@@ -333,3 +333,749 @@ report.
 [^snare-modal]: *Simulation of the snare-membrane collision in modal form*, Forum Acusticum 2023. <https://dael.euracoustics.org/confs/fa2023/data/articles/000995.pdf>
 </content>
 </invoke>
+
+---
+
+## Second pass: the metallic half, and the tails — 2026-08-07
+
+The first pass fixed the struck membrane. This one fixes what the stick meets
+everywhere else: the plates, the glide, and the tails. On the metallic half
+velocity moves level and very little else, the membrane glide a ghost stroke
+follows is within one per cent of an accent's, and no membrane tail carries the
+beat a real drum has. This pass makes those three things answer the strike, and
+adds the pedal and cymbal articulations an electronic kit sends.
+
+**Review note, 2026-08-07.** Every number below has been re-measured against the
+shipping code before this section was allowed to stand, and most of them moved.
+Where a figure here differs from the audit that proposed the pass, this document
+carries the re-measured one and says what it was measured with. Two of the seven
+proposed steps did not survive that re-measurement and have been moved to
+*considered and not planned* with the reason; the five that remain have been
+renumbered, and every one of them has had its verification rewritten, because in
+each case the test as proposed either failed to isolate the effect it was
+testing or asserted a number its own mechanism could not reach. The re-measuring
+was done with a scratch harness linked against `libDrumalorDSP.a` at 48 kHz,
+Humanise 0, one hit per fresh engine unless stated, using an FFT band analysis
+for band shares and centroids, a best-gain time-domain null for "is this the
+same signal with a fader on it", and — for the pitch glide — a trace of the
+engine's own oscillator frequency rather than an analysis band, because the
+analysis band is what produced the wrong numbers.
+
+A standing caution about one measure. "Level-matched third-octave residual" is
+used throughout the audit and is defined nowhere in this repository, and it is
+not one number: for the same pair of renders (v = 0.25 against v = 1.00, first
+60 ms) an unweighted RMS over all third-octave bands, the same RMS restricted to
+bands within 40 dB of the loudest, and an energy-weighted RMS give 4.68, 3.34
+and 0.65 dB for Perc 1 and 3.24–7.92, 3.01–6.87 and 0.53–1.37 dB across the five
+membranes. The three metrics do not even rank the voices the same way. Any
+contract in this document that uses the measure has to define it in the test, and
+no claim of the form "this voice carries less of it than that one" should be
+believed without one.
+
+### What changed in the field
+
+The bar in modelled acoustic drums has not moved. There is no MODO DRUM 2 —
+IK's NAMM 2026 announcement covers TONEX, ARC and iLoud with no drum news, and
+the shipping line is still 1.5 plus the Custom Shop tiers.[^ikn-namm2026] There
+is no Superior Drummer 4: Toontrack's release notes show 3.4.3 on 17 February
+2026 and 3.4.4 on 26 March 2026, both maintenance releases, and a March 2026
+forum thread asking when 4 is coming has no answer.[^sd3-notes][^sd4-thread]
+Both of these are absences, reported as absences. The gaps the first pass closed
+are still gaps in the field.
+
+The pressure has arrived from below instead. Tiagolr's RipplerX (February 2025)
+is a free, open-source modal resonator plugin with twelve resonator models, up
+to 64 partials each, and serial or parallel coupling between two of
+them.[^ripplerx][^ripplerx-repo] Drumalor's head bank is twelve resonators
+total. Bitwig Studio 5.3 (February 2025) bundled 25 drum devices free to
+existing owners, including 808- and 909-derived families built from oscillator
+banks, FM and physical models — which erodes exactly the synthesised
+drum-machine ground Drumalor's relaxation-oscillator banks and circuit output
+stages serve best.[^bitwig53] The defensible half is the acoustic half.
+
+Three things in the acoustic half are newly specific.
+
+- **Cymbals and hi-hats are the category's named weak point, and the complaint
+  is about playability rather than sample quality.** E Drum Info's survey of
+  e-drummers reports the hi-hat and cymbals as the most-criticised part of every
+  plug-in, while granting that Superior Drummer 3 and Addictive Drums sound
+  lifelike — "the big issue is the actual playability of the sounds when
+  'played' from pads".[^edrum-cymbals] MODO DRUM's cymbals, which are sampled
+  rather than modelled, are its most-criticised component in owner
+  threads.[^modo-kvr] Drumalor's Ride and Crash have no modal bank at all —
+  deliberately: one used to sit there and was removed for putting a pitched ring
+  on top of two circuits that do not produce one (`DrumEngine.cpp:2913–2919`).
+  That is the argument any future cymbal plate has to answer, and this pass does
+  not answer it.
+- **The standard cymbal articulation set is three zones and a choke.** Mixwave's
+  articulation reference lists rides responding to bell, edge and bow, and
+  crashes to crash, bow tip, bow shank, bell tip and bell shank; chokes are
+  conventionally offered as a dedicated MIDI key, as key-held/key-released, or
+  on aftertouch.[^mixwave-artic] Drumalor maps GM 53 (Ride Bell) and 59 to the
+  same plain ride head strike, and `dispatchMidiData` handles note-on, CC 4 and
+  CC 120/123 only, so two of the three choke conventions are unreachable.
+- **The General MIDI pedal note is a foot chick, not a stick hit.** The GM
+  percussion map assigns note 44 to Pedal Hi-Hat, 52 to Chinese Cymbal, 53 to
+  Ride Bell and 55 to Splash Cymbal.[^gm-perc] `case 42: case 44:` makes 44 a
+  second name for a stick-struck closed hat — the same class of mis-alias the
+  first pass corrected for notes 37 and 40 — even though `setHiHatPedal()`
+  already emits a real modelled chick on a fast close. Notes 52 and 55 are
+  silent.
+
+Two smaller competitive facts. High-resolution velocity is now marketed:
+Sound Magic's Supreme Drums Blue (February 2026) advertises up to 65,536
+velocity layers over MIDI 2.0, and MIDI 1.0's own High Resolution Velocity
+Prefix (CC 88 ahead of the note-on, supplying the low seven bits) has existed
+since about 2010.[^supreme-blue][^hires-vel] Drumalor divides `data[2] & 0x7f`
+by 127 and discards the rest, which is the one claim a continuous engine should
+be winning outright. And Iconic Instruments' Detroit Drums (June 2026) makes a
+continuous hi-hat pedal and a per-drum Dampening control its headline
+features[^detroit] — the pedal is already Drumalor's, by a better method, but
+damping-as-distinct-from-decay is a control it does not expose.
+
+Sustained brush sweeps remain the category's unsolved articulation: practitioner
+threads describe the sweep being truncated by the hit and note that swirls do
+not loop, and Toontrack's own forum carries the request as an open
+topic.[^brush-sweeps][^brush-toontrack] Nothing shipped in the last year answers
+it. It is also the one articulation a sample library cannot answer in principle
+and a modal engine gets nearly free, and it is out of reach here only because
+the engine has no concept of a held note.
+
+Literature this pass draws on, none of it cited by the first pass:
+
+- R. Worland, *Normal modes of a musical drumhead under non-uniform tension*,
+  JASA 127(1), 525–533, 2010: the m > 0 modes of an ideal circular head are
+  doubly degenerate, and non-uniform rim tension lifts the degeneracy into
+  audible frequency splitting.[^worland] Practitioners hear it as the
+  "wow-wow-wow" warble in a drum's decay and see it as two close spikes in the
+  fundamental region.[^idrumtune]
+- M. Ducceschi and C. Touzé, *Modal approach for nonlinear vibrations of damped
+  impacted plates*, JSV 344, 313–331, 2015: a hard-struck plate enters a wave
+  turbulence regime in which energy cascades from the struck low modes upward
+  into a broadband high-frequency band over the first few
+  milliseconds.[^ducceschi][^touze-page] L. Skare and J. Abel, DAFx-19, note
+  that a full modal treatment is not tractable for a whole kit in real time and
+  offer approximate modal coupling as the cheap route.[^skare] Nothing in this
+  pass now acts on it: the cymbal plate that would have carried the cascade was
+  withdrawn in review, and the membranes have no slots left. It is recorded here
+  because it is the right literature for whichever pass builds that plate.
+- Hertz's contact law, as used in the mallet-impact literature: the duration of
+  an elastic impact scales as the impact velocity to the power −1/5, so a faster
+  stick is on the plate for less time and its force spectrum reaches higher.
+  This is the same `contactSpectrum()` the head bank already uses; the cymbal
+  channels do not use it at all.
+- T. Kirby and M. Sandler, JASA 150(1), 202–214, 2021, measuring a tom struck at
+  67 intensities: volume, pitch glide *and* decay time all evolve with strike
+  velocity.[^kirby] Their AB test against real samples returned exactly 50 %
+  accuracy over 20 participants, which is the strongest published listening-test
+  result in this field. Their decay finding is not acted on here, for the reason
+  recorded below.
+
+A method note, because it affects how these citations should be treated. This
+box's egress proxy blocked direct fetches of most publisher domains, so the
+quotations behind the claims above come from search-result content rather than
+from pages opened directly. The URLs, DOIs and volume numbers are as reported
+there. Anything that becomes load-bearing in the README should be re-verified
+against the primary source before it is written down as fact.
+
+### Where the engine actually stands
+
+Measured on the shipping code at 48 kHz, Humanise 0 unless stated. The gaps are
+numbered for this pass; the first pass's gap numbers are unrelated.
+
+1. **Perc 1's velocity is a gain fader and nothing else — but almost nothing in
+   the voice could carry anything else.** `renderPerc1`
+   (`Source/DSP/DrumEngine.cpp:3609`) reads `metallicSourceFor`, `filterA`,
+   `filterB`, `filterC` and three envelopes. It reads neither
+   `voice.velocityTimbre` nor `voice.excitationScale`, and the Perc 1 case of
+   `initialiseVoice` (`DrumEngine.cpp:3013`) is alone among the twelve filter
+   set-ups in the engine in placing every corner from `baseFrequency` and a
+   constant. The brightness ratio `10·log10(E[8–16 kHz]/E[2–6 kHz])` over the
+   first 60 ms moves from −20.42 dB at v = 0.08 to −19.99 dB at v = 1.00: a span
+   of **0.44 dB**, monotone, against 6.22 dB for the Mid Tom and 3.87 dB for the
+   Snare. Peak level over MIDI 1..127 moves **37.30 dB**.
+   The audit's companion figure — 0.99 dB of level-matched third-octave residual
+   against 4.92–7.69 dB for the membranes — does not reproduce on any definition
+   of that measure — 4.68 dB unweighted over all third-octave bands, 3.34 dB
+   restricted to bands within 40 dB of the loudest, 0.65 dB energy-weighted,
+   against 3.24–7.92, 3.01–6.87 and 0.53–1.37 dB for the five membranes. On all
+   three Perc 1
+   sits *inside* the membrane range, and the ranking is an artefact of which
+   bands the measure counts. What is true, and is what matters here, is where the
+   voice keeps its energy: over the first 60 ms Perc 1 puts **92.2 %** of it in
+   200–800 Hz, 6.0 % in 0.8–2 kHz, **1.72 %** in 2–6 kHz and **0.017 %** in
+   8–16 kHz. The brightness ratio above is the ratio of two bands carrying 1.7 %
+   and one part in six thousand. Perc 1 is one band-passed square pair through
+   one VCA, and both of its auxiliary paths are garnish: scaling the plate term
+   at `3618` from zero to four times moves the whole voice's brightness ratio by
+   1.49 dB and its 0.8–6 kHz to 200–800 Hz balance by 0.06 dB, and scaling the
+   click term by eight moves no band share by a thousandth of a per cent.
+
+2. **The Ride and Crash repeat identically at one end of the Machine control,
+   and that end is not where they ship.** `configureCymbalChannel` sets
+   `channel.romPhase = 0.0f` (`DrumEngine.cpp:1831`) with `romEnvelope = 1.0f`
+   and `clockPhase = 1.0f` (`1803–1806`), so every strike reads the same
+   32768-word table from the same address with the same envelope. At the
+   shipping Machine defaults that table carries **90.2 %** of the Ride's energy
+   and **86.1 %** of the Crash's, against 17.1 % and 22.8 % on the analogue leg
+   (they sum past 100 % because the legs partly correlate at the output stage).
+   Isolated successive hits at Machine 1.0 and Humanise 0 do null to
+   **−119.56 dB** with 0.0000 dB of peak spread — the audit's figure, reproduced
+   exactly. But at the **shipping defaults** (Ride 0.78, Crash 0.68) the same
+   test gives −6.26 dB and −6.07 dB with 1.55 dB and 0.65 dB of eight-hit peak
+   spread at Humanise 0, because the free-running analogue oscillator bank is
+   still 17–23 % of the sound; and at Machine 1.0 with a musical 0.15 s repeat
+   the nulls are −8.41 dB and −4.08 dB with 1.37 dB and 6.26 dB of peak spread,
+   because the previous hit is still ringing. The identity is real only for
+   isolated hits at one extreme of a control whose whole purpose is to select
+   the machine that is famous for it, and the code says so at `1823–1831`.
+
+3. **Both hi-hats brighten as they ring — because the modelled plate dies before
+   the circuit hiss does.** `filterA` is a two-pole high-pass at
+   `3400 + 6500·characterB` (`DrumEngine.cpp:2809`), 7.8–8.0 kHz at the shipping
+   voicings and flat above it, carrying the largest weight in the mix —
+   `0.58·high·envelope` at `DrumEngine.cpp:3496` — on the slowest envelope in the
+   voice. Open Hat centroid, 400 Hz–20 kHz, over 40 ms windows: **8908 Hz** at
+   0 ms, 9849 at 50 ms, 10385 at 167 ms, 10752 at 333 ms, 10947 at 500 ms,
+   10868 at 1000 ms — a rise of **+3.44 semitones**. Closed Hat: 9357 Hz at 0 ms
+   to 10870 Hz at 50 ms, **+2.59 semitones**, after which it is silent. For
+   contrast the Crash falls 6.18 semitones over 5 s and the Mid Tom 26.79
+   semitones over 600 ms, which is the correct direction.
+   The cause is not the one the audit gives. Rendering the three paths
+   separately: the hiss path's own centroid is **flat** (10995 Hz at 0 ms,
+   10868 at 1000 ms, −0.02 semitones), the band-limited `focused` path near
+   9.8 kHz carries only 12.7 % (Open) and 15.8 % (Closed) of the first 60 ms, and
+   the **plate bank** — the modal bronze, 18.5 % and 25.3 % — runs from 1129 Hz
+   down to 541 Hz and is gone by 300 ms. Hiss and plate together reproduce
+   +3.43 of the +3.44 semitones. The hat gets brighter as it rings because the
+   part of it that is modelled metal decays faster than the part of it that is a
+   circuit, and the comment at `DrumEngine.cpp:2815` and the README both
+   describe what the plate bank does rather than what the voice does.
+
+4. **Hi-hat and cymbal velocity moves 1.3 to 2.6 dB of timbre and 3 to 16 % of
+   decay across the whole range.** The hat's `filterA` carries no
+   `velocityTimbre` while `filterB` does (`DrumEngine.cpp:2809, 2811`), and
+   `filterA` has the larger mix weight; the hat's plate bank does read the
+   contact through `reach` (`2849`), but that bank is under a quarter of the
+   voice. The Ride/Crash case (`2865–2920`) has no `velocityTimbre`, no
+   `excitationScale` and no bank; its only velocity term is
+   `channel.peak = 0.58f + 0.42f * velocity` (`DrumEngine.cpp:1771`), which
+   drives the VCA control and the OTA bandwidth — an envelope shape, not a
+   spectrum. Brightness span across v = 0.08..1.00: Closed Hat **2.07 dB**, Open
+   Hat **2.59 dB**, Ride **1.33 dB**, Crash **2.00 dB**. Decay to −20 dB from
+   v = 0.1 to v = 1.0: Closed Hat +2.6 %, Open Hat +3.4 %, Ride +10.0 %, Crash
+   +15.8 %. The audit's Open Hat figure of −2.1 %, "the wrong direction", does
+   not reproduce; every voice moves the right way, just not far.
+
+5. **The tom and kick pitch glide is a drawn exponential, and a ghost stroke
+   follows all of it.** `voice.sweepAmount = 0.12f + 1.20f * voice.characterA`
+   (`DrumEngine.cpp:2929`) is a panel knob, and `renderTom` applies
+   `1 + sweepAmount * pitchEnvelope` to oscillator 0 (`3550`); the Kick's only
+   velocity term on the same path is `triggerSweep = 0.84f + 0.16f *
+   voice.velocity` (`3290`). Traced from the engine's own oscillator-0 frequency
+   rather than through an analysis band, the glide from the strike to the settled
+   note is **25.73 semitones** on the Kick, **10.44** on the Low Tom, **10.48**
+   on the Mid Tom and **9.93** on the High Tom at v = 1.00 — and at v = 0.08 it
+   is **91.7 %** of that on the Kick and **99.2 %, 99.1 % and 99.0 %** on the
+   three Toms. The audit's figures (1.28 against 1.57 semitones, 70–82 %) came
+   from interpolated zero crossings in a band that both starts after the sweep
+   has largely collapsed and overlaps the m = 1 mode; they understate the glide
+   by about sevenfold and overstate its velocity dependence by about fourfold.
+   The gap is therefore much worse than the audit reported: on the toms the
+   drawn sweep is entirely velocity-independent, and the 0.8–1.0 % that does move
+   is the *existing* tension term at `3546–3548`,
+   `1 + (0.006 + 0.052·characterB)·excitationScale·envelope²`, which is already
+   an energy law on oscillator 0 — as is the Kick's `amplitudePitch` at
+   `3291–3292`.
+   What is missing is not an energy path to the oscillator. It is that the drawn
+   sweep beside it does not know how hard the drum was hit.
+
+6. **No degenerate mode pair is ever split, so no membrane tail carries a slow
+   beat.** `buildHeadBank` emits exactly one resonator for every m ≠ 0 mode —
+   `if (order != 0) { emit (ideal, order, 1.0f); continue; }`
+   (`DrumEngine.cpp:2320`). Every mode above the axisymmetric family is therefore
+   a single pole pair. Worland's measurement says a real head, which is never
+   perfectly cleared, splits each of those into two close frequencies that beat
+   at a few hertz. The audit's supporting figure — "under 0.15 dB of ripple
+   today, a pure exponential" — is wrong, and wrong in a way that matters for the
+   test: band-passing each membrane around its m = 1 mode, taking a 10 ms
+   envelope and removing the exponential trend gives a detrended peak-to-peak
+   ripple of **2.76 dB** on the Kick, **3.53 dB** on the Low Tom, **1.94 dB** on
+   the Mid Tom and **1.32 dB** on the High Tom already. That ripple is the
+   analysis band-pass admitting neighbouring modes and the settling oscillator,
+   and it runs at **85–137 Hz**. What is genuinely absent is ripple *at a beat
+   rate*: nothing in the 0.5–12 Hz band a split pair would produce. The Snare
+   cannot be measured this way at all — its m = 1 band stays within 45 dB of its
+   own peak for 72 ms, so there is no tail to detrend.
+
+7. **The digital cymbal channel has no onset and no contact time.**
+   `channel.romEnvelope = 1.0f` with `channel.clockPhase = 1.0f`
+   (`DrumEngine.cpp:1803–1806`) means the clock fires on the first sample and the
+   address envelope starts at unity. The 808 leg has an RC attack smoother
+   (`1762–1765`) precisely because a step into a resonant band-pass clicks; the
+   909 leg has none, and at the shipping defaults it is the leg carrying the
+   sound. Time from trigger to −6 dB of peak, Ride: **0.85 ms** at Machine 0.0,
+   0.85 ms at 0.5, **0.06 ms** — three samples — at Machine 1.0. Crash: 3.38 ms,
+   0.27 ms, 0.10 ms. The onset is identical for a brushed ride tip and a
+   crash-ride accent. This is the one place in the kit where the Hertzian
+   contact model that governs every membrane voice is simply absent. All six
+   figures reproduce exactly.
+
+8. **The kit ships with no inter-drum coupling.** `drumalor::parameters::bleed`
+   defaults to 0.0f (`Source/PluginProcessor.cpp:278`, `DrumEngine.h:81`) and the
+   whole path is branch-skipped (`DrumEngine.cpp:3994, 4072–4081`). `Presets/`
+   contains only a README, so nothing turns it on. The audit's "14.9 dB
+   discarded" does not survive re-measurement: a single full-velocity kick puts
+   the snare's 3–6 kHz wire band at −50.58 dB relative to the hit at Bleed 0.00
+   and −47.35 dB at Bleed 1.00, so the whole control is worth **3.2 dB** in that
+   band as delivered. Isolated by subtracting the Bleed 0 render, the coupling
+   itself sits 50.2 dB under the kick in the wire band and 27.7 dB under it
+   full-band at Bleed 1.00. It is room glue, which is what it was built to be,
+   not a buried 15 dB.
+
+9. **The clap's tail is loudest before three of its four sources have
+   happened.** `tail = (0.16f + 0.30f * characterB) * voice.envelope`
+   (`DrumEngine.cpp:3458`), and `voice.envelope` starts at 1.0 at sample zero and
+   only decays, while the four impacts land at 0, 18, 39.6 and 63 ms. Rendering
+   that path alone gives −28.00 dBrms over 0–16 ms, −32.31 over 20–36, −35.65
+   over 45–60 and −39.81 over 66–82: strictly monotone from the first sample, as
+   the code guarantees. The path the comment calls "the room answering" is
+   **7.50 dB** louder having heard one clap than having heard four — the audit
+   said 2.71 dB, measured on the summed voice rather than on the path — and it
+   is the same `nextBandLimitedNoise(voice)` sample as the direct path through a
+   different band-pass with zero delay and zero diffusion.
+
+10. **The MIDI surface is note-on, CC 4 and CC 120/123.** `dispatchMidiData`
+    (`Source/PluginProcessor.cpp:362–392`) handles nothing else: no note-off, no
+    polyphonic or channel aftertouch, no CC 88, no CC 16/18. `midiTriggerForNote`
+    (`DrumEngine.cpp:434`) has `case 42: case 44:` on one line and
+    `case 51: case 53: case 59:` on another, so the GM pedal chick is a stick
+    hit and the GM ride bell is a plain bow strike; notes 52 and 55 return
+    `nullopt`. Velocity is `(data[2] & 0x7f) / 127.0f` and the low seven bits of
+    a 14-bit velocity are discarded.
+
+**What must not regress.** Sample-rate independence is ahead of the commercial
+field: level-matched third-octave comparison against 48 kHz gives 0.00 dB for
+the Mid Tom, 0.02 dB for Perc 2, 0.10–0.13 dB for the Kick, 0.22–0.23 dB for the
+Snare and 0.28–0.46 dB for the Closed Hat at 44.1, 96 and 192 kHz; the
+fixed-grid noise generator and the reference-rate resonator residue are what buy
+it. The struck-membrane voices carry real velocity timbre — 3.2–7.9 dB RMS of
+level-matched third-octave change from v = 0.25 to v = 1.00 on the unweighted
+measure, 3.0–6.9 dB restricted to audible bands — and 24–42 % of decay change;
+whichever measure a contract picks it must name it, for the reason given at the
+head of this section. The head bank's centroid falls 26.8 semitones over a Mid
+Tom's first 600 ms. The hand-rolled
+`besselJ` agrees with `std::cyl_bessel_j` to 7.58e−07 over every order and
+radius the bank uses. Master-stage headroom is tight but sound: on an eight-voice
+full-velocity downbeat only 2 of 57600 samples reach the clamp at the default
+0.82 output gain, so voice and bus curvatures must not get more aggressive
+without re-measuring. And the continuous hi-hat pedal is genuinely the control:
+at five pedal positions notes 42 and 46 differ by only 0.38–0.65 dB RMS in
+level-matched bands.
+
+### Steps
+
+Numbering restarts for this pass. Each step is one commit, self-contained, with
+the JUCE-free DSP build and its regression suite green. Five steps, ordered
+cheapest and most audible first; the two that were proposed and did not survive
+review are recorded under *considered and not planned* with the measurement that
+struck them. Every threshold below has been checked against what the mechanism
+can actually reach, not only against what would be nice to assert: a contract
+nobody can pass is a contract nobody will keep.
+
+- [ ] **1. Stop the hi-hat brightening as it rings.** A hat's top goes first: it
+  is the dense upper-mode region of a bronze plate, and that is the region
+  radiation damping removes fastest. Drumalor's does the opposite, and the reason
+  is not the one the audit gave. The part of the voice that is modelled metal —
+  the plate bank, 18.5 % of an Open Hat and 25.3 % of a Closed one — runs from
+  1129 Hz down to 541 Hz and is gone by 300 ms, while the part that is a circuit,
+  a two-pole high-pass at 7.8 kHz flat above its corner carrying 0.58 of the mix
+  on the slowest envelope in the voice, holds a centroid of 10.9 kHz from the
+  first sample to the last. As the metal leaves, what remains is brighter than
+  what started. Put a one-pole low-pass in front of the hiss path whose corner
+  falls as the note rings, and set its value at the strike from the `reach` term
+  already computed in the hat case (`DrumEngine.cpp:2849–2850`,
+  `0.00042 / contactSeconds`, clamped to 0.30..1.60) so a ghost hat starts duller
+  as well as quieter.
+  Two cautions on how the corner's fall is derived, both of which the audit got
+  wrong. `lossPerSecond(f, multipole)` is a lambda local to `buildHeadBank` and
+  is not available here: the hat's bank goes through `initialiseModalVoice`,
+  whose law is `fixed + hysteretic·ratio + viscous·ratio²` — a function of the
+  mode *ratio*, with `ModalLoss::radiation` left at its default of zero. And
+  `pedalBlend(0.15f, 0.04f)` at `DrumEngine.cpp:2861` is the **viscous** term,
+  not the radiation one. Extrapolating that law to the hiss band, 13 to 37 times
+  the plate's own base frequency, gives a loss factor of about 217 — the hiss
+  would vanish instantly. So the corner's trajectory is a voiced curve shaped
+  like the plate's loss law, not a reading of it, and this step should say so
+  rather than dress a fudge factor as a derivation. What does carry over honestly
+  is the pedal's *direction*: over the bank's own ratio range the open law spans
+  3.3× from bottom to top and the clamped one 1.66×, so a closed pair does darken
+  more slowly than an open one, by about a factor of two rather than by the
+  factor of infinity a frequency-independent friction term would give.
+  *Closes gap 3 and the hi-hat half of 4.* *Verified by*: a hat spectral-decay
+  contract measured **after the plate bank has gone**, because a comparison
+  against the 0 ms centroid is a comparison against a mixture that no longer
+  exists — a frozen low-pass anywhere from 20 kHz to 5 kHz makes the 0-to-1000 ms
+  rise *worse* (3.44 → 5.11 semitones), which is what makes the audit's proposed
+  "3.0 semitones below the 0 ms value" unreachable without deleting the path
+  altogether. Assert instead that the Open Hat's 400 Hz–20 kHz centroid over
+  167/333/500/1000 ms is non-increasing and that its 1000 ms value is at least
+  **1.5 semitones below** its 167 ms value (today it is 0.79 semitones above,
+  10385 → 10868 Hz); that the Closed Hat's 50 ms centroid does not exceed its
+  0 ms value (9357 → 10870 Hz today); that the Open Hat's rms over 500–600 ms
+  falls by no more than **4 dB** against the present engine, so the darkening is
+  not the tail being deleted; and that the brightness span across velocity is at
+  least **3.5 dB** on both hats (2.07 and 2.59 dB today — 4.0 dB is out of reach,
+  because the existing `reach` term only spans 2.29× over v = 0.08..1.00 and a
+  corner moving 2.29× is worth about 1.4 dB on this measure). Drop the audit's
+  pedal-brightness clause: over the first 60 ms a closed hat has already stopped,
+  so a pedal-1.0-against-pedal-0.0 comparison in that window measures decay, not
+  the loss law, and today it reads 10.87 against 11.07 dB on note 42 with a
+  non-monotone 11.70 dB in the middle of the travel. If the pedal's darkening is
+  to be asserted at all, assert it as a *rate*: the fall in centroid per unit
+  time between 20 and 120 ms at pedal 0.35 must be at least **1.5×** the same
+  figure at pedal 0.85. The existing assertions that pedal 1.0 reproduces the
+  Closed Hat and pedal 0.0 the Open Hat sample for sample must stay green, which
+  is what forces the change onto both voices identically, and the Closed Hat's
+  0.28–0.46 dB sample-rate independence must hold, which means the corner has to
+  be computed in seconds and hertz rather than in samples.
+
+- [ ] **2. Put a contact time on both cymbal channels.** The 909 leg opens in
+  three samples because `romEnvelope` and `clockPhase` both start at unity, and
+  nothing anywhere on the cymbal path knows how fast the stick was travelling.
+  A stick tip on a thin plate is the closest thing in the kit to a clean
+  Hertzian impact, so use the derived exponent rather than the voiced ones the
+  membranes carry: `tau(v) = tau0 · v^(-1/5)`.
+  Feed it to the spectrum, and feed the *envelope* separately — these are two
+  numbers, not one, and the audit's version of this step collapsed them. A
+  contact time that also serves as the attack constant would have to be around a
+  millisecond to give the onset the contract wants, and `1/(2·tau)` would then
+  put the low-pass on the reconstructed ROM output at 250–1250 Hz, which does not
+  soften a cymbal, it deletes it. So: the attack smoother on the digital leg is
+  the circuit's own RC, matching the analogue leg's 0.85 ms (Ride) and 1.60 ms
+  (Crash) at `DrumEngine.cpp:1762`, modulated by velocity through the same −1/5
+  law; and the contact time proper is a stick tip on bronze, of the order of
+  40–80 µs, whose spectral corner `1/(2·tau)` lands at 6–12 kHz where it can tilt
+  the top of the cymbal without touching its body. One law, two constants, both
+  stated. *Closes gap 7 and the cymbal half of gap 4.* *Verified by*: a cymbal
+  onset-and-velocity contract asserting that the Ride's time from trigger to
+  −6 dB of peak at Machine 1.0 and v = 1.0 lies between **0.40 and 2.0 ms** (it
+  is 0.062 ms today, three samples at 48 kHz); that the same measurement at
+  v = 0.10 is at least **1.35×** the v = 1.0 figure, where the −1/5 law predicts
+  1.585×, and that this ratio is measured with the spectral low-pass bypassed so
+  the onset test reads the smoother rather than the filter's own group delay;
+  that the Machine 0.0 onset stays within **0.05 ms** of its present 0.854 ms
+  (Ride) and 3.375 ms (Crash) so the 808 smoother is untouched; that the
+  brightness span across velocity reaches at least **3.0 dB** on both cymbals
+  (1.33 and 2.00 dB today); and that `analyseCymbalPreset`'s existing
+  `presenceShare`, `airShare`, `logBandEntropy` and Machine-level assertions in
+  `testCymbalQualityContract` stay green, since a low-pass on the leg carrying
+  86–90 % of the energy is exactly what those bounds exist to catch.
+
+- [ ] **3. Make the membrane glide's depth follow the strike.** A head is stiff
+  because it is stretched, so the pitch rise follows the energy actually in the
+  drum — Avanzini and Marogna's result, which the engine already estimates as
+  `voice.modalEnergy` for the bank and, on oscillator 0 itself, as
+  `(0.006 + 0.052·characterB)·excitationScale·envelope²` in `renderTom`
+  (`DrumEngine.cpp:3546–3548`) and `0.016·characterB·stateMagnitude` in
+  `renderKick` (`3291–3292`). So the premise the audit gave for this step — that
+  no energy term reaches oscillator 0 — is false; both exist, both are bounded,
+  and between them they are the entire 0.8–1.0 % by which a tom's glide differs
+  between a ghost stroke and an accent. What has no strike term at all is the
+  *drawn* sweep sitting beside them: `1 + sweepAmount · pitchEnvelope` at `3550`,
+  where `sweepAmount` is a panel knob, and on the Kick
+  `1 + sweepAmount · triggerSweep · pitchEnvelope` at `3295`, where `triggerSweep`
+  spans only 0.84 to 1.00. Give the drawn sweep an energy-proportional depth of
+  the same bounded form: `1 + sweepAmount · min(1, kappa · modalEnergy)`,
+  normalised so that v = 1.00 lands where it lands today.
+  Do **not** carry `applyTension`'s 6 % ceiling across, as the audit proposed.
+  That ceiling is a statement about how far a stretched head can go — about a
+  semitone — and the sweep it would be applied to is a factor of 4.42 at the
+  Kick's strike. Capping it at 6 % would cut the Kick's 25.73 semitones to about
+  one, which is not the redistribution this step claims to be and would take the
+  deep-analogue-kick contract with it. The ceiling here is the present sweep
+  depth; the strike decides how much of it is used.
+  *Closes gap 5.* *Verified by*: extending the pitch-glide contract with an
+  estimator stated in the test, because the estimator is what produced the
+  audit's wrong numbers. Take the oscillator's frequency where the test can see
+  it — interpolated positive-going zero crossings of the render low-passed below
+  the m = 1 mode, with the first complete period giving the start and the median
+  over 350–500 ms the settled value — and apply it identically at both
+  velocities, so the assertion is on the *ratio* and cannot be moved by which
+  partials the band admits. Assert that the v = 0.08 glide is at most **35 %** of
+  the v = 1.00 glide on the Kick and all three Toms (it is 91.7 %, 99.2 %, 99.1 %
+  and 99.0 % today, traced from the engine's own oscillator frequency); that the
+  v = 1.00 glide stays within **±15 %** of its present traced value (Kick 25.73,
+  Low Tom 10.44, Mid Tom 10.48, High Tom 9.93 semitones) so this is a
+  redistribution and not a reduction; that the first pass's settled-pitch
+  assertion — the same partial within 5 cents at both velocities once the energy
+  has gone — stays green; and that `testDeepAnalogKickContract` stays green,
+  since the Kick's sweep is its Punch knob and this step is rewriting how that
+  knob is applied.
+
+- [ ] **4. Split the degenerate mode pairs, and let Humanise move the strike
+  azimuth.** Every m > 0 mode of an ideal circular head is a doubly degenerate
+  pair, and any departure from circular symmetry lifts the degeneracy into two
+  close frequencies; Worland shows that ordinary non-uniform lug tension is
+  enough, and drummers hear the result as the warble in a decay. Emit both
+  members where `buildHeadBank` currently emits one (`DrumEngine.cpp:2320`),
+  separated by a relative split `delta` fixed per instrument from the unit's own
+  seed and in the range a cleared head shows — the beat rate is `f·delta`, and
+  the kit's m = 1 modes sit at 78 Hz (Kick), 117 (Low Tom), 195 (Mid) and 234
+  (High), so a 0.5 % to 2.5 % split puts every one of them between 0.4 and
+  5.9 Hz, inside the band the contract below measures. The two
+  members are orthogonal in azimuth, so their excitation balance is
+  `cos(m·phi)` and `sin(m·phi)` for a strike at azimuth `phi`; take `phi` from
+  the voice's per-hit seed, scaled by Humanise. That is the first deviation
+  Humanise has ever made to the strike rather than to a control, and it closes
+  the first pass's gap 4 along a different axis from the one that was withdrawn.
+  Splitting needs slots: raise `resonatorCount` from 12 to 18
+  (`DrumEngine.h:144`) and split the m > 0 modes in descending gain order until
+  the budget is used, which also lets the two table entries currently truncated
+  at the end of `membraneModeRatios` through — the loop reaches twelve emitted
+  resonators at `membraneModeZeros[9]`, so 4.059 and 4.132 never get in today.
+  Two things about that budget increase have to be said out loud. It is free in
+  time: a dense eight-second thirteen-voice render costs 3.96 s at twelve slots
+  and 3.97 s at eighteen, against a 20 s guardrail. It is **not** free in sound:
+  admitting those two entries alone, before any splitting, changes every membrane
+  by a best-gain null of −46 dB (Kick), −28 dB (Mid Tom), −27.9 dB (High Tom),
+  −26 dB (Low Tom) and −22.5 dB (Snare). That is a re-voicing of the whole
+  membrane half of the kit, small but real, and it belongs in the commit message
+  and in a listening check rather than being discovered later.
+  *Closes gap 6.* *Verified by*: a membrane-tail contract that band-passes each
+  membrane around its m = 1 mode, takes a 10 ms envelope, removes the exponential
+  trend by fitting a line in dB, **band-limits the detrended residual to
+  0.5–12 Hz**, and only then asserts a peak-to-peak ripple of at least **1.5 dB**.
+  The band-limiting is the whole test: unfiltered, the detrended residual is
+  already 2.76 dB on the Kick, 3.53 on the Low Tom, 1.94 on the Mid Tom and 1.32
+  on the High Tom, all of it the analysis band-pass admitting neighbouring modes
+  and the settling oscillator, and all of it running at 85–137 Hz — so an
+  amplitude-only assertion passes today, on three of the four, for a reason that
+  has nothing to do with split pairs. Assert also that the ripple rate lies
+  between **0.5 and 12 Hz**; that two hits at Humanise 0 give the same rate within
+  **2 %**, because a lug pattern is a property of the drum and not of the hit;
+  that the ripple depth over eight hits spreads by at least **0.8 dB** at
+  Humanise 1.0 and by at most **0.05 dB** at Humanise 0; and that the first pass's
+  settled-pitch, decay-range and dense-stress contracts stay green. Run the tail
+  test on the Kick and the three Toms only: the Snare's m = 1 band stays within
+  45 dB of its own peak for 72 ms, which is not a tail, and asserting a
+  sub-12 Hz beat inside 72 ms asserts less than a tenth of a cycle.
+
+- [ ] **5. Answer the notes and messages a drummer's kit actually sends.** Four
+  articulations a drummer plays are unreachable, one the engine does make is
+  aliased to the wrong note, and half the velocity resolution an e-kit sends is
+  thrown away. The mapping half of this step is verified as stated: `midiTriggerForNote`
+  (`DrumEngine.cpp:434`) does return a plain Closed Hat for both 42 and 44 and a
+  plain Ride for 51, 53 and 59; 52 and 55 do return `nullopt`; and
+  `dispatchMidiData` (`PluginProcessor.cpp:362–392`) does handle note-on, CC 4
+  and CC 120/123 and nothing else. Three of the audit's mechanisms behind it do
+  not survive, and the step is smaller and more honest without them.
+  **The foot chick is not a sound the engine already has.** `setHiHatPedal()`
+  emits it by calling `trigger (Instrument::ClosedHat, ...)` — the chick *is* a
+  stick-struck closed hat, at a velocity taken from the pedal travel. Routing
+  note 44 there changes nothing. A foot chick has to be built: the same plate
+  with the pair already clamped, the stick excitation removed — no `attack` noise
+  burst, no `transientScale` on the hiss — and a much shorter, blunter contact,
+  because what strikes the plates is the other plate. Small, but it is a new
+  excitation and not a wiring job, and the step should be costed as one.
+  **The foot splash is not the mirror of the close.** Opening the plates cannot
+  put energy back; the code already says so at `setHiHatPedal` — "A pedal that
+  opens again does not undo it: the energy has already gone" — and the resonator
+  decay coefficients are fixed at note-on, so nothing in the engine re-voices a
+  ringing bank. What re-opening can honestly do is *stop the friction*, so the
+  remainder decays at the open plate's rate from wherever it had reached. Say
+  that, and implement it as a re-configure of the ringing hat's bank, which is a
+  mechanism the engine does not have yet.
+  **The ride bell is not a strike position.** With the cymbal plate withdrawn
+  from this pass (see *considered and not planned*), the Ride and Crash have no
+  modal bank and therefore no concept of where the stick landed. Notes 53, 52 and 55 become voiced variants
+  of the existing channel — band gains, clock rate, contact time from step 2 —
+  which is cheap, effective and worth doing, but it is voicing and not geometry.
+  What remains, and is worth the commit on its own: note 44 to a real foot chick;
+  notes 52, 53 and 55 to china, bell and splash variants; channel and polyphonic
+  aftertouch on a cymbal note driving `beginChoke()`, which already takes a time
+  constant and so is progressive without changes; and CC 88 ahead of a note-on
+  supplying the low seven bits of a 14-bit velocity.
+  *Closes gap 10, and the parts of the field's articulation set named above.*
+  *Verified by*: a MIDI-surface contract — which must define its level-matched
+  third-octave residual in the test, for the reason given at the head of this
+  section, and should use the audible-band form, restricted to bands within 40 dB
+  of the loudest — asserting that note 44 and note 42 at
+  v = 0.9 differ by a level-matched third-octave residual of at least **6 dB**
+  (they are the same trigger today) and that note 44's 8–16 kHz energy over the
+  first 30 ms is at most **0.45×** note 42's; that note 53 and note 51 at v = 0.8
+  differ by at least **6 dB** level-matched with the bell's decay to −20 dB at
+  least **1.4×** the bow's; that notes 52 and 55 each differ from note 49 by at
+  least **4 dB** level-matched rather than being silent; that channel aftertouch
+  127 after a crash puts the window 30 ms later at least **20 dB** below the
+  unchoked one, with aftertouch 48 landing at least **6 dB** clear of both; and
+  that CC 88 values 0 and 127 ahead of the same velocity byte give peak levels at
+  least **0.02 dB** apart in the right order, while a note-on with no preceding
+  CC 88 stays bit-identical to the present engine — which means the un-prefixed
+  path must keep dividing by 127 rather than folding into the 14-bit
+  `(msb·128 + lsb)/16383` scaling, since the two disagree by 0.07 dB at full
+  velocity.
+  The splash clause needs rewriting too. As proposed — CC 4 to 127 and back to 0
+  within 40 ms of a ringing open hat leaving 10 dB more in the 150–400 ms window
+  than the same close held — it cannot pass and cannot fail: a full close at
+  20 ms takes that window to exact digital zero, and ten decibels above zero is
+  zero. Measured today: no pedal move −44.10 dB, close-and-hold −300 (the
+  flush-to-zero floor), close-then-open −300, half-close-then-open −98.24 dB.
+  Assert instead against a **partial** close: CC 4 to 76 at 20 ms and back to 0
+  at 40 ms must leave at least **10 dB** more energy in the 150–400 ms window
+  than CC 4 held at 76, and at least **15 dB less** than no pedal move at all, so
+  the splash is a release of damping and not a restoration of the note.
+
+### Considered and not planned
+
+- **Withdrawn in review: a contact time on Perc 1's plate path.** Proposed as
+  Hertz's `tau(v) = tau0 · v^(-1/5)` weighting the `filterC` plate term by
+  `contactSpectrum(f_plate, tau) / contactSpectrum(f_body, tau)` in place of the
+  fixed `0.30f + 0.22f * characterA` at `DrumEngine.cpp:3618`, verified by 3.5 dB
+  of brightness span. The gap it addresses is real — Perc 1's velocity moves
+  37.30 dB of level and 0.44 dB of brightness — but the mechanism cannot reach
+  the target and the target is measured where the voice is not. Over the first
+  60 ms Perc 1 puts 92.2 % of its energy in 200–800 Hz and 0.017 % in 8–16 kHz,
+  so the proposed contract is a ratio of two nearly empty bands; and scaling that
+  plate term from zero to four times — a swing far wider than the contact-
+  spectrum ratio can produce, which is about 4.6 dB over v = 0.08..1.00 — moves
+  the brightness ratio by 1.49 dB in total and the audible 0.8–6 kHz to
+  200–800 Hz balance by 0.06 dB. Scaling the click term by eight moves nothing at
+  all. The only place a stick speed could be heard in this voice is `filterA`,
+  which carries 92 % of it, or the balance of the two square oscillators behind
+  it — and that bank is shared, free-running engine state, so it cannot be
+  weighted per hit without retuning tails that are still ringing. Moving
+  `filterA` is a re-voicing of the cowbell that can only be judged by ear, which
+  is the same reason the first pass declined to re-voice the head bank. If the
+  cowbell is to answer the stick, that is a listening session, not a contract.
+- **Withdrawn in review: a persistent modal plate and a wave-turbulence cascade
+  on the Ride and Crash.** Proposed to close gap 2 and the rest of gap 4 at once.
+  Both halves fail for separate reasons. The repeat-identity half rests on a
+  measurement taken at one extreme of a control: the −119.56 dB null reproduces
+  exactly, but only for isolated hits at Machine 1.0, and at the shipping
+  defaults the same test gives −6.26 dB (Ride) and −6.07 dB (Crash) with 1.55 dB
+  and 0.65 dB of eight-hit peak spread at Humanise 0, while at a musical 0.15 s
+  repeat rate at Machine 1.0 it gives −8.41 dB and −4.08 dB with 1.37 dB and
+  6.26 dB of spread. The instrument as shipped does not repeat identically, and
+  where it does, it is modelling a machine whose reputation is exactly that,
+  which `configureCymbalChannel` says in as many words. And if that identity is
+  wanted gone anyway, it costs one line rather than a bank: seeding
+  `channel.romPhase` from the per-hit seed instead of `= 0.0f` at
+  `DrumEngine.cpp:1831` takes the isolated null from −119.56 dB to −0.00 dB and
+  the eight-hit peak spread from 0.0000 dB to 0.72–2.28 dB, past the step's own
+  0.25 dB target, with no new component, no CPU and no re-voicing. The
+  velocity half is step 2's job and is already planned there.
+  The plate itself is the larger objection. A modal bank is not a component the
+  cymbals were "left without": it is one the engine removed on purpose, and the
+  comment where it used to sit (`DrumEngine.cpp:2913–2919`) says why — it "kept a
+  pitched ring on top of two circuits that do not produce one". Three shipping
+  assertions exist to keep it out: `ride.lowShare <= 0.62`,
+  `logBandEntropy >= 0.70` and `activeBandFraction >= 0.60` in
+  `testCymbalQualityContract`. A plate at the proposed 25 %-of-mean-square target
+  aims straight at all three. Re-adding it needs the removal argument answered
+  first, by ear, and that is its own pass.
+- **Turning Kit Bleed on by default.** The audit is right that out of the box
+  the instrument is thirteen voices with nothing hearing anything else. Its
+  supporting number is wrong — the whole control is worth 3.2 dB in the snare's
+  wire band as delivered, not 14.9 dB, and the coupling itself sits 27.7 dB under
+  a kick full-band at Bleed 1.00 — but the point stands on its own. This is still
+  a default value rather than a mechanism, and a step in this document has to
+  change how something works. How much bleed a kit has is set by how far apart
+  the drums are, which is the room pass's geometry; the number should be decided
+  there, along with the factory presets `Presets/` does not yet contain.
+- **The clap's tail causality.** The "room" path is 7.50 dB louder between the
+  first two impacts than after all four — strictly monotone from sample zero, as
+  `tail = (0.16f + 0.30f * characterB) * voice.envelope` guarantees — and that is
+  a genuine error, larger than the audit's 2.71 dB, which was measured on the
+  summed voice rather than on the path. The honest fix is still a diffuser with
+  delay — the same early-reflection network the room pass needs — rather than
+  swapping one envelope for another on the same zero-delay noise sample. It goes
+  with the room.
+- **Decay time evolving with strike intensity.** Kirby and Sandler measured a
+  tom at 67 intensities and report that volume, pitch glide *and* decay time all
+  move, and their AB test against real samples came out at 50 %. Acting on it
+  means letting `a2` drift, and `a2` is `−r²` — the pole radius. The first pass's
+  step 2 asserts in a shipping contract that it does not move, and that
+  assertion is what makes the settled-pitch and decay-range claims clean.
+  Changing it needs a stability argument and a re-proof of those contracts,
+  which is a pass of its own rather than a step in this one.
+- **Independent batter and resonant head tension.** Zhao and Rossing show the
+  two heads differ in mass and tension[^zhao-rossing], so the cavity split is asymmetric and
+  the tuning interval between them sets the direction and depth of a drum's
+  bend; MODO DRUM exposes both heads separately and drummers expect to set it.
+  It needs a second `HeadGeometry`, a second bank and a new parameter, and step
+  4 has just taken the bank's spare slots. It is the strongest single candidate
+  for the next pass.
+- **Re-voicing the head bank so strike position becomes audible, and CC 16/18
+  positional sensing.** The competitive case is real — MODO DRUM accepts snare
+  and tom strike position on CC 16 and CC 18 from any flagship e-kit,[^modo-cc16]
+  and it is
+  the axis where a modelled instrument is structurally ahead of a sample
+  library. But the first pass measured this axis over the whole range a drummer
+  covers and got 1.5 dB on the Snare and 0.2 dB elsewhere, and that measurement
+  does not change because the same range is now swept deliberately rather than
+  scattered. The prerequisite is removing the bank's `ratio^tilt` fudge and
+  letting `contactSpectrum` and the radiated efficiency set the balance on their
+  own, which would re-voice every membrane in the kit and can only be judged by
+  ear. Step 4's azimuth is the part of the strike that is audible without it.
+- **Sustained brush sweeps.** The category's standing unsolved articulation, and
+  the one place a modal engine beats a 230 GB library outright rather than
+  matching it. Step 5 adds the note-off handling that a held gesture needs, but
+  the excitation itself — continuous stochastic friction on a damped head, with
+  a gesture speed and a contact area — is a new synthesis path and a new
+  articulation set, not a wiring job. It is the obvious headline for the pass
+  after the room.
+- **Plate-to-plate collision rattle in the hi-hat.** Sekiguchi and Samejima model
+  the two cymbals as thin spherical shells[^sekiguchi] and find that a linear spring contact
+  gives too little rattle while an inelastic collision gives the sloshy
+  half-open sound — the same correction the first pass had to make to the bleed
+  bed's wire law. It is the right mechanism and it is not cheap: it needs a
+  second plate bank and a per-sample displacement-gated contact between them,
+  and step 1 has already improved the half-open hat by a cheaper route. Revisit
+  once the second bank exists for the two-head work above.
+- **Cymbal washer and stand dynamics, and stick rebound.** Samejima's extension[^samejima]
+  is real and is the smallest effect on the list. It presupposes a cymbal plate,
+  which this pass declined to build, so it goes behind that argument rather than
+  ahead of it.
+- **A modelled overhead tap.** `buildHeadBank` already computes each mode's
+  multipole order and its `(ka)^(2m+2)` radiated power and then collapses them
+  into one heard weight with a hard-coded near-field share of
+  `0.34f + 0.66f * sqrt(power/(1+power))` (`DrumEngine.cpp:2311`), which means the
+  instrument has exactly one microphone position baked into every head. A second
+  tap from the same resonators with the multipole weighting recomputed for a
+  far-field share would be a modelled overhead rather than a filtered copy, and
+  no competitor does that. It belongs to the room pass because an overhead
+  without a room is a thin close mic.
+- **Von Kármán phantom partials.** Torin and Bilbao's own caveat[^torin-bilbao] is that phantom
+  partials are frequently masked by the normal series. The audible part of that
+  literature is the amplitude-dependent upward energy migration, which nothing in
+  this pass now takes, since the cymbal plate that would have carried it was
+  withdrawn in review; taking it for the membranes would need that cascade on a
+  bank that is already at its slot budget.
+
+[^ikn-namm2026]: IK Multimedia news, NAMM 2026 announcement (TONEX, ARC, iLoud; no MODO DRUM news). <https://www.ikmultimedia.com/news/?item_id=18953>
+[^sd3-notes]: Toontrack, Superior Drummer 3 release notes (3.4.3, 17 February 2026; 3.4.4, 26 March 2026). <https://www.toontrack.com/release-notes/superior-drummer-3/>
+[^sd4-thread]: Toontrack forums, *Superior Drummer 4 — When?* (March 2026, no announcement in reply). <https://www.toontrack.com/forums/topic/superior-drummer-4-when/>
+[^ripplerx]: Synth Anatomy, *Tiagolr RipplerX: an open-source free physical modeling synthesizer plugin à la Chromaphone* (February 2025). <https://synthanatomy.com/2025/02/tiagolr-ripplerx-an-open-source-free-physical-modeling-synthesizer-plugin-a-la-chromaphone.html>
+[^ripplerx-repo]: RipplerX source repository. <https://github.com/tiagolr/ripplerx>
+[^bitwig53]: Bitwig, *Bitwig Studio 5.3 brings you nice drums* (February 2025). <https://www.bitwig.com/stories/bitwig-studio-53-brings-you-nice-drums-343/>
+[^edrum-cymbals]: E Drum Info, *Cymbals* — the hi-hat and cymbals as the most-criticised part of drum plug-ins, and playability rather than sample quality as the issue. <https://www.edruminfo.com/articles/2021/7/11/28-cymbals>
+[^modo-kvr]: KVR Audio forum thread on MODO DRUM, including its sampled cymbals and the missing physical space. <https://www.kvraudio.com/forum/viewtopic.php?t=585248&start=90>
+[^mixwave-artic]: Mixwave, *Drum library articulation overview* — ride bell/edge/bow, crash bow tip/bow shank/bell tip/bell shank, and the three choke conventions. <https://support.mixwave.com/help/drum-library-articulation-overview>
+[^gm-perc]: General MIDI percussion key map (note 44 Pedal Hi-Hat, 52 Chinese Cymbal, 53 Ride Bell, 55 Splash Cymbal). <https://www.cs.cmu.edu/~music/cmp/archives/cmsip/readings/GMSpecs_PercMap.htm>
+[^supreme-blue]: KVR Audio news, *Sound Magic releases Supreme Drums Blue* (February 2026), advertising up to 65,536 velocity layers via MIDI 2.0. <https://www.kvraudio.com/news/sound-magic-releases-supreme-drums-blue---hybrid-modeled-acoustic-drum-virtual-instrument-supports-midi-2-0-66141>
+[^hires-vel]: MIDI 1.0 High Resolution Velocity Prefix (CC 88 sent ahead of the note-on, carrying the low seven bits). <https://electronicmusic.fandom.com/wiki/High_resolution_velocity_prefix>
+[^detroit]: KVR Audio news, *Iconic Instruments releases Detroit Drums* (June 2026), with per-drum Dampening and a sweeping hi-hat pedal control. <https://www.kvraudio.com/news/iconic-instruments-releases-detroit-drums---virtual-acoustic-drum-instrument-plugins-67339>
+[^brush-sweeps]: VI-Control, *Toontrack for jazz brush swirls* — the sweep truncated by the hit, and swirls that do not loop. <https://vi-control.net/community/threads/toontrack-for-jazz-brush-swirls.143254/>
+[^brush-toontrack]: Toontrack forums, *No sweeping brushes sound?* <https://www.toontrack.com/forums/topic/no-sweeping-brushes-sound/>
+[^worland]: R. Worland, *Normal modes of a musical drumhead under non-uniform tension*, JASA 127(1), 525–533, 2010, DOI 10.1121/1.3268605. <https://pubs.aip.org/asa/jasa/article/127/1/525/793705/>
+[^idrumtune]: iDrumtune, *4-lug tuning and clearing: equalizing the drumhead* — the pulsing "wow-wow-wow" of an unevenly tensioned head and its two close spikes in the F1 region. <https://www.idrumtune.com/4-lug-tuning-and-clearing-equalizing-the-drumhead/>
+[^ducceschi]: M. Ducceschi, C. Touzé, *Modal approach for nonlinear vibrations of damped impacted plates: application to sound synthesis of gongs and cymbals*, JSV 344, 313–331, 2015. <https://hal.science/hal-01134639/>
+[^touze-page]: C. Touzé, cymbals and gongs project page (energy build-up into the high-frequency range a few milliseconds after the strike). <https://perso.ensta-paris.fr/~touze/cymbals.html>
+[^skare]: L. Skare, J. Abel, *Real-time modal synthesis of crash cymbals with nonlinear approximations, using a GPU*, DAFx-19. <https://www.dafx.de/paper-archive/2019/DAFx2019_paper_48.pdf>
+[^kirby]: T. Kirby, M. Sandler, *The evolution of drum modes with strike intensity: analysis and synthesis using the discrete cosine transform*, JASA 150(1), 202–214, 2021. <https://pubs.aip.org/asa/jasa/article/150/1/202/606515/>
+[^sekiguchi]: S. Sekiguchi, T. Samejima, *Physical modeling and sound synthesis of the hi-hat*, Acoustical Science and Technology 44(5), 352–359, 2023. <https://www.jstage.jst.go.jp/article/ast/44/5/44_E2293/_pdf>
+[^samejima]: T. Samejima, *Nonlinear physical modeling sound synthesis of cymbals involving dynamics of washers and sticks/mallets*, Acoustical Science and Technology 42(6), 314–325, 2021. <https://www.jstage.jst.go.jp/article/ast/42/6/42_E2087/_article/-char/en>
+[^zhao-rossing]: H. Zhao, T. D. Rossing, *Modes of vibration and sound radiation from a snare drum*, JASA 85(S1), 1989. <https://pubs.aip.org/asa/jasa/article/85/S1/S33/730120/>
+[^torin-bilbao]: A. Torin, S. Bilbao, *Numerical experiments with non-linear double membrane drums*, and the related *Nonlinear effects in drum membranes*. <https://www.semanticscholar.org/paper/Numerical-Experiments-with-Non-linear-Double-Drums-Torin-Bilbao/0db492504b1e481808833d6feced95ab7eb25c40>
+[^modo-cc16]: IK Multimedia forum, MODO DRUM positional sensing over MIDI CC (CC 16 snare play position, CC 18 toms play position, mapped on the MAPPING page). <https://cgi.ikmultimedia.com/viewtopic.php?t=25553>

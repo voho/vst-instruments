@@ -374,3 +374,878 @@ benchmark's proposed ten-second import gate.
 - **Matching Harmor's 516 partials.** Neuramar already renders up to 256
   oscillators per voice from a 64-partial model; the binding constraint is
   evidence in one recording, not oscillator count.
+
+---
+
+## Second pass — the render side, 2026-08-07
+
+The first pass fixed the analysis: it measured reconstruction for the first
+time, made the harmonic solve joint, shortened the onset aperture, widened the
+body representation, raised polyphony, and measured root detection. Every one of
+those steps improved how faithfully the fitted model reproduces the source *at
+the source pitch*. This pass is about everything that happens after the model is
+fitted — the parts of the render that stand in for a physical mechanism instead
+of replaying learned evidence. A fresh engine audit measured thirteen defects on
+the shipping code at the plug-in's own default parameter values, and they share
+a shape: where Neuramar reproduces evidence it is at or above the commercial top
+tier, and where it has to invent behaviour the source did not record — note-off,
+transposition, repetition, sustain past the sample, stereo placement — it does
+something with no physical counterpart. Nine of the thirteen are audible on the
+first note. This pass closes six of them; a seventh and an eighth were planned,
+re-measured, and struck, and the measurements that struck them are kept under
+*Considered and not planned* so the next pass does not re-derive them.
+
+### What changed in the field
+
+A provenance caveat first, because it bears on how much weight the prices and
+dates below can carry. Direct page fetches were blocked by this session's egress
+proxy for every vendor and forum host tried, so the product claims here rest on
+search-result summaries plus the URLs those results returned, not on the pages
+themselves. The engine-side and acoustics claims are not affected — those were
+read from the repository and from the cited papers' abstracts and records.
+
+**A direct one-click competitor now exists, and it ships the branch Neuramar
+lacks.** Samplab Resynthesizer (announced May 2025, released June 2025) takes a
+one-shot sample, analyses it on-device, splits it into harmonic and percussive
+components, and plays the result chromatically with independent harmonic count,
+drive and smoothing on each layer. That is Neuramar's premise plus the
+harmonic/percussive factorisation the first pass named as its clearest remaining
+structural gap. Reported at EUR 77.99 perpetual.
+[Synthtopia](https://www.synthtopia.com/content/2025/05/27/samplab-resynthesizer-combines-simplicity-of-sampling-with-the-control-of-a-synthesizer/),
+[gearnews](https://www.gearnews.com/samplab-resynthesizer-synth/).
+
+**Owners judge that competitor on partial count, harshly and immediately.**
+Review and forum commentary calls its resynthesis "very poor" with "too few
+harmonics for full fidelity", and quotes a user saying "23 harmonics is way too
+low to get a proper resynthesis". The previous pass's *Deliberately not
+attempted* section dismisses partial count as not the binding constraint, which
+is true of Neuramar's 64-partial model driving 256 oscillators, and is also the
+first number an owner quotes. It should be on the tin.
+[KVR product reviews](https://www.kvraudio.com/product/resynthesizer-by-samplab/reviews).
+
+**The partial-count ceiling this document cites was reset.** Sound Radix
+Radical1 (January 2026) claims "tens of thousands of oscillators in real time"
+with "no aliasing and no oversampling", plus spectral sample resynthesis. Harmor's
+516 and Alchemy's 600 are no longer the top of the scale. The more useful
+consequence is that Radical1 now makes the same aliasing claim Neuramar's
+strongest measured result makes, without publishing a number or a method —
+Neuramar's -108.2 dB (this audit re-measured -111.5 dB at root+43 semitones) is a
+differentiator only if it is published with its method.
+[Sound Radix](https://www.soundradix.com/products/radical1/),
+[Sound On Sound news](https://www.soundonsound.com/news/new-radical1-soft-synth-sound-radix).
+
+**The direct peer gained a local, weight-free way to aim its generator.** Sonic
+Charge PhenoType (June 2026) generates fully editable Synplant 2 patches from
+typed descriptions; the parser "runs locally in Synplant with no internet
+connection required" and "is not a large language model", working from a few
+hundred internal tags plus synonyms and misspellings. It is free to Synplant 2
+owners. Neuramar's sample-free Randomize is an unguided roll of its own neural
+field with 1%/10%/100% breadth and nothing steering it, and PhenoType shows that
+steering is achievable inside exactly the constraints Neuramar set itself: no
+bundled weights, no network, no provenance obligations.
+[KVR news](https://www.kvraudio.com/news/sonic-charge-releases-phenotype---free-text-to-patch-generator-for-synplant-2-67348),
+[Synth Anatomy](https://synthanatomy.com/2026/06/sonic-charge-phenotype-prompt-fully-tweakable-sounds-in-synplant-2-first-look-review.html).
+
+**Every named peer ships MPE. Neuramar handles no per-note expression at all.**
+Serum 2 advertises full MPE; MYTH advertises "full MPE Support" and ships 300+
+MPE presets; Sumu 1.1 added it; HALion 7.5 (free, August 2026) added it.
+`Source/PluginProcessor.cpp` handles CC 120 and CC 123 and nothing else — no
+pitch bend, no channel pressure, no per-note anything, and
+`NeuramarEngine::noteOn(midiNote, velocity)` has no continuous per-note input to
+receive it. This is the most visible spec-sheet omission in the instrument.
+[MYTH](https://www.tracktion.com/products/myth),
+[Serum 2](https://xferrecords.com/products/serum-2),
+[HALion 7.5](https://synthanatomy.com/2026/08/steinberg-halion-7-flagship-sampler-plugin-gets-an-fm-and-spectral-makeover.html).
+
+**The systems owners actually name for accuracy are missing from the comparison
+set.** On KVR, users state that "HALion 7 and Icarus 2 have probably the most
+accurate results" and that "Icarus, HALion 7 and Myth give you a very accurate
+reproduction of the sound you put in"; another says Icarus 2 "is far easier and
+gets better results than Synplant 2 or Serum". The benchmark's ceiling row is
+Harmor and Alchemy, chosen on partial count. It should carry at least Icarus,
+chosen on the property owners are actually ranking.
+[KVR thread](https://www.kvraudio.com/forum/viewtopic.php?t=615611).
+
+**Sumu's binding weakness is confirmed to be its workflow, not its resolution.**
+Sumu 1.3.0 (5 March 2026) shipped "partials import feedback": importing a Vutu
+file with more than 64 partials now fails with a log file instead of producing an
+unplayable map. Madrona's own forums record that analysing a sound with Vutu "is
+a complicated process", that "it can be hard to find the combination of control
+settings that reproduces a sound in 64 partials or fewer", and that importing is
+"super clunky". Neuramar's one-click, no-parameters, 0.77 s fit is a competitive
+claim and is currently stated nowhere as one.
+[Madrona news](https://www.madronalabs.com/news/192),
+[Vutu thread](https://madronalabs.com/topics/8984-vutu-sound-analysis-for-sumu).
+
+**MYTH owners name an artifact class Neuramar cannot measure.** Users report "a
+certain sound ingredient typical for resynthesis" and "the fizziness of the
+resynthesis". That is the perceptual name for high-band noise that is
+uncorrelated with the tone. Neuramar's benchmark measures residual ERB-band power
+MAE, which is a power match and blind to it by construction: two renders with
+identical band powers can differ entirely in whether the noise fuses with the
+tone. No coherence or noise-modulation measurement exists in the suite.
+[KVR MYTH thread](https://www.kvraudio.com/forum/viewtopic.php?t=604436).
+
+**Neuramar's headline fidelity metric has published evidence against it.**
+Horner, Beauchamp and So, *A Search for Best Error Metrics to Predict
+Discrimination of Original and Spectrally Altered Musical Instrument Sounds*
+(JAES, 2006) report that the best correspondence to listener discrimination was
+"a spectral error metric based on linear harmonic amplitude differences
+normalized by rms amplitude and raised to a power a, achieving an optimum
+correspondence of 91% for a 0.64", and that critical-band grouping gave no
+improvement over it. Turian and Henry, *I'm Sorry for Your Loss:
+Spectrally-Based Audio Distances Are Bad at Pitch* (arXiv:2012.04572), find that
+multi-scale spectral distances "still contain many very fine-grained local
+minima". Vahidi et al. (JAES 71(9), 2023; arXiv:2301.10183) add that
+spectrogram-based distances are insensitive to intermediate-timescale structure.
+Neuramar's gates are multi-resolution spectral convergence and log-magnitude MAE.
+Horner's metric is a per-partial quantity and Neuramar's whole representation is
+per-partial, so it is directly computable from what the model already holds.
+[JAES](https://www.aes.org/e-lib/browse.cfm?elib=13671),
+[arXiv:2012.04572](https://arxiv.org/abs/2012.04572),
+[arXiv:2301.10183](https://arxiv.org/abs/2301.10183).
+
+**Absence: nobody in this category has published a number.** A targeted search
+for MUSHRA or listening-test comparisons of Synplant, Harmor, Alchemy, MYTH or
+Sumu against each other returned nothing — only unrelated MUSHRA work on speech
+synthesis, amplifier emulation and ambisonics. All reviewer coverage of these
+products is descriptive and anecdotal. The field has opinions, not standards, so
+executing the benchmark protocol against the locked competitor set would be a
+first rather than a catch-up.
+
+**Absence: no acoustics result was found that supports pitch-invariant decay,
+pitch-invariant inharmonicity, or stationary residual noise.** Every source
+consulted says the opposite, and two of them give quantitative audibility bounds
+that Neuramar currently breaks by a wide margin. Those bounds are used as the
+verification numbers in the plan below: Järveläinen and Tolonen, *Perceptual
+Tolerances for Decay Parameters in Plucked String Synthesis* (JAES 49(11), 2001)
+measure a tolerance of roughly 75%-140% of the reference decay time constant, and
+Järveläinen, Välimäki and Karjalainen, *Audibility of the timbral effects of
+inharmonicity in stringed instrument tones* (ARLO 2(3), 2001) fit an audibility
+threshold `ln B = 2.57 ln f0 - 26.5`, with the threshold at C#6 "over 1,000 times
+higher than for A1".
+[JAES 10173](https://www.aes.org/e-lib/browse.cfm?elib=10173),
+[ARLO](https://pubs.aip.org/asa/arlo/article/2/3/79/123666/Audibility-of-the-timbral-effects-of-inharmonicity).
+
+### Where the engine actually stands
+
+Every number below was measured on the shipping code by scratch programs linking
+`libNeuramarDSP.a` and driving the engine at the plug-in's own default parameter
+values. No repository file was modified to obtain them. The suite is green: 3/3
+ctest suites in 40.5 s.
+
+**Re-measurement note.** This section was re-measured a second time, from
+scratch, by an adversarial pass, and where the two passes disagree the number
+below is the second one. Two structural findings from that pass are folded in
+where they belong: the register compensation cannot change the noise/tone
+balance the way gap 2 originally claimed, and each Bone mode already carries its
+own learned amplitude trajectory, so gap 5 was attributing a Core defect to the
+Bone layer. Both are shown with the measurement that settles them. Every
+absolute level below is fixture-dependent — the register, Orbit, repetition and
+modal numbers move by a factor of several between a sustained, a breathy, a
+decaying, a percussive and a struck fixture — so each claim now names the
+fixture it was taken on, and the plan's gates are written as spreads and ratios
+rather than as absolute levels wherever that is possible. The five scratch
+fixtures are: *sustained* (20 harmonics, `h^-1.4`, 5 Hz vibrato, 1.6 s),
+*breathy* (48 harmonics `h^-1` plus a strong high-passed noise bed, 1.6 s),
+*decay* (32 partials with `tau_h = tau_1 h^-0.75`, `tau_1` 0.9 s or 0.20 s),
+*percussive* (12 partials, `tau_h = 0.30 h^-0.8`, plus a 4 ms noise burst), and
+*struck* (eight independent inharmonic modes at 261.6-4155 Hz with T60 2.20 down
+to 0.07 s).
+
+**Gap 1. Note-off is a gain fade, not damping.**
+`NeuramarEngine.cpp:1199-1201` builds one `releaseMultiplier` per block;
+`:1270-1273` multiplies `voice.envelope` by it; `:1370-1372` applies that single
+scalar to the already-summed `coreSample + airSample + boneSample`. All 256
+partials, 16 Air bands and 12 Bone modes are therefore attenuated by exactly the
+same factor. Measured on the *sustained* fixture over 150 ms after a note-off at
+Dissolve 0.65 s, subtracting the held note's own drop from the released note's at
+each partial by least-squares sinusoid amplitude: -23.077 dB at partial 1
+(220 Hz), -23.083 dB at partial 8, -23.033 dB at partial 16, -23.200 dB at
+partial 32 (7040 Hz). That is 0.12 dB of frequency dependence across five
+octaves, and it reproduces exactly. The released tail's spectral centroid 150 ms
+after note-off is 1079.3 Hz against the held note's 1079.1 Hz — **0.02%**, not
+the 0.34-0.59% first recorded; the smaller number is the one the plan's gate has
+to beat. No physical damper works this
+way: the tone should darken as it dies. The rate is register-independent too —
+-19.19 dB/100 ms at MIDI 36 against -16.98 dB/100 ms at MIDI 96, and all 2.2 dB
+of that difference is the model's own decay riding along.
+
+**Gap 2. Applying the register compensation to Air and Bone is what swings the
+noise/tone balance across the keyboard — by 17-22 dB.**
+`NeuramarEngine.cpp:991-1012` computes `registerGain = sqrt(referencePower /
+renderedPower)`, clamped to [0.25, 4.0], and `:1013-1015`, `:1037-1039` and
+`:1078-1079` multiply the Core, Air and Bone targets by it. Measured with an
+Air-muted render subtracted from a full one — the two differ only in
+`parameters.air`, so the difference is exactly the Air layer — on the *breathy*
+fixture at shipping defaults with Mutation 0, Air's share of total energy runs
+-21.58 dB at MIDI 12, -9.52 dB at MIDI 60 and -4.37 dB at MIDI 108: a **17.2 dB**
+swing, 19.2 dB measured against Core alone. With Body Lock 1 and Register 0
+freezing the band centres it is **21.6 dB** against Core (-19.77 dB at MIDI 12 to
++1.78 dB at MIDI 108). On the *sustained* fixture the same spread is 15.6 dB and
+17.1 dB. That is the defect, and it is real, audible and on by default.
+
+The mechanism first recorded here was wrong, and the correction changes what has
+to be done about it. `registerGain` scales all three layers by the *same* factor,
+so it cannot by itself move the balance between them — but it does not scale the
+Core, it *normalises* it: after the multiply, Core power is `referencePower`,
+which barely depends on the played note, while Air power is `A * registerGain`.
+The ratio is therefore `A / sqrt(renderedPower)`, and `renderedPower` is the
+pre-gain Core power, which collapses on a high note as partials fall past the
+anti-alias limit and past the Body-Lock envelope's range. Multiplying Air and
+Bone by the same gain is exactly what converts a Core-only rendering artefact
+into a keyboard-wide balance error. Two measurements settle it. First, a scratch
+build with `referenceFundamental` changed to the *played* fundamental —
+the like-for-like band limit — produces Air-share and Air/Core columns that are
+**identical to the printed precision** at every note on all four fixtures: that
+change cannot move this metric at all, and it does not stop the clamp
+(`registerGain` still reaches 4.000 at MIDI 96-108 on every fixture, and the
+`h^-1` formant fixture's 21.2 dB level fade across MIDI 12-108 is 21.2 dB after
+it too). Second, a scratch build that simply stops applying `registerGain` to Air
+and Bone collapses the Body-Lock-1 Air/Core spread from **21.55 dB to 0.10 dB**
+and the shipping-default spread from 19.20 dB to 6.77 dB, with the Core's own
+level spread unchanged at 0.07 dB. `README.md:250-255` states the inverted
+version of this reasoning — "Core, Air, and Bone all take the same compensation,
+so the balance between the three layers is the source's at every point on the
+keyboard" — and is false by 17-22 dB for that exact reason.
+
+**Gap 3. Orbit, on by default, makes a held note exactly periodic with
+time-reversed legs.**
+`NeuramarEngine.cpp:723-734` folds the model clock into a triangle over
+`[loopStart, loopEnd]`; `PluginProcessor.cpp:244` declares Orbit as a bool
+defaulting to `true`, and `:452` maps that to `orbit = 1.0`. On the *decay*
+fixture the learned loop is [1.0082, 1.2859] s, so the ping-pong period is
+0.5553 s (1.80 Hz). The 20 ms RMS envelope's normalised autocorrelation over
+t in [2, 6] s, with Air and Bone muted so the noise floor does not blur it, is
+**0.979 at one period and 0.992 at two**, with a matching trough of -0.989 at
+half a period; the level oscillates 2.99 dB peak-to-peak on that fixture and
+**4.68 dB** on the *percussive* one at full shipping defaults, indefinitely, and
+is still doing it at t = 5.9 s. (The originally recorded 0.99977 and 4.8 dB are
+the right order; 0.979/0.992 and 2.99-4.68 dB are what re-measurement gives.)
+Half of every cycle plays backwards, so a decaying trajectory becomes a rising
+one; nothing in a passive resonator re-energises itself. The loop also holds the
+note above its own decay at t = 6 s by **5.3 dB** on the *decay* fixture, 7.7 dB
+on the *percussive* one and 22.6 dB on the *sustained* one — the 9.4 dB first
+recorded is inside that range, not a constant.
+
+**Gap 4. Repeated identical notes are near-clones, and the only variation
+mechanism throws attack away.**
+`NeuramarEngine.cpp:731-734` adds `parameters.mutation * voice.mutationOffset *
+0.018 * duration` to the model clock and clamps the result to `[0, duration]`;
+`:703-705` gives +/-0.0012 of detune per unit mutation; `:884` sets
+`variationDepth = mutation * 0.045`; `:504-516` re-seeds the Air PRNG. At the
+shipping Mutation of 0.12 the entire per-note budget is +/-0.25 cents, +/-0.54%
+of harmonic amplitude, a fresh noise stream and +/-2.6 ms of start-time offset.
+Twelve identical `noteOn(57, 0.8)` calls — each allowed to retire before the next
+so `ageStamp` advances, which is what selects `mutationOffset` — spread
+**0.823 dB** in peak on the *percussive* fixture and **0.101 dB** on the
+*sustained* one at Mutation 0.12, and 2.265 dB / 0.311 dB at Mutation 0.50. (An
+earlier measurement of 1.41 dB and 0.195 dB is the same finding on a different
+fixture.) A hand-struck acoustic instrument varies 1.5-3 dB in peak between
+nominally identical strikes.
+
+The clamp does make the offset one-sided, but narrowly, and one consequence
+recorded here does not hold. `effectiveTime` is clamped to `[0, duration]` and at
+the first control frame `oneShotTime` is 0, so a negative `mutationOffset` clamps
+to 0 and only a positive one skips forward — but that asymmetry lasts only
+`mutation * |offset| * 0.018 * duration`, at most 2.6 ms at Mutation 0.12 on a
+1.2 s source, after which a negative offset simply reads slightly earlier and is
+not clamped at all. The takes that clamp are **not** bit-identical to each other:
+detune, the harmonic variation phase and the Air seed all still differ with
+`mutationOffset`, and the worst take-against-take difference at Mutation 0.12 is
+-50.5 dB, not silence. Nor is the peak distribution detectably bimodal:
+`|mean - median|` across twelve takes is **0.015 dB** at Mutation 0.12 and
+0.119 dB at Mutation 0.50. What is true is that the mechanism is the wrong one —
+first-10 ms energy relative to each take's own peak spreads 0.624 dB at Mutation
+0.12 and 1.231 dB at 0.50, so variation is being bought by deleting transient
+rather than by varying how hard the thing was hit.
+
+**Gap 5. On a struck inharmonic body the render invents a harmonic series and
+holds the modal decays far too long.**
+`NeuramarEngine.cpp:889-972` lays 64-256 partials on integer multiples of the
+detected root, and `:1069` collapses `boneModeReliabilities_` to a binary 1.0/0.0
+gate. On the *struck* fixture (261.6 / 396.4 / 705.2 / 1043.0 / 1519.7 / 2231.5 /
+3068.0 / 4155.0 Hz, T60 2.20 down to 0.07 s) the learner detects a root of
+131.17 Hz — an octave below the lowest mode — and the render's least-squares
+log-amplitude T60 at each *source* mode frequency, played at the detected root,
+is 118.4% of ground truth at mode 1, 118.6% at mode 2, 164.1% at mode 3, 271.6%
+at mode 4, 421.1% at mode 5, 1497.6% at mode 6, 1601.1% at mode 7 and **2911.8%**
+at mode 8. A struck body's modes are held far too long, by up to a factor of 29,
+and that reproduces the earlier finding in kind.
+
+Two claims first recorded under this gap do not survive re-reading the source,
+and they matter because the fix depended on them. First, the Bone modes do
+**not** share one trajectory: `SynthesisFrame::boneAmplitudes` is a 12-element
+per-mode network output (`NeuralModel.h:42`, `outputSize` at `:76-78`) and
+`:1078` reads `frame.boneAmplitudes[mode]`, so every mode already carries its own
+learned amplitude envelope. Measured on the Bone layer in isolation — a full
+render minus a Bone-muted one — the rendered T60 at each populated mode's centre
+is 1.3985 s where the learner's own fitted value implies 1.4055 s, 0.8493 s
+against 0.8517 s, and 2.7712 s against 2.585 s for the three modes with
+reliability above 0.99. The engine does not read `boneDecaySeconds_` because that
+field is redundant with the trajectory, not because a feature was forgotten.
+Second, `SampleLearner.cpp`'s `estimateDecay` returns `-1/slope` of the
+*natural-log* amplitude — a time constant `tau`, not a T60; the three matches
+above only line up after multiplying by `ln(1000)`. Third, and decisively for
+where the defect lives: the Bone layer renders **11.5 dB below** the full render
+on this fixture (-42.91 dB against -31.43 dB), so the 118-2912% modal T60 errors
+above are a property of the harmonic Core laid on the detected root, not of the
+Bone branch. Six of twelve Bone slots were populated, two with reliability below
+0.57 (0.535 and 0.219), all rendered at identical weight; on the Bone layer alone
+those two are the modes whose rendered decay departs furthest from the learner's
+own estimate (159% and 167%).
+
+**Gap 6. A sounding note jumps 5.75 dB across the stereo image when another key
+is struck.**
+`NeuramarEngine.cpp:656-685` assigns `pan = -1 + 2*rank/(count-1)` by `ageStamp`
+rank among currently sounding voices and forces `controlCountdown = 0`, so every
+note-on and every retirement re-places every other voice. Holding MIDI 57 with
+Air and Bone muted, the held note's own 220 Hz fundamental measures L-R = 0.000 dB
+alone and L-R = **5.736 dB** in the first control period after MIDI 76 is struck,
+5.769 dB thereafter (pan -0.580), and never returns while any other voice is
+alive. That reproduces exactly. Because ranking is by note order rather than
+pitch, a chord's layout depends on the order the notes were played: the same
+{57, 64, 71} in the six possible orders gives buffers that differ by **-6.0 to
+-13.5 dB** relative to the signal, which is not a rounding effect but a
+completely different stereo image. Two smaller facts bound the fix. Voice
+summation is over fixed voice slots, so even with every pan equalised the six
+orders still differ by -146.7 dB relative and only 68% of samples match bit for
+bit — float addition is not associative and note order changes which slot a note
+lands in. And `:1142-1143` adds `0.08 * mutation * mutationOffset` to the pan
+*outside* the Spread multiply, so at the shipping Mutation of 0.12 a single voice
+is placed up to +/-0.0096 off centre even at Spread 0: the instrument is not
+exactly mono at Spread 0 today.
+
+**Gap 7. Timbre barely changes with dynamics.**
+`NeuramarEngine.cpp:519` sets `velocityGain = velocity * (0.72 + 0.28*sqrt(velocity))`;
+`:770-774` sets `touchTilt = touch * 0.55 * (velocity - 0.72)` and
+`touchAirGain = 1 + touch * 1.35 * (velocity - 0.72)`. At Touch 0, velocity 0.05
+to 1.00 moves level +28.15 dB and the spectral centroid by exactly 0.0%. At the
+shipping Touch of 0.35 the same span moves level +28.46 dB and the centroid
+1047.7 to 1322.2 Hz, which is **+26.2%** on the *sustained* fixture, not the
++5.5% first recorded; at Touch 1.0 it is +96.5%. This gap is therefore much more
+fixture-dependent than it was written as, and on a bright fixture Touch is not
+obviously undersized. It carries no step in this pass and the number is corrected
+here only so that a later pass does not plan against +5.5%.
+A piano's energy above 2 kHz rises 15-25 dB from pp to ff. The
+level-matched onset waveform of v=0.10 correlates at 0.99404 with v=1.00 over the
+first 20 ms; v=0.85 against v=1.00 is 0.99981.
+
+**Gap 8. Every learned trajectory replays in absolute seconds at every key.**
+`NeuramarEngine.cpp:1379` advances `voice.modelTimeSeconds` by
+`evolutionRate / sampleRate_` with no term involving `voice.transpositionRatio`.
+A model learned from a plucked string or a tine therefore rings for very nearly
+as long two octaves up as it did at the source pitch. On a real string, damping is
+frequency-dependent (Desvages, Bilbao, Ducceschi and Chabassier, POMA 28, 035005,
+2017; Cheng, Dixon and Mauch, ICASSP 2015), and decay time falls steeply across
+the compass. Measured on the fast *decay* fixture with Orbit 0, Air and Bone
+muted, as T20 — the time for the played fundamental to fall 20 dB below its 80 ms
+level, which is the only decay estimator that stays inside the un-frozen part of
+the trajectory — T20 is 0.4850 s at MIDI 33, 0.4600 s at MIDI 57 and 0.4500 s at
+MIDI 81. `T20(81)/T20(57)` is **0.978** and `T20(33)/T20(57)` is 1.054 where a
+source whose per-partial decay follows `tau(f) = tau_1 (f/f_1)^-0.75` predicts
+0.354 and 2.83. Against Järveläinen and Tolonen's 75%-140% tolerance window that
+is 276% of correct going up and 37% going down. Two qualifications the original
+statement lacked. It is not exactly 1.00 — the register path leaves a residual
+5% tilt of its own. And **at the shipping defaults this gap does not manifest at
+all**: Orbit is on, so the model clock ping-pongs inside the loop and the note
+never decays past the loop region at any key. Gap 8 is a defect of Orbit-off
+playing, and any fix for it lands on top of whatever gap 3's fix leaves behind.
+The uniform per-voice release of gap 1 compounds it.
+
+**Gap 9. Every note on the keyboard is made exactly equally loud.**
+The same `registerGain` block at `:991-1012` normalises rendered power to a
+reference that does not depend on the played note. Measured across four learned
+models: the stiff-string model spans 0.09 dB of RMS over MIDI 24-96, an `h^-1.6`
+source 0.06 dB over MIDI 36-96, an `h^-1.0` source 0.06 dB, an `h^-0.6` source
+0.08 dB. Re-measured at the same settings the existing
+`testKeyboardLevelFlatness` uses — Register 0, Touch 0, Air and Bone off,
+Orbit 0 — the *sustained* fixture spans 0.05 dB and the *decay* fixture 0.17 dB
+over MIDI 12-108 at Body Lock 1. A piano at constant hammer velocity varies over
+10 dB across its compass. Above MIDI 96 the flatness breaks the other way as the
+gain saturates: 3.1 dB on the *sustained* fixture at shipping defaults, 4.1 dB on
+the *breathy* one, and **21.2 dB** across MIDI 12-108 on a 96-partial formant
+source (11.3 dB at Body Lock 1), where the first measurement recorded 13.4 dB.
+`registerGain` reaches its 4.000 ceiling at MIDI 96-108 on every fixture tried.
+`README.md` documents the flatness as intentional, so this is a design choice
+measuring wrong against physics rather than an oversight — but the saturation
+fade at the top is not a design choice, and it is the only part a step could
+honestly claim.
+
+**Gap 10. Below about MIDI 30 the instrument gets brighter as you play lower.**
+`NeuramarEngine.cpp:783-787` computes
+`registerContribution = -registerTilt * 0.30 * log2(transpositionRatio)`;
+`:816-819` applies the tilt as `pow(index, tilt)` over all 256 rendered slots;
+`:846-853` grows `desiredHarmonicCount` to 256 as the note falls. The tilt is a
+power law in harmonic *index*, so the same setting brightens a low note far
+harder because it has four times as many indices to climb. Measured at shipping
+defaults, model A: centroid 407.2 Hz at MIDI 30, 525.7 Hz at MIDI 24, 963.5 Hz at
+MIDI 20 — a note ten semitones lower is 7.5 dB brighter. Model B inverts
+independently: 300.8 Hz at MIDI 40 rising to 857.3 Hz at MIDI 20. At Body Lock 0
+the centroid/f0 ratio is a flat 3.36 at every note and at Body Lock 1 the
+absolute centroid is a flat ~700 Hz; only the intermediate blend inverts.
+
+**Gap 11. The fitted stiff-string coefficient does not key-track.**
+`NeuramarEngine.cpp:1185` calls `refreshHarmonicStretch(model->inharmonicity() *
+parameters.stretch)` once per block, `:284-297` builds one global ratio table,
+and `:1306` advances every voice's phase through it. Fitted B = 0.000602 against
+a source B of 0.000600, so the fit itself is excellent — and partial stretch is
+32.7 cents at partial 8, 124.1 cents at partial 16 and 257.8 cents at partial 24,
+identically to the printed precision at MIDI 36 (65.4 Hz) and at MIDI 93
+(1760 Hz). Zero variation across 4.75 octaves where a real string family varies
+by roughly a factor of 100 in B. Against the ARLO threshold law
+`ln B = 2.57 ln f0 - 26.5`, the audibility threshold falls about three orders of
+magnitude from a treble source to a bass rendering of it, so a stretch that was
+subliminal at the source pitch is grossly above threshold two octaves down.
+
+**Gap 12. Every simultaneously sounding voice shares one pitch and amplitude
+trajectory.**
+`NeuramarEngine.cpp:712-763` gives voices an `evaluationModelTime` that differs
+only by the mutation start offset, and `:1133-1139` and `:1266-1267` ramp
+`frame.pitchRatio` identically per voice. On a source carrying 5 Hz / 45-cent
+vibrato, two note-ons of the same key give pitch-trajectory correlation 1.0000 at
+Mutation 0.00, 0.9951 at the shipping 0.12, and 0.9262 (best lag +23 ms) at
+Mutation 1.00. Depth is accurate (+/-40.6 cents rendered against +/-45 in the
+source), so the defect is the lock, not the depth. Maximum available
+decorrelation at the default is +/-3.46 ms on a 1.6 s memory: 6.2 degrees of a
+5 Hz cycle. There is also no coupling of any kind between voices — the output is
+a linear sum of independent oscillator stacks, so a triad is three synthesizers
+rather than one instrument. Simionato and Fasciani model exactly this coupling
+with a separate FiLM-conditioned chord module (arXiv:2409.06513).
+
+**Gap 13. Gravity is a level control as well as a tone control, and can approach
+the output guard.**
+`NeuramarEngine.cpp:781` folds the brightness term into `referenceTilt`, so
+`registerGain` divides it out rather than levelling it. Sweeping the panel's
+Gravity -1.00 to +1.00 at Output unity and velocity 1.0 on the *sustained*
+fixture moves RMS from -7.52 to -4.31 dB (**3.21 dB**) and peak from -2.34 to
++6.79 dBFS at MIDI 57, and from -0.06 to **+17.55 dBFS** at MIDI 24 (17.6 dB of
+peak swing). Nothing pinned the pathological-state guard at `:55-64` and
+`:1409-1414` on this fixture — the guard sits at 7.95 linear, `+18.01 dBFS`, and
+the worst case reached +17.55 dBFS — so the first measurement's 12.5 dB RMS,
+23.07 dB peak and 0.350% pinned samples are a harder fixture's numbers, not a
+constant. The structural point stands: Gravity is not level-neutral, the margin
+at Output 0 dB is under half a dB on a loud fixture, and at the shipping Output
+of -6 dB it does not come close.
+
+**Two more things the audit found that are not defects but bound this plan.**
+The trajectory grid puts 48 of its 128 frames in the first 120 ms and warps the
+remaining 80 as `onsetEnd + (1 - onsetEnd) * p^1.24`, so the final gap is about
+1.55% of the post-onset span. Against a 5.9 Hz vibrato, whose half-period is
+85 ms, that is exactly two samples per cycle at a 5.6 s source and unrepresentable
+at 10 s. `README.md` line 170 claims the contour retains slow vibrato; that is
+true at two seconds and false at six, and the boundary is stated nowhere.
+(Mellody and Wakefield, JASA 107(1):598-611, 2000, measure violin vibrato at a
+mean 5.9 Hz and +/-15.2 cents, and find realism lives "almost entirely" in the
+per-partial amplitude fluctuations.) Separately, the Air branch draws independent
+white noise per band and filters it (`:1334`), stationary within a control
+period; real breath, bow and jet noise is amplitude-modulated at the fundamental
+period, and US5508473A states the failure mode plainly: "There is no perceptual
+fusion of the noise and periodic sounds, and the listener hears two sources."
+
+**Strengths this pass must not regress.**
+
+- Alias floor: worst spectral line below the played fundamental is -111.5 dB at
+  MIDI 100 (root+43 semitones) at Stretch 1.0 and -112.7 dB at Stretch 2.0,
+  better than the -108.2 dB this document already records. No non-finite output
+  at Formant +/-24 st, Stretch 2.0, Gravity 0 or 1, MIDI 12 or 108, Output +6 dB.
+- Per-partial decay reproduction: on a source whose per-partial T60 spans a
+  factor of 13, the render's drop from 0.08 s to 0.60 s is within 0.00 dB at
+  partials 1-7, 0.01 dB at 8-12, 0.00 dB at 16 and 0.02 dB at 20. This is the
+  part of the instrument that is genuinely best-in-class. Confirmed
+  independently: on the *decay* fixture (`tau_1` 0.9 s, `p` 0.75) the rendered
+  fundamental's T60 at the root is 6.217 s against a ground truth of
+  `0.9 * ln(1000)` = 6.217 s, and the model's own per-partial time constants
+  recover the source's to within a few percent out to partial 24.
+- Per-mode Bone decay reproduction: each Bone mode carries its own network
+  amplitude trajectory, and on the *struck* fixture the Bone layer in isolation
+  renders the three high-reliability modes at 1.3985, 2.7712 and 0.8493 s against
+  the learner's own fitted 1.4055, 2.585 and 0.8517 s. This is also a strength,
+  and it is the reason step 3 of the first draft of this plan was struck.
+- Beating survives: a source partial beating at 4.3 Hz with 36.59 dB of
+  peak-to-trough depth renders with 29.67 dB, while a non-beating neighbour
+  reproduces 5.68 dB against the source's 5.69 dB. Beats are neither smeared away
+  nor fabricated.
+- Stiff-string estimation: fitted B = 0.000602 against 0.000600.
+- Exact determinism when asked for: at Mutation 0 and Noise 0, two identical
+  note-ons differ by -318 dB. Any replacement variation mechanism must keep an
+  exact-zero setting.
+- No clicks at state boundaries: the voice-steal tail is a raised cosine with
+  bounded carry, pan changes ramp over a control period, Output has a 6 ms
+  smoother, and the Air filterbank is normalised to unit expected RMS per band so
+  level is independent of centre frequency and sample rate.
+
+### Plan
+
+Six steps, cheapest and most audible first. Each is a single commit, green
+before it lands. Steps 4 and 5 share one fitted damping exponent, step 5 depends
+on step 4, and step 5 also has to land after step 3 because at the shipping
+defaults Orbit is what decides whether a note decays at all. Two steps from the
+first draft of this section — band-limiting the register reference, and giving
+each Bone mode its own fitted decay — were struck on re-measurement and are
+recorded, with the measurements that struck them, under *Considered and not
+planned*.
+
+- [ ] **1. Stop applying the register compensation to Air and Bone.**
+  `registerGain` at `NeuramarEngine.cpp:991-1012` does not scale the Core, it
+  *normalises* it: after `:1013-1015` the Core's power is `referencePower`, which
+  barely depends on the played note. `:1037-1039` and `:1078-1079` then
+  *multiply* Air and Bone by that same factor, so the noise-to-tone ratio comes
+  out as `A / sqrt(renderedPower)` and rides every Core-only rendering artefact —
+  the anti-alias taper, the Body-Lock envelope running out of range — straight
+  into the layer balance. Delete the `* registerGain` from the Air and Bone target
+  expressions and leave the Core normalisation alone. The physical statement is
+  that a compensation for partials the *Core* could not render is not evidence
+  about how much breath noise or body ring the source had; the two are measured
+  independently and should stay independent. This is the fix the block's own
+  comment and `README.md:250-255` argue against, and the argument is inverted:
+  applying one gain to a normalised quantity and an un-normalised one is exactly
+  what breaks the balance it claims to preserve. Closes gap 2. *Verified by*: new
+  `testRegisterLayerBalance` in `Tests/NeuramarEngineTests.cpp` renders MIDI 12,
+  24, 36, 48, 60, 72, 84, 96 and 108 at Mutation 0 on a fixture with a strong
+  noise bed, and reports the Air layer by subtracting an Air-muted render from a
+  full one — the
+  two renders differ in `parameters.air` and nothing else, so the difference is
+  exactly the Air layer and the control moves one thing. With Body Lock 1 and
+  Register 0, which freezes the Air band centres so `registerGain` is the only
+  remaining variable, it asserts the Air-to-Core ratio spread across those nine
+  notes is **below 1.0 dB**, where a scratch build of this change measures
+  0.10 dB and the shipping engine measures 21.55 dB. At shipping defaults, where
+  the Air centres do move with pitch and are edge-limited near Nyquist, it
+  asserts the same spread is **below 9.0 dB**, against 6.77 dB for the change and
+  19.20 dB today. A third assertion guards the Core: `testKeyboardLevelFlatness`
+  must stay green unchanged, and the Core-only level spread across MIDI 12-108 at
+  Body Lock 1 must move by less than 0.2 dB (measured: 0.14 dB against 0.07 dB).
+
+- [ ] **2. Pan by pitch, fixed at note-on, instead of by chord rank.**
+  `refreshVoicePans()` at `NeuramarEngine.cpp:656-685` recomputes every sounding
+  voice's pan from its rank among the currently sounding set, so striking a
+  second key drags the first note 5.736 dB across the image in one control period
+  and the same three notes played in six different orders give six different
+  stereo images, differing by -6.0 to -13.5 dB relative. Replace it with a pan
+  assigned once at note-on and never revised:
+  `pan = clamp(spread * (midiNote - correctedRootMidi) / 24, -1, +1)`. On a
+  piano, harp, marimba or guitar the sounding elements are laid out monotonically
+  in pitch across the width of the radiating body, and a string that is already
+  vibrating does not move when another is struck; both properties fall out of
+  making pan a function of the note rather than of the chord. Order-dependence
+  goes with it, and `refreshVoicePans()` leaves the note-on and voice-retire paths
+  entirely, taking its forced `controlCountdown = 0` with it. Two things this step
+  must handle that the first draft did not. It **changes** the documented
+  behaviour that a single note is always centred: at Spread 0.58 a note two
+  octaves from the root now sits at +/-0.58, which is the point of the change but
+  is not what the engine promises today, so the comment at `:544-546` and the
+  existing `"a single note was not centred at maximum stereo spread"` assertion
+  have to be rewritten rather than merely left passing — that assertion currently
+  survives only by accident, because it plays the root note. And the pan jitter at
+  `:1142-1143` is added *outside* the Spread multiply, so Spread 0 is not exactly
+  mono today; fold it inside the multiply in the same commit so that the claim
+  "Spread 0 is exactly mono" becomes true rather than merely repeated. Closes
+  gap 6. *Verified by*: `testHeldNoteDoesNotMoveInImage` holds MIDI 57 with Air
+  and Bone muted, measures the least-squares L and R amplitude of its own 220 Hz
+  fundamental over 0.30-0.45 s, strikes MIDI 76 at 0.50 s, and asserts the held
+  note's L-R difference over 0.51-0.60 s and again over 0.70-0.90 s changes by
+  less than 0.05 dB, where it changes by 5.736 dB and 5.769 dB today. A second
+  assertion renders {57, 64, 71} in the six possible note orders and requires the
+  six buffers to agree to **better than -120 dB** relative RMS — not bit for bit.
+  Bit-identity is unreachable and the test must not ask for it: voices sum in
+  voice-slot order, note order decides which slot a note lands in, and float
+  addition is not associative, so with every pan already equal the six orders
+  still differ by -146.7 dB and only 68% of samples match exactly. Today the same
+  six differ by -6.0 to -13.5 dB, so -120 dB separates the two cases by 130 dB.
+  A third assertion renders a single note at Spread 0 and Mutation 0.12 and
+  requires L and R identical to within 1e-7, which fails today.
+
+- [ ] **3. Make Orbit a forward, level-continuous, non-repeating sustain.**
+  The triangle fold at `NeuramarEngine.cpp:723-734` gives a held note an envelope
+  autocorrelation of 0.979 at one ping-pong period and 0.992 at two, 2.99 dB of
+  level pumping on a decaying fixture and 4.68 dB on a percussive one that never
+  stops, and a time-reversed second leg. Reversing a decaying trajectory is a
+  negative-damping segment, which is the one thing a passive resonator cannot
+  produce, and no acoustic sustain repeats exactly. Replace the fold with three
+  changes. Traverse the loop forward only, wrapping `loopEnd` back to `loopStart`
+  with an equal-power crossfade of one control period, so no leg runs backwards.
+  Advance the wrap point each pass by `(phi - 1) = 0.6180339887` of the loop
+  length, keeping the read segment inside `[loopStart, loopEnd]` and wrapping the
+  offset modulo the loop length, so successive passes read a different part of the
+  trajectory and the result is quasi-periodic rather than periodic — the golden
+  ratio is the choice that maximises the smallest gap between successive wrap
+  offsets, so no short lag ever lines up. And remove the loop region's own **level
+  trend** across each pass — fit and divide out the mean log-level slope between
+  `loopStart` and `loopEnd`, so the wrap is level-continuous — rather than
+  replacing the level with the region's mean. This is a deliberate narrowing of
+  the first draft, which proposed holding the level flat at the loop mean: a
+  sustained note is quasi-stationary in *trend*, not in fine structure, and
+  flattening the level outright would delete any tremolo, breath pulsing or
+  beating the loop region carries, which the strengths list above records as
+  something this pass must not regress. It would also not fit the parameter: Orbit
+  is a *time* blend, `oneShotTime + orbit * (orbitTime - oneShotTime)`, and a
+  level hold is not expressible inside it. Detrending is. Closes gap 3.
+  *Verified by*: `testOrbitSustainIsNotPeriodic` holds a note for 6 s at shipping
+  defaults on the *decay* fixture with Air and Bone muted — muted because the Air
+  noise stream is what blurs the envelope and the test must measure the
+  trajectory, not the noise — takes a 20 ms short-time RMS envelope, and asserts
+  over t in [2, 6] s that the envelope's **peak-to-peak spread is below 1.5 dB**,
+  against 2.99 dB today and 4.68 dB on the percussive fixture. That bound, not an
+  autocorrelation, is the primary gate, because it is the one that stays
+  well-posed after the fix: a normalised autocorrelation of a mean-removed
+  near-constant envelope is 0/0, and the shipping engine already scores above 0.98
+  at *every* lag on the sustained fixture, whose envelope only moves 0.56 dB — the
+  metric proposed in the first draft cannot tell a pumping sustain from a steady
+  one. Two supporting assertions: the largest rise between consecutive 20 ms
+  frames after t = 2 s must be below 0.25 dB, which is a direct test that no leg
+  runs backwards on a monotonically decaying trajectory; and, guarded by a check
+  that the envelope's spread exceeds 0.5 dB so the statistic is meaningful, the
+  normalised autocorrelation at the old ping-pong period `2 * loopLength` must be
+  below 0.60, against 0.979 today.
+
+- [ ] **4. Damp the release by frequency, using the source's own damping law as
+  the shape.** Release is one scalar on the summed output
+  (`NeuramarEngine.cpp:1199-1201`, `:1270-1273`, `:1370-1372`) and measures
+  0.12 dB of frequency dependence across five octaves, with the released tail's
+  spectral centroid 0.02% away from the held note's at 150 ms after note-off.
+  Real damping is frequency-dependent — air viscosity dominates at low frequency
+  and internal friction at high, so decay time falls with frequency (Desvages,
+  Bilbao, Ducceschi and Chabassier, POMA 28, 035005, 2017) — and a damped note
+  darkens as it dies. At `setModel()`, least-squares fit the exponent `p` in
+  `tau(f) = tau_1 (f/f_1)^-p` over the model's own per-partial amplitude
+  trajectories, clamped to `p` in [0, 1.5]. The release then gives output slot `k`
+  a time constant `tau_rel(k) = releaseSeconds * (f_k/f_1)^-p`, normalised so
+  partial 1 still reaches the retirement level in exactly the Dissolve time and
+  the panel's number keeps its meaning, and with the *ratio* `tau_rel(1) /
+  tau_rel(k)` additionally clamped to at most 12 so that a badly-conditioned fit
+  cannot turn Dissolve into a brickwall on the top of the spectrum. Air bands and
+  Bone modes take the same law at their own centre frequencies.
+  Be honest about what the exponent is: `p` is fitted from the source's *free*
+  decay and applied to a *damper*, which is an analogy and not a derivation — the
+  claim this step can defend is that the release should be frequency-dependent,
+  that the direction and rough magnitude should come from the sound the user
+  dropped in rather than from a drawn curve, and that a source with
+  frequency-independent decay must get `p = 0` and keep today's behaviour exactly.
+  Cost is not free and should be planned for: the per-slot release factor folds
+  into the control-rate amplitude targets rather than the per-sample loop, which
+  is one multiply per slot per 192 samples, but it needs a 284-float per-voice
+  release-gain array (about 73 KB across 16 voices) and 284 `pow()` calls at
+  note-off. Voice retirement stays on partial 1, which is the slowest slot, so no
+  note is cut short. Closes gap 1 and supplies the exponent step 5 needs.
+  *Verified by*: `testReleaseDarkensTail` learns the fixture whose per-partial
+  decay is `tau_h = tau_1 h^-0.75`, renders it twice at Dissolve 0.65 s — held,
+  and released at t = 0.30 s — and measures each partial's least-squares sinusoid
+  amplitude at 0.32 s and 0.47 s in both, subtracting the held drop from the
+  released drop so that the model's own decay is cancelled and only the release
+  is left. It asserts partial 1 loses `100 dB * 0.150/0.65 = 23.08 dB` to within
+  0.5 dB (unchanged calibration; measured -23.077 dB today), that partial 32 loses
+  between 10 dB and 260 dB more than partial 1 — a two-sided window, because
+  `32^-0.75` alone predicts 287 dB of excess and an unbounded assertion would
+  accept a release that simply deletes the top of the spectrum — and that the
+  released tail's spectral centroid at 150 ms after note-off is at least 20% below
+  the held note's, against **0.02%** today. The load-bearing assertion is the
+  fourth: the same test learns a **control fixture with frequency-independent
+  decay** (`tau_h = tau_1`, `p = 0`) and requires its partial-32 excess to stay
+  below 1.0 dB and its fitted `p` below 0.10. Without that control, a hard-coded
+  exponent passes every other assertion in this step. Measured on scratch fits of
+  the model's own trajectories: `p` recovers as 0.734 on the `p = 0.75` fixture,
+  **-0.0009** on the `p = 0` fixture and 1.467 on a `p = 1.5` fixture, with the
+  root-mean-square residual in `log tau` at 0.006, 0.001 and 0.013 respectively
+  against 0.332 on a sustained source and 0.551 on a struck body — so the residual
+  is also the fallback signal, and a fit above about 0.15 should fall back to
+  `p = 0` rather than key-track on noise.
+
+- [ ] **5. Key-track the model clock by the same fitted damping exponent.**
+  `NeuramarEngine.cpp:1379` advances the model clock at `evolutionRate /
+  sampleRate_` with no transposition term, so with Orbit off a plucked or struck
+  memory rings for very nearly the source's wall-clock duration at every key:
+  `T20(81)/T20(57)` is 0.978 and `T20(33)/T20(57)` is 1.054. Step 4 fits `p` from
+  the source's own partials in `tau(f) = tau_1 (f/f_1)^-p`; that is a statement
+  about frequency rather than about harmonic number, so a note played at
+  transposition ratio `r` has fundamental `f_1 r` and a consistent decay time
+  `tau_1 r^-p`, which means the model clock should advance at
+  `evolutionRate * r^p`, clamped to [0.25, 4] so a badly-fitted exponent cannot
+  make a note vanish. At the root `r = 1` and the render is bit-identical. Apply
+  the same `r^p` to the release time constant of step 4, so the top of the
+  keyboard also damps faster than the bottom. This is the mechanism, not a taste
+  control: the exponent comes from the sound the user dropped in, so a source with
+  frequency-independent damping keeps `p = 0` and keeps a pitch-invariant decay.
+  Three costs the first draft did not name, all of which have to be decided before
+  this lands. The model clock is the *only* time variable, so key-tracking it also
+  key-tracks the learned onset and any learned vibrato: a 5 Hz source vibrato
+  becomes 14 Hz two octaves up at `p = 0.75`, which is not what a player does, and
+  the step needs either a separate un-tracked clock for the pitch trajectory or an
+  explicit decision to accept it. At the shipping defaults **this step changes no
+  decay at all** — Orbit is on, the clock ping-pongs inside the loop, and the only
+  audible effect is that the gap-3 pumping runs 2.83 times faster two octaves up —
+  so it must land after step 3 and its value is scoped to Orbit-off playing. And
+  the trajectory freezes at `t = duration`, so a high note reaches the frozen
+  final frame `r^p` times sooner and then holds it indefinitely; the step should
+  say what happens there. Closes gap 8; depends on steps 3 and 4. *Verified by*:
+  `testDecayKeyTracking` learns the `tau_h = tau_1 h^-0.75` fixture with
+  `tau_1 = 0.20 s`, asserts the fitted exponent is 0.75 +/- 0.10 (measured 0.734),
+  then renders MIDI 33, 57 and 81 at **Orbit 0** with Air and Bone muted and
+  measures each played fundamental's **T20** — the time for the fundamental to
+  fall 20 dB below its 80 ms level. T20 is the estimator this test must use, and
+  the reason is measured, not stylistic: a least-squares log-amplitude T60 fit
+  over 0.08-1.5 s gives `T60(81)/T60(57)` = **1.268** on a scratch build that
+  already key-tracks the clock correctly, because the trajectory freezes at
+  `t = duration` — 0.565 s of real time at MIDI 81 — and the frozen tail flattens
+  the fit. T20 stays inside the un-frozen span. It asserts `T20(81)/T20(57)` lies
+  in [0.28, 0.45] against a predicted `4^-0.75 = 0.354` (a scratch build measures
+  0.359; today 0.978) and `T20(33)/T20(57)` in [2.2, 3.6] against a predicted
+  2.83 (scratch build 3.076; today 1.054). A second fixture with
+  frequency-independent decay must keep both ratios within [0.90, 1.10], which
+  fails on any implementation that key-tracks by a constant rather than by the
+  fitted exponent.
+
+- [ ] **6. Vary excitation strength between notes instead of skipping into the
+  attack.** Delete the start-time offset at `NeuramarEngine.cpp:731-734`, whose
+  clamp to `[0, duration]` makes it one-sided over the first
+  `mutation * |offset| * 0.018 * duration` seconds — at most 2.6 ms at Mutation
+  0.12 — so the mechanism buys its variation by deleting transient: first-10 ms
+  energy relative to each take's own peak spreads 0.624 dB at Mutation 0.12 and
+  1.231 dB at Mutation 0.50. Route the per-note variation through excitation
+  strength instead: add `dv = 0.55 * mutation * mutationOffset` to
+  `voice.velocity` at note-on, before `velocityGain` is computed at `:519` and
+  therefore before the Touch terms at `:770-774` read it, clamped to keep velocity
+  in [0.05, 1.0]. What differs between two nominally identical hand strikes is the
+  energy delivered, and on a real instrument level and brightness co-vary because
+  a harder strike shortens the contact time and pushes the excitation spectrum's
+  corner up. Neuramar already has that coupling in the Touch path, so a velocity
+  jitter reproduces the correlated level, tilt and Air variation for free and
+  nothing new is drawn. The +/-0.25 cents of detune at `:703-705`, the +/-0.54%
+  harmonic variation at `:884` and the Air re-seed all stay. Note that the size of
+  the coefficient is load-bearing: with `velocityGain = v(0.72 + 0.28 sqrt(v))`,
+  `dv = +/-0.066` at Mutation 0.12 spans 1.62 dB end to end, and twelve uniform
+  draws cover about 85% of a range, so the *expected* observed spread is around
+  1.4 dB — under the 1.5 dB floor an acoustic instrument shows. Either raise the
+  coefficient to about 0.75 or state the gate as a standard deviation; do not
+  ship a coefficient whose own arithmetic lands below its acceptance test. Closes
+  gap 4. *Verified by*: `testRepeatedNotesVaryInStrength` fires twelve identical
+  `noteOn(57, 0.8)` calls on the *percussive* fixture at Mutation 0.12, letting
+  each voice retire between takes so that `ageStamp` — which is what selects
+  `mutationOffset` — actually advances, and asserts that the standard deviation of
+  the twelve peak levels lies in [0.45, 1.10] dB, which corresponds to a 1.5-3.5 dB
+  expected range for a uniform draw and is the robust form of that gate; today the
+  standard deviation is 0.26 dB and the range 0.823 dB. It asserts that every
+  take's first-10 ms energy relative to its own peak is within 0.5 dB of the
+  Mutation-0 render's, so no take loses transient, against 0.624 dB spread today.
+  And it asserts that at Mutation 0 twelve takes are bit-identical, which they are
+  today and which any replacement mechanism must preserve. The `|mean - median|`
+  assertion proposed in the first draft is dropped: it is 0.015 dB today at
+  Mutation 0.12 and 0.119 dB at Mutation 0.50, so it passes before the change and
+  proves nothing. The peak distribution is not measurably bimodal.
+
+### Considered and not planned
+
+- **Band-limiting the register reference at the played pitch (was step 1).**
+  The first draft of this plan proposed changing `referenceFundamental` at
+  `NeuramarEngine.cpp:991` from `rootFrequencyHz * frame.pitchRatio` to
+  `rootFrequencyHz * voice.transpositionRatio * frame.pitchRatio`, so that
+  `referencePower` and `renderedPower` see the same anti-alias taper, and claimed
+  that this would stop `registerGain` saturating and close gap 2's noise/tone
+  swing. It is a genuine like-for-like tidy-up and it is also very nearly inert,
+  which a scratch build settles three ways. The Air-share and Air/Core columns
+  across MIDI 12-108 come out **identical to the printed precision** before and
+  after on all four fixtures — `registerGain` multiplies Core, Air and Bone alike,
+  so it cannot move the ratio between them, and gap 2's real mechanism is that
+  the Core is *normalised* while Air and Bone are *scaled*. The clamp still
+  saturates: `registerGain` reaches 4.000 at MIDI 96-108 on every fixture after
+  the change. And the top-octave level fade it was supposed to remove does not
+  move — the formant fixture spans 21.21 dB across MIDI 12-108 both before and
+  after, the *breathy* fixture's level spread moves 4.10 to 3.52 dB and the
+  *sustained* fixture's 0.05 to 0.14 dB. The reason it does so little is that
+  every fixture's spectrum rolls off at least as fast as `1/h`, so the partials
+  the taper removes at a high note carry a small fraction of the reference power;
+  what actually drives `registerGain` up is the Body-Lock envelope running out of
+  observed range, which is exactly what the block was written to correct. The
+  change is worth making some day for the sake of the comment being true, but it
+  buys at most a few tenths of a dB and its stated verification would score the
+  same number before and after.
+- **Giving each Bone mode its own fitted decay (was step 3).** The first draft
+  proposed multiplying each Bone mode's trajectory amplitude by a differential
+  envelope built from `boneDecaySeconds_`, on the premise that the twelve modes
+  share one trajectory and that the engine ignores a fitted per-mode decay. Four
+  measurements strike it. **The premise is false**: `SynthesisFrame::boneAmplitudes`
+  is a twelve-element per-mode network output (`NeuralModel.h:42`, `:76-78`) and
+  `NeuramarEngine.cpp:1078` reads `frame.boneAmplitudes[mode]`, so each mode
+  already carries its own learned envelope — and it works, with the Bone layer in
+  isolation rendering the three high-reliability modes of the *struck* fixture at
+  1.3985, 2.7712 and 0.8493 s against the learner's own 1.4055, 2.585 and
+  0.8517 s. The engine does not read `boneDecaySeconds_` because it is redundant
+  with the trajectory. **The formula carries a unit error**:
+  `SampleLearner.cpp`'s `estimateDecay` returns `-1/slope` of the natural-log
+  amplitude, a time constant `tau`, not a T60, so the draft's
+  `tau_m = T60_m / 6.9078` conversion would have decayed every Bone mode 6.9 times
+  too fast. **It targets the wrong layer**: the Bone branch renders 11.5 dB below
+  the full render on a struck body, so the 118-2912% modal T60 errors that
+  motivate gap 5 belong to the harmonic Core laid on the detected root, and no
+  Bone-side change can move them. **And the named verification cannot see the
+  effect**: `makeStruckBodyNote` in `Tests/ResynthesisQualityTests.cpp` gives its
+  ten modes decay rates `0.55 + 0.045 * ratio`, so their time constants span
+  1.61 s down to 0.87 s — a factor of 1.85, not the factor of 31 the step assumed
+  — and per-mode T60 assertions on that fixture would neither fail before the
+  change nor pass more convincingly after it. What survives is small: replacing
+  the binary reliability gate at `:1069` with the stored reliability as a linear
+  weight is principled and cheap, and on the *struck* fixture the two modes below
+  0.57 reliability are the ones whose rendered decay departs furthest from the
+  learner's own estimate (159% and 167%) — but they sit inside a layer that is
+  11.5 dB down, so it does not earn a step under this pass's audibility rule. Gap
+  5 remains open and its real address is the Core's harmonic grid on an
+  inharmonic source, which is a structural change of the kind the missing
+  transient branch already is.
+- **Key-tracking the stiff-string coefficient (gap 11).** The physics is clean —
+  for a constant-diameter, constant-tension string family
+  `B = pi^3 E d^4 / (64 T L^2)` and `f0 ∝ 1/L`, so `B ∝ f0^2` — and the ARLO
+  threshold law gives an exact verification number. It is cut on cost, not on
+  merit: `harmonicStretchRatio_` is one global 256-entry table shared by every
+  voice (`:284-297`, `:1306`), and key-tracking B means a per-voice table
+  rebuilt at note-on, 16 KB of new voice state and 256 square roots per note.
+  The audit rates the audibility subtle where all six planned steps rate clear
+  or obvious. Recorded here so a later pass can pick it up with the exponent and
+  the threshold law already stated.
+- **Period-synchronous Air modulation.** This is the mechanism behind the
+  "fizziness" MYTH owners describe and behind the failure of sines-plus-noise to
+  fuse into one source (US5508473A; Mehta and Quatieri, 2006). The render side is
+  cheap — each voice already knows its instantaneous fundamental phase — but the
+  analysis side needs a new measurement, the depth of period-synchronous
+  modulation in the residual, and the benchmark needs a coherence metric before
+  the result could be verified at all. Two new measurements plus a model format
+  field is a pass of its own.
+- **Non-stationary sinusoid bases in the learner.** Adding a damping and a linear
+  chirp column to each partial's design matrix (Betser 2009; Marchand and Depalle,
+  DAFx-08) would attack the residual-ERB regression this document already records
+  as unexplained across steps 1, 2 and 4, and the vibrato halo. It is the highest-
+  value analysis-side change available and it is an analysis pass, not a render
+  pass; this one is scoped to the render.
+- **Raising the trajectory grid past 128 frames.** The 5.9 Hz vibrato arithmetic
+  above shows the grid runs out at about a 5.6 s source. The fix is a model format
+  bump and a re-measurement of every fidelity number in the benchmark, which is
+  too much to carry alongside six render changes. The correct interim action is
+  documentation: `README.md` line 170's claim about retained slow vibrato needs
+  the duration boundary stated.
+- **MPE and pitch bend.** The largest spec-sheet omission in the instrument and
+  genuinely cheap to wire, since the engine already carries per-voice
+  `pitchRatio`, per-voice Air gain and a velocity-driven Touch tilt. It is
+  excluded here because every step in this pass had to be verifiable by a
+  deterministic DSP test, and MPE's value is in `Source/Plugin*.cpp` note
+  routing. It should be the first item of the next pass, not of this one.
+- **Decorrelating vibrato phase across voices (gap 12) and voice coupling.** The
+  audit rates the lock subtle. The honest version of coupling — a shared,
+  level-following excitation of the Bone modes across sounding voices — was
+  deferred behind per-mode Bone decays; that dependency is gone, because the Bone
+  modes turn out to carry their own learned decays already, but the coupling
+  itself still needs a shared excitation bus that no version of the engine has,
+  and the audit rates the defect it addresses subtle.
+- **A keyboard loudness contour (gap 9).** Perfect flatness is wrong against
+  physics, but the right contour is not derivable from one recording: the source
+  carries no cross-register evidence, and any curve chosen here would be drawn,
+  not derived. The saturation fade at the top of the keyboard — up to 21.2 dB
+  across MIDI 12-108 on a formant-rich fixture, with `registerGain` pinned at its
+  4.000 ceiling from MIDI 96 up — is the part that is a defect rather than a
+  design choice, and no step in this pass removes it: the change that was
+  supposed to, band-limiting the register reference, measures the same 21.2 dB
+  after as before. It is the strongest remaining candidate for the next pass.
+- **Decoupling Gravity from level (gap 13).** Real, and the audit rates it
+  inaudible-but-structural: it makes A/B tone comparison require a compensating
+  Output move, and at Gravity 1.0 / MIDI 24 / velocity 1.0 / Output 0 dB it pins
+  0.350% of samples at the hard-clip guard. It is a control-scaling fix rather
+  than a change to how the instrument sounds when used at its defaults, so it did
+  not earn a step under this pass's rule.

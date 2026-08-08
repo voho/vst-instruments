@@ -300,3 +300,848 @@ amplifier's power stage is two one-poles, a follower and one bounded
 nonlinearity inside a block that is skipped outright when the amp control is at
 zero, and its measured cost is the alias floor rather than the clock: the
 amplifier at full drive moves from -86 dB to -69 dB against a -60 dB bound.
+
+---
+
+## Second pass: the player, the repeat, and the two calibration errors (2026-08-07)
+
+The previous pass fixed what Electry could not *do*. This one fixes what it does
+the same way every time. Two independent lines of evidence point at the same
+target. The competitive survey found that the criticism levelled at the only
+mainstream sample-free guitar is tonal uniformity, not missing features - and
+that Electry's excitation is, by design and by measurement, near-identical from
+stroke to stroke. The engine audit measured that directly: with the string given
+time to decay between strokes, two identical MIDI note-ons differ by 0.0122 dB
+in peak and 0.6 Hz in spectral centroid, velocity spans 5.22 dB across the whole
+MIDI range at the shipping default, and the vibrato repeats its peak depth to
+0.0001 cents per cycle. This pass makes the picking hand and the strumming hand
+vary the way physical ones do, without giving up bit-exact reproducibility, and
+corrects two calibration errors - the humbucker's notch frequency and the
+tension-modulation depth.
+
+**Every number in this section was re-measured under adversarial review before
+any of it was scheduled.** The measurement programs link directly against
+`libElectryDSP.a` through a private-access seam and are listed by name with each
+figure. Where a re-measurement disagreed with the number the pass was originally
+written against, the re-measured number is what appears below and the step that
+rested on the old one was rewritten or struck. One step - fretted intonation -
+did not survive; it is now under "considered and not planned", and gap 4 stays
+in the list below as a measured fact that is deliberately unscheduled.
+
+### What changed in the field
+
+**Method caveat, which bounds everything in this subsection.** Every `WebFetch`
+from this machine was refused by the egress proxy, for every domain tried. All
+of the evidence below comes from web-search result summaries, which quote page
+content but are second-hand. No paper or product page was read in full. Numbers
+taken from these summaries are flagged where they would need verifying before
+being implemented against.
+
+**The category has not moved, and that is the most useful finding.** There is no
+IK Multimedia MODO GUITAR: searching turns up MODO BASS and MODO DRUMS plus a
+2017 thread of users asking for a guitar version
+([VI-Control](https://vi-control.net/community/threads/modo-guitar.63047/)).
+There is no Shreddage 4; the line is still Jupiter, Hydra, Serpent, Rogue and
+Stratus ([Impact Soundworks](https://impactsoundworks.com/products/category/guitar-bass/)).
+Orange Tree's flagship is still described as the fifth generation of the
+Evolution engine, the same generation the previous pass surveyed
+([Orange Tree](https://www.orangetreesamples.com/products/evolution-electric-guitar-stratosphere)).
+The physically-modelled wing of this category remains one product. Electry is
+not racing a moving target, which argues for spending this pass on the
+distance between a model and a recording rather than on articulation counts,
+where the previous pass reached parity.
+
+**The published criticism of that one product is uniformity, stated more
+sharply than "too clean".** Owner and forum discussion of Strum GS-2 says
+"there's a clear uniformity to GS-2's sound that sets it apart from samples and
+the real thing, and attempts to counter this in the editing interface couldn't
+fully dispel the uniformity", and "users have noted that the GS-2 sounds very
+synthetic"
+([KVR](https://www.kvraudio.com/forum/viewtopic.php?t=549064),
+[Sweetwater](https://www.sweetwater.com/store/detail/StrumGS2--applied-acoustics-systems-strum-gs-2-virtual-guitar/reviews)).
+The sampled field spends its entire round-robin budget on the countermeasure,
+and states the rationale plainly: "A real guitarist never hits two chords with
+the exact same force, so adding this subtle randomization simulates the human
+element and prevents the 'machine-gun effect' where every strum sounds
+identical"
+([MusicRadar](https://www.musicradar.com/tuition/tech/how-to-avoid-the-machine-gun-effect-using-round-robin-sampling-632302)).
+Electry's README advertises the opposite as a property: "Identical MIDI always
+renders identical audio." Determinism and uniformity are separable, and this
+pass separates them: every new variation is drawn from the existing per-note
+counter, so renders stay bit-reproducible while consecutive strokes stop being
+clones.
+
+**Competitors ship a rig where Electry ships a knob.** Ample's guitars carry
+"7 classic amp heads ... paired with 8 guitar cabinets, each captured with 8
+microphones" ([Ample Sound](https://www.amplesound.net/en/pro-pd.asp?id=1));
+Evolution Stratosphere has "selectable guitar cab sizes with several microphone
+options and mic placement choices"
+([Orange Tree](https://www.orangetreesamples.com/products/evolution-electric-guitar-stratosphere));
+Heavier7Strings' rack has 31 modules
+([Three-Body Technology](https://www.threebodytech.com/en/products/heavier7strings)).
+Electry has one 0-100% amplifier control, a fixed six-section cabinet filter,
+and no tone stack at all. This is a real gap and it is deliberately not
+addressed here; see "considered and not planned".
+
+**Vibrato and release noises are scored articulations.** Stratosphere advertises
+"various vibrato styles ... from classic vibrato to rock and metal vibrato with
+adjustable depth/speed"; Shreddage 3 documents release articulations that
+"trigger when a MIDI note is released ... automatically adding scrapes, squeaks,
+and other noises"
+([Impact Soundworks](https://impactsoundworks.com/docs/Shreddage%203%20Stratus%20Free%20Manual.pdf)).
+Electry's vibrato is one fixed 4.8-6.4 Hz, 40-cent shape with no user control.
+
+**A calibration error found by reading published measurement against the
+source.** Helmuth Lemme's pickup measurements put the humbucker's two-point
+cancellation notch "at about 3,000 Hz" for the low E string and "4,000 Hz" for
+the A string ([Lemme](http://buildyourguitar.com/resources/lemme/), corroborated
+qualitatively at
+[guitarnuts2](https://guitarnuts2.proboards.com/thread/10690/humbucker-comb-filtering)).
+Electry models the humbucker as a single 21 mm rectangular spatial window, which
+first nulls at c/W rather than c/2d - most of an octave too high. Step 3 below.
+
+**Absences, recorded as absences.** No published listening test or measurement
+comparing virtual electric guitars against each other or against recordings was
+found. No 2026 retail price could be verified. MODO BASS 2's tuning controls
+could not be checked before the research session's search budget ran out, so the
+per-string tuning idea below is scoped on Electry's architecture alone. And the
+one experimental study found on the pickup magnet's effect on the string reports
+"no observable effects on the string's vibration that could be interpreted as
+having a damping effect"
+([Academia](https://www.academia.edu/42961860/The_Effects_of_a_Magnetic_Pickup_on_the_Vibration_Response_of_an_Electric_Guitar_String)),
+so the widely repeated "Strat-itis kills sustain" claim is **not** implemented
+and should not be, on current evidence.
+
+### Where the engine actually stands
+
+Everything below was measured on the shipping sources with scratch programs
+linked directly against the engine. Gap numbers in the step list refer to this
+list, not to the previous pass's.
+
+1. **Velocity is a 5 dB trim.** `makeVelocityProfile` at
+   `Source/DSP/ElectryEngine.cpp:685-702` sets
+   `profile.amplitude = lerp(1.0f, 0.06f + 0.94f * curve, response)`, and at the
+   shipping default `velocityAmount { 0.65f }`
+   (`Source/DSP/ElectryEngine.h:81`) that collapses to
+   `1 - 0.611*(1 - v^1.35)`. Measured on note 40, peak of the first 50 ms, fresh
+   engine per velocity (`p1_velocity`): **v=1 at -30.908 dBFS, v=127 at
+   -25.690 dBFS, a total range of 5.218 dB**, and **1.679 dB from v=61 to
+   v=127**. The 2-8 kHz to sub-500 Hz band ratio, averaged over overlapping
+   2048-point windows across the same 50 ms, moves **2.28 dB** from v=16 to
+   v=127 - not the 4.9 dB this document was first written against, which does
+   not reproduce on any window tried. A guitarist's picking dynamics span
+   roughly 25-30 dB. Written accents, ghost notes and crescendi are all
+   rendered at the same loudness.
+
+   Two things about *why* were measured wrong the first time and matter to the
+   step that follows. First, the law is not what caps the span: at
+   `velocityAmount = 1.0` the existing blend already renders **20.80 dB** from
+   v=1 to v=127, above the 20 dB the step below asks for. What ships is a
+   default, not a structural ceiling. Second, the flattening of the *upper*
+   half is not the pickup's magnetic saturation. Replacing `magneticTransfer`
+   (:3468-3477) with an identity in a patched build (`p2lin`) moves v=127 by
+   **0.17 dB** and the whole span by 0.20 dB - not the 3.36 dB first claimed.
+   Freezing `profile.effort` and `profile.noise` at their v=1.0 values instead
+   (`p2frozen`) restores v=64 to v=127 to **4.62 dB** against the amplitude
+   law's own 4.71 dB. The upper half is flat because `effortCurve` drives
+   `brightness` from 0.20 to 2.10 over the same range, moving the excitation's
+   energy into partials that have decayed before the 50 ms peak is taken.
+   Amplitude and effort are the same knob, and that coupling - not the
+   saturator and not the blend - is what eats the accent.
+
+2. **Two identical note-ons produce the same audio.** Every quantity
+   `startExcitation` sets (`ElectryEngine.cpp:2095-2512`) - amplitude, comb
+   delay and width, pulse length, pick load and slip geometry, release
+   coefficient, polarisation split, onset sample - is a pure function of the
+   parameters, the velocity profile and the string index. The only per-note
+   randomisation in the engine is the noise seed at :2619-2625 and a +/-3%
+   saddle-rattle frequency at :2631-2634. Measured across 12 identical
+   `noteOn(40, 0.80)` events with the three noise controls at zero, **12 s
+   apart so the string has decayed and the previous stroke's ring cannot
+   confound the comparison** (`p3_repeat`): **peak spread 0.0122 dB** and
+   **spectral centroid spread 0.6 Hz on a 401 Hz centroid**. Successive
+   relative L2 difference over the first 150 ms starts at -43.4 dB and falls
+   to -78.2 dB by the twelfth stroke as the residual state converges. The
+   "-55.9 dB, 0.077 dB, 5 Hz" figures this document was first written against
+   do not reproduce on any protocol tried and have been replaced by the three
+   above.
+
+   Two corrections to the original reading of this gap, both of which narrow
+   it. **The Artifacts control does add note-to-note variation** - the +/-3%
+   saddle-rattle detune cited two sentences above is exactly that. On the same
+   12 s protocol, `artifactAmount = 0` lets successive strokes converge to
+   -84.0, -90.8 and -98.9 dB while `artifactAmount = 1` holds them at -43.8,
+   -44.1 and -49.1 dB. What the control does *not* vary is the level: peak
+   spread stays 0.0122 dB at both settings. **And the uniformity holds only for
+   a latched stroke direction.** Under `PickStyle::Alternate` successive strokes
+   of the same note differ by more than the signal itself - relative L2 of
+   **+5.4, +6.3 and +5.4 dB** - because up and down strokes are separately
+   coloured. The gap is real for a player who latches Down and plays repeated
+   notes; it is already absent for one who alternates.
+
+3. **The humbucker's notch is most of an octave too high.**
+   `ElectryEngine.cpp:26`, `humbuckerApertureMetres = 0.0210f`, read at :2000
+   into a single rectangular spatial window. A rectangular window of width W
+   first nulls at c/W; a two-point sum at spacing d nulls at c/2d, and does so
+   with a cosine's steep approach rather than a sinc's gentle one. With the
+   transverse wave speed `c = 2 L f_open` at the shipping `scaleLength` of 0.85
+   (L = 0.7017 m), string 2 (E2, 82.41 Hz) has c = 115.6 m/s: the current model
+   nulls at **5507 Hz** where a 19 mm two-point sum nulls at **3043 Hz**, and
+   string 3 (A2) at **7351 Hz** against **4062 Hz** (`p5_pitch`, which
+   reproduces both columns for all eight strings). Lemme's measured figures are
+   3000 Hz and 4000 Hz. That agreement is closer than it deserves to be: Lemme
+   measured a 25.5-inch instrument, where the same 19 mm spacing puts the low-E
+   null at 2810 Hz, so the model's 3043 Hz agrees with his 3000 Hz partly
+   because the shipping scale is longer. The mechanism is right and the ratio
+   `c/W` against `c/2d` is the error; the exact coincidence is not evidence.
+   The source comment at `pickupCombDepth` (:28-46) records that two coils "was
+   tried instead and measured no better than this" - but that comparison was
+   scored on low-frequency comb depth, not on notch frequency, so it does not
+   settle this.
+
+   What the original reading of this gap missed is the *rest* of the transfer.
+   Evaluating both windows on string 2 (`p5_pitch`), replacing one 21 mm
+   rectangle with two 4.8 mm rectangles 19 mm apart changes the magnitude by
+   -3.9 dB at 2 kHz, **+2.7 dB at 4 kHz, +20.9 dB at 6 kHz, +6.5 dB at 8 kHz
+   and +18.2 dB at 12 kHz**, while on the plain E4 it goes the other way:
+   -3.9 dB at 8 kHz and **-28.5 dB at 12 kHz**. Putting the notch in the right
+   place also rebalances the humbucker across the whole string set and removes
+   most of the top-octave darkness that currently distinguishes it from the
+   single coil. That is a bigger change than the notch, and the step below has
+   to bound it.
+
+4. **The instrument is very nearly in tune, and no guitar is.** *(Measured,
+   and deliberately not scheduled - see "considered and not planned".)*
+   `configureVoicePitch` (:1844-1870) compensates every loop filter's phase
+   delay at the fundamental. How in-tune that leaves it depends entirely on
+   which estimator is asked, and the "-0.54 to +0.46 cents across eleven notes"
+   this document was first written against reproduces on none of them
+   (`p6_pitch2`, running the suite's own protocol - velocity 0.3, window
+   0.45-0.95 s - through three estimators). A **fundamental-only** DFT peak
+   gives **-0.25 to +0.30 cents**, which is the real tuning accuracy and is
+   better than the figure claimed. The **suite's own `measureFrequency`**, which
+   scores five partials weighted by `1/sqrt(n)`, gives **+0.00 to +2.50 cents**
+   on its shipping 0.5-cent grid and **-0.04 to +2.68 cents** when the grid is
+   refined to 0.02 cents. A plain autocorrelation gives **+5.6 cents** on the
+   low E1. The spread between estimators is inharmonicity - the upper partials
+   really are stretched, which is correct physics - and it is an order of
+   magnitude larger than the fret-dependent error a compensated fretboard
+   actually has. The engine has no fret-dependent pitch term of any kind, and
+   the step that was written to add one did not survive review because the
+   term it would add is smaller than the disagreement above.
+
+5. **The vibrato is a mathematically exact LFO with one global phase.**
+   `ElectryEngine.cpp:3933-3943`: `rate = lerp(4.8f, 6.4f, vibratoAmount_)` and
+   `vibratoSemitones_ = ... 0.5f * (1 - cos(2*pi*phase))`, off a single engine
+   wide `vibratoPhase_` (`ElectryEngine.h:958`). Measured through a
+   private-access seam every 8 samples for 6 s (`p4_misc`): settled peak depth
+   0.399992 to 0.399994 semitones over 25 cycles, **spread 1.07e-6 semitones
+   (0.0001 cents)** - the first draft of this document said 4.06e-3 semitones,
+   which is nearly four orders of magnitude too generous; the LFO is exact to
+   the float. Rate **6.40000 Hz** with a **cycle-period standard deviation of
+   0.0533%**, which does reproduce. The settled trace spends 49.2% of each
+   cycle above half depth, as a raised cosine must. Because the phase is shared, a
+   double-stop's two strings move in exact lockstep, and because it resets to
+   zero at zero pressure, every vibrato in a part starts on the same part of the
+   cycle.
+
+6. **A strum is a uniform ramp travelling in a direction the pick stroke does
+   not set.** `ElectryEngine.cpp:1075-1095`: `chordAnchorString_` is fixed by
+   whichever note-on the host sent first, and
+   `startDelaySamples = int(spread * rate) * abs(stringIndex - anchor)`.
+   Measured with an E5 power chord sent low-to-high (`p4_misc`),
+   `PickStyle = Down` and `PickStyle = Up` produce **identical** offsets
+   (+0.000, +12.000, +24.000 ms) with `strokeUp` correctly set to 0 and 1 - the
+   stroke colours the excitation and never reverses the travel. Across eight
+   strings the offsets are +0.0000, +12.0000 ... +84.0000 ms, **zero deviation
+   from a straight line**. The `abs()` also means a chord whose first note-on is
+   a middle string makes the pick travel outward in both directions at once:
+   sending D3 first and then E2, A2, G3, B3 gives 24.0, 12.0, 0.0, 12.0,
+   24.0 ms. All three reproduce exactly. This is the one gap in the list whose
+   every stated number survived re-measurement unchanged.
+
+   One constraint the original reading missed: the chord window is 35 ms
+   (`chordWindowSamples_`, :789), so the note-ons of one chord routinely arrive
+   across several `process()` blocks. Anything that re-decides the anchor after
+   the first note-on has to cope with the first note having already sounded.
+
+7. **Tension modulation is wired up and calibrated about 100x too small.**
+   `ElectryEngine.cpp:2657-2658` sets
+   `voice.tensionDepth = 0.042f * lerp(1.45f, 0.70f, stringGauge) * profile.tension`,
+   driving `tensionFactor = 1 / (1 + tensionDepth * energyEnvelope)` at
+   :1872-1875. `energyEnvelope` is the mean square of the loop samples and peaks
+   at **0.002831**, so the product reaches 9e-5. Reading `tensionDepth` and
+   `energyEnvelope` straight off the seam and evaluating
+   `1200*log2(1 + depth*energy)` (`p4_misc`), the peak deviation from the
+   settled pitch on note 40 at velocity 1.0 with `velocityAmount = 1.0` is
+   **+0.180 cents, at 183 ms**; **+0.0141 cents at velocity 0.25**. The step's
+   own worked example puts a hard 3 mm pluck at **8.7 cents**, and that - not
+   the "tens of cents" this document first asserted, for which no measurement
+   was found - is the target. What is unambiguous is the *timing*: the peak
+   arrives a fifth of a second after the attack, so a fortissimo open low E
+   starts at exactly its steady pitch and goes sharp once it is already
+   decaying, which is backwards.
+
+   Two things about this gap are smaller than they look. The velocity law is
+   already right: 0.180 against 0.0141 cents is a ratio of **12.8**, and a
+   `v^2` law predicts 16. And the gauge dependence is already right: the peak
+   is **0.180 cents at `stringGauge = 1.0` against 0.377 at `stringGauge = 0`**,
+   a ratio of 0.478, where the `1/d^4` law the step proposes to derive predicts
+   0.45. Only the absolute scale and the envelope's attack time are wrong.
+
+8. **Fingered strings exchange no energy.** `sympatheticBus_ += bridgeForce` at
+   :3575-3576 is written only from `renderVoice`, and
+   `renderSympatheticString` is reached only in the `else` branch for inactive
+   voices (:4051-4066); `renderVoice` never reads `sympatheticBusDelayed_`.
+   That much is exactly true, and it is the whole of the real gap.
+
+   The measurement that was attached to it is not. Rendering notes 40 and 47
+   separately and together (`p4_misc`), `||AB - (A+B)|| / ||A+B||` over the
+   first 1.5 s at `sympatheticAmount = 0` is **-40.4 dB at velocity 0.02,
+   -39.8 dB at 0.20 and -39.7 dB at 0.90**, not the -68.2/-72.0/-56.4 dB first
+   claimed. Those figures appear only in a decayed window: over 10-12 s the same
+   ratio is -67.8/-66.8/-65.5 dB. So the two strings are **not** exactly
+   superposable while they are sounding; they already interact at about -40 dB
+   through the shared body, coil and output path, which is not floating-point
+   noise.
+
+   And at the **shipping** `sympatheticAmount = 0.20` - the setting the step
+   below tests at - the same pair already measures **-36.1 dB over 0-1.5 s and
+   -31.4 dB over 10-12 s**, because the six unfingered strings ring off the sum
+   of both notes and a third string's ring is a genuinely non-superposable
+   function of the pair. The gap that remains is the one the step's own last
+   sentence states and the measurement did not: a voicing that leaves *nothing*
+   open has no path at all, because the only coupling the engine has runs
+   through voices that are not being played.
+
+Three further measured defects are real and are **not** scheduled; the reasons
+are under "considered and not planned": the pitch-wheel glide is a one-pole
+exponential that delivers 10.5 cents of a 200-cent bend in the first 5 ms;
+sweeping String Gauge or Scale Length under a ringing note fires broadband
+bursts 48.4 dB above the note's own high-frequency floor; and note-off damping
+is one hard-coded 60 ms T60 that varies only 18% across five octaves and does
+not consult `playStyle` at all. **These three were not re-measured under
+review** - nothing is scheduled against them, so their numbers carry the
+original audit's confidence and not this section's. The same caveat applies to
+the "thirteen of fifteen controls at -63.4 dB" figure quoted below: it bounds
+two steps, so it must be re-measured before either is implemented against it.
+
+**What must not regress.** Four measured strengths bound every step above, and
+one of the four had to be restated to survive its own re-measurement.
+Steady-state tuning is within **-0.25 to +0.30 cents on the fundamental** across
+the eleven notes the suite checks, and must stay there; the "+/-0.6 cents"
+originally recorded here is not what any estimator returns, and the suite's own
+partial-weighted `measureFrequency` reads up to +2.5 cents sharp on the low
+strings because of inharmonicity, so any future tuning claim has to name its
+estimator. Nothing may bypass the phase compensation refresh. The alias floor is
+**155.1 dB below the spectral peak** above 12 kHz on a full eight-string chord
+at velocity 1.0 (`p7_alias`, 32768-point window at 0.2 s; the 155.5 dB
+originally recorded reproduces to within the window), and must stay below the
+existing bound; step 3 adds taps and step 7 adds a feedback path, and both must
+be re-measured against it. Thirteen of fifteen continuous controls
+sweep with a locally-referenced >5 kHz peak-to-RMS at the static note's
+-63.4 dB, and the new per-note variation must not become a per-block one. And
+the engine is unconditionally stable today because the coupling graph is
+acyclic; step 7 removes that property on purpose and therefore carries its own
+bound and its own long-render test. It is *not* superposable today, at -40 dB
+during the note and -36 dB at the shipping resonance setting, so "superposition"
+is not one of the four strengths and the step below is measured against those
+two baselines rather than against silence.
+
+Two further bounds came out of the review and are new here. **No step may assert
+a threshold that the shipping engine already meets**; four assertions in the
+first draft of the step list did, three of them because the verification
+protocol and the gap measurement were not the same experiment. And **no step may
+assert a threshold its own stated physics cannot reach**; three more did, and
+the arithmetic is now carried out in the step rather than asserted.
+
+### Steps
+
+Each step states what changes, which gap it closes, and how it is verified. All
+verification is by a test in `Tests/` that fails without the change **and passes
+only because of it** - every threshold below was checked against the shipping
+engine first, and the measured baseline is quoted next to it.
+
+- [ ] **1. Velocity becomes the pick's deflection, and stops dragging
+  brightness behind it.** Two changes, and the second is the one that does the
+  work. **(a)** Replace the amplitude term in `makeVelocityProfile` with the
+  physics the excitation already implies. A plectrum deflects the string to `y0`
+  before it slips; the lateral force needed is `F = T * y0 / (p (1-p) L)` for a
+  contact at fraction `p`, so `y0 = F p (1-p) L / T` is linear in the hand's
+  force and the pickup, which senses displacement, is linear in `y0`. Take MIDI
+  velocity as proportional to that force: `v_eff = 0.05 + 0.95 * v`, and make
+  the Velocity Response control the exponent, `amplitude = v_eff^response`, so
+  it scales the *decibel* range linearly and stays an exact no-op at zero. The
+  default rises from 0.65 to 0.85. **(b)** Break the coupling between
+  `profile.amplitude` and `profile.effort`. Today `effort = lerp(0.65, v,
+  response)` drives `effortCurve` and thence `brightness` from 0.20 to 2.10 over
+  the same velocity range, and that is what flattens the top of the keyboard:
+  the extra amplitude goes into partials that have decayed before the peak of
+  the first 50 ms is taken. `effort` must span a narrower range - the sensible
+  reading is that a harder stroke is not proportionally sharper, because the
+  plectrum's own stiffness bounds the contact spectrum - so that a change in
+  force reads mostly as a change in level.
+
+  This step was rewritten under review, because the change as first specified
+  was implemented in a patched build (`p2_velpatched` against a patched
+  `libElectryDSP`) and **fails three of its own five assertions**. With
+  `amplitude = v_eff^0.85` and nothing else changed: the v=1 to v=127 span is
+  **17.87 dB** against an asserted 20; v=64 to v=127 is **1.686 dB** against an
+  asserted 4.0, essentially unmoved from today's 1.487 dB; and the level is
+  **not monotone** - it turns over above v=104 and reads -26.167, -26.283,
+  -26.320, -26.144 dBFS at v=104, 112, 120, 127. The amplitude law itself
+  delivers 21.09 dB and 4.71 dB, so the loss is downstream, and the first
+  draft's attribution of it to the pickup's magnetic saturation is wrong by more
+  than an order of magnitude (0.17 dB, measured by linearising
+  `magneticTransfer` in `p2lin`). Freezing `effort` and `noise` at their v=1.0
+  values (`p2frozen`) recovers **4.62 dB** across v=64 to v=127 and restores
+  monotonicity, which is what identifies (b) as the load-bearing change and (a)
+  as necessary but not sufficient.
+  *Closes gap 1.* **Verified by** `testVelocityDynamicRange`: at the shipping
+  defaults on note 40, peak of the first 50 ms, fresh engine per velocity, the
+  span from v=1 to v=127 is **at least 18 dB** (today 5.218 dB; the amplitude
+  law alone reaches 17.87 dB, so this threshold cannot be met without (b)) and
+  from v=64 to v=127 **at least 4.0 dB** (today 1.487 dB; the amplitude law
+  alone reaches 1.686 dB, so this one *only* passes with (b)); the level is
+  **strictly monotone across 16 evenly spaced velocities**, which today passes
+  and which the amplitude law alone breaks, so it is a regression guard rather
+  than a target; v=127 stays **within 1.5 dB of -25.690 dBFS**; and at
+  `velocityAmount = 0` all velocities are bit-identical, which they are today
+  (measured spread exactly 0.00000 dB) and which (a) preserves because
+  `v_eff^0 = 1`.
+  The brightness assertion from the first draft - "the 2-8 kHz to sub-500 Hz
+  band ratio moves at least 12 dB from v=16 to v=127" - is **struck**. Measured
+  on the attack window it moves **2.28 dB today**, not the 4.9 dB claimed, and
+  under the proposed law it moves **2.19 dB**, i.e. slightly *less*. A 12 dB
+  target is unreachable while brightness stays a function of `effortCurve`, and
+  step (b) deliberately reduces that dependence. It is replaced by a bound in
+  the other direction: the band ratio must move **no more than 4 dB** from v=16
+  to v=127, so that (b) cannot be implemented by simply flattening brightness
+  into silence at low velocity. `testVelocityExpression`'s existing bounds are
+  widened to match rather than deleted.
+
+- [ ] **2. The picking hand stops repeating itself.** Draw a small set of
+  per-note offsets from the existing note counter. `startExcitation` already
+  seeds its noise with `hash32(stringIndex ^ midiNote ^ style ^ noteSequence_)`
+  (:2619-2625); the same stream, advanced once more, supplies: contact position
+  along the string (sigma 4 mm, which moves the pluck comb by about 3.4% of its
+  notch frequency at the default Pick Position and is bounded below by the
+  plectrum's own width and above by the hand anchoring on the bridge); contact
+  force (sigma 0.8 dB); pick attack angle (sigma 6 degrees), which is not a free
+  parameter but decomposes exactly onto the two polarisations as `cos` and
+  `sin`, so an angle jitter is a split jitter; and contact patch width
+  (sigma 8%, carried by the existing pulse length). The magnitudes are a
+  calibration - no measurement of picking-hand repeatability was found - but the
+  *presence* of the variation is what the round-robin literature documents, and
+  every draw is a pure function of the note index, so `Identical MIDI always
+  renders identical audio` remains true. The step also has to reach the
+  `PickStyle::Alternate` case, which already varies stroke to stroke by more
+  than the signal itself: the variation must ride *on top of* the up/down
+  colouring rather than replacing it, or alternate picking gets no worse and no
+  better and the whole step is scoped to a latched Down.
+
+  The verification below was rewritten under review, because the protocol the
+  first draft specified is **already satisfied by the shipping engine**. Run
+  exactly as stated - 500 ms between strokes on the same note, contact noise at
+  zero - `p3_repeat` measures a successive relative L2 of **-4.65, -8.05,
+  -10.77, -12.14 dB** falling to -27.02 dB by the twelfth stroke, a peak spread
+  of **1.71 dB** and a centroid spread of **30.5 Hz**. Three of the four
+  assertions (`-24..-8 dB`, `0.6..3.0 dB`, `>=12 Hz`) pass today with no change
+  at all. They pass because at 500 ms the string has not decayed and each stroke
+  lands on the previous one's ring, so the protocol measures retrigger state
+  rather than the excitation - and it measures it *converging*, which is the
+  machine-gun effect rather than the cure. The gap-2 measurement and the step-2
+  verification were not the same experiment.
+  *Closes gap 2.* **Verified by** `testPickingHandVariation`, on a protocol that
+  isolates the excitation: 12 identical `noteOn(40, 0.80)` events **12 s apart**
+  with `pickNoise`, `fingerNoise`, `releaseNoise` **and `artifactAmount` all at
+  zero** - artifacts excluded because the +/-3% saddle-rattle detune already
+  supplies per-note variation and would otherwise be credited to this step. On
+  that protocol the shipping engine measures -84.0, -90.8 and -98.9 dB on
+  successive pairs, 0.0122 dB of peak spread and 0.6 Hz of centroid spread, so:
+  the relative L2 difference between successive strokes' first 150 ms is
+  **between -24 dB and -8 dB** (today -84 dB and falling); peak spread across
+  the 12 strokes is **between 0.6 dB and 3.0 dB** (today 0.0122 dB); spectral
+  centroid spread is **at least 12 Hz** on a 401 Hz centroid (today 0.6 Hz).
+  Separately, and this is the assertion the first draft's protocol was
+  accidentally testing: on the 500 ms protocol the successive difference must
+  **stop converging** - the last pair of 12 must be within 6 dB of the first
+  pair, where today it falls 22.4 dB from -4.65 to -27.02 dB. And the existing
+  `testDeterminism` still passes bit-exact, including that a `reset()` and
+  replay reproduces the first stroke sample for sample.
+
+- [ ] **3. The humbucker becomes two coils.** Replace the single 21 mm
+  rectangular aperture with the sum of two taps 19 mm apart along the string,
+  each carrying the narrow per-bobbin window the single coil already uses
+  (4.8 mm). The sum of two point sensors separated by `d` has magnitude
+  `|cos(pi f d / c)|`, first nulling at `f = c / 2d` with the transverse wave
+  speed `c = 2 L f_open` the engine already computes at :2004-2006 - against
+  `c / W` for the current window. At the shipping scale this moves string 2's
+  first null from 5507 Hz to 3043 Hz and string 3's from 7351 Hz to 4062 Hz,
+  against Lemme's measured 3000 Hz and 4000 Hz. Because the two coils also sit
+  at two different distances from the bridge, each gets its own position comb
+  for free, which is the second-order thickening the single window cannot
+  produce. The single-coil setting is one coil and is unchanged - the 4.8 mm
+  window's own first null sits at 24 kHz on string 2, so nothing audible moves
+  there. `pickupType` continues to morph between them.
+
+  The step survives review, but not for the reason it was written. Putting the
+  notch in the right place is the *smaller* half of what the change does. The
+  larger half is that two 4.8 mm windows pass most of the top octave the single
+  21 mm window was throwing away: on string 2 the replacement is **+2.7 dB at
+  4 kHz, +20.9 dB at 6 kHz, +6.5 dB at 8 kHz and +18.2 dB at 12 kHz**, while on
+  the plain E4 it is **-3.9 dB at 8 kHz and -28.5 dB at 12 kHz** (`p5_pitch`,
+  evaluating both windows in closed form). A humbucker that is brighter than
+  today on the wound strings and darker on the plain ones is a different pickup,
+  not a corrected one, and whether that is an improvement is a voicing question
+  the notch frequency does not answer. The step is therefore scoped to include
+  re-voicing the per-coil window width and, if needed,
+  `humbuckerResonanceHz`/`Q` (:49-53), against the same dry references the
+  `pickupCombDepth` comment cites - and the verification below bounds the
+  broadband change, which the first draft did not.
+  *Closes gap 3.* **Verified by** `testHumbuckerTwoCoilNotch`: at
+  `pickupType = 0`, the deepest notch of the pickup transfer between 2 and 8 kHz
+  lies **within 2.8-3.3 kHz on string 2 (note 40)** and **within 3.8-4.4 kHz on
+  string 3 (note 45)**, and is **at least 10 dB** below the local envelope
+  (today the first null is at 5507 Hz and 7351 Hz respectively); at
+  `pickupType = 1` the magnitude response is within 0.2 dB of today's at every
+  measured frequency; the low-frequency recovery the `pickupCombDepth` comment
+  records does not regress by more than 0.5 dB in the 60-85 Hz band on an open
+  low E; and the alias floor on a full chord stays at least 150 dB below the
+  spectral peak (today 155.1 dB). **And, new under review, the broadband
+  balance is bounded**: on an open low E at `pickupType = 0`, octave-band energy
+  from 4 to 16 kHz moves by **no more than 4 dB per band** against today, and
+  the 2-16 kHz to sub-500 Hz ratio on a full eight-string chord moves by **no
+  more than 3 dB**, so the humbucker stays the dark pickup of the pair. Without
+  those two, the notch assertion can be passed by a change that measurably
+  brightens the setting it is meant to correct.
+
+- [ ] **4. Vibrato becomes a hand.** Four changes, three of them derived. (a)
+  The pitch waveform is the *square* of the wrist's displacement, not the
+  displacement: a finger bending a string laterally by `x` lengthens its path by
+  `dL = k x^2`, so for a wrist rocking as a raised cosine `s(t)` the pitch offset
+  is `depth * s(t)^2`, falling out of the same `dL/L` relation
+  `ElectryEngine.cpp:391-403` already solves per string for the bar. **The first
+  draft described the resulting shape backwards.** `s^2` does not give flat tops
+  and sharp returns; it gives a flat *bottom* - the note dwells at pitch between
+  excursions, because `s^2` is fourth-order small where `s` is second-order
+  small - and a peak whose curvature is doubled, so the excursions are briefer
+  and pointier. That is still the right shape for a guitar vibrato, where the
+  finger returns the string to rest and waits, but it is the opposite claim and
+  the step is kept for the corrected reason. (b) Each fingered string gets its
+  own phase, seeded from its own note stream, because two fingers are not one
+  finger; today one engine-wide `vibratoPhase_` moves a double-stop in exact
+  lockstep. (c) Rate and depth are redrawn each cycle (sigma 12% and 15%) from a
+  stream advanced by a **per-voice cycle counter**, not by `noteSequence_`,
+  which only advances on note-on and would give a held note one fixed draw.
+  (d) The onset uses the `smoothStep` the engine already applies at :1679 and
+  :3343-3345 instead of the one-pole, so the vibrato starts from rest rather
+  than at maximum slew.
+
+  A single Vibrato Depth parameter exposes the maximum excursion. Note that
+  **this reverses an existing calibration rather than adding one**: `rate =
+  lerp(4.8f, 6.4f, vibratoAmount_)` at :3937 already couples rate to depth, in
+  the direction its own comment states - "a rock finger vibrato runs around
+  5 Hz and speeds up as the player leans into it". The step's
+  velocity-limited-gesture argument says the opposite, that a wider arc at
+  bounded wrist angular velocity is a longer period. Both are folk claims and
+  neither was measured, so the reversal is not free: either it ships with a
+  citation or the existing coupling stands and the parameter only scales depth.
+  The competitive note this gap rests on ("adjustable depth/speed") in fact
+  argues for two controls, not for a derived one, and a second control is the
+  cheaper answer to it.
+  *Closes gap 5.* **Verified by** `testVibratoIsAHandNotAnLfo`, reading through
+  the existing private-access seam: over 18 settled cycles the cycle-period
+  standard deviation is **at least 4% of the mean** (today 0.0533%) and the
+  peak-depth spread is **at least 2.5 cents** (today **0.0001 cents** - the
+  first draft's 0.4 cents was nearly four orders of magnitude too generous, so
+  this assertion has far more headroom than it appeared to); the fraction of
+  each cycle spent above half depth is **between 32% and 40%** - a raised cosine
+  gives exactly 50% and measures 49.2% today, and its square gives **36.4%**,
+  not the "about 39%" first written - which pins the `x^2` law from both sides
+  rather than only from above; two simultaneously fingered strings' phases
+  differ by **at least 0.08 cycles**; at maximum Vibrato Depth the peak is **at
+  least 90 cents** and at minimum **at most 15 cents**; and zero aftertouch
+  remains bit-exact identical to no aftertouch. The rate assertions ("below
+  5.2 Hz at maximum, above 6.2 Hz at minimum") are held back until the direction
+  of the depth-rate coupling is settled, since as written they assert the
+  reverse of the shipping calibration.
+  `testFrettingHandVibrato` keeps its existing assertions on upward bias,
+  fingered-strings-only scope and onset delay.
+
+- [ ] **5. The strum travels the way the pick does.** Two changes. First,
+  direction: the offset is computed from the neck edge the resolved stroke
+  starts at, not from whichever note-on arrived first. Maintain the chord's
+  extreme string *in the stroke direction* as the anchor, and when a later
+  note-on in the same window turns out to be more extreme, re-anchor and push
+  the pending offsets of the not-yet-started voices out by the difference. **The
+  first draft called that "safe precisely because nothing has sounded yet",
+  which is not true in general.** The chord window is 35 ms
+  (`chordWindowSamples_`, :789) and a `process()` block is typically 5-10 ms, so
+  the note-ons of one chord routinely straddle several blocks and the
+  first-arriving voice has usually already started. There are two honest ways
+  out and the step must pick one before implementation: give the anchor voice
+  itself a pending delay of the full `7 x spread` so every voice can still be
+  pushed - which adds up to 84 ms of onset latency at the 12 ms spread and moves
+  the chord late against the beat - or restrict re-anchoring to note-ons that
+  land in the same block, which fixes quantised chords and leaves humanised ones
+  travelling from whichever note the host happened to send first. The second is
+  preferred, and the verification below tests the block-straddling case
+  explicitly rather than leaving it undefined. Removing the `abs()` is
+  independent of that choice and stands either way, so a chord anchored on a
+  middle string stops travelling outward in both directions at once. Second,
+  spacing: the wrist accelerates through the
+  strings, so with the pick entering the plane at speed `v0` and accelerating,
+  `v(x) = sqrt(v0^2 + 2 a x)` and the crossing intervals compress monotonically
+  as `dt_k is proportional to 1/v(x_k)`. The acceleration is set so the last gap is about 0.7 of
+  the first, and the total travel is held to the Strum Spread control's stated
+  value so the knob keeps its meaning. The step-2 stream adds per-gap jitter, so
+  no two strums lay the same ramp down twice.
+  *Closes gap 6, the one gap whose every measured number survived
+  re-measurement unchanged.* Depends on step 2 for the jitter stream.
+  **Verified by** `testStrumTravelFollowsStroke`: on the same three-note chord
+  sent in the same MIDI order, `PickStyle = Down` and `PickStyle = Up` produce
+  **reversed** rank orders of `startDelaySamples` - string 0 first on the down,
+  last on the up - where today both produce +0.000/+12.000/+24.000 ms; across
+  eight strings at a 12 ms spread the gaps are monotonically non-increasing and
+  the last gap is **between 0.55 and 0.85 of the first** (today every gap is
+  exactly 12.0000 ms); the first-to-last travel time stays **within 5% of
+  7 x spread**; a chord whose first note-on is a middle string produces offsets
+  that are all non-negative and monotone in string index (today D3-first gives
+  24.0/12.0/0.0/12.0/24.0 ms); and at `strumSpreadSeconds = 0` every offset is
+  exactly 0, so the block chord stays bit-exact. **And, new under review, the
+  block-straddling case is pinned rather than left to chance**: the same chord
+  delivered with its note-ons split across three `process()` calls 8 ms apart -
+  inside the 35 ms chord window, across block boundaries - must produce offsets
+  that are still all non-negative and monotone in string index, and the
+  first-sounding voice's onset must not move by more than one block against the
+  single-block delivery of the same chord. That is the assertion that decides
+  between the two implementations above, and it fails silently without it.
+
+- [ ] **6. The attack blooms sharp.** Recalibrate the tension modulation against
+  the same stretch law the previous steps use. For a string plucked to
+  `y0` at fraction `p`, `dL = y0^2 / (2 L p (1-p))`, `dT = E A dL / L`, and
+  `df/f = dT/2T = E A y0^2 / (4 T L^2 p (1-p))`. With a plain .010 string at
+  E4 - `A = 5.07e-8 m^2`, `E = 200 GPa`, `T = 72.6 N`, so `EA/T = 139` - a 3 mm
+  hard pluck at `p = 0.18` gives `df/f = 5.0e-3`, or **8.7 cents**, decaying with
+  the string's energy. That arithmetic checks out, and it - not the "tens of
+  cents" the gap paragraph first asserted, for which no measurement was found -
+  is the target. The mechanism at :1872-1875 is already correct; what is wrong
+  is that `energyEnvelope` is a mean square in arbitrary loop units that peaks at
+  0.002831, so the product never leaves the noise. Normalise the envelope to
+  physical displacement squared against the known excitation amplitude, express
+  `tensionDepth` as `EA / (4 T L^2 p (1-p))`, and give the envelope an attack
+  fast enough that the bloom peaks during the attack rather than at 183 ms.
+
+  **Two of the three things this step said it would derive are already right,
+  and the step is narrowed accordingly.** Measured (`p4_misc`), the peak at
+  velocity 1.0 against velocity 0.25 is a ratio of **12.8**, against the `v^2`
+  law's 16; and the peak at `stringGauge = 1.0` against `stringGauge = 0` is
+  **0.478**, against the `1/d^4` law's 0.45. The existing
+  `lerp(1.45f, 0.70f, stringGauge)` already spans 2.07x where the derived law
+  wants 2.23x - a difference nothing will hear. So the gauge derivation is
+  cosmetic and the velocity law needs no change; **only the absolute scale and
+  the envelope's attack time are actually wrong**, and the step should be costed
+  as those two.
+  *Closes gap 7.* Depends on step 1, because the effect is proportional to the
+  square of the pick force and is only worth having once velocity carries real
+  force. **Verified by** `testTensionModulationBloom`: on note 40 at velocity
+  1.0 with `velocityAmount = 1.0`, the peak sharpness above the settled pitch is
+  **between 6 and 20 cents** and occurs **within the first 30 ms** (today
+  +0.180 cents at 183 ms); it falls **below 1.5 cents by 400 ms**; at velocity
+  0.25 the peak is **at most 1.5 cents** (today 0.0141 cents); and 3 s after the
+  attack the sounding pitch is **within 0.6 cents** of nominal on the
+  fundamental-only estimator, so the tuning strength survives.
+  The two ratio assertions from the first draft - "the velocity peak ratio is
+  between 8 and 24" and "at `stringGauge = 1.0` the peak is at most 0.7x the
+  peak at `stringGauge = 0.0`" - **already pass today** at 12.8 and 0.478, so
+  they cannot fail without the change and prove nothing about it. They are
+  retained only as regression guards and labelled as such, not counted as
+  verification.
+  **And, new under review, the transient is bounded.** Reaching 8.7 cents inside
+  30 ms means moving note 40's vertical delay by about 5.8 samples out of 1165
+  in a few milliseconds, through an interpolated delay line and a control tick
+  that runs every 16 internal samples. The test must assert that the >5 kHz
+  peak-to-RMS during the bloom stays at or below the static note's **-63.4 dB**
+  - the same locally-referenced measure the control-sweep audit uses - so the
+  bloom is a glide and not a chirp, and that the alias floor above 12 kHz stays
+  at least 150 dB below the peak. Without those, this step's own headline number
+  can be met by an artefact.
+
+- [ ] **7. The strings share a bridge.** Let active voices read the coupling bus
+  they already write - **minus their own contribution to it**. Every string
+  terminates on one saddle whose mechanical admittance is finite, so the saddle
+  velocity driven by the summed string forces drives every *other* string back;
+  that is why a chord sounds like one instrument and why a power chord's low
+  interval blooms. The engine already computes the summed bridge force
+  (`sympatheticBus_`, :3575) and already publishes it one sample late
+  (`sympatheticBusDelayed_`, :4066); the change is to inject it into
+  `renderVoice` as well as `renderSympatheticString`.
+
+  **The self-term is the whole difficulty and the first draft did not mention
+  it.** `sympatheticBusDelayed_` is the sum over *all* active voices, including
+  the one about to read it, and the existing readers are inactive voices which
+  therefore never see themselves. Injecting it unmodified into `renderVoice`
+  would make a *single* note drive itself through the bus, which is not string
+  coupling but a change to that string's own bridge termination - and the
+  engine already carries that termination in `bodyConductance` and
+  `bodyLossFactor`, so it would be double-counted. Every decay-time, T60 and
+  timbre calibration in the instrument sits downstream of that. The bus each
+  voice reads must be `sympatheticBusDelayed_` minus that voice's own
+  contribution from the previous sample, which costs one extra per-voice float
+  and is the difference between this step being a coupling and being a
+  recalibration of the entire string model.
+
+  The one-sample delay makes this an explicit Jacobi iteration, so the acyclic
+  guarantee is replaced by an explicit spectral-radius bound: with `N` strings
+  each injecting a fraction `g` of the bus and each loop's gain bounded by
+  `G < 1`, the worst round trip is `N g^2 G^2`, and `g` is bounded so that stays
+  **at or below 0.25** - 12 dB of margin - at every parameter setting including
+  maximum Resonance. `sympatheticAmount` continues to scale the coupling and
+  still switches it off completely at zero.
+
+  **The step's headline is smaller than it was written to be.** At the shipping
+  `sympatheticAmount = 0.20` the two notes already interact at **-36.1 dB over
+  0-1.5 s and -31.4 dB over 10-12 s** (`p4_misc`), through the six strings left
+  open, so the -26 dB target is 10 dB of new coupling on top of existing
+  coupling, not 42 dB on top of nothing. What genuinely has no path is a voicing
+  that leaves nothing open, and that is the case the verification must lead with.
+  *Closes gap 8.* Last because it is the only step that removes a structural
+  stability guarantee. **Verified by** `testFingeredStringsShareTheBridge`:
+  **first**, on a chord that fingers all eight strings, `||chord - sum of the
+  eight singles|| / ||sum||` is **at or above -26 dB**, which is the case with no
+  existing path at all; then, at `sympatheticAmount = 0.20`, notes 40 and 47
+  rendered separately and together give the same ratio **at or above -26 dB**
+  over 0-1.5 s at velocities 0.02, 0.20 and 0.90 (today -36.1, -36.0 and
+  -36.1 dB - **not** the -68.2/-72.0/-56.4 dB first recorded, which were
+  measured on a decayed 10-12 s window and on `sympatheticAmount = 0`); the same
+  ratio at 10-12 s is **no more than 3 dB above** the ratio over 0-1.5 s, so the
+  coupling is lossy rather than regenerative; **a single note at
+  `sympatheticAmount = 0.20` renders within 0.05 dB of today's, band by band and
+  in T60**, which is the assertion that catches the self-term and without which
+  this step can silently retune the whole instrument; an eight-string chord at
+  full velocity stays finite and inside the existing output bound over a 30 s
+  render; at `sympatheticAmount = 0` the two-note render is bit-identical to the
+  sum; and the alias floor above 12 kHz stays **at least 150 dB** below the
+  spectral peak (today 155.1 dB).
+
+### Considered and not planned
+
+- **Fretted intonation: the fret-1-sharp residual a saddle setback leaves
+  behind. Scheduled as step 4, struck under review because its own physics does
+  not reach its own test.** The plan was to lengthen the path by the action
+  height's kink, `dL = (h^2/2)(1/L_n + 1/(L - L_n))` with `L_n = L/2^(n/12)`,
+  raise the tension by `dT = E A dL / L`, take `df/f = dT/2T`, and then solve a
+  per-string saddle setback that nulls fret 12 - the test asserting fret 1 sharp
+  by 2.0 to 8.0 cents. Carrying that arithmetic out (`p5_pitch`) with the step's
+  own action ramp (0.4 mm at fret 1 to 1.6 mm at fret 12), the step's own
+  `EA/T = 139` and the step's own fret-12 solve gives a residual of **+0.295
+  cents at fret 1, +0.036 at fret 5 and -0.001 at fret 12**, on a solved setback
+  of 0.51 mm. The asserted 2.0 to 8.0 cents is between seven and twenty-seven
+  times what the geometry produces. Reaching it needs either a 1.04 mm
+  first-fret action, which is unplayable, or moving the deflection span from
+  nut-to-fret to finger-behind-fret - which does raise fret 1 to +2.15 cents raw
+  but then solves an **11.4 mm** saddle setback against a real instrument's one
+  to four, and leaves frets 2 through 7 **flat** by up to 1.75 cents, breaking
+  the step's own monotone-decreasing assertion and inverting the sign of the
+  effect it exists to produce. Either way a fudge factor would be doing the
+  work.
+
+  It would also be inaudible and unmeasurable. A 0.3 cent position-dependent
+  difference between the same interval at position 0 and position 12 beats with
+  a period of about thirty seconds, against a test asserting at least 1.5 cents.
+  And it sits below the engine's own instrumentation: the suite's
+  `measureFrequency` runs a 0.5-cent grid and disagrees with a fundamental-only
+  estimator by up to 2.7 cents on the low strings because of inharmonicity, so
+  the effect could not be measured even if it were added. Gap 4 stays in the
+  list above as a true statement about the engine. If it is ever revisited, the
+  mechanism worth modelling is **nut height**, not saddle setback - first-fret
+  sharpness on real instruments is a nut problem, which is why the Buzz Feiten
+  system compensates the nut - and it needs a reference measurement of fretted
+  pitch against fret number that this repository does not have.
+- **The amplifier's tone stack, cabinet and microphone choice, push-pull output
+  stage and speaker nonlinearity.** All four are real, named, published
+  mechanisms Electry does not have: the passive tone stack in closed form (Yeh
+  and Smith, DAFx-06,
+  [paper](https://ccrma.stanford.edu/~dtyeh/papers/yeh06_dafx.pdf)), the
+  push-pull stage with its output transformer and the loudspeaker's influence
+  (Macak and Schimmel, DAFx-11,
+  [record](https://www.fit.vut.cz/research/result/c73701/.en)), the loudspeaker
+  as a reactive load on a damping-factor-of-one amplifier
+  ([Quilter](https://www.quilterlabs.com/blogs/news/reactive-loads-for-guitar-amps)),
+  and the speaker's own nonlinearity (Yeh, Bank and Karjalainen, DAFx-08,
+  [paper](http://legacy.spa.aalto.fi/dafx08/papers/dafx08_17.pdf)). Together
+  they are a whole pass's work, and both lines of evidence this pass rests on
+  point at the player and the string instead. The amplifier is also bypassable
+  and replaceable by a third-party sim; the string is not. Scheduled next, with
+  the tone stack first because it is closed-form.
+- **Single-string bend, and the bend's trajectory.** The wheel remains a bar.
+  Scoping it to the fingered string needs a decision about which string is "the"
+  bent one in a chord, which is the musical-intent layer the previous pass
+  deliberately deferred along with the chord recogniser. The exponential glide
+  (`10.5 cents of a 200-cent bend in the first 5 ms`, and the last 1.5% taking
+  from 200 ms to 600 ms) measures as subtle, and the same one-pole is shared
+  with the sympathetic retune and the resonance follower, so replacing it is
+  wider than one step. Step 4 does replace the law on the vibrato onset, which
+  is the case where the step in the derivative is most exposed.
+- **Per-string tuning, capo and string count.** Nearly free in this
+  architecture - every voice already solves its decay targets, dispersion fit
+  and compliance from an open frequency - and it would let one engine cover
+  standard six-string and drop-D territory it cannot reach at all. It is a
+  feature axis rather than a realism one, and the research session's search
+  budget ran out before MODO BASS 2's tuning controls could be checked, so it is
+  not scoped yet.
+- **Cable capacitance and volume-pot loading.** The pickup's resonance is set by
+  the total capacitance hanging off it, most of which is the cable (commonly
+  300-700 pF), and its height by the volume pot, tone pot and amplifier input
+  resistance
+  ([shootoutguitarcables](http://www.shootoutguitarcables.com/guitar-cables-explained/capacitance-resonant-frequency.html),
+  [Lemme](http://buildyourguitar.com/resources/lemme/)). This is real and cheap,
+  and it is what makes rolling a real guitar's volume back soften the attack
+  rather than only lower it. It needs two more parameters and it belongs in the
+  same pass as the other pickup-circuit work, not split across two.
+- **Eddy-current losses in pole pieces, magnets and covers**, which make the
+  pickup's inductance frequency-dependent and its resonance less peaky than a
+  constant-coefficient second-order section
+  ([Bedlam Guitars](https://bedlamguitars.wordpress.com/technical-info/pickup-inductance/)).
+  Correct criticism, but fitting it needs a reference measurement the repository
+  does not have.
+- **Dead spots as a frequency rather than a fret number.** The centres at
+  `ElectryEngine.cpp:1295-1308` are eight hard-coded fret integers, independent
+  of scale length, gauge, tuning and bend, where a dead spot is the neck's first
+  bending mode absorbing a fixed *frequency*. Measured, the mechanism works at
+  `construction = 1.0` (decay 8.08 s at fret 0, 5.82 s at fret 7, 8.74 s at
+  fret 14) and is entirely buried at the shipping default `construction = 0`
+  (11.55 s rising monotonically to 19.83 s, no dip at all). Fixing where it sits
+  therefore changes nothing a user hears until that control is re-voiced, and
+  the two belong together.
+- **The dispersion re-fit's bursts on String Gauge and Scale Length sweeps.**
+  Measured at -15.0 dB and -20.0 dB against a static note's -63.4 dB, from the
+  coarse two-pass grid search at :1790-1831 stepping eight allpass coefficients
+  inside a live loop. It is a genuine defect, but it only sounds while
+  automating two controls that do not move on a real instrument, and the fix is
+  a numerical one - a continuous or interpolated fit - rather than a change to
+  what the instrument sounds like when played.
+- **Note-off damping that varies with string, articulation and hand.** One
+  hard-coded 60 ms T60 and 22 ms ramp at :2832-2837 stand in for a lifting
+  finger, a dropping palm, a choked chord and an open string the fretting hand
+  cannot reach. Measured spread across five octaves and the full range of string
+  mass is 18% (93 ms at note 28, 79 ms at note 86), and it is identical for
+  Sustain, Palm Mute, Harmonics and Dead because the code never reads
+  `playStyle`. Rated subtle by the audit and cut against the seven above.
+- **Position-shift and release squeaks from the fretting hand's own movement.**
+  The step-1 hand model of the previous pass knows when and how far the hand
+  moves, and the slide work already implements a velocity-dependent winding
+  friction band, so wiring the second to the first is a routing change with a
+  good expected return
+  ([Impact Soundworks](https://impactsoundworks.com/docs/Shreddage%203%20Stratus%20Free%20Manual.pdf)).
+  It is cut only for budget and is the first candidate for the next pass after
+  the amplifier.
+- **Magnetic damping of the string ("Strat-itis").** Not implemented, and should
+  not be on current evidence: the one experimental study found reports the
+  magnet "exhibited no observable effects on the string's vibration that could
+  be interpreted as having a damping effect", only a small reduction of the
+  partials whose node sits over the magnet. Recorded here so the next pass does
+  not spend effort on forum consensus. If it is ever pursued, Zollner's
+  *Physik der Elektrogitarre* chapters 3-5 are the primary source and must be
+  read directly.
