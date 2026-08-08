@@ -144,6 +144,8 @@ void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
     parameterSmoothing_ = 1.0f - std::exp(-inverseSampleRate_ / 0.025f);
     airAttackCoefficient_ = 1.0f - std::exp(-inverseSampleRate_ / 0.004f);
     onsetAirMultiplier_ = std::exp(-inverseSampleRate_ / 0.085f);
+    abductionCoefficient_ = 1.0f - std::exp(-static_cast<float>(controlPeriod)
+                                            * inverseSampleRate_ / 0.050f);
     scoopMultiplier_ = std::exp(-static_cast<float>(controlPeriod) * inverseSampleRate_ / 0.072f);
 
     // Everything below is expressed as a corner frequency or a time constant so
@@ -848,10 +850,40 @@ void VoiceEngine::noteOff(int midiNote)
 
     for (auto& voice : voices_)
         if (voice.active && voice.rootMidi == midiNote)
-            voice.releasing = true;
+            beginRelease(voice);
     updateIntonationRoot();
     if (soundingRoot_ == midiNote)
         soundingRoot_ = -1;
+}
+
+/** A note-off is a laryngeal gesture, not the removal of a drive. The folds
+    move at the offset, and which way they move is the phonation the note was
+    already in: an aspirate offset abducts them, so transglottal flow continues
+    while the oscillation stops and the note tapers from voice into breath; a
+    glottal offset ends "while the folds are still approximated", so the flow
+    is choked and the breath dies with the voice or before it.
+
+    The engine's two adduction controls are Tension, which is the medial
+    compression, and Breath, which is the size of the glottal chink; they are
+    weighted alike because there is no third one. The gesture itself is an area
+    ratio: a full aspirate offset opens the glottis to about twice the area it
+    phonated at, a full glottal offset closes it to about half. Aspiration
+    amplitude follows the square of the transglottal flow and the flow follows
+    the area, so the area ratio reaches the aspiration as its square -- 4 at
+    full abduction, 1 at neutral adduction, 1/4 at a pressed offset.
+
+    Latched here rather than read per sample, because the release is the
+    phonation the note was in at the instant the key came up, not the phonation
+    the knobs drift to afterwards.
+*/
+void VoiceEngine::beginRelease(Voice& voice) noexcept
+{
+    if (voice.releasing)
+        return;
+    voice.releasing = true;
+    const float adduction = clampUnit(0.5f * (1.0f - smoothedBreath_)
+                                      + 0.5f * smoothedTension_);
+    voice.abductionTarget = std::exp2(2.0f * (1.0f - 2.0f * adduction));
 }
 
 void VoiceEngine::allNotesOff()
@@ -864,7 +896,7 @@ void VoiceEngine::allNotesOff()
     soundingRoot_ = -1;
     for (auto& voice : voices_)
         if (voice.active)
-            voice.releasing = true;
+            beginRelease(voice);
 }
 
 void VoiceEngine::allSoundOff() noexcept
@@ -901,6 +933,8 @@ void VoiceEngine::silenceVoice(Voice& voice) noexcept
     voice.releasing = false;
     voice.envelope = 0.0f;
     voice.airEnvelope = 0.0f;
+    voice.abduction = 1.0f;
+    voice.abductionTarget = 1.0f;
     voice.sourceTilt = 0.0f;
     voice.nasalX1 = voice.nasalX2 = 0.0f;
     voice.nasalY1 = voice.nasalY2 = 0.0f;
@@ -1333,7 +1367,11 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
 
     voice.irregularity = voice.midiNote < 52
         ? (1.0f - p.tension) * p.humanize * 0.035f : 0.0f;
-    voice.airShape = aspirationScale_ * aspirationLevel * (0.22f + 0.78f * voice.onsetAir);
+    // The offset's area gesture. It is a no-op on a held note, where the
+    // target and the state are both 1.
+    voice.abduction += abductionCoefficient_ * (voice.abductionTarget - voice.abduction);
+    voice.airShape = aspirationScale_ * aspirationLevel * (0.22f + 0.78f * voice.onsetAir)
+        * voice.abduction;
 
     const float anatomy = 1.0f + p.humanize * (singer.anatomy
         + 0.0045f * formantDrift + 0.0022f * sharedFormant);
@@ -1613,8 +1651,13 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
 
         if (releasing)
         {
+            // Both components are driven by the same decaying subglottal
+            // pressure, so once the larynx stops moving they fall together.
+            // What separates them at an offset is the area gesture, which
+            // rides on airShape at the control rate; the squared envelope
+            // this replaced made every note die cleaner than it lived.
             envelope *= releaseMultiplier_;
-            airEnvelope *= airReleaseMultiplier_;
+            airEnvelope *= releaseMultiplier_;
         }
         else
         {
@@ -1738,7 +1781,6 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
 
     blockParameters_ = snapshotParameters();
     releaseMultiplier_ = std::exp(-inverseSampleRate_ / (0.105f + 0.19f * blockParameters_.humanize));
-    airReleaseMultiplier_ = releaseMultiplier_ * releaseMultiplier_;
     // shimmerScale_ renormalises the smoother's output for the sample rate;
     // folding it in here keeps the per-sample loop untouched.
     shimmerDepth_ = 0.026f * blockParameters_.humanize * shimmerScale_;

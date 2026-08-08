@@ -2416,6 +2416,114 @@ void testDynamicRange()
             "the dynamic still moves the presence band no faster than the level");
 }
 
+/** A released note is a laryngeal gesture, not the removal of a drive.
+
+    At an aspirate offset the folds abduct: transglottal flow continues while
+    the oscillation stops, so the voiced component dies first and the turbulent
+    one outlives it, and the note "tapers from voice into breath". At a glottal
+    offset the note ends "while the folds are still approximated", the flow is
+    choked, and the breath goes with the voice. Which one a note gets is not a
+    preference; it is the phonation the note was already in.
+
+    The engine used to square the air envelope against the voiced one, so every
+    note got cleaner as it died. On the Breath 1.00, Tension 0.15, Humanize 0.60
+    patch the air-to-voiced ratio 300 ms after note-off measured 12.53 dB
+    *below* the ratio the note was sounding at.
+
+    The reference is the last 25 ms of the held note rather than the first 25 ms
+    after note-off: the offset gesture runs on a 50 ms time constant, so a
+    window that starts at the note-off already contains half a time constant of
+    the thing being measured. On the engine this replaced the two readings agree
+    to 0.33 dB, because nothing about the old release moved at the note-off.
+*/
+void testReleaseAerodynamics()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr int window = 1200;              // 25 ms
+    constexpr double c4 = 261.6255653;
+
+    /** Air-to-voiced ratio in dB over the 25 ms window starting at @c start:
+        harmonics 1-12 of C4 in +/-45 Hz bands against 5-18 kHz. */
+    const auto ratioAt = [&] (const std::vector<float>& samples, int start)
+    {
+        const auto air = std::pow (10.0, windowedBandDb (samples, start, window,
+                                                         sampleRate, 5000.0, 18000.0) / 10.0);
+        double voiced = 0.0;
+        for (int harmonic = 1; harmonic <= 12; ++harmonic)
+        {
+            const auto centre = c4 * harmonic;
+            voiced += std::pow (10.0, windowedBandDb (samples, start, window, sampleRate,
+                                                      centre - 45.0, centre + 45.0) / 10.0);
+        }
+        return 10.0 * std::log10 (std::max (air, 1.0e-300) / std::max (voiced, 1.0e-300));
+    };
+
+    struct Offset
+    {
+        double sounding;
+        double after300;
+        double tailSeconds;
+    };
+
+    const auto offsetAt = [&] (float breath, float tension)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = makeParameters (0, 0, 0, 0);
+        parameters.vibrato = 0.0f;
+        parameters.room = 0.0f;
+        parameters.breath = breath;
+        parameters.tension = tension;
+        parameters.humanize = 0.60f;
+        engine.setParameters (parameters);
+
+        engine.noteOn (60, 0.80f);
+        const auto held = renderMono (engine, static_cast<int> (sampleRate * 1.0));
+        engine.noteOff (60);
+        const auto release = renderMono (engine, static_cast<int> (sampleRate * 0.5));
+
+        double tail = 0.5;
+        while (tail < 12.0 && engine.getActiveVoiceCount() > 0)
+        {
+            renderMono (engine, static_cast<int> (sampleRate * 0.1));
+            tail += 0.1;
+        }
+
+        const Offset result {
+            ratioAt (held, static_cast<int> (held.size()) - window),
+            ratioAt (release, static_cast<int> (sampleRate * 0.300)),
+            tail
+        };
+        std::cout << "offset at Breath " << std::fixed << std::setprecision (2) << breath
+                  << ", Tension " << tension << ": sounding " << result.sounding
+                  << " dB, +300 ms " << result.after300 << " dB, change "
+                  << (result.after300 - result.sounding) << " dB, tail "
+                  << std::setprecision (1) << result.tailSeconds << " s\n";
+        return result;
+    };
+
+    // Aspirate offset. Measured +9.93 dB, against -12.53 dB before this step.
+    const auto aspirate = offsetAt (1.00f, 0.15f);
+    expect (aspirate.after300 - aspirate.sounding >= 6.0,
+            "a breathy, lax note still gets cleaner as it dies instead of breathier");
+
+    // Glottal offset, at Breath 0.28 rather than 0.10: below about a fifth of
+    // the Breath range the 5-18 kHz band is not purely air, and the voiced
+    // floor -- the wavetable's own harmonics, 82.30 dB down at Breath 0.00 --
+    // overtakes the aspiration inside the release. At Breath 0.28 the margin
+    // over that floor is 35.01 dB. Measured -7.65 dB.
+    const auto glottal = offsetAt (0.28f, 0.90f);
+    expect (glottal.after300 - glottal.sounding <= 2.0,
+            "a pressed note no longer stops cleanly");
+
+    // The breath may not be bought with a tail that never frees its voice.
+    // Both components now decay on the voiced time constant, so the release
+    // ends where it always did: measured 2.1 s on both legs.
+    expect (aspirate.tailSeconds <= 3.8 && glottal.tailSeconds <= 3.8,
+            "the aspirate offset left its voice sounding past the advertised tail");
+}
+
 /** A vowel change is a jaw and a tongue moving, not a de-zipper.
 
     The 1.1 formant glides ran on 16, 9, 5, 4 and 3 ms time constants, so a
@@ -3410,6 +3518,7 @@ int main()
     testOnsetSpectrum();
     testVelocityShapesOnset();
     testDynamicRange();
+    testReleaseAerodynamics();
     testCoarticulationTiming();
     testSingersFormantCluster();
     testFactoryPresets();

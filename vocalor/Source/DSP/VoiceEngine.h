@@ -240,6 +240,14 @@ private:
         float airEnvelope { 0.0f };
         float onsetAir { 1.0f };
         float airShape { 1.0f };
+        // The offset gesture. A released note is not simply a note whose drive
+        // is removed: the folds move, and which way they move is the phonation
+        // the note was in. `abduction` is the glottal-area gesture in progress,
+        // as a gain on the aspiration, and `abductionTarget` is where it is
+        // headed, latched from the adduction at the moment of note-off. Both
+        // are 1 while the note is held, so nothing about a sounding note moves.
+        float abduction { 1.0f };
+        float abductionTarget { 1.0f };
         float pitchScoop { 0.0f };
         float glideCents { 0.0f };
         // Distance from equal temperament this voice is currently singing, in
@@ -316,6 +324,7 @@ private:
     void updateVoiceControl(Voice& voice, const EngineParameters& parameters);
     void renderVoice(Voice& voice, const EngineParameters& parameters, int count);
     void silenceVoice(Voice& voice) noexcept;
+    void beginRelease(Voice& voice) noexcept;
     int voicesForMode(const EngineParameters& parameters) const noexcept;
     int chordMidiForSinger(int rootMidi, int singer, const EngineParameters& parameters) const noexcept;
     int findFreeVoice() const noexcept;
@@ -370,7 +379,10 @@ private:
     float parameterSmoothing_ { 0.0f };
     float airAttackCoefficient_ { 0.0f };
     float releaseMultiplier_ { 0.0f };
-    float airReleaseMultiplier_ { 0.0f };
+    // How fast the offset's glottal-area gesture completes, at the control
+    // rate. A laryngeal abduction or adduction gesture runs its excursion in
+    // 50-100 ms, so a one-pole at 50 ms is 86 % of the way there at 100 ms.
+    float abductionCoefficient_ { 0.0f };
     float onsetAirMultiplier_ { 0.0f };
     // How far below the block's tension the glottal source starts at a note-on,
     // as a fraction of it. The folds begin abducted and lax and adduct over the

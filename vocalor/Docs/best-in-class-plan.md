@@ -1341,7 +1341,7 @@ have been built at all as written.
      is 1.23 dB, so it is the extent and not the modulation. The other eleven
      move between −0.07 and +0.59 dB and were left alone.
 
-- [ ] **4. Let the air outlive the voice at an aspirate offset.** Replace
+- [x] **4. Let the air outlive the voice at an aspirate offset.** Replace
   `airReleaseMultiplier_ = releaseMultiplier_ * releaseMultiplier_`
   (`VoiceEngine.cpp:1677`) with a coefficient derived from the adduction the
   note is already in. At a released note the folds abduct: transglottal flow
@@ -1358,20 +1358,84 @@ have been built at all as written.
   48 kHz; voiced energy from harmonics 1–12 in ±45 Hz bands, air energy from
   5–18 kHz. At Breath 1.00, Tension 0.15, Humanize 0.60 the air-to-voiced ratio
   300 ms after note-off must be at least 6 dB *above* its value at note-off;
-  today it is **12.32 dB below**. The existing `testReleaseCompletes` bound must
-  still hold: the note must reach silence and free its voice.
+  today it is ~~**12.32 dB below**~~ **12.53 dB below**, re-measured on the
+  engine steps 1–3 left behind. **The reference window is the last 25 ms of the
+  held note, not the first 25 ms after the note-off**: the offset gesture the
+  step installs runs on a 50 ms time constant, so a window that starts at the
+  note-off contains half a time constant of the thing being measured. On the
+  engine this replaced the two conventions agree to 0.33 dB (−34.18 against
+  −33.85 dB), because nothing about the old release moved at the note-off; after
+  the change they read +9.93 and +5.58 dB, so the choice decides the assertion
+  and has to be stated. The existing `testReleaseCompletes` bound must still
+  hold: the note must reach silence and free its voice.
 
   **The pressed-offset control has to change its Breath setting.** The audit
   put it at Breath 0.10, where the 5–18 kHz band is not purely air: measured
-  against a Breath 0.00 render, that band is 83.12 dB below harmonics 1–12 with
-  no aspiration at all and 59.12 dB below at Breath 0.10, and because the air
-  falls at twice the voiced rate the fixed voiced floor overtakes it about
-  500 ms into the release — at the +300 ms point the margin is only about 8 dB,
-  so a "must not rise by more than 2 dB" assertion there is partly measuring
-  harmonics against harmonics. Run the pressed control at **Breath 0.28,
-  Tension 0.90** instead, where the margin is 33 dB, and keep the same
-  assertion: the ratio must not rise by more than 2 dB, so a pressed note still
-  stops cleanly.
+  against a Breath 0.00 render, that band is ~~83.12~~ **82.30** dB below
+  harmonics 1–12 with no aspiration at all and ~~59.12~~ **56.61** dB below at
+  Breath 0.10, and because the air falls at twice the voiced rate the fixed
+  voiced floor overtakes it about 500 ms into the release — at the +300 ms point
+  the margin is only about 8 dB, so a "must not rise by more than 2 dB"
+  assertion there is partly measuring harmonics against harmonics. Run the
+  pressed control at **Breath 0.28, Tension 0.90** instead, where the margin is
+  ~~33~~ **35.01** dB, and keep the same assertion: the ratio must not rise by
+  more than 2 dB, so a pressed note still stops cleanly.
+
+  *What actually shipped*: the mechanism, in one commit, but as two terms
+  rather than as one coefficient, because a coefficient alone cannot reach the
+  step's own number. `airReleaseMultiplier_` is deleted; the air envelope now
+  decays on `releaseMultiplier_`, the same constant as the voice, and the whole
+  of the offset lives in a new per-voice glottal-area gesture, `voice.abduction`,
+  which multiplies `airShape` at the control rate. Its target is latched at the
+  note-off by a new `beginRelease()` from the adduction the note is in —
+  `0.5 (1 − Breath) + 0.5 Tension`, the engine's two adduction controls weighted
+  alike because there is no third one — and it relaxes onto it with a 50 ms
+  one-pole, which is where a laryngeal abduction gesture's 50–100 ms excursion
+  puts it. Three things came out other than as written.
+
+  1. **A single air-release coefficient cannot deliver 6 dB without leaving a
+     voice sounding for five seconds.** Written literally — an adduction-derived
+     exponent `k` on `releaseMultiplier_`, today's `k = 2` at the pressed end —
+     the ratio moves by `8.686 × 0.3 × (1 − k)/τᵥ` dB, and at Humanize 0.60
+     (τᵥ = 219 ms) the air time constant it needs is longer than the release
+     itself. Measured on that build: **k = 0.500 gives +5.96 dB and holds the
+     voice 4.2 s; k = 0.450 gives +6.57 dB at 4.6 s; k = 0.400 gives +7.18 dB
+     at 5.2 s.** So the step's own 6 dB is unreachable with any margin under
+     the 3.8 s `testReleaseCompletes` allows, and a breathy patch would hold
+     its slots for the whole of it.
+
+     What ships instead is the aerodynamics the step's own prose names: the
+     turbulent and the voiced component are driven by the same decaying
+     subglottal pressure, so once the larynx stops moving they fall **together**
+     (k = 1), and everything that separates them is the area gesture. Aspiration
+     amplitude follows the square of the transglottal flow and the flow follows
+     the area, so an area ratio of 2 at a full aspirate offset and 1/2 at a full
+     glottal one reaches the aspiration as **4, 1 and 1/4** —
+     `exp2(2 (1 − 2 × adduction))`. Measured: **+9.93 dB** at Breath 1.00 /
+     Tension 0.15 against the −12.53 dB it read before, **−7.65 dB** at Breath
+     0.28 / Tension 0.90, and the tail is **2.1 s on both legs, unchanged**,
+     because the voiced envelope was always the binding one for freeing a voice.
+  2. **"As short as it is today" survives at the +300 ms point but not as the
+     same curve.** A pressed offset now chokes the flow over the gesture's 50 ms
+     and then tracks the voice, rather than falling at twice the voiced rate
+     forever: −7.65 dB at 300 ms against −12.58 dB before, and −6.81 against
+     −19.55 dB at 500 ms. That is the more faithful shape — a glottal offset
+     closes the glottis, it does not keep halving the flow for a second — and it
+     is what the assertion was written to allow. The step's own control passes
+     either way, so it was checked against a wrong implementation instead: with
+     the gesture applied blind to adduction (every note gets the aspirate
+     offset) the pressed leg reads **+11.81 dB** and fails.
+  3. **The release is audibly a breath now, not only a ratio.** On the Breath
+     1.00 patch the 5–18 kHz band *rises* after the key comes up — +3.85 dB at
+     the note-off, peaking **+6.74 dB at 50 ms**, back through the sounding
+     level at about 250 ms — which is the aspirate offset as a gesture rather
+     than as an accounting change. The full-band peak does not rise (0.1032
+     against 0.1235 held), so nothing about the amplitude guardrails moves. A
+     held note is bit-unchanged: `abduction` and its target are both exactly 1
+     until `beginRelease()`, and per-sample cost is unchanged at 683–714
+     ns/sample across three `testRoughPerformance` runs, since the gesture is
+     control-rate and the render loop lost a coefficient rather than gaining
+     one.
 
 - [ ] **5. Modulate the aspiration with the glottal cycle.** *(Keeps its number,
   but builds last, after steps 7 and 8: the mechanism is right and cheap, and
