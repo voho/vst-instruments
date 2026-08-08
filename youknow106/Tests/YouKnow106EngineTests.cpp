@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -171,6 +172,18 @@ struct YouKnow106TestAccess
     static float vcaControl(const YouKnow106Engine& engine, int slot) noexcept
     {
         return engine.voices_[static_cast<std::size_t>(slot)].vcaControl;
+    }
+
+    static float vcaControlTarget(const YouKnow106Engine& engine,
+                                  int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].vcaControlTarget;
+    }
+
+    static float voiceVcaGain(const YouKnow106Engine& engine,
+                              int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].vca;
     }
 
     static float sharedVca(const YouKnow106Engine& engine) noexcept
@@ -2901,6 +2914,268 @@ void testRetriggerDoesNotTouchVcaHoldBeforeConverterScan()
            "a note event advanced the converter scheduler");
 }
 
+void testNoteOnPlayingLatencyAcrossConverterPhases()
+{
+    // At 48 kHz, one 4.2 ms converter pass is 201.6 host samples. The host
+    // boundary and scan phase therefore realign after five passes, giving
+    // 1,008 distinct event phases. Advance a live, silent engine through that
+    // whole cycle rather than injecting private phase state: this keeps the
+    // converter cursor, free-running DCOs and analogue histories coherent.
+    constexpr double sampleRate = 48000.0;
+    constexpr int phaseCycleSamples = 1008;
+    constexpr int preRollSamples = 96000;
+    constexpr int maximumObservedLatency = 512;
+    constexpr float outputOnsetThreshold = 1.0e-4f;
+    constexpr float oneTimeConstant = 0.63212056f;
+
+    struct Observation
+    {
+        int pitchWrite { -1 };
+        int vcaTargetWrite { -1 };
+        int firstVcaGain { -1 };
+        int heldOneTimeConstant { -1 };
+        int outputOnsetProxy { -1 };
+    };
+
+    std::array<std::vector<Observation>, 2> observations;
+    for (auto& values : observations)
+        values.reserve(6 * phaseCycleSamples);
+
+    for (int quality = 0; quality < 2; ++quality)
+    {
+        const bool oversampled = quality != 0;
+        for (int measuredSlot = 0; measuredSlot < 6; ++measuredSlot)
+        {
+            YouKnow106Engine timeline;
+            timeline.prepare(sampleRate, blockSize, oversampled);
+            auto parameters = plainPatch();
+            parameters.vcaMode = VcaMode::Envelope;
+            parameters.attack = 0.0f;
+            timeline.setParameters(parameters);
+
+            // Seed Poly-1's per-card note memory through the public assigner,
+            // then use the hard all-notes-off path to return to exact silence.
+            // Replaying a card's remembered physical key selects that card
+            // without leaving dummy voices in the audible render. Transpose
+            // makes every measured board pitch C4 and also guarantees that the
+            // voice CPU has a changed pitch to consume at its ordered write.
+            for (int slot = 0; slot < 6; ++slot)
+                timeline.noteOn(48 + slot, 1.0f);
+            timeline.allNotesOff();
+            parameters.keyTranspose = 12 - measuredSlot;
+            timeline.setParameters(parameters);
+            const auto preRoll = renderExact(timeline, preRollSamples);
+            expect(peakOf(preRoll.left, 0) == 0.0
+                       && peakOf(preRoll.right, 0) == 0.0,
+                   "the playing-latency pre-roll was not exact silence");
+
+            const double cycleStartPhase =
+                YouKnow106TestAccess::controlScanPhase(timeline);
+            auto probe = std::make_unique<YouKnow106Engine>();
+            for (int eventPhase = 0; eventPhase < phaseCycleSamples; ++eventPhase)
+            {
+                *probe = timeline;
+                probe->noteOn(48 + measuredSlot, 1.0f);
+                expect(YouKnow106TestAccess::voiceActive(*probe, measuredSlot)
+                           && YouKnow106TestAccess::lastVoiceMidi(
+                                  *probe, measuredSlot) == 60,
+                       "the latency probe did not reach its requested card");
+                expect(YouKnow106TestAccess::dcoResetPending(
+                           *probe, measuredSlot),
+                       "the latency probe did not arm its pitch write");
+                expect(YouKnow106TestAccess::vcaControlTarget(
+                           *probe, measuredSlot) == 0.0f
+                           && YouKnow106TestAccess::vcaControl(
+                                  *probe, measuredSlot) == 0.0f
+                           && YouKnow106TestAccess::voiceVcaGain(
+                                  *probe, measuredSlot) == 0.0f,
+                       "Note On bypassed the scheduled voice-VCA path");
+
+                Observation measured;
+                double peakBeforeCurrentSample = 0.0;
+                for (int sample = 0; sample < maximumObservedLatency; ++sample)
+                {
+                    float left = 0.0f;
+                    float right = 0.0f;
+                    probe->process(&left, &right, 1);
+                    const double outputPeak = std::max(
+                        std::abs(static_cast<double>(left)),
+                        std::abs(static_cast<double>(right)));
+
+                    if (measured.pitchWrite < 0
+                        && !YouKnow106TestAccess::dcoResetPending(
+                            *probe, measuredSlot))
+                        measured.pitchWrite = sample;
+                    if (measured.vcaTargetWrite < 0
+                        && YouKnow106TestAccess::vcaControlTarget(
+                            *probe, measuredSlot) > 0.5f)
+                    {
+                        measured.vcaTargetWrite = sample;
+                        expect(peakBeforeCurrentSample == 0.0,
+                               "audio preceded the ENV-mode voice-VCA write");
+                    }
+                    if (measured.firstVcaGain < 0
+                        && YouKnow106TestAccess::voiceVcaGain(
+                            *probe, measuredSlot) > 0.0f)
+                        measured.firstVcaGain = sample;
+                    if (measured.heldOneTimeConstant < 0
+                        && YouKnow106TestAccess::vcaControl(
+                            *probe, measuredSlot) >= oneTimeConstant)
+                        measured.heldOneTimeConstant = sample;
+                    if (measured.outputOnsetProxy < 0
+                        && outputPeak > outputOnsetThreshold)
+                        measured.outputOnsetProxy = sample;
+
+                    peakBeforeCurrentSample =
+                        std::max(peakBeforeCurrentSample, outputPeak);
+                    if (measured.pitchWrite >= 0
+                        && measured.vcaTargetWrite >= 0
+                        && measured.firstVcaGain >= 0
+                        && measured.heldOneTimeConstant >= 0
+                        && measured.outputOnsetProxy >= 0)
+                        break;
+                }
+
+                const std::string context =
+                    " (HQ " + std::string(oversampled ? "on" : "off")
+                    + ", card " + std::to_string(measuredSlot)
+                    + ", phase " + std::to_string(eventPhase) + ")";
+                expect(measured.pitchWrite >= 0,
+                       "no pitch write was observed" + context);
+                expect(measured.vcaTargetWrite >= measured.pitchWrite,
+                       "the ENV-mode VCA write preceded its envelope tick"
+                           + context);
+                expect(measured.firstVcaGain >= measured.vcaTargetWrite,
+                       "the held VCA gain preceded its converter write"
+                           + context);
+                expect(measured.firstVcaGain == measured.vcaTargetWrite,
+                       "the first held VCA gain left its converter host sample"
+                           + context);
+                expect(measured.heldOneTimeConstant >= measured.firstVcaGain,
+                       "the held VCA crossed one time constant before turn-on"
+                           + context);
+                expect(measured.outputOnsetProxy >= measured.firstVcaGain,
+                       "the output threshold preceded nonzero VCA gain"
+                           + context);
+                expect(measured.pitchWrite <= 201,
+                       "the pitch write exceeded one 48 kHz scan pass"
+                           + context);
+                const int pitchToVca =
+                    measured.vcaTargetWrite - measured.pitchWrite;
+                constexpr std::array<int, 6> minimumPitchToVca {
+                    70, 78, 87, 96, 105, 113
+                };
+                constexpr std::array<int, 6> maximumPitchToVca {
+                    71, 79, 88, 97, 106, 114
+                };
+                expect(pitchToVca
+                           >= minimumPitchToVca[static_cast<std::size_t>(measuredSlot)]
+                           && pitchToVca
+                           <= maximumPitchToVca[static_cast<std::size_t>(measuredSlot)],
+                       "the card's Pitch-to-VoiceVca ordinal gap moved"
+                           + context);
+                const int targetToOneTimeConstant =
+                    measured.heldOneTimeConstant - measured.vcaTargetWrite;
+                expect(oversampled
+                           ? (targetToOneTimeConstant == 32
+                              || targetToOneTimeConstant == 33)
+                           : targetToOneTimeConstant == 32,
+                       "the 687 us voice-VCA hold milestone moved" + context);
+                expect(measured.outputOnsetProxy
+                           < measured.vcaTargetWrite + 96,
+                       "the declared output-onset proxy regressed by 2 ms"
+                           + context);
+                observations[static_cast<std::size_t>(quality)].push_back(measured);
+
+                float discardedLeft = 0.0f;
+                float discardedRight = 0.0f;
+                timeline.process(&discardedLeft, &discardedRight, 1);
+                expect(discardedLeft == 0.0f && discardedRight == 0.0f,
+                       "the silent phase timeline produced output");
+            }
+
+            expectNear(YouKnow106TestAccess::controlScanPhase(timeline),
+                       cycleStartPhase, 1.0e-10,
+                       "the 1,008-sample grid did not cover a complete scan cycle");
+        }
+    }
+
+    const auto summary = [](const std::vector<Observation>& values,
+                            int Observation::* member) {
+        std::vector<int> samples;
+        samples.reserve(values.size());
+        for (const auto& value : values)
+            samples.push_back(value.*member);
+        std::sort(samples.begin(), samples.end());
+        const double median = samples.size() % 2 != 0
+            ? static_cast<double>(samples[samples.size() / 2])
+            : 0.5 * static_cast<double>(samples[samples.size() / 2 - 1]
+                                      + samples[samples.size() / 2]);
+        return std::array<double, 3> {
+            static_cast<double>(samples.front()), median,
+            static_cast<double>(samples.back())
+        };
+    };
+
+    const auto expectSummary = [](const std::array<double, 3>& actual,
+                                  const std::array<double, 3>& expected,
+                                  double tolerance,
+                                  const std::string& label) {
+        for (std::size_t index = 0; index < actual.size(); ++index)
+            expectNear(actual[index], expected[index], tolerance,
+                       label + " latency summary moved");
+    };
+
+    for (int quality = 0; quality < 2; ++quality)
+    {
+        const auto& values = observations[static_cast<std::size_t>(quality)];
+        expect(values.size() == 6 * phaseCycleSamples,
+               "the playing-latency matrix is incomplete");
+        const std::string mode = quality != 0 ? "HQ-on" : "HQ-off";
+        expectSummary(summary(values, &Observation::pitchWrite),
+                      { 0.0, 100.0, 201.0 }, 0.0, mode + " Pitch-write");
+        expectSummary(summary(values, &Observation::vcaTargetWrite),
+                      { 70.0, 192.0, 315.0 }, 0.0,
+                      mode + " VoiceVca-write");
+        expectSummary(summary(values, &Observation::firstVcaGain),
+                      { 70.0, 192.0, 315.0 }, 0.0,
+                      mode + " first-VCA-gain");
+        expectSummary(summary(values, &Observation::heldOneTimeConstant),
+                      quality != 0
+                          ? std::array<double, 3> { 103.0, 225.0, 348.0 }
+                          : std::array<double, 3> { 102.0, 224.0, 347.0 },
+                      0.0, mode + " held-63.2-percent");
+        expectSummary(summary(values, &Observation::outputOnsetProxy),
+                      quality != 0
+                          ? std::array<double, 3> { 93.0, 216.0, 339.0 }
+                          : std::array<double, 3> { 90.0, 213.0, 335.0 },
+                      1.0, mode + " output-onset-proxy");
+    }
+    int maximumOnsetDifference = 0;
+    int maximumPitchDifference = 0;
+    int maximumTargetDifference = 0;
+    for (std::size_t index = 0; index < observations[0].size(); ++index)
+    {
+        maximumOnsetDifference = std::max(
+            maximumOnsetDifference,
+            std::abs(observations[0][index].outputOnsetProxy
+                     - observations[1][index].outputOnsetProxy));
+        maximumPitchDifference = std::max(
+            maximumPitchDifference,
+            std::abs(observations[0][index].pitchWrite
+                     - observations[1][index].pitchWrite));
+        maximumTargetDifference = std::max(
+            maximumTargetDifference,
+            std::abs(observations[0][index].vcaTargetWrite
+                     - observations[1][index].vcaTargetWrite));
+    }
+    expect(maximumPitchDifference == 201
+               && maximumTargetDifference == 201,
+           "the documented HQ scan-grid quantisation changed");
+    expect(std::abs(maximumOnsetDifference - 205) <= 2,
+           "the documented paired HQ onset-grid bound moved");
+}
+
 void testSilentVoiceDoesNotInventUnmeasuredVcaFeedthrough()
 {
     // VR30/R112 correct the BA662 signal-input offset; they are not the Tr20
@@ -4725,12 +5000,18 @@ void testSampleRateAndOversamplingConsistency()
     engine.prepare(48000.0, blockSize, true);
     expect(engine.getOversamplingFactor() == 4, "48 kHz does not run oversampled");
     const int reported = engine.getProcessingLatencySamples();
-    expect(reported > 0, "an oversampled engine reports no latency");
+    expect(reported == 24,
+           "the engine no longer reports its 24-host-sample DSP latency");
 
     // The reported figure has to stay put across every configuration: the
     // quality setting can move while the host is playing, and a plug-in that
     // renegotiated its latency mid-transport would make the host re-align
     // everything around it.
+    engine.prepare(96000.0, blockSize, true);
+    expect(engine.getOversamplingFactor() == 2,
+           "96 kHz does not use the two-times numerical path");
+    expect(engine.getProcessingLatencySamples() == reported,
+           "the reported latency moved on the two-times path");
     engine.prepare(192000.0, blockSize, true);
     expect(engine.getOversamplingFactor() == 1,
            "a high-rate host is oversampled unnecessarily");
@@ -5825,6 +6106,7 @@ int main()
     testFixedOutputBoundaryCorpus();
     testNotesWaitForTheSharedConverterScan();
     testRetriggerDoesNotTouchVcaHoldBeforeConverterScan();
+    testNoteOnPlayingLatencyAcrossConverterPhases();
     testSilentVoiceDoesNotInventUnmeasuredVcaFeedthrough();
     testCommonVcaHoldUsesJackBoardC7TimeConstant();
     testPwmHoldCrossesItsTwoSmoothingPoles();

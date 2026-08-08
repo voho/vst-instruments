@@ -1,6 +1,6 @@
 # Comparative fidelity assessment — YouKnow106 in the JUNO-106 emulation market
 
-**Assessed 2026-08-07.** This document places the project's fidelity and
+**Assessed 2026-08-09.** This document places the project's fidelity and
 sound-quality claims in the market of JUNO-106 (and sibling Juno-6/60)
 software emulations, on criteria that can be checked from public
 documentation and source code. It follows the same evidence discipline as
@@ -43,6 +43,7 @@ strongest competitor named.
 |---|---|---|
 | DCO pitch generation | 8 MHz reference divided by 16-bit timer integers — the hardware's own pitch quantisation (A4\@8' = 440.044 Hz), range switch as clock change, scanned restart semantics | None models timer quantisation. KR-106 uses continuous phase with the firmware's 8.8 portamento rate law; junox has an integer-period *artifact* |
 | Scanned control system | The p. 8 chart's exact 23-write order on a fractional 4.2 ms scheduler; per-destination hold networks, incl. the derived PWM (R117/C62, R116/C63) and SUB (R11/C1) slews; exact intra-pass timestamps declared open (OQ-08) rather than invented | KR-106: 4.2335 ms canonical tick plus per-slot DAC phase offsets from firmware cycle counting — it *claims* the timestamps this project deliberately leaves open; its offsets corroborate our provisional ~125 µs figure |
+| Playing latency | Exhaustive current-model characterization at 48 kHz: every one of the 1,008 host/scan boundary phases on all six cards, with Pitch write, ENV-mode VCA write, 687 µs hold milestone and a declared output-onset proxy reported separately from the fixed 24-sample host DSP report | KR-106 v2.5.12 says rebasing its DAC phase tables removed about 2 ms from tick-driven envelope/LFO updates. No like-for-like event-to-node/output distribution or original-JUNO capture is published in the surveyed open field |
 | Firmware envelope | Hash-scoped B-2 recurrence: 14-bit state, exact Q(v,c) three-partial multiply with the dropped low×low term, `E>>2` DAC truncation, byte-exact fixtures in the suite | KR-106: the same law at instruction level (cleanroom, j106roms lineage), cross-checked against MAME — parity on the digital law; no automated fixtures |
 | Firmware LFO/delay/portamento | Hash-scoped exact laws with regression vectors | KR-106: ROM-table reconstructions verified against four hardware captures — parity in kind |
 | VCF | IR3109 cascade behind the anchored 68 kΩ/560 Ω divider; jointly solved 4.83 Vpp/248.0 Hz self-oscillation endpoints; 992 Hz WIDTH anchor (tracking exactly 1.00); AS3109 700 µA control-current knee; R-2R carry INL on the converter write | KR-106: IR3109 TPT cascade with BA662 67:1 feedback physics, self-osc calibrated to a named unit, and a **4096-point measured DAC→Hz table from a real card** — a data asset this project matches only by derivation (within 30 cents of that table's shape after the knee fix) |
@@ -196,6 +197,42 @@ comparison above; and on the cutoff law KR-106 ships the measured table
 as a lookup, so that axis matches by construction on their side and by
 derivation on this one. Full tables, clips and caveats live on the
 published comparison page.
+
+## Playing latency — characterized, hardware timing still open
+
+**Added 2026-08-09.** The engine fixture advances a live scheduler one host
+sample at a time; it never writes a private scan phase. At 48 kHz the phase
+increment is 5/1008 of a pass per sample, so 1,008 boundaries cover the complete
+host/scan phase cycle over five 4.2 ms passes. Poly-1 note memory selects each
+physical card, followed by a two-second exact-silence pre-roll. The measured
+note is C4 through a saw-only, open-filter patch with ENV VCA, zero attack, full
+sustain, HPF I, chorus/noise/Unit Character off. Offsets are 0-based host
+samples from the timestamped Note On; each cell is min / median / max across
+6,048 card/phase cases.
+
+| Layer | HQ off | HQ on | Scope |
+| --- | ---: | ---: | --- |
+| Host-reported numerical DSP latency | 24 / 24 / 24 | 24 / 24 / 24 | 0.500 ms at 48 kHz; a nominal group-delay report, separate from scan/hold and external buffering |
+| Pitch/envelope write | 0 / 100 / 201 | 0 / 100 / 201 | Current normalized 23-write schedule |
+| VoiceVca target / first nonzero model gain | 70 / 192 / 315 | 70 / 192 / 315 | ENV mode; cannot precede that card's Pitch/envelope tick |
+| Held control reaches 63.2% | 102 / 224 / 347 | 103 / 225 / 348 | Current continuous realization of the component-derived 687 µs hold |
+| Raw output-onset proxy | 90 / 213 / 335 | 93 / 216 / 339 | First `max(abs(L),abs(R)) > 1e-4` (−80 dBFS amplitude); signal/patch dependent |
+| Nominal host-compensation coordinate | 66 / 189 / 311 | 69 / 192 / 315 | Raw proxy index minus the 24-sample report; not a claim of an exact threshold delay |
+
+HQ evaluates the converter queue on four internal substeps while HQ-off checks
+once per host sample. At a few exact arrival boundaries one mode has already
+passed a write that the other reaches after the MIDI event; paired cases can
+therefore differ by one scan, with a measured worst raw-proxy difference of 205
+samples, even though the aggregate distributions align. That is scan-grid
+quantisation, not an extra 205 samples of output-path group delay.
+
+The 4.2 ms pass, 23-write order and qualitative non-simultaneity are anchored.
+The normalized sub-pass offsets, phase origin and continuously slewed hold are
+compatibility/product behavior. The output threshold is a numerical regression
+proxy, not psychoacoustic audibility, and this sweep is exhaustive only over
+48 kHz converter phase for the declared patch and pre-roll. Exact hardware
+offsets, acquisition behavior and audible thresholds remain OQ-07, OQ-08 and
+OQ-12; the BA662 onset law remains OQ-19.
 
 ## Real-time cost — the axis this document was missing
 

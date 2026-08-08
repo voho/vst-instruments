@@ -482,6 +482,41 @@ void testProcessingProducesSound()
     processor.releaseResources();
 }
 
+void testReportedDspLatencyIsForwardedForEveryNumericalPath()
+{
+    struct Configuration
+    {
+        double rate;
+        bool hq;
+        int expectedFactor;
+    };
+    constexpr std::array<Configuration, 4> configurations {{
+        { 48000.0, true, 4 },
+        { 96000.0, true, 2 },
+        { 192000.0, true, 1 },
+        { 48000.0, false, 1 }
+    }};
+
+    for (const auto& configuration : configurations)
+    {
+        YouKnow106AudioProcessor processor;
+        setParameterValue (processor, parameters::hq,
+                           configuration.hq ? 1.0f : 0.0f);
+        processor.setPlayConfigDetails (0, 2, configuration.rate, blockSize);
+        processor.prepareToPlay (configuration.rate, blockSize);
+        expect (processor.getOversamplingFactorForDisplay()
+                    == configuration.expectedFactor,
+                "the processor selected the wrong numerical path at "
+                    + std::to_string (static_cast<int> (configuration.rate))
+                    + " Hz, HQ " + (configuration.hq ? "on" : "off"));
+        expect (processor.getLatencySamples() == 24,
+                "the processor did not forward the fixed 24-sample DSP latency at "
+                    + std::to_string (static_cast<int> (configuration.rate))
+                    + " Hz, HQ " + (configuration.hq ? "on" : "off"));
+        processor.releaseResources();
+    }
+}
+
 void testShortNoteInsideOneBlockIsHeard()
 {
     // A note that opens and closes inside a single buffer must still sound.
@@ -4268,6 +4303,7 @@ int main()
     testParameterContract();
     testParameterTextRoundTrips();
     testProcessingProducesSound();
+    testReportedDspLatencyIsForwardedForEveryNumericalPath();
     testShortNoteInsideOneBlockIsHeard();
     testUiKeyboardPressAndReleaseIsHeard();
     testDeferredQualitySwitchIsNotAutomatable();
