@@ -138,9 +138,12 @@ private:
 
     // MIDI 1.0's High Resolution Velocity Prefix: CC 88 immediately ahead of a
     // note-on carries the low seven bits of that note's fourteen-bit velocity.
-    // It is consumed by the next note-on and by nothing else, so a stray CC 88
-    // with no note behind it cannot change a later stroke.
-    std::optional<int> pendingHighResolutionVelocity {};
+    // One pending value per MIDI channel, because CC 88 is a channel message
+    // and a prefix for the next note *on its own channel*; it is consumed by
+    // that note and by nothing else, and every boundary that ends a stream of
+    // MIDI - prepareToPlay, releaseResources, panic, CC 120 and CC 123 -
+    // discards it, so a stray CC 88 cannot reach a later stroke.
+    drumalor::HighResolutionVelocityPrefix highResolutionVelocity {};
 
     drumalor::DrumEngine engine;
     std::atomic<bool> panicRequested { false };

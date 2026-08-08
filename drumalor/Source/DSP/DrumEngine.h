@@ -129,6 +129,49 @@ struct InstrumentMetadata
 [[nodiscard]] float velocityFromMidi (
     int velocityByte, std::optional<int> highResolutionLsb = std::nullopt) noexcept;
 
+// The pending CC 88 prefixes, one per MIDI channel.
+//
+// CC 88 is a channel message and a prefix for the *next* note event on its own
+// channel, so it has to be held per channel and taken by that channel's note.
+// One pending value for the whole port handed channel 2 the fine bits a
+// controller sent for channel 1, and cleared them before channel 1's note
+// arrived - which on a kit split across channels is every hit landing on some
+// other pad's low velocity bits.
+//
+// It is state that belongs to a stream of MIDI rather than to the engine, so
+// every boundary that ends such a stream has to discard it: a prefix that
+// survived a stop, a re-prepare or a panic would give the first note of the
+// next stream fine bits drawn from the last one.
+class HighResolutionVelocityPrefix
+{
+public:
+    static constexpr int channelCount = 16;
+
+    // Hold what a CC 88 on this channel carries, for that channel's next note.
+    void set (int channel, int lowBits) noexcept;
+
+    // Take this channel's prefix, if it has one, and clear it. A prefix belongs
+    // to one note event and to no other, so it is taken by a note-off as well
+    // as by a note-on: a note-on of velocity zero is a note-off, and leaving the
+    // prefix queued would hand it to a later, unrelated stroke.
+    [[nodiscard]] std::optional<int> take (int channel) noexcept;
+
+    // One channel's prefix, discarded: what CC 120 and CC 123 do, both of which
+    // are channel messages.
+    void clear (int channel) noexcept;
+
+    // Every channel's, for the boundaries that are not channel messages at all.
+    void clearAll() noexcept;
+
+private:
+    [[nodiscard]] static bool valid (int channel) noexcept
+    {
+        return channel >= 0 && channel < channelCount;
+    }
+
+    std::array<std::optional<int>, channelCount> pending_ {};
+};
+
 class DrumEngine
 {
 public:

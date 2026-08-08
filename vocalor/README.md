@@ -161,8 +161,8 @@ dulls the note; it relaxes the glottal pulse toward the lax prototype, which is
 a change in the pulse shape rather than a filter over a fixed one; and it
 narrows the vibrato. Thirty decibels is what a singer covers between pianissimo
 and fortissimo; a mixing fader's 18 dB is not a dynamic range, it is a trim.
-Broadband the control spans 33.0 dB on a held middle C at the shipping Breath,
-and it still spans 32.4 dB at Breath 60 %, so the aspiration does not floor it.
+Broadband the control spans 33.9 dB on a held middle C at the shipping Breath,
+and it still spans 33.2 dB at Breath 60 %, so the aspiration does not floor it.
 
 The band above 1 kHz has to fall faster than the level, and by a stated amount:
 Sundberg measures partials above 1 kHz falling about twice as many decibels as
@@ -172,20 +172,30 @@ gain — so what had to be chosen is only the filter that turns a gain into a
 slope. One first-order stage cannot: however its corner is placed it moves 3 kHz
 at most 6 dB per octave away from 450 Hz, which caps the ratio near 1.44 and
 measures 1.29 at best. Two cascaded first-order shelves at 850 Hz ship, unity at
-DC by construction so the sung fundamental is left alone. Across the full
-control the 2 – 5 kHz band then moves 1.52 dB for every dB of 150 – 800 Hz, and
-dropping the dynamic from 100 % to 30 % costs 19.7 dB at the fundamental against
-39.3 dB across 2.4 – 4.7 kHz. The test suite asserts the ratio, because a
-dynamic that moved both by the same amount would be an output trim wearing a
-different name.
+DC by construction so the sung fundamental is left alone. The pair is there for
+the slope and not to apply the gain twice, so each stage carries the *square
+root* of the note's broadband gain and the cascade's plateau carries it exactly
+once; a stage that carried the whole gain would put the square of it above the
+corner and make the band fall three times as fast as the level rather than
+twice. Measured where the shelf has actually reached that plateau — the
+8 – 16 kHz band against the fundamental, over a velocity move — the law lands at
+2.08, and the suite asserts it two-sided so the cube is excluded from above as
+well as the fader from below.
 
-The 1.52 is measured with the breath closed, and the reason is worth stating.
+Nearer the corner the reading is smaller, because the shelf is still in
+transition there and a first-order stage leaks: across the full control the
+2 – 5 kHz band moves 1.53 dB for every dB of 150 – 800 Hz, and dropping the
+dynamic from 100 % to 30 % costs 19.2 dB at the fundamental against 28.7 dB
+across 2.4 – 4.7 kHz. Those are transition-region numbers rather than the law,
+which is why the law is asserted where the plateau is.
+
+The 1.53 is measured with the breath closed, and the reason is worth stating.
 Over the full travel of the control the voiced source falls thirty decibels
 while the aspiration falls only 7.2, so at an empty dynamic and the shipping
 Breath the aspiration is most of what is left in the 2 – 5 kHz band and the same
 band ratio reads about 1.0 — at that point it is measuring the noise rather than
 the pulse. Read on the harmonics themselves, which reject that noise, the source
-is doing what it should at the shipping Breath: the 19.7-against-39.3 dB pair
+is doing what it should at the shipping Breath: the 19.2-against-28.7 dB pair
 above is measured at Breath 30 %.
 
 **Velocity** is no longer a volume fader either. It sets the note's attack time
@@ -548,13 +558,16 @@ passive contribution — harmonics sweeping static formant skirts, which is wort
 in force* — after the identity's own depth, the vibrato fade and the dynamic,
 not the knob — is applied both to the voiced drive and to the presence shelf.
 Driving both delivers the same 2:1 the dynamic obeys, so the band above the
-shelf corner swings twice as many decibels as the fundamental, for one multiply
-and no transcendental. It is ramped across the control period rather than
-stepped: a 6 Hz modulation applied as a control-rate staircase leaves permanent
+shelf corner swings twice as many decibels as the fundamental. The shelf's two
+stages each take the square root of it, for the same reason they each take the
+square root of the note's broadband gain, and the root is taken once per control
+period on the ramp target rather than per sample. It is ramped across the
+control period rather than stepped: a 6 Hz modulation applied as a control-rate
+staircase leaves permanent
 sidebands 3 kHz either side of every partial on a sustained note, which is the
 same reason the phase increment is already ramped. Measured as the magnitude of
 the envelope's component at the singer's own vibrato rate, a held C5 modulates
-3.0 dB and a C6 3.2 dB, against 0.001 – 0.002 dB with the vibrato off.
+2.7 dB and a C6 2.7 dB, against 0.001 – 0.002 dB with the vibrato off.
 
 **Humanisation.** Each singer has slowly moving pitch, vibrato rate and depth,
 spectral balance, breath, and timing rather than sharing a perfectly periodic

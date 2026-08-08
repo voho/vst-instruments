@@ -1000,6 +1000,7 @@ private:
     void configurePickupFilters() noexcept;
     [[nodiscard]] float bodyConductanceAt(float frequencyHz) const noexcept;
     void startExcitation(Voice& voice, float velocity, bool legato) noexcept;
+    [[nodiscard]] static bool plectrumContacts(PlayStyle style, bool legato) noexcept;
     void drawStrokeVariation(Voice& voice) noexcept;
     void seedVibratoFinger(Voice& voice) noexcept;
     void beginChordStroke(int stringIndex, bool strokeIsUp,

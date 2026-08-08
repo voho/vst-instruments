@@ -364,12 +364,70 @@ void NeuramarEngine::setModel(const NeuralModel* immutableModel) noexcept
         initialPhaseCos_[harmonic] = std::cos(angle);
         initialPhaseSin_[harmonic] = std::sin(angle);
     }
-    loopLevelSlopePerSecond_ = fitLoopLevelSlope(*immutableModel);
+    sampleLoopLevelTrajectory(*immutableModel);
+    // Fit at the gains the parameters are actually sitting at, so the very
+    // first block after a model swap is already correct.
+    const auto current = loadParameters();
+    refreshLoopLevelSlope(current.air, current.bone);
     dampingExponent_ = fitDampingExponent(*immutableModel);
     model_.store(immutableModel, std::memory_order_release);
 }
 
-// Least-squares slope of the model's own log amplitude across the loop region.
+// The three layers' power across the loop region, sampled at the points the
+// slope fit below uses. Kept per layer rather than summed, because the slope
+// that matters is the slope of the mix the renderer produces, and the renderer
+// weights Air and Bone by their controls.
+void NeuramarEngine::sampleLoopLevelTrajectory(const NeuralModel& model) noexcept
+{
+    const float duration = std::max(model.metadata_.durationSeconds, 0.001f);
+    const float loopStart = std::clamp(model.metadata_.loopStartSeconds,
+                                       0.0f, duration);
+    const float loopEnd = std::clamp(model.metadata_.loopEndSeconds,
+                                     loopStart + 0.001f, duration);
+    loopFitLengthSeconds_ = std::max(loopEnd - loopStart, 0.001f);
+    // setModel() runs on the audio thread, so the sampling is budgeted rather
+    // than generous. The trajectory being fitted is a smooth decoder output,
+    // not sampled data, so 32 points land within 0.03% of a 256-point fit on
+    // every fixture that has a trend at all, and within 0.002 dB of correction
+    // across the loop on models whose loop region is already flat. They are
+    // about 120 us of decoder evaluation, against roughly 250 us that a model
+    // swap already spends clearing its voices and rebuilding the onset-phase
+    // table. Splitting the sum three ways costs none of that again.
+    for (int point = 0; point < loopFitPoints; ++point)
+    {
+        const auto slot = static_cast<std::size_t>(point);
+        const float offsetSeconds = loopFitLengthSeconds_
+            * (static_cast<float>(point) / static_cast<float>(loopFitPoints - 1));
+        SynthesisFrame frame;
+        model.evaluate((loopStart + offsetSeconds) / duration, frame);
+        double core = 0.0;
+        double air = 0.0;
+        double bone = 0.0;
+        for (const float amplitude : frame.harmonicAmplitudes)
+            core += static_cast<double>(amplitude) * amplitude;
+        for (const float amplitude : frame.airAmplitudes)
+            air += static_cast<double>(amplitude) * amplitude;
+        // A Bone mode the analysis could not vouch for is never rendered, so it
+        // is never fitted either: `active` in the renderer's Bone targets is
+        // this same reliability test, and leaving those modes in the fit let a
+        // trend nobody hears set the correction for the one they do.
+        for (std::size_t mode = 0; mode < NeuralModel::boneModeCount; ++mode)
+            if (model.boneModeReliabilities_[mode] > 0.0f)
+                bone += static_cast<double>(frame.boneAmplitudes[mode])
+                    * frame.boneAmplitudes[mode];
+        loopFitSeconds_[slot] = offsetSeconds;
+        loopFitCorePower_[slot] = static_cast<float>(core);
+        loopFitAirPower_[slot] = static_cast<float>(air);
+        loopFitBonePower_[slot] = static_cast<float>(bone);
+    }
+    // Force the next refresh to do its work whatever the gains are.
+    loopFitAir_ = -1.0f;
+    loopFitBone_ = -1.0f;
+}
+
+// Least-squares slope of the model's own log amplitude across the loop region,
+// taken on the mix the renderer is actually producing.
+//
 // A learned loop is a stable region, not a stationary one: it still carries the
 // source's overall decay, so reading it forward and wrapping back to its start
 // steps the level up by exactly this trend on every pass. Fitting the trend and
@@ -377,61 +435,62 @@ void NeuramarEngine::setModel(const NeuralModel* immutableModel) noexcept
 // amplitude* rather than replacing the level with the region's mean is the
 // whole point: a mean hold would also delete the tremolo, breath pulsing and
 // beating the region carries, and those are the residuals about this line.
-float NeuramarEngine::fitLoopLevelSlope(const NeuralModel& model) noexcept
+//
+// The layers are weighted by the squares of their controls because the samples
+// are powers and the controls are amplitude gains. Everything else the renderer
+// puts on a layer - the Core's register normalisation, the Air and Bone edge
+// fades, Touch - is constant across the loop for a given note, and a constant
+// factor moves a log-power line's intercept without touching its slope, so it
+// cannot change the answer and is not carried here. What does change the answer
+// is the balance *between* layers, and that is what these two controls set.
+void NeuramarEngine::refreshLoopLevelSlope(float air, float bone) noexcept
 {
-    const float duration = std::max(model.metadata_.durationSeconds, 0.001f);
-    const float loopStart = std::clamp(model.metadata_.loopStartSeconds,
-                                       0.0f, duration);
-    const float loopEnd = std::clamp(model.metadata_.loopEndSeconds,
-                                     loopStart + 0.001f, duration);
-    const float loopLength = std::max(loopEnd - loopStart, 0.001f);
-    // setModel() runs on the audio thread, so the fit is budgeted rather than
-    // generous. The trajectory being fitted is a smooth decoder output, not
-    // sampled data, so 32 points land within 0.03% of a 256-point fit on every
-    // fixture that has a trend at all, and within 0.002 dB of correction across
-    // the loop on models whose loop region is already flat. They are about
-    // 120 us of decoder evaluation, against roughly 250 us that a model swap
-    // already spends clearing its voices and rebuilding the onset-phase table.
-    constexpr int fitPoints = 32;
+    if (air == loopFitAir_ && bone == loopFitBone_)
+        return;
+    loopFitAir_ = air;
+    loopFitBone_ = bone;
+
+    const double airWeight = static_cast<double>(air) * air;
+    const double boneWeight = static_cast<double>(bone) * bone;
     double sumTime = 0.0;
     double sumLevel = 0.0;
     double sumTimeSquared = 0.0;
     double sumTimeLevel = 0.0;
-    for (int point = 0; point < fitPoints; ++point)
+    for (int point = 0; point < loopFitPoints; ++point)
     {
-        const float offsetSeconds = loopLength
-            * (static_cast<float>(point) / static_cast<float>(fitPoints - 1));
-        SynthesisFrame frame;
-        model.evaluate((loopStart + offsetSeconds) / duration, frame);
-        double power = 0.0;
-        for (const float amplitude : frame.harmonicAmplitudes)
-            power += static_cast<double>(amplitude) * amplitude;
-        for (const float amplitude : frame.airAmplitudes)
-            power += static_cast<double>(amplitude) * amplitude;
-        for (const float amplitude : frame.boneAmplitudes)
-            power += static_cast<double>(amplitude) * amplitude;
+        const auto slot = static_cast<std::size_t>(point);
+        const double power = static_cast<double>(loopFitCorePower_[slot])
+            + airWeight * loopFitAirPower_[slot]
+            + boneWeight * loopFitBonePower_[slot];
         const double level = 0.5 * std::log(std::max(power, 1.0e-24));
-        const double time = static_cast<double>(offsetSeconds);
+        const double time = static_cast<double>(loopFitSeconds_[slot]);
         sumTime += time;
         sumLevel += level;
         sumTimeSquared += time * time;
         sumTimeLevel += time * level;
     }
-    constexpr double count = static_cast<double>(fitPoints);
+    constexpr double count = static_cast<double>(loopFitPoints);
     const double denominator = count * sumTimeSquared - sumTime * sumTime;
     if (!(denominator > 0.0))
-        return 0.0;
+    {
+        loopLevelSlopePerSecond_ = 0.0f;
+        return;
+    }
     const double slope = (count * sumTimeLevel - sumTime * sumLevel)
         / denominator;
     if (!std::isfinite(slope))
-        return 0.0;
+    {
+        loopLevelSlopePerSecond_ = 0.0f;
+        return;
+    }
     // A safety limit, not a routine constraint: the correction applied across
     // one pass is bounded to 12 dB either way, so a pathological loop region
     // cannot turn into a large gain. The learned loops measured here need
     // between 0.04 dB and 9.5 dB, so the bound is a guard rather than
     // something a real memory runs into.
-    const double limit = (12.0 / 8.685889638) / static_cast<double>(loopLength);
-    return static_cast<float>(std::clamp(slope, -limit, limit));
+    const double limit = (12.0 / 8.685889638)
+        / static_cast<double>(std::max(loopFitLengthSeconds_, 0.001f));
+    loopLevelSlopePerSecond_ = static_cast<float>(std::clamp(slope, -limit, limit));
 }
 
 // The exponent p in tau(f) = tau_1 (f/f_1)^-p, read out of the model's own
@@ -1634,6 +1693,10 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
     // most once per block and usually never. No allocation is involved.
     refreshHarmonicStretch(model != nullptr
         ? model->inharmonicity() * parameters.stretch : 0.0f);
+    // The Orbit detrend is fitted to the mix Air and Bone are set to render,
+    // so it follows those two controls. No decoder work is involved and the
+    // refresh returns immediately when neither has moved.
+    refreshLoopLevelSlope(parameters.air, parameters.bone);
     // Adopt the host's level on the first block rather than sliding up to it.
     if (!(smoothedOutputGain_ >= 0.0f))
         smoothedOutputGain_ = parameters.outputGain;

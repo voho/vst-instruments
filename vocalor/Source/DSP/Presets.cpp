@@ -47,7 +47,12 @@ constexpr std::array<FactoryPreset, 12> presets { {
         .profile = VoiceProfile::Female, .mode = PerformanceMode::Solo,
         .vowel = Vowel::Aah, .chordQuality = ChordQuality::Major, .choirSize = 8,
         .breath = 0.28f, .resonance = 0.68f, .vibrato = 0.46f, .humanize = 0.58f,
-        .spread = 0.24f, .tension = 0.48f, .room = 0.26f, .outputGain = 1.471f,
+        // Re-trimmed by 1.93 dB when the presence shelf stopped applying the
+        // note's broadband gain twice. This is the one preset in the bank the
+        // correction moved past a decibel: a soloist on an open vowel with
+        // little breath is almost all voiced source, and at its Dynamics 0.82
+        // the shelf plateau rose from -14.1 dB to -7.1.
+        .spread = 0.24f, .tension = 0.48f, .room = 0.26f, .outputGain = 1.178f,
         .glide = 0.38f, .legato = true, .roomSize = 0.45f, .dynamics = 0.82f } },
 
     { "Breath And Air", {

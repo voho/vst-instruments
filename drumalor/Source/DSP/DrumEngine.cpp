@@ -534,6 +534,35 @@ float velocityFromMidi (int velocityByte, std::optional<int> highResolutionLsb) 
     return static_cast<float> (coarse * 128 + fine) / 16383.0f;
 }
 
+void HighResolutionVelocityPrefix::set (int channel, int lowBits) noexcept
+{
+    if (! valid (channel))
+        return;
+    pending_[static_cast<std::size_t> (channel)] = std::clamp (lowBits, 0, 127);
+}
+
+std::optional<int> HighResolutionVelocityPrefix::take (int channel) noexcept
+{
+    if (! valid (channel))
+        return std::nullopt;
+    auto& slot = pending_[static_cast<std::size_t> (channel)];
+    const auto prefix = slot;
+    slot.reset();
+    return prefix;
+}
+
+void HighResolutionVelocityPrefix::clear (int channel) noexcept
+{
+    if (valid (channel))
+        pending_[static_cast<std::size_t> (channel)].reset();
+}
+
+void HighResolutionVelocityPrefix::clearAll() noexcept
+{
+    for (auto& slot : pending_)
+        slot.reset();
+}
+
 float DrumEngine::Biquad::tick (float input) noexcept
 {
     const float output = b0 * input + z1;
@@ -2307,9 +2336,21 @@ bool DrumEngine::applyAftertouch (int midiNote, float pressure) noexcept
     if (! std::isfinite (pressure) || pressure <= 0.0f)
         return true;
     const float seconds = chokeSecondsForPressure (pressure);
+    // A hand lands on one cymbal. Two articulations of the same instrument are
+    // two pieces of bronze on the stand - Crash 49 and China 52 share a channel
+    // strip, as do Ride 51 and Bell 53 - so matching the instrument alone made
+    // the note form of aftertouch channel-wide within it, and grabbing the
+    // china took the crash with it.
+    //
+    // The articulation is the identity rather than the note itself, because a
+    // note is a name for a cymbal and not a cymbal: General MIDI gives the
+    // crash two names (49 and 57) and the ride two (51 and 59), and a player
+    // who struck the crash on 57 and grabbed it on 49 has grabbed the cymbal
+    // that is ringing.
     for (auto* pool : { &voices_, &retiringVoices_ })
         for (auto& voice : *pool)
-            if (voice.active && voice.instrument == mapping->instrument)
+            if (voice.active && voice.instrument == mapping->instrument
+                && voice.articulation == mapping->articulation)
                 beginChoke (voice, seconds);
     return true;
 }
@@ -2378,6 +2419,7 @@ void DrumEngine::applyHatAperture (Voice& voice, float aperture) noexcept
     const ModalLoss loss { pedalBlend (0.55f, 0.86f), pedalBlend (0.30f, 0.10f),
                            pedalBlend (0.15f, 0.04f), 0.0f };
     const float plateSeconds = voice.decaySeconds * pedalBlend (0.70f, 0.85f);
+    float longest = 0.0f;
     for (int mode = 0; mode < voice.modeCount; ++mode)
     {
         auto& resonator = voice.resonators[static_cast<std::size_t> (mode)];
@@ -2392,7 +2434,27 @@ void DrumEngine::applyHatAperture (Voice& voice, float aperture) noexcept
         const float lossFactor = std::max (
             0.05f, loss.fixed + loss.hysteretic * relative
                        + loss.viscous * relative * relative);
-        retuneResonatorDecay (resonator, plateSeconds / lossFactor);
+        const float seconds = plateSeconds / lossFactor;
+        longest = std::max (longest, seconds);
+        retuneResonatorDecay (resonator, seconds);
+    }
+
+    // The bank stops being evaluated once its slowest mode has passed 2.6 of
+    // its own decays, and that deadline was computed at note-on against the
+    // decay the voice had then. Opening the pedal on a ringing hat hands the
+    // plates back to the open plate's own much longer loss law, so the deadline
+    // the note-on left behind now falls inside the sound: renderHat() stopped
+    // evaluating the bank partway through the foot splash and cut the plate
+    // component out from under it. The new deadline is measured from where the
+    // voice actually is rather than from its note-on, and it is only ever
+    // extended - closing the pedal shortens the modes, and a shorter mode does
+    // not entitle anything to stop early while the longer law is still audible.
+    if (longest > 0.0f)
+    {
+        const auto remaining = static_cast<std::uint64_t> (
+            std::ceil (2.6 * static_cast<double> (longest) * sampleRate_)) + 1u;
+        voice.modalActiveSamples = std::max (voice.modalActiveSamples,
+                                             voice.ageSamples + remaining);
     }
 }
 
@@ -2449,10 +2511,17 @@ void DrumEngine::setHiHatPedal (float position) noexcept
     // it is the only stroke on a kit that is played without a stick. Its
     // strength follows the size of the move rather than a clock, so a host that
     // thins its controller stream changes when the chick lands, never how hard.
+    // It is a chick and not a stick hit, so it is played as one. The two-
+    // argument trigger() defaults to Head, which put the engine's own pedal
+    // stroke on the stick path: it kept the broadband tip noise, missed the
+    // shorter clamped decay, the six-times longer plate-on-plate contact and
+    // the blunt-contact filtering, and came out sounding like a quiet closed
+    // hat rather than a foot. GM note 44 has always taken the other branch.
     const float travel = position - previous;
     if (wasActive && previous < 0.55f && position >= 0.55f && travel > 0.18f)
         trigger (Instrument::ClosedHat,
-                 std::clamp (0.18f + 1.25f * travel, 0.15f, 1.0f));
+                 std::clamp (0.18f + 1.25f * travel, 0.15f, 1.0f),
+                 Articulation::FootChick);
 }
 
 bool DrumEngine::isStruckMembrane (Instrument instrument) noexcept

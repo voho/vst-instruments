@@ -289,6 +289,9 @@ void DrumalorAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // rendered hit starts at the restored/default gain instead of gliding down
     // from the DrumEngine standalone default.
     updateEngineParameters();
+    // A prefix belongs to the stream of MIDI it arrived in. Starting a new one
+    // must not hand its first note fine velocity bits left over from the last.
+    highResolutionVelocity.clearAll();
     engine.prepare (sampleRate, samplesPerBlock);
     displaySampleRate.store (sampleRate, std::memory_order_relaxed);
     activeVoiceCount.store (0, std::memory_order_relaxed);
@@ -300,6 +303,7 @@ void DrumalorAudioProcessor::releaseResources()
     engineReady.store (false, std::memory_order_release);
     uiQueueGeneration.fetch_add (1, std::memory_order_acq_rel);
     discardUiTriggers();
+    highResolutionVelocity.clearAll();
     engine.allSoundsOff();
     engine.reset();
     activeVoiceCount.store (0, std::memory_order_relaxed);
@@ -326,6 +330,7 @@ void DrumalorAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     if (panicRequested.exchange (false, std::memory_order_acq_rel))
     {
         discardUiTriggers();
+        highResolutionVelocity.clearAll();
         engine.allSoundsOff();
     }
 
@@ -367,6 +372,9 @@ void DrumalorAudioProcessor::dispatchMidiData (const juce::uint8* data,
 
     const auto status = static_cast<unsigned> (data[0]);
     const auto kind = status & 0xf0u;
+    // CC 88 is a channel message paired with a note on that same channel, so
+    // every read and write of the prefix below is keyed by the status nibble.
+    const auto channel = static_cast<int> (status & 0x0fu);
 
     if ((kind == 0x80u || kind == 0x90u) && numBytes >= 3)
     {
@@ -374,8 +382,7 @@ void DrumalorAudioProcessor::dispatchMidiData (const juce::uint8* data,
         // taken rather than read - by a note-off as well as by a note-on, since
         // a note-on of velocity zero is a note-off and leaving the prefix on
         // the queue would hand it to a later, unrelated stroke.
-        const auto prefix = pendingHighResolutionVelocity;
-        pendingHighResolutionVelocity.reset();
+        const auto prefix = highResolutionVelocity.take (channel);
 
         if (kind == 0x90u && data[2] != 0)
         {
@@ -415,10 +422,12 @@ void DrumalorAudioProcessor::dispatchMidiData (const juce::uint8* data,
         // CC 88 is the High Resolution Velocity Prefix, which is only ever a
         // prefix: it is held for the next note-on and cleared by it.
         else if (controller == 88u)
-            pendingHighResolutionVelocity = static_cast<int> (data[2] & 0x7fu);
+            highResolutionVelocity.set (channel, static_cast<int> (data[2] & 0x7fu));
         else if (controller == 120u || controller == 123u)
         {
-            pendingHighResolutionVelocity.reset();
+            // Both are channel messages, so each discards its own channel's
+            // prefix and leaves the other fifteen alone.
+            highResolutionVelocity.clear (channel);
             engine.allSoundsOff();
         }
     }

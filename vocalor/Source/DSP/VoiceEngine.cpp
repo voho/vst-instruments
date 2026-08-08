@@ -1444,6 +1444,13 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     const float vibratoGainTarget = 1.0f + laryngeal * vibratoSine;
     voice.vibratoGainStep = (vibratoGainTarget - voice.vibratoGain)
         / static_cast<float>(controlPeriod);
+    // What one shelf stage gets. The two stages cascade, so each carries the
+    // square root of the gain the pair is meant to deliver; the square root is
+    // taken here, once per control period, and ramped like the gain it came
+    // from rather than being recovered per sample.
+    const float shelfVibratoTarget = std::sqrt(vibratoGainTarget);
+    voice.shelfVibratoStep = (shelfVibratoTarget - voice.shelfVibrato)
+        / static_cast<float>(controlPeriod);
 
     // Two nested smoothers give the pitch noise a 1/f-like spectrum instead of
     // the single-pole tilt a lone follower produces.
@@ -1506,8 +1513,16 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     // gain is the shelf gain: unity at velocity 1 and full dynamic, 0.001 at
     // the quietest a note can be sung, and the two shelves turn it into a
     // spectral slope instead of the fader the level alone would be.
-    voice.presence = std::clamp(voice.velocityGain * chunkResponse_.voicedGain,
-                                1.0e-4f, 1.0f);
+    //
+    // What is stored is the square root of it, because the shelf is a cascade
+    // of two stages and each of them applies this number. The plateau of the
+    // pair is the square of what one stage carries, so a stage that carried the
+    // whole gain would put the *square* of it above the corner - and with the
+    // broadband gain already on the level, the band above the corner would fall
+    // three times as fast as the fundamental instead of twice. At velocity 0.05
+    // that is a plateau of -57.2 dB where the law asks for -28.6.
+    voice.presence = std::sqrt(std::clamp(
+        voice.velocityGain * chunkResponse_.voicedGain, 1.0e-4f, 1.0f));
 
     // A note's attack is the folds coming onto their limit cycle, and the
     // growth rate of that instability follows how far the subglottal pressure
@@ -1880,11 +1895,15 @@ void VoiceEngine::renderPlacement(int count) noexcept
 
         if (placementHold_[index] <= 0)
         {
-            // Nothing of this singer is left in her line. Keep writing so the
-            // span the taps could reach stays zero, and skip the ten reads.
+            // Nothing of this singer is left in her line, and a hold of zero
+            // means she is not sounding either - `sounding` above sets the hold
+            // to its maximum. Write silence rather than her bus: outside the
+            // hold the bus is no longer cleared for her, so it still holds the
+            // last chunk she sang, and copying that in would leave the span the
+            // taps reach full of a repeat of it for her next note to read.
             for (int i = 0; i < count; ++i)
             {
-                line[write] = bus[static_cast<std::size_t>(i)];
+                line[write] = 0.0f;
                 write = (write + 1) & placementBufferMask;
             }
             continue;
@@ -1973,6 +1992,8 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     float presence = voice.presence;
     float vibratoGain = voice.vibratoGain;
     float vibratoGainStep = voice.vibratoGainStep;
+    float shelfVibrato = voice.shelfVibrato;
+    float shelfVibratoStep = voice.shelfVibratoStep;
     float attack = voice.attackCoefficient;
     float release = voice.releaseCoefficient;
     float irregularity = voice.irregularity;
@@ -2001,6 +2022,7 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             voice.ageSamples = age;
             voice.noiseState = noiseState;
             voice.vibratoGain = vibratoGain;
+            voice.shelfVibrato = shelfVibrato;
             updateVoiceControl(voice, p);
             noiseState = voice.noiseState;
             voice.controlCountdown = controlPeriod;
@@ -2016,9 +2038,11 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             attack = voice.attackCoefficient;
             release = voice.releaseCoefficient;
             vibratoGainStep = voice.vibratoGainStep;
+            shelfVibratoStep = voice.shelfVibratoStep;
         }
 
         vibratoGain += vibratoGainStep;
+        shelfVibrato += shelfVibratoStep;
         phaseIncrement += incrementStep;
         phase += phaseIncrement;
         if (phase >= 1.0f)
@@ -2052,15 +2076,20 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             * (1.0f - tensionSag * onsetAir);
         float glottal = glottalPair(level, phase, sourceTension);
         glottal *= 1.0f + (alternateCycle ? irregularity : -irregularity);
-        // Two first-order shelves, unity at DC and `presence` above the corner:
-        // a quiet note keeps its fundamental and loses its upper partials at
-        // twice the rate, which is the measured law rather than a voicing
-        // choice. One shelf cannot deliver it -- a first-order transition moves
-        // 3 kHz at most 6 dB per octave away from 450 Hz however it is placed,
-        // and the law needs about twice that across those two bands.
+        // Two first-order shelves, unity at DC and the note's broadband gain
+        // above the corner: a quiet note keeps its fundamental and loses its
+        // upper partials at twice the rate, which is the measured law rather
+        // than a voicing choice. One shelf cannot deliver it -- a first-order
+        // transition moves 3 kHz at most 6 dB per octave away from 450 Hz
+        // however it is placed, and the law needs about twice that across those
+        // two bands. The two stages are there for that slope and not to apply
+        // the gain twice, so each carries the square root of it and the pair
+        // between them carries it once. Both factors below are already rooted:
+        // `presence` at the control update, the vibrato when its ramp target
+        // was set.
         // The vibrato reaches the shelf as well as the level, so the band above
         // the corner swings twice as many decibels as the fundamental does.
-        const float shelfGain = presence * vibratoGain;
+        const float shelfGain = presence * shelfVibrato;
         const float slowDelta = glottal - sourceSlow;
         const float shelved = sourceSlow + shelfGain * slowDelta;
         sourceSlow += sourcePresenceCoefficient_ * slowDelta;
@@ -2165,6 +2194,7 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     voice.ageSamples = age;
     voice.phaseIncrementStep = incrementStep;
     voice.vibratoGain = vibratoGain;
+    voice.shelfVibrato = shelfVibrato;
 }
 
 void VoiceEngine::process(float* left, float* right, int numSamples)
@@ -2270,9 +2300,15 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
         }
 
         // Each singer's bus carries only what her own voices put there this
-        // chunk; an identity that is not sounding is already silent.
+        // chunk. A bus is cleared when its singer is about to write to it, and
+        // also while her placement line is still holding: renderPlacement()
+        // keeps feeding a held singer's line from this bus after her last voice
+        // has gone, so a bus left uncleared would push the final chunk of her
+        // note back down the line once per chunk and repeat the end of the note
+        // until the hold expired.
         for (int singer = 0; singer < singerCount; ++singer)
-            if ((singersInUse_ & (1u << singer)) != 0u)
+            if ((singersInUse_ & (1u << singer)) != 0u
+                || placementHold_[static_cast<std::size_t>(singer)] > 0)
                 std::fill(singerMix_[static_cast<std::size_t>(singer)].begin(),
                           singerMix_[static_cast<std::size_t>(singer)].begin() + count, 0.0f);
 
