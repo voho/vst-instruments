@@ -499,7 +499,12 @@ void VoiceEngine::buildSingerIdentities()
         const float position = singerCount > 1 ? 2.0f * static_cast<float>(i) / static_cast<float>(singerCount - 1) - 1.0f : 0.0f;
         singer.pan = std::clamp(0.82f * position + 0.12f * hashFloat(base + 3u), -1.0f, 1.0f);
         singer.onsetOffset = std::max(0.0f, 0.009f + 0.009f * hashFloat(base + 4u));
-        singer.vibratoRate = 4.65f + 0.72f * (0.5f + 0.5f * hashFloat(base + 5u));
+        // Sundberg's definition and the 2022 systematic review both put a sung
+        // vibrato at 5-7 Hz. The 4.65-5.37 Hz the identities used to be seeded
+        // across is below that band at every point of it, which is a tremble
+        // rather than a vibrato; the section is now spread over the band
+        // itself.
+        singer.vibratoRate = 5.6f + 1.4f * (0.5f + 0.5f * hashFloat(base + 5u));
         singer.vibratoDepth = 0.76f + 0.42f * (0.5f + 0.5f * hashFloat(base + 6u));
         singer.driftIncrement = (0.025f + 0.075f * (0.5f + 0.5f * hashFloat(base + 7u))) * inverseSampleRate_;
         singer.drift2Increment = (0.011f + 0.033f * (0.5f + 0.5f * hashFloat(base + 12u))) * inverseSampleRate_;
@@ -945,6 +950,10 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
         smoothedNasal_ += chunkGainCoefficient_ * (nasalTarget - smoothedNasal_);
     }
     chunkResponse_ = dynamicResponse(smoothedDynamics_);
+    // A soloist is limited by nothing; a section member settles at the group
+    // extent the review measures rather than at her own.
+    chunkVibratoCents_ = vibratoExtentCents(
+        p.vibrato, p.mode == PerformanceMode::Solo ? 0.0f : kSectionVibratoCents);
 
     std::array<float, formantCount> target {};
     formantsForPresetVowel(male, vowelIndex, target.data());
@@ -1200,8 +1209,11 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     const float vibratoFade = smoothStep((ageSeconds - 0.16f) / 0.34f);
     const float vibratoRate = singer.vibratoRate *
         (1.0f + p.humanize * (0.055f * singerDrift + 0.018f * sharedRate));
-    const float vibratoDepth = p.vibrato * singer.vibratoDepth *
-        (20.0f + 7.0f * p.humanize * depthDrift) * vibratoFade
+    // The extent is now a curve on the knob rather than a literal 20 cents per
+    // unit, so the wander the identity contributes is a proportion of it rather
+    // than a fixed number of cents: the old +/-7 on +/-20 is +/-35 %.
+    const float vibratoDepth = chunkVibratoCents_ * singer.vibratoDepth
+        * (1.0f + 0.35f * p.humanize * depthDrift) * vibratoFade
         * chunkResponse_.vibratoScale;
     // Integrating the rate keeps the vibrato phase exact for arbitrarily long
     // notes. Recomputing age * rate amplified any rate drift by the note age
@@ -1210,6 +1222,20 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
         * inverseSampleRate_;
     voice.lastControlAge = voice.ageSamples;
     voice.vibratoPhase = wrapPhase(voice.vibratoPhase + elapsedSeconds * vibratoRate);
+    const float vibratoSine = sine(voice.vibratoPhase);
+    // The laryngeal component of a sung vibrato. The cricothyroid oscillation
+    // that carries the pitch also moves subglottal pressure and adduction, so
+    // the level and the source slope swing on the very same cycle. The depth
+    // follows the extent actually in force -- after the identity, the fade and
+    // the dynamic -- rather than the knob, because it is one gesture and not
+    // two: a note whose vibrato has not faded in yet has no laryngeal
+    // modulation either, and a pianissimo note has as little of one as it has
+    // of the other.
+    const float laryngeal = std::min(laryngealAmPerCent_ * vibratoDepth,
+                                     laryngealAmMaximum_);
+    const float vibratoGainTarget = 1.0f + laryngeal * vibratoSine;
+    voice.vibratoGainStep = (vibratoGainTarget - voice.vibratoGain)
+        / static_cast<float>(controlPeriod);
 
     // Two nested smoothers give the pitch noise a 1/f-like spectrum instead of
     // the single-pole tilt a lone follower produces.
@@ -1237,7 +1263,7 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     voice.glideCents *= chunkGlideDecay_;
     const float cents = voice.pitchScoop + voice.glideCents + identityCents + wanderCents
                       + jitterCents + voice.justCents
-                      + vibratoDepth * sine(voice.vibratoPhase)
+                      + vibratoDepth * vibratoSine
                       + 100.0f * pitchBendSemitones_;
     const float frequency = voice.baseFrequency * std::exp2(cents * (1.0f / 1200.0f));
     voice.targetPhaseIncrement = std::clamp(frequency * inverseSampleRate_, 0.0f, 0.48f);
@@ -1528,6 +1554,8 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     float incrementStep = voice.phaseIncrementStep;
     float tilt = voice.tiltCoefficient;
     float presence = voice.presence;
+    float vibratoGain = voice.vibratoGain;
+    float vibratoGainStep = voice.vibratoGainStep;
     float attack = voice.attackCoefficient;
     float irregularity = voice.irregularity;
     float airShape = voice.airShape;
@@ -1556,6 +1584,7 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             voice.onsetAir = onsetAir;
             voice.ageSamples = age;
             voice.noiseState = noiseState;
+            voice.vibratoGain = vibratoGain;
             updateVoiceControl(voice, p);
             noiseState = voice.noiseState;
             voice.controlCountdown = controlPeriod;
@@ -1570,8 +1599,10 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             tensionSag = voice.tensionSag;
             presence = voice.presence;
             attack = voice.attackCoefficient;
+            vibratoGainStep = voice.vibratoGainStep;
         }
 
+        vibratoGain += vibratoGainStep;
         phaseIncrement += incrementStep;
         phase += phaseIncrement;
         if (phase >= 1.0f)
@@ -1602,11 +1633,14 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
         // choice. One shelf cannot deliver it -- a first-order transition moves
         // 3 kHz at most 6 dB per octave away from 450 Hz however it is placed,
         // and the law needs about twice that across those two bands.
+        // The vibrato reaches the shelf as well as the level, so the band above
+        // the corner swings twice as many decibels as the fundamental does.
+        const float shelfGain = presence * vibratoGain;
         const float slowDelta = glottal - sourceSlow;
-        const float shelved = sourceSlow + presence * slowDelta;
+        const float shelved = sourceSlow + shelfGain * slowDelta;
         sourceSlow += sourcePresenceCoefficient_ * slowDelta;
         const float slowerDelta = shelved - sourceSlower;
-        const float shaped = sourceSlower + presence * slowerDelta;
+        const float shaped = sourceSlower + shelfGain * slowerDelta;
         sourceSlower += sourcePresenceCoefficient_ * slowerDelta;
         sourceTilt += tilt * (shaped - sourceTilt);
 
@@ -1622,7 +1656,7 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
         const float airDrive = airLevelAt_[static_cast<std::size_t>(i)]
             * airShape * airEnvelope;
         const float voicedDrive = envelope * voicedScaleAt_[static_cast<std::size_t>(i)]
-            * (1.0f + shimmerDepth_ * shimmer);
+            * (1.0f + shimmerDepth_ * shimmer) * vibratoGain;
         // No separate lip-radiation stage: the wavetable is a glottal flow
         // *derivative*, and differentiating the flow is exactly what radiation
         // from the lips does to it. A radiation zero here would apply that
@@ -1692,6 +1726,7 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     voice.alternateCycle = alternateCycle;
     voice.ageSamples = age;
     voice.phaseIncrementStep = incrementStep;
+    voice.vibratoGain = vibratoGain;
 }
 
 void VoiceEngine::process(float* left, float* right, int numSamples)

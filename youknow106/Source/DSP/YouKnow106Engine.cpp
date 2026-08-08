@@ -231,15 +231,245 @@ float YouKnow106Engine::VoicedResonanceCompatibilityProfile::inputCompensation(
     return 1.0f + inputCompensationPerFeedback * k;
 }
 
+namespace
+{
+// ------------------------------------------------------------------------
+// The cascade's own limit cycle, solved by harmonic balance.
+//
+// A compressive nonlinearity inside an integrator lowers that integrator's
+// pole in proportion to its first-harmonic gain. For a sinusoid of amplitude
+// A driving tanh(v / H) that gain is the classical sinusoidal-input
+// describing function
+//
+//     N(a) = (2 / (pi a)) * integral_0^pi tanh(a sin t) sin t dt,   a = A / H,
+//
+// which is 1 - a^2/4 + O(a^4) at small a (int sin^2 = pi/2, int sin^4 =
+// 3pi/8) and falls to 4/(pi a) once the tanh is square. It is identically 1
+// at a = 0, and that is the property the frequency correction is built on:
+// with no limit cycle there is no droop to correct.
+//
+// The cascade carries two different nonlinearities on two different
+// headrooms, and both are needed. The four stage pairs compress on
+// `otaHeadroomVolts` = 2 Vt / stageAttenuation and set the *frequency*; the
+// resonance return compresses on `loopHeadroomVolts` = 2 Vt * 67.7 and sets
+// the *amplitude*. Referring one node to the other's headroom is what makes
+// a single-node account of this miss: at the service anchor the fourth
+// stage's drive is a = 0.35 and supplies 64 cents on its own, while the
+// first stage's is a = 1.17, because a four-pole loop oscillating at its own
+// corner carries sqrt(2) more amplitude at every step back towards the
+// input. All four have to be carried.
+//
+// Harmonic balance, with the loop running at its own corner scaled by each
+// stage's gain N_n and D = w_osc / w_corner:
+//
+//   phase:      sum_n atan(D / N_n) = pi
+//   amplitude:  k * N_fb(A / Hfb) * prod_n 1 / sqrt(1 + (D / N_n)^2) = 1
+//   drive:      a_n = |V_n| * (D / N_n) / H, with |V_n| walking back from
+//               the output by sqrt(1 + (D / N_{n+1})^2) per stage
+//
+// At A = 0 every N_n is 1, the phase condition gives D = tan(pi/4) = 1 and
+// the amplitude condition gives k = 4: the threshold is
+// `nominalOscillationFeedback` exactly, and it is not a fitted number.
+//
+// The solve is parameterised by amplitude rather than by loop gain, which
+// removes the outer root-find: every A determines the loop that sustains it.
+// Sweeping A and inverting the resulting monotone map gives the correction
+// on a uniform grid in loop gain, once, at first use.
+// ------------------------------------------------------------------------
+constexpr double piHigh = 3.14159265358979323846;
+constexpr double describingCeiling = 8.0;
+constexpr int describingSteps = 512;
+
+// Composite Simpson over the integrand's own quarter period; it is smooth and
+// bounded, so 64 panels hold it far inside the interpolation error of the
+// table it fills.
+double describingIntegral(double a) noexcept
+{
+    constexpr int panels = 64;
+    const double width = 0.5 * piHigh / static_cast<double>(panels);
+    const auto sample = [a](double t) {
+        const double s = std::sin(t);
+        return std::tanh(a * s) * s;
+    };
+    double sum = 0.0;
+    for (int panel = 0; panel < panels; ++panel)
+    {
+        const double left = width * static_cast<double>(panel);
+        sum += width / 6.0
+             * (sample(left) + 4.0 * sample(left + 0.5 * width)
+                + sample(left + width));
+    }
+    return 2.0 * sum;
+}
+
+// N(a), tabulated on [0, 8] and continued by its own 1/a asymptote above it.
+const std::array<double, describingSteps + 1> describingTable = [] {
+    std::array<double, describingSteps + 1> values {};
+    values[0] = 1.0;
+    for (int index = 1; index <= describingSteps; ++index)
+    {
+        const double argument = describingCeiling
+            * static_cast<double>(index) / static_cast<double>(describingSteps);
+        values[static_cast<std::size_t>(index)] =
+            2.0 / (piHigh * argument) * describingIntegral(argument);
+    }
+    return values;
+}();
+
+double describingGain(double a) noexcept
+{
+    const double magnitude = std::abs(a);
+    if (magnitude >= describingCeiling)
+        return describingTable[describingSteps] * describingCeiling / magnitude;
+    const double position = magnitude / describingCeiling
+                          * static_cast<double>(describingSteps);
+    const auto lower = static_cast<std::size_t>(position);
+    const double fraction = position - static_cast<double>(lower);
+    return describingTable[lower] * (1.0 - fraction)
+         + describingTable[lower + 1] * fraction;
+}
+
+// The oscillation frequency the phase condition puts on a cascade whose four
+// stages have been slowed to N_n of their control corner. Newton on a sum of
+// arctangents, seeded at the caller's previous answer.
+double oscillationRatio(const std::array<double, 4>& gains, double seed) noexcept
+{
+    double ratio = std::max(seed, 1.0e-6);
+    for (int iteration = 0; iteration < 24; ++iteration)
+    {
+        double phase = 0.0;
+        double slope = 0.0;
+        for (const double gain : gains)
+        {
+            const double x = ratio / gain;
+            phase += std::atan(x);
+            slope += (1.0 / gain) / (1.0 + x * x);
+        }
+        const double step = (piHigh - phase) / slope;
+        ratio = std::max(1.0e-6, ratio + step);
+        if (std::abs(step) < 1.0e-13 * ratio)
+            break;
+    }
+    return ratio;
+}
+
+struct LimitCycle
+{
+    double loopGain;
+    double droop;
+};
+
+// The loop that sustains a limit cycle of the given output amplitude, and the
+// factor by which that limit cycle drags its own corner down. `gains` carries
+// the previous amplitude's solution in and this one's out, so the sweep that
+// builds the table converges in two or three passes instead of a dozen.
+LimitCycle limitCycleFor(double amplitude, double stageHeadroom,
+                         double returnHeadroom,
+                         std::array<double, 4>& gains) noexcept
+{
+    std::array<double, 4> ratios { 1.0, 1.0, 1.0, 1.0 };
+    double droop = 1.0;
+    for (int iteration = 0; iteration < 32; ++iteration)
+    {
+        droop = oscillationRatio(gains, droop);
+        for (std::size_t stage = 0; stage < 4; ++stage)
+            ratios[stage] = droop / gains[stage];
+
+        std::array<double, 4> nodes {};
+        nodes[3] = amplitude;
+        for (int stage = 2; stage >= 0; --stage)
+        {
+            const auto index = static_cast<std::size_t>(stage);
+            nodes[index] = nodes[index + 1]
+                * std::sqrt(1.0 + ratios[index + 1] * ratios[index + 1]);
+        }
+
+        double moved = 0.0;
+        for (std::size_t stage = 0; stage < 4; ++stage)
+        {
+            const double next =
+                describingGain(nodes[stage] * ratios[stage] / stageHeadroom);
+            moved = std::max(moved, std::abs(next - gains[stage]));
+            gains[stage] = next;
+        }
+        if (moved < 1.0e-11)
+            break;
+    }
+
+    double loss = describingGain(amplitude / returnHeadroom);
+    for (const double ratio : ratios)
+        loss /= std::sqrt(1.0 + ratio * ratio);
+    return LimitCycle { 1.0 / loss, droop };
+}
+} // namespace
+
 float YouKnow106Engine::VoicedResonanceCompatibilityProfile::frequencyTrim(
     float feedback) noexcept
 {
-    // This correction is a compatibility calibration of the model itself.
-    // The service procedure motivates allowing a per-card adjustment, but it
-    // does not establish this feedback-dependent coefficient or curve.
-    const float k = std::clamp(sanitised(feedback, 0.0f), 0.0f, 8.0f);
-    const float fraction = std::min(k / nominalOscillationFeedback, 1.2f);
-    return 1.0f + frequencyTrimAmount * fraction * fraction;
+    // The correction that puts the oscillation back on the control law is the
+    // reciprocal of the droop the limit cycle imposes on the corner. Built
+    // once by sweeping the limit-cycle amplitude and resampling the resulting
+    // loop gain onto a uniform grid from the oscillation threshold to the
+    // clamp this function already carried. Parameterising the sweep by
+    // amplitude rather than by loop gain is what keeps it cheap: every
+    // amplitude determines the loop that sustains it outright, so there is no
+    // outer root-find. `prepare` warms this so no audio callback pays for it.
+    constexpr int trimSteps = 128;
+    constexpr float trimCeiling = 8.0f;
+    static const std::array<float, trimSteps + 1> table = [] {
+        constexpr int sweep = 1024;
+        constexpr double amplitudeCeiling = 12.0;
+        std::array<float, trimSteps + 1> values {};
+        values[0] = 1.0f;
+        const double step = (static_cast<double>(trimCeiling)
+                             - static_cast<double>(nominalOscillationFeedback))
+                          / static_cast<double>(trimSteps);
+        int filled = 0;
+        LimitCycle previous { static_cast<double>(nominalOscillationFeedback), 1.0 };
+        std::array<double, 4> gains { 1.0, 1.0, 1.0, 1.0 };
+        for (int index = 1; index <= sweep && filled < trimSteps; ++index)
+        {
+            const double amplitude = amplitudeCeiling
+                * static_cast<double>(index) / static_cast<double>(sweep);
+            const LimitCycle current = limitCycleFor(
+                amplitude, static_cast<double>(otaHeadroomVolts),
+                static_cast<double>(loopHeadroomVolts), gains);
+            while (filled < trimSteps)
+            {
+                const double wanted =
+                    static_cast<double>(nominalOscillationFeedback)
+                    + step * static_cast<double>(filled + 1);
+                if (wanted > current.loopGain)
+                    break;
+                const double span = current.loopGain - previous.loopGain;
+                const double blend = span > 0.0
+                    ? (wanted - previous.loopGain) / span : 0.0;
+                const double droop = previous.droop
+                    + blend * (current.droop - previous.droop);
+                values[static_cast<std::size_t>(++filled)] =
+                    static_cast<float>(1.0 / droop);
+            }
+            previous = current;
+        }
+        // The sweep covers the clamp with room to spare; hold the last solved
+        // value if a future headroom ever shortens it.
+        for (int index = filled + 1; index <= trimSteps; ++index)
+            values[static_cast<std::size_t>(index)] =
+                values[static_cast<std::size_t>(index - 1)];
+        return values;
+    }();
+
+    const float k = std::clamp(sanitised(feedback, 0.0f), 0.0f, trimCeiling);
+    if (k <= nominalOscillationFeedback)
+        return 1.0f;
+    const float position = (k - nominalOscillationFeedback)
+        / (trimCeiling - nominalOscillationFeedback)
+        * static_cast<float>(trimSteps);
+    const auto lower = static_cast<std::size_t>(position);
+    if (lower >= trimSteps)
+        return table[trimSteps];
+    const float fraction = position - static_cast<float>(lower);
+    return table[lower] * (1.0f - fraction) + table[lower + 1] * fraction;
 }
 
 float YouKnow106Engine::vcfConverterCarryCounts(float counts) noexcept
@@ -1906,6 +2136,11 @@ void YouKnow106Engine::refreshVoiceCardStageTrims() noexcept
 void YouKnow106Engine::prepare(double sampleRate, int /*maxBlockSize*/,
                                bool oversamplingEnabled)
 {
+    // The frequency correction's limit-cycle table is solved on first use.
+    // Touch it here, where blocking is allowed, so the first audio callback
+    // never pays for it.
+    (void) VoicedResonanceCompatibilityProfile::frequencyTrim(0.0f);
+
     sampleRate_ = std::clamp(sampleRate, 8000.0, maximumSupportedSampleRate);
     inverseSampleRate_ = static_cast<float>(1.0 / sampleRate_);
     oversamplingRequested_ = oversamplingEnabled;

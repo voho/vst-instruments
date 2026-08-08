@@ -2018,6 +2018,29 @@ The ADJUSTMENT table's own numbers, taken seriously for the first time.
   Closing that needs the measured frequency-response-versus-resonance family
   this task already asks for.
 
+  *The wart is closed, 2026-08-08, and it did not need the measured family.*
+  `frequencyTrimAmount` is deleted. The correction is now derived from the
+  cascade's own harmonic balance — the sinusoidal-input describing function of
+  `tanh` on the four stage pairs at their own `2Vt/stageAttenuation` headroom
+  and on the resonance return at its own `2Vt·67.7`, solved for the limit
+  cycle each loop gain sustains — so it is identically **1** below the
+  oscillation threshold, which the same balance places at a loop gain of
+  exactly 4, the profile's own `nominalOscillationFeedback`. That removes the
+  hidden cutoff lift the wart named: +8.76 / +32.24 / +80.17 / +116.25 cents
+  at resonance panel 0.30 / 0.50 / 0.70 / 0.80 became +0.00 at all four.
+
+  With the correction derived, the two anchors are no longer a joint fit.
+  `maximumFeedback` was re-solved against the amplitude anchor alone and moved
+  4.51 → **4.504**, landing **4.80 Vp-p** where the joint solve had landed
+  4.83. The 248 Hz anchor is then a *prediction*: the rendered oscillation
+  reads **247.90 Hz**, 0.67 cents under it, and stays inside ±0.81 cents at
+  every loop gain in the oscillating range, so it constrains no constant any
+  more. Two independent readings of the same 248 Hz now agree — the service
+  self-oscillation trim and, at resonance 0, OQ-18's measured
+  code-to-frequency table — which is what a cancelled droop is supposed to
+  deliver. What OQ-09's measured family still owns is the *shape* of
+  `loopGain()` and `inputCompensation()` between the ends.
+
 - **The VCF WIDTH anchor is asserted.** `BANK 3, hold C6 → 992 Hz` against
   `hold C4 → 248 Hz` is exactly two octaves of cutoff for two octaves of
   keyboard. The new test drives it end to end through the real converter path,

@@ -1,9 +1,6 @@
 #include "DSP/TaikoEngine.h"
 
 #include <algorithm>
-#ifndef TAIKOR_SPRAY
-#define TAIKOR_SPRAY 0.0
-#endif
 #include <cmath>
 #include <cstring>
 
@@ -2565,9 +2562,6 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
         mode.resonator.a1 = -2.0 * poleRadius * std::cos (omega);
         mode.resonator.a2 = poleRadius * poleRadius;
         mode.resonator.b0 = std::sin (omega);
-        // TEMPORARY spray injection, to prove the guard bites.
-        mode.resonator.y1 += TAIKOR_SPRAY * (static_cast<double> (shift) - 1.0)
-                           * mode.resonator.y1;
 
         // The state is deliberately left where it is. Rewriting a1 and a2 under
         // a running (y1, y2) does move the next output by da1*y[n-1] +
@@ -2577,15 +2571,18 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
         // the poles. That was prototyped and measured, and it is not worth
         // having. What the rewrite actually leaves behind, measured over 30 to
         // 80 ms after a full-velocity Don with the head's continuum silenced
-        // and an eight-pole high-pass run from the strike so nothing is a
-        // window artefact, is -121.3 dB above 1.2 kHz against a stroke at
-        // -18.8 dB, and Tension Mod 0 to 1 moves it by 0.00 dB. Rotating the
-        // state does not lower that; it raises it, to -181.9 dB from -183.2
-        // above 4 kHz without the rotation and to -164.4 dB with it, because
-        // the shift it is being asked to track is a peak follower over the
-        // modal states and is itself corner-rich at audio rate, and a state
-        // that lags the retune smooths that where a state that follows it
-        // exactly does not. See the second pass's note on gap 14.
+        // and an eight-pole high-pass run from the strike so that nothing in
+        // the number is a window artefact, is -119.9 dB above 1.2 kHz against
+        // a stroke at -18.3 dB, and Tension Mod 0 to 1 moves it by -0.00 dB.
+        // Rotating the state does not lower that. It raises it, above 4 kHz
+        // from -183.2 dB to -164.4 dB, because the shift it would then be
+        // tracking exactly is a peak follower over the modal states and is
+        // itself corner-rich at audio rate, and a state that lags the retune
+        // smooths that where a state that follows it does not. It also moves
+        // the 400 Hz to 16 kHz band enough across four sample rates to fail
+        // testTheContinuumDoesNotDependOnTheSampleRate. The measurement is
+        // kept in testTheGlideDoesNotBrightenTheTopOfTheSpectrum; the reasoning
+        // is under gap 14 in the second pass of the plan.
     }
 
     // The continuum is the same head above where its modes can be told apart,

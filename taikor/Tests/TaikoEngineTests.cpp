@@ -1007,13 +1007,11 @@ void testTheGlideDoesNotBrightenTheTopOfTheSpectrum()
         const double quiet = glideResidue (0.0f, true, 1200.0, quietBroadband);
         const double loud = glideResidue (1.0f, true, 1200.0, loudBroadband);
 
-        // Measured -121.3 dB against a stroke at -18.8 dB, and Tension Mod
-        // moves it by 0.00 dB. The rectangular-window reading of the same two
-        // renders is -48.9 and -41.3 dB, a rise of 7.66 dB, and all of it is
-        // the leakage of the drum's own bottom two octaves.
-        std::cerr << "  [probe] silenced: broadband " << quietBroadband << " / "
-                  << loudBroadband << " dB, >1.2 kHz " << quiet << " -> " << loud
-                  << " dB, rise " << (loud - quiet) << " dB\n";
+        // Measured -119.9 dB against a stroke at -18.3 dB, and Tension Mod
+        // 0 to 1 moves it by -0.00 dB. The same two renders read through
+        // bandLevelDb over 1.2-2.4 kHz give -48.9 and -41.3 dB, a rise of
+        // 7.66 dB, and all of it is the leakage of the drum's own bottom two
+        // octaves through the window's sidelobes.
         expect (quiet < quietBroadband - 80.0 && loud < loudBroadband - 80.0,
                 "the coefficient rewrite in applyTensionShift became audible "
                 "above 1.2 kHz on a drum that has no content there");
@@ -1031,8 +1029,6 @@ void testTheGlideDoesNotBrightenTheTopOfTheSpectrum()
         const double quiet = glideResidue (0.0f, false, corner, ignored);
         const double loud = glideResidue (1.0f, false, corner, ignored);
 
-        std::cerr << "  [probe] shipping, >" << corner << " Hz: " << quiet
-                  << " -> " << loud << " dB, rise " << (loud - quiet) << " dB\n";
         expect (loud - quiet < 3.0,
                 "Tension Mod moved the top of the spectrum by more than the "
                 "continuum retuning with the head accounts for");

@@ -4224,6 +4224,67 @@ void testSampleRateAndOversamplingConsistency()
                + std::to_string(shallow) + "), so the padding is wrong");
 }
 
+void testResonanceDoesNotMoveTheRenderedCorner()
+{
+    // The circuit suite checks the control law; this checks the coefficient
+    // the render actually consumes, so a correction fixed in the pure
+    // function and never wired into audio still fails. `voice.filterG` is the
+    // integrator coefficient the cascade runs on, memoised behind an exact
+    // equality on its own inputs, and the corner it stands for is
+    // atan(g) * internal rate / pi.
+    //
+    // Every source is off, the envelope is out of the cutoff path and Unit
+    // Character is zero, so nothing but the frequency correction couples
+    // RESONANCE to that coefficient at a fixed CUTOFF. Below the oscillation
+    // threshold the cascade carries no limit cycle, so there is no droop to
+    // correct and the five settings must coincide. They spread +0.00 / +8.70
+    // / +32.91 / +80.42 / +117.53 cents at converter code 6272 before this
+    // was derived rather than fitted.
+    constexpr double sampleRate = 48000.0;
+    const auto corner = [&](float cutoffPanel, float resonance) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.sawEnabled = false;
+        parameters.pulseEnabled = false;
+        parameters.subLevel = 0.0f;
+        parameters.noiseLevel = 0.0f;
+        parameters.envDepth = 0.0f;
+        parameters.keyFollow = 0.0f;
+        parameters.calibration = 0.0f;
+        parameters.cutoff = cutoffPanel;
+        parameters.resonance = resonance;
+        engine.setParameters(parameters);
+        engine.noteOn(60, 1.0f);
+        render(engine, static_cast<int>(sampleRate * 0.25));
+        const double internalRate =
+            sampleRate * static_cast<double>(engine.getOversamplingFactor());
+        return std::atan(static_cast<double>(
+                   YouKnow106TestAccess::filterG(engine, 0)))
+             * internalRate / pi;
+    };
+
+    struct Code { const char* name; float panel; double hertz; };
+    // Panel byte times 128 is the converter code, so these are bytes 30, 49
+    // and 90 -- the service code among them.
+    for (const auto& code : { Code { "3840", 30.0f / 127.0f, 56.76 },
+                              Code { "6272", 49.0f / 127.0f, 248.05 },
+                              Code { "11520", 90.0f / 127.0f, 5918.5 } })
+    {
+        const double reference = corner(code.panel, 0.0f);
+        expectNear(reference, code.hertz, code.hertz * 0.002,
+                   std::string("the rendered corner at converter code ")
+                       + code.name + " is not the one the control law asks for");
+        for (const float resonance : { 0.00f, 0.30f, 0.50f, 0.70f, 0.80f })
+            expectNear(1200.0 * std::log2(corner(code.panel, resonance)
+                                          / reference),
+                       0.0, 10.0,
+                       std::string("resonance ") + std::to_string(resonance)
+                           + " moves the rendered corner at converter code "
+                           + code.name);
+    }
+}
+
 void testSelfOscillationMatchesTheServiceTrim()
 {
     // Two Roland ADJUSTMENT steps, both taken on the same card in the same
@@ -5023,6 +5084,7 @@ int main()
     testChorusRateNoiseReproducesTheMeasuredModeDelta();
     testMainNoiseDensityIsProcessingRateInvariant();
     testSampleRateAndOversamplingConsistency();
+    testResonanceDoesNotMoveTheRenderedCorner();
     testSelfOscillationMatchesTheServiceTrim();
     testVcfStageOffsetsBelongToUnitCharacter();
     testVcfStageOffsetsAreLiveBeforeTheFirstSample();

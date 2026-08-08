@@ -1354,6 +1354,70 @@ void testStoredControlDigitalVectors()
     }
 }
 
+void testResonanceLeavesTheCornerAloneBelowOscillation()
+{
+    using Profile = YouKnow106Engine::VoicedResonanceCompatibilityProfile;
+
+    // The frequency correction exists to cancel the droop the cascade's own
+    // limit cycle puts on its corner: a compressive nonlinearity inside an
+    // integrator lowers that integrator's pole in proportion to its
+    // first-harmonic gain. Below the oscillation threshold there is no limit
+    // cycle, so there is no droop, so the correction has to be identically
+    // one and the control law has to read the same frequency at every
+    // resonance setting below it.
+    //
+    // The revision this replaced carried a quadratic in loop gain fitted to
+    // the oscillating endpoint and applied everywhere, which made RESONANCE a
+    // second, hidden CUTOFF slider: it lifted the corner by +8.76 cents at
+    // panel 0.30, +32.24 at 0.50, +80.17 at 0.70 and +116.25 at 0.80, where
+    // the cascade is not oscillating at all.
+    for (const float counts : { 3840.0f, 6272.0f, 11520.0f })
+    {
+        const double reference = YouKnow106Engine::vcfEffectiveCutoffHz(
+            counts, Profile::loopGain(0.0f));
+        for (const float panel : { 0.00f, 0.30f, 0.50f, 0.70f, 0.80f })
+        {
+            const double hertz = YouKnow106Engine::vcfEffectiveCutoffHz(
+                counts, Profile::loopGain(panel));
+            expectNear(1200.0 * std::log2(hertz / reference), 0.0, 10.0,
+                       "resonance panel " + std::to_string(panel)
+                           + " moves the cutoff law at "
+                           + std::to_string(counts) + " counts");
+        }
+    }
+
+    // And at every panel byte the slider can actually take, not merely at the
+    // five sampled above.
+    for (int byte = 0; byte <= 127; ++byte)
+    {
+        const float panel = static_cast<float>(byte) / 127.0f;
+        const float k = Profile::loopGain(panel);
+        if (k > Profile::nominalOscillationFeedback)
+            break;
+        expect(Profile::frequencyTrim(k) == 1.0f,
+               "the frequency correction is not identically one at panel byte "
+                   + std::to_string(byte) + ", where the cascade does not "
+                     "oscillate");
+    }
+
+    // Four identical one-poles carry 45 degrees and 1/sqrt(2) each at their
+    // own corner, so the loop closes at a gain of exactly four: that is where
+    // a limit cycle first exists and where the correction may first depart
+    // from one. It has to be continuous across it, and it has to grow with
+    // the limit cycle beyond it.
+    expect(Profile::frequencyTrim(Profile::nominalOscillationFeedback) == 1.0f,
+           "the frequency correction is already correcting at the oscillation "
+           "threshold");
+    expectNear(1200.0 * std::log2(static_cast<double>(Profile::frequencyTrim(
+                   Profile::nominalOscillationFeedback + 1.0e-3f))),
+               0.0, 1.0,
+               "the frequency correction steps discontinuously as the cascade "
+               "starts to oscillate");
+    expect(Profile::frequencyTrim(Profile::maximumFeedback) > 1.05f,
+           "the frequency correction does not cancel the droop at the loop "
+           "gain the service trim sets");
+}
+
 void testVoicedResonanceCompatibilityProfile()
 {
     using Profile = YouKnow106Engine::VoicedResonanceCompatibilityProfile;
@@ -3908,6 +3972,7 @@ int main()
     testNoteTimerLaw();
     testCutoffControlLaw();
     testStoredControlDigitalVectors();
+    testResonanceLeavesTheCornerAloneBelowOscillation();
     testVoicedResonanceCompatibilityProfile();
     testEnvelopeAndAmplifierLaws();
     testPulseWidthAndHighPassLaws();

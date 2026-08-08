@@ -269,14 +269,21 @@ public:
     //
     // The two anchors are coupled, so neither can be satisfied alone: the
     // limit cycle grows with loop gain, and the stage tanh's compression at
-    // that larger amplitude pulls the oscillation flat. `maximumFeedback` and
-    // `frequencyTrimAmount` below are solved together against both, landing at
-    // 4.83 Vp-p and 248.0 Hz. What remains voiced is the *shape* between the
-    // ends -- the quadratic-then-linear panel curve and the quadratic trim --
-    // and one known wart of that shape: the trim is a function of loop gain,
-    // while the droop it corrects is a function of amplitude, so it lifts
-    // cutoff slightly below the oscillation threshold where there is no droop
-    // to correct. Fixing that needs the measured family OQ-09 asks for.
+    // that larger amplitude pulls the oscillation flat. That coupling used to
+    // be absorbed by a fitted quadratic in loop gain, which lifted cutoff at
+    // every resonance setting -- +32 cents at panel 0.50 and +116 at 0.80 --
+    // where the cascade carries no limit cycle and there is nothing to
+    // correct. The correction is now the reciprocal of the cascade's own
+    // describing-function gain at the limit cycle its loop gain sustains
+    // (`frequencyTrim` below), so it is identically 1 wherever there is no
+    // oscillation and only `maximumFeedback` remains to be solved. What stays
+    // voiced is the quadratic-then-linear panel curve between the ends.
+    //
+    // Both cutoff anchors read 248 Hz at converter code 6272 -- the service
+    // ADJUSTMENT's self-oscillation trim and, at resonance 0, the measured
+    // code-to-frequency table OQ-18 carries -- so the model owes an
+    // oscillation that lands on its own small-signal law, which is exactly
+    // what cancelling the droop delivers.
     struct VoicedResonanceCompatibilityProfile
     {
         // Reported at 67.7 by an independent reverse-engineering of the same
@@ -289,10 +296,20 @@ public:
         static constexpr float loopDividerRatio = 100000.0f / 1500.0f;
         static constexpr float loopHeadroomVolts =
             2.0f * 0.026f * loopDividerRatio;
+        // Four identical one-poles carry 45 degrees each at their own corner,
+        // where each contributes 1/sqrt(2), so the loop closes at a gain of 4
+        // and at the corner itself. That is the cascade's oscillation
+        // threshold, and it is where `frequencyTrim` stops being 1.
         static constexpr float nominalOscillationFeedback = 4.0f;
         static constexpr float nominalOscillationTravel = 0.9f;
-        // Solved against the 4.8 Vp-p service trim; was a voiced 4.19.
-        static constexpr float maximumFeedback = 4.51f;
+        // Solved against the 4.8 Vp-p service trim; was a voiced 4.19, then a
+        // jointly solved 4.51. It is now the only free constant in the
+        // endpoint solve, because the frequency correction below is derived:
+        // the amplitude anchor alone fixes it and the 248 Hz anchor is a
+        // prediction rather than a second fit. Re-solved against the
+        // amplitude alone once the joint trade was gone, which is what moved
+        // the rendered limit cycle from 4.83 Vp-p on to 4.80.
+        static constexpr float maximumFeedback = 4.504f;
         // Voiced, but bracketed by the same reconstruction: its resonance
         // OTA takes VCF IN through 24k/1.5k (1/17.0) on the non-inverting
         // input, VCF OUT through 100k/1.5k on the inverting one, and injects
@@ -304,12 +321,13 @@ public:
         // reconstruction lineage, so not promoted; OQ-09's measured family
         // still owns this number.
         static constexpr float inputCompensationPerFeedback = 0.2296f;
-        // Solved against the 248 Hz service trim at that loop gain, which the
-        // larger limit cycle would otherwise leave 108 cents flat; was 0.045.
-        static constexpr float frequencyTrimAmount = 0.098f;
 
         [[nodiscard]] static float loopGain(float panelPosition) noexcept;
         [[nodiscard]] static float inputCompensation(float feedback) noexcept;
+        // The reciprocal of the pole scaling the cascade's own limit cycle
+        // imposes on itself, as a function of the loop gain that sustains it.
+        // Exactly 1 at and below `nominalOscillationFeedback`, where there is
+        // no limit cycle. See the derivation over `frequencyTrim`'s body.
         [[nodiscard]] static float frequencyTrim(float feedback) noexcept;
     };
 

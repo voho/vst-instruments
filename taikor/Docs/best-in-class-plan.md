@@ -317,15 +317,20 @@ CI workflow files that this work may not edit.
 The first pass fixed what the model was missing at the bottom of the spectrum:
 the head's stiffness, the glide, the collision, the dynamic range. This pass set
 out to do the same for the top of it and for the keyboard, and it was written
-with eight steps. Five survived review.
+with eight steps. Five survived review, and one of those five was then struck
+on implementation, so four are left.
 
-What survived is the sample rate reaching the continuum's level, an attack glide
-that steps its own resonators and sprays noise to 20 kHz, a striker that never
-rings, a cavity treated as a spring of infinite extent, and a keyboard octave
-that is not an octave in the drum's own lowest mode. What did not survive is
-everything that tried to shape the continuum band by band — its ceiling, its
-source size, its contact patch, its parametric pump. All four were prototyped on
-a scratch copy of the engine and measured, and all four moved the audio by less
+What survived review is the sample rate reaching the continuum's level, an
+attack glide that steps its own resonators, a striker that never rings, a cavity
+treated as a spring of infinite extent, and a keyboard octave that is not an
+octave in the drum's own lowest mode. The glide has since gone as well: the step
+to fix it was implemented and struck, because the spray it was written against
+is the leakage of a rectangular window rather than anything the engine emits.
+That correction is under gap 14 and with the rest of the rejects. What did not
+survive review is everything that tried to shape the continuum band by band —
+its ceiling, its source size, its contact patch, its parametric pump. All four
+were prototyped on a scratch copy of the engine and measured, and all four moved
+the audio by less
 than a decibel where they had promised six, for one shared reason recorded as
 gap 2: the continuum's bands are one-pole differences with 12 dB/octave skirts
 and a level law falling as *f*^−1.5, so the lowest band is louder than every
@@ -641,8 +646,12 @@ written with, the review's number stands and the difference is called out.
    pair off narrows it and softens the slap at the same time, because that is
    one mechanism and not two."
 
-4. **The attack glide transfers no energy up the spectrum — but it does inject
-   broadband noise, which is worse.** See gap 14. `applyTensionShift`
+4. **The attack glide transfers no energy up the spectrum.** ~~— but it does
+   inject broadband noise, which is worse.~~ The first half stands and the
+   second half is withdrawn with gap 14: what the glide injects above 1.2 kHz
+   is 101.6 dB under the stroke that made it, and Tension Mod 0 → 1 moves it by
+   −0.00 dB. The last sentence of this entry is wrong for the same reason and
+   is struck below. `applyTensionShift`
    (`:2497-2542`) multiplies every membrane mode's ω by one scalar and rebuilds
    the coefficients while leaving `y1`/`y2` alone, which is exactly
    energy-conserving in the continuous limit and is not what the discrete
@@ -653,8 +662,10 @@ written with, the review's number stands and the difference is called out.
    crossing band edges under a 55-cent bend explain by themselves. Over the
    velocity range 0.01 → 1.00, 4–10 kHz gains 5.17 dB relative to 40–125 Hz for
    a 25.30 dB change in level. A hard stroke on Taikor is the same stroke
-   louder, shorter and briefly sharper; the one thing that does change its
-   character above 1 kHz is an artefact.
+   louder, shorter and briefly sharper; ~~the one thing that does change its
+   character above 1 kHz is an artefact.~~ what little changes its character
+   above 1 kHz is the continuum's bands retuning with the head, which is the
+   mechanism the engine means to have, and it is worth about a decibel.
 
 5. **The stick is a point force, not a contact patch whose radius grows with
    the force.** The modal drive is `besselJ(order, besselZero * rho)` at a
@@ -793,8 +804,22 @@ written with, the review's number stands and the difference is called out.
     steal's step is exactly, it is well under the ones the instrument makes on
     purpose.
 
-14. **The attack glide sprays broadband noise across the top of the spectrum.**
-    Found during review; not in the original reading, and it is the reason step
+14. ~~**The attack glide sprays broadband noise across the top of the
+    spectrum.**~~ **Withdrawn. It was the estimator, not the engine**, and the
+    correction is written out under step 2 below, which it was the whole reason
+    for. The mechanism the gap names is real and its size is not: what the
+    coefficient rewrite leaves above 1.2 kHz on a full-velocity Don with the
+    continuum silenced, over the same 30–80 ms and measured with an eight-pole
+    high-pass run from the strike instead of through a rectangular window, is
+    **−119.9 dB against a stroke at −18.3 dB, and Tension Mod 0 → 1 moves it by
+    −0.00 dB**. The +7.15 / +7.23 / +7.24 dB below reproduces — I read
+    +7.38 / +7.48 / +7.48 with the same estimator — but it is the leakage of the
+    drum's own bottom two octaves through the window's sidelobes, and the
+    flatness that was taken for the signature of an artefact is the signature of
+    that leakage. The original text is kept below because three other entries in
+    this document lean on it.
+
+    ~~Found during review; not in the original reading, and it is the reason step
     6 of this pass was struck. `applyTensionShift` rewrites `a1`, `a2` and `b0`
     on every running membrane resonator whenever the shift moves by more than
     1e-5 (`:2727-2729`), which during the attack is every control period, while
@@ -807,7 +832,14 @@ written with, the review's number stands and the difference is called out.
     is flat to 20 kHz. At the factory Tension Mod of 0.4 it is already worth
     about 6 dB. It is currently the largest single source of
     brightness-with-dynamics the instrument has above 1 kHz thirty milliseconds
-    after a hard stroke, and it is a filter artefact.
+    after a hard stroke, and it is a filter artefact.~~
+
+    What is true, measured on the shipping instrument with the continuum in,
+    over the same window: Tension Mod 0 → 1 buys **+1.26 dB above 1.2 kHz and
+    +0.79 dB above 4 kHz**, and that is the continuum's own bands retuning with
+    the head — the mechanism the engine means to have — rather than an artefact.
+    A hard stroke on Taikor is still, as gap 4 says, the same stroke louder and
+    shorter; it is not sitting on six decibels of filter noise.
 
 **What must not regress.** The resolved bank is in good order and the surviving
 steps run straight through it. Velocity is monotone over 41 steps from
@@ -829,7 +861,8 @@ bands. The DSP suite is green on the tree this review was taken on (2 tests,
 
 Each step is a single commit. The DSP suite must be green before each one, and
 each lands with a test in `Tests/` that fails without it. Five steps survived
-review; three did not, and are recorded with the rest of the rejects below.
+review and three did not; step 2 was then struck on implementation, leaving four.
+All four rejects are recorded with the rest below.
 
 - [x] **1. Make the head's continuum independent of the host sample rate.**
   `mode.drive` is a per-sample integration gain and carries `1/rate` so that
@@ -917,55 +950,22 @@ review; three did not, and are recorded with the rest of the rejects below.
   make. So step 2 can move this pin, but only within seven tenths of a decibel,
   and if it does the honest repair is to re-take the literal on the tree step 2
   lands on rather than to widen the clause.
+  *Resolved*: step 2 was struck without touching the engine, so the literal
+  stands as taken and the hazard lapses. The 0.68 dB measured here is, in
+  hindsight, the first sign that gap 14's 6 dB was not real — the same glide
+  cannot be worth six decibels in one window and seven tenths in another that
+  contains it. It was read at the time as the two windows holding different
+  content; it was the two windows leaking differently.
 
-- [ ] **2. Stop the attack glide from spraying the top of the spectrum.**
-  `applyTensionShift` rewrites each membrane resonator's coefficients in place
-  and leaves its state alone. In the continuous problem that is
-  energy-conserving; in a two-pole difference equation it steps the output by
-  `Δa1 · y[n−1] + Δa2 · y[n−2]` at every rewrite, and the glide rewrites on
-  every control period through the whole attack. The result is a step train,
-  and a step train is white. Rotate the state into the new tuning instead of
-  leaving it — the resonator's `(y1, y2)` pair is a sampled sinusoid whose
-  phase and amplitude are recoverable, and re-deriving `y2` for the new pole
-  angle at the same amplitude and phase makes the coefficient change continuous
-  in the output rather than only in the poles. The alternative — crossfading
-  two resonators — doubles the bank and is not worth it for a term that is a
-  few tens of cents. Nothing about the glide's size, shape or timing changes.
-  Closes gap 14, and it must come before anything else that measures this
-  region, because at the factory Tension Mod every band above 1 kHz is
-  currently sitting on about 6 dB of this.
-  *Verified by*: `testTheGlideRetunesWithoutSplattering` renders a Don at
-  velocity 1.00, Humanise 0, at Tension Mod 0 and 1, **with the voice's
-  continuum silenced** — a test-access hook that zeroes the voice's
-  `continuum[*].level` after `trigger` and before the first block, which holds
-  for a Don because a Don schedules one contact and the relight at
-  `:2758-2762` moves `band.envelope` and not `band.level` — and measures three
-  bands over 30–80 ms
-  after the strike, past the contact entirely, where the drum at C3 has no
-  modelled content at all. **Silencing the continuum is not optional and was
-  missing from the first draft of this clause, which preflight corrected.** The
-  +7.15 / +7.23 / +7.24 dB the pass recorded are the rises with the continuum
-  off; through an ordinary public render the same three bands rise by
-  +3.24 / +7.38 / +8.28 dB, so the flatness the assertion turns on is 5.04 dB
-  wide rather than 0.09 and the test would have failed on the tree it was
-  written against, before anybody touched the engine. With the continuum
-  silenced the figures reproduce exactly.
-  After the change each of the three must rise by less than 1.5 dB, and the
-  12–20 kHz band, which no mechanism in the instrument is entitled to reach, by
-  less than 0.5 dB. The flatness is the signature and the test asserts it as
-  one: the spread between the three bands' rises must not exceed 1.0 dB today
-  (it is 0.09) and the test would be meaningless without recording that,
-  because a genuine mechanism would not be flat. The 40–125 Hz band over the
-  same window must move by less than 0.3 dB (with the continuum silenced
-  Tension Mod 0 → 1 moves it −0.03 dB; the +0.22 dB the first draft quoted is
-  the same band with the continuum on, and the two must not be mixed inside one
-  test). The pitch of the glide, measured through `appliedTensionShift`, must
-  be unchanged sample for sample — which is what stops the rises being met by
-  widening the 1e-5 rewrite threshold at `:2730` or by disabling the glide
-  outright. And a Don at Tension Mod 0 must be **bit-identical** to before the
-  step: at Tension Mod 0 the shift never leaves 1.0, so `applyTensionShift` is
-  never called at all, and that identity is what stops the rises being met by
-  filtering the top off the instrument.
+- [ ] **2. Stop the attack glide from spraying the top of the spectrum.
+  Struck.** The premise is a measurement artefact: there is no spray. Both the
+  step and gap 14 rest on a rectangular-window band level, and a rectangular
+  window's sidelobes fall only as one over the frequency offset, so a drum whose
+  whole voice is two octaves wide leaks across the entire spectrum at a level
+  that has nothing to do with what is there. The reasoning and every number are
+  moved to "considered and not planned" below, the checkbox stays unticked, the
+  engine is unchanged, and the measurement that killed it is kept in the suite as
+  `testTheGlideDoesNotBrightenTheTopOfTheSpectrum`.
 
 - [ ] **3. Ring the striker as well as the struck.** A contact force acts
   equally and oppositely on both bodies (Chatziioannou and van Walstijn 2015),
@@ -1207,6 +1207,98 @@ review; three did not, and are recorded with the rest of the rejects below.
 
 ### Considered and not planned
 
+**Stopping the attack glide from spraying the top of the spectrum (gap 14).
+Struck on implementation.** It was step 2 of this pass. The mechanism it names
+is real: `applyTensionShift` rewrites `a1`, `a2` and `b0` under a running
+`(y1, y2)`, and that does move the next output by *Δa1·y[n−1] + Δa2·y[n−2]*.
+What is wrong is the size, and the size was the entire case for the step —
+"at the factory Tension Mod every band above 1 kHz is currently sitting on
+about 6 dB of this."
+
+**The 7.2 dB is the estimator.** Every band level in gap 14 and in the step's
+verification clause is a Parseval sum over the integer DFT bins of a
+rectangular window. A rectangular window's sidelobes fall as one over the
+frequency offset, so a partial that is not exactly on a bin leaks across the
+whole spectrum, and a Don at C3 puts nearly all of its energy into two octaves
+that the 30–80 ms window cuts through mid-cycle. Demonstrated on a signal whose
+spectrum is not in doubt, and now asserted in the suite: **a single 0.3-amplitude
+sinusoid at 1000.3 Hz reads −68.60 dB in the 4–10 kHz band through that
+estimator and −164.25 dB through the same sum under a Hann window** — 96 dB of
+content that is not there. On unit white noise, where there is genuinely
+something in every band, rectangular, Hann and Blackman–Harris agree to 0.3 dB,
+so the estimator is sound everywhere except the case gap 14 used it for. And the
+flatness the pass took as proof that nothing physical was involved — "flat to a
+tenth of a decibel across four octaves" — is the signature of that leakage
+rather than of a step train: the leakage of one strong partial has the same
+shape in every band, so the ratio of two renders of it is flat by construction.
+
+**Measured honestly, over the same 30–80 ms window with an eight-pole
+high-pass run from the strike so that the filter is settled and no window is
+involved at all:**
+
+| | Tension Mod 0 | Tension Mod 1 | rise |
+|---|---|---|---|
+| continuum silenced, >1.2 kHz | −119.9 dB | −119.9 dB | −0.00 dB |
+| continuum silenced, broadband | −18.3 dB | −18.3 dB | +0.02 dB |
+| shipping, >1.2 kHz | −57.20 dB | −55.94 dB | +1.26 dB |
+| shipping, >4 kHz | −84.26 dB | −83.47 dB | +0.79 dB |
+
+So the rewrite leaves 101.6 dB of headroom under the stroke that made it, and
+the glide moves it by nothing. What Tension Mod really buys above 1 kHz is about
+a decibel, and it is the continuum's own bands retuning with the head — the
+mechanism the engine means to have. For scale, the instrument's ordinary onset
+makes one-sample steps 8.5 dB under its running peak (gap 13); this one is 100 dB
+under.
+
+**What the step asked for, for the record**, since its body has been removed
+from the checklist: a `testTheGlideRetunesWithoutSplattering` rendering a Don at
+velocity 1.00 and Humanise 0 at Tension Mod 0 and 1 with the voice's continuum
+silenced, measuring 1.2–2.4 kHz, 4–10 kHz and 12–20 kHz over 30–80 ms; each rise
+under 1.5 dB, the top band under 0.5 dB, the spread between the three under
+1.0 dB, 40–125 Hz moving under 0.3 dB, `appliedTensionShift` unchanged sample for
+sample, and a Don at Tension Mod 0 bit-identical. The continuum-silencing hook it
+specified was worth building and is now in `TaikoEngineTestAccess`; the bands and
+the window were not, and are replaced by the settled high-pass described above.
+
+**The fix was implemented anyway, and it fails the step's own test.** The
+tree this step was picked up on carried a draft of it — the `(y1, y2)` pair read
+as a sampled sinusoid, its quadrature partner recovered from the old
+coefficients as *(y1·cos ω − r·y2)/sin ω*, and `y2` rewritten at the new pole
+angle. The arithmetic is correct and the retune is continuous in the output.
+Run against the step's own acceptance clause — three bands over 30–80 ms with
+the continuum silenced, each of which "must rise by less than 1.5 dB" —
+it reads **+7.66 / +7.76 / +7.77 dB**, against +7.38 / +7.48 / +7.48 without it.
+The step's fix does not move the step's number, because the number is not about
+the engine.
+
+Two further findings from that draft, both reasons not to keep it on its own
+merits. It makes the honest quantity **worse**, not better: above 4 kHz with the
+continuum silenced, Tension Mod 1 reads −181.9 dB without the rotation and
+−164.4 dB with it. The shift it would then be tracking exactly is a peak
+follower over the modal states, which is corner-rich at audio rate, and a state
+that lags the retune smooths that where a state that follows it does not. And it
+**broke two existing tests** — `testTheContinuumDoesNotDependOnTheSampleRate`'s
+400 Hz–16 kHz clause, which step 1 had just landed at 1.09 dB against a 1.5 dB
+limit, and the ghost-stroke bite in the voice-stealing test. The draft was
+removed and the suite went green.
+
+The one thing in it worth salvaging is not what the step claimed. Preserving a
+mode's amplitude across a retune is the physically right thing to do, and the
+un-rotated rewrite does not: across an instantaneous two-semitone wheel jump on
+a ringing tail it costs **0.39 dB** of 40–125 Hz. That is a claim about the
+wheel and about Pitch automation, not about the top of the spectrum, and it
+wants its own step, its own measurement over the wheel's whole range, and a test
+that fails without it. It is a candidate for the next pass alongside the hand.
+
+**One consequence for a step already struck.** "Letting the head's own
+stretching pump the continuum (gap 4)" was struck because its proposed test —
+4–10 kHz over 30–80 ms rising at least 6 dB from Tension Mod 0 to 1 — "already
+passes on the shipping engine, at +7.38 dB", and gap 14 was the explanation.
+That +7.38 dB is the same leakage. Measured honestly the figure is +0.79 dB, so
+that test would *not* pass today and the step is measurable now rather than
+after step 2. It still has gap 2 in front of it, and that is the reason it stays
+struck; the reason recorded there is wrong and this is the correction.
+
 **Taking the continuum's ceiling from the hide rather than the drum's size
 (gap 2). Struck in review.** It was step 3 as the pass was first drafted. The
 physics of the premise is right — membrane modal density is *2π a² f / c²*, so
@@ -1281,7 +1373,14 @@ pitch and adds nothing" — is wrong in the one way that makes the step
 unmeasurable: there is already something there, it is the wrong thing, and no
 test of a new mechanism can see past it. Step 2 above removes it. After that the
 step becomes measurable again, and it still has gap 2 to get past, since
-relighting bands 2 through 5 changes nothing a listener reaches. The whole-range
+relighting bands 2 through 5 changes nothing a listener reaches.
+*Corrected when step 2 was struck.* The +7.38 dB is a rectangular window's
+leakage, not `applyTensionShift`: measured with a settled high-pass the same
+quantity is +0.79 dB, so the proposed test does **not** already pass and there
+is nothing in the way of seeing a new mechanism. The premise quoted above is
+also, as far as this can be measured, correct — the state-preserving retune adds
+0.00 dB above 1.2 kHz. What keeps this step struck is gap 2 alone, and it is
+measurable today rather than after step 2. See the step 2 entry above. The whole-range
 figure it quoted has also been corrected: 4–10 kHz gains 5.17 dB relative to
 40–125 Hz over velocity 0.01 → 1.00, not 6.91.
 
@@ -1415,7 +1514,7 @@ is supposed to carry.
 **The stand.** Recorded above as an absence finding. The mechanism is real and
 the numbers do not exist.
 
-**Documentation and demonstration audio.** Steps 1, 2, 3, 4 and 5 all move
+**Documentation and demonstration audio.** Steps 1, 3, 4 and 5 all move
 levels or frequencies, so the committed takes under `Docs/audio/` and their level
 table are stale until re-rendered centrally. The README needs two corrections
 after this pass and not before: "What is not modelled" must record that the

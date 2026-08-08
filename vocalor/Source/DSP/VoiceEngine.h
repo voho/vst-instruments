@@ -257,6 +257,17 @@ private:
         float sourceSlow { 0.0f };
         float sourceSlower { 0.0f };
         float presence { 1.0f };
+        // Laryngeal amplitude modulation on the vibrato cycle, as a gain on the
+        // voiced source and on the presence shelf. Both carry it, which is what
+        // makes a vibrato peak brighter as well as louder: the shelf gain is
+        // already the note's broadband gain, so multiplying both by the same
+        // factor moves the band above the corner by twice as many decibels as
+        // the fundamental, which is the same 2:1 law the dynamic obeys. Ramped
+        // across the control period rather than stepped, because a 6 Hz
+        // modulation applied as a staircase at the control rate leaves
+        // permanent sidebands 3 kHz either side of every partial.
+        float vibratoGain { 1.0f };
+        float vibratoGainStep { 0.0f };
         // Velocity as the singer's own output, normalised to what the same note
         // reaches at velocity 1: the level term of amplitudeGain without the
         // ensemble trim. Constant for the note, so it is resolved at note-on.
@@ -440,6 +451,21 @@ private:
     float chunkNotchA2_ { 0.0f };
     float chunkNasalTrim_ { 1.0f };
     bool chunkNasalActive_ { false };
+    // Vibrato extent the knob asks for, in cents, after the mode's own section
+    // limit. It depends on nothing per-voice, and resolving it costs a pow, so
+    // it is resolved once per chunk and every voice scales it by its own
+    // identity depth.
+    float chunkVibratoCents_ { 0.0f };
+    // Linear amplitude modulation the laryngeal oscillation produces per cent
+    // of extent in force. The pitch vibrato is a cricothyroid oscillation, and
+    // the same oscillation moves subglottal pressure and glottal adduction, so
+    // a sung vibrato carries an amplitude and a spectral component that the
+    // harmonics sweeping static formant skirts cannot account for. Measured
+    // amplitude vibrato runs a couple of decibels peak to peak at the extents
+    // singers actually use, so 0.0020 per cent puts a full solo extent at
+    // 0.217 -- 1.7 dB up, 2.1 dB down -- and the engine default at 0.35 dB.
+    static constexpr float laryngealAmPerCent_ = 0.0020f;
+    static constexpr float laryngealAmMaximum_ = 0.35f;
     float jitterHumanize_ { -1.0f };
     float glideAmount_ { -1.0f };
     // Dynamic response resolved once per chunk. The two gains it carries are

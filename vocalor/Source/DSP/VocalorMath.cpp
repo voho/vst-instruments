@@ -161,6 +161,38 @@ DynamicResponse dynamicResponse (float dynamics) noexcept
     return response;
 }
 
+float vibratoExtentCents (float vibrato, float sectionLimitCents) noexcept
+{
+    const float knob = clampUnit (vibrato);
+    if (! (knob > 0.0f))
+        return 0.0f;
+
+    // The knob's top is the definition: +/-1 semitone. What is not free is the
+    // exponent, because the bank already ships between 18 and 46 % and the
+    // engine's own default is 42 %. A linear scale would take every one of
+    // those to 41-46 cents, which is a soloist's full vibrato on a patch that
+    // asked for a third of the knob. 1.75 is the exponent that puts the
+    // default at 21.9 cents -- comfortably above the roughly 10 cents below
+    // which a vibrato is heard as unsteadiness rather than as vibrato, and
+    // well under the maximum the top of the knob still reaches.
+    float cents = kVibratoReachCents * std::pow (knob, 1.75f);
+    // A section member does not sing a soloist's extent. What the section
+    // imposes is a limit rather than a scale: she sings the gesture she would
+    // sing alone until it is wider than the section tolerates, which is why
+    // the same knob position means the same thing in every mode until it is
+    // wide enough to smear. The knee sits at half the limit, where a
+    // hyperbolic limiter is exact and continuous in its first derivative, and
+    // the limit is approached rather than reached so the top of the knob keeps
+    // moving instead of going dead.
+    if (sectionLimitCents > 0.0f)
+    {
+        const float knee = 0.5f * sectionLimitCents;
+        if (cents > knee)
+            cents = sectionLimitCents - knee * knee / cents;
+    }
+    return cents;
+}
+
 float tunedFirstFormant (float baseHz, float fundamentalHz, float ceilingHz) noexcept
 {
     if (! (baseHz > 0.0f) || ! std::isfinite (fundamentalHz) || ! (fundamentalHz > 0.0f))
