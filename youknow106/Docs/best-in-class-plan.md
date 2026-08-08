@@ -266,23 +266,212 @@ phase.
 
 ### 6. What changed in the field since the pass above
 
-The section-1 table above rests on vendor and press pages that **could not be
-re-checked in this session**. The WebSearch budget was exhausted before the
-pass began and the egress proxy refused every host except GitHub —
-`kvraudio.com`, `gearspace.com`, `cherryaudio.com`, `synthanatomy.com`,
-`arxiv.org`, `dafx.de` and `wikipedia.org` all returned `EGRESS_BLOCKED` on
-direct fetch. So the Softube, Roland Cloud, Cherry Audio, TAL and Arturia rows
-must be read as **unrefreshed, not confirmed**. Nothing found here contradicts
-them and nothing confirms them. This is the same environment class the
-open-questions queue already records for the p. 15 / p. 9 page reads: a
-property of the session, not of the sources. A later pass with open egress
-still owes a re-verification of those five positions and a search for anything
-released or updated since 2026-03.
+**Backfilled 2026-08-08 by a search-only pass.** The original text of this
+subsection recorded that no competitive research had been possible: the
+WebSearch budget was exhausted before that pass began, and the section-1 table
+was carried forward explicitly unverified. Budget has since refreshed and the
+sweep was run — 28 distinct queries across products, reviewers, forums,
+shootouts and literature. Everything in this subsection down to "What this
+sweep could not establish" is new material from that sweep, except the
+Ultramaster/GitHub findings, the three recorded contradictions and the
+literature absence, which are the earlier pass's own work and stand unchanged.
 
-What *was* reachable — `github.com`, `api.github.com`,
-`raw.githubusercontent.com` — carried the pass's value, because the one
-benchmarkable competitor develops in the open there and has moved a long way
-since section 1 read it.
+**Read every finding below as second-hand.** The egress policy still refuses
+publisher domains: a direct read of `kvraudio.com` was attempted once this
+session and returned `EGRESS_BLOCKED`, and the policy is an organisation denial
+covering publisher hosts generally, not a transient failure. **No vendor page,
+review, forum thread or changelog cited below was opened.** What is cited is
+what a search engine quoted from those pages. That is weaker evidence than a
+page read in three specific ways, all of which bite here: a search summary can
+attribute a quote to the wrong page, can silently merge two pages, and carries
+no publication date of its own. Where a date, version or price appears below it
+is because the search result stated it; where the result stated two
+incompatible values, both are printed and the item is listed as unresolved.
+Section 1's table is therefore **corroborated in its substance and still
+unverified at source** — a later pass with open egress owes the primary reads.
+
+**All six carried-forward products still exist, and none of the section-1
+positions was contradicted.** Nothing found retires a product,
+reverses a reviewer verdict, or overturns a mechanism claim:
+
+- **Softube Model 84** — actively sold, not discontinued. Its authenticity-leader
+  reputation is intact and the *specific* section-1 claim reproduces: reviews
+  still describe the recreated cutoff stepping as "exaggerated in
+  self-oscillation" and the hardware's unison retrigger quirk as reproduced,
+  and characterise the product as "a perfect facsimile of the original hardware
+  with all the same quirks and linearities"
+  ([MusicRadar](https://www.musicradar.com/reviews/softube-model-84),
+  [MusicTech](https://musictech.com/reviews/software-instruments/softube-model-84-review/)).
+  It has **no arpeggiator**, which reviewers split on — "a missed opportunity"
+  against fidelity discipline. No engine change was found since launch; the only
+  2025 Softube release note that names Model 84 concerns its *chorus* as an Amp
+  Room / Flows module, not the synthesiser. Pricing is unresolved: price-history
+  trackers report a $159/€159 regular with a $99/€99 introductory, a most-recent
+  sale at $49 and a floor of $39, while a separate summary called $49 the
+  standing price ([PluginDealz](https://plugindealz.com/price-history/Softube-Model-84-Polyphonic-Synth),
+  [Softube](https://www.softube.com/us/plug-ins/model-84-polyphonic-synthesizer)).
+- **Roland Cloud JUNO-106** — the CPU row is now backed by the vendor rather
+  than by forum impression. Roland's own support article explains the Legendary
+  series' cost in terms: ACB "does component-level modeling of original analog
+  instruments" and "is very demanding"
+  ([Roland support](https://support.roland.com/hc/en-us/articles/4412191951771-Roland-Cloud-Why-are-the-Legendary-series-synthesizers-so-intensive-on-my-CPU)).
+  Roland *also* publishes a how-to article on removing the plug-in's "constant
+  hissing sound", pointing users at the FX Tone control
+  ([Roland support](https://support.roland.com/hc/en-us/articles/4407795403803-Juno-106-virtual-instrument-plug-in-how-to-remove-constant-hissing-sound))
+  — first-party confirmation that chorus noise is a live differentiator in both
+  directions, which is exactly what section 1 argued. **Correction to a trap
+  this sweep nearly fell into:** the high-DPI UI, universal patch browsing and
+  Circuit Mod that current pages advertise are the **v2.0 update of April
+  2023**, not a recent one
+  ([Synth Anatomy](https://synthanatomy.com/2023/04/roland-jupiter-4-jupiter-8-and-juno-106-v2-plugins-new-circuit-mod-ui-and-more.html)).
+  No 2025–2026 engine change was established. Lifetime Key pricing is
+  unresolved — $199, a $99 promotion said to end 2026-06-30, and a separate
+  $290 regular / $149 bundle figure all appeared
+  ([Roland](https://lp.roland.com/juno-106-lifetime-key)).
+- **Cherry Audio DCO-106** — actively sold and still cheap (store $29, retailers
+  reported $25–$39). Latest release found is **1.0.21**, which adds preset
+  favourites and, materially, "fixed issues with high-frequency aliasing
+  artifacts that could potentially show up when using DCO-106 at 44.1 kHz"
+  ([Cherry Audio](https://cherryaudio.com/news/dco-106-1-0-21-and-ca2600-1-0-20-released),
+  [version history](https://cherryaudio.com/products/dco-106/version-history)).
+  A vendor shipping an aliasing fix is the field conceding aliasing as a defect
+  class, not a flavour.
+- **TAL-U-NO-LX** — alive but on maintenance. Reported releases: **5.1.1**
+  (2025-09-17, more MPE options, Osmose compatibility), **5.1.2** (2025-11-03,
+  MPE pitch on note release), **5.1.5** (2026-04-14, framework update and small
+  UI changes) ([TAL](https://tal-software.com/products/tal-u-no-lx)). No engine
+  change was established. One substantive fidelity note surfaced, attributed to
+  TAL's own documentation: plug-in resonance "is often slightly higher than in
+  the hardware, as the drop in resonance at higher frequencies hasn't been fully
+  emulated". That is a *vendor* admitting a resonance-versus-cutoff dependence
+  it does not model. It bears on this engine's cascade and on OQ-09/OQ-18, and
+  it is exactly the kind of statement that must be read at source before it is
+  used for anything.
+- **Arturia Jun-6 V** — reported updated to build **1.6.6.6366** on 2025-10-09,
+  and now also sold inside a new lower-priced "V Collection Intro" tier
+  (reported €199/$199, ten instruments, Jun-6 V among them)
+  ([Arturia](https://www.arturia.com/products/software-instruments/jun-6-v/resources)).
+  Nothing establishes an audible change in that build.
+- **Ultramaster KR-106** — press and search indexes still describe **v2.1.9,
+  2026-03-19** as current ([kayrock.org](https://kayrock.org/kr106/)). The
+  earlier pass read the project's own in-tree changelog and found **v2.5.13**.
+  The repository is the better source and its finding stands; the discrepancy is
+  a reminder that the search index lags this competitor by several months, so
+  *absence of news about a competitor is not evidence that it has not moved.*
+
+**Four entrants exist that section 1 has no row for. One of them matters.**
+
+1. **AudioThing JUNE, renamed JULY at v1.2 — the one that matters.** A Juno-**60**
+   model, released October 2025 and updated/renamed in 2026, explicitly
+   **circuit-modelled and sample-free**: press describes modelling of the DCO,
+   sub-oscillator and filter sections, and — the load-bearing part — that "the
+   chorus circuit has been modelled in detail, including the MN3009 BBD chips
+   with 256 stages each, the surrounding filters, and the LFOs that drive modes
+   I, II, and I+II"
+   ([KVR](https://www.kvraudio.com/news/audiothing-releases-june---juno-60-emulation-plugin-65002),
+   [Synth Anatomy](https://synthanatomy.com/2026/03/audiothing-june-a-roland-juno-60-synthesizer.html)).
+   That is a competitor **publishing a structural number about the BBD** — stage
+   count, per chip, with the mode LFOs named. It is the closest thing found to
+   another vendor putting a mechanism on the record, and it lands squarely on
+   the axis step 4 works on. Two cautions: it is a 60, not a 106, so its bucket
+   count and clocking are not automatically this instrument's; and "256 stages"
+   is a datasheet property of the part, not a measurement of a unit, so it
+   corroborates nothing this project has not already anchored.
+2. **MNTRA QUASAR-106** (May 2026) — not a synth but a **Juno-106-derived filter
+   + chorus + drive effect** (VST3/AU/AAX), intro $19 to 2026-06-16, regular $49
+   ([KVR](https://www.kvraudio.com/news/mntra-releases-quasar-106---juno-inspired-filter-chorus-and-drive-plugin-67067),
+   [rekkerd](https://rekkerd.org/mntra-quasar-106-analog-color-filter-effect-plugin/),
+   [MNTRA](https://www.mntra.io/product/quasar-106/)). It claims "true analog
+   modelling — we model how physical components interact, warm up, and push back
+   when driven", ships the three chorus modes plus a 12 dB slope "the original
+   never had", and puts "vintage aging in one knob". Method claimed, **no
+   evidence published**. Notable because it unbundles precisely the two things
+   2025–2026 buyers say separate 106 emulations — filter and chorus — and sells
+   them alone.
+3. **ORU Audio HOLO-106** — a Juno-106 chorus plug-in offering a choice between
+   a clean digital chorus and "the subtly characterful analog sound of a modeled
+   MN3009 BBD chip", described as "the result of months studying recordings from
+   a genuine 1984 Roland Juno-106" ([ORU Audio](https://oruaudio.gumroad.com/l/holo106)).
+   No release date, version or price was established. Same pattern as QUASAR-106:
+   the chorus sold on its own, method asserted, evidence not shown.
+4. **Fingerlab JYNTH** (announced end of May 2026, released 2026-06-04, a "2.0"
+   update in June) — press calls it a Juno-106 emulation, iOS/macOS only,
+   standalone plus AUv3, free download with a reported $6.99/€7.99 unlock
+   ([Synth Anatomy](https://synthanatomy.com/2026/05/fingerlab-jynth-a-physics-controlled-juno-106-synth-for-ios-and-macos.html),
+   [Synthtopia](https://www.synthtopia.com/content/2026/06/20/fingerlabs-jynth-brings-analog-style-synthesis-physics-engine-control-to-ios-macos/)).
+   Its selling point is a **physics engine** driving up to eight modulators, not
+   fidelity. **No modelling method is published at all** — nothing found says
+   whether it is modelled, sampled or neither. It is a competitor for attention,
+   not on this project's axes.
+
+   *Not new, listed so a later pass does not re-discover them:* TubeOhm's
+   106-Emulation (Windows VST, 2016, €44.95) is the other product besides Cherry
+   that does SysEx interchange with real hardware; TAL-Pha (Feb 2024) is an
+   Alpha Juno II and not in this field.
+
+**What 2025–2026 reviewers and owners say separates the best — and it is not
+what section 1's axes list leads with.** The sweep found the ranking argument
+being fought almost entirely on **the chorus first and the filter second**, with
+the split section 1 recorded still unresolved and still irreconcilable:
+
+- Pro-Softube/Roland: an owner with hardware reports Roland's JUNO-106 and
+  Model 84 "can sound exactly the same and sound just like the hardware", while
+  "no amount of tweaking will get DCO-106 to sound even remotely the same" —
+  "the chorus being wrong". Another puts Arturia's chorus as lacking "a touch of
+  width/depth" and DCO-106 as "the least convincing of the bunch"
+  ([KVR t=564111](https://www.kvraudio.com/forum/viewtopic.php?t=564111)).
+- Against: a poster prefers KR-106 "because it has character", calling Roland
+  "rather bland and typical digital VA"; TAL draws "it has a weird stereo thing
+  going on, almost sounding like an artificial stereo widening plugin was
+  attached to the output" and a filter that "sounds sterile"
+  ([KVR t=628710](https://www.kvraudio.com/forum/viewtopic.php?t=628710)).
+- Editorial roundups do not converge either: one names Roland's ACB "the only
+  plugin that is indistinguishable from a real Juno 106"; buyer's guides put
+  Model 84 at the top ([KVR roundup](https://www.kvraudio.com/best-juno-106-emulation),
+  [Gearspace t=1400358](https://gearspace.com/threads/best-juno-106-emulation.1400358/)).
+
+  **Conclusion for this project: there is no consensus leader to displace, and
+  the axis buyers argue on is the chorus.** That is a strategically useful
+  finding and it changes no step.
+
+**The four things they complain about**, in the order the sweep found them:
+(i) **chorus wrongness** — the dominant complaint, and the only one that decides
+rankings; (ii) **CPU** — Model 84 is repeatedly recommended over Roland Cloud
+specifically for efficiency, and Roland concedes the cause on its own support
+site; (iii) **aliasing** — a March-2026 KVR poster reports "ridiculous aliasing"
+in KR-106, and Cherry shipped a 44.1 kHz fix; (iv) **envelope timing and control
+law** — the same thread reports that "both the Cherry Audio and Ultramaster's
+attack and release times were WAY too long", and that Roland's was "the only one
+that paid attention to making sure the presets were correct", with sliders
+scaled differently between products ("halfway on one synth is 2/3rds on
+another").
+
+**No published listening test, measurement or shootout with a stated result was
+found — and that absence was tested hard.** What exists is: a Sonic Academy
+course, "Juno Shootout with Kirk Degiorgio", with per-plug-in tutorials for
+DCO-106, Roland Cloud JUNO-106 and TAL-U-NO-LX, whose verdict sits behind the
+paywall and whose page teases "Do you agree with Kirk's choice?"
+([Sonic Academy](https://www.sonicacademy.com/courses/juno-shootout)); a
+"Which JUNO Synth Sounds the Best?" video hosted by **Cherry Audio itself**,
+covering TAL, DCO-106, two Roland Cloud instruments, Zenology and Model 84
+([Cherry Audio](https://cherryaudio.com/videos/which-juno-synth-sounds-best));
+and several YouTube A/B comparisons. **None is blind, none is level-matched,
+none publishes data, and the one with the broadest coverage is published by an
+interested party.** No DAFx or AES paper on Juno or BBD chorus from 2025–2026
+surfaced; the standing BBD reference remains Holters & Parker, DAFx-18, which
+the research contract already cites. **The field still publishes no
+measurements.** Section 1's central absence finding therefore survives a fresh,
+adversarial sweep — and this project's deterministic tests and in-tree derived
+artefacts remain the only evidence chain in the category.
+
+---
+
+**The remainder of this subsection is the 2026-08-07 pass's own work and is
+unchanged.** It was gathered under the same egress denial but from hosts that
+*were* reachable — `github.com`, `api.github.com`, `raw.githubusercontent.com` —
+so unlike everything above it rests on primary sources actually read. The one
+benchmarkable competitor develops in the open there, and it had moved a long way
+since section 1 read it. Nothing in the search sweep above contradicts any of it.
 
 **Ultramaster KR-106 is not a fixed March-2026 snapshot.** Its in-tree
 changelog shows it shipping through at least v2.5.13, and several entries land
@@ -387,6 +576,94 @@ feedback-coupled solve, and it caps a damped Newton iteration at 8 steps with
 no stability proof. Both are recorded as citation gaps in the research
 contract; neither becomes a step here, for the reasons under "considered and
 not planned".
+
+---
+
+#### What this sweep could not establish
+
+This list is the point of the subsection, not an apology at the end of it.
+**Every item above that came from search is an unopened page**, and these
+specific things stayed out of reach even so. None of them may be treated as
+settled, quoted as if read, or used to move a constant.
+
+- **No primary source was read.** `WebFetch` on `kvraudio.com` returned
+  `EGRESS_BLOCKED`, and the policy covers publisher domains as a class. Every
+  vendor page, review, changelog, price and forum quote above is a search
+  engine's rendering of a page nobody in this session opened. Quotation marks
+  above mark *what the search result attributed to the page*, not a verified
+  transcription.
+- **Prices are unresolved for two of the six products.** Model 84 returned
+  $159 regular / $99 intro / $49 recent sale / $39 floor from a tracker, and
+  $49 flat from a summary. Roland's JUNO-106 Lifetime Key returned $199, a $99
+  promotion, and a $290 regular / $149 bundle. These are not reconcilable from
+  search results and no price above should be quoted.
+- **No 2025–2026 engine change was established for any commercial product.**
+  Roland's Circuit Mod and UI work dates to April 2023. TAL's 5.1.x releases are
+  MPE and framework work. Arturia's 1.6.6.6366 has no published changelog here.
+  Softube's Model 84 synthesiser has no update found at all. **Absence of a
+  found changelog is not absence of a change** — the KR-106 v2.1.9-versus-v2.5.13
+  discrepancy above proves the index lags reality by months.
+- **The two shootouts that exist have unread verdicts.** Kirk Degiorgio's choice
+  is paywalled; the broadest video comparison is published by Cherry Audio, a
+  participant. Neither result may be cited in either direction.
+- **TAL's resonance-rolloff admission is second-hand and load-bearing.** The
+  statement that plug-in resonance runs high because "the drop in resonance at
+  higher frequencies hasn't been fully emulated" is the single most technically
+  useful sentence the sweep found, and it is exactly the kind of claim that must
+  be read at source before it touches OQ-09 or OQ-18. It is recorded as a lead,
+  not as evidence.
+- **Fingerlab JYNTH's method is unknown.** Nothing establishes whether it models,
+  samples, or does neither. It is listed as an entrant, not as a competitor on
+  fidelity.
+- **QUASAR-106 and HOLO-106 publish method claims with no evidence.** "True
+  analog modelling" and "a modeled MN3009 BBD chip" are marketing sentences.
+  Neither vendor publishes a measurement, a schematic reference or a test. They
+  do not change the finding that no 106 vendor publishes an evidence chain.
+- **No listening test, null test or measurement suite comparing 106 emulations
+  was found to exist.** This is stated as an absence after a deliberate search
+  for one, in the same discipline the research contract requires — not as a
+  claim that none exists anywhere.
+
+#### What this research changed in the step list: nothing
+
+The section-8 steps were measured adversarially on 2026-08-08 and two were
+struck. **This research reopens none of them, and none of the six was
+added, reordered or removed as a result of it.** Each pressure the field
+evidence could plausibly have applied was checked against the bar and failed it:
+
+- **Is any step chasing a property the category has abandoned?** No. The
+  category has moved the other way. MNTRA sells "we model how physical
+  components interact, warm up, and push back when driven"; AudioThing publishes
+  BBD stage counts and names the mode LFOs; KR-106 publishes analysis reports.
+  All six steps are mechanism-fidelity steps and every one sits on an axis the
+  field is currently competing on.
+- **Is there a capability every competitor has and reviewers treat as table
+  stakes?** Checked explicitly, and no. MPE is in DCO-106 and TAL-U-NO-LX but
+  not established for Model 84 — the product reviewers rank first on fidelity —
+  and Model 84 has no arpeggiator either, which reviewers note and then rank it
+  first anyway. Neither is table stakes for the position this instrument
+  occupies.
+- **Is any priority wrong given what buyers complain about?** The complaint
+  order found is chorus, CPU, aliasing, envelope timing. **Step 4 is a chorus
+  step and it is the only chorus step**, so the field evidence *raises*
+  confidence in its placement rather than disturbing it; AudioThing publishing a
+  BBD structural number is the field arriving at the same axis from the other
+  side. CPU is already the subject of section 10's explicit statement that this
+  pass does not address it and of section 9's deferred solver and oversampling
+  work — the research corroborates that ordering and adds nothing that would
+  make cost a *sound* step. Aliasing is already measured clean here (worst
+  inharmonic line −67.3 dBc), which is why the ADAA item sits in section 9 as a
+  2x/1x concern rather than a defect. Envelope timing is a live axis in the
+  field and no defect in it was measured here.
+- **One honest tension, recorded and not acted on.** Only one of the six steps
+  touches the field's top complaint. That is by construction — section 10 says
+  in terms that this pass fits nothing to a competitor and lists this engine's
+  own measured defects — but a later pass that wants market response rather than
+  defect repair should start from the chorus, and should start by reading the
+  TAL resonance statement and the AudioThing BBD description at source.
+- **Nothing here promotes a hardware claim or moves a constant.** The three
+  recorded contradictions above stay recorded. The new entrants' method claims
+  are unevidenced and stay unevidenced.
 
 ### 7. Where the engine actually stands
 
@@ -1215,8 +1492,9 @@ name are real and a later pass will want the reasoning rather than the idea.
   archive material -- and the review made the step carry the datasheet's own
   10.5 dB bracket (0.2 mVrms max against 59.7 uVrms from S/N 88 dB typ) instead
   of presenting one end of it as a derivation. Step 6 no longer leans on what
-  Softube or Roland Cloud are said to do, because section 6 records those rows
-  as unrefreshed.
+  Softube or Roland Cloud are said to do. The 2026-08-08 search backfill has
+  since corroborated those rows, but corroboration by search summary is not a
+  source read, so the step stays independent of them.
 - **It does not chase the upper-mid darkness lead.** That is still OQ-15/OQ-18
   work. The 270 pF and 40 kHz contradictions above point at the same region and
   are recorded, not acted on.

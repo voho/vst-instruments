@@ -335,31 +335,120 @@ work, and it is written up with the rest of what is not planned.
 
 ### What changed in the field
 
-**Nothing was learned, and that is the finding.** No competitive refresh was
-possible this pass. The session's web-search budget was exhausted (200 of 200)
-before the work began, and every outbound fetch was refused by the egress proxy
-with a 403 on CONNECT — duckduckgo.com, google.com, kvraudio.com,
-vi-control.net, soundonsound.com, en.wikipedia.org, jstage.jst.go.jp, arxiv.org,
-api.crossref.org, api.openalex.org and github.com were each tried and each
-refused. Per `/root/.ccr/README.md` a 403 from the proxy is an organisation
-policy denial to be reported rather than routed around, so it was reported.
+**This is a search-only refresh, and every competitive claim in it is
+second-hand.** When this section was first written no research was possible at
+all: the session's web-search budget was exhausted and every outbound fetch was
+refused. Budget has since refreshed and this subsection was rewritten from about
+two dozen distinct searches. Direct page fetches are *still* refused —
+`WebFetch` returns `EGRESS_BLOCKED` for every publisher and vendor domain, which
+is an organisation policy denial and was not routed around. So **not one primary
+source was opened.** Everything below is what search-result summaries quote from
+pages that were never read. Nothing is written as though a page had been read,
+no price, version, date or quotation appears unless a search result stated it,
+and — following the rule this document already applies to its literature — no
+URLs are given for the new material either, because a URL that has not been
+fetched is not a citation. The list of what remains unverified, at the end of
+this subsection, is the honest bottom line of the whole exercise.
 
-Consequently the product table at the head of this document is **carried forward
-unverified**. Its prices, sample counts and microphone-channel counts were
-correct when the first pass checked them and have not been checked since.
-Specifically unknown as of 2026-08-07: whether Sonica, In Session Audio, 8Dio,
-Impact Soundworks or Sound Magic have shipped anything new or changed prices;
-whether any new *modelled* competitor exists; and what 2025–2026 reviewers now
-single out. Anyone re-running this task with a working allowlist should start
-there. No claim about the competition is made anywhere in this section, because
-none could be sourced.
+**The product table survives contact with search.** Results continue to report
+Taiko Thunder at a $695 regular price with seven microphone channels and
+1,400-plus MIDI grooves; Taiko Creator with seven round robins at seven
+velocities per head hit and four range-adjustable mic positions; Epic Taiko
+Ensemble at over 2,900 samples and Epic Solo Taiko at over 4,200, two mic
+positions each; Kageyama Taikos at 24-bit/48 kHz with two mono spots and a
+stereo overhead, list $99; and Supreme Drums Taiko at about 200 MB against a
+20 GB library, claiming unlimited round robins and up to 65,536 velocity steps
+over MIDI 2.0. Nothing found contradicts a line of it. That is corroboration of
+the table's *claims*, not of the products — see the unverified list.
 
-What could be done instead was to check the engine against the acoustics
+**What has actually moved since the first pass.**
+
+- **Kageyama Taikos is now at 1.5.** Results describe it as adding a 16-inch
+  chudaiko and reverse-side samples for the odaiko and both chudaikos, being
+  re-encoded for the free Kontakt Player, and carrying UI changes and bug fixes;
+  the list price stays $99 with a $20 upgrade for existing owners. One result
+  showed a $49 street price at search time. The row's "9 solo instruments" is
+  therefore probably now stale on the low side.
+- **8Dio's two taiko titles now also exist on Soundpaint**, as *Epic Taiko
+  Ensemble 2.0* and *Solo Taikos*, with 127 dynamic velocity layers and a figure
+  of about $40 attached. One retailer listing shows Epic Taiko Ensemble as
+  discontinued while 8dio.com still sells it; which of those is current could not
+  be settled.
+- **Sound Magic's Epic engine has moved to a V2** — Supreme Drums Orange V2 and
+  the new Supreme Drums Blue, covered in early 2026 — but no result indicates
+  Supreme Drums Taiko itself received it. Supreme Drums Taiko still dates to its
+  October 2023 release and appears on a MIDI Association innovation-award page.
+- **Sonica** shipped Taiko Thunder around late January 2025 after a 35 %
+  pre-order at $451.75, and has run recurring sitewide sales through 2026. No
+  successor and no new Sonica taiko product surfaced.
+- **In Session Audio** has shipped nothing new for Taiko Creator: the two
+  expansion packs and the "Complete Suite" addition all predate this decade's
+  threads.
+
+**No new dedicated modelled taiko competitor exists.** Supreme Drums Taiko is
+still the only one, and it still does not describe its model. What did change is
+the floor underneath the category — sample-free modal synthesis is now free and
+commonplace:
+
+- **RipplerX** (tiagolr), free and open source, built on JUCE, dual coupled
+  resonators with nine models including Membrane and Drumhead and up to 64
+  partials each. Its author is quoted saying it "started as a research project
+  into physically modeled drums and ended up a synth heavily based on AAS
+  Chromaphone". Covered February 2025.
+- **reFX Rippler**, a commercial modal synth, reviewed in August 2026 as having
+  "Chromaphone-like DNA".
+- **FX-Mechanics MechanOdd**, free polyphonic physical modelling, June 2026,
+  whose resonator menu includes a drum membrane.
+- **AAS Chromaphone 3** remains what forum posters reach for when they want a
+  modelled taiko. No taiko-specific evaluation of it was found.
+
+None of these is a taiko instrument: none carries head tension, hide, shell,
+cavity or strike position as a physical quantity, and none of the coverage found
+claims otherwise. What they change is the answer to "why not just use a free
+modal synth" — for a generic percussive hit, there is now no reason not to, and
+the differentiator has to be the drum-specific physics rather than the fact of
+being modelled. Sample-side, names that recur in 2025–26 threads but are absent
+from the table are Strezov Sampling *Taikos X3M* (with a free THUNDER X3M taiko
+alongside it), Evolution Series' taiko, Heavyocity *Damage 2*, *Metropolis
+Ark 3*, and free packs from SampleScience, Prisma Sounds, Floe and Pianobook.
+One hardware note: Roland's TAIKO-1 is modelled rather than sampled, and forum
+posts describe its hits changing timbre with position and force enough to sound
+like "two totally different hits".
+
+**What 2025–26 reviewers and owners single out**, all at second hand:
+
+1. **Microphone perspective and mixing flexibility** are named again and again
+   as what separates convincing from fake, together with the claim that mixing
+   solo recordings into an ensemble "isn't really an effective trick".
+2. **Ensemble timing spread is a sold feature, not an incidental one.** Taiko
+   Creator's Unity control is described as setting the timing spread of the
+   drums within each group, with zero collapsing a group into one composite hit.
+3. **Taiko Thunder is the current favourite.** A June 2025 VI-Control post calls
+   it "the most stunning taiko library I've ever found" and says the poster's
+   Spitfire, Orchestral Tools and VSL purchases are overshadowed by it. No
+   Sound On Sound or comparable magazine review of it was found.
+4. **The sharpest criticism found is aimed at interpolated velocity**, and it
+   lands on Soundpaint rather than on any taiko title specifically: users report
+   the 127 layers behaving as a volume ramp, one calling it "kinda lifeless" and
+   another finding roughly four real velocity switches at the top after drawing
+   all 127 in a DAW. A KVR poster who performs with a taiko group says they are
+   not sure any of these libraries is actually good — only adequate for dramatic
+   cinematic drums.
+
+**No listening test, measurement or shootout was found.** Searches for A/B
+comparisons and head-to-head videos returned nothing about virtual taiko at all;
+the phrase collides with Taiko Audio, a hi-fi server maker, and with a
+browser-automation library of the same name. The category is still evaluated by
+vendor demos and forum opinion, which is worth recording: there is no published
+number anywhere in this field for anyone to be measured against, including
+Taikor.
+
+Alongside the competitive pass the engine was checked against the acoustics
 literature. Nine mechanisms were found that the model does not carry; two of
 them drive surviving steps and four were prototyped and abandoned. The
 references used are given in full here rather than as links, because **none of
-them could be opened this session** and a URL that has not been fetched is not
-a citation:
+them could be opened this session either** and a URL that has not been fetched
+is not a citation:
 
 - P. M. Morse and K. U. Ingard, *Theoretical Acoustics* (McGraw-Hill, 1968),
   Ch. 5 — the mode count of a circular membrane below *f* goes as *A f² / c²*,
@@ -400,6 +489,68 @@ it would put a component under a hard stroke that does *not* move when the drum
 is retuned. Taikor's entire sub-40 Hz region tracks the tuning exactly, so that
 component is missing. It is not implemented because the numbers do not exist,
 and inventing them would be drawing a curve.
+
+Search adds one thing to that absence and nothing else: **no taiko acoustics
+work published after Ando's 2012 paper surfaced.** Queries for post-2012
+nagado-daiko measurement returned the 2009 and 2012 papers already cited and
+nothing newer. A 2025 *Frontiers in Signal Processing* editorial on sound
+synthesis through physical modelling appeared, but it is not about taiko and it
+was not opened. Piana et al.'s finding that the field has essentially no
+literature still stands, so the stand-mode gap above is unlikely to close from
+outside.
+
+**What is still unverified, and why.** This list is the part of this subsection
+that matters most, because the constraint that produced it has not gone away:
+searching is not reading, and no page was read.
+
+- **Every figure above.** Search summaries paraphrase, can be stale, and can be
+  quoting a reseller or a cached page rather than the vendor. None of the
+  numbers in the product table was re-read at its source.
+- **Today's price of any product in the table.** Taiko Thunder's $695 and
+  Kageyama's $99 were repeated by several independent results and are the safest
+  of them; the 8Dio pair's $148 and $198 were not corroborated at all this pass;
+  the Soundpaint ~$40 and the Kageyama $49 are promotional figures with unknown
+  end dates. Sale prices seen in results are deliberately not carried into the
+  table.
+- **Whether Supreme Drums Taiko has been updated since release**, and what
+  version it is at. The V2 engine is confirmed only for other titles in the line.
+- **Whether Kageyama Taikos is at 1.5 or 1.6.** A 1.6 appears in a third-party
+  listing that was not corroborated anywhere else; only 1.5 has real coverage.
+- **Whether 8Dio still sells the Kontakt editions**, given one retailer marks
+  Epic Taiko Ensemble discontinued and the vendor page still offers it.
+- **What any of these products actually measures.** No dynamic range, no
+  round-robin behaviour under repetition, no hit-position count has been
+  measured by anyone, here or elsewhere. "19 sampled hit positions", "7 × 7",
+  "65,536 velocity steps" and "127 dynamic layers" are all vendor claims relayed
+  at second hand, and the Soundpaint criticism above is the only public evidence
+  that one of those claims does not deliver what it sounds like.
+- **Non-English sources.** Only English-language search was done. Sonica's own
+  development blog, Japanese retail listings and Japanese forum opinion were not
+  searched and would be the obvious next place to look.
+- **All the acoustics references listed above**, which remain unopened.
+
+**Effect on the steps: none.** No step was added, reordered or struck as a
+result of this research, and the five that survived review are left exactly as
+they were. The reasoning is worth stating so that it can be disagreed with.
+Nothing found suggests any of the five chases a property the category has
+abandoned — they are internal-physics steps, and the field's stated values
+(dynamic resolution, variation under repetition, believable ensemble and
+perspective) have not moved at all since the first pass. The two capabilities
+that this research does confirm are table stakes — several microphone
+perspectives, and an ensemble that is a spread of drums rather than a chorus —
+are both already recorded under "What was investigated and not done" from the
+first pass, with reasons that this research does not weaken: the ensemble needs
+a build environment for the plugin target that this work does not have, and a
+room perspective needs impulse responses this repository cannot obtain. The new
+evidence strengthens those entries rather than reopening them, and the Unity
+control and the "mixing solo recordings is not an effective trick" line are
+recorded above so that a future pass with a working build has the shape of what
+to aim at. One finding actively supports the premise the steps serve: the
+field's answer to expressive resolution is interpolation between recorded
+layers, and the loudest published complaint about it is that listeners hear the
+interpolation as volume rather than as timbre — which is the exact thing a
+contact-law model gets for free and the reason these steps are spent on the
+physics rather than on layer counts.
 
 ### Where the engine actually stands
 
