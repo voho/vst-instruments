@@ -66,7 +66,11 @@ constexpr std::array<FactoryPreset, 12> presets { {
         .profile = VoiceProfile::Female, .mode = PerformanceMode::Choir,
         .vowel = Vowel::Aah, .chordQuality = ChordQuality::Major, .choirSize = 12,
         .breath = 0.34f, .resonance = 0.70f, .vibrato = 0.42f, .humanize = 0.80f,
-        .spread = 0.92f, .tension = 0.40f, .room = 0.74f, .outputGain = 0.482f,
+        // Twelve singers on a wide vibrato in a large room sum less coherently
+        // than twelve on a narrow one, so the extent this preset asks for now
+        // costs it 1.19 dB of ensemble buildup. Re-trimmed by exactly that, so
+        // the preset still plays at the level it was voiced at.
+        .spread = 0.92f, .tension = 0.40f, .room = 0.74f, .outputGain = 0.553f,
         .roomSize = 0.95f, .intonation = 0.85f } },
 
     { "Closed Mouth Hum", {

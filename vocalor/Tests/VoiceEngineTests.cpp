@@ -187,6 +187,17 @@ struct VoiceEngineTestAccess
         return engine.sourceTensionRampDepth_;
     }
 
+    /** The vibrato rate of every singer identity, in Hz. A reseeded rate that
+        nothing reads would otherwise let a pitch-track measurement pass on the
+        old rate, so the two are cross-checked against each other. */
+    static std::vector<float> singerVibratoRates(const VoiceEngine& engine)
+    {
+        std::vector<float> result;
+        for (const auto& singer : engine.singers_)
+            result.push_back(singer.vibratoRate);
+        return result;
+    }
+
     /** The humanisation noise of the sounding voice in the units the render
         loop applies it in: the amplitude modulation depth the voiced drive is
         multiplied by, and the cents of pitch deviation the two nested jitter
@@ -2690,6 +2701,259 @@ void testEnsembleDispersion()
             "the per-singer drift is unbounded rather than a wander around the target");
 }
 
+/** A sung vibrato is 5-7 Hz at an extent of about a semitone.
+
+    The identities used to be seeded across 4.65-5.37 Hz, which is below
+    Sundberg's band at every point of it, and the extent was a literal 20 cents
+    per unit of the knob, which put the engine's own default at 9.1 cents --
+    under the roughly 10 cents below which a vibrato is heard as unsteadiness
+    rather than as vibrato. Both are read from soundingFrequencies(), which
+    returns the frequency the oscillator is actually running at rather than an
+    estimate of it, so there is no demodulator passband to argue about: complex
+    demodulation of a twelve-voice mix returned +111 / -1112 cents in review,
+    because twelve detuned carriers inside one passband beat rather than
+    resolve.
+*/
+void testVibratoRateAndExtent()
+{
+    constexpr auto sampleRate = 48000.0;
+    // The pitch track is read at the control rate, which is what the vibrato
+    // actually moves at.
+    constexpr int hop = 16;
+    constexpr double trackRate = sampleRate / hop;
+
+    // Every voice's sounding frequency, sampled every hop samples for
+    // `seconds`. The first 1 s is discarded by the callers: the vibrato fades
+    // in over the first half second and the note scoops up into its pitch.
+    const auto pitchTracks = [] (vocalor::PerformanceMode mode, int choirSize,
+                                 double seconds, std::vector<float>& rates)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        vocalor::EngineParameters parameters;
+        parameters.mode = mode;
+        parameters.choirSize = choirSize;
+        parameters.vibrato = 1.0f;
+        parameters.humanize = 0.0f;
+        parameters.dynamics = 1.0f;
+        engine.setParameters (parameters);
+        rates = vocalor::VoiceEngineTestAccess::singerVibratoRates (engine);
+        engine.noteOn (60, 0.85f);
+
+        std::vector<std::vector<double>> tracks;
+        std::vector<float> left (hop, 0.0f);
+        std::vector<float> right (hop, 0.0f);
+        const auto steps = static_cast<int> (seconds * trackRate);
+        for (int step = 0; step < steps; ++step)
+        {
+            engine.process (left.data(), right.data(), hop);
+            const auto sounding = vocalor::VoiceEngineTestAccess::soundingFrequencies (engine);
+            if (tracks.empty())
+                tracks.resize (sounding.size());
+            for (std::size_t voice = 0; voice < tracks.size() && voice < sounding.size(); ++voice)
+                tracks[voice].push_back (static_cast<double> (sounding[voice]));
+        }
+        return tracks;
+    };
+
+    // Reciprocal of the mean interval between rising crossings of the track's
+    // own mean. A frequency track is not a sinusoid -- the scoop and the drift
+    // ride under it -- so a crossing count is the estimator that does not care.
+    const auto rateOf = [] (const std::vector<double>& track)
+    {
+        double mean = 0.0;
+        for (const auto value : track)
+            mean += value;
+        mean /= static_cast<double> (track.size());
+
+        std::vector<double> crossings;
+        for (std::size_t i = 1; i < track.size(); ++i)
+            if (track[i - 1] <= mean && track[i] > mean)
+                crossings.push_back (static_cast<double> (i - 1)
+                                     + (mean - track[i - 1]) / (track[i] - track[i - 1]));
+        if (crossings.size() < 2)
+            return 0.0;
+        const auto interval = (crossings.back() - crossings.front())
+                            / static_cast<double> (crossings.size() - 1);
+        return trackRate / interval;
+    };
+
+    const auto extentOf = [] (const std::vector<double>& track)
+    {
+        double mean = 0.0;
+        for (const auto value : track)
+            mean += value;
+        mean /= static_cast<double> (track.size());
+
+        double lowest = 1.0e9;
+        double highest = -1.0e9;
+        for (const auto value : track)
+        {
+            const auto cents = 1200.0 * std::log2 (value / mean);
+            lowest = std::min (lowest, cents);
+            highest = std::max (highest, cents);
+        }
+        return 0.5 * (highest - lowest);
+    };
+
+    const auto tail = [] (const std::vector<double>& track)
+    {
+        return std::vector<double> (track.begin()
+                                        + static_cast<std::ptrdiff_t> (trackRate),
+                                    track.end());
+    };
+
+    std::vector<float> seededRates;
+    const auto solo = pitchTracks (vocalor::PerformanceMode::Solo, 1, 3.0, seededRates);
+    expect (solo.size() == 1, "the solo vibrato probe did not find exactly one voice");
+    if (solo.size() == 1)
+    {
+        const auto track = tail (solo[0]);
+        const auto rate = rateOf (track);
+        const auto extent = extentOf (track);
+        std::cout << "solo vibrato: " << std::fixed << std::setprecision (3) << rate
+                  << " Hz, +/-" << std::setprecision (1) << extent << " cents\n";
+        // Sundberg's definition, and the band the 2022 systematic review gives.
+        expect (rate > 5.5 && rate < 7.2,
+                "the solo vibrato rate is outside the 5.5-7.2 Hz band a sung vibrato occupies");
+        // "An extent of about +/-1 semitone". The identity depth multiplies it,
+        // so singer 0 reaches 108.6 rather than exactly 100.
+        expect (extent > 80.0,
+                "Vibrato at 100 % does not reach a solo singer's extent");
+        // A reseeded rate that nothing reads would pass the band check on its
+        // own, so the track and the identity have to agree.
+        expect (! seededRates.empty()
+                    && std::abs (rate - static_cast<double> (seededRates[0]))
+                           < 0.02 * static_cast<double> (seededRates[0]),
+                "the sounding vibrato rate does not follow the singer identity's own rate");
+    }
+
+    std::vector<float> choirRates;
+    const auto choir = pitchTracks (vocalor::PerformanceMode::Choir, 12, 3.0, choirRates);
+    expect (choir.size() == 12, "the choir vibrato probe did not find twelve voices");
+    double slowest = 1.0e9;
+    double fastest = -1.0e9;
+    double narrowest = 1.0e9;
+    double widest = -1.0e9;
+    for (const auto& voice : choir)
+    {
+        const auto track = tail (voice);
+        const auto rate = rateOf (track);
+        const auto extent = extentOf (track);
+        slowest = std::min (slowest, rate);
+        fastest = std::max (fastest, rate);
+        narrowest = std::min (narrowest, extent);
+        widest = std::max (widest, extent);
+    }
+    std::cout << "choir vibrato: rates " << std::setprecision (3) << slowest << " - "
+              << fastest << " Hz, extents +/-" << std::setprecision (1) << narrowest
+              << " - +/-" << widest << " cents\n";
+    expect (slowest > 5.5 && fastest < 7.2,
+            "the twelve singer vibrato rates do not all sit in the 5.5-7.2 Hz band");
+    // A section sings a narrower vibrato than a soloist: twelve voices at solo
+    // extent smear into a chorus instead of reading as a section.
+    expect (narrowest > 25.0 && widest < 50.0,
+            "the ensemble vibrato extent is outside the band a section sings");
+}
+
+/** A sung vibrato modulates the amplitude, not only the pitch.
+
+    The engine had one amplitude source and it was the passive one: harmonics
+    sweeping static formant skirts. Measured as the magnitude of the envelope's
+    own component at the singer's vibrato rate that is 0.10 dB on a held C5 and
+    0.22 dB at C6, against a 0.001 dB floor with the vibrato off -- a tenth of
+    what a singer produces. The cricothyroid oscillation that carries the pitch
+    also moves subglottal pressure and adduction, so the level and the source
+    slope swing on the same cycle, and both notes are chosen because the passive
+    contribution alone still does not reach 1 dB at either of them once the
+    extent is a real one: with the laryngeal modulation forced out but the new
+    extent in force it reads 0.51 dB at C5 and 0.67 dB at C6.
+*/
+void testVibratoAmplitude()
+{
+    constexpr auto sampleRate = 48000.0;
+
+    // Magnitude of the envelope's component at `vibratoHz`, expressed as the
+    // decibels the level rises above its own mean. A peak-to-trough statistic
+    // is an extremum dominated by shimmer and jitter; a rate-selective one
+    // reads a true zero when there is no vibrato.
+    const auto modulationDb = [] (int midiNote, float vibrato, double& vibratoHz)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        vocalor::EngineParameters parameters;
+        parameters.mode = vocalor::PerformanceMode::Solo;
+        parameters.vibrato = vibrato;
+        parameters.humanize = 0.0f;
+        parameters.dynamics = 1.0f;
+        engine.setParameters (parameters);
+        // Solo sounds singer 0, so the rate the metric selects on is known
+        // rather than estimated.
+        vibratoHz = static_cast<double> (
+            vocalor::VoiceEngineTestAccess::singerVibratoRates (engine)[0]);
+        engine.noteOn (midiNote, 0.85f);
+
+        const auto total = static_cast<int> (3.0 * sampleRate);
+        const auto audio = renderMono (engine, total);
+
+        // Rectified one-pole follower, 10 ms: fast enough to follow a 6 Hz
+        // modulation without ripple at the fundamental.
+        std::vector<double> envelope (audio.size(), 0.0);
+        double state = 0.0;
+        const double coefficient = 1.0 - std::exp (-1.0 / (0.010 * sampleRate));
+        for (std::size_t i = 0; i < audio.size(); ++i)
+        {
+            state += coefficient * (std::abs (static_cast<double> (audio[i])) - state);
+            envelope[i] = state;
+        }
+
+        // A whole number of vibrato cycles from t = 1 s, so the projection does
+        // not leak the mean into the component.
+        const auto start = static_cast<std::size_t> (sampleRate);
+        const auto cycles = static_cast<int> (static_cast<double> (audio.size() - start)
+                                              * vibratoHz / sampleRate);
+        const auto length = static_cast<std::size_t> (static_cast<double> (cycles)
+                                                      * sampleRate / vibratoHz);
+        double mean = 0.0;
+        for (std::size_t i = 0; i < length; ++i)
+            mean += envelope[start + i];
+        mean /= static_cast<double> (length);
+
+        double real = 0.0;
+        double imaginary = 0.0;
+        for (std::size_t i = 0; i < length; ++i)
+        {
+            const auto phase = 2.0 * 3.14159265358979323846 * vibratoHz
+                             * static_cast<double> (i) / sampleRate;
+            real += (envelope[start + i] - mean) * std::cos (phase);
+            imaginary += (envelope[start + i] - mean) * std::sin (phase);
+        }
+        const auto magnitude = 2.0 * std::sqrt (real * real + imaginary * imaginary)
+                             / static_cast<double> (length);
+        return 20.0 * std::log10 ((mean + magnitude) / std::max (mean, 1.0e-12));
+    };
+
+    for (const int midiNote : { 72, 84 })
+    {
+        double vibratoHz = 0.0;
+        const auto full = modulationDb (midiNote, 1.0f, vibratoHz);
+        const auto none = modulationDb (midiNote, 0.0f, vibratoHz);
+        std::cout << "vibrato amplitude at MIDI " << midiNote << ": " << std::fixed
+                  << std::setprecision (3) << full << " dB at 100 %, " << none
+                  << " dB at 0 %\n";
+        expect (full > 1.0,
+                "the vibrato carries no laryngeal amplitude modulation: "
+                "only the passive formant-skirt contribution is present");
+        // The depth follows the extent in force, so with no extent there is
+        // nothing to modulate.
+        expect (none < 0.05,
+                "the amplitude modulation is not tied to the vibrato extent: "
+                "it is present with the vibrato switched off");
+    }
+}
+
 /** An a cappella ensemble tunes its chord to the bass, not to a keyboard.
 
     Chord mode stacked equal-tempered semitones, so a one-finger triad beat
@@ -3140,6 +3404,8 @@ int main()
     testFormantTuningAtHighPitch();
     testJustIntonation();
     testEnsembleDispersion();
+    testVibratoRateAndExtent();
+    testVibratoAmplitude();
     testNasalBranch();
     testOnsetSpectrum();
     testVelocityShapesOnset();
