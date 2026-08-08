@@ -189,27 +189,37 @@ public:
                  bool enableClockBleed = false,
                  bool enableHyperbolicSweep = false,
                  float calibration = 1.0f,
-                 bool enableRateProportionalNoise = false) noexcept;
+                 bool useRateProportionalNoiseHypothesis = false) noexcept;
 
-    // The one measured structural property of this circuit's noise that the
-    // model does not otherwise carry: mode II's floor sits 3.95 dB above mode
-    // I's, on Panasonic parts and again on Xvive parts (OQ-03). The settled
-    // topology gives the two modes identical sweep depth and clock range --
-    // the mode line changes the modulation *rate* and nothing else -- so a
-    // noise mechanism proportional to that rate, equivalently to the sweep's
-    // own slope d(delay)/dt, predicts exactly
-    // 20*log10(modeRateRatio()) = 4.21 dB and is chip-population independent,
-    // which is the delta's strongest recorded property.
+    // The one usable real-instrument observation of this circuit's noise:
+    // mode II's output floor was reported about 3.95 dB above mode I's, on
+    // Panasonic parts and again on Xvive parts (OQ-03; the printed pairs give
+    // 3.96 and 3.95 dB). The unchanged capture chain makes the relative delta
+    // usable even though its absolute dBFS figures and true-peak statistic
+    // cannot calibrate this model. Apply 3.95 dB empirically by default while
+    // leaving mode I -- whose per-line amplitude answers to the MN3009's own
+    // 0.2 mVrms A-weighted row -- untouched.
+    static constexpr float measuredModeTwoNoiseDeltaDb = 3.95f;
+    static constexpr float measuredModeTwoNoiseGain = 1.57579602f;
+    [[nodiscard]] static constexpr float measuredModeNoiseGain(
+        ChorusMode mode) noexcept
+    {
+        return chorusTwoEngaged(mode) ? measuredModeTwoNoiseGain : 1.0f;
+    }
+
+    // The settled topology gives the two modes identical sweep depth and
+    // clock range -- the mode line changes the modulation *rate* and nothing
+    // else -- so a noise mechanism proportional to that rate, equivalently to
+    // the sweep's own slope d(delay)/dt, predicts exactly
+    // 20*log10(modeRateRatio()) = 4.21 dB. This remains a causal hypothesis,
+    // not the default calibration: OQ-03's same-chain capture at a third,
+    // artificial rate is still needed to distinguish it from noise in the
+    // mode-switch network.
     //
-    // It is a candidate, not a mechanism: the calibrated same-chain capture
-    // OQ-03 asks for would confirm or kill it, and a capture at a third,
-    // artificial rate would separate rate-proportional noise from
-    // mode-switch-network noise directly. Until then it ships behind its own
-    // switch, off by default, so the hypothesis is testable without being
-    // asserted. The reference is mode I, so engaging it leaves mode I's
-    // established floor exactly where it is and raises only mode II's.
-    [[nodiscard]] static float rateProportionalNoiseGain(
-        float rateHz, bool enabled) noexcept;
+    // Selecting the hypothesis replaces, rather than multiplies, the empirical
+    // factor. Both profiles reference mode I and therefore preserve its
+    // established floor exactly.
+    [[nodiscard]] static float rateProportionalNoiseGain(float rateHz) noexcept;
 
     // The nominal (unmodulated) delay in seconds for a clock frequency.
     [[nodiscard]] static constexpr float delaySecondsForClock(float clockHz) noexcept
@@ -522,6 +532,9 @@ private:
     // per sample and doubled each tone's frequency when both were enabled.
     double optionalSpurPhaseA_ { 0.0 };
     double optionalSpurPhaseB_ { 0.0 };
+    // Bypass mutes the wet return but retains the last-selected I/II noise
+    // profile, matching the clock-program behaviour this model already had.
+    ChorusMode runningMode_ { ChorusMode::One };
     // Whether the glided settings have a starting point yet.
     bool primed_ { false };
 };

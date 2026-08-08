@@ -638,6 +638,7 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     clockSpurPhaseB_ = 0.0;
     optionalSpurPhaseA_ = 0.0;
     optionalSpurPhaseB_ = 0.0;
+    runningMode_ = ChorusMode::One;
     // A patch loaded with the effect switched on is not a player reaching for
     // the button: there is nothing to glide from. The first sample after a
     // reset takes the mode as it stands, and only changes made afterwards
@@ -645,10 +646,8 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     primed_ = false;
 }
 
-float Chorus::rateProportionalNoiseGain(float rateHz, bool enabled) noexcept
+float Chorus::rateProportionalNoiseGain(float rateHz) noexcept
 {
-    if (!enabled)
-        return 1.0f;
     const float reference = static_cast<float>(derivedRateHz(true));
     if (!(rateHz > 0.0f) || !(reference > 0.0f))
         return 1.0f;
@@ -660,7 +659,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      bool enableClockBleed,
                      bool enableHyperbolicSweep,
                      float calibration,
-                     bool enableRateProportionalNoise) noexcept
+                     bool useRateProportionalNoiseHypothesis) noexcept
 {
     const auto target = settingsFor(mode);
 
@@ -678,6 +677,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         rateHz_ = target.rateHz;
         sweep_ = target.sweepSeconds;
         centreDelay_ = target.centreDelaySeconds;
+        runningMode_ = chorusTwoEngaged(mode) ? ChorusMode::Two
+                                              : ChorusMode::One;
     }
     const float muteGlide = 1.0f - std::exp(
         -inverseSampleRate_ / wetMuteTimeConstantSeconds);
@@ -752,12 +753,16 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     const float wetOutputCouplingG = mode == ChorusMode::Off
         ? support_.wetOutputCouplingMutedG
         : support_.wetOutputCouplingConnectedG;
-    // The candidate rate-proportional term multiplies the lines' own random
-    // floor and nothing else: the optional common/hum/spur layers below stay
-    // on the plain Chorus Noise master, because the hypothesis is about the
-    // sweep's slope through the buckets, not about the surrounding board.
-    const float lineNoiseScale = noiseScale
-        * rateProportionalNoiseGain(rateHz_, enableRateProportionalNoise);
+    // The relative real-instrument calibration and its alternative causal
+    // hypothesis act on the lines' random floor only. Neither is a claim that
+    // a standalone mode-II MN3009 exceeds its datasheet row: the observation
+    // was made at the completed instrument's output, and the exact physical
+    // insertion point remains OQ-03. The optional common/hum/spur layers below
+    // stay on the plain Chorus Noise master.
+    const float modeNoiseGain = useRateProportionalNoiseHypothesis
+        ? rateProportionalNoiseGain(rateHz_)
+        : measuredModeNoiseGain(runningMode_);
+    const float lineNoiseScale = noiseScale * modeNoiseGain;
     float wetA = lineA_.process(input, clockA, sampleRate_, support_,
                                 wetOutputCouplingG, lineNoiseScale);
     float wetB = lineB_.process(input, clockB, sampleRate_, support_,

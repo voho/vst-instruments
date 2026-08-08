@@ -4417,41 +4417,42 @@ void testChorusSweepTrajectoryDefault()
                "the hyperbolic switch acted at zero Unit Character");
 }
 
-void testChorusRateNoiseReproducesTheMeasuredModeDelta()
+void testChorusNoiseProfilesReproduceTheMeasuredModeDelta()
 {
-    // The chorus noise floor of a real 106 sits 3.95 dB higher in mode II than
-    // in mode I, measured on Panasonic parts and again on Xvive parts
-    // (OQ-03). The settled topology gives both modes the same sweep depth and
+    // A real 106's chorus floor was reported about 3.95 dB higher in mode II:
+    // the printed Panasonic and Xvive pairs give 3.96 and 3.95 dB (OQ-03).
+    // The settled topology gives both modes the same sweep depth and
     // the same clock range, so the only thing the mode line changes is the
     // modulation rate -- and this instrument's own timing network puts that
-    // ratio at 1.6234799, which is 4.21 dB. The candidate mechanism is
-    // therefore noise proportional to that rate.
+    // ratio at 1.6234799, which is 4.21 dB. Noise proportional to that rate is
+    // therefore a useful causal hypothesis, not the empirical calibration.
     //
-    // It ships off, because a prediction that lands 0.26 dB from a measurement
-    // is a lead and not evidence. What this fence holds is that the switch
-    // does what it claims in both positions: silent when off, and exactly the
-    // predicted delta when on.
+    // The measured delta now ships by default; the internal switch substitutes
+    // the rate-law hypothesis so it remains falsifiable. What this fence holds
+    // is that both profiles do exactly what they claim without moving mode I.
     constexpr double sampleRate = 48000.0;
 
     // Each line writes one noise sample per bucket edge, so its instantaneous
     // floor rides the swept clock and the measurement has to cover a whole
     // number of modulation cycles or the two modes are compared over different
-    // parts of their own sweeps. Measured over a fixed window instead, mode II
-    // reads 0.69 dB hot before anything is switched on at all.
-    const auto idleFloorDb = [&](ChorusMode mode, bool rateNoise) {
+    // parts of their own sweeps. In a diagnostic with both mode factors divided
+    // out, a fixed window alone makes mode II read 0.69 dB hot.
+    const auto idleFloor = [&](ChorusMode mode, bool rateHypothesis) {
         YouKnow106Engine engine;
         engine.prepare(sampleRate, blockSize, true);
         auto parameters = plainPatch();
         parameters.chorus = mode;
-        parameters.enableChorusRateNoise = rateNoise;
+        parameters.useChorusRateNoiseHypothesis = rateHypothesis;
         engine.setParameters(parameters);
         // Past the wet-mute glide and the support filters' own settling.
         render(engine, static_cast<int>(sampleRate * 0.5));
 
         constexpr int cycles = 6;
         const double period = 1.0 / Chorus::settingsFor(mode).rateHz;
-        const auto rendered = render(
-            engine, static_cast<int>(sampleRate * period * cycles + 0.5));
+        return render(engine,
+                      static_cast<int>(sampleRate * period * cycles + 0.5));
+    };
+    const auto floorDb = [](const Render& rendered) {
         double energy = 0.0;
         for (float sample : rendered.left)
             energy += static_cast<double>(sample) * sample;
@@ -4459,27 +4460,42 @@ void testChorusRateNoiseReproducesTheMeasuredModeDelta()
             energy / static_cast<double>(rendered.left.size()) + 1.0e-30);
     };
 
-    const double offOne = idleFloorDb(ChorusMode::One, false);
-    const double offTwo = idleFloorDb(ChorusMode::Two, false);
-    const double onOne = idleFloorDb(ChorusMode::One, true);
-    const double onTwo = idleFloorDb(ChorusMode::Two, true);
+    const auto empiricalOneRender = idleFloor(ChorusMode::One, false);
+    const auto empiricalTwoRender = idleFloor(ChorusMode::Two, false);
+    const auto rateOneRender = idleFloor(ChorusMode::One, true);
+    const auto rateTwoRender = idleFloor(ChorusMode::Two, true);
+    const double empiricalOne = floorDb(empiricalOneRender);
+    const double empiricalTwo = floorDb(empiricalTwoRender);
+    const double rateOne = floorDb(rateOneRender);
+    const double rateTwo = floorDb(rateTwoRender);
 
-    expect(std::abs(offTwo - offOne) < 0.10,
-           "the modes already differ by " + std::to_string(offTwo - offOne)
-               + " dB with the rate-noise candidate switched out");
-    // Mode I is the reference leg, so engaging the candidate must leave it
-    // exactly where the shipped default has it.
-    expect(std::abs(onOne - offOne) < 1.0e-6,
-           "engaging the rate-noise candidate moved mode I's own floor by "
-               + std::to_string(onOne - offOne) + " dB");
+    expectNear(20.0 * std::log10(Chorus::measuredModeTwoNoiseGain),
+               Chorus::measuredModeTwoNoiseDeltaDb, 1.0e-6,
+               "the empirical mode-II gain no longer encodes 3.95 dB");
+    expect(std::abs((empiricalTwo - empiricalOne)
+                    - Chorus::measuredModeTwoNoiseDeltaDb) < 0.10,
+           "the default profile raises mode II by "
+               + std::to_string(empiricalTwo - empiricalOne)
+               + " dB, not the reported 3.95 dB calibration");
+    // Mode I is the reference leg, so substituting the causal hypothesis must
+    // leave every rendered sample exactly where the empirical default has it.
+    const auto sameBits = [](const std::vector<float>& first,
+                             const std::vector<float>& second) {
+        return first.size() == second.size()
+            && std::memcmp(first.data(), second.data(),
+                           first.size() * sizeof(float)) == 0;
+    };
+    expect(sameBits(rateOneRender.left, empiricalOneRender.left)
+               && sameBits(rateOneRender.right, empiricalOneRender.right),
+           "selecting the rate-noise hypothesis changed mode I's samples");
 
     const double predicted =
         20.0 * std::log10(Chorus::modeRateRatio());
     expect(std::abs(predicted - 4.21) < 0.01,
-           "the mode-rate ratio no longer predicts the recorded 4.21 dB");
-    expect(std::abs((onTwo - onOne) - predicted) < 0.10,
-           "the rate-noise candidate raises mode II by "
-               + std::to_string(onTwo - onOne) + " dB, not the predicted "
+           "the mode-rate ratio no longer predicts 4.21 dB");
+    expect(std::abs((rateTwo - rateOne) - predicted) < 0.10,
+           "the rate-noise hypothesis raises mode II by "
+               + std::to_string(rateTwo - rateOne) + " dB, not the predicted "
                + std::to_string(predicted));
 }
 
@@ -4487,12 +4503,13 @@ void testChorusNoiseIsPresentAndDefeatable()
 {
     constexpr double sampleRate = 48000.0;
 
-    const auto idleNoise = [&](float scale) {
+    const auto idleNoise = [&](float scale, bool rateHypothesis) {
         YouKnow106Engine engine;
         engine.prepare(sampleRate, blockSize, true);
         auto parameters = plainPatch();
         parameters.chorus = ChorusMode::Two;
         parameters.chorusNoise = scale;
+        parameters.useChorusRateNoiseHypothesis = rateHypothesis;
         engine.setParameters(parameters);
         const auto rendered = render(engine, static_cast<int>(sampleRate));
         double energy = 0.0;
@@ -4502,11 +4519,13 @@ void testChorusNoiseIsPresentAndDefeatable()
         return 10.0 * std::log10(energy / (rendered.left.size() / 2) + 1.0e-30);
     };
 
-    const double modelled = idleNoise(1.0f);
+    const double modelled = idleNoise(1.0f, false);
     expect(modelled > -85.0 && modelled < -55.0,
-           "the voiced delay-line noise floor escaped its regression guard band");
-    expect(idleNoise(0.0f) < -120.0,
-           "the delay lines still hiss with their noise switched out");
+           "the part-anchored delay-line floor escaped its regression guard band");
+    expect(idleNoise(0.0f, false) < -120.0,
+           "the empirical profile still hisses with Chorus Noise at zero");
+    expect(idleNoise(0.0f, true) < -120.0,
+           "the rate-law profile still hisses with Chorus Noise at zero");
 }
 
 void testIdleOutputFloorCarriesTheMn3009NoiseRow()
@@ -4574,12 +4593,12 @@ void testIdleOutputFloorCarriesTheMn3009NoiseRow()
     expectNear(floorOne, -77.85, 0.5,
                "the idle output floor left the MN3009 noise row");
 
-    // One target, not two. `settingsFor` gives modes I and II the same wet gain
-    // and the same sweep -- only the rate differs, and the rate-proportional
-    // noise candidate is off by default -- so a floor that differed by mode
-    // would mean something other than the line noise had moved.
-    expectNear(floorTwo, floorOne, 0.1,
-               "chorus I and II no longer render the same idle floor");
+    // The unchanged-chain observation gives one usable relative target even
+    // though neither absolute dBFS value is portable. Mode I remains on the
+    // part-derived anchor above; mode II must carry the observed lift.
+    expectNear(floorTwo - floorOne,
+               Chorus::measuredModeTwoNoiseDeltaDb, 0.1,
+               "the idle output floor does not carry the measured II-I lift");
 
     // The two measurements have to move together. Both are compared against
     // what this engine rendered before the constant was derived, which is a
@@ -5839,7 +5858,7 @@ int main()
     testChorusSweepTrajectoryDefault();
     testChorusNoiseIsPresentAndDefeatable();
     testIdleOutputFloorCarriesTheMn3009NoiseRow();
-    testChorusRateNoiseReproducesTheMeasuredModeDelta();
+    testChorusNoiseProfilesReproduceTheMeasuredModeDelta();
     testMainNoiseDensityIsProcessingRateInvariant();
     testSampleRateAndOversamplingConsistency();
     testResonanceDoesNotMoveTheRenderedCorner();

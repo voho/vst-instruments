@@ -30,8 +30,9 @@ The set is ordered so it can be played straight through:
   service procedure's published cutoff pitch; the model's feedback-dependent
   correction remains a voiced compatibility profile.
 - **06** is the effect switch heard as a switch: the same pad dry, in mode I,
-  then in mode II. Mode II is faster, not deeper. Listen in headphones for
-  the antiphase width and the hiss riding under both wet modes.
+  then in mode II. Mode II is faster, not deeper, and its noise floor carries
+  the reported approximately 3.95 dB lift over mode I. Listen in headphones
+  for the antiphase width and the stronger hiss under the second wet mode.
 - **07–08** are performance behaviours: Solo Unison summing six free-running
   DCOs — equal timer counts, no deliberate detune and no forced common phase —
   under a constant-rate glide, and the modulator's hold-then-fade delay bringing

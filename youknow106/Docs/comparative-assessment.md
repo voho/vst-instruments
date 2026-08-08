@@ -148,7 +148,7 @@ drifts off the value.
 | Chorus sweep | 1.4–6.4 ms scoped on a designator-faithful build with genuine MN3009s, called identical against the measurer's real 106 | Shipped endpoints | Third-party measured |
 | BBD transfer | MN3009 EC row: −3 dB at 12 kHz, 40 kHz clock (edition-verified 2026-08-07) | −3.000 dB at the anchor | Anchored, fenced with a cross-reading guard band |
 | Digital laws | Hash-identified A-5/B-2 firmware behaviour | Byte-exact envelope/LFO/delay/portamento fixtures | ROM-resolved, fenced |
-| Chorus noise delta | Measured 3.95 dB II−I on two chip populations | The rate-proportional candidate now ships behind `enableChorusRateNoise`, off by default: engaged it raises mode II by a measured 4.2225 dB against its 4.2089 dB prediction and leaves mode I's floor bit-identical | Open; the candidate is implemented and testable, not asserted |
+| Chorus noise delta | Same-chain real-106 true-peak captures report approximately 3.95 dB II−I with Panasonic and Xvive MN3009 populations (3.96/3.95 dB from the printed pairs) | The shipped default applies `10^(3.95/20) = 1.575796` to mode II while leaving mode I sample-bit-identical. The internal `useChorusRateNoiseHypothesis` comparison substitutes the circuit-derived 4.2089 dB rate-law prediction | Aggregate relative delta matched at moderate confidence; treating true peak as a broadband amplitude factor, plus absolute PSD, weighting, stereo correlation, spurs and physical cause, remains OQ-03 |
 
 What this scoreboard is not: a full-instrument null test. That requires
 the calibrated same-chain captures the queue specifies, and no product on
