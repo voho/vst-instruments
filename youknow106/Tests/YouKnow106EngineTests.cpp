@@ -74,6 +74,17 @@ struct YouKnow106TestAccess
         return engine.pwmVoltsTarget_;
     }
 
+    static float lfoValue(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.lfoValue_;
+    }
+
+    // The single delay attenuator, read before it is multiplied into anything.
+    static float lfoDelayLevel(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.lfoDelayLevel_;
+    }
+
     static float pwmHeld(const YouKnow106Engine& engine) noexcept
     {
         return engine.pwmVolts_;
@@ -3079,6 +3090,97 @@ void testModulationDelayRearmsForANewPhrase()
            "a new phrase started with the previous phrase's modulation depth");
 }
 
+void testModulationDelayGatesPulseWidthToo()
+{
+    // There is one LFO and one delay attenuator, and the CPU scales the value
+    // once before it distributes it. PWM therefore has to arrive gated exactly
+    // as the pitch and cutoff writes do, and as the panel LFO display already
+    // shows. Both distribution paths are checked: the scanned converter write
+    // that a held note exercises, and the idle-priming path setParameters runs
+    // when the output is empty.
+    constexpr double sampleRate = 48000.0;
+    // LFO RATE 0.75 is 7.4405 Hz, a 134.4 ms period, so a window shorter than
+    // one full cycle reads an alignment-dependent span rather than the depth:
+    // at t = 6.00 s, full release either way, an 83 ms probe reads 0.4129 and
+    // this 200 ms one reads 0.4166.
+    constexpr double windowSeconds = 0.200;
+    constexpr int windowSamples = static_cast<int>(windowSeconds * sampleRate);
+
+    auto parameters = plainPatch();
+    parameters.sawEnabled = false;
+    parameters.pulseEnabled = true;
+    parameters.pwmSource = PwmSource::Lfo;
+    parameters.pwmDepth = 1.0f;
+    parameters.lfoRate = 0.75f;
+    parameters.lfoDelay = 1.0f;
+
+    std::vector<float> left(blockSize, 0.0f);
+    std::vector<float> right(blockSize, 0.0f);
+    const auto advance = [&](YouKnow106Engine& engine, double seconds) {
+        const int samples = static_cast<int>(seconds * sampleRate);
+        for (int done = 0; done < samples; done += blockSize)
+            engine.process(left.data(), right.data(),
+                           std::min(blockSize, samples - done));
+    };
+    const auto dutySpanOverWindow = [&](YouKnow106Engine& engine) {
+        float lowest = 1.0f;
+        float highest = 0.0f;
+        for (int sample = 0; sample < windowSamples; ++sample)
+        {
+            engine.process(left.data(), right.data(), 1);
+            const float duty = YouKnow106TestAccess::pulseDuty(engine, 0);
+            lowest = std::min(lowest, duty);
+            highest = std::max(highest, duty);
+        }
+        return static_cast<double>(highest - lowest);
+    };
+
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    engine.setParameters(parameters);
+    engine.noteOn(60, 1.0f);
+
+    // DELAY 1.0 is a 4.36 s hold, so nothing at all has been released here.
+    advance(engine, 0.05);
+    expect(YouKnow106TestAccess::lfoDelayLevel(engine) == 0.0f,
+           "the delay envelope had already released at t = 0.05 s");
+    const double heldSpan = dutySpanOverWindow(engine);
+    expect(heldSpan < 0.005,
+           "the pulse width swept " + std::to_string(heldSpan)
+               + " while the delay envelope was still shut");
+
+    // Well past the hold and the stepped fade, where the gated and the raw
+    // value are the same float and the routing can make no difference.
+    advance(engine, 6.0 - 0.05 - windowSeconds);
+    expect(YouKnow106TestAccess::lfoDelayLevel(engine) == 1.0f,
+           "the delay envelope had not fully released at t = 6.00 s");
+    const double releasedSpan = dutySpanOverWindow(engine);
+    expectNear(releasedSpan, 0.4166, 0.4166 * 0.01,
+               "gating the converter write changed full-depth pulse-width "
+               "modulation");
+
+    // The same distribution runs on the host thread when a snapshot arrives
+    // with the output path empty. A patch change during a silence must prime
+    // the one shared PWM hold from the gated value as well, or the next attack
+    // starts at a duty the delay envelope has not authorised.
+    YouKnow106Engine idle;
+    idle.prepare(sampleRate, blockSize, false);
+    idle.setParameters(parameters);
+    // 30 ms of idle running puts the LFO on its positive peak with the delay
+    // envelope still shut, which is where the two values are furthest apart.
+    advance(idle, 0.030);
+    expect(YouKnow106TestAccess::lfoValue(idle) == 1.0f,
+           "the idle LFO did not reach its positive peak in 30 ms");
+    expect(YouKnow106TestAccess::lfoDelayLevel(idle) == 0.0f,
+           "the idle delay envelope had already released after 30 ms");
+    idle.setParameters(parameters);
+    // pwmControlVolts(0.5) is +3.3 V, the middle of the comparator's travel;
+    // the ungated peak would prime +0.6 V, the far end of it.
+    expectNear(YouKnow106TestAccess::pwmHeld(idle),
+               YouKnow106Engine::pwmControlVolts(0.5f), 1.0e-6,
+               "the idle snapshot primed the PWM hold from the ungated LFO");
+}
+
 void testScanTimingSurvivesAProcessingRateChange()
 {
     // Converter progress is stored in normalized passes, not internal samples.
@@ -4895,6 +4997,7 @@ int main()
     testPortamentoRateFollowsItsControl();
     testOscillatorSurvivesMoreThanOneCyclePerSample();
     testModulationDelayRearmsForANewPhrase();
+    testModulationDelayGatesPulseWidthToo();
     testScanTimingSurvivesAProcessingRateChange();
     testUnisonStackGlidesFromOneOrigin();
     testQualityChangeWaitsForTheOutputPathToEmpty();

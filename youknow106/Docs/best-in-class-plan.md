@@ -1108,7 +1108,7 @@ recording what was wrong. Corrected figures are marked **[re-measured
 2026-08-07 preflight]** or **[measured 2026-08-07 preflight]**. No engine change
 was made; nothing is ticked.
 
-- [ ] **1. Gate the PWM converter write with the LFO delay envelope.** The
+- [x] **1. Gate the PWM converter write with the LFO delay envelope.** The
   firmware computes one LFO value and one delay level, and the delay scales the
   value *before* the CPU distributes it — there is one attenuator in the
   instrument, not one per destination. The engine already holds that gated value
@@ -1160,6 +1160,42 @@ was made; nothing is ticked.
   path is the full PWM travel — +0.600000 V against +3.300000 V — which is the
   first attack after a silent patch change landing at the wrong duty. Assertion
   (3) is new and closes it.
+
+  *What actually shipped, 2026-08-08.* As written, with no departure from the
+  mechanism and no constant that came out anywhere else. Every figure the
+  contract asserts reproduced to the digit on the unchanged engine: the 200 ms
+  span at t = 0.05 s is **0.4166** with `lfoDelayLevel_` reading 0.000000; the
+  same window at t = 6.00 s is 0.4166 with `lfoDelayLevel_` bit-exactly 1.0;
+  30 ms of idle running puts `lfoValue_` at exactly +1.000000 with the delay
+  still shut, and the silent `setParameters` there primes `pwmVolts_` to
+  **+0.600000 V**.
+
+  Four edits: the `ConverterDestination::Pwm` case and the `updateSharedScan`
+  body read the gated value, and the two call sites
+  (`Source/DSP/YouKnow106Engine.cpp:2189` and `:2330`) pass
+  `lfoValue_ * lfoDelayLevel_`, which is the product `displayLfo_` already is.
+  The `updateSharedScan` parameter is renamed `lfoRaw` to `lfoGated` so the
+  signature states what it now receives. After the change the t = 0.05 s span
+  is **0.0000** at a fixed duty of 0.7250, the t = 6.00 s span is unchanged at
+  0.4166, and the idle prime lands on **+3.300000 V**, which is
+  `pwmControlVolts(0.5)` — the middle of the comparator's travel rather than
+  its far end.
+
+  *Test:* `testModulationDelayGatesPulseWidthToo` in
+  `Tests/YouKnow106EngineTests.cpp`, with two new `YouKnow106TestAccess` probes
+  for `lfoValue_` and `lfoDelayLevel_`. *Proved to bite:* with all four edits
+  reverted it fails (1) — `the pulse width swept 0.416600 while the delay
+  envelope was still shut` — and (3) — `got 0.6, expected 3.3 +/- 1e-06`. (2)
+  passes either way, as the contract predicts. The preflight's warning was
+  worth the ink: reverting **only** the two `updateSharedScan` call sites, with
+  the converter-write case left correct, still fails (3) at 0.6 V against
+  3.3 V while (1) and (2) pass, so the original contract really would have
+  signed that implementation off. Full suite green afterwards, 6/6.
+
+  The one figure that moved is a parenthetical and is immaterial: the 83 ms
+  illustration reads 0.3575 at t = 0.05 s and 0.4129 at t = 6.00 s here against
+  the 0.3574 and 0.4130 recorded above — a one-sample probing offset, which
+  argues for the 200 ms window either way.
 
 - [ ] **2. Drive the resonance frequency trim from the cascade's own
   limit-cycle amplitude instead of from loop gain.** The droop this trim

@@ -141,8 +141,11 @@ DynamicResponse dynamicResponse (float dynamics) noexcept
     const float below = 1.0f - clampUnit (dynamics);
     DynamicResponse response;
     // Level is linear in dB, which is how a dynamic layer is expected to behave
-    // under a controller: an empty wheel is 18.1 dB down on the voiced source.
-    response.voicedGain = std::exp2 (-3.00f * below);
+    // under a controller. The span is what a singer covers between pianissimo
+    // and fortissimo -- roughly 30-40 dB -- rather than the 18.1 dB a mixing
+    // fader would give: an empty wheel is exactly 30.00 dB down on the voiced
+    // source.
+    response.voicedGain = std::exp2 (-4.9829f * below);
     // Aspiration only loses 7.2 dB over the same span. The glottis leaks a
     // larger share of the flow at low effort, so a soft note is breathier as
     // well as quieter rather than being the same sound turned down.

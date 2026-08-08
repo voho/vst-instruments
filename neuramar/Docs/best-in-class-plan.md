@@ -886,7 +886,7 @@ each Bone mode its own fitted decay — were struck on re-measurement and are
 recorded, with the measurements that struck them, under *Considered and not
 planned*.
 
-- [ ] **1. Stop applying the register compensation to Air and Bone.**
+- [x] **1. Stop applying the register compensation to Air and Bone.**
   `registerGain` at `NeuramarEngine.cpp:991-1012` does not scale the Core, it
   *normalises* it: after `:1013-1015` the Core's power is `referencePower`, which
   barely depends on the played note. `:1037-1039` and `:1078-1079` then
@@ -910,10 +910,15 @@ planned*.
   Register 0, which freezes the Air band centres so `registerGain` is the only
   remaining variable, it asserts the Air-to-Core ratio spread across those nine
   notes is **below 1.0 dB**, where a scratch build of this change measures
-  0.10 dB and the shipping engine measures 21.55 dB. At shipping defaults, where
+  0.10 dB and the shipping engine measures 21.55 dB. (Both of those numbers were
+  written before the gate was; the shipped form of this assertion measures the
+  isolated Air level instead, for the reason in the note below.) At shipping
+  defaults, where
   the Air centres do move with pitch and are edge-limited near Nyquist, it
   asserts the same spread is **below 9.0 dB**, against 6.77 dB for the change and
-  19.20 dB today. A third assertion covers **Bone**, isolated the same way by
+  19.20 dB today. (Struck: measured over the full keyboard this spread *rises*
+  with the change, 8.89 to 11.41 dB, and the 6.77 dB figure is unreachable. See
+  the note below.) A third assertion covers **Bone**, isolated the same way by
   subtracting a Bone-muted render from a full one: at Body Lock 1 and Register 0
   the isolated Bone layer's own level spread across those nine notes must be
   **below 1.0 dB**. At that setting the Bone target depends on the played note
@@ -924,7 +929,9 @@ planned*.
   zero-reliability mode to silence and a silent layer would pass by default. A
   fourth assertion guards the Core: `testKeyboardLevelFlatness` must stay green
   unchanged, and the Core-only level spread across MIDI 12-108 at Body Lock 1
-  must move by less than 0.2 dB (measured: 0.14 dB against 0.07 dB).
+  must move by less than 0.2 dB (measured: 0.14 dB against 0.07 dB). (Shipped as
+  an absolute bound instead, because a test cannot see the pre-change build; on
+  the fixture it builds the Core spread is 2.98 dB and does not move at all.)
   *Contract corrected in preflight.* Every assertion first written here measured
   Air or Core, so an implementation that deleted `* registerGain` from the Air
   expression and left the Bone one alone satisfied the whole contract while
@@ -938,8 +945,57 @@ planned*.
   moving Air centres run into the edge limit near Nyquist at the top of the
   keyboard — so that bound must be re-measured on the fixture the test actually
   builds before it is written down.
+  *What actually shipped*: the engine change is exactly the one specified —
+  `* registerGain` is gone from both the Air target at `:1037-1039` and the Bone
+  target at `:1078-1079`, the Core normalisation is untouched, and the comment
+  that argued for the old behaviour is replaced by the normalised-versus-scaled
+  reasoning. `testRegisterLayerBalance` in `Tests/NeuramarEngineTests.cpp`
+  builds its own fixture, `makeRegisterBalanceSample`: 40 harmonics at 220 Hz
+  falling as `h^-0.82`, six steady inharmonic modes at 1.35-6.35x the
+  fundamental, and the same high-passed noise bed the Air separation fixture
+  uses. The learner detects a root of 219.93 Hz (MIDI 57) and populates all
+  twelve Bone slots, six at reliability 1.000, so the guard that at least one
+  mode is non-zero passes on evidence rather than by luck. Three of the four
+  contracted assertions changed, each for a measured reason.
+  **The Body Lock 1 gate moved from the Air-to-Core ratio to the isolated Air
+  level.** On this fixture the Core's own level is not flat at Body Lock 1: it
+  spreads 2.98 dB across MIDI 12-108 because `registerGain` saturates at its
+  4.0 ceiling on MIDI 96 and 108, which is gap 9 and not something this step
+  touches. The ratio therefore carries the Core's saturation fade and no correct
+  implementation could hold it under 1.0 dB. The isolated Air level is the
+  quantity `registerGain` actually moves, and it is the same form preflight
+  already chose for Bone: it goes from **23.36 dB to 0.36 dB**, and the isolated
+  Bone level from **23.26 dB to 0.000 dB**. The 0.36 dB of Air residual is not a
+  register effect — at Mutation 0 the sixteen Air noise seeds are still drawn
+  from `mixHash(midiNote)` (`:494-506`), so every note gets an independent noise
+  realisation and its windowed RMS differs by that much.
+  **The Core guard is an absolute bound, not a before-and-after comparison**,
+  since a test cannot see the pre-change build: the Core level spread at Body
+  Lock 1 must stay under 4.0 dB, against 2.98 dB measured. What it defends is real — a
+  scratch build that also dropped `registerGain` from the Core loop measures
+  **26.28 dB** on the same fixture. `testKeyboardLevelFlatness` is green and
+  unchanged.
+  **The 9.0 dB shipping-defaults bound was struck, and the direction of that
+  claim was wrong.** Across the full MIDI 12-108 range at the shipping defaults
+  this change makes the Air-to-Core spread *worse*, 8.89 dB to **11.41 dB**,
+  because two independent errors were partially cancelling: at Body Lock 0.65
+  the Air centres scale as `ratio^0.35`, so above about MIDI 72 the top of the
+  sixteen-band set crosses the filterbank's 18 kHz edge fade and is legitimately
+  attenuated, and `registerGain` climbing to its ceiling at the same notes was
+  masking that. The mechanism is settled by pulling every centre back into range
+  with Formant -24 st, where the same full-keyboard spread after the change is
+  **0.354 dB**. The edge taper is a Body Lock property this step does not touch,
+  so the shipping-defaults gate is stated over MIDI 12-72, the register in which
+  every Air band is still in range: **7.82 dB before, 1.51 dB after**, bound at
+  3.0 dB.
+  Reverting both deletions and rerunning fails all three balance assertions at
+  23.364 dB (Air), 23.256 dB (Bone) and 7.820 dB (shipping-defaults Air-to-Core)
+  against bounds of 1.0, 1.0 and 3.0 dB. Suite green, 3/3 ctest suites in
+  41.9 s.
+  `README.md:250-255` still states the inverted claim this step disproves and
+  needs the correction; no engine step owns it.
 
-- [ ] **2. Pan by pitch, fixed at note-on, instead of by chord rank.**
+- [x] **2. Pan by pitch, fixed at note-on, instead of by chord rank.**
   `refreshVoicePans()` at `NeuramarEngine.cpp:656-685` recomputes every sounding
   voice's pan from its rank among the currently sounding set, so striking a
   second key drags the first note 5.736 dB across the image in one control period
@@ -989,6 +1045,63 @@ planned*.
   reasons that have nothing to do with panning. Preflight measured the six orders
   with the rank pan already removed (Spread 0): -145.9 dB at Mutation 0, -4.1 dB
   at 0.10 and -2.9 dB at 0.12.
+  *What actually shipped*: the engine change is the one specified.
+  `refreshVoicePans()` is deleted outright, along with its declaration in
+  `NeuramarEngine.h`, its call at the end of `noteOn()` and its call on voice
+  retirement in the render loop; the forced `controlCountdown = 0` went with it,
+  so the only remaining early control update is the fresh voice's own at
+  note-on, where `firstControlFrame` is true anyway. In its place `noteOn()`
+  sets `voice.pan = (midiNote - correctedRootMidi) / 24` once, using the
+  `correctedRootMidi` that was already being computed two lines further down for
+  the phase ratio, and the pan jitter at the target site is folded inside the
+  Spread multiply. Two comments elsewhere in the file cited a voice-pan refresh
+  as the thing that can re-assert a control frame mid-ramp — one in
+  `Bandpass::set()` and one guarding the harmonic-count contraction — and were
+  corrected to drop a mechanism that no longer exists.
+  **Spread stays live rather than being frozen into the pan.** The step writes
+  the placement as `clamp(spread * (midiNote - correctedRootMidi) / 24, -1, +1)`
+  assigned at note-on. What shipped stores only the note-dependent factor on the
+  voice and leaves the `* parameters.spread` and the outer clamp where they
+  already were, in `updateVoiceControl()`, so the rendered pan is that same
+  expression evaluated every control period. It is identical arithmetic — the
+  clamp is still outside the Spread multiply, which is what makes Spread 0
+  collapse the jitter with it — and it keeps a host automating Spread audible on
+  notes that are already sounding, which freezing the product at note-on would
+  have silently removed.
+  `testHeldNoteDoesNotMoveInImage` in `Tests/NeuramarEngineTests.cpp` runs on
+  the model `learnFixture()` already builds, whose root is 219.96 Hz at MIDI 57,
+  so it costs no extra learn. The second key it strikes is root+19, chosen so
+  none of its partials lands on the held note's fundamental, and the chord is
+  root, root+7, root+14. Measured on that fixture, before and after: the held
+  note's L-R goes from **0.000 dB alone to 5.7546 dB** in the first control
+  period after the second note-on and 5.7541 dB once settled, against
+  **0.00016 dB and -0.0000083 dB** after; the worst of the six note orders goes
+  from **-6.14 dB to -146.88 dB** relative, which lands on preflight's predicted
+  -146.7 dB float-summation floor; and Spread 0 at Mutation 0.12 goes from a
+  worst channel difference of **1.745e-3 to exactly 0**. The step's recorded
+  5.736 / 5.769 dB and -6.0 / -13.5 dB are the same finding on the audit's own
+  fixture; on this one the six orders span -6.14 to -12.04 dB.
+  **The existing "single note centred" assertion was rewritten, not left
+  passing.** It played the root note, which this change still centres, so it
+  survived the change by accident. `testStereoPanAndOverlappingNoteOff` now
+  asserts both halves: the root note is still mono to 1e-7 at Spread 1, and a
+  note an octave above the root sits at -4.771 dB left-against-right, which is
+  what the constant-power law gives for `pan = +0.5`. Measured -4.771 dB after
+  the change and 0.000 dB before, so the pair can no longer pass on an engine
+  that centres everything.
+  Reverting all four parts of the change and rerunning fails five assertions:
+  the octave-placement assertion at 0.000 dB against -4.771 dB, both held-note
+  assertions at 5.7546 dB and 5.7541 dB against a 0.05 dB bound, the six-order
+  assertion at -6.138 dB against -120 dB, and the mono assertion at 1.745e-3
+  against 1e-7. Reverting only the jitter fold and keeping the pitch pan fails
+  the mono assertion alone, at the same 1.745e-3, which is what pins that
+  assertion to that one line. Suite green, 3/3 ctest suites in 41.0 s.
+  `README.md:264` still claims that "adding or removing a chord note glides the
+  remaining voices into their new positions instead of stepping them"; after
+  this change the remaining voices do not move at all, so the sentence needs
+  replacing rather than softening. `README.md:134` describes Horizon as widening
+  voices across the stereo field, which is still true but no longer says what
+  decides where a voice lands. No engine step owns either line.
 
 - [ ] **3. Make Orbit a forward, level-continuous, non-repeating sustain.**
   The triangle fold at `NeuramarEngine.cpp:723-734` gives a held note an envelope

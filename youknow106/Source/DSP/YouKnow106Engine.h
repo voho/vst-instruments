@@ -1162,7 +1162,7 @@ private:
     // ownership is modelled; their individual RC constants and physical write
     // offsets are not yet known.
     void updateSharedScan(const EngineParameters& parameters,
-                          float lfoRaw) noexcept;
+                          float lfoGated) noexcept;
     // Called at the internal sample rate: turns continuously slewed analogue
     // control voltages into filter and amplifier coefficients without making
     // their bandwidth depend on the HQ factor.

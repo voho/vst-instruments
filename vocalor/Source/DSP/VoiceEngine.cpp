@@ -156,6 +156,11 @@ void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
     roomDampingCoefficient_ = onePole(2510.0f);
     roomEnvelopeDecay_ = std::exp(-inverseSampleRate_ / 0.021f);
     shimmerCoefficient_ = onePole(46.0f);
+    // The source-slope shelves. 850 Hz sits above the sung fundamental over
+    // almost the whole range, which is what keeps a soft note from losing its
+    // own first harmonic: the shelf has unity gain at DC by construction, so
+    // only the partials above the corner follow the loudness.
+    sourcePresenceCoefficient_ = onePole(850.0f);
     // ... and every noise-driven smoother among them needs its drive
     // renormalised, or the correct spectrum arrives at the wrong depth.
     shimmerScale_ = noiseSmootherScale(
@@ -775,7 +780,11 @@ void VoiceEngine::initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, 
     voice.singer = singerIndex % singerCount;
     voice.generation = generation_;
     voice.velocity = velocity;
-    voice.amplitudeGain = groupGain * velocity * (0.67f + 0.33f * std::sqrt(velocity));
+    // The singer's own output for this note, with the ensemble trim taken out:
+    // 1 at velocity 1 and 0.037 at velocity 0.05. It is what the source slope
+    // is read from, so a mode trim must not reach it.
+    voice.velocityGain = velocity * (0.67f + 0.33f * std::sqrt(velocity));
+    voice.amplitudeGain = groupGain * voice.velocityGain;
     voice.glideCents = glideFromCents;
     voice.vibratoPhase = wrapPhase(0.173f * static_cast<float>(singerIndex % singerCount));
     voice.noiseState = hash32(static_cast<std::uint32_t>(generation_) ^
@@ -1255,6 +1264,47 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
         // it at 96 and 192.
         voice.tiltCoefficient = 1.0f - std::exp(-twoPi * tiltCorner * inverseSampleRate_);
     }
+
+    // Sundberg: between pianissimo and fortissimo the partials above 1 kHz rise
+    // about twice as fast in dB as the overall sound pressure level. So the
+    // source's high-frequency share is not free to be drawn -- it has to fall
+    // by exactly as many decibels as the note's own broadband gain does. That
+    // gain is the shelf gain: unity at velocity 1 and full dynamic, 0.001 at
+    // the quietest a note can be sung, and the two shelves turn it into a
+    // spectral slope instead of the fader the level alone would be.
+    voice.presence = std::clamp(voice.velocityGain * chunkResponse_.voicedGain,
+                                1.0e-4f, 1.0f);
+
+    // A note's attack is the folds coming onto their limit cycle, and the
+    // growth rate of that instability follows how far the subglottal pressure
+    // sits above the phonation threshold: an accented note arrives well above
+    // it and reaches amplitude in a few milliseconds, a soft one approaches
+    // threshold from just above and takes an order of magnitude longer.
+    // Velocity is what sets the pressure, with the phonation the tension is
+    // already holding contributing the rest. Humanize survives as a multiplier
+    // on the result rather than as its source: a loose take is still a late
+    // take, it is just no longer the only thing an attack knows about.
+    const float onsetDrive = 0.80f * voice.velocity + 0.20f * p.tension;
+    // Pressure above threshold, not pressure: the threshold is a fixed offset,
+    // which is why the last part of the range is where the attack time runs
+    // away rather than the whole of it. Nothing sings below threshold, so the
+    // excess is floored rather than allowed through zero.
+    const float pressureExcess = std::max(onsetDrive - 0.10f, 0.030f);
+    const float attackDrive = pressureExcess / (1.0f + 1.80f * clampUnit(p.humanize));
+    if (attackDrive != voice.attackDrive)
+    {
+        voice.attackDrive = attackDrive;
+        const float attackSeconds = std::clamp(0.0034f / attackDrive, 0.0020f, 0.120f);
+        voice.attackCoefficient = 1.0f - std::exp(-inverseSampleRate_ / attackSeconds);
+    }
+    // The same gesture reaches the source-tension ramp: a hard attack is a
+    // pressed one that starts close to its adducted target, a soft one starts
+    // abducted and has further to travel. The shipped depth is the value at the
+    // reference velocity 0.80, so the onset the first pass measured is
+    // unchanged and only the rest of the velocity range moves.
+    voice.tensionSag = std::clamp(
+        sourceTensionRampDepth_ * (1.0f + 0.90f * (0.80f - voice.velocity)), 0.0f, 1.0f);
+
     voice.irregularity = voice.midiNote < 52
         ? (1.0f - p.tension) * p.humanize * 0.035f : 0.0f;
     voice.airShape = aspirationScale_ * aspirationLevel * (0.22f + 0.78f * voice.onsetAir);
@@ -1457,6 +1507,8 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     float shimmer = voice.shimmer;
     float lastNoise = voice.lastNoise;
     float sourceTilt = voice.sourceTilt;
+    float sourceSlow = voice.sourceSlow;
+    float sourceSlower = voice.sourceSlower;
     std::uint32_t noiseState = voice.noiseState;
     bool alternateCycle = voice.alternateCycle;
     std::uint64_t age = voice.ageSamples;
@@ -1468,11 +1520,15 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     // onsetAir is already that gesture, so the same exponential that gives the
     // note its breathy puff pulls the glottal prototype toward its lax end and
     // lets it firm up onto the block's tension. Re-read on every control update
-    // so a sustained note cannot drift onto a stale depth.
-    float tensionSag = sourceTensionRampDepth_;
+    // so a sustained note cannot drift onto a stale depth, and scaled by the
+    // note's velocity, because a hard attack starts closer to its adducted
+    // target than a soft one.
+    float tensionSag = voice.tensionSag;
 
     float incrementStep = voice.phaseIncrementStep;
     float tilt = voice.tiltCoefficient;
+    float presence = voice.presence;
+    float attack = voice.attackCoefficient;
     float irregularity = voice.irregularity;
     float airShape = voice.airShape;
     float panLeft = voice.panLeft;
@@ -1511,7 +1567,9 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             panLeft = voice.panLeft;
             panRight = voice.panRight;
             level = voice.tableLevel;
-            tensionSag = sourceTensionRampDepth_;
+            tensionSag = voice.tensionSag;
+            presence = voice.presence;
+            attack = voice.attackCoefficient;
         }
 
         phaseIncrement += incrementStep;
@@ -1529,7 +1587,7 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
         }
         else
         {
-            envelope += (1.0f - envelope) * attackCoefficient_;
+            envelope += (1.0f - envelope) * attack;
             airEnvelope += (1.0f - airEnvelope) * airAttackCoefficient_;
         }
         onsetAir *= onsetAirMultiplier_;
@@ -1538,7 +1596,19 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             * (1.0f - tensionSag * onsetAir);
         float glottal = glottalPair(level, phase, sourceTension);
         glottal *= 1.0f + (alternateCycle ? irregularity : -irregularity);
-        sourceTilt += tilt * (glottal - sourceTilt);
+        // Two first-order shelves, unity at DC and `presence` above the corner:
+        // a quiet note keeps its fundamental and loses its upper partials at
+        // twice the rate, which is the measured law rather than a voicing
+        // choice. One shelf cannot deliver it -- a first-order transition moves
+        // 3 kHz at most 6 dB per octave away from 450 Hz however it is placed,
+        // and the law needs about twice that across those two bands.
+        const float slowDelta = glottal - sourceSlow;
+        const float shelved = sourceSlow + presence * slowDelta;
+        sourceSlow += sourcePresenceCoefficient_ * slowDelta;
+        const float slowerDelta = shelved - sourceSlower;
+        const float shaped = sourceSlower + presence * slowerDelta;
+        sourceSlower += sourcePresenceCoefficient_ * slowerDelta;
+        sourceTilt += tilt * (shaped - sourceTilt);
 
         const float noise = randomBipolar(noiseState);
         shimmer += (noise - shimmer) * shimmerCoefficient_;
@@ -1616,6 +1686,8 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     voice.shimmer = shimmer;
     voice.lastNoise = lastNoise;
     voice.sourceTilt = sourceTilt;
+    voice.sourceSlow = sourceSlow;
+    voice.sourceSlower = sourceSlower;
     voice.noiseState = noiseState;
     voice.alternateCycle = alternateCycle;
     voice.ageSamples = age;
@@ -1630,7 +1702,6 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
         prepare(sampleRate_, std::max(maxBlockSize_, numSamples));
 
     blockParameters_ = snapshotParameters();
-    attackCoefficient_ = 1.0f - std::exp(-inverseSampleRate_ / (0.010f + 0.018f * blockParameters_.humanize));
     releaseMultiplier_ = std::exp(-inverseSampleRate_ / (0.105f + 0.19f * blockParameters_.humanize));
     airReleaseMultiplier_ = releaseMultiplier_ * releaseMultiplier_;
     // shimmerScale_ renormalises the smoother's output for the sample rate;

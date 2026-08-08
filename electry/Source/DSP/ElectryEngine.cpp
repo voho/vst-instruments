@@ -687,15 +687,55 @@ ElectryEngine::makeVelocityProfile(float velocity) const noexcept
 {
     const float v = clampf(velocity, 0.0f, 1.0f);
     const float response = smoothedParameters_.velocityAmount;
-    const float curve = std::pow(v, 1.35f);
 
     VelocityProfile profile;
-    profile.amplitude = lerp(1.0f, 0.06f + 0.94f * curve, response);
+
+    // Level is the plectrum's deflection, and the deflection is linear in the
+    // hand's force. A plectrum holding the string at fraction p of its length
+    // needs a lateral force F = T y0 / (p (1-p) L) to hold it at y0, so
+    // y0 = F p (1-p) L / T is linear in F, and a magnetic pickup senses
+    // displacement. Reading MIDI velocity as that force gives an amplitude
+    // that is linear in velocity, and the Velocity Response control is then
+    // the exponent rather than a blend: it scales the decibel range linearly
+    // and is an exact no-op at zero, because v_eff^0 is one for every stroke.
+    // The 0.05 floor is the lightest stroke that still slips off the pick.
+    const float force = 0.05f + 0.95f * v;
+    profile.amplitude = std::pow(force, response);
+
+    // Effort stays the stroke's force: it is what decides how far the string
+    // swings, and thence how hard it meets the frets (`collision`) and how far
+    // it stretches itself sharp (`tension`).
     profile.effort = lerp(0.65f, v, response);
-    profile.effortCurve = smoothStep(profile.effort);
-    profile.brightness = lerp(0.20f, 2.10f, profile.effortCurve);
+
+    // The contact spectrum does not follow that force, and the coupling
+    // between the two is what used to flatten the top of the keyboard: the
+    // extra level went into partials that had already decayed by the time the
+    // attack was over. The string leaves the plectrum at the kink velocity
+    // F / Z set by the string's transverse wave impedance Z, and it has to
+    // travel a slip distance made of two parts - a grip depth d that the
+    // stroke does not change, and the pick tip's own elastic recoil F / k. The
+    // slip time is therefore
+    //     t_s = Z d / F + Z / k,
+    // whose second term is a floor no amount of force gets under: the
+    // plectrum's stiffness bounds the contact spectrum, not the hand. Writing
+    // s for the share of the slip that is pick recoil at a full-force stroke,
+    // s = (F_max / k) / (d + F_max / k), the release rate normalised to its
+    // full-force value is
+    //     rate = 1 / ((1 - s) / F + s).
+    // A 0.73 mm celluloid medium has a tip stiffness near 6 kN/m; deflecting
+    // the low E by 5 mm at a seventh of its length needs about 4.8 N against
+    // its 80 N of tension, so the tip recoils about 0.8 mm past a grip depth
+    // near 0.2 mm, giving s = 0.8. The blend is taken in the rate rather than
+    // in the force so that zero response leaves the release exactly where it
+    // has always been.
+    constexpr float pickRecoilShare = 0.80f;
+    const float releaseRate = 1.0f
+        / ((1.0f - pickRecoilShare) / force + pickRecoilShare);
+    profile.releaseRate = lerp(smoothStep(0.65f), releaseRate, response);
+
+    profile.brightness = lerp(0.20f, 2.10f, profile.releaseRate);
     profile.noise = lerp(1.0f, 0.18f + 0.82f * std::sqrt(v), response);
-    profile.tension = lerp(0.55f, 1.25f, profile.effortCurve);
+    profile.tension = lerp(0.55f, 1.25f, smoothStep(profile.effort));
     profile.collision = smoothStep(
         clampf((profile.effort - 0.25f) / 0.75f, 0.0f, 1.0f));
     return profile;
@@ -2108,7 +2148,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // The string leaves the pick in a fraction of a millisecond; the width
     // controls how much of the upper spectrum the release step carries.
     float pulseMs = lerp(1.15f, 0.10f, parameters.pickHardness)
-                  * lerp(1.55f, 0.48f, profile.effortCurve);
+                  * lerp(1.55f, 0.48f, profile.releaseRate);
     float pulseCutoff = lerp(900.0f, 13000.0f, parameters.pickHardness);
     float pluckFraction = lerp(0.025f, 0.48f, parameters.pickPosition);
     const float pickControl = std::pow(parameters.pickNoise, 0.75f);
@@ -2247,7 +2287,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
                  * lerp(1.08f, 0.42f, parameters.stringAge)
                  * lerp(0.92f, 1.12f, parameters.construction)
                  * (1.0f + 0.24f * lowString);
-    noiseCutoff *= lerp(0.72f, 1.22f, profile.effortCurve)
+    noiseCutoff *= lerp(0.72f, 1.22f, profile.releaseRate)
                  * (plectrumContact
                         ? lerp(0.55f, 1.75f, parameters.pickHardness) : 1.0f)
                  * (1.0f + 0.12f * lowString);
@@ -2260,7 +2300,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // high-partial tilt. Percussive styles may intentionally weight it higher.
     float displacementGain = 1.55f;
     float transientGain = lerp(0.0006f, 0.0025f, parameters.pickHardness)
-                        * lerp(0.88f, 1.08f, profile.effortCurve);
+                        * lerp(0.88f, 1.08f, profile.releaseRate);
     switch (voice.playStyle)
     {
         case PlayStyle::Sustain:
@@ -2431,7 +2471,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     const float modalCutoff = clampf(
         voice.baseFrequency
             * lerp(0.55f, 1.36f, parameters.pickHardness)
-            * lerp(0.90f, 1.12f, profile.effortCurve),
+            * lerp(0.90f, 1.12f, profile.releaseRate),
         28.0f, std::min(900.0f, 0.20f * sampleRate));
     const float articulationModalCutoff = clampf(
         modalCutoff * modalBrightness,
@@ -2463,7 +2503,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     const float stringReleaseCutoff =
         330.0f * std::sqrt(openFrequency / 82.4069f)
                * lerp(0.32f, 2.70f, parameters.pickHardness)
-               * lerp(0.72f, 1.45f, profile.effortCurve)
+               * lerp(0.72f, 1.45f, profile.releaseRate)
                * lerp(1.12f, 0.72f, parameters.stringAge);
     // The bridge hand darkens the release, but deliberately not the reflected
     // image: the image's loss comes from the extra distance it travels through

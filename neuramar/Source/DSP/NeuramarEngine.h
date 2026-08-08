@@ -232,7 +232,6 @@ private:
                             const EngineParameters& parameters) noexcept;
     [[nodiscard]] static float nextNoise(std::uint32_t& state) noexcept;
     void beginFadeTail(std::size_t voiceIndex) noexcept;
-    void refreshVoicePans() noexcept;
 
     std::atomic<const NeuralModel*> model_ { nullptr };
     AtomicParameters parameters_ {};

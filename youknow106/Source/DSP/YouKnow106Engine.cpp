@@ -2186,7 +2186,7 @@ void YouKnow106Engine::reset()
     lfoPolarity_ = 1.0f;
     lfoValue_ = 0.0f;
     lfoDelayLevel_ = 0.0f;
-    updateSharedScan(activeParameters_, lfoValue_);
+    updateSharedScan(activeParameters_, lfoValue_ * lfoDelayLevel_);
     resonanceCv_ = resonanceCvTarget_;
     sharedVca_ = sharedVcaTarget_;
     pwmVoltsFirstPole_ = pwmVoltsTarget_;
@@ -2327,7 +2327,7 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
     // for all cards rather than six incidental opportunities to catch up.
     if (outputPathIdle)
     {
-        updateSharedScan(next, lfoValue_);
+        updateSharedScan(next, lfoValue_ * lfoDelayLevel_);
         resonanceCv_ = resonanceCvTarget_;
         sharedVca_ = sharedVcaTarget_;
         pwmVoltsFirstPole_ = pwmVoltsTarget_;
@@ -3144,7 +3144,7 @@ void YouKnow106Engine::updateVoiceVcaTarget(
 }
 
 void YouKnow106Engine::updateSharedScan(const EngineParameters& parameters,
-                                        float lfoRaw) noexcept
+                                        float lfoGated) noexcept
 {
     const auto converterFraction = [](float value) {
         return static_cast<float>(storedControlDacCode(value)) / 4064.0f;
@@ -3165,7 +3165,7 @@ void YouKnow106Engine::updateSharedScan(const EngineParameters& parameters,
 
     float pwmAmount = converterFraction(parameters.pwmDepth);
     if (parameters.pwmSource == PwmSource::Lfo)
-        pwmAmount *= 0.5f * (1.0f + lfoRaw);
+        pwmAmount *= 0.5f * (1.0f + lfoGated);
     pwmVoltsTarget_ = pwmControlVolts(clamp01(pwmAmount));
 }
 
@@ -3212,6 +3212,10 @@ void YouKnow106Engine::performConverterWrite(
             }
             break;
         case ConverterDestination::Pwm:
+            // DELAY is one attenuator in front of the distribution, not one
+            // per destination: the firmware scales the single LFO value once
+            // and then writes it out, so PWM sees the same gated product the
+            // pitch and cutoff writes see and the panel LFO display shows.
             if (!parameters.pulseEnabled)
             {
                 pwmVoltsTarget_ = -0.8f;
@@ -3220,7 +3224,7 @@ void YouKnow106Engine::performConverterWrite(
             {
                 float amount = converterFraction(parameters.pwmDepth);
                 if (parameters.pwmSource == PwmSource::Lfo)
-                    amount *= 0.5f * (1.0f + lfoValue_);
+                    amount *= 0.5f * (1.0f + lfoGated);
                 pwmVoltsTarget_ = pwmControlVolts(clamp01(amount));
             }
             break;

@@ -167,8 +167,8 @@ void NeuramarEngine::Bandpass::set(float centreHz, float bandwidthOctaves,
     // Control frames re-assert the same centre for as long as the pitch and
     // brightness stand still. Once the previous ramp has finished there is
     // nothing left to move, so the sinh/sin/cos/sqrt redesign is skipped. An
-    // early re-assertion mid-ramp (a voice-pan refresh) still falls through
-    // and re-anchors, exactly like a changed centre.
+    // early re-assertion mid-ramp still falls through and re-anchors, exactly
+    // like a changed centre.
     if (centreHz == configuredCentreHz
         && bandwidthOctaves == configuredBandwidthOctaves
         && rampRemaining == 0)
@@ -541,14 +541,20 @@ void NeuramarEngine::noteOn(int midiNote, float velocity) noexcept
         + 0.10f * static_cast<float>(latentRateAHash) * inverseU32;
     selected->latentRateBHertz = 0.19f
         + 0.18f * static_cast<float>(latentRateBHash) * inverseU32;
-    // Pan is assigned from the currently sounding set below. A single voice is
-    // always centred, while chords occupy a symmetric horizon without making
-    // the result depend on how many notes were played earlier.
-    selected->pan = 0.0f;
-
     const float phaseMutation = mutationAmount * selected->mutationOffset;
     const float correctedRootMidi = static_cast<float>(model->metadata_.rootMidiNote)
         + parameters_.rootOffsetSemitones.load(std::memory_order_relaxed);
+    // Pan is a function of the played note alone, fixed here and never revised
+    // for as long as the voice sounds. On a piano, harp, marimba or guitar the
+    // sounding elements are laid out monotonically in pitch across the width of
+    // the radiating body, and a string that is already vibrating does not move
+    // when another one is struck; both properties follow from placing a voice
+    // by its own pitch instead of by its rank among whatever else happens to be
+    // sounding. Two octaves either side of the corrected root reaches the edge
+    // of the image. Spread scales this and the per-note jitter is added to it
+    // in updateVoiceControl(), so a single note sits centred when it is the
+    // root note or when Spread is zero, and off centre otherwise.
+    selected->pan = (static_cast<float>(midiNote) - correctedRootMidi) / 24.0f;
     const float phaseRatio = std::clamp(
         std::exp2((static_cast<float>(midiNote) - correctedRootMidi) / 12.0f)
             * (1.0f + 0.0012f * phaseMutation),
@@ -576,7 +582,6 @@ void NeuramarEngine::noteOn(int midiNote, float velocity) noexcept
     for (std::size_t mode = 0; mode < NeuralModel::boneModeCount; ++mode)
         selected->bonePhases[mode] = wrapUnit(
             model->initialBonePhases_[mode] + 0.007f * phaseMutation);
-    refreshVoicePans();
 }
 
 void NeuramarEngine::noteOff(int midiNote) noexcept
@@ -651,37 +656,6 @@ void NeuramarEngine::beginFadeTail(std::size_t voiceIndex) noexcept
     tail.position = 0.0f;
     tail.positionStep = 1.0f / static_cast<float>(remaining);
     tail.remaining = remaining;
-}
-
-void NeuramarEngine::refreshVoicePans() noexcept
-{
-    std::array<Voice*, maximumVoices> ordered {};
-    std::size_t count = 0;
-    for (auto& voice : voices_)
-        if (voice.active)
-            ordered[count++] = &voice;
-    // voices_ has exactly maximumVoices elements, so count can never exceed
-    // ordered.size(); this clamp only gives the optimizer a bound it can
-    // prove, silencing a GCC -Warray-bounds false positive in std::sort's
-    // unreachable large-range branch for this fixed 8-element array.
-    count = std::min(count, ordered.size());
-
-    std::sort(ordered.begin(), ordered.begin() + static_cast<std::ptrdiff_t>(count),
-              [](const Voice* left, const Voice* right)
-              {
-                  return left->ageStamp < right->ageStamp;
-              });
-
-    for (std::size_t rank = 0; rank < count; ++rank)
-    {
-        ordered[rank]->pan = count == 1
-            ? 0.0f
-            : -1.0f + 2.0f * static_cast<float>(rank)
-                / static_cast<float>(count - 1);
-        // Recalculate constant-power gains on the next sample rather than
-        // waiting up to one control interval after a chord changes shape.
-        ordered[rank]->controlCountdown = 0;
-    }
 }
 
 float NeuramarEngine::nextNoise(std::uint32_t& state) noexcept
@@ -830,8 +804,8 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
         (static_cast<float>(NeuralModel::harmonicCount) + 0.999f)
         / envelopeRatio;
     // Retire a previous contraction only after its slots are actually silent.
-    // Voice-pan refreshes can request an early control update, so the presence
-    // of another update alone does not prove a full ramp period elapsed.
+    // A control update can arrive early, so the presence of another update
+    // alone does not prove a full ramp period elapsed.
     bool retiringHarmonicsAreSilent = true;
     for (std::size_t harmonic = voice.targetHarmonicCount;
          harmonic < voice.activeHarmonicCount; ++harmonic)
@@ -1038,11 +1012,13 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
         // therefore makes the noise-to-tone ratio A / sqrt(renderedPower), so
         // every Core-only rendering artefact - the anti-alias taper, the
         // Body-Lock envelope running out of range - rides straight into the
-        // layer balance: 26.4 dB of Air-to-Core spread across MIDI 12-108 at
-        // full Body Lock, 8.9 dB at the shipping defaults. A compensation for
-        // partials the Core could not render is not evidence about how much
-        // breath noise the source had. The two are measured independently and
-        // stay independent here.
+        // layer balance. It moved the Air layer's own level by 23.4 dB across
+        // MIDI 12-108 at full Body Lock, where its band centres are frozen and
+        // nothing else can touch it, and the Air-to-Core balance by 7.8 dB over
+        // MIDI 12-72 at the shipping defaults. A compensation for partials the
+        // Core could not render is not evidence about how much breath noise the
+        // source had. The two are measured independently and stay independent
+        // here.
         targets[output] = std::clamp(frame.airAmplitudes[band]
             * parameters.air * variation * edgeGain * touchAirGain,
             0.0f, 2.0f);
@@ -1152,8 +1128,14 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
             / static_cast<float>(controlPeriod_);
     }
 
-    const float pan = std::clamp(voice.pan * parameters.spread
-        + 0.08f * parameters.mutation * voice.mutationOffset, -1.0f, 1.0f);
+    // The per-note jitter is inside the Spread multiply, not beside it: added
+    // outside, it displaced a voice by up to +/-0.0096 at the shipping Mutation
+    // even at Spread 0, so the instrument was not exactly mono at its own
+    // narrowest setting. Multiplied, Spread 0 collapses the placement and the
+    // jitter together and the mono claim holds exactly.
+    const float pan = std::clamp(parameters.spread
+        * (voice.pan + 0.08f * parameters.mutation * voice.mutationOffset),
+        -1.0f, 1.0f);
     const float targetLeft = std::sqrt(0.5f * (1.0f - pan));
     const float targetRight = std::sqrt(0.5f * (1.0f + pan));
     // Air gains a decorrelated side realisation so the noise layer occupies the
@@ -1174,9 +1156,10 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
     {
         voice.airSideGainStep = (targetSideGain - voice.airSideGain)
             / static_cast<float>(controlPeriod_);
-        // Adding or removing a chord note re-ranks every sounding voice. A
-        // stepped gain change there is an audible click, so the new placement
-        // is reached over one control interval like every other target.
+        // A voice's own placement no longer moves once it has sounded, but a
+        // host automating Spread or Mutation still moves it. A stepped gain
+        // change there is an audible click, so the new placement is reached
+        // over one control interval like every other target.
         voice.panLeftStep = (targetLeft - voice.panLeft)
             / static_cast<float>(controlPeriod_);
         voice.panRightStep = (targetRight - voice.panRight)
@@ -1238,7 +1221,6 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
     {
         float outputLeft = 0.0f;
         float outputRight = 0.0f;
-        bool voiceRetired = false;
 
         if (model != nullptr)
         {
@@ -1393,16 +1375,13 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
                     / sampleRate_;
                 ++voice.renderedSampleCount;
 
+                // A retiring voice takes its own pan with it. Every other
+                // sounding voice keeps the placement its own pitch gave it, so
+                // nothing has to be recomputed here.
                 if (voice.releasing && voice.envelope <= retirementLevel)
-                {
                     voice.clear();
-                    voiceRetired = true;
-                }
             }
         }
-
-        if (voiceRetired)
-            refreshVoicePans();
 
         for (auto& tail : fadeTails_)
         {

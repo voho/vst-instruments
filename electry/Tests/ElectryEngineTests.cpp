@@ -1998,6 +1998,148 @@ void testMonoStereoOutputField()
                + std::to_string(energyRatio) + ")");
 }
 
+// A guitarist's picking dynamics span 25-30 dB. Electry used to render 5.2 dB
+// of that, and the missing range was not in the amplitude law: player effort
+// drove the contact spectrum over the same range as the level, so the extra
+// energy of a hard stroke went into partials that had decayed before the
+// attack was over. The two halves of the fix are separated below - the
+// v=1..v=127 span is the target, the v=64..v=127 span is what identifies the
+// decoupling as the change that delivers it.
+void testVelocityDynamicRange()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int note = 40;
+    constexpr int windowSamples = static_cast<int>(0.050 * sampleRate);
+
+    // Fresh engine per velocity: a shared engine would let the previous
+    // stroke's residual ring into the peak of the next one.
+    const auto peakDbAt = [&] (int midiVelocity, float velocityAmount)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.velocityAmount = velocityAmount;
+        engine.setParameters(parameters);
+        const auto rendered = renderNote(
+            engine, sampleRate, note,
+            static_cast<float>(midiVelocity) / 127.0f,
+            PlayStyle::Sustain, 0.050);
+        const double peak = std::max(peakAbs(rendered.left, 0, windowSamples),
+                                     peakAbs(rendered.right, 0, windowSamples));
+        return decibels(std::max(peak, 1.0e-12));
+    };
+
+    // "At the shipping defaults": the default Velocity Response is part of the
+    // change, so it is read from the engine rather than repeated here.
+    const float shippingResponse = EngineParameters {}.velocityAmount;
+    expect(std::abs(shippingResponse - 0.85f) < 1.0e-6f,
+           "default Velocity Response is not 0.85 ("
+               + std::to_string(shippingResponse) + ")");
+
+    const double atOne = peakDbAt(1, shippingResponse);
+    const double atSixtyFour = peakDbAt(64, shippingResponse);
+    const double atFull = peakDbAt(127, shippingResponse);
+
+    // Today 5.218 dB at the shipping default.
+    expect(atFull - atOne >= 18.0,
+           "velocity spans too little of the keyboard (v=1 "
+               + std::to_string(atOne) + " dBFS, v=127 "
+               + std::to_string(atFull) + " dBFS, span "
+               + std::to_string(atFull - atOne) + " dB)");
+
+    // The amplitude law on its own reaches 1.686 dB here, against 1.487 dB
+    // before it; only breaking the level-to-effort coupling moves this. The
+    // ceiling with the release rate frozen outright is 4.630 dB, and freezing
+    // it outright makes velocity darken the attack instead of brightening it,
+    // so the bar sits below that.
+    expect(atFull - atSixtyFour >= 3.0,
+           "the upper half of the keyboard is still flat (v=64 "
+               + std::to_string(atSixtyFour) + " dBFS, v=127 "
+               + std::to_string(atFull) + " dBFS, span "
+               + std::to_string(atFull - atSixtyFour) + " dB)");
+
+    // A regression guard rather than a target: the amplitude law alone turns
+    // the top of the keyboard over above v=104, and so does the shipping
+    // engine on this grid.
+    double previous = -1.0e9;
+    int firstDrop = -1;
+    double dropFrom = 0.0;
+    double dropTo = 0.0;
+    for (int step = 0; step < 16; ++step)
+    {
+        const int midiVelocity = 1
+            + static_cast<int>(std::lround(step * 126.0 / 15.0));
+        const double level = peakDbAt(midiVelocity, shippingResponse);
+        if (level <= previous && firstDrop < 0)
+        {
+            firstDrop = midiVelocity;
+            dropFrom = previous;
+            dropTo = level;
+        }
+        previous = level;
+    }
+    expect(firstDrop < 0,
+           "velocity level is not monotone (v=" + std::to_string(firstDrop)
+               + " fell from " + std::to_string(dropFrom) + " to "
+               + std::to_string(dropTo) + " dBFS)");
+
+    // The loudest stroke must stay where it is: this is a dynamic range that
+    // grows downwards, not an output-level change.
+    expect(std::abs(atFull - (-25.690)) <= 1.5,
+           "full velocity moved away from its calibrated level ("
+               + std::to_string(atFull) + " dBFS)");
+
+    // The decoupling must not be implemented by flattening the attack into
+    // silence at low velocity, in either direction: the 2-8 kHz against
+    // sub-500 Hz band ratio of the attack has to stay put. Today it moves
+    // 3.431 dB across the same pair.
+    const auto attackBandRatioDb = [&] (int midiVelocity, float velocityAmount)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.velocityAmount = velocityAmount;
+        engine.setParameters(parameters);
+        const auto rendered = renderNote(
+            engine, sampleRate, note,
+            static_cast<float>(midiVelocity) / 127.0f,
+            PlayStyle::Sustain, 0.050);
+        constexpr int transform = 2048;
+        double high = 0.0;
+        double low = 0.0;
+        for (int start = 0; start + transform <= windowSamples; start += 512)
+        {
+            for (int bin = 1; bin < transform / 2; ++bin)
+            {
+                const double frequency = bin * sampleRate / transform;
+                const bool isHigh = frequency >= 2000.0 && frequency <= 8000.0;
+                const bool isLow = frequency < 500.0;
+                if (! isHigh && ! isLow)
+                    continue;
+                const double magnitude = dftMagnitude(
+                    rendered.left, start, transform, sampleRate, frequency);
+                (isHigh ? high : low) += magnitude * magnitude;
+            }
+        }
+        return 10.0 * std::log10(std::max(high, 1.0e-30)
+                                 / std::max(low, 1.0e-30));
+    };
+    const double quietBand = attackBandRatioDb(16, shippingResponse);
+    const double loudBand = attackBandRatioDb(127, shippingResponse);
+    expect(std::abs(loudBand - quietBand) <= 4.0,
+           "velocity moved the attack's band balance too far (v=16 "
+               + std::to_string(quietBand) + " dB, v=127 "
+               + std::to_string(loudBand) + " dB)");
+
+    // Velocity Response at zero removes MIDI velocity from the instrument
+    // exactly, which the exponent form preserves because force^0 is one.
+    const double flatLow = peakDbAt(1, 0.0f);
+    const double flatHigh = peakDbAt(127, 0.0f);
+    expect(std::abs(flatHigh - flatLow) < 1.0e-9,
+           "zero velocity response still changes the rendered level (spread "
+               + std::to_string(flatHigh - flatLow) + " dB)");
+}
+
 void testVelocityExpression()
 {
     constexpr double sampleRate = 48000.0;
@@ -2033,7 +2175,15 @@ void testVelocityExpression()
         low.left, attackStart, attackEnd - attackStart, sampleRate, midiHz(45));
     const double highCentroid = spectralCentroid(
         high.left, attackStart, attackEnd - attackStart, sampleRate, midiHz(45));
-    expect(highCentroid > lowCentroid * 1.10,
+    // Deliberately a smaller margin than the 10% this asked for before the
+    // pick's own stiffness came to bound the contact spectrum: a harder stroke
+    // is now mostly louder rather than proportionally sharper, and the
+    // brightening that survives is the residual the plectrum's finite
+    // compliance leaves. Measured 7.3% here, against 16.6% when effort and
+    // level were the same curve. What the bound still catches is the
+    // degenerate case - freezing the release rate outright reads 0.996, i.e. a
+    // harder stroke that arrives darker.
+    expect(highCentroid > lowCentroid * 1.05,
            "velocity does not brighten the attack (low "
                + std::to_string(lowCentroid) + " Hz, high "
                + std::to_string(highCentroid) + " Hz)");
@@ -3083,13 +3233,36 @@ void testPinchHarmonic()
             / std::max(dftMagnitude(buffer.left, start, window, sampleRate, f0),
                        1.0e-15));
     };
-    const double gain = partialOverFundamental(pinchedNearBridge,
-                                               bridgeSquealPartial)
-                      - partialOverFundamental(pickedNearBridge,
-                                               bridgeSquealPartial);
+    // The squeal is a pair of neighbours, not a single line: the eighth and
+    // ninth partials of this pinch sit within 0.06 dB of each other, so which
+    // one `strongestPartial` returns is decided by rounding and swaps under
+    // changes that leave the effect itself alone - the ninth reads 15.12 dB
+    // both before and after the velocity work of the 2026-08-07 pass, but the
+    // reported partial moved from the ninth to the eighth. Score the squeal
+    // over every partial within 1 dB of the pinched peak instead.
+    const double pinchedPeak = dftMagnitude(pinchedNearBridge.left, start,
+                                            window, sampleRate,
+                                            f0 * bridgeSquealPartial);
+    double gain = -1.0e9;
+    int gainPartial = bridgeSquealPartial;
+    for (int n = 2; n <= 16; ++n)
+    {
+        const double magnitude = dftMagnitude(pinchedNearBridge.left, start,
+                                              window, sampleRate, f0 * n);
+        if (magnitude < pinchedPeak * 0.891)  // within 1 dB of the peak
+            continue;
+        const double lift = partialOverFundamental(pinchedNearBridge, n)
+                          - partialOverFundamental(pickedNearBridge, n);
+        if (lift > gain)
+        {
+            gain = lift;
+            gainPartial = n;
+        }
+    }
     expect(gain > 10.0,
            "the pinch did not lift its partial against the fundamental (gain "
-               + std::to_string(gain) + " dB)");
+               + std::to_string(gain) + " dB at partial "
+               + std::to_string(gainPartial) + ")");
 
     // It is its own articulation, not a relabelled one.
     const auto natural = renderAt(0.18f, PlayStyle::Harmonics);
@@ -5382,6 +5555,7 @@ int main()
     testLowRegisterGuitarEnvelope();
     testOpenLowStringLevelBalance();
     testMonoStereoOutputField();
+    testVelocityDynamicRange();
     testVelocityExpression();
     testMaterialAndControlAudibility();
     testNoiseComponentsAndSilence();

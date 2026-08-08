@@ -54,6 +54,8 @@ struct VoiceEngineTestAccess
                 consider(resonator.y2);
             }
             consider(voice.sourceTilt);
+            consider(voice.sourceSlow);
+            consider(voice.sourceSlower);
         }
         for (const auto value : engine.roomLeft_)
             consider(value);
@@ -159,6 +161,30 @@ struct VoiceEngineTestAccess
     static void setSourceTensionRampDepth(VoiceEngine& engine, float depth) noexcept
     {
         engine.sourceTensionRampDepth_ = depth;
+    }
+
+    /** How far below the block's tension the sounding voice's glottal source
+        actually started, after the note's own velocity has scaled the engine's
+        depth. Read from the voice rather than from a render because the two
+        glottal prototypes are crossfaded in the time domain: their harmonics
+        cancel non-monotonically at intermediate tensions, so no band share
+        moves monotonically with this. Measured on the shipping engine, the
+        2-5 kHz share at 10-35 ms with the ramp in minus the same share with it
+        forced out reads 3.06, 1.53, 2.14 and 2.17 dB at velocity 0.10, 0.40,
+        0.80 and 1.00, which is the notch rather than the depth. */
+    static float sourceTensionSag(const VoiceEngine& engine) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing)
+                return voice.tensionSag;
+        return 0.0f;
+    }
+
+    /** The engine's own ramp depth, which is the value the reference velocity
+        0.80 resolves to. */
+    static float sourceTensionRampDepth(const VoiceEngine& engine) noexcept
+    {
+        return engine.sourceTensionRampDepth_;
     }
 
     /** The humanisation noise of the sounding voice in the units the render
@@ -1659,7 +1685,13 @@ void testSourceLevelCalibration()
     // Measured from the calibrated engine. The window is loose enough for
     // platform floating-point differences and far tighter than the ~1.9 dB a
     // second radiation stage across the excitation path costs.
-    constexpr double referenceRmsDb = -15.53;
+    // Moved from -15.53 when the source slope started following the note's own
+    // loudness: the reference render is at velocity 0.85, which is 1.4 dB below
+    // full voice, so its partials above the 850 Hz shelf corner sit 2.8 dB down
+    // and the broadband RMS with them. Nothing about the source's absolute
+    // calibration or its single radiation accounting moved -- at velocity 1.00
+    // and full dynamic the shelf is exactly transparent.
+    constexpr double referenceRmsDb = -17.03;
     constexpr double toleranceDb = 0.9;
 
     for (const auto sampleRate : { 44100.0, 48000.0, 96000.0 })
@@ -1740,6 +1772,52 @@ void testFactoryPresets()
         const auto tail = render (engine, static_cast<int> (sampleRate * 4.0));
         expect (tail.finite, name + " produced invalid audio during its release");
         expect (engine.getActiveVoiceCount() == 0, name + " never finished releasing");
+    }
+
+    // ... and it has to be playable at the level it was voiced at. Nothing else
+    // in the suite makes a re-trim mandatory: the checks above pass a preset
+    // left 10 dB quiet, and testSourceLevelCalibration renders at Dynamics 1.00,
+    // where the voiced gain does not move at all. These are the levels the bank
+    // shipped at before the dynamic grew to 30 dB and the source slope started
+    // following the note's own loudness, both of which lower any preset not sung
+    // at full velocity and full dynamic. Measured on the shipping engine: two
+    // notes held at 57 and 64 at velocity 0.85, 1 s of stereo RMS from t = 0.6 s
+    // at 48 kHz.
+    struct Level { const char* name; double db; };
+    constexpr std::array<Level, 12> shipped { {
+        { "Init Soprano", -19.04 }, { "Intimate Alto", -25.06 },
+        { "Pressed Tenor", -20.28 }, { "Legato Soloist", -25.41 },
+        { "Breath And Air", -29.81 }, { "Warm Bass Choir", -20.98 },
+        { "Cathedral Ensemble", -22.85 }, { "Closed Mouth Hum", -34.88 },
+        { "Small Voices", -24.72 }, { "Vowel Morph Pad", -27.79 },
+        { "Locked Major Chorale", -26.34 }, { "Airy Minor Pad", -29.62 } } };
+
+    for (const auto& entry : shipped)
+    {
+        int index = -1;
+        for (int i = 0; i < count; ++i)
+            if (std::string (vocalor::factoryPreset (i).name) == entry.name)
+                index = i;
+        expect (index >= 0, std::string (entry.name) + " is no longer in the factory bank");
+        if (index < 0)
+            continue;
+
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (vocalor::factoryPreset (index).parameters);
+        engine.noteOn (57, 0.85f);
+        engine.noteOn (64, 0.85f);
+        render (engine, static_cast<int> (sampleRate * 0.6));
+        const auto held = render (engine, static_cast<int> (sampleRate * 1.0));
+        const auto levelDb = 20.0 * std::log10 (held.rms() + 1.0e-30);
+        std::cout << "preset level: " << std::left << std::setw (22) << entry.name
+                  << std::right << std::fixed << std::setprecision (2) << levelDb
+                  << " dB against " << entry.db << " dB\n";
+        expect (std::abs (levelDb - entry.db) <= 1.0,
+                std::string (entry.name) + " renders at " + std::to_string (levelDb)
+                    + " dB against the " + std::to_string (entry.db)
+                    + " dB it shipped at: the preset bank was not re-trimmed");
     }
 }
 
@@ -1983,9 +2061,16 @@ void testOnsetSpectrum()
     expect (airEarly > airMiddle && airMiddle > airLate,
             "the aspiration no longer falls away across the onset");
 
-    // And it must not click. The first 2 ms of a note carry the tract's own
-    // transient response to a source that starts from silence; measured, the
-    // narrowest of these six is 19.81 dB.
+    // And it must not click. What a click is, is energy in the note's first
+    // instants that the envelope did not put there -- the tract's own transient
+    // response to a source that starts from silence. The window has to be
+    // shorter than the fastest attack the engine produces or it measures the
+    // attack instead: velocity now sets the envelope time constant and an
+    // accented note reaches amplitude on 4.5 ms, so the 2 ms window this test
+    // shipped with is a third of the way up the intended envelope rather than
+    // ahead of it. 1 ms is under a quarter of that time constant and under a
+    // third of a glottal period at C4. Measured, the narrowest of these
+    // eighteen is 28.44 dB.
     struct Entry { int midi; vocalor::VoiceProfile profile; const char* name; };
     for (const auto entry : { Entry { 50, vocalor::VoiceProfile::Male, "male D3" },
                               Entry { 60, vocalor::VoiceProfile::Female, "female C4" },
@@ -1993,29 +2078,331 @@ void testOnsetSpectrum()
     {
         for (const float tension : { 0.30f, 0.90f })
         {
+            // Across the velocity range, because velocity is what sets the
+            // attack: the loudest, fastest onset is the one that can click.
+            for (const float velocity : { 0.30f, 0.80f, 1.00f })
+            {
+                vocalor::VoiceEngine engine;
+                engine.prepare (sampleRate, blockSize);
+                engine.reset();
+                engine.setParameters (onsetParameters (entry.profile, tension));
+                engine.noteOn (entry.midi, velocity);
+                const auto samples = renderMono (engine, static_cast<int> (sampleRate * 1.2));
+
+                double firstPeak = 0.0;
+                for (int i = 0; i < at (1.0); ++i)
+                    firstPeak = std::max (firstPeak,
+                                          std::abs (static_cast<double> (samples[static_cast<std::size_t> (i)])));
+                double sustainPeak = 0.0;
+                for (int i = at (900.0); i < at (1100.0); ++i)
+                    sustainPeak = std::max (sustainPeak,
+                                            std::abs (static_cast<double> (samples[static_cast<std::size_t> (i)])));
+                const auto below = 20.0 * std::log10 (sustainPeak / std::max (firstPeak, 1.0e-30));
+                std::cout << "onset: " << entry.name << " at Tension " << std::setprecision (2)
+                          << tension << ", velocity " << velocity << " enters " << below
+                          << " dB below its sustain peak\n";
+                expect (below >= 24.0,
+                        std::string (entry.name) + " starts with a click: its first 1 ms peak "
+                            "is within 24 dB of the sustain peak");
+            }
+        }
+    }
+}
+
+/** Solo, one note, nothing moving but the thing under test. The published
+    baselines for gaps 11 and 21 were measured on the engine's own shipped
+    defaults rather than on steadyParameters(), so these two tests build from
+    EngineParameters directly, as testOnsetSpectrum does. */
+vocalor::EngineParameters dynamicProtocolParameters()
+{
+    vocalor::EngineParameters parameters;
+    parameters.mode = vocalor::PerformanceMode::Solo;
+    parameters.vowel = vocalor::Vowel::Aah;
+    parameters.humanize = 0.0f;
+    parameters.vibrato = 0.0f;
+    parameters.room = 0.0f;
+    parameters.dynamics = 1.0f;
+    return parameters;
+}
+
+/** 10-90 % rise of a four-period sliding-peak envelope, in milliseconds.
+
+    Four periods rather than a fixed window: a 2 ms window at C4 is shorter than
+    the 3.82 ms glottal period, so it does not smooth the waveform out at all
+    and the crossings land on within-period ripple -- the same rise reads 7.8 ms
+    at 2 ms, 13.2 at 8 ms and 27.8 at 30 ms, which is a metric whose answer is
+    set by its own window length. The envelope is the peak of the four periods
+    ending at each sample, sampled on a 0.5 ms grid, and the two crossings are
+    interpolated linearly between grid points. The steady value is the envelope
+    averaged over 0.8-1.0 s, which is well past any attack this engine produces.
+*/
+double onsetRiseMs (const std::vector<float>& samples, double fundamentalHz,
+                    double sampleRate)
+{
+    const auto window = static_cast<int> (std::lround (4.0 * sampleRate / fundamentalHz));
+    const auto count = static_cast<int> (samples.size());
+    std::vector<double> envelope (static_cast<std::size_t> (count), 0.0);
+    // A running maximum over a sliding window, kept O(n) by rescanning only when
+    // the sample that held the maximum falls out of it.
+    double running = 0.0;
+    int runningAt = -1;
+    for (int i = 0; i < count; ++i)
+    {
+        const auto magnitude = std::abs (static_cast<double> (samples[static_cast<std::size_t> (i)]));
+        if (magnitude >= running)
+        {
+            running = magnitude;
+            runningAt = i;
+        }
+        else if (runningAt <= i - window)
+        {
+            running = 0.0;
+            for (int k = std::max (0, i - window + 1); k <= i; ++k)
+            {
+                const auto value = std::abs (static_cast<double> (samples[static_cast<std::size_t> (k)]));
+                if (value >= running)
+                {
+                    running = value;
+                    runningAt = k;
+                }
+            }
+        }
+        envelope[static_cast<std::size_t> (i)] = running;
+    }
+
+    const auto from = static_cast<int> (0.8 * sampleRate);
+    const auto to = std::min (count, static_cast<int> (1.0 * sampleRate));
+    double steady = 0.0;
+    for (int i = from; i < to; ++i)
+        steady += envelope[static_cast<std::size_t> (i)];
+    steady /= std::max (1, to - from);
+
+    const auto step = static_cast<int> (0.0005 * sampleRate);
+    const auto crossing = [&] (double fraction)
+    {
+        const auto target = fraction * steady;
+        for (int i = step; i < count; i += step)
+        {
+            const auto before = envelope[static_cast<std::size_t> (i - step)];
+            const auto after = envelope[static_cast<std::size_t> (i)];
+            if (before < target && after >= target)
+            {
+                const auto within = (target - before) / std::max (after - before, 1.0e-30);
+                return 1000.0 * (static_cast<double> (i - step) + within * step) / sampleRate;
+            }
+        }
+        return -1.0;
+    };
+    return crossing (0.9) - crossing (0.1);
+}
+
+/** Energy in [lowHz, highHz) of a held note's sustain, in dB. Two 100 ms
+    windows, because at Humanize 0 and Vibrato 0 the sustain is stationary. */
+double sustainBandDb (const std::vector<float>& samples, double sampleRate,
+                      double lowHz, double highHz)
+{
+    const auto window = static_cast<int> (0.100 * sampleRate);
+    double total = 0.0;
+    for (const double at : { 0.80, 1.00 })
+        total += windowedBandDb (samples, static_cast<int> (at * sampleRate), window,
+                                 sampleRate, lowHz, highHz);
+    return 0.5 * total;
+}
+
+/** How many decibels the 2-5 kHz band moves per decibel of 150-800 Hz between
+    two renders. Sundberg's measurement is that partials above 1 kHz rise about
+    twice as fast in dB as overall sound pressure level, so this is 2 in a real
+    singer and 1 in a fader. Read at Breath 0.00: at any breath setting the
+    aspiration, which loses only 7.2 dB across the dynamic, floors the 2-5 kHz
+    band once the voiced component has fallen 30 dB, and the ratio then measures
+    the noise rather than the source. */
+double presenceRatio (const std::vector<float>& soft, const std::vector<float>& loud,
+                      double sampleRate)
+{
+    const auto low = sustainBandDb (loud, sampleRate, 150.0, 800.0)
+                   - sustainBandDb (soft, sampleRate, 150.0, 800.0);
+    const auto high = sustainBandDb (loud, sampleRate, 2000.0, 5000.0)
+                    - sustainBandDb (soft, sampleRate, 2000.0, 5000.0);
+    std::cout << "  150-800 Hz " << std::fixed << std::setprecision (2) << low
+              << " dB, 2-5 kHz " << high << " dB, ratio " << high / low << '\n';
+    return high / low;
+}
+
+/** Velocity has to shape the note, not fade it.
+
+    Velocity used to reach a gain and the corner of a one-pole source tilt and
+    nothing else. In particular it never reached the envelope: attackCoefficient_
+    was a per-block constant derived from Humanize alone, so a held C4 rose in
+    the same 16.6 ms at velocity 0.05, 0.40 and 1.00 alike, across a 22 dB level
+    span. A soft onset has to approach phonation threshold pressure slowly and
+    an accented one arrives above it, so the time constant is now the note's own.
+*/
+void testVelocityShapesOnset()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr double fundamental = 261.6255653;   // C4
+
+    const auto riseAt = [&] (float velocity, float humanize)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = dynamicProtocolParameters();
+        parameters.humanize = humanize;
+        engine.setParameters (parameters);
+        engine.noteOn (60, velocity);
+        const auto samples = renderMono (engine, static_cast<int> (sampleRate * 1.5));
+        return onsetRiseMs (samples, fundamental, sampleRate);
+    };
+
+    const auto accented = riseAt (1.00f, 0.0f);
+    const auto soft = riseAt (0.10f, 0.0f);
+    std::cout << "onset rise at Humanize 0: velocity 1.00 " << std::fixed
+              << std::setprecision (2) << accented << " ms, velocity 0.10 " << soft
+              << " ms, ratio " << soft / accented << "x\n";
+
+    // Two-sided, because both ends carry a defect. Below about 6 ms an accented
+    // attack stops being an attack and becomes a click; above about 120 ms a
+    // soft one stops being an onset and becomes a pad swell. Today's engine
+    // fails both: 16.62 ms is over the accented ceiling and under the soft
+    // floor. Measured 8.91 ms and 92.16 ms.
+    expect (accented >= 6.0 && accented <= 14.0,
+            "an accented attack does not reach amplitude in the 6-14 ms a hard "
+            "onset takes");
+    expect (soft >= 45.0 && soft <= 120.0,
+            "a soft attack does not take the 45-120 ms an onset near phonation "
+            "threshold takes");
+    expect (soft / accented >= 2.5,
+            "velocity is still not the envelope's time constant");
+
+    // Humanize published as the dial that loosens a take, and the attack time is
+    // one of the things it loosens. It survives as a multiplier on the time
+    // constant rather than as its source. Measured 8.91 -> 23.53 ms.
+    const auto loose = riseAt (1.00f, 1.0f);
+    std::cout << "onset rise at velocity 1.00: Humanize 0 " << accented
+              << " ms, Humanize 1 " << loose << " ms\n";
+    expect (loose >= 2.0 * accented,
+            "Humanize no longer stretches the attack it is published as loosening");
+
+    // Velocity also reaches the source-tension ramp, so a soft attack is lax as
+    // well as slow: the folds of a hard onset start close to the adducted
+    // configuration they settle on, a soft one starts further from it. The
+    // reference is velocity 0.80, which is what leaves the onset the first pass
+    // measured exactly where it was.
+    const auto sagAt = [&] (float velocity)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (dynamicProtocolParameters());
+        engine.noteOn (60, velocity);
+        render (engine, blockSize);
+        return vocalor::VoiceEngineTestAccess::sourceTensionSag (engine);
+    };
+    const auto softSag = sagAt (0.10f);
+    const auto referenceSag = sagAt (0.80f);
+    const auto hardSag = sagAt (1.00f);
+    std::cout << "source-tension ramp depth: velocity 0.10 " << softSag
+              << ", 0.80 " << referenceSag << ", 1.00 " << hardSag << '\n';
+    const vocalor::VoiceEngine untouched;
+    expect (std::abs (referenceSag
+                          - vocalor::VoiceEngineTestAccess::sourceTensionRampDepth (untouched))
+                <= 0.01f,
+            "the reference velocity no longer resolves to the engine's own ramp depth");
+    expect (softSag >= 1.3f * hardSag,
+            "velocity does not reach the source-tension ramp: a soft attack is "
+            "slow but not lax");
+
+    // And velocity has to reach the spectrum, not only the level.
+    const auto renderAt = [&] (float velocity)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = dynamicProtocolParameters();
+        parameters.breath = 0.0f;
+        engine.setParameters (parameters);
+        engine.noteOn (60, velocity);
+        return renderMono (engine, static_cast<int> (sampleRate * 1.3));
+    };
+    std::cout << "velocity 0.05 -> 1.00:\n";
+    const auto ratio = presenceRatio (renderAt (0.05f), renderAt (1.00f), sampleRate);
+    // 1.066 before this step: velocity was a fader with a very slight tilt on
+    // it. Measured 1.53. Two cascaded first-order shelves cannot reach the 2.0
+    // Sundberg measures across these two bands -- see the plan's note on the
+    // 6 dB per octave per stage ceiling -- so the bound is set where the
+    // mechanism actually lands with margin rather than at the physiology.
+    expect (ratio >= 1.40,
+            "velocity still moves the presence band no faster than the level");
+}
+
+/** The dynamic control has to cover a singer's range, and stay a spectrum
+    control at the bottom of it.
+
+    dynamicResponse's voiced gain was exp2(-3.00 * below), which is exactly
+    18.06 dB by construction, against the 30-40 dB a singer covers between
+    pianissimo and fortissimo. The aspiration only loses 7.2 dB over the same
+    span, so once the voiced gain moves past about 35 dB the noise floors the
+    result and the control stops working at its own bottom end -- which is why
+    the span is measured at three breath settings rather than one.
+*/
+void testDynamicRange()
+{
+    constexpr auto sampleRate = 48000.0;
+
+    const auto spanAt = [&] (float breath)
+    {
+        std::array<double, 2> level {};
+        for (int end = 0; end < 2; ++end)
+        {
             vocalor::VoiceEngine engine;
             engine.prepare (sampleRate, blockSize);
             engine.reset();
-            engine.setParameters (onsetParameters (entry.profile, tension));
-            engine.noteOn (entry.midi, 0.80f);
-            const auto samples = renderMono (engine, static_cast<int> (sampleRate * 1.2));
-
-            double firstPeak = 0.0;
-            for (int i = 0; i < at (2.0); ++i)
-                firstPeak = std::max (firstPeak,
-                                      std::abs (static_cast<double> (samples[static_cast<std::size_t> (i)])));
-            double sustainPeak = 0.0;
-            for (int i = at (900.0); i < at (1100.0); ++i)
-                sustainPeak = std::max (sustainPeak,
-                                        std::abs (static_cast<double> (samples[static_cast<std::size_t> (i)])));
-            const auto below = 20.0 * std::log10 (sustainPeak / std::max (firstPeak, 1.0e-30));
-            std::cout << "onset: " << entry.name << " at Tension " << std::setprecision (2)
-                      << tension << " enters " << below << " dB below its sustain peak\n";
-            expect (below >= 18.0,
-                    std::string (entry.name) + " starts with a click: its first 2 ms peak "
-                        "is within 18 dB of the sustain peak");
+            auto parameters = dynamicProtocolParameters();
+            parameters.breath = breath;
+            parameters.outputGain = 1.0f;
+            parameters.dynamics = end == 0 ? 0.0f : 1.0f;
+            engine.setParameters (parameters);
+            engine.noteOn (60, 0.80f);
+            render (engine, static_cast<int> (sampleRate * 0.8));
+            const auto held = render (engine, static_cast<int> (sampleRate * 1.0));
+            level[static_cast<std::size_t> (end)] = 20.0 * std::log10 (held.rms() + 1.0e-30);
         }
-    }
+        const auto span = level[1] - level[0];
+        std::cout << "dynamic span at Breath " << std::fixed << std::setprecision (2)
+                  << breath << ": " << span << " dB\n";
+        return span;
+    };
+
+    const auto dry = spanAt (0.00f);
+    const auto shipped = spanAt (0.28f);
+    const auto breathy = spanAt (0.60f);
+
+    // Measured 33.19, 33.04 and 32.41 dB, against 18.10 / 18.10 / 18.09 before.
+    expect (shipped >= 28.0,
+            "the dynamic control does not cover a singer's range");
+    // Pinned at the shipping breath, because the aspiration is what would take
+    // the bottom of the range away without any of it showing up at Breath 0.
+    expect (std::abs (breathy - dry) <= 2.0,
+            "the aspiration is flooring the bottom of the dynamic range");
+
+    // And the dynamic has to be a spectrum control across that whole span, not
+    // a 30 dB fader. 1.195 before this step; measured 1.53.
+    const auto renderAt = [&] (float dynamics)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = dynamicProtocolParameters();
+        parameters.breath = 0.0f;
+        parameters.dynamics = dynamics;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.80f);
+        return renderMono (engine, static_cast<int> (sampleRate * 1.3));
+    };
+    std::cout << "dynamics 0.00 -> 1.00:\n";
+    expect (presenceRatio (renderAt (0.00f), renderAt (1.00f), sampleRate) >= 1.40,
+            "the dynamic still moves the presence band no faster than the level");
 }
 
 /** A vowel change is a jaw and a tongue moving, not a de-zipper.
@@ -2529,8 +2916,10 @@ void testPerformanceExpression()
             "the dynamic response is not inert at its full setting");
 
     const auto empty = vocalor::dynamicResponse (0.0f);
-    expect (std::abs (empty.voicedGain - 0.125f) < 1.0e-6f,
-            "an empty dynamic is not 18 dB down on the voiced source");
+    // 30.00 dB, which is what a singer covers between pianissimo and
+    // fortissimo. It was 18.06 dB until the dynamic stopped being a fader.
+    expect (std::abs (20.0f * std::log10 (empty.voicedGain) + 30.00f) < 0.01f,
+            "an empty dynamic is not 30 dB down on the voiced source");
     expect (empty.airGain > 3.0f * empty.voicedGain,
             "aspiration falls as fast as the voiced source at a low dynamic");
 
@@ -2580,7 +2969,9 @@ void testPerformanceExpression()
     const auto bandDrop = toDb (loudSpectrum[1], softSpectrum[1]);
     std::cout << "dynamic 1.0 -> 0.3: fundamental " << std::fixed << std::setprecision (2)
               << fundamentalDrop << " dB, 2.4-4.7 kHz " << bandDrop << " dB\n";
-    expect (fundamentalDrop > 8.0 && fundamentalDrop < 18.0,
+    // Seven tenths of the control, so seven tenths of the 30 dB span plus what
+    // the source slope takes out of the fundamental's own neighbourhood.
+    expect (fundamentalDrop > 15.0 && fundamentalDrop < 30.0,
             "the dynamic did not move the level by a plausible amount");
     expect (bandDrop - fundamentalDrop > 2.2,
             "the dynamic is a fader: it did not roll the source spectrum off as it fell");
@@ -2751,6 +3142,8 @@ int main()
     testEnsembleDispersion();
     testNasalBranch();
     testOnsetSpectrum();
+    testVelocityShapesOnset();
+    testDynamicRange();
     testCoarticulationTiming();
     testSingersFormantCluster();
     testFactoryPresets();

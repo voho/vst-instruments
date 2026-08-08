@@ -78,7 +78,7 @@ struct EngineParameters
     float releaseNoise { 0.4f };    // note-end damping/lift noise level
     float muteDamping { 0.55f };    // palm-mute strength for the Muted style
     float bendTimeSeconds { 0.28f };// finger-bend travel time
-    float velocityAmount { 0.65f }; // MIDI velocity to pluck strength
+    float velocityAmount { 0.85f }; // MIDI velocity to pluck strength
     float outputGain { 0.5f };      // linear output level
     float artifactAmount { 0.18f }; // sympathetic ring and incidental contact
     OutputMode outputMode { OutputMode::Mono }; // authentic DI or hex/string field
@@ -565,8 +565,12 @@ private:
     struct VelocityProfile
     {
         float amplitude { 1.0f };
+        // The stroke's force, and the rate at which the string leaves the
+        // plectrum. They are deliberately not the same curve: the second is
+        // bounded by the pick's own stiffness, so a harder stroke is mostly
+        // louder rather than proportionally sharper.
         float effort { 0.65f };
-        float effortCurve { 0.72f };
+        float releaseRate { 0.72f };
         float brightness { 1.0f };
         float noise { 1.0f };
         float tension { 1.0f };

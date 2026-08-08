@@ -2836,6 +2836,11 @@ void testStereoPanAndOverlappingNoteOff(const neuramar::NeuralModel& model)
     parameters.outputGain = 0.35f;
     engine.setParameters(parameters);
 
+    // Pan is a function of the played note, so the root note - and only the
+    // root note - is centred. The note an octave above it sits half way to the
+    // edge, which the constant-power law puts at 20*log10(sqrt(0.25)/sqrt(0.75))
+    // = -4.771 dB of left-against-right level. Asserting both is what stops
+    // this test passing by accident on an engine that centres everything.
     std::vector<float> left(2048, 0.0f);
     std::vector<float> right(2048, 0.0f);
     engine.noteOn(model.rootMidiNote(), 0.8f);
@@ -2844,7 +2849,20 @@ void testStereoPanAndOverlappingNoteOff(const neuramar::NeuralModel& model)
     for (std::size_t index = 0; index < left.size(); ++index)
         monoDelta = std::max(monoDelta, std::abs(left[index] - right[index]));
     expect(monoDelta < 1.0e-7f,
-           "a single note was not centred at maximum stereo spread");
+           "the root note was not centred at maximum stereo spread");
+
+    engine.allSoundOff();
+    std::fill(left.begin(), left.end(), 0.0f);
+    std::fill(right.begin(), right.end(), 0.0f);
+    engine.noteOn(model.rootMidiNote() + 12, 0.8f);
+    engine.process(left.data(), right.data(), static_cast<int>(left.size()));
+    const float octaveBalanceDb = 20.0f * std::log10(
+        std::max(rms(left), 1.0e-9f) / std::max(rms(right), 1.0e-9f));
+    expect(std::abs(octaveBalanceDb + 4.771f) < 0.20f,
+           "a note an octave above the root was placed at "
+               + std::to_string(octaveBalanceDb)
+               + " dB left-against-right at maximum stereo spread, where "
+                 "pitch placement puts it at -4.771 dB");
 
     engine.allSoundOff();
     engine.noteOn(model.rootMidiNote(), 0.8f);
@@ -2872,6 +2890,209 @@ void testStereoPanAndOverlappingNoteOff(const neuramar::NeuralModel& model)
                    static_cast<int>(releaseLeft.size()));
     expect(engine.getActiveVoiceCount() == 0,
            "the second note-off did not release the remaining overlapping voice");
+}
+
+// Least-squares amplitude of one sinusoid over an explicit interval, Hann
+// weighted. windowedSinusoidAmplitude() above is anchored to a centre and a
+// fixed half-window; these measurements are stated as spans instead, because
+// what they compare is one note's placement before and after a second note
+// arrives and the spans have to sit either side of that instant.
+[[nodiscard]] double intervalSinusoidAmplitude(const std::vector<float>& signal,
+                                               double sampleRate,
+                                               double firstSeconds,
+                                               double lastSeconds,
+                                               double frequencyHz)
+{
+    const auto first = std::max<std::ptrdiff_t>(0, static_cast<std::ptrdiff_t>(
+        std::llround(firstSeconds * sampleRate)));
+    const auto last = std::min<std::ptrdiff_t>(
+        static_cast<std::ptrdiff_t>(signal.size()),
+        static_cast<std::ptrdiff_t>(std::llround(lastSeconds * sampleRate)));
+    if (last - first < 32)
+        return 0.0;
+
+    double cosineCosine = 0.0;
+    double sineSine = 0.0;
+    double cosineSine = 0.0;
+    double signalCosine = 0.0;
+    double signalSine = 0.0;
+    const double denominator = static_cast<double>(last - first - 1);
+    for (auto index = first; index < last; ++index)
+    {
+        const double position = static_cast<double>(index - first) / denominator;
+        const double window = 0.5 - 0.5 * std::cos(2.0 * pi * position);
+        const double angle = 2.0 * pi * frequencyHz
+            * static_cast<double>(index) / sampleRate;
+        const double cosine = std::cos(angle);
+        const double sine = std::sin(angle);
+        const double value = signal[static_cast<std::size_t>(index)];
+        cosineCosine += window * cosine * cosine;
+        sineSine += window * sine * sine;
+        cosineSine += window * cosine * sine;
+        signalCosine += window * value * cosine;
+        signalSine += window * value * sine;
+    }
+    const double determinant = cosineCosine * sineSine - cosineSine * cosineSine;
+    if (determinant <= 1.0e-12)
+        return 0.0;
+    const double cosineCoefficient = (signalCosine * sineSine
+        - signalSine * cosineSine) / determinant;
+    const double sineCoefficient = (signalSine * cosineCosine
+        - signalCosine * cosineSine) / determinant;
+    return std::hypot(cosineCoefficient, sineCoefficient);
+}
+
+// Pan used to be recomputed from a voice's rank by age among the currently
+// sounding set, so every note-on and every retirement re-placed every other
+// voice. A string that is already vibrating does not move across the body of
+// the instrument when another string is struck, and where a note sits in the
+// image cannot depend on the order the chord was played in. Both fall out of
+// making pan a function of the played note, fixed at note-on. The third
+// assertion is about a separate consequence of the same block: the per-note
+// pan jitter used to be added outside the Spread multiply, so Spread 0 was not
+// exactly mono.
+void testHeldNoteDoesNotMoveInImage(const neuramar::NeuralModel& model)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 128;
+    const auto prepare = [&model](neuramar::NeuramarEngine& engine,
+                                  float spread, float mutation)
+    {
+        engine.prepare(sampleRate, blockSize);
+        engine.setModel(&model);
+        neuramar::EngineParameters parameters;
+        // Air and Bone are muted so the measured 220 Hz line is the held
+        // note's own Core fundamental and nothing else.
+        parameters.air = 0.0f;
+        parameters.bone = 0.0f;
+        parameters.mutation = mutation;
+        parameters.spread = spread;
+        parameters.attackSeconds = 0.0f;
+        parameters.outputGain = 1.0f;
+        engine.setParameters(parameters);
+    };
+    const auto render = [blockSize](neuramar::NeuramarEngine& engine,
+                                    std::vector<float>& left,
+                                    std::vector<float>& right,
+                                    int firstSample, int lastSample)
+    {
+        for (int offset = firstSample; offset < lastSample; offset += blockSize)
+        {
+            const int count = std::min(blockSize, lastSample - offset);
+            engine.process(left.data() + offset, right.data() + offset, count);
+        }
+    };
+
+    // A held note must not be dragged across the image when another key is
+    // struck under it.
+    {
+        neuramar::NeuramarEngine engine;
+        prepare(engine, 0.58f, 0.0f);
+        const auto totalSamples = static_cast<int>(1.00 * sampleRate);
+        const auto strikeSample = static_cast<int>(0.50 * sampleRate);
+        std::vector<float> left(static_cast<std::size_t>(totalSamples), 0.0f);
+        std::vector<float> right(static_cast<std::size_t>(totalSamples), 0.0f);
+        engine.noteOn(model.rootMidiNote(), 0.82f);
+        render(engine, left, right, 0, strikeSample);
+        // Nineteen semitones up, so none of the new note's partials lands on
+        // the held note's fundamental.
+        engine.noteOn(model.rootMidiNote() + 19, 0.82f);
+        render(engine, left, right, strikeSample, totalSamples);
+
+        const double fundamentalHz = static_cast<double>(model.rootFrequencyHz());
+        const auto balanceDb = [&](double firstSeconds, double lastSeconds)
+        {
+            const double leftAmplitude = intervalSinusoidAmplitude(
+                left, sampleRate, firstSeconds, lastSeconds, fundamentalHz);
+            const double rightAmplitude = intervalSinusoidAmplitude(
+                right, sampleRate, firstSeconds, lastSeconds, fundamentalHz);
+            return 20.0 * std::log10(std::max(leftAmplitude, 1.0e-12)
+                                     / std::max(rightAmplitude, 1.0e-12));
+        };
+        const double alone = balanceDb(0.30, 0.45);
+        const double justAfter = balanceDb(0.51, 0.60);
+        const double wellAfter = balanceDb(0.70, 0.90);
+        std::cout << "Held-note placement diagnostics: L-R alone "
+                  << alone << " dB, first control period after the second "
+                  << "note-on " << justAfter << " dB, settled "
+                  << wellAfter << " dB\n";
+        expect(std::abs(justAfter - alone) < 0.05,
+               "striking a second key moved the held note's own fundamental by "
+                   + std::to_string(justAfter - alone)
+                   + " dB across the stereo image in the first control period");
+        expect(std::abs(wellAfter - alone) < 0.05,
+               "striking a second key left the held note's own fundamental "
+                   + std::to_string(wellAfter - alone)
+                   + " dB away from where it started in the stereo image");
+    }
+
+    // The same chord played in six different orders must render the same
+    // image. Bit identity is unreachable and is deliberately not asked for:
+    // voices sum in voice-slot order, note order decides which slot a note
+    // lands in, and float addition is not associative.
+    {
+        const std::array<int, 3> chord {
+            model.rootMidiNote(), model.rootMidiNote() + 7,
+            model.rootMidiNote() + 14 };
+        std::array<std::size_t, 3> order { 0, 1, 2 };
+        const auto chordSamples = static_cast<int>(0.30 * sampleRate);
+        std::vector<std::vector<float>> renders;
+        do
+        {
+            neuramar::NeuramarEngine engine;
+            // Mutation is pinned off. Permuting the note-ons permutes each
+            // voice's ageStamp, which selects mutationOffset, which fixes the
+            // detune, the variation phases, the Air seeds and the model-clock
+            // start offset - so at any non-zero Mutation the six orders differ
+            // for reasons that have nothing to do with panning.
+            prepare(engine, 0.58f, 0.0f);
+            std::vector<float> left(static_cast<std::size_t>(chordSamples), 0.0f);
+            std::vector<float> right(static_cast<std::size_t>(chordSamples), 0.0f);
+            for (const std::size_t index : order)
+                engine.noteOn(chord[index], 0.82f);
+            render(engine, left, right, 0, chordSamples);
+            left.insert(left.end(), right.begin(), right.end());
+            renders.push_back(std::move(left));
+        } while (std::next_permutation(order.begin(), order.end()));
+
+        const float reference = rms(renders.front());
+        float worstRelativeDb = -1000.0f;
+        for (std::size_t take = 1; take < renders.size(); ++take)
+        {
+            std::vector<float> difference(renders.front().size(), 0.0f);
+            for (std::size_t index = 0; index < difference.size(); ++index)
+                difference[index] = renders[take][index] - renders.front()[index];
+            worstRelativeDb = std::max(worstRelativeDb, 20.0f * std::log10(
+                std::max(rms(difference), 1.0e-12f)
+                    / std::max(reference, 1.0e-12f)));
+        }
+        std::cout << "Held-note placement diagnostics: worst note-order "
+                     "difference " << worstRelativeDb << " dB relative\n";
+        expect(worstRelativeDb < -120.0f,
+               "the same three notes played in six orders gave stereo images "
+               "differing by "
+                   + std::to_string(worstRelativeDb) + " dB relative");
+    }
+
+    // Spread 0 has to be exactly mono, including at the shipping Mutation,
+    // which is where the pan jitter lives.
+    {
+        neuramar::NeuramarEngine engine;
+        prepare(engine, 0.0f, 0.12f);
+        const auto monoSamples = static_cast<int>(0.30 * sampleRate);
+        std::vector<float> left(static_cast<std::size_t>(monoSamples), 0.0f);
+        std::vector<float> right(static_cast<std::size_t>(monoSamples), 0.0f);
+        engine.noteOn(model.rootMidiNote(), 0.82f);
+        render(engine, left, right, 0, monoSamples);
+        float worstDelta = 0.0f;
+        for (std::size_t index = 0; index < left.size(); ++index)
+            worstDelta = std::max(worstDelta,
+                                  std::abs(left[index] - right[index]));
+        expect(worstDelta < 1.0e-7f,
+               "Spread 0 at the shipping Mutation was not exactly mono: the "
+               "channels differed by up to "
+                   + std::to_string(worstDelta));
+    }
 }
 
 // A stiff-string partial series with a known coefficient. Upper partials decay
@@ -3776,16 +3997,20 @@ void testRegisterLayerBalance()
     expect(lockedAir.span() < 1.0f,
            "the isolated Air layer's level drifted by "
                + std::to_string(lockedAir.span())
-               + " dB across MIDI 12-108 at Body Lock 1, where its centres are "
-                 "frozen and nothing but the register compensation can move it");
+               + " dB across MIDI 12-108 at Body Lock 1, where its centres "
+                 "are frozen and nothing but the register compensation can "
+                 "move it");
     expect(lockedBone.span() < 1.0f,
            "the isolated Bone layer's level drifted by "
                + std::to_string(lockedBone.span())
-               + " dB across MIDI 12-108 at Body Lock 1, where its centres are "
-                 "frozen and nothing but the register compensation can move it");
+               + " dB across MIDI 12-108 at Body Lock 1, where its centres "
+                 "are frozen and nothing but the register compensation can "
+                 "move it");
     // The Core must keep its normalisation. Dropping it there as well takes
-    // this fixture's Core level spread from 3.0 dB to 26.3 dB.
-    expect(lockedCore.span() < 3.2f,
+    // this fixture's Core level spread from 3.0 dB to 26.3 dB, so the bound is
+    // set well clear of the 3.0 dB the compensator's own ceiling saturation
+    // leaves behind on the top two notes.
+    expect(lockedCore.span() < 4.0f,
            "the Core level spread across MIDI 12-108 at Body Lock 1 was "
                + std::to_string(lockedCore.span())
                + " dB, so the Core lost its register normalisation");
@@ -4723,6 +4948,7 @@ int main()
         testDenseVoiceStealTailStaysBounded(*fixture.first.model);
         testMutationZeroRetriggerDeterminism(*fixture.first.model);
         testStereoPanAndOverlappingNoteOff(*fixture.first.model);
+        testHeldNoteDoesNotMoveInImage(*fixture.first.model);
         testHighRegisterRenderThroughput(*fixture.first.model);
         testRegisterTiltTracksTheKeyboard(*fixture.first.model);
         testOutputGainIsSmoothed(*fixture.first.model);

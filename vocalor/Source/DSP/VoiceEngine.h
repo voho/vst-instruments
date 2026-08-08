@@ -252,6 +252,25 @@ private:
         float lastNoise { 0.0f };
         float sourceTilt { 0.0f };
         float tiltCoefficient { 1.0f };
+        // The two first-order shelves that carry the loudness-dependent source
+        // slope, and the shelf gain itself. See sourcePresenceCoefficient_.
+        float sourceSlow { 0.0f };
+        float sourceSlower { 0.0f };
+        float presence { 1.0f };
+        // Velocity as the singer's own output, normalised to what the same note
+        // reaches at velocity 1: the level term of amplitudeGain without the
+        // ensemble trim. Constant for the note, so it is resolved at note-on.
+        float velocityGain { 1.0f };
+        // Per-voice envelope attack. A note's attack is the folds coming onto
+        // their limit cycle, and how long that takes is set by how hard the
+        // note is sung, not by how loose the take is.
+        float attackCoefficient { 0.0f };
+        float attackDrive { -1.0f };
+        // How far below the block's tension this note's glottal source starts.
+        // sourceTensionRampDepth_ is the value at the reference velocity; a
+        // hard attack begins closer to its adducted target and a soft one
+        // further from it.
+        float tensionSag { 0.0f };
         // Vocal effort and pan only move when a parameter does, but their
         // coefficients cost an exp2, an exp and two square roots. Cache the
         // input so a sustained note pays for them once.
@@ -334,9 +353,10 @@ private:
     std::array<float, chunkSize> tensionAt_ {};
     std::array<float, chunkSize> voicedScaleAt_ {};
 
-    // Per-block envelope coefficients, shared by every voice.
+    // Per-block envelope coefficients, shared by every voice. The voiced attack
+    // is no longer among them: how long a note takes to reach amplitude is set
+    // by how hard it is sung, so it lives on the voice.
     float parameterSmoothing_ { 0.0f };
-    float attackCoefficient_ { 0.0f };
     float airAttackCoefficient_ { 0.0f };
     float releaseMultiplier_ { 0.0f };
     float airReleaseMultiplier_ { 0.0f };
@@ -353,6 +373,14 @@ private:
     // Not const: the tests force it to zero to separate what the ramp is worth
     // from what the tract is worth.
     float sourceTensionRampDepth_ { 0.60f };
+    // Corner of the two cascaded first-order shelves that carry the source's
+    // loudness-dependent spectral slope. Sundberg measures partials above 1 kHz
+    // rising about twice as fast in dB as overall SPL, so the shelf gain is the
+    // note's own broadband gain and the shelf is what turns that into a slope
+    // rather than a fader. Two stages because one first-order shelf cannot move
+    // 3 kHz more than 6 dB per octave away from 450 Hz however far its corner
+    // is swept, and the measured law needs about twice that.
+    float sourcePresenceCoefficient_ { 0.0f };
     float scoopMultiplier_ { 0.0f };
     float shimmerDepth_ { 0.0f };
     // Every one of these used to be a bare per-sample or per-control-period
