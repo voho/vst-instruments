@@ -179,10 +179,17 @@ if(BUILD_TESTING)
     # slower. The universal macOS ASan/UBSan configuration has been observed to
     # take roughly 18 minutes after the full 128-frame quality suite, while a
     # native arm64 sanitizer build remains much faster.
+    # The unsanitized bound was 30 s, chosen when the suite ran well inside it.
+    # The register-balance fixture added in the 2026-08-07 pass renders 60
+    # independent takes, which pushed the suite to 25.9 s on a loaded four-core
+    # Linux box and past 30 s on slower runners, so the bound was being hit by
+    # ordinary growth rather than by a runaway test. Raised to 120 s, matching
+    # the other instruments' engine suites, which leaves the guard doing its
+    # real job of catching a hang.
     if(CMAKE_CXX_FLAGS MATCHES "fsanitize")
         set(NEURAMAR_ENGINE_TEST_TIMEOUT 1800)
     else()
-        set(NEURAMAR_ENGINE_TEST_TIMEOUT 30)
+        set(NEURAMAR_ENGINE_TEST_TIMEOUT 120)
     endif()
     set_tests_properties(Neuramar.NeuralEngine PROPERTIES
         TIMEOUT ${NEURAMAR_ENGINE_TEST_TIMEOUT})

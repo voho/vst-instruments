@@ -53,12 +53,9 @@ struct VoiceEngineTestAccess
                 consider(resonator.y1);
                 consider(resonator.y2);
             }
-            for (const auto& resonator : voice.early)
-            {
-                consider(resonator.y1);
-                consider(resonator.y2);
-            }
             consider(voice.sourceTilt);
+            consider(voice.sourceSlow);
+            consider(voice.sourceSlower);
         }
         for (const auto value : engine.roomLeft_)
             consider(value);
@@ -155,43 +152,87 @@ struct VoiceEngineTestAccess
         return { engine.voicedScaleAt_[0], engine.airLevelAt_[0], engine.smoothedDynamics_ };
     }
 
-    /** Peak magnitude of F1 and F2 in the onset stage and in the main tract,
-        each evaluated at its own pole angle, read straight out of the live
-        coefficients. The onset stage runs 1.75x wider bandwidths, so before
-        both stages were peak-normalised on the same basis their levels differed
-        and the onset crossfade moved the level as well as the timbre.
-        Returned as { tract F1, tract F2, early F1, early F2 }. */
-    static std::array<float, 4> onsetStagePeakGains(const VoiceEngine& engine) noexcept
+    /** Forces the source-tension ramp depth. A note-on starts the glottal
+        source this far below the block's tension and firms up onto it; passing
+        0 renders the same note with the ramp switched out, which is how the
+        tract half of the onset and the source half are told apart inside one
+        binary. Applied on every control update, so a note already sounding
+        follows it. */
+    static void setSourceTensionRampDepth(VoiceEngine& engine, float depth) noexcept
     {
-        std::array<float, 4> result {};
+        engine.sourceTensionRampDepth_ = depth;
+    }
+
+    /** How far below the block's tension the sounding voice's glottal source
+        actually started, after the note's own velocity has scaled the engine's
+        depth. Read from the voice rather than from a render because the two
+        glottal prototypes are crossfaded in the time domain: their harmonics
+        cancel non-monotonically at intermediate tensions, so no band share
+        moves monotonically with this. Measured on the shipping engine, the
+        2-5 kHz share at 10-35 ms with the ramp in minus the same share with it
+        forced out reads 3.06, 1.53, 2.14 and 2.17 dB at velocity 0.10, 0.40,
+        0.80 and 1.00, which is the notch rather than the depth. */
+    static float sourceTensionSag(const VoiceEngine& engine) noexcept
+    {
         for (const auto& voice : engine.voices_)
-        {
-            if (! voice.active || voice.releasing || voice.onsetComplete)
-                continue;
+            if (voice.active && ! voice.releasing)
+                return voice.tensionSag;
+        return 0.0f;
+    }
 
-            const auto peak = [](double a1, double a2, double b0) noexcept
-            {
-                // The pole angle is what the normalisation targets, and it is
-                // recoverable from the coefficients: a2 = -r^2, a1 = 2 r cos w.
-                const double radius = std::sqrt(std::max(-a2, 0.0));
-                const double omega = std::acos(
-                    std::clamp(a1 / std::max(2.0 * radius, 1.0e-12), -1.0, 1.0));
-                const double real = 1.0 - a1 * std::cos(omega) - a2 * std::cos(2.0 * omega);
-                const double imaginary = a1 * std::sin(omega) + a2 * std::sin(2.0 * omega);
-                return static_cast<float>(std::abs(b0)
-                                          / std::sqrt(real * real + imaginary * imaginary));
-            };
+    /** The engine's own ramp depth, which is the value the reference velocity
+        0.80 resolves to. */
+    static float sourceTensionRampDepth(const VoiceEngine& engine) noexcept
+    {
+        return engine.sourceTensionRampDepth_;
+    }
 
-            for (int f = 0; f < 2; ++f)
+    /** Forces the depth of the pitch-synchronous aspiration window. 1 is the
+        glottal flow itself; passing 0 renders the same note with stationary
+        noise, which is how a redistribution of the noise inside the period is
+        told apart from a change in how much noise there is. Re-read on every
+        control update, so a note already sounding follows it. */
+    static void setAspirationModulationDepth (VoiceEngine& engine, float depth) noexcept
+    {
+        engine.aspirationModulationDepth_ = depth;
+    }
+
+    /** Reseeds the sounding voice's noise stream mid-note. Rendering the same
+        note twice with only this differing isolates the aspiration by
+        difference: at Humanize 0 the stream drives no jitter and no shimmer, so
+        everything else about the two renders is bit-identical. Reseeding after
+        the note has started rather than before matters, because the initial
+        phase and the pitch scoop are both drawn from this state at note-on. */
+    static void reseedVoiceNoise (VoiceEngine& engine, std::uint32_t state) noexcept
+    {
+        for (auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing)
             {
-                const auto index = static_cast<std::size_t>(f);
-                result[index] = peak(voice.tract[index].a1, engine.chunkA2_[index],
-                                     voice.tract[index].b0);
-                result[index + 2] = peak(voice.early[index].a1, engine.earlyA2_[index],
-                                         voice.early[index].b0);
+                voice.noiseState = state;
+                return;
             }
-            break;
-        }
+    }
+
+    /** The sounding voice's glottal phase and its per-sample increment. Folding
+        a residual onto the glottal period has to bin by the phase the engine is
+        actually at, not by a free-running nominal period, or the fold stops
+        being exact the moment anything perturbs the pitch. */
+    static std::array<float, 2> voicePhaseState (const VoiceEngine& engine) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing)
+                return { voice.phase, voice.phaseIncrement };
+        return { 0.0f, 0.0f };
+    }
+
+    /** The vibrato rate of every singer identity, in Hz. A reseeded rate that
+        nothing reads would otherwise let a pitch-track measurement pass on the
+        old rate, so the two are cross-checked against each other. */
+    static std::vector<float> singerVibratoRates(const VoiceEngine& engine)
+    {
+        std::vector<float> result;
+        for (const auto& singer : engine.singers_)
+            result.push_back(singer.vibratoRate);
         return result;
     }
 
@@ -1520,32 +1561,9 @@ void testParallelFormantBank()
     // And the valley between F1 and F2 must stay within reach of the peak. A
     // bank summed with a common sign digs a 64 dB notch there on a close front
     // vowel, tens of dB deeper than any vocal tract produces.
-    // The onset crossfade blends a wide-bandwidth early stage into the full
-    // tract. The early stage used the unnormalised b0, so it sat at a different
-    // level from the tract it fades into and the crossfade moved the level as
-    // well as the timbre. Both stages are now normalised on the same basis, so
-    // each resonator delivers the same magnitude at its own centre frequency
-    // whatever bandwidth it runs.
-    for (const float sampleRate : { 44100.0f, 48000.0f, 96000.0f, 192000.0f })
-    {
-        vocalor::VoiceEngine engine;
-        engine.prepare (static_cast<double> (sampleRate), blockSize);
-        engine.reset();
-        engine.setParameters (steadyParameters());
-        engine.noteOn (60, 0.8f);
-        // Short enough that the crossfade is still running: it ends 115-195 ms
-        // into the note.
-        render (engine, static_cast<int> (sampleRate * 0.05f));
-
-        const auto gains = vocalor::VoiceEngineTestAccess::onsetStagePeakGains (engine);
-        for (std::size_t f = 0; f < 2; ++f)
-        {
-            expect (gains[f] > 1.0e-6f,
-                    "the onset crossfade probe found no sounding voice");
-            expect (std::abs (gains[f + 2] - gains[f]) <= 2.0e-3f * gains[f],
-                    "the onset stage is no longer normalised like the main tract");
-        }
-    }
+    // The two-formant onset stage this block used to check for a matching
+    // normalisation no longer exists: every voice renders the whole bank from
+    // its first sample. testOnsetSpectrum is what holds that now.
 
     // Limits are the pre-change depths rounded down: /i/-like 64.2, /a/-like
     // 24.9 and /u/-like 29.4 dB. The current bank measures 32.2, 9.6 and
@@ -1716,7 +1734,13 @@ void testSourceLevelCalibration()
     // Measured from the calibrated engine. The window is loose enough for
     // platform floating-point differences and far tighter than the ~1.9 dB a
     // second radiation stage across the excitation path costs.
-    constexpr double referenceRmsDb = -15.53;
+    // Moved from -15.53 when the source slope started following the note's own
+    // loudness: the reference render is at velocity 0.85, which is 1.4 dB below
+    // full voice, so its partials above the 850 Hz shelf corner sit 2.8 dB down
+    // and the broadband RMS with them. Nothing about the source's absolute
+    // calibration or its single radiation accounting moved -- at velocity 1.00
+    // and full dynamic the shelf is exactly transparent.
+    constexpr double referenceRmsDb = -17.03;
     constexpr double toleranceDb = 0.9;
 
     for (const auto sampleRate : { 44100.0, 48000.0, 96000.0 })
@@ -1798,6 +1822,52 @@ void testFactoryPresets()
         expect (tail.finite, name + " produced invalid audio during its release");
         expect (engine.getActiveVoiceCount() == 0, name + " never finished releasing");
     }
+
+    // ... and it has to be playable at the level it was voiced at. Nothing else
+    // in the suite makes a re-trim mandatory: the checks above pass a preset
+    // left 10 dB quiet, and testSourceLevelCalibration renders at Dynamics 1.00,
+    // where the voiced gain does not move at all. These are the levels the bank
+    // shipped at before the dynamic grew to 30 dB and the source slope started
+    // following the note's own loudness, both of which lower any preset not sung
+    // at full velocity and full dynamic. Measured on the shipping engine: two
+    // notes held at 57 and 64 at velocity 0.85, 1 s of stereo RMS from t = 0.6 s
+    // at 48 kHz.
+    struct Level { const char* name; double db; };
+    constexpr std::array<Level, 12> shipped { {
+        { "Init Soprano", -19.04 }, { "Intimate Alto", -25.06 },
+        { "Pressed Tenor", -20.28 }, { "Legato Soloist", -25.41 },
+        { "Breath And Air", -29.81 }, { "Warm Bass Choir", -20.98 },
+        { "Cathedral Ensemble", -22.85 }, { "Closed Mouth Hum", -34.88 },
+        { "Small Voices", -24.72 }, { "Vowel Morph Pad", -27.79 },
+        { "Locked Major Chorale", -26.34 }, { "Airy Minor Pad", -29.62 } } };
+
+    for (const auto& entry : shipped)
+    {
+        int index = -1;
+        for (int i = 0; i < count; ++i)
+            if (std::string (vocalor::factoryPreset (i).name) == entry.name)
+                index = i;
+        expect (index >= 0, std::string (entry.name) + " is no longer in the factory bank");
+        if (index < 0)
+            continue;
+
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (vocalor::factoryPreset (index).parameters);
+        engine.noteOn (57, 0.85f);
+        engine.noteOn (64, 0.85f);
+        render (engine, static_cast<int> (sampleRate * 0.6));
+        const auto held = render (engine, static_cast<int> (sampleRate * 1.0));
+        const auto levelDb = 20.0 * std::log10 (held.rms() + 1.0e-30);
+        std::cout << "preset level: " << std::left << std::setw (22) << entry.name
+                  << std::right << std::fixed << std::setprecision (2) << levelDb
+                  << " dB against " << entry.db << " dB\n";
+        expect (std::abs (levelDb - entry.db) <= 1.0,
+                std::string (entry.name) + " renders at " + std::to_string (levelDb)
+                    + " dB against the " + std::to_string (entry.db)
+                    + " dB it shipped at: the preset bank was not re-trimmed");
+    }
 }
 
 /** The singer's formant is a cluster, not a boost.
@@ -1878,6 +1948,833 @@ void testSingersFormantCluster()
                 "tension moved F" + std::to_string (formant + 1)
                     + ", which carries the vowel rather than the singer's formant");
     }
+}
+
+/** Energy in [lowHz, highHz) of a Blackman-Harris window of @c length samples
+    starting at @c start, in dB. Per-bin DFT: the windows are 25 ms, which is
+    1200 bins at 48 kHz, and the bands are narrow, so this costs less than the
+    renders it measures. */
+double windowedBandDb (const std::vector<float>& samples, int start, int length,
+                       double sampleRate, double lowHz, double highHz)
+{
+    constexpr double pi = 3.14159265358979323846;
+    std::vector<double> window (static_cast<std::size_t> (length));
+    for (int i = 0; i < length; ++i)
+    {
+        const auto angle = 2.0 * pi * i / (length - 1.0);
+        window[static_cast<std::size_t> (i)] = 0.35875 - 0.48829 * std::cos (angle)
+                                             + 0.14128 * std::cos (2.0 * angle)
+                                             - 0.01168 * std::cos (3.0 * angle);
+    }
+
+    const auto binHz = sampleRate / length;
+    const auto firstBin = std::max (1, static_cast<int> (std::ceil (lowHz / binHz)));
+    const auto lastBin = std::min (length / 2 - 1, static_cast<int> (std::floor (highHz / binHz)));
+    double total = 0.0;
+    for (int bin = firstBin; bin <= lastBin; ++bin)
+    {
+        double real = 0.0;
+        double imaginary = 0.0;
+        for (int i = 0; i < length; ++i)
+        {
+            const auto value = samples[static_cast<std::size_t> (start + i)]
+                             * window[static_cast<std::size_t> (i)];
+            const auto angle = 2.0 * pi * bin * i / length;
+            real += value * std::cos (angle);
+            imaginary -= value * std::sin (angle);
+        }
+        total += real * real + imaginary * imaginary;
+    }
+    return 10.0 * std::log10 (std::max (total, 1.0e-300));
+}
+
+/** A vocal tract is a fixed geometry with fixed poles, so it is fully formed
+    before the first glottal pulse reaches it and the singer's-formant cluster
+    is present in the first cycle. The engine used to render the first 50-70 ms
+    through a two-formant stage and lerp the full bank in over the following
+    65-125 ms, which left the 2000-3300 Hz band 17.68 dB below its sustain share
+    at 10-35 ms on a male D3.
+
+    What does develop at an onset is the source: the folds start abducted and
+    lax and adduct over the first tens of milliseconds. That is the second half
+    of this test, and it is measured separately, because a ramp that does
+    nothing is otherwise indistinguishable from a ramp that works.
+*/
+void testOnsetSpectrum()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr int window = 1200;              // 25 ms
+    const auto at = [] (double milliseconds)
+    {
+        return static_cast<int> (sampleRate * milliseconds * 0.001);
+    };
+
+    // The published baseline for gap 9 was measured on the engine's own shipped
+    // defaults rather than on steadyParameters(), which runs a narrower
+    // resonance and a wider spread; keeping to the defaults is what makes the
+    // numbers quoted below comparable with the ones in the plan.
+    const auto onsetParameters = [] (vocalor::VoiceProfile profile, float tension)
+    {
+        vocalor::EngineParameters parameters;
+        parameters.profile = profile;
+        parameters.mode = vocalor::PerformanceMode::Solo;
+        parameters.vowel = vocalor::Vowel::Aah;
+        parameters.tension = tension;
+        parameters.breath = 0.10f;
+        parameters.humanize = 0.0f;
+        parameters.vibrato = 0.0f;
+        parameters.room = 0.0f;
+        return parameters;
+    };
+
+    /** A male AAH on D3 at Tension 0.90, Breath 0.10, Humanize 0, Vibrato 0,
+        either at the shipping source-tension ramp depth or with that ramp
+        forced out. The ramp-on leg does not name a depth, so a depth shipped at
+        zero fails here rather than passing quietly. */
+    const auto probe = [&] (bool rampOff)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (onsetParameters (vocalor::VoiceProfile::Male, 0.90f));
+        if (rampOff)
+            vocalor::VoiceEngineTestAccess::setSourceTensionRampDepth (engine, 0.0f);
+        engine.noteOn (50, 0.80f);
+        return renderMono (engine, static_cast<int> (sampleRate * 1.2));
+    };
+
+    const auto rampOff = probe (true);
+    const auto rampOn = probe (false);
+
+    const auto share = [&] (const std::vector<float>& samples, double milliseconds,
+                            double lowHz, double highHz)
+    {
+        return windowedBandDb (samples, at (milliseconds), window, sampleRate, lowHz, highHz)
+             - windowedBandDb (samples, at (milliseconds), window, sampleRate, 100.0, 900.0);
+    };
+    /** How far the singer's-formant band sits below the share it reaches in the
+        sustain, in dB. This is gap 9's own measurement. */
+    const auto deficit = [&] (const std::vector<float>& samples, double milliseconds)
+    {
+        return share (samples, 1000.0, 2000.0, 3300.0)
+             - share (samples, milliseconds, 2000.0, 3300.0);
+    };
+
+    const auto offDeficit = deficit (rampOff, 10.0);
+    const auto onDeficit = deficit (rampOn, 10.0);
+    const auto offAir = share (rampOff, 10.0, 5000.0, 18000.0);
+    const auto onAir = share (rampOn, 10.0, 5000.0, 18000.0);
+    std::cout << "onset: 2-3.3 kHz deficit at 10-35 ms " << std::fixed << std::setprecision (2)
+              << offDeficit << " dB with the source ramp off, " << onDeficit
+              << " dB with it on; 5-18 kHz share " << offAir << " -> " << onAir << " dB\n";
+
+    // The tract is present from sample zero. With the source ramp switched out
+    // nothing is left to develop but the envelope, so the band the singer's
+    // formant sits in has to arrive with the note. Measured 2.79 dB, against
+    // 17.68 dB for the two-formant onset stage this replaces.
+    expect (offDeficit <= 3.5,
+            "the upper formants are still missing from the attack");
+
+    // And the gap stays closed once the source ramp is doing its work.
+    // Measured 0.57 dB.
+    expect (onDeficit <= 8.0,
+            "the source-tension ramp reopened the singer's-formant gap at the onset");
+
+    // The ramp is doing the remaining work. A lax fold configuration is an
+    // abducted one, so the note has to speak with more aspiration per unit of
+    // voiced output than the same note started at the block's tension.
+    // Measured 5.62 dB.
+    expect (onAir - offAir >= 3.0,
+            "the source-tension ramp does not make the onset breathier than a note "
+            "started at the block's tension");
+
+    // It is an onset gesture, so by the sustain the two renders have to be the
+    // same instrument. Measured within 0.001 dB in all three bands.
+    for (const auto& band : { std::pair { 100.0, 900.0 }, std::pair { 2000.0, 3300.0 },
+                              std::pair { 5000.0, 18000.0 } })
+    {
+        const auto offBand = windowedBandDb (rampOff, at (1000.0), window, sampleRate,
+                                             band.first, band.second);
+        const auto onBand = windowedBandDb (rampOn, at (1000.0), window, sampleRate,
+                                            band.first, band.second);
+        expect (std::abs (onBand - offBand) <= 0.5,
+                "the source-tension ramp is still moving the sustain a second into the note");
+    }
+
+    // Direction test only: the aspiration-to-voiced ratio falls across the
+    // onset rather than rising. Measured 26.20 -> 11.43 -> 3.59 dB above the
+    // sustain share.
+    const auto airEarly = share (rampOn, 10.0, 5000.0, 18000.0);
+    const auto airMiddle = share (rampOn, 70.0, 5000.0, 18000.0);
+    const auto airLate = share (rampOn, 180.0, 5000.0, 18000.0);
+    expect (airEarly > airMiddle && airMiddle > airLate,
+            "the aspiration no longer falls away across the onset");
+
+    // And it must not click. What a click is, is energy in the note's first
+    // instants that the envelope did not put there -- the tract's own transient
+    // response to a source that starts from silence. The window has to be
+    // shorter than the fastest attack the engine produces or it measures the
+    // attack instead: velocity now sets the envelope time constant and an
+    // accented note reaches amplitude on 4.5 ms, so the 2 ms window this test
+    // shipped with is a third of the way up the intended envelope rather than
+    // ahead of it. 1 ms is under a quarter of that time constant and under a
+    // third of a glottal period at C4. Measured, the narrowest of these
+    // eighteen is 28.44 dB.
+    struct Entry { int midi; vocalor::VoiceProfile profile; const char* name; };
+    for (const auto entry : { Entry { 50, vocalor::VoiceProfile::Male, "male D3" },
+                              Entry { 60, vocalor::VoiceProfile::Female, "female C4" },
+                              Entry { 84, vocalor::VoiceProfile::Female, "female C6" } })
+    {
+        for (const float tension : { 0.30f, 0.90f })
+        {
+            // Across the velocity range, because velocity is what sets the
+            // attack: the loudest, fastest onset is the one that can click.
+            for (const float velocity : { 0.30f, 0.80f, 1.00f })
+            {
+                vocalor::VoiceEngine engine;
+                engine.prepare (sampleRate, blockSize);
+                engine.reset();
+                engine.setParameters (onsetParameters (entry.profile, tension));
+                engine.noteOn (entry.midi, velocity);
+                const auto samples = renderMono (engine, static_cast<int> (sampleRate * 1.2));
+
+                double firstPeak = 0.0;
+                for (int i = 0; i < at (1.0); ++i)
+                    firstPeak = std::max (firstPeak,
+                                          std::abs (static_cast<double> (samples[static_cast<std::size_t> (i)])));
+                double sustainPeak = 0.0;
+                for (int i = at (900.0); i < at (1100.0); ++i)
+                    sustainPeak = std::max (sustainPeak,
+                                            std::abs (static_cast<double> (samples[static_cast<std::size_t> (i)])));
+                const auto below = 20.0 * std::log10 (sustainPeak / std::max (firstPeak, 1.0e-30));
+                std::cout << "onset: " << entry.name << " at Tension " << std::setprecision (2)
+                          << tension << ", velocity " << velocity << " enters " << below
+                          << " dB below its sustain peak\n";
+                expect (below >= 24.0,
+                        std::string (entry.name) + " starts with a click: its first 1 ms peak "
+                            "is within 24 dB of the sustain peak");
+            }
+        }
+    }
+}
+
+/** Solo, one note, nothing moving but the thing under test. The published
+    baselines for gaps 11 and 21 were measured on the engine's own shipped
+    defaults rather than on steadyParameters(), so these two tests build from
+    EngineParameters directly, as testOnsetSpectrum does. */
+vocalor::EngineParameters dynamicProtocolParameters()
+{
+    vocalor::EngineParameters parameters;
+    parameters.mode = vocalor::PerformanceMode::Solo;
+    parameters.vowel = vocalor::Vowel::Aah;
+    parameters.humanize = 0.0f;
+    parameters.vibrato = 0.0f;
+    parameters.room = 0.0f;
+    parameters.dynamics = 1.0f;
+    return parameters;
+}
+
+/** 10-90 % rise of a four-period sliding-peak envelope, in milliseconds.
+
+    Four periods rather than a fixed window: a 2 ms window at C4 is shorter than
+    the 3.82 ms glottal period, so it does not smooth the waveform out at all
+    and the crossings land on within-period ripple -- the same rise reads 7.8 ms
+    at 2 ms, 13.2 at 8 ms and 27.8 at 30 ms, which is a metric whose answer is
+    set by its own window length. The envelope is the peak of the four periods
+    ending at each sample, sampled on a 0.5 ms grid, and the two crossings are
+    interpolated linearly between grid points. The steady value is the envelope
+    averaged over 0.8-1.0 s, which is well past any attack this engine produces.
+*/
+double onsetRiseMs (const std::vector<float>& samples, double fundamentalHz,
+                    double sampleRate)
+{
+    const auto window = static_cast<int> (std::lround (4.0 * sampleRate / fundamentalHz));
+    const auto count = static_cast<int> (samples.size());
+    std::vector<double> envelope (static_cast<std::size_t> (count), 0.0);
+    // A running maximum over a sliding window, kept O(n) by rescanning only when
+    // the sample that held the maximum falls out of it.
+    double running = 0.0;
+    int runningAt = -1;
+    for (int i = 0; i < count; ++i)
+    {
+        const auto magnitude = std::abs (static_cast<double> (samples[static_cast<std::size_t> (i)]));
+        if (magnitude >= running)
+        {
+            running = magnitude;
+            runningAt = i;
+        }
+        else if (runningAt <= i - window)
+        {
+            running = 0.0;
+            for (int k = std::max (0, i - window + 1); k <= i; ++k)
+            {
+                const auto value = std::abs (static_cast<double> (samples[static_cast<std::size_t> (k)]));
+                if (value >= running)
+                {
+                    running = value;
+                    runningAt = k;
+                }
+            }
+        }
+        envelope[static_cast<std::size_t> (i)] = running;
+    }
+
+    const auto from = static_cast<int> (0.8 * sampleRate);
+    const auto to = std::min (count, static_cast<int> (1.0 * sampleRate));
+    double steady = 0.0;
+    for (int i = from; i < to; ++i)
+        steady += envelope[static_cast<std::size_t> (i)];
+    steady /= std::max (1, to - from);
+
+    const auto step = static_cast<int> (0.0005 * sampleRate);
+    const auto crossing = [&] (double fraction)
+    {
+        const auto target = fraction * steady;
+        for (int i = step; i < count; i += step)
+        {
+            const auto before = envelope[static_cast<std::size_t> (i - step)];
+            const auto after = envelope[static_cast<std::size_t> (i)];
+            if (before < target && after >= target)
+            {
+                const auto within = (target - before) / std::max (after - before, 1.0e-30);
+                return 1000.0 * (static_cast<double> (i - step) + within * step) / sampleRate;
+            }
+        }
+        return -1.0;
+    };
+    return crossing (0.9) - crossing (0.1);
+}
+
+/** Energy in [lowHz, highHz) of a held note's sustain, in dB. Two 100 ms
+    windows, because at Humanize 0 and Vibrato 0 the sustain is stationary. */
+double sustainBandDb (const std::vector<float>& samples, double sampleRate,
+                      double lowHz, double highHz)
+{
+    const auto window = static_cast<int> (0.100 * sampleRate);
+    double total = 0.0;
+    for (const double at : { 0.80, 1.00 })
+        total += windowedBandDb (samples, static_cast<int> (at * sampleRate), window,
+                                 sampleRate, lowHz, highHz);
+    return 0.5 * total;
+}
+
+/** How many decibels the 2-5 kHz band moves per decibel of 150-800 Hz between
+    two renders. Sundberg's measurement is that partials above 1 kHz rise about
+    twice as fast in dB as overall sound pressure level, so this is 2 in a real
+    singer and 1 in a fader. Read at Breath 0.00: at any breath setting the
+    aspiration, which loses only 7.2 dB across the dynamic, floors the 2-5 kHz
+    band once the voiced component has fallen 30 dB, and the ratio then measures
+    the noise rather than the source. */
+double presenceRatio (const std::vector<float>& soft, const std::vector<float>& loud,
+                      double sampleRate)
+{
+    const auto low = sustainBandDb (loud, sampleRate, 150.0, 800.0)
+                   - sustainBandDb (soft, sampleRate, 150.0, 800.0);
+    const auto high = sustainBandDb (loud, sampleRate, 2000.0, 5000.0)
+                    - sustainBandDb (soft, sampleRate, 2000.0, 5000.0);
+    std::cout << "  150-800 Hz " << std::fixed << std::setprecision (2) << low
+              << " dB, 2-5 kHz " << high << " dB, ratio " << high / low << '\n';
+    return high / low;
+}
+
+/** Velocity has to shape the note, not fade it.
+
+    Velocity used to reach a gain and the corner of a one-pole source tilt and
+    nothing else. In particular it never reached the envelope: attackCoefficient_
+    was a per-block constant derived from Humanize alone, so a held C4 rose in
+    the same 16.6 ms at velocity 0.05, 0.40 and 1.00 alike, across a 22 dB level
+    span. A soft onset has to approach phonation threshold pressure slowly and
+    an accented one arrives above it, so the time constant is now the note's own.
+*/
+void testVelocityShapesOnset()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr double fundamental = 261.6255653;   // C4
+
+    const auto riseAt = [&] (float velocity, float humanize)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = dynamicProtocolParameters();
+        parameters.humanize = humanize;
+        engine.setParameters (parameters);
+        engine.noteOn (60, velocity);
+        const auto samples = renderMono (engine, static_cast<int> (sampleRate * 1.5));
+        return onsetRiseMs (samples, fundamental, sampleRate);
+    };
+
+    const auto accented = riseAt (1.00f, 0.0f);
+    const auto soft = riseAt (0.10f, 0.0f);
+    std::cout << "onset rise at Humanize 0: velocity 1.00 " << std::fixed
+              << std::setprecision (2) << accented << " ms, velocity 0.10 " << soft
+              << " ms, ratio " << soft / accented << "x\n";
+
+    // Two-sided, because both ends carry a defect. Below about 6 ms an accented
+    // attack stops being an attack and becomes a click; above about 120 ms a
+    // soft one stops being an onset and becomes a pad swell. Today's engine
+    // fails both: 16.62 ms is over the accented ceiling and under the soft
+    // floor. Measured 8.91 ms and 92.16 ms.
+    expect (accented >= 6.0 && accented <= 14.0,
+            "an accented attack does not reach amplitude in the 6-14 ms a hard "
+            "onset takes");
+    expect (soft >= 45.0 && soft <= 120.0,
+            "a soft attack does not take the 45-120 ms an onset near phonation "
+            "threshold takes");
+    expect (soft / accented >= 2.5,
+            "velocity is still not the envelope's time constant");
+
+    // Humanize published as the dial that loosens a take, and the attack time is
+    // one of the things it loosens. It survives as a multiplier on the time
+    // constant rather than as its source. Measured 8.91 -> 23.53 ms.
+    const auto loose = riseAt (1.00f, 1.0f);
+    std::cout << "onset rise at velocity 1.00: Humanize 0 " << accented
+              << " ms, Humanize 1 " << loose << " ms\n";
+    expect (loose >= 2.0 * accented,
+            "Humanize no longer stretches the attack it is published as loosening");
+
+    // Velocity also reaches the source-tension ramp, so a soft attack is lax as
+    // well as slow: the folds of a hard onset start close to the adducted
+    // configuration they settle on, a soft one starts further from it. The
+    // reference is velocity 0.80, which is what leaves the onset the first pass
+    // measured exactly where it was.
+    const auto sagAt = [&] (float velocity)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (dynamicProtocolParameters());
+        engine.noteOn (60, velocity);
+        render (engine, blockSize);
+        return vocalor::VoiceEngineTestAccess::sourceTensionSag (engine);
+    };
+    const auto softSag = sagAt (0.10f);
+    const auto referenceSag = sagAt (0.80f);
+    const auto hardSag = sagAt (1.00f);
+    std::cout << "source-tension ramp depth: velocity 0.10 " << softSag
+              << ", 0.80 " << referenceSag << ", 1.00 " << hardSag << '\n';
+    const vocalor::VoiceEngine untouched;
+    expect (std::abs (referenceSag
+                          - vocalor::VoiceEngineTestAccess::sourceTensionRampDepth (untouched))
+                <= 0.01f,
+            "the reference velocity no longer resolves to the engine's own ramp depth");
+    expect (softSag >= 1.3f * hardSag,
+            "velocity does not reach the source-tension ramp: a soft attack is "
+            "slow but not lax");
+
+    // And velocity has to reach the spectrum, not only the level.
+    const auto renderAt = [&] (float velocity)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = dynamicProtocolParameters();
+        parameters.breath = 0.0f;
+        engine.setParameters (parameters);
+        engine.noteOn (60, velocity);
+        return renderMono (engine, static_cast<int> (sampleRate * 1.3));
+    };
+    std::cout << "velocity 0.05 -> 1.00:\n";
+    const auto ratio = presenceRatio (renderAt (0.05f), renderAt (1.00f), sampleRate);
+    // 1.066 before this step: velocity was a fader with a very slight tilt on
+    // it. Measured 1.53. Two cascaded first-order shelves cannot reach the 2.0
+    // Sundberg measures across these two bands -- see the plan's note on the
+    // 6 dB per octave per stage ceiling -- so the bound is set where the
+    // mechanism actually lands with margin rather than at the physiology.
+    expect (ratio >= 1.40,
+            "velocity still moves the presence band no faster than the level");
+}
+
+/** The dynamic control has to cover a singer's range, and stay a spectrum
+    control at the bottom of it.
+
+    dynamicResponse's voiced gain was exp2(-3.00 * below), which is exactly
+    18.06 dB by construction, against the 30-40 dB a singer covers between
+    pianissimo and fortissimo. The aspiration only loses 7.2 dB over the same
+    span, so once the voiced gain moves past about 35 dB the noise floors the
+    result and the control stops working at its own bottom end -- which is why
+    the span is measured at three breath settings rather than one.
+*/
+void testDynamicRange()
+{
+    constexpr auto sampleRate = 48000.0;
+
+    const auto spanAt = [&] (float breath)
+    {
+        std::array<double, 2> level {};
+        for (int end = 0; end < 2; ++end)
+        {
+            vocalor::VoiceEngine engine;
+            engine.prepare (sampleRate, blockSize);
+            engine.reset();
+            auto parameters = dynamicProtocolParameters();
+            parameters.breath = breath;
+            parameters.outputGain = 1.0f;
+            parameters.dynamics = end == 0 ? 0.0f : 1.0f;
+            engine.setParameters (parameters);
+            engine.noteOn (60, 0.80f);
+            render (engine, static_cast<int> (sampleRate * 0.8));
+            const auto held = render (engine, static_cast<int> (sampleRate * 1.0));
+            level[static_cast<std::size_t> (end)] = 20.0 * std::log10 (held.rms() + 1.0e-30);
+        }
+        const auto span = level[1] - level[0];
+        std::cout << "dynamic span at Breath " << std::fixed << std::setprecision (2)
+                  << breath << ": " << span << " dB\n";
+        return span;
+    };
+
+    const auto dry = spanAt (0.00f);
+    const auto shipped = spanAt (0.28f);
+    const auto breathy = spanAt (0.60f);
+
+    // Measured 33.19, 33.04 and 32.41 dB, against 18.10 / 18.10 / 18.09 before.
+    expect (shipped >= 28.0,
+            "the dynamic control does not cover a singer's range");
+    // Pinned at the shipping breath, because the aspiration is what would take
+    // the bottom of the range away without any of it showing up at Breath 0.
+    expect (std::abs (breathy - dry) <= 2.0,
+            "the aspiration is flooring the bottom of the dynamic range");
+
+    // And the dynamic has to be a spectrum control across that whole span, not
+    // a 30 dB fader. 1.195 before this step; measured 1.53.
+    const auto renderAt = [&] (float dynamics)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = dynamicProtocolParameters();
+        parameters.breath = 0.0f;
+        parameters.dynamics = dynamics;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.80f);
+        return renderMono (engine, static_cast<int> (sampleRate * 1.3));
+    };
+    std::cout << "dynamics 0.00 -> 1.00:\n";
+    expect (presenceRatio (renderAt (0.00f), renderAt (1.00f), sampleRate) >= 1.40,
+            "the dynamic still moves the presence band no faster than the level");
+}
+
+/** A released note is a laryngeal gesture, not the removal of a drive.
+
+    At an aspirate offset the folds abduct: transglottal flow continues while
+    the oscillation stops, so the voiced component dies first and the turbulent
+    one outlives it, and the note "tapers from voice into breath". At a glottal
+    offset the note ends "while the folds are still approximated", the flow is
+    choked, and the breath goes with the voice. Which one a note gets is not a
+    preference; it is the phonation the note was already in.
+
+    The engine used to square the air envelope against the voiced one, so every
+    note got cleaner as it died. On the Breath 1.00, Tension 0.15, Humanize 0.60
+    patch the air-to-voiced ratio 300 ms after note-off measured 12.53 dB
+    *below* the ratio the note was sounding at.
+
+    The reference is the last 25 ms of the held note rather than the first 25 ms
+    after note-off: the offset gesture runs on a 50 ms time constant, so a
+    window that starts at the note-off already contains half a time constant of
+    the thing being measured. On the engine this replaced the two readings agree
+    to 0.33 dB, because nothing about the old release moved at the note-off.
+*/
+void testReleaseAerodynamics()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr int window = 1200;              // 25 ms
+    constexpr double c4 = 261.6255653;
+
+    /** Air-to-voiced ratio in dB over the 25 ms window starting at @c start:
+        harmonics 1-12 of C4 in +/-45 Hz bands against 5-18 kHz. */
+    const auto ratioAt = [&] (const std::vector<float>& samples, int start)
+    {
+        const auto air = std::pow (10.0, windowedBandDb (samples, start, window,
+                                                         sampleRate, 5000.0, 18000.0) / 10.0);
+        double voiced = 0.0;
+        for (int harmonic = 1; harmonic <= 12; ++harmonic)
+        {
+            const auto centre = c4 * harmonic;
+            voiced += std::pow (10.0, windowedBandDb (samples, start, window, sampleRate,
+                                                      centre - 45.0, centre + 45.0) / 10.0);
+        }
+        return 10.0 * std::log10 (std::max (air, 1.0e-300) / std::max (voiced, 1.0e-300));
+    };
+
+    struct Offset
+    {
+        double sounding;
+        double after300;
+        double tailSeconds;
+    };
+
+    const auto offsetAt = [&] (float breath, float tension)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = makeParameters (0, 0, 0, 0);
+        parameters.vibrato = 0.0f;
+        parameters.room = 0.0f;
+        parameters.breath = breath;
+        parameters.tension = tension;
+        parameters.humanize = 0.60f;
+        engine.setParameters (parameters);
+
+        engine.noteOn (60, 0.80f);
+        const auto held = renderMono (engine, static_cast<int> (sampleRate * 1.0));
+        engine.noteOff (60);
+        const auto release = renderMono (engine, static_cast<int> (sampleRate * 0.5));
+
+        double tail = 0.5;
+        while (tail < 12.0 && engine.getActiveVoiceCount() > 0)
+        {
+            renderMono (engine, static_cast<int> (sampleRate * 0.1));
+            tail += 0.1;
+        }
+
+        const Offset result {
+            ratioAt (held, static_cast<int> (held.size()) - window),
+            ratioAt (release, static_cast<int> (sampleRate * 0.300)),
+            tail
+        };
+        std::cout << "offset at Breath " << std::fixed << std::setprecision (2) << breath
+                  << ", Tension " << tension << ": sounding " << result.sounding
+                  << " dB, +300 ms " << result.after300 << " dB, change "
+                  << (result.after300 - result.sounding) << " dB, tail "
+                  << std::setprecision (1) << result.tailSeconds << " s\n";
+        return result;
+    };
+
+    // Aspirate offset. Measured +9.93 dB, against -12.53 dB before this step.
+    const auto aspirate = offsetAt (1.00f, 0.15f);
+    expect (aspirate.after300 - aspirate.sounding >= 6.0,
+            "a breathy, lax note still gets cleaner as it dies instead of breathier");
+
+    // Glottal offset, at Breath 0.28 rather than 0.10: below about a fifth of
+    // the Breath range the 5-18 kHz band is not purely air, and the voiced
+    // floor -- the wavetable's own harmonics, 82.30 dB down at Breath 0.00 --
+    // overtakes the aspiration inside the release. At Breath 0.28 the margin
+    // over that floor is 35.01 dB. Measured -7.65 dB.
+    const auto glottal = offsetAt (0.28f, 0.90f);
+    expect (glottal.after300 - glottal.sounding <= 2.0,
+            "a pressed note no longer stops cleanly");
+
+    // The breath may not be bought with a tail that never frees its voice.
+    // Both components now decay on the voiced time constant, so the release
+    // ends where it always did: measured 2.1 s on both legs.
+    expect (aspirate.tailSeconds <= 3.8 && glottal.tailSeconds <= 3.8,
+            "the aspirate offset left its voice sounding past the advertised tail");
+}
+
+/** Aspiration turbulence is generated by flow through the glottal
+    constriction, so it has the period of the voice.
+
+    Hermes reports that stationary noise "is to a large extent perceived as
+    coming from a separate sound source which hardly contributes to the breathy
+    timbre of the vowel", and that the fix is "noise with a temporal envelope of
+    the same periodicity as the pulse train"; Klatt and Klatt use
+    pitch-synchronous amplitude-modulated noise for the same reason. Vocalor's
+    aspiration drive carried no glottal-phase term at all -- the modulation was
+    zero by construction, not by measurement -- so the breath sat behind the
+    voice instead of inside it.
+
+    Sized honestly this is a breathy-preset fix: the isolated aspiration is
+    28.15 dB below the full signal at Breath 1.00 and 41.07 dB below at the 28 %
+    shipping default, so it is the Breath axis that moves and not the default
+    patch.
+*/
+void testAspirationIsPitchSynchronous()
+{
+    constexpr auto sampleRate = 48000.0;
+    // Short blocks so the per-sample phase can be reconstructed from the state
+    // read at each boundary. The increment is constant here anyway -- Vibrato,
+    // Humanize, Glide and Intonation are all zero -- but a short block keeps
+    // the fold exact if that ever stops being true.
+    constexpr int foldBlock = 64;
+    constexpr int bins = 24;
+    constexpr double settleSeconds = 2.0;
+    constexpr double foldSeconds = 8.0;
+
+    /** Renders C4 twice with only the voice's noise stream differing and
+        returns the difference, together with the glottal phase at every sample
+        and the RMS of the full signal. The difference is exact only at
+        Humanize 0, where the noise stream drives no jitter and no shimmer, so
+        the test pins Humanize 0 rather than merely happening to use it. */
+    struct Residual
+    {
+        std::vector<double> difference;
+        std::vector<float> phase;
+        double fullRms = 0.0;
+    };
+
+    const auto isolate = [&] (float breath, float depth)
+    {
+        const auto take = [&] (std::uint32_t reseed, std::vector<float>& mono,
+                               std::vector<float>* phase)
+        {
+            vocalor::VoiceEngine engine;
+            engine.prepare (sampleRate, foldBlock);
+            engine.reset();
+            vocalor::EngineParameters parameters;
+            parameters.profile = vocalor::VoiceProfile::Female;
+            parameters.mode = vocalor::PerformanceMode::Solo;
+            parameters.vowel = vocalor::Vowel::Aah;
+            parameters.breath = breath;
+            parameters.tension = 0.30f;
+            parameters.vibrato = 0.0f;
+            parameters.humanize = 0.0f;
+            parameters.room = 0.0f;
+            parameters.spread = 0.0f;
+            engine.setParameters (parameters);
+            vocalor::VoiceEngineTestAccess::setAspirationModulationDepth (engine, depth);
+            engine.noteOn (60, 0.85f);
+
+            std::vector<float> left (foldBlock, 0.0f);
+            std::vector<float> right (foldBlock, 0.0f);
+            const int settle = static_cast<int> (settleSeconds * sampleRate) / foldBlock;
+            for (int i = 0; i < settle; ++i)
+                engine.process (left.data(), right.data(), foldBlock);
+            if (reseed != 0u)
+                vocalor::VoiceEngineTestAccess::reseedVoiceNoise (engine, reseed);
+
+            const int blocks = static_cast<int> (foldSeconds * sampleRate) / foldBlock;
+            for (int i = 0; i < blocks; ++i)
+            {
+                if (phase != nullptr)
+                {
+                    const auto state = vocalor::VoiceEngineTestAccess::voicePhaseState (engine);
+                    for (int j = 0; j < foldBlock; ++j)
+                    {
+                        // The render loop advances the phase before it uses it,
+                        // so sample j sits at phase + (j + 1) increments.
+                        float value = state[0] + state[1] * static_cast<float> (j + 1);
+                        value -= std::floor (value);
+                        phase->push_back (value);
+                    }
+                }
+                engine.process (left.data(), right.data(), foldBlock);
+                for (int j = 0; j < foldBlock; ++j)
+                    mono.push_back (0.5f * (left[static_cast<std::size_t> (j)]
+                                            + right[static_cast<std::size_t> (j)]));
+            }
+        };
+
+        Residual result;
+        std::vector<float> a;
+        std::vector<float> b;
+        take (0u, a, &result.phase);
+        take (0x9e3779b9u, b, nullptr);
+        result.difference.resize (a.size());
+        double sum = 0.0;
+        for (std::size_t i = 0; i < a.size(); ++i)
+        {
+            result.difference[i] = static_cast<double> (a[i]) - static_cast<double> (b[i]);
+            sum += static_cast<double> (a[i]) * static_cast<double> (a[i]);
+        }
+        result.fullRms = std::sqrt (sum / static_cast<double> (a.size()));
+        return result;
+    };
+
+    /** The residual's energy folded onto the glottal period, in dB per bin.
+        Two independent noise realisations differenced are 3 dB louder than one,
+        which cancels out of every ratio taken below. */
+    const auto fold = [&] (const Residual& residual)
+    {
+        std::array<double, bins> energy {};
+        std::array<long, bins> count {};
+        for (std::size_t i = 0; i < residual.difference.size(); ++i)
+        {
+            const auto bin = static_cast<std::size_t> (std::min (
+                bins - 1, static_cast<int> (residual.phase[i] * static_cast<float> (bins))));
+            energy[bin] += residual.difference[i] * residual.difference[i];
+            ++count[bin];
+        }
+        std::array<double, bins> result {};
+        for (std::size_t i = 0; i < bins; ++i)
+            result[i] = 10.0 * std::log10 (energy[i] / static_cast<double> (count[i]));
+        return result;
+    };
+
+    const auto rms = [] (const Residual& residual)
+    {
+        double sum = 0.0;
+        for (const auto value : residual.difference)
+            sum += value * value;
+        return std::sqrt (sum / static_cast<double> (residual.difference.size()));
+    };
+
+    const auto modulated = isolate (1.0f, 1.0f);
+    const auto stationary = isolate (1.0f, 0.0f);
+    const auto modulatedBins = fold (modulated);
+    const auto stationaryBins = fold (stationary);
+
+    const auto span = [] (const std::array<double, bins>& values)
+    {
+        const auto extremes = std::minmax_element (values.begin(), values.end());
+        return *extremes.second - *extremes.first;
+    };
+    const auto peakBin = static_cast<std::size_t> (
+        std::max_element (modulatedBins.begin(), modulatedBins.end()) - modulatedBins.begin());
+    const auto peakPhase = (static_cast<double> (peakBin) + 0.5) / bins;
+
+    std::cout << std::fixed << std::setprecision (2)
+              << "aspiration fold: peak-to-trough " << span (modulatedBins)
+              << " dB with the glottal window, " << span (stationaryBins)
+              << " dB without it; peak at phase " << std::setprecision (3) << peakPhase
+              << "; isolated aspiration " << std::setprecision (2)
+              << 20.0 * std::log10 (rms (modulated) / std::sqrt (2.0) / modulated.fullRms)
+              << " dB below the full signal\n";
+
+    // Without the window the fold is flat by construction, not by measurement:
+    // 0.26 dB is the estimator's own floor from folding a finite noise record,
+    // and it is what the assertion below has to beat.
+    expect (span (stationaryBins) <= 1.0,
+            "the aspiration fold's own estimator floor is no longer flat");
+
+    // The window is the glottal flow, which is zero while the folds are closed;
+    // what fills the closed phase at the output is the tract ringing on from
+    // the open phase. Measured 8.39 dB. It is pitch-dependent for that reason:
+    // the same measurement reads 9.99 dB at C3 and 4.81 dB at C5, where one
+    // period is shorter than the tract's own ring time, so the note is pinned.
+    expect (span (modulatedBins) >= 8.0,
+            "the aspiration carries no glottal-cycle modulation");
+
+    // Turbulence rises with the flow and is extinguished at closure, so the
+    // energy has to peak in the open phase. At Tension 0.30 the crossfaded
+    // prototypes close at 0.684 of the period; measured peak 0.396, against the
+    // window's own peak at 0.375. On its own this one cannot fail against a
+    // flat fold, whose peak bin is wherever the estimator's noise put it, so it
+    // is paired with the closed-phase margin below.
+    expect (peakPhase < 0.684,
+            "the aspiration peaks in the closed phase rather than the open one");
+
+    // Both prototypes are shut by 0.78 of the period, so the last five bins are
+    // closed glottis whatever the tension is. What is left there is the tract
+    // ringing on from the open phase, and it has to sit well below the peak.
+    double closedEnergy = 0.0;
+    for (std::size_t i = 19; i < bins; ++i)
+        closedEnergy += std::pow (10.0, 0.1 * modulatedBins[i]);
+    const auto closedMargin = modulatedBins[peakBin]
+        - 10.0 * std::log10 (closedEnergy / static_cast<double> (bins - 19));
+    std::cout << "aspiration closed-phase margin: " << closedMargin << " dB\n";
+    // Measured 4.33 dB, against 0.19 dB with the window switched out.
+    expect (closedMargin >= 3.5,
+            "the aspiration is not extinguished while the folds are closed");
+
+    // This moves the noise about inside the period. It must not change how much
+    // noise there is -- which is why the window is normalised to unit mean
+    // square and its crossfade renormalised at the control rate, since a
+    // mid-tension crossfade of the two prototypes otherwise loses up to 1.18 dB.
+    // Measured 0.01 dB.
+    const auto levelChange = 20.0 * std::log10 (rms (modulated) / rms (stationary));
+    expect (std::abs (levelChange) < 1.0,
+            "the glottal window changed the aspiration level instead of its distribution");
+
+    // The prize is on the Breath axis and nowhere else, so the same isolation
+    // is reported at the shipping default to keep that honest: 41.07 dB down.
+    const auto defaultBreath = isolate (0.28f, 1.0f);
+    const auto defaultBins = fold (defaultBreath);
+    std::cout << "aspiration at Breath 0.28: "
+              << 20.0 * std::log10 (rms (defaultBreath) / std::sqrt (2.0) / defaultBreath.fullRms)
+              << " dB below the full signal, peak-to-trough " << span (defaultBins) << " dB\n";
+    expect (span (defaultBins) >= 8.0,
+            "the glottal window does not reach the default patch");
 }
 
 /** A vowel change is a jaw and a tongue moving, not a de-zipper.
@@ -2165,6 +3062,259 @@ void testEnsembleDispersion()
             "the per-singer drift is unbounded rather than a wander around the target");
 }
 
+/** A sung vibrato is 5-7 Hz at an extent of about a semitone.
+
+    The identities used to be seeded across 4.65-5.37 Hz, which is below
+    Sundberg's band at every point of it, and the extent was a literal 20 cents
+    per unit of the knob, which put the engine's own default at 9.1 cents --
+    under the roughly 10 cents below which a vibrato is heard as unsteadiness
+    rather than as vibrato. Both are read from soundingFrequencies(), which
+    returns the frequency the oscillator is actually running at rather than an
+    estimate of it, so there is no demodulator passband to argue about: complex
+    demodulation of a twelve-voice mix returned +111 / -1112 cents in review,
+    because twelve detuned carriers inside one passband beat rather than
+    resolve.
+*/
+void testVibratoRateAndExtent()
+{
+    constexpr auto sampleRate = 48000.0;
+    // The pitch track is read at the control rate, which is what the vibrato
+    // actually moves at.
+    constexpr int hop = 16;
+    constexpr double trackRate = sampleRate / hop;
+
+    // Every voice's sounding frequency, sampled every hop samples for
+    // `seconds`. The first 1 s is discarded by the callers: the vibrato fades
+    // in over the first half second and the note scoops up into its pitch.
+    const auto pitchTracks = [] (vocalor::PerformanceMode mode, int choirSize,
+                                 double seconds, std::vector<float>& rates)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        vocalor::EngineParameters parameters;
+        parameters.mode = mode;
+        parameters.choirSize = choirSize;
+        parameters.vibrato = 1.0f;
+        parameters.humanize = 0.0f;
+        parameters.dynamics = 1.0f;
+        engine.setParameters (parameters);
+        rates = vocalor::VoiceEngineTestAccess::singerVibratoRates (engine);
+        engine.noteOn (60, 0.85f);
+
+        std::vector<std::vector<double>> tracks;
+        std::vector<float> left (hop, 0.0f);
+        std::vector<float> right (hop, 0.0f);
+        const auto steps = static_cast<int> (seconds * trackRate);
+        for (int step = 0; step < steps; ++step)
+        {
+            engine.process (left.data(), right.data(), hop);
+            const auto sounding = vocalor::VoiceEngineTestAccess::soundingFrequencies (engine);
+            if (tracks.empty())
+                tracks.resize (sounding.size());
+            for (std::size_t voice = 0; voice < tracks.size() && voice < sounding.size(); ++voice)
+                tracks[voice].push_back (static_cast<double> (sounding[voice]));
+        }
+        return tracks;
+    };
+
+    // Reciprocal of the mean interval between rising crossings of the track's
+    // own mean. A frequency track is not a sinusoid -- the scoop and the drift
+    // ride under it -- so a crossing count is the estimator that does not care.
+    const auto rateOf = [] (const std::vector<double>& track)
+    {
+        double mean = 0.0;
+        for (const auto value : track)
+            mean += value;
+        mean /= static_cast<double> (track.size());
+
+        std::vector<double> crossings;
+        for (std::size_t i = 1; i < track.size(); ++i)
+            if (track[i - 1] <= mean && track[i] > mean)
+                crossings.push_back (static_cast<double> (i - 1)
+                                     + (mean - track[i - 1]) / (track[i] - track[i - 1]));
+        if (crossings.size() < 2)
+            return 0.0;
+        const auto interval = (crossings.back() - crossings.front())
+                            / static_cast<double> (crossings.size() - 1);
+        return trackRate / interval;
+    };
+
+    const auto extentOf = [] (const std::vector<double>& track)
+    {
+        double mean = 0.0;
+        for (const auto value : track)
+            mean += value;
+        mean /= static_cast<double> (track.size());
+
+        double lowest = 1.0e9;
+        double highest = -1.0e9;
+        for (const auto value : track)
+        {
+            const auto cents = 1200.0 * std::log2 (value / mean);
+            lowest = std::min (lowest, cents);
+            highest = std::max (highest, cents);
+        }
+        return 0.5 * (highest - lowest);
+    };
+
+    const auto tail = [] (const std::vector<double>& track)
+    {
+        return std::vector<double> (track.begin()
+                                        + static_cast<std::ptrdiff_t> (trackRate),
+                                    track.end());
+    };
+
+    std::vector<float> seededRates;
+    const auto solo = pitchTracks (vocalor::PerformanceMode::Solo, 1, 3.0, seededRates);
+    expect (solo.size() == 1, "the solo vibrato probe did not find exactly one voice");
+    if (solo.size() == 1)
+    {
+        const auto track = tail (solo[0]);
+        const auto rate = rateOf (track);
+        const auto extent = extentOf (track);
+        std::cout << "solo vibrato: " << std::fixed << std::setprecision (3) << rate
+                  << " Hz, +/-" << std::setprecision (1) << extent << " cents\n";
+        // Sundberg's definition, and the band the 2022 systematic review gives.
+        expect (rate > 5.5 && rate < 7.2,
+                "the solo vibrato rate is outside the 5.5-7.2 Hz band a sung vibrato occupies");
+        // "An extent of about +/-1 semitone". The identity depth multiplies it,
+        // so singer 0 reaches 108.6 rather than exactly 100.
+        expect (extent > 80.0,
+                "Vibrato at 100 % does not reach a solo singer's extent");
+        // A reseeded rate that nothing reads would pass the band check on its
+        // own, so the track and the identity have to agree.
+        expect (! seededRates.empty()
+                    && std::abs (rate - static_cast<double> (seededRates[0]))
+                           < 0.02 * static_cast<double> (seededRates[0]),
+                "the sounding vibrato rate does not follow the singer identity's own rate");
+    }
+
+    std::vector<float> choirRates;
+    const auto choir = pitchTracks (vocalor::PerformanceMode::Choir, 12, 3.0, choirRates);
+    expect (choir.size() == 12, "the choir vibrato probe did not find twelve voices");
+    double slowest = 1.0e9;
+    double fastest = -1.0e9;
+    double narrowest = 1.0e9;
+    double widest = -1.0e9;
+    for (const auto& voice : choir)
+    {
+        const auto track = tail (voice);
+        const auto rate = rateOf (track);
+        const auto extent = extentOf (track);
+        slowest = std::min (slowest, rate);
+        fastest = std::max (fastest, rate);
+        narrowest = std::min (narrowest, extent);
+        widest = std::max (widest, extent);
+    }
+    std::cout << "choir vibrato: rates " << std::setprecision (3) << slowest << " - "
+              << fastest << " Hz, extents +/-" << std::setprecision (1) << narrowest
+              << " - +/-" << widest << " cents\n";
+    expect (slowest > 5.5 && fastest < 7.2,
+            "the twelve singer vibrato rates do not all sit in the 5.5-7.2 Hz band");
+    // A section sings a narrower vibrato than a soloist: twelve voices at solo
+    // extent smear into a chorus instead of reading as a section.
+    expect (narrowest > 25.0 && widest < 50.0,
+            "the ensemble vibrato extent is outside the band a section sings");
+}
+
+/** A sung vibrato modulates the amplitude, not only the pitch.
+
+    The engine had one amplitude source and it was the passive one: harmonics
+    sweeping static formant skirts. Measured as the magnitude of the envelope's
+    own component at the singer's vibrato rate that is 0.10 dB on a held C5 and
+    0.22 dB at C6, against a 0.001 dB floor with the vibrato off -- a tenth of
+    what a singer produces. The cricothyroid oscillation that carries the pitch
+    also moves subglottal pressure and adduction, so the level and the source
+    slope swing on the same cycle, and both notes are chosen because the passive
+    contribution alone still does not reach 1 dB at either of them once the
+    extent is a real one: with the laryngeal modulation forced out but the new
+    extent in force it reads 0.51 dB at C5 and 0.67 dB at C6.
+*/
+void testVibratoAmplitude()
+{
+    constexpr auto sampleRate = 48000.0;
+
+    // Magnitude of the envelope's component at `vibratoHz`, expressed as the
+    // decibels the level rises above its own mean. A peak-to-trough statistic
+    // is an extremum dominated by shimmer and jitter; a rate-selective one
+    // reads a true zero when there is no vibrato.
+    const auto modulationDb = [] (int midiNote, float vibrato, double& vibratoHz)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        vocalor::EngineParameters parameters;
+        parameters.mode = vocalor::PerformanceMode::Solo;
+        parameters.vibrato = vibrato;
+        parameters.humanize = 0.0f;
+        parameters.dynamics = 1.0f;
+        engine.setParameters (parameters);
+        // Solo sounds singer 0, so the rate the metric selects on is known
+        // rather than estimated.
+        vibratoHz = static_cast<double> (
+            vocalor::VoiceEngineTestAccess::singerVibratoRates (engine)[0]);
+        engine.noteOn (midiNote, 0.85f);
+
+        const auto total = static_cast<int> (3.0 * sampleRate);
+        const auto audio = renderMono (engine, total);
+
+        // Rectified one-pole follower, 10 ms: fast enough to follow a 6 Hz
+        // modulation without ripple at the fundamental.
+        std::vector<double> envelope (audio.size(), 0.0);
+        double state = 0.0;
+        const double coefficient = 1.0 - std::exp (-1.0 / (0.010 * sampleRate));
+        for (std::size_t i = 0; i < audio.size(); ++i)
+        {
+            state += coefficient * (std::abs (static_cast<double> (audio[i])) - state);
+            envelope[i] = state;
+        }
+
+        // A whole number of vibrato cycles from t = 1 s, so the projection does
+        // not leak the mean into the component.
+        const auto start = static_cast<std::size_t> (sampleRate);
+        const auto cycles = static_cast<int> (static_cast<double> (audio.size() - start)
+                                              * vibratoHz / sampleRate);
+        const auto length = static_cast<std::size_t> (static_cast<double> (cycles)
+                                                      * sampleRate / vibratoHz);
+        double mean = 0.0;
+        for (std::size_t i = 0; i < length; ++i)
+            mean += envelope[start + i];
+        mean /= static_cast<double> (length);
+
+        double real = 0.0;
+        double imaginary = 0.0;
+        for (std::size_t i = 0; i < length; ++i)
+        {
+            const auto phase = 2.0 * 3.14159265358979323846 * vibratoHz
+                             * static_cast<double> (i) / sampleRate;
+            real += (envelope[start + i] - mean) * std::cos (phase);
+            imaginary += (envelope[start + i] - mean) * std::sin (phase);
+        }
+        const auto magnitude = 2.0 * std::sqrt (real * real + imaginary * imaginary)
+                             / static_cast<double> (length);
+        return 20.0 * std::log10 ((mean + magnitude) / std::max (mean, 1.0e-12));
+    };
+
+    for (const int midiNote : { 72, 84 })
+    {
+        double vibratoHz = 0.0;
+        const auto full = modulationDb (midiNote, 1.0f, vibratoHz);
+        const auto none = modulationDb (midiNote, 0.0f, vibratoHz);
+        std::cout << "vibrato amplitude at MIDI " << midiNote << ": " << std::fixed
+                  << std::setprecision (3) << full << " dB at 100 %, " << none
+                  << " dB at 0 %\n";
+        expect (full > 1.0,
+                "the vibrato carries no laryngeal amplitude modulation: "
+                "only the passive formant-skirt contribution is present");
+        // The depth follows the extent in force, so with no extent there is
+        // nothing to modulate.
+        expect (none < 0.05,
+                "the amplitude modulation is not tied to the vibrato extent: "
+                "it is present with the vibrato switched off");
+    }
+}
+
 /** An a cappella ensemble tunes its chord to the bass, not to a keyboard.
 
     Chord mode stacked equal-tempered semitones, so a one-finger triad beat
@@ -2391,8 +3541,10 @@ void testPerformanceExpression()
             "the dynamic response is not inert at its full setting");
 
     const auto empty = vocalor::dynamicResponse (0.0f);
-    expect (std::abs (empty.voicedGain - 0.125f) < 1.0e-6f,
-            "an empty dynamic is not 18 dB down on the voiced source");
+    // 30.00 dB, which is what a singer covers between pianissimo and
+    // fortissimo. It was 18.06 dB until the dynamic stopped being a fader.
+    expect (std::abs (20.0f * std::log10 (empty.voicedGain) + 30.00f) < 0.01f,
+            "an empty dynamic is not 30 dB down on the voiced source");
     expect (empty.airGain > 3.0f * empty.voicedGain,
             "aspiration falls as fast as the voiced source at a low dynamic");
 
@@ -2442,7 +3594,9 @@ void testPerformanceExpression()
     const auto bandDrop = toDb (loudSpectrum[1], softSpectrum[1]);
     std::cout << "dynamic 1.0 -> 0.3: fundamental " << std::fixed << std::setprecision (2)
               << fundamentalDrop << " dB, 2.4-4.7 kHz " << bandDrop << " dB\n";
-    expect (fundamentalDrop > 8.0 && fundamentalDrop < 18.0,
+    // Seven tenths of the control, so seven tenths of the 30 dB span plus what
+    // the source slope takes out of the fundamental's own neighbourhood.
+    expect (fundamentalDrop > 15.0 && fundamentalDrop < 30.0,
             "the dynamic did not move the level by a plausible amount");
     expect (bandDrop - fundamentalDrop > 2.2,
             "the dynamic is a fader: it did not roll the source spectrum off as it fell");
@@ -2611,7 +3765,14 @@ int main()
     testFormantTuningAtHighPitch();
     testJustIntonation();
     testEnsembleDispersion();
+    testVibratoRateAndExtent();
+    testVibratoAmplitude();
     testNasalBranch();
+    testOnsetSpectrum();
+    testVelocityShapesOnset();
+    testDynamicRange();
+    testReleaseAerodynamics();
+    testAspirationIsPitchSynchronous();
     testCoarticulationTiming();
     testSingersFormantCluster();
     testFactoryPresets();

@@ -299,7 +299,13 @@ if(BUILD_TESTING)
             target_compile_definitions(${target} PRIVATE YOUKNOW106_SANITIZER_BUILD=1)
         endforeach()
     else()
-        set(YOUKNOW106_ENGINE_TEST_TIMEOUT 300)
+        # The engine bound was 300 s. The warm-up fixture added in the
+        # 2026-08-07 pass advances up to 900 s of internal samples for four
+        # configurations, which takes the suite to about 297 s run alone and
+        # over the bound when it shares a machine with another CTest job —
+        # no runner-speed margin at all. Raised to 900 s so the guard catches
+        # a hang rather than a slow runner.
+        set(YOUKNOW106_ENGINE_TEST_TIMEOUT 900)
         set(YOUKNOW106_CIRCUIT_TEST_TIMEOUT 90)
     endif()
     set_tests_properties(YouKnow106.Engine PROPERTIES

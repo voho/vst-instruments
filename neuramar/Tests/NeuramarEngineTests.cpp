@@ -609,6 +609,53 @@ void testShapePreservingSpectralInterpolation()
     return sample;
 }
 
+// Carries all three layers at once: a decaying harmonic series for the Core, a
+// strong high-passed noise bed for Air, and six steady inharmonic modes for
+// Bone. Rooted at 220 Hz so the fixture spans the same keyboard the register
+// balance measurement walks.
+[[nodiscard]] std::vector<float> makeRegisterBalanceSample(double sampleRate)
+{
+    constexpr double fundamentalHz = 220.0;
+    constexpr double durationSeconds = 1.10;
+    constexpr int harmonicCount = 40;
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    std::uint32_t noiseState = 0x6a09e667u;
+    float previousNoise = 0.0f;
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double envelope = 1.0 - std::exp(-time / 0.006);
+        double value = 0.0;
+        for (int harmonic = 1; harmonic <= harmonicCount; ++harmonic)
+        {
+            const double level = 0.42
+                / std::pow(static_cast<double>(harmonic), 0.82);
+            value += level * std::sin(
+                2.0 * pi * fundamentalHz * static_cast<double>(harmonic) * time
+                + 0.137 * static_cast<double>(harmonic * harmonic));
+        }
+        for (std::size_t mode = 0; mode < persistentBoneRatios.size(); ++mode)
+        {
+            value += 0.050 * std::sin(
+                2.0 * pi * fundamentalHz * persistentBoneRatios[mode] * time
+                + 0.43 * static_cast<double>(mode + 1));
+        }
+
+        noiseState ^= noiseState << 13;
+        noiseState ^= noiseState >> 17;
+        noiseState ^= noiseState << 5;
+        const float noise = static_cast<float>(noiseState)
+            * (2.0f / 4294967295.0f) - 1.0f;
+        const float highNoise = noise - 0.94f * previousNoise;
+        previousNoise = noise;
+        value += 0.085 * static_cast<double>(highNoise);
+        sample[index] = static_cast<float>(envelope * value);
+    }
+    return sample;
+}
+
 [[nodiscard]] std::vector<float> makePersistentBoneSample(double sampleRate)
 {
     constexpr double fundamentalHz = 187.5;
@@ -1465,14 +1512,18 @@ struct AirMetrics
     return left;
 }
 
-[[nodiscard]] float windowedSinusoidAmplitude(
+// The half-window is a parameter because it has to match the interval being
+// measured. A 40 ms half-window smears a 40 ms release interval: it reports the
+// fundamental losing 6.042 dB where the true figure is 6.154 dB, and at a 10 ms
+// half-window it reports 6.153 dB.
+[[nodiscard]] float windowedSinusoidAmplitudeOver(
     const std::vector<float>& signal, double sampleRate,
-    double centreSeconds, double frequencyHz)
+    double centreSeconds, double frequencyHz, double halfWindowSeconds)
 {
     const auto centre = static_cast<std::ptrdiff_t>(std::llround(
         centreSeconds * sampleRate));
     const auto halfWindow = static_cast<std::ptrdiff_t>(std::llround(
-        0.040 * sampleRate));
+        halfWindowSeconds * sampleRate));
     const auto first = std::max<std::ptrdiff_t>(0, centre - halfWindow);
     const auto last = std::min<std::ptrdiff_t>(
         static_cast<std::ptrdiff_t>(signal.size()), centre + halfWindow + 1);
@@ -1509,6 +1560,14 @@ struct AirMetrics
     const double sineCoefficient = (signalSine * cosineCosine
         - signalCosine * cosineSine) / determinant;
     return static_cast<float>(std::hypot(cosineCoefficient, sineCoefficient));
+}
+
+[[nodiscard]] float windowedSinusoidAmplitude(
+    const std::vector<float>& signal, double sampleRate,
+    double centreSeconds, double frequencyHz)
+{
+    return windowedSinusoidAmplitudeOver(signal, sampleRate, centreSeconds,
+                                         frequencyHz, 0.040);
 }
 
 [[nodiscard]] float segmentRms(const std::vector<float>& signal,
@@ -2789,6 +2848,11 @@ void testStereoPanAndOverlappingNoteOff(const neuramar::NeuralModel& model)
     parameters.outputGain = 0.35f;
     engine.setParameters(parameters);
 
+    // Pan is a function of the played note, so the root note - and only the
+    // root note - is centred. The note an octave above it sits half way to the
+    // edge, which the constant-power law puts at 20*log10(sqrt(0.25)/sqrt(0.75))
+    // = -4.771 dB of left-against-right level. Asserting both is what stops
+    // this test passing by accident on an engine that centres everything.
     std::vector<float> left(2048, 0.0f);
     std::vector<float> right(2048, 0.0f);
     engine.noteOn(model.rootMidiNote(), 0.8f);
@@ -2797,7 +2861,20 @@ void testStereoPanAndOverlappingNoteOff(const neuramar::NeuralModel& model)
     for (std::size_t index = 0; index < left.size(); ++index)
         monoDelta = std::max(monoDelta, std::abs(left[index] - right[index]));
     expect(monoDelta < 1.0e-7f,
-           "a single note was not centred at maximum stereo spread");
+           "the root note was not centred at maximum stereo spread");
+
+    engine.allSoundOff();
+    std::fill(left.begin(), left.end(), 0.0f);
+    std::fill(right.begin(), right.end(), 0.0f);
+    engine.noteOn(model.rootMidiNote() + 12, 0.8f);
+    engine.process(left.data(), right.data(), static_cast<int>(left.size()));
+    const float octaveBalanceDb = 20.0f * std::log10(
+        std::max(rms(left), 1.0e-9f) / std::max(rms(right), 1.0e-9f));
+    expect(std::abs(octaveBalanceDb + 4.771f) < 0.20f,
+           "a note an octave above the root was placed at "
+               + std::to_string(octaveBalanceDb)
+               + " dB left-against-right at maximum stereo spread, where "
+                 "pitch placement puts it at -4.771 dB");
 
     engine.allSoundOff();
     engine.noteOn(model.rootMidiNote(), 0.8f);
@@ -2825,6 +2902,209 @@ void testStereoPanAndOverlappingNoteOff(const neuramar::NeuralModel& model)
                    static_cast<int>(releaseLeft.size()));
     expect(engine.getActiveVoiceCount() == 0,
            "the second note-off did not release the remaining overlapping voice");
+}
+
+// Least-squares amplitude of one sinusoid over an explicit interval, Hann
+// weighted. windowedSinusoidAmplitude() above is anchored to a centre and a
+// fixed half-window; these measurements are stated as spans instead, because
+// what they compare is one note's placement before and after a second note
+// arrives and the spans have to sit either side of that instant.
+[[nodiscard]] double intervalSinusoidAmplitude(const std::vector<float>& signal,
+                                               double sampleRate,
+                                               double firstSeconds,
+                                               double lastSeconds,
+                                               double frequencyHz)
+{
+    const auto first = std::max<std::ptrdiff_t>(0, static_cast<std::ptrdiff_t>(
+        std::llround(firstSeconds * sampleRate)));
+    const auto last = std::min<std::ptrdiff_t>(
+        static_cast<std::ptrdiff_t>(signal.size()),
+        static_cast<std::ptrdiff_t>(std::llround(lastSeconds * sampleRate)));
+    if (last - first < 32)
+        return 0.0;
+
+    double cosineCosine = 0.0;
+    double sineSine = 0.0;
+    double cosineSine = 0.0;
+    double signalCosine = 0.0;
+    double signalSine = 0.0;
+    const double denominator = static_cast<double>(last - first - 1);
+    for (auto index = first; index < last; ++index)
+    {
+        const double position = static_cast<double>(index - first) / denominator;
+        const double window = 0.5 - 0.5 * std::cos(2.0 * pi * position);
+        const double angle = 2.0 * pi * frequencyHz
+            * static_cast<double>(index) / sampleRate;
+        const double cosine = std::cos(angle);
+        const double sine = std::sin(angle);
+        const double value = signal[static_cast<std::size_t>(index)];
+        cosineCosine += window * cosine * cosine;
+        sineSine += window * sine * sine;
+        cosineSine += window * cosine * sine;
+        signalCosine += window * value * cosine;
+        signalSine += window * value * sine;
+    }
+    const double determinant = cosineCosine * sineSine - cosineSine * cosineSine;
+    if (determinant <= 1.0e-12)
+        return 0.0;
+    const double cosineCoefficient = (signalCosine * sineSine
+        - signalSine * cosineSine) / determinant;
+    const double sineCoefficient = (signalSine * cosineCosine
+        - signalCosine * cosineSine) / determinant;
+    return std::hypot(cosineCoefficient, sineCoefficient);
+}
+
+// Pan used to be recomputed from a voice's rank by age among the currently
+// sounding set, so every note-on and every retirement re-placed every other
+// voice. A string that is already vibrating does not move across the body of
+// the instrument when another string is struck, and where a note sits in the
+// image cannot depend on the order the chord was played in. Both fall out of
+// making pan a function of the played note, fixed at note-on. The third
+// assertion is about a separate consequence of the same block: the per-note
+// pan jitter used to be added outside the Spread multiply, so Spread 0 was not
+// exactly mono.
+void testHeldNoteDoesNotMoveInImage(const neuramar::NeuralModel& model)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 128;
+    const auto prepare = [&model](neuramar::NeuramarEngine& engine,
+                                  float spread, float mutation)
+    {
+        engine.prepare(sampleRate, blockSize);
+        engine.setModel(&model);
+        neuramar::EngineParameters parameters;
+        // Air and Bone are muted so the measured 220 Hz line is the held
+        // note's own Core fundamental and nothing else.
+        parameters.air = 0.0f;
+        parameters.bone = 0.0f;
+        parameters.mutation = mutation;
+        parameters.spread = spread;
+        parameters.attackSeconds = 0.0f;
+        parameters.outputGain = 1.0f;
+        engine.setParameters(parameters);
+    };
+    const auto render = [blockSize](neuramar::NeuramarEngine& engine,
+                                    std::vector<float>& left,
+                                    std::vector<float>& right,
+                                    int firstSample, int lastSample)
+    {
+        for (int offset = firstSample; offset < lastSample; offset += blockSize)
+        {
+            const int count = std::min(blockSize, lastSample - offset);
+            engine.process(left.data() + offset, right.data() + offset, count);
+        }
+    };
+
+    // A held note must not be dragged across the image when another key is
+    // struck under it.
+    {
+        neuramar::NeuramarEngine engine;
+        prepare(engine, 0.58f, 0.0f);
+        const auto totalSamples = static_cast<int>(1.00 * sampleRate);
+        const auto strikeSample = static_cast<int>(0.50 * sampleRate);
+        std::vector<float> left(static_cast<std::size_t>(totalSamples), 0.0f);
+        std::vector<float> right(static_cast<std::size_t>(totalSamples), 0.0f);
+        engine.noteOn(model.rootMidiNote(), 0.82f);
+        render(engine, left, right, 0, strikeSample);
+        // Nineteen semitones up, so none of the new note's partials lands on
+        // the held note's fundamental.
+        engine.noteOn(model.rootMidiNote() + 19, 0.82f);
+        render(engine, left, right, strikeSample, totalSamples);
+
+        const double fundamentalHz = static_cast<double>(model.rootFrequencyHz());
+        const auto balanceDb = [&](double firstSeconds, double lastSeconds)
+        {
+            const double leftAmplitude = intervalSinusoidAmplitude(
+                left, sampleRate, firstSeconds, lastSeconds, fundamentalHz);
+            const double rightAmplitude = intervalSinusoidAmplitude(
+                right, sampleRate, firstSeconds, lastSeconds, fundamentalHz);
+            return 20.0 * std::log10(std::max(leftAmplitude, 1.0e-12)
+                                     / std::max(rightAmplitude, 1.0e-12));
+        };
+        const double alone = balanceDb(0.30, 0.45);
+        const double justAfter = balanceDb(0.51, 0.60);
+        const double wellAfter = balanceDb(0.70, 0.90);
+        std::cout << "Held-note placement diagnostics: L-R alone "
+                  << alone << " dB, first control period after the second "
+                  << "note-on " << justAfter << " dB, settled "
+                  << wellAfter << " dB\n";
+        expect(std::abs(justAfter - alone) < 0.05,
+               "striking a second key moved the held note's own fundamental by "
+                   + std::to_string(justAfter - alone)
+                   + " dB across the stereo image in the first control period");
+        expect(std::abs(wellAfter - alone) < 0.05,
+               "striking a second key left the held note's own fundamental "
+                   + std::to_string(wellAfter - alone)
+                   + " dB away from where it started in the stereo image");
+    }
+
+    // The same chord played in six different orders must render the same
+    // image. Bit identity is unreachable and is deliberately not asked for:
+    // voices sum in voice-slot order, note order decides which slot a note
+    // lands in, and float addition is not associative.
+    {
+        const std::array<int, 3> chord {
+            model.rootMidiNote(), model.rootMidiNote() + 7,
+            model.rootMidiNote() + 14 };
+        std::array<std::size_t, 3> order { 0, 1, 2 };
+        const auto chordSamples = static_cast<int>(0.30 * sampleRate);
+        std::vector<std::vector<float>> renders;
+        do
+        {
+            neuramar::NeuramarEngine engine;
+            // Mutation is pinned off. Permuting the note-ons permutes each
+            // voice's ageStamp, which selects mutationOffset, which fixes the
+            // detune, the variation phases, the Air seeds and the model-clock
+            // start offset - so at any non-zero Mutation the six orders differ
+            // for reasons that have nothing to do with panning.
+            prepare(engine, 0.58f, 0.0f);
+            std::vector<float> left(static_cast<std::size_t>(chordSamples), 0.0f);
+            std::vector<float> right(static_cast<std::size_t>(chordSamples), 0.0f);
+            for (const std::size_t index : order)
+                engine.noteOn(chord[index], 0.82f);
+            render(engine, left, right, 0, chordSamples);
+            left.insert(left.end(), right.begin(), right.end());
+            renders.push_back(std::move(left));
+        } while (std::next_permutation(order.begin(), order.end()));
+
+        const float reference = rms(renders.front());
+        float worstRelativeDb = -1000.0f;
+        for (std::size_t take = 1; take < renders.size(); ++take)
+        {
+            std::vector<float> difference(renders.front().size(), 0.0f);
+            for (std::size_t index = 0; index < difference.size(); ++index)
+                difference[index] = renders[take][index] - renders.front()[index];
+            worstRelativeDb = std::max(worstRelativeDb, 20.0f * std::log10(
+                std::max(rms(difference), 1.0e-12f)
+                    / std::max(reference, 1.0e-12f)));
+        }
+        std::cout << "Held-note placement diagnostics: worst note-order "
+                     "difference " << worstRelativeDb << " dB relative\n";
+        expect(worstRelativeDb < -120.0f,
+               "the same three notes played in six orders gave stereo images "
+               "differing by "
+                   + std::to_string(worstRelativeDb) + " dB relative");
+    }
+
+    // Spread 0 has to be exactly mono, including at the shipping Mutation,
+    // which is where the pan jitter lives.
+    {
+        neuramar::NeuramarEngine engine;
+        prepare(engine, 0.0f, 0.12f);
+        const auto monoSamples = static_cast<int>(0.30 * sampleRate);
+        std::vector<float> left(static_cast<std::size_t>(monoSamples), 0.0f);
+        std::vector<float> right(static_cast<std::size_t>(monoSamples), 0.0f);
+        engine.noteOn(model.rootMidiNote(), 0.82f);
+        render(engine, left, right, 0, monoSamples);
+        float worstDelta = 0.0f;
+        for (std::size_t index = 0; index < left.size(); ++index)
+            worstDelta = std::max(worstDelta,
+                                  std::abs(left[index] - right[index]));
+        expect(worstDelta < 1.0e-7f,
+               "Spread 0 at the shipping Mutation was not exactly mono: the "
+               "channels differed by up to "
+                   + std::to_string(worstDelta));
+    }
 }
 
 // A stiff-string partial series with a known coefficient. Upper partials decay
@@ -3607,6 +3887,207 @@ void testHighRegisterRenderThroughput(const neuramar::NeuralModel& model)
     return left;
 }
 
+// The register compensation normalises the Core: after it is applied the Core
+// carries referencePower, which barely depends on the played note. Air and Bone
+// are measured independently of the Core and are not normalised by anything, so
+// multiplying them by that same gain made the noise-to-tone and modal-to-tone
+// ratios A / sqrt(renderedPower) - every Core-only rendering artefact, the
+// anti-alias taper and the Body-Lock envelope running out of range, arriving in
+// the layer balance. Each layer is isolated by subtracting a render that
+// differs from the full one in exactly one parameter, so the difference is that
+// layer and nothing else.
+// Mutation at zero has to be behaviour-preserving, and the velocity response
+// has to keep working at the bottom of its range. The perturbation's own floor
+// was being applied to the velocity itself, so every note under 0.05 arrived at
+// 0.05 whether or not anything had been added to it - MIDI velocity 1 and MIDI
+// velocity 6 rendered identically, 16.5 dB louder than the response asks for.
+void testSoftVelocitiesSurviveMutationFloor()
+{
+    auto model = neuramar::NeuralModel::createRandom(4242u, 1.0f);
+    neuramar::NeuramarEngine engine;
+    engine.prepare(48000.0, 128);
+    engine.setModel(model.get());
+    neuramar::EngineParameters parameters;
+    parameters.imprint = 1.0f;
+    parameters.mutation = 0.0f;
+    parameters.attackSeconds = 0.0f;
+    parameters.outputGain = 1.0f;
+    engine.setParameters(parameters);
+
+    const auto peakOf = [&] (float velocity)
+    {
+        const auto audio = renderNoteAtVelocity(engine, 60, velocity, 12000);
+        float peak = 0.0f;
+        for (const auto sample : audio)
+            peak = std::max(peak, std::abs(sample));
+        return peak;
+    };
+
+    // MIDI velocity 1 and MIDI velocity 6, both under the old floor.
+    const float quietest = peakOf(1.0f / 127.0f);
+    const float louder = peakOf(6.0f / 127.0f);
+    expect(quietest > 0.0f && louder > 0.0f,
+           "a soft note rendered silence");
+    const double separation = 20.0 * std::log10(louder / quietest);
+    expect(separation > 3.0,
+           "two velocities below the mutation floor render at the same level ("
+               + std::to_string(separation)
+               + " dB apart), so the floor is being applied to the velocity "
+                 "rather than to the perturbation");
+}
+
+void testRegisterLayerBalance()
+{
+    constexpr double sampleRate = 48000.0;
+    const auto learned = neuramar::SampleLearner::learn(
+        makeRegisterBalanceSample(sampleRate), sampleRate);
+    expect(static_cast<bool>(learned),
+           "register balance fixture failed to learn: " + learned.error);
+    if (!learned)
+        return;
+    const neuramar::NeuralModel& model = *learned.model;
+
+    // A mode whose reliability is zero is gated to silence in the render, so a
+    // fixture that learned no Bone mode would satisfy the Bone assertion by
+    // measuring an empty layer.
+    bool anyBoneMode = false;
+    for (const float reliability : model.boneModeReliabilities())
+        anyBoneMode = anyBoneMode || reliability > 0.0f;
+    expect(anyBoneMode,
+           "register balance fixture learned no Bone mode, so the Bone "
+           "assertion would have passed on silence");
+
+    const auto render = [&model](int midiNote, bool bodyLocked, float air,
+                                 float bone)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(sampleRate, 128);
+        engine.setModel(&model);
+        // Everything except Body Lock and Register is left at the shipping
+        // default, so the second case below is the balance a player hears out
+        // of the box. Mutation is pinned off because its per-note Air seeds and
+        // detune would otherwise add a note-dependent term of their own.
+        neuramar::EngineParameters parameters;
+        parameters.air = air;
+        parameters.bone = bone;
+        parameters.mutation = 0.0f;
+        parameters.spread = 0.0f;
+        parameters.outputGain = 1.0f;
+        if (bodyLocked)
+        {
+            parameters.bodyLock = 1.0f;
+            parameters.registerTilt = 0.0f;
+        }
+        engine.setParameters(parameters);
+        // Skip the onset so the measurement describes the sustained balance.
+        auto audio = renderNote(engine, midiNote,
+                                static_cast<int>(0.30 * sampleRate));
+        audio.erase(audio.begin(),
+                    audio.begin() + static_cast<std::ptrdiff_t>(
+                        0.10 * sampleRate));
+        return audio;
+    };
+
+    struct Layers
+    {
+        float airDb { 0.0f };
+        float boneDb { 0.0f };
+        float coreDb { 0.0f };
+    };
+
+    const auto measure = [&render](int midiNote, bool bodyLocked)
+    {
+        const auto full = render(midiNote, bodyLocked, 0.35f, 0.30f);
+        const auto airMuted = render(midiNote, bodyLocked, 0.0f, 0.30f);
+        const auto boneMuted = render(midiNote, bodyLocked, 0.35f, 0.0f);
+        const auto coreOnly = render(midiNote, bodyLocked, 0.0f, 0.0f);
+        const auto layerDb = [&full](const std::vector<float>& muted)
+        {
+            std::vector<float> layer(full.size(), 0.0f);
+            for (std::size_t index = 0; index < full.size(); ++index)
+                layer[index] = full[index] - muted[index];
+            return 20.0f * std::log10(std::max(rms(layer), 1.0e-9f));
+        };
+        Layers layers;
+        layers.airDb = layerDb(airMuted);
+        layers.boneDb = layerDb(boneMuted);
+        layers.coreDb = 20.0f * std::log10(std::max(rms(coreOnly), 1.0e-9f));
+        return layers;
+    };
+
+    struct Spread
+    {
+        float lowest { 1.0e9f };
+        float highest { -1.0e9f };
+        void add(float value)
+        {
+            lowest = std::min(lowest, value);
+            highest = std::max(highest, value);
+        }
+        [[nodiscard]] float span() const { return highest - lowest; }
+    };
+
+    // Full Body Lock with Register at zero freezes the Air and Bone centre
+    // frequencies, so with Mutation off the register compensation is the only
+    // thing left that can vary either layer with the played note. That makes
+    // each layer's own level, rather than its ratio to the Core, the sharpest
+    // available gate: the Core is not flat here either, because its
+    // compensation saturates at its 4.0 ceiling on the top two notes.
+    Spread lockedAir;
+    Spread lockedBone;
+    Spread lockedCore;
+    for (int midiNote = 12; midiNote <= 108; midiNote += 12)
+    {
+        const Layers layers = measure(midiNote, true);
+        lockedAir.add(layers.airDb);
+        lockedBone.add(layers.boneDb);
+        lockedCore.add(layers.coreDb);
+    }
+    std::cout << "Register layer balance diagnostics: Body Lock 1 Air spread "
+              << lockedAir.span() << " dB, Bone spread " << lockedBone.span()
+              << " dB, Core spread " << lockedCore.span() << " dB\n";
+    expect(lockedAir.span() < 1.0f,
+           "the isolated Air layer's level drifted by "
+               + std::to_string(lockedAir.span())
+               + " dB across MIDI 12-108 at Body Lock 1, where its centres "
+                 "are frozen and nothing but the register compensation can "
+                 "move it");
+    expect(lockedBone.span() < 1.0f,
+           "the isolated Bone layer's level drifted by "
+               + std::to_string(lockedBone.span())
+               + " dB across MIDI 12-108 at Body Lock 1, where its centres "
+                 "are frozen and nothing but the register compensation can "
+                 "move it");
+    // The Core must keep its normalisation. Dropping it there as well takes
+    // this fixture's Core level spread from 3.0 dB to 26.3 dB, so the bound is
+    // set well clear of the 3.0 dB the compensator's own ceiling saturation
+    // leaves behind on the top two notes.
+    expect(lockedCore.span() < 4.0f,
+           "the Core level spread across MIDI 12-108 at Body Lock 1 was "
+               + std::to_string(lockedCore.span())
+               + " dB, so the Core lost its register normalisation");
+
+    // At the shipping Body Lock of 0.65 the Air centres move with the played
+    // pitch, and above about MIDI 72 the top of the sixteen-band set crosses
+    // the filterbank's 18 kHz edge fade and is legitimately attenuated. That
+    // taper is a Body Lock property, not a balance error, so the shipping-
+    // default gate runs over the register in which every band is still in
+    // range and measures Air against Core, which is what a player hears.
+    Spread shippingAirToCore;
+    for (int midiNote = 12; midiNote <= 72; midiNote += 12)
+    {
+        const Layers layers = measure(midiNote, false);
+        shippingAirToCore.add(layers.airDb - layers.coreDb);
+    }
+    std::cout << "Register layer balance diagnostics: shipping defaults "
+                 "Air-to-Core spread over MIDI 12-72 "
+              << shippingAirToCore.span() << " dB\n";
+    expect(shippingAirToCore.span() < 3.0f,
+           "the Air-to-Core balance drifted by "
+               + std::to_string(shippingAirToCore.span())
+               + " dB across MIDI 12-72 at the shipping defaults");
+}
+
 // The instrument has to hold a usable level across the whole compass. Measuring
 // the register reference against the model's full bank instead of against the
 // partials a note actually renders saturated the compensator at its ceiling
@@ -3848,6 +4329,1156 @@ void testLoopRegionAvoidsTheAttack(const LearnedFixture& fixture)
     expect(end - start > 0.12f,
            "the learned loop was too short to be a stable region (span "
                + std::to_string(end - start) + ")");
+}
+
+// Thirty-two partials whose decay times follow tau(h) = tau_1 h^-p, which at
+// p = 0.75 is the frequency-dependent damping a real string has. The loop
+// region the learner picks out of it still falls 2.7 dB across its own length,
+// so it is the fixture that shows what reading that region round and round does
+// to the level. At p = 0 it is the control every test of a frequency-dependent
+// release needs: a source whose partials all decay at the same rate, where the
+// correct answer is to keep the release the instrument already had.
+[[nodiscard]] std::vector<float> makeDecayingPartialSample(
+    double sampleRate, double fundamentalHz, double durationSeconds,
+    double firstPartialTauSeconds, double decayExponent)
+{
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double attack = 1.0 - std::exp(-time / 0.004);
+        double value = 0.0;
+        for (int partial = 1; partial <= 32; ++partial)
+        {
+            const double number = static_cast<double>(partial);
+            const double tau = firstPartialTauSeconds
+                * std::pow(number, -decayExponent);
+            value += std::pow(number, -1.2) * std::exp(-time / tau)
+                * std::sin(2.0 * pi * fundamentalHz * number * time
+                           + 0.37 * number);
+        }
+        sample[index] = static_cast<float>(0.55 * attack * value);
+    }
+    return sample;
+}
+
+// Magnitude-weighted spectral centroid of one analysis frame, taken over the
+// partials of the played fundamental with a Hann window across exactly the
+// frame. It is deliberately not measured through windowedSinusoidAmplitude(),
+// whose 40 ms half-window would smear four frames of this length together.
+// Magnitude weighting rather than power weighting is what keeps the measure
+// sensitive: squaring hands almost the whole weight to partial 1 on a source
+// with this rolloff, and the centroid then barely moves however much the upper
+// spectrum does.
+[[nodiscard]] double frameCentroidHz(const std::vector<float>& signal,
+                                     double sampleRate, std::size_t first,
+                                     std::size_t count, double fundamentalHz,
+                                     int partialCount)
+{
+    double weighted = 0.0;
+    double total = 0.0;
+    const double denominator = static_cast<double>(count - 1);
+    for (int partial = 1; partial <= partialCount; ++partial)
+    {
+        const double frequency = fundamentalHz * static_cast<double>(partial);
+        if (frequency >= 0.45 * sampleRate)
+            break;
+        double cosineSum = 0.0;
+        double sineSum = 0.0;
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            const double window = 0.5 - 0.5 * std::cos(
+                2.0 * pi * static_cast<double>(index) / denominator);
+            const double angle = 2.0 * pi * frequency
+                * static_cast<double>(first + index) / sampleRate;
+            const double value = window * signal[first + index];
+            cosineSum += value * std::cos(angle);
+            sineSum += value * std::sin(angle);
+        }
+        const double magnitude = std::hypot(cosineSum, sineSum);
+        weighted += frequency * magnitude;
+        total += magnitude;
+    }
+    return weighted / std::max(total, 1.0e-30);
+}
+
+// Normalised autocorrelation of a mean-removed sequence at one lag.
+[[nodiscard]] double autocorrelationAtLag(const std::vector<double>& values,
+                                          std::size_t lag)
+{
+    if (lag == 0 || lag >= values.size())
+        return 0.0;
+    double mean = 0.0;
+    for (const double value : values)
+        mean += value;
+    mean /= static_cast<double>(values.size());
+    double product = 0.0;
+    double energy = 0.0;
+    for (std::size_t index = 0; index < values.size(); ++index)
+    {
+        const double centred = values[index] - mean;
+        energy += centred * centred;
+        if (index + lag < values.size())
+            product += centred * (values[index + lag] - mean);
+    }
+    return energy > 0.0 ? product / energy : 0.0;
+}
+
+// A held note under Orbit has to be a sustain: level-continuous, still moving,
+// and not a loop. The triangle fold this replaced played every second leg
+// backwards - a negative-damping segment no passive resonator can produce -
+// and repeated exactly at twice the loop length.
+//
+// Air and Bone are muted because the Air noise stream blurs the envelope and
+// what is under test is the trajectory, not the noise. The analysis frame is a
+// whole number of played-fundamental periods: at 20 ms, which is 4.4 periods of
+// 220 Hz, the frame RMS ripples 0.335 dB peak to peak on a perfectly stationary
+// render and no correct implementation could meet the rise bound below.
+void testOrbitSustainIsNotPeriodic()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr double fundamentalHz = 220.01;
+    const auto source = makeDecayingPartialSample(
+        sampleRate, fundamentalHz, 1.6, 0.9, 0.75);
+    const auto learned = neuramar::SampleLearner::learn(source, sampleRate);
+    expect(static_cast<bool>(learned),
+           "the Orbit sustain fixture failed to learn: " + learned.error);
+    if (!learned.model)
+        return;
+    const auto& metadata = learned.model->metadata();
+    const double loopLength = std::max(
+        static_cast<double>(metadata.loopEndSeconds - metadata.loopStartSeconds),
+        1.0e-3);
+
+    neuramar::EngineParameters parameters;
+    parameters.imprint = 1.0f;
+    parameters.bodyLock = 0.52f;
+    parameters.air = 0.0f;
+    parameters.bone = 0.0f;
+    parameters.brightness = 0.5f;
+    parameters.evolutionRate = 1.0f;
+    parameters.orbit = 1.0f;
+    parameters.mutation = 0.12f;
+    parameters.attackSeconds = 0.0f;
+    parameters.releaseSeconds = 0.65f;
+    parameters.spread = 0.0f;
+    parameters.outputGain = 0.72f;
+    const auto rendered = renderWithParameters(
+        *learned.model, metadata.rootMidiNote, 0.8f, parameters,
+        static_cast<int>(std::llround(6.5 * sampleRate)));
+
+    const double frameSeconds = 11.0 / fundamentalHz;
+    const auto frameSamples = static_cast<std::size_t>(
+        std::llround(frameSeconds * sampleRate));
+    std::vector<double> frameDb;
+    std::vector<double> frameCentroid;
+    for (double time = 2.0; time + frameSeconds <= 6.0 + 1.0e-9;
+         time += frameSeconds)
+    {
+        const auto first = static_cast<std::size_t>(
+            std::llround(time * sampleRate));
+        if (first + frameSamples > rendered.size())
+            break;
+        double power = 0.0;
+        for (std::size_t index = 0; index < frameSamples; ++index)
+            power += static_cast<double>(rendered[first + index])
+                * rendered[first + index];
+        frameDb.push_back(10.0 * std::log10(std::max(
+            power / static_cast<double>(frameSamples), 1.0e-30)));
+        frameCentroid.push_back(frameCentroidHz(
+            rendered, sampleRate, first, frameSamples, fundamentalHz, 24));
+    }
+    expect(frameDb.size() > 60,
+           "the Orbit sustain analysis produced too few frames ("
+               + std::to_string(frameDb.size()) + ")");
+    if (frameDb.size() <= 60)
+        return;
+
+    double lowestDb = frameDb.front();
+    double highestDb = frameDb.front();
+    double largestRiseDb = 0.0;
+    for (std::size_t index = 0; index < frameDb.size(); ++index)
+    {
+        lowestDb = std::min(lowestDb, frameDb[index]);
+        highestDb = std::max(highestDb, frameDb[index]);
+        if (index > 0)
+            largestRiseDb = std::max(largestRiseDb,
+                                     frameDb[index] - frameDb[index - 1]);
+    }
+    double centroidMean = 0.0;
+    for (const double value : frameCentroid)
+        centroidMean += value;
+    centroidMean /= static_cast<double>(frameCentroid.size());
+    const double centroidSpread =
+        *std::max_element(frameCentroid.begin(), frameCentroid.end())
+        - *std::min_element(frameCentroid.begin(), frameCentroid.end());
+    const double centroidSpreadPercent = 100.0 * centroidSpread
+        / std::max(centroidMean, 1.0e-9);
+    const auto forwardLag = static_cast<std::size_t>(
+        std::llround(loopLength / frameSeconds));
+    const auto pingPongLag = static_cast<std::size_t>(
+        std::llround(2.0 * loopLength / frameSeconds));
+    const double forwardCorrelation = std::abs(
+        autocorrelationAtLag(frameCentroid, forwardLag));
+    const double pingPongCorrelation = std::abs(
+        autocorrelationAtLag(frameCentroid, pingPongLag));
+
+    std::cout << "Orbit sustain diagnostics: loop " << loopLength
+              << " s, level spread " << (highestDb - lowestDb)
+              << " dB, largest frame rise " << largestRiseDb
+              << " dB, centroid " << centroidMean << " Hz spreading "
+              << centroidSpreadPercent << "% of its mean, centroid "
+              << "autocorrelation " << forwardCorrelation << " at the loop "
+              << "length and " << pingPongCorrelation
+              << " at twice it\n";
+
+    // The primary gate. A ping-pong fold pumps this fixture 2.49 dB and a
+    // percussive one 4.68 dB, indefinitely. An autocorrelation of the level
+    // cannot be the primary gate: once the pumping is gone the envelope is
+    // near-constant and a mean-removed autocorrelation of it is 0/0.
+    expect(highestDb - lowestDb < 1.5,
+           "a held note under Orbit pumped its level by "
+               + std::to_string(highestDb - lowestDb)
+               + " dB over t in [2, 6] s");
+    // No leg runs backwards. On a monotonically decaying trajectory a reversed
+    // leg is a rising one, and this is the direct test for it: 0.51 dB today,
+    // and exactly 0.00 dB for a frozen model clock.
+    expect(largestRiseDb < 0.25,
+           "the Orbit sustain rose "
+               + std::to_string(largestRiseDb)
+               + " dB between consecutive frames, so part of the learned "
+                 "trajectory is being read backwards");
+    // Level-continuous must not become frozen. A clock parked at loopEnd
+    // passes both bounds above with room to spare - 0.00014 dB of spread and
+    // 3.7e-6 dB of rise - and collapses the centroid to 0.0001% of its own
+    // mean.
+    expect(centroidSpreadPercent > 1.0,
+           "the Orbit sustain stopped moving: its per-frame spectral centroid "
+               "spread only "
+               + std::to_string(centroidSpreadPercent)
+               + "% of its mean, so the model clock is not traversing the "
+                 "loop region");
+    // And it must not repeat. Both lags are needed: the old fold is caught at
+    // twice the loop length, and a forward wrap from a fixed point - exactly
+    // periodic at the loop length - is caught only by the first. The magnitude
+    // is what counts, because a trajectory that repeats at twice a lag is
+    // strongly anti-correlated at the lag itself. Detrending does not touch
+    // the centroid, which is why the non-repetition test lives here rather
+    // than on the level.
+    expect(forwardCorrelation < 0.60,
+           "the Orbit sustain repeated at the loop length (centroid "
+               "autocorrelation "
+               + std::to_string(forwardCorrelation) + ")");
+    expect(pingPongCorrelation < 0.60,
+           "the Orbit sustain repeated at twice the loop length (centroid "
+               "autocorrelation "
+               + std::to_string(pingPongCorrelation) + ")");
+}
+
+// The same tau(h) = tau_1 h^-0.75 partials with a resonant body on top: six
+// long-ringing inharmonic modes, placed well clear of every integer multiple of
+// the fundamental so that they populate the Bone layer without leaking into the
+// per-partial release measurement. The retirement assertion needs a fixture
+// whose Air and Bone layers are still sounding when the note is let go: the
+// plain partial fixture's Bone layer measures -114.6 dBFS at note-off against
+// this one's -47.1 dBFS, and a layer that quiet cannot show whether a body
+// slot outlived its voice.
+//
+// A noise bed is deliberately absent. A sustained broadband residual floors
+// every fast partial's trajectory, so the damping fit sees a decay law that is
+// not there - it recovers p = -0.27 with a residual of 0.51 - and correctly
+// declines to fit at all. That is the right answer for such a source and the
+// wrong fixture for this test.
+[[nodiscard]] std::vector<float> makeDampedBodyNoteSample(
+    double sampleRate, double fundamentalHz)
+{
+    constexpr std::array<double, 6> modeRatios {
+        1.37, 2.11, 3.49, 4.73, 6.41, 8.55
+    };
+    constexpr double durationSeconds = 1.6;
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double attack = 1.0 - std::exp(-time / 0.004);
+        double value = 0.0;
+        for (int partial = 1; partial <= 32; ++partial)
+        {
+            const double number = static_cast<double>(partial);
+            const double tau = 0.9 * std::pow(number, -0.75);
+            value += std::pow(number, -1.2) * std::exp(-time / tau)
+                * std::sin(2.0 * pi * fundamentalHz * number * time
+                           + 0.37 * number);
+        }
+        for (std::size_t mode = 0; mode < modeRatios.size(); ++mode)
+        {
+            value += 0.05
+                * std::exp(-time / (0.8 - 0.06 * static_cast<double>(mode)))
+                * std::sin(2.0 * pi * fundamentalHz * modeRatios[mode] * time
+                           + 0.43 * static_cast<double>(mode + 1));
+        }
+        sample[index] = static_cast<float>(0.55 * attack * value);
+    }
+    return sample;
+}
+
+struct ReleasedTake
+{
+    std::vector<float> audio;
+    std::size_t retirementSample { 0 };
+};
+
+// Renders one note, lets it go at the given time, and records the sample at
+// which the voice actually retired. A note-off time of zero holds the note for
+// the whole render, which is the reference the model's own decay is subtracted
+// with.
+[[nodiscard]] ReleasedTake renderWithNoteOff(
+    const neuramar::NeuralModel& model, int midiNote,
+    const neuramar::EngineParameters& parameters, double sampleRate,
+    int sampleCount, double noteOffSeconds)
+{
+    neuramar::NeuramarEngine engine;
+    engine.prepare(sampleRate, 128);
+    engine.setModel(&model);
+    engine.setParameters(parameters);
+    ReleasedTake take;
+    take.audio.assign(static_cast<std::size_t>(sampleCount), 0.0f);
+    std::vector<float> right(static_cast<std::size_t>(sampleCount), 0.0f);
+    engine.noteOn(midiNote, 0.8f);
+    const int offSample = noteOffSeconds > 0.0
+        ? static_cast<int>(std::llround(noteOffSeconds * sampleRate)) : -1;
+    constexpr int blockSize = 64;
+    for (int offset = 0; offset < sampleCount; offset += blockSize)
+    {
+        if (offSample >= 0 && offset <= offSample
+            && offSample < offset + blockSize)
+            engine.noteOff(midiNote);
+        const int count = std::min(blockSize, sampleCount - offset);
+        engine.process(take.audio.data() + offset, right.data() + offset,
+                       count);
+        if (take.retirementSample == 0 && offSample >= 0 && offset > offSample
+            && engine.getActiveVoiceCount() == 0)
+            take.retirementSample = static_cast<std::size_t>(offset + count);
+    }
+    for (std::size_t index = 0; index < take.audio.size(); ++index)
+        take.audio[index] = 0.5f * (take.audio[index] + right[index]);
+    return take;
+}
+
+[[nodiscard]] double windowRmsDb(const std::vector<float>& signal,
+                                 std::size_t first, std::size_t count)
+{
+    if (first + count > signal.size())
+        return -300.0;
+    double power = 0.0;
+    for (std::size_t index = 0; index < count; ++index)
+        power += static_cast<double>(signal[first + index])
+            * signal[first + index];
+    return 10.0 * std::log10(std::max(power / static_cast<double>(count),
+                                      1.0e-30));
+}
+
+// A note-off is a damper, and a damper is frequency-dependent: air viscosity
+// dominates at low frequency and internal friction at high, so decay time falls
+// with frequency (Desvages, Bilbao, Ducceschi and Chabassier, POMA 28, 035005,
+// 2017) and a damped note darkens as it dies. One release scalar on the summed
+// voice takes all 256 partials, 16 Air bands and 12 Bone modes down by the same
+// number of dB, which is not how any physical damper works.
+//
+// Every measurement below is a released render minus a held one, partial by
+// partial, so the model's own decay cancels and what is left is the release.
+void testReleaseDarkensTail()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr double fundamentalHz = 220.01;
+    constexpr double noteOffSeconds = 0.30;
+    constexpr float dissolveSeconds = 0.65f;
+
+    const auto learn = [](const std::vector<float>& source,
+                          const std::string& name)
+    {
+        auto learned = neuramar::SampleLearner::learn(source, sampleRate);
+        expect(static_cast<bool>(learned),
+               "the " + name + " release fixture failed to learn: "
+                   + learned.error);
+        return learned;
+    };
+    const auto damped = learn(makeDecayingPartialSample(
+        sampleRate, fundamentalHz, 1.6, 0.9, 0.75), "frequency-dependent");
+    const auto uniform = learn(makeDecayingPartialSample(
+        sampleRate, fundamentalHz, 1.6, 0.9, 0.0), "control");
+    const auto body = learn(makeDampedBodyNoteSample(sampleRate,
+                                                     fundamentalHz),
+                            "resonant body");
+    if (!damped.model || !uniform.model || !body.model)
+        return;
+
+    neuramar::EngineParameters parameters;
+    parameters.imprint = 1.0f;
+    parameters.bodyLock = 0.52f;
+    parameters.air = 0.0f;
+    parameters.bone = 0.0f;
+    parameters.brightness = 0.5f;
+    parameters.orbit = 0.0f;
+    parameters.mutation = 0.0f;
+    parameters.attackSeconds = 0.0f;
+    parameters.releaseSeconds = dissolveSeconds;
+    parameters.spread = 0.0f;
+    parameters.outputGain = 0.72f;
+
+    const auto fittedExponent = [](const neuramar::NeuralModel& model)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(sampleRate, 128);
+        engine.setModel(&model);
+        return engine.dampingExponent();
+    };
+    const float dampedExponent = fittedExponent(*damped.model);
+    const float uniformExponent = fittedExponent(*uniform.model);
+    std::cout << "Release damping diagnostics: fitted exponent "
+              << dampedExponent << " on the tau_h = tau_1 h^-0.75 fixture and "
+              << uniformExponent << " on the frequency-independent control\n";
+
+    // The excess a partial loses over the fundamental across one interval,
+    // with the held render's own drop subtracted at both ends so the model's
+    // trajectory cancels. The analysis half-window has to be short against the
+    // interval or it smears the two endpoints into each other.
+    const auto releaseExcessDb = [&](const neuramar::NeuralModel& model,
+                                     const ReleasedTake& held,
+                                     const ReleasedTake& releasedTake,
+                                     int partial, double firstSeconds,
+                                     double lastSeconds, double halfWindow)
+    {
+        const double frequency = static_cast<double>(model.rootFrequencyHz())
+            * static_cast<double>(partial);
+        const auto drop = [&](const std::vector<float>& signal)
+        {
+            const double before = windowedSinusoidAmplitudeOver(
+                signal, sampleRate, firstSeconds, frequency, halfWindow);
+            const double after = windowedSinusoidAmplitudeOver(
+                signal, sampleRate, lastSeconds, frequency, halfWindow);
+            return 20.0 * std::log10(std::max(after, 1.0e-30)
+                                     / std::max(before, 1.0e-30));
+        };
+        return drop(releasedTake.audio) - drop(held.audio);
+    };
+
+    const int sampleCount = static_cast<int>(std::llround(1.2 * sampleRate));
+    const auto renderPair = [&](const neuramar::NeuralModel& model)
+    {
+        return std::pair<ReleasedTake, ReleasedTake> {
+            renderWithNoteOff(model, model.rootMidiNote(), parameters,
+                              sampleRate, sampleCount, 0.0),
+            renderWithNoteOff(model, model.rootMidiNote(), parameters,
+                              sampleRate, sampleCount, noteOffSeconds)
+        };
+    };
+    const auto damping = renderPair(*damped.model);
+
+    // Calibration. Dissolve is a duration to the retirement level, so the
+    // fundamental has to lose 100 dB * 0.150 / 0.65 over this interval whatever
+    // the release does to the rest of the spectrum, and the panel's number
+    // keeps its meaning. This is the assertion that fails if the frequency
+    // dependence is bought by speeding the whole release up.
+    const double fundamentalDropDb = -releaseExcessDb(
+        *damped.model, damping.first, damping.second, 1, 0.32, 0.47, 0.040);
+    const double predictedDropDb = 100.0 * 0.150
+        / static_cast<double>(dissolveSeconds);
+    std::cout << "Release damping diagnostics: the fundamental lost "
+              << fundamentalDropDb << " dB over 0.32 to 0.47 s against "
+              << predictedDropDb << " dB predicted\n";
+    expect(std::abs(fundamentalDropDb - predictedDropDb) < 0.5,
+           "the released fundamental lost "
+               + std::to_string(fundamentalDropDb)
+               + " dB over 150 ms where the Dissolve time predicts "
+               + std::to_string(predictedDropDb)
+               + " dB, so the release no longer means what the panel says");
+
+    // Frequency dependence, over a 40 ms interval with a 10 ms half-window so
+    // that both endpoints sit on real signal at every partial. tau_rel(8) is
+    // 8^p times faster than tau_rel(1), so partial 8 owes 6.15 * (8^0.75 - 1)
+    // = 23.1 dB more than the fundamental over the same interval. The window is
+    // two-sided on purpose: an unbounded assertion would accept a release that
+    // simply deletes the top of the spectrum.
+    std::array<double, 4> excessDb {};
+    constexpr std::array<int, 4> partials { 1, 2, 4, 8 };
+    for (std::size_t index = 0; index < partials.size(); ++index)
+    {
+        excessDb[index] = -releaseExcessDb(
+            *damped.model, damping.first, damping.second, partials[index],
+            0.32, 0.36, 0.010);
+    }
+    const double partialEightExcess = excessDb[3] - excessDb[0];
+    std::cout << "Release damping diagnostics: partials 1, 2, 4, 8 lost "
+              << excessDb[0] << ", " << excessDb[1] << ", " << excessDb[2]
+              << ", " << excessDb[3] << " dB over 40 ms\n";
+    expect(partialEightExcess > 15.0 && partialEightExcess < 30.0,
+           "partial 8 lost " + std::to_string(partialEightExcess)
+               + " dB more than the fundamental over 40 ms of release, "
+                 "outside the 15 to 30 dB the fitted damping law predicts");
+    for (std::size_t index = 1; index < partials.size(); ++index)
+    {
+        expect(excessDb[index] > excessDb[index - 1] + 0.5,
+               "partial " + std::to_string(partials[index]) + " lost "
+                   + std::to_string(excessDb[index]) + " dB where partial "
+                   + std::to_string(partials[index - 1]) + " lost "
+                   + std::to_string(excessDb[index - 1])
+                   + " dB, so the release is not monotone in frequency");
+    }
+
+    // The audible consequence: the tail darkens as it dies. A single scalar on
+    // the summed voice leaves the released tail's centroid 0.17% from the held
+    // note's, which is no darkening at all.
+    const auto frameSamples = static_cast<std::size_t>(
+        std::llround(11.0 / fundamentalHz * sampleRate));
+    const auto centroidAt = static_cast<std::size_t>(
+        std::llround((noteOffSeconds + 0.150) * sampleRate));
+    const double heldCentroid = frameCentroidHz(
+        damping.first.audio, sampleRate, centroidAt, frameSamples,
+        damped.model->rootFrequencyHz(), 24);
+    const double releasedCentroid = frameCentroidHz(
+        damping.second.audio, sampleRate, centroidAt, frameSamples,
+        damped.model->rootFrequencyHz(), 24);
+    const double centroidFall = 100.0 * (heldCentroid - releasedCentroid)
+        / std::max(heldCentroid, 1.0e-9);
+    std::cout << "Release damping diagnostics: 150 ms after note-off the "
+                 "centroid is " << releasedCentroid << " Hz against the held "
+                 "note's " << heldCentroid << " Hz, " << centroidFall
+              << "% below\n";
+    expect(centroidFall > 20.0,
+           "the released tail's spectral centroid was only "
+               + std::to_string(centroidFall)
+               + "% below the held note's 150 ms after note-off, so the note "
+                 "is not darkening as it dies");
+
+    // The load-bearing control. p is fitted from the source, so a source whose
+    // partials all decayed at the same rate must keep the frequency-independent
+    // release every earlier build had. Without this, a hard-coded exponent
+    // passes every assertion above.
+    const auto control = renderPair(*uniform.model);
+    const double controlExcess = -releaseExcessDb(
+        *uniform.model, control.first, control.second, 8, 0.32, 0.36, 0.010)
+        + releaseExcessDb(*uniform.model, control.first, control.second, 1,
+                          0.32, 0.36, 0.010);
+    std::cout << "Release damping diagnostics: the frequency-independent "
+                 "control moved partial 8 by " << controlExcess
+              << " dB against the fundamental\n";
+    expect(uniformExponent < 0.10f,
+           "a source whose partials all decay at the same rate fitted a "
+           "damping exponent of " + std::to_string(uniformExponent));
+    expect(std::abs(controlExcess) < 1.0,
+           "the frequency-independent control lost "
+               + std::to_string(controlExcess)
+               + " dB of extra release at partial 8, so the release shape is "
+                 "hard-coded rather than fitted from the source");
+
+    // Retirement. The voice retires on the fundamental, so every other slot has
+    // to be at least as fast or it is still sounding when its own voice is
+    // cleared. That is not an exotic case: f_1 is the *played* fundamental
+    // while the Air centres are the model's own fixed grid and the Bone centres
+    // are rootFrequencyHz * ratio, so at root+24 three of sixteen Air bands sit
+    // below the fundamental and at root+51 twelve of sixteen do.
+    neuramar::EngineParameters bodyParameters = parameters;
+    bodyParameters.bodyLock = 1.0f;
+    bodyParameters.registerTilt = 0.0f;
+    bodyParameters.outputGain = 1.0f;
+    const int bodyRoot = body.model->rootMidiNote();
+    for (const int midiNote : { bodyRoot + 24, bodyRoot + 51 })
+    {
+        const auto layerRender = [&](float air, float bone)
+        {
+            neuramar::EngineParameters layered = bodyParameters;
+            layered.air = air;
+            layered.bone = bone;
+            return renderWithNoteOff(*body.model, midiNote, layered,
+                                     sampleRate, static_cast<int>(std::llround(
+                                         1.6 * sampleRate)), noteOffSeconds);
+        };
+        const auto full = layerRender(0.35f, 0.30f);
+        const auto airMuted = layerRender(0.0f, 0.30f);
+        const auto boneMuted = layerRender(0.35f, 0.0f);
+        expect(full.retirementSample > 0,
+               "the resonant body note never retired at MIDI "
+                   + std::to_string(midiNote));
+        if (full.retirementSample == 0)
+            continue;
+        const auto isolate = [&full](const ReleasedTake& muted)
+        {
+            std::vector<float> layer(full.audio.size(), 0.0f);
+            for (std::size_t index = 0; index < layer.size(); ++index)
+                layer[index] = full.audio[index] - muted.audio[index];
+            return layer;
+        };
+        const auto windowSamples = static_cast<std::size_t>(
+            std::llround(0.005 * sampleRate));
+        const auto beforeNoteOff = static_cast<std::size_t>(
+            std::llround((noteOffSeconds - 0.005) * sampleRate));
+        const std::size_t lastWindow = full.retirementSample > windowSamples
+            ? full.retirementSample - windowSamples : 0;
+        const auto check = [&](const std::vector<float>& layer,
+                               const std::string& name)
+        {
+            const double atNoteOff = windowRmsDb(layer, beforeNoteOff,
+                                                 windowSamples);
+            const double atRetirement = windowRmsDb(layer, lastWindow,
+                                                    windowSamples);
+            std::cout << "Release damping diagnostics: MIDI " << midiNote
+                      << " " << name << " layer " << atNoteOff
+                      << " dB at note-off, " << atRetirement
+                      << " dB in the last 5 ms, fallen "
+                      << (atNoteOff - atRetirement) << " dB\n";
+            // A silent layer would satisfy the fall by having nothing to fall.
+            expect(atNoteOff > -120.0,
+                   "the isolated " + name + " layer was already silent at "
+                       "note-off at MIDI " + std::to_string(midiNote)
+                       + ", so its retirement was untested");
+            expect(atNoteOff - atRetirement > 60.0,
+                   "the isolated " + name + " layer had fallen only "
+                       + std::to_string(atNoteOff - atRetirement)
+                       + " dB when the voice retired at MIDI "
+                       + std::to_string(midiNote)
+                       + ", so a body slot slower than the fundamental was "
+                         "cut mid-release");
+        };
+        check(isolate(airMuted), "Air");
+        check(isolate(boneMuted), "Bone");
+    }
+}
+
+// T20: the time, measured from the 80 ms reference, for one sinusoid to fall
+// 20 dB below its level there. T20 rather than a least-squares T60 fit, and the
+// reason is measured rather than stylistic: the learned trajectory freezes at
+// t = duration, which on a key-tracked clock is 0.458 s of real time at MIDI 81
+// on this fixture, and the frozen tail flattens a T60 fit to a ratio of 1.268
+// where T20 stays inside the un-frozen span entirely.
+[[nodiscard]] double timeToTwentyDown(const std::vector<float>& signal,
+                                      double sampleRate, double frequencyHz)
+{
+    constexpr double referenceSeconds = 0.080;
+    constexpr double stepSeconds = 0.005;
+    constexpr double halfWindow = 0.020;
+    const double reference = windowedSinusoidAmplitudeOver(
+        signal, sampleRate, referenceSeconds, frequencyHz, halfWindow);
+    if (!(reference > 0.0))
+        return -1.0;
+    const double targetDb = 20.0 * std::log10(reference) - 20.0;
+    double previousSeconds = referenceSeconds;
+    double previousDb = 20.0 * std::log10(reference);
+    const double lastSeconds = static_cast<double>(signal.size()) / sampleRate
+        - halfWindow;
+    for (double seconds = referenceSeconds + stepSeconds; seconds < lastSeconds;
+         seconds += stepSeconds)
+    {
+        const double amplitude = windowedSinusoidAmplitudeOver(
+            signal, sampleRate, seconds, frequencyHz, halfWindow);
+        const double levelDb = 20.0 * std::log10(std::max(
+            static_cast<double>(amplitude), 1.0e-30));
+        if (levelDb <= targetDb)
+        {
+            const double fraction = (previousDb - targetDb)
+                / std::max(previousDb - levelDb, 1.0e-9);
+            return previousSeconds + fraction * stepSeconds - referenceSeconds;
+        }
+        previousSeconds = seconds;
+        previousDb = levelDb;
+    }
+    return -1.0;
+}
+
+// Every learned trajectory used to replay in absolute seconds at every key, so
+// a plucked or struck memory rang for very nearly the source's own wall-clock
+// duration two octaves up. On a real string damping is frequency-dependent
+// (Desvages, Bilbao, Ducceschi and Chabassier, POMA 28, 035005, 2017) and decay
+// time falls steeply across the compass. tau(f) = tau_1 (f/f_1)^-p is a
+// statement about frequency rather than about harmonic number, so a note played
+// at transposition ratio r has fundamental f_1 r and decay time tau_1 r^-p: the
+// model clock should run at r^p and the release time constant should be divided
+// by the same number.
+//
+// Everything below is measured with Orbit at 0. At the shipping defaults the
+// clock ping-pongs inside the loop region and no note decays past it at any
+// key, so this is scoped to Orbit-off playing by construction.
+void testDecayKeyTracking()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr double fundamentalHz = 220.01;
+    constexpr double noteOffSeconds = 0.30;
+    constexpr float dissolveSeconds = 0.65f;
+
+    const auto learn = [](const std::vector<float>& source,
+                          const std::string& name)
+    {
+        auto learned = neuramar::SampleLearner::learn(source, sampleRate);
+        expect(static_cast<bool>(learned),
+               "the " + name + " key-tracking fixture failed to learn: "
+                   + learned.error);
+        return learned;
+    };
+    // tau_1 = 0.20 s rather than the 0.9 s testReleaseDarkensTail uses: the
+    // whole point of this test is to watch a fundamental fall 20 dB three
+    // times over, and at 0.9 s the low key would need six seconds of render.
+    const auto damped = learn(makeDecayingPartialSample(
+        sampleRate, fundamentalHz, 1.6, 0.20, 0.75), "frequency-dependent");
+    const auto uniform = learn(makeDecayingPartialSample(
+        sampleRate, fundamentalHz, 1.6, 0.20, 0.0), "control");
+    if (!damped.model || !uniform.model)
+        return;
+
+    neuramar::EngineParameters parameters;
+    parameters.imprint = 1.0f;
+    parameters.bodyLock = 0.52f;
+    parameters.air = 0.0f;
+    parameters.bone = 0.0f;
+    parameters.brightness = 0.5f;
+    parameters.orbit = 0.0f;
+    parameters.mutation = 0.0f;
+    parameters.attackSeconds = 0.0f;
+    parameters.releaseSeconds = dissolveSeconds;
+    parameters.spread = 0.0f;
+    parameters.outputGain = 0.72f;
+
+    const auto fittedExponent = [](const neuramar::NeuralModel& model)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(sampleRate, 128);
+        engine.setModel(&model);
+        return engine.dampingExponent();
+    };
+    const float dampedExponent = fittedExponent(*damped.model);
+    std::cout << "Decay key-tracking diagnostics: fitted exponent "
+              << dampedExponent << " on the tau_h = tau_1 h^-0.75, "
+                 "tau_1 = 0.20 s fixture\n";
+    expect(std::abs(dampedExponent - 0.75f) < 0.10f,
+           "the fast-decay fixture fitted a damping exponent of "
+               + std::to_string(dampedExponent)
+               + " where its partials decay as tau_h = tau_1 h^-0.75, so the "
+                 "clock has nothing correct to key-track by");
+
+    const auto playedFundamental = [](const neuramar::NeuralModel& model,
+                                      int midiNote)
+    {
+        return static_cast<double>(model.rootFrequencyHz())
+            * std::pow(2.0, (midiNote - model.rootMidiNote()) / 12.0);
+    };
+
+    // The held side. Three keys two octaves apart, Air and Bone muted, so what
+    // is measured is the model trajectory driving the played fundamental and
+    // nothing else.
+    struct Ratios
+    {
+        double high { 0.0 };
+        double low { 0.0 };
+    };
+    const auto heldRatios = [&](const neuramar::NeuralModel& model,
+                                const std::string& name)
+    {
+        const int sampleCount = static_cast<int>(std::llround(2.5 * sampleRate));
+        std::array<double, 3> values {};
+        std::size_t slot = 0;
+        for (const int midiNote : { 33, 57, 81 })
+        {
+            const auto take = renderWithNoteOff(model, midiNote, parameters,
+                                                sampleRate, sampleCount, 0.0);
+            values[slot] = timeToTwentyDown(take.audio, sampleRate,
+                                            playedFundamental(model, midiNote));
+            expect(values[slot] > 0.0,
+                   "the " + name + " fixture's fundamental never fell 20 dB at "
+                       "MIDI " + std::to_string(midiNote));
+            ++slot;
+        }
+        std::cout << "Decay key-tracking diagnostics: " << name
+                  << " T20 " << values[0] << " s at MIDI 33, " << values[1]
+                  << " s at 57, " << values[2] << " s at 81\n";
+        if (!(values[1] > 0.0))
+            return Ratios {};
+        return Ratios { values[2] / values[1], values[0] / values[1] };
+    };
+
+    const Ratios damping = heldRatios(*damped.model, "frequency-dependent");
+    std::cout << "Decay key-tracking diagnostics: T20(81)/T20(57) = "
+              << damping.high << " against 4^-0.75 = 0.354 predicted, "
+                 "T20(33)/T20(57) = " << damping.low
+              << " against 2.83 predicted\n";
+    expect(damping.high > 0.28 && damping.high < 0.45,
+           "T20(81)/T20(57) is " + std::to_string(damping.high)
+               + " where the source's own damping law predicts 0.354, so the "
+                 "model clock is not key-tracked");
+    expect(damping.low > 2.2 && damping.low < 3.6,
+           "T20(33)/T20(57) is " + std::to_string(damping.low)
+               + " where the source's own damping law predicts 2.83, so the "
+                 "model clock is not key-tracked");
+
+    // The load-bearing control on the held side. p is fitted from the source,
+    // so a source whose partials all decay at the same rate must keep the
+    // pitch-invariant decay every earlier build had. Key-tracking by any
+    // constant instead of by the fitted exponent fails here and nowhere else.
+    const Ratios control = heldRatios(*uniform.model, "frequency-independent");
+    expect(control.high > 0.90 && control.high < 1.10,
+           "the frequency-independent control put T20(81)/T20(57) at "
+               + std::to_string(control.high)
+               + ", so the clock is key-tracked by a constant rather than by "
+                 "the exponent the source fitted");
+    expect(control.low > 0.90 && control.low < 1.10,
+           "the frequency-independent control put T20(33)/T20(57) at "
+               + std::to_string(control.low)
+               + ", so the clock is key-tracked by a constant rather than by "
+                 "the exponent the source fitted");
+
+    // The release side needs its own assertions: every T20 above is measured on
+    // a held note and none of them involves a note-off at all. tau_rel(1) is
+    // divided by r^p, so the drop over a fixed interval of release is
+    // multiplied by it. Measured the way step 4 does - released minus held, so
+    // the model's own decay cancels - over 40 ms with a 10 ms analysis
+    // half-window.
+    const auto releaseDrops = [&](const neuramar::NeuralModel& model,
+                                  const std::string& name)
+    {
+        const int sampleCount = static_cast<int>(std::llround(1.2 * sampleRate));
+        std::array<double, 3> drops {};
+        std::size_t slot = 0;
+        for (const int midiNote : { 45, 57, 81 })
+        {
+            const double frequency = playedFundamental(model, midiNote);
+            const auto held = renderWithNoteOff(model, midiNote, parameters,
+                                                sampleRate, sampleCount, 0.0);
+            const auto released = renderWithNoteOff(
+                model, midiNote, parameters, sampleRate, sampleCount,
+                noteOffSeconds);
+            const auto fall = [&](const std::vector<float>& signal)
+            {
+                const double before = windowedSinusoidAmplitudeOver(
+                    signal, sampleRate, 0.32, frequency, 0.010);
+                const double after = windowedSinusoidAmplitudeOver(
+                    signal, sampleRate, 0.36, frequency, 0.010);
+                return 20.0 * std::log10(std::max(after, 1.0e-30)
+                                         / std::max(before, 1.0e-30));
+            };
+            drops[slot] = -(fall(released.audio) - fall(held.audio));
+            expect(drops[slot] > 0.5,
+                   "the " + name + " fixture lost only "
+                       + std::to_string(drops[slot])
+                       + " dB of release at MIDI " + std::to_string(midiNote)
+                       + ", so there is no release to compare");
+            ++slot;
+        }
+        std::cout << "Decay key-tracking diagnostics: " << name
+                  << " release-only drop over 0.32 to 0.36 s " << drops[0]
+                  << " dB at MIDI 45, " << drops[1] << " dB at 57, "
+                  << drops[2] << " dB at 81\n";
+        if (!(drops[1] > 0.0))
+            return Ratios {};
+        return Ratios { drops[2] / drops[1], drops[0] / drops[1] };
+    };
+
+    const Ratios releaseDamping = releaseDrops(*damped.model,
+                                               "frequency-dependent");
+    std::cout << "Decay key-tracking diagnostics: drop(81)/drop(57) = "
+              << releaseDamping.high << " against 4^0.75 = 2.83 predicted, "
+                 "drop(45)/drop(57) = " << releaseDamping.low
+              << " against 0.5^0.75 = 0.595 predicted\n";
+    // Both windows exclude the reversed implementation as well as the missing
+    // one: multiplying the release time constant by r^p instead of dividing
+    // puts these at 0.354 and 1.68, and leaving the release alone puts them at
+    // 1.000 and 1.004.
+    expect(releaseDamping.high > 2.4 && releaseDamping.high < 3.3,
+           "the released fundamental at MIDI 81 fell "
+               + std::to_string(releaseDamping.high)
+               + " times as fast as at MIDI 57 where the fitted damping law "
+                 "predicts 2.83, so Dissolve is not key-tracked");
+    expect(releaseDamping.low > 0.50 && releaseDamping.low < 0.70,
+           "the released fundamental at MIDI 45 fell "
+               + std::to_string(releaseDamping.low)
+               + " times as fast as at MIDI 57 where the fitted damping law "
+                 "predicts 0.595, so Dissolve is not key-tracked");
+
+    const Ratios releaseControl = releaseDrops(*uniform.model,
+                                               "frequency-independent");
+    expect(releaseControl.high > 0.95 && releaseControl.high < 1.05,
+           "the frequency-independent control released MIDI 81 at "
+               + std::to_string(releaseControl.high)
+               + " times MIDI 57's rate, so Dissolve is key-tracked by a "
+                 "constant rather than by the exponent the source fitted");
+    expect(releaseControl.low > 0.95 && releaseControl.low < 1.05,
+           "the frequency-independent control released MIDI 45 at "
+               + std::to_string(releaseControl.low)
+               + " times MIDI 57's rate, so Dissolve is key-tracked by a "
+                 "constant rather than by the exponent the source fitted");
+}
+
+// Twelve partials with tau_h = 0.30 h^-0.8 over a 4 ms noise burst: a struck
+// source whose peak is the strike itself, which is what makes it the fixture
+// that can see both a change in how hard the thing was hit and a loss of
+// transient.
+[[nodiscard]] std::vector<float> makePercussiveStrikeSample(
+    double sampleRate, double fundamentalHz)
+{
+    constexpr double durationSeconds = 1.2;
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    std::uint32_t state = 0x12345678u;
+    const auto nextNoise = [&state]
+    {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        return 2.0 * static_cast<double>(state) / 4294967295.0 - 1.0;
+    };
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double attack = 1.0 - std::exp(-time / 0.0015);
+        double value = 0.0;
+        for (int partial = 1; partial <= 12; ++partial)
+        {
+            const double number = static_cast<double>(partial);
+            const double tau = 0.30 * std::pow(number, -0.8);
+            value += std::pow(number, -1.1) * std::exp(-time / tau)
+                * std::sin(2.0 * pi * fundamentalHz * number * time
+                           + 0.41 * number);
+        }
+        const double burst = 0.35 * std::exp(-time / 0.004) * nextNoise();
+        sample[index] = static_cast<float>(0.55 * (attack * value + burst));
+    }
+    return sample;
+}
+
+// Spearman rank correlation of two equal-length series. Ranks rather than
+// values because the claim under test is that level and brightness move
+// together, not that they are linearly related.
+[[nodiscard]] double spearmanRankCorrelation(const std::vector<double>& first,
+                                             const std::vector<double>& second)
+{
+    const std::size_t count = first.size();
+    if (count < 2 || second.size() != count)
+        return 0.0;
+    const auto ranksOf = [count](const std::vector<double>& values)
+    {
+        std::vector<std::size_t> order(count);
+        for (std::size_t index = 0; index < count; ++index)
+            order[index] = index;
+        std::sort(order.begin(), order.end(),
+                  [&values](std::size_t a, std::size_t b)
+                  { return values[a] < values[b]; });
+        std::vector<double> ranks(count, 0.0);
+        for (std::size_t position = 0; position < count; ++position)
+            ranks[order[position]] = static_cast<double>(position);
+        return ranks;
+    };
+    const auto firstRanks = ranksOf(first);
+    const auto secondRanks = ranksOf(second);
+    const double mean = 0.5 * static_cast<double>(count - 1);
+    double product = 0.0;
+    double firstEnergy = 0.0;
+    double secondEnergy = 0.0;
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const double a = firstRanks[index] - mean;
+        const double b = secondRanks[index] - mean;
+        product += a * b;
+        firstEnergy += a * a;
+        secondEnergy += b * b;
+    }
+    return product / std::sqrt(std::max(firstEnergy * secondEnergy, 1.0e-30));
+}
+
+// Repeated identical notes must not be clones, and the variation must be the
+// one a player actually produces. Two nominally identical hand strikes differ
+// in the energy delivered, and on a real instrument level and brightness
+// co-vary, because a harder strike shortens the contact time and pushes the
+// excitation spectrum's corner up. Mutation used to buy its variation by
+// displacing the model read position instead, which deletes transient: it is
+// clamped at zero, so a positive per-voice offset skipped into the attack and a
+// negative one did nothing.
+//
+// The last assertion is what separates a physical mechanism from a decorative
+// one. A per-take output *gain* passes the first three - a pure scalar cancels
+// out of "first 10 ms relative to this take's own peak" exactly - and produces
+// no timbre movement at all. Only variation that travels through the excitation
+// path makes the loud takes the bright ones.
+void testRepeatedNotesVaryInStrength()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr double fundamentalHz = 220.01;
+    constexpr int takeCount = 12;
+    constexpr int renderSamples = 28800;   // 0.6 s, past the strike and its tail
+    constexpr float velocity = 0.8f;
+
+    const auto source = makePercussiveStrikeSample(sampleRate, fundamentalHz);
+    const auto learned = neuramar::SampleLearner::learn(source, sampleRate);
+    expect(static_cast<bool>(learned),
+           "the percussive strike fixture failed to learn: " + learned.error);
+    if (!learned.model)
+        return;
+    const auto& model = *learned.model;
+    const int playedNote = model.rootMidiNote();
+    const double playedHz = static_cast<double>(model.rootFrequencyHz());
+
+    struct Take
+    {
+        std::vector<float> audio;
+        double peakDb { -300.0 };
+        // First 10 ms of energy referred to this take's own peak, so a take
+        // that is simply louder scores identically and only a take that has
+        // lost attack moves.
+        double transientDb { -300.0 };
+        double centroidHz { 0.0 };
+    };
+
+    // One engine per parameter setting, played takeCount times, each note let
+    // go and drained before the next so the voice actually retires. ageStamp is
+    // what selects mutationOffset, and it advances per note-on either way, but
+    // draining keeps a take from rendering over the previous one's fade tail.
+    const auto renderTakes = [&](float mutation, float touch)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(sampleRate, 128);
+        engine.setModel(&model);
+        neuramar::EngineParameters parameters;
+        parameters.mutation = mutation;
+        parameters.touch = touch;
+        engine.setParameters(parameters);
+
+        std::vector<Take> takes;
+        takes.reserve(takeCount);
+        for (int index = 0; index < takeCount; ++index)
+        {
+            Take take;
+            take.audio.assign(static_cast<std::size_t>(renderSamples), 0.0f);
+            std::vector<float> right(static_cast<std::size_t>(renderSamples),
+                                     0.0f);
+            engine.noteOn(playedNote, velocity);
+            constexpr int blockSize = 64;
+            for (int offset = 0; offset < renderSamples; offset += blockSize)
+                engine.process(take.audio.data() + offset,
+                               right.data() + offset,
+                               std::min(blockSize, renderSamples - offset));
+            for (std::size_t sample = 0; sample < take.audio.size(); ++sample)
+                take.audio[sample] = 0.5f
+                    * (take.audio[sample] + right[sample]);
+
+            engine.noteOff(playedNote);
+            std::vector<float> drainLeft(256, 0.0f);
+            std::vector<float> drainRight(256, 0.0f);
+            for (int block = 0; block < 512
+                 && engine.getActiveVoiceCount() > 0; ++block)
+                engine.process(drainLeft.data(), drainRight.data(), 256);
+
+            double peak = 0.0;
+            for (const float value : take.audio)
+                peak = std::max(peak, static_cast<double>(std::abs(value)));
+            take.peakDb = 20.0 * std::log10(std::max(peak, 1.0e-30));
+            const auto transientSamples = static_cast<std::size_t>(
+                std::llround(sampleRate * 0.010));
+            double transientEnergy = 0.0;
+            for (std::size_t sample = 0; sample < transientSamples; ++sample)
+                transientEnergy += static_cast<double>(take.audio[sample])
+                    * take.audio[sample];
+            take.transientDb = 10.0 * std::log10(std::max(
+                transientEnergy / static_cast<double>(transientSamples),
+                1.0e-30)) - take.peakDb;
+            take.centroidHz = frameCentroidHz(
+                take.audio, sampleRate,
+                static_cast<std::size_t>(std::llround(sampleRate * 0.005)),
+                2048, playedHz, 12);
+            takes.push_back(std::move(take));
+        }
+        return takes;
+    };
+
+    // At Mutation zero the instrument is exactly reproducible, and that has to
+    // survive any change to how the variation is produced.
+    const auto silentTakes = renderTakes(0.0f, 0.0f);
+    double worstDeterminismDelta = 0.0;
+    for (std::size_t index = 1; index < silentTakes.size(); ++index)
+        for (std::size_t sample = 0; sample < silentTakes[0].audio.size();
+             ++sample)
+            worstDeterminismDelta = std::max(worstDeterminismDelta,
+                static_cast<double>(std::abs(
+                    silentTakes[index].audio[sample]
+                    - silentTakes[0].audio[sample])));
+    expect(worstDeterminismDelta < 1.0e-9,
+           "twelve identical notes at Mutation 0 differed by "
+               + std::to_string(worstDeterminismDelta)
+               + ", so the per-note variation is not gated by Mutation");
+
+    const auto takes = renderTakes(0.12f, 0.0f);
+    double mean = 0.0;
+    for (const auto& take : takes)
+        mean += take.peakDb;
+    mean /= static_cast<double>(takes.size());
+    double variance = 0.0;
+    for (const auto& take : takes)
+        variance += (take.peakDb - mean) * (take.peakDb - mean);
+    variance /= static_cast<double>(takes.size() - 1);
+    const double peakDeviation = std::sqrt(variance);
+    // A uniform draw has a standard deviation of its range over sqrt(12), so
+    // [0.45, 1.10] dB is the robust statement of the 1.5-3.5 dB peak-to-peak
+    // variation a hand-struck acoustic instrument shows. Twelve takes of a
+    // range are a poor estimator of that range and a good estimator of this.
+    expect(peakDeviation > 0.45 && peakDeviation < 1.10,
+           "twelve identical notes at Mutation 0.12 varied by a standard "
+           "deviation of " + std::to_string(peakDeviation)
+               + " dB in peak, outside the 0.45-1.10 dB an acoustic "
+                 "instrument's strike-to-strike spread implies");
+
+    // Nothing may buy that variation out of the attack.
+    const double reference = silentTakes.front().transientDb;
+    double worstTransientDeviation = 0.0;
+    for (const auto& take : takes)
+        worstTransientDeviation = std::max(worstTransientDeviation,
+            std::abs(take.transientDb - reference));
+    // 0.30 dB rather than the 0.5 dB first written: the read-position offset
+    // this replaced moves a take 0.515 dB on this fixture, so a 0.5 dB gate
+    // separates the two mechanisms by 3%. Excitation-strength variation leaves
+    // 0.066 dB, which is the Air re-seed and the harmonic variation phase and
+    // nothing to do with the attack, so the tighter bound still has more than
+    // fourfold headroom on the side that has to pass.
+    expect(worstTransientDeviation < 0.30,
+           "a take at Mutation 0.12 moved its first 10 ms of energy "
+               + std::to_string(worstTransientDeviation)
+               + " dB relative to its own peak against the Mutation 0 render, "
+                 "so the variation is being bought by deleting transient");
+
+    // The physical claim, stated as a number: the loud takes must be the bright
+    // ones. Touch is what carries excitation strength into the spectrum, so
+    // this is measured at its shipping value.
+    const auto touchTakes = renderTakes(0.12f, 0.35f);
+    std::vector<double> peaks;
+    std::vector<double> centroids;
+    peaks.reserve(touchTakes.size());
+    centroids.reserve(touchTakes.size());
+    for (const auto& take : touchTakes)
+    {
+        peaks.push_back(take.peakDb);
+        centroids.push_back(take.centroidHz);
+    }
+    const double correlation = spearmanRankCorrelation(peaks, centroids);
+    expect(correlation > 0.9,
+           "peak level and spectral centroid rank-correlated at only "
+               + std::to_string(correlation)
+               + " across twelve takes at Touch 0.35, so the per-note "
+                 "variation is not travelling through the excitation path");
+    const auto loudest = static_cast<std::size_t>(
+        std::max_element(peaks.begin(), peaks.end()) - peaks.begin());
+    const auto quietest = static_cast<std::size_t>(
+        std::min_element(peaks.begin(), peaks.end()) - peaks.begin());
+    const double centroidRise = centroids[loudest] / centroids[quietest] - 1.0;
+    std::cout << "Strike variation diagnostics: peak standard deviation "
+              << peakDeviation << " dB over twelve takes at Mutation 0.12, "
+              << "worst transient departure " << worstTransientDeviation
+              << " dB, level/centroid rank correlation " << correlation
+              << " with the loudest take " << 100.0 * centroidRise
+              << "% brighter than the quietest\n";
+    expect(centroidRise > 0.01,
+           "the loudest of twelve takes was only "
+               + std::to_string(100.0 * centroidRise)
+               + "% brighter than the quietest at Touch 0.35, so level and "
+                 "brightness are not co-varying");
 }
 
 void testRoughPerformance(const neuramar::NeuralModel& model)
@@ -4481,6 +6112,8 @@ int main()
     testBodyLayersAreSampleRateInvariant();
     testBoneCeilingIsAnchoredToTheAudibleBand();
     testKeyboardLevelFlatness();
+    testSoftVelocitiesSurviveMutationFloor();
+    testRegisterLayerBalance();
     testInputValidationAndCancellation();
     testAirFilterNormalisation();
     testRandomNeuralSeed();
@@ -4498,6 +6131,10 @@ int main()
     testEvolvingAirColour();
     testTransientAirResolution();
     testInharmonicPartialSeries();
+    testOrbitSustainIsNotPeriodic();
+    testReleaseDarkensTail();
+    testDecayKeyTracking();
+    testRepeatedNotesVaryInStrength();
     testFormantShift();
     testResamplerAccuracyAndCost();
     if (fixture.first.model)
@@ -4518,6 +6155,7 @@ int main()
         testDenseVoiceStealTailStaysBounded(*fixture.first.model);
         testMutationZeroRetriggerDeterminism(*fixture.first.model);
         testStereoPanAndOverlappingNoteOff(*fixture.first.model);
+        testHeldNoteDoesNotMoveInImage(*fixture.first.model);
         testHighRegisterRenderThroughput(*fixture.first.model);
         testRegisterTiltTracksTheKeyboard(*fixture.first.model);
         testOutputGainIsSmoothed(*fixture.first.model);

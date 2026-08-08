@@ -91,6 +91,80 @@ public:
     // Explicit plug-in declick policy, not a measured mute-transistor value.
     static constexpr float wetMuteTimeConstantSeconds = 0.005f;
 
+    // One model unit at the BBD node, in volts. This is the engine's
+    // `internalVoltsPerUnit` seen from inside the chorus; the engine
+    // static_asserts the two equal where it can see both, so the coordinate
+    // cannot drift between the two files.
+    static constexpr float nodeVoltsPerUnit = 2.6f;
+
+    // ------------------------------------------------------------------
+    // The line's own noise floor, from the MN3009's own noise row.
+    //
+    // This is the same datasheet the model already treats as anchored for
+    // bandwidth (-3 dB at 12 kHz, see `transferSmear`) and for distortion
+    // (0.3% at 0.78 Vrms and 2.5% at 1.5 Vrms, see `bbdTransfer`). Its noise
+    // row reads **0.2 mVrms max, A-weighted**, and that is the figure below.
+    //
+    // The datasheet's own two noise figures disagree by 10.5 dB: the 0.2 mVrms
+    // A-weighted *maximum* against the ~59.7 uVrms implied by its S/N 88 dB
+    // *typical* at the 1.5 Vrms maximum input. The target is therefore a
+    // bracket, and landing on its conservative end is a choice inside that
+    // bracket rather than a derivation from it. The guaranteed maximum is
+    // chosen because it is the guaranteed figure, and because any lower value
+    // is close to indistinguishable from the bit-exact zero the same fixture
+    // renders with the chorus switched out. The 10.5 dB bracket is recorded in
+    // the research contract so a later pass inherits it rather than
+    // rediscovering it as a contradiction.
+    //
+    // What this replaces is not a hardware measurement. The previous 1.0e-3
+    // was a declared compatibility level carried forward from before OQ-03,
+    // and the one head-to-head on record put the model's floor about 9 dB
+    // above one lossy archive recording and about 5 dB below another --
+    // agreement with an undocumented chain is not a fidelity claim in either
+    // direction, so neither recording is used here.
+    static constexpr float mn3009OutputNoiseAWeightedVrms = 0.200e-3f;
+
+    // The datasheet figure is a noise *voltage at the part's output*, so the
+    // amplitude the line writes at each clock edge is not that number: what
+    // arrives at IC6's wet input is the injected sequence after the hold, the
+    // tap-summing pole, both reconstruction sections and the wet output
+    // coupling, and the datasheet's own weighting is A. The constant below is
+    // that whole chain's A-weighted transfer from the injected sequence's
+    // full-scale amplitude to the recovered wet line, in model units per unit
+    // -- a measured property of this model's own linear filters, not a fit to
+    // any recording. It is 1/sqrt(3) (a uniform sequence's own RMS) times
+    // 0.6987, the chain's own A-weighted transfer, and the second factor is
+    // dominated by the hold: at the sweep's 20.0-91.4 kHz clock the held
+    // sequence's sinc-shaped density puts roughly half its power inside the
+    // 10 kHz reconstruction band.
+    //
+    // Stated at 192 kHz, which is what HQ targets from the 48 kHz host-rate
+    // family and is also the engine's `noiseReferenceRateHz`. It is rate
+    // dependent, because a coarser grid folds more of the held sequence back
+    // into the band. Across HQ that dependence is nil: the recovered figure
+    // moves 0.005 dB between the 192 kHz and 176.4 kHz internal rates HQ
+    // reaches. Below HQ it bites -- the same measure reads 0.4080 at 96 kHz,
+    // 0.4224 at 48 kHz and 0.4249 at 44.1 kHz, so with HQ switched out the
+    // recovered figure reads 0.10, 0.40 and 0.45 dB high at those host rates.
+    // That is a property of the numerical grid rather than of the part, and
+    // this constant deliberately anchors the part at the rate the shipping HQ
+    // path runs.
+    //
+    // Known to about +/-0.1%, and no better: it is estimated from a finite
+    // window of a random process. Over windows of 4 s to 256 s in both modes
+    // the estimate spans 0.4025-0.4037 about a 0.40338 long run, and a 1 s
+    // window reaches 0.4055. Four figures is all the measurand supports, which
+    // is why the suites allow 0.05 dB on the datasheet side of the resulting
+    // assertion rather than fencing it exactly at the row.
+    static constexpr float lineNoiseAWeightedTransfer = 0.4034f;
+
+    // Amplitude of the uniform random sample each line writes at its own clock
+    // edges, in model units. One equation, solved once: the recovered
+    // A-weighted wet line equals the datasheet's noise row.
+    static constexpr float independentLineRandomAmplitude =
+        mn3009OutputNoiseAWeightedVrms
+            / (nodeVoltsPerUnit * lineNoiseAWeightedTransfer);
+
     // A live engine-quality change alters only the numerical sample grid.
     // `preserveState` retains the BBD buckets and all free-running phases/RNGs;
     // audio-rate TPT carries are cleared under the engine's zero-gain fade

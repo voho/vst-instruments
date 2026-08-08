@@ -208,7 +208,8 @@ public:
         // model applies -- ambient, at Character zero.
         return 25.0f
              + 15.0f * activeParameters_.calibration
-                     * (1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f));
+                     * (1.0f - std::exp(-static_cast<float>(
+                                            thermalWarmupSeconds_) / 900.0f));
     }
     [[nodiscard]] float getDisplayRailDroopVolts() const noexcept
     {
@@ -269,14 +270,21 @@ public:
     //
     // The two anchors are coupled, so neither can be satisfied alone: the
     // limit cycle grows with loop gain, and the stage tanh's compression at
-    // that larger amplitude pulls the oscillation flat. `maximumFeedback` and
-    // `frequencyTrimAmount` below are solved together against both, landing at
-    // 4.83 Vp-p and 248.0 Hz. What remains voiced is the *shape* between the
-    // ends -- the quadratic-then-linear panel curve and the quadratic trim --
-    // and one known wart of that shape: the trim is a function of loop gain,
-    // while the droop it corrects is a function of amplitude, so it lifts
-    // cutoff slightly below the oscillation threshold where there is no droop
-    // to correct. Fixing that needs the measured family OQ-09 asks for.
+    // that larger amplitude pulls the oscillation flat. That coupling used to
+    // be absorbed by a fitted quadratic in loop gain, which lifted cutoff at
+    // every resonance setting -- +32 cents at panel 0.50 and +116 at 0.80 --
+    // where the cascade carries no limit cycle and there is nothing to
+    // correct. The correction is now the reciprocal of the cascade's own
+    // describing-function gain at the limit cycle its loop gain sustains
+    // (`frequencyTrim` below), so it is identically 1 wherever there is no
+    // oscillation and only `maximumFeedback` remains to be solved. What stays
+    // voiced is the quadratic-then-linear panel curve between the ends.
+    //
+    // Both cutoff anchors read 248 Hz at converter code 6272 -- the service
+    // ADJUSTMENT's self-oscillation trim and, at resonance 0, the measured
+    // code-to-frequency table OQ-18 carries -- so the model owes an
+    // oscillation that lands on its own small-signal law, which is exactly
+    // what cancelling the droop delivers.
     struct VoicedResonanceCompatibilityProfile
     {
         // Reported at 67.7 by an independent reverse-engineering of the same
@@ -289,10 +297,20 @@ public:
         static constexpr float loopDividerRatio = 100000.0f / 1500.0f;
         static constexpr float loopHeadroomVolts =
             2.0f * 0.026f * loopDividerRatio;
+        // Four identical one-poles carry 45 degrees each at their own corner,
+        // where each contributes 1/sqrt(2), so the loop closes at a gain of 4
+        // and at the corner itself. That is the cascade's oscillation
+        // threshold, and it is where `frequencyTrim` stops being 1.
         static constexpr float nominalOscillationFeedback = 4.0f;
         static constexpr float nominalOscillationTravel = 0.9f;
-        // Solved against the 4.8 Vp-p service trim; was a voiced 4.19.
-        static constexpr float maximumFeedback = 4.51f;
+        // Solved against the 4.8 Vp-p service trim; was a voiced 4.19, then a
+        // jointly solved 4.51. It is now the only free constant in the
+        // endpoint solve, because the frequency correction below is derived:
+        // the amplitude anchor alone fixes it and the 248 Hz anchor is a
+        // prediction rather than a second fit. Re-solved against the
+        // amplitude alone once the joint trade was gone, which is what moved
+        // the rendered limit cycle from 4.83 Vp-p on to 4.80.
+        static constexpr float maximumFeedback = 4.504f;
         // Voiced, but bracketed by the same reconstruction: its resonance
         // OTA takes VCF IN through 24k/1.5k (1/17.0) on the non-inverting
         // input, VCF OUT through 100k/1.5k on the inverting one, and injects
@@ -304,12 +322,13 @@ public:
         // reconstruction lineage, so not promoted; OQ-09's measured family
         // still owns this number.
         static constexpr float inputCompensationPerFeedback = 0.2296f;
-        // Solved against the 248 Hz service trim at that loop gain, which the
-        // larger limit cycle would otherwise leave 108 cents flat; was 0.045.
-        static constexpr float frequencyTrimAmount = 0.098f;
 
         [[nodiscard]] static float loopGain(float panelPosition) noexcept;
         [[nodiscard]] static float inputCompensation(float feedback) noexcept;
+        // The reciprocal of the pole scaling the cascade's own limit cycle
+        // imposes on itself, as a function of the loop gain that sustains it.
+        // Exactly 1 at and below `nominalOscillationFeedback`, where there is
+        // no limit cycle. See the derivation over `frequencyTrim`'s body.
         [[nodiscard]] static float frequencyTrim(float feedback) noexcept;
     };
 
@@ -429,6 +448,10 @@ public:
     // to drive the chorus. Choosing this provisional reference makes the new
     // -18 dBFS RMS boundary exactly unity and therefore preserves sessions.
     static constexpr float internalVoltsPerUnit = 2.6f;
+    // The chorus refers its BBD noise row to the same coordinate and has to
+    // name it locally, so the two cannot be allowed to drift apart.
+    static_assert(Chorus::nodeVoltsPerUnit == internalVoltsPerUnit,
+                  "the chorus and the engine disagree about the node volt scale");
     static constexpr float minus18DbfsAmplitude = 0.125892541f;
     static constexpr float compatibilityOutputReferenceRmsVolts =
         internalVoltsPerUnit * minus18DbfsAmplitude;
@@ -624,6 +647,11 @@ public:
     // designator-level read; the resistance it works against is not, so the
     // corner itself is voiced -- see the constant's note in the .cpp.
     [[nodiscard]] static float moduleCouplingCornerHz() noexcept;
+    // C59 1 uF/50 V NP, the per-voice coupling from pin 3 VCF OUT into the
+    // VR27/R108 network and pin 9 VCA IN (module board pp. 18-19). The
+    // capacitor is anchored; the load it works against is not, so the corner
+    // is voiced and bracketed -- see the constant's note in the .cpp.
+    [[nodiscard]] static float vcaInputCouplingCornerHz() noexcept;
     // The shared noise generator's own support circuit, module board p. 13:
     // Tr21's collector noise crosses C42 1 uF into the BA662 level OTA's
     // 4.7 kOhm input bias (high-pass), and the OTA's output is loaded by
@@ -1063,6 +1091,17 @@ private:
         // summed WAVE node and pin 1 VCF IN, so no mixer DC reaches the
         // filter core or the voice VCA behind it.
         HighPass moduleCoupling {};
+        // C59, the per-voice coupling out of pin 3 VCF OUT and into pin 9
+        // VCA IN. The filter core makes DC of its own -- stage offsets and the
+        // duty-asymmetric pulse the cascade only partly removes -- and this is
+        // the capacitor that stops the envelope from multiplying it.
+        HighPass vcaInputCoupling {};
+        // The pin 9 node itself, held after each internal sample: the value
+        // the voice VCA multiplies, in volts. It is what the service
+        // procedure's VR30/R112 null is adjusted against, and the DC
+        // regression reads it here rather than inferring it from the mix,
+        // where three further couplings have already removed any DC.
+        float vcaInputVolts { 0.0f };
     };
 
     static EngineParameters sanitise(const EngineParameters& parameters) noexcept;
@@ -1095,6 +1134,15 @@ private:
     // when the panel does, so this is called where those change, not from the
     // audio path.
     void refreshVoiceCardStageTrims() noexcept;
+    // One internal sample of chassis warm-up: the wall-clock timer and the
+    // exponential the voices read. The render loop's only way to advance it,
+    // so a fixture that drives it directly drives exactly what audio does.
+    void advanceThermalWarmup() noexcept;
+    // The OTA headroom the cascade is solved with on one card, in module-node
+    // volts: 2 Vt(T) / stageAttenuation at the chassis temperature the warm-up
+    // clock has reached, plus this card's place in the spatial gradient.
+    [[nodiscard]] float dynamicOtaHeadroomVolts(
+        const EngineParameters& parameters, int cardIndex) const noexcept;
     void noteOnInternal(int midiNote, float velocity) noexcept;
     // Assigns a note already present in the held-key table. Kept separate from
     // noteOnInternal so a POLY-mode rebuild does not count the physical key a
@@ -1155,6 +1203,14 @@ private:
                               float lfoGated) noexcept;
     void updateVoiceVcaTarget(Voice& voice,
                               const EngineParameters& parameters) noexcept;
+    // The velocity extension's one gain. The modelled hardware has no velocity
+    // input at all, so `velocityDepth` is 0 by default and this is identically
+    // 1.0f -- a multiply by exactly one, which leaves the faithful render bit
+    // for bit where it was. When a player turns it up it scales both places a
+    // note's dynamics reach: the amplifier control and the envelope's own
+    // amount into the filter.
+    [[nodiscard]] static float velocityGain(
+        const EngineParameters& parameters, const Voice& voice) noexcept;
     void performConverterWrite(const ConverterWrite& write,
                                const EngineParameters& parameters,
                                float lfoGated) noexcept;
@@ -1162,7 +1218,7 @@ private:
     // ownership is modelled; their individual RC constants and physical write
     // offsets are not yet known.
     void updateSharedScan(const EngineParameters& parameters,
-                          float lfoRaw) noexcept;
+                          float lfoGated) noexcept;
     // Called at the internal sample rate: turns continuously slewed analogue
     // control voltages into filter and amplifier coefficients without making
     // their bandwidth depend on the HQ factor.
@@ -1362,6 +1418,10 @@ private:
     // Shared by all six cards: one part number, one nominal corner. The state
     // is per voice because each card has its own capacitor.
     float moduleCouplingG_ { 0.0001f };
+    // C59/VR27, between each card's filter output and its own amplifier. Same
+    // arrangement as the module input above: one nominal corner, one state per
+    // voice, because each card carries its own capacitor.
+    float vcaInputCouplingG_ { 0.0001f };
     HighPass highPass_ {};
     float highPassG_ { 0.01f };
     float highPassShelf_ { 1.0f };
@@ -1385,7 +1445,20 @@ private:
 
     // Deterministic physical circuit state: voice card thermal warmup timer (s)
     // and power supply rail droop (V) under heavy polyphonic loading.
-    float thermalWarmupSeconds_ { 0.0f };
+    //
+    // Double precision, for the same reason `HighPass::state` is: the timer is
+    // advanced once per *internal* sample, so its increment is 5.208e-6 s at a
+    // 192 kHz internal rate. A float total passing 128 s carries a 1.526e-5 s
+    // ULP -- three times that increment -- and every further addition rounds
+    // away, freezing the clock at 128.0 s and the modelled chassis at 26.99 C
+    // for the rest of the session. Which power-of-two boundary caught it
+    // depended on the internal rate, so the quality switch moved the modelled
+    // physics: at a 48 kHz internal rate the freeze was at 512.0 s and
+    // 31.51 C, which is exactly what `voiceEnergyFollowerSeconds` above
+    // forbids for the same reason. In double the increment stays
+    // eight orders of magnitude above half an ULP and the 900 s law runs to
+    // completion at every rate.
+    double thermalWarmupSeconds_ { 0.0 };
     // 1 - exp(-t/900), advanced once per internal sample beside the timer
     // above. It is chassis-wide, so recomputing it per voice recomputed the
     // same number six times.

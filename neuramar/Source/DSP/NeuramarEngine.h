@@ -72,6 +72,17 @@ public:
 
     [[nodiscard]] int getActiveVoiceCount() const noexcept;
 
+    // The exponent p in tau(f) = tau_1 (f/f_1)^-p, fitted by setModel() from
+    // the published model's own per-partial amplitude trajectories and used to
+    // damp the release by frequency. Zero means the source decayed at the same
+    // rate at every frequency, or that its trajectories carried no usable
+    // decay evidence at all, and the release then behaves exactly as it did
+    // before this was fitted.
+    [[nodiscard]] float dampingExponent() const noexcept
+    {
+        return dampingExponent_;
+    }
+
 private:
     // The neural controller remains a compact 64-partial model. A larger,
     // engine-only bank lets Body Lock resample that observed spectrum onto the
@@ -82,6 +93,10 @@ private:
         + NeuralModel::airBandCount;
     static constexpr std::size_t renderAmplitudeCount = boneOutputOffset
         + NeuralModel::boneModeCount;
+    // The level a releasing voice retires at, and the level the Dissolve time
+    // is the duration to. The frequency-dependent release below is normalised
+    // against it, so both have to name the same number.
+    static constexpr float retirementLevel = 1.0e-5f;
 
     struct AtomicParameters
     {
@@ -182,6 +197,12 @@ private:
         float airSideGain { 0.0f };
         float airSideGainStep { 0.0f };
         float transpositionRatio { 1.0f };
+        // r^p, the rate at which this key replays the learned trajectory, and
+        // the per-sample envelope factor that key-tracks Dissolve by the same
+        // law. Both are exactly the untracked value at the root note and on
+        // any source that fits p = 0.
+        float clockRateScale { 1.0f };
+        float releaseMultiplier { 1.0f };
         float pitchRatio { 1.0f };
         float pitchRatioStep { 0.0f };
         float lastLeft { 0.0f };
@@ -204,6 +225,18 @@ private:
         std::array<float, NeuralModel::boneModeCount> boneFrequencySteps {};
         std::array<float, renderAmplitudeCount> amplitudes {};
         std::array<float, renderAmplitudeCount> amplitudeSteps {};
+        // The release damps by frequency, so each rendered slot carries the
+        // *excess* attenuation it owes on top of the one release scalar the
+        // audio loop applies to the summed voice. Partial 1 owes none of it,
+        // which is what keeps the Dissolve time and the retirement decision
+        // exactly where the panel says they are. The pair is a running gain
+        // and the factor it is multiplied by once per control period; the
+        // pow() that builds the factors is paid once, at note-off.
+        std::array<float, renderAmplitudeCount> releaseSlotGain {};
+        std::array<float, renderAmplitudeCount> releaseSlotDecay {};
+        // The Dissolve time the factors above were built for. Negative until
+        // the voice releases, so a held voice costs nothing at all.
+        float releaseShapeSeconds { -1.0f };
         std::array<Bandpass, NeuralModel::airBandCount> airFilters {};
 
         void clear() noexcept;
@@ -230,9 +263,17 @@ private:
     void refreshHarmonicStretch(float inharmonicity) noexcept;
     void updateVoiceControl(Voice& voice, const NeuralModel& model,
                             const EngineParameters& parameters) noexcept;
+    [[nodiscard]] static float fitLoopLevelSlope(
+        const NeuralModel& model) noexcept;
+    [[nodiscard]] static float fitDampingExponent(
+        const NeuralModel& model) noexcept;
+    void buildReleaseShape(
+        Voice& voice, float releaseSeconds, float renderedFundamentalHz,
+        const std::array<float, NeuralModel::airBandCount>& airCentresHz,
+        const std::array<float, NeuralModel::boneModeCount>& boneCentresHz)
+        const noexcept;
     [[nodiscard]] static float nextNoise(std::uint32_t& state) noexcept;
     void beginFadeTail(std::size_t voiceIndex) noexcept;
-    void refreshVoicePans() noexcept;
 
     std::atomic<const NeuralModel*> model_ { nullptr };
     AtomicParameters parameters_ {};
@@ -248,6 +289,18 @@ private:
     // coefficient actually changes, never per voice and never per sample.
     std::array<float, renderedHarmonicCount> harmonicStretchRatio_ {};
     float cachedInharmonicity_ { -1.0f };
+    // Mean log-amplitude slope of the published model across its own loop
+    // region, in nepers per second of model time, fitted once per model by
+    // setModel(). Orbit divides it out so that a wrap from loopEnd back to
+    // loopStart is level-continuous. Only the trend is removed: whatever
+    // tremolo, breath pulsing or beating the region carries is a residual
+    // about this line and survives untouched.
+    float loopLevelSlopePerSecond_ { 0.0f };
+    // The published model's own damping exponent p, fitted once per model by
+    // setModel() and bounded to [0, 1.5]. It is the shape the release borrows:
+    // a source whose partials all decayed at the same rate fits zero and keeps
+    // the frequency-independent release every earlier build had.
+    float dampingExponent_ { 0.0f };
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };
     // Core anti-alias fade constants for coreNyquistGain(), precomputed so the

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -52,6 +53,7 @@ struct ElectryEngineTestAccess
         float excitationLoadScale { 0.0f };
         float excitationSlipScale { 0.0f };
         float loopDampingCoefficient { 0.0f };
+        float vibratoSemitones { 0.0f };
     };
 
     static VoiceSnapshot snapshot(const ElectryEngine& engine, int stringIndex)
@@ -91,7 +93,16 @@ struct ElectryEngineTestAccess
         result.excitationLoadScale = voice.excitationLoadScale;
         result.excitationSlipScale = voice.excitationSlipScale;
         result.loopDampingCoefficient = voice.vertical.loopDampingCoefficient;
+        result.vibratoSemitones = voice.vibratoSemitones;
         return result;
+    }
+
+    // The shared depth envelope the fretting hand's vibrato rides on, read
+    // straight off the engine so the onset's shape can be measured without
+    // the oscillation on top of it.
+    static float vibratoDepthEnvelope(const ElectryEngine& engine) noexcept
+    {
+        return engine.vibratoAmount_;
     }
 
     static bool channelsLinked(const ElectryEngine& engine) noexcept
@@ -118,6 +129,69 @@ struct ElectryEngineTestAccess
     static bool pickupPathActive(const ElectryEngine& engine, bool neck) noexcept
     {
         return neck ? engine.neckPathActive_ : engine.bridgePathActive_;
+    }
+
+    // Is the humbucker's second coil running on this string's bridge pickup?
+    static bool coilPairActive(const ElectryEngine& engine,
+                               int stringIndex) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(stringIndex)]
+            .coilPairBridge.paired;
+    }
+
+    // The pickup's spatial transfer at one frequency, evaluated in closed form
+    // from the two stages the voice is actually running: the humbucker's coil
+    // pair and the per-coil aperture window. Both are FIR, so this is exact
+    // rather than a fit.
+    //
+    // The position comb is deliberately not included. It is a separate stage
+    // with nulls of its own at every multiple of c/2x, several of which land
+    // between 2 and 8 kHz, so folding it in would leave "the deepest notch"
+    // ambiguous. And the notch is read here rather than off a rendered
+    // spectrum because a null between two harmonics is sampled only as finely
+    // as the string's fundamental spacing.
+    static double apertureChainMagnitude(const ElectryEngine& engine,
+                                         int stringIndex, double frequencyHz,
+                                         bool includeCoilPair)
+    {
+        constexpr double pi = 3.14159265358979323846;
+        const auto& voice = engine.voices_[static_cast<std::size_t>(stringIndex)];
+        const auto& window = voice.apertureBridge;
+        const auto& pair = voice.coilPairBridge;
+        const double omega = 2.0 * pi * frequencyHz / engine.sampleRate_;
+
+        // Rectangular window: unit taps at 0..W-1 plus a fractional tap at W,
+        // scaled by the inverse window length.
+        double real = 0.0;
+        double imaginary = 0.0;
+        for (int k = 0; k < window.windowWhole; ++k)
+        {
+            real += std::cos(omega * k);
+            imaginary -= std::sin(omega * k);
+        }
+        const double edge = omega * static_cast<double>(window.windowWhole);
+        real += window.windowFraction * std::cos(edge);
+        imaginary -= window.windowFraction * std::sin(edge);
+        double magnitude = std::hypot(real, imaginary) * window.inverseWindow;
+
+        if (includeCoilPair && pair.paired)
+        {
+            const double near = omega * static_cast<double>(pair.spacingWhole);
+            const double far = omega * static_cast<double>(pair.spacingWhole + 1);
+            const double nearWeight = 1.0
+                - static_cast<double>(pair.spacingFraction);
+            const double farWeight = static_cast<double>(pair.spacingFraction);
+            const double balance = static_cast<double>(pair.balance);
+            const double pairReal = 1.0
+                + balance * (nearWeight * std::cos(near)
+                             + farWeight * std::cos(far));
+            const double pairImaginary =
+                -balance * (nearWeight * std::sin(near)
+                            + farWeight * std::sin(far));
+            magnitude *= std::hypot(pairReal, pairImaginary)
+                       * static_cast<double>(pair.normalise);
+        }
+        return magnitude;
     }
 
     static int oversamplingFactor(const ElectryEngine& engine) noexcept
@@ -1998,6 +2072,312 @@ void testMonoStereoOutputField()
                + std::to_string(energyRatio) + ")");
 }
 
+// A guitarist's picking dynamics span 25-30 dB. Electry used to render 5.2 dB
+// of that, and the missing range was not in the amplitude law: player effort
+// drove the contact spectrum over the same range as the level, so the extra
+// energy of a hard stroke went into partials that had decayed before the
+// attack was over. The two halves of the fix are separated below - the
+// v=1..v=127 span is the target, the v=64..v=127 span is what identifies the
+// decoupling as the change that delivers it.
+void testVelocityDynamicRange()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int note = 40;
+    constexpr int windowSamples = static_cast<int>(0.050 * sampleRate);
+
+    // Fresh engine per velocity: a shared engine would let the previous
+    // stroke's residual ring into the peak of the next one.
+    const auto peakDbAt = [&] (int midiVelocity, float velocityAmount)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.velocityAmount = velocityAmount;
+        engine.setParameters(parameters);
+        const auto rendered = renderNote(
+            engine, sampleRate, note,
+            static_cast<float>(midiVelocity) / 127.0f,
+            PlayStyle::Sustain, 0.050);
+        const double peak = std::max(peakAbs(rendered.left, 0, windowSamples),
+                                     peakAbs(rendered.right, 0, windowSamples));
+        return decibels(std::max(peak, 1.0e-12));
+    };
+
+    // "At the shipping defaults": the default Velocity Response is part of the
+    // change, so it is read from the engine rather than repeated here.
+    const float shippingResponse = EngineParameters {}.velocityAmount;
+    expect(std::abs(shippingResponse - 0.85f) < 1.0e-6f,
+           "default Velocity Response is not 0.85 ("
+               + std::to_string(shippingResponse) + ")");
+
+    const double atOne = peakDbAt(1, shippingResponse);
+    const double atSixtyFour = peakDbAt(64, shippingResponse);
+    const double atFull = peakDbAt(127, shippingResponse);
+
+    // Today 5.218 dB at the shipping default.
+    expect(atFull - atOne >= 18.0,
+           "velocity spans too little of the keyboard (v=1 "
+               + std::to_string(atOne) + " dBFS, v=127 "
+               + std::to_string(atFull) + " dBFS, span "
+               + std::to_string(atFull - atOne) + " dB)");
+
+    // The amplitude law on its own reaches 1.686 dB here, against 1.487 dB
+    // before it; only breaking the level-to-effort coupling moves this. The
+    // ceiling with the release rate frozen outright is 4.630 dB, and freezing
+    // it outright makes velocity darken the attack instead of brightening it,
+    // so the bar sits below that.
+    expect(atFull - atSixtyFour >= 3.0,
+           "the upper half of the keyboard is still flat (v=64 "
+               + std::to_string(atSixtyFour) + " dBFS, v=127 "
+               + std::to_string(atFull) + " dBFS, span "
+               + std::to_string(atFull - atSixtyFour) + " dB)");
+
+    // A regression guard rather than a target: the amplitude law alone turns
+    // the top of the keyboard over above v=104, and so does the shipping
+    // engine on this grid.
+    double previous = -1.0e9;
+    int firstDrop = -1;
+    double dropFrom = 0.0;
+    double dropTo = 0.0;
+    for (int step = 0; step < 16; ++step)
+    {
+        const int midiVelocity = 1
+            + static_cast<int>(std::lround(step * 126.0 / 15.0));
+        const double level = peakDbAt(midiVelocity, shippingResponse);
+        if (level <= previous && firstDrop < 0)
+        {
+            firstDrop = midiVelocity;
+            dropFrom = previous;
+            dropTo = level;
+        }
+        previous = level;
+    }
+    expect(firstDrop < 0,
+           "velocity level is not monotone (v=" + std::to_string(firstDrop)
+               + " fell from " + std::to_string(dropFrom) + " to "
+               + std::to_string(dropTo) + " dBFS)");
+
+    // The loudest stroke must stay where it is: this is a dynamic range that
+    // grows downwards, not an output-level change.
+    expect(std::abs(atFull - (-25.690)) <= 1.5,
+           "full velocity moved away from its calibrated level ("
+               + std::to_string(atFull) + " dBFS)");
+
+    // The decoupling must not be implemented by flattening the attack into
+    // silence at low velocity, in either direction: the 2-8 kHz against
+    // sub-500 Hz band ratio of the attack has to stay put. Today it moves
+    // 3.431 dB across the same pair.
+    const auto attackBandRatioDb = [&] (int midiVelocity, float velocityAmount)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.velocityAmount = velocityAmount;
+        engine.setParameters(parameters);
+        const auto rendered = renderNote(
+            engine, sampleRate, note,
+            static_cast<float>(midiVelocity) / 127.0f,
+            PlayStyle::Sustain, 0.050);
+        constexpr int transform = 2048;
+        double high = 0.0;
+        double low = 0.0;
+        for (int start = 0; start + transform <= windowSamples; start += 512)
+        {
+            for (int bin = 1; bin < transform / 2; ++bin)
+            {
+                const double frequency = bin * sampleRate / transform;
+                const bool isHigh = frequency >= 2000.0 && frequency <= 8000.0;
+                const bool isLow = frequency < 500.0;
+                if (! isHigh && ! isLow)
+                    continue;
+                const double magnitude = dftMagnitude(
+                    rendered.left, start, transform, sampleRate, frequency);
+                (isHigh ? high : low) += magnitude * magnitude;
+            }
+        }
+        return 10.0 * std::log10(std::max(high, 1.0e-30)
+                                 / std::max(low, 1.0e-30));
+    };
+    const double quietBand = attackBandRatioDb(16, shippingResponse);
+    const double loudBand = attackBandRatioDb(127, shippingResponse);
+    expect(std::abs(loudBand - quietBand) <= 4.0,
+           "velocity moved the attack's band balance too far (v=16 "
+               + std::to_string(quietBand) + " dB, v=127 "
+               + std::to_string(loudBand) + " dB)");
+
+    // Velocity Response at zero removes MIDI velocity from the instrument
+    // exactly, which the exponent form preserves because force^0 is one.
+    const double flatLow = peakDbAt(1, 0.0f);
+    const double flatHigh = peakDbAt(127, 0.0f);
+    expect(std::abs(flatHigh - flatLow) < 1.0e-9,
+           "zero velocity response still changes the rendered level (spread "
+               + std::to_string(flatHigh - flatLow) + " dB)");
+}
+
+// A repeated note must not be a repeated render. The protocol deliberately
+// leaves 12 s between strokes so the string has decayed and the measurement
+// sees the excitation rather than the previous stroke's residual ring, and it
+// silences every noise control and the Artifacts detune so that what is
+// measured is the picking hand and nothing that already varied.
+void testPickingHandVariation()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int note = 40;
+    constexpr int strokeCount = 12;
+    constexpr int captureSamples = static_cast<int>(0.150 * sampleRate);
+
+    struct Repeats
+    {
+        std::vector<std::vector<float>> strokes;
+        std::vector<double> peaksDb;
+        std::vector<double> centroids;
+    };
+
+    const auto repeat = [&] (double gapSeconds, PickStyle pickStyle)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickNoise = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        parameters.artifactAmount = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(pickKeyswitch(pickStyle), 1.0f);
+
+        Repeats result;
+        StereoBuffer gap(static_cast<int>(gapSeconds * sampleRate));
+        for (int stroke = 0; stroke < strokeCount; ++stroke)
+        {
+            engine.noteOn(note, 0.80f);
+            renderInto(engine, gap);
+            std::vector<float> attack(gap.left.begin(),
+                                      gap.left.begin() + captureSamples);
+            result.peaksDb.push_back(
+                decibels(std::max<double>(peakAbs(attack), 1.0e-12)));
+            result.centroids.push_back(spectralCentroid(
+                attack, 0, captureSamples, sampleRate, midiHz(note)));
+            result.strokes.push_back(std::move(attack));
+        }
+        return result;
+    };
+
+    // Energy of the difference between two strokes' attacks, against the energy
+    // of the earlier one.
+    const auto differenceDb = [] (const std::vector<float>& later,
+                                  const std::vector<float>& earlier)
+    {
+        double difference = 0.0;
+        double reference = 0.0;
+        for (std::size_t i = 0; i < later.size(); ++i)
+        {
+            const double d = static_cast<double>(later[i]) - earlier[i];
+            difference += d * d;
+            reference += static_cast<double>(earlier[i]) * earlier[i];
+        }
+        return 10.0 * std::log10(std::max(difference, 1.0e-30)
+                                 / std::max(reference, 1.0e-30));
+    };
+
+    const auto spreadOf = [] (const std::vector<double>& values)
+    {
+        const auto bounds = std::minmax_element(values.begin(), values.end());
+        return *bounds.second - *bounds.first;
+    };
+
+    // Successive strokes, or - under Alternate - strokes two apart, which hold
+    // the up/down colouring constant so what is left is the hand.
+    const auto pairDbs = [&] (const Repeats& repeats, int lag)
+    {
+        std::vector<double> result;
+        for (std::size_t i = 0; i + static_cast<std::size_t>(lag)
+                                    < repeats.strokes.size(); ++i)
+            result.push_back(differenceDb(
+                repeats.strokes[i + static_cast<std::size_t>(lag)],
+                repeats.strokes[i]));
+        return result;
+    };
+
+    const auto meanOf = [] (const std::vector<double>& values)
+    {
+        double total = 0.0;
+        for (const double value : values)
+            total += value;
+        return total / static_cast<double>(values.size());
+    };
+
+    const auto latched = repeat(12.0, PickStyle::Down);
+    const auto latchedPairs = pairDbs(latched, 1);
+    const double latchedMean = meanOf(latchedPairs);
+
+    // Without the per-stroke draws the successive pairs fall from -43.5 dB to
+    // -94.3 dB, a mean of -84.6 dB: the twelve strokes are the same stroke, and
+    // what little separates them is converging residual state. The band is
+    // scored on the mean because the draws are independent, so two consecutive
+    // strokes may land close by chance - one pair of the twelve reads -30.8 dB;
+    // every individual pair still has to stay under the band's top.
+    expect(latchedMean >= -24.0 && latchedMean <= -8.0,
+           "repeated strokes do not differ by a hand's worth (mean successive "
+               "difference " + std::to_string(latchedMean) + " dB)");
+    expect(*std::max_element(latchedPairs.begin(), latchedPairs.end()) <= -8.0,
+           "repeated strokes differ too much to be the same note (loudest "
+               "successive difference "
+               + std::to_string(*std::max_element(latchedPairs.begin(),
+                                                  latchedPairs.end())) + " dB)");
+
+    // The variation must be audible as a hand rather than as a level control.
+    // Without the draws, 0.0120 dB.
+    const double peakSpread = spreadOf(latched.peaksDb);
+    expect(peakSpread >= 0.6 && peakSpread <= 3.0,
+           "stroke-to-stroke level variation is outside a player's range ("
+               + std::to_string(peakSpread) + " dB across 12 strokes)");
+
+    // And it must move the tone, not only the level: without the draws, 0.380 Hz
+    // on a 456 Hz centroid.
+    const double centroidSpread = spreadOf(latched.centroids);
+    expect(centroidSpread >= 12.0,
+           "repeated strokes are spectrally identical (centroid spread "
+               + std::to_string(centroidSpread) + " Hz)");
+
+    // Alternate picking already varies stroke to stroke by more than the signal
+    // itself, so the hand's variation has to ride on top of the up/down
+    // colouring rather than replace it. Strokes two apart share a direction;
+    // without the draws they converge to a mean of -86.1 dB, exactly as the
+    // latched case does, so a change that only varies a latched Down fails
+    // here.
+    const auto alternating = repeat(12.0, PickStyle::Alternate);
+    const auto alternatingPairs = pairDbs(alternating, 2);
+    const double alternatingMean = meanOf(alternatingPairs);
+    expect(alternatingMean >= -24.0 && alternatingMean <= -8.0,
+           "alternate-picked repeats of the same stroke direction do not vary "
+               "(mean difference two apart " + std::to_string(alternatingMean)
+               + " dB)");
+    expect(*std::max_element(alternatingPairs.begin(), alternatingPairs.end())
+               <= -8.0,
+           "alternate-picked strokes two apart differ too much (loudest "
+               + std::to_string(*std::max_element(alternatingPairs.begin(),
+                                                  alternatingPairs.end()))
+               + " dB)");
+
+    // Half a second apart the string has not decayed, so each stroke lands on
+    // the previous one's ring and the difference between them is dominated by
+    // how far that residual state has converged. Without the draws it
+    // converges: the twelfth pair reads -27.3 dB against -94.3 dB on the 12 s
+    // protocol, 67 dB apart. With the excitation itself varying, the two
+    // protocols have to
+    // agree, because the difference is then a property of the stroke rather
+    // than of the state it lands on.
+    const auto rapid = repeat(0.5, PickStyle::Down);
+    const auto rapidPairs = pairDbs(rapid, 1);
+    const double lastRapid = rapidPairs.back();
+    const double lastLatched = latchedPairs.back();
+    expect(std::abs(lastRapid - lastLatched) <= 6.0,
+           "a repeated note still converges on itself (last pair "
+               + std::to_string(lastRapid) + " dB at 0.5 s against "
+               + std::to_string(lastLatched) + " dB at 12 s)");
+}
+
 void testVelocityExpression()
 {
     constexpr double sampleRate = 48000.0;
@@ -2033,7 +2413,15 @@ void testVelocityExpression()
         low.left, attackStart, attackEnd - attackStart, sampleRate, midiHz(45));
     const double highCentroid = spectralCentroid(
         high.left, attackStart, attackEnd - attackStart, sampleRate, midiHz(45));
-    expect(highCentroid > lowCentroid * 1.10,
+    // Deliberately a smaller margin than the 10% this asked for before the
+    // pick's own stiffness came to bound the contact spectrum: a harder stroke
+    // is now mostly louder rather than proportionally sharper, and the
+    // brightening that survives is the residual the plectrum's finite
+    // compliance leaves. Measured 7.3% here, against 16.6% when effort and
+    // level were the same curve. What the bound still catches is the
+    // degenerate case - freezing the release rate outright reads 0.996, i.e. a
+    // harder stroke that arrives darker.
+    expect(highCentroid > lowCentroid * 1.05,
            "velocity does not brighten the attack (low "
                + std::to_string(lowCentroid) + " Hz, high "
                + std::to_string(highCentroid) + " Hz)");
@@ -2629,6 +3017,75 @@ void testFrettingHandVibrato()
     expect(still.stringIndex == 3 && moving.stringIndex == 3,
            "the vibrato fixture did not land on the open A string");
 
+    // Vibrato Depth has to reach the engine while it is playing, not only at
+    // the next reset. A host automating it, or any caller moving it through
+    // setParameters() after prepare(), is the ordinary case rather than the
+    // exotic one: the control tick propagates every other continuous
+    // parameter, and this one was left off that list when the fretting hand
+    // was added, so the depth stayed at whatever the last reset latched.
+    //
+    // The comparison is differential because depth 0 is not silence: the
+    // excursion is lerp(0.10, 1.10, depth) semitones, so a note at depth 0
+    // still moves about 10 cents. Two engines are reset identically at depth
+    // 0 and only one is raised afterwards, so the single difference between
+    // them is the propagation this guards.
+    {
+        const auto excursionCents = [&] (bool raiseAfterReset)
+        {
+            ElectryEngine engine;
+            engine.prepare(sampleRate, 512);
+            EngineParameters parameters;
+            parameters.artifactAmount = 0.0f;
+            parameters.sympatheticAmount = 0.0f;
+            parameters.vibratoDepth = 0.0f;
+            engine.setParameters(parameters);
+            engine.reset();
+
+            if (raiseAfterReset)
+            {
+                parameters.vibratoDepth = 1.0f;
+                engine.setParameters(parameters);
+            }
+
+            engine.noteOn(47, 0.85f);
+            engine.setVibrato(1.0f);
+
+            const int stringIndex = TestAccess::stringForNote(engine, 47);
+            constexpr int chunk = 32;
+            const int total = static_cast<int>(1.6 * sampleRate);
+            StereoBuffer scratch(chunk);
+            std::vector<float> target;
+            for (int at = 0; at < total; at += chunk)
+            {
+                engine.process(scratch.left.data(), scratch.right.data(),
+                               chunk);
+                target.push_back(
+                    TestAccess::snapshot(engine,
+                                         stringIndex).verticalDelayTarget);
+            }
+
+            double highest = 0.0;
+            double lowest = 1.0e9;
+            const std::size_t settled = target.size() / 2;
+            for (std::size_t i = settled; i < target.size(); ++i)
+            {
+                highest = std::max(highest,
+                                   static_cast<double>(target[i]));
+                lowest = std::min(lowest, static_cast<double>(target[i]));
+            }
+            return 1200.0 * std::log2(highest / lowest);
+        };
+
+        const double latched = excursionCents(false);
+        const double raised = excursionCents(true);
+        expect(raised > latched * 2.0,
+               "Vibrato Depth raised after reset never reached the engine: the "
+               "held note moved " + std::to_string(raised)
+                   + " cents against " + std::to_string(latched)
+                   + " cents with the control left alone, so the parameter is "
+                     "dead until the next reset");
+    }
+
     // Zero pressure is an exact no-op: the same score with the control never
     // touched renders bit-for-bit the same audio.
     {
@@ -2690,9 +3147,12 @@ void testFrettingHandVibrato()
            "the vibrato is centred on the fretted pitch rather than sharp of "
            "it (mean ratio " + std::to_string(mean) + ")");
 
-    // Its depth is the modelled one: a shorter delay by 2^(-cents/1200).
+    // Its depth is the modelled one: a shorter delay by 2^(-cents/1200). The
+    // upper bound admits the per-cycle excursion draw, which is bounded at
+    // +45% of the nominal 40 cents, so the deepest cycle in any window can
+    // reach 58; a tighter ceiling here would be asserting the draw away.
     const double depthCents = 1200.0 * std::log2(1.0 / lowest);
-    expect(depthCents > 25.0 && depthCents < 55.0,
+    expect(depthCents > 25.0 && depthCents < 60.0,
            "the vibrato depth is not the modelled 40 cents ("
                + std::to_string(depthCents) + " cents)");
 
@@ -2754,6 +3214,259 @@ void testFrettingHandVibrato()
     expect(std::abs(barCoupled - restingCoupled) > 1.0f,
            "the bar fixture did not bend the coupled string, so the "
            "comparison above proves nothing");
+}
+
+// A hand is not an LFO. Four things separate them and all four are read off
+// the engine's own vibrato offset rather than off a pitch estimate, because
+// the quantity under test is a modulation shape and any estimator would smear
+// it with the string's own tension relaxation.
+//
+// The shape: the pitch follows the square of the finger's displacement, so a
+// cycle spends 36.4% of itself above half its own peak where a raised cosine
+// spends exactly 50%. The scatter: the rate and the excursion are redrawn
+// every cycle, so neither repeats. The hand: two stopped strings are two
+// fingers and drift apart instead of moving in lockstep. And the onset: the
+// depth leaves rest with zero slope rather than at its steepest.
+void testVibratoIsAHandNotAnLfo()
+{
+    constexpr double sampleRate = 48000.0;
+    // The engine runs at twice the host rate below 96 kHz and its control
+    // block is 16 internal samples long, so eight host samples is exactly one
+    // control tick: every trace below is sampled on the grid the vibrato is
+    // computed on rather than interpolated off it.
+    constexpr int chunk = 8;
+    const double tick = static_cast<double>(chunk) / sampleRate;
+
+    const auto minimaOf = [] (const std::vector<double>& trace)
+    {
+        std::vector<int> minima;
+        for (std::size_t i = 1; i + 1 < trace.size(); ++i)
+            if (trace[i] <= trace[i - 1] && trace[i] < trace[i + 1])
+                minima.push_back(static_cast<int>(i));
+        return minima;
+    };
+
+    // One fingered string's vibrato offset in semitones, one reading per
+    // control tick, with the shared depth envelope alongside it.
+    const auto traceOf = [&] (float vibratoDepth, double seconds,
+                              std::vector<double>* envelope)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        parameters.vibratoDepth = vibratoDepth;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(47, 0.85f);
+        StereoBuffer scratch(chunk);
+        for (int at = 0; at < static_cast<int>(0.2 * sampleRate); at += chunk)
+            engine.process(scratch.left.data(), scratch.right.data(), chunk);
+        const int stringIndex = TestAccess::stringForNote(engine, 47);
+        expect(stringIndex >= 0 && TestAccess::snapshot(engine, stringIndex).fret > 0,
+               "the vibrato fixture is not on a stopped string");
+        engine.setVibrato(1.0f);
+
+        std::vector<double> trace;
+        const int steps = static_cast<int>(seconds * sampleRate) / chunk;
+        trace.reserve(static_cast<std::size_t>(steps));
+        for (int step = 0; step < steps; ++step)
+        {
+            engine.process(scratch.left.data(), scratch.right.data(), chunk);
+            trace.push_back(stringIndex >= 0
+                ? static_cast<double>(
+                      TestAccess::snapshot(engine, stringIndex).vibratoSemitones)
+                : 0.0);
+            if (envelope != nullptr)
+                envelope->push_back(TestAccess::vibratoDepthEnvelope(engine));
+        }
+        return trace;
+    };
+
+    // ---- one cycle's shape, and the scatter between cycles ---------------
+    const EngineParameters defaults;
+    const auto trace = traceOf(defaults.vibratoDepth, 8.0, nullptr);
+    const auto minima = minimaOf(trace);
+    expect(minima.size() >= 25,
+           "the vibrato fixture did not produce enough cycles to score ("
+               + std::to_string(minima.size()) + ")");
+
+    // The first six cycles are dropped: the depth envelope is still ramping
+    // through them, so their peaks measure the onset rather than the draw.
+    std::vector<double> periods, peakCents, aboveHalf;
+    for (std::size_t k = 6; k + 1 < minima.size(); ++k)
+    {
+        const int from = minima[k];
+        const int to = minima[k + 1];
+        double peak = 0.0;
+        for (int i = from; i <= to; ++i)
+            peak = std::max(peak, trace[static_cast<std::size_t>(i)]);
+        int above = 0;
+        for (int i = from; i < to; ++i)
+            if (trace[static_cast<std::size_t>(i)] > 0.5 * peak)
+                ++above;
+        periods.push_back((to - from) * tick);
+        peakCents.push_back(100.0 * peak);
+        aboveHalf.push_back(static_cast<double>(above) / (to - from));
+    }
+    expect(periods.size() >= 18,
+           "fewer than the eighteen settled cycles this test scores ("
+               + std::to_string(periods.size()) + ")");
+
+    const auto meanOf = [] (const std::vector<double>& values)
+    {
+        double sum = 0.0;
+        for (double value : values)
+            sum += value;
+        return sum / static_cast<double>(values.size());
+    };
+
+    const double periodMean = meanOf(periods);
+    double periodVariance = 0.0;
+    for (double period : periods)
+        periodVariance += (period - periodMean) * (period - periodMean);
+    const double periodDeviation =
+        std::sqrt(periodVariance / static_cast<double>(periods.size()));
+    expect(periodDeviation > 0.04 * periodMean,
+           "the vibrato rate repeats itself like an oscillator (period "
+           "deviation " + std::to_string(100.0 * periodDeviation / periodMean)
+               + "% of the mean)");
+
+    const double deepest = *std::max_element(peakCents.begin(), peakCents.end());
+    const double shallowest = *std::min_element(peakCents.begin(), peakCents.end());
+    expect(deepest - shallowest > 2.5,
+           "the vibrato reaches the same depth every cycle (spread "
+               + std::to_string(deepest - shallowest) + " cents)");
+
+    // The x^2 law is pinned from both sides. A raised cosine gives exactly
+    // 50%, its square 36.4%, and each cycle is scored against its own peak
+    // because the depth is redrawn every cycle.
+    const double halfFraction = meanOf(aboveHalf);
+    expect(halfFraction > 0.32 && halfFraction < 0.40,
+           "the vibrato is not following the square of the finger's "
+           "displacement (cycle spends " + std::to_string(halfFraction)
+               + " of itself above half its own peak)");
+
+    // ---- the Vibrato Depth control's range -------------------------------
+    const auto peakOf = [&] (float vibratoDepth)
+    {
+        const auto depthTrace = traceOf(vibratoDepth, 6.0, nullptr);
+        double peak = 0.0;
+        for (std::size_t i = depthTrace.size() / 3; i < depthTrace.size(); ++i)
+            peak = std::max(peak, depthTrace[i]);
+        return 100.0 * peak;
+    };
+    const double widest = peakOf(1.0f);
+    const double narrowest = peakOf(0.0f);
+    expect(widest >= 90.0,
+           "a fully open Vibrato Depth does not reach a rock vibrato's arc ("
+               + std::to_string(widest) + " cents)");
+    expect(narrowest <= 15.0,
+           "a closed Vibrato Depth is still a wide vibrato ("
+               + std::to_string(narrowest) + " cents)");
+
+    // ---- two fingered strings are two fingers ----------------------------
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(47, 0.85f);
+        engine.noteOn(52, 0.85f);
+        StereoBuffer scratch(chunk);
+        for (int at = 0; at < static_cast<int>(0.2 * sampleRate); at += chunk)
+            engine.process(scratch.left.data(), scratch.right.data(), chunk);
+        const int lower = TestAccess::stringForNote(engine, 47);
+        const int upper = TestAccess::stringForNote(engine, 52);
+        expect(lower >= 0 && upper >= 0 && lower != upper,
+               "the double stop did not land on two separate strings");
+        engine.setVibrato(1.0f);
+
+        std::vector<double> lowerTrace, upperTrace;
+        const int steps = static_cast<int>(6.0 * sampleRate) / chunk;
+        for (int step = 0; step < steps; ++step)
+        {
+            engine.process(scratch.left.data(), scratch.right.data(), chunk);
+            lowerTrace.push_back(static_cast<double>(
+                TestAccess::snapshot(engine, lower).vibratoSemitones));
+            upperTrace.push_back(static_cast<double>(
+                TestAccess::snapshot(engine, upper).vibratoSemitones));
+        }
+        const auto lowerMinima = minimaOf(lowerTrace);
+        const auto upperMinima = minimaOf(upperTrace);
+        expect(lowerMinima.size() >= 12 && upperMinima.size() >= 12,
+               "the double-stop fixture did not oscillate on both strings");
+
+        // For every settled cycle of the lower string, how far its rest point
+        // sits from the upper string's nearest rest point, as a fraction of a
+        // cycle. Scored on the mean rather than on every cycle: two
+        // independent fingers do occasionally pass through the same phase, and
+        // a floor under every cycle would assert that they never may.
+        std::vector<double> separation;
+        for (std::size_t k = 6; k + 1 < lowerMinima.size(); ++k)
+        {
+            const double period = lowerMinima[k + 1] - lowerMinima[k];
+            double nearest = 1.0e9;
+            for (int candidate : upperMinima)
+                nearest = std::min(nearest,
+                                   std::abs(static_cast<double>(candidate
+                                                                - lowerMinima[k])));
+            separation.push_back(nearest / period);
+        }
+        const double meanSeparation = meanOf(separation);
+        expect(meanSeparation >= 0.08,
+               "a double stop's two strings move as one finger (mean phase "
+               "separation " + std::to_string(meanSeparation) + " cycles)");
+    }
+
+    // ---- the onset leaves rest rather than jumping -----------------------
+    {
+        std::vector<double> envelope;
+        (void) traceOf(defaults.vibratoDepth, 1.5, &envelope);
+        expect(! envelope.empty(), "the onset fixture produced no envelope");
+        const double settled = envelope.back();
+        expect(settled > 0.9, "the vibrato never reached full depth");
+        std::size_t reached = envelope.size() - 1;
+        for (std::size_t i = 0; i < envelope.size(); ++i)
+            if (envelope[i] >= 0.9 * settled) { reached = i; break; }
+        // A scale-free measure, so it does not have to name an onset time: at
+        // a tenth of the way to 90% of settled depth, a one-pole is already
+        // 20.6% of the way there whatever its time constant, because it is
+        // steepest at t = 0. A smoothStep is still at rest.
+        const std::size_t early = static_cast<std::size_t>(
+            0.1 * static_cast<double>(reached + 1));
+        const double earlyFraction = envelope[early] / settled;
+        expect(earlyFraction <= 0.05,
+               "the vibrato's depth leaves rest at its steepest instead of "
+               "easing off it (" + std::to_string(100.0 * earlyFraction)
+                   + "% of settled at a tenth of the time to 90%)");
+    }
+
+    // ---- and none of it moves a note nobody is pressing -------------------
+    {
+        const auto render = [&] (bool touchControl)
+        {
+            ElectryEngine engine;
+            engine.prepare(sampleRate, 512);
+            EngineParameters parameters;
+            parameters.artifactAmount = 0.0f;
+            parameters.sympatheticAmount = 0.0f;
+            engine.setParameters(parameters);
+            engine.reset();
+            engine.noteOn(47, 0.85f);
+            if (touchControl)
+                engine.setVibrato(0.0f);
+            StereoBuffer buffer(static_cast<int>(0.6 * sampleRate));
+            renderInto(engine, buffer);
+            return buffer.left;
+        };
+        expect(render(false) == render(true),
+               "a silent pressure control is not a bit-exact no-op");
+    }
 }
 
 // A slide is a finger that stays down and travels: the sounding length moves
@@ -3083,13 +3796,36 @@ void testPinchHarmonic()
             / std::max(dftMagnitude(buffer.left, start, window, sampleRate, f0),
                        1.0e-15));
     };
-    const double gain = partialOverFundamental(pinchedNearBridge,
-                                               bridgeSquealPartial)
-                      - partialOverFundamental(pickedNearBridge,
-                                               bridgeSquealPartial);
+    // The squeal is a pair of neighbours, not a single line: the eighth and
+    // ninth partials of this pinch sit within 0.06 dB of each other, so which
+    // one `strongestPartial` returns is decided by rounding and swaps under
+    // changes that leave the effect itself alone - the ninth reads 15.12 dB
+    // both before and after the velocity work of the 2026-08-07 pass, but the
+    // reported partial moved from the ninth to the eighth. Score the squeal
+    // over every partial within 1 dB of the pinched peak instead.
+    const double pinchedPeak = dftMagnitude(pinchedNearBridge.left, start,
+                                            window, sampleRate,
+                                            f0 * bridgeSquealPartial);
+    double gain = -1.0e9;
+    int gainPartial = bridgeSquealPartial;
+    for (int n = 2; n <= 16; ++n)
+    {
+        const double magnitude = dftMagnitude(pinchedNearBridge.left, start,
+                                              window, sampleRate, f0 * n);
+        if (magnitude < pinchedPeak * 0.891)  // within 1 dB of the peak
+            continue;
+        const double lift = partialOverFundamental(pinchedNearBridge, n)
+                          - partialOverFundamental(pickedNearBridge, n);
+        if (lift > gain)
+        {
+            gain = lift;
+            gainPartial = n;
+        }
+    }
     expect(gain > 10.0,
            "the pinch did not lift its partial against the fundamental (gain "
-               + std::to_string(gain) + " dB)");
+               + std::to_string(gain) + " dB at partial "
+               + std::to_string(gainPartial) + ")");
 
     // It is its own articulation, not a relabelled one.
     const auto natural = renderAt(0.18f, PlayStyle::Harmonics);
@@ -3375,6 +4111,7 @@ void testParameterSanitisation()
     hostile.palmMute = -7.0f;
     hostile.strumSpreadSeconds = std::numeric_limits<float>::infinity();
     hostile.resonanceDepth = std::numeric_limits<float>::quiet_NaN();
+    hostile.vibratoDepth = 12.0f;
     hostile.pickupSelector = static_cast<PickupSelector>(999);
     hostile.outputMode = static_cast<electry::OutputMode>(999);
     engine.setParameters(hostile);
@@ -3710,24 +4447,37 @@ void testStrumSpread()
     expect(allFinite(block.second), "block chord produced non-finite audio");
 
     const auto strummed = renderChord(0.020f);
-    // The first string the pick meets fires immediately; each further string
-    // is offset by the travel time, in physical string order.
-    expect(strummed.first[0] == 0, "the leading string of a strum was delayed");
-    const int step = static_cast<int>(0.020f * sampleRate * 2.0f); // internal 2x clock
+    // The first string the pick meets fires after the re-anchor pre-roll every
+    // voice of a strummed chord carries, not immediately: until that window
+    // closes a later note-on may still turn out to be the edge the stroke
+    // began at. Each further string is offset by the travel time on top of it,
+    // in physical string order.
+    const int preRoll = static_cast<int>(0.020 * sampleRate * 2.0); // internal 2x clock
+    const int step = static_cast<int>(0.020f * sampleRate * 2.0f);
+    expect(std::abs(strummed.first[0] - preRoll) <= 2,
+           "the leading string of a strum did not fire one pre-roll after its "
+           "note-on (" + std::to_string(strummed.first[0]) + " vs "
+               + std::to_string(preRoll) + ")");
+    // The pick accelerates through the strings, so the offsets no longer lie
+    // on a straight line - but they still increase string by string, and the
+    // knob still states the mean crossing time, so seven crossings still take
+    // seven times it.
+    int previous = strummed.first[0];
     for (const std::size_t stringIndex : { std::size_t { 2 }, std::size_t { 3 },
                                            std::size_t { 4 }, std::size_t { 5 },
                                            std::size_t { 7 } })
     {
-        const int expected = step * static_cast<int>(stringIndex);
-        // The engine truncates the travel time to whole internal samples, so
-        // the rounding error accumulates by at most one sample per string.
-        expect(std::abs(strummed.first[stringIndex] - expected)
-                   <= 2 * static_cast<int>(stringIndex) + 2,
+        expect(strummed.first[stringIndex] > previous,
                "string " + std::to_string(stringIndex)
                    + " did not receive its strum travel offset ("
-                   + std::to_string(strummed.first[stringIndex]) + " vs "
-                   + std::to_string(expected) + ")");
+                   + std::to_string(strummed.first[stringIndex]) + " after "
+                   + std::to_string(previous) + ")");
+        previous = strummed.first[stringIndex];
     }
+    const int travel = strummed.first[7] - strummed.first[0];
+    expect(std::abs(travel - 7 * step) <= 7 * step / 20,
+           "a strum across eight strings did not take seven times the spread ("
+               + std::to_string(travel) + " vs " + std::to_string(7 * step) + ")");
     expect(allFinite(strummed.second) && peakAbs(strummed.second.left) < 0.80f,
            "strummed chord produced non-finite or unbounded audio");
 
@@ -3743,8 +4493,9 @@ void testStrumSpread()
     expect(strumPeak < blockPeak,
            "spreading a chord did not lower its stacked initial peak");
 
-    // A note that arrives after the chord window starts a fresh stroke and is
-    // therefore never delayed.
+    // A note that arrives after the chord window starts a fresh stroke, so it
+    // carries the pre-roll and nothing else - never the previous chord's
+    // travel.
     ElectryEngine engine;
     engine.prepare(sampleRate, 512);
     EngineParameters parameters;
@@ -3755,8 +4506,9 @@ void testStrumSpread()
     StereoBuffer gap(static_cast<int>(0.2 * sampleRate));
     renderInto(engine, gap);
     engine.noteOn(64, 0.9f);
-    expect(TestAccess::snapshot(engine,
-                                ElectryEngine::stringCount - 1).startDelaySamples == 0,
+    expect(std::abs(TestAccess::snapshot(
+                        engine, ElectryEngine::stringCount - 1).startDelaySamples
+                    - preRoll) <= 2,
            "a note outside the chord window inherited a strum offset");
 
     // A delayed voice is never retired before its excitation fires.
@@ -3838,6 +4590,244 @@ void testStrumSpread()
         expect(late < 0.01f,
                "a string was picked after its key was released (late peak "
                    + std::to_string(late) + ")");
+    }
+}
+
+void testStrumTravelFollowsStroke()
+{
+    // The pick enters the neck at one edge, travels in one direction, and
+    // speeds up as it goes. Three things follow, and none of them held before:
+    // the edge is set by the stroke rather than by whichever note-on the host
+    // sent first, the crossing intervals compress instead of lying on a
+    // straight line, and no two strokes lay the same ramp down twice.
+    constexpr double sampleRate = 48000.0;
+    constexpr double internalRate = sampleRate * 2.0;   // the engine's own clock
+    constexpr float spread = 0.012f;
+    const int spreadSamples = static_cast<int>(spread * internalRate);
+    // Every voice of a strummed chord is held back by this much, which is what
+    // buys the re-anchor window a note-on arriving in a later block needs.
+    const int preRoll = static_cast<int>(0.020 * internalRate);
+
+    const auto strum = [&] (ElectryEngine& engine, const std::vector<int>& notes)
+    {
+        for (const int note : notes)
+            engine.noteOn(note, 0.85f);
+        std::array<int, ElectryEngine::stringCount> delays {};
+        for (int s = 0; s < ElectryEngine::stringCount; ++s)
+            delays[static_cast<std::size_t>(s)] =
+                TestAccess::snapshot(engine, s).startDelaySamples;
+        return delays;
+    };
+
+    const auto makeEngine = [&] (std::unique_ptr<ElectryEngine>& engine,
+                                 float spreadSeconds, PickStyle pick)
+    {
+        engine = std::make_unique<ElectryEngine>();
+        engine->prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        parameters.strumSpreadSeconds = spreadSeconds;
+        engine->setParameters(parameters);
+        engine->reset();
+        engine->noteOn(pickKeyswitch(pick), 1.0f);
+    };
+
+    // 1. The stroke sets the edge. The same three notes in the same MIDI order
+    //    must travel low-to-high on a downstroke and high-to-low on an
+    //    upstroke; before this the two produced identical offsets.
+    {
+        std::unique_ptr<ElectryEngine> down, up;
+        makeEngine(down, spread, PickStyle::Down);
+        makeEngine(up, spread, PickStyle::Up);
+        const auto downDelays = strum(*down, { 40, 45, 50 });
+        const auto upDelays = strum(*up, { 40, 45, 50 });
+        expect(downDelays[2] < downDelays[3] && downDelays[3] < downDelays[4],
+               "a downstroke did not travel from the low string ("
+                   + std::to_string(downDelays[2]) + ", "
+                   + std::to_string(downDelays[3]) + ", "
+                   + std::to_string(downDelays[4]) + ")");
+        expect(upDelays[2] > upDelays[3] && upDelays[3] > upDelays[4],
+               "an upstroke did not travel from the high string ("
+                   + std::to_string(upDelays[2]) + ", "
+                   + std::to_string(upDelays[3]) + ", "
+                   + std::to_string(upDelays[4]) + ")");
+        // 8. The whole cost of the pre-roll: the string the pick starts from
+        //    sounds exactly one re-anchor window after its note-on.
+        expect(std::abs(downDelays[2] - preRoll) <= 2
+                   && std::abs(upDelays[4] - preRoll) <= 2,
+               "the string the stroke started from did not sound one pre-roll "
+               "after its note-on (" + std::to_string(downDelays[2]) + ", "
+                   + std::to_string(upDelays[4]) + " vs "
+                   + std::to_string(preRoll) + ")");
+    }
+
+    // 2/3. The wrist accelerates through the strings, so the crossing
+    //      intervals compress - and the knob still states the mean crossing
+    //      time, so eight strings still take seven times it.
+    {
+        std::unique_ptr<ElectryEngine> engine;
+        makeEngine(engine, spread, PickStyle::Down);
+        const auto delays = strum(*engine, { 28, 35, 40, 45, 50, 55, 59, 64 });
+        std::array<int, ElectryEngine::stringCount - 1> gaps {};
+        for (int k = 0; k < ElectryEngine::stringCount - 1; ++k)
+            gaps[static_cast<std::size_t>(k)] =
+                delays[static_cast<std::size_t>(k + 1)]
+                - delays[static_cast<std::size_t>(k)];
+        for (int k = 0; k + 1 < ElectryEngine::stringCount - 1; ++k)
+            expect(gaps[static_cast<std::size_t>(k + 1)]
+                       <= gaps[static_cast<std::size_t>(k)],
+                   "the strum's crossing intervals did not compress at gap "
+                       + std::to_string(k) + " ("
+                       + std::to_string(gaps[static_cast<std::size_t>(k)]) + " then "
+                       + std::to_string(gaps[static_cast<std::size_t>(k + 1)]) + ")");
+        const double lastOverFirst = static_cast<double>(gaps[6])
+                                   / static_cast<double>(gaps[0]);
+        expect(lastOverFirst > 0.55 && lastOverFirst < 0.85,
+               "the strum's last crossing was not about 0.7 of its first ("
+                   + std::to_string(lastOverFirst) + ")");
+        const int travel = delays[7] - delays[0];
+        expect(std::abs(travel - 7 * spreadSamples) <= 7 * spreadSamples / 20,
+               "eight strings did not take seven times the strum spread ("
+                   + std::to_string(travel) + " vs "
+                   + std::to_string(7 * spreadSamples) + ")");
+    }
+
+    // 4. A chord whose first note-on is a middle string. The pick does not
+    //    travel outward in both directions at once: it re-anchors on the low
+    //    edge and every offset stays non-negative and monotone in string
+    //    index. Before this the same chord gave 24/12/0/12/24 ms.
+    {
+        std::unique_ptr<ElectryEngine> engine;
+        makeEngine(engine, spread, PickStyle::Down);
+        const auto delays = strum(*engine, { 50, 28, 45, 55, 59 });
+        const std::array<int, 5> played { 0, 3, 4, 5, 6 };
+        int previous = -1;
+        for (const int s : played)
+        {
+            const int delay = delays[static_cast<std::size_t>(s)];
+            expect(delay >= 0,
+                   "string " + std::to_string(s)
+                       + " of a middle-anchored chord was scheduled backwards");
+            expect(delay > previous,
+                   "a middle-anchored chord did not travel in string order at "
+                   "string " + std::to_string(s) + " ("
+                       + std::to_string(delay) + " after "
+                       + std::to_string(previous) + ")");
+            previous = delay;
+        }
+    }
+
+    // 5. At a zero spread the chord is one block again, to the sample.
+    {
+        std::unique_ptr<ElectryEngine> engine;
+        makeEngine(engine, 0.0f, PickStyle::Down);
+        const auto delays = strum(*engine, { 28, 35, 40, 45, 50, 55, 59, 64 });
+        for (const int delay : delays)
+            expect(delay == 0,
+                   "a chord at zero spread carried a strum offset or a "
+                   "pre-roll (" + std::to_string(delay) + ")");
+    }
+
+    // 6. The wrist does not lay the same ramp down twice. Two strums of the
+    //    same chord 12 s apart - long enough that the strings have decayed and
+    //    nothing else is shared - must differ somewhere by at least one
+    //    internal sample. The offsets were previously a pure function of the
+    //    spread and the string index, so the two were identical.
+    {
+        std::unique_ptr<ElectryEngine> engine;
+        makeEngine(engine, spread, PickStyle::Down);
+        const std::vector<int> chord { 28, 35, 40, 45, 50, 55, 59, 64 };
+        const auto first = strum(*engine, chord);
+        for (const int note : chord)
+            engine->noteOff(note);
+        StereoBuffer decay(static_cast<int>(12.0 * sampleRate));
+        renderInto(*engine, decay);
+        const auto second = strum(*engine, chord);
+        int largest = 0;
+        for (int s = 0; s < ElectryEngine::stringCount; ++s)
+            largest = std::max(largest,
+                               std::abs(second[static_cast<std::size_t>(s)]
+                                        - first[static_cast<std::size_t>(s)]));
+        expect(largest >= 1,
+               "two strums of the same chord laid down the same ramp ("
+                   + std::to_string(largest) + " internal samples apart)");
+    }
+
+    // 7/9. The block-straddling case, pinned in absolute onsets. One chord's
+    //      note-ons routinely arrive across several process() calls, so what
+    //      matters is each event's arrival sample plus its voice's remaining
+    //      delay, reduced to one clock. Those onsets must reverse with the
+    //      stroke and must not depend on the order the host sent the notes -
+    //      today they are 0/20/40 ms in arrival order whichever way the chord
+    //      is sent, i.e. the chord travels in host order.
+    {
+        const int blockSamples = static_cast<int>(0.008 * sampleRate);
+        const auto splitDelivery = [&] (PickStyle pick, bool ascending)
+        {
+            std::unique_ptr<ElectryEngine> engine;
+            makeEngine(engine, spread, pick);
+            const std::array<int, 3> ascendingNotes { 40, 45, 50 };
+            const std::array<int, 3> descendingNotes { 50, 45, 40 };
+            const auto& notes = ascending ? ascendingNotes : descendingNotes;
+            int arrival = 0;
+            for (std::size_t k = 0; k < notes.size(); ++k)
+            {
+                engine->noteOn(notes[k], 0.85f);
+                if (k + 1 < notes.size())
+                {
+                    StereoBuffer block(blockSamples);
+                    renderInto(*engine, block);
+                    arrival += blockSamples * 2;   // host samples to the engine's clock
+                }
+            }
+            // Read after the last note-on: the chord's span is 16 ms, inside
+            // the 20 ms pre-roll, so nothing has sounded and every voice is
+            // still on the same clock.
+            std::array<int, 3> onsets {};
+            for (int s = 2; s <= 4; ++s)
+                onsets[static_cast<std::size_t>(s - 2)] =
+                    arrival + TestAccess::snapshot(*engine, s).startDelaySamples;
+            return onsets;
+        };
+
+        const auto downAscending = splitDelivery(PickStyle::Down, true);
+        const auto downDescending = splitDelivery(PickStyle::Down, false);
+        const auto upAscending = splitDelivery(PickStyle::Up, true);
+        const auto upDescending = splitDelivery(PickStyle::Up, false);
+
+        expect(downAscending[0] < downAscending[1]
+                   && downAscending[1] < downAscending[2],
+               "a split-block downstroke did not sound low string first");
+        expect(upAscending[0] > upAscending[1] && upAscending[1] > upAscending[2],
+               "a split-block upstroke did not sound high string first");
+        for (std::size_t k = 0; k < 3; ++k)
+        {
+            expect(downAscending[k] == downDescending[k],
+                   "a split-block downstroke's onsets depended on the order the "
+                   "host sent the chord (string " + std::to_string(k + 2) + ": "
+                       + std::to_string(downAscending[k]) + " vs "
+                       + std::to_string(downDescending[k]) + ")");
+            expect(upAscending[k] == upDescending[k],
+                   "a split-block upstroke's onsets depended on the order the "
+                   "host sent the chord (string " + std::to_string(k + 2) + ": "
+                       + std::to_string(upAscending[k]) + " vs "
+                       + std::to_string(upDescending[k]) + ")");
+        }
+
+        // 9. What a re-anchor costs. The first string to sound in the split
+        //    delivery may be pushed back by at most the chord's own arrival
+        //    span plus the control period the countdown is quantised to.
+        std::unique_ptr<ElectryEngine> single;
+        makeEngine(single, spread, PickStyle::Down);
+        const auto blockChord = strum(*single, { 40, 45, 50 });
+        const int splitFirst = std::min({ downAscending[0], downAscending[1],
+                                          downAscending[2] });
+        const int arrivalSpan = 2 * blockSamples * 2;   // two blocks, engine clock
+        expect(splitFirst - blockChord[2] <= arrivalSpan + 16,
+               "a re-anchor delayed the leading string by more than the chord's "
+               "own arrival span (" + std::to_string(splitFirst) + " vs "
+                   + std::to_string(blockChord[2]) + ")");
     }
 }
 
@@ -4786,6 +5776,303 @@ double bandEnergyDb(const std::vector<float>& data, int start, int length,
     return 10.0 * std::log10(energy + 1.0e-30);
 }
 
+// A humbucker's two-point cancellation notch sits at c/2d, where d is the
+// distance between its coils and c is the string's transverse wave speed.
+// Modelling it as one wide rectangular window instead put the notch at c/W,
+// most of an octave too high - 5507 Hz on string 2 where Lemme measures a low
+// E notching at about 3000 Hz, and 7351 Hz on string 3 against his 4000 Hz.
+//
+// Moving the notch is the smaller half of what the two coils do. The larger
+// half is that two narrow windows pass a top octave one wide window was
+// throwing away, so the assertions below bound the broadband change as well
+// as placing the notch. What they cannot do is bound it per octave band
+// against the shipping engine: the misplaced null on the wound strings sat
+// *inside* the 4-8 kHz band, so moving it out of that band necessarily raises
+// it, and on the plain strings the change goes the other way. See the plan
+// document for the measurement that retired that bound.
+void testHumbuckerTwoCoilNotch()
+{
+    constexpr double sampleRate = 48000.0;
+
+    // Rendering protocol shared by every level measurement below.
+    const auto renderChord = [&] (float pickupType, float velocity,
+                                  double seconds)
+    {
+        auto engine = std::make_unique<ElectryEngine>();
+        engine->prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickupType = pickupType;
+        engine->setParameters(parameters);
+        engine->reset();
+        engine->noteOn(pickKeyswitch(PickStyle::Down), 1.0f);
+        engine->noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+        for (const int note : { 28, 35, 40, 45, 50, 55, 59, 64 })
+            engine->noteOn(note, velocity);
+        StereoBuffer buffer(static_cast<int>(seconds * sampleRate));
+        renderInto(*engine, buffer);
+        return buffer;
+    };
+    const auto renderSingle = [&] (float pickupType, int midiNote,
+                                   float velocity, double seconds)
+    {
+        auto engine = std::make_unique<ElectryEngine>();
+        engine->prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickupType = pickupType;
+        engine->setParameters(parameters);
+        return renderNote(*engine, sampleRate, midiNote, velocity,
+                          PlayStyle::Sustain, seconds);
+    };
+
+    // 1. Where the notch is, and how deep, read off the two stages the voice
+    // is actually running rather than off a rendered spectrum.
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickupType = 0.0f;
+        engine.setParameters(parameters);
+        // reset() snaps the parameter smoother, so the voice is configured at
+        // the control value asked for rather than part-way through a glide
+        // from the default.
+        engine.reset();
+        engine.noteOn(40, 0.8f);
+        engine.noteOn(45, 0.8f);
+        StereoBuffer settle(512);
+        renderInto(engine, settle);
+
+        struct NotchCase { int midiNote; double lowHz; double highHz; };
+        const std::array<NotchCase, 2> cases {{
+            { 40, 2800.0, 3300.0 },   // string 2, E2: c/2d = 3043 Hz
+            { 45, 3800.0, 4400.0 },   // string 3, A2: c/2d = 4062 Hz
+        }};
+        for (const auto& notch : cases)
+        {
+            const int stringIndex =
+                TestAccess::stringForNote(engine, notch.midiNote);
+            expect(stringIndex >= 0,
+                   "note " + std::to_string(notch.midiNote)
+                       + " did not take a string");
+            if (stringIndex < 0)
+                continue;
+            expect(TestAccess::coilPairActive(engine, stringIndex),
+                   "the humbucker is running on one coil");
+
+            double deepest = 1.0e30;
+            double deepestHz = 0.0;
+            for (double f = 2000.0; f <= 8000.0; f *= 1.0004)
+            {
+                const double magnitude =
+                    TestAccess::apertureChainMagnitude(
+                        engine, stringIndex, f, true);
+                if (magnitude < deepest)
+                {
+                    deepest = magnitude;
+                    deepestHz = f;
+                }
+            }
+            std::cout << "PROBE humbucker notch on note " << notch.midiNote
+                      << ": " << deepestHz << " Hz\n";
+            expect(deepestHz > notch.lowHz && deepestHz < notch.highHz,
+                   "humbucker notch on note " + std::to_string(notch.midiNote)
+                       + " is at " + std::to_string(deepestHz)
+                       + " Hz, outside " + std::to_string(notch.lowHz) + ".."
+                       + std::to_string(notch.highHz) + " Hz");
+
+            // The local envelope is the aperture window on its own - the
+            // smooth trend the coil pair notches into.
+            const double envelope =
+                TestAccess::apertureChainMagnitude(
+                    engine, stringIndex, deepestHz, false);
+            const double depthDb = 20.0 * std::log10(
+                envelope / std::max(deepest, 1.0e-12));
+            std::cout << "PROBE humbucker notch depth on note "
+                      << notch.midiNote << ": " << depthDb << " dB\n";
+            expect(depthDb >= 10.0,
+                   "humbucker notch on note " + std::to_string(notch.midiNote)
+                       + " is only " + std::to_string(depthDb)
+                       + " dB below its local envelope");
+        }
+    }
+
+    // 2. The single coil is one coil and is untouched. Structurally the coil
+    // pair is not in its path at all; by measurement its partials sit where
+    // the shipping engine put them.
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickupType = 1.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(45, 0.8f);
+        StereoBuffer settle(512);
+        renderInto(engine, settle);
+        const int stringIndex = TestAccess::stringForNote(engine, 45);
+        expect(stringIndex >= 0, "note 45 did not take a string");
+        if (stringIndex >= 0)
+            expect(! TestAccess::coilPairActive(engine, stringIndex),
+                   "the single coil grew a second coil");
+
+        // Partial magnitudes in dB, measured on the shipping engine with this
+        // protocol. Partials past the 28th sit more than 90 dB below the
+        // strongest one, where a one-ulp difference in the window length is
+        // worth a decibel, so the comparison stops there.
+        struct Partial { int index; double decibels; };
+        const std::array<Partial, 16> reference {{
+            { 1, 16.4891 }, { 2, 22.4436 }, { 3, 24.5343 },
+            { 4, 24.7026 }, { 6, 22.5968 }, { 8, 15.7140 },
+            { 10, 5.52877 }, { 12, -2.75441 }, { 14, -7.49994 },
+            { 16, -13.3693 }, { 18, -29.0575 }, { 20, -41.6398 },
+            { 22, -57.8266 }, { 24, -67.7500 }, { 26, -60.3338 },
+            { 28, -65.1425 },
+        }};
+        const auto render = renderSingle(1.0f, 45, 0.70f, 1.0);
+        const int start = static_cast<int>(0.05 * sampleRate);
+        const int window = static_cast<int>(0.4 * sampleRate);
+        const double f0 = midiHz(45);
+        double worst = 0.0;
+        for (const auto& partial : reference)
+        {
+            const double measured = 20.0 * std::log10(
+                dftMagnitude(render.left, start, window, sampleRate,
+                             f0 * partial.index) + 1.0e-30);
+            worst = std::max(worst, std::abs(measured - partial.decibels));
+            expect(std::abs(measured - partial.decibels) < 0.2,
+                   "single-coil partial " + std::to_string(partial.index)
+                       + " moved from " + std::to_string(partial.decibels)
+                       + " dB to " + std::to_string(measured) + " dB");
+        }
+        std::cout << "PROBE single-coil partials moved at most " << worst
+                  << " dB\n";
+    }
+
+    // 3. The low-frequency recovery the pickup comb's weight was fitted for
+    // must survive. Measured on the shipping engine: 30.6608 dB.
+    {
+        const auto lowE = renderSingle(0.0f, 28, 0.80f, 1.5);
+        const double band = bandEnergyDb(lowE.left,
+                                         static_cast<int>(0.02 * sampleRate),
+                                         static_cast<int>(1.0 * sampleRate),
+                                         sampleRate, 60.0, 85.0);
+        std::cout << "PROBE open low E 60-85 Hz band: " << band << " dB\n";
+        expect(band > 30.6608 - 0.5,
+               "the open low E lost its 60-85 Hz band ("
+                   + std::to_string(band) + " dB against 30.6608 dB)");
+    }
+
+    // 4. Broadband balance. The humbucker has to stay the dark pickup of the
+    // pair: on a full eight-string chord its 2-16 kHz to sub-500 Hz ratio may
+    // not move more than 3 dB against the shipping engine's -68.369 dB, and
+    // in every octave band from 4 to 16 kHz on a low, a middle and a plain
+    // string it must stay at least 12 dB below the single coil (today's
+    // narrowest gap is 13.16 dB).
+    {
+        const auto chord = renderChord(0.0f, 0.80f, 1.5);
+        const int start = static_cast<int>(0.02 * sampleRate);
+        const int window = static_cast<int>(1.0 * sampleRate);
+        const double ratio =
+            bandEnergyDb(chord.left, start, window, sampleRate, 2000.0, 16000.0)
+            - bandEnergyDb(chord.left, start, window, sampleRate, 60.0, 500.0);
+        std::cout << "PROBE humbucker chord 2-16k/sub-500 ratio: " << ratio
+                  << " dB\n";
+        expect(std::abs(ratio - (-68.369)) < 3.0,
+               "the humbucker's broadband balance on a chord moved from "
+                   "-68.369 dB to " + std::to_string(ratio) + " dB");
+
+        struct Band { double lowHz; double highHz; };
+        const std::array<Band, 2> bands {{ { 4000.0, 8000.0 },
+                                           { 8000.0, 16000.0 } }};
+        // Octave-band energy on the shipping engine, humbucker then single
+        // coil, for notes 28, 40 and 64.
+        struct Reference { int midiNote; double humbucker[2]; double single[2]; };
+        const std::array<Reference, 3> shipping {{
+            { 28, { -86.559, -118.699 }, { -53.600, -96.302 } },
+            { 40, { -85.336, -116.775 }, { -56.185, -96.338 } },
+            { 64, { -68.007, -105.829 }, { -50.338, -92.672 } },
+        }};
+        for (const auto& reference : shipping)
+        {
+            const auto humbucker = renderSingle(0.0f, reference.midiNote,
+                                                0.80f, 1.5);
+            const auto single = renderSingle(1.0f, reference.midiNote,
+                                             0.80f, 1.5);
+            for (std::size_t b = 0; b < bands.size(); ++b)
+            {
+                const double dark = bandEnergyDb(
+                    humbucker.left, start, window, sampleRate,
+                    bands[b].lowHz, bands[b].highHz);
+                const double bright = bandEnergyDb(
+                    single.left, start, window, sampleRate,
+                    bands[b].lowHz, bands[b].highHz);
+                std::cout << "PROBE note " << reference.midiNote << " "
+                          << bands[b].lowHz << "-" << bands[b].highHz
+                          << " Hz: humbucker " << dark << " dB (was "
+                          << reference.humbucker[b] << "), single coil "
+                          << bright << " dB (was " << reference.single[b]
+                          << ")\n";
+                expect(dark < bright - 12.0,
+                       "the humbucker is no longer the dark pickup in the "
+                           + std::to_string(static_cast<int>(bands[b].lowHz))
+                           + " Hz band on note "
+                           + std::to_string(reference.midiNote) + " ("
+                           + std::to_string(dark) + " dB against "
+                           + std::to_string(bright) + " dB)");
+                // A loose guard on the size of the move, not a
+                // discriminator: the change runs from -4.93 to +8.81 dB, and
+                // its largest terms are on the bands the misplaced null used
+                // to sit in or beside.
+                expect(std::abs(dark - reference.humbucker[b]) < 12.0,
+                       "humbucker octave-band energy on note "
+                           + std::to_string(reference.midiNote) + " moved from "
+                           + std::to_string(reference.humbucker[b]) + " dB to "
+                           + std::to_string(dark) + " dB");
+                // The single coil is not on the path this step changed, so it
+                // is held to a tight bound - but only where the measurement
+                // means something. A band sitting 90-odd dB down is numerical
+                // floor rather than signal, and its decibel value does not
+                // reproduce between x86_64 and arm64, which contract
+                // multiply-adds differently: on Apple silicon the 8-16 kHz
+                // bands moved 0.80 and 1.19 dB while every band carrying real
+                // signal agreed to 0.02 dB. Tightening this further would only
+                // pin the floating-point noise of one architecture.
+                const double singleTolerance =
+                    reference.single[b] > -80.0 ? 0.5 : 2.5;
+                expect(std::abs(bright - reference.single[b]) < singleTolerance,
+                       "single-coil octave-band energy on note "
+                           + std::to_string(reference.midiNote) + " moved from "
+                           + std::to_string(reference.single[b]) + " dB to "
+                           + std::to_string(bright) + " dB");
+            }
+        }
+    }
+
+    // 5. The coil pair adds a tap inside the pickup chain, so the alias floor
+    // has to be re-measured against the bound the audit set: at least 150 dB
+    // below the spectral peak above 12 kHz on a full chord at velocity 1.0.
+    {
+        const auto chord = renderChord(0.32f, 1.0f, 1.0);
+        const int start = static_cast<int>(0.2 * sampleRate);
+        constexpr int window = 32768;
+        double peak = 0.0;
+        double top = 0.0;
+        for (double f = 40.0; f < 23500.0; f *= 1.0075)
+        {
+            const double magnitude = dftMagnitude(chord.left, start, window,
+                                                  sampleRate, f);
+            peak = std::max(peak, magnitude);
+            if (f > 12000.0)
+                top = std::max(top, magnitude);
+        }
+        const double floorDb = 20.0 * std::log10(peak / std::max(top, 1.0e-30));
+        std::cout << "PROBE alias floor above 12 kHz: " << floorDb
+                  << " dB below the spectral peak\n";
+        expect(floorDb > 150.0,
+               "the alias floor rose to " + std::to_string(floorDb)
+                   + " dB below the spectral peak");
+    }
+}
+
 // The instrument has to sound the same at every host rate, and the decay
 // envelope is where that is hardest: a per-sample constant anywhere inside the
 // string loop turns into a rate-dependent decay, because the number of samples
@@ -5377,12 +6664,15 @@ int main()
     testHammerOnLegatoContinuity();
     testTensionGlide();
     testPickupsToneAndModelMorph();
+    testHumbuckerTwoCoilNotch();
     testArtifactsControl();
     testAdvancedDispersionAndBodyConductance();
     testLowRegisterGuitarEnvelope();
     testOpenLowStringLevelBalance();
     testMonoStereoOutputField();
+    testVelocityDynamicRange();
     testVelocityExpression();
+    testPickingHandVariation();
     testMaterialAndControlAudibility();
     testNoiseComponentsAndSilence();
     testStringAllocationAndPolyphony();
@@ -5391,6 +6681,7 @@ int main()
     testPinchHarmonic();
     testSlideArticulation();
     testFrettingHandVibrato();
+    testVibratoIsAHandNotAnLfo();
     testDeadNote();
     testSustainPedal();
     testVibratoOnlyMovesFingeredStrings();
@@ -5398,6 +6689,7 @@ int main()
     testSympatheticBridgeCoupling();
     testPalmMuteContinuum();
     testStrumSpread();
+    testStrumTravelFollowsStroke();
     testResonanceControlRaisesSympatheticRing();
     testResonanceFeedbackSelfSustains();
     testPickGeometryFollowsFret();

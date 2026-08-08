@@ -74,6 +74,17 @@ struct YouKnow106TestAccess
         return engine.pwmVoltsTarget_;
     }
 
+    static float lfoValue(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.lfoValue_;
+    }
+
+    // The single delay attenuator, read before it is multiplied into anything.
+    static float lfoDelayLevel(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.lfoDelayLevel_;
+    }
+
     static float pwmHeld(const YouKnow106Engine& engine) noexcept
     {
         return engine.pwmVolts_;
@@ -220,6 +231,21 @@ struct YouKnow106TestAccess
                                    int slot) noexcept
     {
         return engine.voices_[static_cast<std::size_t>(slot)].filter.voltage[3];
+    }
+
+    // Pin 9 VCA IN: the filter output after C59, which is the value the voice
+    // amplifier multiplies. Reading it here rather than in the mix is the only
+    // way to see this node's DC at all -- three further couplings downstream
+    // of the multiply remove any that survives it.
+    static float vcaInputVolts(const YouKnow106Engine& engine,
+                               int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].vcaInputVolts;
+    }
+
+    static bool voiceActive(const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].active;
     }
 
     static void setFilterState(YouKnow106Engine& engine, int slot,
@@ -457,6 +483,44 @@ struct YouKnow106TestAccess
     static float dcoCv(const YouKnow106Engine& engine, int slot) noexcept
     {
         return engine.voices_[static_cast<std::size_t>(slot)].dcoCv;
+    }
+
+    // The chassis warm-up clock and the exponential the voices read off it.
+    static double thermalWarmupSeconds(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.thermalWarmupSeconds_;
+    }
+
+    static float thermalWarmupFraction(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.thermalWarmupFraction_;
+    }
+
+    static double internalRate(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.oversampledRate_;
+    }
+
+    // Advances the warm-up clock by calling the one function the render loop
+    // calls, once per internal sample. It reads `inverseOversampledRate_`, so
+    // the increment is whatever rate `prepare()` selected -- a fixture driving
+    // this is exercising the rate dependence, not assuming it away. It skips
+    // the surrounding render work and nothing else, which is what makes a
+    // fifteen-minute warm-up affordable in a unit test.
+    static void advanceThermalWarmup(YouKnow106Engine& engine,
+                                     long long internalSamples) noexcept
+    {
+        for (long long sample = 0; sample < internalSamples; ++sample)
+            engine.advanceThermalWarmup();
+    }
+
+    // The OTA headroom `renderVoice` solves the cascade with, read from the
+    // engine's own law rather than restated here.
+    static float otaHeadroomVolts(const YouKnow106Engine& engine,
+                                  const EngineParameters& parameters,
+                                  int cardIndex) noexcept
+    {
+        return engine.dynamicOtaHeadroomVolts(parameters, cardIndex);
     }
 
     static float dcoCvTarget(const YouKnow106Engine& engine,
@@ -3079,6 +3143,97 @@ void testModulationDelayRearmsForANewPhrase()
            "a new phrase started with the previous phrase's modulation depth");
 }
 
+void testModulationDelayGatesPulseWidthToo()
+{
+    // There is one LFO and one delay attenuator, and the CPU scales the value
+    // once before it distributes it. PWM therefore has to arrive gated exactly
+    // as the pitch and cutoff writes do, and as the panel LFO display already
+    // shows. Both distribution paths are checked: the scanned converter write
+    // that a held note exercises, and the idle-priming path setParameters runs
+    // when the output is empty.
+    constexpr double sampleRate = 48000.0;
+    // LFO RATE 0.75 is 7.4405 Hz, a 134.4 ms period, so a window shorter than
+    // one full cycle reads an alignment-dependent span rather than the depth:
+    // at t = 6.00 s, full release either way, an 83 ms probe reads 0.4129 and
+    // this 200 ms one reads 0.4166.
+    constexpr double windowSeconds = 0.200;
+    constexpr int windowSamples = static_cast<int>(windowSeconds * sampleRate);
+
+    auto parameters = plainPatch();
+    parameters.sawEnabled = false;
+    parameters.pulseEnabled = true;
+    parameters.pwmSource = PwmSource::Lfo;
+    parameters.pwmDepth = 1.0f;
+    parameters.lfoRate = 0.75f;
+    parameters.lfoDelay = 1.0f;
+
+    std::vector<float> left(blockSize, 0.0f);
+    std::vector<float> right(blockSize, 0.0f);
+    const auto advance = [&](YouKnow106Engine& engine, double seconds) {
+        const int samples = static_cast<int>(seconds * sampleRate);
+        for (int done = 0; done < samples; done += blockSize)
+            engine.process(left.data(), right.data(),
+                           std::min(blockSize, samples - done));
+    };
+    const auto dutySpanOverWindow = [&](YouKnow106Engine& engine) {
+        float lowest = 1.0f;
+        float highest = 0.0f;
+        for (int sample = 0; sample < windowSamples; ++sample)
+        {
+            engine.process(left.data(), right.data(), 1);
+            const float duty = YouKnow106TestAccess::pulseDuty(engine, 0);
+            lowest = std::min(lowest, duty);
+            highest = std::max(highest, duty);
+        }
+        return static_cast<double>(highest - lowest);
+    };
+
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    engine.setParameters(parameters);
+    engine.noteOn(60, 1.0f);
+
+    // DELAY 1.0 is a 4.36 s hold, so nothing at all has been released here.
+    advance(engine, 0.05);
+    expect(YouKnow106TestAccess::lfoDelayLevel(engine) == 0.0f,
+           "the delay envelope had already released at t = 0.05 s");
+    const double heldSpan = dutySpanOverWindow(engine);
+    expect(heldSpan < 0.005,
+           "the pulse width swept " + std::to_string(heldSpan)
+               + " while the delay envelope was still shut");
+
+    // Well past the hold and the stepped fade, where the gated and the raw
+    // value are the same float and the routing can make no difference.
+    advance(engine, 6.0 - 0.05 - windowSeconds);
+    expect(YouKnow106TestAccess::lfoDelayLevel(engine) == 1.0f,
+           "the delay envelope had not fully released at t = 6.00 s");
+    const double releasedSpan = dutySpanOverWindow(engine);
+    expectNear(releasedSpan, 0.4166, 0.4166 * 0.01,
+               "gating the converter write changed full-depth pulse-width "
+               "modulation");
+
+    // The same distribution runs on the host thread when a snapshot arrives
+    // with the output path empty. A patch change during a silence must prime
+    // the one shared PWM hold from the gated value as well, or the next attack
+    // starts at a duty the delay envelope has not authorised.
+    YouKnow106Engine idle;
+    idle.prepare(sampleRate, blockSize, false);
+    idle.setParameters(parameters);
+    // 30 ms of idle running puts the LFO on its positive peak with the delay
+    // envelope still shut, which is where the two values are furthest apart.
+    advance(idle, 0.030);
+    expect(YouKnow106TestAccess::lfoValue(idle) == 1.0f,
+           "the idle LFO did not reach its positive peak in 30 ms");
+    expect(YouKnow106TestAccess::lfoDelayLevel(idle) == 0.0f,
+           "the idle delay envelope had already released after 30 ms");
+    idle.setParameters(parameters);
+    // pwmControlVolts(0.5) is +3.3 V, the middle of the comparator's travel;
+    // the ungated peak would prime +0.6 V, the far end of it.
+    expectNear(YouKnow106TestAccess::pwmHeld(idle),
+               YouKnow106Engine::pwmControlVolts(0.5f), 1.0e-6,
+               "the idle snapshot primed the PWM hold from the ungated LFO");
+}
+
 void testScanTimingSurvivesAProcessingRateChange()
 {
     // Converter progress is stored in normalized passes, not internal samples.
@@ -3313,13 +3468,18 @@ void testQualityChangePreservesOutputCouplingTail()
     // decimator wait. Rebuilding HQ must not clear that rate-independent
     // state; an earlier implementation made a roughly -19 dBFS step here.
     //
-    // Six cards at full VCA LEVEL, not one at 99. Until C56/C50 were modelled
-    // this fixture leaned on the mixer's raw PWM DC reaching C17/C20 intact,
-    // which the real instrument's per-voice module-input coupling does not
-    // allow. What still charges the final capacitor is legitimate: each card's
-    // own 0.48 Hz coupling passes the note-on duty step as a slow transient,
-    // and the six sum. The single-voice residual (0.0025) no longer clears the
-    // guard below; the six-card sum leaves 0.026, five times it.
+    // Six cards at full VCA LEVEL, not one at 99. This fixture has now lost
+    // two DC paths to two modelled capacitors, and both losses were the point
+    // of modelling them. It first leaned on the mixer's raw PWM DC reaching
+    // C17/C20 intact, which C56/C50 stopped; it then leaned on each card's own
+    // 0.48 Hz module coupling passing the note-on duty step as a slow
+    // transient, six of them summing to 0.026, which C59 stops as well -- no
+    // per-voice offset of any kind now survives to the voice VCA. What is left
+    // charging the final capacitor is the gate closure itself: the Gate VCA
+    // shuts on a waveform that is not at zero, and the six cards' steps sum to
+    // 0.0037 at 100-120 ms, seven times the bound below. That is the smallest
+    // this fixture can legitimately get, because it is no longer reading any
+    // DC the model manufactures -- only the step a real gate leaves.
     constexpr double sampleRate = 48000.0;
     YouKnow106Engine switched;
     YouKnow106Engine reference;
@@ -3360,7 +3520,7 @@ void testQualityChangePreservesOutputCouplingTail()
            "the coupling-tail quality change never completed");
     const std::size_t compareFrom = changed.left.size()
                                   - static_cast<std::size_t>(sampleRate * 0.02);
-    expect(peakOf(unchanged.left, compareFrom) > 0.005,
+    expect(peakOf(unchanged.left, compareFrom) > 0.002,
            "the asymmetric-PWM fixture produced no coupling tail to preserve");
     double difference = 0.0;
     for (std::size_t index = compareFrom; index < changed.left.size(); ++index)
@@ -3376,7 +3536,7 @@ void testQualityChangePreservesOutputCouplingTail()
     }
     // C14/C12 and the switched HPF continue at the new internal rate, so the
     // complete tail need not be sample-identical to the unchanged reference.
-    // Resetting C17/C20 would move it by the reference tail itself (>0.005);
+    // Resetting C17/C20 would move it by the reference tail itself (>0.002);
     // this narrow bound still distinguishes preservation from a reset.
     expect(difference < 5.0e-4,
            "an HQ rebuild displaced the preserved analogue/output-coupling tail by "
@@ -3500,6 +3660,193 @@ void testModuleInputCouplingKeepsMixerDcOutOfTheVoiceVca()
                    + std::to_string(depth));
         previousRatio = ratio;
     }
+}
+
+void testFilterToVcaCouplingRemovesTheDutyDependentThump()
+{
+    // Module board pp. 18-19: pin 3 VCF OUT reaches pin 9 VCA IN only through
+    // C59 1 uF/50 V NP and the VR27/R108 network, and the service procedure
+    // trims VR30/25/20/15/10/5 through R112 2.2 MOhm at that same node for
+    // minimum thump. The filter core makes DC of its own -- the stage offsets
+    // sit inside the loop and an enabled pulse arrives duty asymmetric -- so
+    // without the capacitor the envelope multiplies a standing offset and
+    // leaves a sub-audio bump whose size walks with PWM duty.
+    //
+    // The capacitor is anchored; the load is not (R108 and VR27's setting are
+    // not in tree), so what is fenced here is the declared bracket rather than
+    // a value: 100 kOhm gives 1.59 Hz and 33 kOhm gives 4.82 Hz, both far
+    // enough below the lowest note that the audible consequence is the DC
+    // block itself and not the corner.
+    const double corner = YouKnow106Engine::vcaInputCouplingCornerHz();
+    expect(corner >= 1.59 && corner <= 4.83,
+           "the filter-to-VCA coupling corner left its declared 33-100 kOhm "
+           "bracket (got " + std::to_string(corner) + " Hz)");
+
+    constexpr double sampleRate = 48000.0;
+    constexpr int probeBlock = 64;
+    constexpr double renderSeconds = 8.0;
+    constexpr double releaseSeconds = 4.0;
+    // A cascade of four one-pole low-pass sections. The order is part of the
+    // measurand and not an implementation detail: on the same render at the
+    // same duty this engine reads -9.68 dB through one pole and -42.49 dB
+    // through four, so a "20 Hz low-pass" that does not say how steep says
+    // nothing.
+    struct SubAudioLowPass
+    {
+        std::array<double, 4> state {};
+        double process(double input, double g) noexcept
+        {
+            double signal = input;
+            for (auto& section : state)
+            {
+                const double v = (signal - section) * g / (1.0 + g);
+                const double low = v + section;
+                section = low + v;
+                signal = low;
+            }
+            return signal;
+        }
+    };
+
+    struct CouplingRun
+    {
+        float duty { 0.0f };
+        double vcaInputDcVolts { 0.0 };
+        double subAudioDb { 0.0 };
+    };
+
+    const auto measure = [&](float pwmPanel)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, probeBlock, true);
+
+        EngineParameters parameters;
+        parameters.sawEnabled = false;
+        parameters.pulseEnabled = true;
+        parameters.subLevel = 0.0f;
+        parameters.noiseLevel = 0.0f;
+        parameters.pwmSource = PwmSource::Manual;
+        parameters.pwmDepth = pwmPanel;
+        parameters.highPass = HighPassMode::One;
+        parameters.cutoff = 0.30f;
+        parameters.resonance = 0.75f;
+        parameters.envDepth = 0.35f;
+        parameters.keyFollow = 0.50f;
+        parameters.vcaMode = VcaMode::Envelope;
+        parameters.vcaLevel = 0.80f;
+        parameters.attack = 0.45f;
+        parameters.decay = 1.0f;
+        parameters.sustain = 1.0f;
+        parameters.release = 0.30f;
+        parameters.volume = 0.80f;
+        parameters.chorus = ChorusMode::Off;
+        // Unit Character 1.0 deliberately: the point of the fixture is that
+        // this DC is a property of the nominal calibrated model, and the card
+        // spread is left on so the assertion holds with it too.
+        parameters.calibration = 1.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.setParameters(parameters);
+        engine.noteOn(48, 1.0f);
+
+        const int total = static_cast<int>(sampleRate * renderSeconds);
+        const int releaseAt = static_cast<int>(sampleRate * releaseSeconds);
+        std::array<float, probeBlock> left {};
+        std::array<float, probeBlock> right {};
+
+        SubAudioLowPass lowPass;
+        const double g = std::tan(pi * 20.0 / sampleRate);
+        double sumOfSquares = 0.0;
+        double subAudioPeak = 0.0;
+        // A rectangular mean of the pin 9 node over the sustain window leaves
+        // up to 2.7 mV of the 130 Hz note behind, because the window is not an
+        // integer number of its periods -- more than the 1 mV the DC assertion
+        // is worth stating, and enough to fail it after a correct fix. A Hann
+        // weight over the same window reads 0.17 mV there, and leaves a real
+        // offset alone.
+        double weightedSum = 0.0;
+        double weight = 0.0;
+        bool sustained = true;
+        bool released = false;
+        for (int offset = 0; offset < total; offset += probeBlock)
+        {
+            if (!released && offset >= releaseAt)
+            {
+                engine.noteOff(48);
+                released = true;
+            }
+            engine.process(left.data(), right.data(), probeBlock);
+            for (int index = 0; index < probeBlock; ++index)
+            {
+                const double sample = left[static_cast<std::size_t>(index)];
+                sumOfSquares += sample * sample;
+                subAudioPeak = std::max(
+                    subAudioPeak, std::abs(lowPass.process(sample, g)));
+            }
+            const double seconds = static_cast<double>(offset) / sampleRate;
+            if (seconds >= 1.5 && seconds <= 3.0)
+            {
+                const double phase = (seconds - 1.5) / 1.5;
+                const double hann = 0.5 - 0.5 * std::cos(2.0 * pi * phase);
+                weightedSum +=
+                    hann * YouKnow106TestAccess::vcaInputVolts(engine, 0);
+                weight += hann;
+                sustained = sustained
+                         && YouKnow106TestAccess::voiceActive(engine, 0);
+            }
+        }
+        expect(sustained,
+               "the coupling fixture's voice stopped sounding inside the "
+               "1.5-3.0 s window, so the DC below is not a sustained node");
+        const double rms = std::sqrt(sumOfSquares / static_cast<double>(total));
+        expect(rms > 0.005,
+               "the filter-to-VCA coupling fixture produced no tone at panel "
+                   + std::to_string(pwmPanel));
+
+        CouplingRun run;
+        run.duty = YouKnow106TestAccess::pulseDuty(engine, 0);
+        run.vcaInputDcVolts = weightedSum / weight;
+        run.subAudioDb = 20.0 * std::log10(subAudioPeak / rms);
+        return run;
+    };
+
+    // (a) The node the amplifier multiplies carries no standing offset. This
+    // is the assertion that isolates the capacitor: every downstream coupling
+    // is on the far side of the multiply, so it cannot flatter this reading.
+    // Without C59 the same window reads +0.0428 V at panel 0.00, +0.0244 V at
+    // panel 0.50 and +0.0298 V at panel 1.00 -- 24 to 43 times the bound.
+    const CouplingRun open = measure(0.00f);
+    const CouplingRun middle = measure(0.50f);
+    const CouplingRun narrow = measure(1.00f);
+    expectNear(open.duty, 0.5043, 1.0e-3,
+               "the coupling fixture's PWM panel 0.00 left its 0.5043 duty");
+    expectNear(narrow.duty, 0.9436, 1.0e-3,
+               "the coupling fixture's PWM panel 1.00 left its 0.9436 duty");
+    for (const auto& run : { open, middle, narrow })
+    {
+        expect(std::abs(run.vcaInputDcVolts) < 1.0e-3,
+               "the voice amplifier is multiplying filter DC again at duty "
+                   + std::to_string(run.duty) + " (pin 9 mean "
+                   + std::to_string(run.vcaInputDcVolts) + " V)");
+    }
+
+    // (b) The audible consequence, at the duty that carries the most of it.
+    // The bump is an envelope-shaped excursion, so it is read as the peak of
+    // the whole render -- note-on and note-off transients included -- against
+    // broadband RMS. Without C59 this is -17.55 dB; with it, -30.25 dB. The
+    // remainder is not DC: it is the attack's own amplitude ramp, which is
+    // slower than the coupling's 4.82 Hz corner and is a real property of a
+    // note that starts, so the fence sits at 25 dB rather than at the 35 dB
+    // the plan first asked for, which no correct implementation reaches.
+    expect(narrow.subAudioDb <= -25.0,
+           "the sub-20 Hz thump at duty 0.9436 is back above 25 dB under RMS "
+           "(got " + std::to_string(narrow.subAudioDb) + " dB)");
+    // One-sided, and it does not bite today: blocking DC also removes the
+    // sub-5 Hz part of the note gate, so this figure must fall. It guards
+    // only against a coupling that trades the narrow duty for the wide one.
+    expect(open.subAudioDb <= -39.5,
+           "the sub-20 Hz thump at duty 0.5043 rose above its uncoupled "
+           "-42.49 dB (got " + std::to_string(open.subAudioDb) + " dB)");
 }
 
 void testFinalOutputCouplingRemovesManualPwmDc()
@@ -3752,6 +4099,167 @@ void testRailDroopTracksLoadAtOneWallClockRate()
            "oversampling on (" + std::to_string(ratio) + "x)");
 }
 
+void testThermalWarmupClockRunsToCompletionAtEveryRate()
+{
+    // The chassis warm-up is wall-clock physics: T(t) = 25 + 15(1 - e^-t/900),
+    // with the 15 C rise scaled by Unit Character. Nothing about it belongs to
+    // the numerical grid, and the comment on `voiceEnergyFollowerSeconds`
+    // in `YouKnow106Engine.h` says so in words for the supply follower --
+    // a quality setting is not allowed to change what the supply does.
+    //
+    // What this fences is the accumulator, not the law. The timer is advanced
+    // once per *internal* sample, so its increment is 5.208e-6 s at a 192 kHz
+    // internal rate. Held in a float, the running total's ULP overtakes that
+    // increment on a power-of-two boundary and every further addition rounds
+    // away: the clock stopped dead at 128.0 s, and which boundary caught it
+    // depended on the internal rate `prepare()` had selected -- 128.0 s with
+    // HQ on, 512.0 s with it off. The modelled chassis therefore froze at
+    // 26.99 C or at 31.51 C according to a quality switch, and never reached
+    // the 34.48 C its own law asks for.
+    struct Configuration
+    {
+        double hostRate;
+        bool highQuality;
+        const char* name;
+    };
+    // 48 kHz HQ on, 96 kHz HQ on and 192 kHz HQ on all run the engine at a
+    // 192000 Hz internal rate -- HQ targets a rate rather than multiplying the
+    // host's -- so the axis this comparison actually spans is the quality
+    // switch and the internal rate it selects. 48 kHz HQ off is the one that
+    // lands on the other boundary, and the three HQ-on entries additionally
+    // prove the reading does not move with the host rate.
+    const Configuration configurations[] = {
+        { 48000.0, true, "48 kHz HQ on" },
+        { 48000.0, false, "48 kHz HQ off" },
+        { 96000.0, true, "96 kHz HQ on" },
+        { 192000.0, true, "192 kHz HQ on" },
+    };
+
+    struct Mark
+    {
+        double seconds;
+        double celsius;
+    };
+    // The law's own values. 128 s and 300 s are on the rise; 900 s is the time
+    // constant, where the rise has run 1 - 1/e of its course.
+    const Mark marks[] = {
+        { 128.0, 26.9886 },
+        { 300.0, 29.2520 },
+        { 900.0, 34.4818 },
+    };
+    constexpr double celsiusTolerance = 0.05;
+    // Unit Character 1.0: getDisplayTemperatureC() scales the rise by
+    // `calibration`, so the targets above are that setting's law and no
+    // other's. The spatial gradient is off because the headroom target below
+    // is the chassis mean's -- with the gradient on, card 0 sits about 4 C
+    // hotter and reads 6.6542 V.
+    const auto fixtureParameters = [] {
+        auto parameters = plainPatch();
+        parameters.calibration = 1.0f;
+        parameters.enableSpatialThermalGradient = false;
+        return parameters;
+    };
+
+    constexpr std::size_t markCount = std::size(marks);
+    constexpr std::size_t configurationCount = std::size(configurations);
+    std::array<std::array<double, markCount>, configurationCount> readings {};
+    std::array<double, configurationCount> headroomAt900 {};
+
+    for (std::size_t index = 0; index < configurationCount; ++index)
+    {
+        const auto& configuration = configurations[index];
+        YouKnow106Engine engine;
+        engine.prepare(configuration.hostRate, blockSize,
+                       configuration.highQuality);
+        const auto parameters = fixtureParameters();
+        engine.setParameters(parameters);
+
+        const double internalRate =
+            YouKnow106TestAccess::internalRate(engine);
+        long long advanced = 0;
+        for (std::size_t mark = 0; mark < markCount; ++mark)
+        {
+            const long long target =
+                std::llround(marks[mark].seconds * internalRate);
+            YouKnow106TestAccess::advanceThermalWarmup(engine,
+                                                       target - advanced);
+            advanced = target;
+            readings[index][mark] = engine.getDisplayTemperatureC();
+            expectNear(readings[index][mark], marks[mark].celsius,
+                       celsiusTolerance,
+                       std::string("the warm-up clock does not reach the "
+                                   "modelled temperature at t = ")
+                           + std::to_string(static_cast<int>(
+                                 marks[mark].seconds))
+                           + " s at " + configuration.name);
+        }
+
+        headroomAt900[index] =
+            YouKnow106TestAccess::otaHeadroomVolts(engine, parameters, 0);
+        // 2 Vt(T) / stageAttenuation at 34.4818 C, in module-node volts. It is
+        // the number the cascade is actually solved with, so the 2.5% error a
+        // frozen clock left in it was a real error on hot patches.
+        expectNear(headroomAt900[index], 6.5687, 0.001,
+                   std::string("the modelled OTA headroom at 900 s is not the "
+                               "warm chassis value at ")
+                       + configuration.name);
+    }
+
+    for (std::size_t mark = 0; mark < markCount; ++mark)
+    {
+        double lowest = readings[0][mark];
+        double highest = readings[0][mark];
+        for (std::size_t index = 1; index < configurationCount; ++index)
+        {
+            lowest = std::min(lowest, readings[index][mark]);
+            highest = std::max(highest, readings[index][mark]);
+        }
+        expect(highest - lowest <= 0.01,
+               std::string("the quality setting moves the modelled chassis "
+                           "temperature at t = ")
+                   + std::to_string(static_cast<int>(marks[mark].seconds))
+                   + " s (spread " + std::to_string(highest - lowest)
+                   + " C across 48 kHz HQ on/off, 96 kHz HQ on and 192 kHz "
+                     "HQ on)");
+    }
+
+    // The clock the fixture drove has to be the clock a render advances, or
+    // everything above is a statement about a test friend. Two seconds of
+    // silence at 48 kHz HQ on against the same count of internal samples
+    // driven, compared bit for bit -- both the timer and the exponential.
+    {
+        constexpr int hostSamples = 96000;
+        YouKnow106Engine rendered;
+        rendered.prepare(48000.0, blockSize, true);
+        rendered.setParameters(fixtureParameters());
+        renderExact(rendered, hostSamples);
+
+        YouKnow106Engine driven;
+        driven.prepare(48000.0, blockSize, true);
+        driven.setParameters(fixtureParameters());
+        const long long internalSamples = static_cast<long long>(
+            std::llround(hostSamples
+                         * (YouKnow106TestAccess::internalRate(driven)
+                            / 48000.0)));
+        YouKnow106TestAccess::advanceThermalWarmup(driven, internalSamples);
+
+        expect(YouKnow106TestAccess::thermalWarmupSeconds(rendered)
+                   == YouKnow106TestAccess::thermalWarmupSeconds(driven),
+               "the driven warm-up clock is not the one the render loop "
+               "advances (rendered "
+                   + std::to_string(
+                         YouKnow106TestAccess::thermalWarmupSeconds(rendered))
+                   + " s, driven "
+                   + std::to_string(
+                         YouKnow106TestAccess::thermalWarmupSeconds(driven))
+                   + " s)");
+        expect(YouKnow106TestAccess::thermalWarmupFraction(rendered)
+                   == YouKnow106TestAccess::thermalWarmupFraction(driven),
+               "the driven warm-up fraction is not the one the render loop "
+               "computes");
+    }
+}
+
 void testEnvelopeAndGateModes()
 {
     constexpr double sampleRate = 48000.0;
@@ -4001,6 +4509,124 @@ void testChorusNoiseIsPresentAndDefeatable()
            "the delay lines still hiss with their noise switched out");
 }
 
+void testIdleOutputFloorCarriesTheMn3009NoiseRow()
+{
+    // What the line-noise constant is worth at the jacks. The circuit suite
+    // fences the recovered wet line against the MN3009's 0.2 mVrms row; this
+    // one fences the number a listener meets, and ties the two together so
+    // neither can be satisfied on its own.
+    //
+    // The fixture is pinned rather than derived from plainPatch(), because the
+    // floor scales with two panel controls and with nothing else: VOLUME 0.80,
+    // VCA LEVEL 0.80, CHORUS NOISE 1.0, Unit Character 1.0, no note ever
+    // played, HQ on at a 48 kHz host rate so the chorus runs at its 192 kHz
+    // internal rate. RMS of both channels over 4 s after a 2 s settle.
+    constexpr double sampleRate = 48000.0;
+
+    const auto idleFloorDbfs = [&](ChorusMode mode) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        EngineParameters parameters;
+        parameters.volume = 0.80f;
+        parameters.vcaLevel = 0.80f;
+        parameters.chorusNoise = 1.0f;
+        parameters.calibration = 1.0f;
+        parameters.chorus = mode;
+        engine.setParameters(parameters);
+        render(engine, static_cast<int>(sampleRate * 2.0));
+        const auto rendered = render(engine, static_cast<int>(sampleRate * 4.0));
+        double energy = 0.0;
+        for (std::size_t index = 0; index < rendered.left.size(); ++index)
+            energy += static_cast<double>(rendered.left[index]) * rendered.left[index]
+                    + static_cast<double>(rendered.right[index]) * rendered.right[index];
+        const double meanSquare =
+            energy / static_cast<double>(rendered.left.size() * 2);
+        return 10.0 * std::log10(meanSquare + 1.0e-40);
+    };
+
+    // With the chorus switched out this fixture renders bit-exact zero, so the
+    // BBD line noise is the only thing in the floor below and the figure is
+    // fully determined by `independentLineRandomAmplitude`.
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        EngineParameters parameters;
+        parameters.volume = 0.80f;
+        parameters.vcaLevel = 0.80f;
+        parameters.chorusNoise = 1.0f;
+        parameters.calibration = 1.0f;
+        parameters.chorus = ChorusMode::Off;
+        engine.setParameters(parameters);
+        const auto rendered = render(engine, static_cast<int>(sampleRate * 2.0));
+        double peak = 0.0;
+        for (std::size_t index = 0; index < rendered.left.size(); ++index)
+            peak = std::max({ peak,
+                              static_cast<double>(std::abs(rendered.left[index])),
+                              static_cast<double>(std::abs(rendered.right[index])) });
+        expect(peak == 0.0,
+               "the idle fixture is no longer silent with the chorus switched "
+               "out, so its floor is not the BBD line noise alone (peak "
+                   + std::to_string(peak) + ")");
+    }
+
+    const double floorOne = idleFloorDbfs(ChorusMode::One);
+    const double floorTwo = idleFloorDbfs(ChorusMode::Two);
+    expectNear(floorOne, -77.85, 0.5,
+               "the idle output floor left the MN3009 noise row");
+
+    // One target, not two. `settingsFor` gives modes I and II the same wet gain
+    // and the same sweep -- only the rate differs, and the rate-proportional
+    // noise candidate is off by default -- so a floor that differed by mode
+    // would mean something other than the line noise had moved.
+    expectNear(floorTwo, floorOne, 0.1,
+               "chorus I and II no longer render the same idle floor");
+
+    // The two measurements have to move together. Both are compared against
+    // what this engine rendered before the constant was derived, which is a
+    // recorded number and not a reference render: once the constant moves
+    // there is no pre-change engine left to render against. If a gain were
+    // moved somewhere in the output path instead of the line noise, the floor
+    // would land and the wet line would not.
+    constexpr double floorBeforeDbfs = -63.4409;
+    constexpr double wetLineBeforeVrms = 1.0611e-3;
+
+    constexpr double lineRate = 192000.0;
+    Chorus chorus;
+    chorus.prepare(lineRate);
+    const double recover = static_cast<double>(Chorus::nodeVoltsPerUnit)
+        / (static_cast<double>(Chorus::dryMixGain)
+           * static_cast<double>(Chorus::wetToDryGain));
+    for (int index = 0; index < static_cast<int>(lineRate * 0.5); ++index)
+    {
+        float left = 0.0f;
+        float right = 0.0f;
+        chorus.process(0.0f, ChorusMode::One, 1.0f, left, right);
+    }
+    double lineEnergy = 0.0;
+    const int lineWindow = static_cast<int>(lineRate * 2.0);
+    for (int index = 0; index < lineWindow; ++index)
+    {
+        float left = 0.0f;
+        float right = 0.0f;
+        chorus.process(0.0f, ChorusMode::One, 1.0f, left, right);
+        const double a = static_cast<double>(left) * recover;
+        const double b = static_cast<double>(right) * recover;
+        lineEnergy += a * a + b * b;
+    }
+    // Broadband rather than A-weighted: the circuit suite owns the weighted
+    // figure, and the whole path from the injection point is linear, so the
+    // two read the same delta to the digit.
+    const double wetLineNow =
+        std::sqrt(lineEnergy / static_cast<double>(lineWindow * 2));
+
+    const double floorDelta = floorOne - floorBeforeDbfs;
+    const double lineDelta = 20.0 * std::log10(wetLineNow / wetLineBeforeVrms);
+    expectNear(floorDelta, lineDelta, 0.5,
+               "the idle floor moved " + std::to_string(floorDelta)
+                   + " dB while the wet line moved " + std::to_string(lineDelta)
+                   + " dB, so something other than the BBD line noise moved");
+}
+
 void testMainNoiseDensityIsProcessingRateInvariant()
 {
     // The hardware noise source has a continuous-time spectral density. A
@@ -4120,6 +4746,262 @@ void testSampleRateAndOversamplingConsistency()
            "the two configurations do not share an onset (deep "
                + std::to_string(deep) + ", shallow "
                + std::to_string(shallow) + "), so the padding is wrong");
+}
+
+void testResonanceDoesNotMoveTheRenderedCorner()
+{
+    // The circuit suite checks the control law; this checks the coefficient
+    // the render actually consumes, so a correction fixed in the pure
+    // function and never wired into audio still fails. `voice.filterG` is the
+    // integrator coefficient the cascade runs on, memoised behind an exact
+    // equality on its own inputs, and the corner it stands for is
+    // atan(g) * internal rate / pi.
+    //
+    // Every source is off, the envelope is out of the cutoff path and Unit
+    // Character is zero, so nothing but the frequency correction couples
+    // RESONANCE to that coefficient at a fixed CUTOFF. Below the oscillation
+    // threshold the cascade carries no limit cycle, so there is no droop to
+    // correct and the five settings must coincide. They spread +0.00 / +8.70
+    // / +32.91 / +80.42 / +117.53 cents at converter code 6272 before this
+    // was derived rather than fitted.
+    constexpr double sampleRate = 48000.0;
+    const auto corner = [&](float cutoffPanel, float resonance) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.sawEnabled = false;
+        parameters.pulseEnabled = false;
+        parameters.subLevel = 0.0f;
+        parameters.noiseLevel = 0.0f;
+        parameters.envDepth = 0.0f;
+        parameters.keyFollow = 0.0f;
+        parameters.calibration = 0.0f;
+        parameters.cutoff = cutoffPanel;
+        parameters.resonance = resonance;
+        engine.setParameters(parameters);
+        engine.noteOn(60, 1.0f);
+        render(engine, static_cast<int>(sampleRate * 0.25));
+        const double internalRate =
+            sampleRate * static_cast<double>(engine.getOversamplingFactor());
+        return std::atan(static_cast<double>(
+                   YouKnow106TestAccess::filterG(engine, 0)))
+             * internalRate / pi;
+    };
+
+    struct Code { const char* name; float panel; double hertz; };
+    // Panel byte times 128 is the converter code, so these are bytes 30, 49
+    // and 90 -- the service code among them.
+    for (const auto& code : { Code { "3840", 30.0f / 127.0f, 56.76 },
+                              Code { "6272", 49.0f / 127.0f, 248.05 },
+                              Code { "11520", 90.0f / 127.0f, 5918.5 } })
+    {
+        const double reference = corner(code.panel, 0.0f);
+        expectNear(reference, code.hertz, code.hertz * 0.002,
+                   std::string("the rendered corner at converter code ")
+                       + code.name + " is not the one the control law asks for");
+        for (const float resonance : { 0.00f, 0.30f, 0.50f, 0.70f, 0.80f })
+            expectNear(1200.0 * std::log2(corner(code.panel, resonance)
+                                          / reference),
+                       0.0, 10.0,
+                       std::string("resonance ") + std::to_string(resonance)
+                           + " moves the rendered corner at converter code "
+                           + code.name);
+    }
+}
+
+void testVelocityScalesTheEnvelopeIntoTheFilter()
+{
+    // Velocity is an extension -- the modelled hardware has no velocity input
+    // and `velocityDepth` is 0 by default -- but when a player turns it up it
+    // has to do what a dynamics control does. It scales the ENV amount into
+    // the VCF, the only path this instrument has from the envelope to cutoff,
+    // by the same gain the amplifier already applies, so a quieter note is a
+    // note whose filter envelope opened less far.
+    //
+    // The envelope is pinned along with the panel, because the probe is at
+    // t = 0.3 s: a decaying envelope would put the three velocities at three
+    // points of one decay rather than at three depths. CUTOFF 0.30 with ENV
+    // 0.30 keeps the realised corner inside the audio band at every velocity;
+    // at the 0.50/0.40 pair this fixture was first written for, velocity 1.0
+    // lands the corner at 32.8 kHz and the audible spectrum saturates.
+    constexpr double sampleRate = 48000.0;
+    constexpr int probeAt = 14400;   // t = 0.3 s
+    constexpr int fftSize = 32768;
+
+    struct Take
+    {
+        double highBandDb { 0.0 };
+        double cornerHz { 0.0 };
+    };
+
+    const auto fixture = [] {
+        auto parameters = plainPatch();
+        parameters.cutoff = 0.30f;
+        parameters.resonance = 0.30f;
+        parameters.envDepth = 0.30f;
+        parameters.attack = 0.0f;
+        parameters.decay = 1.0f;
+        parameters.sustain = 1.0f;
+        parameters.release = 0.0f;
+        parameters.vcaMode = VcaMode::Envelope;
+        parameters.calibration = 0.0f;
+        return parameters;
+    };
+
+    const auto measure = [&](float velocity, float velocityDepth) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = fixture();
+        parameters.velocityDepth = velocityDepth;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.setParameters(parameters);
+        engine.noteOn(48, velocity);
+
+        std::vector<float> left(probeAt + fftSize, 0.0f);
+        std::vector<float> right(probeAt + fftSize, 0.0f);
+        Take take;
+        bool probed = false;
+        for (int offset = 0; offset < probeAt + fftSize; offset += blockSize)
+        {
+            const int count =
+                std::min(blockSize, probeAt + fftSize - offset);
+            engine.process(left.data() + offset, right.data() + offset, count);
+            if (!probed && offset + count >= probeAt)
+            {
+                // The coefficient the render actually consumes, not a
+                // restatement of the control law: a routing fixed in the
+                // target computation and never reaching the cascade fails
+                // here.
+                take.cornerHz =
+                    std::atan(static_cast<double>(
+                        YouKnow106TestAccess::filterG(engine, 0)))
+                    * sampleRate
+                    * static_cast<double>(engine.getOversamplingFactor()) / pi;
+                probed = true;
+            }
+        }
+
+        // A 32768-point Blackman-Harris window from t = 0.3 s, evaluated on a
+        // 10 Hz grid from 20 Hz to 8 kHz, and the fraction of that energy at
+        // or above 1 kHz. Stating the estimator matters: the same render
+        // reads a different number on a different band or grid.
+        std::vector<double> windowed(fftSize);
+        for (int n = 0; n < fftSize; ++n)
+        {
+            const double phase = 2.0 * pi * static_cast<double>(n)
+                               / static_cast<double>(fftSize - 1);
+            windowed[static_cast<std::size_t>(n)] =
+                (0.35875 - 0.48829 * std::cos(phase)
+                 + 0.14128 * std::cos(2.0 * phase)
+                 - 0.01168 * std::cos(3.0 * phase))
+                * static_cast<double>(left[static_cast<std::size_t>(probeAt + n)]);
+        }
+        double totalEnergy = 0.0;
+        double highEnergy = 0.0;
+        for (double hertz = 20.0; hertz <= 8000.5; hertz += 10.0)
+        {
+            const double omega = 2.0 * pi * hertz / sampleRate;
+            const std::complex<double> step { std::cos(-omega),
+                                              std::sin(-omega) };
+            std::complex<double> turn { 1.0, 0.0 };
+            std::complex<double> sum { 0.0, 0.0 };
+            for (int n = 0; n < fftSize; ++n)
+            {
+                sum += windowed[static_cast<std::size_t>(n)] * turn;
+                turn *= step;
+            }
+            const double energy = std::norm(sum);
+            totalEnergy += energy;
+            if (hertz >= 1000.0)
+                highEnergy += energy;
+        }
+        expect(totalEnergy > 0.0,
+               "the velocity fixture rendered no energy at all at velocity "
+                   + std::to_string(velocity));
+        take.highBandDb =
+            10.0 * std::log10(highEnergy / totalEnergy + 1.0e-30);
+        return take;
+    };
+
+    // (1) The audible one. Before the routing the three are identical to
+    // 0.0001 dB -- a span of 0.00 dB, the whole of gap 5 -- because velocity
+    // reached the amplifier and nothing else. With it they read
+    // -83.62 / -54.31 / -16.33 dB.
+    // (2) The seam one. Before, all three sit at 1985.03 Hz; after,
+    // 189.97 / 458.19 / 1985.03 Hz, a span of 4062 cents.
+    const Take soft = measure(0.2f, 1.0f);
+    const Take middle = measure(0.5f, 1.0f);
+    const Take hard = measure(1.0f, 1.0f);
+
+    expect(soft.highBandDb < middle.highBandDb
+               && middle.highBandDb < hard.highBandDb,
+           "the high-band energy fraction is not monotone in velocity ("
+               + std::to_string(soft.highBandDb) + " / "
+               + std::to_string(middle.highBandDb) + " / "
+               + std::to_string(hard.highBandDb) + " dB)");
+    expect(hard.highBandDb - soft.highBandDb >= 30.0,
+           "velocity moves the spectrum by only "
+               + std::to_string(hard.highBandDb - soft.highBandDb)
+               + " dB of high-band energy fraction, so the dynamics control "
+                 "is still very nearly a pure gain");
+
+    expect(soft.cornerHz < middle.cornerHz && middle.cornerHz < hard.cornerHz,
+           "the rendered corner is not monotone in velocity ("
+               + std::to_string(soft.cornerHz) + " / "
+               + std::to_string(middle.cornerHz) + " / "
+               + std::to_string(hard.cornerHz) + " Hz)");
+    const double cents = 1200.0 * std::log2(hard.cornerHz / soft.cornerHz);
+    expect(cents >= 3000.0,
+           "velocity moves the corner the cascade runs on by only "
+               + std::to_string(cents) + " cents");
+
+    // (3) The faithfulness one, and the reason this can be an extension at
+    // all. There is no pre-change render lock in these suites to compare
+    // against, and a hard-coded hash of a float render would be a constant
+    // about this machine's libm rather than about the engine. The property
+    // that reference would have proved is proved directly instead, from the
+    // two exact identities `velocityGain` has: it is exactly 1.0f when
+    // `velocityDepth` is 0, whatever the velocity, and exactly 1.0f at
+    // velocity 1.0, whatever the depth. So the faithful default cannot hear
+    // velocity, and the loudest note cannot hear the extension -- both bit
+    // for bit, on a patch that runs every source through the filter, the
+    // amplifier and the chorus.
+    const auto renderFor = [&](float velocity, float velocityDepth) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = fixture();
+        parameters.pulseEnabled = true;
+        parameters.subLevel = 0.3f;
+        parameters.noiseLevel = 0.2f;
+        parameters.keyFollow = 0.5f;
+        parameters.chorus = ChorusMode::One;
+        parameters.calibration = 1.0f;
+        parameters.velocityDepth = velocityDepth;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.setParameters(parameters);
+        engine.noteOn(48, velocity);
+        return renderExact(engine, static_cast<int>(sampleRate * 0.5));
+    };
+
+    const Render faithful = renderFor(1.0f, 0.0f);
+    expect(peakOf(faithful.left, 0) > 0.0,
+           "the velocity faithfulness patch rendered silence");
+    for (const float velocity : { 0.2f, 0.5f })
+    {
+        const Render quiet = renderFor(velocity, 0.0f);
+        expect(maximumDifference(faithful.left, quiet.left) == 0.0
+                   && maximumDifference(faithful.right, quiet.right) == 0.0,
+               "velocityDepth 0.0 is no longer the faithful default: velocity "
+                   + std::to_string(velocity)
+                   + " changed the render the hardware would have made");
+    }
+    const Render extended = renderFor(1.0f, 1.0f);
+    expect(maximumDifference(faithful.left, extended.left) == 0.0
+               && maximumDifference(faithful.right, extended.right) == 0.0,
+           "the velocity extension moved a full-velocity note, where its own "
+           "gain is exactly one");
 }
 
 void testSelfOscillationMatchesTheServiceTrim()
@@ -4895,6 +5777,7 @@ int main()
     testPortamentoRateFollowsItsControl();
     testOscillatorSurvivesMoreThanOneCyclePerSample();
     testModulationDelayRearmsForANewPhrase();
+    testModulationDelayGatesPulseWidthToo();
     testScanTimingSurvivesAProcessingRateChange();
     testUnisonStackGlidesFromOneOrigin();
     testQualityChangeWaitsForTheOutputPathToEmpty();
@@ -4902,10 +5785,12 @@ int main()
     testQualityChangePreservesOutputCouplingTail();
     testQualityChangePreservesFreeRunningClocks();
     testModuleInputCouplingKeepsMixerDcOutOfTheVoiceVca();
+    testFilterToVcaCouplingRemovesTheDutyDependentThump();
     testFinalOutputCouplingRemovesManualPwmDc();
     testHardStopSilencesTheWholeOutputPath();
     testComponentDriftRateIsIndependentOfOversampling();
     testRailDroopTracksLoadAtOneWallClockRate();
+    testThermalWarmupClockRunsToCompletionAtEveryRate();
     testTransposeReachesSoundingVoices();
     testFirstGlidedNoteStartsAtItsOwnPitch();
     testVoicesRetireWithComponentToleranceApplied();
@@ -4917,9 +5802,12 @@ int main()
     testGlideKeepsTheRampContinuous();
     testChorusSweepTrajectoryDefault();
     testChorusNoiseIsPresentAndDefeatable();
+    testIdleOutputFloorCarriesTheMn3009NoiseRow();
     testChorusRateNoiseReproducesTheMeasuredModeDelta();
     testMainNoiseDensityIsProcessingRateInvariant();
     testSampleRateAndOversamplingConsistency();
+    testResonanceDoesNotMoveTheRenderedCorner();
+    testVelocityScalesTheEnvelopeIntoTheFilter();
     testSelfOscillationMatchesTheServiceTrim();
     testVcfStageOffsetsBelongToUnitCharacter();
     testVcfStageOffsetsAreLiveBeforeTheFirstSample();

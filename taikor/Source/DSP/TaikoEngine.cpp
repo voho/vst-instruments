@@ -146,7 +146,14 @@ constexpr float edgeOrderFactor = 0.12f;
 // climbs as the stroke walks out towards the rim.
 constexpr float edgeBoostBase = 0.30f;
 constexpr float edgeBoostSlope = 1.80f;
-constexpr float continuumCalibration = 26.0f;
+// What the continuum's level is worth against the head's own modal receptance.
+// In seconds, because the receptance it multiplies is a velocity per unit force
+// and the level it produces is not: this constant carries the sample period the
+// calibration used to inherit from mode.drive. It is the same number it has
+// always been - 26.0 / 48 kHz - so nothing about a 48 kHz session moved when it
+// was written this way; what went with it is the rate dependence of everything
+// above the crossover.
+constexpr float continuumCalibration = 26.0f / 48000.0f;
 
 // Impact speed in m/s at the softest and hardest MIDI velocity. The bottom is a
 // ghost stroke - a bachi tip barely leaving the head - and the top is a
@@ -627,6 +634,149 @@ void TaikoEngine::solveAxisymmetricBranch (float diagonalB, float diagonalR,
     vectorR = isBatter ? 0.0f : 1.0f;
 }
 
+float TaikoEngine::columnStiffnessFactor (float x) noexcept
+{
+    // A rigidly terminated column of air driven at one end presents the
+    // stiffness rho c omega cot(omega l / c) per unit area, which is
+    // (rho c^2 / l) * x cot x with x = omega l / c. The x -> 0 limit of that
+    // is the lumped spring the model used to be, so this factor is exactly one
+    // where the cavity is short against the wavelength and falls away as the
+    // body gets deep against it. The caller supplies l: for a two-headed drum
+    // it is half the body, because the volume-changing motion is symmetric
+    // about the midplane and that plane is a velocity node.
+    constexpr float quarterWave = 0.5f * piFloat;
+
+    if (! (x > 0.0f))
+        return 1.0f;
+
+    // At the quarter-wave the column is resonant and its input stiffness is
+    // zero: the head sees a pressure release and the air stops tying the two
+    // heads together. Above it cot goes negative, which is a real thing - the
+    // air is mass-like there - but it is a mass this model has nowhere to put,
+    // because the enclosed air is a stiffness and not a degree of freedom, and
+    // past the second pole at x = pi the expression turns positive again on a
+    // branch that means something else entirely. So the correction is taken
+    // over the one branch on which a lumped stiffness has a meaning, and above
+    // it the answer is the one the engine already knows how to report: an
+    // uncoupled pair of heads, which is what measure() describes at Air
+    // Coupling zero. The truncation is continuous, because x cot x reaches
+    // zero at the quarter-wave rather than jumping to it.
+    if (x >= quarterWave)
+        return 0.0f;
+
+    return x * std::cos (x) / std::sin (x);
+}
+
+float TaikoEngine::volumeBranchOmega (const DrumState& drum,
+                                       float cavityStiffness) noexcept
+{
+    // The (0,1) pair, built exactly as measure() and buildVoiceModes build it:
+    // no stiffness stretch, because the stretch is normalised at this mode, and
+    // the air load's shape factor is one here for the same reason.
+    const auto lambda = static_cast<float> (membraneModes()[0].besselZero);
+
+    const float idealBatter =
+        drum.waveSpeed * lambda / (2.0f * piFloat * drum.radius);
+    const float idealResonant =
+        drum.resonantWaveSpeed * lambda / (2.0f * piFloat * drum.radius);
+    const float loadBatter = 1.0f / std::sqrt (
+        1.0f + 0.85f * airDensity * drum.radius / drum.batterDensity);
+    const float loadResonant = 1.0f / std::sqrt (
+        1.0f + 0.85f * airDensity * drum.radius / drum.resonantDensity);
+
+    const float omegaBatter = 2.0f * piFloat * idealBatter * loadBatter;
+    const float omegaResonant = 2.0f * piFloat * idealResonant * loadResonant;
+
+    const float cavity = cavityStiffness * 4.0f / (lambda * lambda);
+    const float diagonalB = omegaBatter * omegaBatter + cavity / drum.batterDensity;
+    const float diagonalR = omegaResonant * omegaResonant + cavity / drum.resonantDensity;
+    const float offDiagonal =
+        cavity / std::sqrt (drum.batterDensity * drum.resonantDensity);
+
+    float eigenvalue = 0.0f;
+    float vectorB = 0.0f;
+    float vectorR = 0.0f;
+    // Branch zero is the higher eigenvalue, and with a positive off-diagonal
+    // its eigenvector has both heads moving the same way in the symmetrised
+    // coordinates - that is the branch that changes the body's volume, and it
+    // is the only one the enclosed air stiffens.
+    solveAxisymmetricBranch (diagonalB, diagonalR, offDiagonal, 0, eigenvalue,
+                             vectorB, vectorR);
+    return eigenvalue > 0.0f ? std::sqrt (eigenvalue) : 0.0f;
+}
+
+TaikoEngine::AxisymmetricPair
+TaikoEngine::solveAxisymmetricPair (const DrumState& drum) noexcept
+{
+    // The (0,1) pair, built exactly as buildVoiceModes builds it. No stiffness
+    // stretch on either branch: the stretch is taken relative to the (0,1) mode
+    // and this is the (0,1) mode, so it is unity by construction - which is the
+    // whole point of normalising it there. The air load's shape factor is one
+    // here for the same reason.
+    const auto lambda = static_cast<float> (membraneModes()[0].besselZero);
+
+    const float idealBatter =
+        drum.waveSpeed * lambda / (2.0f * piFloat * drum.radius);
+    const float idealResonant =
+        drum.resonantWaveSpeed * lambda / (2.0f * piFloat * drum.radius);
+    const float loadBatter = 1.0f / std::sqrt (
+        1.0f + 0.85f * airDensity * drum.radius / drum.batterDensity);
+    const float loadResonant = 1.0f / std::sqrt (
+        1.0f + 0.85f * airDensity * drum.radius / drum.resonantDensity);
+
+    const float omegaBatter = 2.0f * piFloat * idealBatter * loadBatter;
+    const float omegaResonant = 2.0f * piFloat * idealResonant * loadResonant;
+
+    const float cavity = drum.cavityStiffness * 4.0f / (lambda * lambda);
+    const float diagonalB = omegaBatter * omegaBatter + cavity / drum.batterDensity;
+    const float diagonalR = omegaResonant * omegaResonant + cavity / drum.resonantDensity;
+    const float offDiagonal =
+        cavity / std::sqrt (drum.batterDensity * drum.resonantDensity);
+
+    AxisymmetricPair pair;
+    float upperEigen = 0.0f;
+    float lowerEigen = 0.0f;
+    solveAxisymmetricBranch (diagonalB, diagonalR, offDiagonal, 0, upperEigen,
+                             pair.upperBatter, pair.upperResonant);
+    solveAxisymmetricBranch (diagonalB, diagonalR, offDiagonal, 1, lowerEigen,
+                             pair.lowerBatter, pair.lowerResonant);
+
+    pair.upperHz = std::sqrt (std::max (upperEigen, 0.0f)) / (2.0f * piFloat);
+    pair.lowerHz = std::sqrt (std::max (lowerEigen, 0.0f)) / (2.0f * piFloat);
+
+    // Only the branches the batter head moves in are worth reporting, because
+    // those are the only ones a stroke on the batter head can excite. The
+    // eigenvectors are unit length, so a batter share this small is forty
+    // decibels down and is not what anyone hears.
+    //
+    // It matters at zero Air Coupling, where the two heads are independent and
+    // one branch belongs entirely to the far head. With the resonant head slack
+    // it is also the lower of the two, so the readout named a silent 88.5 Hz as
+    // the fundamental while the drum actually sounded 92.9 Hz - and named the
+    // batter head's own mode the breathing mode, which on an open body does not
+    // exist at all.
+    constexpr float audibleShare = 0.01f;
+    pair.upperAudible = std::abs (pair.upperBatter) > audibleShare;
+    pair.lowerAudible = std::abs (pair.lowerBatter) > audibleShare;
+
+    if (pair.upperAudible && pair.lowerAudible)
+    {
+        pair.breathingHz = pair.upperHz;
+        pair.loadedFundamentalHz = pair.lowerHz;
+    }
+    else
+    {
+        // One branch only: the drum has a single axisymmetric mode you can
+        // hear, and both figures are it. Reporting the same number twice is the
+        // honest description of a body with no cavity to split it.
+        const float audible = pair.upperAudible ? pair.upperHz : pair.lowerHz;
+        pair.breathingHz = audible;
+        pair.loadedFundamentalHz = audible;
+    }
+
+    return pair;
+}
+
 std::uint32_t TaikoEngine::hash32 (std::uint32_t value) noexcept
 {
     value ^= value >> 16;
@@ -895,30 +1045,12 @@ TaikoEngine::DrumState TaikoEngine::resolveDrum (int octaveOffset) const noexcep
     return resolveDrumFor (applied_, 2.0f * pitchBend_, octaveOffset);
 }
 
-TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
-                                                    float pitchBendSemitones,
-                                                    int octaveOffset) noexcept
+void TaikoEngine::resolveDrumGeometry (const EngineParameters& applied,
+                                       float radiusFactor,
+                                       float tensionOctaveFactor,
+                                       float tensionPitchFactor,
+                                       DrumState& drum) noexcept
 {
-    const auto applied = sanitise (raw);
-    DrumState drum;
-
-    const auto octave = static_cast<float> (
-        std::clamp (octaveOffset, lowestOctaveOffset, highestOctaveOffset));
-
-    // An octave can be bought either by halving the drum or by quadrupling the
-    // tension; both land on exactly the same pitch, and octaveBody chooses the
-    // mixture. They do not sound the same, because the air load, the cavity
-    // stiffness and the radiation efficiency all depend on the radius and none
-    // of them scale with the tension.
-    const float body = applied.octaveBody;
-    const float radiusFactor = std::exp2 (-body * octave);
-    const float tensionOctaveFactor = std::exp2 (2.0f * (1.0f - body) * octave);
-
-    // The pitch control and the wheel are head tension, because that is what
-    // tuning a drum is.
-    const float semitones = applied.pitch + pitchBendSemitones;
-    const float tensionPitchFactor = std::exp2 (2.0f * semitones / 12.0f);
-
     drum.radius = clampFloat (0.5f * applied.headDiameter * radiusFactor,
                               radiusFloor, radiusCeiling);
     // The ceiling has to clear the geometry the controls can actually ask for,
@@ -1044,8 +1176,253 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
 
     // Cavity stiffness per unit area. The per-mode 4/lambda^2 volume weighting
     // is applied where the modes are built, since it belongs to the mode.
-    drum.cavityStiffness = applied.cavityCoupling * airDensity * soundSpeed
-                         * soundSpeed / drum.depth;
+    //
+    // rho c^2 / L is the omega -> 0 limit of a cavity, and this instrument runs
+    // out of that limit inside its own range: c/2L is 212 Hz on the factory
+    // drum and 139 Hz at the deepest body, which is well under the top of the
+    // resolved bank. The enclosed air is really a column, and the volume
+    // changing motion of a two-headed drum is symmetric about the midplane, so
+    // that plane is a velocity node and each head drives a rigidly terminated
+    // column of length L/2. Its exact input stiffness is the lumped value times
+    // x cot x with x = omega L / 2c.
+    //
+    // That makes the eigenproblem implicit: the stiffness depends on the
+    // frequency it sets. It is solved here, once per drum, and never in the
+    // render loop, which sees only the converged number.
+    //
+    // The map from the factor to the factor the branch it produces asks for is
+    // monotone decreasing - a stiffer cavity raises the branch, which raises x,
+    // which lowers the stiffness - and it lands in [0, 1]. So it has exactly
+    // one fixed point, it is bracketed by the endpoints, and it is why the
+    // correction is self-limiting rather than runaway: lowering the frequency
+    // lowers x, which brings the factor back up.
+    //
+    // It is solved by bisection on that bracket rather than by relaxing the
+    // iteration towards it, which was the first thing tried. Damped iteration
+    // converges over most of the controls and does not converge everywhere: the
+    // map's slope reaches about -100 where the cavity dominates the branch and
+    // the factor is small, because omega then goes as the square root of the
+    // factor while x cot x is falling steeply towards the quarter-wave, and no
+    // fixed relaxation is stable against that. Over the full control scan a
+    // half-damped iteration failed to settle in 0.4 % of configurations and
+    // stopped wherever its iteration cap left it, which would have made the
+    // reported factor a number about the solver. Bisection on a monotone
+    // bracket cannot do that, and it converges in a fixed count.
+    const float lumpedCavity = applied.cavityCoupling * airDensity * soundSpeed
+                             * soundSpeed / drum.depth;
+
+    {
+        const auto asked = [&drum, lumpedCavity] (float factor)
+        {
+            const float omega = volumeBranchOmega (drum, lumpedCavity * factor);
+            return columnStiffnessFactor (omega * drum.depth / (2.0f * soundSpeed));
+        };
+
+        // Zero unless the bracket opens, which is the case where even an
+        // unstiffened head already sits past the column's quarter-wave: there
+        // is then no frequency at which this cavity stiffens this drum at all,
+        // and the honest answer is the decoupled pair the readout already
+        // describes at Air Coupling zero.
+        float factor = 0.0f;
+
+        if (asked (0.0f) > 0.0f)
+        {
+            // Twenty-four halvings takes a unit bracket to six parts in a
+            // hundred million, which is where a float runs out either way, so
+            // the answer is a function of the drum rather than of the iteration
+            // count. It is also what this costs: the solve roughly doubles the
+            // time a drum resolve takes - 1.4 to 2.9 microseconds, measured -
+            // and a drum resolve happens when a control moves or the wheel
+            // passes a tenth of a cent, at most once per block, never per
+            // sample.
+            float low = 0.0f;
+            float high = 1.0f;
+
+            for (int iteration = 0; iteration < 24; ++iteration)
+            {
+                const float middle = 0.5f * (low + high);
+                (asked (middle) > middle ? low : high) = middle;
+            }
+
+            factor = 0.5f * (low + high);
+        }
+
+        drum.cavityColumnFactor = clampFloat (factor, 0.0f, 1.0f);
+    }
+
+    drum.cavityStiffness = lumpedCavity * drum.cavityColumnFactor;
+}
+
+TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
+                                                    float pitchBendSemitones,
+                                                    int octaveOffset) noexcept
+{
+    const auto applied = sanitise (raw);
+    DrumState drum;
+
+    const auto octave = static_cast<float> (
+        std::clamp (octaveOffset, lowestOctaveOffset, highestOctaveOffset));
+
+    // An octave can be bought either by halving the drum or by quadrupling the
+    // tension, and octaveBody chooses the mixture. They do not sound the same,
+    // because the air load, the cavity stiffness and the radiation efficiency
+    // all depend on the radius and none of them scale with the tension.
+    const float body = applied.octaveBody;
+
+    // The pitch control and the wheel are head tension, because that is what
+    // tuning a drum is.
+    const float semitones = applied.pitch + pitchBendSemitones;
+    const float tensionPitchFactor = std::exp2 (2.0f * semitones / 12.0f);
+
+    // Halving the drum and quadrupling the tension used to be written down as
+    // landing on exactly the same pitch, and that was only ever true of the
+    // ideal membrane frequency - a quantity that is never audible on its own.
+    // What the drum sounds is the lower branch of the air-loaded axisymmetric
+    // pair, and the air load goes as rho_air a / sigma while the cavity goes as
+    // rho c^2 / L. Neither of them scales with the transform, so the two ways
+    // of buying an octave land a long way apart in the pitch a listener names,
+    // and the transform that doubles the ideal frequency does not double the
+    // real one. Measured on the shipping code the octave steps at Octave Body
+    // 1.0 were 1545 / 1443 / 1353 / 1286 / 1244 cents - a keyboard whose bottom
+    // octave is nearly three semitones wide.
+    //
+    // So the transform is solved for rather than written down: how much of it,
+    // in octaves, puts the loaded fundamental exactly one octave above the one
+    // this drum sounds untransformed. The mixture is untouched - the solve
+    // moves along the axis Octave Body already chose, so at Octave Body 0 the
+    // radius still never moves and at 1.0 the tension still never does - and it
+    // is the principle the head's stiffness stretch already follows and the
+    // README already states: a drum is tuned by the pitch it sounds.
+    //
+    // The loaded fundamental is monotone increasing in the amount of transform
+    // applied, because more tension and less radius both raise it and the
+    // mixture moves them together, so a bisection on a bracket that starts at
+    // the transform the engine used to apply and is widened until it straddles
+    // the answer is well posed. Twenty halvings of that bracket is a millionth
+    // of an octave, four thousandths of a cent at the top of the keyboard,
+    // against a clause the test states in twenties of a cent.
+    //
+    // Inside the loop is the head and the air behind it; the shell, the mounting
+    // and the microphones are computed once, from the answer. It is not cheap -
+    // resolving all six octaves goes from 15.7 to 179.8 microseconds, measured -
+    // but a drum resolve happens when a control moves or the wheel passes a
+    // tenth of a cent, which is at most once per block and never per sample.
+    const auto transformed = [&applied, body, tensionPitchFactor] (float amount,
+                                                                   DrumState& state)
+    {
+        resolveDrumGeometry (applied, std::exp2 (-body * amount),
+                             std::exp2 (2.0f * (1.0f - body) * amount),
+                             tensionPitchFactor, state);
+    };
+
+    // The transform is the identity at octave zero for every Octave Body, so
+    // there is nothing to solve there and the reference the solve would need is
+    // the drum itself. Taking that case out keeps the reference octave
+    // bit-identical rather than nearly so.
+    if (octaveOffset == 0)
+    {
+        transformed (0.0f, drum);
+    }
+    else
+    {
+        // The bracket is carried as a pair of resolved drums rather than as a
+        // pair of numbers, and the one that wins is the drum that is handed on.
+        // Re-resolving the winning share at the end instead would be the same
+        // arithmetic written twice, and the two copies do not always round the
+        // same way: where the sounding pitch steps - see below - a difference in
+        // the last place of the exponentials is enough to put the final resolve
+        // the other side of the step from the trial that chose it, and the drum
+        // that ships is then not the drum that was measured.
+        DrumState lowState;
+        DrumState highState;
+
+        transformed (0.0f, lowState);
+        const float untransformed =
+            solveAxisymmetricPair (lowState).loadedFundamentalHz;
+
+        if (! (untransformed > 0.0f))
+        {
+            transformed (octave, drum);
+        }
+        else
+        {
+            // Measured in shares of the transform the engine used to apply, so
+            // that the bracket runs from none of it to all of it and beyond
+            // whichever way up the keyboard this is going, and the function is
+            // increasing in the share in both directions.
+            const auto reached = [&transformed, untransformed, octave] (
+                                     float share, DrumState& state)
+            {
+                transformed (share * octave, state);
+                const float sounded =
+                    solveAxisymmetricPair (state).loadedFundamentalHz;
+                return sounded > 0.0f
+                         ? std::log2 (sounded / untransformed) / octave
+                         : 0.0f;
+            };
+
+            float low = 0.0f;
+            float high = 1.0f;
+            // reached(0) is zero by construction, and lowState already holds it.
+            float atLow = 0.0f;
+            float atHigh = reached (high, highState);
+
+            // Widened rather than assumed. A share of one is the old behaviour,
+            // and over the control space it overshoots far more often than it
+            // undershoots - but the cavity does not scale with the tension, so
+            // at Octave Body 0 it holds the branch back and there are drums
+            // that need slightly more than all of it.
+            for (int widen = 0; widen < 4 && atHigh < 1.0f; ++widen)
+            {
+                low = high;
+                atLow = atHigh;
+                lowState = highState;
+                high *= 2.0f;
+                atHigh = reached (high, highState);
+            }
+
+            DrumState middleState;
+
+            for (int iteration = 0; iteration < 20; ++iteration)
+            {
+                const float middle = 0.5f * (low + high);
+                const float here = reached (middle, middleState);
+
+                if (here < 1.0f)
+                {
+                    low = middle;
+                    atLow = here;
+                    lowState = middleState;
+                }
+                else
+                {
+                    high = middle;
+                    atHigh = here;
+                    highState = middleState;
+                }
+            }
+
+            // Whichever end of the converged bracket is nearer, rather than its
+            // midpoint. Wherever the sounding pitch is continuous in the
+            // transform the two ends agree to a millionth of an octave and this
+            // is the same answer either way.
+            //
+            // Where they do not agree, the bracket has not failed to converge -
+            // it has found a step in the quantity being solved for, and the drum
+            // is saying that the octave it is being asked for does not exist. At
+            // the transform where the air column reaches its quarter-wave the
+            // two heads stop being tied together; the lower branch becomes the
+            // far head's alone, a stroke on the batter head can no longer sound
+            // it, and what the drum sounds steps up to the batter head's own
+            // mode. There is a band of pitches on the far side of that step
+            // which no amount of transform reaches. The near side of it is the
+            // closest an octave can be got to, and taking the midpoint would
+            // land past it - which at the worst corner of the control space
+            // would be a larger error than the transform this replaces makes.
+            drum = std::abs (atLow - 1.0f) <= std::abs (atHigh - 1.0f)
+                 ? lowState : highState;
+        }
+    }
 
     drum.radiationScale = radiationCalibration;
 
@@ -1382,7 +1759,19 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
     int count = 0;
     float peakMagnitude = 1.0e-12f;
     // The head's own share of that, which is what the high-frequency continuum
-    // is measured against.
+    // is measured against - but carrying the sample rate back out of it.
+    //
+    // mode.drive is a per-sample integration gain: it holds a 1/rate because
+    // the resonator it feeds accumulates a force over a sample period. The
+    // continuum integrates nothing - it multiplies a noise sequence whose
+    // variance is already normalised to unity - so calibrating it against
+    // mode.drive handed it a sample rate it has no use for, and the whole
+    // region lost 6 dB per doubling of the host's clock. Multiplying the rate
+    // back in measures the continuum against the modal receptance
+    // shapeStrike * batterShare / (geometricMass * omega), a velocity per unit
+    // force and a property of the drum alone, observed through the same
+    // microphone factor the modes are observed through. The microphone factor
+    // has to stay: it is the continuum's only distance dependence.
     float membranePeak = 1.0e-12f;
 
     // A real head is never quite uniform, so each degenerate pair sits a
@@ -1560,8 +1949,12 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
 
                 peakMagnitude = std::max (peakMagnitude,
                                           std::abs (mode.drive * mode.micLeft));
+                // Times the rate, so that what the continuum is calibrated
+                // against is the receptance rather than the per-sample
+                // integration gain. See the note on membranePeak's
+                // declaration.
                 membranePeak = std::max (membranePeak,
-                                         std::abs (mode.drive * mode.micLeft));
+                                         std::abs (mode.drive * rate * mode.micLeft));
             }
         }
         else
@@ -1662,8 +2055,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                               std::abs (mode.drive * mode.micRight)));
                 membranePeak = std::max (
                     membranePeak,
-                    std::max (std::abs (mode.drive * mode.micLeft),
-                              std::abs (mode.drive * mode.micRight)));
+                    std::max (std::abs (mode.drive * rate * mode.micLeft),
+                              std::abs (mode.drive * rate * mode.micRight)));
             }
         }
     }
@@ -2539,6 +2932,27 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
         mode.resonator.a1 = -2.0 * poleRadius * std::cos (omega);
         mode.resonator.a2 = poleRadius * poleRadius;
         mode.resonator.b0 = std::sin (omega);
+
+        // The state is deliberately left where it is. Rewriting a1 and a2 under
+        // a running (y1, y2) does move the next output by da1*y[n-1] +
+        // da2*y[n-2], and it is tempting to read the pair's amplitude and phase
+        // out of the old pole and write them back at the new one so that the
+        // coefficient change is continuous in the output rather than only in
+        // the poles. That was prototyped and measured, and it is not worth
+        // having. What the rewrite actually leaves behind, measured over 30 to
+        // 80 ms after a full-velocity Don with the head's continuum silenced
+        // and an eight-pole high-pass run from the strike so that nothing in
+        // the number is a window artefact, is -119.9 dB above 1.2 kHz against
+        // a stroke at -18.3 dB, and Tension Mod 0 to 1 moves it by -0.00 dB.
+        // Rotating the state does not lower that. It raises it, above 4 kHz
+        // from -183.2 dB to -164.4 dB, because the shift it would then be
+        // tracking exactly is a peak follower over the modal states and is
+        // itself corner-rich at audio rate, and a state that lags the retune
+        // smooths that where a state that follows it does not. It also moves
+        // the 400 Hz to 16 kHz band enough across four sample rates to fail
+        // testTheContinuumDoesNotDependOnTheSampleRate. The measurement is
+        // kept in testTheGlideDoesNotBrightenTheTopOfTheSpectrum; the reasoning
+        // is under gap 14 in the second pass of the plan.
     }
 
     // The continuum is the same head above where its modes can be told apart,
@@ -3216,6 +3630,7 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
     result.arealDensityKgPerSquareMetre = drum.batterDensity;
     result.waveSpeedMetresPerSecond = drum.waveSpeed;
     result.headStiffnessParameter = drum.stiffnessBatter;
+    result.cavityStiffnessFactor = drum.cavityColumnFactor;
     // No stiffness stretch on either of these: the stretch is taken relative to
     // the (0,1) mode and this is the (0,1) mode, so it is unity by
     // construction. That is the whole point of normalising it there - the pitch
@@ -3224,65 +3639,20 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
     result.idealFundamentalHz =
         drum.waveSpeed * lambda / (2.0f * piFloat * drum.radius);
 
-    const float idealResonant =
-        drum.resonantWaveSpeed * lambda / (2.0f * piFloat * drum.radius);
-    const float loadShape = 1.0f;
-    const float loadBatter = 1.0f
-        / std::sqrt (1.0f + 0.85f * loadShape * airDensity * drum.radius / drum.batterDensity);
-    const float loadResonant = 1.0f
-        / std::sqrt (1.0f + 0.85f * loadShape * airDensity * drum.radius / drum.resonantDensity);
-
-    const float omegaBatter = 2.0f * piFloat * result.idealFundamentalHz * loadBatter;
-    const float omegaResonant = 2.0f * piFloat * idealResonant * loadResonant;
-
-    const float cavity = drum.cavityStiffness * 4.0f / (lambda * lambda);
-    const float diagonalB = omegaBatter * omegaBatter + cavity / drum.batterDensity;
-    const float diagonalR = omegaResonant * omegaResonant + cavity / drum.resonantDensity;
-    const float offDiagonal =
-        cavity / std::sqrt (drum.batterDensity * drum.resonantDensity);
-
-    // Solved through the same routine the render path uses, so the readout and
-    // the audio cannot disagree about the drum - including at zero coupling,
-    // where the pair is degenerate.
-    float upperEigen = 0.0f, upperB = 0.0f, upperR = 0.0f;
-    float lowerEigen = 0.0f, lowerB = 0.0f, lowerR = 0.0f;
-    solveAxisymmetricBranch (diagonalB, diagonalR, offDiagonal, 0, upperEigen,
-                             upperB, upperR);
-    solveAxisymmetricBranch (diagonalB, diagonalR, offDiagonal, 1, lowerEigen,
-                             lowerB, lowerR);
-
-    const float upper = std::sqrt (std::max (upperEigen, 0.0f));
-    const float lower = std::sqrt (std::max (lowerEigen, 0.0f));
-
-    // Only the branches the batter head moves in are worth reporting, because
-    // those are the only ones a stroke on the batter head can excite. The
-    // eigenvectors are unit length, so a batter share this small is forty
-    // decibels down and is not what anyone hears.
-    //
-    // It matters at zero Air Coupling, where the two heads are independent and
-    // one branch belongs entirely to the far head. With the resonant head
-    // slack it is also the lower of the two, so the readout named a silent
-    // 88.5 Hz as the fundamental while the drum actually sounded 92.9 Hz - and
-    // named the batter head's own mode the breathing mode, which on an open
-    // body does not exist at all.
+    // Both branches, solved through the same routine the render path and the
+    // octave transform use, so the readout, the audio and the keyboard cannot
+    // disagree about the drum - including at zero coupling, where the pair is
+    // degenerate. The transform in particular is now solved against exactly the
+    // number reported here, which is what makes the keyboard's octave and the
+    // panel's fundamental the same claim rather than two that have to be kept
+    // in step by hand.
+    const auto pair = solveAxisymmetricPair (drum);
+    // The tail sweep below solves every mode's own branches, including this
+    // one's, so it needs the threshold rather than the pair's own verdict.
     constexpr float audibleShare = 0.01f;
-    const bool upperAudible = std::abs (upperB) > audibleShare;
-    const bool lowerAudible = std::abs (lowerB) > audibleShare;
 
-    if (upperAudible && lowerAudible)
-    {
-        result.breathingModeHz = upper / (2.0f * piFloat);
-        result.loadedFundamentalHz = lower / (2.0f * piFloat);
-    }
-    else
-    {
-        // One branch only: the drum has a single axisymmetric mode you can
-        // hear, and both figures are it. Reporting the same number twice is
-        // the honest description of a body with no cavity to split it.
-        const float audible = upperAudible ? upper : lower;
-        result.breathingModeHz = audible / (2.0f * piFloat);
-        result.loadedFundamentalHz = audible / (2.0f * piFloat);
-    }
+    result.breathingModeHz = pair.breathingHz;
+    result.loadedFundamentalHz = pair.loadedFundamentalHz;
 
     // How long a branch rings, with its own radiation share. Two branches of the
     // same mode differ a great deal on a sealed drum, because only the one that

@@ -563,7 +563,7 @@ crossfade over roughly 4 ms.
 | 16 | `releaseNoise` | Release noise | 0..100%, default 40% |
 | 17 | `muteDamping` | Mute damping | 0..100%, default 55% |
 | 18 | `bendTime` | Bend time | pitch-wheel travel time, 40 ms..2 s, default 280 ms |
-| 19 | `velocity` | Velocity response | 0..100% multi-dimensional response, default 65% |
+| 19 | `velocity` | Velocity response | 0..100% multi-dimensional response, default 85% |
 | 20 | `output` | Output level | -24..+6 dB, default -6 dB |
 | 21 | `artifacts` | Artifacts | clean bypass..ring/contact/saddle detail, default 18% |
 | 22 | `outputMode` | Output field | **Mono** / Stereo divided-pickup field |

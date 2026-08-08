@@ -21,10 +21,37 @@ constexpr float telecasterBridgePickupMetres = 0.028f;
 constexpr float lesPaulNeckPickupMetres = 0.155f;
 constexpr float telecasterNeckPickupMetres = 0.163f;
 
-// Effective magnetic aperture windows: a humbucker averages string motion
-// across two coils, a narrow single coil across a much shorter window.
-constexpr float humbuckerApertureMetres = 0.0210f;
-constexpr float singleCoilApertureMetres = 0.0048f;
+// Magnetic aperture of one coil, and the distance between a humbucker's two.
+//
+// Both pickups sense the string through the same narrow per-bobbin window -
+// a magnet or slug of about this diameter - and what separates them is that a
+// humbucker sums two of those windows at two different distances from the
+// bridge. The sum of two sensors separated by d has magnitude
+// |cos(pi f d / c)| and first nulls at c/2d, where c = 2 L f_open is the
+// string's transverse wave speed. A single window of width W nulls at c/W
+// instead, most of an octave too high: modelling the humbucker as one 21 mm
+// rectangle put string 2's first null at 5507 Hz where a 19 mm coil pair puts
+// it at 3043 Hz, against the 3000 Hz Lemme measures on a low E and the
+// 4000 Hz he measures on the A.
+//
+// The two coils also sit at two different distances from the bridge, so each
+// sees its own position comb. Writing the pair out shows that this needs no
+// second comb tap: with the position comb evaluated at the pickup's centre,
+// the sum of the two coils factors exactly into that comb times the two-point
+// sum above, so one extra fractional read per pickup buys both.
+constexpr float coilApertureMetres = 0.0048f;
+constexpr float humbuckerCoilSpacingMetres = 0.0190f;
+
+// Weight on the second coil, which sets how deep the pair's dip goes:
+// (1-b)/(1+b), 12 dB here. It is below one for the reason `pickupCombDepth`
+// below is, and on the same reading - measured pickup responses notch by
+// something like 6 to 15 dB rather than vanishing, because no real pickup is
+// a pair of point sensors reading one plane of motion. The screw coil sits
+// further from the string than the slug coil and reads quieter for it, so the
+// two contributions cannot cancel however well the geometry lines up. Same
+// value as `pickupCombDepth` and the same evidence behind it, kept a separate
+// constant because the two nulls are different mechanisms.
+constexpr float humbuckerCoilBalance = 0.60f;
 
 // Weight on the delayed tap of the pickup position comb.
 //
@@ -41,8 +68,11 @@ constexpr float singleCoilApertureMetres = 0.0048f;
 // the fundamental most. Against the dry reference recordings this recovered
 // 4.7 dB in the 60-85 Hz band on an open low E and 5.4 dB on a muted power
 // chord, which is the hollow, bodyless low register the references do not
-// have. Explicitly modelling the humbucker's two coils was tried instead and
-// measured no better than this, at two extra fractional reads per string.
+// have. Explicitly modelling the humbucker's two coils was tried instead of
+// this weight and measured no better on that objective - which is a statement
+// about the low register only. The two coils are modelled above as well as
+// this weight, because they set the notch frequency, which the objective that
+// comparison used did not score.
 constexpr float pickupCombDepth = 0.60f;
 
 // Loaded electrical resonance of the two anchor pickup circuits (coil
@@ -86,6 +116,37 @@ constexpr float handDipQ = 0.70f;
 // second - inaudible before the next beat of a moderate tempo - to 13 dB down,
 // which is the sustain the string's own fitted T60 was always asking for.
 constexpr float polarisationCouplingPerRoundTrip = 0.04f;
+
+// The strum. Three constants, all of them about the wrist rather than the
+// string.
+//
+// `strumReAnchorSeconds` is the pre-roll every voice of a chord carries. A
+// chord window is 35 ms and a host block is typically 5 to 10 ms, so one
+// chord's note-ons routinely arrive across several `process()` calls; without
+// a pre-roll the first arrival has already sounded by the time the string the
+// pick actually starts from is known, and no causal scheduler can put the
+// later arrival ahead of it. Holding every voice back by this much buys a
+// window in which any of them may still turn out to be the anchor. It is a
+// fixed time rather than a block count, so onsets do not depend on the host's
+// buffer size, and it is charged only when Strum Spread is non-zero.
+constexpr double strumReAnchorSeconds = 0.020;
+
+// The pick enters the string plane at `v0` and accelerates through the
+// strings, so `v(x) = sqrt(v0^2 + 2 a x)` and the crossing intervals compress
+// as `dt_k = D / v(x_k)`. Written against the entry speed, with the strings
+// evenly spaced, `v(x_k) = v0 sqrt(1 + u k)` for `u = 2 a D / v0^2` - one
+// dimensionless number for the whole stroke. Requiring the last of the seven
+// crossings to take 0.70 of the first gives `1 / sqrt(1 + 6u) = 0.70`, so
+// `u = 1/(6*0.49) - 1/6`.
+constexpr float strumAcceleration = 0.173469388f;
+
+// How much of that the wrist does not repeat. The acceleration is a property
+// of one stroke and is drawn once per chord; the per-crossing draw is what is
+// left over, and it is small for a reason the shape itself sets - adjacent
+// crossings differ by only 3 to 8 %, so a per-gap jitter of the same size
+// would erase the compression rather than humanise it.
+constexpr float strumAccelerationSigma = 0.15f;
+constexpr float strumCrossingSigma = 0.005f;
 
 constexpr float steelDensity = 7850.0f;      // kg/m^3
 constexpr float steelYoungModulus = 2.0e11f; // Pa
@@ -331,6 +392,8 @@ EngineParameters ElectryEngine::sanitise(const EngineParameters& parameters) noe
 
     result.resonanceDepth = clampUnit(parameters.resonanceDepth,
                                       defaults.resonanceDepth);
+    result.vibratoDepth = clampUnit(parameters.vibratoDepth,
+                                    defaults.vibratoDepth);
 
     if (! std::isfinite(parameters.bendTimeSeconds))
         result.bendTimeSeconds = defaults.bendTimeSeconds;
@@ -687,15 +750,55 @@ ElectryEngine::makeVelocityProfile(float velocity) const noexcept
 {
     const float v = clampf(velocity, 0.0f, 1.0f);
     const float response = smoothedParameters_.velocityAmount;
-    const float curve = std::pow(v, 1.35f);
 
     VelocityProfile profile;
-    profile.amplitude = lerp(1.0f, 0.06f + 0.94f * curve, response);
+
+    // Level is the plectrum's deflection, and the deflection is linear in the
+    // hand's force. A plectrum holding the string at fraction p of its length
+    // needs a lateral force F = T y0 / (p (1-p) L) to hold it at y0, so
+    // y0 = F p (1-p) L / T is linear in F, and a magnetic pickup senses
+    // displacement. Reading MIDI velocity as that force gives an amplitude
+    // that is linear in velocity, and the Velocity Response control is then
+    // the exponent rather than a blend: it scales the decibel range linearly
+    // and is an exact no-op at zero, because v_eff^0 is one for every stroke.
+    // The 0.05 floor is the lightest stroke that still slips off the pick.
+    const float force = 0.05f + 0.95f * v;
+    profile.amplitude = std::pow(force, response);
+
+    // Effort stays the stroke's force: it is what decides how far the string
+    // swings, and thence how hard it meets the frets (`collision`) and how far
+    // it stretches itself sharp (`tension`).
     profile.effort = lerp(0.65f, v, response);
-    profile.effortCurve = smoothStep(profile.effort);
-    profile.brightness = lerp(0.20f, 2.10f, profile.effortCurve);
+
+    // The contact spectrum does not follow that force, and the coupling
+    // between the two is what used to flatten the top of the keyboard: the
+    // extra level went into partials that had already decayed by the time the
+    // attack was over. The string leaves the plectrum at the kink velocity
+    // F / Z set by the string's transverse wave impedance Z, and it has to
+    // travel a slip distance made of two parts - a grip depth d that the
+    // stroke does not change, and the pick tip's own elastic recoil F / k. The
+    // slip time is therefore
+    //     t_s = Z d / F + Z / k,
+    // whose second term is a floor no amount of force gets under: the
+    // plectrum's stiffness bounds the contact spectrum, not the hand. Writing
+    // s for the share of the slip that is pick recoil at a full-force stroke,
+    // s = (F_max / k) / (d + F_max / k), the release rate normalised to its
+    // full-force value is
+    //     rate = 1 / ((1 - s) / F + s).
+    // A 0.73 mm celluloid medium has a tip stiffness near 6 kN/m; deflecting
+    // the low E by 5 mm at a seventh of its length needs about 4.8 N against
+    // its 80 N of tension, so the tip recoils about 0.8 mm past a grip depth
+    // near 0.2 mm, giving s = 0.8. The blend is taken in the rate rather than
+    // in the force so that zero response leaves the release exactly where it
+    // has always been.
+    constexpr float pickRecoilShare = 0.80f;
+    const float releaseRate = 1.0f
+        / ((1.0f - pickRecoilShare) / force + pickRecoilShare);
+    profile.releaseRate = lerp(smoothStep(0.65f), releaseRate, response);
+
+    profile.brightness = lerp(0.20f, 2.10f, profile.releaseRate);
     profile.noise = lerp(1.0f, 0.18f + 0.82f * std::sqrt(v), response);
-    profile.tension = lerp(0.55f, 1.25f, profile.effortCurve);
+    profile.tension = lerp(0.55f, 1.25f, smoothStep(profile.effort));
     profile.collision = smoothStep(
         clampf((profile.effort - 0.25f) / 0.75f, 0.0f, 1.0f));
     return profile;
@@ -788,14 +891,19 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     // enough to group a chord and short enough not to merge separate beats.
     chordWindowSamples_ = std::max(1, static_cast<int>(0.035 * sampleRate_));
     handReturnSamples_ = std::max(1, static_cast<int>(1.5 * sampleRate_));
-    // The vibrato's phase advances once per control tick, and its depth eases
-    // in over about 90 ms - the time a player takes to land a note before
-    // starting to move on it.
+    // The window inside which a later note-on may still turn out to be the
+    // edge the stroke began at, and the pre-roll that keeps every voice of the
+    // chord silent while it is open.
+    strumReAnchorSamples_ = std::max(
+        1, static_cast<int>(strumReAnchorSeconds * sampleRate_));
+    // The vibrato's phase advances once per control tick, and the pressure
+    // behind it ramps at a bounded rate - the time a player takes to land a
+    // note before starting to move on it.
     vibratoPhaseIncrement_ = static_cast<float>(controlPeriod)
                            / static_cast<float>(sampleRate_);
-    vibratoOnsetCoefficient_ = 1.0f - std::exp(
-        -static_cast<float>(controlPeriod)
-        / (0.090f * static_cast<float>(sampleRate_)));
+    vibratoOnsetIncrement_ = static_cast<float>(controlPeriod)
+                           / (vibratoOnsetSeconds
+                              * static_cast<float>(sampleRate_));
 
     // The compliance table lives behind a guarded function-local static (its
     // initializer is not constexpr-able); touch it here so the one-time
@@ -831,8 +939,7 @@ void ElectryEngine::reset()
     appliedBendGlideSeconds_ = -1.0f;
     resonanceAmount_ = resonanceTarget_;
     vibratoAmount_ = 0.0f;
-    vibratoPhase_ = 0.0f;
-    vibratoSemitones_ = 0.0f;
+    vibratoRamp_ = 0.0f;
     feedbackRing_.fill(0.0f);
     feedbackWriteIndex_ = 0;
     feedbackReadIndex_ = 0;
@@ -847,6 +954,11 @@ void ElectryEngine::reset()
     engineClock_ = 0;
     lastNoteOnClock_ = -(1ll << 40);
     chordAnchorString_ = 0;
+    chordStrokeIsUp_ = false;
+    chordFirstNoteOnClock_ = -(1ll << 40);
+    chordSequence_ = 0;
+    strumPreRollSamples_ = 0;
+    chordTravelSamples_.fill(0);
     frettingHandPosition_ = 0.0f;
     palmMuteBlend_ = clampf(smoothedParameters_.palmMute + palmMutePressure_,
                             0.0f, 1.0f);
@@ -1068,31 +1180,48 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
 
     auto& voice = voices_[static_cast<std::size_t>(stringIndex)];
 
-    // Strum travel. The first note of a chord fixes the edge the pick starts
-    // from, and every later string is offset by the time the pick needs to
-    // reach it. At a zero spread this is exactly the previous simultaneous
+    // Strum travel. The pick enters the neck at one edge and crosses the chord
+    // in one direction, so the edge is the chord's extreme string *in the
+    // stroke's direction* - not whichever note-on the host happened to send
+    // first - and the offset is the signed distance from it rather than the
+    // absolute one. At a zero spread this is exactly the previous simultaneous
     // behaviour.
-    if (newChord)
-        chordAnchorString_ = stringIndex;
-    updateFrettingHand(
-        midiNote - stringSpecs()[static_cast<std::size_t>(stringIndex)].openMidiNote,
-        newChord);
-    lastNoteOnClock_ = engineClock_;
-
-    int startDelaySamples = 0;
+    //
     // Read the sanitised target rather than the smoothed copy. This control
     // schedules the stroke instead of shaping it, so the control tick copies it
     // verbatim; a chord whose note-ons land at offset 0 of the same block as
     // the automation change would otherwise be scheduled with the previous
     // block's spread, usually as a block chord.
     const float spreadSeconds = targetParameters_.strumSpreadSeconds;
-    if (spreadSeconds > 0.0f && ! newChord)
+    if (newChord)
+        beginChordStroke(stringIndex, strokeIsUp, spreadSeconds);
+    else if (strumPreRollSamples_ > 0
+             && engineClock_ - chordFirstNoteOnClock_
+                    < static_cast<std::int64_t>(strumPreRollSamples_))
+        reAnchorChordStroke(stringIndex);
+
+    updateFrettingHand(
+        midiNote - stringSpecs()[static_cast<std::size_t>(stringIndex)].openMidiNote,
+        newChord);
+    lastNoteOnClock_ = engineClock_;
+
+    int startDelaySamples = 0;
+    if (strumPreRollSamples_ > 0)
     {
-        const int stringsCrossed = std::abs(stringIndex - chordAnchorString_);
+        // One clock for the whole chord: the pick reaches this string at the
+        // chord's first note-on plus the pre-roll plus the travel, whenever
+        // this particular note-on arrived.
+        const int crossings = chordStrokeIsUp_
+            ? chordAnchorString_ - stringIndex
+            : stringIndex - chordAnchorString_;
+        const std::int64_t onset = chordFirstNoteOnClock_
+                                 + static_cast<std::int64_t>(strumPreRollSamples_)
+                                 + static_cast<std::int64_t>(
+                                       strumTravelSamples(std::max(0, crossings)));
         startDelaySamples = static_cast<int>(
-            spreadSeconds * static_cast<float>(sampleRate_))
-            * stringsCrossed;
+            std::max<std::int64_t>(0, onset - engineClock_));
     }
+    voice.strumChordId = chordSequence_;
 
     const bool legato = (playStyle_ == PlayStyle::Hammer
                          || playStyle_ == PlayStyle::Slide)
@@ -1694,7 +1823,7 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     // that is the same distinction the finger-noise term already draws at
     // fret 0. The bar still reaches it, because the bar stretches the whole
     // instrument rather than one stopped note.
-    const float vibrato = voice.fret > 0 ? vibratoSemitones_ : 0.0f;
+    const float vibrato = voice.fret > 0 ? voice.vibratoSemitones : 0.0f;
     const float semitones = legatoOffset
                           + pitchBendSemitones_
                             * bendSensitivity(voice.stringIndex)
@@ -1996,17 +2125,32 @@ void ElectryEngine::configureVoicePickups(Voice& voice) noexcept
     // Magnetic aperture: a true finite rectangular spatial window. Its
     // temporal length is Fs*w/c, where c is transverse wave speed. This has
     // the expected sinc response and -3 dB point at approximately .443*c/w,
-    // unlike the previous one-pole approximation.
-    const float aperture = lerp(humbuckerApertureMetres, singleCoilApertureMetres,
-                                parameters.pickupType);
+    // unlike the previous one-pole approximation. The window is the same for
+    // both pickups - it is one bobbin either way - and what the pickup type
+    // moves is how far apart the humbucker's two of them sit.
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
     const float waveSpeed = 2.0f * openLength * midiToHz(
         static_cast<float>(spec.openMidiNote));
     const float apertureLength = clampf(
-        static_cast<float>(sampleRate_) * aperture / std::max(waveSpeed, 1.0f),
+        static_cast<float>(sampleRate_) * coilApertureMetres
+            / std::max(waveSpeed, 1.0f),
         1.0f, static_cast<float>(apertureHistorySize - 2));
     voice.apertureNeck.setWindow(apertureLength);
     voice.apertureBridge.setWindow(apertureLength);
+
+    // The coil pair, which the type control closes up until the humbucker is
+    // a single coil. The position comb above is evaluated at the pickup's
+    // centre, which is where the factorisation puts it: two coils at
+    // centre +- d/2 read (1 + b z^-d/c) times one comb anchored at the
+    // centre, so the pair costs one delayed read rather than a second comb.
+    const float coilSpacing = lerp(humbuckerCoilSpacingMetres, 0.0f,
+                                   parameters.pickupType);
+    const float coilDelay = clampf(
+        static_cast<float>(sampleRate_) * coilSpacing
+            / std::max(waveSpeed, 1.0f),
+        0.0f, static_cast<float>(apertureHistorySize - 2));
+    voice.coilPairNeck.setSpacing(coilDelay, humbuckerCoilBalance);
+    voice.coilPairBridge.setSpacing(coilDelay, humbuckerCoilBalance);
 }
 
 void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
@@ -2092,6 +2236,201 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
                static_cast<float>(delayLineSize - 8)));
 }
 
+void ElectryEngine::drawStrokeVariation(Voice& voice) noexcept
+{
+    // A hand does not put the pick down twice in the same place. Four things
+    // about the contact move from stroke to stroke, and they are the four the
+    // excitation already reads: where along the string the pick lands, how hard
+    // it is pushed, at what angle it meets the string, and how much of its tip
+    // is touching. Nothing else in the attack is randomised - the pluck is
+    // still the same mechanism, differently placed.
+    //
+    // Every draw is a pure function of the note counter and the string, so
+    // `Identical MIDI always renders identical audio` survives it: the same
+    // sequence of note-ons produces the same sequence of draws. `startOrder`
+    // is taken rather than `noteSequence_` because a strummed chord's later
+    // strings excite several blocks after their note-on, by which time the
+    // counter has moved on.
+    std::uint32_t state = hash32(
+        static_cast<std::uint32_t>(voice.startOrder * 2654435761u)
+        ^ static_cast<std::uint32_t>(voice.stringIndex * 40503u)
+        ^ 0x5bf03635u);
+    // Three uniforms on [-1, 1] sum to unit variance and cannot leave +/-3
+    // sigma, which is the bound the physical quantities need: the contact
+    // cannot move further along the string than the plectrum's width lets the
+    // player feel, nor further than the heel of the hand anchored on the
+    // bridge allows.
+    const auto normal = [&state]
+    {
+        return bipolarNoise(state) + bipolarNoise(state) + bipolarNoise(state);
+    };
+
+    // Contact position. 4 mm of standard deviation along the string is the
+    // scale the plectrum's own width and the anchored hand bracket; at the
+    // default Pick Position it is about 5% of the pick-to-bridge distance, so
+    // it moves the pluck comb's first notch by about that much.
+    voice.strokeContactOffsetMetres = 0.004f * normal();
+    // Contact force. The stroke's level is meant to move by about 0.8 dB of
+    // standard deviation, but the contact patch below already carries 0.4 dB of
+    // that on its own - a longer contact injects more of the pick's work as
+    // well as less of its top end - so the force itself draws the remainder.
+    // It rides on the velocity profile rather than replacing it, so a written
+    // accent still reads as an accent.
+    voice.strokeForceGain = std::pow(10.0f, 0.6f * normal() / 20.0f);
+    // Attack angle. The pick meets the string a few degrees off the plane it
+    // nominally travels in; because the excitation is split between two
+    // polarisations, an angle is not a free parameter but exactly that split,
+    // so the jitter is applied as a rotation of the split vector in
+    // updateStyleWeights() and takes no energy with it.
+    voice.strokeAngleOffset = 6.0f * (pi / 180.0f) * normal();
+    // Contact patch. 8% of standard deviation on how much of the tip is
+    // touching, carried by the length of the release pulse.
+    voice.strokeWidthScale = clampf(1.0f + 0.08f * normal(), 0.6f, 1.4f);
+}
+
+void ElectryEngine::beginChordStroke(int stringIndex, bool strokeIsUp,
+                                     float spreadSeconds) noexcept
+{
+    // A new pick stroke. The edge it starts from is the chord's extreme string
+    // in the stroke's own direction, which is not known yet - only the first
+    // note-on has arrived - so it is provisional and `reAnchorChordStroke`
+    // below may move it while the pre-roll is still running.
+    ++chordSequence_;
+    chordAnchorString_ = stringIndex;
+    chordStrokeIsUp_ = strokeIsUp;
+    chordFirstNoteOnClock_ = engineClock_;
+    chordTravelSamples_.fill(0);
+
+    if (! (spreadSeconds > 0.0f))
+    {
+        // No spread, no travel and no pre-roll: the chord is one block again,
+        // to the sample.
+        strumPreRollSamples_ = 0;
+        return;
+    }
+    strumPreRollSamples_ = strumReAnchorSamples_;
+
+    // The wrist's motion for this one stroke. It is drawn from the chord
+    // counter alone, so every string of the chord reads the same ramp and the
+    // same MIDI still renders the same audio.
+    std::uint32_t state = hash32(
+        static_cast<std::uint32_t>(chordSequence_ * 2891336453u) ^ 0x7feb352du);
+    const auto normal = [&state]
+    {
+        return bipolarNoise(state) + bipolarNoise(state) + bipolarNoise(state);
+    };
+
+    // Three uniforms sum to unit variance and cannot leave +/-3 sigma, so the
+    // acceleration stays between 0.55 and 1.45 of nominal and the ramp cannot
+    // invert.
+    const float acceleration = strumAcceleration
+                             * (1.0f + strumAccelerationSigma * normal());
+
+    std::array<float, stringCount - 1> gaps {};
+    float total = 0.0f;
+    for (int k = 0; k < stringCount - 1; ++k)
+    {
+        gaps[static_cast<std::size_t>(k)] =
+            (1.0f + strumCrossingSigma * normal())
+            / std::sqrt(1.0f + acceleration * static_cast<float>(k));
+        total += gaps[static_cast<std::size_t>(k)];
+    }
+
+    // Strum Spread states the time the pick takes per string, so the ramp is
+    // normalised to it: whatever shape the draws gave it, seven crossings
+    // still take seven times the knob. The acceleration redistributes the
+    // stroke, it does not lengthen it.
+    const float scale = spreadSeconds * static_cast<float>(sampleRate_)
+                      * static_cast<float>(stringCount - 1)
+                      / std::max(1.0e-6f, total);
+    float travel = 0.0f;
+    for (int k = 0; k < stringCount - 1; ++k)
+    {
+        travel += gaps[static_cast<std::size_t>(k)] * scale;
+        chordTravelSamples_[static_cast<std::size_t>(k + 1)] =
+            static_cast<int>(travel);
+    }
+}
+
+void ElectryEngine::reAnchorChordStroke(int stringIndex) noexcept
+{
+    // A note-on that is further out along the neck than the current anchor, in
+    // the direction the pick is travelling, is where the stroke really began.
+    // Every voice of this chord is still inside its pre-roll, so none of them
+    // has sounded and all of them can be pushed out by the extra travel.
+    const int crossings = chordStrokeIsUp_ ? chordAnchorString_ - stringIndex
+                                           : stringIndex - chordAnchorString_;
+    if (crossings >= 0)
+        return;
+
+    chordAnchorString_ = stringIndex;
+    for (auto& voice : voices_)
+    {
+        if (voice.strumChordId != chordSequence_ || voice.startDelaySamples <= 0)
+            continue;
+        const int moved = chordStrokeIsUp_
+            ? chordAnchorString_ - voice.stringIndex
+            : voice.stringIndex - chordAnchorString_;
+        // Rescheduled against the chord's own clock rather than by adding a
+        // difference, so the countdown's control-tick quantisation does not
+        // accumulate across re-anchors.
+        const std::int64_t onset = chordFirstNoteOnClock_
+                                 + static_cast<std::int64_t>(strumPreRollSamples_)
+                                 + static_cast<std::int64_t>(strumTravelSamples(moved));
+        voice.startDelaySamples = static_cast<int>(
+            std::max<std::int64_t>(1, onset - engineClock_));
+    }
+}
+
+int ElectryEngine::strumTravelSamples(int crossings) const noexcept
+{
+    // A chord whose note-ons are spread wider than the re-anchor window still
+    // travels from its first arrival: a string that turns out to be beyond the
+    // anchor once the window has closed is picked as soon as it can be, which
+    // is the stated limit of the mechanism rather than an undefined case.
+    const int index = std::clamp(crossings, 0, stringCount - 1);
+    return chordTravelSamples_[static_cast<std::size_t>(index)];
+}
+
+void ElectryEngine::seedVibratoFinger(Voice& voice) noexcept
+{
+    // The finger that will rock this note starts its own cycle wherever it
+    // happens to be when it gets there: the rock is not synchronised to the
+    // pick, so the phase is drawn rather than started at zero. The onset
+    // shaping holds the excursion at zero regardless, so the note still leaves
+    // the fret at exactly its fretted pitch. Only a fresh note reseeds - a
+    // hammer-on or a slide is the same finger arriving somewhere else, and it
+    // keeps rocking through the move rather than jumping to a new phase.
+    voice.vibratoSeed = hash32(
+        static_cast<std::uint32_t>(voice.startOrder * 2246822519u)
+        ^ static_cast<std::uint32_t>(voice.stringIndex * 68041u)
+        ^ 0x27d4eb2fu);
+    std::uint32_t phaseState = voice.vibratoSeed;
+    voice.vibratoPhase = 0.5f * (bipolarNoise(phaseState) + 1.0f);
+    voice.vibratoCycle = 0u;
+    drawVibratoCycle(voice);
+}
+
+void ElectryEngine::drawVibratoCycle(Voice& voice) noexcept
+{
+    // A hand does not rock twice at the same speed or to the same width. Both
+    // are redrawn once per cycle from a stream this voice advances itself -
+    // the note counter only moves on note-on, so a held note drawn from it
+    // would get one fixed pair for its whole length.
+    std::uint32_t state = hash32(voice.vibratoSeed
+                                 ^ (voice.vibratoCycle * 2654435761u));
+    ++voice.vibratoCycle;
+    const auto normal = [&state]
+    {
+        return bipolarNoise(state) + bipolarNoise(state) + bipolarNoise(state);
+    };
+    // Three uniforms sum to unit variance and cannot leave +/-3 sigma, so the
+    // rate stays inside 0.64..1.36 of nominal and the excursion inside
+    // 0.55..1.45 - a hand that wanders, not one that stumbles.
+    voice.vibratoRateScale = 1.0f + 0.12f * normal();
+    voice.vibratoDepthScale = 1.0f + 0.15f * normal();
+}
+
 void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) noexcept
 {
     (void) velocity; // The note-on velocity is cached in velocityProfile.
@@ -2104,11 +2443,13 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     const float hardnessGain = lerp(0.98f, 1.26f, parameters.pickHardness);
 
     float amplitude = 0.48f * profile.amplitude * hardnessGain
-                    * lerp(1.0f, 0.90f, parameters.stringAge);
+                    * lerp(1.0f, 0.90f, parameters.stringAge)
+                    * voice.strokeForceGain;
     // The string leaves the pick in a fraction of a millisecond; the width
     // controls how much of the upper spectrum the release step carries.
     float pulseMs = lerp(1.15f, 0.10f, parameters.pickHardness)
-                  * lerp(1.55f, 0.48f, profile.effortCurve);
+                  * lerp(1.55f, 0.48f, profile.releaseRate)
+                  * voice.strokeWidthScale;
     float pulseCutoff = lerp(900.0f, 13000.0f, parameters.pickHardness);
     float pluckFraction = lerp(0.025f, 0.48f, parameters.pickPosition);
     const float pickControl = std::pow(parameters.pickNoise, 0.75f);
@@ -2247,7 +2588,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
                  * lerp(1.08f, 0.42f, parameters.stringAge)
                  * lerp(0.92f, 1.12f, parameters.construction)
                  * (1.0f + 0.24f * lowString);
-    noiseCutoff *= lerp(0.72f, 1.22f, profile.effortCurve)
+    noiseCutoff *= lerp(0.72f, 1.22f, profile.releaseRate)
                  * (plectrumContact
                         ? lerp(0.55f, 1.75f, parameters.pickHardness) : 1.0f)
                  * (1.0f + 0.12f * lowString);
@@ -2260,7 +2601,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // high-partial tilt. Percussive styles may intentionally weight it higher.
     float displacementGain = 1.55f;
     float transientGain = lerp(0.0006f, 0.0025f, parameters.pickHardness)
-                        * lerp(0.88f, 1.08f, profile.effortCurve);
+                        * lerp(0.88f, 1.08f, profile.releaseRate);
     switch (voice.playStyle)
     {
         case PlayStyle::Sustain:
@@ -2352,8 +2693,16 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // at the twelfth fret is now picked at twice the relative distance, which
     // is what moves a high fretted note toward the hollow, mid-string comb of
     // a real guitar.
+    //
+    // The stroke's own contact offset is a distance along the string, so it is
+    // added to the open-string fraction before the fret stretch, exactly as the
+    // nominal position is: the hand is a few millimetres out of place, not a
+    // few millimetres of the sounding length out of place.
     const float fretStretch = std::exp2(static_cast<float>(voice.fret) / 12.0f);
-    const float combFraction = clampf(pluckFraction * fretStretch, 0.02f, 0.49f);
+    const float strokePluckFraction = pluckFraction
+        + voice.strokeContactOffsetMetres / scaleLengthMetres();
+    const float combFraction = clampf(strokePluckFraction * fretStretch,
+                                      0.02f, 0.49f);
     voice.excitationCombDelay = combFraction * voice.vertical.targetDelay;
 
     // Where the touching hand is, if either hand is touching. The natural
@@ -2431,7 +2780,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     const float modalCutoff = clampf(
         voice.baseFrequency
             * lerp(0.55f, 1.36f, parameters.pickHardness)
-            * lerp(0.90f, 1.12f, profile.effortCurve),
+            * lerp(0.90f, 1.12f, profile.releaseRate),
         28.0f, std::min(900.0f, 0.20f * sampleRate));
     const float articulationModalCutoff = clampf(
         modalCutoff * modalBrightness,
@@ -2463,7 +2812,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     const float stringReleaseCutoff =
         330.0f * std::sqrt(openFrequency / 82.4069f)
                * lerp(0.32f, 2.70f, parameters.pickHardness)
-               * lerp(0.72f, 1.45f, profile.effortCurve)
+               * lerp(0.72f, 1.45f, profile.releaseRate)
                * lerp(1.12f, 0.72f, parameters.stringAge);
     // The bridge hand darkens the release, but deliberately not the reflected
     // image: the image's loss comes from the extra distance it travels through
@@ -2566,6 +2915,24 @@ void ElectryEngine::updateStyleWeights(Voice& voice, bool legato) noexcept
         horizontalWeight *= 0.46f / 0.42f;
         makeup *= 1.06f;
     }
+    // The stroke's own attack angle. The split between the two polarisations
+    // *is* the angle at which the pick meets the string, so a few degrees of
+    // hand-to-hand variation is a rotation of that vector and nothing else: its
+    // length, which is how much of the pick's work reaches the string, does not
+    // move. This composes with the upstroke tilt above rather than replacing
+    // it, so an alternate-picked repeat varies on top of its up/down colouring
+    // instead of losing it. A hammered note has no plectrum to hold at an
+    // angle, on the same grounds the upstroke voicing skips it.
+    if (voice.playStyle != PlayStyle::Hammer && voice.strokeAngleOffset != 0.0f)
+    {
+        const float magnitude = std::sqrt(verticalWeight * verticalWeight
+                                          + horizontalWeight * horizontalWeight);
+        const float angle = clampf(
+            std::atan2(horizontalWeight, verticalWeight) + voice.strokeAngleOffset,
+            0.02f, 0.5f * pi - 0.02f);
+        verticalWeight = magnitude * std::cos(angle);
+        horizontalWeight = magnitude * std::sin(angle);
+    }
     voice.verticalWeight = verticalWeight;
     voice.horizontalWeight = horizontalWeight;
     voice.articulationMakeup = makeup;
@@ -2606,6 +2973,8 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     voice.velocity = velocity;
     voice.velocityProfile = makeVelocityProfile(velocity);
     voice.startOrder = ++noteSequence_;
+    drawStrokeVariation(voice);
+    seedVibratoFinger(voice);
     voice.ageSamples = 0;
     // Per-note, for the same reason ageSamples is: the relax factor is
     // measured against this note's own peak. Carried over, a quiet note
@@ -2742,6 +3111,7 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     voice.sustained = false;
     voice.releasing = false;
     voice.startOrder = ++noteSequence_;
+    drawStrokeVariation(voice);
     voice.velocity = velocity;
     voice.velocityProfile = makeVelocityProfile(velocity);
     voice.releaseGain = 1.0f;
@@ -2896,11 +3266,14 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.slideNoiseLevel = 0.0f;
     voice.slideShaperHigh.reset();
     voice.slideShaperLow.reset();
+    voice.vibratoSemitones = 0.0f;
     // Every retained filter state must clear with the voice, or a silenced
     // string could leak residue into a later, otherwise identical render and
     // break the engine's determinism contract.
     voice.apertureNeck.reset();
     voice.apertureBridge.reset();
+    voice.coilPairNeck.reset();
+    voice.coilPairBridge.reset();
     voice.excitationShaper.reset();
     voice.excitationModalShaper1.reset();
     voice.excitationModalShaper2.reset();
@@ -3496,7 +3869,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
                   + 0.35f * (horizontalTotal
                              - pickupCombDepth * horizontal.readTap(delayTap))
                   + 0.55f * artifactPickup;
-        tap = voice.apertureNeck.process(tap);
+        tap = voice.apertureNeck.process(voice.coilPairNeck.process(tap));
         const float flux = voice.fluxScale
             * magneticTransfer(tap, magneticDriveNeck_, magneticDriveNeckInverse_);
         // Faraday's law: a magnetic pickup outputs induced voltage,
@@ -3523,7 +3896,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
                   + 0.35f * (horizontalTotal
                              - pickupCombDepth * horizontal.readTap(delayTap))
                   + artifactPickup;
-        tap = voice.apertureBridge.process(tap);
+        tap = voice.apertureBridge.process(voice.coilPairBridge.process(tap));
         const float flux = voice.fluxScale
             * magneticTransfer(tap, magneticDriveBridge_,
                                magneticDriveBridgeInverse_);
@@ -3759,6 +4132,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
         smoothTowards(s.sympatheticAmount, t.sympatheticAmount);
         smoothTowards(s.palmMute, t.palmMute);
         smoothTowards(s.resonanceDepth, t.resonanceDepth);
+        smoothTowards(s.vibratoDepth, t.vibratoDepth);
         s.strumSpreadSeconds = t.strumSpreadSeconds;
         s.bendTimeSeconds = t.bendTimeSeconds;
         s.pickupSelector = t.pickupSelector;
@@ -3915,31 +4289,66 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
                 / (0.33f * std::max(s.bendTimeSeconds, 0.01f)
                    * static_cast<float>(sampleRate_)));
         }
-        // The fretting hand's vibrato. The depth eases in rather than
-        // switching on, because a player lands the note and then starts to
-        // move; the oscillation is a raised cosine, so its minimum is the
-        // fretted pitch and the note is only ever pushed sharp, which is what
-        // a finger can do to a string and a bar cannot be made to do. One
-        // phase for the whole hand. At zero pressure the offset is exactly
-        // zero and every voice's pitch solve is bit-for-bit what it was.
-        vibratoAmount_ += vibratoOnsetCoefficient_
-                        * (vibratoTarget_ - vibratoAmount_);
-        if (vibratoTarget_ <= 0.0f && vibratoAmount_ < 1.0e-4f)
-        {
-            vibratoAmount_ = 0.0f;
-            vibratoPhase_ = 0.0f;
-            vibratoSemitones_ = 0.0f;
-        }
+        // The fretting hand's vibrato. The pressure ramps at a bounded rate
+        // and is then shaped by smoothStep, so the hand leaves rest with zero
+        // slope instead of at its steepest, and comes back to rest the same
+        // way. At zero pressure the ramp sits at exactly zero, the shaping
+        // returns exactly zero, and every voice's pitch solve is bit-for-bit
+        // what it was.
+        vibratoRamp_ += clampf(vibratoTarget_ - vibratoRamp_,
+                               -vibratoOnsetIncrement_, vibratoOnsetIncrement_);
+        vibratoAmount_ = smoothStep(vibratoRamp_);
         if (vibratoAmount_ > 0.0f)
         {
+            // The pitch follows the *square* of the finger's displacement.
+            // Rocking a stopped string sideways by x lengthens its path by
+            // dL = k x^2 - the same dL/L relation bendSensitivity() solves for
+            // the bar - so a wrist rocking as the raised cosine s(t) moves the
+            // pitch by depth * s(t)^2. That is not a flat top: s^2 is
+            // fourth-order small where s is second-order small, so the note
+            // dwells at the fretted pitch between excursions and the
+            // excursions themselves are briefer and sharper-cornered than the
+            // rock that makes them. It is still one-sided, so the note is only
+            // ever pushed sharp, which is what a finger can do to a string and
+            // a bar cannot be made to do.
+            //
             // A rock finger vibrato runs around 5 Hz and speeds up as the
-            // player leans into it.
+            // player leans into it. The Vibrato Depth control scales the
+            // excursion only: which way a real hand couples width to speed was
+            // never measured here, so the existing coupling stands rather than
+            // being reversed on an unsourced argument.
             const float rate = lerp(4.8f, 6.4f, vibratoAmount_);
-            vibratoPhase_ += rate * vibratoPhaseIncrement_;
-            if (vibratoPhase_ >= 1.0f)
-                vibratoPhase_ -= 1.0f;
-            vibratoSemitones_ = vibratoMaximumSemitones * vibratoAmount_ * 0.5f
-                * (1.0f - std::cos(twoPi * vibratoPhase_));
+            const float depth = lerp(vibratoMinimumSemitones,
+                                     vibratoMaximumSemitones, s.vibratoDepth)
+                              * vibratoAmount_;
+            // Every stopped string is its own finger, with its own phase and
+            // its own per-cycle rate and excursion. Open strings have nothing
+            // holding them down and are left alone, exactly as before.
+            for (auto& voice : voices_)
+            {
+                if (! voice.active || voice.fret <= 0)
+                    continue;
+                voice.vibratoPhase += rate * voice.vibratoRateScale
+                                    * vibratoPhaseIncrement_;
+                if (voice.vibratoPhase >= 1.0f)
+                {
+                    voice.vibratoPhase -= 1.0f;
+                    drawVibratoCycle(voice);
+                }
+                const float rock = 0.5f
+                    * (1.0f - std::cos(twoPi * voice.vibratoPhase));
+                voice.vibratoSemitones = depth * voice.vibratoDepthScale
+                                       * rock * rock;
+            }
+        }
+        else
+        {
+            // The phase is deliberately left where it stopped rather than
+            // reset: a finger that stops rocking and starts again does not
+            // begin from the same point in the cycle, which is what made every
+            // vibrato in a part start identically.
+            for (auto& voice : voices_)
+                voice.vibratoSemitones = 0.0f;
         }
 
         pitchBendSemitones_ += bendGlideCoefficient_
@@ -3981,6 +4390,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
             for (auto& voice : voices_)
             {
                 voice.apertureNeck.reset();
+                voice.coilPairNeck.reset();
                 voice.previousFluxNeck = 0.0f;
                 voice.emfLowpassNeck.reset();
             }
@@ -3990,6 +4400,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
             for (auto& voice : voices_)
             {
                 voice.apertureBridge.reset();
+                voice.coilPairBridge.reset();
                 voice.previousFluxBridge = 0.0f;
                 voice.emfLowpassBridge.reset();
             }

@@ -110,6 +110,11 @@ private:
     static constexpr int tableSize = 2048;
     static constexpr int tableMask = tableSize - 1;
     static constexpr int tableLevels = 9;
+    // The aspiration envelope needs far less resolution than the source:
+    // it is smooth, it multiplies noise, and 256 entries keep it in L1 next
+    // to twelve voices' worth of tract state.
+    static constexpr int flowTableSize = 256;
+    static constexpr int flowTableMask = flowTableSize - 1;
     static constexpr int maxHarmonics = 256;
     static constexpr int maxVoices = 96;
     static constexpr int singerCount = 12;
@@ -216,7 +221,6 @@ private:
         bool releasing { false };
         bool alternateCycle { false };
         bool controlInitialised { false };
-        bool onsetComplete { false };
         int rootMidi { -1 };
         int midiNote { 60 };
         int singer { 0 };
@@ -241,6 +245,14 @@ private:
         float airEnvelope { 0.0f };
         float onsetAir { 1.0f };
         float airShape { 1.0f };
+        // The offset gesture. A released note is not simply a note whose drive
+        // is removed: the folds move, and which way they move is the phonation
+        // the note was in. `abduction` is the glottal-area gesture in progress,
+        // as a gain on the aspiration, and `abductionTarget` is where it is
+        // headed, latched from the adduction at the moment of note-off. Both
+        // are 1 while the note is held, so nothing about a sounding note moves.
+        float abduction { 1.0f };
+        float abductionTarget { 1.0f };
         float pitchScoop { 0.0f };
         float glideCents { 0.0f };
         // Distance from equal temperament this voice is currently singing, in
@@ -253,6 +265,36 @@ private:
         float lastNoise { 0.0f };
         float sourceTilt { 0.0f };
         float tiltCoefficient { 1.0f };
+        // The two first-order shelves that carry the loudness-dependent source
+        // slope, and the shelf gain itself. See sourcePresenceCoefficient_.
+        float sourceSlow { 0.0f };
+        float sourceSlower { 0.0f };
+        float presence { 1.0f };
+        // Laryngeal amplitude modulation on the vibrato cycle, as a gain on the
+        // voiced source and on the presence shelf. Both carry it, which is what
+        // makes a vibrato peak brighter as well as louder: the shelf gain is
+        // already the note's broadband gain, so multiplying both by the same
+        // factor moves the band above the corner by twice as many decibels as
+        // the fundamental, which is the same 2:1 law the dynamic obeys. Ramped
+        // across the control period rather than stepped, because a 6 Hz
+        // modulation applied as a staircase at the control rate leaves
+        // permanent sidebands 3 kHz either side of every partial.
+        float vibratoGain { 1.0f };
+        float vibratoGainStep { 0.0f };
+        // Velocity as the singer's own output, normalised to what the same note
+        // reaches at velocity 1: the level term of amplitudeGain without the
+        // ensemble trim. Constant for the note, so it is resolved at note-on.
+        float velocityGain { 1.0f };
+        // Per-voice envelope attack. A note's attack is the folds coming onto
+        // their limit cycle, and how long that takes is set by how hard the
+        // note is sung, not by how loose the take is.
+        float attackCoefficient { 0.0f };
+        float attackDrive { -1.0f };
+        // How far below the block's tension this note's glottal source starts.
+        // sourceTensionRampDepth_ is the value at the reference velocity; a
+        // hard attack begins closer to its adducted target and a soft one
+        // further from it.
+        float tensionSag { 0.0f };
         // Vocal effort and pan only move when a parameter does, but their
         // coefficients cost an exp2, an exp and two square roots. Cache the
         // input so a sustained note pays for them once.
@@ -264,8 +306,6 @@ private:
         float panRight { 0.7071f };
         float panTargetLeft { 0.7071f };
         float panTargetRight { 0.7071f };
-        float onsetMix { 0.0f };
-        float onsetMixStep { 1.0f };
         // Nasal branch state: the two-sample memory of the series
         // anti-resonator, and the nasal cavity's own pole in parallel with the
         // oral formants.
@@ -276,7 +316,6 @@ private:
         Resonator nasal {};
         std::array<float, formantCount> formantHz {};
         std::array<Resonator, formantCount> tract {};
-        std::array<Resonator, 2> early {};
     };
 
     EngineParameters snapshotParameters() const noexcept;
@@ -290,6 +329,7 @@ private:
     void updateVoiceControl(Voice& voice, const EngineParameters& parameters);
     void renderVoice(Voice& voice, const EngineParameters& parameters, int count);
     void silenceVoice(Voice& voice) noexcept;
+    void beginRelease(Voice& voice) noexcept;
     int voicesForMode(const EngineParameters& parameters) const noexcept;
     int chordMidiForSinger(int rootMidi, int singer, const EngineParameters& parameters) const noexcept;
     int findFreeVoice() const noexcept;
@@ -302,6 +342,8 @@ private:
     int countActiveVoices() const noexcept;
     void updateIntonationRoot() noexcept;
     float glottalPair(int level, float phase, float tension) const noexcept;
+    float glottalFlow(float phase, float tension) const noexcept;
+    float aspirationWindowGain(float tension, float depth) const noexcept;
     float sine(float phase) const noexcept;
     SineCosine sineCosineFromCycles(float cycles) const noexcept;
     static float randomBipolar(std::uint32_t& state) noexcept;
@@ -325,6 +367,16 @@ private:
     // Interleaved lax/pressed glottal-derivative pairs: [2i] lax, [2i+1]
     // pressed. Interleaving halves the cache lines the oscillator touches.
     std::array<std::array<float, 2 * tableSize>, tableLevels> glottalTables_ {};
+    // The glottal flow that produced those derivatives, interleaved the same
+    // way and normalised to unit mean square over the period. Aspiration
+    // turbulence is generated by flow through the glottal constriction, so this
+    // is the noise's own envelope: no band limiting is needed because it never
+    // radiates on its own, it only multiplies a broadband noise stream.
+    std::array<float, 2 * flowTableSize> glottalFlowTable_ {};
+    // Mean of each normalised flow prototype, and the mean of their product.
+    // These are what aspirationWindowGain() needs to renormalise a crossfade.
+    std::array<float, 2> flowMean_ { 1.0f, 1.0f };
+    float flowCross_ { 1.0f };
     std::array<float, tableSize> sineTable_ {};
 
     std::array<Voice*, maxVoices> activeVoices_ {};
@@ -338,13 +390,37 @@ private:
     std::array<float, chunkSize> tensionAt_ {};
     std::array<float, chunkSize> voicedScaleAt_ {};
 
-    // Per-block envelope coefficients, shared by every voice.
+    // Per-block envelope coefficients, shared by every voice. The voiced attack
+    // is no longer among them: how long a note takes to reach amplitude is set
+    // by how hard it is sung, so it lives on the voice.
     float parameterSmoothing_ { 0.0f };
-    float attackCoefficient_ { 0.0f };
     float airAttackCoefficient_ { 0.0f };
     float releaseMultiplier_ { 0.0f };
-    float airReleaseMultiplier_ { 0.0f };
+    // How fast the offset's glottal-area gesture completes, at the control
+    // rate. A laryngeal abduction or adduction gesture runs its excursion in
+    // 50-100 ms, so a one-pole at 50 ms is 86 % of the way there at 100 ms.
+    float abductionCoefficient_ { 0.0f };
     float onsetAirMultiplier_ { 0.0f };
+    // How far below the block's tension the glottal source starts at a note-on,
+    // as a fraction of it. The folds begin abducted and lax and adduct over the
+    // first tens of milliseconds, so the note starts at a higher open quotient
+    // and firms up onto the block's tension on the onset time constant while
+    // the tract stays put. 0.60 puts the first pulse of a Tension 0.90 patch at
+    // an open quotient of 0.665 against the 0.49 it settles on, which is the
+    // range voice onsets are measured over; going all the way to the lax
+    // prototype raises the first-2 ms peak 5 dB on a lax female patch, because
+    // that prototype carries a much larger fundamental.
+    // Not const: the tests force it to zero to separate what the ramp is worth
+    // from what the tract is worth.
+    float sourceTensionRampDepth_ { 0.60f };
+    // Corner of the two cascaded first-order shelves that carry the source's
+    // loudness-dependent spectral slope. Sundberg measures partials above 1 kHz
+    // rising about twice as fast in dB as overall SPL, so the shelf gain is the
+    // note's own broadband gain and the shelf is what turns that into a slope
+    // rather than a fader. Two stages because one first-order shelf cannot move
+    // 3 kHz more than 6 dB per octave away from 450 Hz however far its corner
+    // is swept, and the measured law needs about twice that.
+    float sourcePresenceCoefficient_ { 0.0f };
     float scoopMultiplier_ { 0.0f };
     float shimmerDepth_ { 0.0f };
     // Every one of these used to be a bare per-sample or per-control-period
@@ -352,6 +428,14 @@ private:
     // They are now derived from a time constant in prepare().
     float shimmerCoefficient_ { 0.0f };
     float aspirationPreEmphasis_ { 0.0f };
+    // How much of the glottal flow's own shape the aspiration carries. The
+    // turbulence that makes the noise is driven by flow through the glottal
+    // constriction, so it rises through the open phase and is extinguished
+    // while the folds are closed; stationary noise is heard as a separate
+    // source sitting behind the voice rather than as the voice's own breath.
+    // 1 is the flow itself. Not const: the tests force it to zero to prove the
+    // change is a redistribution in time and not a level change.
+    float aspirationModulationDepth_ { 1.0f };
     float aspirationScale_ { 1.0f };
     float controlGlide_ { 0.0f };
     // Per-formant articulator inertia: the jaw that sets F1 is heavier and
@@ -382,9 +466,6 @@ private:
     std::array<float, formantCount> chunkPoleScale_ {};
     std::array<float, formantCount> chunkA2_ {};
     std::array<float, formantCount> chunkRadius_ {};
-    std::array<float, 2> earlyPoleScale_ {};
-    std::array<float, 2> earlyA2_ {};
-    std::array<float, 2> earlyRadius_ {};
     // Vowel targets, formant shift and bandwidth scale the tract was last
     // resolved from. Resolving it costs more than the whole rest of the chunk
     // update, and on a sustained note none of these inputs move.
@@ -407,6 +488,21 @@ private:
     float chunkNotchA2_ { 0.0f };
     float chunkNasalTrim_ { 1.0f };
     bool chunkNasalActive_ { false };
+    // Vibrato extent the knob asks for, in cents, after the mode's own section
+    // limit. It depends on nothing per-voice, and resolving it costs a pow, so
+    // it is resolved once per chunk and every voice scales it by its own
+    // identity depth.
+    float chunkVibratoCents_ { 0.0f };
+    // Linear amplitude modulation the laryngeal oscillation produces per cent
+    // of extent in force. The pitch vibrato is a cricothyroid oscillation, and
+    // the same oscillation moves subglottal pressure and glottal adduction, so
+    // a sung vibrato carries an amplitude and a spectral component that the
+    // harmonics sweeping static formant skirts cannot account for. Measured
+    // amplitude vibrato runs a couple of decibels peak to peak at the extents
+    // singers actually use, so 0.0020 per cent puts a full solo extent at
+    // 0.217 -- 1.7 dB up, 2.1 dB down -- and the engine default at 0.35 dB.
+    static constexpr float laryngealAmPerCent_ = 0.0020f;
+    static constexpr float laryngealAmMaximum_ = 0.35f;
     float jitterHumanize_ { -1.0f };
     float glideAmount_ { -1.0f };
     // Dynamic response resolved once per chunk. The two gains it carries are

@@ -78,7 +78,7 @@ struct EngineParameters
     float releaseNoise { 0.4f };    // note-end damping/lift noise level
     float muteDamping { 0.55f };    // palm-mute strength for the Muted style
     float bendTimeSeconds { 0.28f };// finger-bend travel time
-    float velocityAmount { 0.65f }; // MIDI velocity to pluck strength
+    float velocityAmount { 0.85f }; // MIDI velocity to pluck strength
     float outputGain { 0.5f };      // linear output level
     float artifactAmount { 0.18f }; // sympathetic ring and incidental contact
     OutputMode outputMode { OutputMode::Mono }; // authentic DI or hex/string field
@@ -96,6 +96,13 @@ struct EngineParameters
     // much amplified output is allowed to feed back into the strings. At 1 a
     // raised wheel lets a distorted tone self-resonate; at 0 CC1 does nothing.
     float resonanceDepth { 0.35f };
+    // Widest excursion the fretting-hand vibrato reaches at full channel
+    // pressure, mapped over the range a finger can actually cover: 10 cents
+    // at 0 is the narrow rock a player uses to keep a held note alive, and
+    // 110 cents at 1 is the semitone-wide arc of a rock vibrato leaned all
+    // the way in. The shipping default puts it at 40 cents, which is where
+    // the fixed excursion this control replaced sat.
+    float vibratoDepth { 0.30f };
 };
 
 // Per-string readout for the editor's fretboard display. It is produced on
@@ -435,6 +442,72 @@ private:
         }
     };
 
+    // The humbucker's two coils. A pickup that sums two sensors a distance d
+    // apart along the string adds the string's motion to itself delayed by the
+    // time the wave takes to cross that gap, d/c, so its magnitude response is
+    // |1 + b e^(-j 2 pi f d / c)| / (1 + b), dipping at c/2d. Normalised so the
+    // pair has unit gain at DC, and exact identity at zero spacing, which is
+    // what the single coil is.
+    //
+    // The second coil's weight b is below one for the same reason
+    // `pickupCombDepth` is: the null of a real pickup is a dip and not a zero.
+    // The screw coil sits further from the string than the slug coil and reads
+    // correspondingly quieter, so the two contributions cannot cancel.
+    struct CoilPairSum
+    {
+        std::array<float, apertureHistorySize> history {};
+        int writeIndex { 0 };
+        int spacingWhole { 0 };
+        float spacingFraction { 0.0f };
+        float balance { 1.0f };
+        float normalise { 0.5f };
+        bool paired { false };
+
+        void reset() noexcept
+        {
+            history.fill(0.0f);
+            writeIndex = 0;
+        }
+
+        void setSpacing(float delaySamples, float secondCoil) noexcept
+        {
+            balance = secondCoil;
+            normalise = 1.0f / (1.0f + secondCoil);
+            if (! (delaySamples > 0.0f))
+            {
+                paired = false;
+                spacingWhole = 0;
+                spacingFraction = 0.0f;
+                return;
+            }
+            if (delaySamples > static_cast<float>(apertureHistorySize - 2))
+                delaySamples = static_cast<float>(apertureHistorySize - 2);
+            paired = true;
+            spacingWhole = static_cast<int>(delaySamples);
+            spacingFraction = delaySamples - static_cast<float>(spacingWhole);
+        }
+
+        // Defined here for the same reason as the aperture above: it runs once
+        // per pickup per string per sample.
+        float process(float input) noexcept
+        {
+            constexpr int mask = apertureHistorySize - 1;
+            history[static_cast<std::size_t>(writeIndex)] = input;
+            if (! paired)
+            {
+                writeIndex = (writeIndex + 1) & mask;
+                return input;
+            }
+            const int recentIndex = (writeIndex - spacingWhole) & mask;
+            const int olderIndex = (recentIndex - 1) & mask;
+            const float recent = history[static_cast<std::size_t>(recentIndex)];
+            const float older = history[static_cast<std::size_t>(olderIndex)];
+            const float delayed = recent + spacingFraction * (older - recent);
+            writeIndex = (writeIndex + 1) & mask;
+            return (input + balance * delayed) * normalise;
+        }
+    };
+
     // A read at a delay that only changes when the voice is reconfigured: the
     // pickup position taps and the coupled string's bridge tap. Their
     // interpolation weights are a function of the delay alone, so they are
@@ -565,8 +638,12 @@ private:
     struct VelocityProfile
     {
         float amplitude { 1.0f };
+        // The stroke's force, and the rate at which the string leaves the
+        // plectrum. They are deliberately not the same curve: the second is
+        // bounded by the pick's own stiffness, so a harder stroke is mostly
+        // louder rather than proportionally sharper.
         float effort { 0.65f };
-        float effortCurve { 0.72f };
+        float releaseRate { 0.72f };
         float brightness { 1.0f };
         float noise { 1.0f };
         float tension { 1.0f };
@@ -590,6 +667,27 @@ private:
         VelocityProfile velocityProfile {};
         std::uint64_t startOrder { 0 };
         std::uint32_t noiseState { 1u };
+
+        // What the picking hand did not repeat about this stroke. All four are
+        // drawn once per attack from the note counter, so identical MIDI still
+        // renders identical audio, and all four are neutral until an attack
+        // draws them.
+        float strokeContactOffsetMetres { 0.0f }; // along the string, from the nominal
+        float strokeForceGain { 1.0f };           // linear, on the pick's amplitude
+        float strokeAngleOffset { 0.0f };         // radians, on the attack's plane
+        float strokeWidthScale { 1.0f };          // on the contact's duration
+
+        // The finger that is rocking this string. Two fingers of one hand are
+        // not one oscillator: each carries its own phase, its own rate and its
+        // own excursion, and the last two are redrawn every cycle from a
+        // stream this voice advances itself. All of it is seeded from the note
+        // counter, so identical MIDI still renders identical audio.
+        float vibratoPhase { 0.0f };        // 0..1, 0 is the finger at rest
+        float vibratoRateScale { 1.0f };    // this cycle's rate, relative
+        float vibratoDepthScale { 1.0f };   // this cycle's excursion, relative
+        float vibratoSemitones { 0.0f };    // what the pitch solve reads
+        std::uint32_t vibratoSeed { 0u };
+        std::uint32_t vibratoCycle { 0u };
 
         PolarisationLoop vertical {};
         PolarisationLoop horizontal {};
@@ -708,12 +806,17 @@ private:
         // Strum travel: a chord's later strings start after the pick reaches
         // them. Zero for a simultaneous (non-strummed) note-on.
         int startDelaySamples { 0 };
+        // Which pick stroke this pending excitation belongs to. A note-on that
+        // re-anchors the stroke may only push the strings of its own chord.
+        std::uint64_t strumChordId { 0 };
 
         // Pickup taps and per-string pickup colouring.
         DelayTap pickupTapNeck {};
         DelayTap pickupTapBridge {};
         FractionalMovingAverage apertureNeck {};
         FractionalMovingAverage apertureBridge {};
+        CoilPairSum coilPairNeck {};
+        CoilPairSum coilPairBridge {};
         float previousFluxNeck { 0.0f };
         float previousFluxBridge { 0.0f };
         OnePole emfLowpassNeck {};
@@ -891,6 +994,13 @@ private:
     void configurePickupFilters() noexcept;
     [[nodiscard]] float bodyConductanceAt(float frequencyHz) const noexcept;
     void startExcitation(Voice& voice, float velocity, bool legato) noexcept;
+    void drawStrokeVariation(Voice& voice) noexcept;
+    void seedVibratoFinger(Voice& voice) noexcept;
+    void beginChordStroke(int stringIndex, bool strokeIsUp,
+                          float spreadSeconds) noexcept;
+    void reAnchorChordStroke(int stringIndex) noexcept;
+    int strumTravelSamples(int crossings) const noexcept;
+    void drawVibratoCycle(Voice& voice) noexcept;
     void startVoice(Voice& voice, int midiNote, float velocity,
                     PlayStyle playStyle, bool strokeIsUp,
                     int startDelaySamples) noexcept;
@@ -942,22 +1052,29 @@ private:
     float appliedBendGlideSeconds_ { -1.0f };
     // The wheel position the sympathetic strings were last retuned to.
     float sympatheticAppliedBend_ { 0.0f };
-    // Fretting-hand vibrato from channel pressure. One hand, so one shared
-    // phase across every fingered string; upward-biased, so its minimum is the
-    // fretted pitch rather than its mean; and smoothed with an onset time
-    // constant, because a player lands the note before starting the vibrato.
-    // Its depth is deliberately expressed in equal semitones rather than
-    // through the per-string elastic compliance the wheel's bar uses: a bar
-    // stretches every string by the same length and each answers differently,
-    // while a finger is controlling a pitch and adjusts its own displacement
-    // to get it.
-    static constexpr float vibratoMaximumSemitones = 0.40f;
+    // Fretting-hand vibrato from channel pressure. One hand, but not one
+    // finger: the phase, the rate and the excursion live on the voice, and
+    // only the pressure and the onset are shared. Upward-biased, so its
+    // minimum is the fretted pitch rather than its mean, because a finger can
+    // only lengthen the string's path. Its depth is deliberately expressed in
+    // equal semitones rather than through the per-string elastic compliance
+    // the wheel's bar uses: a bar stretches every string by the same length
+    // and each answers differently, while a finger is controlling a pitch and
+    // adjusts its own displacement to get it.
+    static constexpr float vibratoMinimumSemitones = 0.10f;
+    static constexpr float vibratoMaximumSemitones = 1.10f;
+    // The pressure ramps at a bounded rate and is then shaped by smoothStep,
+    // so the hand accelerates from rest instead of leaving at its steepest -
+    // and stops the same way. The ramp is 258 ms long, which puts 90 % of the
+    // settled depth at 207 ms, where the one-pole this replaces put it
+    // (ln(10) times its 90 ms time constant): the change is one of shape, not
+    // of speed.
+    static constexpr float vibratoOnsetSeconds = 0.258f;
     float vibratoTarget_ { 0.0f };
     float vibratoAmount_ { 0.0f };
-    float vibratoOnsetCoefficient_ { 0.02f };
-    float vibratoPhase_ { 0.0f };
+    float vibratoRamp_ { 0.0f };
+    float vibratoOnsetIncrement_ { 0.002f };
     float vibratoPhaseIncrement_ { 0.0f };
-    float vibratoSemitones_ { 0.0f };
 
     // CC1 performance resonance and the acoustic feedback path it opens.
     float resonanceTarget_ { 0.0f };
@@ -970,8 +1087,22 @@ private:
     // at every host rate.
     std::int64_t engineClock_ { 0 };
     std::int64_t lastNoteOnClock_ { -(1ll << 40) };
+    // The neck edge the pick entered from, the direction it is travelling, and
+    // the clock the chord's first note-on arrived on. Every voice of the chord
+    // is scheduled against that one clock, so the ramp is laid down in stroke
+    // order however the host interleaved the note-ons.
     int chordAnchorString_ { 0 };
+    bool chordStrokeIsUp_ { false };
+    std::int64_t chordFirstNoteOnClock_ { -(1ll << 40) };
+    std::uint64_t chordSequence_ { 0 };
     int chordWindowSamples_ { 1680 };
+    // The pre-roll every voice of a strummed chord carries, in internal
+    // samples, and the travel time from the anchor to each further string.
+    // Both are zero at a zero Strum Spread, which keeps the block chord
+    // bit-exact.
+    int strumPreRollSamples_ { 0 };
+    int strumReAnchorSamples_ { 0 };
+    std::array<int, stringCount> chordTravelSamples_ {};
 
     // Where the fretting hand is. The index finger sits at this fret and the
     // little finger reaches `frettingHandReach` frets above it; open strings
