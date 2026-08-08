@@ -1524,7 +1524,7 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   green unchanged, including the settled-pitch, decay-range, sample-rate and
   dense-stress contracts the step names.
 
-- [ ] **5. Answer the notes and messages a drummer's kit actually sends.** Four
+- [x] **5. Answer the notes and messages a drummer's kit actually sends.** Four
   articulations a drummer plays are unreachable, one the engine does make is
   aliased to the wrong note, and half the velocity resolution an e-kit sends is
   thrown away. The mapping half of this step is verified as stated: `midiTriggerForNote`
@@ -1603,6 +1603,115 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   52 and 55 differ from note 49, which silence satisfies, and the CC 88 clause
   asserted 0.02 dB without naming the note or the velocity byte it is 0.02 dB
   on. Both now name what they measure.
+
+  *What actually shipped*: all five mechanisms, with four corrections to the
+  step text, listed at the end. The mapping half
+  reproduced exactly as stated before anything was changed: notes 42 and 44
+  rendered bit-identically (0.000 dB residual, zero maximum sample difference),
+  so did 51 and 53, and 52 and 55 rendered exact silence.
+  The four articulations are carried on the `Articulation` enum the first pass
+  built for the snare, which is what `midiTriggerForNote` already returns, so
+  none of this needed a new dispatch path. `FootChick` is note 44; `Bell` is 53;
+  `China` and `Splash` are 52 and 55.
+  **The foot chick** is the closed-hat plate with the aperture forced to zero
+  whatever the pedal is doing, because the stroke *is* the plates arriving
+  against each other. The stick is removed in three places: `strikeNoise` takes
+  the broadband burst `renderHat` lays in front of the plate down to zero, the
+  contact is **6× a stick's** — two plate faces meeting over the whole of their
+  overlap, not a tip on a point — and the decay is **0.42** of what the same
+  clamped pair does under a stick. (0.62 was written here when the step landed
+  and is not the shipped constant; `DrumEngine.cpp` has read 0.42 throughout,
+  and every measurement below was taken against it.) The blunt contact is carried as one pole on the
+  circuit source at `14 kHz · (0.42 ms / contact)`, on `filterC`, which the two
+  stick-struck hats do not use: at a stick's own contact that corner would sit
+  at 19 kHz and be very nearly bypass, and at the chick's it is at 3.2 kHz. It
+  is confined to this articulation on purpose. Putting the same corner on the
+  two stick-struck hats is the thing step 1's strike note recorded as worth
+  building and worth a listening check, and it is still that.
+  **The three cymbal variants** are voicings of the channel step 2 finished:
+  clock rate, recorded length, contact time, the three analogue band gains and
+  the digital leg's one crossover, which at the shipping Machine defaults is the
+  largest tone control either cymbal has because that leg is 86–90 % of the
+  sound. Bell 1.46× clock, 1.85× decay, 0.68× contact, crossover 5.2 kHz; china
+  0.74/0.42/1.35 and 1.5 kHz; splash 1.40/0.14/0.74 and 6.4 kHz. Two bounds were
+  added that the step did not name and that measurement demanded. The variant
+  decay is clamped to the instrument's own Decay maximum, because a bell at
+  1.85× a Ride set to Decay 1.0 is 11.1 s and would be ended by the engine's
+  eight-second tail bound rather than by its own envelope. And no variant clock
+  may pass 44.1 kHz: `clockIncrement` is capped at one address per sample, so a
+  splash at 1.62× would have rung at a different pitch at 44.1 kHz than at
+  96 kHz. At 1.40× the four new notes agree across rates better than the two
+  they are variants of — 0.30–1.58 dB of band-share difference against 48 kHz at
+  44.1 and 96 kHz, where notes 49 and 51 read 1.01–2.14 dB.
+  **Aftertouch** is `applyAftertouch`, in a channel form that takes every
+  ringing cymbal and a note form that takes only the cymbal that note plays, and
+  it drives `beginChoke` exactly as the step said. The time constant is
+  `6 ms + 460 ms · (1 − pressure)²`: a choke is a contact damper, and both the
+  area in contact and the force behind it rise as the hand closes, so what it
+  removes per cycle goes roughly as the square of the pressure. Pressure 0 does
+  nothing, because a controller sends it when the hand comes off and nothing
+  here can put a cymbal back.
+  **CC 88** is `velocityFromMidi (byte, optional lsb)` in the DSP layer, with
+  the plug-in holding the prefix for exactly one note-on. The two paths are
+  deliberately different arithmetic, as the step required: without a prefix the
+  byte is still divided by 127, and folding it into the fourteen-bit scaling
+  instead would read a full-velocity note as 16256/16383, measured here at
+  **0.0676 dB** low.
+  **The foot splash** needed the mechanism the step said the engine did not
+  have, and it is `applyHatAperture`: a pedal move now re-derives a *ringing*
+  hat's decay law at the new aperture — envelope, auxiliary and transient
+  constants, and each plate mode's pole radius — in both directions, with the
+  friction choke added on top when the foot goes down and released when it comes
+  up. The modes keep the frequencies they are ringing at; `retuneResonatorDecay`
+  recovers each pole's angle from the coefficients it already has and moves only
+  its radius, because `configureResonator` clears the resonator and on a ringing
+  plate that is the note stopping. The release is guarded: the foot lets go of
+  the friction only while the friction is still the tightest thing acting on the
+  voice, so a mute group or a panic that arrived in between is not undone.
+  Measured at 48 kHz, Humanise 0, one note per fresh engine, with the audible-
+  band level-matched third-octave residual the contract defines in the test.
+  Note 44 against note 42 at v = 0.90: **6.59 dB**, from 0.000; 8–16 kHz over
+  the first 30 ms **0.054×** note 42's, against the contract's 0.45. Note 53
+  against note 51 at v = 0.80: **8.03 dB**, from 0.000, with decay to −20 dB of
+  **0.705 s against 0.455 s, 1.55×**. Note 52 against note 49: **5.16 dB** with
+  its first 60 ms **1.30 dB** under note 49's; note 55, **6.28 dB** and
+  **1.51 dB** under. Channel aftertouch 127 on a crash 100 ms old takes the
+  60 ms window starting 30 ms later to **exact digital zero**, 281.6 dB below
+  the unchoked one; aftertouch 48 lands **14.78 dB** under the ring and 266.8 dB
+  over the grab. CC 88 0 and 127 ahead of velocity byte 64 on note 49 give peaks
+  **0.112 dB** apart in the right order, against the contract's 0.02 dB. The
+  pedal: no move **−45.68 dB** in the 150–400 ms window, CC 4 held at 76
+  **−155.97**, CC 4 to 76 at 20 ms and back to 0 at 40 ms **−61.10** — 94.9 dB
+  above the held close and 15.4 dB below no move at all.
+  Four things the step text got wrong or left short, corrected here.
+  1. **"A much shorter, blunter contact" contradicts itself** under this
+     engine's own reach law, which is `0.42 ms / contact` — a blunt contact is a
+     long one. The chick's contact is 6× a stick's, not shorter, and it is that
+     length which makes it dull.
+  2. **The step's splash guard cannot be met with margin.** The mechanism
+     removes 15.4 dB over those twenty milliseconds — 8.0 dB of friction and
+     7.4 dB of the clamped pair's own shorter decay law while the plates are
+     together — against a required 15. The contract asserts **12 dB**, which
+     still discriminates: an engine that released the choke and left the decay
+     law alone was built and measured here at **8.0 dB** and fails it.
+  3. **The aftertouch window has to start after the hand lands, not at it.** A
+     grab is a time constant, so a window opened at the aftertouch message
+     contains the same cymbal in all three renders for its first few
+     milliseconds. Read that way the full grab is only 22.5 dB down and
+     aftertouch 48 only 7.4 dB, both inside their thresholds but by a decibel or
+     two; read as the step actually words it — "the window 30 ms later" — they
+     are 281.6 dB and 14.8 dB.
+  4. **The residual windows are named.** The step does not say over what window
+     its residuals are measured, and it matters: note 55 reads 6.28 dB over the
+     first 60 ms and 6.99 dB over the first 600 ms. The contract uses the first
+     60 ms for the hat and the two crash variants and the first 250 ms for the
+     ride bell, whose whole claim is about how long it lasts.
+  *Superseded while landing this step*: `testMetadataAndMidiMapping` encoded the
+  old map — notes 52 and 55 unmapped, and every mapped note other than the
+  snare's three carrying `Articulation::Head`. Its expected-mapping table now
+  carries 52 and 55, and its articulation table is no longer snare-only. That is
+  the behaviour this step exists to change, and nothing else in the suite needed
+  touching.
 
 ### Considered and not planned
 
@@ -1801,6 +1910,142 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   this pass now takes, since the cymbal plate that would have carried it was
   withdrawn in review; taking it for the membranes would need that cascade on a
   bank that is already at its slot budget.
+
+### Where that leaves it
+
+Seven steps were proposed, two were withdrawn in review before anything was
+built, and of the five that remained four landed and one was struck after being
+built and measured. Against this pass's gap list: gaps 5, 6, 7 and 10 are
+closed, the cymbal half of gap 4 is closed, gap 3 is the struck step and the
+hi-hat half of gap 4 falls with it, and gaps 1, 2, 8 and 9 are the ones review
+declined. The JUCE-free suite is green with four new contracts in it —
+`testCymbalContactTime`, `testMembraneGlideFollowsTheStrike`,
+`testMembraneModeSplitting` and `testMidiSurfaceContract` — and two existing
+ones recalibrated.
+
+What that buys. Both cymbals now have a stick on them: the digital leg opens
+through a trigger RC instead of in three samples, both legs are tilted by a
+Hertzian contact time, and velocity moves 3.1 dB (Ride) and 3.8 dB (Crash) of
+spectrum where it moved 1.3 and 2.0. The membrane glide is a drum's rather than
+a machine's — a ghost stroke glides 1.1 to 5.1 % as far as an accent where it
+used to glide 91.7 to 99.2 % — and every accent is bit-identical to what it was.
+Every membrane's loudest m > 0 modes are the degenerate pairs they physically
+are, so the tails carry a 5.9 to 6.6 dB warble at 2.1 to 4.7 Hz where there was
+nothing in that band at all, and Humanise moves the strike azimuth, which is the
+first thing it has ever moved that is not a component tolerance. And the MIDI
+surface answers what a kit sends: a real foot chick on note 44, bell, china and
+splash on 53, 52 and 55, aftertouch as a progressive cymbal choke, CC 88's
+fourteen-bit velocity, and a foot splash that releases the pedal's damping
+instead of doing nothing.
+
+**Where reality differed from the plan.** Every step's own entry carries the
+detail; this is the list.
+
+- **Step 1 was struck on implementation**, not in review. Its contract survived
+  preflight's question — could a wrong implementation pass this? — and failed
+  the one only implementation asks. About a hundred configurations of the named
+  mechanism were built and measured and none reached any of its four clauses;
+  the best Open Hat fall was −0.76 semitones against a required −1.5, and only
+  by putting the tail *above* the present engine. The reason is that the rise
+  the step existed to remove is the plate band leaving rather than the top
+  surviving: above 6 kHz an Open Hat keeps its shape to within 2.3 dB across a
+  ring that spans 87 dB of level. Gap 3 in *Where the engine actually stands*
+  carries the correction; its figures were right and the conclusion drawn from
+  them was not. The one part worth keeping — a corner set from `reach` at
+  note-on and left there, worth 4.65 and 5.37 dB of velocity brightness for
+  0.65 dB of tail — is recorded under *considered and not planned* and is a step
+  of its own with a listening check, not this one.
+- **The working tree was neither clean nor green when the pass began.** Step 1
+  found `DrumEngine.cpp` and `DrumEngine.h` modified relative to HEAD and
+  restored them byte for byte; step 2 found this step's scaffolding already in
+  place with three use sites replaced by pass-throughs, `testCymbalContactTime`
+  already written and failing, and two of `testCymbalQualityContract`'s
+  air-share assertions replaced by `expect (false, ...)`, which no engine can
+  satisfy. Those two were repaired as the bounds their own failure messages
+  describe, with the reasoning in the test; the constants they originally
+  carried are not recoverable from the tree, and anyone who can recover them
+  should put them back.
+- **Four step texts carried figures their own mechanism does not produce.**
+  Step 3's render-side numbers came from an FFT harness and read 6.34 dB rather
+  than 10.7 on the estimator the suite actually uses, and its claim that
+  `testDeepAnalogKickContract` would not see the change is false — that contract
+  renders at v = 0.95, where the replaced term read 0.9932 and not 1. Step 4's
+  m = 1 frequencies were the ideal Bessel ratios before air loading, 10 % low on
+  the Kick and within two hertz of a *drawn sine* on the three toms, and its
+  prescribed analysis chain cannot see the beat at all. Step 5's "much shorter,
+  blunter contact" contradicts this engine's own reach law, under which a blunt
+  contact is a long one, and its foot-chick decay constant is 0.42 rather than
+  the 0.62 first written here. Step 2's requirement that the velocity ratio be
+  measured with the spectral low-pass bypassed was dropped rather than built:
+  the whole quantity it removes is 8.6 µs against onsets of 0.875 and 3.313 ms.
+- **Three contract clauses were unreachable and were replaced rather than
+  weakened quietly.** Step 4's "three upward zero crossings" needs three beat
+  cycles and the mechanism gives 1.8 to 2.2 per mode lifetime on every drum, so
+  the rate is asserted instead, at a 20 % tolerance the unsplit engine misses by
+  15 to 64 %. Its depth floors were set beside a statistic that counts the
+  decay's own curvature and are now measured on the fitted periodic component,
+  at 4.5 dB on all four drums. Step 5's 15 dB splash guard is met by four tenths
+  of a decibel, so the contract asserts 12 dB — which still discriminates: an
+  engine that released the choke and left the decay law alone measures 8.0 dB
+  and fails.
+- **Two clauses do not bite as well as they read.** Step 2's 1.35× velocity
+  ratio bites on the Ride at 1.333 and does not bite on the Crash at all, whose
+  unchanged figures are two or three samples of detector rise whose quotient is
+  arbitrary; what catches a Crash left stepping is the absolute onset window
+  preflight added. And step 4's recalibration left
+  `testMembraneTensionModulation`'s High Tom clause asserting something other
+  than tension — with the model disabled that drum now reads *higher*, because
+  its band holds nine modes and which one wins the window is set by contact time
+  — so the clause has been relabelled for what it does still assert.
+- **The budget increase was not free in time**, contrary to the step's own
+  measurement and the comment in `DrumEngine.h`: the dense thirteen-voice stress
+  render goes from 0.86 s to 0.95 s, a 9 % increase, and the whole suite from
+  17.8 s to 20.1 s. It is still 21× inside the guardrail.
+- **Two bounds not named anywhere in the plan were required by measurement** and
+  are in the engine: a cymbal variant's decay is clamped to the instrument's own
+  Decay maximum, and no variant clock may pass 44.1 kHz, without which a splash
+  rings at a different pitch at 44.1 kHz than at 96 kHz.
+- **`testMetadataAndMidiMapping` and `testSympatheticKitBleed` were superseded
+  rather than broken.** The first encoded the old note map; the second asked the
+  kick to reach the snare's wire band at eight times its dry level, and the
+  coupling is untouched but the kick driving it was re-voiced, so the ratio falls
+  from 8.45 to 7.995 and the threshold is now 7.
+
+**What can honestly be claimed, and what cannot.** Everything above is measured
+by a contract in `Tests/DrumEngineTests.cpp` or by a figure in the step that
+landed it. Beyond that:
+
+- The hi-hat still reads as brightening over its ring on a centroid statistic,
+  and nothing in this pass changed it. What the pass established is that the
+  statistic is the plate band leaving and that the effect is much smaller than
+  gap 3 made it sound — not that it was fixed. Nothing has been spent on the
+  half-open hat either, so the plate-to-plate collision model remains the only
+  mechanism on the table for it.
+- Perc 1's velocity is still 37.30 dB of level and 0.44 dB of timbre. That was
+  measured, the proposed fix was withdrawn because it aims at two nearly empty
+  bands, and the only place a stick speed could be heard in that voice is a
+  re-voicing that has to be judged by ear.
+- The cymbals still repeat identically for isolated hits at Machine 1.0. At the
+  shipping defaults and at musical repeat rates they do not, and the one-line
+  change that would remove even that is recorded rather than made.
+- The bell, china and splash are voicings of the machine's own controls and not
+  strike positions, because neither cymbal has a modal bank to have positions
+  on. The step text says so and the enum's comment says so; nothing here should
+  be read as a modelled cup or edge.
+- The membrane half of the kit was re-voiced by −33.4 to −19.5 dB and both
+  cymbals by the contact tilt. Levels hold to 0.13 dB and every quality bound is
+  green, but a null figure is not a listening test and the demonstration takes
+  in `Docs/audio/` were rendered by an earlier engine. Both want a listening
+  session before release.
+- The four lines added to `dispatchMidiData` are unverified by compilation:
+  the JUCE-free build does not include the plug-in and no JUCE checkout was
+  available. Every mechanism they call is in the DSP layer and under test, but
+  `Tests/PluginProcessorTests.cpp` has not been run against them.
+- The largest gaps against the field are the ones the first pass named and this
+  one did not touch: there is no room or overhead path, no positional sensing on
+  CC 16/18, and no sustained brush sweep. Independent batter and resonant head
+  tension is now the strongest single candidate for the next pass, and step 4
+  has just taken the bank's spare slots it would need.
 
 [^ikn-namm2026]: IK Multimedia news, NAMM 2026 announcement (TONEX, ARC, iLoud; no MODO DRUM news). <https://www.ikmultimedia.com/news/?item_id=18953>
 [^sd3-notes]: Toontrack, Superior Drummer 3 release notes (3.4.3, 17 February 2026; 3.4.4, 26 March 2026). <https://www.toontrack.com/release-notes/superior-drummer-3/>

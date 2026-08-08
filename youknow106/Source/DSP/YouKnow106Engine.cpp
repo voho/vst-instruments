@@ -2443,7 +2443,7 @@ void YouKnow106Engine::reset()
     rateTransition_ = RateTransition::Idle;
     rateTransitionGain_ = 1.0f;
 
-    thermalWarmupSeconds_ = 0.0f;
+    thermalWarmupSeconds_ = 0.0;
     thermalWarmupFraction_ = 0.0f;
     powerSupplyDroop_ = 0.0f;
     lfoAccumulator_ = 0u;
@@ -3371,8 +3371,15 @@ void YouKnow106Engine::updateVoiceVcfTarget(
     float counts = vcfPanelCounts(parameters.cutoff);
     const float envelopeSign =
         parameters.envPolarity == EnvPolarity::Normal ? 1.0f : -1.0f;
+    // The velocity extension rides here rather than on a curve of its own.
+    // ENV into the VCF is the only path this instrument has from the envelope
+    // to the cutoff, so scaling its amount by the same gain the amplifier
+    // applies makes a quieter note one whose filter envelope opened less far
+    // -- with no new law and no new constant. The panel byte is still the
+    // byte the firmware stored; the extension multiplies what that byte asks
+    // for, exactly as it multiplies the amplifier's own control.
     counts += envelopeSign * byte7(parameters.envDepth) * vcfEnvelopeCounts
-            * envelope;
+            * envelope * velocityGain(parameters, voice);
     counts += byte7(parameters.vcfLfoDepth) * vcfLfoCounts * lfoGated;
     counts += byte7(parameters.benderVcfDepth) * vcfBenderCounts * pitchBend_;
     counts += byte7(parameters.keyFollow) * vcfCountsPerOctave
@@ -3401,13 +3408,18 @@ void YouKnow106Engine::updateVoiceVcaTarget(
     const float envelope = voice.envelope.value;
 
     // --- Amplifier control ------------------------------------------------
-    const float velocityGain = 1.0f
-        - parameters.velocityDepth * (1.0f - voice.velocity);
     const float control = parameters.vcaMode == VcaMode::Envelope
                         ? envelope
                         : (voice.keyDown || voice.sustained ? 1.0f : 0.0f);
     voice.vcaControlTarget = clamp01(
-        control * velocityGain + card.vcaControlOffset * 0.004f * tolerance);
+        control * velocityGain(parameters, voice)
+        + card.vcaControlOffset * 0.004f * tolerance);
+}
+
+float YouKnow106Engine::velocityGain(const EngineParameters& parameters,
+                                     const Voice& voice) noexcept
+{
+    return 1.0f - parameters.velocityDepth * (1.0f - voice.velocity);
 }
 
 void YouKnow106Engine::updateSharedScan(const EngineParameters& parameters,
@@ -3635,6 +3647,33 @@ bool YouKnow106Engine::pulseMixEnabled(bool requested, float duty) noexcept
 // ---------------------------------------------------------------------------
 // Voice rendering
 // ---------------------------------------------------------------------------
+
+void YouKnow106Engine::advanceThermalWarmup() noexcept
+{
+    // Wall-clock seconds, not internal samples: the chassis warms at the same
+    // rate whatever grid the model is solved on. The total is double so the
+    // increment cannot round away against it -- see the member's declaration.
+    thermalWarmupSeconds_ += inverseOversampledRate_;
+    // The warm-up fraction is one chassis-wide number, advanced beside the
+    // timer it derives from. Six voices asking six times per internal sample
+    // for the same exponential of the same elapsed time is the same answer at
+    // six times the price.
+    thermalWarmupFraction_ =
+        1.0f - std::exp(-static_cast<float>(thermalWarmupSeconds_) / 900.0f);
+}
+
+float YouKnow106Engine::dynamicOtaHeadroomVolts(
+    const EngineParameters& parameters, int cardIndex) const noexcept
+{
+    const float psuThermalOffset = parameters.enableSpatialThermalGradient
+        ? chassisGradientCelsius(cardIndex) * parameters.calibration
+        : 0.0f;
+    const float tempRise = 15.0f * parameters.calibration;
+    const float tempC =
+        25.0f + psuThermalOffset + tempRise * thermalWarmupFraction_;
+    const float dynamicThermalVoltage = 0.026f * ((tempC + 273.15f) / 298.15f);
+    return 2.0f * dynamicThermalVoltage / stageAttenuation;
+}
 
 float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parameters,
                                     float noiseSample) noexcept
@@ -3960,20 +3999,10 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     const float filterInput = coupled * filterInputAttenuation
                             * voice.inputCompensation
                             + microscopicNoise * noiseRateScale_;
-    // Physical thermal warmup curve: V_t(T) = k * T / q from 25°C to 40°C
     const float cardGradient = chassisGradientCelsius(voice.cardIndex);
-    const float psuThermalOffset = parameters.enableSpatialThermalGradient
-        ? cardGradient * parameters.calibration
-        : 0.0f;
-    const float tempRise = 15.0f * parameters.calibration;
-    // The warm-up fraction is one chassis-wide number, advanced beside the
-    // timer it derives from. Six voices asking six times per internal sample
-    // for the same exponential of the same elapsed time is the same answer at
-    // six times the price.
-    const float tempC =
-        25.0f + psuThermalOffset + tempRise * thermalWarmupFraction_;
-    const float dynamicThermalVoltage = 0.026f * ((tempC + 273.15f) / 298.15f);
-    const float dynamicHeadroom = 2.0f * dynamicThermalVoltage / stageAttenuation;
+    // Physical thermal warmup curve: V_t(T) = k * T / q from 25°C to 40°C.
+    const float dynamicHeadroom =
+        dynamicOtaHeadroomVolts(parameters, voice.cardIndex);
     // The same gradient, through the control path's own temperature
     // coefficient, and about the six-card mean: the FREQ trim is set with the
     // instrument warm, so a calibrated unit carries the spread and not the
@@ -4209,9 +4238,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             pwmVolts_ += (pwmVoltsFirstPole_ - pwmVolts_) * pwmSlewSecond;
             subCv_ += (subCvTarget_ - subCv_) * subSlew;
             noiseCv_ += (noiseCvTarget_ - noiseCv_) * noiseSlew;
-            thermalWarmupSeconds_ += static_cast<float>(inverseOversampledRate_);
-            thermalWarmupFraction_ =
-                1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f);
+            advanceThermalWarmup();
 
             if (--driftControlCountdown_ <= 0)
             {

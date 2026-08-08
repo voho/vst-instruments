@@ -209,6 +209,13 @@ open question, it is named in its entry.
 
 1. **VCF Thermal Warmup & OTA Transconductance ($V_t(T)$)**:
    Models thermal dissipation warming voice cards from $25^\circ\text{C}$ to $40^\circ\text{C}$ ($T(t) = 25 + 15(1 - e^{-t/900})$). Thermal voltage $V_t(T) = \frac{k T}{q}$ scales transconductance headroom $2 V_t / \text{attenuation}$, naturally softening resonance and broadening linear differential headroom over a 15-minute warmup curve.
+   The elapsed-time accumulator is wall-clock seconds in double precision
+   *(2026-08-08)*: it is advanced once per internal sample, so a float total
+   stalled on a power-of-two boundary set by the internal rate — at 128.0 s
+   with HQ on and 512.0 s with it off, freezing the modelled chassis at
+   $26.99^\circ\text{C}$ or $31.51^\circ\text{C}$ and the headroom 2.5% or 1.0%
+   short of the $6.5687\ \text{V}$ the warm curve asks for. In double the curve
+   runs to completion and reads the same at every rate and quality setting.
 
 2. **Voice-VCA input-offset thump — unsupported heuristic removed** *(2026-08-06)*:
    Service Notes pp. 13 and 18 establish a real per-card null: C59 AC-couples

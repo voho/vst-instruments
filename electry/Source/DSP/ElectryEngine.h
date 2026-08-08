@@ -806,6 +806,9 @@ private:
         // Strum travel: a chord's later strings start after the pick reaches
         // them. Zero for a simultaneous (non-strummed) note-on.
         int startDelaySamples { 0 };
+        // Which pick stroke this pending excitation belongs to. A note-on that
+        // re-anchors the stroke may only push the strings of its own chord.
+        std::uint64_t strumChordId { 0 };
 
         // Pickup taps and per-string pickup colouring.
         DelayTap pickupTapNeck {};
@@ -993,6 +996,10 @@ private:
     void startExcitation(Voice& voice, float velocity, bool legato) noexcept;
     void drawStrokeVariation(Voice& voice) noexcept;
     void seedVibratoFinger(Voice& voice) noexcept;
+    void beginChordStroke(int stringIndex, bool strokeIsUp,
+                          float spreadSeconds) noexcept;
+    void reAnchorChordStroke(int stringIndex) noexcept;
+    int strumTravelSamples(int crossings) const noexcept;
     void drawVibratoCycle(Voice& voice) noexcept;
     void startVoice(Voice& voice, int midiNote, float velocity,
                     PlayStyle playStyle, bool strokeIsUp,
@@ -1080,8 +1087,22 @@ private:
     // at every host rate.
     std::int64_t engineClock_ { 0 };
     std::int64_t lastNoteOnClock_ { -(1ll << 40) };
+    // The neck edge the pick entered from, the direction it is travelling, and
+    // the clock the chord's first note-on arrived on. Every voice of the chord
+    // is scheduled against that one clock, so the ramp is laid down in stroke
+    // order however the host interleaved the note-ons.
     int chordAnchorString_ { 0 };
+    bool chordStrokeIsUp_ { false };
+    std::int64_t chordFirstNoteOnClock_ { -(1ll << 40) };
+    std::uint64_t chordSequence_ { 0 };
     int chordWindowSamples_ { 1680 };
+    // The pre-roll every voice of a strummed chord carries, in internal
+    // samples, and the travel time from the anchor to each further string.
+    // Both are zero at a zero Strum Spread, which keeps the block chord
+    // bit-exact.
+    int strumPreRollSamples_ { 0 };
+    int strumReAnchorSamples_ { 0 };
+    std::array<int, stringCount> chordTravelSamples_ {};
 
     // Where the fretting hand is. The index finger sits at this fret and the
     // little finger reaches `frettingHandReach` frets above it; open strings

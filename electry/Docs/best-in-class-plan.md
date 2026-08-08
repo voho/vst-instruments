@@ -766,7 +766,11 @@ list, not to the previous pass's.
    `energyEnvelope` straight off the seam and evaluating
    `1200*log2(1 + depth*energy)` (`p4_misc`), the peak deviation from the
    settled pitch on note 40 at velocity 1.0 with `velocityAmount = 1.0` is
-   **+0.180 cents, at 183 ms**; **+0.0141 cents at velocity 0.25**. The step's
+   **+0.180 cents, at 183 ms**; **+0.0141 cents at velocity 0.25**. *(Both were
+   re-measured after step 1 landed and read **+0.1583 cents at 184.2 ms** and
+   **+0.0156 cents** - step 1 replaced the velocity-to-amplitude law those two
+   numbers hang off, so the pre-step-1 figures above are what the audit saw and
+   the post-step-1 figures are what step 6 was implemented against.)* The step's
    own worked example puts a hard 3 mm pluck at **8.7 cents**, and that - not
    the "tens of cents" this document first asserted, for which no measurement
    was found - is the target. What is unambiguous is the *timing*: the peak
@@ -780,6 +784,9 @@ list, not to the previous pass's.
    is **0.180 cents at `stringGauge = 1.0` against 0.377 at `stringGauge = 0`**,
    a ratio of 0.478, where the `1/d^4` law the step proposes to derive predicts
    0.45. Only the absolute scale and the envelope's attack time are wrong.
+   *(After step 1 the velocity ratio reads **10.14** rather than 12.8, because
+   step 1 moved the amplitude law and left `profile.tension` where it was; the
+   gauge ratio reproduces unchanged at **0.4762**.)*
 
 8. **Fingered strings exchange no energy.** `sympatheticBus_ += bridgeForce` at
    :3575-3576 is written only from `renderVoice`, and
@@ -841,7 +848,13 @@ estimator. Nothing may bypass the phase compensation refresh. The alias floor is
 at velocity 1.0 (`p7_alias`, 32768-point window at 0.2 s; the 155.5 dB
 originally recorded reproduces to within the window), and must stay below the
 existing bound; step 3 adds taps and step 7 adds a feedback path, and both must
-be re-measured against it. Thirteen of fifteen continuous controls
+be re-measured against it. *(Step 6's implementation established what this
+figure is and is not: it is a **static**-chord measurement. On the unmodified
+engine the same measurement on a fretted chord falls from 162.1 dB with the
+vibrato at rest to 88.7 dB at half channel pressure and 90.6 dB at full
+(`s6_vib`), so any step that puts a pitch modulation on a sounding string is
+outside what this bound can score, and step 6 was struck partly for that
+reason.)* Thirteen of fifteen continuous controls
 sweep with a locally-referenced >5 kHz peak-to-RMS at the static note's
 -63.4 dB, and the new per-note variation must not become a per-block one. And
 the engine is unconditionally stable today because the coupling graph is
@@ -1466,7 +1479,7 @@ engine first, and the measured baseline is quoted next to it.
   default-constructs `EngineParameters`, so the plug-in runs at 40 cents, which
   is exactly the excursion it had.
 
-- [ ] **5. The strum travels the way the pick does.** Two changes. First,
+- [x] **5. The strum travels the way the pick does.** Two changes. First,
   direction: the offset is computed from the neck edge the resolved stroke
   starts at, not from whichever note-on arrived first. Maintain the chord's
   extreme string *in the stroke direction* as the anchor, and when a later
@@ -1553,7 +1566,90 @@ engine first, and the measured baseline is quoted next to it.
   assertion at all: once the first note has sounded, no causal scheduler can
   place a later-arriving string ahead of it.
 
-- [ ] **6. The attack blooms sharp.** Recalibrate the tension modulation against
+  *What actually shipped*: the mechanism as written - a 20 ms pre-roll carried
+  by every voice of a chord, an anchor set by the stroke direction and
+  re-anchored inside that window, the `abs()` gone, and an accelerating ramp
+  normalised to the knob - with five deviations and one correction.
+
+  Every baseline figure reproduced (`s5_base`, notes 40/45/50 and the full
+  eight-string set at a 12 ms spread): `Down` and `Up` both gave
+  +0.000/+12.000/+24.000 ms, eight strings gave +0.0000 to +84.0000 ms with
+  zero deviation from a straight line, a middle-anchored chord travelled
+  outward in both directions at once, and the split-block absolute onsets were
+  0/20/40 ms **in arrival order** for both pick styles and both arrival orders.
+  On the shipped engine the same chord reads 20.000/34.667/48.094 ms on the
+  downstroke and 48.094/34.667/20.000 ms on the upstroke, the eight-string
+  offsets are 20.000, 34.667, 48.094, 60.708, 72.406, 83.469, 93.948,
+  104.000 ms - gaps 14.667, 13.427, 12.615, 11.698, 11.063, 10.479, 10.052 ms,
+  84.000 ms of travel to the sample - and the split-block onsets are
+  20.000/34.667/48.094 ms on the downstroke and 48.094/34.667/20.000 ms on the
+  upstroke, **identical from both arrival orders**.
+
+  1. **The per-gap jitter ships at a standard deviation of 0.5%, and what
+     carries the stroke-to-stroke variation is a per-stroke draw on the
+     acceleration that the step did not name.** Independent per-gap draws of
+     any physically interesting size destroy the property the step exists to
+     add: adjacent nominal crossings differ by only 3.2 to 7.7%, so with the
+     step-2 stream's hard +/-3 sigma bound anything above about 0.53% can make
+     a later gap longer than an earlier one and the "monotonically
+     non-increasing" assertion is no longer about acceleration at all. The
+     wrist is also one continuous ballistic motion rather than seven
+     independent events, so the honest place for the variation is the motion:
+     the acceleration `u` is drawn once per chord at sigma 15%, and the
+     per-crossing draw at sigma 0.5% is what is left over. Measured over 200
+     eight-string strums 1.2 s apart (`s5_stats`): **zero monotonicity
+     violations**, worst successive-gap ratio 0.97862, last gap between
+     **0.6489 and 0.7787** of the first, and successive strums differing in
+     some string's offset by at least **5 internal samples (0.052 ms)**, mean
+     59 samples, against exactly 0 on the unmodified engine.
+  2. **The gap law is the step's stated `dt_k` proportional to `1/v(x_k)`,
+     which fixes `u` at 0.17347.** Requiring the last of seven crossings to
+     take 0.70 of the first gives `1 / sqrt(1 + 6u) = 0.70` directly. Solving
+     the exact kinematics instead - gaps of `(v_{k+1} - v_k)/a` rather than
+     `D/v(x_k)` - puts the same ratio at `u = 0.18936` and moves every gap by
+     less than 0.4% of itself, which is below the per-crossing jitter and not
+     worth the extra square root per chord.
+  3. **The total travel is normalised after the draws, not merely held.** The
+     seven gaps are rescaled so they sum to seven times Strum Spread whatever
+     the acceleration and jitter did to their shape; measured total over the
+     200 strums is 0.99988 to 1.00000 of `7 x spread`, the shortfall being
+     integer truncation. The knob therefore states the *mean* crossing time.
+     A chord that spans fewer than eight strings is spread slightly wider per
+     string than the knob says - 1.208 times it on the first crossing, 0.700
+     on the last - because the pick has not finished speeding up. That is the
+     mechanism, not an error.
+  4. **The pre-roll is charged to single notes as well.** A note-on cannot
+     know whether the rest of a chord is still coming, so `R` is charged
+     whenever Strum Spread is non-zero, including on a note that turns out to
+     be alone. At the shipping default (`strumSpreadSeconds = 0`) nothing is
+     charged, no draw is made and the engine is bit-unchanged. `R` is computed
+     in double precision: as a `float` constant `0.020f * 96000` truncates to
+     1919 internal samples, 19.9896 ms rather than 20.
+  5. **The chord's stroke direction is captured at its first note-on and holds
+     for the whole chord.** Under `PickStyle::Alternate` the up/down toggle
+     otherwise advances once per string, so one strummed chord would be asked
+     to travel in both directions at once. The per-voice excitation colouring
+     still alternates exactly as before; only the travel reads the chord's own
+     stroke.
+  6. **Two assertions in `testStrumSpread` were restated and one was
+     retired.** "The leading string of a strum is delayed by exactly 0" and "a
+     note outside the chord window inherited a strum offset" both now read
+     `R`, which the step already sanctions for the first and which is the same
+     fact for the second. The per-string comparison against `step x
+     stringIndex` asserted the uniform ramp this step replaces - string 2 read
+     6415 internal samples against its expected 3838 - and is replaced by the
+     three properties that survive: the leading string at `R`, offsets
+     strictly increasing in string index, and string 0 to string 7 within 5%
+     of `7 x spread`.
+
+- [ ] **6. The attack blooms sharp. Struck under review: three of its
+  verification contracts are unreachable - the 400 ms relaxation, the alias
+  guard and the 30 ms peak - and the depth that meets the rest can only ship by
+  rewriting the spectral regression tables steps 2 and 3 installed. The
+  reasoning and every measurement are under "considered and not planned"; gap 7
+  stays in the list above as a measured fact that is deliberately
+  unscheduled.**
+  Recalibrate the tension modulation against
   the same stretch law the previous steps use. For a string plucked to
   `y0` at fraction `p`, `dL = y0^2 / (2 L p (1-p))`, `dT = E A dL / L`, and
   `df/f = dT/2T = E A y0^2 / (4 T L^2 p (1-p))`. With a plain .010 string at
@@ -1747,6 +1843,91 @@ engine first, and the measured baseline is quoted next to it.
   for.
 
 ### Considered and not planned
+
+- **The attack pitch bloom: tension modulation recalibrated to its own stretch
+  law. Scheduled as step 6, struck under review because three of its
+  verification contracts are unreachable and the depth that meets the rest can
+  only ship by rewriting the spectral regression tables the earlier steps of
+  this pass installed.** The gap it closes is real and reproduces: on note 40 at velocity
+  1.0 with `velocityAmount = 1.0`, reading `tensionDepth` and `energyEnvelope`
+  off the seam, the peak deviation from the settled pitch is **+0.1583 cents at
+  184.2 ms** (`s6_base`, against the audit's pre-step-1 +0.180 at 183 ms),
+  **+0.0156 cents at velocity 0.25**, and the gauge ratio is **0.4762**,
+  reproducing the audit's 0.478 to three digits. The timing is the worse half:
+  the bloom arrives a fifth of a second after the attack, which is backwards.
+
+  **The recalibration was implemented and measured before it was struck.**
+  `configureVoicePitch` gained `E A / (4 T L^2)` from the same core diameter
+  the bending-stiffness fit already uses, `startExcitation` gained the
+  `1/(p (1-p))` of the plectrum's own contact fraction, the envelope became a
+  deflection in square metres with both its time constants referenced to the
+  loop's round trip, and one constant converted loop units to metres. Measured
+  on that build with the constant set so a full-force stroke deflects the
+  string **2.05 mm** (1.76 to 2.20 mm across the eight strings): note 40 peaks
+  at **8.96 cents at 26.2 ms**, falls to 4.64 cents at 400 ms and 0.558 at 3 s;
+  velocity 0.25 peaks at **0.873 cents**; the gauge ratio holds at 0.4755 and
+  the velocity ratio at 10.27; note 64 - the worked example's E4 - peaks at
+  **4.31 cents**, which is **8.1 cents** when scaled to the example's own 3 mm
+  and `p = 0.18`, against its stated 8.7. The physics reproduces. What it
+  collides with is everything else.
+
+  **(a) The 400 ms relaxation is unreachable.** "Below 1.5 cents by 400 ms"
+  from a 6-to-20-cent peak asks the bloom to lose 7.6 dB in 400 ms, and the
+  bloom decays with the string. Note 40's rendered peak amplitude falls from
+  0.0455 at 20 ms to 0.0303 at 400 ms - **3.5 dB** - and the implemented
+  deflection envelope reads **52 per cent** of its peak at 400 ms, giving 4.64
+  cents from an 8.96-cent peak. No implementation that decays with the string
+  meets it, and one that decays faster is a drawn curve.
+
+  **(b) The alias guard is unreachable by any pitch bloom, and the strength it
+  guards is a static-instrument strength.** The step requires the >12 kHz floor
+  to stay at least 150 dB below the spectral peak on a chord at velocity 1.0.
+  Measured (`s6_guards`): **159.8 dB** with the bloom off, **142.6 dB** with it
+  on. That is not an artefact of the implementation - a *static* 0.5 per cent
+  delay shortening reads **160.6 dB**, so it is the motion and not the offset -
+  and it is not new: on the **unmodified** engine the same measurement on a
+  fretted chord reads **162.1 dB** with the vibrato at rest, **88.7 dB** at half
+  channel pressure and **90.6 dB** at full (`s6_vib`). A 40-cent vibrato the
+  instrument already ships costs 73 dB on this metric. It measures spectral
+  purity of a *static* chord; a plucked string whose pitch is moving cannot
+  meet it, and the four measured strengths need to say so.
+
+  **(c) The 30 ms peak is at the edge of possible, and buying it costs the
+  alias floor twice over.** Note 40's loop returns nothing at all for its first
+  round trip - the first non-zero loop sample is at **12.1 ms** - and a
+  deflection cannot be read from a waveguide in less than a period, so the
+  earliest peak is two round trips. It was reached (26.2 ms) only with a
+  near-instant follower attack, which leaves **26 per cent** of once-per-round-
+  trip ripple on the delay and takes the alias metric to **131.1 dB**;
+  smoothing that ripple into a monotone glide moves the peak to **83 ms** with
+  two poles and **104 ms** with three.
+
+  **(d) And the depth that does meet the headline band breaks five existing
+  tests, one of which forbids pitch modulation of any size.** At the derived
+  depth: `testHumbuckerTwoCoilNotch` fails eleven of its sixteen pinned
+  single-coil partials (partial 12 moves 17.9 dB), five of its six octave
+  bands, its chord balance and its alias floor; `testPalmMuteDoesNotShiftPitch`
+  fails by up to 10 cents, because a damped string genuinely blooms less than
+  an open one; `testVelocityExpression`'s attack brightening collapses from
+  1.073 to 1.001; step 2's `testPickingHandVariation` misses its 6 dB bound at
+  6.52; and `testSlideArticulation`'s two friction centroids converge. Nearly
+  all of that is fixed-frequency estimators reading a signal whose pitch is
+  moving - the partials leave their bins - which is exactly why it cannot be
+  fixed by making the effect smaller. At **a quarter** of the derived depth
+  (2.34 cents on note 40) eleven partials still fail, the worst by 5.5 dB, and
+  the alias floor still fails at 148.4 dB. Step 3's table pins sixteen partials
+  to **0.2 dB**; a bloom small enough to clear it is smaller than the 0.18
+  cents that ships.
+
+  **What would make it viable.** Not a smaller effect and not a different
+  envelope: the suite's spectral estimators have to track the pitch they are
+  measuring - a settled analysis window, or a per-partial peak search instead
+  of a fixed bin - before the instrument is allowed to move its pitch during an
+  attack. That is a change to the measurement infrastructure of six tests owned
+  by five other steps, and it is the prerequisite, not the step. Gap 7 stays in
+  the list above as a true statement about the engine: tension modulation is
+  wired up, calibrated about fifty times too small, and peaks a fifth of a
+  second late.
 
 - **Fretted intonation: the fret-1-sharp residual a saddle setback leaves
   behind. Scheduled as step 4, struck under review because its own physics does

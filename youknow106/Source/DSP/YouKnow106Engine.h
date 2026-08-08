@@ -208,7 +208,8 @@ public:
         // model applies -- ambient, at Character zero.
         return 25.0f
              + 15.0f * activeParameters_.calibration
-                     * (1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f));
+                     * (1.0f - std::exp(-static_cast<float>(
+                                            thermalWarmupSeconds_) / 900.0f));
     }
     [[nodiscard]] float getDisplayRailDroopVolts() const noexcept
     {
@@ -1133,6 +1134,15 @@ private:
     // when the panel does, so this is called where those change, not from the
     // audio path.
     void refreshVoiceCardStageTrims() noexcept;
+    // One internal sample of chassis warm-up: the wall-clock timer and the
+    // exponential the voices read. The render loop's only way to advance it,
+    // so a fixture that drives it directly drives exactly what audio does.
+    void advanceThermalWarmup() noexcept;
+    // The OTA headroom the cascade is solved with on one card, in module-node
+    // volts: 2 Vt(T) / stageAttenuation at the chassis temperature the warm-up
+    // clock has reached, plus this card's place in the spatial gradient.
+    [[nodiscard]] float dynamicOtaHeadroomVolts(
+        const EngineParameters& parameters, int cardIndex) const noexcept;
     void noteOnInternal(int midiNote, float velocity) noexcept;
     // Assigns a note already present in the held-key table. Kept separate from
     // noteOnInternal so a POLY-mode rebuild does not count the physical key a
@@ -1193,6 +1203,14 @@ private:
                               float lfoGated) noexcept;
     void updateVoiceVcaTarget(Voice& voice,
                               const EngineParameters& parameters) noexcept;
+    // The velocity extension's one gain. The modelled hardware has no velocity
+    // input at all, so `velocityDepth` is 0 by default and this is identically
+    // 1.0f -- a multiply by exactly one, which leaves the faithful render bit
+    // for bit where it was. When a player turns it up it scales both places a
+    // note's dynamics reach: the amplifier control and the envelope's own
+    // amount into the filter.
+    [[nodiscard]] static float velocityGain(
+        const EngineParameters& parameters, const Voice& voice) noexcept;
     void performConverterWrite(const ConverterWrite& write,
                                const EngineParameters& parameters,
                                float lfoGated) noexcept;
@@ -1427,7 +1445,20 @@ private:
 
     // Deterministic physical circuit state: voice card thermal warmup timer (s)
     // and power supply rail droop (V) under heavy polyphonic loading.
-    float thermalWarmupSeconds_ { 0.0f };
+    //
+    // Double precision, for the same reason `HighPass::state` is: the timer is
+    // advanced once per *internal* sample, so its increment is 5.208e-6 s at a
+    // 192 kHz internal rate. A float total passing 128 s carries a 1.526e-5 s
+    // ULP -- three times that increment -- and every further addition rounds
+    // away, freezing the clock at 128.0 s and the modelled chassis at 26.99 C
+    // for the rest of the session. Which power-of-two boundary caught it
+    // depended on the internal rate, so the quality switch moved the modelled
+    // physics: at a 48 kHz internal rate the freeze was at 512.0 s and
+    // 31.51 C, which is exactly what `voiceEnergyFollowerSeconds` above
+    // forbids for the same reason. In double the increment stays
+    // eight orders of magnitude above half an ULP and the 900 s law runs to
+    // completion at every rate.
+    double thermalWarmupSeconds_ { 0.0 };
     // 1 - exp(-t/900), advanced once per internal sample beside the timer
     // above. It is chassis-wide, so recomputing it per voice recomputed the
     // same number six times.

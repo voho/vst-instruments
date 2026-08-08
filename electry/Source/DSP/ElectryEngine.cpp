@@ -117,6 +117,37 @@ constexpr float handDipQ = 0.70f;
 // which is the sustain the string's own fitted T60 was always asking for.
 constexpr float polarisationCouplingPerRoundTrip = 0.04f;
 
+// The strum. Three constants, all of them about the wrist rather than the
+// string.
+//
+// `strumReAnchorSeconds` is the pre-roll every voice of a chord carries. A
+// chord window is 35 ms and a host block is typically 5 to 10 ms, so one
+// chord's note-ons routinely arrive across several `process()` calls; without
+// a pre-roll the first arrival has already sounded by the time the string the
+// pick actually starts from is known, and no causal scheduler can put the
+// later arrival ahead of it. Holding every voice back by this much buys a
+// window in which any of them may still turn out to be the anchor. It is a
+// fixed time rather than a block count, so onsets do not depend on the host's
+// buffer size, and it is charged only when Strum Spread is non-zero.
+constexpr double strumReAnchorSeconds = 0.020;
+
+// The pick enters the string plane at `v0` and accelerates through the
+// strings, so `v(x) = sqrt(v0^2 + 2 a x)` and the crossing intervals compress
+// as `dt_k = D / v(x_k)`. Written against the entry speed, with the strings
+// evenly spaced, `v(x_k) = v0 sqrt(1 + u k)` for `u = 2 a D / v0^2` - one
+// dimensionless number for the whole stroke. Requiring the last of the seven
+// crossings to take 0.70 of the first gives `1 / sqrt(1 + 6u) = 0.70`, so
+// `u = 1/(6*0.49) - 1/6`.
+constexpr float strumAcceleration = 0.173469388f;
+
+// How much of that the wrist does not repeat. The acceleration is a property
+// of one stroke and is drawn once per chord; the per-crossing draw is what is
+// left over, and it is small for a reason the shape itself sets - adjacent
+// crossings differ by only 3 to 8 %, so a per-gap jitter of the same size
+// would erase the compression rather than humanise it.
+constexpr float strumAccelerationSigma = 0.15f;
+constexpr float strumCrossingSigma = 0.005f;
+
 constexpr float steelDensity = 7850.0f;      // kg/m^3
 constexpr float steelYoungModulus = 2.0e11f; // Pa
 
@@ -860,6 +891,11 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     // enough to group a chord and short enough not to merge separate beats.
     chordWindowSamples_ = std::max(1, static_cast<int>(0.035 * sampleRate_));
     handReturnSamples_ = std::max(1, static_cast<int>(1.5 * sampleRate_));
+    // The window inside which a later note-on may still turn out to be the
+    // edge the stroke began at, and the pre-roll that keeps every voice of the
+    // chord silent while it is open.
+    strumReAnchorSamples_ = std::max(
+        1, static_cast<int>(strumReAnchorSeconds * sampleRate_));
     // The vibrato's phase advances once per control tick, and the pressure
     // behind it ramps at a bounded rate - the time a player takes to land a
     // note before starting to move on it.
@@ -918,6 +954,11 @@ void ElectryEngine::reset()
     engineClock_ = 0;
     lastNoteOnClock_ = -(1ll << 40);
     chordAnchorString_ = 0;
+    chordStrokeIsUp_ = false;
+    chordFirstNoteOnClock_ = -(1ll << 40);
+    chordSequence_ = 0;
+    strumPreRollSamples_ = 0;
+    chordTravelSamples_.fill(0);
     frettingHandPosition_ = 0.0f;
     palmMuteBlend_ = clampf(smoothedParameters_.palmMute + palmMutePressure_,
                             0.0f, 1.0f);
@@ -1139,31 +1180,48 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
 
     auto& voice = voices_[static_cast<std::size_t>(stringIndex)];
 
-    // Strum travel. The first note of a chord fixes the edge the pick starts
-    // from, and every later string is offset by the time the pick needs to
-    // reach it. At a zero spread this is exactly the previous simultaneous
+    // Strum travel. The pick enters the neck at one edge and crosses the chord
+    // in one direction, so the edge is the chord's extreme string *in the
+    // stroke's direction* - not whichever note-on the host happened to send
+    // first - and the offset is the signed distance from it rather than the
+    // absolute one. At a zero spread this is exactly the previous simultaneous
     // behaviour.
-    if (newChord)
-        chordAnchorString_ = stringIndex;
-    updateFrettingHand(
-        midiNote - stringSpecs()[static_cast<std::size_t>(stringIndex)].openMidiNote,
-        newChord);
-    lastNoteOnClock_ = engineClock_;
-
-    int startDelaySamples = 0;
+    //
     // Read the sanitised target rather than the smoothed copy. This control
     // schedules the stroke instead of shaping it, so the control tick copies it
     // verbatim; a chord whose note-ons land at offset 0 of the same block as
     // the automation change would otherwise be scheduled with the previous
     // block's spread, usually as a block chord.
     const float spreadSeconds = targetParameters_.strumSpreadSeconds;
-    if (spreadSeconds > 0.0f && ! newChord)
+    if (newChord)
+        beginChordStroke(stringIndex, strokeIsUp, spreadSeconds);
+    else if (strumPreRollSamples_ > 0
+             && engineClock_ - chordFirstNoteOnClock_
+                    < static_cast<std::int64_t>(strumPreRollSamples_))
+        reAnchorChordStroke(stringIndex);
+
+    updateFrettingHand(
+        midiNote - stringSpecs()[static_cast<std::size_t>(stringIndex)].openMidiNote,
+        newChord);
+    lastNoteOnClock_ = engineClock_;
+
+    int startDelaySamples = 0;
+    if (strumPreRollSamples_ > 0)
     {
-        const int stringsCrossed = std::abs(stringIndex - chordAnchorString_);
+        // One clock for the whole chord: the pick reaches this string at the
+        // chord's first note-on plus the pre-roll plus the travel, whenever
+        // this particular note-on arrived.
+        const int crossings = chordStrokeIsUp_
+            ? chordAnchorString_ - stringIndex
+            : stringIndex - chordAnchorString_;
+        const std::int64_t onset = chordFirstNoteOnClock_
+                                 + static_cast<std::int64_t>(strumPreRollSamples_)
+                                 + static_cast<std::int64_t>(
+                                       strumTravelSamples(std::max(0, crossings)));
         startDelaySamples = static_cast<int>(
-            spreadSeconds * static_cast<float>(sampleRate_))
-            * stringsCrossed;
+            std::max<std::int64_t>(0, onset - engineClock_));
     }
+    voice.strumChordId = chordSequence_;
 
     const bool legato = (playStyle_ == PlayStyle::Hammer
                          || playStyle_ == PlayStyle::Slide)
@@ -2228,6 +2286,110 @@ void ElectryEngine::drawStrokeVariation(Voice& voice) noexcept
     // Contact patch. 8% of standard deviation on how much of the tip is
     // touching, carried by the length of the release pulse.
     voice.strokeWidthScale = clampf(1.0f + 0.08f * normal(), 0.6f, 1.4f);
+}
+
+void ElectryEngine::beginChordStroke(int stringIndex, bool strokeIsUp,
+                                     float spreadSeconds) noexcept
+{
+    // A new pick stroke. The edge it starts from is the chord's extreme string
+    // in the stroke's own direction, which is not known yet - only the first
+    // note-on has arrived - so it is provisional and `reAnchorChordStroke`
+    // below may move it while the pre-roll is still running.
+    ++chordSequence_;
+    chordAnchorString_ = stringIndex;
+    chordStrokeIsUp_ = strokeIsUp;
+    chordFirstNoteOnClock_ = engineClock_;
+    chordTravelSamples_.fill(0);
+
+    if (! (spreadSeconds > 0.0f))
+    {
+        // No spread, no travel and no pre-roll: the chord is one block again,
+        // to the sample.
+        strumPreRollSamples_ = 0;
+        return;
+    }
+    strumPreRollSamples_ = strumReAnchorSamples_;
+
+    // The wrist's motion for this one stroke. It is drawn from the chord
+    // counter alone, so every string of the chord reads the same ramp and the
+    // same MIDI still renders the same audio.
+    std::uint32_t state = hash32(
+        static_cast<std::uint32_t>(chordSequence_ * 2891336453u) ^ 0x7feb352du);
+    const auto normal = [&state]
+    {
+        return bipolarNoise(state) + bipolarNoise(state) + bipolarNoise(state);
+    };
+
+    // Three uniforms sum to unit variance and cannot leave +/-3 sigma, so the
+    // acceleration stays between 0.55 and 1.45 of nominal and the ramp cannot
+    // invert.
+    const float acceleration = strumAcceleration
+                             * (1.0f + strumAccelerationSigma * normal());
+
+    std::array<float, stringCount - 1> gaps {};
+    float total = 0.0f;
+    for (int k = 0; k < stringCount - 1; ++k)
+    {
+        gaps[static_cast<std::size_t>(k)] =
+            (1.0f + strumCrossingSigma * normal())
+            / std::sqrt(1.0f + acceleration * static_cast<float>(k));
+        total += gaps[static_cast<std::size_t>(k)];
+    }
+
+    // Strum Spread states the time the pick takes per string, so the ramp is
+    // normalised to it: whatever shape the draws gave it, seven crossings
+    // still take seven times the knob. The acceleration redistributes the
+    // stroke, it does not lengthen it.
+    const float scale = spreadSeconds * static_cast<float>(sampleRate_)
+                      * static_cast<float>(stringCount - 1)
+                      / std::max(1.0e-6f, total);
+    float travel = 0.0f;
+    for (int k = 0; k < stringCount - 1; ++k)
+    {
+        travel += gaps[static_cast<std::size_t>(k)] * scale;
+        chordTravelSamples_[static_cast<std::size_t>(k + 1)] =
+            static_cast<int>(travel);
+    }
+}
+
+void ElectryEngine::reAnchorChordStroke(int stringIndex) noexcept
+{
+    // A note-on that is further out along the neck than the current anchor, in
+    // the direction the pick is travelling, is where the stroke really began.
+    // Every voice of this chord is still inside its pre-roll, so none of them
+    // has sounded and all of them can be pushed out by the extra travel.
+    const int crossings = chordStrokeIsUp_ ? chordAnchorString_ - stringIndex
+                                           : stringIndex - chordAnchorString_;
+    if (crossings >= 0)
+        return;
+
+    chordAnchorString_ = stringIndex;
+    for (auto& voice : voices_)
+    {
+        if (voice.strumChordId != chordSequence_ || voice.startDelaySamples <= 0)
+            continue;
+        const int moved = chordStrokeIsUp_
+            ? chordAnchorString_ - voice.stringIndex
+            : voice.stringIndex - chordAnchorString_;
+        // Rescheduled against the chord's own clock rather than by adding a
+        // difference, so the countdown's control-tick quantisation does not
+        // accumulate across re-anchors.
+        const std::int64_t onset = chordFirstNoteOnClock_
+                                 + static_cast<std::int64_t>(strumPreRollSamples_)
+                                 + static_cast<std::int64_t>(strumTravelSamples(moved));
+        voice.startDelaySamples = static_cast<int>(
+            std::max<std::int64_t>(1, onset - engineClock_));
+    }
+}
+
+int ElectryEngine::strumTravelSamples(int crossings) const noexcept
+{
+    // A chord whose note-ons are spread wider than the re-anchor window still
+    // travels from its first arrival: a string that turns out to be beyond the
+    // anchor once the window has closed is picked as soon as it can be, which
+    // is the stated limit of the mechanism rather than an undefined case.
+    const int index = std::clamp(crossings, 0, stringCount - 1);
+    return chordTravelSamples_[static_cast<std::size_t>(index)];
 }
 
 void ElectryEngine::seedVibratoFinger(Voice& voice) noexcept

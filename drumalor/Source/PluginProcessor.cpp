@@ -368,14 +368,40 @@ void DrumalorAudioProcessor::dispatchMidiData (const juce::uint8* data,
     const auto status = static_cast<unsigned> (data[0]);
     const auto kind = status & 0xf0u;
 
-    if (kind == 0x90u && numBytes >= 3 && data[2] != 0)
+    if ((kind == 0x80u || kind == 0x90u) && numBytes >= 3)
     {
-        const auto midiNote = static_cast<int> (data[1] & 0x7fu);
-        const auto velocity = static_cast<float> (data[2] & 0x7fu) / 127.0f;
+        // The prefix belongs to the next note event and to no other, so it is
+        // taken rather than read - by a note-off as well as by a note-on, since
+        // a note-on of velocity zero is a note-off and leaving the prefix on
+        // the queue would hand it to a later, unrelated stroke.
+        const auto prefix = pendingHighResolutionVelocity;
+        pendingHighResolutionVelocity.reset();
 
-        if (engine.triggerMidi (midiNote, velocity))
-            if (const auto instrument = drumalor::instrumentForMidiNote (midiNote))
-                registerTrigger (*instrument);
+        if (kind == 0x90u && data[2] != 0)
+        {
+            const auto midiNote = static_cast<int> (data[1] & 0x7fu);
+            const auto velocity = drumalor::velocityFromMidi (
+                static_cast<int> (data[2] & 0x7fu), prefix);
+
+            if (engine.triggerMidi (midiNote, velocity))
+                if (const auto instrument = drumalor::instrumentForMidiNote (midiNote))
+                    registerTrigger (*instrument);
+        }
+    }
+    else if (kind == 0xa0u && numBytes >= 3)
+    {
+        // Polyphonic aftertouch: the pressure belongs to the note it names, so
+        // it chokes only the cymbal that note plays.
+        (void) engine.applyAftertouch (
+            static_cast<int> (data[1] & 0x7fu),
+            static_cast<float> (data[2] & 0x7fu) / 127.0f);
+    }
+    else if (kind == 0xd0u && numBytes >= 2)
+    {
+        // Channel aftertouch: one pressure for the whole channel, so it takes
+        // every cymbal that is still ringing. This is the choke convention an
+        // electronic kit sends when the pad has no per-note pressure.
+        engine.applyAftertouch (static_cast<float> (data[1] & 0x7fu) / 127.0f);
     }
     else if (kind == 0xb0u && numBytes >= 3)
     {
@@ -386,8 +412,15 @@ void DrumalorAudioProcessor::dispatchMidiData (const juce::uint8* data,
         // every MIDI event, so a pedal move lands where the player put it.
         if (controller == 4u)
             engine.setHiHatPedal (static_cast<float> (data[2] & 0x7fu) / 127.0f);
+        // CC 88 is the High Resolution Velocity Prefix, which is only ever a
+        // prefix: it is held for the next note-on and cleared by it.
+        else if (controller == 88u)
+            pendingHighResolutionVelocity = static_cast<int> (data[2] & 0x7fu);
         else if (controller == 120u || controller == 123u)
+        {
+            pendingHighResolutionVelocity.reset();
             engine.allSoundsOff();
+        }
     }
 }
 

@@ -804,11 +804,47 @@ private:
     [[nodiscard]] static float signedUnitFromHash (std::uint32_t value) noexcept;
     [[nodiscard]] static float nextNoise (std::uint32_t& state) noexcept;
 
+    // The whole (0,1) pair of a resolved drum: both branches, their
+    // eigenvectors, and which of the two the batter head can actually be heard
+    // in. The readout reports it, and the octave transform is solved against
+    // it, so the pitch the keyboard buys and the pitch the panel shows are the
+    // same quantity by construction rather than by agreement.
+    struct AxisymmetricPair
+    {
+        float upperHz { 0.0f };
+        float lowerHz { 0.0f };
+        float upperBatter { 0.0f };
+        float upperResonant { 0.0f };
+        float lowerBatter { 0.0f };
+        float lowerResonant { 0.0f };
+        bool upperAudible { false };
+        bool lowerAudible { false };
+        // What measure() reports. With both branches audible these are the two
+        // above; with one, it is that one twice, because a body with no cavity
+        // to split it has a single axisymmetric mode and saying so twice is the
+        // honest description of it.
+        float breathingHz { 0.0f };
+        float loadedFundamentalHz { 0.0f };
+    };
+    [[nodiscard]] static AxisymmetricPair solveAxisymmetricPair (
+        const DrumState& drum) noexcept;
+
     // Resolving a drum depends only on the parameter block, the wheel and the
     // octave, so it is static and the instance method simply supplies its own.
     [[nodiscard]] static DrumState resolveDrumFor (const EngineParameters& parameters,
                                                    float pitchBendSemitones,
                                                    int octaveOffset) noexcept;
+    // The head and the air behind it for one choice of the octave transform:
+    // geometry, tension, wave speeds, bending stiffness, the loss terms and the
+    // converged cavity stiffness. Split out of resolveDrumFor because the
+    // octave transform is now solved against the (0,1) pair, so everything the
+    // pair depends on runs several times per octave while the shell, the
+    // mounting and the microphones run once, from the answer.
+    static void resolveDrumGeometry (const EngineParameters& applied,
+                                     float radiusFactor,
+                                     float tensionOctaveFactor,
+                                     float tensionPitchFactor,
+                                     DrumState& drum) noexcept;
     [[nodiscard]] DrumState resolveDrum (int octaveOffset) const noexcept;
     // The pair of sticks. Takes the parameter block rather than a DrumState on
     // purpose: it reads only the hardness control and the octave, so no drum

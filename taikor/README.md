@@ -76,14 +76,18 @@ taiko.
 
 | Octave | Notes | Drum | Fundamental |
 | --- | --- | --- | ---: |
-| C1 | 24–35 | Past the end of the family: felt rather than heard | 10 Hz |
-| C2 | 36–47 | Larger than anything ever actually built | 23 Hz |
+| C1 | 24–35 | Past the end of the family: felt rather than heard | 13 Hz |
+| C2 | 36–47 | Larger than anything ever actually built | 25 Hz |
 | **C3** | **48–59** | **The ō-daiko the controls describe, unscaled** | **51 Hz** |
-| C4 | 60–71 | Nagado-daiko: the everyday drum | 108 Hz |
-| C5 | 72–83 | Shime-daiko territory: tight, high and short | 227 Hz |
-| C6 | 84–95 | Smaller still | 466 Hz |
+| C4 | 60–71 | Nagado-daiko: the everyday drum | 101 Hz |
+| C5 | 72–83 | Shime-daiko territory: tight, high and short | 203 Hz |
+| C6 | 84–95 | Smaller still | 406 Hz |
 
 Notes outside 24–95 are silent.
+
+Those are exact octaves of the reference drum, and they are the same numbers at
+every setting of Octave Body, because the octave transform is solved against the
+pitch the drum sounds rather than written down.
 
 The instrument opens on the big drum rather than on a middling one, because the
 big drum is the point of a taiko. That does put the bottom two octaves below
@@ -100,8 +104,8 @@ louder at once.
 
 The mapping is geometric and nothing shapes it, so equal steps of MIDI velocity
 are equal steps of decibels — which is what an arm does. At full Velocity Depth
-that is thirty-four decibels between a ghost stroke and a full blow on an open
-Don, and forty on the stick click. The single most common complaint about the
+that is thirty-three decibels between a ghost stroke and a full blow on an open
+Don, and forty-two on the stick click. The single most common complaint about the
 sampled taiko libraries this competes with is that they have very little of
 that; it is not a limitation a model has any reason to inherit.
 
@@ -158,11 +162,11 @@ The default output is far quieter than a synthesizer's usually is, deliberately.
 A taiko is a very loud instrument with a very large crest factor, and this one
 models the whole of it: the loudest stroke it can make — a full-velocity rim
 shot on the largest drum — sits more than twenty decibels above unity, and the
-bottom of the range is a ghost stroke some thirty-four decibels below a full
+bottom of the range is a ghost stroke some thirty-three decibels below a full
 blow on the same drum. The default leaves everything short of that one extreme
 just under full scale rather than making a middling stroke as loud as possible:
-the hardest rim shot on the factory drum peaks around −2 dBFS, while the same
-stroke on the biggest drum grazes the safety limiter for about twenty
+the hardest rim shot on the factory drum peaks around −5 dBFS, while the same
+stroke two octaves down reaches the safety limiter for about seven
 milliseconds.
 
 ## Sound engine
@@ -187,7 +191,7 @@ open out further the smaller the drum and the thicker its hide.
 That single term is most of what separates a shime-daiko's spectrum from an
 ō-daiko's. On the factory drum two octaves down, the top of the resolved bank
 sits about ten cents above where an ideal membrane would put it; at the
-reference, thirty; three octaves up, close to a hundred and fifty. Head Material
+reference, twenty-seven; three octaves up, a hundred and twenty. Head Material
 moves it as hard again, because it is thickness as well as density and *D* goes
 as the cube of thickness: a thin synthetic film is an ideal membrane to within
 half a cent, and a thick hide stretches its top mode by well over a semitone.
@@ -245,25 +249,31 @@ actually drives is a rigidly terminated column of length *L/2* — the
 volume-changing motion is symmetric about the midplane, so that plane behaves
 like a wall — and its stiffness is *x cot x* times the lumped value, with
 *x = ωL/2c*. That is the same number at low frequency and less than it as the
-body gets deep against the wavelength: 0.87 on the default drum, 0.78 two
-octaves down, 0.69 two octaves down at full Body Depth. It has to be solved for
+body gets deep against the wavelength: 0.87 on the default drum, 0.80 two
+octaves down, 0.71 two octaves down at full Body Depth. It has to be solved for
 rather than computed, because the stiffness depends on the frequency it sets, so
-the drum resolve converges on it once per drum and the audio never sees the
-iteration.
+the drum resolve bisects on it once per drum and the audio never sees the
+iteration. The model reports it for the same reason: it is an answer the drum
+has to converge on rather than an expression anything can write down.
 
 Musically this is what stops the biggest drums being air springs with a hide
-attached. The breathing branch used to step 509 cents between the bottom two
-octaves of the keyboard — a fourth, where an octave was asked for — because the
-spring stiffened as *1/L* while the drum grew in every dimension at once. With
-the column it steps 582, and every octave above it widens too.
+attached, and the size of it is worth stating plainly rather than generously.
+The breathing branch steps 509 / 611 / 776 / 956 / 1094 cents up the keyboard
+against the octave the drum is actually tuned to; with the air treated as a
+lumped spring, the same six drums give 451 / 570 / 748 / 937 / 1079. The column
+widens every one of the five boundaries, because a lumped spring stiffens as
+*1/L* while the drum grows in every dimension at once. It does not make them
+octaves. The two axisymmetric branches do not move together, and between the
+bottom two octaves of the keyboard the upper one still steps a fourth where the
+lower one steps an octave.
 
 Where the column passes its own quarter-wave the stiffness reaches zero and the
 two heads stop being tied together at all. Above that the air is mass-like
 rather than stiff, which is a real thing this model has nowhere to put, so the
 answer there is the one an open body already gets: one axisymmetric mode,
 reported twice. It takes a body shorter than a quarter of its head's own
-wavelength to reach — a 20 cm shell tuned to several kilohertz — and no taiko
-in the instrument's range is near it.
+wavelength to reach — a 20 cm shell tuned to several kilohertz — so no drum
+with a taiko's proportions is near it, but the controls will build one that is.
 
 Because the breathing mode is the one that radiates, it is also the one that
 empties first — on the default drum it is gone in about half a second while the
@@ -319,6 +329,18 @@ twenty to thirty-five decibels across the entire upper half of the spectrum, and
 what is missing is exactly what a listener calls body. With the continuum in
 place the model tracks those measurements to within a few decibels from two
 hundred hertz upward.
+
+What sets its weight is the head's own modal receptance — the velocity a unit
+force gets out of the drum — observed through the same microphone factor the
+resolved modes are observed through. That is a property of the drum and of
+nothing else, so the region sits at the same level whatever clock the host is
+running: across 44.1, 48, 96 and 192 kHz the 4–10 kHz band of a Don holds to
+within a decibel. Weighed instead against a resonator's per-sample integration
+gain, which carries a *1/rate* because a resonator accumulates a force over a
+sample period and a variance-normalised noise band accumulates nothing, the
+whole region lost six decibels for every doubling of the host's clock — eight
+decibels of it between 48 and 192 kHz — and a session moved from 48 kHz to
+96 kHz was a different instrument.
 
 It has to stay in its place, though, and its place is much smaller than it
 looks. Left too loud it does not sit above the resolved bank, it buries it: the
@@ -392,10 +414,11 @@ radius, as every other frequency in the model already does. Pinned at a fixed
 modal set down through a shelf that did not move, so the stand ate more of the
 instrument the larger the instrument got, and the o-daiko end of the keyboard
 came out both the quietest and the shortest thing on it. Measured on the factory
-drum, from an octave above the reference down two octaves below it: 108 / 51 /
-23 / 10 Hz of loaded fundamental against 2.4 / 3.3 / 4.4 / 5.5 s of tail and
-−14 / +5 / +10 / +15 dB in the 20–63 Hz band. The drum gets bigger in every way
-that matters, rather than only in name.
+drum, from an octave above the reference down two octaves below it: 101 / 51 /
+25 / 13 Hz of sounding fundamental against 2.5 / 3.3 / 4.3 / 5.2 s of tail, and
+a full-velocity Don's 20–63 Hz band running −18 / 0 / +6 / +9 dB against the
+reference drum's. The drum gets bigger in every way that matters, rather than
+only in name.
 
 ### The stick
 
@@ -437,6 +460,16 @@ in the middle of them: the fractional tension rise goes as the fourth inverse
 power of the radius, so the smallest head at no tension reached fifteen
 semitones of bend before it was bounded, and the factory drum reaches a tenth of
 a tension at full velocity.
+
+The glide carries the head's continuum with it as well as its resolved modes,
+because the continuum is the same head. That is the whole of what Tension Mod
+does above a kilohertz, and it is worth about a decibel across the control —
+a bend, not a brightness control. Rewriting a running resonator's coefficients
+under its own state is not exactly energy-conserving, and it is easy to assume
+the difference is heard as spray; measured with the continuum silenced, over
+30–80 ms with a settled high-pass and no analysis window involved, what the
+rewrite leaves above 1.2 kHz sits 102 dB under the stroke that made it and does
+not move with Tension Mod at all.
 
 ### The tack line
 
@@ -481,7 +514,7 @@ are an attempt to hide the fact that a sampler cannot do this at all.
 
 ### Two sticks, and nothing else
 
-The twelfth stroke claps the bachi together and never touches the drum, so it is
+The eighth stroke claps the bachi together and never touches the drum, so it is
 modelled as an object in its own right rather than as a retuning of the body. A
 bachi is a plain wooden dowel, so it rings in the free-free bending modes of a
 solid cylinder, *f_n = (β_n L)² κ √(E/ρ) / (2πL²)* with *κ = r/2* and the *β_n L*
@@ -516,8 +549,16 @@ surface. Right on the head the two microphones therefore read the *shape* of the
 membrane under them, and because every mode with a circumferential order reaches
 two different points with a different sign and amplitude, the pair genuinely
 decorrelates. A hand's width back, only what the drum radiates survives, and the
-image closes towards mono. Backing the pair off narrows it and softens the slap
-at the same time, because that is one mechanism and not two.
+image closes towards mono. That narrowing is a mechanism rather than a width
+control, and it is the whole of what Mic Distance does to the image.
+
+It is not also a softening. The narrowing belongs to the resolved bank, where the
+evanescent term is per mode; everything above the bank is carried by the
+continuum, whose only distance dependence is one flat gain taken from the loudest
+resolved mode's own microphone factor. Swept from 3 cm to 40 cm the drum loses
+17.6 dB at 400–1200 Hz and 13.6 dB at 4–10 kHz, so backing the pair off leaves it
+four decibels *brighter* relative to itself. The level law is right and the tilt
+is missing; it is recorded below under what is not modelled.
 
 On top of that, each microphone hears the impact **through the air** from
 wherever the stick landed, at its own distance and so at its own level and its
@@ -543,13 +584,45 @@ worth a phase check if the mix has to fold down.
 
 ### Octave Body
 
-An octave can be bought either by halving the drum or by quadrupling its
-tension. Both land on exactly the same pitch, and **Octave Body** chooses the
-mixture. They do not sound the same, because the air load, the cavity stiffness
-and the radiation efficiency all depend on the radius and none of them scale with
-the tension. At *Tuned* the same drum is retuned; at *Family* the whole taiko
-family sits under the hands at once, and a smaller drum sounds smaller rather
-than merely higher.
+An octave can be bought either by making the drum smaller or by tightening its
+head, and **Octave Body** chooses the mixture. They do not sound the same,
+because the air load, the cavity stiffness and the radiation efficiency all
+depend on the radius and none of them scale with the tension. At *Tuned* the
+same drum is retuned; at *Family* the whole taiko family sits under the hands at
+once, and a smaller drum sounds smaller rather than merely higher.
+
+How much of the mixture an octave costs is solved rather than written down, and
+that is the same principle the head's stiffness already follows: a drum is tuned
+by the pitch it sounds. Halving the radius and quadrupling the tension are the
+octave of an *ideal* membrane, which is not a pitch anything ever hears — the
+air hanging off the head loads it as *ρ_air a/σ*, which does not scale with a
+transform that changes the radius. Written down, the transform left the keyboard
+out by up to 345 cents at *Family* and 210 at the factory setting. Solved
+against the lower axisymmetric branch — the drum's own lowest mode, by
+bisection on the share of the transform, at drum-resolve time and never in the
+render loop — every octave boundary on the keyboard reads 1200.0 cents at
+*Tuned*, at the factory 70 % and at *Family* alike, and the drum lands on
+12.69 / 25.37 / 50.75 / 101.49 / 202.99 / 405.98 Hz whichever of the three is
+chosen. So the control now changes only the body, which is what its name claims.
+What it costs is arithmetic: resolving six octaves takes 180 µs rather than 16,
+once per processed block at worst and never per sample.
+
+The tension no longer quadruples exactly and the radius no longer halves
+exactly, and that is the solve working rather than drifting. At *Tuned* the
+tension goes ×4.000 / 4.001 / 4.006 / 4.093 / 4.010 per octave up the keyboard;
+at *Family* the radius goes ×0.578 / 0.560 / 0.542 / 0.526 / 0.514. The two
+halves that are exact — the radius at *Tuned*, the tension at *Family* — are
+untouched, because the transform does not own those axes.
+
+It holds across the controls and not only at their defaults. Over a scan of
+eight controls crossed with the six octaves — 155,520 drums — the worst octave
+is 51 cents out and 102 of them miss by more than 20 cents, every one of those a
+drum whose air column has passed its quarter-wave or whose geometry has run into
+a clamp. Written down, the same scan was out by 1106 cents at worst and missed
+on 101,957 of them.
+
+What is solved is the drum's own lowest mode, and only that. The breathing
+branch above it is not an octave, and this does not make it one.
 
 ### What is not modelled
 
@@ -557,20 +630,40 @@ The room, the player's body, the stand, and the far head's own radiation into
 the space behind the drum. The enclosed air carries the stiffness of a finite
 column but not its mass or its own resonances: above the body's first axial
 resonance — 212 Hz on the factory drum, and between 139 and 451 Hz across Body
-Depth — the column is treated as absent rather than as the mass it becomes, and
-nothing anywhere associates a loss with the enclosed air, so Body Depth moves
-the pitch of the split and never the decay of either branch.
+Depth — the column is treated as absent rather than as the mass it becomes.
+Nothing anywhere associates a loss with the enclosed air either, so Body Depth
+moves the pitch of the split and never the decay of either branch. That last one
+is an omission with a number behind it rather than an oversight: thermal
+exchange with the walls gives the cavity a loss factor around 1e-4, which is
+three orders of magnitude under what radiation is already taking out of the same
+mode, so modelling it would change nothing anyone could hear.
+
+Above the resolved bank the microphones have a level and not a shape. The
+near-field and proximity terms that make the pair decorrelate are computed per
+mode, and the continuum sits above the modes, so it takes the distance law of
+the drum's loudest resolved mode as a single flat gain. Mic Distance therefore
+moves the whole region's level correctly and its tilt not at all.
+
+Only the struck body rings. The contact force acts equally and oppositely on
+both bodies, and the engine carries a correct free-free bar model for a bachi —
+but that model is reached by the one stroke that is nothing but sticks. On the
+seven strokes that touch the drum, the stick that struck it is a force and not
+a sounding object. The modes for it are cheap; its level against the drum is
+not, because the engine describes a bachi in two places whose masses differ by
+1.6× to 3.2× across the keyboard, which is 4 to 10 dB of a component that would
+otherwise be drawn rather than derived.
 
 Six constants are calibrated rather than derived, and each of them sets the
 *depth* of a term whose shape is computed: the overall level of radiation
 damping and how efficiently the shell, the sticks and the airborne click reach
 the microphones — all four of which depend on how the drum is mounted and where
 the player is standing, neither of which this model describes; the weight of the
-head's high-frequency continuum against its resolved bank; and the shape factor
-of the attack pitch glide, which stands in for the difference between the modal
-states the engine has and the mean square slope the tension rise depends on.
-Everything about how those terms *vary* with size, material, position and stroke
-is computed.
+head's high-frequency continuum against its resolved bank, which is a time in
+seconds because what it multiplies is the head's receptance; and the shape
+factor of the attack pitch glide, which stands in for the difference between the
+modal states the engine has and the mean square slope the tension rise depends
+on. Everything about how those terms *vary* with size, material, position and
+stroke is computed.
 
 ## Interface
 
@@ -623,17 +716,20 @@ ctest --test-dir build-dsp --output-on-failure
 ```
 
 The JUCE-free suite covers the stroke vocabulary and MIDI mapping, the octave
-contract at every Octave Body setting, all eight strokes at five sample rates,
-sample-rate and block-size invariance, bit-exact determinism, the velocity and
-contact-time laws, the instrument's dynamic range and the evenness of its
+contract at every Octave Body setting — including that the octave is an octave
+in the pitch the drum sounds, in the readout and in the rendered partial — all
+eight strokes at five sample rates, sample-rate and block-size invariance
+including the level of the head's continuum, bit-exact determinism, the velocity
+and contact-time laws, the instrument's dynamic range and the evenness of its
 velocity response, the head's bending stiffness and the modal ratios it opens
-out, the attack glide's dependence on the head rather than on a clock, the tack
-line's threshold, what one stroke takes out of a head another stroke left
-ringing, every physical control's effect on the solved drum *and* on the
-rendered audio, the close pair's decorrelation and mono compatibility, tail
-termination and exact idle silence, voice stealing, hostile input, and the
-presentation mathematics the editor draws with. It also smoke-tests the
-demonstration renderer.
+out, the enclosed air solved as a finite column rather than an infinite spring,
+the attack glide's dependence on the head rather than on a clock and its silence
+above the resolved bank, the tack line's threshold, what one stroke takes out of
+a head another stroke left ringing, every physical control's effect on the
+solved drum *and* on the rendered audio, the close pair's decorrelation and mono
+compatibility, tail termination and exact idle silence, voice stealing, hostile
+input, and the presentation mathematics the editor draws with. It also
+smoke-tests the demonstration renderer.
 
 ## Regenerate the demonstration audio
 

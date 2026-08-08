@@ -4447,24 +4447,37 @@ void testStrumSpread()
     expect(allFinite(block.second), "block chord produced non-finite audio");
 
     const auto strummed = renderChord(0.020f);
-    // The first string the pick meets fires immediately; each further string
-    // is offset by the travel time, in physical string order.
-    expect(strummed.first[0] == 0, "the leading string of a strum was delayed");
-    const int step = static_cast<int>(0.020f * sampleRate * 2.0f); // internal 2x clock
+    // The first string the pick meets fires after the re-anchor pre-roll every
+    // voice of a strummed chord carries, not immediately: until that window
+    // closes a later note-on may still turn out to be the edge the stroke
+    // began at. Each further string is offset by the travel time on top of it,
+    // in physical string order.
+    const int preRoll = static_cast<int>(0.020 * sampleRate * 2.0); // internal 2x clock
+    const int step = static_cast<int>(0.020f * sampleRate * 2.0f);
+    expect(std::abs(strummed.first[0] - preRoll) <= 2,
+           "the leading string of a strum did not fire one pre-roll after its "
+           "note-on (" + std::to_string(strummed.first[0]) + " vs "
+               + std::to_string(preRoll) + ")");
+    // The pick accelerates through the strings, so the offsets no longer lie
+    // on a straight line - but they still increase string by string, and the
+    // knob still states the mean crossing time, so seven crossings still take
+    // seven times it.
+    int previous = strummed.first[0];
     for (const std::size_t stringIndex : { std::size_t { 2 }, std::size_t { 3 },
                                            std::size_t { 4 }, std::size_t { 5 },
                                            std::size_t { 7 } })
     {
-        const int expected = step * static_cast<int>(stringIndex);
-        // The engine truncates the travel time to whole internal samples, so
-        // the rounding error accumulates by at most one sample per string.
-        expect(std::abs(strummed.first[stringIndex] - expected)
-                   <= 2 * static_cast<int>(stringIndex) + 2,
+        expect(strummed.first[stringIndex] > previous,
                "string " + std::to_string(stringIndex)
                    + " did not receive its strum travel offset ("
-                   + std::to_string(strummed.first[stringIndex]) + " vs "
-                   + std::to_string(expected) + ")");
+                   + std::to_string(strummed.first[stringIndex]) + " after "
+                   + std::to_string(previous) + ")");
+        previous = strummed.first[stringIndex];
     }
+    const int travel = strummed.first[7] - strummed.first[0];
+    expect(std::abs(travel - 7 * step) <= 7 * step / 20,
+           "a strum across eight strings did not take seven times the spread ("
+               + std::to_string(travel) + " vs " + std::to_string(7 * step) + ")");
     expect(allFinite(strummed.second) && peakAbs(strummed.second.left) < 0.80f,
            "strummed chord produced non-finite or unbounded audio");
 
@@ -4480,8 +4493,9 @@ void testStrumSpread()
     expect(strumPeak < blockPeak,
            "spreading a chord did not lower its stacked initial peak");
 
-    // A note that arrives after the chord window starts a fresh stroke and is
-    // therefore never delayed.
+    // A note that arrives after the chord window starts a fresh stroke, so it
+    // carries the pre-roll and nothing else - never the previous chord's
+    // travel.
     ElectryEngine engine;
     engine.prepare(sampleRate, 512);
     EngineParameters parameters;
@@ -4492,8 +4506,9 @@ void testStrumSpread()
     StereoBuffer gap(static_cast<int>(0.2 * sampleRate));
     renderInto(engine, gap);
     engine.noteOn(64, 0.9f);
-    expect(TestAccess::snapshot(engine,
-                                ElectryEngine::stringCount - 1).startDelaySamples == 0,
+    expect(std::abs(TestAccess::snapshot(
+                        engine, ElectryEngine::stringCount - 1).startDelaySamples
+                    - preRoll) <= 2,
            "a note outside the chord window inherited a strum offset");
 
     // A delayed voice is never retired before its excitation fires.
@@ -4575,6 +4590,244 @@ void testStrumSpread()
         expect(late < 0.01f,
                "a string was picked after its key was released (late peak "
                    + std::to_string(late) + ")");
+    }
+}
+
+void testStrumTravelFollowsStroke()
+{
+    // The pick enters the neck at one edge, travels in one direction, and
+    // speeds up as it goes. Three things follow, and none of them held before:
+    // the edge is set by the stroke rather than by whichever note-on the host
+    // sent first, the crossing intervals compress instead of lying on a
+    // straight line, and no two strokes lay the same ramp down twice.
+    constexpr double sampleRate = 48000.0;
+    constexpr double internalRate = sampleRate * 2.0;   // the engine's own clock
+    constexpr float spread = 0.012f;
+    const int spreadSamples = static_cast<int>(spread * internalRate);
+    // Every voice of a strummed chord is held back by this much, which is what
+    // buys the re-anchor window a note-on arriving in a later block needs.
+    const int preRoll = static_cast<int>(0.020 * internalRate);
+
+    const auto strum = [&] (ElectryEngine& engine, const std::vector<int>& notes)
+    {
+        for (const int note : notes)
+            engine.noteOn(note, 0.85f);
+        std::array<int, ElectryEngine::stringCount> delays {};
+        for (int s = 0; s < ElectryEngine::stringCount; ++s)
+            delays[static_cast<std::size_t>(s)] =
+                TestAccess::snapshot(engine, s).startDelaySamples;
+        return delays;
+    };
+
+    const auto makeEngine = [&] (std::unique_ptr<ElectryEngine>& engine,
+                                 float spreadSeconds, PickStyle pick)
+    {
+        engine = std::make_unique<ElectryEngine>();
+        engine->prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        parameters.strumSpreadSeconds = spreadSeconds;
+        engine->setParameters(parameters);
+        engine->reset();
+        engine->noteOn(pickKeyswitch(pick), 1.0f);
+    };
+
+    // 1. The stroke sets the edge. The same three notes in the same MIDI order
+    //    must travel low-to-high on a downstroke and high-to-low on an
+    //    upstroke; before this the two produced identical offsets.
+    {
+        std::unique_ptr<ElectryEngine> down, up;
+        makeEngine(down, spread, PickStyle::Down);
+        makeEngine(up, spread, PickStyle::Up);
+        const auto downDelays = strum(*down, { 40, 45, 50 });
+        const auto upDelays = strum(*up, { 40, 45, 50 });
+        expect(downDelays[2] < downDelays[3] && downDelays[3] < downDelays[4],
+               "a downstroke did not travel from the low string ("
+                   + std::to_string(downDelays[2]) + ", "
+                   + std::to_string(downDelays[3]) + ", "
+                   + std::to_string(downDelays[4]) + ")");
+        expect(upDelays[2] > upDelays[3] && upDelays[3] > upDelays[4],
+               "an upstroke did not travel from the high string ("
+                   + std::to_string(upDelays[2]) + ", "
+                   + std::to_string(upDelays[3]) + ", "
+                   + std::to_string(upDelays[4]) + ")");
+        // 8. The whole cost of the pre-roll: the string the pick starts from
+        //    sounds exactly one re-anchor window after its note-on.
+        expect(std::abs(downDelays[2] - preRoll) <= 2
+                   && std::abs(upDelays[4] - preRoll) <= 2,
+               "the string the stroke started from did not sound one pre-roll "
+               "after its note-on (" + std::to_string(downDelays[2]) + ", "
+                   + std::to_string(upDelays[4]) + " vs "
+                   + std::to_string(preRoll) + ")");
+    }
+
+    // 2/3. The wrist accelerates through the strings, so the crossing
+    //      intervals compress - and the knob still states the mean crossing
+    //      time, so eight strings still take seven times it.
+    {
+        std::unique_ptr<ElectryEngine> engine;
+        makeEngine(engine, spread, PickStyle::Down);
+        const auto delays = strum(*engine, { 28, 35, 40, 45, 50, 55, 59, 64 });
+        std::array<int, ElectryEngine::stringCount - 1> gaps {};
+        for (int k = 0; k < ElectryEngine::stringCount - 1; ++k)
+            gaps[static_cast<std::size_t>(k)] =
+                delays[static_cast<std::size_t>(k + 1)]
+                - delays[static_cast<std::size_t>(k)];
+        for (int k = 0; k + 1 < ElectryEngine::stringCount - 1; ++k)
+            expect(gaps[static_cast<std::size_t>(k + 1)]
+                       <= gaps[static_cast<std::size_t>(k)],
+                   "the strum's crossing intervals did not compress at gap "
+                       + std::to_string(k) + " ("
+                       + std::to_string(gaps[static_cast<std::size_t>(k)]) + " then "
+                       + std::to_string(gaps[static_cast<std::size_t>(k + 1)]) + ")");
+        const double lastOverFirst = static_cast<double>(gaps[6])
+                                   / static_cast<double>(gaps[0]);
+        expect(lastOverFirst > 0.55 && lastOverFirst < 0.85,
+               "the strum's last crossing was not about 0.7 of its first ("
+                   + std::to_string(lastOverFirst) + ")");
+        const int travel = delays[7] - delays[0];
+        expect(std::abs(travel - 7 * spreadSamples) <= 7 * spreadSamples / 20,
+               "eight strings did not take seven times the strum spread ("
+                   + std::to_string(travel) + " vs "
+                   + std::to_string(7 * spreadSamples) + ")");
+    }
+
+    // 4. A chord whose first note-on is a middle string. The pick does not
+    //    travel outward in both directions at once: it re-anchors on the low
+    //    edge and every offset stays non-negative and monotone in string
+    //    index. Before this the same chord gave 24/12/0/12/24 ms.
+    {
+        std::unique_ptr<ElectryEngine> engine;
+        makeEngine(engine, spread, PickStyle::Down);
+        const auto delays = strum(*engine, { 50, 28, 45, 55, 59 });
+        const std::array<int, 5> played { 0, 3, 4, 5, 6 };
+        int previous = -1;
+        for (const int s : played)
+        {
+            const int delay = delays[static_cast<std::size_t>(s)];
+            expect(delay >= 0,
+                   "string " + std::to_string(s)
+                       + " of a middle-anchored chord was scheduled backwards");
+            expect(delay > previous,
+                   "a middle-anchored chord did not travel in string order at "
+                   "string " + std::to_string(s) + " ("
+                       + std::to_string(delay) + " after "
+                       + std::to_string(previous) + ")");
+            previous = delay;
+        }
+    }
+
+    // 5. At a zero spread the chord is one block again, to the sample.
+    {
+        std::unique_ptr<ElectryEngine> engine;
+        makeEngine(engine, 0.0f, PickStyle::Down);
+        const auto delays = strum(*engine, { 28, 35, 40, 45, 50, 55, 59, 64 });
+        for (const int delay : delays)
+            expect(delay == 0,
+                   "a chord at zero spread carried a strum offset or a "
+                   "pre-roll (" + std::to_string(delay) + ")");
+    }
+
+    // 6. The wrist does not lay the same ramp down twice. Two strums of the
+    //    same chord 12 s apart - long enough that the strings have decayed and
+    //    nothing else is shared - must differ somewhere by at least one
+    //    internal sample. The offsets were previously a pure function of the
+    //    spread and the string index, so the two were identical.
+    {
+        std::unique_ptr<ElectryEngine> engine;
+        makeEngine(engine, spread, PickStyle::Down);
+        const std::vector<int> chord { 28, 35, 40, 45, 50, 55, 59, 64 };
+        const auto first = strum(*engine, chord);
+        for (const int note : chord)
+            engine->noteOff(note);
+        StereoBuffer decay(static_cast<int>(12.0 * sampleRate));
+        renderInto(*engine, decay);
+        const auto second = strum(*engine, chord);
+        int largest = 0;
+        for (int s = 0; s < ElectryEngine::stringCount; ++s)
+            largest = std::max(largest,
+                               std::abs(second[static_cast<std::size_t>(s)]
+                                        - first[static_cast<std::size_t>(s)]));
+        expect(largest >= 1,
+               "two strums of the same chord laid down the same ramp ("
+                   + std::to_string(largest) + " internal samples apart)");
+    }
+
+    // 7/9. The block-straddling case, pinned in absolute onsets. One chord's
+    //      note-ons routinely arrive across several process() calls, so what
+    //      matters is each event's arrival sample plus its voice's remaining
+    //      delay, reduced to one clock. Those onsets must reverse with the
+    //      stroke and must not depend on the order the host sent the notes -
+    //      today they are 0/20/40 ms in arrival order whichever way the chord
+    //      is sent, i.e. the chord travels in host order.
+    {
+        const int blockSamples = static_cast<int>(0.008 * sampleRate);
+        const auto splitDelivery = [&] (PickStyle pick, bool ascending)
+        {
+            std::unique_ptr<ElectryEngine> engine;
+            makeEngine(engine, spread, pick);
+            const std::array<int, 3> ascendingNotes { 40, 45, 50 };
+            const std::array<int, 3> descendingNotes { 50, 45, 40 };
+            const auto& notes = ascending ? ascendingNotes : descendingNotes;
+            int arrival = 0;
+            for (std::size_t k = 0; k < notes.size(); ++k)
+            {
+                engine->noteOn(notes[k], 0.85f);
+                if (k + 1 < notes.size())
+                {
+                    StereoBuffer block(blockSamples);
+                    renderInto(*engine, block);
+                    arrival += blockSamples * 2;   // host samples to the engine's clock
+                }
+            }
+            // Read after the last note-on: the chord's span is 16 ms, inside
+            // the 20 ms pre-roll, so nothing has sounded and every voice is
+            // still on the same clock.
+            std::array<int, 3> onsets {};
+            for (int s = 2; s <= 4; ++s)
+                onsets[static_cast<std::size_t>(s - 2)] =
+                    arrival + TestAccess::snapshot(*engine, s).startDelaySamples;
+            return onsets;
+        };
+
+        const auto downAscending = splitDelivery(PickStyle::Down, true);
+        const auto downDescending = splitDelivery(PickStyle::Down, false);
+        const auto upAscending = splitDelivery(PickStyle::Up, true);
+        const auto upDescending = splitDelivery(PickStyle::Up, false);
+
+        expect(downAscending[0] < downAscending[1]
+                   && downAscending[1] < downAscending[2],
+               "a split-block downstroke did not sound low string first");
+        expect(upAscending[0] > upAscending[1] && upAscending[1] > upAscending[2],
+               "a split-block upstroke did not sound high string first");
+        for (std::size_t k = 0; k < 3; ++k)
+        {
+            expect(downAscending[k] == downDescending[k],
+                   "a split-block downstroke's onsets depended on the order the "
+                   "host sent the chord (string " + std::to_string(k + 2) + ": "
+                       + std::to_string(downAscending[k]) + " vs "
+                       + std::to_string(downDescending[k]) + ")");
+            expect(upAscending[k] == upDescending[k],
+                   "a split-block upstroke's onsets depended on the order the "
+                   "host sent the chord (string " + std::to_string(k + 2) + ": "
+                       + std::to_string(upAscending[k]) + " vs "
+                       + std::to_string(upDescending[k]) + ")");
+        }
+
+        // 9. What a re-anchor costs. The first string to sound in the split
+        //    delivery may be pushed back by at most the chord's own arrival
+        //    span plus the control period the countdown is quantised to.
+        std::unique_ptr<ElectryEngine> single;
+        makeEngine(single, spread, PickStyle::Down);
+        const auto blockChord = strum(*single, { 40, 45, 50 });
+        const int splitFirst = std::min({ downAscending[0], downAscending[1],
+                                          downAscending[2] });
+        const int arrivalSpan = 2 * blockSamples * 2;   // two blocks, engine clock
+        expect(splitFirst - blockChord[2] <= arrivalSpan + 16,
+               "a re-anchor delayed the leading string by more than the chord's "
+               "own arrival span (" + std::to_string(splitFirst) + " vs "
+                   + std::to_string(blockChord[2]) + ")");
     }
 }
 
@@ -6436,6 +6689,7 @@ int main()
     testSympatheticBridgeCoupling();
     testPalmMuteContinuum();
     testStrumSpread();
+    testStrumTravelFollowsStroke();
     testResonanceControlRaisesSympatheticRing();
     testResonanceFeedbackSelfSustains();
     testPickGeometryFollowsFret();

@@ -952,12 +952,14 @@ well as gap 3's −61.1 dBFS; see gap 3.
 
 **Gap 8 — the modelled 900-second warm-up permanently stalls after 128 s, and
 how far it gets depends on the quality setting.**
-`Source/DSP/YouKnow106Engine.cpp:3927-3929`
-(`thermalWarmupSeconds_ += static_cast<float>(inverseOversampledRate_)`),
-consumed at `:3702-3705` and reported by `getDisplayTemperatureC`
-(`Source/DSP/YouKnow106Engine.h:204-212`). At 192 kHz the increment is
-5.208e-6 s; once the float accumulator passes 128.0 its ULP is 1.526e-5, the
-increment rounds away entirely and the accumulator freezes forever.
+The former `thermalWarmupSeconds_ += static_cast<float>(inverseOversampledRate_)`
+in the internal-sample loop (now `advanceThermalWarmup()`,
+`Source/DSP/YouKnow106Engine.cpp:3639-3651`), consumed by
+`dynamicOtaHeadroomVolts` (`:3653-3664`) and reported by
+`getDisplayTemperatureC` (`Source/DSP/YouKnow106Engine.h:204-213`). At 192 kHz
+the increment is 5.208e-6 s; once the float accumulator passes 128.0 its ULP is
+1.526e-5, the increment rounds away entirely and the accumulator freezes
+forever.
 
 **[re-measured 2026-08-08]** The mechanism is confirmed exactly, by simulating
 the float accumulation itself (`youknow106-therm.cpp`) rather than by rendering
@@ -969,24 +971,36 @@ boundary, and *which* boundary depends on the internal rate:
 | 48 kHz, HQ on | 192 kHz | 5.208e-6 | 128.0 | 118.64 s | **26.9886 C** (13.3%) | 6.4087 V |
 | 48 kHz, HQ off | 48 kHz | 2.083e-5 | 512.0 | 474.54 s | **31.5077 C** (43.4%) | 6.5052 V |
 | 44.1 kHz, HQ on | 176.4 kHz | 5.669e-6 | 128.0 | 126.82 s | 26.9886 C | 6.4087 V |
-| **96 kHz, HQ on** | 384 kHz | 2.604e-6 | **64.0** | 59.32 s | **26.0296 C** (6.9%) | 6.3883 V |
-| **192 kHz, HQ on** | 768 kHz | 1.302e-6 | **32.0** | 29.66 s | **25.5240 C** (3.5%) | 6.3775 V |
+| ~~96 kHz, HQ on~~ | ~~384 kHz~~ | ~~2.604e-6~~ | ~~64.0~~ | ~~59.32 s~~ | ~~26.0296 C~~ | ~~6.3883 V~~ |
+| ~~192 kHz, HQ on~~ | ~~768 kHz~~ | ~~1.302e-6~~ | ~~32.0~~ | ~~29.66 s~~ | ~~25.5240 C~~ | ~~6.3775 V~~ |
+| **96 kHz, HQ on** | 192 kHz | 5.208e-6 | 128.0 | 118.64 s | **26.9886 C** (13.3%) | 6.4087 V |
+| **192 kHz, HQ on** | 192 kHz | 5.208e-6 | 128.0 | 118.64 s | **26.9886 C** (13.3%) | 6.4087 V |
 
-The document's "44.1 kHz and 96 kHz freeze at the same temperature" is **wrong**
-and is withdrawn: 44.1 kHz does, 96 kHz does not, and 192 kHz is worse again.
-The defect is therefore *larger* than stated -- the **host** sample rate moves
-the modelled physics as well as the quality switch, and the spread across
-supported rates is **25.52 C to 31.51 C** where the law `25 + 15(1 - e^-t/900)`
-wants 34.4818 C at 900 s. `Source/DSP/YouKnow106Engine.h:786-790` explicitly
-forbids exactly this ("a quality setting is not allowed to change what the
-supply does"). The OTA headroom the accumulator drives stops between 6.3775 V
-and 6.5052 V instead of **6.5687 V** -- a 2.5% error at 48 kHz HQ and 2.9% at
-192 kHz -- and the panel thermometer reports the frozen value as fact. One
-implementation detail every fixture must respect: `getDisplayTemperatureC()`
-(`Source/DSP/YouKnow106Engine.h:204-212`) multiplies the 15 C rise by
+**[corrected 2026-08-08, while implementing step 5]** The two struck rows
+assumed HQ multiplies the host rate by four. It does not:
+`updateProcessingRate` (`Source/DSP/YouKnow106Engine.cpp:2180-2190`) picks the
+factor that *reaches* `minimumHqProcessingRate`, so 96 kHz HQ on oversamples by
+2 and 192 kHz HQ on by 1, and all three HQ-on rates run the engine at 192 kHz
+internal. Measured by rendering silence on the unchanged engine, they freeze at
+the identical 128.0000 s and read the identical 26.988573 C and 6.408747 V.
+The 384 kHz and 768 kHz internal rates, and every number derived from them, are
+withdrawn.
+
+The document's "44.1 kHz and 96 kHz freeze at the same temperature" is
+therefore **right**, and it is the *quality switch* that moves the modelled
+physics, not the host rate: the spread across supported configurations is
+**26.99 C to 31.51 C** where the law `25 + 15(1 - e^-t/900)` wants 34.4818 C at
+900 s. `Source/DSP/YouKnow106Engine.h:812-818`, the comment on
+`voiceEnergyFollowerSeconds`, explicitly forbids exactly this ("a quality
+setting is not allowed to change what the supply does"). The OTA headroom the
+accumulator drives stops between 6.4087 V and 6.5052 V instead of
+**6.5687 V** -- a 2.5% error with HQ on and 1.0% with it off -- and the panel
+thermometer reports the frozen value as fact. One implementation detail every
+fixture must respect: `getDisplayTemperatureC()`
+(`Source/DSP/YouKnow106Engine.h:204-213`) multiplies the 15 C rise by
 `activeParameters_.calibration`, so the temperatures above are the Unit
 Character 1.0 readings and a fixture at any other Character is asserting a
-different law. Audibility: inaudible-but-structural, plus a 2.5-2.9% headroom
+different law. Audibility: inaudible-but-structural, plus a 1.0-2.5% headroom
 error that is real on hot patches.
 
 **Gap 9 -- the four-position HPF keeps one shared first-order state and
@@ -1741,13 +1755,13 @@ Restored, the full run is green: 6/6, 224.8 s.
   predicted this: with the chorus wet path 14.4 dB quieter, the dry path's own
   bit-exact silence between notes is now that much more exposed.
 
-- [ ] **5. Make the warm-up clock a wall-clock accumulator neither a quality
+- [x] **5. Make the warm-up clock a wall-clock accumulator neither a quality
   setting nor a host rate can move.** `thermalWarmupSeconds_` becomes a `double`
   (or an integer internal-sample count divided at the point of use), so the
   increment stops falling below half an ULP and the modelled law
   `T(t) = 25 + 15(1 − e^{−t/900})` runs to completion. No constant, curve or
   time-scale changes; only the accumulator's precision does. Closes gap 8. The
-  invariant restored is the one `Source/DSP/YouKnow106Engine.h:786-790` states in
+  invariant restored is the one `Source/DSP/YouKnow106Engine.h:812-818` states in
   words. The freeze point is a power-of-two boundary set by the **internal**
   rate: the accumulator stops when `inverseOversampledRate_` falls below half an
   ULP of the running total, which at a 192 kHz internal rate is exactly
@@ -1793,6 +1807,60 @@ Restored, the full run is green: 6/6, 224.8 s.
   increment. The 6.5687 V figure required the spatial gradient off, which the
   fixture never said; with it on and card 0 the headroom is 6.6542 V and the
   ±0.001 V tolerance is unreachable.
+
+  *What actually shipped, 2026-08-08.* The step as written, and every figure in
+  it — including all four the preflight corrected — reproduced to the digit
+  before anything was touched. `thermalWarmupSeconds_` is a `double` (the
+  step's first option; no integer sample count was needed), and that one
+  declaration is the whole defect. Rendering silence on the unchanged engine at
+  48 kHz HQ on put the accumulator at exactly **128.000000 s** at t = 128 s of
+  audio and left it there through t = 140 s, with the thermometer frozen at
+  **26.988573 °C** and the OTA headroom at **6.408747 V**; 96 kHz HQ on and
+  192 kHz HQ on read the same three numbers, and 48 kHz HQ off was still
+  climbing (130.19 s at t = 128 s, because a float total in [64, 128) rounds
+  its 2.083e-5 s increment *up* and the clock runs 1.7% fast before it stops).
+  A separate simulation of the accumulation alone puts the freezes at 128.0 s
+  after 118.6355 s of audio at 192 kHz internal, 128.0 s after 126.8222 s at
+  176.4 kHz, and 512.0 s after 474.5420 s at 48 kHz — the gap's 118.64 /
+  126.82 / 474.54 s, exactly.
+
+  After the change the fixture reads **26.988573 / 29.252031 / 34.481808 °C**
+  and **6.568748 V**, identically at all four configurations. Reverting the one
+  declaration to `float` and rerunning the fixture fails **15 assertions**:
+  every 300 s and 900 s temperature at all four configurations, every headroom
+  (6.40875 V at the three HQ-on rates, 6.50524 V at 48 kHz HQ off), and all
+  three spreads — 0.031551 °C at t = 128 s, 1.728998 °C at t = 300 s and
+  4.519115 °C at t = 900 s, against the 0.01 °C the invariant allows.
+
+  Four notes on what the change is made of, none of them a departure from the
+  step's substance.
+
+  1. **The increment stays the float `inverseOversampledRate_`**, because the
+     step says only the accumulator's precision changes. `float(1/192000)` is
+     1.071e-8 low, so 900 s of accumulation lands at 899.9999904 s and
+     34.4818083 °C against the law's 34.4818084 — 5.9e-8 °C, six orders under
+     the fixture's tolerance. The exponential's argument is narrowed back to
+     `float` at the point of use, so the audio path still pays one `expf` per
+     internal sample rather than a `double` `exp`; a float ULP at 900 s is
+     6.1e-5 s, worth 3.7e-7 °C.
+  2. **Two pure extractions**, both so the fixture reads the engine rather than
+     a restatement of it. `advanceThermalWarmup()` is the render loop's two
+     lines moved into a member the loop calls, so the permitted direct drive is
+     literally the render loop's own code reading the rate `prepare()`
+     selected. `dynamicOtaHeadroomVolts(parameters, cardIndex)` is the
+     headroom's four lines moved out of `renderVoice`, which now calls it, so
+     the 6.5687 V assertion reads the number the cascade is solved with. No
+     arithmetic and no ordering changed in either.
+  3. **The bit-exactness cross-check the step requires is 2 s of silence at
+     48 kHz HQ on** against 384000 driven internal samples. Both
+     `thermalWarmupSeconds_` (1.9999999785795808 s) and the derived
+     `thermalWarmupFraction_` compare equal bit for bit.
+  4. **No measurable cost.** The `testCpuBudget` patch, best of five: 1.2478 /
+     1.2567 / 1.2828x realtime before, 1.2373 / 1.2425 / 1.2428x after. The
+     difference is smaller than the run-to-run spread, which is what one double
+     add in place of one float add per internal sample should look like.
+
+  No existing test needed changing; the whole suite is green (6/6, 243 s).
 
 - [ ] **6. Route the velocity extension through the envelope's own path to the
   filter.** Velocity stays an extension — the hardware has none, `velocityDepth`
