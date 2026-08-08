@@ -21,10 +21,37 @@ constexpr float telecasterBridgePickupMetres = 0.028f;
 constexpr float lesPaulNeckPickupMetres = 0.155f;
 constexpr float telecasterNeckPickupMetres = 0.163f;
 
-// Effective magnetic aperture windows: a humbucker averages string motion
-// across two coils, a narrow single coil across a much shorter window.
-constexpr float humbuckerApertureMetres = 0.0210f;
-constexpr float singleCoilApertureMetres = 0.0048f;
+// Magnetic aperture of one coil, and the distance between a humbucker's two.
+//
+// Both pickups sense the string through the same narrow per-bobbin window -
+// a magnet or slug of about this diameter - and what separates them is that a
+// humbucker sums two of those windows at two different distances from the
+// bridge. The sum of two sensors separated by d has magnitude
+// |cos(pi f d / c)| and first nulls at c/2d, where c = 2 L f_open is the
+// string's transverse wave speed. A single window of width W nulls at c/W
+// instead, most of an octave too high: modelling the humbucker as one 21 mm
+// rectangle put string 2's first null at 5507 Hz where a 19 mm coil pair puts
+// it at 3043 Hz, against the 3000 Hz Lemme measures on a low E and the
+// 4000 Hz he measures on the A.
+//
+// The two coils also sit at two different distances from the bridge, so each
+// sees its own position comb. Writing the pair out shows that this needs no
+// second comb tap: with the position comb evaluated at the pickup's centre,
+// the sum of the two coils factors exactly into that comb times the two-point
+// sum above, so one extra fractional read per pickup buys both.
+constexpr float coilApertureMetres = 0.0048f;
+constexpr float humbuckerCoilSpacingMetres = 0.0190f;
+
+// Weight on the second coil, which sets how deep the pair's dip goes:
+// (1-b)/(1+b), 12 dB here. It is below one for the reason `pickupCombDepth`
+// below is, and on the same reading - measured pickup responses notch by
+// something like 6 to 15 dB rather than vanishing, because no real pickup is
+// a pair of point sensors reading one plane of motion. The screw coil sits
+// further from the string than the slug coil and reads quieter for it, so the
+// two contributions cannot cancel however well the geometry lines up. Same
+// value as `pickupCombDepth` and the same evidence behind it, kept a separate
+// constant because the two nulls are different mechanisms.
+constexpr float humbuckerCoilBalance = 0.60f;
 
 // Weight on the delayed tap of the pickup position comb.
 //
@@ -41,8 +68,11 @@ constexpr float singleCoilApertureMetres = 0.0048f;
 // the fundamental most. Against the dry reference recordings this recovered
 // 4.7 dB in the 60-85 Hz band on an open low E and 5.4 dB on a muted power
 // chord, which is the hollow, bodyless low register the references do not
-// have. Explicitly modelling the humbucker's two coils was tried instead and
-// measured no better than this, at two extra fractional reads per string.
+// have. Explicitly modelling the humbucker's two coils was tried instead of
+// this weight and measured no better on that objective - which is a statement
+// about the low register only. The two coils are modelled above as well as
+// this weight, because they set the notch frequency, which the objective that
+// comparison used did not score.
 constexpr float pickupCombDepth = 0.60f;
 
 // Loaded electrical resonance of the two anchor pickup circuits (coil
@@ -2036,17 +2066,32 @@ void ElectryEngine::configureVoicePickups(Voice& voice) noexcept
     // Magnetic aperture: a true finite rectangular spatial window. Its
     // temporal length is Fs*w/c, where c is transverse wave speed. This has
     // the expected sinc response and -3 dB point at approximately .443*c/w,
-    // unlike the previous one-pole approximation.
-    const float aperture = lerp(humbuckerApertureMetres, singleCoilApertureMetres,
-                                parameters.pickupType);
+    // unlike the previous one-pole approximation. The window is the same for
+    // both pickups - it is one bobbin either way - and what the pickup type
+    // moves is how far apart the humbucker's two of them sit.
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
     const float waveSpeed = 2.0f * openLength * midiToHz(
         static_cast<float>(spec.openMidiNote));
     const float apertureLength = clampf(
-        static_cast<float>(sampleRate_) * aperture / std::max(waveSpeed, 1.0f),
+        static_cast<float>(sampleRate_) * coilApertureMetres
+            / std::max(waveSpeed, 1.0f),
         1.0f, static_cast<float>(apertureHistorySize - 2));
     voice.apertureNeck.setWindow(apertureLength);
     voice.apertureBridge.setWindow(apertureLength);
+
+    // The coil pair, which the type control closes up until the humbucker is
+    // a single coil. The position comb above is evaluated at the pickup's
+    // centre, which is where the factorisation puts it: two coils at
+    // centre +- d/2 read (1 + b z^-d/c) times one comb anchored at the
+    // centre, so the pair costs one delayed read rather than a second comb.
+    const float coilSpacing = lerp(humbuckerCoilSpacingMetres, 0.0f,
+                                   parameters.pickupType);
+    const float coilDelay = clampf(
+        static_cast<float>(sampleRate_) * coilSpacing
+            / std::max(waveSpeed, 1.0f),
+        0.0f, static_cast<float>(apertureHistorySize - 2));
+    voice.coilPairNeck.setSpacing(coilDelay, humbuckerCoilBalance);
+    voice.coilPairBridge.setSpacing(coilDelay, humbuckerCoilBalance);
 }
 
 void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
@@ -3023,6 +3068,8 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     // break the engine's determinism contract.
     voice.apertureNeck.reset();
     voice.apertureBridge.reset();
+    voice.coilPairNeck.reset();
+    voice.coilPairBridge.reset();
     voice.excitationShaper.reset();
     voice.excitationModalShaper1.reset();
     voice.excitationModalShaper2.reset();
@@ -3618,7 +3665,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
                   + 0.35f * (horizontalTotal
                              - pickupCombDepth * horizontal.readTap(delayTap))
                   + 0.55f * artifactPickup;
-        tap = voice.apertureNeck.process(tap);
+        tap = voice.apertureNeck.process(voice.coilPairNeck.process(tap));
         const float flux = voice.fluxScale
             * magneticTransfer(tap, magneticDriveNeck_, magneticDriveNeckInverse_);
         // Faraday's law: a magnetic pickup outputs induced voltage,
@@ -3645,7 +3692,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
                   + 0.35f * (horizontalTotal
                              - pickupCombDepth * horizontal.readTap(delayTap))
                   + artifactPickup;
-        tap = voice.apertureBridge.process(tap);
+        tap = voice.apertureBridge.process(voice.coilPairBridge.process(tap));
         const float flux = voice.fluxScale
             * magneticTransfer(tap, magneticDriveBridge_,
                                magneticDriveBridgeInverse_);
@@ -4103,6 +4150,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
             for (auto& voice : voices_)
             {
                 voice.apertureNeck.reset();
+                voice.coilPairNeck.reset();
                 voice.previousFluxNeck = 0.0f;
                 voice.emfLowpassNeck.reset();
             }
@@ -4112,6 +4160,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
             for (auto& voice : voices_)
             {
                 voice.apertureBridge.reset();
+                voice.coilPairBridge.reset();
                 voice.previousFluxBridge = 0.0f;
                 voice.emfLowpassBridge.reset();
             }

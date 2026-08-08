@@ -435,6 +435,72 @@ private:
         }
     };
 
+    // The humbucker's two coils. A pickup that sums two sensors a distance d
+    // apart along the string adds the string's motion to itself delayed by the
+    // time the wave takes to cross that gap, d/c, so its magnitude response is
+    // |1 + b e^(-j 2 pi f d / c)| / (1 + b), dipping at c/2d. Normalised so the
+    // pair has unit gain at DC, and exact identity at zero spacing, which is
+    // what the single coil is.
+    //
+    // The second coil's weight b is below one for the same reason
+    // `pickupCombDepth` is: the null of a real pickup is a dip and not a zero.
+    // The screw coil sits further from the string than the slug coil and reads
+    // correspondingly quieter, so the two contributions cannot cancel.
+    struct CoilPairSum
+    {
+        std::array<float, apertureHistorySize> history {};
+        int writeIndex { 0 };
+        int spacingWhole { 0 };
+        float spacingFraction { 0.0f };
+        float balance { 1.0f };
+        float normalise { 0.5f };
+        bool paired { false };
+
+        void reset() noexcept
+        {
+            history.fill(0.0f);
+            writeIndex = 0;
+        }
+
+        void setSpacing(float delaySamples, float secondCoil) noexcept
+        {
+            balance = secondCoil;
+            normalise = 1.0f / (1.0f + secondCoil);
+            if (! (delaySamples > 0.0f))
+            {
+                paired = false;
+                spacingWhole = 0;
+                spacingFraction = 0.0f;
+                return;
+            }
+            if (delaySamples > static_cast<float>(apertureHistorySize - 2))
+                delaySamples = static_cast<float>(apertureHistorySize - 2);
+            paired = true;
+            spacingWhole = static_cast<int>(delaySamples);
+            spacingFraction = delaySamples - static_cast<float>(spacingWhole);
+        }
+
+        // Defined here for the same reason as the aperture above: it runs once
+        // per pickup per string per sample.
+        float process(float input) noexcept
+        {
+            constexpr int mask = apertureHistorySize - 1;
+            history[static_cast<std::size_t>(writeIndex)] = input;
+            if (! paired)
+            {
+                writeIndex = (writeIndex + 1) & mask;
+                return input;
+            }
+            const int recentIndex = (writeIndex - spacingWhole) & mask;
+            const int olderIndex = (recentIndex - 1) & mask;
+            const float recent = history[static_cast<std::size_t>(recentIndex)];
+            const float older = history[static_cast<std::size_t>(olderIndex)];
+            const float delayed = recent + spacingFraction * (older - recent);
+            writeIndex = (writeIndex + 1) & mask;
+            return (input + balance * delayed) * normalise;
+        }
+    };
+
     // A read at a delay that only changes when the voice is reconfigured: the
     // pickup position taps and the coupled string's bridge tap. Their
     // interpolation weights are a function of the delay alone, so they are
@@ -727,6 +793,8 @@ private:
         DelayTap pickupTapBridge {};
         FractionalMovingAverage apertureNeck {};
         FractionalMovingAverage apertureBridge {};
+        CoilPairSum coilPairNeck {};
+        CoilPairSum coilPairBridge {};
         float previousFluxNeck { 0.0f };
         float previousFluxBridge { 0.0f };
         OnePole emfLowpassNeck {};

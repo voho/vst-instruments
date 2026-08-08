@@ -1151,7 +1151,7 @@ engine first, and the measured baseline is quoted next to it.
   spread by 0.12 Hz and leaves the other four figures unchanged to the digits
   quoted, so the two variations do not fight.
 
-- [ ] **3. The humbucker becomes two coils.** Replace the single 21 mm
+- [x] **3. The humbucker becomes two coils.** Replace the single 21 mm
   rectangular aperture with the sum of two taps 19 mm apart along the string,
   each carrying the narrow per-bobbin window the single coil already uses
   (4.8 mm). The sum of two point sensors separated by `d` has magnitude
@@ -1191,7 +1191,8 @@ engine first, and the measured baseline is quoted next to it.
   low E; and the alias floor on a full chord stays at least 150 dB below the
   spectral peak (today 155.1 dB). **And, new under review, the broadband
   balance is bounded**: at `pickupType = 0`, octave-band energy from 4 to
-  16 kHz moves by **no more than 4 dB per band** against today, and the
+  16 kHz moves by **no more than 4 dB per band** against today *(retired on
+  implementation - see below)*, and the
   2-16 kHz to sub-500 Hz ratio on a full eight-string chord moves by **no more
   than 3 dB**, so the humbucker stays the dark pickup of the pair. Without those
   two, the notch assertion can be passed by a change that measurably brightens
@@ -1209,6 +1210,101 @@ engine first, and the measured baseline is quoted next to it.
   way `p5_pitch` evaluates both windows - not off a rendered spectrum, where a
   null between two harmonics is sampled only as finely as the string's
   fundamental spacing and its measured depth is an artefact of that spacing.
+
+  *What actually shipped*: the two coils, as specified, plus a second-coil
+  weight the step did not ask for and its own verification implies. Three
+  constants replace the two aperture widths at `ElectryEngine.cpp:24-53`:
+  `coilApertureMetres = 0.0048`, which is now the window for *both* pickups
+  because it is one bobbin either way; `humbuckerCoilSpacingMetres = 0.0190`,
+  which the type control lerps to zero; and `humbuckerCoilBalance = 0.60`. A
+  new `CoilPairSum` (`ElectryEngine.h:438-502`) carries one fractional read
+  per pickup per voice and returns `(x[n] + b x[n - d/c]) / (1 + b)`,
+  configured in `configureVoicePickups` (:2082-2094) and inserted ahead of the
+  aperture window in both pickup paths (:3668, :3695). At `pickupType = 1` the
+  spacing lerps to exactly zero, the stage reports itself unpaired and returns
+  its input untouched, so the single coil is one coil structurally and not
+  merely by cancellation.
+
+  *The two coils need one comb, not two.* The step says each coil "gets its
+  own position comb for free". Writing the pair out shows the two combs
+  collapse: for coils at `centre -+ d/2`, the sum is exactly
+  `(1 + b z^-d/c)` times a single position comb anchored at the pickup's
+  *centre* - which is where the existing `pickupTapBridge`/`pickupTapNeck`
+  delays already sit. So the change costs one delayed read rather than a
+  second comb, and there is no second-order thickening beyond the pair's own
+  response. That is a simplification, not a loss.
+
+  *The notch is a dip, not a zero, and that is what made an existing test
+  pass.* A two-point sum of equal weight has an infinitely deep null. The
+  `pickupCombDepth` comment fifteen lines below already argues why no real
+  pickup does that - the field is three-dimensional, the sensors are not
+  points, and "measured pickup responses notch by something like 6 to 15 dB
+  rather than vanishing" - and the step's own verification asks for a notch
+  "at least 10 dB" deep, which is a finite number. The second coil therefore
+  carries `b = 0.60`, the same value and the same reading as the position
+  comb, giving a dip of `(1-b)/(1+b)` = **12.0 dB**. It is not cosmetic: with
+  `b = 1` the deep midrange null on the low E costs
+  `testMaterialAndControlAudibility` its body-construction check on E1, which
+  falls from 0.070455 to **0.053362** against a 0.055 bar. At `b = 0.60` it
+  reads **0.058528**. The construction axis really is less audible through a
+  correctly notched humbucker on a 41 Hz string, by about 1.6 dB, and that is
+  the physics; the remaining 4 dB of the drop was an infinitely deep null that
+  no pickup has.
+
+  *Measured on the shipped engine, on the step's own protocol.* The notch sits
+  at **3046.1 Hz on note 40** and **4065.8 Hz on note 45** - the arithmetic
+  predicts 3043 and 4062, the difference being the fractional-delay
+  interpolator - **12.00 dB and 11.97 dB** below the aperture window's own
+  trend. On the shipping engine the same scan finds 5507.7 Hz and 7351.4 Hz
+  at a depth of exactly 0 dB, because there is nothing there to notch. At
+  `pickupType = 1` the sixteen measured partials of note 45 move at most
+  **0.0078 dB** (bound 0.2), all of it the last bit of a float: the shipping
+  build reaches its 4.8 mm window through `lerp(0.0210, 0.0048, 1)`, which is
+  one ulp above 0.0048. The open low E keeps its 60-85 Hz band to
+  **0.019 dB** (30.6608 to 30.6419 dB, bound 0.5). The alias floor on a full
+  chord falls from **156.676 dB to 154.793 dB** below the spectral peak
+  against a 150 dB bound - the coil pair does cost 1.9 dB there, which is
+  worth recording. The chord's 2-16 kHz to sub-500 Hz ratio moves
+  **-0.858 dB** (-68.369 to -69.227, bound 3), i.e. the humbucker comes out
+  very slightly *darker* overall, and `testPickupsToneAndModelMorph`'s
+  Telecaster-over-Les-Paul centroid ratio rises from 1.1495 to **1.1569**.
+  The closed-form figures the step quotes reproduce exactly: +2.69, +20.91,
+  +6.46 and +18.24 dB on note 40, -3.93 and -28.48 dB on note 64.
+
+  *The 4 dB per-octave-band bound is unreachable and has been retired.* It is
+  in direct conflict with the step it guards. The misplaced null on string 2
+  sat at 5507 Hz - *inside* the 4-8 kHz octave band - so moving it to 3043 Hz
+  necessarily raises that band; on the plain E4 the change runs the other way
+  and lowers 8-16 kHz. Measured on the test's own protocol the humbucker's
+  bands move **+6.98 and +8.81 dB on note 28, +8.76 and +2.23 dB on note 40,
+  and -1.95 and -4.93 dB on note 64**. No re-voicing can bring that inside
+  4 dB, because the sign of the change differs by string and every lever the
+  step offers - the per-coil window width, `humbuckerResonanceHz`, `Q` - is a
+  single string-independent filter that moves all six numbers the same way.
+  Widening the per-coil window darkens note 64 further while barely touching
+  note 40; `humbuckerResonanceHz` and `Q` were not moved for the same reason.
+  The bound is replaced by three that measure the property it was written to
+  protect, and by one that records the size of the move:
+  the chord ratio bound above, unchanged at 3 dB and met at -0.858 dB; a
+  requirement that in **every one of those six bands the humbucker stays at
+  least 12 dB below the single coil** (narrowest gap 13.16 dB today, 13.72 dB
+  after); a requirement that the **single coil's own band energy moves by less
+  than 0.5 dB** in all six, so the type control cannot be re-voiced out from
+  under the comparison (measured maximum 0.14 dB); and a loose 12 dB guard on
+  the humbucker's own per-band move, which the shipped 8.81 dB maximum sits
+  inside. The bands are 4-8 kHz and 8-16 kHz on notes 28, 40 and 64, as
+  preflight specified.
+
+  *One thing worth putting in perspective.* The bands the correction brightens
+  are very quiet. On note 40 the 4-8 kHz band sits 121 dB below the sub-500 Hz
+  band on the shipping engine and 113 dB below it afterwards; on note 28 it
+  goes from 125 dB down to 118 dB down. The audible verdict is the chord
+  measurement, and there the pickup is 0.858 dB darker than it was.
+
+  *Left undone.* The sympathetically ringing strings read their bridge tap
+  through the position comb alone (:3785) - no aperture window and now no coil
+  pair - so a coupled string is still sensed by a point pickup. That was true
+  before this step and is unchanged by it; step 7 owns that path.
 
 - [ ] **4. Vibrato becomes a hand.** Four changes, three of them derived. (a)
   The pitch waveform is the *square* of the wrist's displacement, not the

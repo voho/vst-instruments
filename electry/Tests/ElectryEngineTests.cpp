@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -118,6 +119,69 @@ struct ElectryEngineTestAccess
     static bool pickupPathActive(const ElectryEngine& engine, bool neck) noexcept
     {
         return neck ? engine.neckPathActive_ : engine.bridgePathActive_;
+    }
+
+    // Is the humbucker's second coil running on this string's bridge pickup?
+    static bool coilPairActive(const ElectryEngine& engine,
+                               int stringIndex) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(stringIndex)]
+            .coilPairBridge.paired;
+    }
+
+    // The pickup's spatial transfer at one frequency, evaluated in closed form
+    // from the two stages the voice is actually running: the humbucker's coil
+    // pair and the per-coil aperture window. Both are FIR, so this is exact
+    // rather than a fit.
+    //
+    // The position comb is deliberately not included. It is a separate stage
+    // with nulls of its own at every multiple of c/2x, several of which land
+    // between 2 and 8 kHz, so folding it in would leave "the deepest notch"
+    // ambiguous. And the notch is read here rather than off a rendered
+    // spectrum because a null between two harmonics is sampled only as finely
+    // as the string's fundamental spacing.
+    static double apertureChainMagnitude(const ElectryEngine& engine,
+                                         int stringIndex, double frequencyHz,
+                                         bool includeCoilPair)
+    {
+        constexpr double pi = 3.14159265358979323846;
+        const auto& voice = engine.voices_[static_cast<std::size_t>(stringIndex)];
+        const auto& window = voice.apertureBridge;
+        const auto& pair = voice.coilPairBridge;
+        const double omega = 2.0 * pi * frequencyHz / engine.sampleRate_;
+
+        // Rectangular window: unit taps at 0..W-1 plus a fractional tap at W,
+        // scaled by the inverse window length.
+        double real = 0.0;
+        double imaginary = 0.0;
+        for (int k = 0; k < window.windowWhole; ++k)
+        {
+            real += std::cos(omega * k);
+            imaginary -= std::sin(omega * k);
+        }
+        const double edge = omega * static_cast<double>(window.windowWhole);
+        real += window.windowFraction * std::cos(edge);
+        imaginary -= window.windowFraction * std::sin(edge);
+        double magnitude = std::hypot(real, imaginary) * window.inverseWindow;
+
+        if (includeCoilPair && pair.paired)
+        {
+            const double near = omega * static_cast<double>(pair.spacingWhole);
+            const double far = omega * static_cast<double>(pair.spacingWhole + 1);
+            const double nearWeight = 1.0
+                - static_cast<double>(pair.spacingFraction);
+            const double farWeight = static_cast<double>(pair.spacingFraction);
+            const double balance = static_cast<double>(pair.balance);
+            const double pairReal = 1.0
+                + balance * (nearWeight * std::cos(near)
+                             + farWeight * std::cos(far));
+            const double pairImaginary =
+                -balance * (nearWeight * std::sin(near)
+                            + farWeight * std::sin(far));
+            magnitude *= std::hypot(pairReal, pairImaginary)
+                       * static_cast<double>(pair.normalise);
+        }
+        return magnitude;
     }
 
     static int oversamplingFactor(const ElectryEngine& engine) noexcept
@@ -5123,6 +5187,292 @@ double bandEnergyDb(const std::vector<float>& data, int start, int length,
     return 10.0 * std::log10(energy + 1.0e-30);
 }
 
+// A humbucker's two-point cancellation notch sits at c/2d, where d is the
+// distance between its coils and c is the string's transverse wave speed.
+// Modelling it as one wide rectangular window instead put the notch at c/W,
+// most of an octave too high - 5507 Hz on string 2 where Lemme measures a low
+// E notching at about 3000 Hz, and 7351 Hz on string 3 against his 4000 Hz.
+//
+// Moving the notch is the smaller half of what the two coils do. The larger
+// half is that two narrow windows pass a top octave one wide window was
+// throwing away, so the assertions below bound the broadband change as well
+// as placing the notch. What they cannot do is bound it per octave band
+// against the shipping engine: the misplaced null on the wound strings sat
+// *inside* the 4-8 kHz band, so moving it out of that band necessarily raises
+// it, and on the plain strings the change goes the other way. See the plan
+// document for the measurement that retired that bound.
+void testHumbuckerTwoCoilNotch()
+{
+    constexpr double sampleRate = 48000.0;
+
+    // Rendering protocol shared by every level measurement below.
+    const auto renderChord = [&] (float pickupType, float velocity,
+                                  double seconds)
+    {
+        auto engine = std::make_unique<ElectryEngine>();
+        engine->prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickupType = pickupType;
+        engine->setParameters(parameters);
+        engine->reset();
+        engine->noteOn(pickKeyswitch(PickStyle::Down), 1.0f);
+        engine->noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+        for (const int note : { 28, 35, 40, 45, 50, 55, 59, 64 })
+            engine->noteOn(note, velocity);
+        StereoBuffer buffer(static_cast<int>(seconds * sampleRate));
+        renderInto(*engine, buffer);
+        return buffer;
+    };
+    const auto renderSingle = [&] (float pickupType, int midiNote,
+                                   float velocity, double seconds)
+    {
+        auto engine = std::make_unique<ElectryEngine>();
+        engine->prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickupType = pickupType;
+        engine->setParameters(parameters);
+        return renderNote(*engine, sampleRate, midiNote, velocity,
+                          PlayStyle::Sustain, seconds);
+    };
+
+    // 1. Where the notch is, and how deep, read off the two stages the voice
+    // is actually running rather than off a rendered spectrum.
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickupType = 0.0f;
+        engine.setParameters(parameters);
+        // reset() snaps the parameter smoother, so the voice is configured at
+        // the control value asked for rather than part-way through a glide
+        // from the default.
+        engine.reset();
+        engine.noteOn(40, 0.8f);
+        engine.noteOn(45, 0.8f);
+        StereoBuffer settle(512);
+        renderInto(engine, settle);
+
+        struct NotchCase { int midiNote; double lowHz; double highHz; };
+        const std::array<NotchCase, 2> cases {{
+            { 40, 2800.0, 3300.0 },   // string 2, E2: c/2d = 3043 Hz
+            { 45, 3800.0, 4400.0 },   // string 3, A2: c/2d = 4062 Hz
+        }};
+        for (const auto& notch : cases)
+        {
+            const int stringIndex =
+                TestAccess::stringForNote(engine, notch.midiNote);
+            expect(stringIndex >= 0,
+                   "note " + std::to_string(notch.midiNote)
+                       + " did not take a string");
+            if (stringIndex < 0)
+                continue;
+            expect(TestAccess::coilPairActive(engine, stringIndex),
+                   "the humbucker is running on one coil");
+
+            double deepest = 1.0e30;
+            double deepestHz = 0.0;
+            for (double f = 2000.0; f <= 8000.0; f *= 1.0004)
+            {
+                const double magnitude =
+                    TestAccess::apertureChainMagnitude(
+                        engine, stringIndex, f, true);
+                if (magnitude < deepest)
+                {
+                    deepest = magnitude;
+                    deepestHz = f;
+                }
+            }
+            std::cout << "PROBE humbucker notch on note " << notch.midiNote
+                      << ": " << deepestHz << " Hz\n";
+            expect(deepestHz > notch.lowHz && deepestHz < notch.highHz,
+                   "humbucker notch on note " + std::to_string(notch.midiNote)
+                       + " is at " + std::to_string(deepestHz)
+                       + " Hz, outside " + std::to_string(notch.lowHz) + ".."
+                       + std::to_string(notch.highHz) + " Hz");
+
+            // The local envelope is the aperture window on its own - the
+            // smooth trend the coil pair notches into.
+            const double envelope =
+                TestAccess::apertureChainMagnitude(
+                    engine, stringIndex, deepestHz, false);
+            const double depthDb = 20.0 * std::log10(
+                envelope / std::max(deepest, 1.0e-12));
+            std::cout << "PROBE humbucker notch depth on note "
+                      << notch.midiNote << ": " << depthDb << " dB\n";
+            expect(depthDb >= 10.0,
+                   "humbucker notch on note " + std::to_string(notch.midiNote)
+                       + " is only " + std::to_string(depthDb)
+                       + " dB below its local envelope");
+        }
+    }
+
+    // 2. The single coil is one coil and is untouched. Structurally the coil
+    // pair is not in its path at all; by measurement its partials sit where
+    // the shipping engine put them.
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickupType = 1.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(45, 0.8f);
+        StereoBuffer settle(512);
+        renderInto(engine, settle);
+        const int stringIndex = TestAccess::stringForNote(engine, 45);
+        expect(stringIndex >= 0, "note 45 did not take a string");
+        if (stringIndex >= 0)
+            expect(! TestAccess::coilPairActive(engine, stringIndex),
+                   "the single coil grew a second coil");
+
+        // Partial magnitudes in dB, measured on the shipping engine with this
+        // protocol. Partials past the 28th sit more than 90 dB below the
+        // strongest one, where a one-ulp difference in the window length is
+        // worth a decibel, so the comparison stops there.
+        struct Partial { int index; double decibels; };
+        const std::array<Partial, 16> reference {{
+            { 1, 16.4891 }, { 2, 22.4436 }, { 3, 24.5343 },
+            { 4, 24.7026 }, { 6, 22.5968 }, { 8, 15.7140 },
+            { 10, 5.52877 }, { 12, -2.75441 }, { 14, -7.49994 },
+            { 16, -13.3693 }, { 18, -29.0575 }, { 20, -41.6398 },
+            { 22, -57.8266 }, { 24, -67.7500 }, { 26, -60.3338 },
+            { 28, -65.1425 },
+        }};
+        const auto render = renderSingle(1.0f, 45, 0.70f, 1.0);
+        const int start = static_cast<int>(0.05 * sampleRate);
+        const int window = static_cast<int>(0.4 * sampleRate);
+        const double f0 = midiHz(45);
+        double worst = 0.0;
+        for (const auto& partial : reference)
+        {
+            const double measured = 20.0 * std::log10(
+                dftMagnitude(render.left, start, window, sampleRate,
+                             f0 * partial.index) + 1.0e-30);
+            worst = std::max(worst, std::abs(measured - partial.decibels));
+            expect(std::abs(measured - partial.decibels) < 0.2,
+                   "single-coil partial " + std::to_string(partial.index)
+                       + " moved from " + std::to_string(partial.decibels)
+                       + " dB to " + std::to_string(measured) + " dB");
+        }
+        std::cout << "PROBE single-coil partials moved at most " << worst
+                  << " dB\n";
+    }
+
+    // 3. The low-frequency recovery the pickup comb's weight was fitted for
+    // must survive. Measured on the shipping engine: 30.6608 dB.
+    {
+        const auto lowE = renderSingle(0.0f, 28, 0.80f, 1.5);
+        const double band = bandEnergyDb(lowE.left,
+                                         static_cast<int>(0.02 * sampleRate),
+                                         static_cast<int>(1.0 * sampleRate),
+                                         sampleRate, 60.0, 85.0);
+        std::cout << "PROBE open low E 60-85 Hz band: " << band << " dB\n";
+        expect(band > 30.6608 - 0.5,
+               "the open low E lost its 60-85 Hz band ("
+                   + std::to_string(band) + " dB against 30.6608 dB)");
+    }
+
+    // 4. Broadband balance. The humbucker has to stay the dark pickup of the
+    // pair: on a full eight-string chord its 2-16 kHz to sub-500 Hz ratio may
+    // not move more than 3 dB against the shipping engine's -68.369 dB, and
+    // in every octave band from 4 to 16 kHz on a low, a middle and a plain
+    // string it must stay at least 12 dB below the single coil (today's
+    // narrowest gap is 13.16 dB).
+    {
+        const auto chord = renderChord(0.0f, 0.80f, 1.5);
+        const int start = static_cast<int>(0.02 * sampleRate);
+        const int window = static_cast<int>(1.0 * sampleRate);
+        const double ratio =
+            bandEnergyDb(chord.left, start, window, sampleRate, 2000.0, 16000.0)
+            - bandEnergyDb(chord.left, start, window, sampleRate, 60.0, 500.0);
+        std::cout << "PROBE humbucker chord 2-16k/sub-500 ratio: " << ratio
+                  << " dB\n";
+        expect(std::abs(ratio - (-68.369)) < 3.0,
+               "the humbucker's broadband balance on a chord moved from "
+                   "-68.369 dB to " + std::to_string(ratio) + " dB");
+
+        struct Band { double lowHz; double highHz; };
+        const std::array<Band, 2> bands {{ { 4000.0, 8000.0 },
+                                           { 8000.0, 16000.0 } }};
+        // Octave-band energy on the shipping engine, humbucker then single
+        // coil, for notes 28, 40 and 64.
+        struct Reference { int midiNote; double humbucker[2]; double single[2]; };
+        const std::array<Reference, 3> shipping {{
+            { 28, { -86.559, -118.699 }, { -53.600, -96.302 } },
+            { 40, { -85.336, -116.775 }, { -56.185, -96.338 } },
+            { 64, { -68.007, -105.829 }, { -50.338, -92.672 } },
+        }};
+        for (const auto& reference : shipping)
+        {
+            const auto humbucker = renderSingle(0.0f, reference.midiNote,
+                                                0.80f, 1.5);
+            const auto single = renderSingle(1.0f, reference.midiNote,
+                                             0.80f, 1.5);
+            for (std::size_t b = 0; b < bands.size(); ++b)
+            {
+                const double dark = bandEnergyDb(
+                    humbucker.left, start, window, sampleRate,
+                    bands[b].lowHz, bands[b].highHz);
+                const double bright = bandEnergyDb(
+                    single.left, start, window, sampleRate,
+                    bands[b].lowHz, bands[b].highHz);
+                std::cout << "PROBE note " << reference.midiNote << " "
+                          << bands[b].lowHz << "-" << bands[b].highHz
+                          << " Hz: humbucker " << dark << " dB (was "
+                          << reference.humbucker[b] << "), single coil "
+                          << bright << " dB (was " << reference.single[b]
+                          << ")\n";
+                expect(dark < bright - 12.0,
+                       "the humbucker is no longer the dark pickup in the "
+                           + std::to_string(static_cast<int>(bands[b].lowHz))
+                           + " Hz band on note "
+                           + std::to_string(reference.midiNote) + " ("
+                           + std::to_string(dark) + " dB against "
+                           + std::to_string(bright) + " dB)");
+                // A loose guard on the size of the move, not a
+                // discriminator: the change runs from -4.93 to +8.81 dB, and
+                // its largest terms are on the bands the misplaced null used
+                // to sit in or beside.
+                expect(std::abs(dark - reference.humbucker[b]) < 12.0,
+                       "humbucker octave-band energy on note "
+                           + std::to_string(reference.midiNote) + " moved from "
+                           + std::to_string(reference.humbucker[b]) + " dB to "
+                           + std::to_string(dark) + " dB");
+                expect(std::abs(bright - reference.single[b]) < 0.5,
+                       "single-coil octave-band energy on note "
+                           + std::to_string(reference.midiNote) + " moved from "
+                           + std::to_string(reference.single[b]) + " dB to "
+                           + std::to_string(bright) + " dB");
+            }
+        }
+    }
+
+    // 5. The coil pair adds a tap inside the pickup chain, so the alias floor
+    // has to be re-measured against the bound the audit set: at least 150 dB
+    // below the spectral peak above 12 kHz on a full chord at velocity 1.0.
+    {
+        const auto chord = renderChord(0.32f, 1.0f, 1.0);
+        const int start = static_cast<int>(0.2 * sampleRate);
+        constexpr int window = 32768;
+        double peak = 0.0;
+        double top = 0.0;
+        for (double f = 40.0; f < 23500.0; f *= 1.0075)
+        {
+            const double magnitude = dftMagnitude(chord.left, start, window,
+                                                  sampleRate, f);
+            peak = std::max(peak, magnitude);
+            if (f > 12000.0)
+                top = std::max(top, magnitude);
+        }
+        const double floorDb = 20.0 * std::log10(peak / std::max(top, 1.0e-30));
+        std::cout << "PROBE alias floor above 12 kHz: " << floorDb
+                  << " dB below the spectral peak\n";
+        expect(floorDb > 150.0,
+               "the alias floor rose to " + std::to_string(floorDb)
+                   + " dB below the spectral peak");
+    }
+}
+
 // The instrument has to sound the same at every host rate, and the decay
 // envelope is where that is hardest: a per-sample constant anywhere inside the
 // string loop turns into a rate-dependent decay, because the number of samples
@@ -5714,6 +6064,7 @@ int main()
     testHammerOnLegatoContinuity();
     testTensionGlide();
     testPickupsToneAndModelMorph();
+    testHumbuckerTwoCoilNotch();
     testArtifactsControl();
     testAdvancedDispersionAndBodyConductance();
     testLowRegisterGuitarEnvelope();
