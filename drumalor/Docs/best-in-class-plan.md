@@ -1354,7 +1354,9 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   (High) — wrong, and corrected under *What actually shipped*: those four are
   the ideal Bessel ratio before air loading, and the modes are at 86.19, 131.33,
   214.51 and 255.60 Hz — so a **1.5 % to 2.5 %** split puts every one of them
-  between 1.2 and 5.9 Hz. The bottom of that range is set by the measurement
+  between 1.3 and 6.4 Hz — the 1.2 to 5.9 Hz first written here was the same
+  arithmetic on the uncorrected frequencies. The bottom of that range is set by
+  the measurement
   rather than by the physics: a 0.5 % split on the Kick beats at 0.39 Hz, which
   is outside the
   0.5–12 Hz band the contract measures in and is a 2.6 s period against a tail
@@ -1442,7 +1444,7 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   gain order, for as many slots as the table left over — four pairs on every
   membrane. The split is `0.020 + 0.005 · signedUnitFromHash(instrument)`, which
   gives **2.438 %** on the Kick, **1.941 %** on the Low Tom, **2.128 %** on the
-  Mid Tom, **1.821 %** on the High Tom and 2.052 % on the Snare, all inside the
+  Mid Tom, **1.821 %** on the High Tom and 2.412 % on the Snare, all inside the
   step's 1.5–2.5 %. Each pair is driven at `cos(m·phi)` and `sin(m·phi)` from a
   new `Voice::strikeAzimuth`, set once in `initialiseVoice` as the fixed nominal
   25 degrees plus `HitVariation::strikeAzimuthDegrees`. That field is
@@ -1464,7 +1466,7 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   never beat — which is 7.5 dB louder than the m = 1 mode and is what an
   analysis band centred on the step's figure actually reads. The split rates
   therefore come out as 2.101, 2.549, 4.565 and 4.654 Hz, still inside the
-  step's 1.2–5.9 Hz and its contract's 1.0–8.0 Hz.
+  step's 1.3–6.4 Hz and its contract's 1.0–8.0 Hz.
 
   *The prescribed analysis does not work, and the reason is physical.* A
   band-pass at Q 12 has a 7 Hz skirt at 86 Hz and rejects the Kick's own
@@ -1494,7 +1496,7 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   asserts the rate instead, which two cycles are enough to estimate, and pays for
   it with a wider tolerance: **20 %**, not the step's 10 %. Measured, the four
   rates come out 1.0, 1.7, 2.8 and 10.2 % from their own `f·delta`, and the
-  unsplit engine misses by 15 to 64 %, which is the separation the clause lives
+  unsplit engine misses by 15 to 66 %, which is the separation the clause lives
   on.
 
   *The depth floors were set beside the wrong statistic.* Peak-to-peak of a
@@ -1502,10 +1504,10 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   it read 3.46 dB on the unsplit Kick. The contract measures the peak-to-peak of
   the **fitted periodic component** instead, which is the beat and nothing else.
   On the shipping engine that is **5.92 dB** (Kick), 6.54 (Low Tom), 6.21 (Mid),
-  6.59 (High); on the unsplit engine 1.55, 1.57, 2.07 and 7.06. The step's 6 dB
+  6.59 (High); on the unsplit engine 1.55, 1.57, 2.07 and 7.14. The step's 6 dB
   Kick floor is above what the mechanism delivers and its 4 dB tom floor is below
   what the unsplit High Tom already reads, so both are replaced by **4.5 dB** on
-  all four. The High Tom's spurious 7.06 dB is caught by its rate instead
+  all four. The High Tom's spurious 7.14 dB is caught by its rate instead
   (3.46 Hz against 4.654), which is the point of asserting both.
 
   The Humanise clauses hold as the step wrote them and are the cleanest bite in
@@ -1527,7 +1529,8 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   −27.9 (High Tom) against its −46, −22.5, −26, −28, −27.9. The splitting on its
   own is worth −34.0, −21.8, −27.1, −27.0 and −27.9, and the two together —
   which is what shipped — **−33.4, −19.5, −22.5, −23.9 and −24.6 dB**, with the
-  level unchanged to within 0.13 dB on every voice. It is **not** free in time
+  level unchanged to within 0.17 dB on every voice — that is the Snare, and the
+  other four hold to 0.03 dB. It is **not** free in time
   either: the suite's dense thirteen-voice stress render goes from 0.86 s to
   0.95 s, a 9 % increase against a 20 s guardrail, and the whole regression suite
   from 17.8 s to 20.1 s of which 2.3 s is the new contract.
@@ -1549,6 +1552,56 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   **8.45 to 7.995**. The threshold is now 7. Everything else in the suite is
   green unchanged, including the settled-pitch, decay-range, sample-rate and
   dense-stress contracts the step names.
+
+  *Re-verified on implementation, 2026-08-08.* The mechanism, the contract and
+  this note were already in the working tree when this step came up to be
+  implemented, with the suite green, so what was done instead was to check them
+  rather than to rewrite working code. The check was made against the head bank
+  itself and against a second analysis chain, not by reading the test.
+
+  An instrumented copy of `buildHeadBank` in a scratch build prints the bank it
+  emits. It confirms the split figures above to every digit — 0.02438115 (Kick),
+  0.01941010 (Low Tom), 0.02127660 (Mid Tom), 0.01820561 (High Tom) — and puts
+  the m = 1 pairs at 85.141/87.242 Hz (Kick), 130.052/132.601, 212.226/216.790
+  and 253.277/257.930, whose centres are the contract's 86.19, 131.33, 214.51
+  and 255.60 Hz and whose separations are 2.101, 2.549, 4.564 and 4.653 Hz. Four
+  pairs are emitted on every membrane including the Snare, and the reverted bank
+  stops at twelve slots with `membraneModeZeros[9]` on top, so the two truncated
+  table entries are admitted only by the budget increase, exactly as the step
+  says. The mode decays are the beat's own clock: 0.865, 0.746, 0.485 and
+  0.387 s to −60 dB against beat periods of 476, 392, 219 and 215 ms, which is
+  where the 1.8 to 2.2 cycles come from.
+
+  A second detector, written to a different design — quadrature demodulation
+  with a symmetric Gaussian FIR rather than a forward-backward Butterworth
+  cascade — reads the same tails at 2.17, 2.54, 4.75 and 4.75 Hz, within 4.1 %
+  of each drum's `f·delta`, at 7.98, 6.90, 6.12 and 6.39 dB of depth; on the
+  reverted engine the same detector reads 1.71, 1.63, 1.80 and 2.59 Hz at 1.83,
+  1.42, 1.17 and 1.37 dB. That is gap 6 reproduced independently and then
+  closed. It also reproduces the note above about analysis bandwidth from the
+  other side: the same detector opened to a 10 Hz corner, or replaced by a
+  120 ms sliding transform, reads 1.4 to 2.0 Hz on every drum, because at 15 Hz
+  from the tom centres it is still admitting the shell oscillator. Nothing about
+  this beat can be measured with a wide band.
+
+  The revert-proof was run: `resonatorCount` back to 12 and the splitting loop
+  disabled fails `testMembraneModeSplitting` ten times, with the ten messages
+  and the ten numbers this note already lists. Restoring the two lines puts both
+  files back byte for byte, and the suite is green at 2/2.
+
+  **Five figures are corrected above.** The Snare's split is **2.412 %**, not
+  2.052 %. The band a 1.5 to 2.5 % split puts the four m = 1 modes in is
+  **1.3 to 6.4 Hz**: the step text had already been corrected to the loaded mode
+  frequencies but its 1.2 to 5.9 Hz was still the arithmetic on the old ones.
+  The unsplit engine's rate error spans **15 to 66 %**, not 15 to 64:
+  Mid Tom 15.2 % (3.870 Hz against 4.565), Kick 38.8, High Tom 25.7, Low Tom
+  65.9. The unsplit High Tom's depth reads **7.14 dB** rather than 7.06 — it is
+  the one unsplit depth `ctest` cannot show, because it is the one that passes,
+  and the other three reproduce to four figures (1.5470, 1.5656, 2.0735). And
+  the level held across the re-voicing is **0.17 dB**, not 0.13: that is the
+  Snare, measured at v = 1.00 with default parameters against a reverted build,
+  where the five best-gain nulls read −33.53, −19.31, −22.42, −23.84 and
+  −24.56 dB against this note's −33.4, −19.5, −22.5, −23.9 and −24.6.
 
 - [x] **5. Answer the notes and messages a drummer's kit actually sends.** Four
   articulations a drummer plays are unreachable, one the engine does make is
@@ -2008,7 +2061,7 @@ detail; this is the list.
   weakened quietly.** Step 4's "three upward zero crossings" needs three beat
   cycles and the mechanism gives 1.8 to 2.2 per mode lifetime on every drum, so
   the rate is asserted instead, at a 20 % tolerance the unsplit engine misses by
-  15 to 64 %. Its depth floors were set beside a statistic that counts the
+  15 to 66 %. Its depth floors were set beside a statistic that counts the
   decay's own curvature and are now measured on the fitted periodic component,
   at 4.5 dB on all four drums. Step 5's 15 dB splash guard is met by four tenths
   of a decibel, so the contract asserts 12 dB — which still discriminates: an
@@ -2059,7 +2112,7 @@ landed it. Beyond that:
   on. The step text says so and the enum's comment says so; nothing here should
   be read as a modelled cup or edge.
 - The membrane half of the kit was re-voiced by −33.4 to −19.5 dB and both
-  cymbals by the contact tilt. Levels hold to 0.13 dB and every quality bound is
+  cymbals by the contact tilt. Levels hold to 0.17 dB and every quality bound is
   green, but a null figure is not a listening test and the demonstration takes
   in `Docs/audio/` were rendered by an earlier engine. Both want a listening
   session before release.
