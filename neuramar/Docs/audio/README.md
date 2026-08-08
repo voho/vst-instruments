@@ -63,11 +63,11 @@ five-voice pad is genuinely louder than a single faithful replay.
 | --- | --- | ---: | ---: | ---: |
 | `01-training-tone.wav` | The procedurally synthesized tone the model is learned from, twice | 6.0 s | −14.4 dBFS | +11.4 dB |
 | `02-learned-vs-source.wav` | The training tone, then the fitted model replaying its root note | 6.8 s | −13.8 dBFS | +10.8 dB |
-| `03-melody-across-octaves.wav` | A phrase across two octaves: every pitch but the root is extrapolated | 9.1 s | −12.8 dBFS | +9.8 dB |
+| `03-melody-across-octaves.wav` | A phrase across two octaves: every pitch but the root is extrapolated | 9.1 s | −12.7 dBFS | +9.7 dB |
 | `04-velocity-touch.wav` | Five velocities with Touch at zero, then the same five fully open | 9.3 s | −12.6 dBFS | +9.6 dB |
 | `05-core-air-bone.wav` | A held note as Core, Air and Bone are brought in and out | 10.7 s | −14.0 dBFS | +11.0 dB |
-| `06-formant-shift.wav` | The learned resonant body moved while the played pitch stays put | 7.3 s | −13.4 dBFS | +10.4 dB |
-| `07-polyphonic-pad.wav` | A five-voice pad with Awaken fades, Horizon width and Orbit looping | 9.9 s | −10.3 dBFS | +7.3 dB |
+| `06-formant-shift.wav` | The learned resonant body moved while the played pitch stays put | 7.3 s | −13.3 dBFS | +10.3 dB |
+| `07-polyphonic-pad.wav` | A five-voice pad with Awaken fades, Horizon width and Orbit looping | 9.9 s | −10.0 dBFS | +7.0 dB |
 | `08-stiff-string-stretch.wav` | The fitted inharmonicity forced off, as learned, then doubled | 8.0 s | −13.6 dBFS | +10.6 dB |
 <!-- peaks-table-end -->
 
