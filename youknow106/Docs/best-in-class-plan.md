@@ -39,9 +39,11 @@ it *does* change:
 2. **Chorus noise is a live differentiator in both directions.** Roland and
    Arturia expose a noise control; Cherry is praised by a 106 owner precisely
    for leaving the hiss out. This project models the hiss and can defeat it,
-   which is the right side of that argument — but the one *measured* structural
-   property of the hardware's chorus noise, the 3.95 dB II−I level difference,
-   is recorded in the queue as an unexplained lead and is not modelled.
+   which is the right side of that argument — but the one reported structural
+   property of the hardware's chorus noise, the approximately 3.95 dB II−I
+   level difference, was an unexplained, unmodelled lead at this plan's initial
+   snapshot. Continuous-fidelity step 2 below supersedes that state with a
+   direct relative calibration.
 
 ## 2. Gap analysis
 
@@ -109,17 +111,22 @@ Where the cost is, measured by profile rather than assumed:
   comparator solver value-initialises a 2 KB event buffer on every voice on
   every internal sample although only its first few entries are ever read.
 
-### 2.3 The second gap: one measured chorus property is not modelled
+### 2.3 Historical second gap: one reported chorus property was not modelled
 
-OQ-03 records a structural 3.95 dB II−I noise-level difference measured on two
-independent chip populations, and the 2026-08-07 pass named a candidate
-mechanism — noise proportional to modulation rate, which mode II raises by
-exactly the instrument's own 1.6234799 ratio, predicting 4.21 dB. The
-implementation's per-line floor is mode-independent, so the model has **no**
-delta at all. The calibrated capture that would confirm or kill the mechanism is
-still owed, so it cannot ship on by default; but leaving it unimplemented also
-leaves the one measured property of this circuit's noise unrepresented and
-untestable.
+At this plan's initial snapshot, OQ-03 recorded an approximately 3.95 dB II−I
+true-peak difference reported with two chip populations, and the 2026-08-07
+pass named a candidate mechanism — noise proportional to modulation rate,
+which mode II raises by exactly the instrument's own 1.6234799 ratio,
+predicting 4.21 dB. The then-current per-line floor was mode-independent, so
+the model had **no** delta at all. The calibrated capture that would confirm or
+kill the mechanism is still owed, so the causal hypothesis could not ship on
+by default; leaving it unimplemented also left the one reported property of
+this circuit's noise unrepresented and untestable.
+
+*Superseded 2026-08-09 by continuous-fidelity step 2:* the default now carries
+the reported relative delta directly, while the rate law remains a separate
+comparison profile. Absolute calibration, the true-peak-to-broadband
+extrapolation and physical causality remain OQ-03.
 
 ## 3. Steps
 
@@ -169,12 +176,16 @@ commit.
   here on, and the cost reduction is a measurement, not an assertion.
 
 - [x] **5. Model the rate-proportional chorus-noise mechanism behind its own
-  switch.** *Closes:* §2.3. A named, off-by-default `enableChorusRateNoise`
+  switch.** *Closes:* §2.3. A named, off-by-default
+  `enableChorusRateNoise` (the identifier and default policy in this pass)
   scales each line's noise with its own modulation rate, so mode II sits
   `20·log10(1.6234799) = 4.21 dB` above mode I — the candidate the queue
-  records against the measured 3.95 dB.
+  records against the reported ~3.95 dB.
   *Verified by:* an engine-suite test measuring the rendered II−I floor
   difference with the switch on, and asserting bit-identical output with it off.
+  *Superseded 2026-08-09:* continuous-fidelity step 2 promotes the reported
+  ~3.95 dB relative delta directly and retains the rate law only as the renamed
+  `useChorusRateNoiseHypothesis` comparison.
 
 - [x] **6. Publish the throughput baseline, and true the documents up.**
   *Closes:* the assessment's missing axis. The comparative assessment gains a
@@ -807,6 +818,10 @@ and this is the tell that survives every other fidelity gain. Audibility: clear.
    (`enableChorusRateNoise`) is off by default. The 0.016 dB I-vs-II difference
    measured is round-off. A verification asserting two different mode targets
    0.7 dB apart asserts something the code cannot produce.
+   *Superseded 2026-08-09 by continuous-fidelity step 2:* this describes the
+   pre-change model, not the real-unit evidence. The default output floors now
+   differ by the usable same-chain 3.95 dB observation while the raw part
+   calibration remains one baseline target.
 3. The datasheet's own two noise figures disagree by 10.5 dB — 0.2 mVrms
    **max** A-weighted against the ~59.7 µVrms implied by S/N 88 dB **typ** at
    1.5 Vrms. Landing the model exactly on a guaranteed worst case is a choice
@@ -1714,6 +1729,11 @@ Restored, the full run is green: 6/6, 224.8 s.
   measurement window and nothing else does]. The existing MN3009 bandwidth and
   THD anchors must pass unchanged.
 
+  *Superseded 2026-08-09 by continuous-fidelity step 2:* “one target” applies
+  to the MN3009 part row after separating the instrument-level factor, not to
+  the finished instrument's two mode floors. The shipped default now carries
+  the reported ~3.95 dB II−I output delta directly.
+
   **The measurand needs a rate and a window, and the upper bound needs a
   tolerance** [corrected on implementation, 2026-08-08]. Two things the contract
   above left unstated turn out to decide whether it can be met at all.
@@ -2406,3 +2426,27 @@ evidence about a physical JUNO-106.
   exclusions. This changes no DSP sample and makes no new hardware claim: as
   section 10 records, PWM delay gating remains an internal-consistency choice
   pending direct evidence.
+- [x] **2. Make the shipped Chorus II floor carry the reported I→II lift.** A
+  same-chain true-peak capture of a real JUNO-106 reports approximately 3.95 dB
+  II−I with Panasonic and Xvive MN3009 populations; the printed pairs give 3.96
+  and 3.95 dB. The old default left
+  both modes within 0.10 dB and kept the 4.2089 dB rate-law approximation behind
+  an off-by-default switch. Mode I now remains on the MN3009-derived baseline;
+  mode II applies the observed factor directly,
+  `10^(3.95/20) = 1.575796`. The rate-law profile survives under the explicit
+  internal name `useChorusRateNoiseHypothesis` and substitutes for, rather than
+  compounds with, the empirical factor. Engine regressions measure both modes
+  over whole modulation cycles, require the default delta within 0.10 dB of
+  3.95 dB, require the alternative within 0.10 dB of the circuit's 4.2089 dB
+  prediction, prove mode I is sample-bit-identical between profiles, and prove Chorus
+  Noise zero defeats both. The circuit suite still recovers the 0.2 mVrms
+  A-weighted part row on each clock programme after separating the output-level
+  factor, and directly proves that bypass preserves the last-selected hidden
+  II clock/noise profile while legacy `OneTwo` canonicalises to II. A canonical
+  Linux before/after render leaves eight documentation
+  takes byte-identical and refreshes only `02-pwm-strings.wav` and
+  `06-chorus-modes.wav`, the two takes that use mode II. This is a
+  moderate-confidence relative calibration only: treating the source's
+  true-peak difference as a broadband amplitude factor, absolute PSD,
+  bandwidth/weighting, stereo correlation, spurs and the physical cause or
+  insertion point all remain OQ-03.

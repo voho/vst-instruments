@@ -84,7 +84,7 @@ unmodelled interaction and switching memory of the complete HPF network.
 |---|---|---|---|
 | P0 | 01 | Hardware confirmation of the derived 0.5533/0.8983 Hz rates (TP4 capture), a *calibrated* original-unit sweep capture, and whether the clock is period- or frequency-linear in its CV | Two-line topology, mode controls, the integrator-plus-comparator LFO and its straight triangle, the 1.6234799 mode-rate ratio, the summing-node β = 33/47 and C3 = 0.1 µF (netlist-corroborated), the derived rate scale, and the shipped 1.4–6.4 ms sweep — third-party-scoped on a designator-faithful p. 15 build with genuine MN3009s against a real 106 (2026-08-07), superseding the sibling JUNO-60 capture |
 | P2 | 02 | Installed-unit common-VCA endpoint, component/rail/IC variation and residual error against the nominal law | The complete nominal path: `d=b<<5`, ideal R-2R `/4096`, p. 8's +4 to −6 V span, p. 15 R30/C7/R32/R31/R165 network, NEC's −5.9 mV/dB typical law, and C7's 9.08249 ms constant |
-| P0 | 03 | Calibrated chorus noise PSD, SNR, spurs and stereo correlation (a capture with a reference tone; the −47.97/−44.01 dBFS floors have a declared but uncalibrated chain) | No-compander topology, the need for a wet-line noise model, the sourced heduhl floors and the structural 3.95 dB I→II delta on both chip populations (provenance corrected 2026-08-07) |
+| P0 | 03 | Calibrated chorus noise PSD, SNR, spurs and stereo correlation (a capture with a reference tone; the −47.97/−44.01 dBFS floors have a declared but uncalibrated chain), plus the approximate 3.95 dB delta's physical cause | No-compander topology, the MN3009-derived mode-I line floor, the sourced heduhl true-peak floors and the reported approximately 3.95 dB I→II delta (3.96/3.95 dB from the printed pairs); that relative calibration ships as of 2026-08-09 |
 | P2 | 04 | Loaded post-BBD support transfer (tap-pole candidates 11.9/15.1/22.2 kHz vs the shipped ideal-source 23.46 kHz), the Gi–fi fixture reading (tracked vs broadband — one tracked ~40 kHz sweep decides, and with it the typical-part residual coefficient inside its recorded [−4.355, −1.33] dB span at 40 k/12 k), and emitter-follower source loading | Component topology with the 106's own p. 15 capacitor codes read at designator level; the two-phase OUT1/OUT2 composite solved as a full-period hold, confirming the shipped shift/hold/polyBLEP structure (2026-08-07); the fixed per-shift residual coefficient anchored to the guaranteed-minimum 40 kHz/12 kHz row, inside every candidate reading's band; Rs ≈ 3.70 kΩ summed-output source impedance and ≈ +1.10 dB intrinsic gain derived from the Gi–RL panel; the digitised 10/40/100 kHz typical family with its self-contradiction between panels recorded |
 | P0 | 05 | TA75558S IC6 and High-output clipping swing versus frequency and load | IC6 identity, linear resistor gains and ±15 V rails |
 | Dependency | 06 | Physical `Vref_rms` for a declared High-output/load condition | Final -18 dBFS RMS mapping, floating output and no-limiter policy |
@@ -397,8 +397,10 @@ not establish SNR.
 *Implementation note, 2026-08-08:* the per-line floor is **no longer voiced**.
 It is the MN3009's own noise row — 0.2 mVrms max, A-weighted — from the same
 datasheet this model already treats as anchored for bandwidth and distortion,
-and the recovered wet line now measures 0.19978 mVrms (I) / 0.20016 mVrms (II)
-against it where it previously measured 1.0488 mVrms, 14.39 dB hot. Three things
+and the recovered baseline wet line now measures 0.19978 mVrms in mode I; the
+faster mode-II clock programme measures 0.20016 mVrms after its separate
+instrument-output factor is divided out. It previously measured 1.0488 mVrms,
+14.39 dB hot. Three things
 this does **not** settle, all of which the capture below still owns.
 
 1. **The datasheet brackets rather than fixes the figure.** Its two noise rows
@@ -413,27 +415,28 @@ this does **not** settle, all of which the capture below still owns.
    reconstruction sections; the injection node's own unweighted RMS is 3.12 dB
    above that. Which node a BBD datasheet's noise row denotes depends on its
    test circuit, which is not in tree.
-3. **Only the amplitude moved.** The mechanism is still one edge-held uniform
-   random per line, and the optional common/correlated, hum and clock-spur
-   layers are still zero-amplitude hypotheses. Nothing here bears on the 3.95 dB
-   II−I delta below, which the settled topology still cannot produce.
+3. **The base mechanism remains deliberately narrow.** It is still one
+   edge-held uniform random per line, and the optional common/correlated, hum
+   and clock-spur layers remain zero-amplitude hypotheses. The relative mode
+   calibration below changes none of those spectra or correlations.
 
-*Implementation note, 2026-08-07:* the rate-proportional candidate for the
-measured 3.95 dB II−I delta, named under the 2026-08-07 numerical lead below,
-now ships as `enableChorusRateNoise` — **off by default**. Engaged, it scales
-each line's own random floor with its modulation rate referenced to mode I, so
-mode I's floor is untouched and mode II rises by
-`20·log10(1.6234799) = 4.2089 dB`; the rendered idle floor measures 4.2225 dB
-over six whole modulation cycles. It changes nothing in the shipped sound and
-closes nothing: it makes the hypothesis testable so the capture below can
-confirm or kill it, and the discriminating capture is **a third, artificial
-modulation rate on the same chain**, which separates rate-proportional noise
-from mode-switch-network noise directly. A useful measurement caution came out
-of building it: each line writes one noise sample per bucket edge, so its
-instantaneous floor rides the swept clock, and a fixed measurement window that
-is not a whole number of modulation cycles reads mode II 0.69 dB hot with no
-mechanism present at all. Any capture compared against this model must average
-over whole cycles.
+*Implementation note, 2026-08-09:* the usable same-chain observation now ships
+directly: mode I keeps the part-derived floor, and mode II's edge-held line
+contribution is multiplied by `10^(3.95/20) = 1.575796`. The source used
+iZotope RX true peak over unspecified noise-only selections; its printed pairs
+yield 3.96 and 3.95 dB, so translating the reported approximately 3.95 dB into
+a broadband amplitude/RMS factor is explicitly moderate-confidence policy. It
+is an empirical **complete-instrument output** calibration, not a claim that a
+standalone mode-II MN3009 exceeds its datasheet row; the exact physical
+insertion point is unknown. The earlier rate-proportional candidate remains available internally
+as `useChorusRateNoiseHypothesis`. It substitutes the instrument's 1.6234799
+mode-rate ratio (4.2089 dB) instead of multiplying both profiles, keeping mode I
+bit-identical so a third-rate capture can still falsify it. A useful measurement
+caution remains: each line writes one noise sample per bucket edge, so its
+instantaneous floor rides the swept clock, and a fixed window that is not a
+whole number of modulation cycles reads mode II 0.69 dB hot even in a diagnostic
+with both mode factors divided out. Any capture compared against this model must
+average whole cycles.
 
 ### Needed output (for LLM)
 
@@ -1522,17 +1525,21 @@ the largest single audible number found in this pass.
 ### OQ-03 — a robust chorus-noise delta
 
 A third-party measurement of a real JUNO-106 (48 kHz/24-bit, VOLUME 10, OUTPUT
-HIGH, +25 dB into a Fireface 800, original Panasonic MN3009s) reports peak noise of
-**−47.97 dBFS for Chorus I and −44.01 dBFS for Chorus II**.
+HIGH, +25 dB into a Fireface 800, original Panasonic MN3009s) reports RX
+true-peak noise of **−47.97 dBFS for Chorus I and −44.01 dBFS for Chorus II**.
 
 The absolute figures are not usable — the chain gain is stated but the reference is
 the converter's dBFS, not dBu. The **difference is usable**, because the chain gain
-cancels: **Chorus II is 3.95 dB noisier than Chorus I**. The model uses one noise
-amplitude for both modes and does not reproduce this. It is physically plausible —
-mode II's sweep spends more time at low clock rates, where BBD noise is worse.
+cancels: **Chorus II is reported about 3.95 dB noisier than Chorus I** (3.96 dB
+for the printed Panasonic pair and 3.95 dB for Xvive). The shipped model now
+reproduces that relative delta directly while leaving mode I on the MN3009-derived
+baseline. Its chosen insertion point preserves the existing spectrum and
+correlation; it does not identify the hardware cause.
 
-Status: **partially resolved.** Confidence moderate for the delta, low for the
-absolute level. Remaining gap: calibrated PSD, stereo correlation and spurs.
+Status: **partially resolved.** Confidence moderate for the implemented relative
+delta and its true-peak-to-broadband extrapolation, low for the absolute level
+and cause. Remaining gap: calibrated PSD, declared bandwidth/weighting, stereo
+correlation and spurs.
 
 The BBD host-grid polyBLEP does not change that status. It reconstructs only the
 deterministic held-output step: held noise and the RNG sequence remain unchanged,
@@ -3018,10 +3025,11 @@ have — each card's own 0.48 Hz coupling passing the note-on duty step, six
 summed. `testModuleInputCouplingKeepsMixerDcOutOfTheVoiceVca` pins the corner
 and asserts the thump falls monotonically as PWM deepens.
 
-### OQ-03 — a numerical lead on the unexplained 3.95 dB mode delta
+### OQ-03 — a causal hypothesis behind the reported ~3.95 dB mode delta
 
-Recorded as a lead, not a mechanism. The structural II−I noise delta —
-3.95 dB on Panasonic parts and 3.95 dB again on Xvive parts — sits
+Recorded as a lead, not a mechanism. The reported II−I true-peak delta —
+3.96 dB from the printed Panasonic pair and 3.95 dB from Xvive, summarized as
+3.95 dB for both in the source post — sits
 0.26 dB from the mode-rate ratio expressed in amplitude:
 `20·log10(1.6234799) = 4.21 dB`. The settled topology gives the two modes
 identical sweep depth and clock range; the *only* thing the mode line
@@ -3032,10 +3040,11 @@ delta to within the measurement's plausible uncertainty and would be
 chip-population-independent — matching the delta's strongest recorded
 property. This does not conflict with the earlier rejection of a
 sweep-depth or level difference between the modes; it names a
-rate-proportional candidate the requested calibrated capture could
-confirm or kill (a same-chain capture at a third, artificial rate would
-separate rate-proportional noise from mode-switch-network noise
-directly).
+rate-proportional candidate the requested calibrated capture could confirm or
+kill. The shipped default now follows the observation directly; the rate law
+survives only as the internal `useChorusRateNoiseHypothesis` comparison. A
+same-chain capture at a third, artificial rate would separate rate-proportional
+noise from mode-switch-network noise directly.
 
 ### Pages read for the record, without model consequence
 

@@ -101,8 +101,11 @@ struct EngineParameters
     float volume { 0.80f };
 
     // --- Controls the modelled hardware does not have ----------------------
-    // Velocity zero and six voices are structurally hardware-aligned; the
-    // unmeasured chorus-noise level remains a voiced compatibility value.
+    // Velocity zero and six voices are structurally hardware-aligned. Chorus
+    // Noise 1 preserves the MN3009-derived mode-I line floor and the reported
+    // approximate II-I lift; its absolute installed-unit PSD, stereo
+    // correlation and parasitic layers remain OQ-03 rather than a fully
+    // calibrated level.
     float velocityDepth { 0.0f };  // The hardware ignores MIDI velocity.
     // Exposed to the host as Unit Character: one master over every modelled
     // component tolerance, trimmer residual, thermal wander and optional
@@ -153,12 +156,11 @@ struct EngineParameters
     // ships and the frequency-linear hypothesis waits behind this switch for
     // the calibrated capture OQ-01 still requests.
     bool enableChorusHyperbolicSweep { false };
-    // Off by default: the 3.95 dB II-I noise delta measured on two chip
-    // populations is real, and a mechanism proportional to modulation rate
-    // predicts it to 0.26 dB from this instrument's own mode-rate ratio -- but
-    // it remains a candidate until the calibrated same-chain capture OQ-03
-    // asks for confirms or kills it. See Chorus::rateProportionalNoiseGain.
-    bool enableChorusRateNoise { false };
+    // The reported approximately 3.95 dB II-I output-floor delta ships as the
+    // empirical default. This internal switch substitutes the rate-proportional
+    // 4.21 dB causal hypothesis for controlled comparisons; it does not
+    // multiply the two profiles. OQ-03 still owns absolute level and causality.
+    bool useChorusRateNoiseHypothesis { false };
     bool enableElectrolyticC14Nonlinearity { true };
 };
 

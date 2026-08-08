@@ -24,6 +24,11 @@ struct YouKnow106TestAccess
 {
     using Cascade = YouKnow106Engine::OtaCascade;
 
+    static ChorusMode runningChorusMode(const Chorus& chorus) noexcept
+    {
+        return chorus.runningMode_;
+    }
+
     static constexpr float headroom() noexcept
     {
         return YouKnow106Engine::otaHeadroomVolts;
@@ -2489,6 +2494,39 @@ void testJuno60FallbackBucketBrigadeTiming()
                "legacy I+II did not canonicalise to II's centre delay");
     expectNear(both.wetGain, two.wetGain, 1.0e-9,
                "legacy I+II did not canonicalise to II's line gain");
+    expectNear(Chorus::measuredModeNoiseGain(ChorusMode::OneTwo),
+               Chorus::measuredModeNoiseGain(ChorusMode::Two), 1.0e-9,
+               "legacy I+II did not canonicalise to II's noise calibration");
+    expectNear(Chorus::measuredModeNoiseGain(ChorusMode::One), 1.0, 1.0e-9,
+               "the empirical mode calibration moved mode I's part anchor");
+    expectNear(Chorus::measuredModeNoiseGain(ChorusMode::Off), 1.0, 1.0e-9,
+               "chorus bypass invented a separate noise calibration");
+
+    // Bypass only mutes the return. It must not silently reset the hidden
+    // oscillator/noise profile to I while the last-selected II clock continues
+    // to run, or the two pieces of the model would contradict each other.
+    {
+        Chorus chorus;
+        chorus.prepare(48000.0);
+        float left = 0.0f;
+        float right = 0.0f;
+        chorus.process(0.0f, ChorusMode::Two, 0.0f, left, right);
+        expect(YouKnow106TestAccess::runningChorusMode(chorus)
+                   == ChorusMode::Two,
+               "mode II did not select its hidden running noise profile");
+        chorus.process(0.0f, ChorusMode::Off, 0.0f, left, right);
+        expect(YouKnow106TestAccess::runningChorusMode(chorus)
+                   == ChorusMode::Two,
+               "chorus bypass reset the hidden mode-II noise profile");
+        chorus.process(0.0f, ChorusMode::One, 0.0f, left, right);
+        expect(YouKnow106TestAccess::runningChorusMode(chorus)
+                   == ChorusMode::One,
+               "mode I did not replace the hidden running noise profile");
+        chorus.process(0.0f, ChorusMode::OneTwo, 0.0f, left, right);
+        expect(YouKnow106TestAccess::runningChorusMode(chorus)
+                   == ChorusMode::Two,
+               "legacy I+II did not select II's hidden noise profile");
+    }
 
     // And it has to be observable, not just tabulated: run the effect in each
     // mode and count how far the modulation oscillator actually travels.
@@ -2639,7 +2677,9 @@ void testChorusLineNoiseMatchesTheMn3009NoiseRow()
     //    in, because what the datasheet row bounds is what the part delivers
     //    to the board, and they are the board.
     //  * A 0.5 s settle for the wet-mute glide and the support filters, then a
-    //    16 s window. Both modes, because the clock programme differs.
+    //    16 s window. Both clock programmes are measured after dividing out
+    //    the empirical instrument-output II-I factor; that reported ~3.95 dB
+    //    observation belongs to the engine contract, not the standalone row.
     //
     // The upper bound carries 0.05 dB. This is a finite-window estimate of a
     // random process's power and does not converge to better than about
@@ -2673,7 +2713,9 @@ void testChorusLineNoiseMatchesTheMn3009NoiseRow()
             {
                 float left = 0.0f;
                 float right = 0.0f;
-                chorus.process(0.0f, mode, 1.0f, left, right);
+                const float isolatePartScale =
+                    1.0f / Chorus::measuredModeNoiseGain(mode);
+                chorus.process(0.0f, mode, isolatePartScale, left, right);
                 const double weightedLeft =
                     weightLeft.step(static_cast<double>(left) * recover);
                 const double weightedRight =

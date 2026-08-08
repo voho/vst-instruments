@@ -4393,7 +4393,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                             parameters.enableChorusClockBleed,
                             parameters.enableChorusHyperbolicSweep,
                             parameters.calibration,
-                            parameters.enableChorusRateNoise);
+                            parameters.useChorusRateNoiseHypothesis);
 
             // TA75558S IC6 cannot swing past its own +/-15 V rails. Unlike the
             // modelled tolerances, this is not scaled by Unit Character: a
