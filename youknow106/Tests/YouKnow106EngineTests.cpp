@@ -5576,6 +5576,42 @@ void testPanelLayout()
            "the folded panel width disagrees with the editor contract");
 }
 
+// The panel help is part of the instrument contract, not decoration. The
+// engine routes one delay-gated LFO value to pitch, PWM and cutoff; stale help
+// used to describe the pre-fix PWM exception even after that exception had
+// left the DSP, directly contradicting the behavior the modulation suite
+// fences.
+void testPanelHelpMatchesTheModulationRouting()
+{
+    const panel::Control* delay = nullptr;
+    const panel::Control* pwmLfo = nullptr;
+    for (const auto& control : panel::controls())
+    {
+        if (control.parameterId != nullptr
+            && std::strcmp(control.parameterId, parameters::lfoDelay) == 0)
+            delay = &control;
+        if (control.parameterId != nullptr && control.label != nullptr
+            && std::strcmp(control.parameterId, parameters::pwmMode) == 0
+            && std::strcmp(control.label, "LFO") == 0)
+            pwmLfo = &control;
+    }
+
+    expect(delay != nullptr, "the panel has no LFO DELAY help to verify");
+    expect(pwmLfo != nullptr, "the panel has no PWM LFO help to verify");
+    if (delay == nullptr || pwmLfo == nullptr)
+        return;
+
+    const std::string delayHelp(delay->tooltip);
+    const std::string pwmHelp(pwmLfo->tooltip);
+    expect(delayHelp.find("DCO, PWM and VCF") != std::string::npos,
+           "LFO DELAY help does not name all three gated destinations");
+    expect(pwmHelp.find("delay-gated LFO") != std::string::npos,
+           "PWM LFO help does not describe the routed delay envelope");
+    expect(delayHelp.find("does not delay PWM") == std::string::npos
+               && pwmHelp.find("LFO DELAY does not apply") == std::string::npos,
+           "the panel still describes the removed raw-LFO PWM path");
+}
+
 // Cost of rendering `seconds` of a patch, as a multiple of realtime, taking
 // the fastest of three passes so one descheduled run cannot decide a fence.
 double realtimeCost(const EngineParameters& parameters, int notes,
@@ -5821,6 +5857,7 @@ int main()
     testPairedSwitchModes();
     testNoLabelIsTruncated();
     testPanelLayout();
+    testPanelHelpMatchesTheModulationRouting();
     testQualityChangeRefreshesTheFilterCoefficient();
     testResonanceDoesNotMultiplyTheSolveCost();
     testCpuBudget();

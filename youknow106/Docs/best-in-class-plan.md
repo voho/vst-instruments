@@ -2383,3 +2383,26 @@ OQ-03, OQ-09 and OQ-19 without claiming the questions themselves. Gaps 1, 3, 4,
 5, 6 and 8 in section 7 carry closure notes naming the step that closed them.
 Gap 2 does not, and must not: its step was struck, so Solo Unison is still the
 uniform comb this section measured, and gaps 7, 9 and 10 stand as recorded.
+
+---
+
+## YouKnow106 — continuous fidelity work, 2026-08-09
+
+Every item in this continuation lands as one scoped commit with its regression
+and documentation in that same commit. Open hardware questions remain governed
+by `Docs/open-questions.md`; a consistency fix must not be promoted into new
+evidence about a physical JUNO-106.
+
+- [x] **1. Make the panel help agree with the modulation path.** The DSP, its
+  engine fixture, the README and the research contract all agree that the one
+  delay-gated LFO value reaches DCO pitch, PWM and VCF cutoff. Two surviving
+  tooltips and the PWM-strings renderer comment still described the superseded
+  implementation: DELAY said “It does not delay PWM,” and the PWM LFO selector
+  said “LFO DELAY does not apply.” They now describe the three-destination
+  route the instrument actually runs.
+  `testPanelHelpMatchesTheModulationRouting` locates both controls through the
+  JUCE-free panel description, requires the DELAY help to name DCO/PWM/VCF,
+  requires the PWM help to call its source delay-gated, and rejects both stale
+  exclusions. This changes no DSP sample and makes no new hardware claim: as
+  section 10 records, PWM delay gating remains an internal-consistency choice
+  pending direct evidence.

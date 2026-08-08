@@ -678,14 +678,14 @@ There are six JUCE-free suites, plus the plug-in suite when JUCE is enabled:
   deterministic and exactly silent when idle, and that hostile automation
   cannot produce a non-finite sample. It fences this pass's six corrections in
   the same terms: that LFO DELAY holds pulse width as well as pitch and cutoff,
-  including through the idle-priming path; that resonance leaves the rendered
-  corner alone at three converter codes; that the node the amplifier multiplies
-  carries no duty-dependent offset; that the idle output floor sits on the
-  MN3009 noise row; that the warm-up clock reaches 900 s at every rate and in
-  both quality settings; and that velocity moves the corner monotonically while
-  its two exact identities stay bit-identical. It also renders every historical
-  factory tone without per-preset normalization and rejects non-finite or
-  runaway output.
+  including through the idle-priming path, and that the panel help describes
+  that same three-destination route; that resonance leaves the rendered corner
+  alone at three converter codes; that the node the amplifier multiplies carries
+  no duty-dependent offset; that the idle output floor sits on the MN3009 noise
+  row; that the warm-up clock reaches 900 s at every rate and in both quality
+  settings; and that velocity moves the corner monotonically while its two exact
+  identities stay bit-identical. It also renders every historical factory tone
+  without per-preset normalization and rejects non-finite or runaway output.
 - **`YouKnow106.PluginProcessor`** (macOS/plug-in builds only) checks the
   parameter contract, state round-tripping and migration, controller transport,
   legacy/modern automation ordering, exact patch reload, all 128 incoming
