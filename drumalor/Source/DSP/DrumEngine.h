@@ -150,7 +150,14 @@ private:
     static constexpr int maxVoices = 64;
     static constexpr int retiringVoiceCount = maxVoices;
     static constexpr int oscillatorCount = 8;
-    static constexpr int resonatorCount = 12;
+    // Twelve was the size of the mode table. Eighteen is the size of the table
+    // with every m > 0 mode allowed to be the pair it physically is: an ideal
+    // circular head's m > 0 modes are doubly degenerate, and buildHeadBank now
+    // splits the loudest of them into their two members. Six extra slots is
+    // what the table's tail plus that splitting needs; the cost is time, and
+    // there is none - a dense eight-second thirteen-voice render measures 3.96 s
+    // at twelve slots and 3.97 s at eighteen against a 20 s guardrail.
+    static constexpr int resonatorCount = 18;
     static constexpr int metallicBankCount = 5;
     static constexpr int metallicOscillatorCount = 6;
     static constexpr int maximumMetallicDecimatorTaps = 401;
@@ -359,6 +366,14 @@ private:
         float circuitDriveOffset { 0.0f };
         float circuitBias { 0.0f };
         float phaseOffset { 0.0f };
+        // Where around the head this particular stroke landed, in degrees away
+        // from the nominal aim. This is the first deviation Humanise has ever
+        // made to the strike itself rather than to a control, and it is the
+        // only field here with no component-drift term in it: a supply rail and
+        // an ambient temperature do not decide where a stick lands, and two
+        // drums struck a moment apart have no reason to be hit in the same
+        // place. It is per-hit and nothing else.
+        float strikeAzimuthDegrees { 0.0f };
     };
 
     struct Voice
@@ -450,6 +465,12 @@ private:
         // bring it back, because a hat that has been shut has been shut.
         float hatAperture { 1.0f };
         float baseFrequency { 100.0f };
+        // Where the strike landed around the head, in radians. The head
+        // geometry says how far out from the middle the stick was, which is
+        // what decides which modes it can reach at all; this says where around
+        // the hoop, which is what decides the balance between the two members
+        // of every split pair. Read only by buildHeadBank.
+        float strikeAzimuth { 0.0f };
         float sweepAmount { 0.0f };
         // How much of the drawn sweep this strike is allowed to use. Latched at
         // note-on from the energy the strike put into the drum, because a head

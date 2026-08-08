@@ -88,6 +88,22 @@ constexpr std::array<int, 12> membraneModeOrders {{
     0, 1, 2, 0, 3, 1, 4, 2, 0, 5, 3, 6
 }};
 
+// Where a player aims around the hoop, in radians, before Humanise moves it.
+// Every m > 0 mode of a circular head is two modes at right angles to each
+// other, and a strike at azimuth phi drives them as cos(m phi) and sin(m phi),
+// so the aim decides the balance of every pair - and an aim of zero would
+// strike one member of each pair and leave the other silent, which is a head
+// with no warble in it at all.
+//
+// Twenty-five degrees is not decoration. It keeps m*phi off every multiple of
+// ninety degrees for all six circumferential orders the mode table carries, so
+// no pair is silently reduced to one member; on m = 1 it puts the two members
+// at 0.906 and 0.423, which is about 8.8 dB of beat depth in the tail. It also
+// has to be a fixed nominal rather than a Humanise-scaled draw, because
+// Humanise scales its deviations to nothing at zero and that is the setting
+// every measurement of this engine is taken at.
+constexpr float nominalStrikeAzimuth = 25.0f * (pi / 180.0f);
+
 // The zeros themselves. The ratios above are these divided by the first one,
 // but the air between two heads couples to a mode through its shape rather than
 // its pitch, so the undivided value is needed too.
@@ -2363,6 +2379,11 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
     float ratios[resonatorCount] {};
     float excitation[resonatorCount] {};
     float decays[resonatorCount] {};
+    // The circumferential order each emitted slot came from, and zero for the
+    // slots that are not a member of a degenerate pair. Only the m > 0 modes
+    // are degenerate: an axisymmetric mode has no azimuth to rotate about, so
+    // there is nothing for an uneven hoop to lift apart.
+    int orders[resonatorCount] {};
     int count = 0;
 
     // Air loading is added mass, and a mode that ripples finely across the head
@@ -2430,6 +2451,9 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
             decays[count] = decaySeconds * referenceLoss / modeLoss;
             excitation[count] = shape * weight * heard
                 * contactSpectrum (frequency, head.contactSeconds);
+            // Zero for the axisymmetric family, whose two branches above are
+            // the air spring's doing and not a degeneracy.
+            orders[count] = order;
             ++count;
         };
 
@@ -2468,9 +2492,102 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
         emit (ideal * std::sqrt (1.0f + 2.0f * stiffness), 0, 1.0f);
     }
 
+    const float tilt = -1.30f + 1.05f * brightness;
+
+    // Every mode above the axisymmetric family is two modes, not one. An ideal
+    // circular head has a rotational symmetry, so for each m > 0 there are two
+    // shapes at the same frequency - cos(m theta) and sin(m theta), one rotated
+    // half a lobe from the other - and any departure from that symmetry lifts
+    // them apart. Worland measured that ordinary non-uniform lug tension is
+    // enough to do it, and a drummer hears the result as the warble that a real
+    // head's decay has and a single pole pair cannot produce: two close
+    // frequencies sounding together beat at their difference.
+    //
+    // How far apart is a property of this drum and of nobody's playing - a
+    // tuning key was turned once and the head has been that shape ever since -
+    // so the split is hashed from the instrument rather than from the hit, and
+    // reproduces after a reset. The range is what a cleared head shows, floored
+    // at the point where the beat is slower than the tail it has to appear in:
+    // 1.5 % on the Kick's m = 1 mode is 1.3 Hz against a 0.93 s tail, and half
+    // a per cent would be a 2.6 s period inside that same tail, which is not a
+    // warble anybody could hear.
+    const float split = 0.020f + 0.005f * signedUnitFromHash (
+        static_cast<std::uint32_t> ((indexFor (voice.instrument) + 1u) * 0x9e3779b9u)
+        ^ 0x51ed270bu);
+
+    // Splitting costs a slot each time, so the loudest pairs get the slots that
+    // are left once the table has been emitted. Gain here is the same product
+    // the normalisation below uses, so "loudest" means loudest as heard and not
+    // loudest as struck.
+    const auto gainOf = [&] (int slot)
+    {
+        const auto index = static_cast<std::size_t> (slot);
+        return std::pow (std::max (1.0f, ratios[index]), tilt)
+            * std::abs (excitation[index]);
+    };
+
+    const float renderable = 0.44f * static_cast<float> (sampleRate_);
+    while (count < resonatorCount)
+    {
+        int best = -1;
+        float bestGain = 0.0f;
+        for (int slot = 0; slot < count; ++slot)
+        {
+            // Zero is the axisymmetric family and negative marks a slot that is
+            // already one member of a pair. Splitting a member again would be
+            // inventing a degeneracy that is not there.
+            if (orders[slot] <= 0)
+                continue;
+            // The upper member has to be a mode the rate can still render, on
+            // the same terms the emission above applies.
+            const float upper = ratios[static_cast<std::size_t> (slot)]
+                * (1.0f + 0.5f * split);
+            if (fundamental * upper >= renderable)
+                continue;
+            const float gain = gainOf (slot);
+            if (gain > bestGain)
+            {
+                bestGain = gain;
+                best = slot;
+            }
+        }
+        if (best < 0)
+            break;
+
+        const auto lower = static_cast<std::size_t> (best);
+        const auto upper = static_cast<std::size_t> (count);
+        const int order = orders[lower];
+        // The two members lie at right angles to each other around the head, so
+        // a strike at azimuth phi drives them as cos(m phi) and sin(m phi).
+        // Squared those sum to one, so the pair carries exactly the energy the
+        // single mode carried and the split is a redistribution rather than a
+        // gain: what changes is that the energy now arrives at two frequencies
+        // instead of one.
+        const float excited = excitation[lower];
+        const float lowerRatio = ratios[lower] * (1.0f - 0.5f * split);
+        const float upperRatio = ratios[lower] * (1.0f + 0.5f * split);
+        const auto decayFor = [&] (float ratio)
+        {
+            return decaySeconds * referenceLoss
+                / std::max (1.0e-3f, lossPerSecond (fundamental * ratio, order));
+        };
+
+        ratios[lower] = lowerRatio;
+        excitation[lower] = excited * std::cos (static_cast<float> (order)
+                                                * voice.strikeAzimuth);
+        decays[lower] = decayFor (lowerRatio);
+        ratios[upper] = upperRatio;
+        excitation[upper] = excited * std::sin (static_cast<float> (order)
+                                                * voice.strikeAzimuth);
+        decays[upper] = decayFor (upperRatio);
+        // Both members are spoken for now, so neither is a candidate again.
+        orders[lower] = -order;
+        orders[upper] = -order;
+        ++count;
+    }
+
     // Level and spectral tilt, then the resonators themselves.
     voice.modeCount = count;
-    const float tilt = -1.30f + 1.05f * brightness;
     float gainSum = 0.0f;
     for (int mode = 0; mode < count; ++mode)
     {
@@ -2581,6 +2698,10 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
     voice.decaySeconds = decaySecondsFor (instrument, values.decay)
         * variation.decayScale;
     voice.transientScale = variation.transientScale;
+    // The nominal aim, moved by whatever this stroke's Humanise draw was. Only
+    // buildHeadBank reads it, so the voices with no head do no work for it.
+    voice.strikeAzimuth = nominalStrikeAzimuth
+        + variation.strikeAzimuthDegrees * (pi / 180.0f);
     // Treat MIDI velocity as trigger/accent voltage as well as final VCA
     // loudness. The deliberately narrow range preserves the established gain
     // curve while making hard hits inject more energy into the physical core.
@@ -3329,6 +3450,14 @@ void DrumEngine::trigger (Instrument instrument, float velocity,
         + 0.012f * boardDrift);
     variation.phaseOffset = humaniseDepth * (0.018f * drift
         + 0.022f * signedUnitFromHash (seed ^ 0xc2b2ae35u));
+    // Where the stick landed, as a deviation from the nominal aim. Neither
+    // drift term appears: see HitVariation. Four degrees at the calibrated
+    // unit, eight at the top of the control, which on the m = 1 members of a
+    // split pair is the difference between about 5 dB and about 13 dB of beat
+    // depth in the tail - a stroke that lands closer to a nodal line rings a
+    // deeper warble than one that splits the pair evenly.
+    variation.strikeAzimuthDegrees = humaniseDepth * 4.0f
+        * signedUnitFromHash (seed ^ 0x27d4eb2fu);
     auto& voice = voices_[static_cast<std::size_t> (findVoiceSlot())];
     if (voice.active && voice.ageSamples != 0u)
         retireVoice (voice);

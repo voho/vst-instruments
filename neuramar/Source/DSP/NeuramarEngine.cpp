@@ -345,6 +345,7 @@ void NeuramarEngine::setModel(const NeuralModel* immutableModel) noexcept
     if (immutableModel == nullptr)
     {
         allSoundOff();
+        dampingExponent_ = 0.0f;
         model_.store(nullptr, std::memory_order_release);
         return;
     }
@@ -364,6 +365,7 @@ void NeuramarEngine::setModel(const NeuralModel* immutableModel) noexcept
         initialPhaseSin_[harmonic] = std::sin(angle);
     }
     loopLevelSlopePerSecond_ = fitLoopLevelSlope(*immutableModel);
+    dampingExponent_ = fitDampingExponent(*immutableModel);
     model_.store(immutableModel, std::memory_order_release);
 }
 
@@ -430,6 +432,200 @@ float NeuramarEngine::fitLoopLevelSlope(const NeuralModel& model) noexcept
     // something a real memory runs into.
     const double limit = (12.0 / 8.685889638) / static_cast<double>(loopLength);
     return static_cast<float>(std::clamp(slope, -limit, limit));
+}
+
+// The exponent p in tau(f) = tau_1 (f/f_1)^-p, read out of the model's own
+// per-partial amplitude trajectories. Real damping is frequency-dependent -
+// air viscosity dominates at low frequency and internal friction at high, so
+// decay time falls with frequency (Desvages, Bilbao, Ducceschi and Chabassier,
+// POMA 28, 035005, 2017) - and this is the only place the instrument can find
+// out how steeply it falls for the sound the user actually dropped in.
+//
+// Each partial's own time constant is fitted first, in log amplitude, over the
+// span between that partial's peak and the point where it has lost 40 dB; then
+// log(1/tau) is regressed against log(harmonic number), whose slope is p. Two
+// gates decide whether the answer is evidence or noise. A partial that loses
+// less than 6 dB across the window it was fitted on carries a trend rather
+// than a decay and is left out, and if fewer than six partials survive that -
+// which is what a sustained source looks like - the fit is abandoned. So is a
+// fit whose partials scatter more than 0.15 in log tau about the fitted line,
+// which is where a struck inharmonic body and a bowed note land: measured
+// residuals are 0.0002 on a tau_h = tau_1 h^-0.75 source and 0.33 on a
+// sustained one. Abandoning it returns exactly zero, and a zero exponent
+// renders the release the instrument has always had.
+float NeuramarEngine::fitDampingExponent(const NeuralModel& model) noexcept
+{
+    constexpr int scanPoints = 64;
+    constexpr std::size_t harmonics = NeuralModel::harmonicCount;
+    const double duration = std::max(
+        static_cast<double>(model.metadata_.durationSeconds), 0.001);
+
+    struct PartialFit
+    {
+        double peak { 0.0 };
+        double startSeconds { 0.0 };
+        double spanSeconds { 0.0 };
+        double sumTime { 0.0 };
+        double sumLevel { 0.0 };
+        double sumTimeSquared { 0.0 };
+        double sumTimeLevel { 0.0 };
+        int count { 0 };
+        bool finished { false };
+    };
+    std::array<PartialFit, harmonics> partials {};
+
+    // One forward pass. Restarting a partial's accumulators whenever it sets a
+    // new maximum is what makes a single pass equivalent to fitting from the
+    // peak: past the true peak the running maximum is already final, so no
+    // learned onset is ever fitted as if it were decay.
+    //
+    // The scan is warped by the same 1.24 the trajectory grid itself uses past
+    // the onset, so the points land where the model actually carries detail. A
+    // uniform scan under-samples exactly the early span where the fast
+    // partials live and have already finished: on a source whose fundamental
+    // decays with a 0.20 s time constant it recovers p = 0.703 against 0.735
+    // warped, and the residual falls from 0.056 to 0.004.
+    for (int point = 0; point < scanPoints; ++point)
+    {
+        const double position = std::pow(static_cast<double>(point)
+            / static_cast<double>(scanPoints - 1), 1.24);
+        SynthesisFrame frame;
+        model.evaluate(static_cast<float>(position), frame);
+        const double time = position * duration;
+        for (std::size_t harmonic = 0; harmonic < harmonics; ++harmonic)
+        {
+            const double amplitude = frame.harmonicAmplitudes[harmonic];
+            PartialFit& partial = partials[harmonic];
+            if (amplitude > partial.peak)
+            {
+                partial = PartialFit {};
+                partial.peak = amplitude;
+                partial.startSeconds = time;
+            }
+            else if (partial.finished
+                     || amplitude < 0.01 * partial.peak
+                     || amplitude < 1.0e-6)
+            {
+                partial.finished = true;
+                continue;
+            }
+            const double offset = time - partial.startSeconds;
+            const double level = std::log(std::max(amplitude, 1.0e-12));
+            partial.spanSeconds = offset;
+            partial.sumTime += offset;
+            partial.sumLevel += level;
+            partial.sumTimeSquared += offset * offset;
+            partial.sumTimeLevel += offset * level;
+            ++partial.count;
+        }
+    }
+
+    double sumX = 0.0;
+    double sumY = 0.0;
+    double sumXX = 0.0;
+    double sumXY = 0.0;
+    double sumYY = 0.0;
+    int used = 0;
+    for (std::size_t harmonic = 0; harmonic < harmonics; ++harmonic)
+    {
+        const PartialFit& partial = partials[harmonic];
+        if (partial.peak < 1.0e-5 || partial.count < 4)
+            continue;
+        const double count = static_cast<double>(partial.count);
+        const double denominator = count * partial.sumTimeSquared
+            - partial.sumTime * partial.sumTime;
+        if (!(denominator > 0.0))
+            continue;
+        const double rate = -(count * partial.sumTimeLevel
+            - partial.sumTime * partial.sumLevel) / denominator;
+        if (!(rate > 0.0) || rate * partial.spanSeconds < 0.69)
+            continue;
+        const double x = std::log(static_cast<double>(harmonic + 1));
+        const double y = std::log(rate);
+        sumX += x;
+        sumY += y;
+        sumXX += x * x;
+        sumXY += x * y;
+        sumYY += y * y;
+        ++used;
+    }
+    if (used < 6)
+        return 0.0f;
+    const double count = static_cast<double>(used);
+    const double denominator = count * sumXX - sumX * sumX;
+    if (!(denominator > 0.0))
+        return 0.0f;
+    const double slope = (count * sumXY - sumX * sumY) / denominator;
+    if (!std::isfinite(slope))
+        return 0.0f;
+    // Residual root-mean-square in log tau, computed from the accumulated
+    // moments rather than from a second pass over the partials.
+    const double intercept = (sumY - slope * sumX) / count;
+    const double squared = sumYY - 2.0 * intercept * sumY
+        - 2.0 * slope * sumXY + count * intercept * intercept
+        + 2.0 * slope * intercept * sumX + slope * slope * sumXX;
+    const double residual = std::sqrt(std::max(squared, 0.0) / count);
+    if (!(residual < 0.15))
+        return 0.0f;
+    return static_cast<float>(std::clamp(slope, 0.0, 1.5));
+}
+
+// The per-slot release factors, built once at note-off and rebuilt only if
+// Dissolve itself moves. This is where the step's pow() budget is spent: 284
+// of them per note-off, against one multiply per slot per control period for
+// the rest of the release.
+//
+// The law is tau_rel(k) = tau_rel(1) * (f_k/f_1)^-p, and what is stored is the
+// *excess* rate each slot owes over partial 1, because the audio loop's single
+// release scalar already runs every slot at partial 1's rate. Partial 1's
+// factor is therefore exactly 1, the Dissolve time keeps its meaning, and the
+// voice still retires on the slot the panel's number describes.
+//
+// Both clamps are load-bearing. The fast side bounds the rate ratio at 12, so
+// a badly conditioned fit cannot turn Dissolve into a brickwall on the top of
+// the spectrum. The slow side bounds it at 1, which is what makes partial 1
+// the slowest slot: f_1 is the *played* fundamental while the Air centres are
+// the model's own fixed 94 Hz to 13.6 kHz grid and the Bone centres are
+// rootFrequencyHz * ratio, so slots below the played fundamental are routine.
+// Three of sixteen Air bands sit below it at the root note itself and twelve
+// of sixteen at MIDI 108 at full Body Lock; without the clamp the slowest of
+// them would still be 5.8 dB down when the voice retires underneath it.
+void NeuramarEngine::buildReleaseShape(
+    Voice& voice, float releaseSeconds, float renderedFundamentalHz,
+    const std::array<float, NeuralModel::airBandCount>& airCentresHz,
+    const std::array<float, NeuralModel::boneModeCount>& boneCentresHz)
+    const noexcept
+{
+    const bool firstRelease = !(voice.releaseShapeSeconds > 0.0f);
+    voice.releaseShapeSeconds = releaseSeconds;
+    // Dissolve is a duration to the retirement level, not a time constant, so
+    // partial 1's time constant is that duration divided by the number of
+    // nepers between unity and retirement.
+    const float slowestTau = releaseSeconds / -std::log(retirementLevel);
+    const float frameSeconds = static_cast<float>(controlPeriod_)
+        / static_cast<float>(sampleRate_);
+    const float fundamental = std::max(renderedFundamentalHz, 1.0f);
+    const float perFrame = frameSeconds / std::max(slowestTau, 1.0e-6f);
+    const auto excessDecay = [this, perFrame](float frequencyRatio) noexcept
+    {
+        const float rateRatio = std::clamp(
+            std::pow(std::max(frequencyRatio, 1.0e-4f), dampingExponent_),
+            1.0f, 12.0f);
+        return std::exp(-(rateRatio - 1.0f) * perFrame);
+    };
+    const float fundamentalStretch = std::max(harmonicStretchRatio_.front(),
+                                              1.0e-4f);
+    for (std::size_t harmonic = 0; harmonic < renderedHarmonicCount; ++harmonic)
+        voice.releaseSlotDecay[harmonic] = excessDecay(
+            harmonicStretchRatio_[harmonic] / fundamentalStretch);
+    for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
+        voice.releaseSlotDecay[airOutputOffset + band] = excessDecay(
+            airCentresHz[band] / fundamental);
+    for (std::size_t mode = 0; mode < NeuralModel::boneModeCount; ++mode)
+        voice.releaseSlotDecay[boneOutputOffset + mode] = excessDecay(
+            boneCentresHz[mode] / fundamental);
+    if (firstRelease)
+        voice.releaseSlotGain.fill(1.0f);
 }
 
 void NeuramarEngine::setParameters(const EngineParameters& parameters) noexcept
@@ -1164,6 +1360,7 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
             filter.finishRamp();
     }
 
+    std::array<float, NeuralModel::boneModeCount> boneCentresHz {};
     for (std::size_t mode = 0; mode < NeuralModel::boneModeCount; ++mode)
     {
         const std::size_t output = boneOutputOffset + mode;
@@ -1171,6 +1368,7 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
             ? 1.0f : 0.0f;
         const float desiredFrequency = model.metadata_.rootFrequencyHz
             * model.boneFrequencyRatios_[mode] * spectralScale;
+        boneCentresHz[mode] = desiredFrequency;
         const float edgeGain = std::clamp(
             (desiredFrequency - 10.0f) / 20.0f, 0.0f, 1.0f)
             * std::clamp((boneEdgeLimitHz_ - desiredFrequency)
@@ -1194,6 +1392,47 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
             voice.boneFrequencySteps[mode] =
                 (boundedFrequency - voice.boneFrequenciesHz[mode])
                 / static_cast<float>(controlPeriod_);
+        }
+    }
+
+    // Damp the release by frequency. A note-off is a damper, and a damper is
+    // frequency-dependent: the tone should darken as it dies, where one gain
+    // fade on the summed voice takes all 256 partials, 16 Air bands and 12
+    // Bone modes down by exactly the same number of dB and leaves the released
+    // tail's spectral centroid 0.17% from the held note's.
+    //
+    // The shape is the source's own: p is fitted from the model's per-partial
+    // trajectories by fitDampingExponent(), so a source whose partials decayed
+    // at the same rate at every frequency fits zero and renders bit-identically
+    // to every earlier build. Applying a free-decay exponent to a damper is an
+    // analogy rather than a derivation - what it defends is that the release
+    // should be frequency-dependent, and that its direction and rough size
+    // should come from the sound the user dropped in rather than from a drawn
+    // curve.
+    //
+    // The excess folds into the control-rate targets rather than into the
+    // per-sample loop, so it costs one multiply per slot per control period.
+    // The first control frame after a note-off can be up to one control period
+    // late, which offsets every slot's release by the same constant and cancels
+    // out of any measurement of how fast one slot falls against another.
+    if (voice.releasing && dampingExponent_ > 0.0f)
+    {
+        const float releaseSeconds = std::max(parameters.releaseSeconds,
+                                              0.005f);
+        if (voice.releaseShapeSeconds != releaseSeconds)
+            buildReleaseShape(voice, releaseSeconds, renderedFundamental,
+                              airCentresHz, boneCentresHz);
+        for (std::size_t output = 0; output < renderAmplitudeCount; ++output)
+        {
+            const float gain = voice.releaseSlotGain[output]
+                * voice.releaseSlotDecay[output];
+            // At the ratio ceiling and a 0.65 s Dissolve the fastest slot
+            // loses 6.8 dB per control period, so it would walk into the
+            // denormal range long before the voice retires. The floor is 400
+            // dB below any level the output carries and keeps the running gain
+            // in normal floats.
+            voice.releaseSlotGain[output] = gain > 1.0e-20f ? gain : 0.0f;
+            targets[output] *= voice.releaseSlotGain[output];
         }
     }
 
@@ -1307,7 +1546,6 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
     const float attackStep = parameters.attackSeconds <= 0.0f
         ? 1.0f
         : inverseSampleRate_ / parameters.attackSeconds;
-    constexpr float retirementLevel = 1.0e-5f;
     const float releaseMultiplier = std::exp(
         std::log(retirementLevel) * inverseSampleRate_
         / std::max(parameters.releaseSeconds, 0.005f));

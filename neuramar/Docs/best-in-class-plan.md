@@ -1260,11 +1260,15 @@ planned*.
   about that gap has moved. What changed for step 5 is only that the clock it
   key-tracks now traverses rather than ping-pongs.
 
-- [ ] **4. Damp the release by frequency, using the source's own damping law as
+- [x] **4. Damp the release by frequency, using the source's own damping law as
   the shape.** Release is one scalar on the summed output
   (`NeuramarEngine.cpp:1199-1201`, `:1270-1273`, `:1370-1372`) and measures
   0.12 dB of frequency dependence across five octaves, with the released tail's
   spectral centroid 0.02% away from the held note's at 150 ms after note-off.
+  (Both numbers are the *sustained* fixture's. On the `tau_h = tau_1 h^-0.75`
+  fixture the test builds, the same measurements are 0.05 dB across partials 1
+  to 32 and a centroid **0.167% the wrong way** — the released tail is very
+  slightly *brighter* than the held note, not darker.)
   Real damping is frequency-dependent — air viscosity dominates at low frequency
   and internal friction at high, so decay time falls with frequency (Desvages,
   Bilbao, Ducceschi and Chabassier, POMA 28, 035005, 2017) — and a damped note
@@ -1296,7 +1300,9 @@ planned*.
   into the control-rate amplitude targets rather than the per-sample loop, which
   is one multiply per slot per 192 samples, but it needs a 284-float per-voice
   release-gain array (about 73 KB across 16 voices) and 284 `pow()` calls at
-  note-off. Voice retirement stays on partial 1, which the slow-side clamp above
+  note-off. (Shipped as *two* 284-float arrays — the running gain and the
+  per-control-period factor — which is 36 KB across 16 voices, not 73 KB: one
+  284-float array is 1.1 KB per voice and 18 KB across the engine.) Voice retirement stays on partial 1, which the slow-side clamp above
   makes the slowest slot again, so no note is cut short. Closes gap 1 and
   supplies the exponent step 5 needs.
   *Verified by*: `testReleaseDarkensTail` learns the fixture whose per-partial
@@ -1305,7 +1311,8 @@ planned*.
   amplitude in both, subtracting the held drop from the released drop so that the
   model's own decay is cancelled and only the release is left. It asserts partial
   1 loses `100 dB * 0.150/0.65 = 23.08 dB` over 0.32 s to 0.47 s to within 0.5 dB
-  (unchanged calibration; measured -23.077 dB today). The frequency-dependence
+  (unchanged calibration; measured -23.077 dB today, and -22.966 dB both before
+  and after on the fixture the test builds). The frequency-dependence
   assertion is taken over a **40 ms** release interval, 0.32 s to 0.36 s, with an
   analysis half-window of 10 ms: partial 8 must lose between **15 dB and 30 dB**
   more than partial 1 — `6.15 * (8^0.75 - 1)` predicts 23.1 dB — and the excess
@@ -1313,7 +1320,9 @@ planned*.
   two-sided because an unbounded assertion would accept a release that simply
   deletes the top of the spectrum. A third assertion is that the released tail's
   spectral centroid at 150 ms after note-off is at least 20% below the held
-  note's, against **0.02%** today. The load-bearing assertion is the
+  note's, against **0.02%** today (-0.167% on the fixture the test builds:
+  today's released tail is fractionally brighter than the held note, so the
+  gate has the right sign as well as the right size). The load-bearing assertion is the
   fourth: the same test learns a **control fixture with frequency-independent
   decay** (`tau_h = tau_1`, `p = 0`) and requires its partial-8 excess to stay
   below 1.0 dB and its fitted `p` below 0.10. Without that control, a hard-coded
@@ -1323,7 +1332,10 @@ planned*.
   root-mean-square residual in `log tau` at 0.006, 0.001 and 0.013 respectively
   against 0.332 on a sustained source and 0.551 on a struck body — so the residual
   is also the fallback signal, and a fit above about 0.15 should fall back to
-  `p = 0` rather than key-track on noise. A fifth assertion covers retirement,
+  `p = 0` rather than key-track on noise. (The shipped fit recovers 0.747,
+  0.0000187 and 1.447 on those three fixtures at residuals of 0.002, 0.0004 and
+  0.061; the sustained source is turned away by a different gate, see the note
+  below.) A fifth assertion covers retirement,
   which no assertion in the first draft touched: at Body Lock 1, at root+24 and
   root+51 semitones, the isolated Air layer and the isolated Bone layer must each
   sit at least 60 dB below their own level at note-off over the last 5 ms before
@@ -1331,7 +1343,10 @@ planned*.
   scalar takes every layer down together — and exists to catch the specific way
   this step can break retirement: without the slow-side clamp, the slowest Air
   band at root+24 has fallen only 30.9 dB and at root+51 only 5.8 dB when the
-  voice built on partial 1 retires underneath it.
+  voice built on partial 1 retires underneath it. (Those are the slowest single
+  band. The assertion measures the whole isolated layer, which is a sum over
+  sixteen bands, so the shipped numbers without the clamp are 42.5 dB at
+  root+24 and 22.7 dB at root+51 for Air and 59.4 dB and 29.0 dB for Bone.)
   *Contract corrected in preflight.* Two things were wrong. The excess assertion
   was stated on partial 32 over the 150 ms interval, where the arithmetic puts it
   out of reach of any measurement: with the ratio clamped at 12, partial 32's
@@ -1347,6 +1362,93 @@ planned*.
   prose that partial 1 is the slowest slot, which the sub-fundamental Air and
   Bone slots make false; the slow-side clamp and the fifth assertion above are
   what make that sentence true.
+  *What actually shipped*: both halves of the mechanism as specified, plus one
+  addition to the fit that the step did not name and one fixture finding that
+  bounds what this step can do.
+  **The release is expressed as the excess each slot owes over partial 1, not
+  as a per-slot release.** `process()` keeps the single `releaseMultiplier` on
+  `voice.envelope` exactly as it was, and `updateVoiceControl()` multiplies the
+  control-rate targets by a per-slot running gain
+  `exp(-((f_k/f_1)^p - 1) * t / tau_rel(1))` (`NeuramarEngine.cpp:1398-1436`).
+  Partial 1's factor is identically 1, so the Dissolve time, the retirement
+  decision and `testReleaseDurationSemantics` are untouched by construction
+  rather than by a normalisation that has to be got right: retirement is
+  0.6507 s after note-off at Dissolve 0.65 s before and after the change, at
+  every key measured. The running gain is advanced by one multiply per slot per
+  control period and the 284 `pow()` calls build the per-period factors once,
+  in `buildReleaseShape()` (`:593-629`), at note-off — and again only if a host
+  moves Dissolve mid-release. A held voice costs nothing at all: the whole
+  block is behind `voice.releasing`, and behind `dampingExponent_ > 0`, so a
+  source that fits `p = 0` renders bit-identically to the previous build.
+  **The exponent is fitted on a warped scan, which the step did not call for
+  and the short-decay fixture needs.** `fitDampingExponent()` (`:456-571`)
+  evaluates the model at 64 points, fits each partial's own time constant in
+  log amplitude between its peak and the point where it has lost 40 dB, and
+  regresses `log(1/tau)` on `log h`. The scan points are placed at
+  `(point/63)^1.24` of the duration — the same 1.24 the trajectory grid itself
+  uses past the onset — because a uniform scan under-samples exactly the early
+  span where the fast partials live and have already finished. On the
+  `tau_1 = 0.20 s` fixture step 5 uses, a uniform scan recovers **p = 0.703 at
+  a residual of 0.056** where the warped one recovers **0.735 at 0.004**; on
+  the `tau_1 = 0.9 s` fixture the two agree to 0.003. Two gates decide whether
+  the answer is evidence: a partial that loses less than 6 dB across its own
+  fit window is dropped, and if fewer than six survive the fit is abandoned.
+  **The sustained fixture is turned away by the six-partial gate, not by the
+  residual gate** the step predicted — only four of its partials decay at all —
+  and both paths return exactly zero, so the distinction costs nothing.
+  **A source with a sustained noise bed cannot be fitted at all, and that is
+  the honest answer rather than a defect.** Adding the *breathy* fixture's
+  high-passed noise bed to the `p = 0.75` partials floors every fast partial's
+  trajectory on the residual instead of on its own decay: the recovered
+  exponent is **-0.27 at a residual of 0.51**, so the residual gate declines and
+  the release keeps today's behaviour. The scatter is where it should be — the
+  fit is clean out to about partial 17 and then the time constants climb back
+  from 0.11 s to 0.56 s as the partials meet the noise floor. A breathy or
+  bowed source therefore gets nothing from this step, which is the same
+  conclusion the step's own `p = 0` control reaches by a different route. It is
+  also why the test's retirement fixture carries a resonant body and no noise
+  bed.
+  `testReleaseDarkensTail` in `Tests/NeuramarEngineTests.cpp` learns three
+  fixtures. `makeDecayingPartialSample` gained a decay-exponent parameter, so
+  the frequency-dependent fixture and the `p = 0` control are the same
+  generator at `0.75` and `0.0`; step 3's `testOrbitSustainIsNotPeriodic` passes
+  `0.75` and is otherwise unchanged. The third,
+  `makeDampedBodyNoteSample`, is those same partials plus six long-ringing
+  inharmonic modes at 1.37 to 8.55 times the fundamental, deliberately placed
+  clear of every integer multiple: the plain partial fixture's Bone layer
+  measures **-114.6 dBFS** at note-off against this one's **-47.1 dBFS**, and a
+  layer that quiet cannot show whether a body slot outlived its voice. `windowedSinusoidAmplitude` was split so the analysis half-window
+  is a parameter, because preflight is right that the existing fixed 40 ms
+  window smears a 40 ms interval — it reports the fundamental losing 6.042 dB
+  where the true figure is 6.154 dB, and the test measures 6.156 dB at a 10 ms
+  half-window.
+  Measured before and after: the fitted exponent is **0.747** on the
+  `h^-0.75` fixture and **0.0000187** on the control; the fundamental loses
+  **22.966 dB** over 150 ms either way; partials 1, 2, 4 and 8 lose
+  **6.153, 6.152, 6.154, 6.154 dB** over 40 ms before and
+  **6.156, 10.262, 17.267, 29.044 dB** after, so partial 8's excess goes
+  **0.0005 -> 22.888 dB** against a window of [15, 30] and a prediction of
+  23.1; the centroid 150 ms after note-off goes **-0.167% -> 46.93%** below the
+  held note's; and the control fixture's partial-8 excess is **0.002 dB**.
+  Reverting the release block and rerunning fails five assertions: the
+  partial-8 window at 0.0005 dB and all three monotonicity assertions at
+  6.153/6.152/6.154/6.154 dB, and the centroid at -0.167%. The calibration and
+  control assertions correctly still pass on the reverted engine, which is what
+  they are for. Dropping only the slow-side clamp — leaving the rest of the
+  change in place — fails all four retirement assertions and nothing else, at
+  **42.5 dB** and **22.7 dB** for the isolated Air layer at root+24 and root+51
+  and **59.4 dB** and **29.0 dB** for the isolated Bone layer, against a bound
+  of 60 dB and 107 to 112 dB with the clamp. Hard-coding `p = 0.75` instead of
+  fitting it fails the two control assertions and nothing else, at an exponent
+  of 0.75 and a partial-8 excess of **23.13 dB** on a source with no
+  frequency-dependent decay at all — which is what the step predicted that
+  control was for.
+  Cost: `setModel()` goes from **133.5 us to 421.4 us** per swap here, all of
+  it the fit's 64 decoder evaluations. It is a one-off on a model swap, which
+  already fades every sounding voice out, and the render path is unchanged for
+  held notes — the engine benchmark's six scenarios are all held chords and
+  move within run-to-run noise. Suite green, 3/3 ctest suites in 49.0 s; the
+  NeuralEngine suite grows 27.0 s to 30.2 s, which is the three added learns.
 
 - [ ] **5. Key-track the model clock by the same fitted damping exponent.**
   `NeuramarEngine.cpp:1379` advances the model clock at `evolutionRate /

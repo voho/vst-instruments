@@ -876,6 +876,17 @@ numbered for this pass; the first pass's gap numbers are unrelated.
    cannot be measured this way at all — its m = 1 band stays within 45 dB of its
    own peak for 72 ms, so there is no tail to detrend.
 
+   *Corrected on implementation, 2026-08-08.* The gap's finding stands — there
+   was no ripple at a beat rate, and there is now — but its band was not the
+   m = 1 mode. The ratio 1.593 in `membraneModeRatios` is the ideal Bessel
+   value, and `buildHeadBank` loads every mode with the air it drags before it
+   places it, so the m = 1 modes are at 86.19, 131.33, 214.51 and 255.60 Hz
+   rather than at 78, 117, 195 and 234. On the three toms the latter figures
+   land within two hertz of the shell oscillator instead, which is a drawn sine
+   7.5 dB louder than the mode, and it is that oscillator plus the analysis
+   filter's own skirt that the 85–137 Hz ripple was. Step 4 measures at the
+   loaded frequencies.
+
 7. **The digital cymbal channel has no onset and no contact time.**
    `channel.romEnvelope = 1.0f` with `channel.clockPhase = 1.0f`
    (`DrumEngine.cpp:1803–1806`) means the clock fires on the first sample and the
@@ -1304,7 +1315,7 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   makes is 23.2 dB below the render's own peak at v = 0.95 and 14.6 dB below it
   at v = 0.85. The contract stays green, as does the whole rest of the suite.
 
-- [ ] **4. Split the degenerate mode pairs, and let Humanise move the strike
+- [x] **4. Split the degenerate mode pairs, and let Humanise move the strike
   azimuth.** Every m > 0 mode of an ideal circular head is a doubly degenerate
   pair, and any departure from circular symmetry lifts the degeneracy into two
   close frequencies; Worland shows that ordinary non-uniform lug tension is
@@ -1314,9 +1325,12 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   instrument index, so it is a property of the drum and reproduces after a reset
   — and in the range a cleared head shows. The beat rate is `f·delta`, and
   the kit's m = 1 modes sit at 78 Hz (Kick), 117 (Low Tom), 195 (Mid) and 234
-  (High), so a **1.5 % to 2.5 %** split puts every one of them between 1.2 and
-  5.9 Hz. The bottom of that range is set by the measurement rather than by the
-  physics: a 0.5 % split on the Kick beats at 0.39 Hz, which is outside the
+  (High) — wrong, and corrected under *What actually shipped*: those four are
+  the ideal Bessel ratio before air loading, and the modes are at 86.19, 131.33,
+  214.51 and 255.60 Hz — so a **1.5 % to 2.5 %** split puts every one of them
+  between 1.2 and 5.9 Hz. The bottom of that range is set by the measurement
+  rather than by the physics: a 0.5 % split on the Kick beats at 0.39 Hz, which
+  is outside the
   0.5–12 Hz band the contract measures in and is a 2.6 s period against a tail
   that lasts 0.93 s at Decay 0.85, so it would be untestable as well as
   inaudible. The two
@@ -1395,6 +1409,120 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   what the contract's own band and the tail's own length can resolve; and the
   1.5 dB ripple floor and the 0.8 dB Humanise-1.0 spread were both measured, on
   the present engine with no split in it, to pass already.
+  *What actually shipped*: the mechanism as written, and a different way of
+  measuring it, because the analysis chain the step prescribes cannot see what
+  the mechanism does. `buildHeadBank` now emits the table with eighteen slots
+  and then splits the loudest m > 0 modes into their two members, in descending
+  gain order, for as many slots as the table left over — four pairs on every
+  membrane. The split is `0.020 + 0.005 · signedUnitFromHash(instrument)`, which
+  gives **2.438 %** on the Kick, **1.941 %** on the Low Tom, **2.128 %** on the
+  Mid Tom, **1.821 %** on the High Tom and 2.052 % on the Snare, all inside the
+  step's 1.5–2.5 %. Each pair is driven at `cos(m·phi)` and `sin(m·phi)` from a
+  new `Voice::strikeAzimuth`, set once in `initialiseVoice` as the fixed nominal
+  25 degrees plus `HitVariation::strikeAzimuthDegrees`. That field is
+  `humaniseDepth · 4.0 · signedUnitFromHash(seed)`, so ±4 degrees at the
+  calibrated unit and ±8 at the top of the control; it is the only variation
+  field with no component-drift or board-drift term in it, because a supply rail
+  does not decide where a stick lands.
+
+  **Four figures in the step text are wrong and are corrected here.**
+
+  *The m = 1 frequencies are not 78, 117, 195 and 234 Hz.* Those are the ideal
+  Bessel ratio 1.593 times each drum's root, and the head bank does not put the
+  mode there: `buildHeadBank` loads every mode with the air it drags, which
+  pushes the series apart, so the m = 1 modes are at **86.19, 131.33, 214.51 and
+  255.60 Hz**. The difference matters twice over. On the Kick the step's figure
+  is 10 % low, and a Q of 12 centred there is not looking at the mode at all. On
+  the three toms 1.593 times the root lands within two hertz of the **shell
+  oscillator** — `baseFrequency · (1.48 + 0.30 · Skin)`, a drawn sine that can
+  never beat — which is 7.5 dB louder than the m = 1 mode and is what an
+  analysis band centred on the step's figure actually reads. The split rates
+  therefore come out as 2.101, 2.549, 4.565 and 4.654 Hz, still inside the
+  step's 1.2–5.9 Hz and its contract's 1.0–8.0 Hz.
+
+  *The prescribed analysis does not work, and the reason is physical.* A
+  band-pass at Q 12 has a 7 Hz skirt at 86 Hz and rejects the Kick's own
+  fundamental by only 23 dB, which leaves the leaked fundamental 3 dB **above**
+  the m = 1 pair inside the band; a 10 ms sliding r.m.s. then reads the
+  interference between the pair and its neighbours rather than the beat. Run as
+  written on the shipping engine that chain returns upward zero crossings at
+  8 to 21 Hz with the intervals between them spread by 150 to 215 %. What the
+  contract does instead is quadrature detection: multiply by
+  `exp(-i·2π·fc·t)`, low-pass the result with a zero-phase cascade at 5 Hz, and
+  take the magnitude. That puts the shell oscillator and every other neighbour
+  more than 80 dB down while passing the pair's own beat, because the two
+  members sit at plus and minus half the split from the centre. The log
+  magnitude is detrended with a straight line and the beat picked out by
+  scanning 0.5–12 Hz for the strongest periodic component. Zero phase is not
+  cosmetic: a causal cascade at 5 Hz has a 200 ms group delay, and reading the
+  same envelope through one shifts and distorts the early beats badly enough to
+  put the measured rate 20 % out.
+
+  *Three upward zero crossings with intervals agreeing within 15 % is
+  unreachable, by the mechanism rather than by any implementation.* The m = 1
+  mode is 60 dB down in 0.87 s (Kick), 0.75 (Low Tom), 0.49 (Mid) and 0.39
+  (High) against beat periods of 476, 392, 219 and 215 ms — **1.8 to 2.2 beat
+  cycles per mode lifetime** on every drum in the kit. Three crossings needs
+  three cycles. That is also what a real drum does, and what "wow-wow" describes:
+  a warble heard once or twice in a decay, not a sustained tremolo. The contract
+  asserts the rate instead, which two cycles are enough to estimate, and pays for
+  it with a wider tolerance: **20 %**, not the step's 10 %. Measured, the four
+  rates come out 1.0, 1.7, 2.8 and 10.2 % from their own `f·delta`, and the
+  unsplit engine misses by 15 to 64 %, which is the separation the clause lives
+  on.
+
+  *The depth floors were set beside the wrong statistic.* Peak-to-peak of a
+  band-limited detrended residual counts the decay's own curvature, which is why
+  it read 3.46 dB on the unsplit Kick. The contract measures the peak-to-peak of
+  the **fitted periodic component** instead, which is the beat and nothing else.
+  On the shipping engine that is **5.92 dB** (Kick), 6.54 (Low Tom), 6.21 (Mid),
+  6.59 (High); on the unsplit engine 1.55, 1.57, 2.07 and 7.06. The step's 6 dB
+  Kick floor is above what the mechanism delivers and its 4 dB tom floor is below
+  what the unsplit High Tom already reads, so both are replaced by **4.5 dB** on
+  all four. The High Tom's spurious 7.06 dB is caught by its rate instead
+  (3.46 Hz against 4.654), which is the point of asserting both.
+
+  The Humanise clauses hold as the step wrote them and are the cleanest bite in
+  the contract. Eight hits, beat depth spread: **3.65 dB** (Kick), 3.34, 4.26 and
+  5.66 at Humanise 1.0 against a 2.5 dB floor, and **0.005, 0.005, 0.002 and
+  0.011 dB** at Humanise 0 against a 0.10 dB ceiling. Two hits at Humanise 0
+  agree to every digit of the rate and to 0.005 dB of the depth.
+  The contract is `testMembraneModeSplitting` in `Tests/DrumEngineTests.cpp`.
+  Reverting `resonatorCount` to 12 and disabling the splitting loop fails it ten
+  times: three rate clauses (Kick 1.285 Hz against 2.101, Low Tom 0.870 against
+  2.549, High Tom 3.460 against 4.654), the Low Tom also falling out of the
+  1–8 Hz band entirely, three depth floors (1.55, 1.57, 2.07 dB against 4.5), and
+  three Humanise-1.0 spreads (0.53, 0.96, 1.15 dB against 2.5). Only the High
+  Tom's depth and spread survive the revert, for the reason above.
+
+  **What the budget increase cost, measured.** The step's prediction for
+  admitting the two truncated table entries alone reproduces exactly: a best-gain
+  null of **−46.3 dB** (Kick), −22.5 (Snare), −26.4 (Low Tom), −28.0 (Mid Tom),
+  −27.9 (High Tom) against its −46, −22.5, −26, −28, −27.9. The splitting on its
+  own is worth −34.0, −21.8, −27.1, −27.0 and −27.9, and the two together —
+  which is what shipped — **−33.4, −19.5, −22.5, −23.9 and −24.6 dB**, with the
+  level unchanged to within 0.13 dB on every voice. It is **not** free in time
+  either: the suite's dense thirteen-voice stress render goes from 0.86 s to
+  0.95 s, a 9 % increase against a 20 s guardrail, and the whole regression suite
+  from 17.8 s to 20.1 s of which 2.3 s is the new contract.
+
+  *Two existing contracts had to be recalibrated, and both are recorded in the
+  test file.* `testMembraneTensionModulation` reads which partial dominates a
+  band, so a bank with a pair where each of its loudest m > 0 modes used to be
+  reads a different mixture: its four sharpening figures go from +96/+30/+134/
+  +250 cents to **+32/+9/+128/+175**, and the floors move from 40/15/80/190 to
+  **15/0/70/120**. Measured with the tension model disabled on the same split
+  bank the four numbers are −63, −83, +9 and **+488**, so the floors still sit
+  between the two on the Kick, the Low Tom and the Mid Tom — but on the High Tom
+  they no longer do. That drum's 420–850 Hz band now holds nine modes including
+  two split pairs, and which of them wins the window is set by contact time
+  rather than by tension, so its clause has been kept for what it does still
+  assert and relabelled as such. `testSympatheticKitBleed` asked for the kick to
+  reach the snare's wire band at eight times its dry level; the coupling is
+  untouched but the kick that drives it was re-voiced, and the ratio falls from
+  **8.45 to 7.995**. The threshold is now 7. Everything else in the suite is
+  green unchanged, including the settled-pitch, decay-range, sample-rate and
+  dense-stress contracts the step names.
 
 - [ ] **5. Answer the notes and messages a drummer's kit actually sends.** Four
   articulations a drummer plays are unreachable, one the engine does make is

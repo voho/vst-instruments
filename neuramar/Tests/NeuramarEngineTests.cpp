@@ -1512,14 +1512,18 @@ struct AirMetrics
     return left;
 }
 
-[[nodiscard]] float windowedSinusoidAmplitude(
+// The half-window is a parameter because it has to match the interval being
+// measured. A 40 ms half-window smears a 40 ms release interval: it reports the
+// fundamental losing 6.042 dB where the true figure is 6.154 dB, and at a 10 ms
+// half-window it reports 6.153 dB.
+[[nodiscard]] float windowedSinusoidAmplitudeOver(
     const std::vector<float>& signal, double sampleRate,
-    double centreSeconds, double frequencyHz)
+    double centreSeconds, double frequencyHz, double halfWindowSeconds)
 {
     const auto centre = static_cast<std::ptrdiff_t>(std::llround(
         centreSeconds * sampleRate));
     const auto halfWindow = static_cast<std::ptrdiff_t>(std::llround(
-        0.040 * sampleRate));
+        halfWindowSeconds * sampleRate));
     const auto first = std::max<std::ptrdiff_t>(0, centre - halfWindow);
     const auto last = std::min<std::ptrdiff_t>(
         static_cast<std::ptrdiff_t>(signal.size()), centre + halfWindow + 1);
@@ -1556,6 +1560,14 @@ struct AirMetrics
     const double sineCoefficient = (signalSine * cosineCosine
         - signalCosine * cosineSine) / determinant;
     return static_cast<float>(std::hypot(cosineCoefficient, sineCoefficient));
+}
+
+[[nodiscard]] float windowedSinusoidAmplitude(
+    const std::vector<float>& signal, double sampleRate,
+    double centreSeconds, double frequencyHz)
+{
+    return windowedSinusoidAmplitudeOver(signal, sampleRate, centreSeconds,
+                                         frequencyHz, 0.040);
 }
 
 [[nodiscard]] float segmentRms(const std::vector<float>& signal,
@@ -4279,14 +4291,16 @@ void testLoopRegionAvoidsTheAttack(const LearnedFixture& fixture)
                + std::to_string(end - start) + ")");
 }
 
-// Thirty-two partials whose decay times follow tau(h) = tau_1 h^-0.75, which is
-// the frequency-dependent damping a real string has. The loop region the
-// learner picks out of it still falls 2.7 dB across its own length, so it is
-// the fixture that shows what reading that region round and round does to the
-// level.
+// Thirty-two partials whose decay times follow tau(h) = tau_1 h^-p, which at
+// p = 0.75 is the frequency-dependent damping a real string has. The loop
+// region the learner picks out of it still falls 2.7 dB across its own length,
+// so it is the fixture that shows what reading that region round and round does
+// to the level. At p = 0 it is the control every test of a frequency-dependent
+// release needs: a source whose partials all decay at the same rate, where the
+// correct answer is to keep the release the instrument already had.
 [[nodiscard]] std::vector<float> makeDecayingPartialSample(
     double sampleRate, double fundamentalHz, double durationSeconds,
-    double firstPartialTauSeconds)
+    double firstPartialTauSeconds, double decayExponent)
 {
     const auto sampleCount = static_cast<std::size_t>(
         std::llround(sampleRate * durationSeconds));
@@ -4299,7 +4313,8 @@ void testLoopRegionAvoidsTheAttack(const LearnedFixture& fixture)
         for (int partial = 1; partial <= 32; ++partial)
         {
             const double number = static_cast<double>(partial);
-            const double tau = firstPartialTauSeconds * std::pow(number, -0.75);
+            const double tau = firstPartialTauSeconds
+                * std::pow(number, -decayExponent);
             value += std::pow(number, -1.2) * std::exp(-time / tau)
                 * std::sin(2.0 * pi * fundamentalHz * number * time
                            + 0.37 * number);
@@ -4386,7 +4401,7 @@ void testOrbitSustainIsNotPeriodic()
     constexpr double sampleRate = 48000.0;
     constexpr double fundamentalHz = 220.01;
     const auto source = makeDecayingPartialSample(
-        sampleRate, fundamentalHz, 1.6, 0.9);
+        sampleRate, fundamentalHz, 1.6, 0.9, 0.75);
     const auto learned = neuramar::SampleLearner::learn(source, sampleRate);
     expect(static_cast<bool>(learned),
            "the Orbit sustain fixture failed to learn: " + learned.error);
@@ -4520,6 +4535,378 @@ void testOrbitSustainIsNotPeriodic()
            "the Orbit sustain repeated at twice the loop length (centroid "
                "autocorrelation "
                + std::to_string(pingPongCorrelation) + ")");
+}
+
+// The same tau(h) = tau_1 h^-0.75 partials with a resonant body on top: six
+// long-ringing inharmonic modes, placed well clear of every integer multiple of
+// the fundamental so that they populate the Bone layer without leaking into the
+// per-partial release measurement. The retirement assertion needs a fixture
+// whose Air and Bone layers are still sounding when the note is let go: the
+// plain partial fixture's Bone layer measures -114.6 dBFS at note-off against
+// this one's -47.1 dBFS, and a layer that quiet cannot show whether a body
+// slot outlived its voice.
+//
+// A noise bed is deliberately absent. A sustained broadband residual floors
+// every fast partial's trajectory, so the damping fit sees a decay law that is
+// not there - it recovers p = -0.27 with a residual of 0.51 - and correctly
+// declines to fit at all. That is the right answer for such a source and the
+// wrong fixture for this test.
+[[nodiscard]] std::vector<float> makeDampedBodyNoteSample(
+    double sampleRate, double fundamentalHz)
+{
+    constexpr std::array<double, 6> modeRatios {
+        1.37, 2.11, 3.49, 4.73, 6.41, 8.55
+    };
+    constexpr double durationSeconds = 1.6;
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double attack = 1.0 - std::exp(-time / 0.004);
+        double value = 0.0;
+        for (int partial = 1; partial <= 32; ++partial)
+        {
+            const double number = static_cast<double>(partial);
+            const double tau = 0.9 * std::pow(number, -0.75);
+            value += std::pow(number, -1.2) * std::exp(-time / tau)
+                * std::sin(2.0 * pi * fundamentalHz * number * time
+                           + 0.37 * number);
+        }
+        for (std::size_t mode = 0; mode < modeRatios.size(); ++mode)
+        {
+            value += 0.05
+                * std::exp(-time / (0.8 - 0.06 * static_cast<double>(mode)))
+                * std::sin(2.0 * pi * fundamentalHz * modeRatios[mode] * time
+                           + 0.43 * static_cast<double>(mode + 1));
+        }
+        sample[index] = static_cast<float>(0.55 * attack * value);
+    }
+    return sample;
+}
+
+struct ReleasedTake
+{
+    std::vector<float> audio;
+    std::size_t retirementSample { 0 };
+};
+
+// Renders one note, lets it go at the given time, and records the sample at
+// which the voice actually retired. A note-off time of zero holds the note for
+// the whole render, which is the reference the model's own decay is subtracted
+// with.
+[[nodiscard]] ReleasedTake renderWithNoteOff(
+    const neuramar::NeuralModel& model, int midiNote,
+    const neuramar::EngineParameters& parameters, double sampleRate,
+    int sampleCount, double noteOffSeconds)
+{
+    neuramar::NeuramarEngine engine;
+    engine.prepare(sampleRate, 128);
+    engine.setModel(&model);
+    engine.setParameters(parameters);
+    ReleasedTake take;
+    take.audio.assign(static_cast<std::size_t>(sampleCount), 0.0f);
+    std::vector<float> right(static_cast<std::size_t>(sampleCount), 0.0f);
+    engine.noteOn(midiNote, 0.8f);
+    const int offSample = noteOffSeconds > 0.0
+        ? static_cast<int>(std::llround(noteOffSeconds * sampleRate)) : -1;
+    constexpr int blockSize = 64;
+    for (int offset = 0; offset < sampleCount; offset += blockSize)
+    {
+        if (offSample >= 0 && offset <= offSample
+            && offSample < offset + blockSize)
+            engine.noteOff(midiNote);
+        const int count = std::min(blockSize, sampleCount - offset);
+        engine.process(take.audio.data() + offset, right.data() + offset,
+                       count);
+        if (take.retirementSample == 0 && offSample >= 0 && offset > offSample
+            && engine.getActiveVoiceCount() == 0)
+            take.retirementSample = static_cast<std::size_t>(offset + count);
+    }
+    for (std::size_t index = 0; index < take.audio.size(); ++index)
+        take.audio[index] = 0.5f * (take.audio[index] + right[index]);
+    return take;
+}
+
+[[nodiscard]] double windowRmsDb(const std::vector<float>& signal,
+                                 std::size_t first, std::size_t count)
+{
+    if (first + count > signal.size())
+        return -300.0;
+    double power = 0.0;
+    for (std::size_t index = 0; index < count; ++index)
+        power += static_cast<double>(signal[first + index])
+            * signal[first + index];
+    return 10.0 * std::log10(std::max(power / static_cast<double>(count),
+                                      1.0e-30));
+}
+
+// A note-off is a damper, and a damper is frequency-dependent: air viscosity
+// dominates at low frequency and internal friction at high, so decay time falls
+// with frequency (Desvages, Bilbao, Ducceschi and Chabassier, POMA 28, 035005,
+// 2017) and a damped note darkens as it dies. One release scalar on the summed
+// voice takes all 256 partials, 16 Air bands and 12 Bone modes down by the same
+// number of dB, which is not how any physical damper works.
+//
+// Every measurement below is a released render minus a held one, partial by
+// partial, so the model's own decay cancels and what is left is the release.
+void testReleaseDarkensTail()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr double fundamentalHz = 220.01;
+    constexpr double noteOffSeconds = 0.30;
+    constexpr float dissolveSeconds = 0.65f;
+
+    const auto learn = [](const std::vector<float>& source,
+                          const std::string& name)
+    {
+        auto learned = neuramar::SampleLearner::learn(source, sampleRate);
+        expect(static_cast<bool>(learned),
+               "the " + name + " release fixture failed to learn: "
+                   + learned.error);
+        return learned;
+    };
+    const auto damped = learn(makeDecayingPartialSample(
+        sampleRate, fundamentalHz, 1.6, 0.9, 0.75), "frequency-dependent");
+    const auto uniform = learn(makeDecayingPartialSample(
+        sampleRate, fundamentalHz, 1.6, 0.9, 0.0), "control");
+    const auto body = learn(makeDampedBodyNoteSample(sampleRate,
+                                                     fundamentalHz),
+                            "resonant body");
+    if (!damped.model || !uniform.model || !body.model)
+        return;
+
+    neuramar::EngineParameters parameters;
+    parameters.imprint = 1.0f;
+    parameters.bodyLock = 0.52f;
+    parameters.air = 0.0f;
+    parameters.bone = 0.0f;
+    parameters.brightness = 0.5f;
+    parameters.orbit = 0.0f;
+    parameters.mutation = 0.0f;
+    parameters.attackSeconds = 0.0f;
+    parameters.releaseSeconds = dissolveSeconds;
+    parameters.spread = 0.0f;
+    parameters.outputGain = 0.72f;
+
+    const auto fittedExponent = [](const neuramar::NeuralModel& model)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(sampleRate, 128);
+        engine.setModel(&model);
+        return engine.dampingExponent();
+    };
+    const float dampedExponent = fittedExponent(*damped.model);
+    const float uniformExponent = fittedExponent(*uniform.model);
+    std::cout << "Release damping diagnostics: fitted exponent "
+              << dampedExponent << " on the tau_h = tau_1 h^-0.75 fixture and "
+              << uniformExponent << " on the frequency-independent control\n";
+
+    // The excess a partial loses over the fundamental across one interval,
+    // with the held render's own drop subtracted at both ends so the model's
+    // trajectory cancels. The analysis half-window has to be short against the
+    // interval or it smears the two endpoints into each other.
+    const auto releaseExcessDb = [&](const neuramar::NeuralModel& model,
+                                     const ReleasedTake& held,
+                                     const ReleasedTake& releasedTake,
+                                     int partial, double firstSeconds,
+                                     double lastSeconds, double halfWindow)
+    {
+        const double frequency = static_cast<double>(model.rootFrequencyHz())
+            * static_cast<double>(partial);
+        const auto drop = [&](const std::vector<float>& signal)
+        {
+            const double before = windowedSinusoidAmplitudeOver(
+                signal, sampleRate, firstSeconds, frequency, halfWindow);
+            const double after = windowedSinusoidAmplitudeOver(
+                signal, sampleRate, lastSeconds, frequency, halfWindow);
+            return 20.0 * std::log10(std::max(after, 1.0e-30)
+                                     / std::max(before, 1.0e-30));
+        };
+        return drop(releasedTake.audio) - drop(held.audio);
+    };
+
+    const int sampleCount = static_cast<int>(std::llround(1.2 * sampleRate));
+    const auto renderPair = [&](const neuramar::NeuralModel& model)
+    {
+        return std::pair<ReleasedTake, ReleasedTake> {
+            renderWithNoteOff(model, model.rootMidiNote(), parameters,
+                              sampleRate, sampleCount, 0.0),
+            renderWithNoteOff(model, model.rootMidiNote(), parameters,
+                              sampleRate, sampleCount, noteOffSeconds)
+        };
+    };
+    const auto damping = renderPair(*damped.model);
+
+    // Calibration. Dissolve is a duration to the retirement level, so the
+    // fundamental has to lose 100 dB * 0.150 / 0.65 over this interval whatever
+    // the release does to the rest of the spectrum, and the panel's number
+    // keeps its meaning. This is the assertion that fails if the frequency
+    // dependence is bought by speeding the whole release up.
+    const double fundamentalDropDb = -releaseExcessDb(
+        *damped.model, damping.first, damping.second, 1, 0.32, 0.47, 0.040);
+    const double predictedDropDb = 100.0 * 0.150
+        / static_cast<double>(dissolveSeconds);
+    std::cout << "Release damping diagnostics: the fundamental lost "
+              << fundamentalDropDb << " dB over 0.32 to 0.47 s against "
+              << predictedDropDb << " dB predicted\n";
+    expect(std::abs(fundamentalDropDb - predictedDropDb) < 0.5,
+           "the released fundamental lost "
+               + std::to_string(fundamentalDropDb)
+               + " dB over 150 ms where the Dissolve time predicts "
+               + std::to_string(predictedDropDb)
+               + " dB, so the release no longer means what the panel says");
+
+    // Frequency dependence, over a 40 ms interval with a 10 ms half-window so
+    // that both endpoints sit on real signal at every partial. tau_rel(8) is
+    // 8^p times faster than tau_rel(1), so partial 8 owes 6.15 * (8^0.75 - 1)
+    // = 23.1 dB more than the fundamental over the same interval. The window is
+    // two-sided on purpose: an unbounded assertion would accept a release that
+    // simply deletes the top of the spectrum.
+    std::array<double, 4> excessDb {};
+    constexpr std::array<int, 4> partials { 1, 2, 4, 8 };
+    for (std::size_t index = 0; index < partials.size(); ++index)
+    {
+        excessDb[index] = -releaseExcessDb(
+            *damped.model, damping.first, damping.second, partials[index],
+            0.32, 0.36, 0.010);
+    }
+    const double partialEightExcess = excessDb[3] - excessDb[0];
+    std::cout << "Release damping diagnostics: partials 1, 2, 4, 8 lost "
+              << excessDb[0] << ", " << excessDb[1] << ", " << excessDb[2]
+              << ", " << excessDb[3] << " dB over 40 ms\n";
+    expect(partialEightExcess > 15.0 && partialEightExcess < 30.0,
+           "partial 8 lost " + std::to_string(partialEightExcess)
+               + " dB more than the fundamental over 40 ms of release, "
+                 "outside the 15 to 30 dB the fitted damping law predicts");
+    for (std::size_t index = 1; index < partials.size(); ++index)
+    {
+        expect(excessDb[index] > excessDb[index - 1] + 0.5,
+               "partial " + std::to_string(partials[index]) + " lost "
+                   + std::to_string(excessDb[index]) + " dB where partial "
+                   + std::to_string(partials[index - 1]) + " lost "
+                   + std::to_string(excessDb[index - 1])
+                   + " dB, so the release is not monotone in frequency");
+    }
+
+    // The audible consequence: the tail darkens as it dies. A single scalar on
+    // the summed voice leaves the released tail's centroid 0.17% from the held
+    // note's, which is no darkening at all.
+    const auto frameSamples = static_cast<std::size_t>(
+        std::llround(11.0 / fundamentalHz * sampleRate));
+    const auto centroidAt = static_cast<std::size_t>(
+        std::llround((noteOffSeconds + 0.150) * sampleRate));
+    const double heldCentroid = frameCentroidHz(
+        damping.first.audio, sampleRate, centroidAt, frameSamples,
+        damped.model->rootFrequencyHz(), 24);
+    const double releasedCentroid = frameCentroidHz(
+        damping.second.audio, sampleRate, centroidAt, frameSamples,
+        damped.model->rootFrequencyHz(), 24);
+    const double centroidFall = 100.0 * (heldCentroid - releasedCentroid)
+        / std::max(heldCentroid, 1.0e-9);
+    std::cout << "Release damping diagnostics: 150 ms after note-off the "
+                 "centroid is " << releasedCentroid << " Hz against the held "
+                 "note's " << heldCentroid << " Hz, " << centroidFall
+              << "% below\n";
+    expect(centroidFall > 20.0,
+           "the released tail's spectral centroid was only "
+               + std::to_string(centroidFall)
+               + "% below the held note's 150 ms after note-off, so the note "
+                 "is not darkening as it dies");
+
+    // The load-bearing control. p is fitted from the source, so a source whose
+    // partials all decayed at the same rate must keep the frequency-independent
+    // release every earlier build had. Without this, a hard-coded exponent
+    // passes every assertion above.
+    const auto control = renderPair(*uniform.model);
+    const double controlExcess = -releaseExcessDb(
+        *uniform.model, control.first, control.second, 8, 0.32, 0.36, 0.010)
+        + releaseExcessDb(*uniform.model, control.first, control.second, 1,
+                          0.32, 0.36, 0.010);
+    std::cout << "Release damping diagnostics: the frequency-independent "
+                 "control moved partial 8 by " << controlExcess
+              << " dB against the fundamental\n";
+    expect(uniformExponent < 0.10f,
+           "a source whose partials all decay at the same rate fitted a "
+           "damping exponent of " + std::to_string(uniformExponent));
+    expect(std::abs(controlExcess) < 1.0,
+           "the frequency-independent control lost "
+               + std::to_string(controlExcess)
+               + " dB of extra release at partial 8, so the release shape is "
+                 "hard-coded rather than fitted from the source");
+
+    // Retirement. The voice retires on the fundamental, so every other slot has
+    // to be at least as fast or it is still sounding when its own voice is
+    // cleared. That is not an exotic case: f_1 is the *played* fundamental
+    // while the Air centres are the model's own fixed grid and the Bone centres
+    // are rootFrequencyHz * ratio, so at root+24 three of sixteen Air bands sit
+    // below the fundamental and at root+51 twelve of sixteen do.
+    neuramar::EngineParameters bodyParameters = parameters;
+    bodyParameters.bodyLock = 1.0f;
+    bodyParameters.registerTilt = 0.0f;
+    bodyParameters.outputGain = 1.0f;
+    const int bodyRoot = body.model->rootMidiNote();
+    for (const int midiNote : { bodyRoot + 24, bodyRoot + 51 })
+    {
+        const auto layerRender = [&](float air, float bone)
+        {
+            neuramar::EngineParameters layered = bodyParameters;
+            layered.air = air;
+            layered.bone = bone;
+            return renderWithNoteOff(*body.model, midiNote, layered,
+                                     sampleRate, static_cast<int>(std::llround(
+                                         1.6 * sampleRate)), noteOffSeconds);
+        };
+        const auto full = layerRender(0.35f, 0.30f);
+        const auto airMuted = layerRender(0.0f, 0.30f);
+        const auto boneMuted = layerRender(0.35f, 0.0f);
+        expect(full.retirementSample > 0,
+               "the resonant body note never retired at MIDI "
+                   + std::to_string(midiNote));
+        if (full.retirementSample == 0)
+            continue;
+        const auto isolate = [&full](const ReleasedTake& muted)
+        {
+            std::vector<float> layer(full.audio.size(), 0.0f);
+            for (std::size_t index = 0; index < layer.size(); ++index)
+                layer[index] = full.audio[index] - muted.audio[index];
+            return layer;
+        };
+        const auto windowSamples = static_cast<std::size_t>(
+            std::llround(0.005 * sampleRate));
+        const auto beforeNoteOff = static_cast<std::size_t>(
+            std::llround((noteOffSeconds - 0.005) * sampleRate));
+        const std::size_t lastWindow = full.retirementSample > windowSamples
+            ? full.retirementSample - windowSamples : 0;
+        const auto check = [&](const std::vector<float>& layer,
+                               const std::string& name)
+        {
+            const double atNoteOff = windowRmsDb(layer, beforeNoteOff,
+                                                 windowSamples);
+            const double atRetirement = windowRmsDb(layer, lastWindow,
+                                                    windowSamples);
+            std::cout << "Release damping diagnostics: MIDI " << midiNote
+                      << " " << name << " layer " << atNoteOff
+                      << " dB at note-off, " << atRetirement
+                      << " dB in the last 5 ms, fallen "
+                      << (atNoteOff - atRetirement) << " dB\n";
+            // A silent layer would satisfy the fall by having nothing to fall.
+            expect(atNoteOff > -120.0,
+                   "the isolated " + name + " layer was already silent at "
+                       "note-off at MIDI " + std::to_string(midiNote)
+                       + ", so its retirement was untested");
+            expect(atNoteOff - atRetirement > 60.0,
+                   "the isolated " + name + " layer had fallen only "
+                       + std::to_string(atNoteOff - atRetirement)
+                       + " dB when the voice retired at MIDI "
+                       + std::to_string(midiNote)
+                       + ", so a body slot slower than the fundamental was "
+                         "cut mid-release");
+        };
+        check(isolate(airMuted), "Air");
+        check(isolate(boneMuted), "Bone");
+    }
 }
 
 void testRoughPerformance(const neuramar::NeuralModel& model)
@@ -5172,6 +5559,7 @@ int main()
     testTransientAirResolution();
     testInharmonicPartialSeries();
     testOrbitSustainIsNotPeriodic();
+    testReleaseDarkensTail();
     testFormantShift();
     testResamplerAccuracyAndCost();
     if (fixture.first.model)
