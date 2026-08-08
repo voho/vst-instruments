@@ -516,7 +516,10 @@ verified this session):
   control system included, at 4x.
 - v2.5.12: "DAC phase tables rebased so slot 0 lands at tick rollover; cuts
   ~2 ms of latency off every tick-driven envelope/LFO update". Playing latency
-  is an axis neither this plan nor the comparative assessment has a row for.
+  was an unrepresented axis when this comparison was written; continuous-work
+  step 3 now gives it a deterministic 48 kHz model baseline and the comparative
+  assessment its own row, without inferring the competitor's phase table or a
+  physical JUNO timing profile.
   (Its "VCF write lands ~125 us before VCA per slot" independently corroborates
   this project's own provisional ~125 µs intra-pass figure, which is already
   recorded, so only the latency-origin question is new.)
@@ -1143,9 +1146,12 @@ may trade them away.
   same slot give |correlation| 0.26 / 0.36 / 0.86 / 0.26 / 0.39 against the
   first take. The struck DCO-restart step would have changed the rule this
   rests on; nothing in the surviving list touches it.
-- **Derived note-on timing scatter.** Notes land on the 4.2 ms scan grid,
-  giving 0–4.2 ms of attack spread (measured t(90%) 8.62 / 10.90 / 5.52 /
-  7.79 ms across four presses) and 1.83 ms between voices in a chord.
+- **Earlier envelope-tick timing probe.** The four-press fixture showed that
+  notes land on different parts of the 4.2 ms scan grid (t(90%) 8.62 / 10.90 /
+  5.52 / 7.79 ms, with 1.83 ms between voices in one chord). It was not an
+  end-to-end latency distribution. Continuous-work step 3 now separates the
+  Pitch/envelope write, VoiceVca write, hold milestone, raw output threshold
+  and host-reported DSP delay over the complete 48 kHz phase cycle.
 - **Integer-recurrence envelopes and LFO.** Attack 4.2 ms – 3.28 s, decay(−20
   dB) 4.2 ms – 21.6 s, release 16.8 ms – 25.5 s, LFO 0.0363 – 29.76 Hz.
 - **The chorus delay engine.** Impulse-timed wet peak sweeps 1.67–6.44 ms
@@ -2183,12 +2189,14 @@ name are real and a later pass will want the reasoning rather than the idea.
   bucket-clocked, so both may legitimately need the higher rate — and the honest
   first move is to measure each domain's cost separately and publish which ones
   actually need 4x. That measurement belongs with the solver rework above.
-- **Note-on-to-first-sample latency.** Neither this plan nor the comparative
-  assessment has a row for playing latency, and KR-106 v2.5.12 deliberately
-  removed ~2 ms from its tick-driven update path. Whether this engine's scan
-  phase origin adds avoidable latency on top of the host buffer has never been
-  measured here. It should be measured and published before anything is changed;
-  measuring it is not a step because it changes nothing.
+- **Note-on-to-first-sample latency — completed 2026-08-09.** Continuous-work
+  step 3 measures and publishes the complete declared 48 kHz host/scan-phase
+  distribution before any scheduler change. It became a step because making
+  the result durable required a 12,096-case regression, exact processor-latency
+  fences and an evidence-bound
+  documentation update. It establishes the build baseline, not whether the
+  normalized phase origin matches or should be changed to match hardware; that
+  remains OQ-08.
 - **Additive mains hum, and the chorus click resonance.** The settled guardrail
   that rejects mains ripple derives only the *cutoff-modulation* path — 3300 µF
   behind a 0.25 A secondary, ~60 dB of M5230L rejection, ~0.03 cents of cutoff
@@ -2450,3 +2458,49 @@ evidence about a physical JUNO-106.
   true-peak difference as a broadband amplitude factor, absolute PSD,
   bandwidth/weighting, stereo correlation, spurs and the physical cause or
   insertion point all remain OQ-03.
+- [x] **3. Characterize note-on playing latency without changing the
+  scheduler.** At 48 kHz the scan advances exactly 5/1008 of a pass per host
+  sample, so the new engine fixture advances a silent live timeline through
+  all 1,008 host-boundary phases, copies it for each Note On, and repeats that
+  for all six physical cards with HQ off and on: 12,096 cases. Poly-1 note
+  memory selects the card; a two-second exact-silence pre-roll settles the
+  powered card state; transpose holds the measured board pitch at C4. The patch
+  is saw only, open VCF, ENV VCA, zero attack, full sustain, HPF I, with
+  chorus/noise/Unit Character off. Offsets are 0-based host samples from the
+  Note On:
+
+  | Model layer (min / median / max) | HQ off | HQ on |
+  | --- | ---: | ---: |
+  | Pitch/envelope write | 0 / 100 / 201 | 0 / 100 / 201 |
+  | VoiceVca target / first nonzero model gain | 70 / 192 / 315 | 70 / 192 / 315 |
+  | Held control reaches 63.2% | 102 / 224 / 347 | 103 / 225 / 348 |
+  | Raw output-onset proxy, `max(abs(L),abs(R)) > 1e-4` | 90 / 213 / 335 | 93 / 216 / 339 |
+  | Nominal host-compensation coordinate (raw minus 24) | 66 / 189 / 311 | 69 / 192 / 315 |
+
+  The engine and plug-in separately report exactly 24 host samples for 4×, 2×
+  and 1× numerical paths: 0.500 ms only at 48 kHz, 0.250 ms at 96 kHz and
+  0.125 ms at 192 kHz. It is nominal oscillator-reconstruction/decimation group
+  delay, not a physical decomposition of the signal-dependent output threshold.
+  The processor fixture also keeps sample-positioned MIDI ahead of rendering
+  and exact silence before a late event.
+
+  The regression proves the measured fresh ENV Note On leaves its zero VCA
+  target, hold and gain closed until the scheduled path advances, requires
+  VoiceVca to follow that card's Pitch/envelope tick, fences
+  the per-card 8/23…13/23 ordinal gaps, and verifies the 687 µs hold reaches
+  63.2% at a 32-index offset in HQ-off—33 one-pole updates including the write
+  sample—and a 32–33-index offset with HQ substeps. HQ
+  checks the queue at four internal substeps and HQ-off once per host sample;
+  on a few exact boundaries one has passed a write the other still catches, so
+  paired cases can differ by one pass (worst raw proxy 205 samples) while their
+  aggregate distributions remain aligned. This is scan-grid quantisation, not
+  205 samples of extra output-path delay.
+
+  The `1e-4` crossing is a −80 dBFS numerical proxy, not psychoacoustic
+  audibility, and the exhaustive claim covers converter phase at 48 kHz for
+  this patch/pre-roll—not every oscillator phase, patch, buffer or unit. The
+  4.2 ms pass, 23-write order and qualitative non-simultaneity are anchored;
+  normalized offsets, phase origin and continuous hold realization are policy.
+  Exact acquisition/timing and audible-output captures remain OQ-07/OQ-08/OQ-12,
+  and the BA662 onset law remains OQ-19. No production DSP, scheduler, preset or
+  audio demonstration changes in this step.

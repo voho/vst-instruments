@@ -718,6 +718,23 @@ bandlimited numerically. That is a model of plausible reload behavior, not a
 fact established by the service timing chart. This task must determine what the
 8253 write and surrounding DCO circuitry actually force, and at which edge.
 
+**2026-08-09 model baseline — characterization, not closure.** At 48 kHz,
+`testNoteOnPlayingLatencyAcrossConverterPhases` now advances all 1,008 distinct
+host/scan boundaries and selects each of the six physical cards through Poly-1
+note memory. For the declared two-second-pre-rolled C4 saw/ENV fixture,
+event-to-Pitch-write is 0/100/201 samples (min/median/max), event-to-VoiceVca
+target and first nonzero model gain is 70/192/315, and 63.2% of the held target
+is reached at 102/224/347 HQ-off or 103/225/348 HQ-on. The raw first stereo
+sample above `1e-4` is 90/213/335 or 93/216/339. The plug-in's fixed 24-sample
+host latency report is numerical group-delay bookkeeping and is not folded into
+those scan/hold figures. HQ evaluates four substeps per host sample while HQ-off
+evaluates one; at exact write boundaries the same host-indexed event can catch
+different passes, so the worst paired raw proxy differs by 205 samples despite
+closely aligned aggregate distributions. This baseline characterizes
+`NormalizedServiceChart`; it supplies no physical offset, acquisition, phase
+origin or audible-threshold evidence. OQ-07, this question, OQ-12 and OQ-19 all
+remain open.
+
 ### Needed output (for LLM)
 
 - A timestamped scan timeline covering a complete pass: LFO/envelope
