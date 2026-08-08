@@ -361,6 +361,8 @@ EngineParameters ElectryEngine::sanitise(const EngineParameters& parameters) noe
 
     result.resonanceDepth = clampUnit(parameters.resonanceDepth,
                                       defaults.resonanceDepth);
+    result.vibratoDepth = clampUnit(parameters.vibratoDepth,
+                                    defaults.vibratoDepth);
 
     if (! std::isfinite(parameters.bendTimeSeconds))
         result.bendTimeSeconds = defaults.bendTimeSeconds;
@@ -858,14 +860,14 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     // enough to group a chord and short enough not to merge separate beats.
     chordWindowSamples_ = std::max(1, static_cast<int>(0.035 * sampleRate_));
     handReturnSamples_ = std::max(1, static_cast<int>(1.5 * sampleRate_));
-    // The vibrato's phase advances once per control tick, and its depth eases
-    // in over about 90 ms - the time a player takes to land a note before
-    // starting to move on it.
+    // The vibrato's phase advances once per control tick, and the pressure
+    // behind it ramps at a bounded rate - the time a player takes to land a
+    // note before starting to move on it.
     vibratoPhaseIncrement_ = static_cast<float>(controlPeriod)
                            / static_cast<float>(sampleRate_);
-    vibratoOnsetCoefficient_ = 1.0f - std::exp(
-        -static_cast<float>(controlPeriod)
-        / (0.090f * static_cast<float>(sampleRate_)));
+    vibratoOnsetIncrement_ = static_cast<float>(controlPeriod)
+                           / (vibratoOnsetSeconds
+                              * static_cast<float>(sampleRate_));
 
     // The compliance table lives behind a guarded function-local static (its
     // initializer is not constexpr-able); touch it here so the one-time
@@ -901,8 +903,7 @@ void ElectryEngine::reset()
     appliedBendGlideSeconds_ = -1.0f;
     resonanceAmount_ = resonanceTarget_;
     vibratoAmount_ = 0.0f;
-    vibratoPhase_ = 0.0f;
-    vibratoSemitones_ = 0.0f;
+    vibratoRamp_ = 0.0f;
     feedbackRing_.fill(0.0f);
     feedbackWriteIndex_ = 0;
     feedbackReadIndex_ = 0;
@@ -1764,7 +1765,7 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     // that is the same distinction the finger-noise term already draws at
     // fret 0. The bar still reaches it, because the bar stretches the whole
     // instrument rather than one stopped note.
-    const float vibrato = voice.fret > 0 ? vibratoSemitones_ : 0.0f;
+    const float vibrato = voice.fret > 0 ? voice.vibratoSemitones : 0.0f;
     const float semitones = legatoOffset
                           + pitchBendSemitones_
                             * bendSensitivity(voice.stringIndex)
@@ -2227,6 +2228,45 @@ void ElectryEngine::drawStrokeVariation(Voice& voice) noexcept
     // Contact patch. 8% of standard deviation on how much of the tip is
     // touching, carried by the length of the release pulse.
     voice.strokeWidthScale = clampf(1.0f + 0.08f * normal(), 0.6f, 1.4f);
+}
+
+void ElectryEngine::seedVibratoFinger(Voice& voice) noexcept
+{
+    // The finger that will rock this note starts its own cycle wherever it
+    // happens to be when it gets there: the rock is not synchronised to the
+    // pick, so the phase is drawn rather than started at zero. The onset
+    // shaping holds the excursion at zero regardless, so the note still leaves
+    // the fret at exactly its fretted pitch. Only a fresh note reseeds - a
+    // hammer-on or a slide is the same finger arriving somewhere else, and it
+    // keeps rocking through the move rather than jumping to a new phase.
+    voice.vibratoSeed = hash32(
+        static_cast<std::uint32_t>(voice.startOrder * 2246822519u)
+        ^ static_cast<std::uint32_t>(voice.stringIndex * 68041u)
+        ^ 0x27d4eb2fu);
+    std::uint32_t phaseState = voice.vibratoSeed;
+    voice.vibratoPhase = 0.5f * (bipolarNoise(phaseState) + 1.0f);
+    voice.vibratoCycle = 0u;
+    drawVibratoCycle(voice);
+}
+
+void ElectryEngine::drawVibratoCycle(Voice& voice) noexcept
+{
+    // A hand does not rock twice at the same speed or to the same width. Both
+    // are redrawn once per cycle from a stream this voice advances itself -
+    // the note counter only moves on note-on, so a held note drawn from it
+    // would get one fixed pair for its whole length.
+    std::uint32_t state = hash32(voice.vibratoSeed
+                                 ^ (voice.vibratoCycle * 2654435761u));
+    ++voice.vibratoCycle;
+    const auto normal = [&state]
+    {
+        return bipolarNoise(state) + bipolarNoise(state) + bipolarNoise(state);
+    };
+    // Three uniforms sum to unit variance and cannot leave +/-3 sigma, so the
+    // rate stays inside 0.64..1.36 of nominal and the excursion inside
+    // 0.55..1.45 - a hand that wanders, not one that stumbles.
+    voice.vibratoRateScale = 1.0f + 0.12f * normal();
+    voice.vibratoDepthScale = 1.0f + 0.15f * normal();
 }
 
 void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) noexcept
@@ -2772,6 +2812,7 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     voice.velocityProfile = makeVelocityProfile(velocity);
     voice.startOrder = ++noteSequence_;
     drawStrokeVariation(voice);
+    seedVibratoFinger(voice);
     voice.ageSamples = 0;
     // Per-note, for the same reason ageSamples is: the relax factor is
     // measured against this note's own peak. Carried over, a quiet note
@@ -3063,6 +3104,7 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.slideNoiseLevel = 0.0f;
     voice.slideShaperHigh.reset();
     voice.slideShaperLow.reset();
+    voice.vibratoSemitones = 0.0f;
     // Every retained filter state must clear with the voice, or a silenced
     // string could leak residue into a later, otherwise identical render and
     // break the engine's determinism contract.
@@ -4084,31 +4126,66 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
                 / (0.33f * std::max(s.bendTimeSeconds, 0.01f)
                    * static_cast<float>(sampleRate_)));
         }
-        // The fretting hand's vibrato. The depth eases in rather than
-        // switching on, because a player lands the note and then starts to
-        // move; the oscillation is a raised cosine, so its minimum is the
-        // fretted pitch and the note is only ever pushed sharp, which is what
-        // a finger can do to a string and a bar cannot be made to do. One
-        // phase for the whole hand. At zero pressure the offset is exactly
-        // zero and every voice's pitch solve is bit-for-bit what it was.
-        vibratoAmount_ += vibratoOnsetCoefficient_
-                        * (vibratoTarget_ - vibratoAmount_);
-        if (vibratoTarget_ <= 0.0f && vibratoAmount_ < 1.0e-4f)
-        {
-            vibratoAmount_ = 0.0f;
-            vibratoPhase_ = 0.0f;
-            vibratoSemitones_ = 0.0f;
-        }
+        // The fretting hand's vibrato. The pressure ramps at a bounded rate
+        // and is then shaped by smoothStep, so the hand leaves rest with zero
+        // slope instead of at its steepest, and comes back to rest the same
+        // way. At zero pressure the ramp sits at exactly zero, the shaping
+        // returns exactly zero, and every voice's pitch solve is bit-for-bit
+        // what it was.
+        vibratoRamp_ += clampf(vibratoTarget_ - vibratoRamp_,
+                               -vibratoOnsetIncrement_, vibratoOnsetIncrement_);
+        vibratoAmount_ = smoothStep(vibratoRamp_);
         if (vibratoAmount_ > 0.0f)
         {
+            // The pitch follows the *square* of the finger's displacement.
+            // Rocking a stopped string sideways by x lengthens its path by
+            // dL = k x^2 - the same dL/L relation bendSensitivity() solves for
+            // the bar - so a wrist rocking as the raised cosine s(t) moves the
+            // pitch by depth * s(t)^2. That is not a flat top: s^2 is
+            // fourth-order small where s is second-order small, so the note
+            // dwells at the fretted pitch between excursions and the
+            // excursions themselves are briefer and sharper-cornered than the
+            // rock that makes them. It is still one-sided, so the note is only
+            // ever pushed sharp, which is what a finger can do to a string and
+            // a bar cannot be made to do.
+            //
             // A rock finger vibrato runs around 5 Hz and speeds up as the
-            // player leans into it.
+            // player leans into it. The Vibrato Depth control scales the
+            // excursion only: which way a real hand couples width to speed was
+            // never measured here, so the existing coupling stands rather than
+            // being reversed on an unsourced argument.
             const float rate = lerp(4.8f, 6.4f, vibratoAmount_);
-            vibratoPhase_ += rate * vibratoPhaseIncrement_;
-            if (vibratoPhase_ >= 1.0f)
-                vibratoPhase_ -= 1.0f;
-            vibratoSemitones_ = vibratoMaximumSemitones * vibratoAmount_ * 0.5f
-                * (1.0f - std::cos(twoPi * vibratoPhase_));
+            const float depth = lerp(vibratoMinimumSemitones,
+                                     vibratoMaximumSemitones, s.vibratoDepth)
+                              * vibratoAmount_;
+            // Every stopped string is its own finger, with its own phase and
+            // its own per-cycle rate and excursion. Open strings have nothing
+            // holding them down and are left alone, exactly as before.
+            for (auto& voice : voices_)
+            {
+                if (! voice.active || voice.fret <= 0)
+                    continue;
+                voice.vibratoPhase += rate * voice.vibratoRateScale
+                                    * vibratoPhaseIncrement_;
+                if (voice.vibratoPhase >= 1.0f)
+                {
+                    voice.vibratoPhase -= 1.0f;
+                    drawVibratoCycle(voice);
+                }
+                const float rock = 0.5f
+                    * (1.0f - std::cos(twoPi * voice.vibratoPhase));
+                voice.vibratoSemitones = depth * voice.vibratoDepthScale
+                                       * rock * rock;
+            }
+        }
+        else
+        {
+            // The phase is deliberately left where it stopped rather than
+            // reset: a finger that stops rocking and starts again does not
+            // begin from the same point in the cycle, which is what made every
+            // vibrato in a part start identically.
+            for (auto& voice : voices_)
+                voice.vibratoSemitones = 0.0f;
         }
 
         pitchBendSemitones_ += bendGlideCoefficient_

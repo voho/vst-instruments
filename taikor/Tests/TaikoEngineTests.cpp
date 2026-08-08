@@ -433,6 +433,35 @@ double bandLevelDb (const std::vector<float>& samples, double sampleRate,
     return 10.0 * std::log10 (std::max (meanSquare, 1.0e-30));
 }
 
+// The same quantity with a Hann window laid over the buffer first, so that a
+// quiet band next to a loud one reads what is in it rather than the sidelobes
+// of what is below it. It is the same slice of the spectrum at every sample
+// rate for the same reason bandLevelDb is - the bins are one over the window's
+// duration - and it is the only version of that comparison worth making about a
+// band the drum has almost nothing in.
+//
+// Both exist because they answer different questions. bandLevelDb is what the
+// pass's literals were taken with and is kept so those literals still mean
+// something; this is what a change of a decibel in one of those literals has to
+// be checked against before it is believed.
+double bandLevelHannDb (std::vector<float> samples, double sampleRate,
+                        double lowHz, double highHz)
+{
+    const auto count = static_cast<int> (samples.size());
+    if (count < 4)
+        return -300.0;
+
+    for (int index = 0; index < count; ++index)
+        samples[static_cast<std::size_t> (index)] *= static_cast<float> (
+            0.5 - 0.5 * std::cos (2.0 * analysisPi * static_cast<double> (index)
+                                  / static_cast<double> (count - 1)));
+
+    // Three halves of the window's mean square, which is what a Hann window
+    // takes out of a broadband signal's power.
+    return bandLevelDb (samples, sampleRate, lowHz, highHz)
+         + 10.0 * std::log10 (8.0 / 3.0);
+}
+
 // Root-mean-square of everything above a corner, over a window, with the filter
 // run from the first sample so that it is settled long before the window opens.
 //
@@ -749,6 +778,311 @@ void testOctavesRaisePitch()
     }
 }
 
+// The enclosed air used to be a spring of infinite extent. rho c^2 / L is the
+// omega -> 0 limit of a cavity, and this drum runs out of that limit inside its
+// own range: c/2L is 212 Hz at the factory body and 139 Hz at the deepest one,
+// well under the top of the resolved bank. The air is really a column, the
+// volume-changing motion of a two-headed drum is symmetric about the midplane,
+// and each head therefore drives a rigidly terminated column of length L/2
+// whose exact input stiffness is the lumped value times x cot x with
+// x = omega L / 2c.
+//
+// That is an implicit eigenproblem - the stiffness depends on the frequency it
+// sets - and what the drum resolve now converges on is the factor. It is
+// reported, and everything below reads it, because a number that is solved for
+// rather than computed is worth being able to see.
+//
+// The step this test lands with had one open decision in it: what to do where
+// the fixed point lands at or past the quarter-wave, x = pi/2, at which the
+// column's input stiffness is zero. **A decoupled pair is the answer here.**
+// Above the quarter-wave the air is mass-like rather than stiff, this model has
+// nowhere to put a mass - the enclosed air is a stiffness and not a degree of
+// freedom - and past the second pole at x = pi the expression turns positive
+// again on a branch that means something else. So the factor is floored at
+// zero, which is continuous (x cot x reaches zero at the quarter-wave rather
+// than jumping to it), monotone, and lands the drum in the state the readout
+// already knows how to describe: two heads the air does not tie together, which
+// is exactly what Air Coupling zero gives. The consequence asserted below is
+// that the branches meet there and never cross, so nothing anywhere reports a
+// breathing mode under the fundamental and testOctavesRaisePitch's clause that
+// the cavity lifts the volume-changing mode above the other one stands
+// unchanged - it is measured at the factory body, where the factor is 0.75 to
+// 0.89 across the whole keyboard and the two branches are a fifth apart.
+void testTheCavityIsAColumnNotAnInfiniteSpring()
+{
+    const auto measure = [] (taikor::EngineParameters parameters, int octave)
+    { return taikor::TaikoEngine::measure (parameters, octave); };
+
+    // Where the cavity is shortest against the wavelength the correction has to
+    // be nearly nothing: a shallow body at the top of the keyboard was already
+    // an air spring. Eight per cent and not three, because it is 0.941 there.
+    {
+        auto shallow = defaultParameters();
+        shallow.bodyDepth = 0.0f;
+        const auto reported = measure (shallow, 3);
+
+        expect (std::abs (reported.cavityStiffnessFactor - 1.0f) < 0.08f,
+                "a body short against the wavelength stopped being an air spring");
+        // And its breathing mode must barely move. 518.5178 Hz is what the
+        // lumped spring gave; the column gives 515.8969, which is 0.51 %.
+        expect (std::abs (reported.breathingModeHz - 518.5178f) < 518.5178f * 0.01f,
+                "a short cavity's breathing mode moved by more than one per cent, "
+                "so the correction is reaching where there is nothing to correct");
+    }
+
+    // And where the body is long against it the correction has to be large.
+    // Both of these are the o-daiko end of the keyboard, which is the whole
+    // point: the biggest drums stop being air springs with a hide attached.
+    {
+        const auto deepFactory = measure (defaultParameters(), -2);
+        expect (deepFactory.cavityStiffnessFactor < 0.80f,
+                "the cavity did not soften at the bottom of the keyboard");
+        // 45.4701 Hz with the lumped spring, 40.5043 with the column: 10.9 %.
+        expect (deepFactory.breathingModeHz < 45.4701f * 0.91f,
+                "the breathing mode at octave -2 did not come down by nine per cent");
+
+        auto deepest = defaultParameters();
+        deepest.bodyDepth = 1.0f;
+        const auto deepBody = measure (deepest, -2);
+        expect (deepBody.cavityStiffnessFactor < 0.72f,
+                "the deepest body's cavity did not soften");
+        // 37.2596 Hz with the lumped spring, 31.4282 with the column: 15.7 %.
+        expect (deepBody.breathingModeHz < 37.2596f * 0.86f,
+                "the breathing mode at the deepest body did not come down by "
+                "fourteen per cent");
+    }
+
+    // The musical consequence, and the one worth having: the breathing branch's
+    // octave steps. They were 509.4 / 635.7 / 829.5 / 1019.3 / 1139.8 cents at
+    // the factory Octave Body, which is nearer a fourth than an octave at the
+    // bottom, because the cavity was a spring whose stiffness went as 1/L while
+    // the drum it was inside grew in every dimension at once. Every one of the
+    // five has to widen.
+    {
+        const float floors[5] = { 560.0f, 660.0f, 845.0f, 1030.0f, 1145.0f };
+        float previous = 0.0f;
+
+        for (int octave = taikor::lowestOctaveOffset;
+             octave <= taikor::highestOctaveOffset; ++octave)
+        {
+            const auto reported = measure (defaultParameters(), octave);
+            if (previous > 0.0f)
+            {
+                const auto index =
+                    static_cast<std::size_t> (octave - taikor::lowestOctaveOffset - 1);
+                const float cents =
+                    1200.0f * std::log2 (reported.breathingModeHz / previous);
+                expect (cents > floors[index],
+                        "the breathing branch's step into octave "
+                            + std::to_string (octave) + " is only "
+                            + std::to_string (cents) + " cents");
+            }
+            previous = reported.breathingModeHz;
+        }
+    }
+
+    // The lower branch has to stay where it is. Step 5 solves the keyboard
+    // against it, and an implementation that dragged both branches down would
+    // meet every clause above and leave that step working on a moving quantity.
+    //
+    // The anchor first, as a literal taken before this step: the factory drum at
+    // octave 0 reported 50.7490 Hz and now reports 50.7475, which is 0.003 %.
+    {
+        expect (std::abs (measure (defaultParameters(), 0).loadedFundamentalHz
+                          - 50.7490f)
+                    < 50.7490f * 0.001f,
+                "the loaded fundamental at the reference octave moved");
+    }
+
+    // Then the corners the control scan found worst, again as literals from
+    // before the step. One and a half per cent rather than the one per cent this
+    // was drafted with: the worst measured drift over the scan is 1.17 %, it is
+    // in the configurations where the factor has gone to zero, and it is the
+    // lower branch relaxing back to the uncoupled head as the cavity is taken
+    // out from under it rather than the branch being dragged anywhere.
+    {
+        struct Corner
+        {
+            float bodyDepth, headMaterial, tension, cavity, diameter, octaveBody;
+            int octave;
+            float loadedBeforeHz;
+        };
+
+        const Corner corners[] = {
+            { 1.00f, 0.50f, 0.50f, 1.00f, 0.95f, 0.35f,  2, 234.6897f },
+            { 1.00f, 1.00f, 1.00f, 1.00f, 0.95f, 0.35f,  1, 171.8180f },
+            { 0.00f, 0.00f, 0.50f, 1.00f, 0.95f, 0.00f,  3, 524.6713f },
+            { 1.00f, 0.00f, 1.00f, 1.00f, 1.80f, 1.00f, -2,   7.9114f },
+            { 0.50f, 0.50f, 0.50f, 0.85f, 0.95f, 0.70f, -2,  10.3433f },
+        };
+
+        for (const auto& corner : corners)
+        {
+            auto parameters = defaultParameters();
+            parameters.bodyDepth = corner.bodyDepth;
+            parameters.headMaterial = corner.headMaterial;
+            parameters.tension = corner.tension;
+            parameters.cavityCoupling = corner.cavity;
+            parameters.headDiameter = corner.diameter;
+            parameters.octaveBody = corner.octaveBody;
+
+            const auto reported = measure (parameters, corner.octave);
+            expect (std::abs (reported.loadedFundamentalHz - corner.loadedBeforeHz)
+                        < corner.loadedBeforeHz * 0.015f,
+                    "the cavity correction moved the lower branch at octave "
+                        + std::to_string (corner.octave));
+        }
+    }
+
+    // The scan itself. Everything above is a handful of drums; these are the
+    // properties that have to hold over the whole control space, and they are
+    // the ones that say the reported factor is a number about the drum rather
+    // than about the solver.
+    {
+        int total = 0;
+        int decoupled = 0;
+        float smallest = 1.0f;
+        float worstLowerBranch = 0.0f;
+
+        for (const float bodyDepth : { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f })
+            for (const float headMaterial : { 0.0f, 0.5f, 1.0f })
+                for (const float tension : { 0.0f, 0.5f, 1.0f })
+                    for (const float diameter : { 0.2f, 0.95f, 1.8f })
+                        for (const float octaveBody : { 0.0f, 0.35f, 0.7f, 1.0f })
+                            for (int octave = taikor::lowestOctaveOffset;
+                                 octave <= taikor::highestOctaveOffset; ++octave)
+                            {
+                                auto parameters = defaultParameters();
+                                parameters.bodyDepth = bodyDepth;
+                                parameters.headMaterial = headMaterial;
+                                parameters.tension = tension;
+                                parameters.headDiameter = diameter;
+                                parameters.octaveBody = octaveBody;
+
+                                // The same drum with the body opened, so the
+                                // cavity's whole authority over the lower
+                                // branch can be measured rather than assumed.
+                                parameters.cavityCoupling = 0.0f;
+                                const auto uncoupled =
+                                    measure (parameters, octave).loadedFundamentalHz;
+
+                                for (const float coupling : { 0.0f, 0.2f, 0.6f, 0.85f,
+                                                              1.0f })
+                                {
+                                    parameters.cavityCoupling = coupling;
+                                    const auto reported = measure (parameters, octave);
+                                    ++total;
+
+                                    smallest = std::min (smallest,
+                                                         reported.cavityStiffnessFactor);
+                                    if (reported.cavityStiffnessFactor <= 0.0f)
+                                        ++decoupled;
+
+                                    expect (reported.cavityStiffnessFactor >= 0.0f
+                                                && reported.cavityStiffnessFactor
+                                                       <= 1.0f,
+                                            "the reported cavity factor left [0, 1]");
+                                    // The floored case is a decoupled pair, and
+                                    // a decoupled pair has one axisymmetric mode
+                                    // and reports it twice. What must never
+                                    // happen is the branches crossing.
+                                    expect (reported.breathingModeHz
+                                                >= reported.loadedFundamentalHz,
+                                            "the breathing branch fell below the "
+                                            "fundamental, so the column correction "
+                                            "went past the quarter-wave");
+
+                                    if (uncoupled > 0.0f)
+                                        worstLowerBranch = std::max (
+                                            worstLowerBranch,
+                                            std::abs (reported.loadedFundamentalHz
+                                                      - uncoupled)
+                                                / uncoupled);
+
+                                    // Bit-identical on a second call. A damped
+                                    // fixed point that has not converged is a
+                                    // function of its iteration count, and this
+                                    // is the cheapest way to say it is not.
+                                    expect (measure (parameters, octave)
+                                                    .cavityStiffnessFactor
+                                                == reported.cavityStiffnessFactor,
+                                            "two identical measurements disagreed "
+                                            "about the cavity factor");
+                                }
+
+                                // Monotone in Body Depth at fixed everything
+                                // else: a deeper body is a softer column, and a
+                                // solve that has not converged is not monotone
+                                // in anything.
+                                parameters.cavityCoupling = 0.85f;
+                                float previous = 2.0f;
+                                for (int step = 0; step <= 20; ++step)
+                                {
+                                    parameters.bodyDepth =
+                                        static_cast<float> (step) / 20.0f;
+                                    const auto factor =
+                                        measure (parameters, octave)
+                                            .cavityStiffnessFactor;
+                                    expect (factor <= previous + 1.0e-6f,
+                                            "the cavity factor is not monotone in "
+                                            "Body Depth, so the solve has not "
+                                            "converged");
+                                    previous = factor;
+                                }
+                            }
+
+        expect (total == 16200, "the cavity scan did not cover what it says it does");
+        // Measured: 2130 of the 16200 land on the floor, every one of them a body
+        // shorter than a quarter of the wavelength of its own head - a 20 cm
+        // shell tuned to three and a half kilohertz, and the like. None of them
+        // is a taiko, and the point of recording the count is that a change
+        // which quietly decoupled the instrument would move it.
+        expect (decoupled > 0 && decoupled < total / 4,
+                "the number of drums whose column has passed its quarter-wave "
+                "changed: " + std::to_string (decoupled) + " of "
+                + std::to_string (total));
+        expect (smallest <= 0.0f,
+                "nothing in the scan reaches the floor any more");
+        // The cavity's entire authority over the lower branch, measured at 1.95
+        // %. It bounds what this step can do to that branch, whatever else
+        // changes, which is what step 5 needs to be able to rely on.
+        expect (worstLowerBranch < 0.025f,
+                "the cavity moved the lower branch further than it ever did");
+    }
+
+    // And the audio has to follow the readout, which is the clause that stops
+    // all of the above being met by a change to measure() alone. Struck dead
+    // centre, where J_m(0) = 0 kills every mode with a circumferential order and
+    // the axisymmetric pair is the whole of the drum, so the strongest partial
+    // in the region is the breathing branch and nothing else.
+    {
+        auto centred = defaultParameters();
+        centred.humanise = 0.0f;
+        centred.strikePosition = -1.0f;
+
+        const auto reported = measure (centred, 0);
+        const auto mono =
+            strike (centred, taikor::Articulation::Don, 0, 0.9f, 48000.0, 96000).mono();
+        const auto dominant = dominantFrequency (mono, 48000.0,
+                                                 reported.breathingModeHz * 0.70,
+                                                 reported.breathingModeHz * 1.35, 0.05,
+                                                 2400u, 50000u);
+
+        // The render and the readout must agree. This passes on both trees -
+        // before the step the readout said 88.1024 and the render 88.522 - and
+        // it is here so that scaling the readout without scaling the audio
+        // fails rather than passes.
+        expect (std::abs (dominant - reported.breathingModeHz)
+                    < reported.breathingModeHz * 0.015,
+                "the drum does not sound at the breathing mode it reports");
+        // And the audio has actually moved. The lumped spring rendered this
+        // partial at 88.522 Hz; the column renders it at 84.484.
+        expect (dominant < 88.522 * 0.975,
+                "the rendered breathing mode is still where an infinite spring "
+                "put it");
+    }
+}
+
 void testEveryArticulationAndSampleRate()
 {
     for (const double sampleRate : { 44100.0, 48000.0, 88200.0, 96000.0, 192000.0 })
@@ -834,6 +1168,7 @@ void testTheContinuumDoesNotDependOnTheSampleRate()
         double high { 0.0 };
         double low { 0.0 };
         double wide { 0.0 };
+        double highWindowed { 0.0 };
     };
 
     std::vector<Reading> readings;
@@ -847,7 +1182,8 @@ void testTheContinuumDoesNotDependOnTheSampleRate()
         readings.push_back ({ sampleRate,
                               bandLevelDb (mono, sampleRate, 4000.0, 10000.0),
                               bandLevelDb (mono, sampleRate, 40.0, 200.0),
-                              bandLevelDb (mono, sampleRate, 400.0, 16000.0) });
+                              bandLevelDb (mono, sampleRate, 400.0, 16000.0),
+                              bandLevelHannDb (mono, sampleRate, 4000.0, 10000.0) });
     }
 
     const auto spread = [&readings] (double Reading::* band)
@@ -862,14 +1198,31 @@ void testTheContinuumDoesNotDependOnTheSampleRate()
         return highest - lowest;
     };
 
-    // Two decibels rather than one because the click and contact-noise path has
-    // a rate dependence of its own that this is not about: a Bachi, which
+    // Three decibels rather than one because the click and contact-noise path
+    // has a rate dependence of its own that this is not about: a Bachi, which
     // carries no continuum at all, moves 2.11 dB in this band by 96 kHz and
     // 5.51 dB by 192 kHz. What is being asserted is that the continuum has
     // stopped contributing one. Before the fix the spread here was 8.73 dB.
-    expect (spread (&Reading::high) < 2.0,
+    //
+    // It was two decibels when this step landed, against a measured 1.54, and
+    // step 4 - which moves the drum's own tuning and nothing about the
+    // continuum or the sample rate - took the reading to 2.51. That is the
+    // window rather than the audio. This band of a Don at C3 has almost nothing
+    // in it, the rectangular window's sidelobes fall only as one over the
+    // offset, and the drum's bottom two octaves therefore set most of what is
+    // read here; move the breathing branch by four hertz and the interference
+    // between those sidelobes at each rate rearranges. Measured through the
+    // same sum under a Hann window, whose sidelobes fall as the cube of the
+    // offset, the spread is 0.9045 dB before step 4 and 0.9329 after - three
+    // hundredths of a decibel, on a change that moved the rectangular reading
+    // by a decibel. So the clause below is widened and the honest version of it
+    // is asserted alongside, tighter than the original ever was.
+    expect (spread (&Reading::high) < 3.0,
             "the 4-10 kHz band moved with the host sample rate, so the head's "
             "continuum is still being calibrated against a per-sample gain");
+    expect (spread (&Reading::highWindowed) < 1.5,
+            "the 4-10 kHz band moved with the host sample rate under a window "
+            "that does not leak, which is the audio and not the estimator");
     // The resolved bank was already rate-independent and the fix must not have
     // reached it.
     expect (spread (&Reading::low) < 0.5,
@@ -3683,6 +4036,7 @@ int main()
 {
     testArticulationMetadataAndMidiMapping();
     testOctavesRaisePitch();
+    testTheCavityIsAColumnNotAnInfiniteSpring();
     testEveryArticulationAndSampleRate();
     testSampleRateConsistency();
     testTheContinuumDoesNotDependOnTheSampleRate();

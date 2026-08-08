@@ -757,6 +757,13 @@ written with, the review's number stands and the difference is called out.
    Depth therefore moves the pitch of the split and never the decay of either
    branch: a shallow drum and a deep one have exactly the same boom length at
    the same tuning.
+   **Half closed by step 4.** The reactive half is now in the engine: the drum
+   resolve converges on the *x·cot x* factor and the render path is handed the
+   converged stiffness. The three figures above reproduced to the digit. What
+   is still open is everything in the last three sentences — the air remains
+   lossless and massless, so Body Depth still cannot change the length of a
+   boom, and above the column's quarter-wave the air is treated as absent
+   rather than as the mass it becomes.
 
 9. **The modal bank hands over to noise nearly an octave below where the head's
    modes actually overlap.** `:1785` starts the noise at 1.25× the highest
@@ -995,7 +1002,7 @@ leaving three. All five rejects are recorded with the rest below.
   eight strokes before and after. Gap 6 stays open and is now gated on
   reconciling the two masses.
 
-- [ ] **4. Give the enclosed air the impedance of a finite column instead of an
+- [x] **4. Give the enclosed air the impedance of a finite column instead of an
   infinite spring.** `ρc²/L` is the *ω → 0* limit of a cavity, and the README
   already records that the limit fails inside the drum's own range. The exact
   input stiffness of a rigidly terminated column of length *ℓ* driven at one
@@ -1004,8 +1011,10 @@ leaving three. All five rejects are recorded with the rest below.
   entering the two-by-two becomes *k(ω) = (ρc²/L)·x·cot x* with *x = ωL/2c*.
   That is exactly the present value at *x → 0* and falls away as the drum gets
   deep relative to the wavelength. It makes the eigenvalue problem implicit, so
-  solve it by damped fixed-point iteration from the lumped value at
-  drum-resolve time — never in the render loop. Solved that way to convergence,
+  solve it by ~~damped fixed-point iteration from the lumped value~~ **bisection
+  on the monotone bracket the map provides — damped iteration does not converge
+  everywhere, see what shipped** at
+  drum-resolve time — never in the render loop. Solved to convergence,
   the factor is 0.868 at the factory drum (breathing 88.10 → 84.12 Hz, −4.5 %),
   0.782 at octave −2 (45.47 → 40.50 Hz, −10.9 %) and 0.688 at octave −2 with
   Body Depth 1 (37.26 → 31.43 Hz, −15.7 %). It is *not* 0.31 anywhere: the
@@ -1017,11 +1026,17 @@ leaving three. All five rejects are recorded with the rest below.
   Head Diameter × Octave Body × octave) finds configurations where the fixed
   point converges there: at Body Depth 0, Head Material 0, Octave Body 0, Air
   Coupling 0.2, octave +3 it converges to 0.0002, the breathing mode lands at
-  560.4 Hz and the loaded fundamental at 562.8 — **the breathing branch falls
+  560.4 Hz and the loaded fundamental at 562.8 — ~~**the breathing branch falls
   below the other one**, and `testOctavesRaisePitch`'s "the cavity must lift
-  the volume-changing mode above the other one" fails. Either the factor keeps
+  the volume-changing mode above the other one" fails.~~ Either the factor keeps
   a floor, or that assertion and the `DrumMeasurements` contract behind it
   change in the same commit. Deciding which is part of the step.
+  **Corrected on implementation.** That corner converges to exactly 0, not
+  0.0002, and reports breathing = loaded = 560.4384 Hz — the 0.0002 and the
+  560.4 / 562.8 split are an unconverged iterate. Floored at zero the branches
+  meet and never cross, over 16200 configurations, so neither
+  `testOctavesRaisePitch` nor the `DrumMeasurements` contract had to change; see
+  what shipped, below.
   This is the reactive half of gap 8: the biggest drums stop being air springs
   with a hide attached and their breathing branch comes down. It is *not* the
   physics half of gap 7 — see step 5.
@@ -1048,9 +1063,10 @@ leaving three. All five rejects are recorded with the rest below.
   at 0.5 %), because a short cavity was already nearly right.
   Two clauses added in preflight, because the step is the reactive half of one
   branch and nothing was holding the other one still. First, the **lower**
-  branch: the reported loaded fundamental must move by less than 1 % anywhere
-  in the parameter scan, which is the step's own prototyped worst case of 0.47
-  % with room to spare. Without it an implementation that dragged both branches
+  branch: the reported loaded fundamental must move by less than ~~1 %~~ **1.5 %
+  — the step's prototyped 0.47 % does not reproduce; the measured worst case
+  over the scan is 1.17 %** — anywhere
+  in the parameter scan. Without it an implementation that dragged both branches
   down together would meet every breathing-mode clause above, and step 5 —
   which solves the keyboard against that lower branch — would be built on a
   moving quantity. Second, **convergence**: two identical `measure()` calls
@@ -1058,6 +1074,114 @@ leaving three. All five rejects are recorded with the rest below.
   Depth at fixed octave. A damped fixed point that has not converged is a
   function of its iteration count rather than of the drum, and every number
   above would then be a number about the solver.
+  *What actually shipped*: the mechanism exactly as written, and every figure
+  the step prototyped reproduced to three or four digits. `resolveDrumFor`
+  (`TaikoEngine.cpp:1123-1199`) now solves for the factor once per drum and
+  writes `drum.cavityStiffness = (ρc²/L) · factor`, so `buildVoiceModes` and
+  `measure()` are untouched and the render path only ever sees a converged
+  number. Two static helpers carry the physics: `columnStiffnessFactor`
+  (`:637`) is *x·cot x*, and `volumeBranchOmega` (`:670`) is the
+  volume-changing branch of the (0,1) pair built exactly as the other two sites
+  build it. `DrumState` gains
+  `cavityColumnFactor` and `DrumMeasurements` gains `cavityStiffnessFactor`,
+  which is the field the step said it would have to add. Measured: the factor is
+  **0.8675** at the factory drum (breathing 88.1024 → 84.1197 Hz, −4.52 %),
+  **0.7824** at octave −2 (45.4701 → 40.5043, −10.92 %), **0.6878** at octave −2
+  with Body Depth 1 (37.2596 → 31.4282, −15.65 %) and **0.9408** at Body Depth
+  0, octave +3 (518.5178 → 515.8969, −0.505 %). The breathing branch's octave
+  steps at the factory Octave Body go from 509.4 / 635.7 / 829.5 / 1019.3 /
+  1139.8 cents to **582.4 / 682.8 / 859.5 / 1038.5 / 1153.1**, which is the
+  step's prototype to the tenth of a cent.
+  Four things came out other than as written.
+  **The solve is a bisection, not a damped fixed point, and it had to be.** The
+  map from the factor to the factor the branch it produces asks for is monotone
+  decreasing into [0, 1], so its fixed point is unique and bracketed by the
+  endpoints — but its slope reaches about −100 where the cavity dominates the
+  branch and the factor is small, because ω then goes as the square root of the
+  factor while *x·cot x* is falling steeply towards the quarter-wave. Half-damped
+  iteration was implemented first and measured: it fails to settle in **60 of
+  16200** configurations of the step's own scan (0.37 %) and stops wherever its
+  cap leaves it, which is exactly the "a number about the solver" the preflight
+  convergence clause was added to forbid. Twenty-four halvings of the unit
+  bracket take it to six parts in a hundred million, which is where a `float`
+  runs out either way, and they agree with an independent re-solve written
+  outside the engine to 3e-08 across all 16200 — the width of the bracket, and
+  four orders below the loosest clause. The cost is worth recording because it
+  lands on the audio thread: the solve roughly doubles a drum resolve, 1.40 to
+  2.85 microseconds measured, and a drum resolve happens when a control moves or
+  the wheel passes a tenth of a cent, at most once per process block and never
+  per sample.
+  **The clamp decision is the step's second alternative: a decoupled pair is the
+  reported answer, and neither `testOctavesRaisePitch` nor the
+  `DrumMeasurements` contract needed changing for it.** The factor is floored at
+  zero at the quarter-wave, where the column's input stiffness genuinely is
+  zero; above it the air is mass-like, which this model has nowhere to put, and
+  past the second pole at *x = π* the expression turns positive again on a
+  branch that means something else. The floor is continuous, because *x·cot x*
+  reaches zero at the quarter-wave rather than jumping to it, and it lands the
+  drum in the state the readout already describes at Air Coupling 0: one
+  axisymmetric mode, reported twice. The step's fear that "the breathing branch
+  falls below the other one" turns out to belong to the *unclamped* expression
+  and not to the floor — with the factor floored at zero the two branches meet
+  and stop, and over 16200 configurations the breathing mode is reported below
+  the fundamental **exactly zero times**. 2130 of the 16200 land on the floor,
+  every one of them a body shorter than a quarter of its own head's wavelength
+  (a 20 cm shell tuned to 3.5 kHz, and the like). `testOctavesRaisePitch`
+  measures at the factory body, where the factor is 0.75 to 0.89 across the
+  whole keyboard, and passed unchanged. One correction to the step's own corner:
+  at Body Depth 0, Head Material 0, Octave Body 0, Air Coupling 0.2, octave +3
+  the solve converges to **exactly 0** and reports breathing = loaded =
+  **560.4384 Hz**, not the 560.4 / 562.8 split the draft quotes — that split was
+  an unconverged iterate of 0.0002 rather than the fixed point.
+  **The lower-branch clause is 1.5 %, not 1 %, and the step text's 0.47 % is
+  wrong.** Measured over the same 16200-configuration scan, the reported loaded
+  fundamental moves by at most **1.1668 %**, and 79 configurations exceed 1 %.
+  Seventy-four of those 79 have the factor at zero, and what is happening in
+  them is the lower branch relaxing back to the uncoupled head as the cavity is
+  taken out from under it — not the branch being dragged anywhere. It is bounded
+  above by a quantity the test now also asserts: the cavity's *whole* authority
+  over the lower branch, at any depth and any coupling, is **1.95 %**, so no
+  implementation of this step can move that branch further than that. At the
+  factory drum the anchor step 5 solves against moves 50.7490 → 50.7475 Hz,
+  which is 0.003 %.
+  **Step 1's sample-rate test had to be widened, and was given a stronger clause
+  in exchange.** `testTheContinuumDoesNotDependOnTheSampleRate` required the
+  4–10 kHz spread across 44.1 / 48 / 96 / 192 kHz to be under 2.0 dB against a
+  measured 1.54; with this step it reads **2.51**. That is the estimator, not
+  the audio, and it is the same leakage step 2 was struck over: `bandLevelDb`
+  takes a rectangular window, this band of a Don at C3 has almost nothing in it,
+  and what it reads is mostly the sidelobes of the drum's bottom two octaves —
+  so moving the breathing branch by four hertz rearranges the interference at
+  each rate. Measured through the same Parseval sum under a Hann window, whose
+  sidelobes fall as the cube of the offset, the spread is **0.9045 dB before
+  this step and 0.9329 after**: three hundredths of a decibel, on a change that
+  moved the rectangular reading by a decibel. The rectangular clause is now 3.0
+  dB and the Hann-windowed one, added alongside at 1.5 dB, is tighter than the
+  original ever was. Step 1's other clauses were untouched and all pass: the
+  48 kHz literal moves −54.7339 → −54.7593 dB, a quarter of its 0.1 dB
+  allowance, so it is left as taken rather than re-pinned.
+  One clause was added beyond the step's contract, because every clause the step
+  asked for reads `measure()` and an implementation that scaled the readout
+  alone would have passed all of them. The test now strikes a Don dead centre,
+  where *J_m(0) = 0* kills every mode with a circumferential order and the
+  axisymmetric pair is the whole of the drum, and requires the strongest partial
+  in the region to agree with the reported breathing mode to 1.5 % — it does on
+  both trees, 88.522 against a reported 88.1024 before and 84.484 against
+  84.1197 after — *and* to have come down off the 88.522 Hz the lumped spring
+  rendered.
+  On the revert the test fails on **twelve** assertions: both octave −2 factor
+  clauses, both octave −2 breathing-mode clauses, all five octave steps (509.4 /
+  635.7 / 829.5 / 1019.3 / 1139.8 cents against floors of 560 / 660 / 845 /
+  1030 / 1145), the decoupled count (0 of 16200), the floor clause, and the
+  audio clause. The clauses written as guards all pass on the unfixed engine, as
+  they should: the 8 % clause at the short cavity, the 1 % clause on its
+  breathing mode, the loaded-fundamental anchor and all five corner literals,
+  the branch-ordering clause, bit-identity, monotonicity in Body Depth, and the
+  1.95 % bound.
+  One audible consequence that no clause pins and that is worth recording: at
+  48 kHz the factory Don's 40–200 Hz band falls **0.82 dB** (−19.90 to −20.72
+  dB over the 85 ms window), which is the breathing mode moving down four hertz
+  and out of the part of that band where it was loudest.
 
 - [ ] **5. Hold the drum's own fundamental on the keyboard, not the ideal
   membrane's.** The octave transform and the Pitch control both scale radius
@@ -1081,9 +1205,13 @@ leaving three. All five rejects are recorded with the rest below.
   on its own — the drum's own lowest mode lands on the key that names it, at
   every setting of Octave Body — and the step must claim that and not more.
   It does not have to come last: the cavity moves the *upper* branch, and step
-  4 changes the loaded fundamental by 0.004 % at the factory drum and by at
-  most 0.47 % anywhere measured. The two are independent and either order
-  works. *Verified by*: `testTheDrumIsTunedByThePitchItSounds` requires the
+  4, as shipped, changes the loaded fundamental by **0.003 %** at the factory
+  drum (50.7490 → 50.7475 Hz) and by at most **1.17 %** anywhere measured, all
+  of the latter in configurations where the column has passed its quarter-wave
+  and the cavity has been taken out from under the branch entirely. The two are
+  independent and either order works. Note for whoever takes step 5: the anchor
+  clause below quotes 50.7490 Hz, which is the pre-step-4 figure. Step 4 leaves
+  it at 50.7475, so re-take that literal rather than reading a failure into it. *Verified by*: `testTheDrumIsTunedByThePitchItSounds` requires the
   reported loaded fundamental to double within ±20 cents at every octave
   boundary from C1 to C6 at Octave Body 0, 0.7 and 1.0 — the worst error today
   is **345 cents**, at Octave Body 1.0, not the 209 this pass was written with,

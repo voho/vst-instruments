@@ -232,10 +232,38 @@ applied to those modes alone, weighted by how much volume each one displaces.
 The result is that each axisymmetric mode splits in two: a **breathing** mode
 where both heads move outward together, lifted well above its uncoupled
 frequency by the air spring, and a volume-preserving mode that is left roughly
-where it was. On the default drum the pair lands at about 51 Hz and 88 Hz. The
+where it was. On the default drum the pair lands at about 51 Hz and 84 Hz. The
 breathing mode is also the one that radiates, because it is the one that changes
 the drum's volume — which is why a sealed taiko is heard higher than its
 membrane fundamental.
+
+The spring is a column and not an infinite one. *ρc²/L* is what a cavity is
+worth only while the wavelength runs away from the body, and this drum leaves
+that limit inside its own range: the body's first axial resonance is 212 Hz on
+the default drum and as low as 139 Hz at the deepest body. What each head
+actually drives is a rigidly terminated column of length *L/2* — the
+volume-changing motion is symmetric about the midplane, so that plane behaves
+like a wall — and its stiffness is *x cot x* times the lumped value, with
+*x = ωL/2c*. That is the same number at low frequency and less than it as the
+body gets deep against the wavelength: 0.87 on the default drum, 0.78 two
+octaves down, 0.69 two octaves down at full Body Depth. It has to be solved for
+rather than computed, because the stiffness depends on the frequency it sets, so
+the drum resolve converges on it once per drum and the audio never sees the
+iteration.
+
+Musically this is what stops the biggest drums being air springs with a hide
+attached. The breathing branch used to step 509 cents between the bottom two
+octaves of the keyboard — a fourth, where an octave was asked for — because the
+spring stiffened as *1/L* while the drum grew in every dimension at once. With
+the column it steps 582, and every octave above it widens too.
+
+Where the column passes its own quarter-wave the stiffness reaches zero and the
+two heads stop being tied together at all. Above that the air is mass-like
+rather than stiff, which is a real thing this model has nowhere to put, so the
+answer there is the one an open body already gets: one axisymmetric mode,
+reported twice. It takes a body shorter than a quarter of its head's own
+wavelength to reach — a 20 cm shell tuned to several kilohertz — and no taiko
+in the instrument's range is near it.
 
 Because the breathing mode is the one that radiates, it is also the one that
 empties first — on the default drum it is gone in about half a second while the
@@ -526,10 +554,12 @@ than merely higher.
 ### What is not modelled
 
 The room, the player's body, the stand, and the far head's own radiation into
-the space behind the drum. The enclosed air is a lumped spring rather than a
-column, which is exact only below the body's first axial resonance — 212 Hz on
-the factory drum, and between 139 and 451 Hz across Body Depth, so the
-assumption gives out inside the drum's own range.
+the space behind the drum. The enclosed air carries the stiffness of a finite
+column but not its mass or its own resonances: above the body's first axial
+resonance — 212 Hz on the factory drum, and between 139 and 451 Hz across Body
+Depth — the column is treated as absent rather than as the mass it becomes, and
+nothing anywhere associates a loss with the enclosed air, so Body Depth moves
+the pitch of the split and never the decay of either branch.
 
 Six constants are calibrated rather than derived, and each of them sets the
 *depth* of a term whose shape is computed: the overall level of radiation

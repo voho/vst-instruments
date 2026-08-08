@@ -96,6 +96,13 @@ struct EngineParameters
     // much amplified output is allowed to feed back into the strings. At 1 a
     // raised wheel lets a distorted tone self-resonate; at 0 CC1 does nothing.
     float resonanceDepth { 0.35f };
+    // Widest excursion the fretting-hand vibrato reaches at full channel
+    // pressure, mapped over the range a finger can actually cover: 10 cents
+    // at 0 is the narrow rock a player uses to keep a held note alive, and
+    // 110 cents at 1 is the semitone-wide arc of a rock vibrato leaned all
+    // the way in. The shipping default puts it at 40 cents, which is where
+    // the fixed excursion this control replaced sat.
+    float vibratoDepth { 0.30f };
 };
 
 // Per-string readout for the editor's fretboard display. It is produced on
@@ -670,6 +677,18 @@ private:
         float strokeAngleOffset { 0.0f };         // radians, on the attack's plane
         float strokeWidthScale { 1.0f };          // on the contact's duration
 
+        // The finger that is rocking this string. Two fingers of one hand are
+        // not one oscillator: each carries its own phase, its own rate and its
+        // own excursion, and the last two are redrawn every cycle from a
+        // stream this voice advances itself. All of it is seeded from the note
+        // counter, so identical MIDI still renders identical audio.
+        float vibratoPhase { 0.0f };        // 0..1, 0 is the finger at rest
+        float vibratoRateScale { 1.0f };    // this cycle's rate, relative
+        float vibratoDepthScale { 1.0f };   // this cycle's excursion, relative
+        float vibratoSemitones { 0.0f };    // what the pitch solve reads
+        std::uint32_t vibratoSeed { 0u };
+        std::uint32_t vibratoCycle { 0u };
+
         PolarisationLoop vertical {};
         PolarisationLoop horizontal {};
 
@@ -973,6 +992,8 @@ private:
     [[nodiscard]] float bodyConductanceAt(float frequencyHz) const noexcept;
     void startExcitation(Voice& voice, float velocity, bool legato) noexcept;
     void drawStrokeVariation(Voice& voice) noexcept;
+    void seedVibratoFinger(Voice& voice) noexcept;
+    void drawVibratoCycle(Voice& voice) noexcept;
     void startVoice(Voice& voice, int midiNote, float velocity,
                     PlayStyle playStyle, bool strokeIsUp,
                     int startDelaySamples) noexcept;
@@ -1024,22 +1045,29 @@ private:
     float appliedBendGlideSeconds_ { -1.0f };
     // The wheel position the sympathetic strings were last retuned to.
     float sympatheticAppliedBend_ { 0.0f };
-    // Fretting-hand vibrato from channel pressure. One hand, so one shared
-    // phase across every fingered string; upward-biased, so its minimum is the
-    // fretted pitch rather than its mean; and smoothed with an onset time
-    // constant, because a player lands the note before starting the vibrato.
-    // Its depth is deliberately expressed in equal semitones rather than
-    // through the per-string elastic compliance the wheel's bar uses: a bar
-    // stretches every string by the same length and each answers differently,
-    // while a finger is controlling a pitch and adjusts its own displacement
-    // to get it.
-    static constexpr float vibratoMaximumSemitones = 0.40f;
+    // Fretting-hand vibrato from channel pressure. One hand, but not one
+    // finger: the phase, the rate and the excursion live on the voice, and
+    // only the pressure and the onset are shared. Upward-biased, so its
+    // minimum is the fretted pitch rather than its mean, because a finger can
+    // only lengthen the string's path. Its depth is deliberately expressed in
+    // equal semitones rather than through the per-string elastic compliance
+    // the wheel's bar uses: a bar stretches every string by the same length
+    // and each answers differently, while a finger is controlling a pitch and
+    // adjusts its own displacement to get it.
+    static constexpr float vibratoMinimumSemitones = 0.10f;
+    static constexpr float vibratoMaximumSemitones = 1.10f;
+    // The pressure ramps at a bounded rate and is then shaped by smoothStep,
+    // so the hand accelerates from rest instead of leaving at its steepest -
+    // and stops the same way. The ramp is 258 ms long, which puts 90 % of the
+    // settled depth at 207 ms, where the one-pole this replaces put it
+    // (ln(10) times its 90 ms time constant): the change is one of shape, not
+    // of speed.
+    static constexpr float vibratoOnsetSeconds = 0.258f;
     float vibratoTarget_ { 0.0f };
     float vibratoAmount_ { 0.0f };
-    float vibratoOnsetCoefficient_ { 0.02f };
-    float vibratoPhase_ { 0.0f };
+    float vibratoRamp_ { 0.0f };
+    float vibratoOnsetIncrement_ { 0.002f };
     float vibratoPhaseIncrement_ { 0.0f };
-    float vibratoSemitones_ { 0.0f };
 
     // CC1 performance resonance and the acoustic feedback path it opens.
     float resonanceTarget_ { 0.0f };

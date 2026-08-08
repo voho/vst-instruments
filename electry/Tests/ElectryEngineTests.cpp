@@ -53,6 +53,7 @@ struct ElectryEngineTestAccess
         float excitationLoadScale { 0.0f };
         float excitationSlipScale { 0.0f };
         float loopDampingCoefficient { 0.0f };
+        float vibratoSemitones { 0.0f };
     };
 
     static VoiceSnapshot snapshot(const ElectryEngine& engine, int stringIndex)
@@ -92,7 +93,16 @@ struct ElectryEngineTestAccess
         result.excitationLoadScale = voice.excitationLoadScale;
         result.excitationSlipScale = voice.excitationSlipScale;
         result.loopDampingCoefficient = voice.vertical.loopDampingCoefficient;
+        result.vibratoSemitones = voice.vibratoSemitones;
         return result;
+    }
+
+    // The shared depth envelope the fretting hand's vibrato rides on, read
+    // straight off the engine so the onset's shape can be measured without
+    // the oscillation on top of it.
+    static float vibratoDepthEnvelope(const ElectryEngine& engine) noexcept
+    {
+        return engine.vibratoAmount_;
     }
 
     static bool channelsLinked(const ElectryEngine& engine) noexcept
@@ -3068,9 +3078,12 @@ void testFrettingHandVibrato()
            "the vibrato is centred on the fretted pitch rather than sharp of "
            "it (mean ratio " + std::to_string(mean) + ")");
 
-    // Its depth is the modelled one: a shorter delay by 2^(-cents/1200).
+    // Its depth is the modelled one: a shorter delay by 2^(-cents/1200). The
+    // upper bound admits the per-cycle excursion draw, which is bounded at
+    // +45% of the nominal 40 cents, so the deepest cycle in any window can
+    // reach 58; a tighter ceiling here would be asserting the draw away.
     const double depthCents = 1200.0 * std::log2(1.0 / lowest);
-    expect(depthCents > 25.0 && depthCents < 55.0,
+    expect(depthCents > 25.0 && depthCents < 60.0,
            "the vibrato depth is not the modelled 40 cents ("
                + std::to_string(depthCents) + " cents)");
 
@@ -3132,6 +3145,259 @@ void testFrettingHandVibrato()
     expect(std::abs(barCoupled - restingCoupled) > 1.0f,
            "the bar fixture did not bend the coupled string, so the "
            "comparison above proves nothing");
+}
+
+// A hand is not an LFO. Four things separate them and all four are read off
+// the engine's own vibrato offset rather than off a pitch estimate, because
+// the quantity under test is a modulation shape and any estimator would smear
+// it with the string's own tension relaxation.
+//
+// The shape: the pitch follows the square of the finger's displacement, so a
+// cycle spends 36.4% of itself above half its own peak where a raised cosine
+// spends exactly 50%. The scatter: the rate and the excursion are redrawn
+// every cycle, so neither repeats. The hand: two stopped strings are two
+// fingers and drift apart instead of moving in lockstep. And the onset: the
+// depth leaves rest with zero slope rather than at its steepest.
+void testVibratoIsAHandNotAnLfo()
+{
+    constexpr double sampleRate = 48000.0;
+    // The engine runs at twice the host rate below 96 kHz and its control
+    // block is 16 internal samples long, so eight host samples is exactly one
+    // control tick: every trace below is sampled on the grid the vibrato is
+    // computed on rather than interpolated off it.
+    constexpr int chunk = 8;
+    const double tick = static_cast<double>(chunk) / sampleRate;
+
+    const auto minimaOf = [] (const std::vector<double>& trace)
+    {
+        std::vector<int> minima;
+        for (std::size_t i = 1; i + 1 < trace.size(); ++i)
+            if (trace[i] <= trace[i - 1] && trace[i] < trace[i + 1])
+                minima.push_back(static_cast<int>(i));
+        return minima;
+    };
+
+    // One fingered string's vibrato offset in semitones, one reading per
+    // control tick, with the shared depth envelope alongside it.
+    const auto traceOf = [&] (float vibratoDepth, double seconds,
+                              std::vector<double>* envelope)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        parameters.vibratoDepth = vibratoDepth;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(47, 0.85f);
+        StereoBuffer scratch(chunk);
+        for (int at = 0; at < static_cast<int>(0.2 * sampleRate); at += chunk)
+            engine.process(scratch.left.data(), scratch.right.data(), chunk);
+        const int stringIndex = TestAccess::stringForNote(engine, 47);
+        expect(stringIndex >= 0 && TestAccess::snapshot(engine, stringIndex).fret > 0,
+               "the vibrato fixture is not on a stopped string");
+        engine.setVibrato(1.0f);
+
+        std::vector<double> trace;
+        const int steps = static_cast<int>(seconds * sampleRate) / chunk;
+        trace.reserve(static_cast<std::size_t>(steps));
+        for (int step = 0; step < steps; ++step)
+        {
+            engine.process(scratch.left.data(), scratch.right.data(), chunk);
+            trace.push_back(stringIndex >= 0
+                ? static_cast<double>(
+                      TestAccess::snapshot(engine, stringIndex).vibratoSemitones)
+                : 0.0);
+            if (envelope != nullptr)
+                envelope->push_back(TestAccess::vibratoDepthEnvelope(engine));
+        }
+        return trace;
+    };
+
+    // ---- one cycle's shape, and the scatter between cycles ---------------
+    const EngineParameters defaults;
+    const auto trace = traceOf(defaults.vibratoDepth, 8.0, nullptr);
+    const auto minima = minimaOf(trace);
+    expect(minima.size() >= 25,
+           "the vibrato fixture did not produce enough cycles to score ("
+               + std::to_string(minima.size()) + ")");
+
+    // The first six cycles are dropped: the depth envelope is still ramping
+    // through them, so their peaks measure the onset rather than the draw.
+    std::vector<double> periods, peakCents, aboveHalf;
+    for (std::size_t k = 6; k + 1 < minima.size(); ++k)
+    {
+        const int from = minima[k];
+        const int to = minima[k + 1];
+        double peak = 0.0;
+        for (int i = from; i <= to; ++i)
+            peak = std::max(peak, trace[static_cast<std::size_t>(i)]);
+        int above = 0;
+        for (int i = from; i < to; ++i)
+            if (trace[static_cast<std::size_t>(i)] > 0.5 * peak)
+                ++above;
+        periods.push_back((to - from) * tick);
+        peakCents.push_back(100.0 * peak);
+        aboveHalf.push_back(static_cast<double>(above) / (to - from));
+    }
+    expect(periods.size() >= 18,
+           "fewer than the eighteen settled cycles this test scores ("
+               + std::to_string(periods.size()) + ")");
+
+    const auto meanOf = [] (const std::vector<double>& values)
+    {
+        double sum = 0.0;
+        for (double value : values)
+            sum += value;
+        return sum / static_cast<double>(values.size());
+    };
+
+    const double periodMean = meanOf(periods);
+    double periodVariance = 0.0;
+    for (double period : periods)
+        periodVariance += (period - periodMean) * (period - periodMean);
+    const double periodDeviation =
+        std::sqrt(periodVariance / static_cast<double>(periods.size()));
+    expect(periodDeviation > 0.04 * periodMean,
+           "the vibrato rate repeats itself like an oscillator (period "
+           "deviation " + std::to_string(100.0 * periodDeviation / periodMean)
+               + "% of the mean)");
+
+    const double deepest = *std::max_element(peakCents.begin(), peakCents.end());
+    const double shallowest = *std::min_element(peakCents.begin(), peakCents.end());
+    expect(deepest - shallowest > 2.5,
+           "the vibrato reaches the same depth every cycle (spread "
+               + std::to_string(deepest - shallowest) + " cents)");
+
+    // The x^2 law is pinned from both sides. A raised cosine gives exactly
+    // 50%, its square 36.4%, and each cycle is scored against its own peak
+    // because the depth is redrawn every cycle.
+    const double halfFraction = meanOf(aboveHalf);
+    expect(halfFraction > 0.32 && halfFraction < 0.40,
+           "the vibrato is not following the square of the finger's "
+           "displacement (cycle spends " + std::to_string(halfFraction)
+               + " of itself above half its own peak)");
+
+    // ---- the Vibrato Depth control's range -------------------------------
+    const auto peakOf = [&] (float vibratoDepth)
+    {
+        const auto depthTrace = traceOf(vibratoDepth, 6.0, nullptr);
+        double peak = 0.0;
+        for (std::size_t i = depthTrace.size() / 3; i < depthTrace.size(); ++i)
+            peak = std::max(peak, depthTrace[i]);
+        return 100.0 * peak;
+    };
+    const double widest = peakOf(1.0f);
+    const double narrowest = peakOf(0.0f);
+    expect(widest >= 90.0,
+           "a fully open Vibrato Depth does not reach a rock vibrato's arc ("
+               + std::to_string(widest) + " cents)");
+    expect(narrowest <= 15.0,
+           "a closed Vibrato Depth is still a wide vibrato ("
+               + std::to_string(narrowest) + " cents)");
+
+    // ---- two fingered strings are two fingers ----------------------------
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(47, 0.85f);
+        engine.noteOn(52, 0.85f);
+        StereoBuffer scratch(chunk);
+        for (int at = 0; at < static_cast<int>(0.2 * sampleRate); at += chunk)
+            engine.process(scratch.left.data(), scratch.right.data(), chunk);
+        const int lower = TestAccess::stringForNote(engine, 47);
+        const int upper = TestAccess::stringForNote(engine, 52);
+        expect(lower >= 0 && upper >= 0 && lower != upper,
+               "the double stop did not land on two separate strings");
+        engine.setVibrato(1.0f);
+
+        std::vector<double> lowerTrace, upperTrace;
+        const int steps = static_cast<int>(6.0 * sampleRate) / chunk;
+        for (int step = 0; step < steps; ++step)
+        {
+            engine.process(scratch.left.data(), scratch.right.data(), chunk);
+            lowerTrace.push_back(static_cast<double>(
+                TestAccess::snapshot(engine, lower).vibratoSemitones));
+            upperTrace.push_back(static_cast<double>(
+                TestAccess::snapshot(engine, upper).vibratoSemitones));
+        }
+        const auto lowerMinima = minimaOf(lowerTrace);
+        const auto upperMinima = minimaOf(upperTrace);
+        expect(lowerMinima.size() >= 12 && upperMinima.size() >= 12,
+               "the double-stop fixture did not oscillate on both strings");
+
+        // For every settled cycle of the lower string, how far its rest point
+        // sits from the upper string's nearest rest point, as a fraction of a
+        // cycle. Scored on the mean rather than on every cycle: two
+        // independent fingers do occasionally pass through the same phase, and
+        // a floor under every cycle would assert that they never may.
+        std::vector<double> separation;
+        for (std::size_t k = 6; k + 1 < lowerMinima.size(); ++k)
+        {
+            const double period = lowerMinima[k + 1] - lowerMinima[k];
+            double nearest = 1.0e9;
+            for (int candidate : upperMinima)
+                nearest = std::min(nearest,
+                                   std::abs(static_cast<double>(candidate
+                                                                - lowerMinima[k])));
+            separation.push_back(nearest / period);
+        }
+        const double meanSeparation = meanOf(separation);
+        expect(meanSeparation >= 0.08,
+               "a double stop's two strings move as one finger (mean phase "
+               "separation " + std::to_string(meanSeparation) + " cycles)");
+    }
+
+    // ---- the onset leaves rest rather than jumping -----------------------
+    {
+        std::vector<double> envelope;
+        (void) traceOf(defaults.vibratoDepth, 1.5, &envelope);
+        expect(! envelope.empty(), "the onset fixture produced no envelope");
+        const double settled = envelope.back();
+        expect(settled > 0.9, "the vibrato never reached full depth");
+        std::size_t reached = envelope.size() - 1;
+        for (std::size_t i = 0; i < envelope.size(); ++i)
+            if (envelope[i] >= 0.9 * settled) { reached = i; break; }
+        // A scale-free measure, so it does not have to name an onset time: at
+        // a tenth of the way to 90% of settled depth, a one-pole is already
+        // 20.6% of the way there whatever its time constant, because it is
+        // steepest at t = 0. A smoothStep is still at rest.
+        const std::size_t early = static_cast<std::size_t>(
+            0.1 * static_cast<double>(reached + 1));
+        const double earlyFraction = envelope[early] / settled;
+        expect(earlyFraction <= 0.05,
+               "the vibrato's depth leaves rest at its steepest instead of "
+               "easing off it (" + std::to_string(100.0 * earlyFraction)
+                   + "% of settled at a tenth of the time to 90%)");
+    }
+
+    // ---- and none of it moves a note nobody is pressing -------------------
+    {
+        const auto render = [&] (bool touchControl)
+        {
+            ElectryEngine engine;
+            engine.prepare(sampleRate, 512);
+            EngineParameters parameters;
+            parameters.artifactAmount = 0.0f;
+            parameters.sympatheticAmount = 0.0f;
+            engine.setParameters(parameters);
+            engine.reset();
+            engine.noteOn(47, 0.85f);
+            if (touchControl)
+                engine.setVibrato(0.0f);
+            StereoBuffer buffer(static_cast<int>(0.6 * sampleRate));
+            renderInto(engine, buffer);
+            return buffer.left;
+        };
+        expect(render(false) == render(true),
+               "a silent pressure control is not a bit-exact no-op");
+    }
 }
 
 // A slide is a finger that stays down and travels: the sounding length moves
@@ -3776,6 +4042,7 @@ void testParameterSanitisation()
     hostile.palmMute = -7.0f;
     hostile.strumSpreadSeconds = std::numeric_limits<float>::infinity();
     hostile.resonanceDepth = std::numeric_limits<float>::quiet_NaN();
+    hostile.vibratoDepth = 12.0f;
     hostile.pickupSelector = static_cast<PickupSelector>(999);
     hostile.outputMode = static_cast<electry::OutputMode>(999);
     engine.setParameters(hostile);
@@ -6092,6 +6359,7 @@ int main()
     testPinchHarmonic();
     testSlideArticulation();
     testFrettingHandVibrato();
+    testVibratoIsAHandNotAnLfo();
     testDeadNote();
     testSustainPedal();
     testVibratoOnlyMovesFingeredStrings();

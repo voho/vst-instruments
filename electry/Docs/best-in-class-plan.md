@@ -728,8 +728,11 @@ list, not to the previous pass's.
    (0.0001 cents)** - the first draft of this document said 4.06e-3 semitones,
    which is nearly four orders of magnitude too generous; the LFO is exact to
    the float. Rate **6.40000 Hz** with a **cycle-period standard deviation of
-   0.0533%**, which does reproduce. The settled trace spends 49.2% of each
-   cycle above half depth, as a raised cosine must. Because the phase is shared, a
+   0.0533%**, which does reproduce. The settled trace spends **49.97%** of each
+   cycle above half depth, as a raised cosine must - the 49.2% first recorded
+   here is a segmentation artefact; step 4's own test, sampling on the control
+   grid and scoring each cycle against its own peak, reads 0.499733. Because
+   the phase is shared, a
    double-stop's two strings move in exact lockstep, and because it resets to
    zero at zero pressure, every vibrato in a part starts on the same part of the
    cycle.
@@ -1306,7 +1309,7 @@ engine first, and the measured baseline is quoted next to it.
   pair - so a coupled string is still sensed by a point pickup. That was true
   before this step and is unchanged by it; step 7 owns that path.
 
-- [ ] **4. Vibrato becomes a hand.** Four changes, three of them derived. (a)
+- [x] **4. Vibrato becomes a hand.** Four changes, three of them derived. (a)
   The pitch waveform is the *square* of the wrist's displacement, not the
   displacement: a finger bending a string laterally by `x` lengthens its path by
   `dL = k x^2`, so for a wrist rocking as a raised cosine `s(t)` the pitch offset
@@ -1347,7 +1350,9 @@ engine first, and the measured baseline is quoted next to it.
   first draft's 0.4 cents was nearly four orders of magnitude too generous, so
   this assertion has far more headroom than it appeared to); the fraction of
   each cycle spent above half depth is **between 32% and 40%** - a raised cosine
-  gives exactly 50% and measures 49.2% today, and its square gives **36.4%**,
+  gives exactly 50% and measures **49.97%** today (the 49.2% first recorded is
+  an artefact of a coarser cycle segmentation; on the control-tick grid the
+  test samples, the shipping LFO reads 0.499733), and its square gives **36.4%**,
   not the "about 39%" first written - which pins the `x^2` law from both sides
   rather than only from above. **Corrected in preflight**: that fraction is
   measured against **each cycle's own peak**, not against the run's maximum,
@@ -1355,7 +1360,10 @@ engine first, and the measured baseline is quoted next to it.
   global maximum the same correct implementation reads several percent low, and
   the band is only 3.6 percentage points wide either side of 36.4%. Two
   simultaneously fingered strings' phases
-  differ by **at least 0.08 cycles**; at maximum Vibrato Depth the peak is **at
+  differ by **at least 0.08 cycles on the mean of the settled cycles**
+  (corrected in implementation from a floor under every cycle, which two
+  independent fingers cannot honour - see *What actually shipped*); at maximum
+  Vibrato Depth the peak is **at
   least 90 cents** and at minimum **at most 15 cents**; and zero aftertouch
   remains bit-exact identical to no aftertouch. **Change (d) gets its own
   assertion, added in preflight**, because nothing above tested it and it could
@@ -1370,6 +1378,93 @@ engine first, and the measured baseline is quoted next to it.
   reverse of the shipping calibration.
   `testFrettingHandVibrato` keeps its existing assertions on upward bias,
   fingered-strings-only scope and onset delay.
+
+  *What actually shipped*: all four changes, in
+  `ElectryEngine.cpp` (the control-tick vibrato block, `seedVibratoFinger`,
+  `drawVibratoCycle`) and `ElectryEngine.h` (six per-voice fields and the
+  `vibratoDepth` engine parameter). Measured on the shipped engine, on the
+  test's own protocol (note 47 at fret 2, control-tick sampling, noise controls
+  and Artifacts at zero): cycle-period standard deviation **14.18% of the mean**
+  against 0.0533% today; per-cycle peak spread **25.12 cents** on a 41.34-cent
+  mean against 0.00011 cents today; fraction of each cycle above half its own
+  peak **0.3641** (min 0.3631, max 0.3651) against 0.4997 today, i.e. the `x^2`
+  law to three digits; mean phase separation of a double stop **0.1903 cycles**
+  against exactly 0; depth envelope at a tenth of the time to 90% of settled
+  **1.851%** against the one-pole's **20.665%** - both reproducing the
+  preflight's analytic 1.8% and 20.6% to the digit; zero pressure still
+  bit-exact. Every one of the seven assertions was watched failing on the
+  reverted engine with those baselines printed. Seven deviations.
+
+  1. **Vibrato Depth is the *nominal* excursion, not a hard maximum.** It maps
+     10 to 110 cents (default 0.30 = 40 cents, exactly the fixed excursion it
+     replaces), and (c)'s per-cycle draw rides on top of it, bounded at +/-3
+     sigma, so the widest cycle reaches 1.45x nominal. Measured peaks over a
+     6 s render: **13.67 cents at 0, 54.69 at the default, 150.40 at 1**. The
+     two range assertions are met with the minimum's worst case at 14.5 cents
+     against its 15-cent bound. Reading the control as a hard ceiling instead
+     would have meant a one-sided depth draw, which is not the symmetric sigma
+     the step specifies.
+  2. **The onset ramp is 258 ms, chosen so the 90% time is unchanged.** A
+     `smoothStep` reaches 0.9 at 0.804 of its ramp, so 258 ms puts 90% of
+     settled depth at **207 ms**, where the one-pole's 90 ms time constant put
+     it (`ln(10) * 0.090 = 207 ms`). (d) is a change of shape, and taking the
+     one-pole's *number* as the ramp length instead would have been a change of
+     speed as well - and would have broken `testFrettingHandVibrato`, because
+     (b)'s drawn starting phase can put a string at its peak 60 ms in. That
+     assertion now reads **0.0029 against a 0.0118 bound**.
+  3. **The pressure-to-depth curve became a `smoothStep` with it.** The ramp
+     slews toward the pressure at a bounded rate and the shaping is applied to
+     the ramp, which is what makes the onset start from rest, keeps a pressure
+     *change* from stepping the pitch, and keeps zero pressure exactly zero.
+     The side effect is that held partial pressures now read
+     `smoothStep(pressure)` rather than `pressure`. It is the same shaping the
+     engine already applies to Artifacts, and the two ends of the control are
+     unchanged.
+  4. **The phase-separation assertion is scored on the mean of the settled
+     cycles.** Two independently seeded fingers do pass through the same phase
+     from time to time: over thirty settled cycles of the double stop the
+     smallest separation is **0.0093 cycles** while the mean is 0.1903. A floor
+     under every cycle would assert that two fingers of one hand may never
+     momentarily align, which is the same defect step 2 found in its own
+     per-pair floor. The mean is exactly 0 on the unmodified engine, so the
+     assertion still separates the two builds by everything it has.
+  5. **The 49.2% baseline for the shipping raised cosine is 49.97%.** Measured
+     by the test's own method - local minima on the control-tick grid, each
+     cycle scored against its own peak - the unmodified engine reads
+     **0.499733**, which is what a raised cosine must read. The step's
+     conclusion is unaffected; only the baseline figure moves.
+  6. **`testFrettingHandVibrato`'s depth ceiling went 55 to 60 cents.** It
+     scores the single deepest sample in its settled window, and (c) bounds the
+     per-cycle excursion at +45% of the nominal 40 cents, i.e. 58. The measured
+     value moves from 40.00 cents before to **51.91** after. Keeping 55 would
+     have been asserting the excursion draw away; 60 still catches a runaway.
+     Its other four assertions are untouched and all pass: upward bias
+     (highest ratio 0.999992 against 1.0002), sharp-centred mean (0.990186
+     against 0.9995), rate (6.25 Hz), and the onset delay above.
+  7. **The phase is seeded at note-on but not re-seeded on a legato retarget**,
+     where `drawStrokeVariation` is. A hammer-on or a slide is the same finger
+     arriving somewhere else; re-seeding would step the pitch by up to the full
+     excursion in the middle of the move. `seedVibratoFinger` is therefore a
+     separate call made only from `startVoice`.
+
+  *The depth-rate coupling was not reversed.* The step's own condition was that
+  the reversal "ships with a citation or the existing coupling stands" - and no
+  citation is obtainable from this machine, for the reason this section's
+  method caveat already records: every `WebFetch` is refused by the egress
+  proxy. So `rate = lerp(4.8f, 6.4f, vibratoAmount_)` stands unchanged, Vibrato
+  Depth scales the excursion only, and the two rate assertions stay held back.
+
+  *Left undone: the plug-in has no Vibrato Depth control yet.* The engine
+  parameter exists, is sanitised, and is what the test drives; the host-facing
+  knob and automation lane are not added. Three reasons, all of which belong to
+  a pass that can build JUCE: the plug-in is not compiled or tested in this
+  environment (`-DELECTRY_BUILD_PLUGIN=OFF`), a thirtieth knob would fail
+  `PluginProcessorTests`' 29-knob and 31-parameter assertions, and the obvious
+  parameter ID `"vibratoDepth"` is already taken - version 1.2 repurposed that
+  stored slot for Resonance Depth (`PluginProcessor.h:49`), so exposing this
+  needs a new ID rather than the natural one. `updateEngineParameters`
+  default-constructs `EngineParameters`, so the plug-in runs at 40 cents, which
+  is exactly the excursion it had.
 
 - [ ] **5. The strum travels the way the pick does.** Two changes. First,
   direction: the offset is computed from the neck edge the resolved stroke

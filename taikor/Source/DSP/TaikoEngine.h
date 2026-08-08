@@ -255,6 +255,16 @@ public:
         // the order of 10^-3, which stretches the top of the resolved bank by
         // well over a semitone.
         float headStiffnessParameter { 0.0f };
+        // The enclosed air's stiffness as a fraction of the lumped rho c^2 / L
+        // an infinite spring would give. A drum's cavity is a column of finite
+        // length, and its exact input stiffness is x cot x times the lumped
+        // value with x = omega L / 2c - one only as the wavelength runs away
+        // from the body, and falling towards zero as the half column
+        // approaches its quarter-wave resonance, where it stops tying the two
+        // heads together at all. It is reported because it is solved for: the
+        // frequency it is evaluated at is the frequency it sets, so the drum
+        // resolve converges on it rather than computing it.
+        float cavityStiffnessFactor { 1.0f };
     };
 
     [[nodiscard]] DrumMeasurements measureDrum (int octaveOffset) const noexcept;
@@ -669,7 +679,14 @@ private:
         float edgeLoss { 0.6f };
         // Cavity stiffness per unit area, before the per-mode 4/lambda^2
         // volume-efficiency weighting. Zero on an uncoupled (open) body.
+        // This is the finite-column stiffness: the lumped rho c^2 / L already
+        // multiplied by cavityColumnFactor below.
         float cavityStiffness { 0.0f };
+        // How much of the lumped air spring the finite column actually
+        // presents at the frequency the drum settles on, x cot x with
+        // x = omega L / 2c. One at the low-frequency limit and falling as the
+        // body gets deep against the wavelength. See resolveDrumFor.
+        float cavityColumnFactor { 1.0f };
         float radiationScale { 0.10f };
         // Close-pair geometry, resolved once so every stroke places the mics
         // identically. Radius is in metres; angles are in radians.
@@ -774,6 +791,15 @@ private:
                                          float offDiagonal, int branch,
                                          float& eigenvalue, float& vectorB,
                                          float& vectorR) noexcept;
+    // x cot x, the exact reactive input stiffness of a rigidly terminated air
+    // column relative to its own low-frequency limit, with x = omega l / c.
+    // See resolveDrumFor for why it is floored at the quarter-wave.
+    [[nodiscard]] static float columnStiffnessFactor (float x) noexcept;
+    // The angular frequency of the volume-changing branch of the (0,1) pair for
+    // a given cavity stiffness. The cavity correction is solved against this
+    // branch because it is the only one the enclosed air stiffens.
+    [[nodiscard]] static float volumeBranchOmega (const DrumState& drum,
+                                                  float cavityStiffness) noexcept;
     [[nodiscard]] static std::uint32_t hash32 (std::uint32_t value) noexcept;
     [[nodiscard]] static float signedUnitFromHash (std::uint32_t value) noexcept;
     [[nodiscard]] static float nextNoise (std::uint32_t& state) noexcept;

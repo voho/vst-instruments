@@ -634,6 +634,77 @@ void TaikoEngine::solveAxisymmetricBranch (float diagonalB, float diagonalR,
     vectorR = isBatter ? 0.0f : 1.0f;
 }
 
+float TaikoEngine::columnStiffnessFactor (float x) noexcept
+{
+    // A rigidly terminated column of air driven at one end presents the
+    // stiffness rho c omega cot(omega l / c) per unit area, which is
+    // (rho c^2 / l) * x cot x with x = omega l / c. The x -> 0 limit of that
+    // is the lumped spring the model used to be, so this factor is exactly one
+    // where the cavity is short against the wavelength and falls away as the
+    // body gets deep against it. The caller supplies l: for a two-headed drum
+    // it is half the body, because the volume-changing motion is symmetric
+    // about the midplane and that plane is a velocity node.
+    constexpr float quarterWave = 0.5f * piFloat;
+
+    if (! (x > 0.0f))
+        return 1.0f;
+
+    // At the quarter-wave the column is resonant and its input stiffness is
+    // zero: the head sees a pressure release and the air stops tying the two
+    // heads together. Above it cot goes negative, which is a real thing - the
+    // air is mass-like there - but it is a mass this model has nowhere to put,
+    // because the enclosed air is a stiffness and not a degree of freedom, and
+    // past the second pole at x = pi the expression turns positive again on a
+    // branch that means something else entirely. So the correction is taken
+    // over the one branch on which a lumped stiffness has a meaning, and above
+    // it the answer is the one the engine already knows how to report: an
+    // uncoupled pair of heads, which is what measure() describes at Air
+    // Coupling zero. The truncation is continuous, because x cot x reaches
+    // zero at the quarter-wave rather than jumping to it.
+    if (x >= quarterWave)
+        return 0.0f;
+
+    return x * std::cos (x) / std::sin (x);
+}
+
+float TaikoEngine::volumeBranchOmega (const DrumState& drum,
+                                       float cavityStiffness) noexcept
+{
+    // The (0,1) pair, built exactly as measure() and buildVoiceModes build it:
+    // no stiffness stretch, because the stretch is normalised at this mode, and
+    // the air load's shape factor is one here for the same reason.
+    const auto lambda = static_cast<float> (membraneModes()[0].besselZero);
+
+    const float idealBatter =
+        drum.waveSpeed * lambda / (2.0f * piFloat * drum.radius);
+    const float idealResonant =
+        drum.resonantWaveSpeed * lambda / (2.0f * piFloat * drum.radius);
+    const float loadBatter = 1.0f / std::sqrt (
+        1.0f + 0.85f * airDensity * drum.radius / drum.batterDensity);
+    const float loadResonant = 1.0f / std::sqrt (
+        1.0f + 0.85f * airDensity * drum.radius / drum.resonantDensity);
+
+    const float omegaBatter = 2.0f * piFloat * idealBatter * loadBatter;
+    const float omegaResonant = 2.0f * piFloat * idealResonant * loadResonant;
+
+    const float cavity = cavityStiffness * 4.0f / (lambda * lambda);
+    const float diagonalB = omegaBatter * omegaBatter + cavity / drum.batterDensity;
+    const float diagonalR = omegaResonant * omegaResonant + cavity / drum.resonantDensity;
+    const float offDiagonal =
+        cavity / std::sqrt (drum.batterDensity * drum.resonantDensity);
+
+    float eigenvalue = 0.0f;
+    float vectorB = 0.0f;
+    float vectorR = 0.0f;
+    // Branch zero is the higher eigenvalue, and with a positive off-diagonal
+    // its eigenvector has both heads moving the same way in the symmetrised
+    // coordinates - that is the branch that changes the body's volume, and it
+    // is the only one the enclosed air stiffens.
+    solveAxisymmetricBranch (diagonalB, diagonalR, offDiagonal, 0, eigenvalue,
+                             vectorB, vectorR);
+    return eigenvalue > 0.0f ? std::sqrt (eigenvalue) : 0.0f;
+}
+
 std::uint32_t TaikoEngine::hash32 (std::uint32_t value) noexcept
 {
     value ^= value >> 16;
@@ -1051,8 +1122,81 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
 
     // Cavity stiffness per unit area. The per-mode 4/lambda^2 volume weighting
     // is applied where the modes are built, since it belongs to the mode.
-    drum.cavityStiffness = applied.cavityCoupling * airDensity * soundSpeed
-                         * soundSpeed / drum.depth;
+    //
+    // rho c^2 / L is the omega -> 0 limit of a cavity, and this instrument runs
+    // out of that limit inside its own range: c/2L is 212 Hz on the factory
+    // drum and 139 Hz at the deepest body, which is well under the top of the
+    // resolved bank. The enclosed air is really a column, and the volume
+    // changing motion of a two-headed drum is symmetric about the midplane, so
+    // that plane is a velocity node and each head drives a rigidly terminated
+    // column of length L/2. Its exact input stiffness is the lumped value times
+    // x cot x with x = omega L / 2c.
+    //
+    // That makes the eigenproblem implicit: the stiffness depends on the
+    // frequency it sets. It is solved here, once per drum, and never in the
+    // render loop, which sees only the converged number.
+    //
+    // The map from the factor to the factor the branch it produces asks for is
+    // monotone decreasing - a stiffer cavity raises the branch, which raises x,
+    // which lowers the stiffness - and it lands in [0, 1]. So it has exactly
+    // one fixed point, it is bracketed by the endpoints, and it is why the
+    // correction is self-limiting rather than runaway: lowering the frequency
+    // lowers x, which brings the factor back up.
+    //
+    // It is solved by bisection on that bracket rather than by relaxing the
+    // iteration towards it, which was the first thing tried. Damped iteration
+    // converges over most of the controls and does not converge everywhere: the
+    // map's slope reaches about -100 where the cavity dominates the branch and
+    // the factor is small, because omega then goes as the square root of the
+    // factor while x cot x is falling steeply towards the quarter-wave, and no
+    // fixed relaxation is stable against that. Over the full control scan a
+    // half-damped iteration failed to settle in 0.4 % of configurations and
+    // stopped wherever its iteration cap left it, which would have made the
+    // reported factor a number about the solver. Bisection on a monotone
+    // bracket cannot do that, and it converges in a fixed count.
+    const float lumpedCavity = applied.cavityCoupling * airDensity * soundSpeed
+                             * soundSpeed / drum.depth;
+
+    {
+        const auto asked = [&drum, lumpedCavity] (float factor)
+        {
+            const float omega = volumeBranchOmega (drum, lumpedCavity * factor);
+            return columnStiffnessFactor (omega * drum.depth / (2.0f * soundSpeed));
+        };
+
+        // Zero unless the bracket opens, which is the case where even an
+        // unstiffened head already sits past the column's quarter-wave: there
+        // is then no frequency at which this cavity stiffens this drum at all,
+        // and the honest answer is the decoupled pair the readout already
+        // describes at Air Coupling zero.
+        float factor = 0.0f;
+
+        if (asked (0.0f) > 0.0f)
+        {
+            // Twenty-four halvings takes a unit bracket to six parts in a
+            // hundred million, which is where a float runs out either way, so
+            // the answer is a function of the drum rather than of the iteration
+            // count. It is also what this costs: the solve roughly doubles the
+            // time a drum resolve takes - 1.4 to 2.9 microseconds, measured -
+            // and a drum resolve happens when a control moves or the wheel
+            // passes a tenth of a cent, at most once per block, never per
+            // sample.
+            float low = 0.0f;
+            float high = 1.0f;
+
+            for (int iteration = 0; iteration < 24; ++iteration)
+            {
+                const float middle = 0.5f * (low + high);
+                (asked (middle) > middle ? low : high) = middle;
+            }
+
+            factor = 0.5f * (low + high);
+        }
+
+        drum.cavityColumnFactor = clampFloat (factor, 0.0f, 1.0f);
+    }
+
+    drum.cavityStiffness = lumpedCavity * drum.cavityColumnFactor;
 
     drum.radiationScale = radiationCalibration;
 
@@ -3260,6 +3404,7 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
     result.arealDensityKgPerSquareMetre = drum.batterDensity;
     result.waveSpeedMetresPerSecond = drum.waveSpeed;
     result.headStiffnessParameter = drum.stiffnessBatter;
+    result.cavityStiffnessFactor = drum.cavityColumnFactor;
     // No stiffness stretch on either of these: the stretch is taken relative to
     // the (0,1) mode and this is the (0,1) mode, so it is unity by
     // construction. That is the whole point of normalising it there - the pitch
