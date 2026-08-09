@@ -3,6 +3,18 @@
 #include <algorithm>
 #include <cmath>
 
+#if defined(YOUKNOW106_WORK_AUDIT)
+#include "../../Tools/OversamplingAuditSupport.h"
+
+#define YOUKNOW106_COUNT_DOMAIN_WORK(field, amount)                         \
+    do                                                                      \
+    {                                                                       \
+        if (auto* counters =                                                \
+                youknow106::oversampling_audit::activeDomainWorkCounters)   \
+            counters->field += (amount);                                    \
+    } while (false)
+#endif
+
 namespace youknow106
 {
 namespace
@@ -471,6 +483,9 @@ double Chorus::Line::deterministicBlepCorrection(
     // output is s[0] + delta * beta(age). Older past edges have the same sign.
     for (int index = 0; index < pastBlepEventCount; ++index)
     {
+#if defined(YOUKNOW106_WORK_AUDIT)
+        YOUKNOW106_COUNT_DOMAIN_WORK(blepPastCorrectionVisits, 1);
+#endif
         const auto& event = pastBlepEvents[static_cast<std::size_t>(index)];
         correction += static_cast<double>(event.jump)
                     * Chorus::bbdPolyBlepResidual(event.ageInSamples);
@@ -493,6 +508,9 @@ double Chorus::Line::deterministicBlepCorrection(
          event < maximumBlepEvents && distance < 2.0;
          ++event, distance += inverseIncrement)
     {
+#if defined(YOUKNOW106_WORK_AUDIT)
+        YOUKNOW106_COUNT_DOMAIN_WORK(blepFuturePredictionVisits, 1);
+#endif
         futureIndex = futureIndex + 1 < cellPairs ? futureIndex + 1 : 0;
         const float before = predictedTransferState;
         Chorus::transferLossStep(
@@ -528,6 +546,9 @@ float Chorus::Line::processClockedCore(float limitedInput, float clockHz,
     {
         clockPhase -= 1.0;
         ++shifts;
+#if defined(YOUKNOW106_WORK_AUDIT)
+        YOUKNOW106_COUNT_DOMAIN_WORK(bbdShifts, 1);
+#endif
 
         // The remaining phase is the time since this edge in clock cycles.
         // Dividing it by the increment gives exactly the Octave reference's
@@ -576,6 +597,9 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
                             const SupportChain& support,
                             float outputCouplingG, float noiseScale) noexcept
 {
+#if defined(YOUKNOW106_WORK_AUDIT)
+    YOUKNOW106_COUNT_DOMAIN_WORK(bbdLineFrames, 1);
+#endif
     // Band-limit ahead of the line. Everything above half the clock would fold,
     // exactly as it does in the part. The two Sallen-Key sections precede the
     // wet-only C44/C47 coupling high-pass; the passive 10 kOhm / 2.2 nF pole is
@@ -661,6 +685,9 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      float calibration,
                      bool useRateProportionalNoiseHypothesis) noexcept
 {
+#if defined(YOUKNOW106_WORK_AUDIT)
+    YOUKNOW106_COUNT_DOMAIN_WORK(chorusFrames, 1);
+#endif
     const auto target = settingsFor(mode);
 
     if (!primed_)
@@ -850,3 +877,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
 }
 
 } // namespace youknow106
+
+#if defined(YOUKNOW106_WORK_AUDIT)
+#undef YOUKNOW106_COUNT_DOMAIN_WORK
+#endif

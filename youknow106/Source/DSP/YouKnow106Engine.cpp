@@ -4,6 +4,18 @@
 #include <cmath>
 #include <limits>
 
+#if defined(YOUKNOW106_WORK_AUDIT)
+#include "../../Tools/OversamplingAuditSupport.h"
+
+#define YOUKNOW106_COUNT_DOMAIN_WORK(field, amount)                         \
+    do                                                                      \
+    {                                                                       \
+        if (auto* counters =                                                \
+                youknow106::oversampling_audit::activeDomainWorkCounters)   \
+            counters->field += (amount);                                    \
+    } while (false)
+#endif
+
 namespace youknow106
 {
 namespace
@@ -1775,12 +1787,18 @@ static inline void tanhPathAverage(float x1, float x0, float lnCoshAtX0,
     const float span = x1 - x0;
     if (std::abs(span) < 1.0e-3f)
     {
+#if defined(YOUKNOW106_WORK_AUDIT)
+        YOUKNOW106_COUNT_DOMAIN_WORK(vcfShortPathAverages, 1);
+#endif
         const float t =
             YouKnow106Engine::CascadeKernels::tanh(0.5f * (x1 + x0));
         average = t;
         slope = 0.5f * (1.0f - t * t);
         return;
     }
+#if defined(YOUKNOW106_WORK_AUDIT)
+    YOUKNOW106_COUNT_DOMAIN_WORK(vcfLongPathAverages, 1);
+#endif
     float tanhAtX1 = 0.0f;
     float lnCoshAtX1 = 0.0f;
     tanhAndLnCosh(x1, tanhAtX1, lnCoshAtX1);
@@ -1815,6 +1833,9 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
                                             bool enableEarlyEffect,
                                             float calibration) noexcept
 {
+#if defined(YOUKNOW106_WORK_AUDIT)
+    YOUKNOW106_COUNT_DOMAIN_WORK(vcfSteps, 1);
+#endif
     const float inverseHeadroom = 1.0f / std::max(headroom, 1.0e-5f);
     constexpr float feedbackHeadroom =
         VoicedResonanceCompatibilityProfile::loopHeadroomVolts;
@@ -1839,12 +1860,18 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
 
     for (int iteration = 0; iteration < maximumIterations; ++iteration)
     {
+#if defined(YOUKNOW106_WORK_AUDIT)
+        YOUKNOW106_COUNT_DOMAIN_WORK(vcfIterations, 1);
+#endif
         const float feedbackTanh =
             CascadeKernels::tanh(voltage[3] / feedbackHeadroom);
         const float feedbackSech2 = 1.0f - feedbackTanh * feedbackTanh;
         float previous = input - k * feedbackHeadroom * feedbackTanh;
         for (int n = 0; n < 4; ++n)
         {
+#if defined(YOUKNOW106_WORK_AUDIT)
+            YOUKNOW106_COUNT_DOMAIN_WORK(vcfStageEvaluations, 1);
+#endif
             const float earlyMod = (enableEarlyEffect && calibration > 0.0f)
                 ? (1.0f + otaEarlyEffectCoefficient * calibration
                        * CascadeKernels::tanh(
@@ -1877,6 +1904,9 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
         // the corner column, then combine. This is the rank-one correction that
         // closes the resonance loop without forming a 4x4 matrix.
         const auto solveBidiagonal = [&](const std::array<float, 4>& rhs) {
+#if defined(YOUKNOW106_WORK_AUDIT)
+            YOUKNOW106_COUNT_DOMAIN_WORK(vcfBidiagonalSolves, 1);
+#endif
             std::array<float, 4> x {};
             x[0] = rhs[0] / selfDerivative[0];
             for (int n = 1; n < 4; ++n)
@@ -1957,6 +1987,9 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
         if (!std::isfinite(state[static_cast<std::size_t>(n)])
             || !std::isfinite(driveMemory[static_cast<std::size_t>(n)]))
         {
+#if defined(YOUKNOW106_WORK_AUDIT)
+            YOUKNOW106_COUNT_DOMAIN_WORK(vcfRecoveries, 1);
+#endif
             state[static_cast<std::size_t>(n)] = 0.0f;
             voltage[static_cast<std::size_t>(n)] = 0.0f;
             driveMemory[static_cast<std::size_t>(n)] = 0.0f;
@@ -3452,6 +3485,9 @@ void YouKnow106Engine::performConverterWrite(
     const ConverterWrite& write, const EngineParameters& parameters,
     float lfoGated) noexcept
 {
+#if defined(YOUKNOW106_WORK_AUDIT)
+    YOUKNOW106_COUNT_DOMAIN_WORK(converterWrites, 1);
+#endif
     const auto converterFraction = [](float value) {
         return static_cast<float>(storedControlDacCode(value)) / 4064.0f;
     };
@@ -3527,6 +3563,9 @@ void YouKnow106Engine::performConverterWrite(
 void YouKnow106Engine::updateVoiceAudio(Voice& voice,
                                         const EngineParameters& parameters) noexcept
 {
+#if defined(YOUKNOW106_WORK_AUDIT)
+    YOUKNOW106_COUNT_DOMAIN_WORK(voiceAudioUpdates, 1);
+#endif
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
     const float tolerance = parameters.calibration;
 
@@ -3573,6 +3612,9 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     if (analogCounts != voice.cutoffChainCounts
         || voice.feedback != voice.cutoffChainFeedback)
     {
+#if defined(YOUKNOW106_WORK_AUDIT)
+        YOUKNOW106_COUNT_DOMAIN_WORK(cutoffMemoMisses, 1);
+#endif
         const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, voice.feedback);
         const float limited =
             std::min(cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
@@ -3580,6 +3622,12 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
         voice.cutoffChainCounts = analogCounts;
         voice.cutoffChainFeedback = voice.feedback;
     }
+#if defined(YOUKNOW106_WORK_AUDIT)
+    else
+    {
+        YOUKNOW106_COUNT_DOMAIN_WORK(cutoffMemoHits, 1);
+    }
+#endif
 
     voice.vca = VoiceVcaControlLaw::gain(voice.vcaControl)
               * (1.0f + card.vcaGainError * 0.03f * tolerance);
@@ -3592,6 +3640,9 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
 void YouKnow106Engine::updatePulseComparator(
     Voice& voice, const EngineParameters& parameters) noexcept
 {
+#if defined(YOUKNOW106_WORK_AUDIT)
+    YOUKNOW106_COUNT_DOMAIN_WORK(pulseComparatorUpdates, 1);
+#endif
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
     // The comparator compares the threshold against the ramp actually being
     // integrated, whose amplitude this cycle is the *frozen* per-cycle ratio
@@ -3684,6 +3735,9 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     if (!voice.active && voice.cardIndex >= hardwareVoices)
         return 0.0f;
 
+#if defined(YOUKNOW106_WORK_AUDIT)
+    YOUKNOW106_COUNT_DOMAIN_WORK(dcoFrames, 1);
+#endif
     auto& dco = voice.dco;
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
 
@@ -3790,6 +3844,9 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
                      samplesAgo(base + rise));
         if (insideThisSample(base + 1.0))
         {
+#if defined(YOUKNOW106_WORK_AUDIT)
+            YOUKNOW106_COUNT_DOMAIN_WORK(dcoCycleWraps, 1);
+#endif
             const float launchScale = dcoLaunchScale(voice);
             addSlope(dco.saw,
                      (slopeAtStart * launchScale
@@ -3886,6 +3943,9 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
             continue;
         addStep(dco.pulse, event.state - dco.pulseState,
                 static_cast<float>(1.0 - event.time));
+#if defined(YOUKNOW106_WORK_AUDIT)
+        YOUKNOW106_COUNT_DOMAIN_WORK(dcoComparatorTransitions, 1);
+#endif
         dco.pulseState = event.state;
     }
 
@@ -3905,6 +3965,9 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     if (comparatorAtEnd != dco.pulseState)
     {
         addStep(dco.pulse, comparatorAtEnd - dco.pulseState, 0.0f);
+#if defined(YOUKNOW106_WORK_AUDIT)
+        YOUKNOW106_COUNT_DOMAIN_WORK(dcoComparatorTransitions, 1);
+#endif
         dco.pulseState = comparatorAtEnd;
     }
     voice.previousPulseDuty = duty;
@@ -3933,6 +3996,9 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
             continue;
         const float target = -dco.subState;
         addStep(dco.sub, target - dco.subState, samplesAgo(base + rise));
+#if defined(YOUKNOW106_WORK_AUDIT)
+        YOUKNOW106_COUNT_DOMAIN_WORK(dcoSubTransitions, 1);
+#endif
         dco.subState = target;
     }
     const float subGain = subMixVolts * subCv_
@@ -4065,6 +4131,9 @@ void YouKnow106Engine::downsamplePair(HalfbandDecimator& decimator,
                                       float secondLeft, float secondRight,
                                       float& outputLeft, float& outputRight) noexcept
 {
+#if defined(YOUKNOW106_WORK_AUDIT)
+    YOUKNOW106_COUNT_DOMAIN_WORK(decimatorCalls, 1);
+#endif
     decimator.left[static_cast<std::size_t>(decimator.writeIndex)] = firstLeft;
     decimator.right[static_cast<std::size_t>(decimator.writeIndex)] = firstRight;
     decimator.writeIndex = (decimator.writeIndex + 1) & (halfbandRingSize - 1);
@@ -4080,6 +4149,10 @@ void YouKnow106Engine::downsamplePair(HalfbandDecimator& decimator,
         const float coefficient = halfbandKernel_[static_cast<std::size_t>(tap)];
         if (coefficient != 0.0f)
         {
+#if defined(YOUKNOW106_WORK_AUDIT)
+            YOUKNOW106_COUNT_DOMAIN_WORK(decimatorNonzeroTapVisits, 1);
+            YOUKNOW106_COUNT_DOMAIN_WORK(decimatorStereoMacs, 2);
+#endif
             sumLeft += coefficient * decimator.left[static_cast<std::size_t>(index)];
             sumRight += coefficient * decimator.right[static_cast<std::size_t>(index)];
         }
@@ -4169,6 +4242,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
+#if defined(YOUKNOW106_WORK_AUDIT)
+        YOUKNOW106_COUNT_DOMAIN_WORK(hostFrames, 1);
+#endif
         float outputLeft = 0.0f;
         float outputRight = 0.0f;
         bool sounding = false;
@@ -4180,6 +4256,10 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
         for (int step = 0; step < oversampling_; ++step)
         {
+#if defined(YOUKNOW106_WORK_AUDIT)
+            YOUKNOW106_COUNT_DOMAIN_WORK(internalFrames, 1);
+            YOUKNOW106_COUNT_DOMAIN_WORK(scanPolls, 1);
+#endif
             // One converter serves the whole instrument. The service chart
             // and the hash-matched B-2 code establish the complete ordinal
             // write order and show sequential activity across the pass. The
@@ -4188,6 +4268,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             bool converterPassCompleted = false;
             if (controlScanPhase_ >= 1.0)
             {
+#if defined(YOUKNOW106_WORK_AUDIT)
+                YOUKNOW106_COUNT_DOMAIN_WORK(converterPassStarts, 1);
+#endif
                 controlScanPhase_ -= 1.0;
                 nextConverterWrite_ = 0;
                 if (assignmentRescanPending_)
@@ -4209,6 +4292,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 {
                     auto& voice = voices_[static_cast<std::size_t>(slot)];
                     const double previousPeriod = voice.dco.periodSamples;
+#if defined(YOUKNOW106_WORK_AUDIT)
+                    YOUKNOW106_COUNT_DOMAIN_WORK(extensionScanUpdates, 1);
+#endif
                     updateVoiceScan(voice, parameters, converterPassLfoGated_);
                     if (voice.dcoResetPending)
                     {
@@ -4301,6 +4387,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             {
                 auto& voice = voices_[static_cast<std::size_t>(slot)];
 
+#if defined(YOUKNOW106_WORK_AUDIT)
+                YOUKNOW106_COUNT_DOMAIN_WORK(holdVoiceUpdates, 1);
+#endif
                 // Each hold capacitor's own slew turns the scan's staircase
                 // back into a continuous control voltage before it reaches
                 // its converter. The amplifier's hold is the slow one.
@@ -4505,3 +4594,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 }
 
 } // namespace youknow106
+
+#if defined(YOUKNOW106_WORK_AUDIT)
+#undef YOUKNOW106_COUNT_DOMAIN_WORK
+#endif

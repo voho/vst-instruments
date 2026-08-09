@@ -5912,8 +5912,10 @@ void testPanelHelpMatchesTheModulationRouting()
            "the panel still describes the removed raw-LFO PWM path");
 }
 
-// Cost of rendering `seconds` of a patch, as a multiple of realtime, taking
-// the fastest of three passes so one descheduled run cannot decide a fence.
+// Elapsed wall time for rendering `seconds` of a patch, as a multiple of
+// realtime, taking the fastest of three passes so one descheduled run cannot
+// decide this coarse runaway fence.  This is deliberately not labelled CPU
+// time; the reproducible work audit uses an uninstrumented thread-CPU clock.
 double realtimeCost(const EngineParameters& parameters, int notes,
                     double sampleRate, double seconds)
 {
@@ -5999,11 +6001,12 @@ void testQualityChangeRefreshesTheFilterCoefficient()
 
 void testResonanceDoesNotMultiplyTheSolveCost()
 {
-    // A ratio, not a time, because a wall-clock ceiling only says how fast the
-    // machine running the suite is. What this fences is a property of the
-    // solver: the implicit cascade must not cost several times more to run at
-    // high resonance than at low, which is what happens when its convergence
-    // test cannot be satisfied and every hot sample runs the iteration cap.
+    // A same-run wall-time ratio rather than an absolute duration reduces the
+    // machine dependence of this coarse fence. What this fences is a property
+    // of the solver: the implicit cascade must not cost several times more to
+    // run at high resonance than at low, which is what happens when its
+    // convergence test cannot be satisfied and every hot sample runs the
+    // iteration cap.
     //
     // Measured on one 2.8 GHz core at 48 kHz/HQ before the step test was
     // scaled to the volts it measures: 2.21, 2.24, 2.23. After: 1.31, 1.30,

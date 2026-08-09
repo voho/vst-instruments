@@ -205,6 +205,44 @@ if(YOUKNOW106_BUILD_TOOLS)
     target_compile_definitions(YouKnow106AuditFactoryPresets PRIVATE
         "YOUKNOW106_FACTORY_AUDIT_DEFAULT_OUTPUT=\"${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio/factory-presets\"")
 
+    # Oversampling research has two deliberately separate builds. The normal
+    # executable links the exact shipping DSP for uninstrumented CPU timing.
+    # The work executable links only the engine/chorus translation units built
+    # with semantic counters; the shipping library contains no counter branch.
+    add_executable(YouKnow106OversamplingAudit
+        Tools/AuditOversamplingDomains.cpp
+        Tools/OversamplingAuditSupport.h)
+    target_link_libraries(YouKnow106OversamplingAudit PRIVATE YouKnow106DSP)
+    target_include_directories(YouKnow106OversamplingAudit
+        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Tools")
+    target_compile_features(YouKnow106OversamplingAudit PRIVATE cxx_std_20)
+
+    add_library(YouKnow106DSPWorkAudit STATIC
+        Source/DSP/YouKnow106Engine.cpp
+        Source/DSP/YouKnow106Chorus.cpp
+        Source/DSP/YouKnow106Engine.h
+        Source/DSP/YouKnow106Chorus.h
+        Tools/OversamplingAuditSupport.h)
+    target_include_directories(YouKnow106DSPWorkAudit
+        PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Source"
+        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Tools")
+    target_compile_features(YouKnow106DSPWorkAudit PUBLIC cxx_std_20)
+    target_compile_definitions(YouKnow106DSPWorkAudit
+        PRIVATE YOUKNOW106_WORK_AUDIT=1)
+    set_target_properties(YouKnow106DSPWorkAudit PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+
+    add_executable(YouKnow106OversamplingWorkAudit
+        Tools/AuditOversamplingDomains.cpp
+        Tools/OversamplingAuditSupport.h)
+    target_link_libraries(YouKnow106OversamplingWorkAudit
+        PRIVATE YouKnow106DSPWorkAudit)
+    target_include_directories(YouKnow106OversamplingWorkAudit
+        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Tools")
+    target_compile_features(YouKnow106OversamplingWorkAudit PRIVATE cxx_std_20)
+    target_compile_definitions(YouKnow106OversamplingWorkAudit
+        PRIVATE YOUKNOW106_WORK_AUDIT=1)
+
     if(MSVC)
         target_compile_options(YouKnow106RenderDemos PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderSota PRIVATE /W4 /permissive-)
@@ -214,6 +252,12 @@ if(YOUKNOW106_BUILD_TOOLS)
             PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106AuditFactoryPresets PRIVATE
             /W4 /permissive-)
+        target_compile_options(YouKnow106OversamplingAudit
+            PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnow106DSPWorkAudit
+            PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnow106OversamplingWorkAudit
+            PRIVATE /W4 /permissive-)
     else()
         target_compile_options(YouKnow106RenderDemos PRIVATE
             -Wall -Wextra -Wpedantic)
@@ -226,6 +270,12 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106RenderRealismComparison PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106AuditFactoryPresets PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnow106OversamplingAudit PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnow106DSPWorkAudit PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnow106OversamplingWorkAudit PRIVATE
             -Wall -Wextra -Wpedantic)
     endif()
 endif()
@@ -280,6 +330,17 @@ if(BUILD_TESTING)
                          --self-test-baseline-contract)
         set_tests_properties(YouKnow106.RealismComparisonContract
                              PROPERTIES TIMEOUT 30)
+
+        # Wall-clock/CPU measurements are informational and intentionally not
+        # gated. CI checks deterministic work algebra and raw-float parity
+        # between the shipping and counter-instrumented builds instead.
+        add_test(NAME YouKnow106.OversamplingAuditContract
+                 COMMAND ${CMAKE_COMMAND}
+                         "-DNORMAL_AUDIT=$<TARGET_FILE:YouKnow106OversamplingAudit>"
+                         "-DWORK_AUDIT=$<TARGET_FILE:YouKnow106OversamplingWorkAudit>"
+                         -P "${CMAKE_CURRENT_SOURCE_DIR}/Tools/CheckOversamplingAudit.cmake")
+        set_tests_properties(YouKnow106.OversamplingAuditContract
+                             PROPERTIES TIMEOUT 300)
     endif()
     # The engine suite renders the complete factory-balance corpus, while the
     # circuit suite re-solves reference ODE models at high internal rates.
