@@ -837,9 +837,10 @@ and this is the tell that survives every other fidelity gain. Audibility: clear.
    inside that bracket, not a derivation from it.
 
 *[Closed 2026-08-08 by step 4, inside that bracket and at its
-guaranteed-maximum end: the recovered A-weighted wet line is 0.19978 mVrms (I)
-and 0.20016 mVrms (II) and the idle floor moved with it, −63.44 → −77.83 dBFS
-at the pinned controls.]*
+guaranteed-maximum end. Those step-4 figures are retained as dated evidence.
+Step 9 remeasures the changed exact output chain at 0.200059/0.200078 mVrms
+(I/II) at 176.4 kHz and 0.200006/0.200020 at 192 kHz, after dividing out the
+separate mode factor; the cross-HQ spread is below 0.004 dB.]*
 
 **Gap 4 — LFO DELAY gates the DCO and VCF modulation but not PWM.**
 `Source/DSP/YouKnow106Engine.cpp:3214-3226` (`performConverterWrite`,
@@ -1750,7 +1751,7 @@ Restored, the full run is green: 6/6, 224.8 s.
   tolerance** [corrected on implementation, 2026-08-08]. Two things the contract
   above left unstated turn out to decide whether it can be met at all.
 
-  *It is rate dependent.* A coarser numerical grid folds more of the held noise
+  *It is rate dependent (dated Step-4 measurement).* A coarser numerical grid folds more of the held noise
   sequence back into the reconstruction band, so the recovered figure is not one
   number: the same measure reads **0.40338 at 192 kHz, 0.40795 at 96 kHz,
   0.42238 at 48 kHz and 0.42486 at 44.1 kHz** in transfer terms — so with HQ
@@ -1759,7 +1760,11 @@ Restored, the full run is green: 6/6, 224.8 s.
   therefore part of the measurand and not an incidental fixture choice. Across
   HQ the choice does not bite: `minimumHqProcessingRate` is 176400, so HQ
   targets 176.4 kHz from the 44.1 kHz host-rate family and 192 kHz from the
-  48 kHz family, and the two read 0.005 dB apart.
+  48 kHz family, and the two read 0.005 dB apart. Step 9 supersedes these
+  numerical-transfer values after replacing the output support integration:
+  HQ now spans only 0.200006–0.200078 mVrms (<0.004 dB), while HQ-off reads
+  +0.36…+0.38 dB at 44.1 kHz, +0.30…+0.31 at 48 kHz,
+  +0.06…+0.08 at 88.2 kHz and +0.05…+0.07 at 96 kHz.
 
   *A bound placed exactly on 0.200 mVrms is decided by the estimator, not by the
   constant.* This is a finite-window estimate of a random process's power and
@@ -1784,7 +1789,7 @@ Restored, the full run is green: 6/6, 224.8 s.
   requirement that the two deltas agree is new, and is what stops the second
   assertion from being satisfied by moving a gain somewhere else.
 
-  *What actually shipped.* The step, with the measurand pinned down as above.
+  *What actually shipped in Step 4.* The step, with the measurand pinned down as above.
   `independentLineRandomAmplitude` is no longer a literal: it is
   `mn3009OutputNoiseAWeightedVrms / (nodeVoltsPerUnit ·
   lineNoiseAWeightedTransfer)` = **1.90687e-4**, down 14.39 dB from the 1.0e-3
@@ -1795,13 +1800,16 @@ Restored, the full run is green: 6/6, 224.8 s.
   amplitude the line writes at each clock edge needs the whole chain from the
   injection point — hold, tap-summing pole, both reconstruction sections, wet
   output coupling — under the datasheet's own A weighting. That transfer is
-  **0.4034**, which is 1/√3 (a uniform sequence's own RMS) times 0.6987, and the
+  **0.4034**, which was 1/√3 (a uniform sequence's own RMS) times 0.6987, and the
   second factor is dominated by the hold: at the sweep's 20.0–91.4 kHz clock the
   held sequence's sinc-shaped density puts roughly half its power inside the
   10 kHz reconstruction band. It is a measured property of this model's own
   linear filters, not a fit to any recording, and the assertion re-measures it
   from the render, so a change to the reconstruction sections that left it stale
-  would fail.
+  would fail. Step 9 exercises that fence: the current exact output transition
+  remeasures the factor as **0.4026 = 1/√3 × 0.6973** and therefore derives
+  `independentLineRandomAmplitude = 1.9106577e-4`; the part's 0.2 mVrms row,
+  node coordinate and stochastic law do not change.
 
   Both gap-3 figures reproduce: **1.0611 mVrms full band** to the digit, and
   **1.0488 mVrms A-weighted** against the gap's 1.047 — a 0.015 dB refinement
@@ -2211,14 +2219,18 @@ name are real and a later pass will want the reasoning rather than the idea.
   6 below supplies the common-host 1×/2×/4× isolated-domain matrix against
   analytic DCO/scan, RK4 VCF and closed-form BBD references. Its dated DCO
   result blocked every tested factor; Step 7 subsequently clears those DCO
-  cells without changing the global selector. Step 8 then replaces only the
-  BBD's linear input-edge sampler with a causal current-plus-three-past
-  four-point Lagrange reconstruction. That moves the 4× BBD SGA submetric below
-  −60 dBc at both hosts, but every BBD cell still rejects overall on analytic
-  NRMS and, at 44.1 kHz/4×, wanted-image gain. Every VCF cell also still
-  rejects. Isolated submetric passes cannot qualify a split before the
-  remaining support-filter/grid error, inter-domain reconstruction,
-  whole-engine behavior and latency parity are measured.
+  cells without changing the global oversampling-factor selector. Step 8 then
+  replaces only the BBD's linear input-edge sampler with a causal current-plus-three-past
+  four-point Lagrange reconstruction. Step 9 then advances each complete
+  six-state support side as one exact continuous transition under that same
+  causal drive, with exact output at every rate and exact input at internal
+  rates ≥176.4 kHz. The common-host 4× cells and all six actual HQ selector
+  paths now pass every gate in the four-case low-drive deterministic-line
+  fixture; lower common-host factors remain
+  absolute REJECT and HQ-off passes only frozen Step-8 nonregression limits.
+  Every VCF cell still rejects. Isolated BBD admission cannot qualify a split
+  before inter-domain reconstruction, whole-engine behavior and latency parity
+  are measured.
 - **Note-on-to-first-sample latency — completed 2026-08-09.** Continuous-work
   step 3 measures and publishes the complete declared 48 kHz host/scan-phase
   distribution before any scheduler change. It became a step because making
@@ -2316,6 +2328,10 @@ profile. Steps 1, 5 and 6 changed no constant of any kind.
 | 4. MN3009 noise row | idle output floor at the pinned controls | −63.44 dBFS | **−77.83 dBFS** |
 | 5. Warm-up clock | modelled chassis at 900 s, Character 1.0 | frozen at 26.99 °C (HQ on), 31.51 °C (HQ off) | **34.481808 °C at every rate and quality** |
 | 6. Velocity into the VCF | rendered corner at velocity 0.2 / 0.5 / 1.0 | 1985.03 Hz at all three | **189.97 / 458.19 / 1985.03 Hz** |
+
+The Step-4 noise row is the dated result of that pass. Step 9's exact output
+transition subsequently re-derived the injection transfer and current HQ
+values; its checked record is appended at the end of this plan.
 
 Stated as behaviour rather than as numbers: RESONANCE is no longer a second
 CUTOFF slider; the voice amplifier no longer multiplies the filter's own DC, so
@@ -2936,3 +2952,116 @@ evidence about a physical JUNO-106.
   predates the current derived clock schedule, which renders 891,964 frames,
   and the tool correctly refuses to align them. The current common-host oracle,
   not that archived null, controls this step's numerical claim.
+- [x] **9. Replace the remaining BBD support-chain warping with a combined
+  continuous-state transition, without moving a physical constant.** Steps 1–8
+  above remain the dated history. The exact-transition formulation represents
+  each input or output side as one six-state physical network rather than a
+  sequence of separately warped TPT sections; production uses it for every
+  output grid and for input only at internal rates ≥176.4 kHz.
+  A prepare-only Higham Pade-13 scaling-and-squaring exponential builds a
+  10×10 augmented transition for the sample interval and for the declared
+  causal cubic through the current and three preceding samples. The audio loop
+  performs only the fixed state/drive multiply. It reads no future sample,
+  adds no lookahead and leaves the fixed 41-sample latency unchanged.
+
+  Output support uses the exact transition on every accepted grid. Input
+  support uses it at internal rates ≥176.4 kHz and retains Step 8's reviewed
+  TPT input path below; a full-exact low-grid candidate was rejected because it
+  worsened SGA. Muted and connected output loads are two prepared transitions
+  in the same physical coordinate system, so Off/on wet-mute switching changes
+  the matrix, not the meaning of state; I↔II remains connected. Dead output TPT
+  coefficients/carries are removed.
+  A guarded quality-rate rebuild still clears support and cubic histories under
+  zero gain while preserving BBD buckets, clocks and RNG. Exact support state is
+  a vector of physical voltages rather than timestep-embedded carries, but
+  preservation/reseeding has not been qualified and is not claimed.
+
+  The matrix construction agrees with an independent SciPy exponential within
+  1.78e-15 at the selected rates and 2.22e-15 across a 601-rate scan; DC
+  identities are within 2.22e-16. The maximum Padé denominator condition number
+  is 15.03, at most three squarings are required and the worst transition pole
+  radius is 0.999940816. Circuit coverage spans 8, 44.1, 48, 176.4, 192 and
+  768 kHz, the adjacent-float 176.4 kHz selector fence, exact DC/RK4 agreement,
+  muted/connected switching, hostile-input recovery and the deliberate reset.
+
+  This oracle covers four deterministic low-drive cases and exactly one
+  qualifying BGA line per cell; it is not nonlinear whole-line coverage. The
+  unchanged common-host absolute gates are analytic NRMS ≤−40 dB,
+  qualifying BGA error ≤0.75 dB and unmasked SGA <−60 dBc:
+
+  | Host | Factor | Analytic NRMS | BGA error | SGA | Result |
+  | ---: | ---: | ---: | ---: | ---: | --- |
+  | 44.1 kHz | 1× | −3.511 dB | 4.764 dB | −26.934 dBc | **REJECT** |
+  | 44.1 kHz | 2× | −18.390 dB | 0.070 dB | −41.304 dBc | **REJECT** |
+  | 44.1 kHz | 4× | **−53.442 dB** | **0.011 dB** | **−71.831 dBc** | **PASS** |
+  | 48 kHz | 1× | −5.263 dB | 3.406 dB | −30.746 dBc | **REJECT** |
+  | 48 kHz | 2× | −20.051 dB | 0.016 dB | −46.044 dBc | **REJECT** |
+  | 48 kHz | 4× | **−56.101 dB** | **0.008 dB** | **−65.381 dBc** | **PASS** |
+
+  The common-host q4 cells now pass in full; lower factors remain absolute
+  rejections. A second matrix follows the actual engine selector instead of
+  treating the two common hosts as the whole product:
+
+  | Shipping path | Analytic NRMS | BGA error | SGA | Admission |
+  | --- | ---: | ---: | ---: | --- |
+  | 44.1 kHz HQ, 4× | −53.442 dB | 0.011 dB | −71.831 dBc | **absolute PASS** |
+  | 48 kHz HQ, 4× | −56.101 dB | 0.008 dB | −65.381 dBc | **absolute PASS** |
+  | 88.2 kHz HQ, 2× | −50.700 dB | 0.011 dB | −71.832 dBc | **absolute PASS** |
+  | 96 kHz HQ, 2× | −51.863 dB | 0.008 dB | −65.382 dBc | **absolute PASS** |
+  | 176.4 kHz HQ, 1× | −53.481 dB | 0.011 dB | −71.832 dBc | **absolute PASS** |
+  | 192 kHz HQ, 1× | −56.079 dB | 0.008 dB | −65.381 dBc | **absolute PASS** |
+  | 44.1 kHz HQ-off, 1× | −3.511 dB | 4.764 dB | −26.934 dBc | Step-8 nonregression PASS |
+  | 48 kHz HQ-off, 1× | −5.263 dB | 3.406 dB | −30.746 dBc | Step-8 nonregression PASS |
+  | 88.2 kHz HQ-off, 1× | −18.390 dB | 0.071 dB | −41.304 dBc | Step-8 nonregression PASS |
+  | 96 kHz HQ-off, 1× | −20.051 dB | 0.016 dB | −46.044 dBc | Step-8 nonregression PASS |
+
+  The HQ-off limits were declared before inspection: at most +0.75 dB NRMS,
+  +0.25 dB BGA error and +1.5 dB SGA relative to frozen Step 8. Those four
+  results are compatibility passes, not absolute numerical admission. Thus the
+  bounded low-drive fixture passes on all six actual HQ paths and no lower rate
+  is relabelled or promoted. It is not a nonlinear whole-line qualification.
+
+  The exact output path changes its derived noise transfer, so the old 0.4034
+  factor is not carried forward. The current value is
+  **0.4026 = 1/√3 × 0.6973**, deriving
+  `independentLineRandomAmplitude = 1.9106577e-4` while keeping the MN3009
+  0.2 mVrms row, 2.6 V coordinate, RNG and mode-II factor unchanged. After
+  dividing out that separate factor, recovered I/II values are
+  0.200059/0.200078 mVrms at 176.4 kHz and
+  0.200006/0.200020 at 192 kHz, under 0.004 dB across HQ. HQ-off pairs are
+  0.208558/0.208917, 0.206982/0.207251, 0.201452/0.201763 and
+  0.201218/0.201584 mVrms at 44.1/48/88.2/96 kHz. Five PSD-band changes
+  versus Step 8 are within 0.147 dB and unweighted RMS within 0.070 dB.
+
+  The compile-time audit names the added work. Over 2,048 host frames and two
+  lines, 48 kHz HQ counts 16,384 exact input plus 16,384 exact output advances,
+  196,608 coordinate updates and 1,966,080 MACs; HQ-off counts 4,096 legacy
+  input frames plus 4,096 exact output advances, 24,576 updates and 245,760
+  MACs. The 2× exact path counts 8,192 advances on each side, 98,304 updates and
+  983,040 MACs; a high-rate exact 1× path counts 4,096 each, 49,152 and
+  491,520. Every exact advance is six coordinates/60 MACs, and normal/counter
+  builds remain raw-float identical.
+
+  A seven-run current M1 Max observation remains below realtime at 4×/1×:
+  0.578/0.167 idle, 0.547/0.178 plain, 0.719/0.205 resonant and
+  0.830/0.315 full-mixer Chorus II. The final 0.682667-second window's median
+  CPU times are 566.779/215.019 ms (MAD 1.735/3.640 ms). Alternating
+  Step-8/current runs were load/thermal sensitive, so no paired speedup or
+  regression is inferred; the hard CPU suite owns the gate.
+
+  Documentation artifacts were regenerated from the final DSP. Exactly wet
+  demos 01/02/06/07 changed; the other six remained byte-identical, and only
+  demo 01's displayed peak moved (−4.2/+1.2 to −4.3/+1.3 dB). All ten factory
+  previews changed under one common gain, 0.542974 → 0.543119 (−5.30 dB
+  rounded). All 128 factory rows remain finite; the summary is unchanged at
+  32 over-zero, zero silent and nine balance outliers, median −21.48 dBFS.
+  The largest peak delta is 0.027693 dB (B86), the largest gated-RMS delta
+  0.003771 dB (B27), and no classification changes.
+
+  **Verdict: the BBD support integration makes the four-case low-drive fixture
+  pass on all six shipping HQ paths, without pretending its independent
+  declared-model oracle is nonlinear whole-line or hardware truth.** OQ-01's
+  clock/delay trajectory, OQ-03's physical
+  noise mechanism, OQ-04's loaded MN3009/support response and OQ-20's wet-mute
+  switching remain explicitly open. No hardware constant, global oversampling-factor selector,
+  split-domain architecture or latency changes.

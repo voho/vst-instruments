@@ -1,10 +1,11 @@
-// Common-host VCF/BBD numerical-quality audit.
+// Common-host VCF/BBD and shipping-grid BBD numerical-quality audit.
 //
 // This executable deliberately does not expose a production quality control.
 // It drives the shipping private kernels through their existing friend seam,
 // reconstructs every candidate through the shipping decimator, and compares
-// 1x/2x/4x at the same 44.1/48 kHz host boundaries.  Four-times processing is
-// one candidate in the matrix, never the reference.
+// 1x/2x/4x at the same 44.1/48 kHz host boundaries.  A separate BBD-only
+// matrix covers every shipping HQ/HQ-off grid without multiplying VCF work.
+// Four-times processing is one candidate in the common matrix, never truth.
 
 #include "DSP/YouKnow106Chorus.h"
 #include "DSP/YouKnow106Engine.h"
@@ -12,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -38,6 +40,13 @@ struct YouKnow106TestAccess
     {
         int writeIndex {};
         double clockPhase {};
+    };
+
+    struct ProcessingRate
+    {
+        int factor {};
+        double internalRate {};
+        bool hqRequested {};
     };
 
     static constexpr float otaHeadroom() noexcept
@@ -109,7 +118,7 @@ struct YouKnow106TestAccess
     {
         return chorus.lineA_.process(
             input, clockHz, sampleRate, chorus.support_,
-            chorus.support_.wetOutputCouplingConnectedG, 0.0f);
+            chorus.support_.exactOutputConnected, 0.0f);
     }
 
     static constexpr double shippingDecimatorBoundaryDelayHostFrames(
@@ -127,6 +136,15 @@ struct YouKnow106TestAccess
     static BbdState bbdState(const Chorus& chorus) noexcept
     {
         return { chorus.lineA_.writeIndex, chorus.lineA_.clockPhase };
+    }
+
+    static ProcessingRate shippingProcessingRate(double hostRate,
+                                                  bool hqEnabled)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(hostRate, 1, hqEnabled);
+        return { engine.getOversamplingFactor(), engine.oversampledRate_,
+                 engine.isOversamplingEnabled() };
     }
 };
 } // namespace youknow106
@@ -985,13 +1003,49 @@ constexpr double bbdOraclePassbandHz = auditPassbandHz;
 constexpr int bbdMaximumImageOrder = 1024;
 constexpr std::size_t bbdWarmupHostFrames = 8192u;
 constexpr std::size_t bbdCaptureHostFrames = 4096u;
-constexpr std::size_t bbdMeasurementEndHostFrame =
-    bbdWarmupHostFrames + bbdCaptureHostFrames;
 constexpr std::size_t bbdRenderTailHostFrames = 256u;
-constexpr std::size_t bbdHostFrames =
-    bbdMeasurementEndHostFrame + bbdRenderTailHostFrames;
 
 static_assert(Chorus::cellPairs == 128);
+
+struct BbdAuditWindow
+{
+    double familyBaseRate {};
+    double lowToneHz {};
+    std::size_t warmupHostFrames {};
+    std::size_t captureHostFrames {};
+    std::size_t measurementEndHostFrame {};
+    std::size_t renderTailHostFrames {};
+    std::size_t hostFrames {};
+};
+
+BbdAuditWindow makeBbdAuditWindow(double hostRate, double familyBaseRate)
+{
+    if (!std::isfinite(hostRate) || !std::isfinite(familyBaseRate)
+        || hostRate <= 0.0 || familyBaseRate <= 0.0)
+        throw std::runtime_error("BBD audit timeline has an invalid rate");
+    const double ratio = hostRate / familyBaseRate;
+    const auto multiplier = static_cast<std::size_t>(std::llround(ratio));
+    if (multiplier == 0u
+        || std::abs(ratio - static_cast<double>(multiplier)) > 1.0e-12)
+        throw std::runtime_error(
+            "BBD shipping timeline is not an integer family multiple");
+
+    BbdAuditWindow window;
+    window.familyBaseRate = familyBaseRate;
+    window.lowToneHz = familyBaseRate * 137.0 / 4096.0;
+    window.warmupHostFrames = bbdWarmupHostFrames * multiplier;
+    window.captureHostFrames = bbdCaptureHostFrames * multiplier;
+    window.measurementEndHostFrame = window.warmupHostFrames
+                                   + window.captureHostFrames;
+    window.renderTailHostFrames = bbdRenderTailHostFrames * multiplier;
+    window.hostFrames = window.measurementEndHostFrame
+                      + window.renderTailHostFrames;
+    if ((window.captureHostFrames
+            & (window.captureHostFrames - 1u)) != 0u)
+        throw std::runtime_error(
+            "BBD shipping capture must remain a power of two");
+    return window;
+}
 
 std::complex<double> onePoleLowPass(double frequencyHz, double cutoffHz)
 {
@@ -1050,9 +1104,8 @@ struct BbdCaseDefinition
     bool highTone {};
 };
 
-std::array<BbdCaseDefinition, 4> bbdCases(double hostRate)
+std::array<BbdCaseDefinition, 4> bbdCases(double lowTone)
 {
-    const double lowTone = hostRate * 137.0 / 4096.0;
     return {{ { 20000.0f, lowTone, false },
               { 50000.0f, lowTone, false },
               { 128.0f / 0.0014f, lowTone, false },
@@ -1075,6 +1128,7 @@ struct BbdOracleCase
 struct BbdOracleCheck
 {
     double hostRate {};
+    std::size_t expectedCaptureHostFrames {};
     double linearizationRelativeBound {};
     double maximumProjectionGainErrorDb {};
     double worstOffMaskSpurDb { -300.0 };
@@ -1086,7 +1140,12 @@ struct BbdOracleCheck
     std::size_t validOffMaskBins {};
     std::size_t validOffMaskFfts {};
     std::size_t offMaskFftFrames {};
+    double filterPassbandRippleDb {};
+    double filterStopbandMaximumDb {};
+    double filterGridConvergenceDb {};
     bool everyImageTailTerminated { true };
+    bool independentFilterResponsePassed {};
+    bool independentFilterConvergencePassed {};
     bool independentFilterPassed {};
     bool allFinite { true };
 
@@ -1106,7 +1165,7 @@ struct BbdOracleCheck
             && validSyntheticProjections > 0u
             && validOffMaskBins > 0u
             && validOffMaskFfts == 4u
-            && offMaskFftFrames == bbdCaptureHostFrames
+            && offMaskFftFrames == expectedCaptureHostFrames
             && verifiedImageOrder == bbdMaximumImageOrder
             && everyImageTailTerminated
             && independentFilterPassed
@@ -1118,6 +1177,7 @@ struct BbdOracle
 {
     std::array<BbdOracleCase, 4> cases;
     BbdOracleCheck check;
+    BbdAuditWindow window;
 };
 
 std::complex<double> bbdImagePhasor(
@@ -1238,14 +1298,36 @@ std::pair<double, std::complex<double>> hostCanonicalPhasor(
 }
 
 BbdOracle buildBbdOracle(double hostRate,
-                         const quality::KaiserLowPass& filter)
+                         const quality::KaiserLowPass& filter,
+                         BbdAuditWindow window)
 {
     BbdOracle oracle;
+    oracle.window = window;
     oracle.check.hostRate = hostRate;
+    oracle.check.expectedCaptureHostFrames = window.captureHostFrames;
     oracle.check.verifiedImageOrder = bbdMaximumImageOrder;
-    oracle.check.independentFilterPassed =
-        quality::checkReferenceFilter(filter).passed();
-    const auto definitions = bbdCases(hostRate);
+    quality::ReferenceFilterRequirements filterRequirements;
+    // Keep the response-search spacing fixed in physical Hz along with the
+    // family capture.  A fixed point count at 96 kHz skipped a narrow,
+    // already -158 dB stop-band extremum on one of the nested grids and made
+    // a sound filter fail only because its host boundary doubled.
+    filterRequirements.coarseGridIntervals = 8192u
+        * static_cast<std::size_t>(std::llround(
+            hostRate / window.familyBaseRate));
+    const auto filterCheck = quality::checkReferenceFilter(
+        filter, filterRequirements);
+    oracle.check.filterPassbandRippleDb =
+        filterCheck.convergence.fine.passbandRippleDb;
+    oracle.check.filterStopbandMaximumDb =
+        filterCheck.convergence.fine.stopbandMaximumDb;
+    oracle.check.filterGridConvergenceDb =
+        filterCheck.convergence.maximumExtremumDeltaDb;
+    oracle.check.independentFilterResponsePassed =
+        filterCheck.responsePassed;
+    oracle.check.independentFilterConvergencePassed =
+        filterCheck.convergencePassed;
+    oracle.check.independentFilterPassed = filterCheck.passed();
+    const auto definitions = bbdCases(window.lowToneHz);
     for (std::size_t caseIndex = 0u;
          caseIndex < definitions.size(); ++caseIndex)
     {
@@ -1349,8 +1431,8 @@ BbdOracle buildBbdOracle(double hostRate,
         result.output.hostSampleRateHz = hostRate;
         result.output.decimationFactor = 1u;
         result.output.firstHostFrame = 0;
-        result.output.samples.resize(bbdHostFrames);
-        for (std::size_t frame = 0u; frame < bbdHostFrames; ++frame)
+        result.output.samples.resize(window.hostFrames);
+        for (std::size_t frame = 0u; frame < window.hostFrames; ++frame)
         {
             const double seconds = static_cast<double>(frame + 1u) / hostRate;
             double sample = 0.0;
@@ -1370,7 +1452,7 @@ BbdOracle buildBbdOracle(double hostRate,
 
         const long double elapsedEdges =
             static_cast<long double>(definition.clockHz)
-            * static_cast<long double>(bbdHostFrames)
+            * static_cast<long double>(window.hostFrames)
             / static_cast<long double>(hostRate);
         result.edgeCount = static_cast<std::uint64_t>(std::floor(elapsedEdges));
         result.writeIndex = static_cast<int>(
@@ -1379,8 +1461,8 @@ BbdOracle buildBbdOracle(double hostRate,
             elapsedEdges - std::floor(elapsedEdges));
 
         const auto capture = std::span<const double>(
-            result.output.samples.data() + bbdWarmupHostFrames,
-            bbdCaptureHostFrames);
+            result.output.samples.data() + window.warmupHostFrames,
+            window.captureHostFrames);
         std::vector<HostPhasorGroup> groups;
         std::vector<HostPhasorGroup> wantedGroups;
         for (int order : result.synthesizedImageOrders)
@@ -1425,7 +1507,7 @@ BbdOracle buildBbdOracle(double hostRate,
             const auto projection = quality::projectTone(
                 capture, hostRate, imageHz,
                 quality::ProjectionWindow::BlackmanHarris92Db,
-                static_cast<std::int64_t>(bbdWarmupHostFrames));
+                static_cast<std::int64_t>(window.warmupHostFrames));
             const double expected = std::abs(group.phasor);
             if (expected > 1.0e-8 * fundamentalAmplitude
                 && finiteProjection(projection)
@@ -1447,12 +1529,12 @@ BbdOracle buildBbdOracle(double hostRate,
         const auto oracleFundamental = quality::projectTone(
             capture, hostRate, definition.toneHz,
             quality::ProjectionWindow::BlackmanHarris92Db,
-            static_cast<std::int64_t>(bbdWarmupHostFrames));
+            static_cast<std::int64_t>(window.warmupHostFrames));
         const auto spectrum = blackmanHarrisSpectrum(capture, hostRate);
         const bool spectrumFinite = spectrum.allFinite
             && finiteProjection(oracleFundamental)
             && oracleFundamental.amplitude > 1.0e-10
-            && spectrum.frameCount == bbdCaptureHostFrames;
+            && spectrum.frameCount == window.captureHostFrames;
         oracle.check.allFinite = oracle.check.allFinite && spectrumFinite;
         if (spectrumFinite)
         {
@@ -1485,6 +1567,9 @@ BbdOracle buildBbdOracle(double hostRate,
 
 struct BbdMetrics
 {
+    static constexpr std::uint64_t rawFingerprintOffset =
+        UINT64_C(14695981039346656037);
+
     double worstAnalyticRelativeRms {};
     double highToneRelativeRms {};
     double worstPhysicalImageErrorDb {};
@@ -1498,21 +1583,27 @@ struct BbdMetrics
     std::size_t validSgaBins {};
     std::size_t validSgaFfts {};
     std::size_t sgaFftFrames {};
+    std::uint64_t rawInternalFingerprint { rawFingerprintOffset };
+    std::vector<std::uint32_t> rawInternalBits;
     bool edgeStateMatches { true };
     bool analyticOraclePassed {};
     bool allFinite { true };
     bool pass {};
 };
 
-BbdMetrics auditBbd(double hostRate, int factor, const BbdOracle& oracle)
+BbdMetrics auditBbd(double hostRate, int factor, const BbdOracle& oracle,
+                    bool retainRawInternalBits = false)
 {
     const float internalRate = static_cast<float>(hostRate * factor);
     const std::size_t internalFrames =
-        bbdHostFrames * static_cast<std::size_t>(factor);
+        oracle.window.hostFrames * static_cast<std::size_t>(factor);
     const double delay =
         YouKnow106TestAccess::shippingDecimatorBoundaryDelayHostFrames(factor);
 
     BbdMetrics metrics;
+    if (retainRawInternalBits)
+        metrics.rawInternalBits.reserve(
+            internalFrames * oracle.cases.size());
     metrics.appliedDelayHostFrames = delay;
     metrics.analyticOraclePassed = oracle.check.passed();
     for (const auto& reference : oracle.cases)
@@ -1529,6 +1620,21 @@ BbdMetrics auditBbd(double hostRate, int factor, const BbdOracle& oracle)
             actualInternal[index] = YouKnow106TestAccess::processBbdLine(
                 production, input, reference.definition.clockHz, internalRate);
         }
+        if (retainRawInternalBits)
+        {
+            for (float sample : actualInternal)
+            {
+                const auto bits = std::bit_cast<std::uint32_t>(sample);
+                metrics.rawInternalBits.push_back(bits);
+                for (unsigned int shift = 0u; shift < 32u; shift += 8u)
+                {
+                    metrics.rawInternalFingerprint ^=
+                        static_cast<std::uint8_t>(bits >> shift);
+                    metrics.rawInternalFingerprint *=
+                        UINT64_C(1099511628211);
+                }
+            }
+        }
 
         const auto boundary = YouKnow106TestAccess::decimate(
             actualInternal, factor);
@@ -1536,7 +1642,8 @@ BbdMetrics auditBbd(double hostRate, int factor, const BbdOracle& oracle)
             boundary, hostRate, delay);
         const auto interval = alignedInterval(
             reference.output, aligned,
-            bbdWarmupHostFrames, bbdMeasurementEndHostFrame);
+            oracle.window.warmupHostFrames,
+            oracle.window.measurementEndHostFrame);
         const auto comparison = quality::compareRms(
             interval.reference, interval.candidate);
         const bool caseFinite = allFiniteSamples(actualInternal)
@@ -1628,7 +1735,8 @@ BbdMetrics auditBbd(double hostRate, int factor, const BbdOracle& oracle)
             difference, hostRate);
         const bool spectrumFinite = residualSpectrum.allFinite
             && referenceFundamental.amplitude > 1.0e-10
-            && residualSpectrum.frameCount == bbdCaptureHostFrames;
+            && residualSpectrum.frameCount
+                   == oracle.window.captureHostFrames;
         metrics.allFinite = metrics.allFinite && spectrumFinite;
         if (spectrumFinite)
         {
@@ -1668,7 +1776,7 @@ BbdMetrics auditBbd(double hostRate, int factor, const BbdOracle& oracle)
         && metrics.validBgaLines > 0u
         && metrics.validSgaBins > 0u
         && metrics.validSgaFfts == oracle.cases.size()
-        && metrics.sgaFftFrames == bbdCaptureHostFrames
+        && metrics.sgaFftFrames == oracle.window.captureHostFrames
         && std::isfinite(metrics.minimumFundamentalAmplitude)
         && metrics.minimumFundamentalAmplitude > 1.0e-10
         && metrics.edgeStateMatches
@@ -1678,6 +1786,155 @@ BbdMetrics auditBbd(double hostRate, int factor, const BbdOracle& oracle)
         && metrics.worstPhysicalImageErrorDb <= bbdPhysicalImageGateDb
         && metrics.worstSgaDb < bbdSgaGateDb;
     return metrics;
+}
+
+struct ShippingBbdDefinition
+{
+    std::string_view label;
+    double hostRate {};
+    bool hqEnabled {};
+    int expectedFactor {};
+    double familyBaseRate {};
+    bool hasStep8Baseline {};
+    double step8NrmsDb {};
+    double step8BgaDb {};
+    double step8SgaDb {};
+};
+
+// These are the unique shipping configurations.  The three HQ rows in each
+// clock family share one internal grid, while HQ-off adds the lower-rate 1x
+// grids that users can actually select.  The family rate also owns the tone
+// and physical capture duration, so changing host boundary cannot make a row
+// easier by shortening the observation or moving the stimulus.
+// HQ-off baselines were reproduced from Step 8 commit 22d2f2c with this exact
+// BBD-only protocol; in particular, 88.2 and 96 kHz are measured rows rather
+// than values inferred from the old 44.1/48 kHz common-host matrix.
+constexpr std::array<ShippingBbdDefinition, 10> shippingBbdDefinitions {{
+    { "HQ 44.1k", 44100.0, true, 4, 44100.0, false, 0.0, 0.0, 0.0 },
+    { "HQ 48k", 48000.0, true, 4, 48000.0, false, 0.0, 0.0, 0.0 },
+    { "HQ 88.2k", 88200.0, true, 2, 44100.0, false, 0.0, 0.0, 0.0 },
+    { "HQ 96k", 96000.0, true, 2, 48000.0, false, 0.0, 0.0, 0.0 },
+    { "HQ 176.4k", 176400.0, true, 1, 44100.0, false, 0.0, 0.0, 0.0 },
+    { "HQ 192k", 192000.0, true, 1, 48000.0, false, 0.0, 0.0, 0.0 },
+    { "HQ-off 44.1k", 44100.0, false, 1, 44100.0,
+      true, -3.602244, 34.362019, -26.764803 },
+    { "HQ-off 48k", 48000.0, false, 1, 48000.0,
+      true, -5.768382, 22.866183, -30.364034 },
+    { "HQ-off 88.2k", 88200.0, false, 1, 44100.0,
+      true, -18.159078, 4.080394, -41.303689 },
+    { "HQ-off 96k", 96000.0, false, 1, 48000.0,
+      true, -19.696069, 3.249559, -45.866209 }
+}};
+
+constexpr double bbdShippingNrmsRegressionAllowanceDb = 0.75;
+constexpr double bbdShippingBgaRegressionAllowanceDb = 0.25;
+constexpr double bbdShippingSgaRegressionAllowanceDb = 1.5;
+
+struct ShippingBbdResult
+{
+    ShippingBbdDefinition definition;
+    BbdAuditWindow window;
+    YouKnow106TestAccess::ProcessingRate engineRate;
+    BbdOracleCheck oracleCheck;
+    BbdMetrics metrics;
+    double nrmsDb {};
+    bool engineRatePassed {};
+    bool finitePassed {};
+    bool evidencePassed {};
+    bool edgePassed {};
+    bool nrmsAbsolutePassed {};
+    bool bgaAbsolutePassed {};
+    bool sgaAbsolutePassed {};
+    bool absolutePassed {};
+    bool nrmsBaselinePassed {};
+    bool bgaBaselinePassed {};
+    bool sgaBaselinePassed {};
+    bool baselinePassed {};
+    bool pass {};
+};
+
+ShippingBbdResult auditShippingBbd(
+    const ShippingBbdDefinition& definition)
+{
+    ShippingBbdResult result;
+    result.definition = definition;
+    result.window = makeBbdAuditWindow(
+        definition.hostRate, definition.familyBaseRate);
+    result.engineRate = YouKnow106TestAccess::shippingProcessingRate(
+        definition.hostRate, definition.hqEnabled);
+    const auto oracle = buildBbdOracle(
+        definition.hostRate, makeOracleFilter(definition.hostRate),
+        result.window);
+    result.oracleCheck = oracle.check;
+    result.metrics = auditBbd(
+        definition.hostRate, result.engineRate.factor, oracle, true);
+    result.nrmsDb = decibels(result.metrics.worstAnalyticRelativeRms);
+
+    const double expectedInternalRate = definition.hostRate
+                                      * definition.expectedFactor;
+    result.engineRatePassed =
+        result.engineRate.factor == definition.expectedFactor
+        && result.engineRate.hqRequested == definition.hqEnabled
+        && std::isfinite(result.engineRate.internalRate)
+        && std::abs(result.engineRate.internalRate - expectedInternalRate)
+               <= 1.0e-9;
+    result.finitePassed = result.metrics.allFinite
+        && std::isfinite(result.nrmsDb)
+        && std::isfinite(result.metrics.highToneRelativeRms)
+        && std::isfinite(result.metrics.worstPhysicalImageErrorDb)
+        && std::isfinite(result.metrics.worstSgaDb)
+        && std::isfinite(result.metrics.minimumFundamentalAmplitude)
+        && result.metrics.minimumFundamentalAmplitude > 1.0e-10;
+    result.evidencePassed = result.oracleCheck.passed()
+        && result.metrics.analyticOraclePassed
+        && result.metrics.validCases == oracle.cases.size()
+        && result.metrics.validBgaLines > 0u
+        && result.metrics.validSgaBins > 0u
+        && result.metrics.validSgaFfts == oracle.cases.size()
+        && result.metrics.sgaFftFrames == result.window.captureHostFrames;
+    result.edgePassed = result.metrics.edgeStateMatches
+        && std::isfinite(result.metrics.worstClockPhaseError)
+        && result.metrics.worstClockPhaseError <= bbdPhaseGate;
+
+    result.nrmsAbsolutePassed =
+        result.metrics.worstAnalyticRelativeRms
+            <= bbdAnalyticRelativeRmsGate;
+    result.bgaAbsolutePassed =
+        result.metrics.worstPhysicalImageErrorDb <= bbdPhysicalImageGateDb;
+    result.sgaAbsolutePassed = result.metrics.worstSgaDb < bbdSgaGateDb;
+    result.absolutePassed = result.nrmsAbsolutePassed
+        && result.bgaAbsolutePassed && result.sgaAbsolutePassed;
+
+    if (definition.hasStep8Baseline)
+    {
+        result.nrmsBaselinePassed = result.nrmsDb
+            <= definition.step8NrmsDb
+             + bbdShippingNrmsRegressionAllowanceDb;
+        result.bgaBaselinePassed = result.metrics.worstPhysicalImageErrorDb
+            <= definition.step8BgaDb
+             + bbdShippingBgaRegressionAllowanceDb;
+        result.sgaBaselinePassed = result.metrics.worstSgaDb
+            <= definition.step8SgaDb
+             + bbdShippingSgaRegressionAllowanceDb;
+        result.baselinePassed = result.nrmsBaselinePassed
+            && result.bgaBaselinePassed && result.sgaBaselinePassed;
+    }
+
+    const bool qualityPassed = definition.hqEnabled
+        ? result.absolutePassed
+        : result.absolutePassed || result.baselinePassed;
+    result.pass = result.engineRatePassed && result.finitePassed
+        && result.evidencePassed && result.edgePassed && qualityPassed;
+    return result;
+}
+
+std::vector<ShippingBbdResult> runShippingBbdMatrix()
+{
+    std::vector<ShippingBbdResult> results;
+    results.reserve(shippingBbdDefinitions.size());
+    for (const auto& definition : shippingBbdDefinitions)
+        results.push_back(auditShippingBbd(definition));
+    return results;
 }
 
 struct CellResult
@@ -1691,6 +1948,7 @@ struct CellResult
 struct AuditResult
 {
     std::vector<CellResult> cells;
+    std::vector<ShippingBbdResult> shippingBbdCells;
     std::array<quality::ReferencePathSelfCheck, hostRates.size()>
         referencePathChecks;
     std::array<quality::FractionalDelaySelfCheck, 2>
@@ -1711,7 +1969,9 @@ AuditResult runMatrix()
     {
         const double hostRate = hostRates[hostIndex];
         const auto vcfOracle = buildVcfOracle(hostRate);
-        const auto bbdOracle = buildBbdOracle(hostRate, vcfOracle.filter);
+        const auto bbdOracle = buildBbdOracle(
+            hostRate, vcfOracle.filter,
+            makeBbdAuditWindow(hostRate, hostRate));
         result.bbdOracleChecks[hostIndex] = bbdOracle.check;
         for (int factor : factors)
             result.cells.push_back({
@@ -1719,12 +1979,125 @@ AuditResult runMatrix()
                 auditVcf(hostRate, factor, vcfOracle),
                 auditBbd(hostRate, factor, bbdOracle) });
     }
+    result.shippingBbdCells = runShippingBbdMatrix();
     return result;
 }
 
 const char* verdict(bool pass) noexcept
 {
     return pass ? "PASS" : "REJECT";
+}
+
+void printShippingBbdReport(
+    std::span<const ShippingBbdResult> results)
+{
+    std::cout << "\nBBD shipping-configuration quality matrix\n"
+              << "rate policy: factors are queried from a prepared shipping "
+                 "engine; HQ covers 44.1/48k x4, 88.2/96k x2 and "
+                 "176.4/192k x1, while HQ-off covers the four lower 1x "
+                 "grids. The 44.1 and 48 kHz clock families keep fixed "
+                 "0.185760/0.170667 s warmups, 0.092880/0.085333 s "
+                 "captures and 1475.024414/1605.468750 Hz low tones across "
+                 "host boundaries\n"
+              << "admission: HQ must pass the absolute NRMS/BGA/SGA gates; "
+                 "an HQ-off row that does not pass all three absolute gates "
+                 "must independently stay within its frozen Step-8 NRMS +"
+              << bbdShippingNrmsRegressionAllowanceDb << " dB, BGA +"
+              << bbdShippingBgaRegressionAllowanceDb << " dB and SGA +"
+              << bbdShippingSgaRegressionAllowanceDb
+              << " dB limits. Finite, evidence, engine-factor and edge/phase "
+                 "gates are mandatory for every row\n\n";
+
+    std::cout << std::fixed << std::setprecision(6);
+    for (const auto& row : results)
+    {
+        const auto& definition = row.definition;
+        std::cout << definition.label
+                  << " host=" << definition.hostRate
+                  << " factor=" << row.engineRate.factor
+                  << " internal=" << row.engineRate.internalRate
+                  << " family=" << definition.familyBaseRate
+                  << " tone=" << row.window.lowToneHz
+                  << " warmup_ms="
+                  << 1000.0 * row.window.warmupHostFrames
+                             / definition.hostRate
+                  << " capture_ms="
+                  << 1000.0 * row.window.captureHostFrames
+                             / definition.hostRate
+                  << " verdict=" << verdict(row.pass) << '\n'
+                  << "  metrics nrms=" << row.nrmsDb << " dB"
+                  << " high12k="
+                  << decibels(row.metrics.highToneRelativeRms) << " dB"
+                  << " bga_error="
+                  << row.metrics.worstPhysicalImageErrorDb << " dB"
+                  << " sga_max=" << row.metrics.worstSgaDb << " dBc"
+                  << " phase_error=" << std::scientific
+                  << row.metrics.worstClockPhaseError << std::fixed
+                  << " takes=" << row.metrics.validCases
+                  << " bga_lines=" << row.metrics.validBgaLines
+                  << " sga_fft=" << row.metrics.validSgaFfts << "x"
+                  << row.metrics.sgaFftFrames
+                  << " bins=" << row.metrics.validSgaBins << '\n'
+                  << "  raw_internal=0x" << std::hex
+                  << std::setw(16) << std::setfill('0')
+                  << row.metrics.rawInternalFingerprint << std::dec
+                  << std::setfill(' ')
+                  << " samples=" << row.metrics.rawInternalBits.size()
+                  << '\n'
+                  << "  oracle projection="
+                  << row.oracleCheck.maximumProjectionGainErrorDb << " dB"
+                  << " off_mask=" << row.oracleCheck.worstOffMaskSpurDb
+                  << " dBc tail=" << row.oracleCheck.worstTerminalImageDb
+                  << " dBc ffts=" << row.oracleCheck.validOffMaskFfts << "x"
+                  << row.oracleCheck.offMaskFftFrames
+                  << " bins=" << row.oracleCheck.validOffMaskBins
+                  << " finite=" << verdict(row.oracleCheck.allFinite)
+                  << " filter="
+                  << verdict(row.oracleCheck.independentFilterPassed)
+                  << " (ripple="
+                  << row.oracleCheck.filterPassbandRippleDb
+                  << " dB stop="
+                  << row.oracleCheck.filterStopbandMaximumDb
+                  << " dB grid="
+                  << row.oracleCheck.filterGridConvergenceDb
+                  << " dB response="
+                  << verdict(row.oracleCheck.independentFilterResponsePassed)
+                  << " convergence="
+                  << verdict(
+                         row.oracleCheck.independentFilterConvergencePassed)
+                  << ")\n"
+                  << "  gates engine=" << verdict(row.engineRatePassed)
+                  << " finite=" << verdict(row.finitePassed)
+                  << " evidence=" << verdict(row.evidencePassed)
+                  << " edge=" << verdict(row.edgePassed)
+                  << " nrms_abs=" << verdict(row.nrmsAbsolutePassed)
+                  << " bga_abs=" << verdict(row.bgaAbsolutePassed)
+                  << " sga_abs=" << verdict(row.sgaAbsolutePassed);
+        if (!definition.hqEnabled)
+        {
+            if (definition.hasStep8Baseline)
+            {
+                std::cout << '\n'
+                          << "  step8 baseline="
+                          << definition.step8NrmsDb << "/"
+                          << definition.step8BgaDb << "/"
+                          << definition.step8SgaDb << " dB"
+                          << " limits="
+                          << definition.step8NrmsDb
+                               + bbdShippingNrmsRegressionAllowanceDb << "/"
+                          << definition.step8BgaDb
+                               + bbdShippingBgaRegressionAllowanceDb << "/"
+                          << definition.step8SgaDb
+                               + bbdShippingSgaRegressionAllowanceDb << " dB"
+                          << " gates=" << verdict(row.nrmsBaselinePassed)
+                          << "/" << verdict(row.bgaBaselinePassed)
+                          << "/" << verdict(row.sgaBaselinePassed);
+            }
+            else
+                std::cout << " step8_baseline=UNFROZEN";
+        }
+        std::cout << '\n';
+    }
 }
 
 void printReport(const AuditResult& audit)
@@ -1892,7 +2265,8 @@ void printReport(const AuditResult& audit)
                  "five-pole/coupling input support through buckets, transfer, "
                  "BLEP and output support/coupling. The steady-state BBD "
                  "capture starts after 8192 host frames (>12 output-coupling "
-                 "time constants). Candidates alone use the shipping TPT "
+                 "time constants). Candidates alone use the shipping exact "
+                 "continuous output support, rate-selected legacy/exact input "
                  "support, causal four-point Lagrange input-edge interpolation, "
                  "polyBLEP, half-bands and the declared no-search "
                  "0/23.5/35.25 host-frame advance. Scan/holds, DCO, VCA, "
@@ -1907,6 +2281,146 @@ void printReport(const AuditResult& audit)
                  "it is not a second hardware fit, "
                  "not measurement of an original JUNO-106, and not authority "
                  "to change production rate selection.\n";
+
+    printShippingBbdReport(audit.shippingBbdCells);
+}
+
+void selfTestShippingBbd(
+    std::span<const ShippingBbdResult> results)
+{
+    const auto requireNear = [](double actual, double expected,
+                                double tolerance, std::string_view label) {
+        if (!std::isfinite(actual)
+            || std::abs(actual - expected) > tolerance)
+            throw std::runtime_error(
+                std::string(label) + " changed; inspect the shipping matrix");
+    };
+    constexpr std::array<double, 10> expectedNrmsDb {
+        -53.442029, -56.101384, -50.700400, -51.863116, -53.481340,
+        -56.078509, -3.511374, -5.263465, -18.390080, -20.050559
+    };
+    constexpr std::array<double, 10> expectedBgaDb {
+        0.011045, 0.008369, 0.010592, 0.008047, 0.010563,
+        0.007985, 4.763869, 3.406139, 0.070754, 0.016355
+    };
+    constexpr std::array<double, 10> expectedSgaDb {
+        -71.831447, -65.381479, -71.831817, -65.381807, -71.831728,
+        -65.381263, -26.934318, -30.746435, -41.303811, -46.044040
+    };
+    constexpr std::array<double, 10> expectedPhaseError {
+        7.833734e-13, 1.651013e-12, 7.833734e-13, 1.651013e-12,
+        7.833734e-13, 1.651013e-12, 5.809797e-13, 1.534772e-12,
+        3.537171e-13, 1.534883e-12
+    };
+    constexpr std::array<std::size_t, 10> expectedRawSampleCounts {
+        200704u, 200704u, 200704u, 200704u, 200704u,
+        200704u, 50176u, 50176u, 100352u, 100352u
+    };
+    constexpr std::array<std::size_t, 10> expectedSgaFftFrames {
+        4096u, 4096u, 8192u, 8192u, 16384u,
+        16384u, 4096u, 4096u, 8192u, 8192u
+    };
+    constexpr std::array<std::size_t, 10> expectedSgaBinCounts {
+        7361u, 6756u, 7361u, 6756u, 7361u,
+        6756u, 7361u, 6756u, 7361u, 6756u
+    };
+    if (results.size() != shippingBbdDefinitions.size())
+        throw std::runtime_error(
+            "shipping BBD matrix has the wrong number of rows");
+    for (std::size_t index = 0u; index < results.size(); ++index)
+    {
+        const auto& row = results[index];
+        const auto& expected = shippingBbdDefinitions[index];
+        if (row.definition.label != expected.label
+            || row.definition.hostRate != expected.hostRate
+            || row.definition.hqEnabled != expected.hqEnabled
+            || row.definition.expectedFactor != expected.expectedFactor
+            || row.definition.familyBaseRate != expected.familyBaseRate)
+            throw std::runtime_error(
+                "shipping BBD matrix ordering/configuration changed");
+
+        const double expectedWarmupSeconds =
+            static_cast<double>(bbdWarmupHostFrames)
+                / expected.familyBaseRate;
+        const double expectedCaptureSeconds =
+            static_cast<double>(bbdCaptureHostFrames)
+                / expected.familyBaseRate;
+        const double actualWarmupSeconds =
+            static_cast<double>(row.window.warmupHostFrames)
+                / expected.hostRate;
+        const double actualCaptureSeconds =
+            static_cast<double>(row.window.captureHostFrames)
+                / expected.hostRate;
+        const double expectedTone = expected.familyBaseRate
+                                  * 137.0 / 4096.0;
+        if (std::abs(actualWarmupSeconds - expectedWarmupSeconds) > 1.0e-15
+            || std::abs(actualCaptureSeconds - expectedCaptureSeconds)
+                   > 1.0e-15
+            || std::abs(row.window.lowToneHz - expectedTone) > 1.0e-12)
+            throw std::runtime_error(
+                "shipping BBD family changed its physical timeline or tone");
+
+        if (!row.engineRatePassed || !row.finitePassed
+            || !row.evidencePassed || !row.edgePassed || !row.pass)
+            throw std::runtime_error(
+                "shipping BBD structural/rate classification changed");
+        if (expected.hqEnabled)
+        {
+            if (!row.absolutePassed || !row.nrmsAbsolutePassed
+                || !row.bgaAbsolutePassed || !row.sgaAbsolutePassed)
+                throw std::runtime_error(
+                    "a shipping HQ BBD row missed an absolute gate");
+        }
+        else
+        {
+            if (!expected.hasStep8Baseline)
+                throw std::runtime_error(
+                    "an HQ-off BBD row lacks a frozen Step-8 baseline");
+            if (!row.absolutePassed && (!row.baselinePassed
+                    || !row.nrmsBaselinePassed || !row.bgaBaselinePassed
+                    || !row.sgaBaselinePassed))
+                throw std::runtime_error(
+                    "an HQ-off BBD metric regressed beyond Step-8 allowance");
+        }
+
+        requireNear(row.nrmsDb, expectedNrmsDb[index], 0.75,
+                    "shipping BBD analytic waveform");
+        requireNear(decibels(row.metrics.highToneRelativeRms),
+                    expectedNrmsDb[index], 0.75,
+                    "shipping BBD 12 kHz waveform");
+        requireNear(row.metrics.worstPhysicalImageErrorDb,
+                    expectedBgaDb[index], 0.25,
+                    "shipping BBD physical-image error");
+        requireNear(row.metrics.worstSgaDb, expectedSgaDb[index], 1.5,
+                    "shipping BBD simulation-generated alias");
+        requireNear(row.metrics.worstClockPhaseError,
+                    expectedPhaseError[index], 5.0e-11,
+                    "shipping BBD clock phase");
+        if (row.metrics.rawInternalBits.size()
+                != expectedRawSampleCounts[index]
+            || row.metrics.sgaFftFrames != expectedSgaFftFrames[index]
+            || row.metrics.validSgaBins != expectedSgaBinCounts[index])
+            throw std::runtime_error(
+                "shipping BBD raw/spectral evidence changed");
+    }
+
+    constexpr std::array<std::array<std::size_t, 3>, 2> hqFamilies {{
+        {{ 0u, 2u, 4u }}, {{ 1u, 3u, 5u }}
+    }};
+    for (const auto& family : hqFamilies)
+    {
+        const auto& anchor = results[family[0]].metrics;
+        for (std::size_t member = 1u; member < family.size(); ++member)
+        {
+            const auto& candidate = results[family[member]].metrics;
+            if (candidate.rawInternalFingerprint
+                    != anchor.rawInternalFingerprint
+                || candidate.rawInternalBits != anchor.rawInternalBits)
+                throw std::runtime_error(
+                    "an HQ BBD family is not bit-identical before decimation");
+        }
+    }
+    std::cout << "BBD shipping-configuration self-test: PASS\n";
 }
 
 void selfTest(const AuditResult& audit)
@@ -1921,6 +2435,7 @@ void selfTest(const AuditResult& audit)
     const auto& results = audit.cells;
     if (results.size() != hostRates.size() * factors.size())
         throw std::runtime_error("quality matrix has the wrong number of cells");
+    selfTestShippingBbd(audit.shippingBbdCells);
 
     for (std::size_t index = 0u;
          index < audit.referencePathChecks.size(); ++index)
@@ -1981,6 +2496,9 @@ void selfTest(const AuditResult& audit)
         if (!check.passed() || check.hostRate != hostRates[index])
             throw std::runtime_error(
                 "closed-form BBD oracle self-check failed");
+        if (check.expectedCaptureHostFrames != bbdCaptureHostFrames)
+            throw std::runtime_error(
+                "common-host BBD oracle capture length changed");
         constexpr std::array expectedLinearization {
             2.423593e-7, 2.391281e-7
         };
@@ -2027,7 +2545,7 @@ void selfTest(const AuditResult& audit)
         false, false, false, false, false, false
     };
     constexpr std::array<bool, 6> expectedBbd {
-        false, false, false, false, false, false
+        false, false, true, false, false, true
     };
     constexpr std::array<bool, 6> expectedVcfRkGate {
         true, true, true, true, true, true
@@ -2039,10 +2557,10 @@ void selfTest(const AuditResult& audit)
         false, true, true, false, true, true
     };
     constexpr std::array<bool, 6> expectedBbdAnalyticGate {
-        false, false, false, false, false, false
+        false, false, true, false, false, true
     };
     constexpr std::array<bool, 6> expectedBbdBgaGate {
-        false, false, false, false, false, true
+        false, true, true, false, true, true
     };
     constexpr std::array<bool, 6> expectedBbdSgaGate {
         false, false, true, false, false, true
@@ -2066,16 +2584,16 @@ void selfTest(const AuditResult& audit)
         0.004, 0.003, 0.003, 0.008, 0.007, 0.005
     };
     constexpr std::array<double, 6> expectedBbdAnalyticDb {
-        -3.602, -18.159, -30.394, -5.768, -19.696, -31.847
+        -3.511, -18.390, -53.442, -5.263, -20.051, -56.101
     };
     constexpr std::array<double, 6> expectedBbdHighToneDb {
-        -3.602, -18.159, -30.394, -5.768, -19.696, -31.847
+        -3.511, -18.390, -53.442, -5.263, -20.051, -56.101
     };
     constexpr std::array<double, 6> expectedBbdBgaDb {
-        34.362, 4.080, 0.865, 22.866, 3.249, 0.706
+        4.764, 0.070, 0.011, 3.406, 0.016, 0.008
     };
     constexpr std::array<double, 6> expectedBbdSgaDb {
-        -26.765, -41.304, -72.041, -30.364, -45.866, -65.597
+        -26.934, -41.304, -71.831, -30.746, -46.044, -65.381
     };
     constexpr std::array<double, 6> expectedBbdPhaseError {
         5.810e-13, 3.537e-13, 7.834e-13,
@@ -2242,18 +2760,41 @@ int main(int argc, char** argv)
     try
     {
         bool selfTestRequested = false;
+        bool shippingOnlyRequested = false;
+        bool shippingSelfTestRequested = false;
         if (argc == 2 && std::string_view(argv[1]) == "--self-test")
             selfTestRequested = true;
+        else if (argc == 2
+                 && std::string_view(argv[1]) == "--bbd-shipping-only")
+            shippingOnlyRequested = true;
+        else if (argc == 2
+                 && std::string_view(argv[1])
+                        == "--bbd-shipping-self-test")
+        {
+            shippingOnlyRequested = true;
+            shippingSelfTestRequested = true;
+        }
         else if (argc == 2 && (std::string_view(argv[1]) == "--help"
                               || std::string_view(argv[1]) == "-h"))
         {
-            std::cout << "Usage: YouKnow106VcfBbdQualityAudit [--self-test]\n";
+            std::cout
+                << "Usage: YouKnow106VcfBbdQualityAudit [--self-test|"
+                   "--bbd-shipping-only|--bbd-shipping-self-test]\n";
             return 0;
         }
         else if (argc != 1)
         {
             std::cerr << "unknown argument; use --help\n";
             return 2;
+        }
+
+        if (shippingOnlyRequested)
+        {
+            const auto results = runShippingBbdMatrix();
+            printShippingBbdReport(results);
+            if (shippingSelfTestRequested)
+                selfTestShippingBbd(results);
+            return 0;
         }
 
         const auto results = runMatrix();

@@ -2362,10 +2362,11 @@ void YouKnow106Engine::clearRateDependentOutputPath(
 {
     firstDecimator_.reset();
     secondDecimator_.reset();
-    // updateProcessingRate() has already replaced the chorus coefficients,
-    // retained its BBD buckets/free-running phases, and cleared only support-
-    // filter TPT carries that embed the old timestep. A hard reset also clears
-    // the physical/free-running effect state.
+    // updateProcessingRate() has already replaced the chorus transitions,
+    // retained its BBD buckets/free-running phases, and reinitialised the
+    // sample-grid support histories and continuous-support coordinates under
+    // this zero-gain boundary. A hard reset also clears the physical/free-
+    // running effect state.
     if (!preserveFreeRunningState)
         chorus_.reset(false);
     if (!preserveFreeRunningState)

@@ -35,9 +35,14 @@ the raw level recorded in each folder's README and manifest.
    image is not claimed transparent: it moves -5.30 dB from an already
    -100.47 dBc baseline. Whole-file difference is -15.95 dBc peak and -27.66
    dBc RMS at the same fixed 0 dB gain. This protocol predates the current
-   derived clock schedule and Step-8 input-edge interpolation; its immutable
+   derived clock schedule, Step-8 input-edge interpolation and Step-9 combined
+   continuous support transitions; its immutable
    baseline frame count intentionally prevents a misleading current `after`
-   render. The current numerical result is in the common-host quality audit.
+   render. The current evidence is the common-host plus actual-shipping-path
+   quality audit: both common-host 4× cells and all six HQ selector paths pass
+   the absolute four-case low-drive deterministic-line fixture gates, while
+   lower factors remain absolute
+   failures and HQ-off passes only frozen nonregression gates.
 
 3. **Voice-VCA silent thump** — the most isolated artifact comparison.
    Listen to [before](voice-vca-feedthrough/voice-vca-feedthrough-before-listen-f32.wav),

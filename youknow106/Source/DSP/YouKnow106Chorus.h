@@ -61,6 +61,11 @@ public:
     // Lowest host rate the engine accepts. The fastest clock against it is the
     // most edges a single sample can ever have to consume.
     static constexpr float minimumSampleRate = 8000.0f;
+    // The shipping HQ policy targets at least 176.4 kHz internally. At and
+    // above that grid the input support uses the combined exact transition;
+    // lower grids retain the reviewed TPT anti-alias path because an exact
+    // cubic drive there worsens the independently measured SGA boundary.
+    static constexpr float minimumExactInputSupportRate = 176400.0f;
     static constexpr int maximumShiftsPerSample =
         static_cast<int>(maximumClockHz / minimumSampleRate) + 2;
 
@@ -133,30 +138,29 @@ public:
     // full-scale amplitude to the recovered wet line, in model units per unit
     // -- a measured property of this model's own linear filters, not a fit to
     // any recording. It is 1/sqrt(3) (a uniform sequence's own RMS) times
-    // 0.6987, the chain's own A-weighted transfer, and the second factor is
+    // 0.6973, the chain's own A-weighted transfer, and the second factor is
     // dominated by the hold: at the sweep's 20.0-91.4 kHz clock the held
     // sequence's sinc-shaped density puts roughly half its power inside the
     // 10 kHz reconstruction band.
     //
     // Stated at 192 kHz, which is what HQ targets from the 48 kHz host-rate
-    // family and is also the engine's `noiseReferenceRateHz`. It is rate
-    // dependent, because a coarser grid folds more of the held sequence back
-    // into the band. Across HQ that dependence is nil: the recovered figure
-    // moves 0.005 dB between the 192 kHz and 176.4 kHz internal rates HQ
-    // reaches. Below HQ it bites -- the same measure reads 0.4080 at 96 kHz,
-    // 0.4224 at 48 kHz and 0.4249 at 44.1 kHz, so with HQ switched out the
-    // recovered figure reads 0.10, 0.40 and 0.45 dB high at those host rates.
-    // That is a property of the numerical grid rather than of the part, and
-    // this constant deliberately anchors the part at the rate the shipping HQ
-    // path runs.
+    // family and is also the engine's `noiseReferenceRateHz`. The combined
+    // exact output support measures 0.4026 there; this is a derived numerical
+    // transfer update, not a change to the part's 0.2 mVrms row or its noise
+    // law. Across HQ the recovered result moves less than 0.004 dB between the
+    // 192 and 176.4 kHz internal grids. Below HQ, extra folded power still
+    // reads high: about +0.36..+0.38 dB at 44.1 kHz, +0.30..+0.31 dB at
+    // 48 kHz, +0.06..+0.08 dB at 88.2 kHz and +0.05..+0.07 dB at 96 kHz.
+    // That is numerical-grid error rather than a property of the part.
     //
     // Known to about +/-0.1%, and no better: it is estimated from a finite
-    // window of a random process. Over windows of 4 s to 256 s in both modes
-    // the estimate spans 0.4025-0.4037 about a 0.40338 long run, and a 1 s
-    // window reaches 0.4055. Four figures is all the measurand supports, which
-    // is why the suites allow 0.05 dB on the datasheet side of the resulting
-    // assertion rather than fencing it exactly at the row.
-    static constexpr float lineNoiseAWeightedTransfer = 0.4034f;
+    // random sequence. Fixed-seed 128 s measurements put the effective
+    // transfer at 0.40272-0.40276 on the 176.4 kHz family and
+    // 0.40261-0.40264 on the 192 kHz family. Four figures is all the
+    // measurand supports, which is why the suites allow 0.05 dB on the
+    // datasheet side of the resulting assertion rather than fencing it
+    // exactly at the row.
+    static constexpr float lineNoiseAWeightedTransfer = 0.4026f;
 
     // Amplitude of the uniform random sample each line writes at its own clock
     // edges, in model units. One equation, solved once: the recovered
@@ -166,9 +170,11 @@ public:
             / (nodeVoltsPerUnit * lineNoiseAWeightedTransfer);
 
     // A live engine-quality change alters only the numerical sample grid.
-    // `preserveState` retains the BBD buckets and all free-running phases/RNGs;
-    // audio-rate TPT carries are cleared under the engine's zero-gain fade
-    // because they contain the old timestep rather than literal voltages.
+    // `preserveState` retains the BBD buckets and all free-running phases/RNGs.
+    // The grid histories, output correction and support state are deliberately
+    // reinitialised under the engine's zero-gain transition. The exact support
+    // coordinates are physical voltages, not timestep-embedded TPT carries;
+    // preserving and reseeding them is a separate, still-unqualified policy.
     void prepare(double sampleRate,
                  bool preserveState = false) noexcept;
     void reset(bool preserveLfoPhase = false) noexcept;
@@ -349,9 +355,9 @@ public:
 
     [[nodiscard]] static ModeSettings settingsFor(ChorusMode mode) noexcept;
 
-    // The support filters either side of the line, exposed as a coefficient and
-    // a single step so the suites can measure where the corner actually lands
-    // rather than trusting that the two match. They only agree for one pairing:
+    // The legacy low-rate input fallback, exposed as a coefficient and a
+    // single step so the suites can measure where its corner actually lands
+    // rather than trusting that the two match. They agree for one pairing:
     // this coefficient belongs to this recursion and to no other.
     [[nodiscard]] static float onePoleG(float cutoffHz, float sampleRate) noexcept;
     static float supportFilterStep(float& state, float input, float g) noexcept;
@@ -373,9 +379,9 @@ public:
     [[nodiscard]] static float sallenKeyQ(float feedbackFarads,
                                           float shuntFarads) noexcept;
 
-    // Topology-preserving state-variable section, taken at its lowpass output.
-    // Two states, advanced together, so it stays stable while the delay either
-    // side of it is being swept.
+    // Legacy topology-preserving input section, taken at its lowpass output.
+    // Two states advance together; the exact continuous support uses physical
+    // six-state coordinates instead.
     struct BiquadState
     {
         float s1 { 0.0f };
@@ -390,17 +396,21 @@ public:
     // there is nothing to recompute per sample.
     struct SupportChain
     {
+        struct ExactTransition
+        {
+            std::array<std::array<double, 6>, 6> state {};
+            std::array<std::array<double, 4>, 6> drive {};
+        };
+
         float inputCouplingG { 0.001f };    // C44 / R120, wet path only
         float passiveG { 0.1f };            // R122 / C52, ahead of the line
-        // Ideal-source approximation for R118/R119, R117 and C45.  The name
-        // keeps the still-open MN3009 output loading out of the claim.
-        float idealSourceTapPoleG { 0.1f };
-        float wetOutputCouplingMutedG { 0.001f };
-        float wetOutputCouplingConnectedG { 0.001f };
+        // Legacy TPT coefficients retained only for the low-rate input policy.
+        // The output side is exclusively the exact continuous transition.
         BiquadCoefficients antiAliasFirst {};
         BiquadCoefficients antiAliasSecond {};
-        BiquadCoefficients reconstructionFirst {};
-        BiquadCoefficients reconstructionSecond {};
+        ExactTransition exactInput {};
+        ExactTransition exactOutputMuted {};
+        ExactTransition exactOutputConnected {};
     };
     [[nodiscard]] static SupportChain supportChainFor(float sampleRate) noexcept;
 
@@ -494,10 +504,14 @@ private:
         float antiAliasState { 0.0f };
         BiquadState antiAliasFirst {};
         BiquadState antiAliasSecond {};
-        float tapSumState { 0.0f };
-        BiquadState reconstructionFirst {};
-        BiquadState reconstructionSecond {};
-        float outputCouplingState { 0.0f };
+        std::array<double, 6> exactInputState {};
+        std::array<double, 6> exactOutputState {};
+        double exactInputPrevious { 0.0 };
+        double exactInputPrevious2 { 0.0 };
+        double exactInputPrevious3 { 0.0 };
+        double exactOutputPrevious { 0.0 };
+        double exactOutputPrevious2 { 0.0 };
+        double exactOutputPrevious3 { 0.0 };
         float transferState { 0.0f };
         std::uint32_t noiseState { 0x9e3779b9u };
         std::array<BlepEvent, maximumBlepEvents> pastBlepEvents {};
@@ -513,8 +527,9 @@ private:
             float limitedInput, float clockHz, float sampleRate,
             float noiseScale) noexcept;
         float process(float input, float clockHz, float sampleRate,
-                      const SupportChain& support, float outputCouplingG,
-                      float noiseScale) noexcept;
+                      const SupportChain& support,
+                      const SupportChain::ExactTransition& outputTransition,
+                      float noiseScale, bool useBlep = true) noexcept;
     };
 
     Line lineA_ {};

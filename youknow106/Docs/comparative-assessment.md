@@ -49,7 +49,7 @@ strongest competitor named.
 | Firmware LFO/delay/portamento | Hash-scoped exact laws with regression vectors | KR-106: ROM-table reconstructions verified against four hardware captures — parity in kind |
 | VCF | IR3109 cascade behind the anchored 68 kΩ/560 Ω divider; loop gain fitted only to the 4.8 Vpp service amplitude (rendered 4.8009 Vpp), with 247.90 Hz then predicted rather than fitted; 992 Hz WIDTH anchor (tracking exactly 1.00); AS3109 700 µA control-current knee; R-2R carry INL on the converter write | KR-106: IR3109 TPT cascade with BA662 67:1 feedback physics, self-osc calibrated to a named unit, and a **4096-point measured DAC→Hz table from a real card** — a data asset this project matches only by derivation (within 30 cents of that table's shape after the knee fix) |
 | VCF numerical quality | Path-average antiderivative/divided-difference evaluation inside the Newton solve. An exhaustive 20 Hz–20 kHz hot-residual FFT clears −60 dBc at 2×/4× with an independent-oracle off-mask control below −93 dBc, but the independent common-host RK64/RK128 comparison rejects every 1×/2×/4× nominal-Character-0 cell on full-waveform NRMS for the production-compensated hot-saw fixture; 4× is still only −24.35/−25.81 dB at 44.1/48 kHz against −40. A one-step bounded-work candidate separately fails the engine-bound/standard-grid scanned-control matrix | KR-106: 2×/4× oversampling, no published equivalent common-host or fold-back fence. No other surveyed project publishes one |
-| Chorus | Bucket-clocked two-phase 256-stage MN3009 model: full-period hold confirmed by the datasheet OUT1/OUT2 solve, per-shift transfer loss on the EC-row anchor, derived LFO rates 0.5533/0.8983 Hz from the 106's own timing network (ratio 1.6234799), measured 1.4–6.4 ms sweep, causal four-point Lagrange edge-input interpolation and bounded-polyBLEP BGA/SGA separation, no-compander hiss modelled | KR-106: deliberately *not* bucket-clocked (Hermite delay line with a written rationale), surrounded by measured side-effects (CTE gain modulation, leakage noise, clock-reset clicks); Chorus II rate marked "inherited, not re-verified". Hera has the field's only other bucket-level BBD — attached to an admittedly inaccurate alpha |
+| Chorus | Bucket-clocked two-phase 256-stage MN3009 model: full-period hold confirmed by the datasheet OUT1/OUT2 solve, per-shift transfer loss on the EC-row anchor, derived LFO rates 0.5533/0.8983 Hz from the 106's own timing network (ratio 1.6234799), measured 1.4–6.4 ms sweep, causal four-point Lagrange edge-input interpolation, bounded-polyBLEP BGA/SGA separation and combined exact continuous six-state support integration on every shipping HQ path, with no-compander hiss modelled | KR-106: deliberately *not* bucket-clocked (Hermite delay line with a written rationale), surrounded by measured side-effects (CTE gain modulation, leakage noise, clock-reset clicks); Chorus II rate marked "inherited, not re-verified". Hera has the field's only other bucket-level BBD — attached to an admittedly inaccurate alpha |
 | HPF incl. bass boost | The boost shelf **derived from the p. 15 branch** (+10.50 dB DC, +1.41 dB HF, 59.41 Hz; within 0.016 dB of the exact 2z/2p solve), cut corners from designators; asymptotic C14 coupling states | KR-106: the same 2p2z transfer from designators, verified 0.55 dB RMS against its (unpublished) hardware noise sweep — convergent result, one lineage of hardware corroboration |
 | Common VCA LEVEL | Derived dB-linear law from p. 8/p. 15/NEC (−16.32 + 0.1656·b dB), C7 9.08 ms settling | Not modelled as a distinct stage anywhere else surveyed |
 | Output boundary | JIS-B volume law with internal 29.3 kΩ wiper loading, three coupling boundaries, −18 dBFS RMS declared policy | Generic gain staging everywhere else |
@@ -191,7 +191,8 @@ hunting progressively adversarial corners until one engine loses would
 be motivated measurement. The standing difference on this axis is
 verification, not the number — YouKnow106 deterministically fences the
 exhaustive 20 Hz–20 kHz hot-VCF residual spectrum and now records an expanded
-DCO matrix pass alongside the full-waveform VCF and BBD matrix rejections; no
+DCO matrix pass, a full-waveform VCF rejection and the BBD low-drive fixture's
+absolute HQ passes alongside explicit lower-grid rejections; no
 competitor publishes equivalent gates. Pitch is
 essentially exact on both. The axes this material cannot measure — scan
 stepping, BBD clock behaviour, alias floors, and every deterministically
@@ -304,22 +305,37 @@ deliberately coarse absolute runaway ceiling.
 **Added 2026-08-09.** `YouKnow106OversamplingAudit` links the normal shipping
 DSP and times only `engine.process` with the current thread's CPU clock. The
 state is pre-rolled for two seconds, copied before the timer and rendered in
-256-frame blocks; seven 4×/1× pairs alternate order and retain every raw run,
-median, minimum, median absolute deviation and raw-float fingerprint. On an
-Apple M1 Max under macOS 26.5.1, native arm64 Release, 48 kHz, the 32,768-frame
-Unit-Character-1.0 windows measured:
+256-frame blocks; repeated 4×/1× runs retain every raw run, median, minimum,
+median absolute deviation and raw-float fingerprint. On an Apple M1 Max under
+macOS 26.5.1, native arm64 Release, 48 kHz, the 32,768-frame
+Unit-Character-1.0 windows measured the following dated Step-8 baseline:
 
-| Current fixture | 4× CPU s / audio s | 1× CPU s / audio s | Paired 4× / 1× |
+| Step-8 fixture | 4× CPU s / audio s | 1× CPU s / audio s | Paired 4× / 1× |
 | --- | ---: | ---: | ---: |
 | Idle, six physical cards behind closed VCAs | **0.520** | **0.147** | **3.545×** |
 | Six voices, chorus off, cutoff 0.62, resonance 0.10 | **0.493** | **0.154** | **3.175×** |
 | Six voices, chorus off, cutoff 0.62, resonance 0.95 | **0.636** | **0.183** | **3.466×** |
 | Six voices, full mixer, chorus II/noise 1.0, resonance 0.70 | **0.753** | **0.284** | **2.655×** |
 
-Every timing median absolute deviation is below 1.2%. These are JUCE-free
-engine thread-CPU figures, not plug-in, host or device totals. The older table
-above remains useful as a same-machine before/after history, but its clock was
-`steady_clock`; it is not merged with this CPU-clock baseline.
+Every Step-8 timing median absolute deviation is below 1.2%. Step 9's separate
+seven-run current observation, on the same declared platform and a
+0.682667-second audio window, is:
+
+| Step-9 fixture | 4× CPU s / audio s | 1× CPU s / audio s |
+| --- | ---: | ---: |
+| Idle, six physical cards behind closed VCAs | **0.578** | **0.167** |
+| Six voices, chorus off, cutoff 0.62, resonance 0.10 | **0.547** | **0.178** |
+| Six voices, chorus off, cutoff 0.62, resonance 0.95 | **0.719** | **0.205** |
+| Six voices, full mixer, chorus II/noise 1.0, resonance 0.70 | **0.830** | **0.315** |
+
+The final row's median CPU times are 566.779/215.019 ms, with median absolute
+deviations 1.735/3.640 ms. All of these are JUCE-free engine thread-CPU
+observations, not plug-in, host or device totals. Alternating Step-8/current
+runs were sensitive to system load and thermal state, so they do not support a
+paired speedup or regression claim; the hard CPU suite remains the performance
+gate. The older table above remains useful as a same-machine before/after
+history, but its clock was `steady_clock`; it is not merged with this CPU-clock
+baseline.
 
 The companion `YouKnow106DSPWorkAudit` recompiles only Engine and Chorus with
 non-atomic semantic counters. That build is never timed and never linked into
@@ -333,12 +349,23 @@ six-voice resonant fixture, a 2,048-host-frame window at 48 kHz gives:
 | Six-card audio updates / DCO frames / VCF steps | 49,152 each | 12,288 each | six powered cards on every internal frame |
 | Sixteen-slot hold updates / PWM solves | 131,072 each | 32,768 each | all product slots on every internal frame |
 | Two BBD-line support frames | 16,384 | 4,096 | two lines on every internal frame, even Chorus Off |
+| Input support | 16,384 exact advances | 4,096 legacy TPT frames | exact input selected only at internal rates ≥176.4 kHz |
+| Exact output support advances | 16,384 | 4,096 | output support is exact at every accepted rate |
+| Exact support coordinate updates / MACs | 196,608 / 1,966,080 | 24,576 / 245,760 | six physical coordinates and 60 transition MACs per exact advance |
 | Newton iterations, zero recoveries | 205,008 | 56,604 | 4.171 vs 4.606 iterations/VCF step; data/grid dependent |
 | Cutoff memo misses | 1,397 | 1,469 | nearly wall-time driven; 2.84% vs 11.95% of card updates |
 | Converter pass starts / writes | 10 / 234 | 10 / 233 | model's anchored nominal 4.2 ms pass, one numerical-window boundary write apart |
 | DCO cycle wraps / BBD shifts | 61 / 3,162 | 61 / 3,162 | oscillator and asynchronous BBD-clock events track elapsed time |
 | Past + future BLEP correction visits | 12,648 | 12,651 | edge/event driven, not four times larger at 4× |
 | Half-band calls / stereo nonzero-tap MACs | 6,144 / 602,112 | 0 / 0 | three decimations and 294 stereo MACs per 4× host frame |
+
+The support counter algebra is also fenced across every shipping 4×/2×/1×
+case. A two-line 2× window has 8,192 exact input and 8,192 exact output
+advances, 98,304 coordinate updates and 983,040 MACs; a high-rate 1× window
+has 4,096 of each advance, 49,152 coordinate updates and 491,520 MACs. A
+low-rate 1× window instead has 4,096 legacy input frames and 4,096 exact output
+advances, 24,576 coordinate updates and 245,760 MACs. These are semantic
+operation counts, not cycle weights.
 
 The 95-tap half-band has 49 exact nonzero coefficients, so each decimator call
 performs 49 coefficient visits and 98 stereo MACs. The same regression covers
@@ -355,12 +382,14 @@ VCF/VCA, scan/holds, BBD/support processing and their reconstruction boundary
 currently share one loop. The common-host qualification below now supplies the
 isolated DCO, RK64/RK128 VCF, closed-form BBD and analytic scan comparisons. The
 DCO clears its isolated numerical boundary after Step 7; Step 8 improves the
-BBD edge-input reconstruction, but VCF and BBD still reject every factor, and
-the matrix does not include the inter-domain reconstruction, whole-engine or
-latency proof a split architecture would require. The DCO reconstruction and
-fixed latency changed in Step 7; the BBD edge interpolation changes in Step 8
-without changing that latency. No domain split or rate-selector change is
-admitted.
+BBD edge-input reconstruction, and Step 9 makes the declared four-case
+low-drive BBD fixture pass at the two common-host 4× cells plus every actual HQ
+selector path. Lower common-host
+factors still reject the absolute gates, the VCF still rejects every factor,
+and the matrix does not include the inter-domain reconstruction, whole-engine
+or latency proof a split architecture would require. The DCO reconstruction
+and fixed latency changed in Step 7; the BBD changes in Steps 8 and 9 add no
+lookahead or latency. No domain split or rate-selector change is admitted.
 
 ### Common-host numerical quality: no split admitted
 
@@ -391,6 +420,24 @@ sequence, hardware and model constants, global rate selection and the reported
 41-sample latency are unchanged. Corrected values written into and propagated
 through the buckets intentionally differ. This is a numerical reconstruction
 change, not a new MN3009 or JUNO-106 claim.
+
+**Step 9, 2026-08-09.** Each input or output support side is now represented as
+one six-state continuous physical network rather than a cascade of separately
+warped TPT sections. A prepare-only 10×10 augmented matrix exponential builds
+the discrete state and drive maps; processing advances the six physical
+coordinates under the causal cubic determined by the current and three past
+samples. There is no future sample, lookahead or added delay. Output support is
+exact at every accepted rate. Input support uses the same exact combined
+transition at internal rates ≥176.4 kHz and retains the reviewed Step-8 TPT
+path below that boundary because exact cubic input drive there worsened SGA.
+The muted and connected output loads select two prepared transitions over one
+shared physical state. Clock phase, bucket count/index progression, transfer
+law/cadence, RNG sequence, deterministic BBD and physical component anchors,
+the global oversampling-factor selector and 41-sample latency do not move. A
+guarded quality change deliberately resets support and grid histories under
+zero gain; the
+exact coordinates are physical voltages, but their preservation/reseeding has
+not been qualified.
 
 The DCO grid uses the six octave-spaced notes MIDI 36/48/60/72/84/96, all three
 ranges, saw and sub, and pulse at 5/50/95% duty. Its gate is ≤−70 dBc; the
@@ -424,8 +471,8 @@ passes do not override the complete-waveform NRMS rejection or qualify
 Character 1.
 
 The deterministic BBD oracle evaluates the documented component filters, the
-128-edge transfer and complete zero-order-hold image phasors at a bounded
-linearized drive. It deliberately uses the same model anchors, so it is an
+128-edge transfer and complete zero-order-hold image phasors across four cases
+at a bounded linearized drive. It deliberately uses the same model anchors, so it is an
 independent numerical implementation, not a new hardware measurement or truth.
 BBD production history, exact edge/clock/bucket/transfer state and the causal
 four-point result are fenced separately by the suite.
@@ -436,9 +483,9 @@ reported as the maximum over every unmasked 20 Hz–20 kHz Blackman–Harris FFT
 bin. Only validated wanted physical lines whose source is ≤20 kHz may be masked.
 
 The left side of each matrix cell preserves the dated Step 7 shipping result;
-the bold right side is the Step 8 current result.
+the bold right side is the dated Step 8 result.
 
-| BBD metric, Step 7 before → Step 8 current | Host | 1× | 2× | 4× | Gate |
+| BBD metric, Step 7 before → dated Step 8 | Host | 1× | 2× | 4× | Gate |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Analytic NRMS (dB) | 44.1 kHz | −3.099 → **−3.602** | −14.910 → **−18.159** | −27.045 → **−30.394** | ≤−40 |
 | Analytic NRMS (dB) | 48 kHz | −4.640 → **−5.768** | −16.426 → **−19.696** | −28.181 → **−31.847** | ≤−40 |
@@ -447,19 +494,60 @@ the bold right side is the Step 8 current result.
 | 20 Hz–20 kHz unmasked SGA max (dBc) | 44.1 kHz | −24.854 → **−26.765** | −28.762 → **−41.304** | −47.635 → **−72.041** | <−60 |
 | 20 Hz–20 kHz unmasked SGA max (dBc) | 48 kHz | −28.871 → **−30.364** | −31.329 → **−45.866** | −38.189 → **−65.597** | <−60 |
 
-Every VCF and BBD cell remains **REJECT**. The BBD's 4× SGA submetric now
-passes at both hosts, and 48 kHz/4× BGA remains inside 0.75 dB. Neither admits
-the domain: finite-grid support-filter warping leaves all six analytic NRMS
-values outside −40 dB, 44.1 kHz/4× BGA remains outside its gate at 0.865 dB,
-and the 1×/2× cells retain additional BGA and SGA failures. Oracle controls
-put the post-FIR omitted-image tail at −198.030/−202.098 dBc and exhaustive
-20 Hz–20 kHz off-mask content at −93.046/−135.607 dBc for 44.1/48 kHz.
-Step 7 changes the production DCO reconstruction and fixed latency; Step 8
-changes only the BBD edge-input interpolation. Neither changes the global
-selector, rates or presets, and Step 8 does not change latency. A passing
-isolated submetric does not admit a split: inter-domain reconstruction,
-whole-engine equivalence and latency qualification remain mandatory, and the
-VCF/BBD rejections still block every tested factor.
+Step 8 still rejected every BBD cell. Step 9's current common-host matrix is:
+
+| BBD metric, Step 9 current | Host | 1× | 2× | 4× | Gate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Analytic NRMS (dB) | 44.1 kHz | −3.511 | −18.390 | **−53.442** | ≤−40 |
+| Analytic NRMS (dB) | 48 kHz | −5.263 | −20.051 | **−56.101** | ≤−40 |
+| Qualifying-line BGA absolute level error (dB) | 44.1 kHz | 4.764 | **0.070** | **0.011** | ≤0.75 |
+| Qualifying-line BGA absolute level error (dB) | 48 kHz | 3.406 | **0.016** | **0.008** | ≤0.75 |
+| 20 Hz–20 kHz unmasked SGA max (dBc) | 44.1 kHz | −26.934 | −41.304 | **−71.831** | <−60 |
+| 20 Hz–20 kHz unmasked SGA max (dBc) | 48 kHz | −30.746 | −46.044 | **−65.381** | <−60 |
+
+Both 4× cells now pass every absolute gate. The four lower-factor cells remain
+overall **REJECT**: their exact output support materially improves NRMS/BGA,
+but NRMS fails at 1×/2×, SGA fails there too, and 1× BGA remains outside its
+gate. The independent oracle controls and state fences still pass.
+
+The production-selector extension prevents the common-host grid from standing
+in for shipping policy. It evaluates ten unique configurations using the
+engine's actual factor selection and a constant physical case family:
+
+| Shipping path | Analytic NRMS | BGA error | SGA | Admission |
+| --- | ---: | ---: | ---: | --- |
+| 44.1 kHz HQ, 4× | −53.442 dB | 0.011 dB | −71.831 dBc | **absolute PASS** |
+| 48 kHz HQ, 4× | −56.101 dB | 0.008 dB | −65.381 dBc | **absolute PASS** |
+| 88.2 kHz HQ, 2× | −50.700 dB | 0.011 dB | −71.832 dBc | **absolute PASS** |
+| 96 kHz HQ, 2× | −51.863 dB | 0.008 dB | −65.382 dBc | **absolute PASS** |
+| 176.4 kHz HQ, 1× | −53.481 dB | 0.011 dB | −71.832 dBc | **absolute PASS** |
+| 192 kHz HQ, 1× | −56.079 dB | 0.008 dB | −65.381 dBc | **absolute PASS** |
+| 44.1 kHz HQ-off, 1× | −3.511 dB | 4.764 dB | −26.934 dBc | Step-8 nonregression PASS |
+| 48 kHz HQ-off, 1× | −5.263 dB | 3.406 dB | −30.746 dBc | Step-8 nonregression PASS |
+| 88.2 kHz HQ-off, 1× | −18.390 dB | 0.071 dB | −41.304 dBc | Step-8 nonregression PASS |
+| 96 kHz HQ-off, 1× | −20.051 dB | 0.016 dB | −46.044 dBc | Step-8 nonregression PASS |
+
+The HQ-off allowances were declared before inspection: no more than +0.75 dB
+NRMS, +0.25 dB BGA error or +1.5 dB SGA relative to the frozen Step-8 path.
+They are compatibility/nonregression gates, not a relabeling of absolute
+failures as numerical fidelity. Thus all six actual HQ paths pass the declared
+four-case low-drive deterministic-line fixture and all four HQ-off paths avoid
+regression, but
+no physical BBD law, component value or open hardware question closes. Step 7
+changes the production DCO reconstruction and fixed latency; Steps 8 and 9
+change only causal BBD numerical realization and do not change latency. No
+split follows: inter-domain reconstruction, whole-engine equivalence and
+latency qualification remain mandatory, and the VCF still blocks every tested
+factor.
+
+The final-DSP documentation render changed exactly wet demos 01/02/06/07; the
+other six stayed byte-identical, and only demo 01's displayed peak moved
+(−4.2/+1.2 to −4.3/+1.3 dB). All ten common-gain factory previews changed as
+expected from the shared wet path. The non-boosting gain moved
+0.542974→0.543119 (−5.30 dB rounded), while all 128 rows remained finite and
+the summary stayed 32 over-zero, zero silent, nine balance outliers, median
+−21.48 dBFS. The largest peak delta was 0.027693 dB (B86), the largest
+gated-RMS delta 0.003771 dB (B27), and no classification changed.
 
 ### Bounded-work VCF candidate: matrix rejection
 
@@ -513,8 +601,9 @@ that does not yet exist publicly for any product, this one included:
 
 1. **Calibrated null/capture tests against original units** — the exact
    protocols are already written, per mechanism, in the
-   [open-questions queue](open-questions.md) (OQ-01, -03, -05, -09, -15,
-   -19 are the audible blockers). No vendor publishes such data either.
+   [open-questions queue](open-questions.md) (including OQ-01, -03, -04 and
+   -20 for the chorus; OQ-05, -09, -15 and -19 remain other audible blockers).
+   No vendor publishes such data either.
 2. **Blind listening panels** against hardware and against the named
    competitors, with disclosed patches and levels.
 3. **Third-party replication** of this project's derivations — the

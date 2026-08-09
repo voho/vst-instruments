@@ -126,6 +126,327 @@ constexpr float reconstructionSecondHz = 10377.0f;
 // before them would drive their fitted nonlinearity too hard.
 constexpr float lineGain = Chorus::wetToDryGain;   // 47/39, +1.62 dB
 
+template <std::size_t Size>
+using FixedMatrix = std::array<std::array<double, Size>, Size>;
+
+template <std::size_t Size>
+FixedMatrix<Size> matrixIdentity() noexcept
+{
+    FixedMatrix<Size> result {};
+    for (std::size_t index = 0; index < Size; ++index)
+        result[index][index] = 1.0;
+    return result;
+}
+
+template <std::size_t Size>
+FixedMatrix<Size> matrixMultiply(const FixedMatrix<Size>& left,
+                                 const FixedMatrix<Size>& right) noexcept
+{
+    FixedMatrix<Size> result {};
+    for (std::size_t row = 0; row < Size; ++row)
+        for (std::size_t inner = 0; inner < Size; ++inner)
+        {
+            const double value = left[row][inner];
+            for (std::size_t column = 0; column < Size; ++column)
+                result[row][column] += value * right[inner][column];
+        }
+    return result;
+}
+
+template <std::size_t Size>
+FixedMatrix<Size> matrixLinearCombination(
+    const FixedMatrix<Size>& left, double leftScale,
+    const FixedMatrix<Size>& right, double rightScale) noexcept
+{
+    FixedMatrix<Size> result {};
+    for (std::size_t row = 0; row < Size; ++row)
+        for (std::size_t column = 0; column < Size; ++column)
+            result[row][column] = leftScale * left[row][column]
+                                + rightScale * right[row][column];
+    return result;
+}
+
+template <std::size_t Size>
+bool matrixSolve(FixedMatrix<Size> left, FixedMatrix<Size> right,
+                 FixedMatrix<Size>& result) noexcept
+{
+    for (std::size_t pivot = 0; pivot < Size; ++pivot)
+    {
+        std::size_t best = pivot;
+        double bestMagnitude = std::abs(left[pivot][pivot]);
+        for (std::size_t row = pivot + 1; row < Size; ++row)
+        {
+            const double magnitude = std::abs(left[row][pivot]);
+            if (magnitude > bestMagnitude)
+            {
+                best = row;
+                bestMagnitude = magnitude;
+            }
+        }
+        if (!(bestMagnitude > 1.0e-30) || !std::isfinite(bestMagnitude))
+            return false;
+        if (best != pivot)
+        {
+            std::swap(left[best], left[pivot]);
+            std::swap(right[best], right[pivot]);
+        }
+
+        const double inversePivot = 1.0 / left[pivot][pivot];
+        for (std::size_t column = pivot; column < Size; ++column)
+            left[pivot][column] *= inversePivot;
+        for (std::size_t column = 0; column < Size; ++column)
+            right[pivot][column] *= inversePivot;
+
+        for (std::size_t row = 0; row < Size; ++row)
+        {
+            if (row == pivot)
+                continue;
+            const double factor = left[row][pivot];
+            left[row][pivot] = 0.0;
+            for (std::size_t column = pivot + 1; column < Size; ++column)
+                left[row][column] -= factor * left[pivot][column];
+            for (std::size_t column = 0; column < Size; ++column)
+                right[row][column] -= factor * right[pivot][column];
+        }
+    }
+    result = right;
+    return true;
+}
+
+// Higham's scaling-and-squaring [13/13] Pade construction.  The augmented
+// matrix is dimensionless (one numerical interval), keeping its norm bounded
+// even though the analog state coordinates are expressed in volts.
+template <std::size_t Size>
+FixedMatrix<Size> matrixExponential(FixedMatrix<Size> matrix) noexcept
+{
+    constexpr std::array<double, 14> b {
+        64764752532480000.0, 32382376266240000.0,
+        7771770303897600.0, 1187353796428800.0,
+        129060195264000.0, 10559470521600.0,
+        670442572800.0, 33522128640.0, 1323241920.0,
+        40840800.0, 960960.0, 16380.0, 182.0, 1.0
+    };
+    constexpr double theta13 = 5.371920351148152;
+
+    double norm = 0.0;
+    for (std::size_t column = 0; column < Size; ++column)
+    {
+        double sum = 0.0;
+        for (std::size_t row = 0; row < Size; ++row)
+            sum += std::abs(matrix[row][column]);
+        norm = std::max(norm, sum);
+    }
+    int squarings = 0;
+    if (norm > theta13)
+        squarings = std::max(0, static_cast<int>(
+            std::ceil(std::log2(norm / theta13))));
+    const double scale = std::ldexp(1.0, -squarings);
+    for (auto& row : matrix)
+        for (double& value : row)
+            value *= scale;
+
+    const auto identity = matrixIdentity<Size>();
+    const auto a2 = matrixMultiply(matrix, matrix);
+    const auto a4 = matrixMultiply(a2, a2);
+    const auto a6 = matrixMultiply(a4, a2);
+
+    auto innerU = matrixLinearCombination(a6, b[13], a4, b[11]);
+    innerU = matrixLinearCombination(innerU, 1.0, a2, b[9]);
+    innerU = matrixMultiply(a6, innerU);
+    innerU = matrixLinearCombination(innerU, 1.0, a6, b[7]);
+    innerU = matrixLinearCombination(innerU, 1.0, a4, b[5]);
+    innerU = matrixLinearCombination(innerU, 1.0, a2, b[3]);
+    innerU = matrixLinearCombination(innerU, 1.0, identity, b[1]);
+    const auto u = matrixMultiply(matrix, innerU);
+
+    auto innerV = matrixLinearCombination(a6, b[12], a4, b[10]);
+    innerV = matrixLinearCombination(innerV, 1.0, a2, b[8]);
+    auto v = matrixMultiply(a6, innerV);
+    v = matrixLinearCombination(v, 1.0, a6, b[6]);
+    v = matrixLinearCombination(v, 1.0, a4, b[4]);
+    v = matrixLinearCombination(v, 1.0, a2, b[2]);
+    v = matrixLinearCombination(v, 1.0, identity, b[0]);
+
+    const auto denominator = matrixLinearCombination(v, 1.0, u, -1.0);
+    const auto numerator = matrixLinearCombination(v, 1.0, u, 1.0);
+    FixedMatrix<Size> result {};
+    if (!matrixSolve(denominator, numerator, result))
+        return identity;
+    for (int step = 0; step < squarings; ++step)
+        result = matrixMultiply(result, result);
+    return result;
+}
+
+using AnalogMatrix = FixedMatrix<6>;
+using AnalogDrive = std::array<double, 6>;
+
+Chorus::SupportChain::ExactTransition exactTransition(
+    const AnalogMatrix& analog, const AnalogDrive& analogDrive,
+    const std::array<double, 6>& constantInputEquilibrium,
+    double sampleRate) noexcept
+{
+    FixedMatrix<10> augmented {};
+    const double interval = 1.0 / sampleRate;
+    for (std::size_t row = 0; row < 6; ++row)
+    {
+        for (std::size_t column = 0; column < 6; ++column)
+            augmented[row][column] = interval * analog[row][column];
+        augmented[row][6] = interval * analogDrive[row];
+    }
+    augmented[6][7] = 1.0;
+    augmented[7][8] = 1.0;
+    augmented[8][9] = 1.0;
+    const auto exponential = matrixExponential(augmented);
+
+    // Initial polynomial coordinates at the previous sample for the unique
+    // cubic through u[n], u[n-1], u[n-2], u[n-3].
+    constexpr std::array<std::array<double, 4>, 4> polynomial {
+        std::array<double, 4> { 0.0, 1.0, 0.0, 0.0 },
+        std::array<double, 4> { 1.0 / 3.0, 0.5, -1.0, 1.0 / 6.0 },
+        std::array<double, 4> { 1.0, -2.0, 1.0, 0.0 },
+        std::array<double, 4> { 1.0, -3.0, 3.0, -1.0 }
+    };
+
+    Chorus::SupportChain::ExactTransition result;
+    for (std::size_t row = 0; row < 6; ++row)
+    {
+        for (std::size_t column = 0; column < 6; ++column)
+            result.state[row][column] = exponential[row][column];
+        for (std::size_t sample = 0; sample < 4; ++sample)
+            for (std::size_t derivative = 0; derivative < 4; ++derivative)
+                result.drive[row][sample] += exponential[row][6 + derivative]
+                                           * polynomial[derivative][sample];
+
+        // Force the constant-input equilibrium identity exactly in stored
+        // double arithmetic. This removes an otherwise tiny DC leak from
+        // cancellation around the very slow coupling pole at 768 kHz.
+        double target = constantInputEquilibrium[row];
+        for (std::size_t column = 0; column < 6; ++column)
+            target -= result.state[row][column]
+                    * constantInputEquilibrium[column];
+        double actual = 0.0;
+        for (std::size_t sample = 0; sample < 4; ++sample)
+            actual += result.drive[row][sample];
+        result.drive[row][0] += target - actual;
+    }
+    return result;
+}
+
+AnalogMatrix inputSupportMatrix() noexcept
+{
+    constexpr double pi = 3.14159265358979323846;
+    const double w1 = 2.0 * pi * antiAliasFirstHz;
+    const double w2 = 2.0 * pi * antiAliasSecondHz;
+    const double wc = 2.0 * pi * inputCouplingHz;
+    const double wp = 2.0 * pi * antiAliasPassiveHz;
+    const double k1 = 1.0 / Chorus::sallenKeyQ(
+        antiAliasFirstFeedbackF, antiAliasFirstShuntF);
+    const double k2 = 1.0 / Chorus::sallenKeyQ(
+        antiAliasSecondFeedbackF, antiAliasSecondShuntF);
+    AnalogMatrix matrix {};
+    // Voltage-like analog integrator coordinates: BP1, LP1, BP2, LP2,
+    // coupling-capacitor lowpass voltage and passive-pole output voltage.
+    matrix[0][0] = -k1 * w1;
+    matrix[0][1] = -w1;
+    matrix[1][0] = w1;
+    matrix[2][1] = w2;
+    matrix[2][2] = -k2 * w2;
+    matrix[2][3] = -w2;
+    matrix[3][2] = w2;
+    matrix[4][3] = wc;
+    matrix[4][4] = -wc;
+    matrix[5][3] = wp;
+    matrix[5][4] = -wp;
+    matrix[5][5] = -wp;
+    return matrix;
+}
+
+AnalogDrive inputSupportDrive() noexcept
+{
+    constexpr double pi = 3.14159265358979323846;
+    AnalogDrive drive {};
+    drive[0] = 2.0 * pi * antiAliasFirstHz;
+    return drive;
+}
+
+AnalogMatrix outputSupportMatrix(bool wetConnected) noexcept
+{
+    constexpr double pi = 3.14159265358979323846;
+    const double wt = 2.0 * pi * idealSourceTapPoleHz;
+    const double w1 = 2.0 * pi * reconstructionFirstHz;
+    const double w2 = 2.0 * pi * reconstructionSecondHz;
+    const double wc = 2.0 * pi
+        * Chorus::wetOutputCouplingCornerHz(wetConnected);
+    const double k1 = 1.0 / Chorus::sallenKeyQ(
+        antiAliasFirstFeedbackF, antiAliasFirstShuntF);
+    const double k2 = 1.0 / Chorus::sallenKeyQ(
+        antiAliasSecondFeedbackF, antiAliasSecondShuntF);
+    AnalogMatrix matrix {};
+    // Tap LP, then BP1/LP1, BP2/LP2, and the output-coupling lowpass
+    // capacitor voltage.  Every coordinate remains meaningful when wc swaps.
+    matrix[0][0] = -wt;
+    matrix[1][0] = w1;
+    matrix[1][1] = -k1 * w1;
+    matrix[1][2] = -w1;
+    matrix[2][1] = w1;
+    matrix[3][2] = w2;
+    matrix[3][3] = -k2 * w2;
+    matrix[3][4] = -w2;
+    matrix[4][3] = w2;
+    matrix[5][4] = wc;
+    matrix[5][5] = -wc;
+    return matrix;
+}
+
+AnalogDrive outputSupportDrive() noexcept
+{
+    constexpr double pi = 3.14159265358979323846;
+    AnalogDrive drive {};
+    drive[0] = 2.0 * pi * idealSourceTapPoleHz;
+    return drive;
+}
+
+void advanceExactSupport(
+    std::array<double, 6>& state,
+    const Chorus::SupportChain::ExactTransition& transition,
+    double current, double previous, double previous2,
+    double previous3) noexcept
+{
+    constexpr double maximumState =
+        static_cast<double>(std::numeric_limits<float>::max()) / 16.0;
+    if (!std::isfinite(current))
+        current = 0.0;
+    if (!std::isfinite(previous))
+        previous = 0.0;
+    if (!std::isfinite(previous2))
+        previous2 = 0.0;
+    if (!std::isfinite(previous3))
+        previous3 = 0.0;
+    const std::array<double, 4> samples {
+        std::clamp(current, -maximumState, maximumState),
+        std::clamp(previous, -maximumState, maximumState),
+        std::clamp(previous2, -maximumState, maximumState),
+        std::clamp(previous3, -maximumState, maximumState)
+    };
+    std::array<double, 6> next {};
+    for (std::size_t row = 0; row < 6; ++row)
+    {
+        for (std::size_t column = 0; column < 6; ++column)
+            next[row] += transition.state[row][column] * state[column];
+        for (std::size_t sample = 0; sample < 4; ++sample)
+            next[row] += transition.drive[row][sample] * samples[sample];
+    }
+    for (double value : next)
+    {
+        if (!std::isfinite(value) || std::abs(value) > maximumState)
+        {
+            state.fill(0.0);
+            return;
+        }
+    }
+    state = next;
+}
+
 std::uint32_t nextNoiseState(std::uint32_t state) noexcept
 {
     state ^= state << 13;
@@ -321,19 +642,12 @@ float Chorus::onePoleG(float cutoffHz, float sampleRate) noexcept
     // silently moved a real component value. A small positive floor still
     // protects tan() from invalid callers without voicing the circuit.
     //
-    // The 0.45 ceiling is load-bearing, not defensive: tan() turns negative
-    // past fs/2 and would invert the recursion. It engages on exactly one
-    // corner, the 23.46 kHz tap pole, and only with oversampling off -- at
-    // 44.1 kHz it renders 19.845 kHz and at 48 kHz 21.600 kHz. That pole is
-    // genuinely above Nyquist at those rates, so it cannot be restored, and
-    // measurement says this ceiling is already the best available one-pole:
-    // against the analogue response at 44.1 kHz the error at 5/10/15/20 kHz
-    // is +0.18/+0.64/+1.14/-0.97 dB here, against +0.19/+0.72/+1.47/+2.18 dB
-    // for a 0.49 ceiling and +0.19/+0.72/+1.47/+2.11 dB for a matched-z
-    // coefficient. Raising it to approach pass-through is both less accurate
-    // in the top octave and less stable -- the state pole walks from -0.73
-    // toward -1. Recorded so the deviation is known rather than silent; the
-    // oversampled path (176.4/192 kHz) carries the settled corner exactly.
+    // The upper ceiling is defensive: tan() turns negative past fs/2 and
+    // would invert the recursion. On the audited 44.1-96 kHz fallback grids,
+    // shipping calls use only the 15.9 Hz coupling and 7.234 kHz passive
+    // corners, comfortably below it. Lower supported stress-test grids are
+    // necessarily Nyquist-limited; the exact output transition owns the
+    // higher tap/reconstruction poles at every rate.
     const float limited = std::clamp(cutoffHz, 0.1f, sampleRate * 0.45f);
     const float g = std::tan(3.14159265358979324f * limited / sampleRate);
     return g / (1.0f + g);
@@ -407,26 +721,26 @@ Chorus::SupportChain Chorus::supportChainFor(float sampleRate) noexcept
     SupportChain chain;
     chain.inputCouplingG = onePoleG(inputCouplingHz, sampleRate);
     chain.passiveG = onePoleG(antiAliasPassiveHz, sampleRate);
-    chain.idealSourceTapPoleG = onePoleG(idealSourceTapPoleHz, sampleRate);
-    chain.wetOutputCouplingMutedG = onePoleG(
-        wetOutputCouplingCornerHz(false), sampleRate);
-    chain.wetOutputCouplingConnectedG = onePoleG(
-        wetOutputCouplingCornerHz(true), sampleRate);
     chain.antiAliasFirst = sallenKeyCoefficients(
         antiAliasFirstHz,
         sallenKeyQ(antiAliasFirstFeedbackF, antiAliasFirstShuntF), sampleRate);
     chain.antiAliasSecond = sallenKeyCoefficients(
         antiAliasSecondHz,
         sallenKeyQ(antiAliasSecondFeedbackF, antiAliasSecondShuntF), sampleRate);
-    // The output sections are the same two networks again, part for part --
-    // an identity read from the sister board's clone netlist rather than
-    // assumed (see the corner constants above).
-    chain.reconstructionFirst = sallenKeyCoefficients(
-        reconstructionFirstHz,
-        sallenKeyQ(antiAliasFirstFeedbackF, antiAliasFirstShuntF), sampleRate);
-    chain.reconstructionSecond = sallenKeyCoefficients(
-        reconstructionSecondHz,
-        sallenKeyQ(antiAliasSecondFeedbackF, antiAliasSecondShuntF), sampleRate);
+    constexpr std::array<double, 6> inputEquilibrium {
+        0.0, 1.0, 0.0, 1.0, 1.0, 0.0
+    };
+    constexpr std::array<double, 6> outputEquilibrium {
+        1.0, 0.0, 1.0, 0.0, 1.0, 1.0
+    };
+    chain.exactInput = exactTransition(
+        inputSupportMatrix(), inputSupportDrive(), inputEquilibrium, sampleRate);
+    chain.exactOutputMuted = exactTransition(
+        outputSupportMatrix(false), outputSupportDrive(), outputEquilibrium,
+        sampleRate);
+    chain.exactOutputConnected = exactTransition(
+        outputSupportMatrix(true), outputSupportDrive(), outputEquilibrium,
+        sampleRate);
     return chain;
 }
 
@@ -443,10 +757,14 @@ void Chorus::Line::reset(std::uint32_t seed) noexcept
     antiAliasState = 0.0f;
     antiAliasFirst.reset();
     antiAliasSecond.reset();
-    tapSumState = 0.0f;
-    reconstructionFirst.reset();
-    reconstructionSecond.reset();
-    outputCouplingState = 0.0f;
+    exactInputState.fill(0.0);
+    exactOutputState.fill(0.0);
+    exactInputPrevious = 0.0f;
+    exactInputPrevious2 = 0.0f;
+    exactInputPrevious3 = 0.0f;
+    exactOutputPrevious = 0.0f;
+    exactOutputPrevious2 = 0.0f;
+    exactOutputPrevious3 = 0.0f;
     transferState = 0.0f;
     noiseState = seed | 1u;
     pastBlepEvents.fill({});
@@ -455,11 +773,11 @@ void Chorus::Line::reset(std::uint32_t seed) noexcept
 
 void Chorus::Line::resetAudioRateSupport() noexcept
 {
-    // The input history is indexed on the numerical grid, and the trapezoidal
-    // integration carries below embed its old interval. The engine calls this
-    // only at zero output gain after waiting for musical tails. BBD buckets,
-    // write/clock position, transfer state, held output and RNG remain
-    // free-running.
+    // The interpolation histories are indexed on the numerical grid, and the
+    // legacy low-rate TPT carries below embed its old interval. The engine
+    // calls this only at zero output gain after waiting for musical tails.
+    // BBD buckets, write/clock position, transfer state, held output and RNG
+    // remain free-running.
     previousInput = 0.0f;
     previousInput2 = 0.0f;
     previousInput3 = 0.0f;
@@ -467,10 +785,18 @@ void Chorus::Line::resetAudioRateSupport() noexcept
     antiAliasState = 0.0f;
     antiAliasFirst.reset();
     antiAliasSecond.reset();
-    tapSumState = 0.0f;
-    reconstructionFirst.reset();
-    reconstructionSecond.reset();
-    outputCouplingState = 0.0f;
+    // The exact coordinates are physical and mode-compatible, but this rate
+    // boundary still deliberately reinitializes the entire numerical support
+    // under the engine's established zero-gain transition. Preserving them
+    // while clearing/reseeding the cubic drive is a separate qualification.
+    exactInputState.fill(0.0);
+    exactOutputState.fill(0.0);
+    exactInputPrevious = 0.0f;
+    exactInputPrevious2 = 0.0f;
+    exactInputPrevious3 = 0.0f;
+    exactOutputPrevious = 0.0f;
+    exactOutputPrevious2 = 0.0f;
+    exactOutputPrevious3 = 0.0f;
     // Event ages are measured in samples of the numerical output grid. They
     // cannot be reinterpreted at the new rate, unlike the literal BBD state
     // deliberately preserved above. Their complete support is only two old
@@ -628,9 +954,11 @@ float Chorus::Line::processClockedCore(float limitedInput, float clockHz,
     return held + static_cast<float>(deterministicBlepCorrection(increment));
 }
 
-float Chorus::Line::process(float input, float clockHz, float sampleRate,
-                            const SupportChain& support,
-                            float outputCouplingG, float noiseScale) noexcept
+float Chorus::Line::process(
+    float input, float clockHz, float sampleRate,
+    const SupportChain& support,
+    const SupportChain::ExactTransition& outputTransition,
+    float noiseScale, bool useBlep) noexcept
 {
 #if defined(YOUKNOW106_WORK_AUDIT)
     YOUKNOW106_COUNT_DOMAIN_WORK(bbdLineFrames, 1);
@@ -639,30 +967,71 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
     // exactly as it does in the part. The two Sallen-Key sections precede the
     // wet-only C44/C47 coupling high-pass; the passive 10 kOhm / 2.2 nF pole is
     // last, immediately beside the MN3009 input.
-    float limited = Chorus::biquadStep(antiAliasFirst, input, support.antiAliasFirst);
-    limited = Chorus::biquadStep(antiAliasSecond, limited, support.antiAliasSecond);
-    const float couplingLow = Chorus::supportFilterStep(
-        inputCouplingState, limited, support.inputCouplingG);
-    limited -= couplingLow;
-    limited = Chorus::supportFilterStep(antiAliasState, limited, support.passiveG);
+    // A corrupt host buffer must not poison either persistent support state.
+    // Sixty-four model units is over 160 V at this node and therefore far
+    // outside every circuit or engine fixture; treat anything beyond it as a
+    // corrupt sample instead of turning it into a long full-scale BBD burst.
+    constexpr float maximumSupportInput = 64.0f;
+    const float supportInput = std::isfinite(input)
+            && std::abs(input) <= maximumSupportInput
+        ? input : 0.0f;
+    float limited = 0.0f;
+    if (sampleRate >= Chorus::minimumExactInputSupportRate)
+    {
+#if defined(YOUKNOW106_WORK_AUDIT)
+        YOUKNOW106_COUNT_DOMAIN_WORK(bbdExactInputSupportAdvances, 1);
+        YOUKNOW106_COUNT_DOMAIN_WORK(bbdExactSupportCoordinateUpdates, 6);
+        YOUKNOW106_COUNT_DOMAIN_WORK(bbdExactSupportMacs, 60);
+#endif
+        const double exactInput = static_cast<double>(supportInput);
+        advanceExactSupport(
+            exactInputState, support.exactInput,
+            exactInput, exactInputPrevious, exactInputPrevious2,
+            exactInputPrevious3);
+        exactInputPrevious3 = exactInputPrevious2;
+        exactInputPrevious2 = exactInputPrevious;
+        exactInputPrevious = exactInput;
+        limited = static_cast<float>(exactInputState[5]);
+    }
+    else
+    {
+#if defined(YOUKNOW106_WORK_AUDIT)
+        YOUKNOW106_COUNT_DOMAIN_WORK(bbdLegacyInputSupportFrames, 1);
+#endif
+        limited = Chorus::biquadStep(
+            antiAliasFirst, supportInput, support.antiAliasFirst);
+        limited = Chorus::biquadStep(
+            antiAliasSecond, limited, support.antiAliasSecond);
+        const float couplingLow = Chorus::supportFilterStep(
+            inputCouplingState, limited, support.inputCouplingG);
+        limited -= couplingLow;
+        limited = Chorus::supportFilterStep(
+            antiAliasState, limited, support.passiveG);
+    }
 
-    const float reconstructedHold = processClockedCore(
+    const float correctedHold = processClockedCore(
         limited, clockHz, sampleRate, noiseScale);
+    const float reconstructedHold = useBlep ? correctedHold : held;
 
     // Sum the complementary BBD output taps through their 3.3 kOhm resistors,
     // then reconstruct the BLEP-sampled physical staircase through the two
     // output sections. The correction is deliberately upstream of every
     // hardware reconstruction pole and downstream of charge transfer/noise.
-    const float tapSum = Chorus::supportFilterStep(
-        tapSumState, reconstructedHold, support.idealSourceTapPoleG);
-    const float first =
-        Chorus::biquadStep(reconstructionFirst, tapSum,
-                           support.reconstructionFirst);
-    const float reconstructed = Chorus::biquadStep(
-        reconstructionSecond, first, support.reconstructionSecond);
-    const float outputCouplingLow = Chorus::supportFilterStep(
-        outputCouplingState, reconstructed, outputCouplingG);
-    return reconstructed - outputCouplingLow;
+    const double exactOutput = std::isfinite(reconstructedHold)
+        ? static_cast<double>(reconstructedHold) : 0.0;
+#if defined(YOUKNOW106_WORK_AUDIT)
+    YOUKNOW106_COUNT_DOMAIN_WORK(bbdExactOutputSupportAdvances, 1);
+    YOUKNOW106_COUNT_DOMAIN_WORK(bbdExactSupportCoordinateUpdates, 6);
+    YOUKNOW106_COUNT_DOMAIN_WORK(bbdExactSupportMacs, 60);
+#endif
+    advanceExactSupport(
+        exactOutputState, outputTransition,
+        exactOutput, exactOutputPrevious,
+        exactOutputPrevious2, exactOutputPrevious3);
+    exactOutputPrevious3 = exactOutputPrevious2;
+    exactOutputPrevious2 = exactOutputPrevious;
+    exactOutputPrevious = exactOutput;
+    return static_cast<float>(exactOutputState[4] - exactOutputState[5]);
 }
 
 void Chorus::prepare(double sampleRate, bool preserveState) noexcept
@@ -812,9 +1181,9 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     const float clockB = std::clamp(clockForDelaySeconds(delayB),
                                     minimumClockHz, maximumClockHz);
 
-    const float wetOutputCouplingG = mode == ChorusMode::Off
-        ? support_.wetOutputCouplingMutedG
-        : support_.wetOutputCouplingConnectedG;
+    const auto& wetOutputTransition = mode == ChorusMode::Off
+        ? support_.exactOutputMuted
+        : support_.exactOutputConnected;
     // The relative real-instrument calibration and its alternative causal
     // hypothesis act on the lines' random floor only. Neither is a claim that
     // a standalone mode-II MN3009 exceeds its datasheet row: the observation
@@ -826,9 +1195,9 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         : measuredModeNoiseGain(runningMode_);
     const float lineNoiseScale = noiseScale * modeNoiseGain;
     float wetA = lineA_.process(input, clockA, sampleRate_, support_,
-                                wetOutputCouplingG, lineNoiseScale);
+                                wetOutputTransition, lineNoiseScale);
     float wetB = lineB_.process(input, clockB, sampleRate_, support_,
-                                wetOutputCouplingG, lineNoiseScale);
+                                wetOutputTransition, lineNoiseScale);
 
     if (enableClockBleed)
     {

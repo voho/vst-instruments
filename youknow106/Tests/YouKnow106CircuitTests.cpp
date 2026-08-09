@@ -381,39 +381,48 @@ struct YouKnow106TestAccess
     {
         auto& line = chorus.lineA_;
         const auto& support = chorus.support_;
-        const float outputCouplingG =
-            support.wetOutputCouplingConnectedG;
+        // Both sides use the exact same physical support. The seam changes
+        // only whether its output side sees the BLEP-corrected or raw held
+        // BBD staircase, so the comparison cannot accidentally measure two
+        // different filter implementations.
+        return line.process(input, clockHz, chorus.sampleRate_, support,
+                            support.exactOutputConnected, 0.0f, useBlep);
+    }
 
-        if (useBlep)
-        {
-            return line.process(input, clockHz, chorus.sampleRate_, support,
-                                outputCouplingG, 0.0f);
-        }
+    static float processBbdExactMode(Chorus& chorus, float input,
+                                     float clockHz,
+                                     bool wetConnected) noexcept
+    {
+        auto& line = chorus.lineA_;
+        const auto& support = chorus.support_;
+        const auto& transition = wetConnected
+            ? support.exactOutputConnected : support.exactOutputMuted;
+        return line.process(input, clockHz, chorus.sampleRate_, support,
+                            transition, 0.0f, true);
+    }
 
-        // Legacy-output reference using the same complete input/output support
-        // chain and the same physical core. Only the value entering the tap
-        // pole differs: raw held staircase rather than its BLEP sampling.
-        float limited = Chorus::biquadStep(
-            line.antiAliasFirst, input, support.antiAliasFirst);
-        limited = Chorus::biquadStep(
-            line.antiAliasSecond, limited, support.antiAliasSecond);
-        const float couplingLow = Chorus::supportFilterStep(
-            line.inputCouplingState, limited, support.inputCouplingG);
-        limited -= couplingLow;
-        limited = Chorus::supportFilterStep(
-            line.antiAliasState, limited, support.passiveG);
-        (void) line.processClockedCore(
-            limited, clockHz, chorus.sampleRate_, 0.0f);
+    static const std::array<double, 6>& chorusExactInputState(
+        const Chorus& chorus) noexcept
+    {
+        return chorus.lineA_.exactInputState;
+    }
 
-        const float tapSum = Chorus::supportFilterStep(
-            line.tapSumState, line.held, support.idealSourceTapPoleG);
-        const float first = Chorus::biquadStep(
-            line.reconstructionFirst, tapSum, support.reconstructionFirst);
-        const float reconstructed = Chorus::biquadStep(
-            line.reconstructionSecond, first, support.reconstructionSecond);
-        const float outputCouplingLow = Chorus::supportFilterStep(
-            line.outputCouplingState, reconstructed, outputCouplingG);
-        return reconstructed - outputCouplingLow;
+    static const std::array<double, 6>& chorusExactOutputState(
+        const Chorus& chorus) noexcept
+    {
+        return chorus.lineA_.exactOutputState;
+    }
+
+    static bool chorusExactHistoriesAreFinite(
+        const Chorus& chorus) noexcept
+    {
+        const auto& line = chorus.lineA_;
+        return std::isfinite(line.exactInputPrevious)
+            && std::isfinite(line.exactInputPrevious2)
+            && std::isfinite(line.exactInputPrevious3)
+            && std::isfinite(line.exactOutputPrevious)
+            && std::isfinite(line.exactOutputPrevious2)
+            && std::isfinite(line.exactOutputPrevious3);
     }
 
     static std::array<float, 2> correlatedChorusNoiseStep(
@@ -490,6 +499,10 @@ struct YouKnow106TestAccess
         const Chorus& chorus) noexcept
     {
         const auto clear = [](const Chorus::Line& line) {
+            const auto allZero = [](const auto& values) {
+                return std::all_of(values.begin(), values.end(),
+                    [](double value) { return value == 0.0; });
+            };
             return line.previousInput == 0.0f
                 && line.previousInput2 == 0.0f
                 && line.previousInput3 == 0.0f
@@ -499,12 +512,14 @@ struct YouKnow106TestAccess
                 && line.antiAliasFirst.s2 == 0.0f
                 && line.antiAliasSecond.s1 == 0.0f
                 && line.antiAliasSecond.s2 == 0.0f
-                && line.tapSumState == 0.0f
-                && line.reconstructionFirst.s1 == 0.0f
-                && line.reconstructionFirst.s2 == 0.0f
-                && line.reconstructionSecond.s1 == 0.0f
-                && line.reconstructionSecond.s2 == 0.0f
-                && line.outputCouplingState == 0.0f
+                && allZero(line.exactInputState)
+                && allZero(line.exactOutputState)
+                && line.exactInputPrevious == 0.0
+                && line.exactInputPrevious2 == 0.0
+                && line.exactInputPrevious3 == 0.0
+                && line.exactOutputPrevious == 0.0
+                && line.exactOutputPrevious2 == 0.0
+                && line.exactOutputPrevious3 == 0.0
                 && line.pastBlepEventCount == 0;
         };
         return clear(chorus.lineA_) && clear(chorus.lineB_);
@@ -3459,13 +3474,11 @@ void testChorusLineNoiseMatchesTheMn3009NoiseRow()
     //
     // The measurand, stated in full because every part of it moves the number:
     //
-    //  * 192 kHz: what HQ targets from the 48 kHz host-rate family, and the
-    //    engine's `noiseReferenceRateHz`. A coarser grid folds more of the
-    //    held sequence back into the band and reads high, so the rate is part
-    //    of the measurand and not an incidental fixture choice. Across HQ it
-    //    does not matter -- 176.4 kHz, the other internal rate HQ reaches,
-    //    reads 0.005 dB apart -- but with HQ switched out the same measure
-    //    reads 0.40 dB high at 48 kHz and 0.45 dB high at 44.1 kHz.
+    //  * Both 176.4 and 192 kHz: the two internal grids shipping HQ reaches.
+    //    A coarser grid folds more of the held sequence back into the band, so
+    //    rate is part of the measurand rather than an incidental fixture
+    //    choice. The exact output support keeps these HQ families within
+    //    0.004 dB; HQ-off remains a separately documented numerical error.
     //  * Silence in. Both output channels. The wet line is recovered by
     //    undoing IC6's dry and wet summing gains only, and referred to volts
     //    through the 2.6 V node coordinate: the reconstruction sections stay
@@ -3476,74 +3489,89 @@ void testChorusLineNoiseMatchesTheMn3009NoiseRow()
     //    the empirical instrument-output II-I factor; that reported ~3.95 dB
     //    observation belongs to the engine contract, not the standalone row.
     //
-    // The upper bound carries 0.05 dB. This is a finite-window estimate of a
-    // random process's power and does not converge to better than about
-    // +/-0.1%: over windows of 4 s to 256 s in both modes the estimate spans
-    // 0.199568-0.200161 mVrms, so a bound placed exactly on 0.200 mVrms would
-    // be decided by the estimator's own spread rather than by the constant.
-    // 0.05 dB is about four times that spread (0.026 dB peak to peak) and is
-    // negligible against the datasheet's own 10.5 dB bracket between its max
-    // and typical rows. The lower fence is the wide one: 0.2 mVrms is a
-    // *maximum*, so being under it is not an error, and 1 dB only has to catch
-    // a gross over-correction.
-    constexpr double sampleRate = 192000.0;
+    // The upper bound carries 0.05 dB because this is a finite-window estimate
+    // of a random process, not a deterministic tone projection. Fixed-seed
+    // 128 s verification of the current path spans 0.200006-0.200078 mVrms
+    // across both HQ grids/modes; the shorter regression window needs explicit
+    // estimator margin. That tolerance is still negligible against the
+    // datasheet's own 10.5 dB bracket between its max and typical rows. The
+    // lower fence is the wide one: 0.2 mVrms is a *maximum*, so being under it
+    // is not an error, and 1 dB only has to catch a gross over-correction.
     constexpr double target = 0.200e-3;
     constexpr double upperBound = 0.200e-3 * 1.0057900;  // +0.05 dB
     constexpr double lowerBound = 0.200e-3 * 0.8912509;  // -1.00 dB
+    std::array<double, 4> recoveredByRateAndMode {};
+    std::size_t resultIndex = 0;
 
-    for (const auto mode : { ChorusMode::One, ChorusMode::Two })
+    for (const double sampleRate : { 176400.0, 192000.0 })
     {
-        Chorus chorus;
-        chorus.prepare(sampleRate);
-        AWeightingFilter weightLeft(sampleRate);
-        AWeightingFilter weightRight(sampleRate);
-        // process() returns dryMixGain * (input + wet * wetToDryGain) on each
-        // side, so with silence in this recovers the line's own output.
-        const double recover = static_cast<double>(Chorus::nodeVoltsPerUnit)
-            / (static_cast<double>(Chorus::dryMixGain)
-               * static_cast<double>(Chorus::wetToDryGain));
+        for (const auto mode : { ChorusMode::One, ChorusMode::Two })
+        {
+            Chorus chorus;
+            chorus.prepare(sampleRate);
+            AWeightingFilter weightLeft(sampleRate);
+            AWeightingFilter weightRight(sampleRate);
+            // process() returns dryMixGain * (input + wet * wetToDryGain) on
+            // each side, so with silence in this recovers the line output.
+            const double recover = static_cast<double>(Chorus::nodeVoltsPerUnit)
+                / (static_cast<double>(Chorus::dryMixGain)
+                   * static_cast<double>(Chorus::wetToDryGain));
 
-        const auto advance = [&](long long samples, double* sum) {
-            for (long long index = 0; index < samples; ++index)
-            {
-                float left = 0.0f;
-                float right = 0.0f;
-                const float isolatePartScale =
-                    1.0f / Chorus::measuredModeNoiseGain(mode);
-                chorus.process(0.0f, mode, isolatePartScale, left, right);
-                const double weightedLeft =
-                    weightLeft.step(static_cast<double>(left) * recover);
-                const double weightedRight =
-                    weightRight.step(static_cast<double>(right) * recover);
-                if (sum != nullptr)
-                    *sum += weightedLeft * weightedLeft
-                          + weightedRight * weightedRight;
-            }
-        };
+            const auto advance = [&](long long samples, double* sum) {
+                for (long long index = 0; index < samples; ++index)
+                {
+                    float left = 0.0f;
+                    float right = 0.0f;
+                    const float isolatePartScale =
+                        1.0f / Chorus::measuredModeNoiseGain(mode);
+                    chorus.process(
+                        0.0f, mode, isolatePartScale, left, right);
+                    const double weightedLeft = weightLeft.step(
+                        static_cast<double>(left) * recover);
+                    const double weightedRight = weightRight.step(
+                        static_cast<double>(right) * recover);
+                    if (sum != nullptr)
+                        *sum += weightedLeft * weightedLeft
+                              + weightedRight * weightedRight;
+                }
+            };
 
-        const auto settle = static_cast<long long>(sampleRate * 0.5);
-        const auto window = static_cast<long long>(sampleRate * 16.0);
-        advance(settle, nullptr);
-        double sum = 0.0;
-        advance(window, &sum);
-        const double recovered =
-            std::sqrt(sum / static_cast<double>(window * 2));
+            const auto settle = static_cast<long long>(sampleRate * 0.5);
+            const auto window = static_cast<long long>(sampleRate * 16.0);
+            advance(settle, nullptr);
+            double sum = 0.0;
+            advance(window, &sum);
+            const double recovered =
+                std::sqrt(sum / static_cast<double>(window * 2));
+            recoveredByRateAndMode[resultIndex++] = recovered;
 
-        const std::string label = mode == ChorusMode::One ? "I" : "II";
-        expect(recovered <= upperBound,
-               "chorus " + label + " wet-line noise is "
-                   + std::to_string(recovered * 1000.0)
-                   + " mVrms A-weighted, above the MN3009's 0.200 mVrms max");
-        expect(recovered >= lowerBound,
-               "chorus " + label + " wet-line noise is "
-                   + std::to_string(recovered * 1000.0)
-                   + " mVrms A-weighted, more than 1 dB under the MN3009's "
-                     "0.200 mVrms max");
-        expect(std::abs(20.0 * std::log10(recovered / target)) < 1.0,
-               "chorus " + label + " wet-line noise left the datasheet row by "
-                   + std::to_string(20.0 * std::log10(recovered / target))
-                   + " dB");
+            const std::string label = mode == ChorusMode::One ? "I" : "II";
+            const std::string fixture = label + " at "
+                + std::to_string(static_cast<int>(sampleRate)) + " Hz";
+            expect(recovered <= upperBound,
+                   "chorus " + fixture + " wet-line noise is "
+                       + std::to_string(recovered * 1000.0)
+                       + " mVrms A-weighted, above the MN3009's 0.200 mVrms max");
+            expect(recovered >= lowerBound,
+                   "chorus " + fixture + " wet-line noise is "
+                       + std::to_string(recovered * 1000.0)
+                       + " mVrms A-weighted, more than 1 dB under the "
+                         "MN3009's 0.200 mVrms max");
+            expect(std::abs(20.0 * std::log10(recovered / target)) < 1.0,
+                   "chorus " + fixture
+                       + " wet-line noise left the datasheet row by "
+                       + std::to_string(20.0 * std::log10(recovered / target))
+                       + " dB");
+        }
     }
+
+    const auto [minimumRecovered, maximumRecovered] = std::minmax_element(
+        recoveredByRateAndMode.begin(), recoveredByRateAndMode.end());
+    const double hqSpreadDb = 20.0 * std::log10(
+        *maximumRecovered / *minimumRecovered);
+    expect(hqSpreadDb < 0.05,
+           "chorus noise changed across HQ families/modes by "
+               + std::to_string(hqSpreadDb) + " dB");
 
     // The derivation is one equation and the header publishes every term of
     // it. Re-solving it here stops the amplitude from being edited to a number
@@ -3968,7 +3996,7 @@ void testChorusRateChangePreservesPhysicalState()
     expect(after == before,
            "a numerical sample-rate change power-cycled BBD/free-running state");
     expect(YouKnow106TestAccess::chorusAudioRateSupportIsClear(chorus),
-           "a chorus rate change reused TPT carries expressed in the old timestep");
+           "a chorus rate change reused support coordinates or grid history");
 }
 
 void testBucketBrigadeDatasheetAnchors()
@@ -4355,7 +4383,8 @@ void testBbdOutputPolyBlepReferenceAndBounds()
            "noise-only BBD golden edge count/RNG state changed");
 
     // Rate-change policy: physical state is covered separately, while this
-    // sample-grid history must be discarded with the old TPT carries.
+    // sample-grid correction history must be discarded at the zero-gain
+    // boundary.
     maximumRate.prepare(16000.0, true);
     expect(YouKnow106TestAccess::bbdBlepEventCount(maximumRate) == 0,
            "BBD polyBLEP history survived a numerical grid change");
@@ -4706,6 +4735,296 @@ void testNoiseSourceShapingFollowsItsCircuit()
            "the rendered noise lost its passband as well as its top");
 }
 
+void testCombinedBbdSupportTransitionAndStateSafety()
+{
+    using Transition = Chorus::SupportChain::ExactTransition;
+    using Matrix = std::array<std::array<double, 6>, 6>;
+    using State = std::array<double, 6>;
+
+    const auto transitionFinite = [](const Transition& transition) {
+        for (const auto& row : transition.state)
+            for (double value : row)
+                if (!std::isfinite(value))
+                    return false;
+        for (const auto& row : transition.drive)
+            for (double value : row)
+                if (!std::isfinite(value))
+                    return false;
+        return true;
+    };
+    const auto equilibriumResidual = [](const Transition& transition,
+                                        const State& equilibrium) {
+        double worst = 0.0;
+        for (std::size_t row = 0; row < 6; ++row)
+        {
+            double next = 0.0;
+            for (std::size_t column = 0; column < 6; ++column)
+                next += transition.state[row][column] * equilibrium[column];
+            for (double weight : transition.drive[row])
+                next += weight;
+            worst = std::max(worst, std::abs(next - equilibrium[row]));
+        }
+        return worst;
+    };
+    const auto transitionStep = [](const Transition& transition,
+                                   const State& state,
+                                   const std::array<double, 4>& samples) {
+        State next {};
+        for (std::size_t row = 0; row < 6; ++row)
+        {
+            for (std::size_t column = 0; column < 6; ++column)
+                next[row] += transition.state[row][column] * state[column];
+            for (std::size_t sample = 0; sample < 4; ++sample)
+                next[row] += transition.drive[row][sample] * samples[sample];
+        }
+        return next;
+    };
+    const auto cubic = [](const std::array<double, 4>& samples, double tau) {
+        const double first = samples[0] / 3.0 + samples[1] / 2.0
+                           - samples[2] + samples[3] / 6.0;
+        const double second = samples[0] - 2.0 * samples[1] + samples[2];
+        const double third = samples[0] - 3.0 * samples[1]
+                           + 3.0 * samples[2] - samples[3];
+        return samples[1] + tau * (first + tau * (
+            0.5 * second + tau * third / 6.0));
+    };
+    const auto rk4 = [&](const Matrix& matrix, const State& drive,
+                         State state, const std::array<double, 4>& samples,
+                         double sampleRate) {
+        constexpr int substeps = 4096;
+        const double step = 1.0 / static_cast<double>(substeps);
+        const double interval = 1.0 / sampleRate;
+        const auto derivative = [&](const State& at, double input) {
+            State slope {};
+            for (std::size_t row = 0; row < 6; ++row)
+            {
+                for (std::size_t column = 0; column < 6; ++column)
+                    slope[row] += matrix[row][column] * at[column];
+                slope[row] = interval * (slope[row] + drive[row] * input);
+            }
+            return slope;
+        };
+        const auto advanced = [](const State& at, const State& slope,
+                                 double amount) {
+            State result {};
+            for (std::size_t index = 0; index < 6; ++index)
+                result[index] = at[index] + amount * slope[index];
+            return result;
+        };
+        for (int substep = 0; substep < substeps; ++substep)
+        {
+            const double tau = static_cast<double>(substep) * step;
+            const auto k1 = derivative(state, cubic(samples, tau));
+            const auto k2 = derivative(
+                advanced(state, k1, 0.5 * step),
+                cubic(samples, tau + 0.5 * step));
+            const auto k3 = derivative(
+                advanced(state, k2, 0.5 * step),
+                cubic(samples, tau + 0.5 * step));
+            const auto k4 = derivative(
+                advanced(state, k3, step), cubic(samples, tau + step));
+            for (std::size_t index = 0; index < 6; ++index)
+                state[index] += step * (k1[index] + 2.0 * k2[index]
+                                      + 2.0 * k3[index] + k4[index]) / 6.0;
+        }
+        return state;
+    };
+    const auto maximumDifference = [](const State& left,
+                                      const State& right) {
+        double worst = 0.0;
+        for (std::size_t index = 0; index < 6; ++index)
+            worst = std::max(worst, std::abs(left[index] - right[index]));
+        return worst;
+    };
+    const auto inputMatrix = [] {
+        const double w1 = 2.0 * pi * static_cast<double>(9688.0f);
+        const double w2 = 2.0 * pi * static_cast<double>(10377.0f);
+        const double wc = 2.0 * pi * static_cast<double>(15.9155f);
+        const double wp = 2.0 * pi * static_cast<double>(7234.0f);
+        const double q1 = Chorus::sallenKeyQ(820.0e-12f, 680.0e-12f);
+        const double q2 = Chorus::sallenKeyQ(1.8e-9f, 270.0e-12f);
+        Matrix matrix {};
+        matrix[0][0] = -w1 / q1;
+        matrix[0][1] = -w1;
+        matrix[1][0] = w1;
+        matrix[2][1] = w2;
+        matrix[2][2] = -w2 / q2;
+        matrix[2][3] = -w2;
+        matrix[3][2] = w2;
+        matrix[4][3] = wc;
+        matrix[4][4] = -wc;
+        matrix[5][3] = wp;
+        matrix[5][4] = -wp;
+        matrix[5][5] = -wp;
+        return matrix;
+    };
+    const auto outputMatrix = [](bool connected) {
+        const double wt = 2.0 * pi * static_cast<double>(23461.38f);
+        const double w1 = 2.0 * pi * static_cast<double>(9688.0f);
+        const double w2 = 2.0 * pi * static_cast<double>(10377.0f);
+        const double wc = 2.0 * pi * static_cast<double>(
+            Chorus::wetOutputCouplingCornerHz(connected));
+        const double q1 = Chorus::sallenKeyQ(820.0e-12f, 680.0e-12f);
+        const double q2 = Chorus::sallenKeyQ(1.8e-9f, 270.0e-12f);
+        Matrix matrix {};
+        matrix[0][0] = -wt;
+        matrix[1][0] = w1;
+        matrix[1][1] = -w1 / q1;
+        matrix[1][2] = -w1;
+        matrix[2][1] = w1;
+        matrix[3][2] = w2;
+        matrix[3][3] = -w2 / q2;
+        matrix[3][4] = -w2;
+        matrix[4][3] = w2;
+        matrix[5][4] = wc;
+        matrix[5][5] = -wc;
+        return matrix;
+    };
+
+    State inputDrive {};
+    inputDrive[0] = 2.0 * pi * static_cast<double>(9688.0f);
+    State outputDrive {};
+    outputDrive[0] = 2.0 * pi * static_cast<double>(23461.38f);
+    constexpr State inputEquilibrium { 0.0, 1.0, 0.0, 1.0, 1.0, 0.0 };
+    constexpr State outputEquilibrium { 1.0, 0.0, 1.0, 0.0, 1.0, 1.0 };
+    constexpr State initial { 0.03, -0.07, 0.11, -0.13, 0.17, -0.19 };
+    constexpr std::array<double, 4> samples { 0.2, -0.1, 0.05, -0.03 };
+
+    // Endpoint rates exercise the matrix exponential's widest conditioning
+    // range; the middle rows cover both common hosts and both shipping HQ
+    // grids so a rate-specific matrix defect cannot hide between endpoints.
+    for (double sampleRate : {
+             8000.0, 44100.0, 48000.0, 176400.0, 192000.0, 768000.0 })
+    {
+        const auto support = Chorus::supportChainFor(
+            static_cast<float>(sampleRate));
+        expect(transitionFinite(support.exactInput)
+                   && transitionFinite(support.exactOutputMuted)
+                   && transitionFinite(support.exactOutputConnected),
+               "combined BBD support transition is non-finite at "
+                   + std::to_string(sampleRate) + " Hz");
+        expect(equilibriumResidual(support.exactInput, inputEquilibrium)
+                   <= 2.0e-15,
+               "combined input support leaks its exact DC equilibrium");
+        expect(equilibriumResidual(
+                   support.exactOutputMuted, outputEquilibrium) <= 2.0e-15
+                   && equilibriumResidual(
+                       support.exactOutputConnected, outputEquilibrium)
+                          <= 2.0e-15,
+               "combined output support leaks its exact DC equilibrium");
+
+        const double inputError = maximumDifference(
+            transitionStep(support.exactInput, initial, samples),
+            rk4(inputMatrix(), inputDrive, initial, samples, sampleRate));
+        const double mutedError = maximumDifference(
+            transitionStep(support.exactOutputMuted, initial, samples),
+            rk4(outputMatrix(false), outputDrive, initial, samples,
+                sampleRate));
+        const double connectedError = maximumDifference(
+            transitionStep(support.exactOutputConnected, initial, samples),
+            rk4(outputMatrix(true), outputDrive, initial, samples,
+                sampleRate));
+        expect(std::max({ inputError, mutedError, connectedError }) <= 2.0e-11,
+               "combined BBD support disagrees with independent RK4 at "
+                   + std::to_string(sampleRate) + " Hz");
+
+        Chorus chorus;
+        chorus.prepare(sampleRate);
+        const int driveFrames = std::max(
+            16, static_cast<int>(sampleRate * 0.02));
+        const int decayFrames = std::max(
+            16, static_cast<int>(sampleRate * 0.50));
+        const int toggleFrames = std::max(
+            1, static_cast<int>(sampleRate * 0.003));
+        std::uint32_t random = 0x1234567u;
+        double maximumState = 0.0;
+        bool allFinite = true;
+        for (int frame = 0; frame < driveFrames + decayFrames; ++frame)
+        {
+            random = random * 1664525u + 1013904223u;
+            const float randomSample = static_cast<float>(random >> 8)
+                                     * (2.0f / 16777215.0f) - 1.0f;
+            const float input = frame < driveFrames
+                ? 0.2f * randomSample : 0.0f;
+            const bool connected = ((frame / toggleFrames) & 1) == 0;
+            const float output = YouKnow106TestAccess::processBbdExactMode(
+                chorus, input, 200000.0f, connected);
+            allFinite = allFinite && std::isfinite(output)
+                && YouKnow106TestAccess::chorusExactHistoriesAreFinite(chorus);
+            for (double value : YouKnow106TestAccess::chorusExactInputState(
+                     chorus))
+            {
+                allFinite = allFinite && std::isfinite(value);
+                maximumState = std::max(maximumState, std::abs(value));
+            }
+            for (double value : YouKnow106TestAccess::chorusExactOutputState(
+                     chorus))
+            {
+                allFinite = allFinite && std::isfinite(value);
+                maximumState = std::max(maximumState, std::abs(value));
+            }
+        }
+        expect(allFinite && maximumState < 10.0,
+               "combined BBD support is unstable under coupling switches at "
+                   + std::to_string(sampleRate) + " Hz");
+
+        const float nanOutput = YouKnow106TestAccess::processBbdExactMode(
+            chorus, std::numeric_limits<float>::quiet_NaN(), 200000.0f, true);
+        const float infiniteOutput = YouKnow106TestAccess::processBbdExactMode(
+            chorus, std::numeric_limits<float>::infinity(), 200000.0f, false);
+        const float maximumOutput = YouKnow106TestAccess::processBbdExactMode(
+            chorus, std::numeric_limits<float>::max(), 200000.0f, true);
+        expect(std::isfinite(nanOutput) && std::isfinite(infiniteOutput)
+                   && std::isfinite(maximumOutput),
+               "combined BBD support emitted a non-finite hostile response");
+        expect(YouKnow106TestAccess::chorusExactHistoriesAreFinite(chorus),
+               "combined BBD support retained a hostile non-finite input");
+        for (double value : YouKnow106TestAccess::chorusExactInputState(chorus))
+            expect(std::isfinite(value),
+                   "combined BBD input state escaped finite containment");
+        for (double value : YouKnow106TestAccess::chorusExactOutputState(chorus))
+            expect(std::isfinite(value),
+                   "combined BBD output state escaped finite containment");
+
+        double recoveryPeak = 0.0;
+        for (int frame = 0; frame < 1024; ++frame)
+            recoveryPeak = std::max(recoveryPeak, std::abs(static_cast<double>(
+                YouKnow106TestAccess::processBbdExactMode(
+                    chorus, 0.0f, 200000.0f, true))));
+        expect(recoveryPeak < 0.05,
+               "one corrupt BBD input poisoned later support state (peak "
+                   + std::to_string(recoveryPeak) + ")");
+
+        chorus.prepare(sampleRate == 768000.0 ? 8000.0
+                                              : sampleRate + 1.0, true);
+        expect(YouKnow106TestAccess::chorusAudioRateSupportIsClear(chorus),
+               "rate reset retained combined support state or cubic history");
+    }
+
+    // The selector is an explicit numerical-quality policy, not an emergent
+    // consequence of a host-rate comparison. Fence both adjacent float grids:
+    // the lower one must leave the exact input state untouched, while the HQ
+    // threshold must route the same signal through it.
+    const float belowExactRate = std::nextafter(
+        Chorus::minimumExactInputSupportRate, 0.0f);
+    for (const auto [rate, shouldUseExact] : {
+             std::pair { belowExactRate, false },
+             std::pair { Chorus::minimumExactInputSupportRate, true } })
+    {
+        Chorus chorus;
+        chorus.prepare(rate);
+        for (int frame = 0; frame < 32; ++frame)
+            (void) YouKnow106TestAccess::processBbdExactMode(
+                chorus, frame == 0 ? 0.25f : 0.0f, 50000.0f, true);
+        const bool exactStateMoved = std::any_of(
+            YouKnow106TestAccess::chorusExactInputState(chorus).begin(),
+            YouKnow106TestAccess::chorusExactInputState(chorus).end(),
+            [](double value) { return value != 0.0; });
+        expect(exactStateMoved == shouldUseExact,
+               "BBD exact-input selector moved at its 176.4 kHz boundary");
+    }
+}
+
 void testSupportFilterCornersLandWhereAsked()
 {
     const auto gainAt = [](double frequency, float g, float sampleRate) {
@@ -4760,11 +5079,9 @@ void testSupportFilterCornersLandWhereAsked()
         expectNear(settled, 1.0, 1.0e-5, "the support filter does not pass DC");
     }
 
-    // The two newly explicit single-pole networks are checked through the
-    // coefficients supportChainFor() actually installs, so accidentally
-    // leaving either field at its default cannot hide behind onePoleG's own
-    // unit checks. C44/R120 is a wet-only high-pass; the BBD tap-summing node
-    // is a low-pass under the documented ideal-source approximation.
+    // The TPT checks below now own only the low-rate input fallback. Output
+    // support is exclusively the independently checked exact transition in
+    // testCombinedBbdSupportTransitionAndStateSafety().
     {
         const auto chain = Chorus::supportChainFor(48000.0f);
         expectNear(highPassGainAt(15.9155, chain.inputCouplingG, 48000.0f),
@@ -4781,45 +5098,6 @@ void testSupportFilterCornersLandWhereAsked()
                    1.0e-5, "muted wet-output coupling corner");
         expectNear(Chorus::wetOutputCouplingCornerHz(true), connectedCorner,
                    1.0e-5, "engaged wet-output coupling corner");
-        expectNear(highPassGainAt(
-                       mutedCorner, chain.wetOutputCouplingMutedG, 48000.0f),
-                   0.70710678, 0.005,
-                   "muted C28/C25 wet-output pole is misplaced");
-        expectNear(highPassGainAt(
-                       connectedCorner,
-                       chain.wetOutputCouplingConnectedG, 48000.0f),
-                   0.70710678, 0.005,
-                   "engaged C28/C25 wet-output pole is misplaced");
-    }
-    {
-        const auto chain = Chorus::supportChainFor(192000.0f);
-        expectNear(gainAt(23461.38, chain.idealSourceTapPoleG, 192000.0f),
-                   0.70710678, 0.005,
-                   "the BBD tap-summing pole is not at its nominal corner");
-    }
-    {
-        // The tap pole is the one corner in this chain above Nyquist at the
-        // rates the engine runs without oversampling, so onePoleG's 0.45
-        // ceiling relocates it there -- 19.845 kHz at 44.1 kHz, 21.600 kHz at
-        // 48 kHz. It cannot be restored (tan() inverts past fs/2) and the
-        // ceiling measures better in the top octave than either a higher one
-        // or a matched-z coefficient, so this fixture pins the deviation
-        // rather than forbidding it: the whole point is that it is known.
-        for (const float rate : { 44100.0f, 48000.0f })
-        {
-            expectNear(Chorus::onePoleG(23461.38f, rate),
-                       Chorus::onePoleG(rate * 0.45f, rate), 1.0e-9,
-                       "the non-oversampled BBD tap pole stopped clamping to "
-                       "0.45 fs, so its realised corner moved silently");
-        }
-        // ...and that the oversampled path carries the settled corner exactly.
-        for (const float rate : { 176400.0f, 192000.0f })
-        {
-            expect(Chorus::onePoleG(23461.38f, rate)
-                       < Chorus::onePoleG(rate * 0.45f, rate),
-                   "the oversampled BBD tap pole is being clamped, which would "
-                   "move a settled corner at the engine's own internal rate");
-        }
     }
 
     const auto measureCorner = [&gainAt](float requested, float sampleRate) {
@@ -4844,8 +5122,6 @@ void testSupportFilterCornersLandWhereAsked()
     // it accepts -- where the prewarping matters most.
     expectNear(measureCorner(9900.0f, 192000.0f), 9900.0, 60.0,
                "anti-alias corner at the internal rate");
-    expectNear(measureCorner(9500.0f, 192000.0f), 9500.0, 60.0,
-               "reconstruction corner at the internal rate");
     expectNear(measureCorner(9900.0f, 48000.0f), 9900.0, 60.0,
                "one-pole corner without oversampling");
 
@@ -5151,6 +5427,7 @@ int main()
     testBbdInputCubicInterpolation();
     testBbdOutputPolyBlepReferenceAndBounds();
     testBbdOutputPolyBlepSeparatesPhysicalAndNumericalAliases();
+    testCombinedBbdSupportTransitionAndStateSafety();
     testSupportFilterCornersLandWhereAsked();
     testHighPassReachesTheSummedSignal();
     testNoiseSourceShapingFollowsItsCircuit();

@@ -181,9 +181,14 @@ PreparedSnapshot prepareSnapshot(const Scenario& scenario, int sampleRate,
             snapshot.engine.noteOn(note, 1.0f);
 
     const int preRollFrames = sampleRate * preRollSeconds;
-    if (preRollFrames % blockSize != 0)
-        throw std::logic_error("pre-roll must contain complete 256-frame blocks");
     renderBlocks(snapshot.engine, preRollFrames / blockSize);
+    const int remainder = preRollFrames % blockSize;
+    if (remainder != 0)
+    {
+        std::array<float, blockSize> left {};
+        std::array<float, blockSize> right {};
+        snapshot.engine.process(left.data(), right.data(), remainder);
+    }
 
     snapshot.factor = snapshot.engine.getOversamplingFactor();
     if (scenario.holdChord && snapshot.engine.getActiveVoiceCount() != 6)
@@ -500,10 +505,15 @@ struct CounterCase
 };
 
 constexpr std::array counterCases {
+    CounterCase { "44.1k-4x", 44100, true, 4 },
+    CounterCase { "44.1k-1x", 44100, false, 1 },
     CounterCase { "48k-4x", 48000, true, 4 },
     CounterCase { "48k-1x", 48000, false, 1 },
+    CounterCase { "88.2k-2x", 88200, true, 2 },
+    CounterCase { "88.2k-1x", 88200, false, 1 },
     CounterCase { "96k-2x", 96000, true, 2 },
     CounterCase { "96k-1x", 96000, false, 1 },
+    CounterCase { "176.4k-1x", 176400, true, 1 },
     CounterCase { "192k-1x", 192000, true, 1 },
 };
 
@@ -565,6 +575,19 @@ void validateCounterAlgebra(const CounterCase& testCase,
         * static_cast<std::uint64_t>(testCase.expectedFactor);
     const std::uint64_t voiceCards = 6u * internal;
     const std::uint64_t voiceSlots = 16u * internal;
+    const bool exactInputSelected =
+        static_cast<std::uint64_t>(testCase.sampleRate)
+                * static_cast<std::uint64_t>(testCase.expectedFactor)
+            >= static_cast<std::uint64_t>(
+                youknow106::Chorus::minimumExactInputSupportRate);
+    const std::uint64_t bbdLineFrames = 2u * internal;
+    const std::uint64_t exactInputAdvances = exactInputSelected
+        ? bbdLineFrames : 0u;
+    const std::uint64_t legacyInputFrames = exactInputSelected
+        ? 0u : bbdLineFrames;
+    const std::uint64_t exactOutputAdvances = bbdLineFrames;
+    const std::uint64_t exactAdvances = exactInputAdvances
+                                      + exactOutputAdvances;
     const std::uint64_t decimatorCalls = testCase.expectedFactor == 4
         ? 3u * host
         : (testCase.expectedFactor == 2 ? host : 0u);
@@ -588,7 +611,18 @@ void validateCounterAlgebra(const CounterCase& testCase,
     expectEqual(errors, testCase.name, "chorusFrames",
                 counters.chorusFrames, internal);
     expectEqual(errors, testCase.name, "bbdLineFrames",
-                counters.bbdLineFrames, 2u * internal);
+                counters.bbdLineFrames, bbdLineFrames);
+    expectEqual(errors, testCase.name, "bbdLegacyInputSupportFrames",
+                counters.bbdLegacyInputSupportFrames, legacyInputFrames);
+    expectEqual(errors, testCase.name, "bbdExactInputSupportAdvances",
+                counters.bbdExactInputSupportAdvances, exactInputAdvances);
+    expectEqual(errors, testCase.name, "bbdExactOutputSupportAdvances",
+                counters.bbdExactOutputSupportAdvances, exactOutputAdvances);
+    expectEqual(errors, testCase.name, "bbdExactSupportCoordinateUpdates",
+                counters.bbdExactSupportCoordinateUpdates,
+                6u * exactAdvances);
+    expectEqual(errors, testCase.name, "bbdExactSupportMacs",
+                counters.bbdExactSupportMacs, 60u * exactAdvances);
     expectEqual(errors, testCase.name, "decimatorCalls",
                 counters.decimatorCalls, decimatorCalls);
     expectEqual(errors, testCase.name, "decimatorNonzeroTapVisits",

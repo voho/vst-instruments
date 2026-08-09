@@ -394,13 +394,16 @@ No compander exists in this circuit, so a noise model is structurally required.
 A noise voltage without a same-path reference tone, bandwidth and weighting does
 not establish SNR.
 
-*Implementation note, 2026-08-08:* the per-line floor is **no longer voiced**.
-It is the MN3009's own noise row — 0.2 mVrms max, A-weighted — from the same
-datasheet this model already treats as anchored for bandwidth and distortion,
-and the recovered baseline wet line now measures 0.19978 mVrms in mode I; the
-faster mode-II clock programme measures 0.20016 mVrms after its separate
-instrument-output factor is divided out. It previously measured 1.0488 mVrms,
-14.39 dB hot. Three things
+*Implementation note, 2026-08-08; numerical transfer updated in Step 9 on
+2026-08-09:* the per-line floor is **no longer voiced**. It is the MN3009's own
+noise row — 0.2 mVrms max, A-weighted — from the same datasheet this model
+already treats as anchored for bandwidth and distortion. After the exact
+continuous output-support transition, its derived A-weighted transfer is
+0.4026 = 1/√3 × 0.6973 and the injected amplitude is 1.9106577e-4 model
+units. With the separate instrument-output factor divided out, the recovered
+mode-I/mode-II wet lines are 0.200059/0.200078 mVrms at 176.4 kHz and
+0.200006/0.200020 mVrms at 192 kHz, a cross-HQ spread below 0.004 dB. The
+pre-calibration model measured 1.0488 mVrms, 14.39 dB hot. Three things
 this does **not** settle, all of which the capture below still owns.
 
 1. **The datasheet brackets rather than fixes the figure.** Its two noise rows
@@ -419,6 +422,14 @@ this does **not** settle, all of which the capture below still owns.
    edge-held uniform random per line, and the optional common/correlated, hum
    and clock-spur layers remain zero-amplitude hypotheses. The relative mode
    calibration below changes none of those spectra or correlations.
+
+The Step-9 numerical check also keeps grid error visible. With HQ off, the
+mode-I/mode-II recovered pairs are 0.208558/0.208917 mVrms at 44.1 kHz,
+0.206982/0.207251 at 48 kHz, 0.201452/0.201763 at 88.2 kHz and
+0.201218/0.201584 at 96 kHz: about +0.05…+0.38 dB above the datasheet row.
+Five PSD-band changes against Step 8 remain within 0.147 dB and unweighted RMS
+within 0.070 dB. Those are numerical/model measurements, not a calibrated
+hardware spectrum, so they narrow no part of the capture request below.
 
 *Implementation note, 2026-08-09:* the usable same-chain observation now ships
 directly: mode I keeps the part-derived floor, and mode II's edge-held line
@@ -595,6 +606,39 @@ fixed, the remaining q4 discrepancy is support/grid limited rather than
 permission to retune an MN3009 constant. OQ-01 (clock/delay), OQ-03 (noise),
 OQ-04 (loaded physical transfer/support) and OQ-20 (wet switching) all remain
 open.
+
+**2026-08-09 Step-9 continuous support rerun — the bounded low-drive fixture
+passes on every shipping HQ path; the physical question stays open.** The input
+and output component networks are
+now each one six-state continuous system. A prepare-only 10×10 augmented
+matrix exponential gives the exact transition under the declared causal cubic
+through the current and three past samples. Output uses it at every rate; input
+uses it at internal rates ≥176.4 kHz and retains Step 8's TPT path below,
+where the exact cubic input drive worsened SGA. It adds no future sample,
+lookahead or latency and changes no component, BBD, clock or selector constant.
+
+| Host | Factor | Analytic NRMS | BGA error | SGA | Absolute result |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 44.1 kHz | 1× | −3.511 dB | 4.764 dB | −26.934 dBc | **REJECT** |
+| 44.1 kHz | 2× | −18.390 dB | 0.070 dB | −41.304 dBc | **REJECT** |
+| 44.1 kHz | 4× | −53.442 dB | 0.011 dB | −71.831 dBc | **PASS** |
+| 48 kHz | 1× | −5.263 dB | 3.406 dB | −30.746 dBc | **REJECT** |
+| 48 kHz | 2× | −20.051 dB | 0.016 dB | −46.044 dBc | **REJECT** |
+| 48 kHz | 4× | −56.101 dB | 0.008 dB | −65.381 dBc | **PASS** |
+
+The shipping-policy extension passes that same four-case low-drive fixture on
+all six actual HQ paths:
+44.1 kHz/4× −53.442/0.011/−71.831,
+48 kHz/4× −56.101/0.008/−65.381,
+88.2 kHz/2× −50.700/0.011/−71.832,
+96 kHz/2× −51.863/0.008/−65.382,
+176.4 kHz/1× −53.481/0.011/−71.832 and
+192 kHz/1× −56.079/0.008/−65.381 (NRMS dB/BGA dB/SGA dBc).
+HQ-off at 44.1/48/88.2/96 kHz remains an absolute failure but passes only the
+frozen Step-8 nonregression allowances. Exact integration therefore resolves
+the warping measured by this bounded HQ fixture; it does not measure the real
+loaded transfer, select among the unresolved source impedances, prove the adopted
+component boundary or close OQ-04.
 
 This matrix characterizes only the current deterministic model boundary; it
 cannot close the real MN3009 normalized transfer, BGA, source impedance or
@@ -1746,7 +1790,7 @@ MN3009/installed-unit tracked sweep,
 plus a schematic re-read of the capacitor codes behind
 `YouKnow106Chorus.cpp:73-83` — a single 10× code misread moves a corner by a decade.
 
-### Deterministic BBD host-grid aliasing — q4 SGA passes; absolute domain rejects
+### Deterministic BBD host-grid aliasing — shipping HQ passes; lower grids reject
 
 Gabrielli, D'Angelo and Squartini distinguish wanted BBD-generated aliasing
 (BGA) at `k·Fclock ± f` from the simulation-generated aliasing (SGA) introduced
@@ -1754,9 +1798,10 @@ when asynchronous held-output steps meet the fixed sample grid. The engine now
 uses a paper-motivated, deterministic-only polyBLEP after transfer loss and
 before the tap-summing pole. Its fixed scheduler has 54 slots and uses 50 in the
 tested 200 kHz-clock/8 kHz-grid worst case; the correction handles multiple
-edges per internal sample. Buckets, index, BBD phase, transfer and held-noise
-state, and RNG sequence remain unchanged. The grid-specific input-interpolation
-history and output-correction slots also clear on an internal-rate change.
+edges per internal sample. That output correction alone leaves buckets, index,
+BBD phase, transfer and held-noise state, and RNG sequence unchanged. The
+grid-specific input-interpolation history and output-correction slots also clear
+on an internal-rate change.
 Noise remains uncorrected.
 
 The isolated core reduces SGA by **36.2873 dB at 50 kHz** and **42.6752 dB in
@@ -1782,20 +1827,27 @@ internal rates. Its published SNR numbers are therefore not reused as product
 claims. The peer-reviewed result supports the BGA/SGA classification and method
 family; the exact bounded scheduler and the figures above are engine validation.
 The reconstruction mechanism is implemented and the relative-improvement
-fixture above remains useful, but numerical fidelity is not resolved. At the
-dated Step-7 checkpoint, the common-host absolute audit rejected every factor
-and 4× reached only −47.635/−38.189 dBc for exhaustive 20 Hz–20 kHz unmasked
-SGA at 44.1/48 kHz, against <−60. Step 8 then replaces only the linear
-input-edge sampler with a causal current-plus-three-past four-point Lagrange
-evaluation. With no lookahead, latency, physical-constant, noise or
-support-filter change, q4 SGA becomes **−72.041/−65.597 dBc** and passes at
-both hosts. The corresponding analytic NRMS remains only
-−30.394/−31.847 dB, however, and 44.1 kHz/q4 BGA error remains 0.865 dB, so
-both q4 cells and every lower factor still reject overall. This does **not**
-close OQ-01's clock/delay law, OQ-03's stochastic model, OQ-04's physical
-loaded transfer/BGA response or OQ-20's wet switching. A noise-on fixed/swept
-HQ/LQ PSD test and audition section are still required before extending the
-same reconstruction claim to the default hiss path.
+fixture above remains useful. At the dated Step-7 checkpoint, the common-host
+absolute audit rejected every factor and 4× reached only −47.635/−38.189 dBc
+for exhaustive 20 Hz–20 kHz unmasked SGA at 44.1/48 kHz, against <−60.
+Step 8's causal edge sampler moved that to −72.041/−65.597 dBc but still left
+the complete q4 cells rejected by support-grid error.
+
+Step 9 removes that remaining HQ numerical warping in the audited boundary by advancing each complete
+six-state support side with an exact continuous transition under the same
+causal cubic drive. Common-host q4 now passes every absolute gate:
+NRMS **−53.442/−56.101 dB**, BGA error **0.011/0.008 dB** and SGA
+**−71.831/−65.381 dBc**. The same four-case low-drive fixture, with one
+qualifying BGA line per cell, passes on all six actual HQ selector paths through
+192 kHz. It is not a nonlinear whole-line oracle. Lower common-host factors
+remain absolute REJECT; the four HQ-off
+shipping paths pass only predeclared Step-8 nonregression gates. Noise-on
+verification now spans both modes at 176.4/192 kHz and all four HQ-off rates:
+the recovered cross-HQ spread is below 0.004 dB, five PSD-band changes versus
+Step 8 stay within 0.147 dB and unweighted RMS within 0.070 dB. This is model
+validation, not a measured hardware PSD. It does **not** close OQ-01's
+clock/delay law, OQ-03's stochastic model, OQ-04's physical loaded
+transfer/BGA response or OQ-20's wet switching.
 
 ### OQ-02 — the nominal common-VCA law is circuit-derived
 
@@ -3586,7 +3638,13 @@ gate is not new hardware evidence.
   affine clock multiplier double-counted clock scaling. The paper-motivated
   host-grid reconstruction is an implemented numerical product mechanism: it acts
   after transfer loss and before the tap pole, leaves physical BBD/RNG state and
-  noise unchanged, and clears only its grid-specific slots at a rate change.
+  noise unchanged, and clears its grid-specific slots at a rate change. Step 9
+  additionally advances each output-side support network as one exact
+  continuous six-state transition at every rate and does the same on the input
+  at internal rates ≥176.4 kHz; lower input grids retain the reviewed TPT path.
+  A guarded rate change resets the support coordinates under zero gain. They
+  are physical voltages, not timestep-embedded carries, but preservation or
+  reseeding is not yet qualified.
   The two-phase OUT1/OUT2 pair presents one sample per clock period — the
   2026-08-07 solve confirmed the composite is a full-period hold — so it must
   not be modelled as a 2·fcp output stage.

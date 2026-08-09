@@ -30,10 +30,14 @@ This folder is frozen evidence for the earlier output-step reconstruction, not
 an isolated Step-8 Lagrange comparison. Its immutable baseline contains 925,348
 frames at the archived clock program; the current derived clock rates produce
 891,964 frames. The renderer therefore correctly refuses to align a current
-`after` pass with that baseline. Step 8 is instead controlled by the
-factor-independent common-host oracle and its committed regression matrix; a
-future listening comparison needs a new protocol and immutable baseline rather
-than overwriting this one.
+`after` pass with that baseline. Step 9 is instead controlled by the
+factor-independent common-host oracle and the actual 44.1–192 kHz shipping
+selector matrix. Both common-host 4× cells and all six HQ paths pass the
+absolute four-case low-drive deterministic-line fixture gates; lower factors
+remain absolute failures, while
+HQ-off passes only its frozen Step-8 nonregression limits. A future listening
+comparison needs a new protocol and immutable baseline rather than overwriting
+this one.
 
 Only the text between the generated markers below is renderer-owned.
 

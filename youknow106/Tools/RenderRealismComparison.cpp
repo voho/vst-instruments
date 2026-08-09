@@ -125,9 +125,9 @@ struct YouKnow106TestAccess
                 phase -= std::floor(phase);
                 return std::array<float, 2> {
                     lineA.process(input, clockHz, rate, support,
-                                  support.wetOutputCouplingConnectedG, 0.0f),
+                                  support.exactOutputConnected, 0.0f),
                     lineB.process(input, clockHz, rate, support,
-                                  support.wetOutputCouplingConnectedG, 0.0f)
+                                  support.exactOutputConnected, 0.0f)
                 };
             });
     }

@@ -42,6 +42,11 @@ struct DomainWorkCounters
     std::uint64_t vcfRecoveries {};
     std::uint64_t chorusFrames {};
     std::uint64_t bbdLineFrames {};
+    std::uint64_t bbdLegacyInputSupportFrames {};
+    std::uint64_t bbdExactInputSupportAdvances {};
+    std::uint64_t bbdExactOutputSupportAdvances {};
+    std::uint64_t bbdExactSupportCoordinateUpdates {};
+    std::uint64_t bbdExactSupportMacs {};
     std::uint64_t bbdShifts {};
     std::uint64_t blepPastCorrectionVisits {};
     std::uint64_t blepFuturePredictionVisits {};
@@ -81,6 +86,11 @@ inline constexpr std::array counterDescriptors {
     CounterDescriptor { "vcfRecoveries", &DomainWorkCounters::vcfRecoveries },
     CounterDescriptor { "chorusFrames", &DomainWorkCounters::chorusFrames },
     CounterDescriptor { "bbdLineFrames", &DomainWorkCounters::bbdLineFrames },
+    CounterDescriptor { "bbdLegacyInputSupportFrames", &DomainWorkCounters::bbdLegacyInputSupportFrames },
+    CounterDescriptor { "bbdExactInputSupportAdvances", &DomainWorkCounters::bbdExactInputSupportAdvances },
+    CounterDescriptor { "bbdExactOutputSupportAdvances", &DomainWorkCounters::bbdExactOutputSupportAdvances },
+    CounterDescriptor { "bbdExactSupportCoordinateUpdates", &DomainWorkCounters::bbdExactSupportCoordinateUpdates },
+    CounterDescriptor { "bbdExactSupportMacs", &DomainWorkCounters::bbdExactSupportMacs },
     CounterDescriptor { "bbdShifts", &DomainWorkCounters::bbdShifts },
     CounterDescriptor { "blepPastCorrectionVisits", &DomainWorkCounters::blepPastCorrectionVisits },
     CounterDescriptor { "blepFuturePredictionVisits", &DomainWorkCounters::blepFuturePredictionVisits },
