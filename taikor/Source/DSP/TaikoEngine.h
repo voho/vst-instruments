@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string_view>
 
@@ -742,6 +743,12 @@ private:
         float micAngleRight { 0.0f };
         float micDistanceMetres { 0.16f };
         float micProximity { 0.6f };
+        // The width trim the output stage will apply to the finished pair. It
+        // belongs to the drum's resolved state because it decides what a mode
+        // is worth once the two capsules have been combined - and at width 0
+        // that is a mono sum, in which a mode with a nodal diameter between the
+        // two capsules very nearly cancels. See observeMode.
+        float stereoWidth { 0.5f };
         std::array<float, shellResonatorCount> shellFrequencies {};
         std::array<float, shellResonatorCount> shellDecays {};
         // Modal mass of the shell wall, so a stroke on the body drives it
@@ -888,6 +895,15 @@ private:
         float amplitude { 0.0f };
         float decayRate { 0.0f };
         float weight { 0.0f };
+        // The same quantity in nepers, which is the one that survives a drum
+        // whose modes are all emptied inside the pitch window. `weight` holds a
+        // difference of two exponentials, and on a 15 cm head at the tension
+        // ceiling both of them underflow to zero for every mode of the drum -
+        // whereupon a comparison on `weight` alone has nothing to choose
+        // between and reports no mode at all. This is computed from the
+        // exponents rather than from the exponentials, so it stays finite as
+        // far down as a float exponent reaches.
+        float logWeight { -std::numeric_limits<float>::infinity() };
     };
     [[nodiscard]] static ModeObservation observeMode (const DrumState& drum,
                                                       int entryIndex, int branch,

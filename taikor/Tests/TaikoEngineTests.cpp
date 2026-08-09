@@ -2159,9 +2159,13 @@ void testTheReadoutNamesThePartialTheDrumIsHeardAt()
     // Pitch, Head Tension and Bachi Hardness that move which mode wins. Every
     // one of these was found by sweeping, not chosen: the settings marked below
     // are the ones the pre-fix engine gets wrong.
-    struct Setting { int octave; float strike, spread, distance, pitch, tension, bachi; };
+    struct Setting
+    {
+        int octave;
+        float strike, spread, distance, pitch, tension, bachi, width;
+    };
     const auto at = [] (int octave, float strike, float spread, float distance)
-    { return Setting { octave, strike, spread, distance, 0.0f, 0.62f, 0.7f }; };
+    { return Setting { octave, strike, spread, distance, 0.0f, 0.62f, 0.7f, 0.5f }; };
 
     const Setting settings[] = {
         // The reported case, and its neighbours across the strike.
@@ -2185,11 +2189,22 @@ void testTheReadoutNamesThePartialTheDrumIsHeardAt()
         at (3, 0.00f, 0.55f, 0.35f),
         at (3, 1.00f, 0.00f, 0.35f),
         // Pitch and Head Tension taken to their corners on the o-daiko.
-        { 0, -0.50f, 0.55f, 0.35f, -7.0f, 0.62f, 0.7f },   // 57.1 against 94.2
-        { 0, -0.50f, 0.55f, 0.35f, 0.0f, 0.40f, 0.7f },    // 57.7 against 102.3
+        { 0, -0.50f, 0.55f, 0.35f, -7.0f, 0.62f, 0.7f, 0.5f },  // 57.1 against 94.2
+        { 0, -0.50f, 0.55f, 0.35f, 0.0f, 0.40f, 0.7f, 0.5f },   // 57.7 against 102.3
         // A felt beater, which is where the contact time matters most.
-        { 1, 0.50f, 0.00f, 0.35f, 0.0f, 0.62f, 0.0f },
-        { 0, 0.00f, 0.55f, 0.35f, 0.0f, 0.62f, 0.0f },
+        { 1, 0.50f, 0.00f, 0.35f, 0.0f, 0.62f, 0.0f, 0.5f },
+        { 0, 0.00f, 0.55f, 0.35f, 0.0f, 0.62f, 0.0f, 0.5f },
+        // Stereo Width, with the pair fully opened so the two capsules straddle
+        // the nodal diameters and the width trim decides how much of the
+        // difference between them survives. At 0 they are summed and a mode of
+        // order three all but cancels; at 1 the difference is exaggerated
+        // instead. Ranking on the left capsule described neither.
+        { 1, 1.00f, 1.00f, 0.00f, 0.0f, 0.62f, 0.7f, 0.0f },    // 210.1 against 119.8
+        { 0, 1.00f, 1.00f, 0.35f, 0.0f, 0.62f, 0.7f, 0.0f },    // 107.6 against 59.7
+        { 0, 1.00f, 1.00f, 0.35f, 0.0f, 0.62f, 0.7f, 1.0f },    // 107.6 against 84.6
+        { 1, 1.00f, 1.00f, 0.00f, 0.0f, 0.62f, 0.7f, 1.0f },
+        { 2, 1.00f, 1.00f, 0.00f, 0.0f, 0.62f, 0.7f, 1.0f },    // 238.6 against 412.3
+        { 1, 0.00f, 0.55f, 0.35f, 0.0f, 0.62f, 0.7f, 0.0f },
     };
 
     int pitched = 0;
@@ -2208,9 +2223,13 @@ void testTheReadoutNamesThePartialTheDrumIsHeardAt()
         parameters.pitch = setting.pitch;
         parameters.tension = setting.tension;
         parameters.bachiHardness = setting.bachi;
+        parameters.stereoWidth = setting.width;
 
         const auto reported =
             taikor::TaikoEngine::measure (parameters, setting.octave).soundingHz;
+        expect (std::isfinite (reported) && reported > 0.0f,
+                "the readout is not a frequency at all: "
+                    + std::to_string (reported) + " Hz");
 
         const auto where =
             ", octave " + std::to_string (setting.octave) + ", strike "
@@ -2219,7 +2238,8 @@ void testTheReadoutNamesThePartialTheDrumIsHeardAt()
             + std::to_string (setting.distance) + ", pitch "
             + std::to_string (setting.pitch) + ", tension "
             + std::to_string (setting.tension) + ", bachi "
-            + std::to_string (setting.bachi);
+            + std::to_string (setting.bachi) + ", width "
+            + std::to_string (setting.width);
 
         // The band is fixed by the octave and by nothing the engine reports, so
         // a readout that has gone wrong cannot narrow the search that catches it.
@@ -2235,10 +2255,14 @@ void testTheReadoutNamesThePartialTheDrumIsHeardAt()
                                       setting.octave, strokes[index].velocity,
                                       sampleRate, rendered);
             expect (take.finite, "the take is not finite" + where);
-            // The left channel rather than the pair summed: observeMode's
-            // microphone term is the left capsule's, and a mono sum of two
-            // capsules that have landed on two different partials of a near-tie
-            // is a spectrum neither of them has.
+            // The left output channel, which is what `observeMode` describes -
+            // the left *output*, after the width trim, and not the left
+            // capsule. Those are the same signal only at Stereo Width 0.5; at 0
+            // the output is the sum of the two capsules and at 1 it is their
+            // difference exaggerated, and the settings above put both of those
+            // in the grid. Not the pair summed offline: a mono sum of two
+            // capsules that have landed on different partials of a near-tie is
+            // a spectrum neither channel has.
             heard[index] = strongestPartialUnbiased (take.left, lowHz, highHz,
                                                      sampleRate, first, last);
             if (strokes[index].articulation == taikor::Articulation::Don
@@ -2272,13 +2296,20 @@ void testTheReadoutNamesThePartialTheDrumIsHeardAt()
             ++pitched;
             const auto cents = 1200.0 * std::log2 (reported / centre);
             worstPitchedCents = std::max (worstPitchedCents, std::abs (cents));
-            // Twenty-five cents. Swept over 704 settings - the strike crossed
-            // with both microphone controls on all four drums, and Pitch, Head
-            // Tension and Bachi Hardness crossed with the strike - the worst
-            // this reads on a setting that has a pitch is 14 cents, and what is
-            // in it is the attack glide: the readout names the frequency the
-            // head settles at and the window opens while it is still sharp.
-            // Before the fix the same sweep read 1478 cents.
+            // Twenty-five cents. Over these twenty-six settings the worst is 6.
+            // Over a 252-setting sweep - the strike crossed with both
+            // microphone controls on all four drums, and Pitch, Head Tension
+            // and Bachi Hardness crossed with the strike - 195 of the 201
+            // settings that have a pitch are within 19 cents and six are not;
+            // those six are misses rather than tolerance, they are recorded in
+            // the plan, and none of them is here. What is inside the 19 cents
+            // is the attack glide: the readout names the frequency the head
+            // settles at and the window opens while the head is still sharp.
+            // Before the fixes these twenty-six read 2088 cents.
+            //
+            // The six Stereo Width settings were added a round later, with the
+            // width trim itself: on the tree before that they read 1019 cents
+            // and a level share of 0.034.
             expect (std::abs (cents) < 25.0,
                     "the readout is not on the partial the drum is heard at: "
                         + std::to_string (reported) + " against "
@@ -2301,7 +2332,10 @@ void testTheReadoutNamesThePartialTheDrumIsHeardAt()
             bandMagnitude (reference, reported, 20.0, sampleRate, first, last);
         const auto share = atReported / std::max (strongest, 1.0e-30);
         worstShare = std::min (worstShare, share);
-        // Measured worst over the same sweep: 0.935 after, 0.765 before.
+        // Measured worst over these twenty-six settings: 0.999 after, 0.034
+        // before - the chu-daiko at the rim with the pair fully open and summed
+        // to mono, where the readout named a partial with a thirtieth of the
+        // amplitude of the one that is there.
         expect (share > 0.85,
                 "the reported pitch is not where the energy is: "
                     + std::to_string (share) + " of the strongest partial" + where);
@@ -2309,14 +2343,160 @@ void testTheReadoutNamesThePartialTheDrumIsHeardAt()
 
     // The guard on the guard. The tie rule must not be quietly emptying the
     // clause above: if a change made every take ambiguous, the pitch clause
-    // would pass by never firing.
-    expect (pitched >= 15,
+    // would pass by never firing. Twenty-three of the twenty-six have a pitch,
+    // before the fixes and after - they do not move which takes are ambiguous,
+    // because they do not touch the audio. The three that do not are the
+    // chu-daiko struck between -0.50 and +0.25 with the pair coincident, where
+    // its (0,2) lower branch and its (1,1) are within a decibel and the
+    // velocity decides between them.
+    expect (pitched >= 20,
             "only " + std::to_string (pitched) + " of "
                 + std::to_string (std::size (settings))
                 + " settings had a pitch at all, so the clause above has stopped "
                   "saying anything");
     (void) worstPitchedCents;
     (void) worstShare;
+}
+
+// Whatever the controls are set to, the drum has a pitch and the panel has to
+// print one.
+//
+// It did not. `ModeObservation::weight` carries a difference of two
+// exponentials of the mode's decay, and `soundingMode` used to accept a mode
+// only if its weight beat a zero-initialised best. On a very small head at the
+// tension ceiling every mode of the drum is emptied before the pitch window
+// even opens - at 15 cm, Head Tension 1.0, a thin film and Pitch +12, the okedo
+// pad's longest-lived mode decays at nine hundred inverse seconds - so both
+// exponentials underflow to exactly zero, every weight on the drum is zero,
+// nothing is ever accepted and the readout is the default 0.00 Hz:
+//
+//   octave 0   2466.33 Hz      octave 2      0.00 Hz  (fundamental 16793.35)
+//   octave 1   5097.77         octave 3      0.00     (fundamental 25565.08)
+//
+// Swept over the drum controls it was 22527 of 729000 combinations, and over
+// the stroke and microphone controls 6750 of 162000 more - three per cent of
+// the space, all of it on the small tight heads, and every one of them a drum
+// that plainly sounds. The comparison now falls back to the same quantity in
+// nepers, which has the exponents rather than the exponentials in it, and takes
+// the first valid mode when even that cannot separate them.
+//
+// This reads the reported value directly rather than the audio, because the
+// defect is a literal zero: there is no pitch to measure it against.
+void testTheReadoutIsAlwaysAFrequency()
+{
+    long total = 0;
+    long bad = 0;
+    std::string firstBad;
+
+    const auto check = [&] (const taikor::EngineParameters& parameters,
+                            const std::string& where)
+    {
+        for (int octave = taikor::lowestOctaveOffset;
+             octave <= taikor::highestOctaveOffset; ++octave)
+        {
+            ++total;
+            const auto reported =
+                taikor::TaikoEngine::measure (parameters, octave).soundingHz;
+            if (std::isfinite (reported) && reported > 0.0f)
+                continue;
+            ++bad;
+            if (firstBad.empty())
+                firstBad = std::to_string (reported) + " Hz at " + where
+                         + ", octave " + std::to_string (octave);
+        }
+    };
+
+    // The case that was reported, stated as itself so a regression names it.
+    {
+        auto parameters = defaultParameters();
+        parameters.headDiameter = 0.15f;
+        parameters.tension = 1.0f;
+        parameters.headMaterial = 0.0f;
+        parameters.pitch = 12.0f;
+        parameters.octaveBody = 1.0f;
+        for (int octave = taikor::lowestOctaveOffset;
+             octave <= taikor::highestOctaveOffset; ++octave)
+        {
+            const auto reported =
+                taikor::TaikoEngine::measure (parameters, octave).soundingHz;
+            const auto measurements = taikor::TaikoEngine::measure (parameters, octave);
+            expect (std::isfinite (reported) && reported > 0.0f,
+                    "a 15 cm head at the tension ceiling reports "
+                        + std::to_string (reported) + " Hz at octave "
+                        + std::to_string (octave));
+            // And it is a mode of that drum rather than any number at all. On a
+            // head this small and this tight the mounting cannot reach the
+            // fundamental, so the fundamental is what it is heard at - the two
+            // agree to four decimal places at every octave here.
+            expect (std::abs (1200.0 * std::log2 (reported
+                                                  / measurements.loadedFundamentalHz))
+                        < 50.0,
+                    "the reported pitch is not one of this drum's modes: "
+                        + std::to_string (reported) + " against a fundamental of "
+                        + std::to_string (measurements.loadedFundamentalHz)
+                        + " Hz at octave " + std::to_string (octave));
+        }
+    }
+
+    // And the sweep the case was found in. Coarser than the 891000-point one
+    // quoted above - that one takes a minute - but over the same corners, and
+    // it lands on the same failures.
+    for (const float diameter : { 0.15f, 0.60f, 1.50f, 1.80f })
+        for (const float tension : { 0.0f, 0.5f, 1.0f })
+            for (const float material : { 0.0f, 0.5f, 1.0f })
+                for (const float pitch : { -24.0f, 0.0f, 12.0f, 24.0f })
+                    for (const float body : { 0.0f, 1.0f })
+                        for (const float damping : { 0.0f, 1.0f })
+                            for (const float coupling : { 0.0f, 1.0f })
+                            {
+                                auto parameters = defaultParameters();
+                                parameters.headDiameter = diameter;
+                                parameters.tension = tension;
+                                parameters.headMaterial = material;
+                                parameters.pitch = pitch;
+                                parameters.octaveBody = body;
+                                parameters.headDamping = damping;
+                                parameters.cavityCoupling = coupling;
+                                check (parameters,
+                                       "diameter " + std::to_string (diameter)
+                                           + ", tension " + std::to_string (tension)
+                                           + ", material " + std::to_string (material)
+                                           + ", pitch " + std::to_string (pitch)
+                                           + ", body " + std::to_string (body)
+                                           + ", damping " + std::to_string (damping)
+                                           + ", coupling " + std::to_string (coupling));
+                            }
+
+    // The stroke and the microphones, at the extremes of the drum.
+    for (const float diameter : { 0.15f, 1.80f })
+        for (const float tension : { 0.0f, 1.0f })
+            for (const float position : { -1.0f, 0.0f, 1.0f })
+                for (const float spread : { 0.0f, 0.55f, 1.0f })
+                    for (const float distance : { 0.0f, 1.0f })
+                        for (const float width : { 0.0f, 0.5f, 1.0f })
+                            for (const float pitch : { -24.0f, 24.0f })
+                            {
+                                auto parameters = defaultParameters();
+                                parameters.headDiameter = diameter;
+                                parameters.tension = tension;
+                                parameters.strikePosition = position;
+                                parameters.micSpread = spread;
+                                parameters.micDistance = distance;
+                                parameters.stereoWidth = width;
+                                parameters.pitch = pitch;
+                                check (parameters,
+                                       "diameter " + std::to_string (diameter)
+                                           + ", tension " + std::to_string (tension)
+                                           + ", strike " + std::to_string (position)
+                                           + ", spread " + std::to_string (spread)
+                                           + ", distance " + std::to_string (distance)
+                                           + ", width " + std::to_string (width)
+                                           + ", pitch " + std::to_string (pitch));
+                            }
+
+    expect (bad == 0,
+            std::to_string (bad) + " of " + std::to_string (total)
+                + " drums report no pitch at all; the first is " + firstBad);
 }
 
 void testTheDrumIsTunedByThePitchItSounds()
@@ -5430,6 +5610,7 @@ int main()
     testThePitchTransformIsContinuousUnderAutomation();
     testTheReadoutFollowsTheStrikePosition();
     testTheReadoutNamesThePartialTheDrumIsHeardAt();
+    testTheReadoutIsAlwaysAFrequency();
     testEveryArticulationAndSampleRate();
     testSampleRateConsistency();
     testTheContinuumDoesNotDependOnTheSampleRate();

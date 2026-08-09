@@ -3032,3 +3032,206 @@ readout steps from 91.9 to 50.3 Hz while the rendered take moves smoothly from
 which of its two partials is louder. That is a readout accuracy question rather
 than a tuning one now that the tuning no longer reads the argmax, and it wants
 the glide-aware weight the previous section already asks for.
+
+### Step 6, second follow-up — the readout above the (0,2), and the glide that was never a level
+
+Two defects in the comparison the readout makes between a drum's modes, one
+thing that looked like a third and was not, and the glide-aware weight the two
+sections above keep asking for — which turns out to be the same root cause as
+the thing that was not a defect.
+
+#### What was reported
+
+Octave 1, chū-daiko, Don at velocity 0.85, Strike Position +0.50, Mic Spread
+0.00, channel L, strongest partial of a 0.9 s window opening 80 ms after the
+strike: **heard 68.3 Hz, reported 227.2 Hz, 2081 cents apart, with the rendered
+level at the reported frequency 10.1 dB below the strongest partial.**
+
+#### The 10.1 dB is the estimator, not the drum
+
+Every membrane partial of a struck head sits *sharp* of where it settles for a
+good part of that window: the attack glide is the head stretching itself, it is
+a tension shift, and a tension shift scales the whole head at once — so it is
+the same number of *cents* on every mode and a very different number of *hertz*.
+A 0.9 s window resolves 1.11 Hz. Measured on the take above, with Humanise off:
+
+| mode | settles at | sounds at | glide | level at where it sounds | level at where it settles |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| (0,1) lower | 68.05 | 68.32 | +7.0 ¢ | 0.00 dB | −0.06 dB |
+| (0,1) upper | 94.51 | 95.03 | +9.6 | −1.18 | −1.74 |
+| (1,1) | 119.32 | 119.89 | +8.3 | −1.28 | −3.32 |
+| (0,2) lower | 171.55 | 171.92 | +3.7 | −1.39 | −2.47 |
+| (1,2) | 227.23 | 228.30 | +8.1 | **−0.76** | **−12.85** |
+
+Eight cents is a fifth of a hertz at 68 Hz and 1.2 Hz — a whole window width — at
+227. The partial the old readout named is 0.76 dB off the loudest thing in that
+take, not ten decibels; a probe parked on its settled frequency simply misses it.
+
+The same effect is what the two sections above record as *"the weights drift
+several decibels high by the fourth radial order"* and what they propose a
+glide-aware weight to correct. There is nothing to correct. **Measured where each
+partial actually sounds — over Strike Position × Mic Spread × Mic Distance on
+all four drums, 252 takes — the weights carry no drift with the radial order at
+all, out to the ninth.** Per mode row, mean and standard deviation of
+weight-minus-rendered in dB, over the modes the model ranks within 20 dB of the
+top:
+
+| mode | (0,1) | (0,2) | (0,3) | (0,4) | (1,1) | (1,2) | (1,3) | (2,1) | (3,1) | (4,1) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| mean | −0.06 | −1.34 | −0.44 | −0.04 | −0.36 | −0.26 | +0.60 | −1.53 | +0.33 | −0.40 |
+| s.d. | 1.5 | 3.2 | 1.8 | 2.0 | 1.2 | 0.9 | 1.4 | 4.0 | 1.1 | 0.8 |
+
+Every mean is inside a decibel and a half and none of them grows with the mode's
+order. What scatter there is belongs to the microphone geometry rather than to
+the mode: the two wide rows, the (0,2) and the (2,1), are wide because of what
+happens at Mic Distance 1.00 and Mic Spread 1.00, and they are as wide at the
+bottom of the bank as at the top.
+
+A glide term cannot change a ranking anyway, for the reason the table above
+shows: it multiplies every mode by the same ratio. That is now written down in
+`soundingMode`, and the two open items asking for it are closed by it.
+
+#### The two defects that were real
+
+**The pitch-bearing bound excluded modes that win.** It stopped at the head's
+third radial order. Struck at its middle with the pair open, the ō-daiko is
+heard at its **(0,3) lower branch at 140.0 Hz** — the strongest partial of all
+six of Don and Tsu at three velocities, 3 cents apart across them — and the
+readout could not name it: it said 85.75 Hz, 849 cents below. With the pair
+backed off, the chū-daiko is heard at its **(1,3) at 337 Hz** and the readout
+said 94.51, 2202 cents below. The bound is gone.
+
+**The stroke was modelled as an impulse.** A bachi rests on the head between one
+and six milliseconds depending on how hard it is — 1.42 / 1.05 / 0.75 / 0.66 ms
+across the four drums at the factory hardness, and 6.06 / 4.65 / 3.55 / 3.16 ms
+with the beater at its softest — and a force pulse that long cannot drive a mode
+whose period is not much longer than it. The render has always known this: it
+drives the bank with the Hertz sin^1.5 arch. The comparison did not, so it
+ranked the modes of a drum struck by something nobody owns. Measured on the
+chū-daiko with the beater soft and the glide off, it put the (1,2) mode **8.9 dB
+above** where the rendered take has it. `DrumState` now carries the contact time
+for a neutral full open stroke, resolved beside the mounting and the microphones
+and for the same reason, and `observeMode` multiplies by
+`contactSpectrum (omega * tau)` — the Hertz pulse's own transform, fitted to
+0.05 dB out to omega·tau = 6.
+
+That second term is what decides the reported case. The five partials above are
+within 1.4 dB of one another; the contact time is 1.05 ms there, which is worth
+0.03 dB at 68 Hz and 0.38 dB at 227, and that is the difference between naming
+one and naming the other.
+
+#### The measurements
+
+252 settings, Humanise off, each rendered six times — Don and Tsu at 0.35, 0.85
+and 1.00. **A setting has a pitch when at least five of the six strokes are
+heard at the same partial**, within 50 cents. One stroke of six landing
+elsewhere is a near-tie falling the other way; two or more means the pitch
+depends on how the drum is hit, and then no single number is right and the
+readout is not asked for one.
+
+| | before | after |
+| --- | ---: | ---: |
+| settings with a pitch | 201 of 252 | 201 of 252 |
+| of those, readout wrong by more than 50 ¢ | **10** | **6** |
+| worst error where there is a pitch | 2084 ¢ | 1552 ¢ |
+| worst error on the ones it gets right | — | 19 ¢ |
+
+and on the twenty settings the suite pins, which are the region rather than the
+whole sweep:
+
+| | before | after |
+| --- | ---: | ---: |
+| settings with a pitch | 17 of 20 | 17 of 20 |
+| of those, readout wrong by more than 25 ¢ | **8** | **0** |
+| worst error where there is a pitch | 2088 ¢ | **6 ¢** |
+| worst rendered level at the reported pitch | 0.412 | **0.999** |
+
+The reported case itself: **227.23 → 68.05 Hz**, against 68.19 Hz measured, an
+error of 4 cents where it was 2084.
+
+The estimator had to be fixed first, and it is worth recording. The suite's
+`blindStrongestPartial` walks its band in constant *ratio* steps and refines
+around whichever step read highest. A window of fixed length has a fixed
+resolution in hertz, so a constant-ratio step is a wider slice of it the higher
+it lands: 1.005 is an eighth of a window width at 68 Hz and a whole one at 228,
+which costs a high partial up to 4 dB before the comparison that picks the
+winner has even happened. It always favours the lower partial. The new test
+refines every local maximum within ten decibels of the coarse best and compares
+those; checked against a 262144-point transform of the same window over
+twenty-four takes it agrees on all of them, and the single-pass search does not.
+The twelve takes `testTheReadoutFollowsTheStrikePosition` pins read identically
+under both, so nothing it records was an artefact.
+
+#### Hard constraints, re-verified
+
+- The factory heard-octave grid is **bit-identical**: 59.659817 / 119.319633 /
+  238.639252 / 477.278503 Hz at Octave Body 1, stepping 1200.0000 / 1199.9999 /
+  1200.0000 cents, and the same at Octave Body 0, 0.5 and 0.7. The latched
+  tuning identities are e4/b0, e4/b0, e0/b1, e0/b1 at *Family* as before, and
+  so are the solved tensions and radii to the last digit printed. The heard
+  figures are 59.6 / 119.7 / 238.7 / 477.3 as before. Swept over Octave Body in
+  hundredths the one thing that moves is the chū-daiko's handover, by a single
+  step: it was at 0.36 and is at 0.37. That control is the one whose whole job
+  is to change which instrument an octave plays, the pitch is continuous
+  through it either way, and no rendered audio moves.
+- `testThePitchTransformIsContinuousUnderAutomation`, `testTheReadoutFollowsThe`
+  `StrikePosition`, `testTheFourDrumsStepInHeardOctaves` and
+  `testTheFourDrumsAreFourInstruments` all pass unchanged. Nothing here touches
+  the tuning path: `resolveDrumFor` reads only `ModeObservation::frequencyHz`,
+  which no term added here moves, and `tuningModeFor`'s latched identities were
+  re-measured and are the same rows of the same table.
+- `Tests/PluginProcessorTests.cpp` asserts `measureDrum (0).soundingHz` is
+  between 40 and 65 Hz at the default Strike Position. It reads 59.659817 before
+  and after, so that file needed no change.
+
+#### Tests
+
+`testTheReadoutNamesThePartialTheDrumIsHeardAt` renders twenty settings six ways
+each — the strike walked across the head crossed with both microphone controls
+on all four drums, plus Pitch −7, Head Tension 0.40 and the beater at its
+softest — and asserts, from rendered audio and from nothing the engine says
+about itself, that wherever five of the six strokes agree on a partial the
+readout is within 25 cents of it, and that at every setting the rendered level
+at the reported frequency is within 0.85 of the strongest partial. It carries
+the two estimator pieces the measurement needed: an unbiased blind search, and a
+±20-cent band on the level clause for the glide, both documented at their
+definitions.
+
+Reverting the two changes by hand — the bound put back in `soundingMode` and the
+`contactSpectrum` factor commented out of `observeMode` — fails it fifteen
+times: eight pitch clauses, worst 2088 cents and including the reported case at
+2084, and seven level clauses, worst 0.412. Restoring them passes all of it, and
+the rest of the suite passes either way.
+
+#### What is still open
+
+Six of the 201 settings with a pitch are still wrong, and none of them is a
+near-tie: the reported partial sits 1.1 to 3.0 dB below the strongest.
+
+| setting | reported | heard | error |
+| --- | ---: | ---: | ---: |
+| Head Tension 0.20, okedo, centred | 321.3 Hz | 131.1 Hz | +1552 ¢ |
+| Head Tension 0.20, okedo, +0.50 | 223.2 | 131.9 | +911 |
+| Pitch −7, chū-daiko, −0.50 | 115.2 | 82.7 | +573 |
+| Pitch −7, ō-daiko, centred | 93.9 | 77.5 | +333 |
+| Mic Spread 1.00, Mic Distance 1.00, chū-daiko, centred | 335.7 | 171.7 | +1161 |
+| Mic Distance 0.00, chū-daiko, at the rim | 277.4 | 119.8 | +1453 |
+
+The first four are the slackest heads the controls reach — Head Tension at 0.20
+and Pitch at −7 semitones — where the glide runs to 23 and 41 cents and the
+mounting term is at its steepest, and where the weights are further out than the
+1.5 dB the table above records. The last two are the model inside its own stated
+accuracy and losing: it puts the chū-daiko's (1,3) 0.70 dB above its (0,2)
+lower branch where the render has it 0.46 dB below, and its (0,3) upper 0.04 dB
+above its (1,1) where the render has it 1.40 dB below. Both were named correctly
+before this step only because the bound forbade the answer, which is not the same
+as getting it right.
+
+Closing those wants the weights better than a decibel and a half, and that is a
+different piece of work from this one: the residual is not in any single term
+but in the near-field and radiation shares at the extremes of the microphone
+geometry, where a decibel of error is enough to swap two partials that are
+themselves within a decibel.
+
+The per-fix audio previews under `Docs/audio/` are one-time review evidence and
+are not re-rendered here.

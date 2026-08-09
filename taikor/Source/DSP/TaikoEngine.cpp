@@ -1341,6 +1341,11 @@ void TaikoEngine::resolveDrumGeometry (const EngineParameters& applied,
     // Close microphones lift the low end. The depth follows the same distance,
     // so backing the pair off thins the drum exactly as it does in a room.
     drum.micProximity = 1.20f * (0.12f / (0.12f + drum.micDistanceMetres));
+    // And the width trim the output stage will put on the finished pair, which
+    // is part of the microphone geometry rather than part of the mix: it
+    // decides how much of the difference between the two capsules survives, and
+    // therefore what a mode is worth once the pair is combined.
+    drum.stereoWidth = applied.stereoWidth;
 
     // How long a full open stroke stays on this head. Resolved here with the
     // mounting and the microphones, and for the same reason: a stroke is a
@@ -1380,9 +1385,13 @@ void TaikoEngine::resolveDrumGeometry (const EngineParameters& applied,
 // The exact quantity has no elementary form, so this is a fit to it: the
 // integral of sin(pi u)^1.5 e^(-i x u) over [0,1], divided by its value at
 // x = 0. Measured against a two-hundred-thousand-point quadrature it is inside
-// 0.05 dB everywhere out to x = 6, which is where every comparison this
-// function is asked for lives - the four drums put their competing modes below
-// x = 6.5 even with the softest beater the control offers.
+// 0.05 dB everywhere out to x = 6. That covers every close comparison this
+// function is asked for: on the two large drums, which are the ones whose modes
+// come within a decibel of each other, the competing set stays below x = 6.5
+// even with the softest beater the control offers. A felt beater on the two
+// small ones does put their whole bank past x = 5 - the shime's fundamental
+// lands at 9.5 - but there the winner leads the runner-up by 17.6 and 26.8 dB
+// and nothing this fit can do reaches that.
 //
 // Above that it runs high: 1.6 dB at x = 8 and 9.5 dB at x = 10. The real
 // transform has a null just past x = 9 - a pulse that vanishes as u^1.5 at both
@@ -1548,11 +1557,45 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
         const float proximity =
             1.0f + drum.micProximity
                        / (1.0f + (frequency / 190.0f) * (frequency / 190.0f));
-        const float observed =
+        // Both capsules, and then the width trim the output stage puts on them.
+        //
+        // Only the near field carries the shape of the head, so only it differs
+        // between the two capsules, and for a mode of order m it differs by
+        // cos(m theta) at each of their two angles. The width stage is
+        // mid ± width·(L−R), so at 0.5 it hands the pair through untouched, at
+        // 0 it sums them, and above 0.5 it exaggerates the difference. Reading
+        // the left capsule alone described the instrument only at 0.5.
+        //
+        // It matters most where it used to be ignored hardest. With the pair
+        // fully opened the two capsules straddle the nodal diameters of the low
+        // orders, so at width 0 a mode of order three on the chu-daiko arrives
+        // at the two of them within a per cent of anti-phase and all but
+        // cancels in the sum - and the readout, reading the left capsule, named
+        // it: 210.1 Hz against a rendered 119.8, with the named partial at 11 %
+        // of the strongest.
+        //
+        // Still the left channel, and that is deliberate: it is the left channel
+        // the instrument puts out rather than the left capsule, which is what
+        // this used to read and what it should always have read. Written as a
+        // pair of gains rather than as mid plus side so that at width 0.5 the
+        // two are exactly 1 and 0 and the answer is bit-identical to the
+        // capsule term - the octave transform reads this function, and a
+        // difference in the last place there would move a latched mode. It
+        // does: taking the louder of the two finished channels instead moves
+        // the chu-daiko's handover from Octave Body 0.359 to 0.209.
+        const float propagating = 0.35f * efficiency * propagatingSpread;
+        const float observedLeft =
             nearField * shapeMic * std::cos (orderFloat * drum.micAngleLeft)
                 * proximity
-            + 0.35f * efficiency * propagatingSpread;
-        amplitude = std::abs (drive * observed);
+            + propagating;
+        const float observedRight =
+            nearField * shapeMic * std::cos (orderFloat * drum.micAngleRight)
+                * proximity
+            + propagating;
+        const float ownGain = 0.5f + drum.stereoWidth;
+        const float otherGain = 0.5f - drum.stereoWidth;
+        amplitude = std::abs (
+            drive * (ownGain * observedLeft + otherGain * observedRight));
     }
 
     if (! (omega > 0.0f) || ! (decay > 0.0f))
@@ -1582,6 +1625,32 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
     result.weight = amplitude / decay
                   * (std::exp (-decay * pitchWindowStart)
                      - std::exp (-decay * pitchWindowEnd));
+
+    // And the same quantity in nepers, written so that it survives where the
+    // line above does not.
+    //
+    // On a very small head at the tension ceiling every mode of the drum is
+    // emptied long before the pitch window opens: at 15 cm, Head Tension 1.0,
+    // a thin film and Pitch +12, the okedo pad's slowest mode decays at nine
+    // hundred inverse seconds, so exp(-d t0) and exp(-d t1) both underflow to
+    // exactly zero and every weight on the drum is zero. A comparison on
+    // `weight` then has nothing to choose between, accepts no mode, and reports
+    // no pitch at all - the panel read 0.00 Hz for a drum that plainly sounds.
+    //
+    // exp(-d t0) - exp(-d t1) is exp(-d t0) (1 - exp(-d (t1 - t0))), and both
+    // factors have well-behaved logarithms however large d is: the first is a
+    // product rather than an exponential, and the second tends to zero from
+    // below as log1p of something that has itself underflowed. Nothing here is
+    // an approximation of the line above - it is the same number, taken through
+    // the exponents instead of through the exponentials, and it only decides
+    // anything where that line has lost all of its digits. See soundingMode.
+    const double decayed = static_cast<double> (decay);
+    const double surviving = -std::expm1 (
+        -decayed * static_cast<double> (pitchWindowEnd - pitchWindowStart));
+    result.logWeight = static_cast<float> (
+        std::log (static_cast<double> (amplitude)) - std::log (decayed)
+        - decayed * static_cast<double> (pitchWindowStart)
+        + std::log (surviving));
     return result;
 }
 
@@ -1631,6 +1700,8 @@ TaikoEngine::SoundingMode TaikoEngine::soundingMode (const DrumState& drum,
                                                      float strikeRadius) noexcept
 {
     SoundingMode best;
+    bool found = false;
+    float bestLogWeight = -std::numeric_limits<float>::infinity();
 
     for (int entryIndex = 0; entryIndex < modeEntryCount; ++entryIndex)
     {
@@ -1642,12 +1713,37 @@ TaikoEngine::SoundingMode TaikoEngine::soundingMode (const DrumState& drum,
             const auto observation =
                 observeMode (drum, entryIndex, branch, strikeRadius);
 
-            if (! (observation.frequencyHz > 0.0f)
-                || ! (observation.weight > best.weight))
+            if (! (observation.frequencyHz > 0.0f))
                 continue;
 
+            // The comparison is on `weight`, and it is only on `logWeight` when
+            // `weight` has run out of exponent - on a drum whose every mode is
+            // emptied before the pitch window opens, where every weight is
+            // exactly zero and there is otherwise nothing to choose between
+            // them. Written this way rather than as a comparison on `logWeight`
+            // alone so that wherever this function had an answer before it
+            // returns the same one: the two orderings agree mathematically and
+            // to a few units in the last place numerically, and a comparison
+            // that changed in the last place would be a comparison that could
+            // hand the octave transform a different latched mode.
+            //
+            // The first valid mode is always taken, so a drum that sounds is
+            // never reported as having no pitch. It used to be: nothing was
+            // accepted unless it beat a zero, and on a 15 cm head at the
+            // tension ceiling nothing did.
+            const bool better =
+                ! found
+                || observation.weight > best.weight
+                || (! (best.weight > 0.0f) && ! (observation.weight > 0.0f)
+                    && observation.logWeight > bestLogWeight);
+
+            if (! better)
+                continue;
+
+            found = true;
             best.frequencyHz = observation.frequencyHz;
             best.weight = observation.weight;
+            bestLogWeight = observation.logWeight;
             best.identity.entryIndex = static_cast<std::uint8_t> (entryIndex);
             best.identity.branch = static_cast<std::uint8_t> (branch);
         }
