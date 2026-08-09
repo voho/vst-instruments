@@ -8,23 +8,24 @@ lengthened or shortened independently of pitch. The engine is procedural and
 runs locally: it does not clone a named singer, load recordings, or contact a
 service while rendering audio.
 
-> **Listen first.** Nine [rendered demonstrations](Docs/audio/README.md) cover
+> **Listen first.** Ten [rendered demonstrations](Docs/audio/README.md) cover
 > a solo legato phrase, the preset vowels on both voice profiles, the vowel
 > space and formant shift on held notes, the twelve-singer ensemble, chord mode
 > locking onto just intervals, a choir swelled on the Dynamics control, tension
-> and breath closing into a hum, and the room at both sizes. They are rendered
-> by the shipping engine, so they cannot drift from what the plug-in does.
+> and breath closing into a hum, the room at both sizes, and one soprano line
+> through the register-aware upper tract. They are rendered by the shipping
+> engine, so they cannot drift from what the plug-in does.
 
 ![Vocalor Standalone instrument interface](Docs/screenshots/vocalor-standalone.png)
 
 The screenshot above was captured from the 1.0 Standalone application and shows
 the previous layout. The 1.1 editor added the vowel-space pad, the live
 vocal-tract analyser with output meters, and the phrasing and room-geometry
-controls; 1.2 adds Dynamics, Intonation and Nasal to the same row and regroups
-it into voice character, performance, space and master. The visual language is
-unchanged. It has not been re-captured because the screenshots can only be
-produced from a macOS build. The VST3 and Audio Unit use the same resizable
-JUCE editor.
+controls; 1.2 added Dynamics, Intonation and Nasal to the same row and regrouped
+it into voice character, performance, space and master. 1.3 adds Instability to
+that voice-character group. The visual language is unchanged. The repository
+screenshot remains the earlier layout; automated editor-rendering tests exercise
+the current one. The VST3 and Audio Unit use the same resizable JUCE editor.
 
 The interface remains fully resolution-independent: the layered hardware knobs,
 choice states, panel depth, vowel pad, response curve, and complete vocal-range
@@ -46,7 +47,7 @@ The project builds three products from one JUCE codebase:
 
 ## Interface and controls
 
-Vocalor exposes 23 automatable host parameters. Every parameter keeps its
+Vocalor exposes 24 automatable host parameters. Every parameter keeps its
 identifier, range, default, and host ordering, so existing sessions and any
 automation written against them recall in place.
 
@@ -83,6 +84,15 @@ different singer count.
 | `dynamics` | Dynamics | 0 – 100 % | 100 % | 1.2 |
 | `intonation` | Just intonation | 0 – 100 % | 0 % | 1.2 |
 | `nasal` | Nasality | 0 – 100 % | 0 % | 1.2 |
+| `instability` | Instability | 0 – 100 % | 38 % | 1.3 |
+
+Saved state also carries a hidden voice-model version, not exposed as a host
+parameter. A project written before 1.3 restores Instability at 0 % and bypasses
+the new automatic register-support gain, so neither the legacy vibrato path nor
+the absence of that ±3 dB support law changes on recall; re-saving preserves the
+marker. A fresh instance or a newly selected 1.3 factory program uses the
+current model. The separately documented LF-source and soprano-tract upgrades
+are intentional 1.3 revoicing, not covered by this narrow compatibility switch.
 
 The top row selects the voice profile, the performance mode, the chord quality,
 and the vowel anchor. **Ensemble size** renders exactly that many independently
@@ -103,21 +113,22 @@ to the pad, the **vocal-tract response** display draws the live magnitude
 response of the five formant resonators of a sounding voice on a logarithmic
 axis, marks F1 to F5, and carries the stereo output meters.
 
-Thirteen continuous controls fill the bottom row in four groups. **Voice
+Fourteen continuous controls fill the bottom row in four groups. **Voice
 character** holds **Breath**, **Resonance**, **Tension**, **Nasal**,
-**Vibrato** and **Humanize**; **performance** holds **Dynamics**,
+**Vibrato**, **Instability** and **Humanize**; **performance** holds **Dynamics**,
 **Intonation** and **Glide**; **space** holds **Spread**, **Room** and room
 **Size**; and **master** holds the **Output** level. **Vibrato** is calibrated in
 cents rather than in an arbitrary depth — the top of the knob is the ±1 semitone
-that defines a sung vibrato — and **Humanize** loosens the section in time as
-well as in pitch, so at zero twelve singers enter and release exactly together
-and at full they do not. **Spread** now places the section rather than panning
-it, so it moves twelve positions in a room and not twelve gains. The status
-display reports
+that defines a sung vibrato. **Instability** adds bounded, deterministic
+cycle-to-cycle variation in its period, depth and contour. **Humanize** owns the
+between-singer differences in pitch, timing and anatomy, so at zero twelve
+singers enter and release exactly together and at full they do not. **Spread**
+now places the section rather than panning it, so it moves twelve positions in
+a room and not twelve gains. The status display reports
 active voices and sample rate, the Panic button mutes immediately, and the
 on-screen keyboard is also mapped to the computer keys shown above it. The
-editor's minimum width rose from 1020 to 1120 px with the three added knobs, so
-that a cell still holds the value box under its dial.
+editor remains usable at its 1120 px minimum; fourteen equal cells share the
+row, while the 1240 px default gives the longer Instability label more room.
 
 ## Factory presets
 
@@ -213,24 +224,30 @@ at 100 %, which is exactly the 1.1 behaviour.
 The JUCE-free C++20 DSP core uses a low-latency, source-filter vocal model.
 
 **Glottal source.** The excitation is a band-limited Liljencrants-Fant style
-glottal flow derivative rather than an arbitrary harmonic roll-off. Two
-prototypes — a lax pulse (open quotient 0.78, speed quotient 2.6, long return
-phase) and a firmly adducted one (0.46, 3.4, short return phase) — are analysed
-once at `prepare()` time and rendered into nine band-limited mip levels. Vocal
-tension crossfades between them, so the control changes the shape of the pulse
-and the resulting spectral tilt for a physical reason instead of interpolating
-two hand-tuned spectra. A one-pole tilt driven by velocity and tension is
-applied on top, and two cascaded first-order shelves at 850 Hz carry the
-loudness-dependent slope described under **Dynamics**, which is why a soft note
-is dull as well as quiet.
+glottal flow derivative rather than an arbitrary harmonic roll-off. Tension
+interpolates the physical LF parameters from a lax pulse (open quotient 0.78,
+speed quotient 2.6, long return phase) to a firmly adducted one (0.46, 3.4,
+short return phase). Nine analysed shapes at 12.5 % intervals keep runtime
+interpolation within 0.182 dB on H1–H5 of the continuously generated model.
+Every derivative and its matching flow envelope is circularly aligned on the
+maximum-flow-declination/closure event before interpolation. That alignment is
+the important part: the old two-endpoint waveform crossfade summed closures at
+different phases and dug non-physical holes into individual harmonics at middle
+Tension settings.
 
-The crossfade is in the time domain, and the two prototypes return at different
-instants, so a mid-tension source is two pulses summed at different phases
-rather than a pulse of intermediate open quotient. Individual harmonics cancel
-there — at one table level the second harmonic falls from 0.149 and 0.147 to
-0.034 at a tension of 0.36. It is a property worth knowing before reading a
-narrow-band measurement of this source: a band share does not vary monotonically
-with the tension that produced it.
+The immutable shapes are built once per process, on the heap, into nine
+band-limited mip levels and shared by every engine. Each mip has its own
+257-point compatibility gain curve, so a one-harmonic high note and a
+256-harmonic bass both retain the former source RMS; the worst residual in the
+test sweep is below 0.0001 dB, while the reference H1–H24 band stays within
+0.024 dB. The former H2/H5 cancellation minima were 0.104/0.350 of their own
+endpoint floors; the coherent bank holds H1–H5 to
+0.994/0.889/0.708/0.867/0.988 or above without demanding a flat spectrum.
+`prepare()` owns the roughly 23 ms cold build and is explicitly non-real-time;
+an unprepared engine renders silence rather than allocating in its first audio
+callback. A one-pole tilt driven by velocity and tension is applied on top, and
+two cascaded first-order shelves at 850 Hz carry the loudness-dependent slope
+described under **Dynamics**, which is why a soft note is dull as well as quiet.
 
 **Attack and onset.** A note used to be rendered for its first 50 – 70 ms
 through a reduced two-formant tract at 1.75× bandwidth, with the full
@@ -241,22 +258,23 @@ present in the first cycle. The reduced stage is gone and every voice renders
 all five formants and the nasal branch from its first sample. Measured on a male
 D3 at Tension 90 %, the 2 – 3.3 kHz band sat 17.7 dB below its own sustain share
 over the first 10 – 35 ms of a note, and 17.4 dB below at 70 – 95 ms; it now sits
-2.7 dB below with the source ramp described next held out of the way, and 0.4 dB
-below as the instrument ships. Removing the stage is what closes almost all of
+3.44 dB below with the source ramp described next held out of the way, and
+3.96 dB below as the instrument ships. Removing the stage is what closes almost all of
 it: the tract, and not the source, is what was arriving late.
 
 What does develop at a vocal onset is the source: the folds start abducted and
 lax and adduct over the first tens of milliseconds, which is a rise in the
 closed quotient and a fall in the breath-to-voice ratio. The engine already
 carried that gesture on the aspiration side as an 85 ms exponential puff, so the
-glottal crossfade is now driven from the same envelope rather than from a second
+LF shape trajectory is driven from the same envelope rather than from a second
 one — the puff and the adduction are literally the same gesture. A note begins
 0.60 of the way from the block's tension toward the lax prototype at the
 reference velocity, which puts the first pulse of a Tension 90 % patch at an
 open quotient of 0.665 against the 0.492 it settles on. Measured, the
-5 – 18 kHz share over the first 10 – 35 ms is 5.6 dB higher with the ramp than
+5 – 18 kHz share over the first 10 – 35 ms is 0.94 dB higher with the ramp than
 with it forced out, and the sustain is unchanged to within 0.001 dB in every
-band: the ramp is an onset, not a tone control.
+band: the ramp is an onset, not a tone control. The old 5.6 dB figure included
+the endpoint-crossfade harmonic notch that the coherent source removes.
 
 How long that takes is the note's own. The growth rate of the fold oscillation
 follows how far the subglottal pressure sits *above* the phonation threshold, so
@@ -266,16 +284,16 @@ rather than a scale — which is why the attack time runs away at the bottom of
 the velocity range instead of stretching across the whole of it. It is clamped
 to 2 – 120 ms and divided by `1 + 1.8 × Humanize`, so Humanize still loosens an
 attack exactly as it used to. On a held middle C at Humanize 0 the 10 – 90 %
-rise of a four-period envelope measures 9.25 ms at full velocity and 86.4 ms at
-velocity 10 %, a factor of 9.3, where the whole range above the very bottom of
+rise of a four-period envelope measures 8.85 ms at full velocity and 65.6 ms at
+velocity 10 %, a factor of 7.4, where the whole range above the very bottom of
 it used to measure 16.6 ms whatever the note was played at;
-full Humanize takes the accented attack from 9.25 to 23.2 ms. Velocity reaches
+full Humanize takes the accented attack from 8.85 to 27.2 ms. Velocity reaches
 the source-tension ramp as well, so a soft attack is lax as well as slow: the
 ramp runs 0.98 deep at velocity 10 % and 0.49 at full.
 
 None of that may arrive as a click. The suite measures the first millisecond of
 a note against its own sustain peak on three notes, two tensions and three
-velocities; the narrowest of those eighteen entries is 40.0 dB below the sustain
+velocities; the narrowest of those eighteen entries is 36.6 dB below the sustain
 peak. A millisecond is under a quarter of the fastest time constant the engine
 produces and under a third of a glottal period at middle C, so the window still
 catches a discontinuity without measuring the attack it is supposed to allow.
@@ -350,26 +368,60 @@ like a tract rather than like five independent peaking filters:
   front: F2 and F3 of /i/ are carried nearly as strongly as F1 instead of
   sitting 22 dB below it.
 
-**Singer's formant.** Vocal tension used to raise the amplitude of F3 by 12 %
-and of F4 by 6 % and leave them where they were. Three formants 700 Hz apart
-with a little more gain each are still three formants: the spectral peak at
-2.5 – 3.5 kHz that lets an unamplified voice carry over an orchestra comes from
-narrowing the epilaryngeal tube until F3, F4 and F5 collapse into one. Tension
-now does that — it pulls the three upper formants toward a profile-dependent
-cluster centre (2.9 kHz male, 3.2 kHz female, scaled with the formant shift like
-the rest of the tract) and narrows their bandwidths together. Vocal effort
-strengthens the same configuration, so the dynamic reaches it as well.
+**Singer's formant and soprano register.** Vocal tension used to raise the
+amplitude of F3 by 12 % and of F4 by 6 % and leave them where they were. Three
+formants 700 Hz apart with a little more gain each are still three formants: the
+spectral peak at 2.5 – 3.5 kHz that lets an unamplified lower voice carry over
+an orchestra comes from narrowing the epilaryngeal tube until F3, F4 and F5
+converge. Tension now does that on the male profile — it pulls the three upper
+formants toward 2.9 kHz, scaled with the formant shift like the rest of the
+tract, and narrows their bandwidths together. Vocal effort strengthens the
+same configuration, so the dynamic reaches it as well.
 
 On a held male D3 the F3-to-F5 span closes from 1860 Hz to 1065 Hz as Tension
 goes from 0 to 95 %, and the share of the output between 2.05 and 4 kHz rises
 8.7 dB. At Tension 0 the upper formants sit exactly where the vowel puts them.
 
-The cluster is applied at every pitch, which is a known limit rather than a
-finding: sopranos measured at the top of their range have no narrow cluster,
-because their upper-formant bandwidths stay wide. Disengaging it needs a
-per-voice bandwidth path, and it is worth knowing that the band share cannot
-prove the disengagement happened — Tension also drives the source tilt corner,
-which on its own accounts for 9.0 dB of the 14.3 dB rise at C6.
+A soprano is different. Weiss, Brown and Morris measured broad low/middle
+reinforcement, usually at least 2 kHz wide, and no ordinary singer's-formant
+band at their 932 Hz high pitch ([Journal of
+Voice](https://www.sciencedirect.com/science/article/abs/pii/S0892199701000467)).
+The female profile therefore uses one quarter of the lower-voice convergence —
+an engineering mapping that uses broad outer-pole coverage as a structural
+proxy for that *aggregate* region, not a claim that any individual pole is
+2 kHz wide — then smoothly releases even that residual from E-flat5 (622.25 Hz)
+to B-flat5 (932.33 Hz) on a logarithmic pitch axis. The AAH F3–F5 outer coverage
+stays broad at C4, 2337 Hz relaxed and 2094 Hz at Tension 95 %. At B-flat5 the
+cluster is fully released; after the pitch-related resonance movement below,
+both tension endpoints cover 2023 Hz rather than collapsing into one 3 kHz peak.
+
+Direct broadband tract excitation also found a small systematic register rise:
+R3 moved by 0.48 ± 0.39 Hz and R4 by 0.46 ± 0.38 Hz for each hertz of f0, with
+no evidence that either locked to a harmonic ([Joliveau, Smith and
+Wolfe](https://newt.phys.unsw.edu.au/~jw/reprints/Joliveauetal.pdf)). The female
+profile therefore adds those mean slopes above C4. Humanize applies one shared,
+bounded anatomical draw to both modes — preserving the reported spread without
+letting independent extremes collapse the opposite-polarity poles — and the
+twelve identities span 0.145–0.788 for R3 and 0.134–0.760 for R4. The movement
+follows intentional portamento and pitch bend but excludes vibrato and jitter;
+it scales with Formant Shift, leaves R5 untouched, stays linear through B5, and
+smoothly reaches its C6-sized saturation by C-sharp6 rather than extrapolating
+through the non-human remainder of MIDI. All five vowel-pad anchors retain at
+least one mean bandwidth between R3, R4 and R5 at both Formant Shift extremes.
+
+Frequencies, bandwidths, cascade-derived amplitudes and both pole coefficients
+now belong to each voice. A simultaneous C4 and B-flat5 can therefore hold the
+broad low-register reinforcement and the released high-register tract behind
+one parameter state; the editor publishes that same voice's complete tuple.
+The five amplitudes are recalculated from the actual five poles rather than
+from a nominal chunk tract, including after F1 tuning and singer anatomy. This
+also fixes a subtler mismatch that predated the soprano work.
+
+`Female` still serves the **Intimate Alto** preset, although classical altos can
+retain a genuine cluster. An explicit voice-class/fach dimension is the honest
+future solution; pitch alone cannot tell the engine whether a singer is an alto
+or a soprano. Male clustering is deliberately retained in this pass, and the
+broader changes measured at male register extremes remain future work.
 
 **Coarticulation.** A vowel change is a jaw and a tongue moving. The formant
 glides ran on 16, 9, 5, 4 and 3 ms time constants, which put a whole vowel
@@ -443,16 +495,40 @@ Two things follow, both asserted by the test suite:
 
 - **The vowel no longer decides whether the top octave exists.** At C6 the
   close anchor measured 25.1 dB below the open one and 20.1 dB below itself at
-  C4. It now measures 7.0 dB below the open anchor and 1.2 dB below itself at
-  C4. The residual is the cascade amplitude weighting, which is still resolved
-  once per chunk for the untuned tract and therefore still knows the close vowel
-  by its speech formants.
+  C4. With the per-voice tract and register support it is now 0.6 dB below the
+  open anchor and 1.0 dB above itself at C4: both vowels place F1 on the
+  fundamental, while their remaining formants still describe different vowels.
 - **The resonance it wins is spent on efficiency, not on volume.** Putting the
   fundamental exactly on F1 is worth 7 – 12 dB, which would leave the top octave
   shouting over the middle. A singer uses that to reduce subglottal pressure
   instead, so the voice gain is trimmed in proportion to how far F1 actually had
-  to move: nothing while F1 has not moved, and 6 dB once it has moved by a fifth
-  or more.
+  to move: nothing while F1 has not moved, and about 6.9 dB once it has moved by
+  a fifth or more. The extra 0.9 dB hands back the gain exposed when cascade
+  amplitudes began following each voice's tuned poles exactly.
+
+That F1 gesture cannot cover the entire register. Even with the jaw model
+settled, a harmonic passing through F1 or F2 can make two equal-velocity notes
+jump several decibels while the source itself changes smoothly. This is a
+physical source–filter interaction, but a singer does not hold subglottal drive
+fixed while it happens. Recent controlled modelling likewise finds vocal
+intensity to be a joint result of source, f0 and tract tuning, with high-pitch
+formant alignment producing fluctuations above 5 dB ([Zhang, JASA
+2025](https://www.surgery.medsch.ucla.edu/spl/papers/2025JASA09_FormantTuning.pdf)).
+
+**Register support** is the engine's bounded breath-support response to that
+interaction. For each voice it evaluates the exact LF source weights and the
+current five-pole tract at the first eight harmonics, then compares that power
+with eight midpoint probes spread across one harmonic interval. It returns
+only half of the inferred amplitude correction, clamps it to ±3 dB, and glides
+the target over 40 ms. The analysis follows intentional pitch and articulation,
+not vibrato or jitter; it multiplies only the voiced drive, so aspiration and
+spectral shape are not normalised away. This is an explicit engineering model
+of support, not a claim that a singer performs the calculation.
+
+On the equal-velocity C4–C6 demonstration line, the raw steady-note span falls
+from 11.68 to 6.48 dB and the largest adjacent-note change from 7.37 to 4.67 dB.
+The full correction would erase sung colour, while a fader written into the demo
+would merely disguise the model defect; the bounded half-law leaves both audible.
 
 **Resonance** sets the formant bandwidths and nothing else. Because narrower
 formants make the cascade peakier, it now widens the contrast between the
@@ -471,24 +547,21 @@ is generated by flow through the glottal constriction, so its envelope is the
 glottal flow itself: it rises through the open phase and is extinguished while
 the folds are closed. The engine builds a second table for it at `prepare()`
 time — the exact integral of the same two Liljencrants-Fant prototypes the
-source wavetables are the derivative of, interleaved and crossfaded by the same
-tension — so the window's open quotient follows the Tension knob and the onset
-ramp without being told, and the noise is multiplied by it *before* the
+source wavetables are the derivative of. The same nine closure-aligned physical
+shapes and adjacent interpolation are used on both sides, so the window's open
+quotient follows the Tension knob and the onset ramp without being told, and the noise is multiplied by it *before* the
 pre-emphasis differentiates it, which is the same single radiation accounting
 the voiced source gets.
 
-A crossfade of two unit-mean-square shapes is not itself unit mean square: the
-two flows peak at different instants and overlap only to 0.523, which would cost
-up to 1.2 dB of breath at intermediate tensions. The compensation is in closed
-form from those two prototype means and their overlap, resolved once per control
-update, so the per-sample cost stays one multiply and the level change is
-0.01 dB. Measured at middle C, Breath 100 %, Tension 30 %, the isolated
-aspiration folded onto the glottal period runs 8.4 dB peak to trough where it
-was flat by construction, peaks at 0.40 of the period, and sits 4.3 dB below its
-own peak while the folds are closed. It is a redistribution in time rather than
-a level change, and it is a breathy-patch feature honestly sized: the isolated
-aspiration is 28.2 dB below the full signal at Breath 100 % but 41.1 dB below at
-the 28 % default.
+An interpolation of two unit-mean-square shapes is not itself unit mean square.
+The bank stores the mean of every flow and the overlap of every adjacent pair;
+the exact quadratic compensation is resolved once per control update, so the
+per-sample cost stays one multiply and the level remains a redistribution in
+time. Measured at middle C, Breath 100 %, Tension 30 %, the isolated aspiration
+folded onto the glottal period runs 10.46 dB peak to trough where stationary
+noise reads 0.26 dB, peaks at phase 0.604, and sits 3.51 dB below its own peak
+while the folds are closed. The isolated aspiration is 27.81 dB below the full
+signal at Breath 100 % but 40.73 dB below at the 28 % default.
 
 **Sample rate.** Every filter coefficient in the engine is derived from a corner
 frequency or a time constant at `prepare()` time: the room damping and low cut,
@@ -535,10 +608,10 @@ unsteadiness rather than as vibrato, with every factory preset below that again.
 
 The identities are reseeded over 5.6 – 7.0 Hz and land on 5.72 – 6.84 Hz. The
 extent is `100 × knob^1.75` cents: the top of the knob is the definition, and
-the exponent is fixed by requiring the engine's own default of 42 % to land at
-21.9 cents rather than by taste. Before the singer's own depth, Vibrato at 38 %
-is 18.4 cents, 42 % is 21.9 and 46 % is 25.7. That curve is why the control could
-be rescaled without re-dialling
+the exponent is fixed by requiring the compatibility engine default of 42 % to
+land at 21.9 cents rather than by taste. Before the singer's own depth, the
+published 38 % setting is 18.4 cents, 42 % is 21.9 and 46 % is 25.7. That curve
+is why the control could be rescaled without re-dialling
 the bank — eleven of the twelve presets sit at or below 44 %, and a linear
 rescale would have taken every one of them to a soloist's full vibrato.
 
@@ -551,31 +624,50 @@ knee, asymptotic above — so the top of the knob keeps moving instead of going
 dead. Solo reaches ±108.6 cents on the first identity's own depth; the twelve
 section extents land between ±27.8 and ±40.0 cents.
 
-A sung vibrato is not only a pitch modulation. The same cricothyroid oscillation
-moves subglottal pressure and glottal adduction, and the engine carried only the
-passive contribution — harmonics sweeping static formant skirts, which is worth
-0.10 dB on a held C5. A linear depth of 0.0020 per cent of the extent *actually
-in force* — after the identity's own depth, the vibrato fade and the dynamic,
-not the knob — is applied both to the voiced drive and to the presence shelf.
-Driving both delivers the same 2:1 the dynamic obeys, so the band above the
-shelf corner swings twice as many decibels as the fundamental. The shelf's two
-stages each take the square root of it, for the same reason they each take the
-square root of the note's broadband gain, and the root is taken once per control
-period on the ramp target rather than per sample. It is ramped across the
-control period rather than stepped: a 6 Hz modulation applied as a control-rate
-staircase leaves permanent
-sidebands 3 kHz either side of every partial on a sustained note, which is the
-same reason the phase increment is already ramped. Measured as the magnitude of
-the envelope's component at the singer's own vibrato rate, a held C5 modulates
-2.7 dB and a C6 2.7 dB, against 0.001 – 0.002 dB with the vibrato off.
+A sung vibrato is not only a pitch modulation. The same laryngeal gesture moves
+airflow and intensity, while harmonics sweeping static formant skirts contribute
+only 0.10 dB on a held C5. Instability-zero sessions retain the established
+0.0020-per-cent, in-phase gesture and pure sinusoidal contour. Fresh sounds use
+the natural path instead. Each singer's airflow-linked gain leads F0 by a
+bounded 45–150 degrees, a conservative interior of the 34–197-degree range
+reported by [Nandamudi and Scherer](https://pubmed.ncbi.nlm.nih.gov/30190093/),
+and its coefficient moves toward 0.0011 per cent with a 0.18 ceiling. Each of
+the two presence shelves carries the square root of that gesture, so together
+they apply it once; with the direct source, the upper band follows the intended
+2:1 movement rather than accidentally receiving three copies.
 
-**Humanisation.** Each singer has slowly moving pitch, vibrato rate and depth,
-spectral balance, breath, and timing rather than sharing a perfectly periodic
-LFO. Pitch jitter runs through two nested smoothers for a 1/f-like spectrum, and
-ensemble and chord modes instantiate independent singers, preventing the
-phase-locked oscillator sound common to simple choir patches. Humanize also
-multiplies each note's attack time constant and scales the ensemble's entry and
-release scatter, so at zero the section is locked in pitch *and* in time.
+Every target is ramped across the control period, including the hand-off between
+cycle draws. In a nine-second control-domain measurement, the actual fresh patch
+(Vibrato 38 %, Instability 38 %) moves 0.575 dB peak to peak at the direct source
+and 1.150 dB in the upper band. The solo demo's 50/44 % setting measures
+0.922/1.845 dB, and the full 100/100 % corner remains bounded at
+2.933/5.866 dB. The upper band therefore follows the intended 2:1
+spectral law without the old, perfectly phase-locked pulse.
+
+**Instability.** Vibrato owns the intended extent; Instability controls how
+perfectly the gesture repeats. At zero the legacy sinusoid is exact. Above zero,
+each singer makes bounded cycle-to-cycle changes to period and depth and blends
+toward a mildly asymmetric contour instead of tracing the same ideal LFO
+forever. The dimensions are deliberately unequal: at full Instability the
+measured period/extent coefficients of variation are 7.622/20.585 %, the mean
+rate remains 5.92 Hz, and the pitch rise takes 0.825 times the fall duration.
+That follows [Horii's cycle analysis](https://pubs.asha.org/doi/10.1044/jshr.3204.829),
+which found rate more regular than extent, predominantly linear contours and a
+faster F0 rise than fall. Correlated draws retain a tendency for several cycles,
+then depth and contour cross smoothly into the next gesture over its first
+18 %. The pseudo-random stream belongs to the voice and is seeded from the note
+sequence, so repeated renders are deterministic even though neighbouring cycles
+and neighbouring singers differ. Parameter changes are smoothed before they
+reach a sounding voice.
+
+**Humanisation.** Humanize owns ensemble identity: the slowly moving pitch,
+spectral and breath differences, vocal-tract anatomy, position, and note-entry
+and release timing that keep singers from collapsing into one oscillator. Pitch
+jitter runs through two nested smoothers for a 1/f-like spectrum, and ensemble
+and chord modes instantiate independent singers. Humanize also multiplies each
+note's attack time constant and scales the ensemble's entry and release scatter,
+so at zero the section is locked in pitch *and* in time. It is deliberately not
+a second control for the cycle-to-cycle extent set by Instability.
 
 **Ensemble dispersion.** How far apart twelve singers sit is what separates a
 section from one thick voice, and Vocalor's section used to be far too tight.
@@ -741,10 +833,12 @@ single per-resonator coefficient so the render loop multiplies once instead of
 twice per formant per sample.
 
 Earlier work that still stands: voices render voice-major over aligned 64-sample
-chunks, the two glottal wavetables are interleaved so the oscillator touches half
-as many cache lines, the aspiration path runs through the tract rather than
-through its own filter, and the wavetables are built from the sine table instead
-of two million `sin()` calls, which keeps `prepare()` at a few milliseconds.
+chunks, the oscillator reads only the two adjacent shapes it interpolates from
+the compact nine-shape mip bank, the aspiration path runs through the tract
+rather than through its own filter, and the process-wide immutable bank is built
+from one shared sine table. The larger bank takes about 23 ms on its one cold
+build and roughly 0.1 ms on later prepares; that work is explicitly outside the
+audio callback.
 
 Chunk boundaries are aligned to the absolute sample position, and every drift
 oscillator and every per-note draw is a pure function of the note sequence
@@ -752,7 +846,8 @@ rather than of a running random state, so how a host splits its buffers does not
 change what the instrument plays. The test suite asserts both halves of that:
 buffer sizes that are multiples of the 64-sample render chunk reproduce a
 single-block render bit for bit, and splits that land inside a chunk agree with
-it to within 1.3e−6 peak — a rounding residual of the chunk boundary itself,
+it to within 1.3e−6 peak on the general timing fixture and 2.9e−6 through the
+soprano register fixture — rounding residuals of the chunk boundary itself,
 smaller than it was before the per-note draws were added. The twelve entry
 delays and vibrato phases a note draws are identical at every buffer size,
 including for a second note-on that happens inside a render.
@@ -810,6 +905,23 @@ instead of to the ninety-six voices, and by skipping the ten reads entirely once
 a singer's line has run dry. The offset gesture, the per-voice attack and the
 vibrato modulation are all control-rate arithmetic; the release loop lost an
 engine-wide coefficient rather than gaining one.
+
+The 1.3 source follow-through is the one deliberate regression: interpolating
+nine physical LF shapes reads two full mip tables instead of one interleaved
+endpoint pair. In the same twelve-singer 96 kHz fixture, the pre-bank binary
+measured about 355–359 ns/sample and the completed bank about 404–408
+ns/sample, roughly 14 % more source work but still only 0.039× real time on one
+core. A duplicated adjacent-pair layout recovered less than two percent while
+costing another half megabyte, so the compact shared bank is retained.
+
+The register-support analysis adds a modest cost to that completed-bank fixture.
+Its target is evaluated about every 5.3 ms, uses eight harmonics and eight offset
+probes, and the resulting gain is interpolated per sample; keeping the refresh
+clock in seconds also avoids doing twice as many analyses at 96 kHz. The unbounded
+all-harmonic reference changes the chosen correction by no more than 0.14 dB in
+the low-register probes used to set that budget. Three optimized runs measure
+440, 454 and 444 ns/sample (0.043× real time at the median), about 9 % over the
+completed LF bank rather than a rate-proportional cost.
 
 ## Requirements
 
@@ -890,6 +1002,13 @@ the room tap geometry and tail length, the absence of denormal state during a
 long release, the behaviour under non-finite parameters, and that a full-range
 parameter jump glides instead of stepping.
 
+Full five-pole tract fidelity is specified from 44.1 through 192 kHz. The core
+also accepts 8 and 16 kHz for analysis/offline compatibility; at those rates
+upper resonances above the representable band deliberately coalesce at the
+Nyquist guard. Dedicated fixtures require that degraded geometry, its gains and
+its rendered coefficients to remain finite and mutually coherent rather than
+pretending five independently ordered upper modes fit below 4 or 8 kHz.
+
 The formant bank has its own checks, since it is where the audible defects were:
 the rendered level and the individual harmonic magnitudes must agree across
 44.1, 48, 88.2, 96 and 192 kHz; the depth *and* the correlation time of the
@@ -906,6 +1025,11 @@ Every control and every performance behaviour is asserted numerically rather
 than described, because each of them is one that could easily have been a fader
 or a constant instead:
 
+- an unprepared engine must ignore notes and return digital silence rather than
+  cold-build its shared source bank on the audio thread; all prepared engines
+  must share that immutable bank, and every harmonic mip must reproduce the
+  legacy endpoint-crossfade RMS while the physical shape interpolation avoids
+  destructive H1–H5 holes and remains smooth across all 257 Tension steps
 - the dynamic must roll the 2.4 – 4.7 kHz band off by more than it drops the
   fundamental, and must raise the aspiration-to-voiced ratio as it falls; a
   ±2 semitone bend must produce the ±2 semitone frequency ratio; the sustain
@@ -916,6 +1040,10 @@ or a constant instead:
 - F1 must track the fundamental once the fundamental passes it, stop at the
   jaw's ceiling, and leave the vowel alone below that; the level at C6 must
   neither collapse against C4 nor shout over it
+- register support must cut the equal-velocity C4–C6 level span materially
+  without exceeding ±3 dB, changing the normalised spectrum, following vibrato,
+  or acquiring a host-buffer or sample-rate dependency; its 40 ms target must
+  move through a legato register change rather than step at the note event
 - the just intervals must measure their own ratios to within a cent, in chord
   mode and in played polyphony, and must re-tune when a bass arrives after them,
   gliding rather than stepping
@@ -928,6 +1056,16 @@ or a constant instead:
   settle in a fraction of the time
 - the epilarynx must contract the F3-to-F5 span and raise the 2 – 4 kHz share,
   and must leave the vowel's own upper formants alone at rest
+- the female C4 reinforcement must remain about 2 kHz wide, then release
+  monotonically between E-flat5 and B-flat5; simultaneous low and high notes
+  must keep different bandwidths, each rendered gain must be derived from that
+  voice's own poles, and the transition must remain sample-rate-invariant;
+  64-sample-aligned host blocks are bit-exact, while arbitrary sub-chunk splits
+  stay below one 16-bit PCM step; above C4 the female R3/R4 slopes must recover
+  0.48/0.46 Hz/Hz at Humanize zero, spread coherently by identity at Humanize
+  one, follow glide and bend but not vibrato, saturate above the evidence range,
+  leave Male/R5 unchanged, and preserve at least one mean bandwidth between
+  every upper pole across all vowel anchors and Formant Shift extremes
 - the singer's-formant band must be present in the first 10 – 35 ms of a note
   with the source ramp forced out, so it is the tract and not the source that
   arrives complete; the ramp must then make the onset measurably breathier than

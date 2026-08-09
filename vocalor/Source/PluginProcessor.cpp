@@ -50,9 +50,15 @@ void addMissingParameterDefaults (
 
         juce::ValueTree parameterState { parameterType };
         parameterState.setProperty (idProperty, ranged->paramID, nullptr);
+        // Fresh instances intentionally open with some vocal instability, but
+        // a state written before the control existed must retain the perfectly
+        // compatible old signal path. APVTS otherwise fills a missing child
+        // from the new published default, which would change every old session.
+        const auto missingValue = ranged->paramID == vocalor::parameters::instability
+            ? 0.0f
+            : ranged->convertFrom0to1 (ranged->getDefaultValue());
         parameterState.setProperty (
-            valueProperty,
-            ranged->convertFrom0to1 (ranged->getDefaultValue()), nullptr);
+            valueProperty, missingValue, nullptr);
         state.appendChild (parameterState, nullptr);
     }
 }
@@ -63,6 +69,15 @@ const juce::Identifier& programProperty()
     static const juce::Identifier identifier { "vocalorProgram" };
     return identifier;
 }
+
+const juce::Identifier& voiceModelProperty()
+{
+    static const juce::Identifier identifier { "vocalorVoiceModel" };
+    return identifier;
+}
+
+constexpr int legacyVoiceModelVersion = 2;
+constexpr int currentVoiceModelVersion = 3;
 } // namespace
 
 VocalorAudioProcessor::VocalorAudioProcessor()
@@ -94,9 +109,11 @@ VocalorAudioProcessor::VocalorAudioProcessor()
     parameterPointers.dynamics     = parameters.getRawParameterValue (dynamics);
     parameterPointers.intonation   = parameters.getRawParameterValue (intonation);
     parameterPointers.nasal        = parameters.getRawParameterValue (nasal);
+    parameterPointers.instability  = parameters.getRawParameterValue (instability);
 
     jassert (parameterPointers.profile != nullptr && parameterPointers.output != nullptr);
     jassert (parameterPointers.vowelMorph != nullptr && parameterPointers.roomSize != nullptr);
+    jassert (parameterPointers.instability != nullptr);
     keyboardState.addListener (this);
 }
 
@@ -125,10 +142,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalorAudioProcessor::creat
     result.push_back (std::make_unique<juce::AudioParameterInt> (
         juce::ParameterID { choirSize, 1 }, "Choir size", 2, 16, 8));
 
-    const auto addPercent = [&result] (const char* id, const char* name, float defaultValue)
+    const auto addPercent = [&result] (const char* id, const char* name,
+                                       float defaultValue, int versionHint = 1)
     {
         result.push_back (std::make_unique<juce::AudioParameterFloat> (
-            juce::ParameterID { id, 1 }, name,
+            juce::ParameterID { id, versionHint }, name,
             juce::NormalisableRange<float> { 0.0f, 1.0f, 0.001f }, defaultValue,
             juce::AudioParameterFloatAttributes().withLabel ("%")
                                                    .withStringFromValueFunction ([] (float v, int)
@@ -178,6 +196,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalorAudioProcessor::creat
     addPercent (dynamics, "Dynamics", 1.0f);
     addPercent (intonation, "Just intonation", 0.0f);
     addPercent (nasal, "Nasality", 0.0f);
+    // AU orders identifiers by this hint. A newly published parameter must use
+    // a value above every shipped parameter or it can move old automation slots.
+    addPercent (instability, "Vocal instability", 0.38f, 2);
 
     return { result.begin(), result.end() };
 }
@@ -199,6 +220,9 @@ void VocalorAudioProcessor::setCurrentProgram (int index)
         return;
 
     currentProgram = bounded;
+    // Choosing a 1.3 factory program is an explicit opt-in to its current DSP
+    // model even if this instance previously restored a legacy session.
+    voiceModelVersion.store (currentVoiceModelVersion, std::memory_order_relaxed);
     const auto& values = vocalor::factoryPreset (currentProgram).parameters;
 
     const auto write = [this] (const char* id, float denormalised)
@@ -233,6 +257,7 @@ void VocalorAudioProcessor::setCurrentProgram (int index)
     write (dynamics, values.dynamics);
     write (intonation, values.intonation);
     write (nasal, values.nasal);
+    write (instability, values.instability);
 
     // A program change can move every control at once, so the sounding voices
     // are stopped rather than left to glide through the whole change.
@@ -396,6 +421,10 @@ void VocalorAudioProcessor::updateEngineParameters() noexcept
     next.dynamics = parameterPointers.dynamics->load (std::memory_order_relaxed);
     next.intonation = parameterPointers.intonation->load (std::memory_order_relaxed);
     next.nasal = parameterPointers.nasal->load (std::memory_order_relaxed);
+    next.instability = parameterPointers.instability->load (std::memory_order_relaxed);
+    next.legacyRadiatedPowerBypass =
+        voiceModelVersion.load (std::memory_order_relaxed)
+            < currentVoiceModelVersion;
     engine.setParameters (next);
 }
 
@@ -451,6 +480,11 @@ void VocalorAudioProcessor::getStateInformation (juce::MemoryBlock& destinationD
     // Saved alongside the parameters so a restored session can tell the host
     // which program it is on without the host having to re-apply it.
     state.setProperty (programProperty(), currentProgram, nullptr);
+    // Saving a migrated old project must not silently opt it into a different
+    // voiced-level law the next time the host opens it.
+    state.setProperty (
+        voiceModelProperty(),
+        voiceModelVersion.load (std::memory_order_relaxed), nullptr);
     if (const auto xml = state.createXml())
         copyXmlToBinary (*xml, destinationData);
 }
@@ -461,6 +495,13 @@ void VocalorAudioProcessor::setStateInformation (const void* data, int sizeInByt
     if (xml != nullptr && xml->hasTagName (parameters.state.getType()))
     {
         auto restoredState = juce::ValueTree::fromXml (*xml);
+        const int restoredModel = restoredState.hasProperty (voiceModelProperty())
+            ? static_cast<int> (restoredState.getProperty (voiceModelProperty()))
+            : legacyVoiceModelVersion;
+        voiceModelVersion.store (
+            restoredModel >= currentVoiceModelVersion
+                ? currentVoiceModelVersion : legacyVoiceModelVersion,
+            std::memory_order_relaxed);
         if (restoredState.hasProperty (programProperty()))
             currentProgram = juce::jlimit (
                 0, juce::jmax (0, vocalor::factoryPresetCount() - 1),

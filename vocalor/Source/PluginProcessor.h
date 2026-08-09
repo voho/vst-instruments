@@ -36,6 +36,9 @@ inline constexpr auto roomSize     = "roomSize";
 inline constexpr auto dynamics     = "dynamics";
 inline constexpr auto intonation   = "intonation";
 inline constexpr auto nasal        = "nasal";
+// Added after every 1.2 parameter so existing host automation indices remain
+// unchanged.
+inline constexpr auto instability  = "instability";
 } // namespace vocalor::parameters
 
 namespace vocalor
@@ -107,6 +110,8 @@ public:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
 private:
+    friend struct VocalorAudioProcessorTestAccess;
+
     struct ParameterPointers
     {
         std::atomic<float>* profile = nullptr;
@@ -132,6 +137,7 @@ private:
         std::atomic<float>* dynamics = nullptr;
         std::atomic<float>* intonation = nullptr;
         std::atomic<float>* nasal = nullptr;
+        std::atomic<float>* instability = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent
@@ -160,6 +166,10 @@ private:
     std::atomic<bool> engineReady { false };
     std::atomic<int> activeVoiceCount { 0 };
     std::atomic<double> displaySampleRate { 0.0 };
+    // Hidden state version for DSP laws which are not host parameters. Version
+    // 2 means a pre-1.3 session whose register support stays bypassed; version
+    // 3 is the current model used by fresh instances and factory programs.
+    std::atomic<int> voiceModelVersion { 3 };
     int currentProgram = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VocalorAudioProcessor)
