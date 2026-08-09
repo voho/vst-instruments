@@ -502,16 +502,18 @@ documented rather than given an inaudible retune.
 law** — full-period hold times one pole per shift — and that is what the
 circuit fixture asserts, by driving `transferLossStep` on a synthetic 40 kHz
 grid against an analytic aperture. `processClockedCore` was never entered by
-it. Measured through the shipped render path at the 176.4 kHz default internal
-rate, the raw held node reads about −3.15 dB versus DC; the ≈0.13 dB residual
-is the linear interpolator that places the host-grid input on the clock edge
-(`YouKnow106Chorus.cpp`, `atEdge`), which is open future work already recorded
-in `circuit-modelling-research.md`, not a bandwidth claim about the part. That
-interpolation loss is strongly rate-dependent — at 12 kHz it averages 0.11 dB
-on a 192 kHz grid, 0.45 dB on 96 kHz and 1.81 dB on 48 kHz — so it is another
-reason the non-oversampled path is a compromise rather than an equivalent. No
-constant moves: `transferSmear` stays 0.8654743 and the raw node stays inside
-the recorded [−4.355, −1.33] dB cross-reading guard band.* The former additional factor
+it. At that dated checkpoint the shipped 176.4 kHz path read about −3.15 dB
+versus DC; the ≈0.13 dB residual came from the current/previous linear sampler
+that placed the host-grid input on the clock edge. Its historical 12 kHz loss
+averaged 0.11 dB on a 192 kHz grid, 0.45 dB on 96 kHz and 1.81 dB on 48 kHz.
+Superseded 2026-08-09: each edge now evaluates a causal four-point Lagrange
+polynomial through the current post-support sample and its three predecessors.
+There is no future sample, lookahead or added latency, and this is not a
+fractional BBD output read-tap or Thiran allpass. No constant moves:
+`transferSmear` stays 0.8654743, the analytic raw-node anchor stays −3.000 dB
+versus DC/−2.972 dB versus 1 kHz and the recorded [−4.355, −1.33] dB
+cross-reading guard band remains. This numerical correction supplies no new
+physical bandwidth evidence and does not close OQ-04.* The former additional factor
 `1+(clock−26000)·1.5e−6` double-counted
 that scaling: it gave −2.757 dB versus DC, or −2.732 dB versus 1 kHz, and swept
 the normalized 0.3-cycle response from about
@@ -565,6 +567,34 @@ and <−60 dBc SGA. The oracle's exhaustive 20 Hz–20 kHz off-mask controls are
 −198.030/−202.098 dBc at 44.1/48 kHz; clock-phase, exact edge-state, projection,
 finite-value and independent-filter controls also pass. Four-times remains a
 candidate, not truth, and every BBD rate is unadmitted.
+
+**2026-08-09 Step-8 causal input-edge rerun — SGA submetric passes, domain
+still rejects.** The table above is retained as the Step-7 before-state. The
+only production signal-path change is current-plus-three-past four-point
+Lagrange sampling
+of the post-support input at each existing edge in place of the two-point
+linear sampler. It is causal and has no future sample, lookahead, added
+latency, support-filter change, physical-constant change or noise-path change.
+The deterministic output polyBLEP also remains unchanged. Using the same
+oracle, cases and gates, the before → current matrix is:
+
+| Host | Factor | Analytic NRMS, Step 7 → Step 8 | BGA error, Step 7 → Step 8 | SGA, Step 7 → Step 8 | Result |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 44.1 kHz | 1× | −3.099 → −3.602 dB | 34.389 → 34.362 dB | −24.854 → −26.765 dBc | **REJECT** |
+| 44.1 kHz | 2× | −14.910 → −18.159 dB | 4.088 → 4.080 dB | −28.762 → −41.304 dBc | **REJECT** |
+| 44.1 kHz | 4× | −27.045 → −30.394 dB | 0.867 → 0.865 dB | −47.635 → **−72.041 dBc** | **REJECT** |
+| 48 kHz | 1× | −4.640 → −5.768 dB | 22.893 → 22.866 dB | −28.871 → −30.364 dBc | **REJECT** |
+| 48 kHz | 2× | −16.426 → −19.696 dB | 3.257 → 3.249 dB | −31.329 → −45.866 dBc | **REJECT** |
+| 48 kHz | 4× | −28.181 → −31.847 dB | 0.708 → **0.706 dB** | −38.189 → **−65.597 dBc** | **REJECT** |
+
+At q4 the <−60 dBc SGA gate now passes at both hosts, and the 48 kHz BGA
+error remains inside its ≤0.75 dB gate. Analytic NRMS still misses ≤−40 dB in
+every cell, while 44.1 kHz/q4 BGA remains outside at 0.865 dB; all six rows
+therefore remain overall **REJECT**. With the component support chain held
+fixed, the remaining q4 discrepancy is support/grid limited rather than
+permission to retune an MN3009 constant. OQ-01 (clock/delay), OQ-03 (noise),
+OQ-04 (loaded physical transfer/support) and OQ-20 (wet switching) all remain
+open.
 
 This matrix characterizes only the current deterministic model boundary; it
 cannot close the real MN3009 normalized transfer, BGA, source impedance or
@@ -1716,7 +1746,7 @@ MN3009/installed-unit tracked sweep,
 plus a schematic re-read of the capacitor codes behind
 `YouKnow106Chorus.cpp:73-83` — a single 10× code misread moves a corner by a decade.
 
-### Deterministic BBD host-grid aliasing — mechanism implemented; absolute gate rejects
+### Deterministic BBD host-grid aliasing — q4 SGA passes; absolute domain rejects
 
 Gabrielli, D'Angelo and Squartini distinguish wanted BBD-generated aliasing
 (BGA) at `k·Fclock ± f` from the simulation-generated aliasing (SGA) introduced
@@ -1725,8 +1755,9 @@ uses a paper-motivated, deterministic-only polyBLEP after transfer loss and
 before the tap-summing pole. Its fixed scheduler has 54 slots and uses 50 in the
 tested 200 kHz-clock/8 kHz-grid worst case; the correction handles multiple
 edges per internal sample. Buckets, index, BBD phase, transfer and held-noise
-state, and RNG sequence remain unchanged. Only the grid-specific correction
-slots clear on an internal-rate change. Noise remains uncorrected.
+state, and RNG sequence remain unchanged. The grid-specific input-interpolation
+history and output-correction slots also clear on an internal-rate change.
+Noise remains uncorrected.
 
 The isolated core reduces SGA by **36.2873 dB at 50 kHz** and **42.6752 dB in
 the 90 kHz multi-edge case**; at 10 kHz the improvement is **25.0819 dB** after
@@ -1751,13 +1782,20 @@ internal rates. Its published SNR numbers are therefore not reused as product
 claims. The peer-reviewed result supports the BGA/SGA classification and method
 family; the exact bounded scheduler and the figures above are engine validation.
 The reconstruction mechanism is implemented and the relative-improvement
-fixture above remains useful, but numerical fidelity is not resolved. The
-2026-08-09 common-host absolute audit now rejects every factor: even 4× reaches
-only −47.635/−38.189 dBc for exhaustive 20 Hz–20 kHz unmasked SGA at
-44.1/48 kHz, against <−60. This does **not** close OQ-03's stochastic model or
-OQ-04's physical loaded transfer and BGA response. A noise-on fixed/swept HQ/LQ
-PSD test and audition section are still required before extending the same
-reconstruction claim to the default hiss path.
+fixture above remains useful, but numerical fidelity is not resolved. At the
+dated Step-7 checkpoint, the common-host absolute audit rejected every factor
+and 4× reached only −47.635/−38.189 dBc for exhaustive 20 Hz–20 kHz unmasked
+SGA at 44.1/48 kHz, against <−60. Step 8 then replaces only the linear
+input-edge sampler with a causal current-plus-three-past four-point Lagrange
+evaluation. With no lookahead, latency, physical-constant, noise or
+support-filter change, q4 SGA becomes **−72.041/−65.597 dBc** and passes at
+both hosts. The corresponding analytic NRMS remains only
+−30.394/−31.847 dB, however, and 44.1 kHz/q4 BGA error remains 0.865 dB, so
+both q4 cells and every lower factor still reject overall. This does **not**
+close OQ-01's clock/delay law, OQ-03's stochastic model, OQ-04's physical
+loaded transfer/BGA response or OQ-20's wet switching. A noise-on fixed/swept
+HQ/LQ PSD test and audition section are still required before extending the
+same reconstruction claim to the default hiss path.
 
 ### OQ-02 — the nominal common-VCA law is circuit-derived
 

@@ -26,7 +26,18 @@ renderer-only resampler. The after pass refuses a baseline unless its manifest
 binds the scenario, protocol, frame count, raw sample hash and a distinct
 pre-change DSP source fingerprint.
 
+This folder is frozen evidence for the earlier output-step reconstruction, not
+an isolated Step-8 Lagrange comparison. Its immutable baseline contains 925,348
+frames at the archived clock program; the current derived clock rates produce
+891,964 frames. The renderer therefore correctly refuses to align a current
+`after` pass with that baseline. Step 8 is instead controlled by the
+factor-independent common-host oracle and its committed regression matrix; a
+future listening comparison needs a new protocol and immutable baseline rather
+than overwriting this one.
+
 Only the text between the generated markers below is renderer-owned.
+
+Historical reproduction commands at the archived source fingerprints:
 
 ```bash
 cmake --build build-dsp --parallel --target YouKnow106RenderRealismComparison

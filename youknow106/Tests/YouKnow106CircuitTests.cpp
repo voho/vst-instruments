@@ -278,6 +278,14 @@ struct YouKnow106TestAccess
         return Chorus::transferLossStep(state, input);
     }
 
+    static float interpolateBbdInput(float current, float previous,
+                                     float previous2, float previous3,
+                                     double ageInSamples) noexcept
+    {
+        return Chorus::interpolateBbdInput(
+            current, previous, previous2, previous3, ageInSamples);
+    }
+
     static double bbdPolyBlepResidual(double distanceInSamples) noexcept
     {
         return Chorus::bbdPolyBlepResidual(distanceInSamples);
@@ -290,6 +298,8 @@ struct YouKnow106TestAccess
         double clockPhase { 0.0 };
         float held { 0.0f };
         float previousInput { 0.0f };
+        float previousInput2 { 0.0f };
+        float previousInput3 { 0.0f };
         float transferState { 0.0f };
         std::uint32_t noiseState { 0u };
 
@@ -309,6 +319,8 @@ struct YouKnow106TestAccess
         line.clockPhase = clockPhase;
         line.held = held;
         line.previousInput = previousInput;
+        line.previousInput2 = previousInput;
+        line.previousInput3 = previousInput;
         line.transferState = transferState;
         line.noiseState = noiseState;
         line.pastBlepEvents.fill({});
@@ -328,7 +340,24 @@ struct YouKnow106TestAccess
     {
         const auto& line = chorus.lineA_;
         return { line.cells, line.writeIndex, line.clockPhase, line.held,
-                 line.previousInput, line.transferState, line.noiseState };
+                 line.previousInput, line.previousInput2, line.previousInput3,
+                 line.transferState, line.noiseState };
+    }
+
+    static void setBbdInputHistory(Chorus& chorus, float previous,
+                                   float previous2, float previous3) noexcept
+    {
+        chorus.lineA_.previousInput = previous;
+        chorus.lineA_.previousInput2 = previous2;
+        chorus.lineA_.previousInput3 = previous3;
+    }
+
+    static std::array<float, 3> bbdInputHistory(
+        const Chorus& chorus) noexcept
+    {
+        return { chorus.lineA_.previousInput,
+                 chorus.lineA_.previousInput2,
+                 chorus.lineA_.previousInput3 };
     }
 
     static double bbdCoreCorrection(const Chorus& chorus,
@@ -462,6 +491,8 @@ struct YouKnow106TestAccess
     {
         const auto clear = [](const Chorus::Line& line) {
             return line.previousInput == 0.0f
+                && line.previousInput2 == 0.0f
+                && line.previousInput3 == 0.0f
                 && line.inputCouplingState == 0.0f
                 && line.antiAliasState == 0.0f
                 && line.antiAliasFirst.s1 == 0.0f
@@ -629,6 +660,8 @@ struct ReferenceBbdCore
     double clockPhase {};
     float held {};
     float previousInput {};
+    float previousInput2 {};
+    float previousInput3 {};
     float transferState {};
     std::uint32_t noiseState { 1u };
     std::vector<Event> pastEvents;
@@ -651,12 +684,24 @@ struct ReferenceBbdCore
         {
             clockPhase -= 1.0;
             const double age = clockPhase / increment;
-            // Algorithm 1 writes x[n-1] + d * (x[n] - x[n-1]), where
-            // d = 1 - age. This is deliberately associated differently from
-            // the production expression while describing the same timing.
-            const float writeFraction = static_cast<float>(1.0 - age);
-            const float atEdge = previousInput
-                + writeFraction * (input - previousInput);
+            // Express the causal cubic on a coordinate whose zero is the
+            // preceding sample: current is at u=1 and the three histories are
+            // at u=0,-1,-2. Production uses age and a different association,
+            // so this remains an independent transcription of the same
+            // four-point Lagrange interpolant.
+            const double u = 1.0 - age;
+            const double currentWeight = u * (u + 1.0) * (u + 2.0) / 6.0;
+            const double previousWeight =
+                -(u - 1.0) * (u + 1.0) * (u + 2.0) / 2.0;
+            const double previous2Weight =
+                u * (u - 1.0) * (u + 2.0) / 2.0;
+            const double previous3Weight =
+                -u * (u - 1.0) * (u + 1.0) / 6.0;
+            const float atEdge = static_cast<float>(
+                currentWeight * static_cast<double>(input)
+                + previousWeight * static_cast<double>(previousInput)
+                + previous2Weight * static_cast<double>(previousInput2)
+                + previous3Weight * static_cast<double>(previousInput3));
             const float bounded = YouKnow106TestAccess::bbdTransfer(atEdge);
 
             writeIndex = writeIndex + 1 < Chorus::cellPairs
@@ -673,6 +718,8 @@ struct ReferenceBbdCore
             noiseState = referenceXorshift32(noiseState);
             held = transferState;
         }
+        previousInput3 = previousInput2;
+        previousInput2 = previousInput;
         previousInput = input;
 
         double correction = 0.0;
@@ -4026,6 +4073,117 @@ void testBucketBrigadeDatasheetAnchors()
            "raw held node left the cross-reading guard band at 40 kHz / 12 kHz");
 }
 
+void testBbdInputCubicInterpolation()
+{
+    const auto interpolate = [](float current, float previous,
+                                float previous2, float previous3,
+                                double age) {
+        return YouKnow106TestAccess::interpolateBbdInput(
+            current, previous, previous2, previous3, age);
+    };
+
+    constexpr std::array<float, 4> endpointVector {
+        0.375f, -0.625f, 0.875f, -0.125f
+    };
+    expect(interpolate(endpointVector[0], endpointVector[1],
+                       endpointVector[2], endpointVector[3], 0.0)
+               == endpointVector[0],
+           "BBD cubic input interpolation moved the current endpoint");
+    expect(interpolate(endpointVector[0], endpointVector[1],
+                       endpointVector[2], endpointVector[3], 1.0)
+               == endpointVector[1],
+           "BBD cubic input interpolation moved the preceding endpoint");
+
+    // A four-point Lagrange interpolant must reproduce every polynomial up to
+    // degree three. Use binary-exact coefficients and an independent Horner
+    // evaluation so this checks the whole interval, not merely its nodes.
+    constexpr std::array<std::array<double, 4>, 4> polynomials {{
+        { 0.25, 0.0, 0.0, 0.0 },
+        { 0.125, 0.25, 0.0, 0.0 },
+        { 0.125, 0.25, -0.0625, 0.0 },
+        { 0.125, 0.25, -0.0625, 0.015625 }
+    }};
+    constexpr std::array<double, 7> ages {
+        0.0, 0.125, 0.25, 0.5, 0.75, 0.875, 1.0
+    };
+    const auto evaluate = [](const auto& coefficients, double time) {
+        return ((coefficients[3] * time + coefficients[2]) * time
+                 + coefficients[1]) * time + coefficients[0];
+    };
+    double worstPolynomialError = 0.0;
+    for (const auto& polynomial : polynomials)
+    {
+        const float current = static_cast<float>(evaluate(polynomial, 0.0));
+        const float previous = static_cast<float>(evaluate(polynomial, -1.0));
+        const float previous2 = static_cast<float>(evaluate(polynomial, -2.0));
+        const float previous3 = static_cast<float>(evaluate(polynomial, -3.0));
+        for (const double age : ages)
+        {
+            const double actual = interpolate(
+                current, previous, previous2, previous3, age);
+            const double expected = evaluate(polynomial, -age);
+            worstPolynomialError = std::max(
+                worstPolynomialError, std::abs(actual - expected));
+        }
+    }
+    expect(worstPolynomialError < 5.0e-7,
+           "BBD cubic input interpolation is not constant/linear/quadratic/"
+           "cubic exact (max error "
+               + std::to_string(worstPolynomialError) + ")");
+
+    // Causal cubic Lagrange has small negative side lobes. Exhaust all sign
+    // combinations over a dense fractional grid: their L1 envelope peaks at
+    // 1.63114, so 1.632 is an independent finite overshoot fence rather than
+    // an assumption that the interpolant is monotone.
+    double worstAdversarialMagnitude = 0.0;
+    bool adversarialFinite = true;
+    for (int step = 0; step <= 4096; ++step)
+    {
+        const double age = static_cast<double>(step) / 4096.0;
+        for (unsigned int pattern = 0; pattern < 16u; ++pattern)
+        {
+            std::array<float, 4> values {};
+            for (unsigned int sample = 0; sample < values.size(); ++sample)
+                values[sample] = (pattern & (1u << sample)) != 0u
+                    ? 1.0f : -1.0f;
+            const float actual = interpolate(
+                values[0], values[1], values[2], values[3], age);
+            adversarialFinite = adversarialFinite && std::isfinite(actual);
+            worstAdversarialMagnitude = std::max(
+                worstAdversarialMagnitude,
+                std::abs(static_cast<double>(actual)));
+        }
+    }
+    expect(adversarialFinite && worstAdversarialMagnitude < 1.632,
+           "BBD cubic input interpolation left its finite L1 bound (peak "
+               + std::to_string(worstAdversarialMagnitude) + ")");
+
+    const float maximum = std::numeric_limits<float>::max();
+    const float saturated = interpolate(
+        maximum, maximum, -maximum, maximum, 0.451416);
+    expect(std::isfinite(saturated) && saturated == maximum,
+           "BBD cubic input interpolation overflowed an adversarial float");
+    expect(interpolate(
+               std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f, 0.0f,
+               0.5) == 0.0f
+               && interpolate(0.0f, 0.0f, 0.0f, 0.0f,
+                              std::numeric_limits<double>::infinity()) == 0.0f,
+           "BBD cubic input interpolation did not contain non-finite input");
+
+    Chorus history;
+    history.prepare(48000.0);
+    YouKnow106TestAccess::setBbdInputHistory(history, 0.25f, -0.5f, 0.75f);
+    history.reset();
+    expect(YouKnow106TestAccess::bbdInputHistory(history)
+               == std::array<float, 3> {},
+           "BBD cubic input history survived reset");
+    YouKnow106TestAccess::setBbdInputHistory(history, -0.25f, 0.5f, -0.75f);
+    history.prepare(96000.0, true);
+    expect(YouKnow106TestAccess::bbdInputHistory(history)
+               == std::array<float, 3> {},
+           "BBD cubic input history survived an audio-grid change");
+}
+
 void testBbdOutputPolyBlepReferenceAndBounds()
 {
     // Exact residual landmarks from the authors' companion implementation.
@@ -4046,10 +4204,11 @@ void testBbdOutputPolyBlepReferenceAndBounds()
                1.0e-8, "BBD polyBLEP pieces are discontinuous at one sample");
 
     // A short, deliberately irregular vector crosses from 1.25 through 25
-    // edges per numerical sample. The independent implementation above uses
-    // Algorithm 1's input-fraction expression and the companion source's
-    // past/future signs rather than calling any production reconstruction
-    // helper. The prefilled ring makes every edge a useful non-zero case.
+    // edges per numerical sample. The independent implementation above uses a
+    // separately associated coordinate form for the causal cubic and the
+    // companion source's past/future output-correction signs rather than
+    // calling any production reconstruction helper. The prefilled ring makes
+    // every edge a useful non-zero case.
     std::array<float, Chorus::cellPairs> initialCells {};
     for (int index = 0; index < Chorus::cellPairs; ++index)
     {
@@ -4075,6 +4234,8 @@ void testBbdOutputPolyBlepReferenceAndBounds()
     reference.clockPhase = initialPhase;
     reference.held = initialTransfer;
     reference.previousInput = initialInput;
+    reference.previousInput2 = initialInput;
+    reference.previousInput3 = initialInput;
     reference.transferState = initialTransfer;
     reference.noiseState = initialNoise;
     reference.pastEvents.reserve(Chorus::maximumBlepEvents);
@@ -4097,13 +4258,22 @@ void testBbdOutputPolyBlepReferenceAndBounds()
                                 std::abs(static_cast<double>(actual) - expected));
     }
     expect(maximumError < 2.0e-6,
-           "BBD polyBLEP differs from the independent multi-edge reference by "
+           "BBD core differs from the independent multi-edge reference by "
                + std::to_string(maximumError));
     if (std::getenv("YOUKNOW106_AUDIT_BBD_BLEP") != nullptr)
         std::cout << "BBD BLEP independent-vector max error: "
                   << maximumError << '\n';
 
     const auto coreState = YouKnow106TestAccess::bbdCorePhysicalState(production);
+    double maximumBucketError = 0.0;
+    for (std::size_t index = 0; index < coreState.cells.size(); ++index)
+        maximumBucketError = std::max(
+            maximumBucketError,
+            std::abs(static_cast<double>(coreState.cells[index])
+                     - static_cast<double>(reference.cells[index])));
+    expect(maximumBucketError < 2.0e-7,
+           "BBD cubic input writes differ from the independent reference by "
+               + std::to_string(maximumBucketError));
     expect(coreState.writeIndex == reference.writeIndex,
            "BBD reference correspondence moved a different number of buckets");
     expectNear(coreState.clockPhase, reference.clockPhase, 1.0e-12,
@@ -4112,6 +4282,10 @@ void testBbdOutputPolyBlepReferenceAndBounds()
                "BBD reference correspondence changed transfer-loss state");
     expect(coreState.noiseState == reference.noiseState,
            "BBD output reconstruction changed the per-edge RNG sequence");
+    expect(coreState.previousInput == reference.previousInput
+               && coreState.previousInput2 == reference.previousInput2
+               && coreState.previousInput3 == reference.previousInput3,
+           "BBD cubic input history differs from the independent reference");
 
     // Reconstruction is a const read of already-realised deterministic state.
     // Evaluate it twice around a full physical snapshot to guard against a
@@ -4974,6 +5148,7 @@ int main()
     testChorusBypassStateAndWetMuteTiming();
     testChorusRateChangePreservesPhysicalState();
     testBucketBrigadeDatasheetAnchors();
+    testBbdInputCubicInterpolation();
     testBbdOutputPolyBlepReferenceAndBounds();
     testBbdOutputPolyBlepSeparatesPhysicalAndNumericalAliases();
     testSupportFilterCornersLandWhereAsked();

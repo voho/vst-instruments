@@ -1893,7 +1893,8 @@ void printReport(const AuditResult& audit)
                  "BLEP and output support/coupling. The steady-state BBD "
                  "capture starts after 8192 host frames (>12 output-coupling "
                  "time constants). Candidates alone use the shipping TPT "
-                 "support, polyBLEP, half-bands and the declared no-search "
+                 "support, causal four-point Lagrange input-edge interpolation, "
+                 "polyBLEP, half-bands and the declared no-search "
                  "0/23.5/35.25 host-frame advance. Scan/holds, DCO, VCA, "
                  "LFO trajectory, "
                  "stochastic noise, stereo/IC6 mix, output stages, latency "
@@ -2044,7 +2045,7 @@ void selfTest(const AuditResult& audit)
         false, false, false, false, false, true
     };
     constexpr std::array<bool, 6> expectedBbdSgaGate {
-        false, false, false, false, false, false
+        false, false, true, false, false, true
     };
     constexpr std::array<double, 6> expectedVcfRkDb {
         -53.243, -65.282, -77.301, -54.730, -66.783, -78.803
@@ -2065,16 +2066,16 @@ void selfTest(const AuditResult& audit)
         0.004, 0.003, 0.003, 0.008, 0.007, 0.005
     };
     constexpr std::array<double, 6> expectedBbdAnalyticDb {
-        -3.099, -14.910, -27.045, -4.640, -16.426, -28.181
+        -3.602, -18.159, -30.394, -5.768, -19.696, -31.847
     };
     constexpr std::array<double, 6> expectedBbdHighToneDb {
-        -3.099, -14.910, -27.045, -4.640, -16.426, -28.181
+        -3.602, -18.159, -30.394, -5.768, -19.696, -31.847
     };
     constexpr std::array<double, 6> expectedBbdBgaDb {
-        34.389, 4.088, 0.867, 22.893, 3.257, 0.708
+        34.362, 4.080, 0.865, 22.866, 3.249, 0.706
     };
     constexpr std::array<double, 6> expectedBbdSgaDb {
-        -24.854, -28.762, -47.635, -28.871, -31.329, -38.189
+        -26.765, -41.304, -72.041, -30.364, -45.866, -65.597
     };
     constexpr std::array<double, 6> expectedBbdPhaseError {
         5.810e-13, 3.537e-13, 7.834e-13,

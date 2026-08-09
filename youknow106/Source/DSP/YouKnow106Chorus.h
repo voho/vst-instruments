@@ -451,6 +451,13 @@ private:
     // result.
     [[nodiscard]] static float bbdTransfer(float input) noexcept;
     static float transferLossStep(float& state, float input) noexcept;
+    // Reconstruct the already support-filtered input at an asynchronous BBD
+    // edge from the current and three preceding numerical samples.  The edge
+    // lies inside the completed previous-to-current interval, so this causal
+    // four-point Lagrange interpolation needs neither lookahead nor latency.
+    [[nodiscard]] static float interpolateBbdInput(
+        float current, float previous, float previous2, float previous3,
+        double ageInSamples) noexcept;
     [[nodiscard]] static double bbdPolyBlepResidual(
         double distanceInSamples) noexcept;
 
@@ -470,6 +477,8 @@ private:
         double clockPhase { 0.0 };
         float held { 0.0f };
         float previousInput { 0.0f };
+        float previousInput2 { 0.0f };
+        float previousInput3 { 0.0f };
         // The wet input has its own coupling high-pass and five low-pass
         // poles: two Sallen-Key sections and one passive pole. The
         // output has the tap-summing pole followed by two Sallen-Key sections.

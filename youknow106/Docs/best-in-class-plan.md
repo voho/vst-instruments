@@ -2211,9 +2211,14 @@ name are real and a later pass will want the reasoning rather than the idea.
   6 below supplies the common-host 1×/2×/4× isolated-domain matrix against
   analytic DCO/scan, RK4 VCF and closed-form BBD references. Its dated DCO
   result blocked every tested factor; Step 7 subsequently clears those DCO
-  cells without changing the global selector, while every VCF/BBD cell still
-  rejects. Isolated passes cannot qualify a split before inter-domain
-  reconstruction, whole-engine and latency parity are measured.
+  cells without changing the global selector. Step 8 then replaces only the
+  BBD's linear input-edge sampler with a causal current-plus-three-past
+  four-point Lagrange reconstruction. That moves the 4× BBD SGA submetric below
+  −60 dBc at both hosts, but every BBD cell still rejects overall on analytic
+  NRMS and, at 44.1 kHz/4×, wanted-image gain. Every VCF cell also still
+  rejects. Isolated submetric passes cannot qualify a split before the
+  remaining support-filter/grid error, inter-domain reconstruction,
+  whole-engine behavior and latency parity are measured.
 - **Note-on-to-first-sample latency — completed 2026-08-09.** Continuous-work
   step 3 measures and publishes the complete declared 48 kHz host/scan-phase
   distribution before any scheduler change. It became a step because making
@@ -2872,3 +2877,62 @@ evidence about a physical JUNO-106.
   write/restart timing), OQ-11 (pinned comparator leg) and OQ-15 (loaded
   oscillator/mixer levels) remain open. Numerical agreement with the declared
   model cannot substitute for an original-unit capture.
+- [x] **8. Replace linear BBD input-edge interpolation with a causal four-point
+  reconstruction.** Step 7's six BBD rows above remain the dated before-state.
+  At each already-scheduled BBD clock edge, the line now evaluates the unique
+  four-point Lagrange polynomial through the current input-support sample and
+  its three predecessors instead of linearly interpolating the current and
+  previous samples. This is a numerical input sampler, not a physical BBD law:
+  it uses no future sample or lookahead and adds no output delay. The edge
+  timestamp and phase, 128-stage bucket count/index progression,
+  `transferLossStep` law and cadence, output-step polyBLEP, component support
+  filters, physical constants and RNG sequence are unchanged. Corrected signal
+  values written into the buckets and propagated to the held output
+  intentionally differ. It is also distinct
+  from a fractional BBD read-tap or Thiran allpass; neither is added here.
+
+  Gabrielli, D'Angelo and Squartini's official DAFx-25
+  [paper](https://dafx.de/paper-archive/2025/DAFx25_paper_29.pdf) and
+  [companion](https://dangelo.audio/dafx25-bbd) continue to support the BGA/SGA
+  distinction and numerical antialiasing method family. They do not establish
+  this MN3009 model's physical response or these implementation-specific
+  figures. The unchanged common-host audit reads:
+
+  | Host | Factor | Analytic NRMS, Step 7 → Step 8 | BGA error, Step 7 → Step 8 | SGA, Step 7 → Step 8 | Result |
+  | ---: | ---: | ---: | ---: | ---: | --- |
+  | 44.1 kHz | 1× | −3.099 → −3.602 dB | 34.389 → 34.362 dB | −24.854 → −26.765 dBc | **REJECT** |
+  | 44.1 kHz | 2× | −14.910 → −18.159 dB | 4.088 → 4.080 dB | −28.762 → −41.304 dBc | **REJECT** |
+  | 44.1 kHz | 4× | −27.045 → −30.394 dB | 0.867 → 0.865 dB | −47.635 → **−72.041 dBc** | **REJECT** |
+  | 48 kHz | 1× | −4.640 → −5.768 dB | 22.893 → 22.866 dB | −28.871 → −30.364 dBc | **REJECT** |
+  | 48 kHz | 2× | −16.426 → −19.696 dB | 3.257 → 3.249 dB | −31.329 → −45.866 dBc | **REJECT** |
+  | 48 kHz | 4× | −28.181 → −31.847 dB | 0.708 → **0.706 dB** | −38.189 → **−65.597 dBc** | **REJECT** |
+
+  The absolute gates remain analytic NRMS ≤−40 dB, qualifying-line BGA error
+  ≤0.75 dB and unmasked SGA <−60 dBc. The 4× SGA column now passes at both
+  hosts, and the 48 kHz/4× BGA column passes, but NRMS rejects every cell and
+  44.1 kHz/4× still misses BGA by 0.115 dB. The near-static BGA column also
+  verifies that this correction is not a hidden retune of wanted physical
+  images. With no support-filter change in this step, the remaining 4× error
+  stays assigned to the sampled support path rather than to an invented MN3009
+  constant.
+
+  **Verdict: the causal input-edge sampler fixes the decisive 4× SGA failure,
+  but no BBD rate is qualified and no selector changes.** OQ-01 (clock and
+  delay law), OQ-03 (noise mechanism), OQ-04 (physical loaded transfer/support)
+  and OQ-20 (wet switching) explicitly remain open. Character 1,
+  inter-domain reconstruction and whole-engine output remain outside this
+  isolated numerical result.
+
+  A sequential same-machine thread-CPU rerun measured the full-mixer Chorus-II
+  fixture at 0.758×/0.284× realtime for the detached Step-7 baseline and
+  0.753×/0.284× for this step at 4×/1×. That difference is inside run
+  variability; the unchanged coarse real-time budget remains the gate.
+
+  The documentation render was regenerated as one ten-file set; only wet demos
+  01, 02, 06 and 07 changed. The complete 128-tone factory audit and all ten
+  common-gain previews were regenerated; corpus flags stayed unchanged and the
+  shared non-boosting gain moved from 0.542977 to 0.542974. The older strict
+  host-grid listening comparison remains frozen: its 925,348-frame baseline
+  predates the current derived clock schedule, which renders 891,964 frames,
+  and the tool correctly refuses to align them. The current common-host oracle,
+  not that archived null, controls this step's numerical claim.

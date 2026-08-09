@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #if defined(YOUKNOW106_WORK_AUDIT)
 #include "../../Tools/OversamplingAuditSupport.h"
@@ -266,6 +267,33 @@ float Chorus::transferLossStep(float& state, float input) noexcept
     return state;
 }
 
+float Chorus::interpolateBbdInput(float current, float previous,
+                                  float previous2, float previous3,
+                                  double ageInSamples) noexcept
+{
+    if (!std::isfinite(current) || !std::isfinite(previous)
+        || !std::isfinite(previous2) || !std::isfinite(previous3)
+        || !std::isfinite(ageInSamples))
+        return 0.0f;
+
+    const double age = std::clamp(ageInSamples, 0.0, 1.0);
+    const double t = -age;
+    const double l0 = (t + 1.0) * (t + 2.0) * (t + 3.0) / 6.0;
+    const double l1 = -t * (t + 2.0) * (t + 3.0) / 2.0;
+    const double l2 = t * (t + 1.0) * (t + 3.0) / 2.0;
+    const double l3 = -t * (t + 1.0) * (t + 2.0) / 6.0;
+    const double interpolated = l0 * static_cast<double>(current)
+                              + l1 * static_cast<double>(previous)
+                              + l2 * static_cast<double>(previous2)
+                              + l3 * static_cast<double>(previous3);
+    if (!std::isfinite(interpolated))
+        return 0.0f;
+
+    constexpr double maximum =
+        static_cast<double>(std::numeric_limits<float>::max());
+    return static_cast<float>(std::clamp(interpolated, -maximum, maximum));
+}
+
 double Chorus::bbdPolyBlepResidual(double distanceInSamples) noexcept
 {
     // Integrated third-order Lagrange residual used by Gabrielli, D'Angelo
@@ -409,6 +437,8 @@ void Chorus::Line::reset(std::uint32_t seed) noexcept
     clockPhase = 0.0;
     held = 0.0f;
     previousInput = 0.0f;
+    previousInput2 = 0.0f;
+    previousInput3 = 0.0f;
     inputCouplingState = 0.0f;
     antiAliasState = 0.0f;
     antiAliasFirst.reset();
@@ -425,11 +455,14 @@ void Chorus::Line::reset(std::uint32_t seed) noexcept
 
 void Chorus::Line::resetAudioRateSupport() noexcept
 {
-    // These are trapezoidal integration carries whose representation embeds
-    // the old sample interval. The engine calls this only at zero output gain
-    // after waiting for musical tails. BBD buckets, write/clock position, the
-    // clock-rate transfer state, held output and RNG remain free-running.
+    // The input history is indexed on the numerical grid, and the trapezoidal
+    // integration carries below embed its old interval. The engine calls this
+    // only at zero output gain after waiting for musical tails. BBD buckets,
+    // write/clock position, transfer state, held output and RNG remain
+    // free-running.
     previousInput = 0.0f;
+    previousInput2 = 0.0f;
+    previousInput3 = 0.0f;
     inputCouplingState = 0.0f;
     antiAliasState = 0.0f;
     antiAliasFirst.reset();
@@ -558,9 +591,9 @@ float Chorus::Line::processClockedCore(float limitedInput, float clockHz,
         const double ageInSamples = increment > 0.0
             ? std::clamp(clockPhase / increment, 0.0, 1.0)
             : 0.0;
-        const float fraction = static_cast<float>(ageInSamples);
-        const float atEdge = limitedInput
-                           + (previousInput - limitedInput) * fraction;
+        const float atEdge = Chorus::interpolateBbdInput(
+            limitedInput, previousInput, previousInput2, previousInput3,
+            ageInSamples);
         // The line's own overload. The charge a cell can hold is bounded by
         // its bias window, so the wet path saturates before anything around
         // it does; driving the chorus hot grits the delayed signal only.
@@ -588,6 +621,8 @@ float Chorus::Line::processClockedCore(float limitedInput, float clockHz,
     // it was asked for and drift further out every sample.
     if (clockPhase >= 1.0)
         clockPhase -= std::floor(clockPhase);
+    previousInput3 = previousInput2;
+    previousInput2 = previousInput;
     previousInput = limitedInput;
 
     return held + static_cast<float>(deterministicBlepCorrection(increment));

@@ -22,8 +22,8 @@ the raw level recorded in each folder's README and manifest.
    Difference RMS is −8.70 dBc. The corrected law follows the stored-DAC,
    resistor and uPC1252 path instead of the former cubic curve.
 
-2. **BBD host-grid alias reconstruction** — the clearest chorus-quality
-   comparison. Listen to
+2. **Archived BBD host-grid alias reconstruction** — the clearest historical
+   chorus-quality comparison. Listen to
    [before](bbd-host-grid-alias/bbd-host-grid-alias-before-listen-f32.wav),
    [after](bbd-host-grid-alias/bbd-host-grid-alias-after-listen-f32.wav), then the
    [signed difference](bbd-host-grid-alias/bbd-host-grid-alias-difference-listen-f32.wav).
@@ -34,7 +34,10 @@ the raw level recorded in each folder's README and manifest.
    while the wanted first image moves only -0.04 dB. The LQ near-Nyquist wanted
    image is not claimed transparent: it moves -5.30 dB from an already
    -100.47 dBc baseline. Whole-file difference is -15.95 dBc peak and -27.66
-   dBc RMS at the same fixed 0 dB gain.
+   dBc RMS at the same fixed 0 dB gain. This protocol predates the current
+   derived clock schedule and Step-8 input-edge interpolation; its immutable
+   baseline frame count intentionally prevents a misleading current `after`
+   render. The current numerical result is in the common-host quality audit.
 
 3. **Voice-VCA silent thump** — the most isolated artifact comparison.
    Listen to [before](voice-vca-feedthrough/voice-vca-feedthrough-before-listen-f32.wav),
