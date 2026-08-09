@@ -311,6 +311,37 @@ void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
     }
     jitterSlowCoefficient_ = 1.0f - std::exp(-static_cast<float>(controlPeriod)
                                              * inverseSampleRate_ / 0.0095f);
+    const float controlSeconds = static_cast<float>(controlPeriod)
+        * inverseSampleRate_;
+    const auto ouCoefficients = [](float intervalSeconds,
+                                   float timeConstantSeconds) noexcept
+    {
+        const float retention = std::exp(-intervalSeconds / timeConstantSeconds);
+        const float innovation = std::sqrt(std::max(
+            0.0f, 1.0f - retention * retention));
+        return std::array<float, 2> { retention, innovation };
+    };
+    const auto pitchFast = ouCoefficients(controlSeconds, pitchDriftFastSeconds);
+    pitchDriftFastRetention_ = pitchFast[0];
+    pitchDriftFastInnovation_ = pitchFast[1];
+    const auto pitchSlow = ouCoefficients(controlSeconds, pitchDriftSlowSeconds);
+    pitchDriftSlowRetention_ = pitchSlow[0];
+    pitchDriftSlowInnovation_ = pitchSlow[1];
+
+    vowelDriftUpdateControls_ = std::max(1, static_cast<int>(std::lround(
+        vowelDriftUpdateSeconds / controlSeconds)));
+    const float vowelDriftInterval = static_cast<float>(
+        vowelDriftUpdateControls_ * controlPeriod) * inverseSampleRate_;
+    const auto vowelMorph = ouCoefficients(
+        vowelDriftInterval, vowelDriftMorphSeconds);
+    vowelDriftMorphRetention_ = vowelMorph[0];
+    vowelDriftMorphInnovation_ = vowelMorph[1];
+    const auto vowelX = ouCoefficients(vowelDriftInterval, vowelDriftXSeconds);
+    vowelDriftXRetention_ = vowelX[0];
+    vowelDriftXInnovation_ = vowelX[1];
+    const auto vowelY = ouCoefficients(vowelDriftInterval, vowelDriftYSeconds);
+    vowelDriftYRetention_ = vowelY[0];
+    vowelDriftYInnovation_ = vowelY[1];
     // A singer hears the beating and moves onto the just interval; she does not
     // arrive on it. 90 ms is about how long that adjustment takes.
     justGlide_ = 1.0f - std::exp(-static_cast<float>(controlPeriod)
@@ -411,6 +442,8 @@ void VoiceEngine::setParameters(const EngineParameters& p)
     atomicParameters_.instability.store(clampUnit(p.instability), std::memory_order_relaxed);
     atomicParameters_.legacyRadiatedPowerBypass.store(
         p.legacyRadiatedPowerBypass ? 1 : 0, std::memory_order_relaxed);
+    atomicParameters_.legacyDriftBypass.store(
+        p.legacyDriftBypass ? 1 : 0, std::memory_order_relaxed);
 }
 
 void VoiceEngine::setPitchBend(float semitones) noexcept
@@ -497,6 +530,8 @@ EngineParameters VoiceEngine::snapshotParameters() const noexcept
     p.legacyRadiatedPowerBypass =
         atomicParameters_.legacyRadiatedPowerBypass.load(
             std::memory_order_relaxed) != 0;
+    p.legacyDriftBypass = atomicParameters_.legacyDriftBypass.load(
+        std::memory_order_relaxed) != 0;
     return p;
 }
 
@@ -1157,7 +1192,10 @@ bool VoiceEngine::retuneForLegato(int midiNote, const EngineParameters& p)
         voice.rootMidi = midiNote;
         voice.baseFrequency = midiToHz(sounding);
         voice.delaySamples = 0;
-        updateVoiceControl(voice, p);
+        // Retuning is an articulation event, not another elapsed 16-sample
+        // control interval. Re-resolve the pitch and tract immediately while
+        // leaving Drift's fixed stochastic clocks untouched.
+        updateVoiceControl(voice, p, false);
         retuned = true;
     }
     return retuned;
@@ -1264,6 +1302,24 @@ void VoiceEngine::initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, 
     voice.glideCents = glideFromCents;
     voice.noiseState = hash32(static_cast<std::uint32_t>(generation_) ^
                               static_cast<std::uint32_t>(rootMidi * 977 + singerIndex * 131));
+    voice.pitchDriftState = hash32(voice.noiseState ^ 0xa511e9b3u);
+    voice.pitchDriftFast = std::clamp(
+        triangularUnitVariance(voice.pitchDriftState),
+        -driftStateLimit, driftStateLimit);
+    voice.pitchDriftSlow = std::clamp(
+        triangularUnitVariance(voice.pitchDriftState),
+        -driftStateLimit, driftStateLimit);
+    voice.vowelDriftState = hash32(voice.noiseState ^ 0x63d83595u);
+    voice.vowelDriftMorph = std::clamp(
+        triangularUnitVariance(voice.vowelDriftState),
+        -driftStateLimit, driftStateLimit);
+    voice.vowelDriftX = std::clamp(
+        triangularUnitVariance(voice.vowelDriftState),
+        -driftStateLimit, driftStateLimit);
+    voice.vowelDriftY = std::clamp(
+        triangularUnitVariance(voice.vowelDriftState),
+        -driftStateLimit, driftStateLimit);
+    voice.vowelDriftCountdown = vowelDriftUpdateControls_;
     voice.phase = 0.5f + 0.12f * hashFloat(voice.noiseState + 17u);
     // The vibrato was seeded at a fixed phase per singer, so twelve singers
     // arrived in the same relative configuration on every repeat of a note and
@@ -1281,6 +1337,13 @@ void VoiceEngine::initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, 
     voice.vibratoAmplitudePhase = std::clamp(
         singer.vibratoAmplitudePhase + 0.028f * hashFloat(voice.noiseState + 37u),
         0.125f, 0.417f);
+    // Real singers do not start every note's vibrato on the same clock. These
+    // are natural-path targets; Drift zero still selects the historical
+    // 160/340 ms envelope exactly in updateVoiceControl().
+    voice.vibratoFadeStart = 0.12f + 0.14f
+        * (0.5f + 0.5f * hashFloat(voice.noiseState + 53u));
+    voice.vibratoFadeDuration = 0.24f + 0.28f
+        * (0.5f + 0.5f * hashFloat(voice.noiseState + 59u));
     // Habitual offset plus this attempt's own draw. A soloist has nobody to be
     // out of time with, so a single voice keeps entering and leaving on the
     // beat; Humanize scales the whole gesture, so at 0 the section is exact.
@@ -1295,7 +1358,7 @@ void VoiceEngine::initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, 
         * (singer.releaseTendency + releaseNoteSpread * hashFloat(voice.noiseState + 47u)));
     voice.pitchScoop = -(7.0f + 19.0f * (0.5f + 0.5f * hashFloat(voice.noiseState + 23u))) * (0.25f + 0.75f * p.humanize);
     voice.controlCountdown = 0;
-    updateVoiceControl(voice, p);
+    updateVoiceControl(voice, p, false);
     voice.phaseIncrement = voice.targetPhaseIncrement;
 }
 
@@ -1485,6 +1548,11 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
         smoothedNasal_ += chunkGainCoefficient_ * (nasalTarget - smoothedNasal_);
         smoothedInstability_ += chunkGainCoefficient_
             * (instabilityTarget - smoothedInstability_);
+        // Drift zero is a structural bypass: once the short automation glide
+        // is inaudibly close, land exactly on the target so the OU streams stop
+        // consuming random draws instead of living forever in denormals.
+        if (std::abs(instabilityTarget - smoothedInstability_) < 1.0e-4f)
+            smoothedInstability_ = instabilityTarget;
     }
     chunkResponse_ = dynamicResponse(smoothedDynamics_);
     // A soloist is limited by nothing; a section member settles at the group
@@ -1515,6 +1583,7 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     const float epilarynx = clampUnit(smoothedTension_ * (0.40f + 0.60f * smoothedDynamics_));
     const float profileCluster = male ? 1.0f : femaleClusterStrength;
     const float nominalEpilarynx = epilarynx * profileCluster;
+    chunkVowelDriftScale_.fill(1.0f);
     if (nominalEpilarynx > 0.0f)
     {
         const float clusterHz = male ? 2900.0f : 3200.0f;
@@ -1522,6 +1591,10 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
         {
             const auto index = static_cast<std::size_t>(formant);
             target[index] += 0.45f * nominalEpilarynx * (clusterHz - target[index]);
+            // A local vowel displacement is pulled toward the epilaryngeal
+            // target by the same affine map as the nominal pole.
+            chunkVowelDriftScale_[index] = 1.0f
+                - 0.45f * nominalEpilarynx;
         }
     }
 
@@ -1803,7 +1876,94 @@ void VoiceEngine::drawVibratoCycle(Voice& voice) noexcept
     }
 }
 
-void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
+void VoiceEngine::updateVowelDrift(Voice& voice,
+                                   const EngineParameters& p,
+                                   float driftAmount,
+                                   bool advanceState) noexcept
+{
+    const int vowelIndex = p.vowel == Vowel::Ooh
+        ? 1 : (p.vowel == Vowel::Uuh ? 2 : 0);
+    const int profileIndex = p.profile == VoiceProfile::Male ? 1 : 0;
+    const VowelPoint anchor = presetVowelPosition(vowelIndex);
+    const float baseMorph = clampUnit(p.vowelMorph);
+    const float padX = clampUnit(p.vowelX);
+    const float padY = clampUnit(p.vowelY);
+    const float baseX = anchor.x + baseMorph * (padX - anchor.x);
+    const float baseY = anchor.y + baseMorph * (padY - anchor.y);
+    const bool male = profileIndex != 0;
+    std::array<float, formantCount> baseSpace {};
+    formantsForVowelPoint(male, baseX, baseY, baseSpace.data());
+
+    voice.vowelDriftProfile = profileIndex;
+    voice.vowelDriftVowel = vowelIndex;
+    voice.vowelDriftInputMorph = baseMorph;
+    voice.vowelDriftInputX = padX;
+    voice.vowelDriftInputY = padY;
+    voice.vowelDriftWasEnabled = driftAmount > 0.0f;
+
+    if (!(driftAmount > 0.0f))
+    {
+        // Do not even add a computed zero to the old target. This is the exact
+        // 1.3 path used by the model bypass and by Drift zero.
+        voice.effectiveVowelMorph = baseMorph;
+        voice.effectiveVowelX = baseX;
+        voice.effectiveVowelY = baseY;
+        voice.vowelDriftFormantHz = baseSpace;
+        voice.vowelDriftFormantDeltaHz.fill(0.0f);
+        return;
+    }
+
+    if (advanceState)
+    {
+        voice.vowelDriftMorph = advanceBoundedOu(
+            voice.vowelDriftMorph, voice.vowelDriftState,
+            vowelDriftMorphRetention_, vowelDriftMorphInnovation_);
+        voice.vowelDriftX = advanceBoundedOu(
+            voice.vowelDriftX, voice.vowelDriftState,
+            vowelDriftXRetention_, vowelDriftXInnovation_);
+        voice.vowelDriftY = advanceBoundedOu(
+            voice.vowelDriftY, voice.vowelDriftState,
+            vowelDriftYRetention_, vowelDriftYInnovation_);
+    }
+
+    // Close the morph drift smoothly at both endpoints. Besides protecting a
+    // preset vowel's identity, this keeps the bounded, mean-zero OU motion
+    // symmetric instead of relying on a one-sided clamp at morph 0 or 1.
+    const float morphEndpointWindow = 4.0f * baseMorph * (1.0f - baseMorph);
+    const float effectiveMorph = std::clamp(
+        baseMorph + vowelDriftMorphMidpointDepth * driftAmount
+            * voice.vowelDriftMorph * morphEndpointWindow,
+        0.0f, 1.0f);
+    const float effectiveX = std::clamp(
+        anchor.x + effectiveMorph * (padX - anchor.x)
+            + vowelDriftXDepth * driftAmount * voice.vowelDriftX,
+        0.0f, 1.0f);
+    const float effectiveY = std::clamp(
+        anchor.y + effectiveMorph * (padY - anchor.y)
+            + vowelDriftYDepth * driftAmount * voice.vowelDriftY,
+        0.0f, 1.0f);
+    voice.effectiveVowelMorph = effectiveMorph;
+    voice.effectiveVowelX = effectiveX;
+    voice.effectiveVowelY = effectiveY;
+
+    // The shipped morph is linear in formant Hz, whereas the vowel space is a
+    // nonlinear inverse-distance surface. Add only the local displacement on
+    // that surface to the exact shipped target: at zero displacement the old
+    // result survives bit for bit, at non-zero Drift the motion still follows
+    // the geometry shown by the pad.
+    std::array<float, formantCount> movedSpace {};
+    formantsForVowelPoint(male, effectiveX, effectiveY, movedSpace.data());
+    for (int formant = 0; formant < formantCount; ++formant)
+    {
+        const auto index = static_cast<std::size_t>(formant);
+        voice.vowelDriftFormantHz[index] = movedSpace[index];
+        voice.vowelDriftFormantDeltaHz[index] = movedSpace[index]
+            - baseSpace[index];
+    }
+}
+
+void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
+                                     bool advanceDriftClock)
 {
     const auto& singer = singers_[static_cast<std::size_t>(voice.singer)];
     const float singerDrift = singer.drift;
@@ -1814,13 +1974,64 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     const float sharedRate = sharedRateDrift_;
     const float sharedFormant = sharedFormantDrift_;
 
-    const float ageSeconds = static_cast<float>(voice.ageSamples) * inverseSampleRate_;
-    const float vibratoFade = smoothStep((ageSeconds - 0.16f) / 0.34f);
     const float instability = clampUnit(smoothedInstability_);
+    const float naturalAmount = std::sqrt(instability);
+    const float driftAmount = p.legacyDriftBypass ? 0.0f : instability;
+    const float ageSeconds = static_cast<float>(voice.ageSamples) * inverseSampleRate_;
+    float vibratoFade = 0.0f;
+    if (p.legacyDriftBypass || !(instability > 0.0f))
+    {
+        // Exact 1.3 branch, including the zero-Drift compatibility path.
+        vibratoFade = smoothStep((ageSeconds - 0.16f) / 0.34f);
+    }
+    else
+    {
+        const float fadeStart = 0.16f
+            + naturalAmount * (voice.vibratoFadeStart - 0.16f);
+        const float fadeDuration = 0.34f
+            + naturalAmount * (voice.vibratoFadeDuration - 0.34f);
+        vibratoFade = smoothStep((ageSeconds - fadeStart) / fadeDuration);
+    }
+
+    const int vowelIndex = p.vowel == Vowel::Ooh
+        ? 1 : (p.vowel == Vowel::Uuh ? 2 : 0);
+    const int profileIndex = p.profile == VoiceProfile::Male ? 1 : 0;
+    const float vowelMorph = clampUnit(p.vowelMorph);
+    const float vowelX = clampUnit(p.vowelX);
+    const float vowelY = clampUnit(p.vowelY);
+    const bool vowelDriftEnabled = driftAmount > 0.0f;
+    const bool vowelInputsChanged = voice.vowelDriftProfile != profileIndex
+        || voice.vowelDriftVowel != vowelIndex
+        || voice.vowelDriftInputMorph != vowelMorph
+        || voice.vowelDriftInputX != vowelX
+        || voice.vowelDriftInputY != vowelY;
+    bool advanceVowelDrift = false;
+    if (vowelDriftEnabled && voice.controlInitialised && advanceDriftClock)
+    {
+        if (--voice.vowelDriftCountdown <= 0)
+        {
+            advanceVowelDrift = true;
+            voice.vowelDriftCountdown = vowelDriftUpdateControls_;
+        }
+    }
+    const bool vowelEnableChanged = vowelDriftEnabled
+        != voice.vowelDriftWasEnabled;
+    if (!vowelDriftEnabled && vowelEnableChanged)
+        voice.vowelDriftCountdown = vowelDriftUpdateControls_;
+    if (!voice.controlInitialised || vowelInputsChanged || vowelEnableChanged
+        || advanceVowelDrift)
+        updateVowelDrift(
+            voice, p, driftAmount, advanceVowelDrift);
+
     // The random range is a depth control: at zero both scales resolve to
     // exactly one; at full they expose the complete bounded per-cycle draw.
+    // The broader Drift model uses a square-root taper so a modest setting is
+    // not perceptually indistinguishable from a clocked LFO. A recalled 1.3
+    // patch retains its original linear mapping.
+    const float cycleVariationAmount = p.legacyDriftBypass
+        ? instability : naturalAmount;
     const float cycleRateScale = 1.0f
-        + instability * (voice.vibratoRateScale - 1.0f);
+        + cycleVariationAmount * (voice.vibratoRateScale - 1.0f);
     const float vibratoRate = singer.vibratoRate * cycleRateScale
         * (1.0f + p.humanize * (0.055f * singerDrift + 0.018f * sharedRate));
     // The extent is now a curve on the knob rather than a literal 20 cents per
@@ -1850,7 +2061,7 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     const float transitionedContour = voice.vibratoPreviousContour
         + cycleTransition * (voice.vibratoContour - voice.vibratoPreviousContour);
     const float cycleDepthScale = 1.0f
-        + instability * (transitionedDepthScale - 1.0f);
+        + cycleVariationAmount * (transitionedDepthScale - 1.0f);
     const float vibratoDepth = chunkVibratoCents_ * singer.vibratoDepth * cycleDepthScale
         * (1.0f + 0.35f * p.humanize * depthDrift) * vibratoFade
         * chunkResponse_.vibratoScale;
@@ -1859,7 +2070,6 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     // faster than the fall. Blend the legacy sine toward a mildly asymmetric
     // triangle. The square-root taper makes the useful natural range occupy
     // the lower half of the knob; zero still returns the sine bit for bit.
-    const float naturalAmount = std::sqrt(instability);
     const auto vibratoWave = [this, naturalAmount, transitionedContour](float phase) noexcept
     {
         phase = wrapPhase(phase);
@@ -1907,6 +2117,28 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     voice.jitter += (random - voice.jitter) * jitterCoefficient_;
     voice.jitterSlow += (voice.jitter - voice.jitterSlow) * jitterSlowCoefficient_;
     const float jitterCents = p.humanize * (1.15f * voice.jitter + 1.35f * voice.jitterSlow);
+    if (driftAmount > 0.0f)
+    {
+        // The note-on draw starts in the stationary distribution. Do not step
+        // it once more on that same initial control update; short notes should
+        // receive the same depth as long ones, not a double draw at t=0.
+        if (voice.controlInitialised && advanceDriftClock)
+        {
+            voice.pitchDriftFast = advanceBoundedOu(
+                voice.pitchDriftFast, voice.pitchDriftState,
+                pitchDriftFastRetention_, pitchDriftFastInnovation_);
+            voice.pitchDriftSlow = advanceBoundedOu(
+                voice.pitchDriftSlow, voice.pitchDriftState,
+                pitchDriftSlowRetention_, pitchDriftSlowInnovation_);
+        }
+        voice.pitchDriftCents = pitchDriftDepthCents * driftAmount
+            * (pitchDriftFastMix * voice.pitchDriftFast
+               + pitchDriftSlowMix * voice.pitchDriftSlow);
+    }
+    else
+    {
+        voice.pitchDriftCents = 0.0f;
+    }
     // An a cappella section tunes its chord to the bass rather than to a
     // keyboard, and moves onto the interval over about a tenth of a second.
     const float justTarget = intonationRoot_ >= 0
@@ -1925,10 +2157,14 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
                                             + 0.75f * sharedPitch);
     voice.pitchScoop *= scoopMultiplier_;
     voice.glideCents *= chunkGlideDecay_;
-    const float cents = voice.pitchScoop + voice.glideCents + identityCents + wanderCents
-                      + jitterCents + voice.justCents
-                      + vibratoDepth * vibratoShape
-                      + 100.0f * pitchBendSemitones_;
+    float cents = voice.pitchScoop + voice.glideCents + identityCents + wanderCents
+                + jitterCents + voice.justCents
+                + vibratoDepth * vibratoShape
+                + 100.0f * pitchBendSemitones_;
+    // Keep the exact legacy expression (and its floating-point association)
+    // when the macro is bypassed or at zero.
+    if (driftAmount > 0.0f)
+        cents += voice.pitchDriftCents;
     const float frequency = voice.baseFrequency * std::exp2(cents * (1.0f / 1200.0f));
     voice.targetPhaseIncrement = std::clamp(frequency * inverseSampleRate_, 0.0f, 0.48f);
     voice.phaseIncrementStep = (voice.targetPhaseIncrement - voice.phaseIncrement)
@@ -2100,6 +2336,18 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
         sopranoR4Slope += p.humanize * sopranoR4RiseDeviation * identityDraw;
     }
 
+    const auto vowelDriftHz = [this, &voice, driftAmount,
+                               sopranoClusterRelease](std::size_t index) noexcept
+    {
+        if (!(driftAmount > 0.0f))
+            return 0.0f;
+        const float clusteredScale = chunkVowelDriftScale_[index];
+        const float releasedScale = clusteredScale
+            + sopranoClusterRelease * (1.0f - clusteredScale);
+        return chunkFormantShiftRatio_ * releasedScale
+            * voice.vowelDriftFormantDeltaHz[index];
+    };
+
     // R3-R5 alternate polarity in the parallel formant bank. Broadening two
     // adjacent poles past their centre separation makes their modes
     // geometrically indistinct and can deepen the cancellation inherent in the
@@ -2120,9 +2368,11 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
             const auto index = static_cast<std::size_t>(formant);
             const float scale = anatomy + p.humanize * singer.formantScale[index];
             const float highTune = 1.0f + highAmount * 0.0003f;
-            const float releasedHz = chunkFormantHz_[index]
+            float releasedHz = chunkFormantHz_[index]
                 + sopranoClusterRelease
                     * (chunkUnclusteredFormantHz_[index] - chunkFormantHz_[index]);
+            if (driftAmount > 0.0f)
+                releasedHz += vowelDriftHz(index);
             float targetHz = releasedHz * scale * highTune;
             if (formant == 2 || formant == 3)
             {
@@ -2154,9 +2404,11 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
         // reinforcement below E-flat5. From there to B-flat5 interpolate both
         // the centres and the pole widths back to the ordinary vowel tract.
         // Male voices keep the full lower-voice cluster at every pitch.
-        const float releasedHz = chunkFormantHz_[index]
+        float releasedHz = chunkFormantHz_[index]
             + sopranoClusterRelease
                 * (chunkUnclusteredFormantHz_[index] - chunkFormantHz_[index]);
+        if (driftAmount > 0.0f)
+            releasedHz += vowelDriftHz(index);
         float targetHz = releasedHz * scale * highTune;
         if (p.profile == VoiceProfile::Female && (formant == 2 || formant == 3))
         {
@@ -2601,6 +2853,24 @@ float VoiceEngine::randomBipolar(std::uint32_t& state) noexcept
     return static_cast<float>(state & 0x00ffffffu) / 8388607.5f - 1.0f;
 }
 
+float VoiceEngine::triangularUnitVariance(std::uint32_t& state) noexcept
+{
+    // A uniform bipolar draw has variance 1/3. Three independent draws sum to
+    // variance one, remain exactly bounded to +/-3, and avoid the tails (and
+    // transcendentals) of a Gaussian generator on the audio thread.
+    return randomBipolar(state) + randomBipolar(state)
+        + randomBipolar(state);
+}
+
+float VoiceEngine::advanceBoundedOu(float current, std::uint32_t& state,
+                                    float retention,
+                                    float innovationScale) noexcept
+{
+    const float next = retention * current
+        + innovationScale * triangularUnitVariance(state);
+    return std::clamp(next, -driftStateLimit, driftStateLimit);
+}
+
 void VoiceEngine::updateRoom(float inputLeft, float inputRight,
                              float& wetLeft, float& wetRight) noexcept
 {
@@ -2912,7 +3182,10 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             // exact running value. Hand the local ramp state back first so a
             // host buffer boundary cannot restart or skip any part of it.
             voice.renderGain = amplitude;
-            updateVoiceControl(voice, p);
+            // initialiseVoice() has already resolved age zero. The render
+            // loop visits that same instant once more on its first sample, so
+            // only later fixed-period visits advance Drift's OU clocks.
+            updateVoiceControl(voice, p, voice.ageSamples != 0u);
             noiseState = voice.noiseState;
             voice.controlCountdown = controlPeriod;
             amplitudeStep = voice.renderGainStep;
@@ -3323,10 +3596,16 @@ void VoiceEngine::publishDisplayState(int voiceCount, float blockPeakLeft,
         ? 1 : (blockParameters_.vowel == Vowel::Uuh ? 2 : 0);
     const VowelPoint anchor = presetVowelPosition(vowelIndex);
     const float morph = clampUnit(blockParameters_.vowelMorph);
-    displayVowelX_.store(anchor.x + morph * (clampUnit(blockParameters_.vowelX) - anchor.x),
-                         std::memory_order_relaxed);
-    displayVowelY_.store(anchor.y + morph * (clampUnit(blockParameters_.vowelY) - anchor.y),
-                         std::memory_order_relaxed);
+    const float baseX = anchor.x
+        + morph * (clampUnit(blockParameters_.vowelX) - anchor.x);
+    const float baseY = anchor.y
+        + morph * (clampUnit(blockParameters_.vowelY) - anchor.y);
+    displayVowelX_.store(
+        reference != nullptr ? reference->effectiveVowelX : baseX,
+        std::memory_order_relaxed);
+    displayVowelY_.store(
+        reference != nullptr ? reference->effectiveVowelY : baseY,
+        std::memory_order_relaxed);
     displayDynamics_.store(smoothedDynamics_, std::memory_order_relaxed);
     activeVoiceCount_.store(voiceCount, std::memory_order_relaxed);
 }

@@ -209,9 +209,10 @@ private:
 // Spell out every setting so a change to EngineParameters' compatibility
 // defaults cannot silently revoice the demonstrations. Starting from the
 // published plug-in values, the neutral demo baseline deliberately backs
-// Resonance down from 0.64 to 0.42, eases Tension from 0.36 to 0.32, and
-// exposes a natural 0.44 Instability. Output stays below the plug-in's own
-// default because a twelve-singer room can sum far hotter than a solo voice;
+// Resonance down from 0.64 to 0.42, eases Tension from 0.36 to 0.32, leaves the
+// published zero Vibrato in place, and exposes a natural 0.44 Drift. Output
+// stays below the plug-in's own default because a twelve-singer room can sum
+// far hotter than a solo voice;
 // every take is normalised to a common level afterwards, so rendering quietly
 // costs nothing.
 EngineParameters demoVoicing()
@@ -224,7 +225,7 @@ EngineParameters demoVoicing()
     parameters.choirSize = 8;
     parameters.breath = 0.30f;
     parameters.resonance = 0.42f;
-    parameters.vibrato = 0.38f;
+    parameters.vibrato = 0.0f;
     parameters.humanize = 0.52f;
     parameters.spread = 0.62f;
     parameters.tension = 0.32f;
@@ -496,9 +497,10 @@ Take renderChoirDynamics()
     for (const auto& step : phrase)
         take.note (step.midi, step.velocity, 0.66, 0.12);
 
-    // The full choir lands on an open fifth and swells on the Dynamics control
-    // alone. The keys are struck once, so everything that moves from here is
-    // the dynamic: level, source tilt, glottal pulse shape and breath balance.
+    // The full choir lands on an open fifth and only Dynamics is automated.
+    // The keys are struck once; Drift continues its natural pitch and vowel
+    // micro-motion while the sweep changes level, source tilt, pulse shape and
+    // breath balance.
     parameters.dynamics = 0.20f;
     take.setParameters (parameters);
     take.noteOn (57, 0.80f);
@@ -666,7 +668,7 @@ const std::array<Demo, 10>& demos()
           "One held note while the morph target walks every cardinal vowel",
           renderVowelSpaceMorph },
         { "04-formant-shift.wav",
-          "The whole tract shifted an octave up and down at a fixed pitch",
+          "The whole tract shifted an octave up and down around one held MIDI note",
           renderFormantShift },
         { "05-ensemble-pad.wav",
           "Twelve independently humanised singers holding a chord pad",

@@ -2758,3 +2758,79 @@ replacement for reactive source–filter coupling. The remaining structural
 priorities are the male passaggio, an explicit alto/soprano voice-class
 dimension, per-singer phonation, nonlinear f0–F1 coupling and a controlled
 market listening test.
+
+## Superseding feedback pass: straight-tone naturalness and Drift (2026-08-09)
+
+The cycle-instability pass above fixed one regular LFO but left the product
+premise wrong: a fresh voice still opened with an intentional vibrato, while
+turning Vibrato to zero also removed almost all short-term pitch life. Listening
+feedback described that combination precisely as too perfect and
+theremin-like. This pass supersedes the *current-sound* claims in **Feedback
+pass: resonance and vocal instability**. Its measurements remain a record of
+model 3, but they are not presented as measurements of the new model 4 path.
+
+- [x] **Make straight tone the honest default.** The engine, host parameter and
+  Init Soprano program now publish Vibrato at exactly 0 %. Vibrato still owns
+  intentional musical extent and keeps the established `100 × knob^1.75`
+  mapping when selected; the 42 % value in its derivation is a historical
+  compatibility anchor, not the current default. Complete old projects store
+  Vibrato explicitly, and a malformed partial legacy state missing it receives
+  the historical 38 % fallback.
+- [x] **Promote `instability` into the Drift macro without moving automation.**
+  The user-facing control is **Drift**, default 38 %, while its immutable
+  parameter ID remains `instability`. Its range, appended position 24 and Audio
+  Unit version hint 2 are unchanged. Model 2 means pre-1.3 state with missing
+  Drift restored to zero and register support bypassed; model 3 preserves the
+  first, vibrato-cycle-only Instability law; model 4 selects the broader 1.4
+  Drift behavior for fresh instances and newly chosen factory programs.
+- [x] **Give Vibrato-zero notes bounded aperiodic pitch life.** Each voice owns
+  a deterministic stream independent of aspiration, shimmer and vibrato. Its
+  16-sample control updates drive stationary 30 ms and 700 ms OU paths, mixed
+  78:22 and hard-clamped at ±2.5 state units. The resulting pitch term is
+  `4.8 cents × Drift`: its exact hard bound is ±4.56 cents at the 38 %
+  default and ±12 cents at full. Stationary note-on draws prevent short notes
+  from starting machine-perfect; legato retains the state. Intentional
+  Vibrato-zero pitch depth and its two amplitude shelves remain exactly zero
+  and unity respectively, so this is not another hidden periodic vibrato.
+- [x] **Let an enabled vibrato breathe in more than one dimension.** Drift uses
+  a square-root taper to expose correlated cycle variation at useful middle
+  settings. The complete bounded draw spans 0.82–1.18 of identity rate and
+  0.58–1.42 of intended depth, while depth and contour cross smoothly into the
+  next cycle. A note-specific natural fade target spans 120–260 ms of start and
+  240–520 ms of duration; zero Drift resolves exactly to the model-3
+  160/340 ms envelope. The mean extent remains under Vibrato rather than being
+  silently changed by Drift.
+- [x] **Move articulation slowly, locally and without losing the chosen vowel.**
+  Per-voice OU states move morph amount and vowel-space X/Y on 2.8/1.6/2.3 s
+  time constants, advancing targets about every 25 ms. Existing formant
+  articulation smoothing makes the pole trajectories continuous. The morph
+  term is `0.04 × Drift × state × 4m(1−m)`, so it closes at both Morph
+  endpoints and is bounded by ±0.10 at its full-Drift midpoint (±0.038 at
+  the default). X/Y terms use coefficients 0.035/0.025, giving raw full-Drift
+  bounds of ±0.0875/±0.0625 before coordinate clamping. The engine adds
+  only the moved-minus-base nonlinear vowel-space target to the exact shipped
+  formant target; Drift zero is therefore the bit-static model-3 tract path.
+- [x] **Keep performer identity on Humanize.** Drift describes imperfection
+  within each performance: aperiodic pitch, enabled-vibrato regularity and slow
+  articulation. Humanize continues to scale between-singer detune, slow
+  identity wander, anatomy, breath and spectral identity, position, attack,
+  entry and release timing. Setting Humanize to zero removes those differences
+  but intentionally does not defeat a non-zero Drift setting.
+- [x] **Render the premise rather than inherit a compatibility default.** The
+  public demo baseline is explicit Vibrato 0 %, Drift 44 %, Resonance 42 % and
+  Tension 32 %. Takes 02, 06, 07 and 09 inherit that straight-tone setting;
+  takes which demonstrate an intentional vibrato opt in explicitly. All Drift
+  streams remain deterministic and fixed-schedule so the same note sequence is
+  invariant to host buffer partitioning.
+
+The integrated multi-rate trajectory pass measures pitch RMS at
+0.913/1.388/1.826/3.652 cents for Drift 25/38/50/100 %, with a largest 3–10 Hz
+sine fit of 0.017, recurrence 0.092 and only 0.06 dB of RMS spread from 44.1 to
+192 kHz. Vowel vector RMS is 0.0144/0.0288/0.0576 at 25/50/100 %, its largest
+line fit is 0.014, and all tested cardinal and AAH/OOH/UUH preset vowels remain
+correctly classified; worst mean F1/F2 bias is 0.91 % on the cardinal matrix
+and 2.36 % on the preset anchors. At the musical Vibrato 40 % / Drift 40 %
+fixture, period/depth variation is 4.851/12.909 %, mean rate is 5.85 Hz and mean
+extent is ±21.27 cents. These are trajectory gates, not a claim that variance
+alone proves preference: the objective is a voice which survives listening,
+not a random number generator which merely reaches a large number.

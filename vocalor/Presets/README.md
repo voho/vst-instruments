@@ -8,9 +8,9 @@ values into the
 
 | Program | What it is |
 | --- | --- |
-| Init Soprano | The shipping default sound, so a host that opens on program 0 opens on what the plug-in opens on |
+| Init Soprano | The shipping straight-tone default: Vibrato 0 %, Drift 38 %, and the same sound a fresh plug-in opens on |
 | Intimate Alto | Close solo voice, breathy, legato with a short glide and a shortened tract |
-| Pressed Tenor | Male solo at high tension, with deliberately restrained cycle instability |
+| Pressed Tenor | Male solo at high tension, with deliberately restrained Drift |
 | Legato Soloist | Solo voice set up for phrasing: legato on, a long glide, dynamics at 82 % |
 | Breath And Air | Aspiration at full and the dynamic low, which is the breathiest the model goes |
 | Warm Bass Choir | Eight male singers on the close-back anchor, tract lengthened four semitones |
@@ -19,13 +19,17 @@ values into the
 | Small Voices | Six singers with the tract shortened six semitones toward the close-front corner |
 | Vowel Morph Pad | Ten singers with the morph at full, so the pad and its two axes own the vowel |
 | Locked Major Chorale | Chord mode in full just intonation: one key, a locked triad |
-| Airy Minor Pad | Minor chord mode, breathy and wide, with the bank's highest cycle instability |
+| Airy Minor Pad | Minor chord mode, breathy and wide, with the bank's highest Drift |
 
-Every program sets Instability explicitly. Vibrato chooses the intended extent;
-Instability adds bounded deterministic variation to each cycle's period, depth
-and contour, while Humanize controls the singers' ensemble identity, timing and
-vocal-tract differences. Pressed sounds stay disciplined, and airy or large
-choir programs are allowed to wander further without becoming nondeterministic.
+Every program sets Drift explicitly under its immutable `instability` host ID.
+Init Soprano pairs the fresh 38 % Drift default with Vibrato at exactly 0 %: it
+is a straight tone with bounded aperiodic pitch and slow articulation motion,
+not a perfect oscillator. Programs that want an intentional sung gesture opt
+into Vibrato explicitly. On those sounds Drift also varies vibrato rate, depth,
+contour and onset. Humanize remains separate: it controls between-singer
+identity, anatomy and timing rather than the amount of imperfection within one
+performance. Pressed sounds stay disciplined, and airy or large choir programs
+are allowed to wander further without becoming nondeterministic.
 
 ## Where they live
 

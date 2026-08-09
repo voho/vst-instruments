@@ -168,13 +168,14 @@ float vibratoExtentCents (float vibrato, float sectionLimitCents) noexcept
         return 0.0f;
 
     // The knob's top is the definition: +/-1 semitone. What is not free is the
-    // exponent, because the bank already ships between 18 and 46 % and the
-    // engine's own default is 42 %. A linear scale would take every one of
-    // those to 41-46 cents, which is a soloist's full vibrato on a patch that
-    // asked for a third of the knob. 1.75 is the exponent that puts the
-    // default at 21.9 cents -- comfortably above the roughly 10 cents below
-    // which a vibrato is heard as unsteadiness rather than as vibrato, and
-    // well under the maximum the top of the knob still reaches.
+    // exponent, because existing sounds already use 18-46 % and the historical
+    // engine compatibility anchor is 42 %. A linear scale would take every one
+    // of those to 41-46 cents, which is a soloist's full vibrato on a patch
+    // that asked for a third of the knob. 1.75 puts that historical 42 % anchor
+    // at 21.9 cents -- comfortably above the roughly 10 cents below which a
+    // vibrato is heard as unsteadiness rather than as vibrato, and well under
+    // the maximum the top of the knob still reaches. The fresh 1.4 default is
+    // zero; this anchor exists only for compatibility and explicit presets.
     float cents = kVibratoReachCents * std::pow (knob, 1.75f);
     // A section member does not sing a soloist's extent. What the section
     // imposes is a limit rather than a scale: she sings the gesture she would

@@ -168,8 +168,9 @@ private:
     std::atomic<double> displaySampleRate { 0.0 };
     // Hidden state version for DSP laws which are not host parameters. Version
     // 2 means a pre-1.3 session whose register support stays bypassed; version
-    // 3 is the current model used by fresh instances and factory programs.
-    std::atomic<int> voiceModelVersion { 3 };
+    // 3 enables that support but retains the first Drift law; version 4 is the
+    // current model used by fresh instances and factory programs.
+    std::atomic<int> voiceModelVersion { 4 };
     int currentProgram = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VocalorAudioProcessor)

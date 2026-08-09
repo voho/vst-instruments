@@ -10,11 +10,28 @@
 #include <utility>
 #include <vector>
 
+namespace vocalor
+{
+struct VoiceEngineTestAccess
+{
+    static EngineParameters parameterSnapshot (const VoiceEngine& engine) noexcept
+    {
+        return engine.snapshotParameters();
+    }
+};
+} // namespace vocalor
+
 struct VocalorAudioProcessorTestAccess
 {
     static int voiceModelVersion(const VocalorAudioProcessor& processor) noexcept
     {
         return processor.voiceModelVersion.load(std::memory_order_relaxed);
+    }
+
+    static vocalor::EngineParameters engineParameters (
+        const VocalorAudioProcessor& processor) noexcept
+    {
+        return vocalor::VoiceEngineTestAccess::parameterSnapshot (processor.engine);
     }
 };
 
@@ -236,23 +253,43 @@ void testParameterLayoutIsStable()
                                              ranged->getVersionHint());
     }
     if (const auto* parameter = state.getParameter (instability))
-        expect (parameter->getVersionHint() > newestShippedVersionHint,
-                "Instability does not sort after every shipped AU parameter");
+    {
+        expect (parameter->paramID == instability,
+                "the Drift macro changed its immutable host identifier");
+        expect (parameter->getName (64) == "Drift",
+                "the instability parameter is not presented to the host as Drift");
+        expect (parameter->getVersionHint() == 2
+                    && parameter->getVersionHint() > newestShippedVersionHint,
+                "Drift does not retain its appended Audio Unit version hint");
+        expect (processor.getParameters()[23] == parameter,
+                "Drift no longer occupies the final published parameter slot");
+    }
     else
-        expect (false, "the vocal-instability parameter is missing");
+    {
+        expect (false, "the Drift parameter is missing");
+    }
 
-    // Version-1 identifiers and defaults are part of the saved session format.
-    // Changing any of them would silently alter existing projects.
+    // Version-1 identifiers, ranges and ordering are part of the saved session
+    // format. Vibrato's fresh default is the deliberate exception below; saved
+    // projects carry their actual value rather than inheriting this metadata.
     struct Expected { const char* id; float value; };
     const Expected versionOne[] = {
         { profile, 0.0f }, { mode, 0.0f }, { vowel, 0.0f }, { chordQuality, 0.0f },
-        { choirSize, 8.0f }, { breath, 0.30f }, { resonance, 0.64f }, { vibrato, 0.38f },
+        { choirSize, 8.0f }, { breath, 0.30f }, { resonance, 0.64f },
         { humanize, 0.52f }, { spread, 0.62f }, { tension, 0.36f }, { room, 0.24f },
         { output, -6.0f }
     };
     for (const auto& entry : versionOne)
         expect (nearly (denormalisedDefault (state, entry.id), entry.value, 0.002f),
                 std::string ("version-1 default for ") + entry.id + " changed");
+
+    expect (nearly (denormalisedDefault (state, vibrato), 0.0f, 0.002f),
+            "a fresh instance no longer opens with Vibrato off");
+    if (const auto* liveVibrato = state.getRawParameterValue (vibrato))
+        expect (nearly (liveVibrato->load(), 0.0f, 0.002f),
+                "the live fresh Vibrato value differs from its zero default");
+    else
+        expect (false, "the Vibrato parameter is missing");
 
     // Version-1.1 additions all default to the neutral setting, so a recalled
     // session sounds exactly as it did before they existed.
@@ -272,10 +309,10 @@ void testParameterLayoutIsStable()
         expect (nearly (denormalisedDefault (state, entry.id), entry.value, 0.002f),
                 std::string ("default for the new parameter ") + entry.id + " is not neutral");
 
-    // Fresh instances deliberately carry a little vocal instability. The
+    // Fresh instances deliberately carry a little non-periodic Drift. The
     // legacy-state test below separately verifies the compatible zero value.
     expect (nearly (denormalisedDefault (state, instability), 0.38f, 0.002f),
-            "the fresh vocal-instability default is no longer 0.38");
+            "the fresh Drift default is no longer 0.38");
 
     if (auto* shift = state.getParameter (formantShift))
     {
@@ -322,6 +359,16 @@ void testFactoryProgramsReachTheParameters()
     expect (processor.getCurrentProgram() == 0,
             "the processor did not open on the first program");
 
+    const auto& init = vocalor::factoryPreset (0).parameters;
+    expect (nearly (init.vibrato, 0.0f) && nearly (init.instability, 0.38f),
+            "Init Soprano is no longer the zero-Vibrato, 0.38-Drift default");
+    const auto* freshVibrato = processor.parameters.getRawParameterValue (vibrato);
+    const auto* freshDrift = processor.parameters.getRawParameterValue (instability);
+    expect (freshVibrato != nullptr && freshDrift != nullptr
+                && nearly (freshVibrato->load(), init.vibrato, 0.002f)
+                && nearly (freshDrift->load(), init.instability, 0.002f),
+            "the fresh host values do not match Init Soprano's Vibrato and Drift");
+
     for (int index = 0; index < count; ++index)
         expect (processor.getProgramName (index)
                     == juce::String (vocalor::factoryPresetName (index)),
@@ -356,9 +403,9 @@ void testFactoryProgramsReachTheParameters()
         if (auto* parameter = processor.parameters.getParameter (instability))
             expect (nearly (parameter->convertFrom0to1 (parameter->getValue()),
                             values.instability, 0.01f),
-                    "selecting a program did not write its vocal instability");
+                    "selecting a program did not write its Drift");
         else
-            expect (false, "the vocal-instability parameter is missing");
+            expect (false, "the Drift parameter is missing");
 
         // Re-asserting the program in force must leave an edit alone: this is
         // the path a host takes when it restores a session.
@@ -583,6 +630,7 @@ void testStateRoundTrip()
     setNormalised (source.parameters, legato, 1.0f);
     setDenormalised (source.parameters, formantShift, -5.5f);
     setNormalised (source.parameters, breath, 0.80f);
+    setNormalised (source.parameters, vibrato, 0.67f);
     setNormalised (source.parameters, instability, 0.73f);
 
     juce::MemoryBlock stored;
@@ -591,8 +639,8 @@ void testStateRoundTrip()
 
     VocalorAudioProcessor destination;
     destination.setStateInformation (stored.getData(), static_cast<int> (stored.getSize()));
-    expect (VocalorAudioProcessorTestAccess::voiceModelVersion (source) == 3
-                && VocalorAudioProcessorTestAccess::voiceModelVersion (destination) == 3,
+    expect (VocalorAudioProcessorTestAccess::voiceModelVersion (source) == 4
+                && VocalorAudioProcessorTestAccess::voiceModelVersion (destination) == 4,
             "a current state round trip lost the voice-model version");
 
     const auto valueOf = [] (const juce::AudioProcessorValueTreeState& state, const char* id)
@@ -602,9 +650,149 @@ void testStateRoundTrip()
     };
 
     for (const char* id : { vowelMorph, vowelX, vowelY, glide, roomSize, legato,
-                            formantShift, breath, instability })
+                            formantShift, breath, vibrato, instability })
         expect (nearly (valueOf (destination.parameters, id), valueOf (source.parameters, id), 0.002f),
                 std::string ("parameter ") + id + " did not survive a state round trip");
+
+    destination.prepareToPlay (sampleRate, blockSize);
+    const auto currentEngineParameters =
+        VocalorAudioProcessorTestAccess::engineParameters (destination);
+    expect (! currentEngineParameters.legacyRadiatedPowerBypass
+                && ! currentEngineParameters.legacyDriftBypass,
+            "a current model-4 state enabled a legacy DSP bypass");
+    destination.releaseResources();
+}
+
+void testVersionThreeStateRetainsItsModelAndParameters()
+{
+    using namespace vocalor::parameters;
+
+    VocalorAudioProcessor source;
+    setNormalised (source.parameters, vibrato, 0.61f);
+    setNormalised (source.parameters, instability, 0.74f);
+    auto versionThreeState = source.parameters.copyState();
+    versionThreeState.setProperty ("vocalorVoiceModel", 3, nullptr);
+
+    juce::MemoryBlock stored;
+    if (const auto xml = versionThreeState.createXml())
+        juce::AudioProcessor::copyXmlToBinary (*xml, stored);
+    else
+        expect (false, "the version-3 state could not be serialised");
+
+    VocalorAudioProcessor destination;
+    destination.setStateInformation (
+        stored.getData(), static_cast<int> (stored.getSize()));
+    const auto* restoredVibrato =
+        destination.parameters.getRawParameterValue (vibrato);
+    const auto* restoredDrift =
+        destination.parameters.getRawParameterValue (instability);
+    expect (VocalorAudioProcessorTestAccess::voiceModelVersion (destination) == 3,
+            "a version-3 state was collapsed into another hidden DSP model");
+    expect (restoredVibrato != nullptr && restoredDrift != nullptr
+                && nearly (restoredVibrato->load(), 0.61f, 0.002f)
+                && nearly (restoredDrift->load(), 0.74f, 0.002f),
+            "a version-3 state lost its explicit Vibrato or Drift value");
+
+    destination.prepareToPlay (sampleRate, blockSize);
+    const auto engineParameters =
+        VocalorAudioProcessorTestAccess::engineParameters (destination);
+    expect (! engineParameters.legacyRadiatedPowerBypass,
+            "a version-3 state disabled the register-support model it was saved with");
+    expect (engineParameters.legacyDriftBypass,
+            "a version-3 state enabled the broader model-4 Drift macro");
+    destination.releaseResources();
+
+    // Re-saving must keep model 3 so the next load can retain register support
+    // while selecting the compatibility Drift law independently.
+    juce::MemoryBlock resaved;
+    destination.getStateInformation (resaved);
+    VocalorAudioProcessor reopened;
+    reopened.setStateInformation (
+        resaved.getData(), static_cast<int> (resaved.getSize()));
+    expect (VocalorAudioProcessorTestAccess::voiceModelVersion (reopened) == 3,
+            "re-saving a version-3 state silently upgraded its hidden DSP model");
+}
+
+void testMissingVibratoUsesVersionedDefault()
+{
+    using namespace vocalor::parameters;
+
+    const auto removeParameter = [] (juce::ValueTree& state, const char* id)
+    {
+        for (int index = state.getNumChildren(); --index >= 0;)
+        {
+            const auto child = state.getChild (index);
+            if (child.hasType ("PARAM")
+                && child.getProperty ("id").toString() == id)
+                state.removeChild (index, nullptr);
+        }
+    };
+    const auto serialise = [] (const juce::ValueTree& state)
+    {
+        juce::MemoryBlock stored;
+        if (const auto xml = state.createXml())
+            juce::AudioProcessor::copyXmlToBinary (*xml, stored);
+        else
+            expect (false, "a partial state could not be serialised");
+        return stored;
+    };
+
+    // A complete 1.0 state always contains Vibrato. If a host or old wrapper
+    // produced a partial tree, however, it should receive the historical 38 %
+    // fallback rather than the new zero used by genuinely current states.
+    VocalorAudioProcessor legacyTemplate;
+    auto legacyState = legacyTemplate.parameters.copyState();
+    removeParameter (legacyState, vibrato);
+    removeParameter (legacyState, instability);
+    const auto legacyStored = serialise (legacyState);
+
+    VocalorAudioProcessor legacyDestination;
+    setNormalised (legacyDestination.parameters, vibrato, 0.91f);
+    setNormalised (legacyDestination.parameters, instability, 0.91f);
+    legacyDestination.setStateInformation (
+        legacyStored.getData(), static_cast<int> (legacyStored.getSize()));
+    const auto* legacyVibrato =
+        legacyDestination.parameters.getRawParameterValue (vibrato);
+    const auto* legacyDrift =
+        legacyDestination.parameters.getRawParameterValue (instability);
+    expect (legacyVibrato != nullptr && nearly (legacyVibrato->load(), 0.38f, 0.002f),
+            "a partial legacy state did not receive the historical Vibrato fallback");
+    expect (legacyDrift != nullptr && nearly (legacyDrift->load(), 0.0f, 0.002f),
+            "a partial legacy state did not receive the compatible zero Drift");
+
+    VocalorAudioProcessor versionThreeTemplate;
+    auto versionThreeState = versionThreeTemplate.parameters.copyState();
+    versionThreeState.setProperty ("vocalorVoiceModel", 3, nullptr);
+    removeParameter (versionThreeState, vibrato);
+    const auto versionThreeStored = serialise (versionThreeState);
+
+    VocalorAudioProcessor versionThreeDestination;
+    setNormalised (versionThreeDestination.parameters, vibrato, 0.91f);
+    versionThreeDestination.setStateInformation (
+        versionThreeStored.getData(),
+        static_cast<int> (versionThreeStored.getSize()));
+    const auto* versionThreeVibrato =
+        versionThreeDestination.parameters.getRawParameterValue (vibrato);
+    expect (versionThreeVibrato != nullptr
+                && nearly (versionThreeVibrato->load(), 0.38f, 0.002f),
+            "a partial version-3 state did not receive the historical Vibrato fallback");
+
+    // Current state carries the hidden model marker. If its Vibrato child is
+    // missing, the published fresh default is the correct deterministic fill.
+    VocalorAudioProcessor currentTemplate;
+    auto currentState = currentTemplate.parameters.copyState();
+    currentState.setProperty ("vocalorVoiceModel", 4, nullptr);
+    removeParameter (currentState, vibrato);
+    const auto currentStored = serialise (currentState);
+
+    VocalorAudioProcessor currentDestination;
+    setNormalised (currentDestination.parameters, vibrato, 0.91f);
+    currentDestination.setStateInformation (
+        currentStored.getData(), static_cast<int> (currentStored.getSize()));
+    const auto* currentVibrato =
+        currentDestination.parameters.getRawParameterValue (vibrato);
+    expect (currentVibrato != nullptr && nearly (currentVibrato->load(), 0.0f, 0.002f),
+            "a partial current state did not receive the zero Vibrato default");
 }
 
 void testVersionOneSessionsStillLoad()
@@ -653,12 +841,13 @@ void testVersionOneSessionsStillLoad()
     };
 
     expect (nearly (valueOf (breath), 0.71f, 0.002f)
+                && nearly (valueOf (vibrato), 0.66f, 0.002f)
                 && nearly (valueOf (spread), 0.88f, 0.002f)
                 && nearly (valueOf (output), -3.5f, 0.01f)
                 && nearly (valueOf (choirSize), 12.0f, 0.01f),
             "a version-1 session did not restore its original parameter values");
     expect (nearly (valueOf (instability), 0.0f, 0.002f),
-            "a version-1 session did not disable vocal instability");
+            "a version-1 session did not disable Drift");
 
     // The 1.1 additions have to stay in a range the engine accepts, whatever a
     // host does with parameters it has never seen before.
@@ -717,12 +906,12 @@ void testVersionOneSessionsStillLoad()
     auto* freshInstability = pristine.parameters.getRawParameterValue (instability);
     expect (freshInstability != nullptr
                 && nearly (freshInstability->load(), 0.38f, 0.002f),
-            "a fresh instance did not use the vocal-instability default");
+            "a fresh instance did not use the Drift default");
     expect (usedInstability != nullptr
                 && nearly (usedInstability->load(), 0.0f, 0.002f),
-            "a legacy session kept live vocal instability instead of migrating to zero");
+            "a legacy session kept live Drift instead of migrating to zero");
     expect (VocalorAudioProcessorTestAccess::voiceModelVersion (used) == 2
-                && VocalorAudioProcessorTestAccess::voiceModelVersion (pristine) == 3,
+                && VocalorAudioProcessorTestAccess::voiceModelVersion (pristine) == 4,
             "legacy and fresh instances did not retain distinct voice models");
 
     // Saving a migrated project must preserve its bypass on the next load.
@@ -733,12 +922,17 @@ void testVersionOneSessionsStillLoad()
     expect (VocalorAudioProcessorTestAccess::voiceModelVersion (reopened) == 2,
             "re-saving a legacy session silently upgraded its voice model");
 
-    // Selecting a genuinely different 1.3 factory program is an explicit opt-in.
+    // Selecting a genuinely different current factory program is an explicit opt-in.
     used.setCurrentProgram (1);
-    expect (VocalorAudioProcessorTestAccess::voiceModelVersion (used) == 3,
+    expect (VocalorAudioProcessorTestAccess::voiceModelVersion (used) == 4,
             "selecting a current factory program kept the legacy voice model");
 
     processor.prepareToPlay (sampleRate, blockSize);
+    const auto legacyEngineParameters =
+        VocalorAudioProcessorTestAccess::engineParameters (processor);
+    expect (legacyEngineParameters.legacyRadiatedPowerBypass
+                && legacyEngineParameters.legacyDriftBypass,
+            "a pre-1.3 model-2 state did not enable both compatibility bypasses");
     juce::AudioBuffer<float> buffer (2, blockSize);
     juce::MidiBuffer midi;
     midi.addEvent (juce::MidiMessage::noteOn (1, 55, static_cast<juce::uint8> (96)), 0);
@@ -805,6 +999,8 @@ int main()
     testNewParametersReachTheEngine();
     testLegatoKeepsASingleVoice();
     testStateRoundTrip();
+    testVersionThreeStateRetainsItsModelAndParameters();
+    testMissingVibratoUsesVersionedDefault();
     testVersionOneSessionsStillLoad();
     testEditorRendering();
 

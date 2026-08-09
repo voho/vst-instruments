@@ -33,7 +33,8 @@ bool containsParameterState (const juce::ValueTree& state,
 
 void addMissingParameterDefaults (
     juce::ValueTree& state, juce::AudioProcessorValueTreeState& parameters,
-    const juce::Array<juce::AudioProcessorParameter*>& hostParameters)
+    const juce::Array<juce::AudioProcessorParameter*>& hostParameters,
+    bool useLegacyDefaults)
 {
     static const juce::Identifier parameterType { "PARAM" };
     static const juce::Identifier idProperty { "id" };
@@ -50,13 +51,16 @@ void addMissingParameterDefaults (
 
         juce::ValueTree parameterState { parameterType };
         parameterState.setProperty (idProperty, ranged->paramID, nullptr);
-        // Fresh instances intentionally open with some vocal instability, but
-        // a state written before the control existed must retain the perfectly
-        // compatible old signal path. APVTS otherwise fills a missing child
-        // from the new published default, which would change every old session.
+        // Fresh instances intentionally open with some Drift, but a state
+        // written before that control existed must retain the perfectly
+        // compatible zero path. Vibrato has existed since 1.0, so a complete
+        // old state always carries it; the historical fallback below also keeps
+        // partial legacy trees from adopting the new zero default accidentally.
         const auto missingValue = ranged->paramID == vocalor::parameters::instability
             ? 0.0f
-            : ranged->convertFrom0to1 (ranged->getDefaultValue());
+            : (useLegacyDefaults && ranged->paramID == vocalor::parameters::vibrato
+                   ? 0.38f
+                   : ranged->convertFrom0to1 (ranged->getDefaultValue()));
         parameterState.setProperty (
             valueProperty, missingValue, nullptr);
         state.appendChild (parameterState, nullptr);
@@ -77,7 +81,8 @@ const juce::Identifier& voiceModelProperty()
 }
 
 constexpr int legacyVoiceModelVersion = 2;
-constexpr int currentVoiceModelVersion = 3;
+constexpr int radiatedPowerVoiceModelVersion = 3;
+constexpr int currentVoiceModelVersion = 4;
 } // namespace
 
 VocalorAudioProcessor::VocalorAudioProcessor()
@@ -161,7 +166,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalorAudioProcessor::creat
 
     addPercent (breath, "Breath", 0.30f);
     addPercent (resonance, "Resonance", 0.64f);
-    addPercent (vibrato, "Vibrato", 0.38f);
+    addPercent (vibrato, "Vibrato", 0.0f);
     addPercent (humanize, "Humanize", 0.52f);
     addPercent (spread, "Stereo spread", 0.62f);
     addPercent (tension, "Vocal tension", 0.36f);
@@ -198,7 +203,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalorAudioProcessor::creat
     addPercent (nasal, "Nasality", 0.0f);
     // AU orders identifiers by this hint. A newly published parameter must use
     // a value above every shipped parameter or it can move old automation slots.
-    addPercent (instability, "Vocal instability", 0.38f, 2);
+    addPercent (instability, "Drift", 0.38f, 2);
 
     return { result.begin(), result.end() };
 }
@@ -220,7 +225,7 @@ void VocalorAudioProcessor::setCurrentProgram (int index)
         return;
 
     currentProgram = bounded;
-    // Choosing a 1.3 factory program is an explicit opt-in to its current DSP
+    // Choosing a current factory program is an explicit opt-in to its current DSP
     // model even if this instance previously restored a legacy session.
     voiceModelVersion.store (currentVoiceModelVersion, std::memory_order_relaxed);
     const auto& values = vocalor::factoryPreset (currentProgram).parameters;
@@ -422,9 +427,9 @@ void VocalorAudioProcessor::updateEngineParameters() noexcept
     next.intonation = parameterPointers.intonation->load (std::memory_order_relaxed);
     next.nasal = parameterPointers.nasal->load (std::memory_order_relaxed);
     next.instability = parameterPointers.instability->load (std::memory_order_relaxed);
-    next.legacyRadiatedPowerBypass =
-        voiceModelVersion.load (std::memory_order_relaxed)
-            < currentVoiceModelVersion;
+    const auto voiceModel = voiceModelVersion.load (std::memory_order_relaxed);
+    next.legacyRadiatedPowerBypass = voiceModel < radiatedPowerVoiceModelVersion;
+    next.legacyDriftBypass = voiceModel < currentVoiceModelVersion;
     engine.setParameters (next);
 }
 
@@ -499,14 +504,16 @@ void VocalorAudioProcessor::setStateInformation (const void* data, int sizeInByt
             ? static_cast<int> (restoredState.getProperty (voiceModelProperty()))
             : legacyVoiceModelVersion;
         voiceModelVersion.store (
-            restoredModel >= currentVoiceModelVersion
-                ? currentVoiceModelVersion : legacyVoiceModelVersion,
+            juce::jlimit (legacyVoiceModelVersion,
+                          currentVoiceModelVersion, restoredModel),
             std::memory_order_relaxed);
         if (restoredState.hasProperty (programProperty()))
             currentProgram = juce::jlimit (
                 0, juce::jmax (0, vocalor::factoryPresetCount() - 1),
                 static_cast<int> (restoredState.getProperty (programProperty())));
-        addMissingParameterDefaults (restoredState, parameters, getParameters());
+        addMissingParameterDefaults (
+            restoredState, parameters, getParameters(),
+            restoredModel < currentVoiceModelVersion);
         parameters.replaceState (restoredState);
         requestPanic();
     }
