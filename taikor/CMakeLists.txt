@@ -157,8 +157,9 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME Taikor.TaikoEngine COMMAND TaikorTaikoEngineTests)
-    # 69 s on the reference machine, up from 55 when the automation-continuity
-    # sweeps landed: those render a hundred takes and scan each of them blind.
+    # 75 s on the reference machine, up from 69 when the Octave Body handover
+    # and the readout's Nyquist clauses landed: those sweep the control in
+    # ten-thousandths and build a voice bank per drum at four sample rates.
     set_tests_properties(Taikor.TaikoEngine PROPERTIES TIMEOUT 240)
 
     if(TAIKOR_BUILD_TOOLS)

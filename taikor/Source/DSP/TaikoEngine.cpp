@@ -1696,8 +1696,32 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
 // a half above it, and that is the pitch the drum is heard at. On a small
 // tightly laced head the fundamental sits far above the corner, keeps its ring,
 // and wins by fifteen decibels. Both are the same physics read at two sizes.
+//
+// `ceilingHz` is the one thing that is excluded, and it is not a claim about
+// which modes can carry a pitch - it is a claim about which modes exist in the
+// audio at all. buildVoiceModes drops every mode at or above 0.98 of Nyquist,
+// because configureResonator cannot make one, so a comparison run over the
+// whole bank can name a partial the render has already thrown away. It did: on
+// a 15 cm head at the tension ceiling with a thin film and Pitch +12, the top
+// pad's own fundamental is 25565 Hz, and the readout named it at a 48 kHz host
+// where nothing at or above 23520 Hz is ever instantiated.
+//
+// The readout passes the renderer's cutoff and the octave transform passes
+// infinity. That is two behaviours in one function and it is deliberate: which
+// mode an instrument is tuned by is a property of the instrument, and a
+// keyboard that retuned itself when the host changed its clock would be a far
+// worse defect than the one this bound fixes. It is also a bound rather than a
+// re-ranking - at infinity this is exactly the function it was - so the tuning
+// path is bit-identical to there being no bound at all.
+//
+// If nothing survives it, nothing is returned: `frequencyHz` stays zero, and
+// zero is the caller's marker for a drum with no membrane tone at this sample
+// rate. Naming the lowest mode anyway would be the defect rather than the fix -
+// the render contains no partial there, and the drum genuinely has no pitch at
+// that rate. See DrumMeasurements::soundingHz.
 TaikoEngine::SoundingMode TaikoEngine::soundingMode (const DrumState& drum,
-                                                     float strikeRadius) noexcept
+                                                     float strikeRadius,
+                                                     float ceilingHz) noexcept
 {
     SoundingMode best;
     bool found = false;
@@ -1714,6 +1738,11 @@ TaikoEngine::SoundingMode TaikoEngine::soundingMode (const DrumState& drum,
                 observeMode (drum, entryIndex, branch, strikeRadius);
 
             if (! (observation.frequencyHz > 0.0f))
+                continue;
+
+            // Exactly the test buildVoiceModes makes on the same frequency, so
+            // the set compared here is the set that will be rendered.
+            if (observation.frequencyHz >= ceilingHz)
                 continue;
 
             // The comparison is on `weight`, and it is only on `logWeight` when
@@ -1750,6 +1779,22 @@ TaikoEngine::SoundingMode TaikoEngine::soundingMode (const DrumState& drum,
     }
 
     return best;
+}
+
+// The highest frequency a resonator will ever be built at.
+//
+// Written once and read by both sides of the question so they cannot drift:
+// configureResonator refuses `frequencyHz >= 0.98 * nyquist` and returns a
+// silent biquad, buildVoiceModes skips the mode before it gets that far, and
+// soundingMode uses this to keep the readout inside the same set. The 0.98 is
+// configureResonator's, not a margin added here - a pole that close to the
+// Nyquist limit is already a resonator with no cycles left in it.
+float TaikoEngine::renderedModeCeilingHz (double sampleRateHz) noexcept
+{
+    const auto clamped = std::clamp (sampleRateHz, minimumSupportedSampleRate,
+                                     maximumSupportedSampleRate);
+    const auto rate = static_cast<float> (clamped);
+    return 0.5f * rate * 0.98f;
 }
 
 // Where the octave transform reads a pitch, and where the readout does.
@@ -1848,8 +1893,13 @@ TaikoEngine::ModeIdentity TaikoEngine::tuningModeFor (int octaveOffset,
     DrumState referenceState;
     resolveDrumGeometry (controls, 1.0f, 1.0f, 1.0f, referenceState);
 
+    // No ceiling on either of these. Which mode an instrument is tuned by is a
+    // property of the instrument; putting the render's Nyquist cutoff on it
+    // would let the host's clock retune the keyboard. See soundingMode.
+    constexpr float noCeiling = std::numeric_limits<float>::infinity();
+
     if (clamped == 0)
-        return soundingMode (referenceState, tuningStrikeRadius()).identity;
+        return soundingMode (referenceState, tuningStrikeRadius(), noCeiling).identity;
 
     const auto applied = parametersForOctave (controls, clamped);
     DrumState untransformed;
@@ -1870,7 +1920,7 @@ TaikoEngine::ModeIdentity TaikoEngine::tuningModeFor (int octaveOffset,
     resolveDrumGeometry (applied, std::exp2 (-body * amount),
                          std::exp2 (2.0f * (1.0f - body) * amount), 1.0f, canonical);
 
-    return soundingMode (canonical, tuningStrikeRadius()).identity;
+    return soundingMode (canonical, tuningStrikeRadius(), noCeiling).identity;
 }
 
 // The player's controls carried onto whichever of the four drums this octave
@@ -4180,12 +4230,16 @@ void TaikoEngine::getVisualState (DrumVisualState& destination) const noexcept
 
 TaikoEngine::DrumMeasurements TaikoEngine::measureDrum (int octaveOffset) const noexcept
 {
-    return measure (applied_, octaveOffset, 2.0f * pitchBend_);
+    // The engine's own prepared rate, because one of the figures - which
+    // partial the drum is heard at - is a question about what this instance
+    // will actually render.
+    return measure (applied_, octaveOffset, 2.0f * pitchBend_, sampleRate_);
 }
 
 TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& parameters,
                                                      int octaveOffset,
-                                                     float pitchBendSemitones) noexcept
+                                                     float pitchBendSemitones,
+                                                     double sampleRateHz) noexcept
 {
     const auto drum = resolveDrumFor (parameters, pitchBendSemitones, octaveOffset);
     const auto& entry = membraneModes()[0]; // the (0,1) mode
@@ -4234,8 +4288,17 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
     // played. The octave transform deliberately does not: it is anchored at the
     // centred stroke inside resolveDrumFor, so Strike Position stays a timbre
     // control and cannot retune the keyboard. See tuningStrikeRadius.
+    //
+    // Bounded to the modes this sample rate will actually put a resonator on.
+    // The drum has whatever modes it has, but the render refuses every one at
+    // or above 0.98 of Nyquist, and on a very small head at the tension ceiling
+    // that can be all of them - at which point this is zero, which is the
+    // marker for a drum with no membrane tone rather than a frequency. See
+    // soundingMode and DrumMeasurements::soundingHz.
     result.soundingHz =
-        soundingMode (drum, readoutStrikeRadius (sanitise (parameters))).frequencyHz;
+        soundingMode (drum, readoutStrikeRadius (sanitise (parameters)),
+                      renderedModeCeilingHz (sampleRateHz))
+            .frequencyHz;
 
     // How long a branch rings, with its own radiation share. Two branches of the
     // same mode differ a great deal on a sealed drum, because only the one that

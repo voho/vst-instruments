@@ -317,7 +317,15 @@ taikor::EngineParameters TaikorAudioProcessor::snapshotEngineParameters() const 
 taikor::TaikoEngine::DrumMeasurements TaikorAudioProcessor::measureDrum (
     int octaveOffset) const noexcept
 {
-    return taikor::TaikoEngine::measure (snapshotEngineParameters(), octaveOffset);
+    // The host's rate, because the pitch this reports has to be a partial the
+    // engine will actually instantiate at it - see TaikoEngine::soundingMode.
+    // Zero means the host has not prepared us yet, and then the measurement's
+    // own default stands.
+    const auto rate = displaySampleRate.load (std::memory_order_relaxed);
+    return rate > 0.0
+             ? taikor::TaikoEngine::measure (snapshotEngineParameters(), octaveOffset,
+                                             0.0f, rate)
+             : taikor::TaikoEngine::measure (snapshotEngineParameters(), octaveOffset);
 }
 
 void TaikorAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)

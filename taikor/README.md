@@ -706,9 +706,27 @@ thin film, a much smaller drum — it is the bottom step that goes: it reads
 between 33 and 327 cents instead of 1200, and the step above it takes up the
 difference, because the ō-daiko and the chū-daiko cross from their (1,1) to
 their fundamental at different settings and between those two points the two
-pads are being heard in different modes. Nothing there is a jump: every one of
-those errors moves smoothly with the control that caused it, and the four drums
-are exact octaves apart in the mode they are tuned by at every setting.
+pads are being heard in different modes. Every one of those errors moves
+smoothly with the control that caused it, and the four drums are exact octaves
+apart in the mode they are tuned by at every setting.
+
+The pitch never jumps anywhere in this control. The **drum** jumps once, and it
+has to. Sweeping Octave Body from *Tuned* to *Family*, the chū-daiko pad's
+latched mode changes hands at 0.3652: below it the pad is tuned by its (0,1),
+above it by its (1,1), and at that one ten-thousandth the solved head grows
+21.8 %, the tension halves and the tail goes from 2.5 to 3.5 seconds while the
+pitch stays at 119.32 Hz throughout. The handover is forced — *Family* needs the
+(1,1) or the factory grid is not octaves, *Tuned* needs the (0,1) or its first
+octave is 157 cents wide — and so, less obviously, is the fact that it is a
+step. The two candidate modes are set apart by their Bessel zeros, 3.8317 over
+2.4048, and everything else in the model only opens that ratio further; it is
+1.766 here. No drum this model can build has those two modes at the same
+frequency, so no continuous path of drums can carry the octave from one to the
+other without the loudest partial moving by that ratio somewhere along it.
+Morphing the geometry across a band was tried and measured: it does make the
+solved drum continuous, and it takes the pad up to 800 cents flat in the middle
+of the band. The step in the timbre is the cheaper of the two, and it is placed
+where the pitch is continuous through it.
 
 What is solved is the mode each drum is actually heard at, and that is not the
 same mode on all four of them. It used to be the drum's own lowest mode, and the
@@ -791,6 +809,15 @@ landed, where the close pair is standing, and what the model says the drum is �
 the pitch it is heard at, its breathing mode and its tail length — all read from
 the same solve the audio comes from.
 
+The pitch it names is always a partial the engine will actually build at the
+host's sample rate. A resonator at or above 0.98 of Nyquist is refused, and on
+the smallest tightest head this instrument reaches — 15 cm at the tension
+ceiling, on a thin film, transposed up an octave — the top pad's own fundamental
+is 25.6 kHz, which is above that at 44.1 and 48 kHz and below it at 96 and 192.
+Where a drum has no membrane mode the engine can sound at all, the display says
+**no pitch** rather than naming one nothing will play. It still has a body and a
+head continuum; what it does not have is a partial to be tuned to.
+
 The panel is drawn procedurally, so the project carries no binary image assets.
 
 ## Requirements
@@ -836,8 +863,11 @@ The JUCE-free suite covers the playing grid and its MIDI mapping — sixteen not
 and exact silence everywhere else — the four drums being four instruments rather
 than one rescaled, the four strokes being mutually distinct, the octave contract
 at every Octave Body setting including that the octave is an octave in the pitch
-the drum sounds, in the readout and in the rendered partial, that the tuning is
-continuous under automation — a fine sweep across three settings where two of a
+the drum sounds, in the readout and in the rendered partial, that Octave Body
+moves the drum smoothly everywhere except at the one latched-mode handover and
+moves the heard pitch nowhere at all, that the pitch the panel reports is always
+a partial the renderer will actually build at the host's sample rate, that the
+tuning is continuous under automation — a fine sweep across three settings where two of a
 drum's modes cross, asserting from rendered audio that no automation step moves
 the heard pitch by more than a fraction of what the step itself is worth — that
 the reported pitch is the pitch of the stroke actually being played across

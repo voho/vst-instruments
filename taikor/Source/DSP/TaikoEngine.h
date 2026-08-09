@@ -49,6 +49,11 @@ inline constexpr int lowestOctaveOffset = 0;
 inline constexpr int highestOctaveOffset = 3;
 inline constexpr int drumCount = highestOctaveOffset - lowestOctaveOffset + 1;
 
+// The rate the static measurement assumes when a caller has no host to ask.
+// It matters because which of a drum's modes the renderer can instantiate at
+// all is a question about the host's clock - see TaikoEngine::measure.
+inline constexpr double defaultSampleRate = 48000.0;
+
 struct ArticulationMetadata
 {
     Articulation articulation {};
@@ -303,6 +308,17 @@ public:
         // puts the factory keyboard on heard octaves; they part company on a
         // drum the controls have taken a long way from those, and where they do
         // it is this figure that is right about what you can hear.
+        //
+        // Zero means the drum has no membrane tone at this sample rate, and it
+        // is the only value in this struct that is a marker rather than a
+        // measurement. The renderer refuses every mode at or above 0.98 of
+        // Nyquist, and a very small head at the tension ceiling taken up the
+        // keyboard can put its *lowest* membrane mode past that: at Head
+        // Diameter 15 cm, Head Tension 1.0, a thin film and Pitch +12 the top
+        // pad's fundamental is 25565 Hz, which no 44.1 or 48 kHz host will ever
+        // sound. There is then no partial to name, and naming one anyway - as
+        // this used to, by ranking modes the renderer had already thrown away -
+        // is reporting a pitch that is not in the audio. See soundingMode.
         float soundingHz { 88.0f };
         // How long the drum audibly rings: the longer-lived of the two
         // axisymmetric branches, each solved with its own radiation share.
@@ -332,9 +348,17 @@ public:
     // The same measurement without an engine instance, so the editor can show
     // what drum the current controls describe without keeping a second copy of
     // the whole voice pool alive to ask.
+    //
+    // The sample rate is here because one of the figures depends on it:
+    // `soundingHz` names a partial the renderer will actually instantiate, and
+    // which partials those are is decided by the host's clock. Everything else
+    // in the struct describes the drum rather than the render and is the same
+    // at every rate. An instance uses its own prepared rate; a caller without
+    // one gets 48 kHz.
     [[nodiscard]] static DrumMeasurements measure (
         const EngineParameters& parameters, int octaveOffset,
-        float pitchBendSemitones = 0.0f) noexcept;
+        float pitchBendSemitones = 0.0f,
+        double sampleRateHz = defaultSampleRate) noexcept;
 
     // Contact time of a stroke in seconds, as the Hertz impact solve returns
     // it. Exposed because the velocity-to-timbre law is the single most
@@ -933,8 +957,21 @@ private:
         float weight { 0.0f };
         ModeIdentity identity {};
     };
+    // `ceilingHz` bounds the comparison to the modes the caller's question is
+    // about. The readout passes the renderer's own cutoff, so it can only name
+    // a partial that will be in the audio; the octave transform passes
+    // infinity, because which mode an instrument is tuned by is a property of
+    // the instrument and must not follow the host's clock. See the definition.
     [[nodiscard]] static SoundingMode soundingMode (const DrumState& drum,
-                                                    float strikeRadius) noexcept;
+                                                    float strikeRadius,
+                                                    float ceilingHz) noexcept;
+
+    // The highest frequency the render will instantiate a resonator at. This
+    // is configureResonator's own test, written once so the readout and the
+    // renderer cannot drift apart: a mode at or above it is silently dropped
+    // from the bank, so a readout that names one names a partial that is not
+    // in the audio.
+    [[nodiscard]] static float renderedModeCeilingHz (double sampleRateHz) noexcept;
 
     // The mode each octave of the family is tuned by: an identity latched from
     // the four instruments the table describes, and never re-chosen from the
@@ -945,6 +982,7 @@ private:
     // continuously. See the definition for what it does and does not depend on.
     [[nodiscard]] static ModeIdentity tuningModeFor (int octaveOffset,
                                                      float octaveBody) noexcept;
+
     // Where the octave transform takes its pitches from: a full open stroke on
     // the head with Strike Position centred. The transform is deliberately
     // anchored here rather than at the player's own strike position, so that

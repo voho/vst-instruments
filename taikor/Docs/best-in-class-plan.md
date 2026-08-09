@@ -2957,6 +2957,13 @@ eighty-six, and it is the Octave Body handover, which was already there: 0.3189
 before, 0.3589 after, 52.5 % and 50.1 % of the head's radius, with the sounding
 pitch continuous through it either way.
 
+> **Corrected by the fourth follow-up.** Recording that crossing as "already
+> there" and leaving it is what this section got wrong. It is a step of 52 % in
+> the solved head at one ten-thousandth of a control, and calling it survivable
+> because the pitch is continuous through it was not the same as showing it had
+> to be there. It does have to be there, and the fourth follow-up shows why with
+> an argument this section never made.
+
 The readout against the strike, from rendered audio, twelve takes:
 
 | | before | after |
@@ -3173,7 +3180,10 @@ under both, so nothing it records was an artefact.
   hundredths the one thing that moves is the chū-daiko's handover, by a single
   step: it was at 0.36 and is at 0.37. That control is the one whose whole job
   is to change which instrument an octave plays, the pitch is continuous
-  through it either way, and no rendered audio moves.
+  through it either way, and no rendered audio moves. (**Corrected by the
+  fourth follow-up**: "that control's whole job" is a reason the handover has
+  to happen, not a reason it has to be a step. The step is forced too, and by a
+  different argument — see below.)
 - `testThePitchTransformIsContinuousUnderAutomation`, `testTheReadoutFollowsThe`
   `StrikePosition`, `testTheFourDrumsStepInHeardOctaves` and
   `testTheFourDrumsAreFourInstruments` all pass unchanged. Nothing here touches
@@ -3391,6 +3401,220 @@ left channel is heard at 238.6 Hz and the right at 412.3 and the readout reports
 and one for the octave transform, and that split is exactly the shape of the
 defect the first follow-up removed. It wants the tuning identity taken off this
 function first.
+
+The per-fix audio previews under `Docs/audio/` are one-time review evidence and
+are not re-rendered here.
+
+### Step 6, fourth follow-up — the Octave Body handover, and a pitch nothing plays
+
+Two defects found by review of the step above. One is fixed; the other turns out
+to be a genuine trade the instrument has to make, and the interesting part of
+this section is the argument that says so — because two earlier passages, both
+corrected above, brushed past it.
+
+#### Defect C — the Octave Body handover is a step, and has to be
+
+Sweeping Octave Body at octave 1, factory settings otherwise, the solved drum
+steps at 0.3652:
+
+| Octave Body | radius (m) | tension (N/m) | loaded fundamental | soundingHz | tail |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.3600 | 0.4182 | 23240.5 | 119.32 | 119.32 | 2.48 s |
+| **0.3651** | **0.4154** | **22863.1** | **119.32** | 119.32 | 2.48 |
+| **0.3652** | **0.5059** | **11510.1** | **67.33** | 119.32 | 3.48 |
+| 0.3660 | 0.5056 | 11492.0 | 67.33 | 119.32 | 3.48 |
+
+Radius +21.80 %, tension −49.66 %, loaded fundamental −43.57 %, tail 2.48 → 3.48 s,
+in one ten-thousandth of the control. Swept in ten-thousandths across the whole
+range at all four octaves this is the **only** crossing there is: the worst step
+anywhere else is 4.30e−4 in the radius and 1.10e−3 in the tension, both at the
+*Tuned* end of octave 3 where the control's own gradient is steepest, and the
+heard pitch never moves by more than 4.8e−7 — a ten-thousandth of a cent —
+anywhere at all.
+
+**What was already known.** The handover is forced. *Family* needs the four
+octaves tuned by (1,1), (1,1), (0,1), (0,1) or the factory grid is not octaves;
+*Tuned* needs octave 1 on its (0,1) or its first octave is 157 cents wide
+instead of the documented ×13.49. No single assignment serves both ends. That
+argument shows the transition has to happen somewhere. It says nothing about
+whether it has to be a *step*, and both passages corrected above treated the two
+as the same claim. They are not.
+
+**What was missing, and is the actual reason.** The solve puts one named mode of
+a **one-parameter** family of drums exactly on the octave: Octave Body fixes the
+mixture and the bisection picks a point along it. The two candidate modes are the
+(0,1) and the (1,1), whose wavenumbers are the Bessel zeros 2.4048 and 3.8317, a
+ratio of 1.5934 fixed by the geometry of a circular membrane. Every other term in
+the model only opens that ratio further: the air load bears hardest on the lowest
+mode and pushes it down, the head's bending stiffness bears hardest on the higher
+one and pushes it up, and the cavity leaves the lower branch where the uncoupled
+head has it. Measured on this drum at the handover it is **1.766**.
+
+So there is no drum this model can build whose (0,1) and (1,1) are at the same
+frequency, and therefore no continuous path of drums from "the (0,1) is on the
+octave" to "the (1,1) is on the octave". Along any such path every partial moves
+by the full 1.766 while the reported pitch is the loudest of them, so wherever
+the two cross, the pitch jumps by that ratio — 975 cents — and if it crosses at
+neither end, it also glides most of the way there first. **Geometry continuity
+and an in-tune keyboard are incompatible at a mode handover.** One of them has
+to be given up, and it cannot be the tuning.
+
+**Measured, not argued.** The morph was implemented — both identities solved
+either side of the crossing, the transform between them interpolated with a
+smoothstep across a band 0.10 wide in Octave Body, resolved once at the blended
+amount so the result is a real drum rather than two drums averaged field by
+field. It does exactly what it was supposed to do to the geometry:
+
+| worst 0.0001 step, octave 1 | stepped | morphed |
+| --- | ---: | ---: |
+| radius | 21.80 % | **0.020 %** |
+| tension | 49.66 % | **0.130 %** |
+| loaded fundamental | 43.57 % | **0.086 %** |
+| **heard pitch** | **0.00004 %** | **76.5 %** |
+
+and it takes the pad out of tune to pay for it. The morphed drum's loudest
+partial, by the engine's own weights:
+
+| Octave Body | loudest | margin over the next | the key asks for |
+| ---: | ---: | ---: | ---: |
+| 0.3150 (below the band) | 119.32 Hz | 12.2 dB | 119.32 |
+| 0.3652 | **89.68** | 12.2 dB | 119.32 (−497 ¢) |
+| 0.3900 | **73.82** | 0.8 dB | 119.32 (−835 ¢) |
+| 0.4150 (above the band) | 119.32 | 1.4 dB | 119.32 |
+
+Five hundred to eight hundred cents flat over a tenth of the control's travel,
+with twelve decibels of margin — this is not a near-tie the readout is getting
+wrong, it is the drum. The morph also moved
+`testTheCavityIsAColumnNotAnInfiniteSpring`'s octave-1 corner at Octave Body
+0.35, which is that clause doing its job: it is a corner inside the band, and
+the drum under it had changed.
+
+A keyboard that plays a fifth to an octave flat across a stretch of a timbre
+control is a far worse instrument than one that changes timbre at a point, so
+**the morph was removed and the step stays**. It is placed where the pitch is
+continuous through it, which is the one place it can be inaudible in pitch: at
+0.3651 the pad is heard at 119.32 with 11.1 dB of margin and at 0.3652 it is
+heard at 119.32 with 0.7 dB of margin.
+
+What is left open is the only thing that could actually remove it: rendering
+both drums across the band and crossfading them in the audio. Every quantity a
+listener hears would then move smoothly and both drums sound 119.32, so the
+pitch would be exact throughout. It needs two modal banks per voice against a
+forty-resonator budget that is currently exactly full, and it makes "the
+radius" two numbers rather than one, so it is a piece of work rather than a fix.
+
+#### Defect D — the readout named a pitch the renderer never builds
+
+`configureResonator` refuses every mode at or above 0.98 of Nyquist and
+`buildVoiceModes` drops it before it gets that far, so which partials exist in
+the audio is a function of the host's clock. The comparison that picks the
+reported pitch ran over the whole modal bank regardless. At Head Diameter 15 cm,
+Head Tension 100 %, Head Material 0 %, Pitch +12, Octave Body 100 %, 48 kHz:
+
+| octave | reported, before | reported, after | |
+| ---: | ---: | ---: | --- |
+| 0 | 2466.33 | 2466.33 | ok |
+| 1 | 5097.77 | 5097.77 | ok |
+| 2 | 16793.35 | 16793.35 | ok |
+| **3** | **25565.09** | **no pitch** | above 0.98·Nyquist = 23520 Hz |
+
+`soundingMode` now takes a ceiling and skips anything at or above it, using
+exactly the test `buildVoiceModes` makes on exactly the same frequency. The
+readout passes the renderer's cutoff; **the octave transform passes infinity**,
+because which mode an instrument is tuned by is a property of the instrument and
+a keyboard that retuned itself when the host changed its clock would be a worse
+defect than the one being fixed. At infinity the function is bit-identical to
+what it was, so the tuning path does not move: the factory grid still reads
+59.659817 / 119.319633 / 238.639252 / 477.278503 Hz.
+
+`measure()` takes the sample rate, `measureDrum()` supplies the engine's own,
+and `TaikorAudioProcessor::measureDrum` supplies the host's.
+
+**What is reported when nothing survives, and why.** Zero, meaning *no membrane
+tone at this sample rate*, and the editor prints "no pitch" rather than
+"0.0 Hz". Three options were weighed:
+
+- *Report the lowest membrane mode anyway.* This is the defect. 25565.09 Hz at a
+  48 kHz host is a number the plug-in will never sound; the readout would be
+  describing a drum the instrument is not producing.
+- *Report the highest mode that does render.* At the reported corner none does,
+  so it does not answer the question at all — and where modes do render,
+  "highest" is the wrong ranking: the readout names the loudest partial, and the
+  highest surviving mode is usually twenty decibels down. It would corrupt the
+  figure everywhere to patch one corner.
+- *Say there is no membrane tone.* Chosen. It is the only one of the three that
+  is true. The drum is not silent there — the head's continuum and the shell
+  still sound — but it has no partial to be tuned to, and that is worth saying
+  rather than hiding behind a number.
+
+This does collide with the previous round's rule that the readout is always a
+positive frequency, and the collision is real rather than a bound that needed
+loosening. It is settled by measurement: swept over the drum controls at four
+sample rates, **every** drum that reports no pitch has an empty membrane bank,
+and **no** drum with a bank reports no pitch.
+
+| sample rate | drums swept | reporting no pitch | of those, with a non-empty bank |
+| ---: | ---: | ---: | ---: |
+| 44100 | 4608 | 68 | **0** |
+| 48000 | 4608 | 44 | **0** |
+| 96000 | 4608 | 4 | **0** |
+| 192000 | 4608 | 0 | **0** |
+
+The count falling to zero at 192 kHz is the shape the physics predicts: it is a
+statement about the host's clock and not about the drum. The reported corner
+reads 25565.09 Hz at 96 and 192 kHz, where the renderer does build it.
+
+#### Tests
+
+`testOctaveBodyHandsOverWithoutMovingThePitch` sweeps Octave Body in
+ten-thousandths across the whole range at every octave and asserts three things:
+the heard pitch never moves (bound 1e−5 relative, against 4.8e−7 measured), the
+solved geometry never moves by more than 2e−3 in one step **except** at a
+handover (against 4.30e−4 / 1.10e−3 measured away from one), and there is
+**exactly one** handover, at octave 1, at Octave Body 0.3652, with its size
+recorded. It also pins *Tuned*'s ×13.49 / ×4.05 / ×4.00 ladder and unmoving
+radius and *Family*'s four diameters, which are the two things the interior of
+the control is not allowed to buy smoothness with. The morph fails its pitch
+clause by 76.5 % against a bound of 0.001 %.
+
+`testTheReadoutNamesAPartialTheRendererBuilds` checks, at 44.1 / 48 / 96 and
+192 kHz, that every reported pitch is below the renderer's cutoff and matches a
+mode the engine actually built — read out of a triggered voice rather than from
+the arithmetic that produced the number, so a readout that agrees only with
+itself fails. It allows a quarter of a per cent for the degenerate split, whose
+lower member is always the one below the frequency the comparison ranks.
+Reverting the bound by hand fails the suite **27 times**; restoring it passes.
+
+`testTheReadoutIsAlwaysAFrequency` is **restated, not relaxed**. It asserted a
+positive frequency everywhere at one implicit sample rate. It now asserts an
+equivalence checked against the built bank: the readout is positive exactly
+where the renderer builds at least one membrane mode and zero exactly where it
+builds none, over the same 6336 drums. The original zero-hertz defect — a drum
+that sounds reported as having no pitch — fails it exactly as it did before, and
+98 of the 6336 are drums with no membrane mode at 48 kHz, every one of them a
+15 cm head carried up the keyboard or transposed two octaves sharp.
+
+#### Hard constraints, re-verified
+
+- **All 25 demonstration WAVs are byte-identical** to the committed ones,
+  rendered to a scratch directory and compared with `cmp`.
+- The factory grid is bit-identical: **59.659817 / 119.319633 / 238.639252 /
+  477.278503 Hz** at *Family*, stepping 1200.0000 / 1199.9999 / 1200.0000 cents,
+  and 59.659817 / 119.319626 / 238.639236 / 477.278473 at *Tuned*. Checked at
+  Octave Body 0, 0.5, 0.7 and 1.0.
+- *Tuned*'s tension ladder is ×13.4879 / ×4.0517 / ×4.0000 and its radius is
+  0.750000000 m at every octave; *Family*'s diameters are 150.0 / 78.0 / 40.0 /
+  30.0 cm.
+- `testThePitchTransformIsContinuousUnderAutomation`,
+  `testTheReadoutFollowsTheStrikePosition`, `testTheReadoutIsAlwaysAFrequency`,
+  `testTheFourDrumsStepInHeardOctaves`, `testTheFourDrumsAreFourInstruments`,
+  `testTheCavityIsAColumnNotAnInfiniteSpring` and the rest of the suite all
+  pass. Nothing in `testTheCavityIsAColumnNotAnInfiniteSpring` needed re-taking
+  once the morph was removed.
+- `Tests/PluginProcessorTests.cpp` needed no change and was checked by
+  inspection: its three measurement clauses read `loadedFundamentalHz`, which no
+  ceiling touches, and `soundingHz` on the default ō-daiko, which reads
+  59.659817 Hz at every supported rate. It compiles only on macOS CI.
 
 The per-fix audio previews under `Docs/audio/` are one-time review evidence and
 are not re-rendered here.

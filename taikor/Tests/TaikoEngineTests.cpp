@@ -2384,29 +2384,80 @@ void testTheReadoutNamesThePartialTheDrumIsHeardAt()
 // defect is a literal zero: there is no pitch to measure it against.
 void testTheReadoutIsAlwaysAFrequency()
 {
+    // What this guarantees, and it is not quite what it used to.
+    //
+    // It was written for a defect in which every weight on a small tight head
+    // underflowed to zero, nothing was ever accepted, and the panel printed
+    // 0.00 Hz for a drum that plainly sounds. It asserted the reported value was
+    // positive everywhere, at one implicit sample rate.
+    //
+    // That is now too strong to be true, and it was always too weak to be the
+    // point. Too strong, because the renderer refuses every mode at or above
+    // 0.98 of Nyquist, and on the smallest tightest heads this sweep reaches
+    // there is no membrane mode below it at all - the drum genuinely has no
+    // membrane tone at that rate, and the honest report is that rather than a
+    // number nothing can sound. Too weak, because "positive" never said the
+    // number was a partial of the drum.
+    //
+    // So the clause is now an equivalence, checked at four sample rates and
+    // against the bank the engine actually builds: the readout is positive
+    // exactly where the renderer builds at least one membrane mode, and zero
+    // exactly where it builds none. The original defect - a drum that sounds
+    // reported as having no pitch - fails it as it always did, on any of the
+    // 6336 drums below. Nothing here is relaxed: the drums that report no pitch
+    // are drums with an empty bank, and that is asserted rather than assumed.
+    // See testTheReadoutNamesAPartialTheRendererBuilds for the other half, which
+    // pins *which* partial is named.
     long total = 0;
-    long bad = 0;
+    long silent = 0;
+    long wrong = 0;
     std::string firstBad;
+
+    const auto rendersAnyMembraneMode = [] (const taikor::EngineParameters& parameters,
+                                            int octave, double sampleRate)
+    {
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (sampleRate, 256);
+        engine.reset();
+        engine.trigger (taikor::Articulation::Don, octave, 0.9f);
+        return ! taikor::TaikoEngineTestAccess::membraneFrequencies (engine).empty();
+    };
 
     const auto check = [&] (const taikor::EngineParameters& parameters,
                             const std::string& where)
     {
+        constexpr double sampleRate = 48000.0;
+
         for (int octave = taikor::lowestOctaveOffset;
              octave <= taikor::highestOctaveOffset; ++octave)
         {
             ++total;
             const auto reported =
-                taikor::TaikoEngine::measure (parameters, octave).soundingHz;
-            if (std::isfinite (reported) && reported > 0.0f)
+                taikor::TaikoEngine::measure (parameters, octave, 0.0f, sampleRate)
+                    .soundingHz;
+            const bool sounds = rendersAnyMembraneMode (parameters, octave, sampleRate);
+
+            if (! sounds)
+                ++silent;
+
+            if (std::isfinite (reported) && (reported > 0.0f) == sounds)
                 continue;
-            ++bad;
+
+            ++wrong;
             if (firstBad.empty())
                 firstBad = std::to_string (reported) + " Hz at " + where
-                         + ", octave " + std::to_string (octave);
+                         + ", octave " + std::to_string (octave)
+                         + (sounds ? ", on a drum the renderer does sound"
+                                   : ", on a drum with no membrane mode at all");
         }
     };
 
-    // The case that was reported, stated as itself so a regression names it.
+    // The case the zero-hertz defect was reported at, stated as itself so a
+    // regression names it. Measured at 48 kHz: octaves 0, 1 and 2 report
+    // 2466.33 / 5097.77 / 16793.35 Hz and each is that drum's own fundamental;
+    // octave 3's fundamental is 25565.08 Hz, above the renderer's 23520 Hz
+    // cutoff, so the bank is empty there and the readout says so.
     {
         auto parameters = defaultParameters();
         parameters.headDiameter = 0.15f;
@@ -2414,33 +2465,40 @@ void testTheReadoutIsAlwaysAFrequency()
         parameters.headMaterial = 0.0f;
         parameters.pitch = 12.0f;
         parameters.octaveBody = 1.0f;
+
         for (int octave = taikor::lowestOctaveOffset;
              octave <= taikor::highestOctaveOffset; ++octave)
         {
-            const auto reported =
-                taikor::TaikoEngine::measure (parameters, octave).soundingHz;
-            const auto measurements = taikor::TaikoEngine::measure (parameters, octave);
-            expect (std::isfinite (reported) && reported > 0.0f,
+            const auto measurements =
+                taikor::TaikoEngine::measure (parameters, octave, 0.0f, 48000.0);
+            const auto reported = measurements.soundingHz;
+            const bool sounds = rendersAnyMembraneMode (parameters, octave, 48000.0);
+
+            expect (std::isfinite (reported) && (reported > 0.0f) == sounds,
                     "a 15 cm head at the tension ceiling reports "
                         + std::to_string (reported) + " Hz at octave "
-                        + std::to_string (octave));
-            // And it is a mode of that drum rather than any number at all. On a
-            // head this small and this tight the mounting cannot reach the
-            // fundamental, so the fundamental is what it is heard at - the two
-            // agree to four decimal places at every octave here.
-            expect (std::abs (1200.0 * std::log2 (reported
-                                                  / measurements.loadedFundamentalHz))
-                        < 50.0,
-                    "the reported pitch is not one of this drum's modes: "
-                        + std::to_string (reported) + " against a fundamental of "
-                        + std::to_string (measurements.loadedFundamentalHz)
-                        + " Hz at octave " + std::to_string (octave));
+                        + std::to_string (octave) + ", where the renderer builds "
+                        + (sounds ? "a membrane bank" : "no membrane mode"));
+
+            // And where it reports a pitch it is a mode of that drum rather than
+            // any number at all. On a head this small and this tight the
+            // mounting cannot reach the fundamental, so the fundamental is what
+            // it is heard at - the two agree to four decimal places at every
+            // octave that has one here.
+            if (reported > 0.0f)
+                expect (std::abs (1200.0 * std::log2 (reported
+                                                      / measurements.loadedFundamentalHz))
+                            < 50.0,
+                        "the reported pitch is not one of this drum's modes: "
+                            + std::to_string (reported) + " against a fundamental of "
+                            + std::to_string (measurements.loadedFundamentalHz)
+                            + " Hz at octave " + std::to_string (octave));
         }
     }
 
     // And the sweep the case was found in. Coarser than the 891000-point one
-    // quoted above - that one takes a minute - but over the same corners, and
-    // it lands on the same failures.
+    // quoted in the plan - that one takes a minute - but over the same corners,
+    // and it lands on the same failures.
     for (const float diameter : { 0.15f, 0.60f, 1.50f, 1.80f })
         for (const float tension : { 0.0f, 0.5f, 1.0f })
             for (const float material : { 0.0f, 0.5f, 1.0f })
@@ -2494,9 +2552,385 @@ void testTheReadoutIsAlwaysAFrequency()
                                            + ", pitch " + std::to_string (pitch));
                             }
 
-    expect (bad == 0,
-            std::to_string (bad) + " of " + std::to_string (total)
-                + " drums report no pitch at all; the first is " + firstBad);
+    expect (wrong == 0,
+            std::to_string (wrong) + " of " + std::to_string (total)
+                + " drums disagree with their own bank about whether they have a "
+                  "pitch; the first is " + firstBad);
+    // Recorded, because a change that quietly stopped excluding anything would
+    // move it: 98 of the 6336 have no membrane mode at all at 48 kHz, every one
+    // of them a head of 15 cm carried up the keyboard or transposed two octaves
+    // sharp. The zero-hertz defect this test was written for showed on 340 of
+    // them, and on drums that sound.
+    expect (silent > 0 && silent < total / 20,
+            "the number of drums with no membrane mode at 48 kHz is "
+                + std::to_string (silent) + " of " + std::to_string (total));
+}
+
+// Octave Body hands the keyboard from one drum retuned to four instruments, and
+// somewhere in that travel the mode each octave is tuned by has to change hands.
+// This pins what that handover may and may not do.
+//
+// The handover is forced. Family needs octave 1 tuned by its (1,1) - that is
+// what puts the factory grid on heard octaves - and Tuned needs it tuned by its
+// (0,1), which is what makes the first octave there cost x13.49 in tension
+// rather than x4. No single assignment serves both ends.
+//
+// What is *not* obvious, and is the reason this test exists rather than a morph,
+// is that the handover cannot be spread out. The solve puts one named mode of a
+// one-parameter family of drums exactly on the octave. The two candidate modes
+// are the (0,1) and the (1,1), whose wavenumbers are fixed Bessel zeros in the
+// ratio 3.8317 / 2.4048 = 1.5934, and every other term in the model - the air
+// load, which bears on the lower mode hardest, and the head's bending stiffness,
+// which bears on the higher one hardest - only opens that ratio further. It is
+// 1.766 on this drum at the handover. So no drum this model can build has its
+// (0,1) and its (1,1) at the same frequency, and therefore no continuous path of
+// drums can carry the octave from one to the other: somewhere along it the
+// loudest partial must jump by the gap between them.
+//
+// Measured, by morphing the solved transform across a band 0.10 wide in Octave
+// Body: the geometry did go continuous - the worst 0.0001 step fell from 21.80 %
+// to 0.02 % in the radius and from 49.66 % to 0.13 % in the tension - and the
+// drum went 800 cents flat doing it. At Octave Body 0.3652 the morphed drum's
+// loudest partial sits at 89.68 Hz, 12.2 dB clear of everything else, where the
+// key asks for 119.32; at 0.3900 it is 73.82 Hz. The reported pitch then steps
+// 76.5 % where the two partials finally cross. A keyboard that plays a fifth to
+// an octave flat over a tenth of a control is a far worse instrument than one
+// that changes timbre at a point, so the step stays and this is what guards the
+// trade.
+//
+// So: the pitch may not move anywhere, the geometry may not move except at the
+// handovers, and there is exactly one handover.
+void testOctaveBodyHandsOverWithoutMovingThePitch()
+{
+    // Away from a handover the solved drum is a smooth function of Octave Body,
+    // and this is what "smooth" measures out at over the whole sweep: the
+    // steepest 0.0001 step anywhere is 4.30e-4 in the radius and 1.10e-3 in the
+    // tension, both at the Tuned end of octave 3 where the control's own
+    // gradient is worst. Two parts in a thousand is that with a little room.
+    constexpr double geometryStep = 2.0e-3;
+    // The pitch, by contrast, must not move at all. The worst step measured
+    // over all four octaves is 4.8e-7 - a ten-thousandth of a cent, which is
+    // float noise in the bisection - so a hundredth of a cent is four orders of
+    // margin and still catches anything real. The rejected morph moved it by
+    // 76.5 % here.
+    constexpr double pitchStep = 1.0e-5;
+
+    struct Handover
+    {
+        int octave;
+        float body;
+        double radius, tension, fundamental;
+    };
+    std::vector<Handover> handovers;
+
+    double worstRadius = 0.0, worstTension = 0.0, worstFundamental = 0.0;
+    double worstPitch = 0.0;
+
+    for (int octave = taikor::lowestOctaveOffset; octave <= taikor::highestOctaveOffset;
+         ++octave)
+    {
+        taikor::EngineParameters parameters = defaultParameters();
+        parameters.octaveBody = 0.0f;
+        auto previous = taikor::TaikoEngine::measure (parameters, octave);
+
+        for (int step = 1; step <= 10000; ++step)
+        {
+            parameters.octaveBody = static_cast<float> (step) * 0.0001f;
+            const auto here = taikor::TaikoEngine::measure (parameters, octave);
+
+            const double radius = std::abs (here.radiusMetres / previous.radiusMetres - 1.0);
+            const double tension = std::abs (here.tensionNewtonsPerMetre
+                                             / previous.tensionNewtonsPerMetre - 1.0);
+            const double fundamental = std::abs (here.loadedFundamentalHz
+                                                 / previous.loadedFundamentalHz - 1.0);
+            const double pitch = std::abs (here.soundingHz / previous.soundingHz - 1.0);
+
+            // A handover is a step in the geometry, and it is allowed to be one.
+            // Everywhere else the three have to move like a function of a
+            // control rather than like a switch.
+            if (radius > geometryStep || tension > geometryStep
+                || fundamental > geometryStep)
+            {
+                handovers.push_back ({ octave, parameters.octaveBody,
+                                       100.0 * (here.radiusMetres / previous.radiusMetres - 1.0),
+                                       100.0 * (here.tensionNewtonsPerMetre
+                                                / previous.tensionNewtonsPerMetre - 1.0),
+                                       100.0 * (here.loadedFundamentalHz
+                                                / previous.loadedFundamentalHz - 1.0) });
+            }
+            else
+            {
+                worstRadius = std::max (worstRadius, radius);
+                worstTension = std::max (worstTension, tension);
+                worstFundamental = std::max (worstFundamental, fundamental);
+            }
+
+            // The pitch is exempt from nothing. This is the clause the morph
+            // failed, and it is the reason the geometry step is kept.
+            expect (pitch < pitchStep,
+                    "the heard pitch moved " + std::to_string (100.0 * pitch)
+                        + " % in one 0.0001 step of Octave Body, at "
+                        + std::to_string (parameters.octaveBody) + ", octave "
+                        + std::to_string (octave));
+            worstPitch = std::max (worstPitch, pitch);
+
+            previous = here;
+        }
+    }
+
+    expect (worstRadius < geometryStep && worstTension < geometryStep
+                && worstFundamental < geometryStep,
+            "the solved drum is not smooth away from the handovers: radius "
+                + std::to_string (worstRadius) + ", tension "
+                + std::to_string (worstTension) + ", fundamental "
+                + std::to_string (worstFundamental));
+    expect (worstPitch < pitchStep,
+            "the heard pitch is not constant across Octave Body: worst step "
+                + std::to_string (worstPitch));
+
+    // Exactly one handover in the whole control, on one octave, recorded where
+    // it is and how big it is. Two would mean the family had grown a crossing;
+    // none would mean the identity latch had stopped depending on the one
+    // control it is allowed to depend on, and Tuned or Family would be wrong.
+    expect (handovers.size() == 1,
+            "the number of latched-mode handovers across Octave Body is "
+                + std::to_string (handovers.size()) + ", recorded as 1");
+
+    if (handovers.size() == 1)
+    {
+        const auto& only = handovers.front();
+        // Measured: octave 1, Octave Body 0.3652, radius +21.7977 %, tension
+        // -49.6566 %, loaded fundamental -43.5718 %. The tolerances are wide
+        // because what is being pinned is where the crossing is and roughly how
+        // big, not the last digit of a solve.
+        expect (only.octave == 1,
+                "the handover moved to octave " + std::to_string (only.octave));
+        expect (std::abs (only.body - 0.3652f) < 0.01f,
+                "the handover moved to Octave Body " + std::to_string (only.body)
+                    + ", recorded at 0.3652");
+        expect (std::abs (only.radius - 21.7977) < 2.0
+                    && std::abs (only.tension + 49.6566) < 2.0
+                    && std::abs (only.fundamental + 43.5718) < 2.0,
+                "the handover changed size: radius " + std::to_string (only.radius)
+                    + " %, tension " + std::to_string (only.tension)
+                    + " %, fundamental " + std::to_string (only.fundamental) + " %");
+    }
+
+    // And the two ends of the control, which are the two things the interior is
+    // not allowed to buy its smoothness with. Tuned's tension ladder is the
+    // documented x13.49 / x4.05 / x4.00 and its radius never moves; Family's
+    // four diameters are the instruments the table names.
+    {
+        auto tuned = defaultParameters();
+        tuned.octaveBody = 0.0f;
+        auto family = defaultParameters();
+        family.octaveBody = 1.0f;
+
+        const double ladder[3] = { 13.4879, 4.0517, 4.0000 };
+        double previousTension = 0.0;
+
+        for (int octave = taikor::lowestOctaveOffset;
+             octave <= taikor::highestOctaveOffset; ++octave)
+        {
+            const auto atTuned = taikor::TaikoEngine::measure (tuned, octave);
+            expect (std::abs (atTuned.radiusMetres - 0.75f) < 1.0e-4f,
+                    "Tuned moved the drum's size at octave " + std::to_string (octave));
+
+            if (previousTension > 0.0)
+            {
+                const auto index =
+                    static_cast<std::size_t> (octave - taikor::lowestOctaveOffset - 1);
+                const double ratio = atTuned.tensionNewtonsPerMetre / previousTension;
+                expect (std::abs (ratio - ladder[index]) < ladder[index] * 0.001,
+                        "Tuned's tension ladder step into octave "
+                            + std::to_string (octave) + " is "
+                            + std::to_string (ratio) + ", recorded as "
+                            + std::to_string (ladder[index]));
+            }
+            previousTension = atTuned.tensionNewtonsPerMetre;
+
+            const auto& description = taikor::getDrumDescription (octave);
+            expect (std::abs (2.0f * taikor::TaikoEngine::measure (family, octave)
+                                         .radiusMetres
+                              - description.headDiameterMetres)
+                        < 0.005f,
+                    "Family is not the instrument the table names at octave "
+                        + std::to_string (octave));
+        }
+    }
+}
+
+// Whatever the readout names, the renderer has to be able to build it.
+//
+// configureResonator refuses every mode at or above 0.98 of Nyquist and
+// buildVoiceModes drops it before it gets that far, so the set of partials that
+// exist in the audio is a function of the host's clock. The comparison that
+// picks the reported pitch used to run over the whole modal bank regardless, and
+// on a small head at the tension ceiling that let it name a partial nothing
+// would ever sound: at Head Diameter 15 cm, Head Tension 1.0, Head Material 0
+// and Pitch +12, the top pad's own fundamental is 25565.09 Hz and the panel
+// printed it at a 48 kHz host, where nothing at or above 23520 Hz is
+// instantiated.
+//
+// This is measured against the bank the engine actually builds - triggered at
+// the rate in question and read out of the voice - rather than against the same
+// arithmetic that produced the number, so a readout that agreed with itself and
+// with nothing else fails it.
+void testTheReadoutNamesAPartialTheRendererBuilds()
+{
+    // The degenerate pairs are split by up to 0.24 %, and the lower member of
+    // each pair is always the one below the undetuned frequency the comparison
+    // ranks - so a mode the comparison admits is always built, and the built
+    // copy can sit a quarter of a per cent low. Half a per cent is that with
+    // room and is far tighter than the gap between any two modes of this head.
+    constexpr double splitTolerance = 0.005;
+
+    const auto builtMembraneModes = [] (const taikor::EngineParameters& parameters,
+                                        int octave, double sampleRate)
+    {
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (sampleRate, 256);
+        engine.reset();
+        engine.trigger (taikor::Articulation::Don, octave, 0.9f);
+        return taikor::TaikoEngineTestAccess::membraneFrequencies (engine);
+    };
+
+    long total = 0;
+    long silent = 0;
+    std::string firstBad;
+
+    const auto check = [&] (const taikor::EngineParameters& parameters,
+                            double sampleRate, const std::string& where)
+    {
+        const auto ceiling = 0.98 * 0.5 * sampleRate;
+
+        for (int octave = taikor::lowestOctaveOffset;
+             octave <= taikor::highestOctaveOffset; ++octave)
+        {
+            ++total;
+            const auto reported =
+                taikor::TaikoEngine::measure (parameters, octave, 0.0f, sampleRate)
+                    .soundingHz;
+            const auto built = builtMembraneModes (parameters, octave, sampleRate);
+
+            const auto fail = [&] (const std::string& what)
+            {
+                if (firstBad.empty())
+                    firstBad = what + " at " + where + ", octave "
+                             + std::to_string (octave) + ", "
+                             + std::to_string (sampleRate) + " Hz";
+                expect (false, what + " at " + where + ", octave "
+                                   + std::to_string (octave) + ", "
+                                   + std::to_string (sampleRate) + " Hz");
+            };
+
+            if (! std::isfinite (reported) || reported < 0.0f)
+            {
+                fail ("the readout is not a frequency: " + std::to_string (reported));
+                continue;
+            }
+
+            if (reported <= 0.0f)
+            {
+                // No pitch reported. That is only honest if the renderer really
+                // does build no membrane mode here - see the plan for why "no
+                // membrane tone at this sample rate" is reported as its own
+                // state rather than as the lowest mode of a drum that cannot be
+                // heard.
+                ++silent;
+                if (! built.empty())
+                    fail ("the readout reports no pitch on a drum whose bank has "
+                          + std::to_string (built.size()) + " membrane modes, the "
+                          "lowest at " + std::to_string (built.front()) + " Hz");
+                continue;
+            }
+
+            if (built.empty())
+            {
+                fail ("the readout reports " + std::to_string (reported)
+                      + " Hz on a drum the renderer builds no membrane mode for");
+                continue;
+            }
+
+            if (! (static_cast<double> (reported) < ceiling))
+            {
+                fail ("the readout reports " + std::to_string (reported)
+                      + " Hz, at or above the renderer's cutoff of "
+                      + std::to_string (ceiling));
+                continue;
+            }
+
+            bool matched = false;
+            for (const float frequency : built)
+                if (std::abs (static_cast<double> (frequency)
+                              / static_cast<double> (reported) - 1.0) < splitTolerance)
+                    matched = true;
+
+            if (! matched)
+                fail ("the readout reports " + std::to_string (reported)
+                      + " Hz, which is not a mode the renderer built");
+        }
+    };
+
+    for (const double sampleRate : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    {
+        // The case that was reported, stated as itself so a regression names it.
+        // Measured: octaves 0, 1 and 2 report 2466.33 / 5097.77 / 16793.35 Hz at
+        // every rate; octave 3's own fundamental is 25565.09 Hz, which is above
+        // the cutoff at 44.1 and 48 kHz and below it at 96 and 192, so the
+        // readout has a pitch there at the two high rates and none at the two
+        // low ones.
+        {
+            auto parameters = defaultParameters();
+            parameters.headDiameter = 0.15f;
+            parameters.tension = 1.0f;
+            parameters.headMaterial = 0.0f;
+            parameters.pitch = 12.0f;
+            parameters.octaveBody = 1.0f;
+            check (parameters, sampleRate, "the reported 15 cm head");
+
+            const auto top =
+                taikor::TaikoEngine::measure (parameters, 3, 0.0f, sampleRate).soundingHz;
+            const bool rendersHere = sampleRate > 2.0 * 25565.09 / 0.98;
+            expect (rendersHere ? std::abs (top - 25565.09f) < 1.0f : ! (top > 0.0f),
+                    "the reported case's top pad reads " + std::to_string (top)
+                        + " Hz at " + std::to_string (sampleRate)
+                        + " Hz, where its only membrane mode is 25565.09");
+        }
+
+        // And the corners the case was found in.
+        for (const float diameter : { 0.15f, 0.60f, 1.50f, 1.80f })
+            for (const float tension : { 0.0f, 0.5f, 1.0f })
+                for (const float material : { 0.0f, 1.0f })
+                    for (const float pitch : { -24.0f, 0.0f, 12.0f, 24.0f })
+                        for (const float body : { 0.0f, 1.0f })
+                        {
+                            auto parameters = defaultParameters();
+                            parameters.headDiameter = diameter;
+                            parameters.tension = tension;
+                            parameters.headMaterial = material;
+                            parameters.pitch = pitch;
+                            parameters.octaveBody = body;
+                            check (parameters, sampleRate,
+                                   "diameter " + std::to_string (diameter)
+                                       + ", tension " + std::to_string (tension)
+                                       + ", material " + std::to_string (material)
+                                       + ", pitch " + std::to_string (pitch)
+                                       + ", body " + std::to_string (body));
+                        }
+    }
+
+    expect (firstBad.empty(),
+            "the readout named something the renderer does not build; the first is "
+                + firstBad);
+    // The count is recorded because a change that quietly stopped excluding
+    // anything would move it: 68 of the swept drums have no membrane mode at all
+    // at 44.1 kHz, 44 at 48 kHz, 4 at 96 kHz and none at 192 kHz - 116 in all
+    // over the four rates, out of 1540 measurements.
+    expect (silent > 0 && silent < total / 4,
+            "the number of drums with no membrane tone at their sample rate is "
+                + std::to_string (silent) + " of " + std::to_string (total));
 }
 
 void testTheDrumIsTunedByThePitchItSounds()
@@ -5611,6 +6045,8 @@ int main()
     testTheReadoutFollowsTheStrikePosition();
     testTheReadoutNamesThePartialTheDrumIsHeardAt();
     testTheReadoutIsAlwaysAFrequency();
+    testTheReadoutNamesAPartialTheRendererBuilds();
+    testOctaveBodyHandsOverWithoutMovingThePitch();
     testEveryArticulationAndSampleRate();
     testSampleRateConsistency();
     testTheContinuumDoesNotDependOnTheSampleRate();
