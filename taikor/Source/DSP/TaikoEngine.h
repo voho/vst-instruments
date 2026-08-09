@@ -753,6 +753,15 @@ private:
         // a mode is long enough to move them.
         float mountLoss { 0.0f };
         float mountCorner { 80.0f };
+        // How long a full open stroke stays on this head, as the Hertz impact
+        // solve returns it for the neutral impact speed. A stroke is a force
+        // pulse of finite length, not an impulse, so it cannot drive a mode
+        // whose period is shorter than the contact: everything above about
+        // 1/tau comes out of the stroke already attenuated. That is the whole
+        // of why a felt beater sounds dull, and it is the term that decides
+        // which mode is loudest whenever two of them straddle 1/tau - see
+        // observeMode and contactSpectrum.
+        float contactSeconds { 0.0015f };
     };
 
     [[nodiscard]] static EngineParameters sanitise (
@@ -861,6 +870,14 @@ private:
     // that outlasts it are not ranked by level alone.
     static constexpr float pitchWindowStart = 0.08f;
     static constexpr float pitchWindowEnd = 0.98f;
+
+    // How much of a stroke reaches a mode at `omegaTau`, where tau is the
+    // contact time: the magnitude of the Hertz force pulse's own transform,
+    // normalised at zero. The pulse the render drives the bank with is a
+    // sin^1.5 arch of length tau, so this is
+    //   |integral of sin(pi u)^1.5 e^(-i x u) du over [0,1]| / (2.3963 / pi),
+    // which has no elementary closed form and is fitted here.
+    [[nodiscard]] static float contactSpectrum (float omegaTau) noexcept;
 
     // One membrane mode of a resolved drum: where it is, what a stroke at
     // `strikeRadius` is worth in it at the microphones, how fast it empties,

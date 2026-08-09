@@ -2015,6 +2015,310 @@ void testTheReadoutFollowsTheStrikePosition()
     (void) worstShare;
 }
 
+// The strongest partial of a take, found blind, with the bias taken out of the
+// search.
+//
+// blindStrongestPartial above walks the band in constant *ratio* steps and then
+// refines around whichever step read highest. A window of fixed length has a
+// fixed resolution in hertz - 1.11 Hz over 0.9 s - so a constant-ratio step is
+// a wider and wider slice of it the higher it lands: at 68 Hz a step of 1.005
+// is an eighth of the window's own width and costs a peak 0.2 dB, and at 228 Hz
+// the same step is a whole width and costs it up to 4 dB. Refining only the
+// coarse winner cannot undo that, because the comparison that chose the winner
+// has already happened. It is enough to decide a near-tie the wrong way and it
+// always decides it for the lower partial, which is exactly the direction that
+// would flatter the clauses below.
+//
+// So every local maximum of the coarse pass within ten decibels of the best is
+// refined on its own, and the comparison happens between the refined values.
+// Checked against a 262144-point transform of the same window - which has no
+// search in it at all - over twenty-four takes spread across the four drums,
+// this agrees on every one and the single-pass search does not.
+double strongestPartialUnbiased (const std::vector<float>& channel, double lowHz,
+                                 double highHz, double sampleRate,
+                                 std::size_t first, std::size_t last)
+{
+    const auto power = [&] (double frequency)
+    {
+        const auto magnitude =
+            binMagnitude (channel, frequency, sampleRate, first, last);
+        return magnitude * magnitude;
+    };
+
+    std::vector<std::pair<double, double>> coarse;
+    double coarseBest = 0.0;
+    for (double frequency = lowHz; frequency <= highHz; frequency *= 1.002)
+    {
+        const auto here = power (frequency);
+        coarse.push_back ({ frequency, here });
+        coarseBest = std::max (coarseBest, here);
+    }
+
+    const double gate = coarseBest * 0.1;    // ten decibels
+    double best = -1.0;
+    double bestFrequency = lowHz;
+
+    for (std::size_t index = 1; index + 1 < coarse.size(); ++index)
+    {
+        if (coarse[index].second < gate) continue;
+        if (! (coarse[index].second >= coarse[index - 1].second
+               && coarse[index].second >= coarse[index + 1].second))
+            continue;
+
+        double localBest = coarse[index].second;
+        double localFrequency = coarse[index].first;
+        for (double step : { 1.0006, 1.00015, 1.00004 })
+            for (int around = -4; around <= 4; ++around)
+            {
+                const auto frequency = localFrequency * std::pow (step, around);
+                const auto here = power (frequency);
+                if (here > localBest) { localBest = here; localFrequency = frequency; }
+            }
+
+        if (localBest > best) { best = localBest; bestFrequency = localFrequency; }
+    }
+
+    return bestFrequency;
+}
+
+// The strongest bin within `cents` of a frequency. Used to ask what the rendered
+// take has at the frequency the readout names, with an allowance for the attack
+// glide: the head is still stretched when the pitch window opens, so every
+// membrane partial sits sharp of where it settles. It is the same *ratio* on all
+// of them, because a tension shift scales the whole head at once, and measured
+// over this family it reaches eleven cents. Reading at exactly the settled
+// frequency therefore measures the drum on the low partials and the window's own
+// 1.11 Hz resolution on the high ones - eleven cents is a quarter of a hertz at
+// 68 Hz and one and a half hertz at 336 - which is a property of the estimator
+// and not of the instrument.
+double bandMagnitude (const std::vector<float>& channel, double centreHz,
+                      double cents, double sampleRate, std::size_t first,
+                      std::size_t last)
+{
+    double best = 0.0;
+    const double low = centreHz * std::exp2 (-cents / 1200.0);
+    const double high = centreHz * std::exp2 (cents / 1200.0);
+    for (double frequency = low; frequency <= high; frequency *= 1.0004)
+        best = std::max (best, binMagnitude (channel, frequency, sampleRate, first, last));
+    return best;
+}
+
+// The readout has to name the partial the drum is actually heard at, and it has
+// to keep doing it when the stick and the microphones move.
+//
+// This is the third defect of the same shape. The readout used to evaluate one
+// fixed stroke whatever Strike Position said (fixed above); then it followed the
+// stroke but compared only the modes below the head's third radial order, and
+// weighted each of them as though a bachi were an impulse. Reported against
+// rendered audio, octave 1, Don at 0.85, Strike Position +0.50 with the pair
+// coincident: heard 68.3 Hz, reported 227.2 Hz, 2081 cents apart.
+//
+// Two things were wrong and one thing was not.
+//
+// Not wrong: the ten decibels the reported frequency appeared to be down in the
+// take. That is the attack glide moving the partial nine cents sharp of where
+// the model puts it, read through a window whose own resolution is 1.11 Hz -
+// nine cents is 1.2 Hz at 227 Hz and a quarter of a hertz at 68. Measured where
+// it actually sounds, the partial the old readout named is 0.4 dB off the
+// strongest in that take. See soundingMode.
+//
+// Wrong, first: the bound. The o-daiko struck at its middle is heard at its
+// (0,3) lower branch and the chu-daiko with the pair backed off at its (1,3),
+// and a comparison that stopped at the third radial order could not name either.
+// Wrong, second: the stroke. A bachi rests on the head for one to six
+// milliseconds depending on how hard it is, and a force pulse that long cannot
+// drive a mode whose period is not much longer than it. Leaving that out put the
+// chu-daiko's (1,2) nine decibels above where the rendered take has it under a
+// felt beater, and it is what decided the reported case.
+//
+// What is asserted, from rendered audio and from nothing the engine says about
+// itself:
+void testTheReadoutNamesThePartialTheDrumIsHeardAt()
+{
+    constexpr double sampleRate = 48000.0;
+    const auto first = static_cast<std::size_t> (0.08 * sampleRate);
+    const auto last = first + static_cast<std::size_t> (0.90 * sampleRate);
+    const auto rendered = static_cast<int> (1.10 * sampleRate);
+
+    // Six strokes: both of the open articulations at three velocities each, the
+    // same set testTheFourDrumsStepInHeardOctaves uses. A drum whose strongest
+    // partial is the same one however it is struck has a pitch and the readout
+    // has to be on it. One stroke of the six landing elsewhere is a near-tie
+    // falling the other way and is allowed; two or more means the pitch depends
+    // on how the drum is hit, and then no single number can be right and this
+    // says so instead of pretending.
+    struct Stroke { taikor::Articulation articulation; float velocity; };
+    const Stroke strokes[] = {
+        { taikor::Articulation::Don, 0.35f }, { taikor::Articulation::Don, 0.85f },
+        { taikor::Articulation::Don, 1.00f }, { taikor::Articulation::Tsu, 0.35f },
+        { taikor::Articulation::Tsu, 0.85f }, { taikor::Articulation::Tsu, 1.00f },
+    };
+
+    // The region the defect lives in: the strike walked across the head, crossed
+    // with the two microphone controls, on all four drums, plus the corners of
+    // Pitch, Head Tension and Bachi Hardness that move which mode wins. Every
+    // one of these was found by sweeping, not chosen: the settings marked below
+    // are the ones the pre-fix engine gets wrong.
+    struct Setting { int octave; float strike, spread, distance, pitch, tension, bachi; };
+    const auto at = [] (int octave, float strike, float spread, float distance)
+    { return Setting { octave, strike, spread, distance, 0.0f, 0.62f, 0.7f }; };
+
+    const Setting settings[] = {
+        // The reported case, and its neighbours across the strike.
+        at (1, 0.50f, 0.00f, 0.35f),      // reported 227.2 against 68.3 before
+        at (1, 0.25f, 0.00f, 0.35f),
+        at (1, 0.00f, 0.00f, 0.35f),
+        at (1, -0.50f, 0.00f, 0.35f),
+        at (1, 0.00f, 0.55f, 0.35f),      // the factory stroke and pair
+        at (1, 0.50f, 0.55f, 0.35f),
+        // The o-daiko, where the (0,3) branch takes over.
+        at (0, -0.50f, 0.55f, 0.00f),     // reported 85.8 against 140.0 before
+        at (0, -0.25f, 0.55f, 0.00f),     // reported 85.8 against 140.0 before
+        at (0, 0.75f, 0.00f, 0.00f),      // reported 115.3 against 140.1 before
+        at (0, 1.00f, 0.00f, 0.00f),      // reported 59.7 against 140.1 before
+        at (0, 0.00f, 0.55f, 0.35f),
+        at (0, -0.50f, 0.00f, 0.35f),
+        // The two small drums, which are heard at their fundamentals and must
+        // stay there.
+        at (2, 0.00f, 0.55f, 0.35f),
+        at (2, 1.00f, 0.00f, 0.35f),
+        at (3, 0.00f, 0.55f, 0.35f),
+        at (3, 1.00f, 0.00f, 0.35f),
+        // Pitch and Head Tension taken to their corners on the o-daiko.
+        { 0, -0.50f, 0.55f, 0.35f, -7.0f, 0.62f, 0.7f },   // 57.1 against 94.2
+        { 0, -0.50f, 0.55f, 0.35f, 0.0f, 0.40f, 0.7f },    // 57.7 against 102.3
+        // A felt beater, which is where the contact time matters most.
+        { 1, 0.50f, 0.00f, 0.35f, 0.0f, 0.62f, 0.0f },
+        { 0, 0.00f, 0.55f, 0.35f, 0.0f, 0.62f, 0.0f },
+    };
+
+    int pitched = 0;
+    double worstPitchedCents = 0.0;
+    double worstShare = 1.0;
+
+    for (const auto& setting : settings)
+    {
+        auto parameters = defaultParameters();
+        // Humanise off, for the reason readoutStrikeRadius gives: the readout
+        // describes the stroke the controls ask for, not the scatter around it.
+        parameters.humanise = 0.0f;
+        parameters.strikePosition = setting.strike;
+        parameters.micSpread = setting.spread;
+        parameters.micDistance = setting.distance;
+        parameters.pitch = setting.pitch;
+        parameters.tension = setting.tension;
+        parameters.bachiHardness = setting.bachi;
+
+        const auto reported =
+            taikor::TaikoEngine::measure (parameters, setting.octave).soundingHz;
+
+        const auto where =
+            ", octave " + std::to_string (setting.octave) + ", strike "
+            + std::to_string (setting.strike) + ", spread "
+            + std::to_string (setting.spread) + ", distance "
+            + std::to_string (setting.distance) + ", pitch "
+            + std::to_string (setting.pitch) + ", tension "
+            + std::to_string (setting.tension) + ", bachi "
+            + std::to_string (setting.bachi);
+
+        // The band is fixed by the octave and by nothing the engine reports, so
+        // a readout that has gone wrong cannot narrow the search that catches it.
+        const double nominal =
+            59.66 * std::pow (2.0, static_cast<double> (setting.octave));
+        const double lowHz = nominal * 0.25, highHz = nominal * 6.0;
+
+        std::array<double, 6> heard {};
+        std::vector<float> reference;
+        for (std::size_t index = 0; index < heard.size(); ++index)
+        {
+            const auto take = strike (parameters, strokes[index].articulation,
+                                      setting.octave, strokes[index].velocity,
+                                      sampleRate, rendered);
+            expect (take.finite, "the take is not finite" + where);
+            // The left channel rather than the pair summed: observeMode's
+            // microphone term is the left capsule's, and a mono sum of two
+            // capsules that have landed on two different partials of a near-tie
+            // is a spectrum neither of them has.
+            heard[index] = strongestPartialUnbiased (take.left, lowHz, highHz,
+                                                     sampleRate, first, last);
+            if (strokes[index].articulation == taikor::Articulation::Don
+                && strokes[index].velocity == 0.85f)
+                reference = take.left;
+        }
+
+        // The largest group of strokes that agree within 50 cents, and where
+        // they agree.
+        int agreeing = 0;
+        double centre = heard[0];
+        for (const double candidate : heard)
+        {
+            int count = 0;
+            double product = 1.0;
+            for (const double other : heard)
+                if (std::abs (1200.0 * std::log2 (other / candidate)) <= 50.0)
+                {
+                    ++count;
+                    product *= other;
+                }
+            if (count > agreeing)
+            {
+                agreeing = count;
+                centre = std::pow (product, 1.0 / static_cast<double> (count));
+            }
+        }
+
+        if (agreeing >= 5)
+        {
+            ++pitched;
+            const auto cents = 1200.0 * std::log2 (reported / centre);
+            worstPitchedCents = std::max (worstPitchedCents, std::abs (cents));
+            // Twenty-five cents. Swept over 704 settings - the strike crossed
+            // with both microphone controls on all four drums, and Pitch, Head
+            // Tension and Bachi Hardness crossed with the strike - the worst
+            // this reads on a setting that has a pitch is 14 cents, and what is
+            // in it is the attack glide: the readout names the frequency the
+            // head settles at and the window opens while it is still sharp.
+            // Before the fix the same sweep read 1478 cents.
+            expect (std::abs (cents) < 25.0,
+                    "the readout is not on the partial the drum is heard at: "
+                        + std::to_string (reported) + " against "
+                        + std::to_string (centre) + " Hz, "
+                        + std::to_string (cents) + " cents, with "
+                        + std::to_string (agreeing)
+                        + " of six strokes agreeing" + where);
+        }
+
+        // And for every setting, including the ones with no single pitch: the
+        // reported frequency has to be where the energy is. Measured against the
+        // strongest partial of the Don at 0.85, with the glide allowance
+        // bandMagnitude documents.
+        expect (! reference.empty(), "the reference take was not rendered" + where);
+        const auto strongest = binMagnitude (
+            reference,
+            strongestPartialUnbiased (reference, lowHz, highHz, sampleRate, first, last),
+            sampleRate, first, last);
+        const auto atReported =
+            bandMagnitude (reference, reported, 20.0, sampleRate, first, last);
+        const auto share = atReported / std::max (strongest, 1.0e-30);
+        worstShare = std::min (worstShare, share);
+        // Measured worst over the same sweep: 0.935 after, 0.765 before.
+        expect (share > 0.85,
+                "the reported pitch is not where the energy is: "
+                    + std::to_string (share) + " of the strongest partial" + where);
+    }
+
+    // The guard on the guard. The tie rule must not be quietly emptying the
+    // clause above: if a change made every take ambiguous, the pitch clause
+    // would pass by never firing.
+    expect (pitched >= 15,
+            "only " + std::to_string (pitched) + " of "
+                + std::to_string (std::size (settings))
+                + " settings had a pitch at all, so the clause above has stopped "
+                  "saying anything");
+    (void) worstPitchedCents;
+    (void) worstShare;
+}
+
 void testTheDrumIsTunedByThePitchItSounds()
 {
     const auto measure = [] (taikor::EngineParameters parameters, int octave)
@@ -5125,6 +5429,7 @@ int main()
     testTheFourDrumsStepInHeardOctaves();
     testThePitchTransformIsContinuousUnderAutomation();
     testTheReadoutFollowsTheStrikePosition();
+    testTheReadoutNamesThePartialTheDrumIsHeardAt();
     testEveryArticulationAndSampleRate();
     testSampleRateConsistency();
     testTheContinuumDoesNotDependOnTheSampleRate();

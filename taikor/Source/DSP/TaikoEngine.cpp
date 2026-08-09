@@ -1341,6 +1341,65 @@ void TaikoEngine::resolveDrumGeometry (const EngineParameters& applied,
     // Close microphones lift the low end. The depth follows the same distance,
     // so backing the pair off thins the drum exactly as it does in a room.
     drum.micProximity = 1.20f * (0.12f / (0.12f + drum.micDistanceMetres));
+
+    // How long a full open stroke stays on this head. Resolved here with the
+    // mounting and the microphones, and for the same reason: a stroke is a
+    // force pulse of finite length rather than an impulse, so how long it lasts
+    // decides how much of it reaches each mode - and therefore which mode the
+    // drum is heard at. Every trial drum the octave transform builds has to be
+    // able to answer that.
+    //
+    // At the neutral impact speed, which is the one the velocity map leaves
+    // alone: `shaped` in trigger() is lerp(0.72, velocity, velocityDepth), so
+    // 0.72 is the speed every stroke has when Velocity Depth is zero, and it is
+    // the one figure that describes this drum rather than one blow on it. The
+    // readout has no velocity to report against and must not acquire one.
+    // Across the playable range the contact time moves about 30 % either way,
+    // which is a decibel in the weighting where two modes compete.
+    {
+        float strikerMass = 0.0f;
+        float impedance = 0.0f;
+        drumContactTerms (drum, strikerMass, impedance);
+        float peakForce = 0.0f;
+        solveContact (strikerMass, impedance, strikeProfile (Articulation::Don),
+                      applied.bachiHardness,
+                      geometricLerp (minimumImpactSpeed, maximumImpactSpeed, 0.72f),
+                      drum.contactSeconds, peakForce);
+    }
+}
+
+// What a stroke of contact time tau is worth in a mode at omega, relative to
+// what an impulse would be worth in it. The render drives the bank with the
+// Hertz force pulse - a sin^1.5 arch of length tau, see renderVoice - and a
+// mode's free ringing after the contact is that pulse's own transform at the
+// mode's frequency. It is flat well below 1/tau and falls away above it, which
+// is why a soft beater on a large head sounds an octave lower than a hard one
+// on the same drum: it is not that the low mode is louder, it is that the high
+// one was never driven.
+//
+// The exact quantity has no elementary form, so this is a fit to it: the
+// integral of sin(pi u)^1.5 e^(-i x u) over [0,1], divided by its value at
+// x = 0. Measured against a two-hundred-thousand-point quadrature it is inside
+// 0.05 dB everywhere out to x = 6, which is where every comparison this
+// function is asked for lives - the four drums put their competing modes below
+// x = 6.5 even with the softest beater the control offers.
+//
+// Above that it runs high: 1.6 dB at x = 8 and 9.5 dB at x = 10. The real
+// transform has a null just past x = 9 - a pulse that vanishes as u^1.5 at both
+// ends rings its own spectrum - and this is deliberately monotone through it
+// rather than following it down, because a notch in the weighting would make
+// the readout step as a control walked a mode across it. What it costs is
+// accuracy in a region where the stroke has already lost thirteen decibels in
+// that mode, and where being high is the conservative direction: it can only
+// keep a mode in a comparison it would otherwise be dropped from.
+float TaikoEngine::contactSpectrum (float omegaTau) noexcept
+{
+    const float x = std::abs (omegaTau);
+    const float x2 = x * x;
+    const float x4 = x2 * x2;
+    const float denominator =
+        1.0f + 0.039680f * x2 + 5.4298e-4f * x4 + 3.1752e-5f * x4 * x2;
+    return denominator > 0.0f ? 1.0f / std::sqrt (denominator) : 0.0f;
 }
 
 // Every membrane mode of a resolved drum, one at a time, with what a stroke on
@@ -1499,6 +1558,16 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
     if (! (omega > 0.0f) || ! (decay > 0.0f))
         return result;
 
+    // The stroke that drives it. Everything above is the receptance of one mode
+    // to a unit impulse; a bachi is not an impulse, it is a force pulse a
+    // millisecond or so long, and a mode whose period is not much longer than
+    // that never receives the stroke at all. Leaving it out meant the readout
+    // compared the modes of a drum struck by something no player owns: measured
+    // on the chu-daiko with a felt beater, where the contact runs to 4.7 ms, it
+    // put the (1,2) mode nine decibels above where the rendered take has it.
+    // See contactSpectrum.
+    amplitude *= contactSpectrum (omega * drum.contactSeconds);
+
     result.frequencyHz = omega / (2.0f * piFloat);
     result.decayRate = decay;
     result.amplitude = amplitude;
@@ -1516,30 +1585,38 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
     return result;
 }
 
-// Which of a drum's modes is the one it is heard at: the loudest over the window
-// above, among the modes low enough to be a drum's pitch at all.
+// Which of a drum's modes is the one it is heard at: the loudest of them over
+// the window above, with nothing excluded.
 //
-// Low enough means below the head's third radial order, which admits the two
-// branches of the (0,1) pair, the (1,1), the (2,1), the (3,1) and both branches
-// of the (0,2). It used to stop at twice the fundamental's wavenumber, which
-// admitted the (0,1) pair and the (1,1) and nothing else, and that was tenable
-// only while this function was asked about one fixed stroke a hand's width in
-// from the middle. It is now asked where the stick actually lands, and the whole
-// point of asking is that a stroke towards the middle of the head stops driving
-// the modes with a nodal diameter and drives the radial orders instead: measured
-// on the chu-daiko struck at the centre, the loudest partial of the rendered take
-// is the (0,2) lower branch at 172 Hz, and a bound that excluded it left the
-// readout naming a mode 1035 cents below what anybody could hear.
+// There used to be a bound - first twice the fundamental's wavenumber, then the
+// head's third radial order - and it is gone, because it was never a statement
+// about which modes can carry a pitch. It was a guard against this comparison
+// being wrong above it, and the reason it looked wrong was an artefact of how
+// the comparison was checked rather than anything in the weights.
 //
-// The bound is also where this comparison is worth trusting. Measured against
-// the rendered audio the weights below are good to about a decibel and a half
-// over the bottom of the bank and drift several decibels high by the fourth
-// radial order, because the attack glide starts the head sharp and smears a
-// partial out of its own bin for a time proportional to how high it is - a real
-// effect on what is heard, and one that only ever pushes the modes above this
-// bound further down. On the o-daiko struck at the very centre three partials
-// land within a decibel of one another and the ranking is inside that error;
-// that drum has no single pitch there, and no bound can give it one.
+// What was measured is this. Rendering a take and reading the level at each
+// mode's frequency with a 0.9 s window, the weights below appeared to drift
+// several decibels high by the fourth radial order. They do not. The attack
+// glide leaves the head stretched for a good part of that window, so every
+// membrane partial sits sharp of where it settles - by the same *ratio*,
+// because a tension shift scales the whole head at once. Nine cents is a
+// quarter of a hertz at 68 Hz and well inside the window's 1.1 Hz resolution;
+// the same nine cents is 1.2 Hz at 230 Hz and a whole bin away from it, so a
+// probe parked on the settled frequency reads a high mode ten decibels down
+// while a low one loses half a decibel. Measured where each partial actually
+// sounds, over the strike position, both microphone controls, Pitch and Head
+// Tension on all four drums, the weights are flat to about 1.5 dB across the
+// whole resolved bank out to the ninth radial order. There is nothing up there
+// to guard against, and a bound cost real answers: the o-daiko struck at its
+// middle is heard at its (0,3) lower branch and the chu-daiko with the pair
+// backed off is heard at its (1,3), and both were excluded.
+//
+// The glide is why nothing in this function accounts for the glide. It moves
+// every mode by the same ratio, so it cannot change which of them is loudest.
+//
+// On the o-daiko struck at the very centre three partials land within a decibel
+// of one another and the ranking is inside the weights' own accuracy; that drum
+// has no single pitch there, and no weighting can give it one.
 //
 // This is not the same question as which mode is lowest, and on half of this
 // family it is not the same answer. The (0,1) pair's lower branch moves the two
@@ -1554,16 +1631,10 @@ TaikoEngine::SoundingMode TaikoEngine::soundingMode (const DrumState& drum,
                                                      float strikeRadius) noexcept
 {
     SoundingMode best;
-    // (0,3), which is the third radial order and the first mode excluded.
-    const double pitchBearingZero = membraneModes()[2].besselZero;
 
     for (int entryIndex = 0; entryIndex < modeEntryCount; ++entryIndex)
     {
         const auto& entry = membraneModes()[static_cast<std::size_t> (entryIndex)];
-
-        if (entry.besselZero >= pitchBearingZero)
-            continue;
-
         const int branches = entry.circumferentialOrder == 0 ? 2 : 1;
 
         for (int branch = 0; branch < branches; ++branch)
