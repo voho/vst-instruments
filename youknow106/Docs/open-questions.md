@@ -806,6 +806,18 @@ results did not move. Neither result supplies evidence for acquisition windows,
 droop, charge injection, continuous-versus-track-and-hold behaviour, or the
 voiced DCO/RESONANCE/NOISE constants. This question remains open at P1.
 
+**2026-08-09 Step-11 numerical-policy update — still not closure.** The engine
+now evaluates the existing 522 µs per-card VCF and shared RESONANCE holds at
+their fractional `NormalizedServiceChart` events. It purely peeks an event in
+`(phase, phase + delta]`, latches that policy-time payload, uses exact
+piecewise-exponential endpoints and seven Merson-node values, then lets the
+ordinary scheduler commit the latch once at its next poll. This removes
+host-grid event snapping from those two modeled paths. It does **not** establish
+whether 522 µs is an acquisition or settling constant, whether a physical hold
+tracks continuously, what it does while disconnected, or the size of droop,
+loading and charge injection. The DCO/NOISE 522 µs values and every other hold
+retain their declared paths. OQ-07 remains open at P1.
+
 ### Needed output (for LLM)
 
 - A schematic/measurement table for every destination: confirmed converter
@@ -891,6 +903,18 @@ the step-response/event-side repair, while the 23-write, quantisation and hold
 measurements remain the same. That numerical pass is still not an original-unit
 timestamp, acquisition or restart capture. OQ-07 and this question remain open
 at P1.
+
+**2026-08-09 Step-11 fractional-event update — compatibility policy, not
+timing evidence.** The normalized `ordinal/23` offsets and exact 23-write order
+are unchanged. For VCF and shared RESONANCE only, production now sees an event
+inside `(phase, phase + delta]`, including resonance across a pass wrap, before
+the sample-grid poll. A pure peek preserves the official cursor and visible
+target, latches the policy-time converter payload against later automation, and
+the next normal poll commits it exactly once. This makes the continuous hold
+evaluation agree with the timestamps the compatibility profile already
+declared; it neither measures nor infers the actual JUNO-106 offsets. Every
+absolute timestamp, jitter/data dependency and changed-pitch restart behavior
+requested below remains unknown. OQ-08 remains open at P1.
 
 ### Needed output (for LLM)
 
@@ -3651,6 +3675,86 @@ calibration (OQ-15), startup-noise mechanism (OQ-16), physical upper-cutoff law
 agreement with the declared ODE cannot validate the hardware that ODE is meant
 to represent.
 
+## Fractional VCF/resonance event pass — 2026-08-09 (grid defect fixed; no OQ closed)
+
+**Work mode:** event-timing realization and independent numerical
+qualification under the existing compatibility profile. **No original unit was
+measured.** Step 10's −33.245 dB 8 kHz rejection is retained above as the dated
+baseline; it is not the current engine result.
+
+The converter's 4.2 ms pass, exact 23-write order and normalized `ordinal/23`
+offsets are unchanged. For VCF and shared RESONANCE events only, production
+purely peeks the next policy event in `(phase, phase + delta]`, including a
+shared-resonance event across the pass wrap. The peek latches the converter
+payload computed at that event without moving the official cursor or visible
+target. The affected 522 µs hold then advances by its exact segmented
+exponential at the endpoint and all seven unique Merson nodes. The next normal
+scheduler poll commits the latched payload once and clears it, so intervening
+host automation cannot recompute an event that has already happened in the
+declared timeline.
+
+Only event-containing intervals receive those exact trajectories. Each
+affected voice interval adds six nonlinear cutoff/feedback mappings for the
+seven node values. The integrator remains two fixed half-step Merson advances,
+ten RHS evaluations and no solver split, retry, runtime selector, audio-sample
+lookahead or latency change. The other converter destinations retain their prior behavior.
+Engine contracts exercise all six card-VCF events plus next-pass resonance,
+pure peek state, pass wrap, payload retention under automation and once-only
+commit. A separate production-path probe replays `renderVoice` bit-exactly when
+the event trajectory is connected; a deliberate `nullptr` mutation must and
+does diverge.
+
+The independent dynamic matrix still renders 19 physical takes for 24 logical
+card/Character/thermal profiles and keeps the −40 dB gate unchanged. The
+current engine-bound results are:
+
+| Coverage | NRMS vs independent oracle | Result |
+| --- | ---: | --- |
+| 8 kHz / 4× | **−84.881 dB** | **PASS** |
+| Six standard HQ selector paths | **worst −112.406 dB; best −116.317 dB** | **PASS** |
+| 768 kHz / 1× | **−119.340 dB** | **PASS** |
+
+Late `ceil` snapping is an expected **REJECT at −33.245 dB** and early
+`floor` snapping an expected **REJECT at −32.007 dB**. Both controls retain
+finite state and exact structural counts. This distinguishes fractional event
+handling from an accidental gate relaxation, missing event or changed oracle.
+The scheduler, write/count, hold and real-wiring/null-mutation contracts pass.
+
+In the 48 kHz, six-card resonant 2,048-frame work window, counters record
+**70 fractional peeks, 70 eventual commits, 120 affected voice intervals, 840
+exact control nodes and 720 additional nonlinear maps**. Seven nodes and six
+maps per affected interval account for the latter two figures; the fixed
+Merson RHS/stage work and zero-recovery contract do not change.
+
+Three fresh alternating Step-10/current pairs, each with seven repetitions at
+48 kHz/block 256, put 4× CPU/audio at 0.653→0.666 idle (+2.056%), 0.670→0.682 plain
+(+1.856%), 0.823→0.832 resonant (+1.096%) and 0.706→0.719 full-mixer Chorus
+II (+1.755%). The 1× pairs are 0.164→0.169 (+3.072%), 0.172→0.176
+(+2.483%), 0.221→0.225 (+1.807%) and 0.184→0.188 (+2.182%). The worst
+current row is 0.832×; every case remains below realtime and the hard Engine
+CPU gate passes. These paired meta-medians are machine/patch specific and
+should not be mixed with Step 10's earlier standalone timing cohort.
+
+Under the user-authorized from-scratch reset, four frozen-binary render passes
+all exit 0. Two demo runs are byte-identical, as are two complete factory runs.
+The canonical 23-file tree has manifest SHA-256
+`764f2770d21a138163c756025551dc8ead7925f4cf003eb98e960234afc098ea`.
+Its 20 WAVs are finite stereo PCM16, with demos at 44.1 kHz and factory previews
+at 48 kHz; maximum absolute DC is 0.000000576 FS and the worst edge is
+−46.96 dBFS. The factory result contains 128 finite, unique rows/tone blobs,
+median gated RMS −21.48 dBFS, 31 rows containing samples above 0 dBFS, zero
+near-silent rows and nine rows outside ±18 dB of the corpus median. This
+qualifies the new canonical artifact set without claiming a delta against the
+retired legacy renders or advancing any hardware question.
+
+This pass changes no component value, hold constant, resonance/cutoff law,
+converter ordering, oversampling selector, domain split or fixed 41-sample
+latency. In particular, a model event at exact normalized `ordinal/23` is not
+evidence that a JUNO-106 wrote there. **OQ-07 remains open** on acquisition,
+droop, loading, injection and the meaning of 522 µs. **OQ-08 remains open** on
+physical intra-pass offsets, jitter/data dependence and DCO restart effects.
+The other VCF evidence questions named in Step 10 remain open unchanged.
+
 ## Settled guardrails — do not reopen without contradictory primary evidence
 
 - **Chorus modes:** the JUNO-106 has Off, I and II. Its owner's manual says I
@@ -3674,8 +3778,10 @@ to represent.
 - **Converter ownership and ordinal order:** the 23 used holds are 18 per-card
   DCO/VCF/ENV-VCA destinations plus shared SUB, VCA LEVEL, PWM, RESONANCE and
   NOISE. The service timing chart orders shared RES/VCA/SUB, DCO 1–6, PWM,
-  interleaved VCF/VCA 1–6, then NOISE. Hold constants and exact event offsets
-  remain OQ-07 and OQ-08 respectively.
+  interleaved VCF/VCA 1–6, then NOISE. The current compatibility profile places
+  ordinal `n` at `n/23`; VCF and shared-resonance holds now evaluate that policy
+  event fractionally and commit its latched payload on the next ordinary poll.
+  Hold constants and physical event offsets remain OQ-07 and OQ-08 respectively.
   OQ-08 also owns the physical ramp/comparator/sub state forced by a changed-
   pitch timer write; the current bandlimited restart is a declared model.
 - **Pulse-off control state:** about -0.8 V pins the comparator output high;

@@ -19,6 +19,8 @@ namespace youknow106
 struct YouKnow106TestAccess
 {
     using Cascade = YouKnow106Engine::OtaCascade;
+    using ControlTrajectory = Cascade::ControlTrajectory;
+    using HoldInterval = YouKnow106Engine::VcfHoldInterval;
 
     static constexpr double pi = 3.14159265358979323846264338327950288;
 
@@ -40,6 +42,20 @@ struct YouKnow106TestAccess
     static constexpr double maximumInputReconstructionL1() noexcept
     {
         return Cascade::maximumInputReconstructionL1;
+    }
+
+    static constexpr const auto& controlNodePositions() noexcept
+    {
+        return Cascade::controlNodePositions;
+    }
+
+    static HoldInterval exactHold(
+        float state, float target, bool hasEvent, double eventPosition,
+        float eventTarget, double intervalSeconds) noexcept
+    {
+        return YouKnow106Engine::exactVcfHoldInterval(
+            state, target, hasEvent, eventPosition, eventTarget,
+            intervalSeconds);
     }
 
     static constexpr double headroom() noexcept
@@ -327,6 +343,114 @@ void testCausalCubicContracts()
     };
     expectNear(maximumMersonAlternating(), 19.0 / 16.0, 2.0e-12,
                "causal cubic Merson-node alternating exposure changed");
+}
+
+void testExactFractionalVcfHoldTrajectory()
+{
+    constexpr float state = 0.21f;
+    constexpr float initialTarget = 0.78f;
+    constexpr float eventTarget = 0.06f;
+    constexpr double eventPosition = 0.37;
+    constexpr double intervalSeconds = 1.0 / 32000.0;
+    constexpr double holdSeconds = static_cast<double>(522.0e-6f);
+    const auto interval = Access::exactHold(
+        state, initialTarget, true, eventPosition, eventTarget,
+        intervalSeconds);
+
+    const auto independent = [=](double position) {
+        const double eventState = static_cast<double>(initialTarget)
+            + (static_cast<double>(state)
+               - static_cast<double>(initialTarget))
+                * std::exp(-eventPosition * intervalSeconds / holdSeconds);
+        if (position < eventPosition)
+        {
+            return static_cast<double>(initialTarget)
+                + (static_cast<double>(state)
+                   - static_cast<double>(initialTarget))
+                    * std::exp(-position * intervalSeconds / holdSeconds);
+        }
+        return static_cast<double>(eventTarget)
+            + (eventState - static_cast<double>(eventTarget))
+                * std::exp(-(position - eventPosition)
+                           * intervalSeconds / holdSeconds);
+    };
+    for (std::size_t point = 0;
+         point < Access::controlNodePositions().size(); ++point)
+    {
+        expectNear(interval.value[point],
+                   independent(Access::controlNodePositions()[point]),
+                   2.0e-15,
+                   "fractional VCF hold misses its segmented exact value");
+    }
+    expectNear(interval.value.front(), state, 0.0,
+               "fractional VCF hold changed its interval-start state");
+    expectNear(interval.endpoint,
+               static_cast<float>(independent(1.0)), 0.0,
+               "fractional VCF hold endpoint was rounded inconsistently");
+
+    const auto eventAtEnd = Access::exactHold(
+        state, initialTarget, true, 1.0, eventTarget, intervalSeconds);
+    const auto noEvent = Access::exactHold(
+        state, initialTarget, false, 0.0, eventTarget, intervalSeconds);
+    expect(eventAtEnd.value == noEvent.value
+               && eventAtEnd.endpoint == noEvent.endpoint,
+           "an endpoint VCF write affected the hold before its physical time");
+
+    const auto eventAtStart = Access::exactHold(
+        state, initialTarget, true, 0.0, eventTarget, intervalSeconds);
+    for (std::size_t point = 0;
+         point < Access::controlNodePositions().size(); ++point)
+    {
+        const double position = Access::controlNodePositions()[point];
+        const double expected = static_cast<double>(eventTarget)
+            + (static_cast<double>(state) - eventTarget)
+                * std::exp(-position * intervalSeconds / holdSeconds);
+        expectNear(eventAtStart.value[point], expected, 2.0e-15,
+                   "a boundary VCF write did not own the new interval");
+    }
+
+    expect(Access::controlNodePositions()
+               == std::array<double, 7> {
+                    0.0, 1.0 / 6.0, 1.0 / 4.0, 1.0 / 2.0,
+                    2.0 / 3.0, 3.0 / 4.0, 1.0 },
+           "VCF hold nodes no longer coincide with the fixed Merson tableau");
+}
+
+void testExplicitControlTrajectoryVisitsEveryMersonNode()
+{
+    constexpr float input = 1.4f;
+    constexpr float omega = 0.72f;
+    constexpr float feedback = 2.6f;
+    const float headroom = static_cast<float>(Access::headroom());
+    Access::ControlTrajectory baselineTrajectory;
+    baselineTrajectory.omegaStep.fill(omega);
+    baselineTrajectory.feedback.fill(feedback);
+    baselineTrajectory.headroom.fill(headroom);
+
+    const auto render = [&](const Access::ControlTrajectory& trajectory) {
+        Cascade cascade;
+        cascade.reset();
+        Access::setState(cascade, { 0.31, -0.19, 0.11, -0.07 });
+        cascade.process(input, omega, feedback, headroom, true, 0.70f,
+                        &trajectory);
+        return Access::state(cascade);
+    };
+    const auto baseline = render(baselineTrajectory);
+    for (std::size_t point = 0;
+         point < Access::controlNodePositions().size(); ++point)
+    {
+        auto perturbed = baselineTrajectory;
+        perturbed.omegaStep[point] += 0.19;
+        const auto actual = render(perturbed);
+        double maximumDifference = 0.0;
+        for (std::size_t stage = 0; stage < actual.size(); ++stage)
+            maximumDifference = std::max(
+                maximumDifference,
+                std::abs(actual[stage] - baseline[stage]));
+        expect(maximumDifference > 1.0e-10,
+               "explicit VCF trajectory ignored Merson control node "
+                   + std::to_string(point));
+    }
 }
 
 void testMersonTableauAndStabilityPolynomial()
@@ -780,6 +904,8 @@ int main()
                && Access::rhsEvaluationsPerInterval() == 10,
            "production VCF work is no longer fixed Merson x2 / 10 RHS");
     testCausalCubicContracts();
+    testExactFractionalVcfHoldTrajectory();
+    testExplicitControlTrajectoryVisitsEveryMersonNode();
     testMersonTableauAndStabilityPolynomial();
     testIntegratorAgainstIndependentReference();
     testRapidControlAlternationAgainstIndependentReference();

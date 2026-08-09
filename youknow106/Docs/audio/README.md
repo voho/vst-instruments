@@ -1,22 +1,32 @@
 # YouKnow106 audio corpus
 
-This directory is a fresh Step 10 render of the current engine candidate. It
+This directory is a fresh Step 11 render of the current engine candidate. It
 intentionally contains only the ten maintained demonstration fixtures and the
 full [factory-preset audit](factory-presets/README.md). Historical
 before/after, fidelity, realism, and state-of-the-art comparison corpora were
-retired when this set was regenerated; they remain recoverable from the Step 9
-history and are not evidence for the Step 10 engine.
+retired during the earlier corpus reset; they remain recoverable from
+repository history and are not evidence for the Step 11 engine.
 
-The snapshot was built in Release mode with the plug-in and tests disabled.
-Its VCF is the Step 10 bounded causal integrator: two fixed half-interval,
-five-stage Merson RK4 advances, current-plus-three-past cubic input
-reconstruction, and endpoint-linear controls. The exact DSP source provenance
-for this render is:
+The snapshot was built in Release mode with the plug-in disabled.
+Its VCF is the Step 11 event-aware scanned-control path on the bounded causal
+integrator. For the six voice-cutoff writes and shared resonance, including a
+pass-wrap resonance write, the engine purely peeks the normalized intra-pass
+event, latches its event-time payload, and evaluates the existing 522 µs
+exponential hold at the exact segmented endpoint and seven fixed Merson nodes
+only in the affected interval. The official scheduler then consumes and
+commits that latched payload exactly once at its next poll; its cursor, order,
+and write count do not move. The two fixed half-interval, five-stage Merson
+advances and current-plus-three-past cubic input reconstruction are unchanged.
+The exact DSP source provenance for this render is:
 
 - `Source/DSP/YouKnow106Engine.cpp` SHA-256
-  `6b2f25b8e3b589c5fd5d0ec2ec69e0b3a99d2013cde43a0b74360ffb24bc651b`
+  `bf6a98f4232a17ee9855f83af82aaa3674e00b2d5f161915cda22cccb3d02f08`
 - `Source/DSP/YouKnow106Engine.h` SHA-256
-  `a32c0ba7e28f55c5022bf689ca47eaec6161865a51322feb05d9c89c897ea733`
+  `7a71b7dfd221da6957cfaff76a47fbdaab45c2adc6aca6decfb597b09ae856c3`
+
+This is render evidence for the declared normalized product schedule, not a
+measurement of the hardware's absolute write offsets, jitter, or acquisition
+behavior; those timing questions remain open.
 
 ## Demonstrations
 
@@ -65,9 +75,10 @@ cmake --build build-dsp --parallel \
 ./build-dsp/YouKnow106AuditFactoryPresets Docs/audio/factory-presets
 ```
 
-For this snapshot both renderers were run twice into independent empty
-directories. The two demo sets and the two complete factory-audit directories
-were byte-identical before the canonical corpus was installed here. All WAVs
-decode as finite stereo PCM: demos are 44.1 kHz/16-bit, previews are
-48 kHz/16-bit, whole-file absolute DC is at most 0.000001 FS, and the worst
-file-edge sample peak is -47.02 dBFS.
+For this snapshot each fresh warning-clean Release renderer was run twice into
+independent empty or renderer-owned directories. The two demo sets and the two
+complete factory-audit directories had identical relative file sets and bytes
+before the canonical run was installed here. All WAVs decode as finite stereo
+PCM: demos are 44.1 kHz/16-bit, previews are 48 kHz/16-bit, whole-file absolute
+DC is at most 0.000000576 FS, and the worst file-edge sample peak is
+-46.96 dBFS.

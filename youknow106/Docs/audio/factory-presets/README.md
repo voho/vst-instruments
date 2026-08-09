@@ -18,7 +18,7 @@ Machine-readable values and exact 18-byte tone hex are in `metrics.csv`.
 - Presets with samples above 0 dBFS: 31.
 - Presets below -60 dBFS max 400 ms RMS: 0.
 - Presets outside median +/-18 dB: 9.
-- Gated-RMS span: A86 Hand Claps at -61.94 dBFS to A48 Synth Bass I (unison) at -8.75 dBFS.
+- Gated-RMS span: A86 Hand Claps at -61.96 dBFS to A48 Synth Bass I (unison) at -8.75 dBFS.
 
 These are review flags, not equal-loudness failures. The bank intentionally mixes transient, sustained, effect and Solo Unison programs, and the circuit-derived common VCA LEVEL law directly affects their relative results. OQ-02 now covers installed-unit variation rather than the nominal curve.
 
@@ -41,7 +41,7 @@ These are review flags, not equal-loudness failures. The bank intentionally mixe
 | A27 | Elect. Piano I | -7.35 | 0 | -19.45 | -28.11 | 20.76 | — |
 | A28 | Elect. Piano II | -2.63 | 0 | -13.04 | -21.74 | 19.11 | — |
 | A31 | Clock Chimes* (1 oct. up) | -0.01 | 0 | -12.12 | -20.89 | 20.88 | sample peak within 1 dB of 0 dBFS |
-| A32 | Steel Drums | 2.10 | 223 | -12.90 | -17.80 | 19.90 | 223 channel samples above 0 dBFS |
+| A32 | Steel Drums | 2.10 | 224 | -12.90 | -17.80 | 19.90 | 224 channel samples above 0 dBFS |
 | A33 | Xylophone | 1.68 | 108 | -15.17 | -20.23 | 21.91 | 108 channel samples above 0 dBFS |
 | A34 | Brass III | 4.33 | 2768 | -6.62 | -12.29 | 16.62 | 2768 channel samples above 0 dBFS |
 | A35 | Fanfare | -0.15 | 0 | -10.19 | -15.81 | 15.66 | sample peak within 1 dB of 0 dBFS |
@@ -53,7 +53,7 @@ These are review flags, not equal-loudness failures. The bank intentionally mixe
 | A43 | Brass Ensemble | -2.68 | 0 | -14.50 | -20.67 | 17.99 | — |
 | A44 | Guitar | 0.18 | 6 | -11.70 | -21.70 | 21.89 | 6 channel samples above 0 dBFS |
 | A45 | Koto | -3.05 | 0 | -15.05 | -22.86 | 19.81 | — |
-| A46 | Dark Pluck | 0.04 | 3 | -11.73 | -21.02 | 21.05 | 3 channel samples above 0 dBFS |
+| A46 | Dark Pluck | 0.04 | 3 | -11.73 | -21.02 | 21.06 | 3 channel samples above 0 dBFS |
 | A47 | Funky I | 2.64 | 5007 | -7.50 | -11.41 | 14.05 | 5007 channel samples above 0 dBFS |
 | A48 | Synth Bass I (unison) | 8.99 | 11058 | -3.56 | -8.75 | 17.74 | 11058 channel samples above 0 dBFS |
 | A51 | Lead I | -1.98 | 0 | -12.30 | -17.71 | 15.73 | — |
@@ -62,8 +62,8 @@ These are review flags, not equal-loudness failures. The bank intentionally mixe
 | A54 | Funky II | -1.06 | 0 | -15.73 | -23.29 | 22.23 | — |
 | A55 | Synth Bass II | -5.50 | 0 | -14.82 | -19.79 | 14.30 | — |
 | A56 | Funky III | 1.30 | 378 | -8.09 | -11.64 | 12.94 | 378 channel samples above 0 dBFS |
-| A57 | Thud Wah | 4.87 | 28015 | -4.67 | -10.62 | 15.49 | 28015 channel samples above 0 dBFS |
-| A58 | Going Up | -7.40 | 0 | -18.02 | -26.45 | 19.04 | — |
+| A57 | Thud Wah | 4.87 | 28010 | -4.67 | -10.62 | 15.49 | 28010 channel samples above 0 dBFS |
+| A58 | Going Up | -7.39 | 0 | -18.02 | -26.45 | 19.05 | — |
 | A61 | Piano II | -3.82 | 0 | -13.91 | -22.84 | 19.02 | — |
 | A62 | Clav | 0.12 | 7 | -10.75 | -18.01 | 18.13 | 7 channel samples above 0 dBFS |
 | A63 | Frontier Organ | 4.44 | 16904 | -5.55 | -10.93 | 15.37 | 16904 channel samples above 0 dBFS |
@@ -77,17 +77,17 @@ These are review flags, not equal-loudness failures. The bank intentionally mixe
 | A73 | Repeater | -0.52 | 0 | -13.67 | -19.21 | 18.69 | sample peak within 1 dB of 0 dBFS |
 | A74 | Sweep II | -1.32 | 0 | -14.70 | -21.85 | 20.53 | — |
 | A75 | Pluck Bell | -1.84 | 0 | -13.12 | -21.38 | 19.54 | — |
-| A76 | Dark Synth Piano | 0.38 | 26 | -8.76 | -16.23 | 16.61 | 26 channel samples above 0 dBFS |
+| A76 | Dark Synth Piano | 0.38 | 24 | -8.76 | -16.23 | 16.61 | 24 channel samples above 0 dBFS |
 | A77 | Sustainer | -4.33 | 0 | -14.04 | -21.20 | 16.86 | — |
-| A78 | Wah Release | 3.43 | 579 | -7.85 | -17.44 | 20.87 | 579 channel samples above 0 dBFS |
+| A78 | Wah Release | 3.43 | 578 | -7.85 | -17.44 | 20.87 | 578 channel samples above 0 dBFS |
 | A81 | Gong (play low chords) | -1.97 | 0 | -14.18 | -19.85 | 17.88 | — |
-| A82 | Resonance Funk | 0.18 | 6 | -19.06 | -25.08 | 25.26 | 6 channel samples above 0 dBFS |
+| A82 | Resonance Funk | 0.18 | 8 | -19.06 | -25.08 | 25.26 | 8 channel samples above 0 dBFS |
 | A83 | Drum Booms* (1 oct. down) | -1.96 | 0 | -12.71 | -22.63 | 20.66 | — |
 | A84 | Dust Storm | -35.83 | 0 | -46.01 | -54.39 | 18.55 | gated RMS outside corpus median +/-18 dB |
-| A85 | Rocket Men | -12.79 | 0 | -22.39 | -25.99 | 13.20 | — |
-| A86 | Hand Claps | -30.55 | 0 | -56.45 | -61.94 | 31.40 | gated RMS outside corpus median +/-18 dB |
+| A85 | Rocket Men | -13.10 | 0 | -22.43 | -26.01 | 12.92 | — |
+| A86 | Hand Claps | -30.57 | 0 | -56.46 | -61.96 | 31.38 | gated RMS outside corpus median +/-18 dB |
 | A87 | FX Sweep | -3.20 | 0 | -15.20 | -24.93 | 21.73 | — |
-| A88 | Caverns | -11.26 | 0 | -26.52 | -33.62 | 22.36 | — |
+| A88 | Caverns | -11.27 | 0 | -26.52 | -33.62 | 22.36 | — |
 | B11 | Strings | -1.28 | 0 | -11.26 | -16.68 | 15.40 | — |
 | B12 | Violin | -3.20 | 0 | -12.43 | -20.97 | 17.77 | — |
 | B13 | Chorus Vibes | 0.14 | 14 | -9.04 | -15.74 | 15.89 | 14 channel samples above 0 dBFS |
@@ -95,35 +95,35 @@ These are review flags, not equal-loudness failures. The bank intentionally mixe
 | B15 | Harpsichord 1 | -6.27 | 0 | -18.83 | -27.56 | 21.29 | — |
 | B16 | Recorder | -4.94 | 0 | -14.96 | -20.02 | 15.08 | — |
 | B17 | Perc. Pluck | -1.04 | 0 | -16.63 | -22.51 | 21.47 | — |
-| B18 | Noise Sweep | -23.99 | 0 | -35.49 | -43.13 | 19.14 | gated RMS outside corpus median +/-18 dB |
-| B21 | Space Chimes | -3.14 | 0 | -20.59 | -26.24 | 23.10 | — |
+| B18 | Noise Sweep | -23.99 | 0 | -35.49 | -43.13 | 19.13 | gated RMS outside corpus median +/-18 dB |
+| B21 | Space Chimes | -3.12 | 0 | -20.59 | -26.24 | 23.12 | — |
 | B22 | Nylon Guitar | -7.33 | 0 | -18.90 | -27.06 | 19.73 | — |
 | B23 | Orchestral Pad | -6.43 | 0 | -16.83 | -24.30 | 17.87 | — |
 | B24 | Bright Pluck | -5.14 | 0 | -18.29 | -26.73 | 21.59 | — |
 | B25 | Organ Bell | 1.24 | 139 | -9.47 | -13.99 | 15.23 | 139 channel samples above 0 dBFS |
 | B26 | Accordion | -2.42 | 0 | -15.81 | -21.98 | 19.56 | — |
-| B27 | FX Rise 1 | -12.97 | 0 | -27.25 | -32.71 | 19.74 | — |
-| B28 | FX Rise 2 | -6.55 | 0 | -15.54 | -22.47 | 15.91 | — |
+| B27 | FX Rise 1 | -12.62 | 0 | -27.25 | -32.71 | 20.09 | — |
+| B28 | FX Rise 2 | -5.53 | 0 | -15.39 | -22.45 | 16.92 | — |
 | B31 | Brass | -4.46 | 0 | -14.96 | -21.52 | 17.07 | — |
-| B32 | Helicopter | 6.04 | 638 | -12.34 | -22.60 | 28.64 | 638 channel samples above 0 dBFS |
+| B32 | Helicopter | 6.04 | 638 | -12.34 | -22.60 | 28.63 | 638 channel samples above 0 dBFS |
 | B33 | Lute | -3.11 | 0 | -16.65 | -22.99 | 19.88 | — |
 | B34 | Chorus Funk | -2.78 | 0 | -13.76 | -17.93 | 15.15 | — |
-| B35 | Tomita | -5.67 | 0 | -15.81 | -20.56 | 14.89 | — |
-| B36 | FX Sweep 1 | -12.93 | 0 | -24.93 | -30.38 | 17.45 | — |
+| B35 | Tomita | -5.66 | 0 | -15.82 | -20.56 | 14.89 | — |
+| B36 | FX Sweep 1 | -12.82 | 0 | -24.95 | -30.38 | 17.56 | — |
 | B37 | Sharp Reed | -2.26 | 0 | -12.77 | -18.08 | 15.82 | — |
 | B38 | Bass Pluck | 2.66 | 536 | -8.87 | -18.90 | 21.56 | 536 channel samples above 0 dBFS |
-| B41 | Resonant Rise | -0.12 | 0 | -11.37 | -20.22 | 20.10 | sample peak within 1 dB of 0 dBFS |
+| B41 | Resonant Rise | -0.12 | 0 | -11.37 | -20.21 | 20.10 | sample peak within 1 dB of 0 dBFS |
 | B42 | Harpsichord 2 | -4.69 | 0 | -17.96 | -25.95 | 21.26 | — |
 | B43 | Dark Ensemble | -0.87 | 0 | -10.66 | -15.13 | 14.25 | sample peak within 1 dB of 0 dBFS |
 | B44 | Contact Wah | 2.98 | 6772 | -6.65 | -12.83 | 15.81 | 6772 channel samples above 0 dBFS |
 | B45 | Noise Sweep 2 | -18.53 | 0 | -32.41 | -39.59 | 21.06 | gated RMS outside corpus median +/-18 dB |
 | B46 | Glassy Wah | -0.32 | 0 | -16.04 | -23.07 | 22.75 | sample peak within 1 dB of 0 dBFS |
 | B47 | Phase Ensemble | 4.98 | 2118 | -5.66 | -14.86 | 19.84 | 2118 channel samples above 0 dBFS |
-| B48 | Chorused Bell | 1.76 | 50 | -9.37 | -18.55 | 20.31 | 50 channel samples above 0 dBFS |
+| B48 | Chorused Bell | 1.76 | 49 | -9.37 | -18.55 | 20.31 | 49 channel samples above 0 dBFS |
 | B51 | Clav | -4.50 | 0 | -17.29 | -27.85 | 23.36 | — |
 | B52 | Organ 2 | -2.31 | 0 | -12.73 | -18.00 | 15.69 | — |
 | B53 | Bassoon | -4.20 | 0 | -16.80 | -22.97 | 18.77 | — |
-| B54 | Auto Release Noise Sweep | -22.99 | 0 | -37.03 | -44.67 | 21.68 | gated RMS outside corpus median +/-18 dB |
+| B54 | Auto Release Noise Sweep | -22.99 | 0 | -37.03 | -44.66 | 21.67 | gated RMS outside corpus median +/-18 dB |
 | B55 | Brass Ensemble | -5.12 | 0 | -15.50 | -21.89 | 16.77 | — |
 | B56 | Ethereal | -2.20 | 0 | -13.87 | -19.01 | 16.82 | — |
 | B57 | Chorus Bell 2 | -1.95 | 0 | -13.87 | -20.93 | 18.98 | — |
@@ -133,22 +133,22 @@ These are review flags, not equal-loudness failures. The bank intentionally mixe
 | B63 | Thunder | -22.95 | 0 | -35.79 | -43.02 | 20.08 | gated RMS outside corpus median +/-18 dB |
 | B64 | Reedy Organ | -2.62 | 0 | -13.06 | -17.78 | 15.16 | — |
 | B65 | Flute / Horn | -4.84 | 0 | -13.16 | -19.86 | 15.01 | — |
-| B66 | Toy Rhodes | -6.43 | 0 | -17.12 | -25.62 | 19.19 | — |
+| B66 | Toy Rhodes | -6.44 | 0 | -17.12 | -25.62 | 19.19 | — |
 | B67 | Surf's Up | -23.86 | 0 | -36.34 | -44.46 | 20.61 | gated RMS outside corpus median +/-18 dB |
 | B68 | OW Bass | 0.68 | 64 | -8.75 | -16.11 | 16.79 | 64 channel samples above 0 dBFS |
 | B71 | Piccolo | -4.28 | 0 | -14.62 | -23.93 | 19.65 | — |
 | B72 | Melodic Taps | -14.11 | 0 | -32.74 | -37.46 | 23.35 | — |
 | B73 | Meow Brass | -5.72 | 0 | -14.10 | -21.92 | 16.21 | — |
 | B74 | Violin (high) | -8.11 | 0 | -18.02 | -26.63 | 18.52 | — |
-| B75 | High Bells | -2.90 | 0 | -17.59 | -25.33 | 22.44 | — |
+| B75 | High Bells | -2.86 | 0 | -17.59 | -25.33 | 22.47 | — |
 | B76 | Rolling Wah | -2.45 | 0 | -14.30 | -19.19 | 16.73 | — |
-| B77 | Ping Bell | 1.07 | 3 | -17.12 | -29.09 | 30.16 | 3 channel samples above 0 dBFS |
+| B77 | Ping Bell | 1.02 | 4 | -17.11 | -29.11 | 30.13 | 4 channel samples above 0 dBFS |
 | B78 | Brassy Organ | -3.52 | 0 | -13.77 | -17.88 | 14.36 | — |
 | B81 | Low Dark Strings | -0.33 | 0 | -9.97 | -14.94 | 14.61 | sample peak within 1 dB of 0 dBFS |
 | B82 | Piccolo Trumpet | -4.69 | 0 | -14.37 | -21.44 | 16.75 | — |
 | B83 | Cello | 1.16 | 214 | -10.28 | -16.06 | 17.23 | 214 channel samples above 0 dBFS |
 | B84 | High Strings | -0.42 | 0 | -11.75 | -20.26 | 19.85 | sample peak within 1 dB of 0 dBFS |
-| B85 | Rocket Men | -6.33 | 0 | -16.91 | -24.91 | 18.58 | — |
+| B85 | Rocket Men | -7.45 | 0 | -16.99 | -24.87 | 17.42 | — |
 | B86 | Forbidden Planet | -4.32 | 0 | -16.41 | -24.33 | 20.02 | — |
 | B87 | Froggy | -1.77 | 0 | -13.56 | -19.07 | 17.30 | — |
 | B88 | Owgan | 3.78 | 340 | -9.35 | -16.04 | 19.82 | 340 channel samples above 0 dBFS |

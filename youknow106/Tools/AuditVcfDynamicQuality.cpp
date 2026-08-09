@@ -39,6 +39,8 @@ namespace youknow106
 struct YouKnow106TestAccess
 {
     using Cascade = YouKnow106Engine::OtaCascade;
+    using ControlTrajectory = Cascade::ControlTrajectory;
+    using VcfHoldInterval = YouKnow106Engine::VcfHoldInterval;
 
     enum class Destination : std::uint8_t
     {
@@ -280,6 +282,379 @@ struct YouKnow106TestAccess
         cascade.offsetVoltage = profile.offsetVoltage;
     }
 
+    static constexpr auto controlNodePositions() noexcept
+    {
+        return Cascade::controlNodePositions;
+    }
+
+    static VcfHoldInterval exactVcfHoldInterval(
+        float state, float target, bool hasEvent, double eventPosition,
+        float eventTarget, double intervalSeconds) noexcept
+    {
+        return YouKnow106Engine::exactVcfHoldInterval(
+            state, target, hasEvent, eventPosition, eventTarget,
+            intervalSeconds);
+    }
+
+    struct SchedulerContract
+    {
+        std::size_t peeks {};
+        std::size_t commits {};
+        bool purePeek { true };
+        bool payloadLatched { true };
+        bool cursorExact { true };
+        bool orderExact { true };
+        bool passWrapExact { true };
+
+        [[nodiscard]] bool passed() const noexcept
+        {
+            return peeks == 7u && commits == 7u && purePeek
+                && payloadLatched && cursorExact && orderExact
+                && passWrapExact;
+        }
+    };
+
+    static SchedulerContract schedulerContract()
+    {
+        SchedulerContract result;
+        const auto phases = YouKnow106Engine::converterEventPhases(
+            YouKnow106Engine::ConverterTimingProfile::NormalizedServiceChart);
+        const auto& writes = YouKnow106Engine::converterWriteOrder();
+
+        // Exercise every per-card VCF payload after its Pitch ordinal. The
+        // envelope, pitch and pass-latched LFO are changed after the peek;
+        // committing through the real write path must still use the payload
+        // captured at the physical event.
+        for (int card = 0; card < YouKnow106Engine::hardwareVoices; ++card)
+        {
+            YouKnow106Engine engine;
+            engine.prepare(8000.0, 1, true);
+            engine.converterEventPhases_ = phases;
+            const std::size_t ordinal = 10u
+                + 2u * static_cast<std::size_t>(card);
+            engine.nextConverterWrite_ = ordinal;
+            engine.vcfEventLatch_ = {};
+            engine.converterPassLfoGated_ = -0.21f;
+            auto& voice = engine.voices_[static_cast<std::size_t>(card)];
+            voice.envelope.value = 0.18f + 0.03f * static_cast<float>(card);
+            voice.currentMidi = 43.0f + 5.0f * static_cast<float>(card);
+            voice.cutoffCountsTarget = 123.0f + static_cast<float>(card);
+
+            EngineParameters atEvent;
+            atEvent.calibration = 0.65f;
+            atEvent.cutoff = 0.27f;
+            atEvent.envDepth = 0.61f;
+            atEvent.keyFollow = 0.42f;
+            atEvent.vcfLfoDepth = 0.38f;
+            const auto& write = writes[ordinal];
+            const float wanted = engine.vcfWriteTarget(
+                write, atEvent, engine.converterPassLfoGated_);
+            const float targetBefore = voice.cutoffCountsTarget;
+            const auto lfoBefore = engine.lfoAccumulator_;
+            const float envelopeBefore = voice.envelope.value;
+            const double delta = YouKnow106Engine::controlScanHz
+                               / engine.oversampledRate_;
+            const double phase = phases[ordinal] - 0.5 * delta;
+            const std::size_t cursorBefore = engine.nextConverterWrite_;
+            const bool peeked = engine.latchUpcomingVcfEvent(
+                phase, delta, atEvent);
+            const bool duplicatePeek = engine.latchUpcomingVcfEvent(
+                phase, delta, atEvent);
+            result.peeks += peeked ? 1u : 0u;
+            result.purePeek = result.purePeek && peeked && !duplicatePeek
+                && engine.nextConverterWrite_ == cursorBefore
+                && voice.cutoffCountsTarget == targetBefore
+                && engine.lfoAccumulator_ == lfoBefore
+                && voice.envelope.value == envelopeBefore;
+            result.orderExact = result.orderExact
+                && engine.vcfEventLatch_.valid
+                && !engine.vcfEventLatch_.nextPass
+                && engine.vcfEventLatch_.ordinal == ordinal
+                && engine.vcfEventLatch_.write.destination
+                       == YouKnow106Engine::ConverterDestination::Vcf
+                && engine.vcfEventLatch_.write.voice == card
+                && std::abs(engine.vcfEventLatch_.eventPosition - 0.5)
+                       <= 1.0e-12;
+            const float latched = engine.vcfEventLatch_.target;
+            result.payloadLatched = result.payloadLatched
+                && latched == wanted;
+
+            EngineParameters afterEvent = atEvent;
+            afterEvent.cutoff = 0.86f;
+            afterEvent.envDepth = 0.09f;
+            afterEvent.keyFollow = 0.91f;
+            afterEvent.vcfLfoDepth = 0.02f;
+            voice.envelope.value = 0.93f;
+            voice.currentMidi = 91.0f;
+            engine.converterPassLfoGated_ = 0.74f;
+            const float changed = engine.vcfWriteTarget(
+                write, afterEvent, engine.converterPassLfoGated_);
+            engine.performConverterWrite(
+                write, afterEvent, engine.converterPassLfoGated_, &latched);
+            ++engine.nextConverterWrite_;
+            engine.vcfEventLatch_ = {};
+            ++result.commits;
+            result.payloadLatched = result.payloadLatched
+                && voice.cutoffCountsTarget == wanted
+                && wanted != changed;
+            result.cursorExact = result.cursorExact
+                && engine.nextConverterWrite_ == ordinal + 1u;
+        }
+
+        // Ordinal zero is special: it is peeked while the previous cursor is
+        // already 23, then committed once after the pass-wrap reset. Neither
+        // LFO nor envelope state may advance during that speculative peek.
+        YouKnow106Engine engine;
+        engine.prepare(8000.0, 1, true);
+        engine.converterEventPhases_ = phases;
+        engine.nextConverterWrite_ = writes.size();
+        engine.vcfEventLatch_ = {};
+        engine.resonanceCvTarget_ = 0.17f;
+        EngineParameters atEvent;
+        atEvent.resonance = 0.34f;
+        const double delta = YouKnow106Engine::controlScanHz
+                           / engine.oversampledRate_;
+        const double phase = 1.0 - 0.5 * delta;
+        const auto lfoBefore = engine.lfoAccumulator_;
+        const float envelopeBefore = engine.voices_[0].envelope.value;
+        const float targetBefore = engine.resonanceCvTarget_;
+        const float wanted = engine.vcfWriteTarget(
+            writes[0], atEvent, engine.converterPassLfoGated_);
+        const bool peeked = engine.latchUpcomingVcfEvent(
+            phase, delta, atEvent);
+        ++result.peeks;
+        result.purePeek = result.purePeek && peeked
+            && engine.nextConverterWrite_ == writes.size()
+            && engine.resonanceCvTarget_ == targetBefore
+            && engine.lfoAccumulator_ == lfoBefore
+            && engine.voices_[0].envelope.value == envelopeBefore;
+        result.passWrapExact = result.passWrapExact
+            && engine.vcfEventLatch_.valid
+            && engine.vcfEventLatch_.nextPass
+            && engine.vcfEventLatch_.ordinal == 0u
+            && engine.vcfEventLatch_.write.destination
+                   == YouKnow106Engine::ConverterDestination::Resonance
+            && std::abs(engine.vcfEventLatch_.eventPosition - 0.5)
+                   <= 1.0e-12;
+        const float latched = engine.vcfEventLatch_.target;
+        EngineParameters afterEvent = atEvent;
+        afterEvent.resonance = 0.91f;
+        const float changed = engine.vcfWriteTarget(
+            writes[0], afterEvent, engine.converterPassLfoGated_);
+        engine.nextConverterWrite_ = 0u;
+        engine.performConverterWrite(
+            writes[0], afterEvent, engine.converterPassLfoGated_, &latched);
+        engine.vcfEventLatch_ = {};
+        ++engine.nextConverterWrite_;
+        ++result.commits;
+        result.payloadLatched = result.payloadLatched
+            && engine.resonanceCvTarget_ == wanted && wanted != changed;
+        result.cursorExact = result.cursorExact
+            && engine.nextConverterWrite_ == 1u;
+        return result;
+    }
+
+    struct ShippingWiringContract
+    {
+        std::size_t probes {};
+        double maximumConnectedStateDifference {};
+        double minimumDisconnectedStateDifference {
+            std::numeric_limits<double>::infinity()
+        };
+        bool connectedExact { true };
+        bool disconnectedRejected { true };
+        bool finite { true };
+
+        [[nodiscard]] bool passed() const noexcept
+        {
+            return probes == 4u && connectedExact
+                && disconnectedRejected && finite
+                && maximumConnectedStateDifference == 0.0
+                && minimumDisconnectedStateDifference > 0.0;
+        }
+    };
+
+    // This is deliberately a renderVoice probe, not another direct cascade
+    // candidate. It supplies a strongly curved physical hold interval to the
+    // shipping voice, recovers the exact input endpoint which renderVoice
+    // handed to its OtaCascade, and replays that one interval from the saved
+    // capacitor/input-history state. The connected replay must be bit exact;
+    // the explicit nullptr replay is the sensitivity mutation and must differ.
+    // Consequently changing Engine.cpp's renderVoice call to pass nullptr
+    // makes the actual shipping state coincide with the rejected mutation and
+    // fails this contract even if every local OtaCascade test still passes.
+    static ShippingWiringContract shippingWiringContract()
+    {
+        constexpr std::array<double, 4> hostRates {
+            8000.0, 44100.0, 48000.0, 768000.0
+        };
+        constexpr float twoPi = 6.28318530717958647692f;
+        ShippingWiringContract result;
+        for (std::size_t probe = 0; probe < hostRates.size(); ++probe)
+        {
+            YouKnow106Engine engine;
+            engine.prepare(hostRates[probe], 1, true);
+            EngineParameters parameters;
+            parameters.calibration = 0.0f;
+            parameters.sawEnabled = true;
+            parameters.pulseEnabled = false;
+            parameters.subLevel = 0.0f;
+            parameters.noiseLevel = 0.0f;
+            parameters.enableVcfStageOffsets = false;
+            parameters.enableSpatialThermalGradient = false;
+            engine.setParameters(parameters);
+
+            const int card = static_cast<int>(probe);
+            auto& voice = engine.voices_[static_cast<std::size_t>(card)];
+            engine.initialiseVoice(voice, card, 48 + 4 * card, 1.0f);
+            voice.dco.reset();
+            voice.dco.periodSamples = engine.oversampledRate_
+                                    / (173.0 + 29.0 * card);
+            voice.dco.phase = 0.271 + 0.071 * static_cast<double>(card);
+            voice.dco.renderScale = 1.0f;
+            voice.dcoCv = static_cast<float>(173.0 + 29.0 * card);
+            voice.dcoCvTarget = voice.dcoCv;
+            voice.moduleCoupling.reset();
+            voice.vcaInputCoupling.reset();
+            voice.filter.reset();
+            voice.filter.state = { 0.17, -0.11, 0.073, -0.047 };
+            voice.filter.inputHistory = { 0.31, -0.19, 0.09 };
+            voice.filter.inputHistoryCount = 2;
+            voice.filter.gScale.fill(1.0f);
+            voice.filter.offsetVoltage.fill(0.0f);
+
+            const float oldCutoff = cutoffTargetForByte(51, 0.0f);
+            const float newCutoff = cutoffTargetForByte(104, 0.0f);
+            const float oldResonance = resonanceTargetForByte(91);
+            const float resonanceTarget = resonanceTargetForByte(19);
+            const double interval = 1.0 / engine.oversampledRate_;
+            const double eventPosition = 0.37;
+            const auto cutoff = YouKnow106Engine::exactVcfHoldInterval(
+                oldCutoff, oldCutoff, true, eventPosition, newCutoff,
+                interval);
+            const auto resonance = YouKnow106Engine::exactVcfHoldInterval(
+                oldResonance, resonanceTarget, false, 1.0,
+                resonanceTarget, interval);
+            engine.cutoffVcfHoldIntervals_[
+                static_cast<std::size_t>(card)] = cutoff;
+            engine.resonanceVcfHoldInterval_ = resonance;
+            engine.exactVcfControlInterval_.fill(false);
+            engine.exactVcfControlInterval_[
+                static_cast<std::size_t>(card)] = true;
+            voice.cutoffCounts = cutoff.endpoint;
+            voice.cutoffCountsTarget = newCutoff;
+            engine.resonanceCv_ = resonance.endpoint;
+            engine.resonanceCvTarget_ = resonanceTarget;
+
+            struct MappedControl
+            {
+                double omega {};
+                double feedback {};
+            };
+            const auto mapHeld = [&](double cutoffCounts,
+                                     double resonanceCv) {
+                const float feedback =
+                    YouKnow106Engine::VoicedResonanceCompatibilityProfile::
+                        loopGain(std::clamp(
+                            static_cast<float>(resonanceCv), 0.0f, 1.0f));
+                const float cutoffHz = YouKnow106Engine::vcfEffectiveCutoffHz(
+                    static_cast<float>(cutoffCounts), feedback);
+                const float limited = std::min(
+                    cutoffHz,
+                    static_cast<float>(engine.oversampledRate_) * 0.45f);
+                const float baseOmega = twoPi * limited
+                                      * engine.inverseOversampledRate_;
+                return MappedControl {
+                    YouKnow106Engine::boundedThermalFilterOmegaStep(
+                        baseOmega, parameters, card),
+                    feedback
+                };
+            };
+
+            const auto start = mapHeld(
+                cutoff.value.front(), resonance.value.front());
+            const auto endpoint = mapHeld(
+                cutoff.value.back(), resonance.value.back());
+            const float headroom = engine.dynamicOtaHeadroomVolts(
+                parameters, card);
+            voice.filter.previousOmegaStep = start.omega;
+            voice.filter.previousFeedback = start.feedback;
+            voice.filter.previousHeadroom = headroom;
+            voice.filter.parameterHistoryPrimed = true;
+            voice.filterOmegaStep = static_cast<float>(endpoint.omega);
+            voice.feedback = static_cast<float>(endpoint.feedback);
+            voice.inputCompensation =
+                YouKnow106Engine::VoicedResonanceCompatibilityProfile::
+                    inputCompensation(voice.feedback);
+
+            ControlTrajectory trajectory;
+            for (std::size_t point = 0;
+                 point < trajectory.omegaStep.size(); ++point)
+            {
+                const auto mapped = mapHeld(
+                    cutoff.value[point], resonance.value[point]);
+                trajectory.omegaStep[point] = mapped.omega;
+                trajectory.feedback[point] = mapped.feedback;
+                trajectory.headroom[point] = headroom;
+            }
+            trajectory.omegaStep.front() = start.omega;
+            trajectory.feedback.front() = start.feedback;
+            trajectory.headroom.front() = headroom;
+            trajectory.omegaStep.back() = endpoint.omega;
+            trajectory.feedback.back() = endpoint.feedback;
+            trajectory.headroom.back() = headroom;
+
+            Cascade connected = voice.filter;
+            Cascade disconnected = voice.filter;
+            (void) engine.renderVoice(voice, parameters, 0.0f);
+            const float renderedInput = static_cast<float>(
+                voice.filter.inputHistory[0]);
+            (void) connected.process(
+                renderedInput, voice.filterOmegaStep, voice.feedback,
+                headroom, parameters.enableVcfEarlyEffect,
+                parameters.calibration, &trajectory);
+            (void) disconnected.process(
+                renderedInput, voice.filterOmegaStep, voice.feedback,
+                headroom, parameters.enableVcfEarlyEffect,
+                parameters.calibration, nullptr);
+
+            double connectedDifference = 0.0;
+            double disconnectedDifference = 0.0;
+            for (std::size_t stage = 0; stage < voice.filter.state.size();
+                 ++stage)
+            {
+                result.finite = result.finite
+                    && std::isfinite(voice.filter.state[stage])
+                    && std::isfinite(connected.state[stage])
+                    && std::isfinite(disconnected.state[stage]);
+                connectedDifference = std::max(
+                    connectedDifference,
+                    std::abs(voice.filter.state[stage]
+                             - connected.state[stage]));
+                disconnectedDifference = std::max(
+                    disconnectedDifference,
+                    std::abs(voice.filter.state[stage]
+                             - disconnected.state[stage]));
+            }
+            result.maximumConnectedStateDifference = std::max(
+                result.maximumConnectedStateDifference,
+                connectedDifference);
+            result.minimumDisconnectedStateDifference = std::min(
+                result.minimumDisconnectedStateDifference,
+                disconnectedDifference);
+            result.connectedExact = result.connectedExact
+                && connectedDifference == 0.0;
+            result.disconnectedRejected = result.disconnectedRejected
+                && disconnectedDifference > 0.0;
+            result.finite = result.finite
+                && std::isfinite(renderedInput)
+                && std::isfinite(connectedDifference)
+                && std::isfinite(disconnectedDifference);
+            ++result.probes;
+        }
+        return result;
+    }
+
     static bool stateExactlyZero(const Cascade& cascade) noexcept
     {
         return std::all_of(cascade.state.begin(), cascade.state.end(),
@@ -381,6 +756,8 @@ constexpr double pi = 3.14159265358979323846;
 constexpr double toneHz = 220.0;
 constexpr double toneVolts = 2.4;
 constexpr double warmSeconds = 900.0;
+constexpr double converterPassSeconds = 21.0 / 5000.0;
+constexpr double converterScanRate = 5000.0 / 21.0;
 constexpr int renderedPasses = 4;
 constexpr int captureFirstPass = 1;
 constexpr int rk64Substeps = 4;
@@ -433,6 +810,7 @@ struct Schedule
     std::vector<ScheduledEvent> events;
     bool phasesExact {};
     bool orderExact {};
+    bool scanRateExact {};
 };
 
 Schedule buildSchedule()
@@ -465,36 +843,63 @@ Schedule buildSchedule()
     }};
     static_assert(expected.size() == YouKnow106TestAccess::writeCount());
 
-    const auto phases = YouKnow106TestAccess::eventPhases();
-    const auto writes = YouKnow106TestAccess::writes();
+    const auto shippingPhases = YouKnow106TestAccess::eventPhases();
+    const auto shippingWrites = YouKnow106TestAccess::writes();
     Schedule schedule;
     schedule.phasesExact = true;
     schedule.orderExact = true;
-    const double passSeconds = 1.0 / YouKnow106TestAccess::scanRate();
-    for (std::size_t ordinal = 0; ordinal < phases.size(); ++ordinal)
+    schedule.scanRateExact = std::abs(
+        1.0 / YouKnow106TestAccess::scanRate()
+            - converterPassSeconds) <= 1.0e-15
+        && std::abs(YouKnow106TestAccess::scanRate() / converterScanRate
+                    - 1.0) <= 1.0e-15;
+    for (std::size_t ordinal = 0; ordinal < expected.size(); ++ordinal)
     {
         const double wanted = static_cast<double>(ordinal)
-                            / static_cast<double>(phases.size());
+                            / static_cast<double>(expected.size());
         schedule.phasesExact = schedule.phasesExact
-            && std::abs(phases[ordinal] - wanted) <= 1.0e-15;
+            && std::abs(shippingPhases[ordinal] - wanted) <= 1.0e-15;
         schedule.orderExact = schedule.orderExact
-            && writes[ordinal].destination == expected[ordinal].destination
-            && writes[ordinal].voice == expected[ordinal].voice;
+            && shippingWrites[ordinal].destination
+                   == expected[ordinal].destination
+            && shippingWrites[ordinal].voice == expected[ordinal].voice;
     }
 
-    schedule.events.reserve(renderedPasses * phases.size());
+    // The oracle timeline and payload order are intentionally constructed
+    // from independent rational constants and the hard-coded service order
+    // above.  The shipping tables are observed only by the exactness checks;
+    // they cannot silently move the reference along with the candidate.
+    schedule.events.reserve(renderedPasses * expected.size());
     for (int pass = 0; pass < renderedPasses; ++pass)
     {
-        for (std::size_t ordinal = 0; ordinal < phases.size(); ++ordinal)
+        for (std::size_t ordinal = 0; ordinal < expected.size(); ++ordinal)
         {
+            const double phase = static_cast<double>(ordinal)
+                               / static_cast<double>(expected.size());
             schedule.events.push_back({
-                (static_cast<double>(pass) + phases[ordinal]) * passSeconds,
-                pass, ordinal, writes[ordinal].destination,
-                writes[ordinal].voice
+                (static_cast<double>(pass) + phase) * converterPassSeconds,
+                pass, ordinal, expected[ordinal].destination,
+                expected[ordinal].voice
             });
         }
     }
     return schedule;
+}
+
+Schedule snapScheduleToInternalGrid(const Schedule& exact,
+                                    double internalRate,
+                                    bool early)
+{
+    Schedule snapped = exact;
+    for (auto& event : snapped.events)
+    {
+        const double grid = event.time * internalRate;
+        event.time = (early
+                ? std::floor(grid + 1.0e-12)
+                : std::ceil(grid - 1.0e-12))
+            / internalRate;
+    }
+    return snapped;
 }
 
 class ExactHold
@@ -727,11 +1132,11 @@ private:
     std::array<double, 4> state_ {};
 };
 
-class CandidateScan
+class EndpointCandidateScan
 {
 public:
-    CandidateScan(const YouKnow106TestAccess::CardProfile& profile,
-                  double internalRate)
+    EndpointCandidateScan(const YouKnow106TestAccess::CardProfile& profile,
+                          double internalRate)
         : profile_(profile), internalRate_(internalRate),
           cutoffState_(YouKnow106TestAccess::cutoffTargetForByte(
               cutoffBytes[0], profile.character)),
@@ -831,6 +1236,428 @@ private:
     std::size_t totalWrites_ {};
     std::size_t cutoffWrites_ {};
     std::size_t resonanceWrites_ {};
+};
+
+class EventAwareCandidateScan
+{
+public:
+    struct Frame
+    {
+        InstantaneousControls endpoint {};
+        YouKnow106TestAccess::ControlTrajectory trajectory {};
+        bool exactControl {};
+    };
+
+    EventAwareCandidateScan(
+        const Schedule& schedule,
+        const ControlTrajectories& exactTrajectories,
+        const YouKnow106TestAccess::CardProfile& profile,
+        double internalRate)
+        : schedule_(schedule), exactTrajectories_(exactTrajectories),
+          profile_(profile), internalRate_(internalRate),
+          cutoffState_(YouKnow106TestAccess::cutoffTargetForByte(
+              cutoffBytes[0], profile.character)),
+          cutoffTarget_(cutoffState_),
+          resonanceState_(YouKnow106TestAccess::resonanceTargetForByte(
+              resonanceBytes[0])),
+          resonanceTarget_(resonanceState_)
+    {
+    }
+
+    Frame advance()
+    {
+        const double interval = 1.0 / internalRate_;
+        const double start = time_;
+        const double end = start + interval;
+        PhysicalEvent physicalEvent;
+        commitDueEvents(start, physicalEvent);
+
+        const std::size_t cursorBeforePeek = cursor_;
+        const float cutoffTargetBeforePeek = cutoffTarget_;
+        const float resonanceTargetBeforePeek = resonanceTarget_;
+        if (!physicalEvent.active)
+            peekUpcomingEvent(start, end);
+        peekPure_ = peekPure_ && cursor_ == cursorBeforePeek
+            && cutoffTarget_ == cutoffTargetBeforePeek
+            && resonanceTarget_ == resonanceTargetBeforePeek;
+
+        if (!physicalEvent.active && pending_.valid)
+        {
+            const auto& event = schedule_.events[pending_.index];
+            physicalEvent = {
+                true, event.destination, event.voice, pending_.position,
+                event.destination
+                        == YouKnow106TestAccess::Destination::Resonance
+                    ? resonanceTarget_ : cutoffTarget_,
+                pending_.target
+            };
+        }
+
+        const bool cutoffEvent = physicalEvent.active
+            && physicalEvent.destination
+                   == YouKnow106TestAccess::Destination::Vcf
+            && physicalEvent.voice == profile_.card;
+        const bool resonanceEvent = physicalEvent.active
+            && physicalEvent.destination
+                   == YouKnow106TestAccess::Destination::Resonance;
+        const bool exactControl = cutoffEvent || resonanceEvent;
+        YouKnow106TestAccess::VcfHoldInterval cutoff;
+        YouKnow106TestAccess::VcfHoldInterval resonance;
+        if (exactControl)
+        {
+            ++exactControlIntervals_;
+            const float cutoffTargetBeforeEvent = cutoffEvent
+                ? physicalEvent.previousTarget : cutoffTarget_;
+            const float resonanceTargetBeforeEvent = resonanceEvent
+                ? physicalEvent.previousTarget : resonanceTarget_;
+            cutoff = YouKnow106TestAccess::exactVcfHoldInterval(
+                cutoffState_, cutoffTargetBeforeEvent, cutoffEvent,
+                physicalEvent.position,
+                cutoffEvent ? physicalEvent.target
+                            : cutoffTargetBeforeEvent,
+                interval);
+            resonance = YouKnow106TestAccess::exactVcfHoldInterval(
+                resonanceState_, resonanceTargetBeforeEvent,
+                resonanceEvent, physicalEvent.position,
+                resonanceEvent ? physicalEvent.target
+                               : resonanceTargetBeforeEvent,
+                interval);
+            checkHoldInterval(
+                cutoff, cutoffState_, cutoffTargetBeforeEvent, cutoffEvent,
+                physicalEvent.position,
+                cutoffEvent ? physicalEvent.target
+                            : cutoffTargetBeforeEvent,
+                exactTrajectories_.cutoff, start, interval);
+            checkHoldInterval(
+                resonance, resonanceState_, resonanceTargetBeforeEvent,
+                resonanceEvent, physicalEvent.position,
+                resonanceEvent ? physicalEvent.target
+                               : resonanceTargetBeforeEvent,
+                exactTrajectories_.resonance, start, interval);
+        }
+        else
+        {
+            // Match the ordinary shipping endpoint arithmetic. Only an
+            // interval containing a physical VCF/resonance write needs the
+            // seven-node override; all other intervals retain Step 10's
+            // endpoint-linear Merson control path.
+            const float inverseRate = static_cast<float>(1.0 / internalRate_);
+            const float holdSeconds = static_cast<float>(
+                YouKnow106TestAccess::holdSeconds());
+            const float slew = 1.0f
+                - std::exp(-inverseRate / holdSeconds);
+            cutoffState_ += (cutoffTarget_ - cutoffState_) * slew;
+            resonanceState_ +=
+                (resonanceTarget_ - resonanceState_) * slew;
+        }
+
+        Frame result;
+        result.exactControl = exactControl;
+        if (exactControl)
+        {
+            constexpr auto positions =
+                YouKnow106TestAccess::controlNodePositions();
+            static_assert(positions.size()
+                          == std::tuple_size_v<decltype(
+                              result.trajectory.omegaStep)>);
+            for (std::size_t point = 0; point < positions.size(); ++point)
+            {
+                const float feedback = YouKnow106TestAccess::feedback(
+                    static_cast<float>(resonance.value[point]), profile_);
+                result.trajectory.feedback[point] = feedback;
+                result.trajectory.omegaStep[point] =
+                    YouKnow106TestAccess::omegaStep(
+                        static_cast<float>(cutoff.value[point]), feedback,
+                        profile_, internalRate_);
+                result.trajectory.headroom[point] = profile_.headroom;
+            }
+            cutoffState_ = cutoff.endpoint;
+            resonanceState_ = resonance.endpoint;
+        }
+        const float endpointFeedback = YouKnow106TestAccess::feedback(
+            resonanceState_, profile_);
+        const float endpointOmega = YouKnow106TestAccess::omegaStep(
+            cutoffState_, endpointFeedback, profile_, internalRate_);
+        const double endpointInput = toneVolts
+            * static_cast<double>(
+                YouKnow106TestAccess::inputCompensation(endpointFeedback))
+            * std::sin(2.0 * pi * toneHz * end);
+        result.endpoint = {
+            static_cast<double>(endpointOmega) * internalRate_,
+            endpointFeedback, profile_.headroom, endpointInput
+        };
+
+        if (exactControl)
+        {
+            endpointExact_ = endpointExact_
+                && result.trajectory.omegaStep.back() == endpointOmega
+                && result.trajectory.feedback.back() == endpointFeedback
+                && result.trajectory.headroom.back() == profile_.headroom;
+        }
+        time_ = end;
+        return result;
+    }
+
+    [[nodiscard]] std::size_t totalWrites() const noexcept
+    {
+        return totalWrites_;
+    }
+
+    [[nodiscard]] std::size_t cutoffWrites() const noexcept
+    {
+        return cutoffWrites_;
+    }
+
+    [[nodiscard]] std::size_t resonanceWrites() const noexcept
+    {
+        return resonanceWrites_;
+    }
+
+    [[nodiscard]] std::size_t cursor() const noexcept
+    {
+        return cursor_;
+    }
+
+    [[nodiscard]] std::size_t peeks() const noexcept
+    {
+        return peeks_;
+    }
+
+    [[nodiscard]] double maximumHoldDifference() const noexcept
+    {
+        return maximumHoldDifference_;
+    }
+
+    [[nodiscard]] std::size_t exactControlIntervals() const noexcept
+    {
+        return exactControlIntervals_;
+    }
+
+    [[nodiscard]] bool contractExact() const noexcept
+    {
+        constexpr std::size_t relevantWritesPerPass = 7u;
+        constexpr std::size_t expectedFractionalPeeks =
+            renderedPasses * relevantWritesPerPass - 1u;
+        constexpr std::size_t expectedControlIntervals =
+            renderedPasses * 2u;
+        return cursorExact_ && peekPure_ && payloadLatched_
+            && singleEventBound_ && directHoldExact_
+            && oracleHoldExact_ && endpointExact_
+            && peeks_ == expectedFractionalPeeks
+            && exactControlIntervals_ == expectedControlIntervals;
+    }
+
+private:
+    struct PhysicalEvent
+    {
+        bool active {};
+        YouKnow106TestAccess::Destination destination {
+            YouKnow106TestAccess::Destination::Noise
+        };
+        int voice { -1 };
+        double position {};
+        float previousTarget {};
+        float target {};
+    };
+
+    struct PendingEvent
+    {
+        bool valid {};
+        std::size_t index {};
+        double position {};
+        float target {};
+    };
+
+    [[nodiscard]] float targetForEvent(
+        const ScheduledEvent& event) const noexcept
+    {
+        if (event.destination
+                == YouKnow106TestAccess::Destination::Resonance)
+        {
+            return YouKnow106TestAccess::resonanceTargetForByte(
+                resonanceBytes[static_cast<std::size_t>(event.pass)]);
+        }
+        if (event.destination == YouKnow106TestAccess::Destination::Vcf)
+        {
+            return YouKnow106TestAccess::cutoffTargetForByte(
+                cutoffBytes[static_cast<std::size_t>(event.pass)],
+                profile_.character);
+        }
+        return 0.0f;
+    }
+
+    void commitDueEvents(double start, PhysicalEvent& physicalEvent) noexcept
+    {
+        while (cursor_ < schedule_.events.size()
+               && schedule_.events[cursor_].time <= start + 1.0e-15)
+        {
+            const auto& event = schedule_.events[cursor_];
+            const bool usesLatch = pending_.valid
+                && pending_.index == cursor_;
+            const float target = usesLatch
+                ? pending_.target : targetForEvent(event);
+            if (usesLatch)
+            {
+                payloadLatched_ = payloadLatched_
+                    && target == pending_.target;
+                pending_ = {};
+            }
+            cursorExact_ = cursorExact_
+                && event.pass == static_cast<int>(
+                    cursor_ / YouKnow106TestAccess::writeCount())
+                && event.ordinal
+                    == cursor_ % YouKnow106TestAccess::writeCount();
+            const bool relevant = event.destination
+                    == YouKnow106TestAccess::Destination::Resonance
+                || event.destination
+                       == YouKnow106TestAccess::Destination::Vcf;
+            if (relevant && !usesLatch && !physicalEvent.active)
+            {
+                physicalEvent = {
+                    true, event.destination, event.voice, 0.0,
+                    event.destination
+                            == YouKnow106TestAccess::Destination::Resonance
+                        ? resonanceTarget_ : cutoffTarget_,
+                    target
+                };
+            }
+            if (event.destination
+                    == YouKnow106TestAccess::Destination::Resonance)
+            {
+                resonanceTarget_ = target;
+                ++resonanceWrites_;
+            }
+            else if (event.destination
+                         == YouKnow106TestAccess::Destination::Vcf
+                     && event.voice == profile_.card)
+            {
+                cutoffTarget_ = target;
+                ++cutoffWrites_;
+            }
+            ++cursor_;
+            ++totalWrites_;
+        }
+    }
+
+    void peekUpcomingEvent(double start, double end) noexcept
+    {
+        if (pending_.valid || cursor_ >= schedule_.events.size())
+            return;
+        const auto& event = schedule_.events[cursor_];
+        const bool relevant = event.destination
+                == YouKnow106TestAccess::Destination::Resonance
+            || event.destination == YouKnow106TestAccess::Destination::Vcf;
+        if (!relevant)
+            return;
+        if (!(event.time > start + 1.0e-15
+              && event.time <= end + 1.0e-15))
+            return;
+        if (cursor_ + 1u < schedule_.events.size())
+            singleEventBound_ = singleEventBound_
+                && schedule_.events[cursor_ + 1u].time > end + 1.0e-15;
+        pending_ = {
+            true, cursor_,
+            std::clamp((event.time - start) * internalRate_, 0.0, 1.0),
+            targetForEvent(event)
+        };
+        ++peeks_;
+    }
+
+    static double independentlyAdvancedHold(
+        double state, double target, bool hasEvent, double eventPosition,
+        double eventTarget, double position, double interval) noexcept
+    {
+        const auto advance = [](double value, double destination,
+                                double duration) {
+            return destination + (value - destination)
+                * std::exp(-duration
+                    / YouKnow106TestAccess::holdSeconds());
+        };
+        if (!hasEvent || position <= eventPosition)
+            return advance(state, target, position * interval);
+        const double atEvent = advance(
+            state, target, eventPosition * interval);
+        return advance(atEvent, eventTarget,
+                       (position - eventPosition) * interval);
+    }
+
+    void checkHoldInterval(
+        const YouKnow106TestAccess::VcfHoldInterval& actual,
+        float state, float target, bool hasEvent, double eventPosition,
+        float eventTarget, const ExactHold& globalExact,
+        double start, double interval) noexcept
+    {
+        constexpr auto positions = YouKnow106TestAccess::controlNodePositions();
+        for (std::size_t point = 0; point < positions.size(); ++point)
+        {
+            const double expected = independentlyAdvancedHold(
+                state, target, hasEvent, eventPosition, eventTarget,
+                positions[point], interval);
+            const double difference = std::abs(
+                actual.value[point] - expected);
+            maximumHoldDifference_ = std::max(
+                maximumHoldDifference_, difference);
+            const double scale = std::max({
+                1.0, std::abs(actual.value[point]), std::abs(expected)
+            });
+            directHoldExact_ = directHoldExact_
+                && difference <= 256.0
+                    * std::numeric_limits<double>::epsilon() * scale;
+
+            const double global = globalExact.value(
+                start + positions[point] * interval);
+            const double globalDifference = std::abs(
+                actual.value[point] - global);
+            const double globalScale = std::max({
+                1.0, std::abs(actual.value[point]), std::abs(global)
+            });
+            // The shipping capacitor endpoint is intentionally float state.
+            // One endpoint rounding error is attenuated by every later RC
+            // interval; eps/(1-exp(-dt/tau)) is the closed-form worst-case
+            // accumulation bound, so this remains rate-derived rather than a
+            // fitted tolerance (and is most demanding on the 768 kHz grid).
+            const double intervalResponse = -std::expm1(
+                -interval / YouKnow106TestAccess::holdSeconds());
+            const double accumulatedFloatBound =
+                std::numeric_limits<float>::epsilon() * globalScale
+                / std::max(intervalResponse,
+                           static_cast<double>(
+                               std::numeric_limits<float>::epsilon()));
+            oracleHoldExact_ = oracleHoldExact_
+                && globalDifference <= accumulatedFloatBound;
+        }
+        const float expectedEndpoint = static_cast<float>(
+            independentlyAdvancedHold(
+                state, target, hasEvent, eventPosition, eventTarget,
+                1.0, interval));
+        directHoldExact_ = directHoldExact_
+            && actual.endpoint == expectedEndpoint;
+    }
+
+    const Schedule& schedule_;
+    const ControlTrajectories& exactTrajectories_;
+    const YouKnow106TestAccess::CardProfile& profile_;
+    double internalRate_ {};
+    float cutoffState_ {};
+    float cutoffTarget_ {};
+    float resonanceState_ {};
+    float resonanceTarget_ {};
+    double time_ {};
+    std::size_t cursor_ {};
+    std::size_t peeks_ {};
+    std::size_t totalWrites_ {};
+    std::size_t cutoffWrites_ {};
+    std::size_t resonanceWrites_ {};
+    std::size_t exactControlIntervals_ {};
+    double maximumHoldDifference_ {};
+    PendingEvent pending_ {};
+    bool cursorExact_ { true };
+    bool peekPure_ { true };
+    bool payloadLatched_ { true };
+    bool singleEventBound_ { true };
+    bool directHoldExact_ { true };
+    bool oracleHoldExact_ { true };
+    bool endpointExact_ { true };
 };
 
 // Diagnosis-only independent transcription of the production Merson tableau.
@@ -1127,15 +1954,85 @@ struct Take
     bool finite { true };
 };
 
+struct CandidateRender
+{
+    std::vector<float> samples;
+    std::size_t writes {};
+    std::size_t cutoffWrites {};
+    std::size_t resonanceWrites {};
+    std::size_t cursor {};
+    std::size_t peeks {};
+    std::size_t exactControlIntervals {};
+    std::size_t recoveries {};
+    double maximumState {};
+    double maximumHoldDifference {};
+    bool resetExact {};
+    bool controlContractExact {};
+    bool finite { true };
+};
+
+CandidateRender renderCandidate(
+    const Schedule& schedule,
+    const YouKnow106TestAccess::CardProfile& profile,
+    double internalRate)
+{
+    const auto framesUnaligned = static_cast<std::size_t>(std::floor(
+        renderedPasses * converterPassSeconds * internalRate));
+    const std::size_t frames = framesUnaligned - framesUnaligned % 4u;
+    CandidateRender render;
+    render.samples.resize(frames);
+
+    YouKnow106TestAccess::Cascade candidate;
+    candidate.reset();
+    YouKnow106TestAccess::configure(candidate, profile);
+    render.resetExact = YouKnow106TestAccess::stateExactlyZero(candidate);
+    const auto exactTrajectories = buildTrajectories(
+        schedule, profile.card, profile);
+    EventAwareCandidateScan candidateScan(
+        schedule, exactTrajectories, profile, internalRate);
+    for (std::size_t frame = 0; frame < frames; ++frame)
+    {
+        const auto controls = candidateScan.advance();
+        render.samples[frame] = candidate.process(
+            static_cast<float>(controls.endpoint.input),
+            static_cast<float>(
+                controls.endpoint.angularFrequency / internalRate),
+            static_cast<float>(controls.endpoint.feedback),
+            static_cast<float>(controls.endpoint.headroom), true,
+            profile.character,
+            controls.exactControl ? &controls.trajectory : nullptr);
+        const bool stateOkay =
+            YouKnow106TestAccess::stateFiniteAndBounded(candidate);
+        render.finite = render.finite && stateOkay
+            && std::isfinite(render.samples[frame]);
+        render.maximumState = std::max(
+            render.maximumState,
+            YouKnow106TestAccess::maximumStateMagnitude(candidate));
+        if (frame > 8u && YouKnow106TestAccess::stateExactlyZero(candidate))
+            ++render.recoveries;
+    }
+    render.writes = candidateScan.totalWrites();
+    render.cutoffWrites = candidateScan.cutoffWrites();
+    render.resonanceWrites = candidateScan.resonanceWrites();
+    render.cursor = candidateScan.cursor();
+    render.peeks = candidateScan.peeks();
+    render.exactControlIntervals = candidateScan.exactControlIntervals();
+    render.maximumHoldDifference =
+        candidateScan.maximumHoldDifference();
+    render.controlContractExact = candidateScan.contractExact()
+        && render.cursor == schedule.events.size();
+    render.finite = render.finite && allFinite(render.samples);
+    return render;
+}
+
 Take renderTake(const Schedule& schedule,
                 const YouKnow106TestAccess::CardProfile& profile,
                 double baseRate, std::string name)
 {
     const double internalRate = baseRate * 4.0;
     const double oracleRate = baseRate * 16.0;
-    const double passSeconds = 1.0 / YouKnow106TestAccess::scanRate();
     const auto framesUnaligned = static_cast<std::size_t>(std::floor(
-        renderedPasses * passSeconds * internalRate));
+        renderedPasses * converterPassSeconds * internalRate));
     const std::size_t candidateFrames = framesUnaligned
                                       - framesUnaligned % 4u;
     const std::size_t oracleFrames = candidateFrames * 4u;
@@ -1150,37 +2047,19 @@ Take renderTake(const Schedule& schedule,
     take.oracleWrites = trajectories.totalWrites;
     take.oracleCutoffWrites = trajectories.cutoffWrites;
     take.oracleResonanceWrites = trajectories.resonanceWrites;
-    take.candidate.resize(candidateFrames);
+    auto candidateRender = renderCandidate(schedule, profile, internalRate);
+    if (candidateRender.samples.size() != candidateFrames)
+        throw std::runtime_error("candidate render length mismatch");
+    take.candidate = std::move(candidateRender.samples);
+    take.candidateWrites = candidateRender.writes;
+    take.candidateCutoffWrites = candidateRender.cutoffWrites;
+    take.candidateResonanceWrites = candidateRender.resonanceWrites;
+    take.recoveries = candidateRender.recoveries;
+    take.maximumState = candidateRender.maximumState;
+    take.resetExact = candidateRender.resetExact;
+    take.finite = candidateRender.finite;
     take.rk64High.resize(oracleFrames);
     take.rk128High.resize(oracleFrames);
-
-    YouKnow106TestAccess::Cascade candidate;
-    candidate.reset();
-    YouKnow106TestAccess::configure(candidate, profile);
-    take.resetExact = YouKnow106TestAccess::stateExactlyZero(candidate);
-    CandidateScan candidateScan(profile, internalRate);
-    for (std::size_t frame = 0; frame < candidateFrames; ++frame)
-    {
-        const auto controls = candidateScan.advanceEndpoint();
-        take.candidate[frame] = candidate.process(
-            static_cast<float>(controls.input),
-            static_cast<float>(controls.angularFrequency / internalRate),
-            static_cast<float>(controls.feedback),
-            static_cast<float>(controls.headroom), true,
-            profile.character);
-        const bool stateOkay =
-            YouKnow106TestAccess::stateFiniteAndBounded(candidate);
-        take.finite = take.finite && stateOkay
-            && std::isfinite(take.candidate[frame]);
-        take.maximumState = std::max(
-            take.maximumState,
-            YouKnow106TestAccess::maximumStateMagnitude(candidate));
-        if (frame > 8u && YouKnow106TestAccess::stateExactlyZero(candidate))
-            ++take.recoveries;
-    }
-    take.candidateWrites = candidateScan.totalWrites();
-    take.candidateCutoffWrites = candidateScan.cutoffWrites();
-    take.candidateResonanceWrites = candidateScan.resonanceWrites();
 
     ReferenceCascade rk64(profile, trajectories, internalRate);
     ReferenceCascade rk128(profile, trajectories, internalRate);
@@ -1314,7 +2193,7 @@ std::vector<float> renderDiagnosticCandidate(
         renderedPasses * passSeconds * internalRate));
     const std::size_t frames = framesUnaligned - framesUnaligned % 4u;
     std::vector<float> result(frames);
-    CandidateScan scan(profile, internalRate);
+    EndpointCandidateScan scan(profile, internalRate);
     DiagnosticMersonCascade cascade(profile, internalRate);
     for (std::size_t frame = 0; frame < frames; ++frame)
     {
@@ -1337,7 +2216,7 @@ struct DiagnosticAggregate
 struct DiagnosticProfileMetric
 {
     std::string name;
-    double productionRelative {};
+    double endpointCloneRelative {};
 };
 
 struct EightKDiagnostics
@@ -1548,10 +2427,10 @@ EightKDiagnostics diagnoseEightK(
                 result.endpointCloneMaximumDifference,
                 std::abs(static_cast<double>(endpointClone[first + frame])
                          - static_cast<double>(reduced.candidate[frame])));
-        const auto production = compareEightKCandidate(
+        const auto endpointCloneComparison = compareEightKCandidate(
             reduced, endpointClone);
         result.profiles.push_back(
-            { reduced.name, production.relativeError });
+            { reduced.name, endpointCloneComparison.relativeError });
 
         constexpr std::array<double, 7> nodePositions {
             0.0, 1.0 / 6.0, 1.0 / 4.0, 1.0 / 2.0,
@@ -1607,8 +2486,12 @@ struct CellMetrics
     double minimumReferenceRms { std::numeric_limits<double>::infinity() };
     std::size_t minimumFrames { std::numeric_limits<std::size_t>::max() };
     std::size_t takes {};
+    std::size_t peeks {};
+    std::size_t exactControlIntervals {};
     std::size_t recoveries {};
     std::size_t writeMismatches {};
+    std::size_t controlContractMismatches {};
+    double maximumHoldDifference {};
     std::uint64_t rawHash {};
     std::string worstTake;
     int preparedFactor {};
@@ -1623,14 +2506,15 @@ struct CellMetrics
 
 CellMetrics auditCell(const Cell& cell,
                       const std::vector<ReducedTake>& takes,
-                      std::uint64_t familyHash)
+                      const std::vector<CandidateRender>& selectorCandidates)
 {
+    if (takes.size() != selectorCandidates.size())
+        throw std::runtime_error("selector candidate profile mismatch");
     const double internalRate = familyBaseRates[
         static_cast<std::size_t>(cell.family)] * 4.0;
-    const double passSeconds = 1.0 / YouKnow106TestAccess::scanRate();
     CellMetrics metrics;
     metrics.cell = cell;
-    metrics.rawHash = familyHash;
+    metrics.rawHash = 1469598103934665603ull;
     metrics.familyRateExact = cell.hostRate
         * static_cast<double>(cell.factor) == internalRate;
     const auto prepared = YouKnow106TestAccess::shippingProcessingRate(
@@ -1639,14 +2523,28 @@ CellMetrics auditCell(const Cell& cell,
     metrics.preparedInternalRate = prepared.internalRate;
     metrics.shippingSelectorExact = prepared.factor == cell.factor
         && prepared.internalRate == internalRate;
-    for (const auto& take : takes)
+    for (std::size_t takeIndex = 0; takeIndex < takes.size(); ++takeIndex)
     {
+        const auto& take = takes[takeIndex];
+        const auto& rawCandidate = selectorCandidates[takeIndex];
+        const auto firstInternal = static_cast<std::size_t>(
+            take.firstInternalFrame);
+        if (rawCandidate.samples.size()
+                < firstInternal + take.candidate.size())
+            throw std::runtime_error("selector candidate is too short");
+        std::vector<float> alignedCandidate(
+            rawCandidate.samples.begin()
+                + static_cast<std::ptrdiff_t>(firstInternal),
+            rawCandidate.samples.begin()
+                + static_cast<std::ptrdiff_t>(
+                    firstInternal + take.candidate.size()));
         auto candidate = YouKnow106TestAccess::decimate(
-            take.candidate, cell.factor);
+            alignedCandidate, cell.factor);
         auto rk64 = YouKnow106TestAccess::decimate(take.rk64, cell.factor);
         auto rk128 = YouKnow106TestAccess::decimate(take.rk128, cell.factor);
         const std::size_t relativeCapture = static_cast<std::size_t>(std::max(
-            0.0, std::ceil(captureFirstPass * passSeconds * internalRate
+            0.0, std::ceil(captureFirstPass * converterPassSeconds
+                         * internalRate
                          - static_cast<double>(take.firstInternalFrame))));
         const std::size_t first = std::min(
             candidate.size(),
@@ -1671,24 +2569,36 @@ CellMetrics auditCell(const Cell& cell,
         metrics.minimumReferenceRms = std::min(
             metrics.minimumReferenceRms, comparison.referenceRms);
         metrics.maximumState = std::max(metrics.maximumState,
-                                        take.maximumState);
+                                        rawCandidate.maximumState);
         metrics.minimumFrames = std::min(metrics.minimumFrames,
                                          candidateSpan.size());
-        metrics.recoveries += take.recoveries;
+        metrics.recoveries += rawCandidate.recoveries;
+        metrics.peeks += rawCandidate.peeks;
+        metrics.exactControlIntervals +=
+            rawCandidate.exactControlIntervals;
+        metrics.maximumHoldDifference = std::max(
+            metrics.maximumHoldDifference,
+            rawCandidate.maximumHoldDifference);
+        metrics.rawHash ^= hashSamples(rawCandidate.samples);
+        metrics.rawHash *= 1099511628211ull;
         constexpr std::size_t expectedWrites =
             renderedPasses * YouKnow106TestAccess::writeCount();
-        if (take.candidateWrites != expectedWrites
+        if (rawCandidate.writes != expectedWrites
+            || rawCandidate.cursor != expectedWrites
             || take.oracleWrites != expectedWrites
-            || take.candidateCutoffWrites
+            || rawCandidate.cutoffWrites
                    != static_cast<std::size_t>(renderedPasses)
             || take.oracleCutoffWrites
                    != static_cast<std::size_t>(renderedPasses)
-            || take.candidateResonanceWrites
+            || rawCandidate.resonanceWrites
                    != static_cast<std::size_t>(renderedPasses)
             || take.oracleResonanceWrites
                    != static_cast<std::size_t>(renderedPasses))
             ++metrics.writeMismatches;
-        metrics.finite = metrics.finite && take.finite && take.resetExact
+        if (!rawCandidate.controlContractExact)
+            ++metrics.controlContractMismatches;
+        metrics.finite = metrics.finite && take.finite
+            && rawCandidate.finite && rawCandidate.resetExact
             && std::isfinite(comparison.relativeError)
             && std::isfinite(convergence.relativeError)
             && allFinite(candidate) && allFinite(rk64) && allFinite(rk128);
@@ -1706,6 +2616,7 @@ CellMetrics auditCell(const Cell& cell,
         && metrics.takes == takes.size()
         && metrics.minimumFrames >= minimumRequiredFrames
         && metrics.recoveries == 0u && metrics.writeMismatches == 0u
+        && metrics.controlContractMismatches == 0u
         && metrics.minimumReferenceRms > 1.0e-5
         && metrics.maximumState > 0.1 && metrics.maximumState <= 64.0
         && metrics.worstConvergence <= convergenceGate;
@@ -1731,13 +2642,19 @@ struct Audit
                familyBaseRates.size()> filterChecks {};
     std::array<std::uint64_t, familyBaseRates.size()> familyHashes {};
     bool scheduleExact {};
+    YouKnow106TestAccess::SchedulerContract schedulerContract;
+    YouKnow106TestAccess::ShippingWiringContract shippingWiringContract;
     bool nominalCollapseExact {};
     bool nominalColdWarmRenderExact {};
     bool familyRowsShareRaw {};
+    bool coverageCountsExact {};
     bool standardAdmissionPass {};
     bool endpointClassificationsExact {};
     std::size_t physicalTakesPerFamily {};
     std::size_t logicalProfilesPerFamily {};
+    CellMetrics lateSnap;
+    CellMetrics earlySnap;
+    bool snapNegativeControlsExact {};
     EightKDiagnostics eightKDiagnostics;
     bool pass {};
 };
@@ -1746,7 +2663,11 @@ Audit runAudit(bool diagnoseEightKCell = false)
 {
     const Schedule schedule = buildSchedule();
     Audit audit;
+    audit.schedulerContract = YouKnow106TestAccess::schedulerContract();
+    audit.shippingWiringContract =
+        YouKnow106TestAccess::shippingWiringContract();
     audit.scheduleExact = schedule.phasesExact && schedule.orderExact
+        && schedule.scanRateExact
         && schedule.events.size()
                == renderedPasses * YouKnow106TestAccess::writeCount();
 
@@ -1784,6 +2705,8 @@ Audit runAudit(bool diagnoseEightKCell = false)
     }
     audit.physicalTakesPerFamily = profiles.size();
     audit.logicalProfilesPerFamily = 24u; // 6 cards x 2 Character x 2 thermal.
+    audit.coverageCountsExact = audit.physicalTakesPerFamily == 19u
+        && audit.logicalProfilesPerFamily == 24u;
 
     std::array<std::vector<ReducedTake>,
                familyBaseRates.size()> reducedFamilies;
@@ -1838,12 +2761,41 @@ Audit runAudit(bool diagnoseEightKCell = false)
     for (std::size_t index = 0; index < shippingCells.size(); ++index)
     {
         const auto& cell = shippingCells[index];
+        const auto prepared = YouKnow106TestAccess::shippingProcessingRate(
+            cell.hostRate);
+        std::vector<CandidateRender> selectorCandidates;
+        selectorCandidates.reserve(profiles.size());
+        for (const auto& profile : profiles)
+            selectorCandidates.push_back(renderCandidate(
+                schedule, profile, prepared.internalRate));
         audit.cells[index] = auditCell(
             cell, reducedFamilies[static_cast<std::size_t>(cell.family)],
-            audit.familyHashes[static_cast<std::size_t>(cell.family)]);
+            selectorCandidates);
     }
 
+    const auto auditSnapMutation = [&](bool early) {
+        const auto snapped = snapScheduleToInternalGrid(
+            schedule, 32000.0, early);
+        std::vector<CandidateRender> candidates;
+        candidates.reserve(profiles.size());
+        for (const auto& profile : profiles)
+            candidates.push_back(renderCandidate(
+                snapped, profile, 32000.0));
+        return auditCell(shippingCells[0], reducedFamilies[2], candidates);
+    };
+    audit.lateSnap = auditSnapMutation(false);
+    audit.earlySnap = auditSnapMutation(true);
+    audit.snapNegativeControlsExact = audit.lateSnap.structuralPass
+        && !audit.lateSnap.qualityPass && audit.lateSnap.finite
+        && audit.earlySnap.structuralPass
+        && !audit.earlySnap.qualityPass && audit.earlySnap.finite;
+
     audit.familyRowsShareRaw = true;
+    for (const auto& cell : audit.cells)
+        audit.familyRowsShareRaw = audit.familyRowsShareRaw
+            && cell.rawHash
+                == audit.familyHashes[static_cast<std::size_t>(
+                    cell.cell.family)];
     for (std::size_t first = 0; first < audit.cells.size(); ++first)
     {
         for (std::size_t second = first + 1u;
@@ -1862,18 +2814,12 @@ Audit runAudit(bool diagnoseEightKCell = false)
     {
         if (cell.cell.hostRate == 8000.0)
         {
-            // The selector legitimately ships this lowest endpoint, but its
-            // 32 kHz physical grid quantises the continuous service events by
-            // as much as one 31.25 us interval. Preserve the universal -40 dB
-            // admission gate and fence the independently reviewed rejection;
-            // neither an arbitrary regression nor an unreviewed improvement
-            // can silently change the endpoint's disposition.
+            // Fractional converter events are now part of the shipping VCF
+            // trajectory.  The lowest selector endpoint therefore faces the
+            // same unchanged -40 dB admission gate as every other cell.
             audit.endpointClassificationsExact =
                 audit.endpointClassificationsExact
-                && cell.structuralPass && !cell.qualityPass
-                && cell.worstRelative >= 0.020
-                && cell.worstRelative <= 0.025
-                && cell.worstTake == "card3-character0-cold";
+                && cell.qualityPass;
         }
         else if (cell.cell.hostRate == 768000.0)
             audit.endpointClassificationsExact =
@@ -1882,12 +2828,16 @@ Audit runAudit(bool diagnoseEightKCell = false)
             audit.standardAdmissionPass =
                 audit.standardAdmissionPass && cell.qualityPass;
     }
-    audit.pass = audit.scheduleExact && audit.nominalCollapseExact
-        && audit.nominalColdWarmRenderExact && audit.familyRowsShareRaw;
+    audit.pass = audit.scheduleExact && audit.schedulerContract.passed()
+        && audit.shippingWiringContract.passed()
+        && audit.nominalCollapseExact
+        && audit.nominalColdWarmRenderExact && audit.familyRowsShareRaw
+        && audit.coverageCountsExact;
     for (std::size_t family = 0; family < audit.filterChecks.size(); ++family)
         audit.pass = audit.pass && audit.filterChecks[family].passed();
     audit.pass = audit.pass && audit.standardAdmissionPass
-        && audit.endpointClassificationsExact;
+        && audit.endpointClassificationsExact
+        && audit.snapNegativeControlsExact;
     return audit;
 }
 
@@ -1916,16 +2866,51 @@ void printAudit(const Audit& audit)
               << " (" << decibels(convergenceGate)
               << " dB), exact schedule/counts, finite state, zero recovery.\n"
               << "schedule=" << (audit.scheduleExact ? "PASS" : "FAIL")
+              << " scheduler_peek_latch="
+              << (audit.schedulerContract.passed() ? "PASS" : "FAIL")
+              << " shipping_trajectory_wiring="
+              << (audit.shippingWiringContract.passed() ? "PASS" : "FAIL")
               << " nominal_collapse="
               << (audit.nominalCollapseExact ? "PASS" : "FAIL")
               << " nominal_cold_warm_raw="
               << (audit.nominalColdWarmRenderExact ? "PASS" : "FAIL")
               << " family_raw_identity="
               << (audit.familyRowsShareRaw ? "PASS" : "FAIL")
+              << " coverage_counts="
+              << (audit.coverageCountsExact ? "PASS" : "FAIL")
               << " standard_admission="
               << (audit.standardAdmissionPass ? "PASS" : "FAIL")
               << " endpoint_classifications="
               << (audit.endpointClassificationsExact ? "PASS" : "FAIL")
+              << " snap_negative_controls="
+              << (audit.snapNegativeControlsExact ? "PASS" : "FAIL")
+              << '\n';
+    std::cout << "  scheduler peeks=" << audit.schedulerContract.peeks
+              << " commits=" << audit.schedulerContract.commits
+              << " pure_peek="
+              << (audit.schedulerContract.purePeek ? "PASS" : "FAIL")
+              << " payload_latched="
+              << (audit.schedulerContract.payloadLatched ? "PASS" : "FAIL")
+              << " cursor="
+              << (audit.schedulerContract.cursorExact ? "PASS" : "FAIL")
+              << " order="
+              << (audit.schedulerContract.orderExact ? "PASS" : "FAIL")
+              << " pass_wrap="
+              << (audit.schedulerContract.passWrapExact ? "PASS" : "FAIL")
+              << '\n';
+    std::cout << "  shipping_wiring probes="
+              << audit.shippingWiringContract.probes
+              << " connected_max_diff=" << std::scientific
+              << audit.shippingWiringContract.maximumConnectedStateDifference
+              << " disconnected_min_diff="
+              << audit.shippingWiringContract.minimumDisconnectedStateDifference
+              << std::fixed
+              << " connected="
+              << (audit.shippingWiringContract.connectedExact
+                      ? "PASS" : "FAIL")
+              << " nullptr_mutation="
+              << (audit.shippingWiringContract.disconnectedRejected
+                      ? "REJECTED" : "MISSED")
               << '\n';
 
     for (std::size_t family = 0; family < audit.filterChecks.size(); ++family)
@@ -1938,13 +2923,7 @@ void printAudit(const Audit& audit)
     }
     for (const auto& metrics : audit.cells)
     {
-        const bool expectedReject = metrics.cell.hostRate == 8000.0
-            && metrics.structuralPass && !metrics.qualityPass
-            && metrics.worstRelative >= 0.020
-            && metrics.worstRelative <= 0.025
-            && metrics.worstTake == "card3-character0-cold";
-        const std::string_view disposition = expectedReject
-            ? "EXPECTED-REJECT" : (metrics.pass ? "PASS" : "FAIL");
+        const std::string_view disposition = metrics.pass ? "PASS" : "FAIL";
         std::cout << "  " << std::setprecision(1) << metrics.cell.hostRate
                   << " Hz q" << metrics.cell.factor << ' '
                   << disposition
@@ -1958,6 +2937,13 @@ void printAudit(const Audit& audit)
                   << " takes=" << metrics.takes
                   << " recoveries=" << metrics.recoveries
                   << " write_mismatches=" << metrics.writeMismatches
+                  << " control_mismatches="
+                  << metrics.controlContractMismatches
+                  << " peeks=" << metrics.peeks
+                  << " exact_intervals="
+                  << metrics.exactControlIntervals
+                  << " hold_diff=" << std::scientific
+                  << metrics.maximumHoldDifference << std::fixed
                   << " family_rate="
                   << (metrics.familyRateExact ? "exact" : "mismatch")
                   << " prepared=q" << metrics.preparedFactor << '@'
@@ -1965,6 +2951,30 @@ void printAudit(const Audit& audit)
                   << (metrics.shippingSelectorExact ? " exact" : " mismatch")
                   << " worst=" << metrics.worstTake << '\n';
     }
+    const auto printSnap = [](std::string_view name,
+                              const CellMetrics& metrics) {
+        const bool expectedReject = metrics.structuralPass
+            && metrics.finite && !metrics.qualityPass;
+        std::cout << "  negative " << name << ' '
+                  << (expectedReject ? "PASS" : "FAIL")
+                  << std::setprecision(3)
+                  << " nrms=" << decibels(metrics.worstRelative) << " dB"
+                  << " structural="
+                  << (metrics.structuralPass ? "PASS" : "FAIL")
+                  << " finite=" << (metrics.finite ? "PASS" : "FAIL")
+                  << " write_mismatches=" << metrics.writeMismatches
+                  << " control_mismatches="
+                  << metrics.controlContractMismatches
+                  << " peeks=" << metrics.peeks
+                  << " exact_intervals="
+                  << metrics.exactControlIntervals
+                  << " hold_diff=" << std::scientific
+                  << metrics.maximumHoldDifference << std::fixed
+                  << " raw_hash=0x" << std::hex << metrics.rawHash
+                  << std::dec << " worst=" << metrics.worstTake << '\n';
+    };
+    printSnap("late/ceil-snap", audit.lateSnap);
+    printSnap("early/floor-snap", audit.earlySnap);
     std::cout << "Overall: " << (audit.pass ? "PASS" : "FAIL") << '\n';
 
     if (audit.eightKDiagnostics.ran)
@@ -2000,8 +3010,8 @@ void printAudit(const Audit& audit)
                   << " worst=" << diagnostic.steady.worstTake << '\n';
         for (const auto& profile : diagnostic.profiles)
             std::cout << "  profile " << profile.name
-                      << " production_nrms="
-                      << decibels(profile.productionRelative) << " dB\n";
+                      << " endpoint_clone_nrms="
+                      << decibels(profile.endpointCloneRelative) << " dB\n";
     }
 }
 } // namespace

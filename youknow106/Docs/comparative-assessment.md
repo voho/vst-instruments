@@ -48,7 +48,7 @@ strongest competitor named.
 | Firmware envelope | Hash-scoped B-2 recurrence: 14-bit state, exact Q(v,c) three-partial multiply with the dropped low×low term, `E>>2` DAC truncation, byte-exact fixtures in the suite | KR-106: the same law at instruction level (cleanroom, j106roms lineage), cross-checked against MAME — parity on the digital law; no automated fixtures |
 | Firmware LFO/delay/portamento | Hash-scoped exact laws with regression vectors | KR-106: ROM-table reconstructions verified against four hardware captures — parity in kind |
 | VCF | IR3109 cascade behind the anchored 68 kΩ/560 Ω divider; loop gain fitted only to the 4.8 Vpp service amplitude (rendered 4.8009 Vpp), with 247.90 Hz then predicted rather than fitted; 992 Hz WIDTH anchor (tracking exactly 1.00); AS3109 700 µA control-current knee; R-2R carry INL on the converter write | KR-106: IR3109 TPT cascade with BA662 67:1 feedback physics, self-osc calibrated to a named unit, and a **4096-point measured DAC→Hz table from a real card** — a data asset this project matches only by derivation (within 30 cents of that table's shape after the knee fix) |
-| VCF numerical quality | Step 10 advances the continuous four-stage equations with two fixed five-stage Merson RK4 halfsteps, causal cubic drive and endpoint-linear controls over four double capacitor states. Common-host 1×/2×/4× classifies REJECT/REJECT/PASS at both 44.1 and 48 kHz; 4× hot NRMS is −50.351/−50.064 dB. More importantly, all six standard shipping HQ paths pass an exact-23-write, all-card dynamic matrix at −48.585…−48.293 dB against independent RK64/RK128 references. The 8 kHz endpoint remains an explicit −33.245 dB rejection | KR-106: 2×/4× oversampling, no published equivalent common-host, converter-schedule dynamic or fold-back fence. No other surveyed project publishes one |
+| VCF numerical quality | Step 10 advances the continuous four-stage equations with two fixed five-stage Merson RK4 halfsteps, causal cubic drive and endpoint-linear ordinary controls over four double capacitor states. Step 11 preserves its ten RHS evaluations but, only in intervals containing a cutoff or shared-resonance write, evaluates the exact segmented 522 µs hold at all seven Merson nodes. A pure scheduler peek latches the fractional event payload without consuming the official cursor/target; the normal poll commits it once. All six standard HQ cells plus 8/768 kHz engine bounds pass at −84.881…−119.340 dB against independent RK64/RK128 references and the unchanged −40 dB gate. Late/ceil and early/floor snap mutations reject at −33.245/−32.007 dB | KR-106: 2×/4× oversampling, no published equivalent common-host, converter-schedule dynamic or fold-back fence. No other surveyed project publishes one |
 | Chorus | Bucket-clocked two-phase 256-stage MN3009 model: full-period hold confirmed by the datasheet OUT1/OUT2 solve, per-shift transfer loss on the EC-row anchor, derived LFO rates 0.5533/0.8983 Hz from the 106's own timing network (ratio 1.6234799), measured 1.4–6.4 ms sweep, causal four-point Lagrange edge-input interpolation, bounded-polyBLEP BGA/SGA separation and combined exact continuous six-state support integration on every shipping HQ path, with no-compander hiss modelled | KR-106: deliberately *not* bucket-clocked (Hermite delay line with a written rationale), surrounded by measured side-effects (CTE gain modulation, leakage noise, clock-reset clicks); Chorus II rate marked "inherited, not re-verified". Hera has the field's only other bucket-level BBD — attached to an admittedly inaccurate alpha |
 | HPF incl. bass boost | The boost shelf **derived from the p. 15 branch** (+10.50 dB DC, +1.41 dB HF, 59.41 Hz; within 0.016 dB of the exact 2z/2p solve), cut corners from designators; asymptotic C14 coupling states | KR-106: the same 2p2z transfer from designators, verified 0.55 dB RMS against its (unpublished) hardware noise sweep — convergent result, one lineage of hardware corroboration |
 | Common VCA LEVEL | Derived dB-linear law from p. 8/p. 15/NEC (−16.32 + 0.1656·b dB), C7 9.08 ms settling | Not modelled as a distinct stage anywhere else surveyed |
@@ -160,14 +160,19 @@ the market has published one either.
 
 The 2026-08-07 head-to-head and the later before/after listening corpora remain
 recoverable from the Step 9 commit, preserving that dated history. They were
-removed when Step 10 regenerated the [maintained audio corpus](audio/README.md)
+removed when the maintained [audio corpus](audio/README.md) was regenerated
 from scratch, so neither their
 clips nor their deltas are presented as evidence for the current engine. The
 maintained corpus now contains only ten fresh demonstrations and the fresh
 [128-row factory report](audio/factory-presets/README.md) with ten common-gain
-previews. Current comparative
-claims below rest on reproducible numerical contracts and primary-source
-mechanism coverage, not on an undocumented recording-chain comparison.
+previews. For Step 11, two independent demo renders and two independent full
+factory renders from the frozen engine produced byte-identical trees. The
+canonical 23-file manifest is
+`764f2770d21a138163c756025551dc8ead7925f4cf003eb98e960234afc098ea`;
+all 20 WAVs are finite stereo PCM16, with maximum absolute DC
+`0.000000576 FS` and worst edge `−46.96 dBFS`. Current comparative claims
+rest on reproducible numerical contracts and primary-source mechanism coverage,
+not on an undocumented recording-chain comparison or a legacy listening delta.
 
 ## Playing latency — characterized, hardware timing still open
 
@@ -289,7 +294,7 @@ recorded a separate seven-run observation: 4×/1× was 0.578/0.167 idle,
 0.547/0.178 plain, 0.719/0.205 resonant and 0.830/0.315 full-mixer Chorus II.
 Its final 0.682667-second window used median thread-CPU times
 566.779/215.019 ms (MAD 1.735/3.640 ms). Those values remain dated history but
-were not collected as a valid pair with Step 10. The current comparison instead
+were not collected as a valid pair with Step 10. The completed comparison instead
 uses three alternating seven-repetition audits on the same declared platform.
 The values below are authoritative median-of-run-medians:
 
@@ -301,12 +306,32 @@ The values below are authoritative median-of-run-medians:
 | Six voices, full mixer, chorus II/noise 1.0, resonance 0.70 | 0.786 → **0.736×** | −6.4% | 0.296 → **0.191×** | −35.5% |
 
 Per-run median absolute deviations are small. All values are JUCE-free engine
-thread-CPU observations, not plug-in, host or device totals. Every current row
+thread-CPU observations, not plug-in, host or device totals. Every Step 10 row
 is at or below 0.850× realtime, and the coarse `<5×` Release CPU runaway gate
 is unchanged. The mixed direction across patches does not support a blanket
 speedup or regression claim. The older wall-time table remains useful as dated
 history, but its `steady_clock` values are not merged with this thread-CPU
 series.
+
+The current Step 10 → Step 11 comparison uses three alternating pairs, each
+with seven repetitions, on the same declared 48 kHz/block-256 platform. The
+values below are authoritative meta-medians of the three run medians; their
+Step 10 baselines are contemporaneous pair controls, so deltas are evaluated
+within this series rather than by mixing it with the dated table above:
+
+| Scenario | Step 10 → Step 11, 4× | Change | Step 10 → Step 11, 1× | Change |
+| --- | ---: | ---: | ---: | ---: |
+| Idle, six physical cards behind closed VCAs | 0.653 → **0.666×** | +2.056% | 0.164 → **0.169×** | +3.072% |
+| Six voices, chorus off, cutoff 0.62, resonance 0.10 | 0.670 → **0.682×** | +1.856% | 0.172 → **0.176×** | +2.483% |
+| Six voices, chorus off, cutoff 0.62, resonance 0.95 | 0.823 → **0.832×** | +1.096% | 0.221 → **0.225×** | +1.807% |
+| Six voices, full mixer, chorus II/noise 1.0, resonance 0.70 | 0.706 → **0.719×** | +1.755% | 0.184 → **0.188×** | +2.182% |
+
+All eight Step 11 meta-medians remain below realtime; the worst is 0.832×,
+and the hard Engine CPU gate passes. These are uninstrumented JUCE-free engine
+thread-CPU observations on one machine, not plug-in/host totals or competitor
+data. The consistent +1.096…+3.072% movement describes these fixtures and does
+not authorize a rate split. The event-counter results below remain semantic
+work attribution, not a substitute for these timings.
 
 The companion `YouKnow106DSPWorkAudit` recompiles only Engine and Chorus with
 non-atomic semantic counters. That build is never timed and never linked into
@@ -327,7 +352,9 @@ six-voice resonant fixture, a 2,048-host-frame window at 48 kHz gives:
 | VCF RHS / feedback evaluations | 491,520 / 491,520 | 122,880 / 122,880 | exactly ten of each per VCF step |
 | VCF stage / full-Early evaluations | 1,966,080 / 1,966,080 | 491,520 / 491,520 | exactly 40 of each per VCF step for the enabled-Character fixture |
 | Causal-cubic input phases / recoveries | 344,064 / 0 | 86,016 / 0 | exactly seven phases and no normal-path recovery per VCF step |
-| Cutoff memo misses | 1,397 | 1,469 | nearly wall-time driven; 2.84% vs 11.95% of card updates |
+| Fractional VCF peeks / latched-target commits | 70 / 70 | 70 / 70 | declared-schedule RES/VCF events; a peek neither consumes the cursor nor changes the official target |
+| Exact event-aware card intervals / control nodes / extra maps | 120 / 840 / 720 | 120 / 840 / 720 | seven Merson nodes and six additional maps per affected card interval; ten RHS evaluations per VCF step are unchanged |
+| Cutoff memo misses | 1,367 | 1,505 | nearly wall-time driven; 2.78% vs 12.25% of card updates |
 | Converter pass starts / writes | 10 / 234 | 10 / 233 | model's anchored nominal 4.2 ms pass, one numerical-window boundary write apart |
 | DCO cycle wraps / BBD shifts | 61 / 3,162 | 61 / 3,162 | oscillator and asynchronous BBD-clock events track elapsed time |
 | Past + future BLEP correction visits | 12,648 | 12,651 | edge/event driven, not four times larger at 4× |
@@ -345,9 +372,10 @@ The 95-tap half-band has 49 exact nonzero coefficients, so each decimator call
 performs 49 coefficient visits and 98 stereo MACs. The same regression covers
 96 kHz 2×/1× and 192 kHz 1×: one 2× decimator call and 98 stereo nonzero-tap
 MACs per host frame, none at 1×. It also proves the fixed Merson algebra above,
-the expected 23-write boundary tolerance and raw-float identity between normal
-and active-counter renders. Shipping-target preprocessing plus symbol/string
-scans contain no audit instrumentation.
+the exact fractional-event counts across every shipping selector case, the
+expected 23-write boundary tolerance and raw-float identity between normal and
+active-counter renders. Shipping-target preprocessing plus symbol/string scans
+contain no audit instrumentation.
 
 This is work attribution, not a selective-rate admission. Counters with
 different semantics are not cycle weights; the whole-engine 4×/1× ratios do
@@ -360,11 +388,14 @@ BBD edge-input reconstruction, and Step 9 makes the declared four-case
 low-drive BBD fixture pass at the two common-host 4× cells plus every actual HQ
 selector path. Step 10 makes the common-host VCF pass at 4× and all six
 standard actual-HQ VCF trajectories pass with the converter schedule and card
-mechanisms active. Lower common-host VCF/BBD factors still reject their
-absolute gates, and the 8 kHz/4× VCF endpoint remains an expected reject. The
-matrix does not include the inter-domain reconstruction, whole-engine or
-latency proof a split architecture would require. Steps 8–10 add no lookahead
-or latency. No domain split or rate-selector change is admitted.
+mechanisms active. Step 11 retains the common-host classifications while making
+the event-aware dynamic VCF matrix pass all six standard HQ paths and both
+8/768 kHz engine bounds. Lower common-host VCF/BBD factors still reject their
+absolute gates. The matrix does not include the inter-domain reconstruction,
+whole-engine or
+latency proof a split architecture would require. Steps 8–11 add no future
+audio-sample lookahead or latency. No domain split or rate-selector change is
+admitted.
 
 ### Common-host numerical quality: no split admitted
 
@@ -440,6 +471,31 @@ A fixed three-substep classical RK4 candidate is about 0.55 dB better in the
 44.1 kHz/1× hot high-`mu` transient, but that cell still rejects. Merson wins
 the primary HQ dynamic matrix and the reviewed damping, Hopf/onset and
 product-cap stability checks while removing a runtime selector.
+
+**Step 11, 2026-08-09.** The dated Step 10 8 kHz rejection isolated a
+converter-event quantisation error, so this step changes only how the existing
+522 µs cutoff and shared-resonance holds are evaluated when one of their writes
+falls in `(phase, phase + delta]`. Before that interval is solved,
+a pure scheduler lookahead checks the next relevant event in
+`(phase, phase + delta]`, including the resonance write at a pass wrap. It
+latches the declared fractional position and the target computed at that event
+without consuming the official 23-write cursor, changing the official target,
+or advancing shared control state. At the next ordinary due-event poll, the
+normal write path commits that latched target exactly once. Host automation
+that arrives between peek and poll therefore cannot retroactively change the
+event-time payload.
+
+For the one card owning a cutoff event, or all six cards under a shared
+resonance event, the engine evaluates the exact piecewise exponential RC hold
+at the seven unique Merson nodes. Ordinary intervals keep Step 10's
+endpoint-linear control path, and every other converter destination is
+unchanged. The two fixed Merson halfsteps still perform exactly ten RHS and ten
+feedback evaluations per VCF step; there is no solver split, extra
+solver/capacitor state, lookahead audio sample, latency change, rate-selector
+change, physical constant change or new hardware claim. The 23 logical
+destinations still use the
+normalized `ordinal/23` compatibility profile. Exact acquisition timing and
+jitter remain OQ-07/OQ-08 rather than being inferred from this numerical fix.
 
 The DCO grid uses the six octave-spaced notes MIDI 36/48/60/72/84/96, all three
 ranges, saw and sub, and pulse at 5/50/95% duty. Its gate is ≤−70 dBc; the
@@ -552,7 +608,7 @@ change only causal BBD numerical realization and do not change latency. No
 split follows: inter-domain reconstruction, whole-engine equivalence and
 latency qualification remain mandatory.
 
-The focused Step 10 integrator contract evaluates the full Early effect and
+The dated focused Step 10 integrator contract evaluates the full Early effect and
 endpoint trajectories against RK96. Its primary comparison is −162.551 dB /
 4.21471e-8 V; an alternating-control trajectory reads −95.2005 dB; and every
 cold/warm product-cap tail is exactly zero for all six actual cards at Unit
@@ -572,18 +628,53 @@ recovery, schedule or count mismatch:
 | 176.4 kHz / 1× | −48.324 dB | **PASS** |
 | 192 kHz / 1× | −48.293 dB | **PASS** |
 
-All six standard HQ paths clear the predeclared −40 dB gate with the actual
+All six standard HQ paths clear the predeclared −40 dB gate with the declared
 converter schedule and card mechanisms active. The engine-bound extension is
 not hidden: 768 kHz/1× passes at −61.360 dB, while 8 kHz/4× is an expected
 **REJECT** at −33.245 dB despite −139.820 dB oracle convergence. Its maximum
 converter-event snap is 30.978 µs; steady and continuously moving
 cutoff/feedback/headroom diagnostics read −136.916 and −60.546 dB. The result
-calls for fractional event-aware hold evaluation in the next step, not a gate
-relaxation. No domain split or global factor-selector change follows.
+became the dated motivation for Step 11's fractional event-aware hold
+evaluation, not a gate relaxation.
 
-Step 10 regenerated the documentation audio from scratch. The maintained tree
+The current Step 11 audit keeps the same 19 physical takes per rate family and
+24 logical card/Character/thermal profiles, the exact logical write count and
+order, finite-state and zero-recovery checks, and independent RK64/RK128
+references. Its direct production-scheduler contract observes six card-cutoff
+writes plus the pass-wrapped shared-resonance write: seven pure peeks and seven
+single normal-path commits, with cursor/order intact and the event payload
+unchanged by later automation. A separate shipping-boundary probe replays four
+strongly curved intervals bit-exactly with the connected trajectory; replacing
+that trajectory with `nullptr` changes every probed state and is deliberately
+rejected. This makes the audit sensitive to wiring the feature into
+`renderVoice`, not merely to a local cascade helper.
+
+| Step 11 dynamic selector/bound cell | Production vs independent oracle | Admission |
+| --- | ---: | --- |
+| 8 kHz / 4× engine bound | −84.881 dB | **PASS** |
+| 44.1 kHz / 4× | −114.226 dB | **PASS** |
+| 48 kHz / 4× | −116.317 dB | **PASS** |
+| 88.2 kHz / 2× | −112.717 dB | **PASS** |
+| 96 kHz / 2× | −115.823 dB | **PASS** |
+| 176.4 kHz / 1× | −112.406 dB | **PASS** |
+| 192 kHz / 1× | −115.445 dB | **PASS** |
+| 768 kHz / 1× engine bound | −119.340 dB | **PASS** |
+
+Every cell clears the same −40 dB NRMS gate. A late/ceil snap of the declared
+events reproduces the dated −33.245 dB rejection; an early/floor snap rejects
+at −32.007 dB. Both remain finite and structurally valid, so their failures
+show that the admission depends on fractional event timing rather than a
+relaxed threshold. No physical VCF law, control constant, global factor,
+domain boundary, VCF ODE/capacitor-state dimension or 41-sample latency changes,
+and no hardware timing is established. OQ-07 and OQ-08 remain open alongside the VCF
+measurement debts listed above.
+
+Step 11 regenerated the documentation audio from scratch. The maintained tree
 contains ten fresh demos, a fresh 128-row factory report/CSV and ten common-gain
-previews; two independent renders produced identical hashes. It is 35.8 MB.
+previews. Two demo runs and two full factory runs produced byte-identical
+23-file trees; the factory report reconciles 128 finite unique rows at a
+`−21.48 dBFS` median gated RMS, with 31 overload flags, zero near-silent
+presets and nine outside `±18 dB` of the corpus median.
 Historical comparison/fidelity/realism/state-of-the-art trees remain
 recoverable from Step 9 and are intentionally not used for before/after claims
 about the current engine.

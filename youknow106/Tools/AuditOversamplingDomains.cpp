@@ -502,19 +502,30 @@ struct CounterCase
     int sampleRate;
     bool highQuality;
     int expectedFactor;
+    std::uint64_t expectedFractionalEvents;
+    std::uint64_t expectedExactControlIntervals;
 };
 
 constexpr std::array counterCases {
-    CounterCase { "44.1k-4x", 44100, true, 4 },
-    CounterCase { "44.1k-1x", 44100, false, 1 },
-    CounterCase { "48k-4x", 48000, true, 4 },
-    CounterCase { "48k-1x", 48000, false, 1 },
-    CounterCase { "88.2k-2x", 88200, true, 2 },
-    CounterCase { "88.2k-1x", 88200, false, 1 },
-    CounterCase { "96k-2x", 96000, true, 2 },
-    CounterCase { "96k-1x", 96000, false, 1 },
-    CounterCase { "176.4k-1x", 176400, true, 1 },
-    CounterCase { "192k-1x", 192000, true, 1 },
+    // The final two fields freeze fractional RES/VCF peeks (and commits) and
+    // affected voice intervals over this exact 2,048-host-frame window. A
+    // resonance event owns six physical-card intervals; a VCF event owns one.
+    CounterCase { "44.1k-4x", 44100, true, 4, 77u, 132u },
+    CounterCase { "44.1k-1x", 44100, false, 1, 77u, 132u },
+    CounterCase { "48k-4x", 48000, true, 4, 70u, 120u },
+    CounterCase { "48k-1x", 48000, false, 1, 70u, 120u },
+    CounterCase {
+        "88.2k-2x", 88200, true, 2, 39u, 64u
+    },
+    CounterCase {
+        "88.2k-1x", 88200, false, 1, 39u, 64u
+    },
+    CounterCase { "96k-2x", 96000, true, 2, 35u, 60u },
+    CounterCase { "96k-1x", 96000, false, 1, 35u, 60u },
+    CounterCase {
+        "176.4k-1x", 176400, true, 1, 20u, 30u
+    },
+    CounterCase { "192k-1x", 192000, true, 1, 18u, 28u },
 };
 
 struct CounterRun
@@ -568,6 +579,8 @@ void expectTrue(std::vector<std::string>& errors, std::string_view caseName,
 void validateVcfCounterAlgebra(std::string_view caseName,
                                const DomainWorkCounters& counters,
                                std::uint64_t expectedSteps,
+                               std::uint64_t expectedFractionalEvents,
+                               std::uint64_t expectedExactControlIntervals,
                                std::vector<std::string>& errors)
 {
     expectEqual(errors, caseName, "vcfSteps",
@@ -590,6 +603,21 @@ void validateVcfCounterAlgebra(std::string_view caseName,
     expectEqual(errors, caseName, "VCF input reconstructions",
                 counters.vcfInputReconstructions,
                 7u * counters.vcfSteps);
+    expectEqual(errors, caseName, "VCF exact control nodes",
+                counters.vcfExactControlNodes,
+                7u * counters.vcfExactControlIntervals);
+    expectEqual(errors, caseName, "VCF exact control maps",
+                counters.vcfExactControlMaps,
+                6u * counters.vcfExactControlIntervals);
+    expectEqual(errors, caseName, "fractional VCF event peeks",
+                counters.vcfFractionalEventPeeks,
+                expectedFractionalEvents);
+    expectEqual(errors, caseName, "fractional VCF target commits",
+                counters.vcfFractionalTargetCommits,
+                expectedFractionalEvents);
+    expectEqual(errors, caseName, "exact VCF control intervals",
+                counters.vcfExactControlIntervals,
+                expectedExactControlIntervals);
     expectEqual(errors, caseName, "vcfRecoveries",
                 counters.vcfRecoveries, 0u);
 }
@@ -660,7 +688,10 @@ void validateCounterAlgebra(const CounterCase& testCase,
     expectEqual(errors, testCase.name, "cutoff memo partition",
                 counters.cutoffMemoHits + counters.cutoffMemoMisses,
                 counters.voiceAudioUpdates);
-    validateVcfCounterAlgebra(testCase.name, counters, voiceCards, errors);
+    validateVcfCounterAlgebra(
+        testCase.name, counters, voiceCards,
+        testCase.expectedFractionalEvents,
+        testCase.expectedExactControlIntervals, errors);
 
     // Ten extension slots receive one digital scan update at each pass start,
     // even though this six-voice contract does not render their audio cards.

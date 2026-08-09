@@ -784,6 +784,9 @@ private:
     static constexpr float dcoHoldSlewSecondsVoiced = 522.0e-6f;
     static constexpr float resonanceHoldSlewSecondsVoiced = 522.0e-6f;
     static constexpr float noiseHoldSlewSecondsVoiced = 522.0e-6f;
+    static_assert(vcfHoldSlewSeconds == resonanceHoldSlewSecondsVoiced,
+                  "the shared exact VCF-hold trajectory requires equal "
+                  "cutoff and resonance constants");
     // The shared white-noise generator and each card's microscopic filter
     // excitation represent continuous-time noise densities.  Their discrete
     // sample amplitudes therefore grow with sqrt(processing rate).  The
@@ -908,6 +911,17 @@ private:
     // lookahead.
     struct OtaCascade
     {
+        static constexpr std::array<double, 7> controlNodePositions {
+            0.0, 1.0 / 6.0, 1.0 / 4.0, 1.0 / 2.0,
+            2.0 / 3.0, 3.0 / 4.0, 1.0
+        };
+        struct ControlTrajectory
+        {
+            std::array<double, controlNodePositions.size()> omegaStep {};
+            std::array<double, controlNodePositions.size()> feedback {};
+            std::array<double, controlNodePositions.size()> headroom {};
+        };
+
         // Capacitor voltages are the complete physical state. Double precision
         // keeps the explicit high-order step from throwing away the accuracy
         // it gains over the former float path-average solve.
@@ -954,12 +968,38 @@ private:
         float process(float input, float omegaStep, float feedback,
                       float headroom = otaHeadroomVolts,
                       bool enableEarlyEffect = true,
-                      float calibration = 0.70f) noexcept;
+                      float calibration = 0.70f,
+                      const ControlTrajectory* trajectory = nullptr) noexcept;
 
         [[nodiscard]] static double reconstructInput(
             double current, const std::array<double, 3>& history,
             double intervalPosition) noexcept;
         [[nodiscard]] static double clampOmegaStep(double value) noexcept;
+    };
+
+    // Exact continuous trajectory of one 522 us VCF hold over an internal
+    // interval. It is a value object: constructing it neither consumes the
+    // converter cursor nor changes the official held target. That separation
+    // lets the audio interval see a write at its fractional physical time
+    // while the recovered firmware scheduler still polls it at the following
+    // internal boundary.
+    struct VcfHoldInterval
+    {
+        std::array<double, OtaCascade::controlNodePositions.size()> value {};
+        float endpoint { 0.0f };
+    };
+    [[nodiscard]] static VcfHoldInterval exactVcfHoldInterval(
+        float state, float target, bool hasEvent, double eventPosition,
+        float eventTarget, double intervalSeconds) noexcept;
+
+    struct VcfEventLatch
+    {
+        bool valid { false };
+        bool nextPass { false };
+        std::size_t ordinal { 0u };
+        ConverterWrite write { ConverterDestination::Resonance, -1 };
+        float target { 0.0f };
+        double eventPosition { 0.0 };
     };
 
     struct HighPass
@@ -1224,6 +1264,9 @@ private:
     void updateVoiceVcfTarget(Voice& voice,
                               const EngineParameters& parameters,
                               float lfoGated) noexcept;
+    [[nodiscard]] float voiceVcfTarget(
+        const Voice& voice, const EngineParameters& parameters,
+        float lfoGated) const noexcept;
     void updateVoiceVcaTarget(Voice& voice,
                               const EngineParameters& parameters) noexcept;
     // The velocity extension's one gain. The modelled hardware has no velocity
@@ -1236,7 +1279,14 @@ private:
         const EngineParameters& parameters, const Voice& voice) noexcept;
     void performConverterWrite(const ConverterWrite& write,
                                const EngineParameters& parameters,
-                               float lfoGated) noexcept;
+                               float lfoGated,
+                               const float* vcfTargetOverride = nullptr) noexcept;
+    [[nodiscard]] float vcfWriteTarget(
+        const ConverterWrite& write, const EngineParameters& parameters,
+        float lfoGated) const noexcept;
+    [[nodiscard]] bool latchUpcomingVcfEvent(
+        double phase, double phasePerInternalSample,
+        const EngineParameters& parameters) noexcept;
     // Shared converter destinations are computed once per pass. Their proven
     // ownership is modelled; their individual RC constants and physical write
     // offsets are not yet known.
@@ -1330,6 +1380,10 @@ private:
     std::array<double, converterWritesPerPass> converterEventPhases_ {};
     std::size_t nextConverterWrite_ { 0 };
     float converterPassLfoGated_ { 0.0f };
+    VcfEventLatch vcfEventLatch_ {};
+    VcfHoldInterval resonanceVcfHoldInterval_ {};
+    std::array<VcfHoldInterval, maxVoices> cutoffVcfHoldIntervals_ {};
+    std::array<bool, maxVoices> exactVcfControlInterval_ {};
     bool assignmentRescanPending_ { false };
     bool assignmentRescanPassArmed_ { false };
     // A mutable plug-in voice count has no hardware equivalent. If a Unison

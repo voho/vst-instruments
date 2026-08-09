@@ -40,6 +40,11 @@ struct DomainWorkCounters
     std::uint64_t vcfFeedbackEvaluations {};
     std::uint64_t vcfEarlyEvaluations {};
     std::uint64_t vcfInputReconstructions {};
+    std::uint64_t vcfFractionalEventPeeks {};
+    std::uint64_t vcfFractionalTargetCommits {};
+    std::uint64_t vcfExactControlIntervals {};
+    std::uint64_t vcfExactControlNodes {};
+    std::uint64_t vcfExactControlMaps {};
     std::uint64_t vcfRecoveries {};
     std::uint64_t chorusFrames {};
     std::uint64_t bbdLineFrames {};
@@ -85,6 +90,11 @@ inline constexpr std::array counterDescriptors {
     CounterDescriptor { "vcfFeedbackEvaluations", &DomainWorkCounters::vcfFeedbackEvaluations },
     CounterDescriptor { "vcfEarlyEvaluations", &DomainWorkCounters::vcfEarlyEvaluations },
     CounterDescriptor { "vcfInputReconstructions", &DomainWorkCounters::vcfInputReconstructions },
+    CounterDescriptor { "vcfFractionalEventPeeks", &DomainWorkCounters::vcfFractionalEventPeeks },
+    CounterDescriptor { "vcfFractionalTargetCommits", &DomainWorkCounters::vcfFractionalTargetCommits },
+    CounterDescriptor { "vcfExactControlIntervals", &DomainWorkCounters::vcfExactControlIntervals },
+    CounterDescriptor { "vcfExactControlNodes", &DomainWorkCounters::vcfExactControlNodes },
+    CounterDescriptor { "vcfExactControlMaps", &DomainWorkCounters::vcfExactControlMaps },
     CounterDescriptor { "vcfRecoveries", &DomainWorkCounters::vcfRecoveries },
     CounterDescriptor { "chorusFrames", &DomainWorkCounters::chorusFrames },
     CounterDescriptor { "bbdLineFrames", &DomainWorkCounters::bbdLineFrames },

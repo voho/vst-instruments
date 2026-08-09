@@ -3196,3 +3196,95 @@ evidence about a physical JUNO-106.
   law, six-card evidence class or physical hold timing. OQ-09, OQ-10, OQ-15,
   OQ-16, OQ-18 and OQ-19 remain open; the 0.45·Fs bound is product/numerical
   policy, not a property of a JUNO-106.
+
+- [x] **11. Evaluate VCF and shared-resonance holds at their fractional
+  compatibility-policy event times.** Steps 1–10 remain the dated history
+  above, including Step 10's diagnostic 8 kHz rejection before this change.
+  The converter still runs the exact 23-write queue and the
+  `NormalizedServiceChart` still places write ordinal `n` at `n/23` of the
+  4.2 ms pass. This step does not claim that those normalized offsets are the
+  hardware timestamps. It changes only how the existing 522 µs VCF and shared
+  RESONANCE holds are evaluated when one of those policy events falls inside
+  an audio interval; DCO, VCA, PWM, SUB, NOISE and converter cursor/order/count
+  behavior are unchanged.
+
+  Before rendering an interval, the engine purely peeks for the next relevant
+  event in `(phase, phase + delta]`, including the shared-resonance event across
+  a pass wrap. The peek does not consume the official firmware scheduler or
+  change its target. It latches the converter payload at that event time,
+  advances the affected RC endpoint and its seven unique Merson control nodes
+  by the exact segmented exponential, and lets the next normal scheduler poll
+  commit that latched payload exactly once. Thus automation arriving between
+  the fractional event and the later poll cannot rewrite history. Dedicated
+  card-VCF and next-pass shared-resonance tests fence pure-peek cursor/target
+  state, pass wrap, event-time payload retention and single retirement.
+
+  Exact node trajectories are supplied only for intervals containing a VCF or
+  shared-resonance event. The fixed integrator remains two half-interval
+  Merson steps with ten right-hand-side evaluations and no split, retry or
+  selector. Each affected voice interval evaluates the same seven unique
+  Merson nodes and adds six nonlinear control maps; ordinary intervals retain
+  Step 10's endpoint-linear path. A production `renderVoice` replay contract
+  is bit-exact when that trajectory is connected, while an explicit
+  `nullptr` wiring mutation must differ, so a local helper that is never wired
+  into the shipping voice cannot pass unnoticed.
+
+  The dynamic audit retains its independent RK64/RK128 oracle, the exact
+  23-write order, all six cards and cold/warm Character profiles. Nineteen
+  physical takes per rate family still cover 24 logical profiles. The
+  predeclared quality gate is unchanged at −40 dB:
+
+  | Engine-bound selector coverage | Candidate vs independent oracle | Admission |
+  | --- | ---: | --- |
+  | 8 kHz / 4× | **−84.881 dB** | **PASS** |
+  | Six standard HQ paths | **worst −112.406 dB; best −116.317 dB** | **PASS** |
+  | 768 kHz / 1× | **−119.340 dB** | **PASS** |
+
+  Both deliberately broken timing controls remain finite and structurally
+  exact but fail the unchanged gate: snapping events late with `ceil` reads
+  **−33.245 dB**, and snapping them early with `floor` reads **−32.007 dB**.
+  Scheduler peek/latch/commit, pass-wrap, write/count and control-contract
+  checks all pass, as do the real-voice wiring and rejected-null-mutation
+  checks. In the 48 kHz, six-card resonant 2,048-frame work window the new
+  semantic counters record **70 peeks, 70 commits, 120 exact-control voice
+  intervals, 840 exact nodes and 720 extra nonlinear maps**. These counts add
+  no right-hand-side evaluation and change no recovery behavior.
+
+  Three fresh Step-10/current alternating pairs, each with seven repetitions
+  at 48 kHz/block 256, give these thread-CPU meta-medians. The percentage is
+  computed only inside this paired cohort; its Step-10 values are not the
+  earlier standalone medians printed in Step 10:
+
+  | Scenario | Step 10 → Step 11, 4× | Change | Step 10 → Step 11, 1× | Change |
+  | --- | ---: | ---: | ---: | ---: |
+  | Idle | 0.653 → **0.666×** | +2.056% | 0.164 → **0.169×** | +3.072% |
+  | Six-voice plain | 0.670 → **0.682×** | +1.856% | 0.172 → **0.176×** | +2.483% |
+  | Six-voice resonant | 0.823 → **0.832×** | +1.096% | 0.221 → **0.225×** | +1.807% |
+  | Full mixer, Chorus II | 0.706 → **0.719×** | +1.755% | 0.184 → **0.188×** | +2.182% |
+
+  The worst current observation is 0.832× realtime; every case stays below
+  1× and the hard Engine CPU gate passes. These measurements are
+  informational and machine/patch specific, not a universal performance claim.
+
+  The user-authorized audio reset treats this as a new canonical corpus rather
+  than comparing against legacy renders. Four frozen-binary passes all exit 0;
+  the two demo passes are byte-identical to each other, as are the two complete
+  factory passes. The canonical tree contains exactly 23 files and has manifest
+  SHA-256
+  `764f2770d21a138163c756025551dc8ead7925f4cf003eb98e960234afc098ea`.
+  Its 20 WAVs are finite stereo PCM16: demos at 44.1 kHz and factory previews at
+  48 kHz. Maximum absolute DC is 0.000000576 FS and the worst file edge is
+  −46.96 dBFS. The factory report contains 128 finite, unique rows/tone blobs,
+  with median gated RMS −21.48 dBFS, 31 rows containing samples above 0 dBFS,
+  zero near-silent rows and nine rows outside ±18 dB of the corpus median. This
+  is a deterministic from-scratch qualification; no legacy audio delta is
+  claimed.
+
+  **Verdict: admit fractional event-aware VCF/shared-resonance hold evaluation
+  across the complete engine-bound rate matrix without relaxing the numerical
+  gate.** This is a more faithful realization of the existing normalized
+  compatibility policy, not new hardware timing or acquisition evidence. It
+  changes no physical constant, converter pass/order, oversampling selector,
+  split-domain boundary or fixed 41-sample latency. Exact intra-pass offsets
+  remain policy; OQ-07 remains open on acquisition, droop and true hold laws,
+  and OQ-08 remains open on physical timestamps, jitter and restart behavior.

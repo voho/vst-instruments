@@ -242,6 +242,13 @@ struct YouKnow106TestAccess
                  static_cast<float>(state[2]), static_cast<float>(state[3]) };
     }
 
+    static bool exactVcfControlInterval(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.exactVcfControlInterval_[
+            static_cast<std::size_t>(slot)];
+    }
+
     // The fourth transconductor's capacitor voltage: the filter's output, in
     // the volts the service procedure measures at TP19.
     static float filterOutputVolts(const YouKnow106Engine& engine,
@@ -334,6 +341,132 @@ struct YouKnow106TestAccess
     static double controlScanPhase(const YouKnow106Engine& engine) noexcept
     {
         return engine.controlScanPhase_;
+    }
+
+    struct VcfLatchState
+    {
+        bool valid {};
+        bool nextPass {};
+        std::size_t ordinal {};
+        int destination {};
+        int voice {};
+        float target {};
+        double eventPosition {};
+    };
+
+    static VcfLatchState vcfLatch(
+        const YouKnow106Engine& engine) noexcept
+    {
+        const auto& latch = engine.vcfEventLatch_;
+        return {
+            latch.valid, latch.nextPass, latch.ordinal,
+            static_cast<int>(latch.write.destination), latch.write.voice,
+            latch.target, latch.eventPosition
+        };
+    }
+
+    static std::size_t nextConverterWrite(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return engine.nextConverterWrite_;
+    }
+
+    static std::size_t converterWriteCount() noexcept
+    {
+        return YouKnow106Engine::converterWritesPerPass;
+    }
+
+    static std::size_t vcfOrdinal(int voice) noexcept
+    {
+        const auto& writes = YouKnow106Engine::converterWriteOrder();
+        for (std::size_t ordinal = 0; ordinal < writes.size(); ++ordinal)
+            if (writes[ordinal].destination
+                    == YouKnow106Engine::ConverterDestination::Vcf
+                && writes[ordinal].voice == voice)
+                return ordinal;
+        return writes.size();
+    }
+
+    static double converterEventPhase(
+        const YouKnow106Engine& engine, std::size_t ordinal) noexcept
+    {
+        return engine.converterEventPhases_[ordinal];
+    }
+
+    static double scanPhasePerInternalSample(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return YouKnow106Engine::controlScanHz / engine.oversampledRate_;
+    }
+
+    static void setConverterScheduler(
+        YouKnow106Engine& engine, double phase,
+        std::size_t nextWrite) noexcept
+    {
+        engine.controlScanPhase_ = phase;
+        engine.nextConverterWrite_ = nextWrite;
+    }
+
+    static float cutoffHeld(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].cutoffCounts;
+    }
+
+    static float cutoffTarget(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .cutoffCountsTarget;
+    }
+
+    static void setCutoffHold(
+        YouKnow106Engine& engine, int slot, float state,
+        float target) noexcept
+    {
+        auto& voice = engine.voices_[static_cast<std::size_t>(slot)];
+        voice.cutoffCounts = state;
+        voice.cutoffCountsTarget = target;
+    }
+
+    static float resonanceHeld(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.resonanceCv_;
+    }
+
+    static float resonanceTarget(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.resonanceCvTarget_;
+    }
+
+    static void setResonanceHold(
+        YouKnow106Engine& engine, float state, float target) noexcept
+    {
+        engine.resonanceCv_ = state;
+        engine.resonanceCvTarget_ = target;
+    }
+
+    static float exactVcfHoldEndpoint(
+        float state, float target, double eventPosition,
+        float eventTarget, double intervalSeconds,
+        bool hasEvent = true) noexcept
+    {
+        return YouKnow106Engine::exactVcfHoldInterval(
+            state, target, hasEvent, eventPosition, eventTarget,
+            intervalSeconds).endpoint;
+    }
+
+    static std::array<double, 7> cutoffVcfHoldNodes(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.cutoffVcfHoldIntervals_[
+            static_cast<std::size_t>(slot)].value;
+    }
+
+    static std::array<double, 7> resonanceVcfHoldNodes(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return engine.resonanceVcfHoldInterval_.value;
     }
 
     static float glidedVolume(const YouKnow106Engine& engine) noexcept
@@ -631,9 +764,32 @@ void expectNear(double actual, double expected, double tolerance,
 
 constexpr double pi = 3.14159265358979323846;
 constexpr int blockSize = 256;
+constexpr std::array<double, 7> vcfControlNodePositions {
+    0.0, 1.0 / 6.0, 1.0 / 4.0, 1.0 / 2.0,
+    2.0 / 3.0, 3.0 / 4.0, 1.0
+};
 // Mirrors the engine's own private constant so the test states the bound it
 // checks rather than importing it.
 constexpr float vcfStageCapacitorToleranceForTest = 0.02f;
+
+double independentVcfHoldValue(
+    float state, float target, bool hasEvent, double eventPosition,
+    float eventTarget, double intervalSeconds, double position)
+{
+    constexpr double holdSeconds = static_cast<double>(522.0e-6f);
+    const double lambda = intervalSeconds / holdSeconds;
+    const double beforeEvent = static_cast<double>(target)
+        + (static_cast<double>(state) - target)
+            * std::exp(-position * lambda);
+    if (!hasEvent || position < eventPosition)
+        return beforeEvent;
+    const double stateAtEvent = static_cast<double>(target)
+        + (static_cast<double>(state) - target)
+            * std::exp(-eventPosition * lambda);
+    return static_cast<double>(eventTarget)
+        + (stateAtEvent - eventTarget)
+            * std::exp(-(position - eventPosition) * lambda);
+}
 
 struct Render
 {
@@ -1792,6 +1948,199 @@ void testConverterSchedulerPreservesFractionalScanPeriod()
         expectNear(average, expectedPeriodSamples, 0.02,
                    "the converter cadence truncated the nominal 4.2 ms period");
     }
+}
+
+void testFractionalVcfWritesPeekWithoutConsumingTheScheduler()
+{
+    constexpr double sampleRate = 8000.0;
+    constexpr int slot = 0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto initial = plainPatch();
+    initial.cutoff = 0.08f;
+    initial.envDepth = 0.0f;
+    initial.vcfLfoDepth = 0.0f;
+    initial.keyFollow = 0.0f;
+    initial.benderVcfDepth = 0.0f;
+    engine.setParameters(initial);
+    engine.noteOn(60, 1.0f);
+
+    auto eventParameters = initial;
+    eventParameters.cutoff = 0.34f;
+    engine.setParameters(eventParameters);
+    YouKnow106TestAccess::setResonanceHold(engine, 0.13f, 0.74f);
+    const std::size_t ordinal = YouKnow106TestAccess::vcfOrdinal(slot);
+    const double delta =
+        YouKnow106TestAccess::scanPhasePerInternalSample(engine);
+    const double eventPhase =
+        YouKnow106TestAccess::converterEventPhase(engine, ordinal);
+    constexpr double requestedPosition = 0.43;
+    YouKnow106TestAccess::setConverterScheduler(
+        engine, eventPhase - requestedPosition * delta, ordinal);
+
+    const float heldBefore = YouKnow106TestAccess::cutoffHeld(engine, slot);
+    const float targetBefore =
+        YouKnow106TestAccess::cutoffTarget(engine, slot);
+    const float resonanceHeldBefore =
+        YouKnow106TestAccess::resonanceHeld(engine);
+    const float resonanceTargetBefore =
+        YouKnow106TestAccess::resonanceTarget(engine);
+    float left = 0.0f;
+    float right = 0.0f;
+    engine.process(&left, &right, 1);
+    const auto latch = YouKnow106TestAccess::vcfLatch(engine);
+    expect(latch.valid && !latch.nextPass && latch.ordinal == ordinal
+               && latch.voice == slot,
+           "the fractional card-0 VCF write was not latched");
+    expectNear(latch.eventPosition, requestedPosition, 2.0e-12,
+               "the VCF latch rounded its physical event position");
+    expect(YouKnow106TestAccess::nextConverterWrite(engine) == ordinal,
+           "peeking a fractional VCF write consumed the firmware cursor");
+    expect(YouKnow106TestAccess::cutoffTarget(engine, slot) == targetBefore,
+           "peeking a fractional VCF write changed the official target");
+    expect(latch.target != targetBefore,
+           "the fractional VCF fixture did not change converter payload");
+    const float expectedEndpoint =
+        YouKnow106TestAccess::exactVcfHoldEndpoint(
+            heldBefore, targetBefore, latch.eventPosition, latch.target,
+            1.0 / sampleRate);
+    expectNear(YouKnow106TestAccess::cutoffHeld(engine, slot),
+               expectedEndpoint, 0.0,
+               "the fractional VCF write missed its exact 522 us endpoint");
+    expectNear(YouKnow106TestAccess::resonanceHeld(engine),
+               YouKnow106TestAccess::exactVcfHoldEndpoint(
+                   resonanceHeldBefore, resonanceTargetBefore, 1.0,
+                   resonanceTargetBefore, 1.0 / sampleRate, false),
+               0.0,
+               "a VCF event interval did not advance resonance exactly once");
+    const auto cutoffNodes =
+        YouKnow106TestAccess::cutoffVcfHoldNodes(engine, slot);
+    const auto resonanceNodes =
+        YouKnow106TestAccess::resonanceVcfHoldNodes(engine);
+    expect(YouKnow106TestAccess::exactVcfControlInterval(engine, slot),
+           "the fractional VCF write did not arm exact Ota controls");
+    for (std::size_t point = 0; point < vcfControlNodePositions.size(); ++point)
+    {
+        expectNear(cutoffNodes[point],
+                   independentVcfHoldValue(
+                       heldBefore, targetBefore, true, latch.eventPosition,
+                       latch.target, 1.0 / sampleRate,
+                       vcfControlNodePositions[point]),
+                   2.5e-12,
+                   "the process-populated cutoff hold node is not segmented-exact");
+        expectNear(resonanceNodes[point],
+                   independentVcfHoldValue(
+                       resonanceHeldBefore, resonanceTargetBefore, false,
+                       1.0, resonanceTargetBefore, 1.0 / sampleRate,
+                       vcfControlNodePositions[point]),
+                   2.5e-12,
+                   "a cutoff event populated the wrong reciprocal resonance node");
+    }
+
+    // Host automation may change after the event's physical time but before
+    // the sample-grid poll. The normal poll must commit the payload that was
+    // present at the event, not recompute it from this newer panel value.
+    auto laterParameters = eventParameters;
+    laterParameters.cutoff = 0.91f;
+    engine.setParameters(laterParameters);
+    expect(YouKnow106TestAccess::vcfLatch(engine).valid,
+           "live automation discarded a pending fractional VCF payload");
+    engine.process(&left, &right, 1);
+    expect(!YouKnow106TestAccess::vcfLatch(engine).valid,
+           "the normal poll did not retire its VCF payload latch");
+    expect(YouKnow106TestAccess::nextConverterWrite(engine) == ordinal + 1u,
+           "the normal poll did not consume exactly one converter write");
+    expect(YouKnow106TestAccess::cutoffTarget(engine, slot) == latch.target,
+           "the normal poll recomputed a peeked VCF payload from later automation");
+}
+
+void testFractionalResonancePeekCrossesThePassBoundary()
+{
+    constexpr double sampleRate = 8000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto initial = plainPatch();
+    initial.resonance = 0.09f;
+    engine.setParameters(initial);
+    engine.noteOn(60, 1.0f);
+
+    auto eventParameters = initial;
+    eventParameters.resonance = 0.68f;
+    engine.setParameters(eventParameters);
+    YouKnow106TestAccess::setCutoffHold(engine, 0, 1400.0f, 11000.0f);
+    const double delta =
+        YouKnow106TestAccess::scanPhasePerInternalSample(engine);
+    constexpr double requestedPosition = 0.27;
+    YouKnow106TestAccess::setConverterScheduler(
+        engine, 1.0 - requestedPosition * delta,
+        YouKnow106TestAccess::converterWriteCount());
+    const float heldBefore = YouKnow106TestAccess::resonanceHeld(engine);
+    const float targetBefore = YouKnow106TestAccess::resonanceTarget(engine);
+    const float cutoffHeldBefore =
+        YouKnow106TestAccess::cutoffHeld(engine, 0);
+    const float cutoffTargetBefore =
+        YouKnow106TestAccess::cutoffTarget(engine, 0);
+
+    float left = 0.0f;
+    float right = 0.0f;
+    engine.process(&left, &right, 1);
+    const auto latch = YouKnow106TestAccess::vcfLatch(engine);
+    expect(latch.valid && latch.nextPass && latch.ordinal == 0u
+               && latch.voice == -1,
+           "the pass-wrap resonance write was not latched as next-pass ordinal zero");
+    expectNear(latch.eventPosition, requestedPosition, 2.0e-12,
+               "the pass-wrap resonance event was snapped to a sample boundary");
+    expect(YouKnow106TestAccess::nextConverterWrite(engine)
+               == YouKnow106TestAccess::converterWriteCount(),
+           "the pass-wrap resonance peek consumed the old pass cursor");
+    expect(YouKnow106TestAccess::resonanceTarget(engine) == targetBefore,
+           "the pass-wrap peek changed the official resonance target");
+    expectNear(YouKnow106TestAccess::resonanceHeld(engine),
+               YouKnow106TestAccess::exactVcfHoldEndpoint(
+                   heldBefore, targetBefore, latch.eventPosition,
+                   latch.target, 1.0 / sampleRate),
+               0.0,
+               "the pass-wrap resonance event missed its exact endpoint");
+    expectNear(YouKnow106TestAccess::cutoffHeld(engine, 0),
+               YouKnow106TestAccess::exactVcfHoldEndpoint(
+                   cutoffHeldBefore, cutoffTargetBefore, 1.0,
+                   cutoffTargetBefore, 1.0 / sampleRate, false),
+               0.0,
+               "a resonance event interval advanced cutoff more than once");
+    const auto resonanceNodes =
+        YouKnow106TestAccess::resonanceVcfHoldNodes(engine);
+    const auto cutoffNodes =
+        YouKnow106TestAccess::cutoffVcfHoldNodes(engine, 0);
+    expect(YouKnow106TestAccess::exactVcfControlInterval(engine, 0),
+           "the pass-wrap resonance event did not arm exact Ota controls");
+    for (std::size_t point = 0; point < vcfControlNodePositions.size(); ++point)
+    {
+        expectNear(resonanceNodes[point],
+                   independentVcfHoldValue(
+                       heldBefore, targetBefore, true, latch.eventPosition,
+                       latch.target, 1.0 / sampleRate,
+                       vcfControlNodePositions[point]),
+                   2.5e-12,
+                   "the process-populated resonance hold node is not segmented-exact");
+        expectNear(cutoffNodes[point],
+                   independentVcfHoldValue(
+                       cutoffHeldBefore, cutoffTargetBefore, false, 1.0,
+                       cutoffTargetBefore, 1.0 / sampleRate,
+                       vcfControlNodePositions[point]),
+                   2.5e-12,
+                   "a resonance event populated the wrong reciprocal cutoff node");
+    }
+
+    auto laterParameters = eventParameters;
+    laterParameters.resonance = 0.96f;
+    engine.setParameters(laterParameters);
+    engine.process(&left, &right, 1);
+    expect(!YouKnow106TestAccess::vcfLatch(engine).valid,
+           "next-pass resonance polling did not retire its latch");
+    expect(YouKnow106TestAccess::nextConverterWrite(engine) == 1u,
+           "pass-wrap polling consumed more than resonance ordinal zero");
+    expect(YouKnow106TestAccess::resonanceTarget(engine) == latch.target,
+           "next-pass resonance polling lost its physical-time payload");
 }
 
 void testPulseOffPinsComparatorWithoutResettingTheDco()
@@ -6166,6 +6515,8 @@ int main()
     testPhysicalFiltersKeepRunningBehindClosedVcas();
     testPhysicalCardStateSurvivesVoiceAssignments();
     testConverterSchedulerPreservesFractionalScanPeriod();
+    testFractionalVcfWritesPeekWithoutConsumingTheScheduler();
+    testFractionalResonancePeekCrossesThePassBoundary();
     testPulseOffPinsComparatorWithoutResettingTheDco();
     testMovingPwmComparatorDoesNotMissThresholdCrossings();
     testModeChangesRebuildHeldKeys();
