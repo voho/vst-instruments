@@ -10,6 +10,14 @@
 #include <utility>
 #include <vector>
 
+struct VocalorAudioProcessorTestAccess
+{
+    static int voiceModelVersion(const VocalorAudioProcessor& processor) noexcept
+    {
+        return processor.voiceModelVersion.load(std::memory_order_relaxed);
+    }
+};
+
 namespace
 {
 constexpr double sampleRate = 48000.0;
@@ -210,8 +218,28 @@ void testParameterLayoutIsStable()
     auto& state = processor.parameters;
     using namespace vocalor::parameters;
 
-    expect (processor.getParameters().size() == 23,
-            "the published parameter count is no longer 23");
+    expect (processor.getParameters().size() == 24,
+            "the published parameter count is no longer 24");
+
+    int newestShippedVersionHint = std::numeric_limits<int>::min();
+    for (auto* hostParameter : processor.getParameters())
+    {
+        const auto* ranged = dynamic_cast<const juce::RangedAudioParameter*> (hostParameter);
+        expect (ranged != nullptr, "the host parameter list contains an unidentified parameter");
+        if (ranged == nullptr || ranged->paramID == instability)
+            continue;
+
+        expect (ranged->getVersionHint() == 1,
+                std::string ("the published AU version hint changed for ")
+                    + ranged->paramID.toStdString());
+        newestShippedVersionHint = std::max (newestShippedVersionHint,
+                                             ranged->getVersionHint());
+    }
+    if (const auto* parameter = state.getParameter (instability))
+        expect (parameter->getVersionHint() > newestShippedVersionHint,
+                "Instability does not sort after every shipped AU parameter");
+    else
+        expect (false, "the vocal-instability parameter is missing");
 
     // Version-1 identifiers and defaults are part of the saved session format.
     // Changing any of them would silently alter existing projects.
@@ -244,6 +272,11 @@ void testParameterLayoutIsStable()
         expect (nearly (denormalisedDefault (state, entry.id), entry.value, 0.002f),
                 std::string ("default for the new parameter ") + entry.id + " is not neutral");
 
+    // Fresh instances deliberately carry a little vocal instability. The
+    // legacy-state test below separately verifies the compatible zero value.
+    expect (nearly (denormalisedDefault (state, instability), 0.38f, 0.002f),
+            "the fresh vocal-instability default is no longer 0.38");
+
     if (auto* shift = state.getParameter (formantShift))
     {
         const auto range = shift->getNormalisableRange();
@@ -256,7 +289,7 @@ void testParameterLayoutIsStable()
     }
 
     for (const char* id : { vowelX, vowelY, vowelMorph, glide, roomSize, dynamics,
-                            intonation, nasal })
+                            intonation, nasal, instability })
     {
         if (auto* parameter = state.getParameter (id))
         {
@@ -306,10 +339,12 @@ void testFactoryProgramsReachTheParameters()
 
     if (hum > 0)
     {
+        const auto& values = vocalor::factoryPreset (hum).parameters;
+        setDenormalised (processor.parameters, instability,
+                         values.instability < 0.5f ? 1.0f : 0.0f);
         processor.setCurrentProgram (hum);
         expect (processor.getCurrentProgram() == hum,
                 "the processor did not adopt the selected program");
-        const auto& values = vocalor::factoryPreset (hum).parameters;
         if (auto* parameter = processor.parameters.getParameter (nasal))
             expect (nearly (parameter->convertFrom0to1 (parameter->getValue()),
                             values.nasal, 0.01f),
@@ -318,6 +353,12 @@ void testFactoryProgramsReachTheParameters()
             expect (nearly (parameter->convertFrom0to1 (parameter->getValue()),
                             values.breath, 0.01f),
                     "selecting a program did not write its breath");
+        if (auto* parameter = processor.parameters.getParameter (instability))
+            expect (nearly (parameter->convertFrom0to1 (parameter->getValue()),
+                            values.instability, 0.01f),
+                    "selecting a program did not write its vocal instability");
+        else
+            expect (false, "the vocal-instability parameter is missing");
 
         // Re-asserting the program in force must leave an edit alone: this is
         // the path a host takes when it restores a session.
@@ -542,6 +583,7 @@ void testStateRoundTrip()
     setNormalised (source.parameters, legato, 1.0f);
     setDenormalised (source.parameters, formantShift, -5.5f);
     setNormalised (source.parameters, breath, 0.80f);
+    setNormalised (source.parameters, instability, 0.73f);
 
     juce::MemoryBlock stored;
     source.getStateInformation (stored);
@@ -549,6 +591,9 @@ void testStateRoundTrip()
 
     VocalorAudioProcessor destination;
     destination.setStateInformation (stored.getData(), static_cast<int> (stored.getSize()));
+    expect (VocalorAudioProcessorTestAccess::voiceModelVersion (source) == 3
+                && VocalorAudioProcessorTestAccess::voiceModelVersion (destination) == 3,
+            "a current state round trip lost the voice-model version");
 
     const auto valueOf = [] (const juce::AudioProcessorValueTreeState& state, const char* id)
     {
@@ -557,7 +602,7 @@ void testStateRoundTrip()
     };
 
     for (const char* id : { vowelMorph, vowelX, vowelY, glide, roomSize, legato,
-                            formantShift, breath })
+                            formantShift, breath, instability })
         expect (nearly (valueOf (destination.parameters, id), valueOf (source.parameters, id), 0.002f),
                 std::string ("parameter ") + id + " did not survive a state round trip");
 }
@@ -598,6 +643,8 @@ void testVersionOneSessionsStillLoad()
         expect (false, "the legacy state could not be serialised");
 
     processor.setStateInformation (stored.getData(), static_cast<int> (stored.getSize()));
+    expect (VocalorAudioProcessorTestAccess::voiceModelVersion (processor) == 2,
+            "a version-1 session enabled the current register-support law");
 
     const auto valueOf = [&processor] (const char* id)
     {
@@ -610,6 +657,8 @@ void testVersionOneSessionsStillLoad()
                 && nearly (valueOf (output), -3.5f, 0.01f)
                 && nearly (valueOf (choirSize), 12.0f, 0.01f),
             "a version-1 session did not restore its original parameter values");
+    expect (nearly (valueOf (instability), 0.0f, 0.002f),
+            "a version-1 session did not disable vocal instability");
 
     // The 1.1 additions have to stay in a range the engine accepts, whatever a
     // host does with parameters it has never seen before.
@@ -626,7 +675,8 @@ void testVersionOneSessionsStillLoad()
     // The same load into an instance that has already been sung through. APVTS
     // keeps a parameter's live value when the stored tree has no child for it,
     // so without the migration a version-1 session would inherit the player's
-    // morph, glide and legato instead of the defaults it was saved with.
+    // morph, glide and legato instead of the defaults it was saved with. The
+    // instability migration is intentionally different from its fresh default.
     VocalorAudioProcessor used;
     const auto setValue = [&used] (const char* id, float value)
     {
@@ -642,6 +692,7 @@ void testVersionOneSessionsStillLoad()
     setValue (glide, 0.62f);
     setValue (legato, 1.0f);
     setValue (roomSize, 0.19f);
+    setValue (instability, 0.91f);
 
     used.setStateInformation (stored.getData(), static_cast<int> (stored.getSize()));
 
@@ -661,6 +712,31 @@ void testVersionOneSessionsStillLoad()
     auto* usedBreath = used.parameters.getRawParameterValue (breath);
     expect (usedBreath != nullptr && nearly (usedBreath->load(), 0.71f, 0.002f),
             "reloading into a used instance lost a stored value");
+
+    auto* usedInstability = used.parameters.getRawParameterValue (instability);
+    auto* freshInstability = pristine.parameters.getRawParameterValue (instability);
+    expect (freshInstability != nullptr
+                && nearly (freshInstability->load(), 0.38f, 0.002f),
+            "a fresh instance did not use the vocal-instability default");
+    expect (usedInstability != nullptr
+                && nearly (usedInstability->load(), 0.0f, 0.002f),
+            "a legacy session kept live vocal instability instead of migrating to zero");
+    expect (VocalorAudioProcessorTestAccess::voiceModelVersion (used) == 2
+                && VocalorAudioProcessorTestAccess::voiceModelVersion (pristine) == 3,
+            "legacy and fresh instances did not retain distinct voice models");
+
+    // Saving a migrated project must preserve its bypass on the next load.
+    juce::MemoryBlock migrated;
+    processor.getStateInformation (migrated);
+    VocalorAudioProcessor reopened;
+    reopened.setStateInformation (migrated.getData(), static_cast<int> (migrated.getSize()));
+    expect (VocalorAudioProcessorTestAccess::voiceModelVersion (reopened) == 2,
+            "re-saving a legacy session silently upgraded its voice model");
+
+    // Selecting a genuinely different 1.3 factory program is an explicit opt-in.
+    used.setCurrentProgram (1);
+    expect (VocalorAudioProcessorTestAccess::voiceModelVersion (used) == 3,
+            "selecting a current factory program kept the legacy voice model");
 
     processor.prepareToPlay (sampleRate, blockSize);
     juce::AudioBuffer<float> buffer (2, blockSize);

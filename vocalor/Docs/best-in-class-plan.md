@@ -85,8 +85,9 @@ Vocalor's tract and source model are already better than the parameter list
 suggests: a Liljencrants-Fant glottal derivative analysed at `prepare()` time and
 band-limited into nine mip levels, a peak-normalised parallel formant bank with
 cascade-derived amplitudes and alternating polarity, sample-rate-invariant
-humanisation with renormalised noise drives, and buffer-split-invariant chunk
-alignment. Those are not the problem. The problems are these.
+humanisation with renormalised noise drives, and absolute 64-sample chunk
+alignment with a bounded arbitrary-split residual. Those are not the problem.
+The problems are these.
 
 **1. There is no continuous expression input at all.** `dispatchMidiData()` in
 `Source/PluginProcessor.cpp` handles exactly three message kinds: note-on,
@@ -722,7 +723,8 @@ MIDI 53 does not reproduce, and the true step is larger than it said. Nothing
 audible rides on it either way, but any change that brightens the source would
 expose it without warning.
 
-**23. The singer's-formant cluster is applied at every pitch.**
+**23. The singer's-formant cluster is applied at every pitch. [Closed in the
+2026-08-09 register-aware follow-through.]**
 `updateChunkState` pulls F3–F5 toward `clusterHz = male ? 2900.0f : 3200.0f`
 under tension and effort with no pitch term (`VoiceEngine.cpp:965-973`), and
 narrows their bandwidths together (`:1012`). Confirmed by measurement: at
@@ -730,8 +732,9 @@ Tension 0.95, Dynamics 1.0, female AAH, the chunk tract is F3 2977 / F4 3458 /
 F5 4202 Hz with bandwidths 89 / 132 / 185 Hz at C4, C5 **and C6 alike, bit for
 bit**. The only pitch term anywhere near it is `highTune` at `:1292`, worth
 ×1.0045 on F3–F5 at C6. Weiss, Brown and Morris tested 10 professional sopranos
-and found no narrow cluster: at 932 Hz their bandwidths were "at least 2-kHz
-wide" against under 1 kHz for tenors ([*Singer's formant in sopranos: fact or
+and found no narrow cluster: at low/middle pitch the *aggregate reinforcement
+band* was usually at least 2 kHz wide, against under 1 kHz for tenors, and at
+932 Hz there was no typical band at all ([*Singer's formant in sopranos: fact or
 fiction?*](https://pubmed.ncbi.nlm.nih.gov/11792022/), Journal of Voice
 15(4):457–468). The centre frequency itself is fine: the cluster is applied
 before `shift` (`:1006`), so it already scales with tract length.
@@ -746,6 +749,18 @@ still leaves **+8.99 dB** of that C6 rise, because Tension also drives
 `effortScale` and through it the source tilt corner at `:1267`. The cluster is
 worth about 5.3 dB at C6 and 4.25 dB at C4. Disengaging it does not make
 Tension inert up there, and no test written on the band share can prove it did.
+
+**Resolution.** The tract now preserves both a clustered and an ordinary vowel
+endpoint, then resolves the actual frequencies, bandwidths, cascade amplitudes
+and `a2` per voice. Male D3 retains the full cluster. Female uses 25 % of that
+convergence — an engineering mapping for the observed broad aggregate region,
+not a measured anatomical coefficient — and releases it with a smooth
+log-pitch curve from 622.25 to 932.33 Hz. At female AAH/Tension 95 %, outer
+F3–F5 coverage is 2337 → 2094 Hz at C4 and 2345 → 2345 Hz at B-flat5. The
+regression holds C4 and B-flat5 simultaneously, proves the amplitudes and poles
+describe one geometry, checks an interior pitch and a legato transition, and
+repeats at 44.1/48/96 kHz and split host buffers. This implements the mechanism
+the struck step below could not; it does not use the invalid C6 band-share test.
 
 **What must not regress.** The alias floor (88.9–98.1 dBc): no step here may
 reintroduce a per-sample nonlinearity or a coarser wavetable read. The
@@ -1403,16 +1418,14 @@ have been built at all as written.
      is 1.23 dB, so it is the extent and not the modulation. The other eleven
      move between −0.07 and +0.59 dB and were left alone.
 
-  *Re-measured on the finished pass, 2026-08-08.* Two figures here are not what
-  shipped. The laryngeal modulation reads **2.994 dB at C5 and 3.163 dB at C6**
-  against the 2.815 and 3.048 recorded above, against a 1.0 dB bound and a
-  0.002 dB floor at Vibrato 0 — step 8's placement landed behind this step and
-  its direct path carries the modulation too. The rate and extent legs are
+  *Re-measured on the integrated 1.3 pass, 2026-08-09.* The rooted two-stage
+  shelf and phase-led natural path put the full-Vibrato audio-envelope reading
+  at **2.556 dB at C5 and 2.653 dB at C6**, against a 1.0 dB bound and a
+  0.001–0.002 dB floor at Vibrato 0. The rate and extent legs are
   unchanged to the digit: 5.719 Hz and ±108.6 cents solo, 5.719–6.842 Hz and
-  ±27.8 to ±40.0 cents across the section. And Cathedral Ensemble's re-trim
-  ships at `outputGain` **0.563**, not the 0.553 recorded above; steps 7 and 8
-  each moved how coherently twelve singers sum in a large room, and the preset
-  is pinned at −22.85 dB, which it now hits exactly.
+  ±27.8 to ±40.0 cents across the section. The final output-only preset
+  calibration pins Cathedral Ensemble at −22.85 dB without changing its
+  source, tract or ensemble controls.
 
 - [x] **4. Let the air outlive the voice at an aspirate offset.** Replace
   `airReleaseMultiplier_ = releaseMultiplier_ * releaseMultiplier_`
@@ -2288,7 +2301,7 @@ the ones in *Where the engine actually stands*.
 | 21. Broadband dynamic span, Breath 0.00 / 0.28 / 0.60 | 18.10 / 18.10 / 18.09 dB | 33.19 / 33.02 / 32.37 dB |
 | 10. Solo vibrato at Vibrato 100 % | 4.711 Hz, ±21.7 cents | 5.719 Hz, ±108.6 cents |
 | 10. Twelve section rates and extents | 4.711 – 5.289 Hz, ±15.4 – ±22.2 cents | 5.719 – 6.842 Hz, ±27.8 – ±40.0 cents |
-| 10. Envelope modulation at the singer's own vibrato rate, C5 / C6 | 0.100 / 0.221 dB | 2.994 / 3.163 dB |
+| 10. Envelope modulation at the singer's own vibrato rate, C5 / C6 | 0.100 / 0.221 dB | 2.556 / 2.653 dB |
 | 13. Air-to-voiced ratio 300 ms after note-off, Breath 1.00 / Tension 0.15 | 12.91 dB *below* the sounding value | 9.56 dB above it |
 | 13. The same at Breath 0.28 / Tension 0.90 | 12.58 dB below | 6.21 dB below — a pressed note still stops cleanly |
 | 14. Isolated aspiration folded on the glottal period, C4 / Breath 1.00 | 0.27 dB, which is the estimator's floor | 8.35 dB peak to trough, peak at phase 0.396, 4.32 dB of closed-phase margin |
@@ -2461,10 +2474,10 @@ figure in the suite; everything the pass cannot support is here too.
   a diffuse early field: on Cathedral the nearest singer gets four arrivals in
   40 ms because the geometry cannot put more there. The tail is the same
   recirculating network it was, within 0.5 dB.
-- **Breath And Air is out of headroom.** It ships at the published `outputGain`
-  maximum of 2.000 with its Dynamics already raised, and still renders 0.64 dB
-  under the level it was voiced at. Any future step that lowers a breathy patch
-  has nowhere to put the difference.
+- **Breath And Air has little output-trim headroom.** The integrated 1.3 bank
+  calibrates it at `outputGain` 1.884 with Dynamics 0.34, only 0.52 dB below the
+  published 2.000 ceiling. Future changes that lower a breathy patch still need
+  to budget that margin explicitly.
 - **Per-sample costs are per-change isolated measurements**, each taken back to
   back on the same box with and without that one change: +13 ns for the onset
   ramp, +43.6 ns for the presence shelves, about +25 ns for the aspiration
@@ -2477,18 +2490,15 @@ figure in the suite; everything the pass cannot support is here too.
 - **Formant dispersion was deliberately not widened.** Ternström and Sundberg
   report smaller inter-subject formant scatter in singing than in speech, so the
   ensemble win this pass took is in timing and space, not in more vowel scatter.
-- **The singer's-formant cluster is still applied at every pitch** (gap 23), and
-  no band-share measurement can prove it was ever disengaged, because Tension
-  also drives the source tilt corner and that alone is worth 8.99 dB of the C6
-  rise. This is the largest known acoustic inaccuracy the pass leaves behind and
-  it is deliberately left, with its reasons, below.
-- **The committed demonstration WAVs were not re-rendered against the finished
-  engine.** `VocalorRenderDemos` is deterministic and rewrites the level table in
-  `Docs/audio/README.md` in place, so regenerating them is a single command, but
-  it was not run here: the tool overwrites the committed audio, and the per-fix
-  preview takes under `Docs/audio/*-fixes/` are frozen review evidence that must
-  not be re-rendered at all. Whoever ships this should regenerate the nine
-  demonstrations and nothing else.
+- **The pitch-invariant singer's-formant gap is now closed** (gap 23). The
+  implementation lives in the 2026-08-09 follow-through below because the
+  original step was correctly rejected: it changed centres but left bandwidths
+  and cascade amplitudes shared, and its output-band test measured source tilt.
+- **The second pass did not re-render the committed demonstration WAVs.** That
+  deferred item was closed by the 2026-08-09 feedback pass below: all ten main
+  takes and their generated peak table now come from the less-resonant voicing
+  and the cycle-instability model. The per-fix preview takes under
+  `Docs/audio/*-fixes/` remain frozen review evidence and were not touched.
 - **Nothing here is a listening test.** No vendor in this category publishes one
   and no controlled comparison of choir plug-ins exists, so every claim above is
   a measurement and none of them is a claim about preference.
@@ -2496,36 +2506,10 @@ figure in the suite; everything the pass cannot support is here too.
 ### Considered and not planned
 
 - **Disengaging the epilaryngeal cluster above the soprano crossover (gap 23).**
-  *Struck in review; it was step 6.* The gap is real — the cluster is applied
-  bit-identically at C4, C5 and C6 — but four things were wrong with the step.
-  *Its test could not have passed.* It required the 2050–4000 Hz share to rise
-  by less than 1.5 dB from Tension 0 to 0.95 at C6. A counterfactual build with
-  `epilarynx` forced to zero still rises **8.99 dB**, because Tension also
-  drives `chunkResponse_.effortScale` and through it the source tilt corner at
-  `:1267`. Nothing short of gutting the tilt reaches 1.5 dB, and gutting the
-  tilt is a far larger regression than the gap.
-  *Its baseline numbers were the wrong voice.* "1860 → 1065 Hz" and "8.8 dB"
-  are what `testSingersFormantCluster` prints for a **male D3**; the female
-  AAH figures the step asserts on are 2140 → 1225 Hz and +8.35 dB at C4.
-  *It does not implement what it cites.* Weiss, Brown and Morris found sopranos
-  have no narrow cluster because their **bandwidths** are "at least 2-kHz
-  wide". The step explicitly leaves bandwidths chunk-level, so the
-  `clusterWidth` narrowing at `:1012` — 89/132/185 Hz on F3–F5 at Tension 0.95 —
-  would still be applied to a soprano at C6. The frequency pull is the half of
-  the mechanism that does not carry the citation.
-  *It breaks a guarantee this pass pins.* Per-voice F3–F5 targets read against
-  chunk amplitudes that `parallelFormantAmplitudes` derived from the *clustered*
-  frequencies mis-weights the disengaged voice, which is the peak-normalisation
-  the "what must not regress" paragraph exists to protect. Doing it properly
-  means two amplitude sets per chunk, i.e. a second
-  `parallelFormantAmplitudes` call in the most expensive part of
-  `updateChunkState`.
-  Also worth recording for whoever picks it up: the 2050–4000 Hz share is a bad
-  metric at C6, where only harmonics 2 and 3 of a 1046 Hz fundamental fall in
-  the band, so the number moves with which sparse harmonic happens to land
-  under F3. This comes back as its own step, with a per-voice bandwidth path,
-  a measurement of what a soprano's F3–F5 bandwidths should be, and a test
-  written on the tract's frequencies and bandwidths rather than on a band share.
+  *Superseded.* The original step was correctly struck because it changed only
+  centres, left bandwidths and amplitudes chunk-wide, and used a C6 band share
+  dominated by source tilt. The later implementation closes all three holes;
+  see gap 23's **Resolution** and the feedback follow-through below.
 - **The male passaggio and register mechanism.** A tenor tunes R1 to the second
   harmonic through the passaggio and R2 to the third at the top
   ([Journal of Voice,
@@ -2618,3 +2602,159 @@ figure in the suite; everything the pass cannot support is here too.
   forced-choice test against rendered competitor demos — would be a genuine
   differentiator, but it is a marketing artefact rather than an engine step and
   does not belong in this list.
+
+## Feedback pass: resonance and vocal instability (2026-08-09)
+
+Listening feedback identified two specific failures that the steady-state audit
+did not: the demonstrations rang too strongly in the upper formants, and held
+vibrato still disclosed a regular LFO. The audit confirmed both. The renderer
+was silently inheriting the DSP compatibility defaults — Resonance 72 %,
+Tension 48 %, Vibrato 42 % — rather than the published plug-in settings, while
+Humanize changed vibrato rate and depth only with 11–53-second sinusoids. Across
+a one-to-three-second note, successive periods were therefore almost identical.
+
+- [x] **Separate intended extent from cycle regularity.** `vibrato` remains the
+  mean musical extent. The appended `instability` parameter controls correlated,
+  bounded variation of period, depth and contour, with a fresh default of 38 %
+  and an explicit zero migration for states that predate it. Every factory
+  program sets it deliberately. Its Audio Unit version hint is newer than all
+  existing parameters, so adding it cannot reorder old automation slots.
+- [x] **Replace the clocked gesture without replacing session sound.** Each
+  voice owns an independent deterministic modulation stream. At maximum, the
+  measured period and extent CVs are 7.622 % and 20.585 %, mean rate is 5.92 Hz,
+  and rise/fall duration is 0.825. Instability zero retains the established
+  sinusoidal rate/depth path and the corrected rooted shelf law. Aligned
+  64-sample host chunks remain bit-exact and
+  arbitrary sub-chunk splits retain the engine's bounded floating residual.
+- [x] **Naturalise amplitude vibrato.** Airflow/intensity receives a
+  singer-specific 45–150-degree lead over F0, a smaller gain law, and one shared
+  spectral gesture across the two presence shelves. New depth and contour draws
+  cross in over the first 18 % of a cycle, preventing the phase-led amplitude
+  waveform from acquiring a redraw edge. The fresh patch measures
+  0.575/1.150 dB direct/high-band peak to peak; the demo setting measures
+  0.922/1.845 dB, and the largest measured high-band redraw kink is 2.02e-05.
+- [x] **Revoice and regenerate the public demonstrations.** Their explicit
+  neutral baseline is now Resonance 42 %, Tension 32 % and Instability 44 %.
+  Female AAH F3–F5 bandwidths widen from 106.6/157.8/221.8 Hz to
+  approximately 133.2/197.2/277.1 Hz after the register-aware tract work. All
+  ten lossless WAVs and the level table were rendered again from the shipping
+  engine; take 10 is the first public example to cross the soprano release.
+- [x] **Make upper-tract reinforcement profile- and pitch-aware.** The male
+  cluster remains the D3 control. Female uses 25 % of that convergence below
+  E-flat5, preserving roughly 2 kHz of F3–F5 outer coverage as a structural
+  proxy, and releases it smoothly through B-flat5. The anchors come from Weiss,
+  Brown and Morris's 261/622/932 Hz
+  soprano measurements ([Journal of
+  Voice](https://www.sciencedirect.com/science/article/abs/pii/S0892199701000467));
+  the 25 % value is explicitly an engineering mapping, not an individual-pole
+  bandwidth read from the paper.
+- [x] **Make the tract genuinely per voice.** Each voice carries its own
+  bandwidths, `a2`, exact all-pole amplitudes and rendered gains. The normalizer
+  builds and reuses those pole coefficients in one pass; the nasal pole uses
+  the same voice's raw F1 amplitude, and the display publishes one coherent
+  Hz/BW/gain tuple. Simultaneous C4/B-flat5, an interior pitch, legato motion,
+  44.1/48/96 kHz and 37-sample host buffers are all regression fixtures. The
+  measured twelve-singer 96 kHz render is about 0.040× real time (roughly
+  412 ns/sample) on this run, below the previous pass's observed cost rather
+  than a regression.
+
+This pass fixes the reported defects; it does not turn the larger goal into a
+finished claim. The highest-value structural work still waiting is the male
+register/passaggio model, a voice-class dimension that can distinguish alto
+from soprano instead of treating `Female` as one fach, per-singer phonation,
+and a controlled listening test against the market rather than an assertion
+that measurements alone prove preference. The high-register demonstration
+validates a continuous release rather than an evenly reinforced H3–H5 spectrum;
+the follow-through below corrects the source interpolation and adds the measured
+R3/R4 trajectory without turning sparse soprano harmonics into an EQ target.
+
+## Source coherence and soprano-resonance follow-through (2026-08-09)
+
+The first feedback build still hid an important source artifact. Tension mixed
+two complete LF derivatives whose closure events were 0.32 cycle apart. At
+middle settings the result was not one fold gesture of intermediate open
+quotient; it was two events cancelling selected harmonics. That cancellation
+also inflated the old onset-band differential and made the high-register result
+depend on which mip level the oscillator selected.
+
+- [x] **Interpolate physical LF shapes at one closure phase.** Nine nodes cover
+  OQ 0.78→0.46, SQ 2.6→3.4 and RQ 0.0120→0.0032. Each derivative and matching
+  flow envelope is circularly aligned on the closure/MFD event before adjacent
+  interpolation. Against the continuously generated path, nine nodes hold the
+  H1–H5 maximum error to 0.182 dB; an unaligned nine-node bank still missed by
+  2.04 dB.
+- [x] **Preserve compatibility drive at the mip that actually sounds.** A
+  separate 257-point gain curve for every 1/2/4/8/16/32/64/128/256-harmonic
+  table reproduces the former endpoint-crossfade RMS curve with less than
+  0.0001 dB residual. The full-table H1–H24 band remains within 0.024 dB. The
+  former H2/H5 minima were only 0.104/0.350 of their endpoint floors; the new
+  H1–H5 minima are 0.994/0.889/0.708/0.867/0.988. This is cancellation removal,
+  not a demand for flat harmonics.
+- [x] **Keep the cold build off the audio thread.** All engines share one
+  immutable heap bank. Its cold construction is about 23 ms and later prepares
+  are about 0.1 ms, so `prepare()` is now an explicit non-real-time contract;
+  an unprepared engine ignores notes and returns silence instead of allocating
+  in `noteOn()` or `process()`.
+- [x] **Recalibrate consequences rather than hide them.** Exact source RMS does
+  not imply exact post-tract level when the formants weight redistributed
+  harmonics. The deterministic AAH reference therefore moves from −17.03 to
+  −19.01 dB. Warm Bass Choir, Small Voices, Vowel Morph Pad and Locked Major
+  Chorale are re-trimmed to −20.98/−23.60/−27.79/−26.34 dB respectively. The
+  onset LF gesture remains positive in the intended direction at +0.94 dB of
+  5–18 kHz share; the earlier +5.56 dB included the removed phase artifact.
+- [x] **Add the measured female R3/R4 register motion without harmonic
+  locking.** Direct broadband excitation measured 0.48 ± 0.39 and
+  0.46 ± 0.38 Hz/Hz. The mapping is exact at Humanize zero, uses one correlated
+  identity draw at Humanize one (observed twelve-singer ranges 0.145–0.788 and
+  0.134–0.760), follows intentional glide and bend, excludes vibrato, scales
+  with Formant Shift, and leaves R5 and Male untouched. It stays linear through
+  B5, eases to a C6-sized displacement by C-sharp6, then saturates instead of
+  extrapolating through MIDI 127.
+- [x] **Guard the model, not one demo spectrum.** All three preset vowels and
+  all five vowel-pad anchors are exercised at C6, C-sharp6 and MIDI 127, both
+  Formant Shift extremes, all twelve identities, and the Resonance/Breath
+  corners that make the poles widest. Adjacent R3–R5 centres must retain a
+  0.98-mean-bandwidth separation; the final sweep's narrowest measured case is
+  1.020× the un-margined bound. This is a near-coincidence guard, not a promise
+  that an alternating-polarity parallel bank has no off-centre cancellation.
+  The suite also pins the shift-normalised slopes, cap endpoint, C4 anchor,
+  male/R5 no-op, per-voice pole/gain coherence, five full-fidelity sample rates,
+  explicit finite low-rate degradation, long glide, ±22-semitone bend, vibrato
+  exclusion and host buffer splits.
+- [x] **Spend narrow harmonic alignment on breath support rather than a demo
+  fader.** The high-register line exposed a second problem after its pole
+  geometry was fixed: equal-velocity plateaus still spanned 11.68 dB and one
+  adjacent step reached 7.37 dB as harmonics crossed F1 and F2. Each voice now
+  compares its exact LF/source-shelf/tract power at H1–H8 with eight midpoint
+  probes across a local harmonic interval. It returns half the amplitude
+  correction, clamps it to ±3 dB, refreshes about every 5.3 ms and follows
+  through a 40 ms smoother. The law follows intentional pitch and current
+  articulation, excludes vibrato/jitter, touches voiced drive only, and is explicitly an
+  engineering support model rather than a physiological estimator. The same
+  demo measures 6.48 dB across the register and 4.67 dB at the largest adjacent
+  move; note events and target updates stay below the local waveform
+  derivative distribution. The source-plus-tract dependence is consistent
+  with [Zhang's 2025 physical/experimental formant-tuning study](https://www.surgery.medsch.ucla.edu/spl/papers/2025JASA09_FormantTuning.pdf).
+- [x] **Version the invisible DSP law.** Instability already migrates missing
+  old state to zero, but the automatic ±3 dB support scalar would still have
+  changed every pre-1.3 project. A hidden `vocalorVoiceModel` state marker now
+  bypasses support for those sessions and survives their next save; fresh
+  instances and an explicitly selected 1.3 factory program use model 3. This
+  preserves host automation order and adds no user-facing compatibility knob.
+- [x] **Recalibrate what the integrated source, tract and shelf laws moved.**
+  The deterministic AAH reference is now −17.91 dB. All twelve programs use
+  output-only trims to land within 0.01 dB of their published chord levels; no
+  tract or source parameter is revoiced to satisfy a scalar pin. The fixed-time
+  refresh avoids a rate-proportional analysis cost.
+  Three final twelve-singer 96 kHz runs measure 440/454/444 ns per sample
+  (0.043× real time at the median), about 9 % over the completed LF bank and far
+  inside the existing real-time guard.
+
+This closes the source cancellation, measured upper-resonance trajectory and
+the worst fixed-drive register jumps. It still does not justify a flat H3–H5
+target: professional soprano spectra can contain only a few noteworthy
+harmonics and vary with register mechanism. Nor is the support scalar a
+replacement for reactive source–filter coupling. The remaining structural
+priorities are the male passaggio, an explicit alto/soprano voice-class
+dimension, per-singer phonation, nonlinear f0–F1 coupling and a controlled
+market listening test.

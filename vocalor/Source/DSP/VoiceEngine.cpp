@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 
 namespace vocalor
 {
@@ -35,6 +36,35 @@ constexpr int sourceBandHarmonics = 24;
 constexpr float sourceBandRms[2] { 0.587f, 0.441f };
 // The rate every level-calibrated constant in this file is expressed against.
 constexpr float referenceSampleRate = 48000.0f;
+// Sopranos do not carry the sub-1 kHz-wide tenor/baritone singer's-formant
+// cluster into their upper range. At low and middle pitches their measured
+// reinforcement region is usually at least 2 kHz wide. One quarter of the
+// male convergence is an engineering mapping that produces that aggregate
+// span with this five-pole model, not a measured anatomical coefficient. It
+// then disappears between the two upper pitches measured by Weiss, Brown and
+// Morris (622 and 932 Hz).
+constexpr float femaleClusterStrength = 0.25f;
+constexpr float sopranoClusterReleaseStartHz = 622.25f;
+constexpr float sopranoClusterReleaseEndHz = 932.33f;
+// Direct broadband excitation of trained sopranos found that R3 and R4 rise
+// with f0 rather than locking to its harmonics (Joliveau et al., 2004). The
+// reported regressions were 0.48 +/- 0.39 Hz/Hz and 0.46 +/- 0.38 Hz/Hz. C4 is
+// the fixed low-register hinge of this mapping, so every female tract retains
+// its existing centre frequencies there and below.
+constexpr float sopranoUpperRiseAnchorHz = 261.63f;
+// The regression was observed across the singers' comfortable range (the
+// paper's high-range summary ends at B5), with C6 the upper worked example and
+// the trend reported to about 1 kHz. Keep the measured linear law through B5,
+// then ease its derivative to zero by C-sharp6. The resulting displacement is
+// almost exactly the linear C6 displacement, but it has no hard corner and is
+// not extrapolated through the non-human remainder of MIDI where independent
+// population slopes can overtake one another.
+constexpr float sopranoUpperRiseSoftLimitHz = 987.77f;
+constexpr float sopranoUpperRiseEndHz = 1108.73f;
+constexpr float sopranoR3RiseMean = 0.48f;
+constexpr float sopranoR3RiseDeviation = 0.39f;
+constexpr float sopranoR4RiseMean = 0.46f;
+constexpr float sopranoR4RiseDeviation = 0.38f;
 
 /** Drive compensation for a one-pole smoother fed by white noise.
 
@@ -66,6 +96,44 @@ float smoothStep(float value) noexcept
     return value * value * (3.0f - 2.0f * value);
 }
 
+void separateUpperFormantBandwidths(
+    const std::array<float, kFormantCount>& formantHz,
+    std::array<float, kFormantCount>& formantBandwidth) noexcept
+{
+    constexpr float spacingMargin = 0.98f;
+    constexpr float minimumBandwidth = 20.0f;
+    for (int formant = 2; formant < 4; ++formant)
+    {
+        const auto lower = static_cast<std::size_t>(formant);
+        const auto upper = static_cast<std::size_t>(formant + 1);
+        const float gap = formantHz[upper] - formantHz[lower];
+        const float maximumCombined = 2.0f * spacingMargin * gap;
+        if (maximumCombined < 2.0f * minimumBandwidth)
+            continue;
+
+        const float combined = formantBandwidth[lower]
+            + formantBandwidth[upper];
+        if (combined <= maximumCombined)
+            continue;
+
+        const float scale = maximumCombined / combined;
+        float narrowedLower = scale * formantBandwidth[lower];
+        float narrowedUpper = scale * formantBandwidth[upper];
+        if (narrowedLower < minimumBandwidth)
+        {
+            narrowedLower = minimumBandwidth;
+            narrowedUpper = maximumCombined - minimumBandwidth;
+        }
+        else if (narrowedUpper < minimumBandwidth)
+        {
+            narrowedLower = maximumCombined - minimumBandwidth;
+            narrowedUpper = minimumBandwidth;
+        }
+        formantBandwidth[lower] = narrowedLower;
+        formantBandwidth[upper] = narrowedUpper;
+    }
+}
+
 float wrapPhase(float phase) noexcept
 {
     phase -= std::floor(phase);
@@ -93,8 +161,8 @@ float hashFloat(std::uint32_t value) noexcept
     @c speedQuotient the ratio of the opening to the closing phase, and
     @c returnQuotient the exponential return-phase time constant that follows
     glottal closure. The return phase is what sets the source spectral tilt, so
-    the two prototypes differ in a physically meaningful way rather than through
-    an arbitrary harmonic roll-off exponent.
+    the endpoint shapes differ in a physically meaningful way rather than
+    through an arbitrary harmonic roll-off exponent.
 */
 float glottalDerivative(float t, float openQuotient, float speedQuotient,
                         float returnQuotient) noexcept
@@ -130,6 +198,20 @@ float glottalFlowShape(float t, float openQuotient, float speedQuotient) noexcep
     return 0.0f;
 }
 } // namespace
+
+struct VoiceEngine::TableBank
+{
+    std::array<std::array<float, glottalShapeCount * tableSize>, tableLevels>
+        glottalTables {};
+    std::array<std::array<float, glottalGainTableSize>, tableLevels>
+        glottalGainTable {};
+    std::array<std::array<float, radiatedPowerHarmonics>, glottalGainTableSize>
+        glottalHarmonicPower {};
+    std::array<float, glottalShapeCount * flowTableSize> glottalFlowTable {};
+    std::array<float, glottalShapeCount> flowMean {};
+    std::array<float, glottalShapeCount - 1> flowCross {};
+    std::array<float, tableSize> sineTable {};
+};
 
 VoiceEngine::VoiceEngine() noexcept
 {
@@ -190,6 +272,12 @@ void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
     // own first harmonic: the shelf has unity gain at DC by construction, so
     // only the partials above the corner follow the loudness.
     sourcePresenceCoefficient_ = onePole(850.0f);
+    radiatedPowerUpdateControls_ = std::max(1, static_cast<int>(std::lround(
+        static_cast<double>(radiatedPowerReferenceUpdateControls)
+        * sampleRate_ / static_cast<double>(referenceSampleRate))));
+    radiatedPowerCoefficient_ = 1.0f - std::exp(
+        -static_cast<float>(radiatedPowerUpdateControls_ * controlPeriod)
+        * inverseSampleRate_ / 0.040f);
     // ... and every noise-driven smoother among them needs its drive
     // renormalised, or the correct spectrum arrives at the wrong depth.
     shimmerScale_ = noiseSmootherScale(
@@ -228,7 +316,7 @@ void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
     justGlide_ = 1.0f - std::exp(-static_cast<float>(controlPeriod)
                                  * inverseSampleRate_ / 0.090f);
 
-    buildTables();
+    tables_ = &sharedTableBank();
     buildSingerIdentities();
     prepared_ = true;
     reset();
@@ -253,6 +341,7 @@ void VoiceEngine::reset()
     smoothedResonance_ = blockParameters_.resonance;
     smoothedFormantShift_ = blockParameters_.formantShift;
     smoothedNasal_ = clampUnit(blockParameters_.nasal);
+    smoothedInstability_ = clampUnit(blockParameters_.instability);
     smoothedRoomSize_ = clampUnit(blockParameters_.roomSize);
     // A host calls prepareToPlay() when the transport or the sample rate moves,
     // and a controller does not resend its position, so the performance state
@@ -319,6 +408,9 @@ void VoiceEngine::setParameters(const EngineParameters& p)
     atomicParameters_.dynamics.store(clampUnit(p.dynamics), std::memory_order_relaxed);
     atomicParameters_.intonation.store(clampUnit(p.intonation), std::memory_order_relaxed);
     atomicParameters_.nasal.store(clampUnit(p.nasal), std::memory_order_relaxed);
+    atomicParameters_.instability.store(clampUnit(p.instability), std::memory_order_relaxed);
+    atomicParameters_.legacyRadiatedPowerBypass.store(
+        p.legacyRadiatedPowerBypass ? 1 : 0, std::memory_order_relaxed);
 }
 
 void VoiceEngine::setPitchBend(float semitones) noexcept
@@ -401,22 +493,41 @@ EngineParameters VoiceEngine::snapshotParameters() const noexcept
     p.dynamics = atomicParameters_.dynamics.load(std::memory_order_relaxed);
     p.intonation = atomicParameters_.intonation.load(std::memory_order_relaxed);
     p.nasal = atomicParameters_.nasal.load(std::memory_order_relaxed);
+    p.instability = atomicParameters_.instability.load(std::memory_order_relaxed);
+    p.legacyRadiatedPowerBypass =
+        atomicParameters_.legacyRadiatedPowerBypass.load(
+            std::memory_order_relaxed) != 0;
     return p;
 }
 
-void VoiceEngine::buildTables()
+const VoiceEngine::TableBank& VoiceEngine::sharedTableBank()
 {
+    // Function-local static initialisation is thread-safe. Keep the comparatively
+    // large bank on the heap so stack-allocated VoiceEngine instances stay small,
+    // and build it only once because none of these samples depends on sample rate
+    // or on a patch parameter.
+    static const auto shared = []
+    {
+    auto tables = std::make_unique<TableBank>();
+    auto& glottalTables_ = tables->glottalTables;
+    auto& glottalGainTable_ = tables->glottalGainTable;
+    auto& glottalHarmonicPower_ = tables->glottalHarmonicPower;
+    auto& glottalFlowTable_ = tables->glottalFlowTable;
+    auto& flowMean_ = tables->flowMean;
+    auto& flowCross_ = tables->flowCross;
+    auto& sineTable_ = tables->sineTable;
+
     for (int i = 0; i < tableSize; ++i)
         sineTable_[static_cast<std::size_t>(i)] = std::sin(twoPi * static_cast<float>(i) / static_cast<float>(tableSize));
 
     // Sine and cosine at an exact harmonic multiple of the table step. Every
     // harmonic of a 2048-point table lands on a table entry, so the analysis
     // and synthesis below need no library trigonometry at all.
-    const auto tableSin = [this](int index) noexcept
+    const auto tableSin = [&sineTable_](int index) noexcept
     {
         return sineTable_[static_cast<std::size_t>(index & tableMask)];
     };
-    const auto tableCos = [this](int index) noexcept
+    const auto tableCos = [&sineTable_](int index) noexcept
     {
         return sineTable_[static_cast<std::size_t>((index + tableSize / 4) & tableMask)];
     };
@@ -427,24 +538,69 @@ void VoiceEngine::buildTables()
         float speedQuotient;
         float returnQuotient;
     };
-    // Lax/breathy versus firmly adducted phonation. Both sets sit inside the
-    // ranges reported for sustained singing (OQ 0.4-0.8, SQ 1.5-4).
-    constexpr Shape shapes[2] = { { 0.78f, 2.60f, 0.0120f },
-                                  { 0.46f, 3.40f, 0.0032f } };
+    // Lax/breathy versus firmly adducted phonation. Both endpoints sit inside
+    // the ranges reported for sustained singing (OQ 0.4-0.8, SQ 1.5-4).
+    // Tension interpolates the physical LF parameters before analysis. Mixing
+    // only the two endpoint waveforms instead would sum closures at different
+    // phases and dig deep, non-physiological notches in individual harmonics.
+    constexpr Shape endpoints[2] = { { 0.78f, 2.60f, 0.0120f },
+                                     { 0.46f, 3.40f, 0.0032f } };
+    // Oscillator phase denotes the glottal closure/MFD event, not an arbitrary
+    // point in a pulse whose open quotient changes with Tension. Rotating every
+    // analysed shape to one closure phase lets adjacent physical shapes
+    // interpolate without cancelling harmonics merely because they close at
+    // different instants.
+    // Keep the lax endpoint at its historical phase. Onsets begin toward this
+    // shape through tensionSag, so retaining its 0.78 closure also avoids
+    // rephasing the first pulse of every existing patch.
+    constexpr float commonClosurePhase = 0.78f;
+    std::array<Shape, glottalShapeCount> shapes {};
+    for (int shapeIndex = 0; shapeIndex < glottalShapeCount; ++shapeIndex)
+    {
+        const float amount = static_cast<float>(shapeIndex)
+            / static_cast<float>(glottalShapeCount - 1);
+        shapes[static_cast<std::size_t>(shapeIndex)] = {
+            endpoints[0].openQuotient
+                + amount * (endpoints[1].openQuotient - endpoints[0].openQuotient),
+            endpoints[0].speedQuotient
+                + amount * (endpoints[1].speedQuotient - endpoints[0].speedQuotient),
+            endpoints[0].returnQuotient
+                + amount * (endpoints[1].returnQuotient - endpoints[0].returnQuotient)
+        };
+    }
+    // Preserve the physical endpoint parameters exactly: evaluating the
+    // arithmetic interpolation at one can round a literal endpoint by an ulp
+    // even though it describes the same real number.
+    shapes.front() = endpoints[0];
+    shapes.back() = endpoints[1];
 
-    std::array<std::array<float, maxHarmonics + 1>, 2> cosineCoefficients {};
-    std::array<std::array<float, maxHarmonics + 1>, 2> sineCoefficients {};
+    std::array<std::array<float, maxHarmonics + 1>, glottalShapeCount>
+        cosineCoefficients {};
+    std::array<std::array<float, maxHarmonics + 1>, glottalShapeCount>
+        sineCoefficients {};
+    // The former oscillator crossfaded these two normalised endpoint spectra
+    // before their closure phases were aligned. Preserve that crossfade's
+    // 1..24-harmonic RMS curve as a loudness contract, while the tables below
+    // interpolate the closure-aligned physical shapes instead.
+    std::array<std::array<float, maxHarmonics + 1>, 2>
+        legacyEndpointCosine {};
+    std::array<std::array<float, maxHarmonics + 1>, 2>
+        legacyEndpointSine {};
     std::array<float, tableSize> prototype {};
 
-    for (int shape = 0; shape < 2; ++shape)
+    for (int shapeIndex = 0; shapeIndex < glottalShapeCount; ++shapeIndex)
     {
+        const float amount = static_cast<float>(shapeIndex)
+            / static_cast<float>(glottalShapeCount - 1);
+        const auto& shape = shapes[static_cast<std::size_t>(shapeIndex)];
+
         double mean = 0.0;
         for (int i = 0; i < tableSize; ++i)
         {
             const float t = static_cast<float>(i) / static_cast<float>(tableSize);
-            const float value = glottalDerivative(t, shapes[shape].openQuotient,
-                                                  shapes[shape].speedQuotient,
-                                                  shapes[shape].returnQuotient);
+            const float value = glottalDerivative(t, shape.openQuotient,
+                                                  shape.speedQuotient,
+                                                  shape.returnQuotient);
             prototype[static_cast<std::size_t>(i)] = value;
             mean += static_cast<double>(value);
         }
@@ -465,27 +621,157 @@ void VoiceEngine::buildTables()
                 imaginary += value * tableSin(index);
                 index += harmonic;
             }
-            cosineCoefficients[static_cast<std::size_t>(shape)][static_cast<std::size_t>(harmonic)] =
+            cosineCoefficients[static_cast<std::size_t>(shapeIndex)][static_cast<std::size_t>(harmonic)] =
                 real * normalise;
-            sineCoefficients[static_cast<std::size_t>(shape)][static_cast<std::size_t>(harmonic)] =
+            sineCoefficients[static_cast<std::size_t>(shapeIndex)][static_cast<std::size_t>(harmonic)] =
                 imaginary * normalise;
         }
 
         float energy = 0.0f;
         for (int harmonic = 1; harmonic <= sourceBandHarmonics; ++harmonic)
         {
-            const float a = cosineCoefficients[static_cast<std::size_t>(shape)][static_cast<std::size_t>(harmonic)];
-            const float b = sineCoefficients[static_cast<std::size_t>(shape)][static_cast<std::size_t>(harmonic)];
+            const float a = cosineCoefficients[static_cast<std::size_t>(shapeIndex)][static_cast<std::size_t>(harmonic)];
+            const float b = sineCoefficients[static_cast<std::size_t>(shapeIndex)][static_cast<std::size_t>(harmonic)];
             energy += a * a + b * b;
         }
         energy = std::sqrt(0.5f * energy);
+        const float targetRms = sourceBandRms[0]
+            + amount * (sourceBandRms[1] - sourceBandRms[0]);
         const float scale = energy > 0.0f
-            ? sourceBandRms[static_cast<std::size_t>(shape)] / energy : 1.0f;
+            ? targetRms / energy : 1.0f;
         for (int harmonic = 1; harmonic <= maxHarmonics; ++harmonic)
         {
-            cosineCoefficients[static_cast<std::size_t>(shape)][static_cast<std::size_t>(harmonic)] *= scale;
-            sineCoefficients[static_cast<std::size_t>(shape)][static_cast<std::size_t>(harmonic)] *= scale;
+            cosineCoefficients[static_cast<std::size_t>(shapeIndex)][static_cast<std::size_t>(harmonic)] *= scale;
+            sineCoefficients[static_cast<std::size_t>(shapeIndex)][static_cast<std::size_t>(harmonic)] *= scale;
         }
+
+        const int endpoint = shapeIndex == 0 ? 0
+            : (shapeIndex == glottalShapeCount - 1 ? 1 : -1);
+        if (endpoint >= 0)
+        {
+            for (int harmonic = 1; harmonic <= maxHarmonics; ++harmonic)
+            {
+                const auto index = static_cast<std::size_t>(harmonic);
+                legacyEndpointCosine[static_cast<std::size_t>(endpoint)][index]
+                    = cosineCoefficients[static_cast<std::size_t>(shapeIndex)][index];
+                legacyEndpointSine[static_cast<std::size_t>(endpoint)][index]
+                    = sineCoefficients[static_cast<std::size_t>(shapeIndex)][index];
+            }
+        }
+
+        // A circular time shift preserves every harmonic magnitude and the
+        // endpoint RMS exactly. Do it on the analysed coefficients rather than
+        // resampling the discontinuous derivative waveform.
+        const float shift = commonClosurePhase - shape.openQuotient;
+        for (int harmonic = 1; harmonic <= maxHarmonics; ++harmonic)
+        {
+            const auto index = static_cast<std::size_t>(harmonic);
+            const float angle = twoPi * static_cast<float>(harmonic) * shift;
+            const float cosine = std::cos(angle);
+            const float sine = std::sin(angle);
+            const float a = cosineCoefficients[static_cast<std::size_t>(shapeIndex)][index];
+            const float b = sineCoefficients[static_cast<std::size_t>(shapeIndex)][index];
+            cosineCoefficients[static_cast<std::size_t>(shapeIndex)][index]
+                = a * cosine - b * sine;
+            sineCoefficients[static_cast<std::size_t>(shapeIndex)][index]
+                = a * sine + b * cosine;
+        }
+    }
+
+    // The radiation-efficiency follower needs only the relative power of the
+    // first eight source harmonics. Resolve the exact closure-aligned shape
+    // interpolation once here. A mip's compatibility gain is common to every
+    // one of these harmonics and therefore cancels in Paverage/Pcurrent.
+    for (int gainIndex = 0; gainIndex < glottalGainTableSize; ++gainIndex)
+    {
+        const float tension = static_cast<float>(gainIndex)
+            / static_cast<float>(glottalGainTableSize - 1);
+        const float shapePosition = tension
+            * static_cast<float>(glottalShapeCount - 1);
+        const int lowerShape = std::min(static_cast<int>(shapePosition),
+                                        glottalShapeCount - 2);
+        const float shapeFraction = shapePosition
+            - static_cast<float>(lowerShape);
+        for (int harmonic = 1; harmonic <= radiatedPowerHarmonics; ++harmonic)
+        {
+            const auto index = static_cast<std::size_t>(harmonic);
+            const float lowerCosine = cosineCoefficients[
+                static_cast<std::size_t>(lowerShape)][index];
+            const float lowerSine = sineCoefficients[
+                static_cast<std::size_t>(lowerShape)][index];
+            const float cosine = lowerCosine + shapeFraction
+                * (cosineCoefficients[
+                       static_cast<std::size_t>(lowerShape + 1)][index]
+                   - lowerCosine);
+            const float sine = lowerSine + shapeFraction
+                * (sineCoefficients[
+                       static_cast<std::size_t>(lowerShape + 1)][index]
+                   - lowerSine);
+            glottalHarmonicPower_[static_cast<std::size_t>(gainIndex)]
+                                  [static_cast<std::size_t>(harmonic - 1)]
+                = cosine * cosine + sine * sine;
+        }
+    }
+
+    // Linear interpolation between two nearby physical shapes loses a small
+    // amount of energy because their harmonic phases are not identical. Resolve
+    // the correction to the legacy endpoint-crossfade RMS curve ahead of time.
+    // It belongs to each mip level: a one-harmonic high note and a 256-harmonic
+    // bass do not lose the same energy when the shapes move. Nine 257-entry
+    // lookups keep the remaining error negligible while the audio thread still
+    // pays only two loads, a lerp and a multiply instead of a square root.
+    for (int level = 0; level < tableLevels; ++level)
+    {
+        const int harmonics = harmonicsPerLevel[static_cast<std::size_t>(level)];
+        auto& gains = glottalGainTable_[static_cast<std::size_t>(level)];
+        for (int gainIndex = 0; gainIndex < glottalGainTableSize; ++gainIndex)
+        {
+            const float tension = static_cast<float>(gainIndex)
+                / static_cast<float>(glottalGainTableSize - 1);
+            const float shapePosition = tension
+                * static_cast<float>(glottalShapeCount - 1);
+            const int lowerShape = std::min(static_cast<int>(shapePosition),
+                                            glottalShapeCount - 2);
+            const float shapeFraction = shapePosition
+                - static_cast<float>(lowerShape);
+            double appliedEnergy = 0.0;
+            double legacyEnergy = 0.0;
+            for (int harmonic = 1; harmonic <= harmonics; ++harmonic)
+            {
+                const auto index = static_cast<std::size_t>(harmonic);
+                const float lowerCosine = cosineCoefficients[
+                    static_cast<std::size_t>(lowerShape)][index];
+                const float lowerSine = sineCoefficients[
+                    static_cast<std::size_t>(lowerShape)][index];
+                const float cosine = lowerCosine + shapeFraction
+                    * (cosineCoefficients[
+                           static_cast<std::size_t>(lowerShape + 1)][index]
+                       - lowerCosine);
+                const float sine = lowerSine + shapeFraction
+                    * (sineCoefficients[
+                           static_cast<std::size_t>(lowerShape + 1)][index]
+                       - lowerSine);
+                appliedEnergy += static_cast<double>(cosine) * cosine
+                               + static_cast<double>(sine) * sine;
+
+                const float legacyCosine = legacyEndpointCosine[0][index]
+                    + tension * (legacyEndpointCosine[1][index]
+                               - legacyEndpointCosine[0][index]);
+                const float legacySine = legacyEndpointSine[0][index]
+                    + tension * (legacyEndpointSine[1][index]
+                               - legacyEndpointSine[0][index]);
+                legacyEnergy += static_cast<double>(legacyCosine) * legacyCosine
+                              + static_cast<double>(legacySine) * legacySine;
+            }
+            const float appliedRms = static_cast<float>(
+                std::sqrt(0.5 * appliedEnergy));
+            const float targetRms = static_cast<float>(
+                std::sqrt(0.5 * legacyEnergy));
+            gains[static_cast<std::size_t>(gainIndex)] = appliedRms > 0.0f
+                ? targetRms / appliedRms : 1.0f;
+        }
+        gains.front() = 1.0f;
+        gains.back() = 1.0f;
     }
 
     for (int level = 0; level < tableLevels; ++level)
@@ -493,7 +779,7 @@ void VoiceEngine::buildTables()
         auto& table = glottalTables_[static_cast<std::size_t>(level)];
         table.fill(0.0f);
         const int harmonics = harmonicsPerLevel[static_cast<std::size_t>(level)];
-        for (int shape = 0; shape < 2; ++shape)
+        for (int shape = 0; shape < glottalShapeCount; ++shape)
         {
             for (int harmonic = 1; harmonic <= harmonics; ++harmonic)
             {
@@ -502,29 +788,34 @@ void VoiceEngine::buildTables()
                 int index = 0;
                 for (int i = 0; i < tableSize; ++i)
                 {
-                    table[static_cast<std::size_t>(2 * i + shape)] += a * tableCos(index) + b * tableSin(index);
+                    table[static_cast<std::size_t>(shape * tableSize + i)]
+                        += a * tableCos(index) + b * tableSin(index);
                     index += harmonic;
                 }
             }
         }
     }
 
-    // The aspiration envelope, from the same two prototypes. It multiplies a
-    // white noise stream, so it is stored once rather than band limited per
-    // level: the product is broadband either way and nothing about it folds
-    // back into the harmonic series. Each prototype is normalised to
-    // unit mean square over the period, which is what makes switching the
-    // modulation on a redistribution of the noise in time rather than a change
-    // in how much of it there is.
-    for (int shape = 0; shape < 2; ++shape)
+    // The aspiration envelope uses the same physical shape bank. It multiplies
+    // white noise, so it is stored once rather than band limited per level: the
+    // product is broadband either way and nothing about it folds back into the
+    // harmonic series. Each shape is normalised to unit mean square over the
+    // period, making the window a redistribution of noise in time rather than a
+    // change in how much noise there is.
+    for (int shape = 0; shape < glottalShapeCount; ++shape)
     {
+        const auto& parameters = shapes[static_cast<std::size_t>(shape)];
         double meanSquare = 0.0;
         for (int i = 0; i < flowTableSize; ++i)
         {
             const float t = static_cast<float>(i) / static_cast<float>(flowTableSize);
-            const float value = glottalFlowShape(t, shapes[shape].openQuotient,
-                                                 shapes[shape].speedQuotient);
-            glottalFlowTable_[static_cast<std::size_t>(2 * i + shape)] = value;
+            const float physicalPhase = wrapPhase(
+                t - (commonClosurePhase - parameters.openQuotient));
+            const float value = glottalFlowShape(physicalPhase,
+                                                 parameters.openQuotient,
+                                                 parameters.speedQuotient);
+            glottalFlowTable_[static_cast<std::size_t>(
+                i * glottalShapeCount + shape)] = value;
             meanSquare += static_cast<double>(value) * static_cast<double>(value);
         }
         meanSquare /= static_cast<double>(flowTableSize);
@@ -533,7 +824,8 @@ void VoiceEngine::buildTables()
         double mean = 0.0;
         for (int i = 0; i < flowTableSize; ++i)
         {
-            const auto index = static_cast<std::size_t>(2 * i + shape);
+            const auto index = static_cast<std::size_t>(
+                i * glottalShapeCount + shape);
             glottalFlowTable_[index] *= normalise;
             mean += static_cast<double>(glottalFlowTable_[index]);
         }
@@ -541,25 +833,45 @@ void VoiceEngine::buildTables()
             static_cast<float>(mean / static_cast<double>(flowTableSize));
     }
 
-    // The two prototypes are each unit mean square, but a crossfade of them is
-    // not: they peak at different instants, so the lax and pressed flows only
-    // overlap to this extent and a mid-tension window loses up to 1.2 dB of
-    // energy. aspirationWindowGain() puts it back at the control rate.
-    double cross = 0.0;
-    for (int i = 0; i < flowTableSize; ++i)
-        cross += static_cast<double>(glottalFlowTable_[static_cast<std::size_t>(2 * i)])
-               * static_cast<double>(glottalFlowTable_[static_cast<std::size_t>(2 * i + 1)]);
-    flowCross_ = static_cast<float>(cross / static_cast<double>(flowTableSize));
+    // Adjacent shapes are each unit mean square, but their interpolation is not:
+    // their peaks still differ slightly in time. Store each pair's overlap so
+    // aspirationWindowGain() can restore the exact energy at control rate.
+    for (int shape = 0; shape + 1 < glottalShapeCount; ++shape)
+    {
+        double cross = 0.0;
+        for (int i = 0; i < flowTableSize; ++i)
+        {
+            const auto lower = static_cast<std::size_t>(
+                i * glottalShapeCount + shape);
+            cross += static_cast<double>(glottalFlowTable_[lower])
+                   * static_cast<double>(glottalFlowTable_[lower + 1]);
+        }
+        flowCross_[static_cast<std::size_t>(shape)] =
+            static_cast<float>(cross / static_cast<double>(flowTableSize));
+    }
+
+    return tables;
+    }();
+    return *shared;
 }
 
 float VoiceEngine::aspirationWindowGain(float tension, float depth) const noexcept
 {
     // Mean square of 1 + depth * (window - 1), in closed form. The window is a
-    // linear crossfade of two unit-mean-square shapes, so its mean is linear in
-    // the tension and its mean square is a quadratic whose only unknown is how
-    // far the two prototypes overlap.
-    const float mean = flowMean_[0] + tension * (flowMean_[1] - flowMean_[0]);
-    const float square = 1.0f - 2.0f * tension * (1.0f - tension) * (1.0f - flowCross_);
+    // linear interpolation between adjacent unit-mean-square physical shapes,
+    // so its mean is linear and its mean square is a quadratic whose only
+    // unknown is the precomputed overlap of that pair.
+    tension = clampUnit(tension);
+    const float shapePosition = tension * static_cast<float>(glottalShapeCount - 1);
+    const int lowerShape = std::min(static_cast<int>(shapePosition),
+                                    glottalShapeCount - 2);
+    const float fraction = shapePosition - static_cast<float>(lowerShape);
+    const auto lower = static_cast<std::size_t>(lowerShape);
+    const auto& tables = *tables_;
+    const float mean = tables.flowMean[lower]
+        + fraction * (tables.flowMean[lower + 1] - tables.flowMean[lower]);
+    const float square = 1.0f - 2.0f * fraction * (1.0f - fraction)
+        * (1.0f - tables.flowCross[lower]);
     const float rest = 1.0f - depth;
     const float applied = rest * rest + 2.0f * depth * rest * mean + depth * depth * square;
     return applied > 1.0e-6f ? 1.0f / std::sqrt(applied) : 1.0f;
@@ -609,6 +921,11 @@ void VoiceEngine::buildSingerIdentities()
         // itself.
         singer.vibratoRate = 5.6f + 1.4f * (0.5f + 0.5f * hashFloat(base + 5u));
         singer.vibratoDepth = 0.76f + 0.42f * (0.5f + 0.5f * hashFloat(base + 6u));
+        // Airflow/intensity modulation leads the F0 modulation by a singer-
+        // dependent amount instead of behaving like a tremolo wired to the
+        // same LFO sample. 0.125..0.417 cycle is 45..150 degrees.
+        singer.vibratoAmplitudePhase = 0.125f
+            + 0.292f * (0.5f + 0.5f * hashFloat(base + 10u));
         singer.driftIncrement = (0.025f + 0.075f * (0.5f + 0.5f * hashFloat(base + 7u))) * inverseSampleRate_;
         singer.drift2Increment = (0.011f + 0.033f * (0.5f + 0.5f * hashFloat(base + 12u))) * inverseSampleRate_;
         singer.depthIncrement = (0.018f + 0.042f * (0.5f + 0.5f * hashFloat(base + 8u))) * inverseSampleRate_;
@@ -854,7 +1171,7 @@ void VoiceEngine::noteOn(int midiNote, float velocity)
         return;
     }
     if (!prepared_)
-        prepare(sampleRate_, maxBlockSize_);
+        return;
 
     midiNote = std::clamp(midiNote, 0, 127);
     velocity = std::clamp(velocity, 0.0f, 1.0f);
@@ -955,6 +1272,15 @@ void VoiceEngine::initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, 
     // a stateful random walk would have cost.
     voice.vibratoPhase = wrapPhase(0.5f + 0.5f * hashFloat(voice.noiseState + 29u));
     const auto& singer = singers_[static_cast<std::size_t>(voice.singer)];
+    voice.vibratoSeed = hash32(voice.noiseState ^ 0x27d4eb2fu);
+    voice.vibratoCycle = 0u;
+    drawVibratoCycle(voice);
+    // The relationship belongs mostly to the singer, with a small residual
+    // for this particular breath and note. It is bounded inside the measured
+    // identity window and faded in by Instability at the control update.
+    voice.vibratoAmplitudePhase = std::clamp(
+        singer.vibratoAmplitudePhase + 0.028f * hashFloat(voice.noiseState + 37u),
+        0.125f, 0.417f);
     // Habitual offset plus this attempt's own draw. A soloist has nobody to be
     // out of time with, so a single voice keeps entering and leaving on the
     // beat; Humanize scales the whole gesture, so at 0 the section is exact.
@@ -1142,12 +1468,14 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     // a second, per-sample smoother in process().
     const float dynamicsTarget = effectiveDynamics(p);
     const float nasalTarget = clampUnit(p.nasal);
+    const float instabilityTarget = clampUnit(p.instability);
     if (!chunkStateValid_)
     {
         smoothedResonance_ = resonanceTarget;
         smoothedFormantShift_ = shiftTarget;
         smoothedDynamics_ = dynamicsTarget;
         smoothedNasal_ = nasalTarget;
+        smoothedInstability_ = instabilityTarget;
     }
     else if (advanceSmoothers)
     {
@@ -1155,6 +1483,8 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
         smoothedFormantShift_ += chunkGainCoefficient_ * (shiftTarget - smoothedFormantShift_);
         smoothedDynamics_ += chunkGainCoefficient_ * (dynamicsTarget - smoothedDynamics_);
         smoothedNasal_ += chunkGainCoefficient_ * (nasalTarget - smoothedNasal_);
+        smoothedInstability_ += chunkGainCoefficient_
+            * (instabilityTarget - smoothedInstability_);
     }
     chunkResponse_ = dynamicResponse(smoothedDynamics_);
     // A soloist is limited by nothing; a section member settles at the group
@@ -1174,6 +1504,8 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
                 morph * (space[static_cast<std::size_t>(formant)] - target[static_cast<std::size_t>(formant)]);
     }
 
+    const auto unclusteredTarget = target;
+
     // The singer's formant is not an amplitude trim. Narrowing the epilaryngeal
     // tube clusters F3, F4 and F5 into one reinforced peak at 2.5-3.5 kHz, and
     // that peak is what lets an unamplified voice carry over an orchestra.
@@ -1181,17 +1513,27 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     // produce a cluster, which is all the 1.1 engine did. Effort strengthens
     // the configuration as well as tension does, so the dynamic reaches it too.
     const float epilarynx = clampUnit(smoothedTension_ * (0.40f + 0.60f * smoothedDynamics_));
-    if (epilarynx > 0.0f)
+    const float profileCluster = male ? 1.0f : femaleClusterStrength;
+    const float nominalEpilarynx = epilarynx * profileCluster;
+    if (nominalEpilarynx > 0.0f)
     {
         const float clusterHz = male ? 2900.0f : 3200.0f;
         for (int formant = 2; formant < formantCount; ++formant)
         {
             const auto index = static_cast<std::size_t>(formant);
-            target[index] += 0.45f * epilarynx * (clusterHz - target[index]);
+            target[index] += 0.45f * nominalEpilarynx * (clusterHz - target[index]);
         }
     }
 
     const float shift = formantShiftRatio(smoothedFormantShift_);
+    chunkFormantShiftRatio_ = shift;
+    // Moving every resonance by an octave changes which sparse harmonics land
+    // on the poles as well as changing perceived body size.  Without a small
+    // opposing level law the +/-12-semitone control spans almost 15 dB and is
+    // heard as a fader. This power law is unity at the centre and contributes
+    // only +/-2.10 dB at the endpoints; the remaining level motion is the real
+    // source/tract interaction rather than a broad gain correction.
+    chunkFormantShiftGain_ = std::exp2(0.029f * smoothedFormantShift_);
     const float bandwidthScale = (1.18f - 0.30f * smoothedResonance_)
         * (1.0f + 0.12f * smoothedBreath_);
     // The jaw runs out before the pitch does. Roughly 1.55x the open vowel's
@@ -1222,20 +1564,21 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
             const auto index = static_cast<std::size_t>(formant);
             tractInputs_[index] = target[index];
             chunkFormantHz_[index] = target[index] * shift;
+            chunkUnclusteredFormantHz_[index] = unclusteredTarget[index] * shift;
 
             // Wider formants track a shifted tract so the resonances keep their
             // shape instead of turning needle-thin when the voice is made small.
             // A narrowed epilarynx damps the cluster less as well as pulling it
             // together, which is the other half of what makes the peak.
-            const float clusterWidth = formant >= 2 ? 1.0f - 0.30f * epilarynx : 1.0f;
-            const float bandwidth = std::clamp(
-                (male ? maleBw[index] : femaleBw[index]) * widthScale * clusterWidth,
+            const float ordinaryBandwidth = std::clamp(
+                (male ? maleBw[index] : femaleBw[index]) * widthScale,
                 20.0f, maximumBandwidth);
+            const float clusterWidth = formant >= 2
+                ? 1.0f - 0.30f * nominalEpilarynx : 1.0f;
+            const float bandwidth = std::clamp(ordinaryBandwidth * clusterWidth,
+                                               20.0f, maximumBandwidth);
             chunkBandwidth_[index] = bandwidth;
-            const float radius = std::exp(-pi * bandwidth * inverseSampleRate_);
-            chunkRadius_[index] = radius;
-            chunkPoleScale_[index] = 2.0f * radius;
-            chunkA2_[index] = -radius * radius;
+            chunkUnclusteredBandwidth_[index] = ordinaryBandwidth;
         }
 
         // A vocal tract does not hand its formants independent amplitudes: they
@@ -1292,7 +1635,7 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
         chunkNasalA2_ = -murmurRadius * murmurRadius;
         // Opposite polarity to F1, for the same reason adjacent oral formants
         // alternate: summed with a common sign they cancel in the valley.
-        chunkNasalB0_ = -0.60f * chunkAmplitude_[0] * chunkNasalMix_
+        chunkNasalB0Scale_ = -0.60f * chunkNasalMix_
             * formantResonatorGain(murmurRadius, murmurTrig.sine);
 
         // A pole-zero pair at one frequency, the zeros nearer the unit circle
@@ -1402,6 +1745,64 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     chunkStateValid_ = true;
 }
 
+void VoiceEngine::drawVibratoCycle(Voice& voice) noexcept
+{
+    // A held human gesture does not repeat at one exact period and excursion.
+    // Draw one bounded pair per cycle from a stream that belongs only to this
+    // voice. Three uniforms sum to unit variance and cannot leave +/-3 sigma;
+    // the clamps keep even the extreme Instability setting expressive rather
+    // than allowing a cycle to stall or lurch.
+    const float precedingDepthScale = voice.vibratoDepthScale;
+    const float precedingContour = voice.vibratoContour;
+    std::uint32_t state = hash32(voice.vibratoSeed
+        ^ (voice.vibratoCycle * 2654435761u));
+    ++voice.vibratoCycle;
+    const auto normal = [&state]() noexcept
+    {
+        return randomBipolar(state) + randomBipolar(state) + randomBipolar(state);
+    };
+
+    const float rateDraw = normal();
+    const float depthDraw = normal();
+    if (voice.vibratoCycle == 1u)
+    {
+        // Begin in the stationary distribution. The vibrato fade hides this
+        // first draw, but avoiding a slow variance ramp also makes short notes
+        // receive the same kind of singer as long ones.
+        voice.vibratoRateVariation = rateDraw;
+        voice.vibratoDepthVariation = depthDraw;
+    }
+    else
+    {
+        // Human cycles are related gestures, not independent dice throws.
+        // These AR(1) memories carry a tendency for two to four cycles while
+        // the sqrt(1-rho^2) terms retain unit stationary variance.
+        voice.vibratoRateVariation = 0.70f * voice.vibratoRateVariation
+            + 0.7141428f * rateDraw;
+        voice.vibratoDepthVariation = 0.64f * voice.vibratoDepthVariation
+            + 0.7683749f * depthDraw;
+    }
+    voice.vibratoRateScale = std::clamp(
+        1.0f + 0.10f * voice.vibratoRateVariation, 0.82f, 1.18f);
+    voice.vibratoDepthScale = std::clamp(
+        1.0f + 0.24f * voice.vibratoDepthVariation, 0.58f, 1.42f);
+    voice.vibratoContour = std::clamp(
+        0.55f * voice.vibratoContour + 0.8351647f * normal(), -3.0f, 3.0f);
+    // The first draw has nothing to transition from. Later draws retain the
+    // completed preceding cycle so updateVoiceControl() can carry both depth
+    // and contour smoothly through the airflow-led AM phase at F0 phase zero.
+    if (voice.vibratoCycle == 1u)
+    {
+        voice.vibratoPreviousDepthScale = voice.vibratoDepthScale;
+        voice.vibratoPreviousContour = voice.vibratoContour;
+    }
+    else
+    {
+        voice.vibratoPreviousDepthScale = precedingDepthScale;
+        voice.vibratoPreviousContour = precedingContour;
+    }
+}
+
 void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
 {
     const auto& singer = singers_[static_cast<std::size_t>(voice.singer)];
@@ -1415,22 +1816,63 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
 
     const float ageSeconds = static_cast<float>(voice.ageSamples) * inverseSampleRate_;
     const float vibratoFade = smoothStep((ageSeconds - 0.16f) / 0.34f);
-    const float vibratoRate = singer.vibratoRate *
-        (1.0f + p.humanize * (0.055f * singerDrift + 0.018f * sharedRate));
+    const float instability = clampUnit(smoothedInstability_);
+    // The random range is a depth control: at zero both scales resolve to
+    // exactly one; at full they expose the complete bounded per-cycle draw.
+    const float cycleRateScale = 1.0f
+        + instability * (voice.vibratoRateScale - 1.0f);
+    const float vibratoRate = singer.vibratoRate * cycleRateScale
+        * (1.0f + p.humanize * (0.055f * singerDrift + 0.018f * sharedRate));
     // The extent is now a curve on the knob rather than a literal 20 cents per
     // unit, so the wander the identity contributes is a proportion of it rather
     // than a fixed number of cents: the old +/-7 on +/-20 is +/-35 %.
-    const float vibratoDepth = chunkVibratoCents_ * singer.vibratoDepth
-        * (1.0f + 0.35f * p.humanize * depthDrift) * vibratoFade
-        * chunkResponse_.vibratoScale;
     // Integrating the rate keeps the vibrato phase exact for arbitrarily long
     // notes. Recomputing age * rate amplified any rate drift by the note age
     // and lost sub-sample precision once the age exceeded 2^24 samples.
     const float elapsedSeconds = static_cast<float>(voice.ageSamples - voice.lastControlAge)
         * inverseSampleRate_;
     voice.lastControlAge = voice.ageSamples;
-    voice.vibratoPhase = wrapPhase(voice.vibratoPhase + elapsedSeconds * vibratoRate);
-    const float vibratoSine = sine(voice.vibratoPhase);
+    const float advancedPhase = voice.vibratoPhase + elapsedSeconds * vibratoRate;
+    voice.vibratoPhase = wrapPhase(advancedPhase);
+    if (advancedPhase >= 1.0f)
+        drawVibratoCycle(voice);
+
+    // Pitch is zero at the redraw, but amplitude vibrato leads pitch and is not.
+    // A smooth phase-domain handoff prevents the new depth and contour from
+    // becoming a short AM step (and therefore broadband sidebands). It is
+    // complete before this cycle reaches its positive peak. At Instability 0
+    // the scale below still resolves to exactly one and the wave blend to the
+    // legacy sine, preserving that signal path bit for bit.
+    const float cycleTransition = smoothStep(
+        voice.vibratoPhase / vibratoCycleTransitionPhase_);
+    const float transitionedDepthScale = voice.vibratoPreviousDepthScale
+        + cycleTransition * (voice.vibratoDepthScale - voice.vibratoPreviousDepthScale);
+    const float transitionedContour = voice.vibratoPreviousContour
+        + cycleTransition * (voice.vibratoContour - voice.vibratoPreviousContour);
+    const float cycleDepthScale = 1.0f
+        + instability * (transitionedDepthScale - 1.0f);
+    const float vibratoDepth = chunkVibratoCents_ * singer.vibratoDepth * cycleDepthScale
+        * (1.0f + 0.35f * p.humanize * depthDrift) * vibratoFade
+        * chunkResponse_.vibratoScale;
+
+    // Analysed sung cycles tend toward linear F0 ramps, with the rise a little
+    // faster than the fall. Blend the legacy sine toward a mildly asymmetric
+    // triangle. The square-root taper makes the useful natural range occupy
+    // the lower half of the knob; zero still returns the sine bit for bit.
+    const float naturalAmount = std::sqrt(instability);
+    const auto vibratoWave = [this, naturalAmount, transitionedContour](float phase) noexcept
+    {
+        phase = wrapPhase(phase);
+        const float sinusoid = sine(phase);
+        const float riseFraction = std::clamp(
+            0.44f + 0.012f * naturalAmount * transitionedContour, 0.39f, 0.49f);
+        const float trianglePhase = wrapPhase(phase + 0.5f * riseFraction);
+        const float triangle = trianglePhase < riseFraction
+            ? -1.0f + 2.0f * trianglePhase / riseFraction
+            : 1.0f - 2.0f * (trianglePhase - riseFraction) / (1.0f - riseFraction);
+        return sinusoid + 0.22f * naturalAmount * (triangle - sinusoid);
+    };
+    const float vibratoShape = vibratoWave(voice.vibratoPhase);
     // The laryngeal component of a sung vibrato. The cricothyroid oscillation
     // that carries the pitch also moves subglottal pressure and adduction, so
     // the level and the source slope swing on the very same cycle. The depth
@@ -1439,17 +1881,24 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     // two: a note whose vibrato has not faded in yet has no laryngeal
     // modulation either, and a pianissimo note has as little of one as it has
     // of the other.
-    const float laryngeal = std::min(laryngealAmPerCent_ * vibratoDepth,
-                                     laryngealAmMaximum_);
-    const float vibratoGainTarget = 1.0f + laryngeal * vibratoSine;
+    const float laryngealPerCent = laryngealAmLegacyPerCent_
+        + naturalAmount * (laryngealAmNaturalPerCent_ - laryngealAmLegacyPerCent_);
+    const float laryngealMaximum = laryngealAmLegacyMaximum_
+        + naturalAmount * (laryngealAmNaturalMaximum_ - laryngealAmLegacyMaximum_);
+    const float laryngeal = std::min(laryngealPerCent * vibratoDepth,
+                                     laryngealMaximum);
+    const float amplitudeShape = vibratoWave(
+        voice.vibratoPhase + naturalAmount * voice.vibratoAmplitudePhase);
+    const float vibratoGainTarget = 1.0f + laryngeal * amplitudeShape;
     voice.vibratoGainStep = (vibratoGainTarget - voice.vibratoGain)
         / static_cast<float>(controlPeriod);
-    // What one shelf stage gets. The two stages cascade, so each carries the
-    // square root of the gain the pair is meant to deliver; the square root is
-    // taken here, once per control period, and ramped like the gain it came
-    // from rather than being recovered per sample.
-    const float shelfVibratoTarget = std::sqrt(vibratoGainTarget);
-    voice.shelfVibratoStep = (shelfVibratoTarget - voice.shelfVibrato)
+    // The two presence shelves cascade, so each carries the square root of
+    // the laryngeal gain. Together they apply it once and the direct source
+    // applies it once: the upper band therefore moves twice as far in dB as
+    // the fundamental, without putting a square root in the sample loop.
+    const float vibratoShelfGainTarget = std::sqrt(vibratoGainTarget);
+    voice.vibratoShelfGainStep
+        = (vibratoShelfGainTarget - voice.vibratoShelfGain)
         / static_cast<float>(controlPeriod);
 
     // Two nested smoothers give the pitch noise a 1/f-like spectrum instead of
@@ -1478,7 +1927,7 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     voice.glideCents *= chunkGlideDecay_;
     const float cents = voice.pitchScoop + voice.glideCents + identityCents + wanderCents
                       + jitterCents + voice.justCents
-                      + vibratoDepth * vibratoSine
+                      + vibratoDepth * vibratoShape
                       + 100.0f * pitchBendSemitones_;
     const float frequency = voice.baseFrequency * std::exp2(cents * (1.0f / 1200.0f));
     voice.targetPhaseIncrement = std::clamp(frequency * inverseSampleRate_, 0.0f, 0.48f);
@@ -1584,32 +2033,149 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
 
     const float anatomy = 1.0f + p.humanize * (singer.anatomy
         + 0.0045f * formantDrift + 0.0022f * sharedFormant);
-    const float highAmount = std::max(0.0f, static_cast<float>(voice.midiNote - 69));
+    // The tract follows the pitch the singer is deliberately travelling to,
+    // including portamento and controller bend, but not the vibrato, jitter or
+    // short onset scoop. Otherwise a B-flat5 bent down an octave would keep a
+    // fully released soprano tract around a sounding B-flat4, and a long glide
+    // would move the jaw to its destination before the oscillator arrived.
+    const float tractCents = voice.glideCents + voice.justCents
+        + 100.0f * pitchBendSemitones_;
+    const float tractFundamental = voice.baseFrequency
+        * std::exp2(tractCents * (1.0f / 1200.0f));
+    const float highAmount = std::max(
+        0.0f, 12.0f * std::log2(std::max(tractFundamental, 1.0f) / 440.0f));
     const float upperLimit = 0.465f * static_cast<float>(sampleRate_);
-    // Formant tuning resolves against the note's own pitch rather than the
-    // vibrato-modulated one. A tract that followed the vibrato would keep the
-    // fundamental permanently on the peak and cancel the amplitude modulation
-    // the vibrato is supposed to produce up there.
-    const float tuningFundamental = voice.baseFrequency;
+    const float maximumBandwidth = 0.25f * static_cast<float>(sampleRate_);
+    float sopranoClusterRelease = 0.0f;
+    if (p.profile == VoiceProfile::Female)
+    {
+        const float releaseOctaves = std::log2(
+            std::max(tractFundamental, 1.0f) / sopranoClusterReleaseStartHz);
+        const float releaseRange = std::log2(
+            sopranoClusterReleaseEndHz / sopranoClusterReleaseStartHz);
+        sopranoClusterRelease = smoothStep(releaseOctaves / releaseRange);
+    }
+    float sopranoUpperRiseSpan = 0.0f;
+    if (p.profile == VoiceProfile::Female)
+    {
+        float riseFundamental = tractFundamental;
+        if (riseFundamental > sopranoUpperRiseSoftLimitHz)
+        {
+            const float range = sopranoUpperRiseEndHz
+                - sopranoUpperRiseSoftLimitHz;
+            const float amount = std::clamp(
+                (riseFundamental - sopranoUpperRiseSoftLimitHz) / range,
+                0.0f, 1.0f);
+            // y=t-t^2/2 has unit slope at zero and zero slope at one. Its final
+            // half-range puts the saturated displacement at almost exactly C6.
+            const float eased = amount - 0.5f * amount * amount;
+            riseFundamental = sopranoUpperRiseSoftLimitHz + range * eased;
+        }
+        sopranoUpperRiseSpan = std::max(
+            riseFundamental - sopranoUpperRiseAnchorHz, 0.0f);
+    }
+    // Formant tuning resolves against the intentional, non-vibrato pitch. A
+    // tract that followed each vibrato cycle would keep the fundamental on the
+    // peak and cancel the amplitude modulation the vibrato produces up there.
+    const float tuningFundamental = tractFundamental;
+    float sopranoR3Slope = sopranoR3RiseMean;
+    float sopranoR4Slope = sopranoR4RiseMean;
+    if (p.profile == VoiceProfile::Female)
+    {
+        // R3 and R4 are two modes of one moving tract, so their population
+        // gesture shares one bounded anatomical draw. Independent +/-SD
+        // extremes can bring the opposite-polarity poles almost on top of one
+        // another even inside the measured range; a correlated gesture retains
+        // both reported means and deviations without inventing that
+        // cancellation. Reusing the existing R3 anatomy hash advances no
+        // random stream, and Humanize zero still resolves to the means.
+        constexpr int riseIdentityFormant = 2;
+        constexpr float identityDepth = 0.014f
+            + 0.006f * static_cast<float>(riseIdentityFormant);
+        const float identityDraw = std::clamp(
+            singer.formantScale[static_cast<std::size_t>(riseIdentityFormant)]
+                / identityDepth,
+            -1.0f, 1.0f);
+        sopranoR3Slope += p.humanize * sopranoR3RiseDeviation * identityDraw;
+        sopranoR4Slope += p.humanize * sopranoR4RiseDeviation * identityDraw;
+    }
+
+    // R3-R5 alternate polarity in the parallel formant bank. Broadening two
+    // adjacent poles past their centre separation makes their modes
+    // geometrically indistinct and can deepen the cancellation inherent in the
+    // parallel representation. Preserve every measured centre trajectory and
+    // narrow only a near-coincident upper pair, proportionally, with a small
+    // margin for float rounding. This is an order/separation guard, not a claim
+    // that an alternating-polarity parallel bank becomes cancellation-free.
+    // Sequential pairs are safe because narrowing R4 for R4/R5 can only make
+    // the already-checked R3/R4 pair less overlapped.
+    const bool needsUpperSeparation = p.profile == VoiceProfile::Female
+        && sopranoUpperRiseSpan > 0.0f;
+    std::array<float, formantCount> separatedTargetBandwidth;
+    if (needsUpperSeparation)
+    {
+        std::array<float, formantCount> boundedTargetHz;
+        for (int formant = 2; formant < formantCount; ++formant)
+        {
+            const auto index = static_cast<std::size_t>(formant);
+            const float scale = anatomy + p.humanize * singer.formantScale[index];
+            const float highTune = 1.0f + highAmount * 0.0003f;
+            const float releasedHz = chunkFormantHz_[index]
+                + sopranoClusterRelease
+                    * (chunkUnclusteredFormantHz_[index] - chunkFormantHz_[index]);
+            float targetHz = releasedHz * scale * highTune;
+            if (formant == 2 || formant == 3)
+            {
+                const float slope = formant == 2
+                    ? sopranoR3Slope : sopranoR4Slope;
+                targetHz += chunkFormantShiftRatio_ * slope
+                    * sopranoUpperRiseSpan;
+            }
+            boundedTargetHz[index] = std::clamp(targetHz, 25.0f, upperLimit);
+            separatedTargetBandwidth[index] = std::clamp(
+                chunkBandwidth_[index]
+                    + sopranoClusterRelease
+                        * (chunkUnclusteredBandwidth_[index]
+                           - chunkBandwidth_[index]),
+                20.0f, maximumBandwidth);
+        }
+        separateUpperFormantBandwidths(
+            boundedTargetHz, separatedTargetBandwidth);
+    }
+
     float tunedF1 = 0.0f;
+    bool tractMoved = !voice.controlInitialised;
     for (int formant = 0; formant < formantCount; ++formant)
     {
         const auto index = static_cast<std::size_t>(formant);
         const float scale = anatomy + p.humanize * singer.formantScale[index];
         const float highTune = 1.0f + highAmount * (formant == 0 ? 0.0032f : (formant == 1 ? 0.00125f : 0.0003f));
-        float targetHz = chunkFormantHz_[index] * scale * highTune;
+        // The chunk endpoint is already the broad, quarter-strength soprano
+        // reinforcement below E-flat5. From there to B-flat5 interpolate both
+        // the centres and the pole widths back to the ordinary vowel tract.
+        // Male voices keep the full lower-voice cluster at every pitch.
+        const float releasedHz = chunkFormantHz_[index]
+            + sopranoClusterRelease
+                * (chunkUnclusteredFormantHz_[index] - chunkFormantHz_[index]);
+        float targetHz = releasedHz * scale * highTune;
+        if (p.profile == VoiceProfile::Female && (formant == 2 || formant == 3))
+        {
+            const float slope = formant == 2 ? sopranoR3Slope : sopranoR4Slope;
+            // Formant Shift is a synthetic tract-length transform. Scale the
+            // measured displacement with that tract as well; adding the same
+            // absolute 300--700 Hz after a one-octave-down transform can make
+            // the numbered upper resonances cross.
+            targetHz += chunkFormantShiftRatio_ * slope * sopranoUpperRiseSpan;
+        }
+        float targetF1Lift = 0.0f;
         if (formant == 0)
         {
             const float base = targetHz;
             targetHz = tunedFirstFormant(base, tuningFundamental, chunkMaxF1_ * scale);
+            targetF1Lift = std::clamp(
+                (targetHz / std::max(base, 1.0f) - 1.0f) * 5.0f,
+                0.0f, 1.0f);
             tunedF1 = targetHz;
-            // A singer spends the resonance she has just won on efficiency, not
-            // on volume: the strategy exists so the top of the range costs less
-            // breath, not so it arrives ten decibels louder than the middle.
-            // Most of the gain is handed back once F1 has moved by a fifth or
-            // more, and none of it is taken while F1 has not moved at all.
-            const float lift = std::clamp((targetHz / base - 1.0f) * 5.0f, 0.0f, 1.0f);
-            voice.renderGain = voice.amplitudeGain * chunkNasalTrim_ / (1.0f + lift);
         }
         else if (formant == 1)
         {
@@ -1619,6 +2185,7 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
             targetHz = std::max(targetHz, kMinimumFormantSpacing * tunedF1);
         }
         const float currentHz = voice.formantHz[index];
+        float coefficient = 1.0f;
         if (currentHz <= 1.0f)
         {
             voice.formantHz[index] = targetHz;
@@ -1630,25 +2197,144 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
             // settles in a fraction of it.
             const float span = std::min(1.0f, std::abs(targetHz - currentHz)
                                                   * formantSpanScale_[index]);
-            const float coefficient = formantGlideFast_[index]
+            coefficient = formantGlideFast_[index]
                 + span * (formantGlideSlow_[index] - formantGlideFast_[index]);
             voice.formantHz[index] = currentHz + coefficient * (targetHz - currentHz);
         }
 
-        const float bounded = std::clamp(voice.formantHz[index], 25.0f, upperLimit);
-        const auto trig = sineCosineFromCycles(bounded * inverseSampleRate_);
-        // Peak-normalised, signed and scaled in one coefficient: the render loop
-        // then needs nothing but a1, a2 and b0 per resonator.
-        const float amplitude = formantPolarity(formant) * chunkFormantGain_[index];
-        voice.tract[index].a1 = chunkPoleScale_[index] * trig.cosine;
-        voice.tract[index].b0 = amplitude
-            * formantResonatorGain(chunkRadius_[index], trig.sine);
+        if (formant == 0)
+        {
+            if (!voice.controlInitialised || currentHz <= 1.0f)
+                voice.formantTuningLift = targetF1Lift;
+            else
+                voice.formantTuningLift += coefficient
+                    * (targetF1Lift - voice.formantTuningLift);
+        }
+
+        float targetBandwidth = chunkBandwidth_[index]
+            + sopranoClusterRelease
+                * (chunkUnclusteredBandwidth_[index] - chunkBandwidth_[index]);
+        if (needsUpperSeparation && formant >= 2)
+            targetBandwidth = separatedTargetBandwidth[index];
+        const float currentBandwidth = voice.formantBandwidth[index];
+        if (currentBandwidth <= 1.0f)
+            voice.formantBandwidth[index] = targetBandwidth;
+        else
+            voice.formantBandwidth[index] = currentBandwidth
+                + coefficient * (targetBandwidth - currentBandwidth);
+
+        voice.formantHz[index] = std::clamp(voice.formantHz[index], 25.0f, upperLimit);
+        voice.formantBandwidth[index] = std::clamp(
+            voice.formantBandwidth[index], 20.0f, maximumBandwidth);
+        tractMoved = tractMoved
+            || voice.resolvedFormantHz[index] != voice.formantHz[index]
+            || voice.resolvedFormantBandwidth[index] != voice.formantBandwidth[index];
+    }
+
+    if (needsUpperSeparation)
+    {
+        // Different cavities have different articulation rates. Project the
+        // realised geometry too, so a safe pair of endpoints cannot overlap
+        // while a vowel, formant shift or pitch glide is still in flight.
+        separateUpperFormantBandwidths(
+            voice.formantHz, voice.formantBandwidth);
+        for (int formant = 2; formant < formantCount; ++formant)
+        {
+            const auto index = static_cast<std::size_t>(formant);
+            tractMoved = tractMoved
+                || voice.resolvedFormantBandwidth[index]
+                    != voice.formantBandwidth[index];
+        }
+    }
+
+    // A singer spends the resonance she has actually reached on efficiency,
+    // not the resonance at the far end of an articulation. Reading the
+    // smoothed F1 here prevents a legato note event from applying the entire
+    // high-register trim in one sample while the jaw is still moving.
+    const float lift = std::clamp(voice.formantTuningLift, 0.0f, 1.0f);
+    // Exact per-voice cascade normalisation returns a little more of the tuned
+    // pole's gain than the former nominal-tract estimate. Hand that extra
+    // efficiency back as breath support too: a fully tuned F1 costs 2.22x
+    // gain rather than 2x, keeping the top octave inside the no-shout window.
+    const float renderGainTarget = voice.amplitudeGain * chunkNasalTrim_
+        * chunkFormantShiftGain_
+        / (1.0f + 1.22f * lift);
+    if (!voice.controlInitialised)
+    {
+        voice.renderGain = renderGainTarget;
+        voice.renderGainStep = 0.0f;
+    }
+    else
+    {
+        voice.renderGainStep = (renderGainTarget - voice.renderGain)
+            / static_cast<float>(controlPeriod);
+    }
+
+    if (tractMoved)
+    {
+        std::array<float, formantCount> poleA1 {};
+        std::array<float, formantCount> poleA2 {};
+        std::array<float, formantCount> peakNormaliser {};
+        parallelFormantCoefficients(
+            voice.formantHz.data(), voice.formantBandwidth.data(), formantCount,
+            static_cast<float>(sampleRate_), 0.010f, voice.formantAmplitude.data(),
+            poleA1.data(), poleA2.data(), peakNormaliser.data());
+        for (int formant = 0; formant < formantCount; ++formant)
+        {
+            const auto index = static_cast<std::size_t>(formant);
+            voice.resolvedFormantHz[index] = voice.formantHz[index];
+            voice.resolvedFormantBandwidth[index] = voice.formantBandwidth[index];
+            // The physical Hz/BW values above already carry the articulation
+            // smoothing. Keep the rendered pole exactly coherent with that
+            // geometry instead of adding a second, sample-rate-dependent lag.
+            voice.tract[index].a1 = poleA1[index];
+            voice.tract[index].a2 = poleA2[index];
+            voice.tract[index].peakNormaliser = peakNormaliser[index];
+        }
+    }
+
+    for (int formant = 0; formant < formantCount; ++formant)
+    {
+        const auto index = static_cast<std::size_t>(formant);
+        voice.formantGain[index] = voice.formantAmplitude[index]
+            * (1.0f - 0.55f * smoothedNasal_);
+        voice.tract[index].b0 = formantPolarity(formant)
+            * voice.formantGain[index] * voice.tract[index].peakNormaliser;
+    }
+
+    if (!voice.controlInitialised)
+    {
+        const float target = radiatedPowerTarget(
+            voice, tractFundamental,
+            smoothedTension_ * chunkResponse_.sourceTensionScale,
+            p.legacyRadiatedPowerBypass);
+        voice.radiatedPowerTarget = target;
+        voice.radiatedPowerGain = target;
+        voice.radiatedPowerGainStep = 0.0f;
+        voice.radiatedPowerCountdown = radiatedPowerUpdateControls_;
+    }
+    else
+    {
+        if (--voice.radiatedPowerCountdown <= 0)
+        {
+            const float rawTarget = radiatedPowerTarget(
+                voice, tractFundamental,
+                smoothedTension_ * chunkResponse_.sourceTensionScale,
+                p.legacyRadiatedPowerBypass);
+            voice.radiatedPowerTarget += radiatedPowerCoefficient_
+                * (rawTarget - voice.radiatedPowerTarget);
+            voice.radiatedPowerCountdown = radiatedPowerUpdateControls_;
+        }
+        voice.radiatedPowerGainStep =
+            (voice.radiatedPowerTarget - voice.radiatedPowerGain)
+            / static_cast<float>(controlPeriod);
     }
 
     // The nasal tract does not vary with the vowel or with the singer, so the
     // branch coefficients are resolved once per chunk and only copied here.
     voice.nasal.a1 = chunkNasalA1_;
-    voice.nasal.b0 = chunkNasalB0_;
+    voice.nasal.a2 = chunkNasalA2_;
+    voice.nasal.b0 = voice.formantAmplitude[0] * chunkNasalB0Scale_;
 
     // A voice no longer carries a pan. Where it is heard from belongs to the
     // singer, not to the note, and it is resolved once per chunk in
@@ -1659,16 +2345,195 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
 
 float VoiceEngine::glottalPair(int level, float phase, float tension) const noexcept
 {
-    const auto& table = glottalTables_[static_cast<std::size_t>(level)];
+    const auto& table = tables_->glottalTables[static_cast<std::size_t>(level)];
     const float position = phase * static_cast<float>(tableSize);
     const int truncated = static_cast<int>(position);
     const int index = truncated & tableMask;
     const float fraction = position - static_cast<float>(truncated);
-    const auto low = static_cast<std::size_t>(2 * index);
-    const auto high = static_cast<std::size_t>(2 * ((index + 1) & tableMask));
-    const float a = table[low] + tension * (table[low + 1] - table[low]);
-    const float b = table[high] + tension * (table[high + 1] - table[high]);
-    return a + fraction * (b - a);
+    const auto next = static_cast<std::size_t>((index + 1) & tableMask);
+
+    tension = clampUnit(tension);
+    const float shapePosition = tension * static_cast<float>(glottalShapeCount - 1);
+    const int lowerShape = std::min(static_cast<int>(shapePosition),
+                                    glottalShapeCount - 2);
+    const float shapeFraction = shapePosition - static_cast<float>(lowerShape);
+    const auto lowerOffset = static_cast<std::size_t>(lowerShape * tableSize);
+    const auto upperOffset = lowerOffset + static_cast<std::size_t>(tableSize);
+    const auto current = static_cast<std::size_t>(index);
+    const float lowerAtPhase = table[lowerOffset + current];
+    const float upperAtPhase = table[upperOffset + current];
+    const float lowerAtNext = table[lowerOffset + next];
+    const float upperAtNext = table[upperOffset + next];
+    const float atPhase = lowerAtPhase
+        + shapeFraction * (upperAtPhase - lowerAtPhase);
+    const float atNextPhase = lowerAtNext
+        + shapeFraction * (upperAtNext - lowerAtNext);
+
+    const float gainPosition = tension * static_cast<float>(glottalGainTableSize - 1);
+    const int gainIndex = std::min(static_cast<int>(gainPosition),
+                                   glottalGainTableSize - 2);
+    const float gainFraction = gainPosition - static_cast<float>(gainIndex);
+    const auto& gains = tables_->glottalGainTable[static_cast<std::size_t>(level)];
+    const float gain = gains[static_cast<std::size_t>(gainIndex)]
+        + gainFraction
+            * (gains[static_cast<std::size_t>(gainIndex + 1)]
+               - gains[static_cast<std::size_t>(gainIndex)]);
+    return gain * (atPhase + fraction * (atNextPhase - atPhase));
+}
+
+float VoiceEngine::radiatedPowerTarget(const Voice& voice, float fundamental,
+                                       float sourceTension,
+                                       bool legacyBypass) const noexcept
+{
+    if (legacyBypass || tables_ == nullptr || !std::isfinite(fundamental)
+        || !(fundamental > 0.0f))
+        return 1.0f;
+
+    // A fully nasal tract uses a different murmur pole and series notch which
+    // this oral estimate intentionally excludes. Make both that case and the
+    // test-only depth-zero A/B a real bypass before doing the H8 tract scan.
+    const float oralAmount = clampUnit(radiatedPowerDepth_)
+        * (1.0f - clampUnit(smoothedNasal_));
+    if (!(oralAmount > 0.0f))
+        return 1.0f;
+
+    // Above Nyquist the oscillator itself is already bounded. Use the same
+    // representable fundamental here so the analysis-rate 8/16 kHz fallback
+    // remains finite rather than asking a transfer function about aliases.
+    const float boundedFundamental = std::clamp(
+        fundamental, 20.0f, 0.45f * static_cast<float>(sampleRate_));
+    // Select the analysis mip from the same intentional f0 as the power law.
+    // The oscillator's running mip follows vibrato, jitter and scoop; borrowing
+    // it here would let those excluded motions flip the analyzed harmonic set
+    // and pump the 40 ms support follower near a mip boundary.
+    const int permissible = std::max(
+        1, static_cast<int>(0.46f * static_cast<float>(sampleRate_)
+                            / boundedFundamental));
+    int tableLevel = 0;
+    for (int level = 1; level < tableLevels; ++level)
+        if (harmonicsPerLevel[static_cast<std::size_t>(level)] <= permissible)
+            tableLevel = level;
+    const int representableHarmonics = std::min(
+        static_cast<int>(0.45f * static_cast<float>(sampleRate_)
+                         / boundedFundamental),
+        harmonicsPerLevel[static_cast<std::size_t>(tableLevel)]);
+    const int harmonics = std::clamp(
+        representableHarmonics, 1, radiatedPowerHarmonics);
+
+    sourceTension = clampUnit(sourceTension);
+    const float powerPosition = sourceTension
+        * static_cast<float>(glottalGainTableSize - 1);
+    const int powerIndex = std::min(static_cast<int>(powerPosition),
+                                    glottalGainTableSize - 2);
+    const float powerFraction = powerPosition - static_cast<float>(powerIndex);
+
+    // The two source shelves read the preceding one-pole state. Resolve their
+    // exact complex transfer once per harmonic; the final effort filter is an
+    // ordinary current-sample one-pole. Only magnitudes are needed because the
+    // tract comparison uses the same source partial on every offset probe.
+    const float shelfCoefficient = sourcePresenceCoefficient_;
+    const float shelfMemory = 1.0f - shelfCoefficient;
+    const float shelfGain = std::clamp(voice.presence, 1.0e-4f, 1.0f);
+    const float tiltCoefficient = std::clamp(voice.tiltCoefficient, 1.0e-6f, 1.0f);
+    const float tiltMemory = 1.0f - tiltCoefficient;
+
+    const auto tractPowerAt = [this, &voice](float frequency) noexcept
+    {
+        const float bounded = std::clamp(
+            frequency, 1.0f, 0.499f * static_cast<float>(sampleRate_));
+        const auto trig = sineCosineFromCycles(bounded * inverseSampleRate_);
+        const float cosine = trig.cosine;
+        const float sineValue = trig.sine;
+        const float cosTwo = 2.0f * cosine * cosine - 1.0f;
+        const float sinTwo = 2.0f * sineValue * cosine;
+        double sumReal = 0.0;
+        double sumImaginary = 0.0;
+        for (int formant = 0; formant < formantCount; ++formant)
+        {
+            const auto index = static_cast<std::size_t>(formant);
+            const auto& pole = voice.tract[index];
+            const float real = 1.0f - pole.a1 * cosine - pole.a2 * cosTwo;
+            const float imaginary = pole.a1 * sineValue + pole.a2 * sinTwo;
+            const float denominator = real * real + imaginary * imaginary;
+            if (!(denominator > 0.0f))
+                continue;
+            const float b0 = formantPolarity(formant)
+                * voice.formantAmplitude[index] * pole.peakNormaliser;
+            const float scale = b0 / denominator;
+            sumReal += static_cast<double>(scale) * real;
+            sumImaginary -= static_cast<double>(scale) * imaginary;
+        }
+        return sumReal * sumReal + sumImaginary * sumImaginary;
+    };
+
+    double currentPower = 0.0;
+    double averagedPower = 0.0;
+    for (int harmonic = 1; harmonic <= harmonics; ++harmonic)
+    {
+        const float frequency = static_cast<float>(harmonic) * boundedFundamental;
+        const auto trig = sineCosineFromCycles(frequency * inverseSampleRate_);
+        const float denominatorReal = 1.0f - shelfMemory * trig.cosine;
+        const float denominatorImaginary = shelfMemory * trig.sine;
+        const float denominator = denominatorReal * denominatorReal
+            + denominatorImaginary * denominatorImaginary;
+        const float numeratorReal = shelfCoefficient * trig.cosine;
+        const float numeratorImaginary = -shelfCoefficient * trig.sine;
+        const float precedingLowReal = denominator > 0.0f
+            ? (numeratorReal * denominatorReal
+               + numeratorImaginary * denominatorImaginary) / denominator
+            : 0.0f;
+        const float precedingLowImaginary = denominator > 0.0f
+            ? (numeratorImaginary * denominatorReal
+               - numeratorReal * denominatorImaginary) / denominator
+            : 0.0f;
+        const float shelfReal = shelfGain
+            + (1.0f - shelfGain) * precedingLowReal;
+        const float shelfImaginary = (1.0f - shelfGain)
+            * precedingLowImaginary;
+        const float oneShelfPower = shelfReal * shelfReal
+            + shelfImaginary * shelfImaginary;
+        const float tiltDenominator = 1.0f + tiltMemory * tiltMemory
+            - 2.0f * tiltMemory * trig.cosine;
+        const float tiltPower = tiltDenominator > 0.0f
+            ? tiltCoefficient * tiltCoefficient / tiltDenominator : 1.0f;
+
+        const auto harmonicIndex = static_cast<std::size_t>(harmonic - 1);
+        const float lowerPower = tables_->glottalHarmonicPower[
+            static_cast<std::size_t>(powerIndex)][harmonicIndex];
+        const float glottalPower = lowerPower + powerFraction
+            * (tables_->glottalHarmonicPower[
+                   static_cast<std::size_t>(powerIndex + 1)][harmonicIndex]
+               - lowerPower);
+        const double sourcePower = static_cast<double>(glottalPower)
+            * oneShelfPower * oneShelfPower * tiltPower;
+        currentPower += sourcePower * tractPowerAt(frequency);
+
+        double offsetPower = 0.0;
+        for (int offset = 0; offset < radiatedPowerOffsets; ++offset)
+        {
+            const float delta = (static_cast<float>(offset) + 0.5f)
+                    / static_cast<float>(radiatedPowerOffsets)
+                - 0.5f;
+            offsetPower += tractPowerAt(
+                (static_cast<float>(harmonic) + delta) * boundedFundamental);
+        }
+        averagedPower += sourcePower * offsetPower
+            / static_cast<double>(radiatedPowerOffsets);
+    }
+
+    if (!(currentPower > 1.0e-30) || !(averagedPower > 1.0e-30))
+        return 1.0f;
+    // Full power equalisation would be sqrt(Pavg/Pcurrent). Keep only half of
+    // that correction (the fourth root) and never move voiced drive by more
+    // than +/-3 dB. The remaining level motion is part of the sung colour.
+    constexpr float minimumGain = 0.70794578f;
+    constexpr float maximumGain = 1.41253754f;
+    float target = std::pow(
+        static_cast<float>(averagedPower / currentPower), 0.25f);
+    target = std::clamp(target, minimumGain, maximumGain);
+    if (oralAmount >= 1.0f)
+        return target;
+    return std::pow(std::max(target, 1.0e-6f), oralAmount);
 }
 
 float VoiceEngine::glottalFlow(float phase, float tension) const noexcept
@@ -1678,33 +2543,49 @@ float VoiceEngine::glottalFlow(float phase, float tension) const noexcept
     // step, on the closing slope, is under 2 % of the peak -- and it saves two
     // loads on a table small enough to stay resident.
     const auto index = static_cast<std::size_t>(
-        2 * (static_cast<int>(phase * static_cast<float>(flowTableSize)) & flowTableMask));
-    const float lax = glottalFlowTable_[index];
-    return lax + tension * (glottalFlowTable_[index + 1] - lax);
+        static_cast<int>(phase * static_cast<float>(flowTableSize)) & flowTableMask);
+    tension = clampUnit(tension);
+    const float shapePosition = tension * static_cast<float>(glottalShapeCount - 1);
+    const int lowerShape = std::min(static_cast<int>(shapePosition),
+                                    glottalShapeCount - 2);
+    const float shapeFraction = shapePosition - static_cast<float>(lowerShape);
+    const auto lower = index * static_cast<std::size_t>(glottalShapeCount)
+        + static_cast<std::size_t>(lowerShape);
+    const auto upper = lower + 1;
+    return tables_->glottalFlowTable[lower]
+        + shapeFraction
+            * (tables_->glottalFlowTable[upper] - tables_->glottalFlowTable[lower]);
 }
 
 float VoiceEngine::sine(float phase) const noexcept
 {
     phase = wrapPhase(phase);
+    if (tables_ == nullptr)
+        return std::sin(twoPi * phase);
     const float position = phase * static_cast<float>(tableSize);
     const int truncated = static_cast<int>(position);
     const int index = truncated & tableMask;
     const float fraction = position - static_cast<float>(truncated);
-    const float a = sineTable_[static_cast<std::size_t>(index)];
-    const float b = sineTable_[static_cast<std::size_t>((index + 1) & tableMask)];
+    const float a = tables_->sineTable[static_cast<std::size_t>(index)];
+    const float b = tables_->sineTable[static_cast<std::size_t>((index + 1) & tableMask)];
     return a + fraction * (b - a);
 }
 
 VoiceEngine::SineCosine VoiceEngine::sineCosineFromCycles(float cycles) const noexcept
 {
+    if (tables_ == nullptr)
+    {
+        const float angle = twoPi * wrapPhase(cycles);
+        return { std::sin(angle), std::cos(angle) };
+    }
     const float position = wrapPhase(cycles) * static_cast<float>(tableSize);
     const int truncated = static_cast<int>(position);
     const int index = truncated & tableMask;
     const float fraction = position - static_cast<float>(truncated);
     const auto lookup = [this, index, fraction](int offset) noexcept
     {
-        const float a = sineTable_[static_cast<std::size_t>((index + offset) & tableMask)];
-        const float b = sineTable_[static_cast<std::size_t>((index + offset + 1) & tableMask)];
+        const float a = tables_->sineTable[static_cast<std::size_t>((index + offset) & tableMask)];
+        const float b = tables_->sineTable[static_cast<std::size_t>((index + offset + 1) & tableMask)];
         return a + fraction * (b - a);
     };
     return { lookup(0), lookup(tableSize / 4) };
@@ -1972,6 +2853,7 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     std::uint64_t age = voice.ageSamples;
 
     float amplitude = voice.renderGain;
+    float amplitudeStep = voice.renderGainStep;
     const bool releasing = voice.releasing;
     // What develops at a vocal onset is the source, not the filter: the folds
     // start abducted and lax and adduct over the first tens of milliseconds.
@@ -1992,8 +2874,10 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     float presence = voice.presence;
     float vibratoGain = voice.vibratoGain;
     float vibratoGainStep = voice.vibratoGainStep;
-    float shelfVibrato = voice.shelfVibrato;
-    float shelfVibratoStep = voice.shelfVibratoStep;
+    float vibratoShelfGain = voice.vibratoShelfGain;
+    float vibratoShelfGainStep = voice.vibratoShelfGainStep;
+    float radiatedPowerGain = voice.radiatedPowerGain;
+    float radiatedPowerGainStep = voice.radiatedPowerGainStep;
     float attack = voice.attackCoefficient;
     float release = voice.releaseCoefficient;
     float irregularity = voice.irregularity;
@@ -2022,11 +2906,16 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             voice.ageSamples = age;
             voice.noiseState = noiseState;
             voice.vibratoGain = vibratoGain;
-            voice.shelfVibrato = shelfVibrato;
+            voice.vibratoShelfGain = vibratoShelfGain;
+            voice.radiatedPowerGain = radiatedPowerGain;
+            // updateVoiceControl() aims the efficiency compensation from its
+            // exact running value. Hand the local ramp state back first so a
+            // host buffer boundary cannot restart or skip any part of it.
+            voice.renderGain = amplitude;
             updateVoiceControl(voice, p);
             noiseState = voice.noiseState;
             voice.controlCountdown = controlPeriod;
-            amplitude = voice.renderGain;
+            amplitudeStep = voice.renderGainStep;
             incrementStep = voice.phaseIncrementStep;
             tilt = voice.tiltCoefficient;
             irregularity = voice.irregularity;
@@ -2038,11 +2927,14 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             attack = voice.attackCoefficient;
             release = voice.releaseCoefficient;
             vibratoGainStep = voice.vibratoGainStep;
-            shelfVibratoStep = voice.shelfVibratoStep;
+            vibratoShelfGainStep = voice.vibratoShelfGainStep;
+            radiatedPowerGainStep = voice.radiatedPowerGainStep;
         }
 
+        amplitude += amplitudeStep;
         vibratoGain += vibratoGainStep;
-        shelfVibrato += shelfVibratoStep;
+        vibratoShelfGain += vibratoShelfGainStep;
+        radiatedPowerGain += radiatedPowerGainStep;
         phaseIncrement += incrementStep;
         phase += phaseIncrement;
         if (phase >= 1.0f)
@@ -2077,19 +2969,16 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
         float glottal = glottalPair(level, phase, sourceTension);
         glottal *= 1.0f + (alternateCycle ? irregularity : -irregularity);
         // Two first-order shelves, unity at DC and the note's broadband gain
-        // above the corner: a quiet note keeps its fundamental and loses its
-        // upper partials at twice the rate, which is the measured law rather
-        // than a voicing choice. One shelf cannot deliver it -- a first-order
-        // transition moves 3 kHz at most 6 dB per octave away from 450 Hz
-        // however it is placed, and the law needs about twice that across those
-        // two bands. The two stages are there for that slope and not to apply
-        // the gain twice, so each carries the square root of it and the pair
-        // between them carries it once. Both factors below are already rooted:
-        // `presence` at the control update, the vibrato when its ramp target
-        // was set.
-        // The vibrato reaches the shelf as well as the level, so the band above
-        // the corner swings twice as many decibels as the fundamental does.
-        const float shelfGain = presence * shelfVibrato;
+        // above the corner:
+        // a quiet note keeps its fundamental and loses its upper partials at
+        // twice the rate, which is the measured law rather than a voicing
+        // choice. One shelf cannot deliver it -- a first-order transition moves
+        // 3 kHz at most 6 dB per octave away from 450 Hz however it is placed,
+        // and the law needs about twice that across those two bands. Each stage
+        // carries the square root of both the dynamics and vibrato gains, so
+        // the pair applies each gain once. With the direct-source gesture below,
+        // the upper band moves twice as far in dB as the fundamental.
+        const float shelfGain = presence * vibratoShelfGain;
         const float slowDelta = glottal - sourceSlow;
         const float shelved = sourceSlow + shelfGain * slowDelta;
         sourceSlow += sourcePresenceCoefficient_ * slowDelta;
@@ -2121,7 +3010,8 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
         const float airDrive = airLevelAt_[static_cast<std::size_t>(i)]
             * airShape * airEnvelope;
         const float voicedDrive = envelope * voicedScaleAt_[static_cast<std::size_t>(i)]
-            * (1.0f + shimmerDepth_ * shimmer) * vibratoGain;
+            * (1.0f + shimmerDepth_ * shimmer) * vibratoGain
+            * radiatedPowerGain;
         // No separate lip-radiation stage: the wavetable is a glottal flow
         // *derivative*, and differentiating the flow is exactly what radiation
         // from the lips does to it. A radiation zero here would apply that
@@ -2152,17 +3042,18 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             source += nasalMix * (notched - source);
         }
 
-        // The tract is a fixed geometry with fixed poles. It is fully formed
-        // before the first pulse reaches it, so every formant including the
-        // singer's-formant cluster is present in the first cycle.
+        // The tract geometry is fully formed before the first pulse reaches
+        // it, so every formant including the upper reinforcement is present in
+        // the first cycle. Later control updates move its per-voice poles only
+        // through the physical articulation smoothers above.
         float tract = 0.0f;
         for (int f = 0; f < formantCount; ++f)
         {
             const auto index = static_cast<std::size_t>(f);
-            tract += voice.tract[index].tick(source, chunkA2_[index]);
+            tract += voice.tract[index].tick(source);
         }
         if (nasalActive)
-            tract += voice.nasal.tick(source, chunkNasalA2_);
+            tract += voice.nasal.tick(source);
 
         const float output = amplitude * (tractLevel * tract + directAirLevel * highNoise * airDrive);
         // Into the singer's own bus, not into the stereo mix: the voices that
@@ -2193,8 +3084,12 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     voice.alternateCycle = alternateCycle;
     voice.ageSamples = age;
     voice.phaseIncrementStep = incrementStep;
+    voice.renderGain = amplitude;
+    voice.renderGainStep = amplitudeStep;
     voice.vibratoGain = vibratoGain;
-    voice.shelfVibrato = shelfVibrato;
+    voice.vibratoShelfGain = vibratoShelfGain;
+    voice.radiatedPowerGain = radiatedPowerGain;
+    voice.radiatedPowerGainStep = radiatedPowerGainStep;
 }
 
 void VoiceEngine::process(float* left, float* right, int numSamples)
@@ -2202,7 +3097,17 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
     if (numSamples <= 0)
         return;
     if (!prepared_)
-        prepare(sampleRate_, std::max(maxBlockSize_, numSamples));
+    {
+        // prepare() owns the process-shared LF table bank's one-time heap build
+        // and is deliberately a non-real-time operation. Silencing an engine
+        // whose host skipped prepare is safer than allocating and blocking for
+        // tens of milliseconds in the first audio callback.
+        if (left != nullptr)
+            std::fill(left, left + numSamples, 0.0f);
+        if (right != nullptr)
+            std::fill(right, right + numSamples, 0.0f);
+        return;
+    }
 
     blockParameters_ = snapshotParameters();
     // shimmerScale_ renormalises the smoother's output for the sample rate;
@@ -2404,9 +3309,14 @@ void VoiceEngine::publishDisplayState(int voiceCount, float blockPeakLeft,
         const auto index = static_cast<std::size_t>(formant);
         const float hz = reference != nullptr && reference->formantHz[index] > 1.0f
             ? reference->formantHz[index] : chunkFormantHz_[index];
+        const float bandwidth = reference != nullptr
+                && reference->formantBandwidth[index] > 1.0f
+            ? reference->formantBandwidth[index] : chunkBandwidth_[index];
+        const float gain = reference != nullptr && reference->formantGain[index] > 0.0f
+            ? reference->formantGain[index] : chunkFormantGain_[index];
         displayFormantHz_[index].store(hz, std::memory_order_relaxed);
-        displayFormantBandwidth_[index].store(chunkBandwidth_[index], std::memory_order_relaxed);
-        displayFormantGain_[index].store(chunkFormantGain_[index], std::memory_order_relaxed);
+        displayFormantBandwidth_[index].store(bandwidth, std::memory_order_relaxed);
+        displayFormantGain_[index].store(gain, std::memory_order_relaxed);
     }
 
     const int vowelIndex = blockParameters_.vowel == Vowel::Ooh

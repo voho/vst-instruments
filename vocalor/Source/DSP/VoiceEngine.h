@@ -48,6 +48,14 @@ struct EngineParameters
     // Velum coupling: 0 is a closed velum and the purely oral tract the engine
     // has always had, 1 is a closed-mouth hum. 0 reproduces 1.1 exactly.
     float nasal { 0.0f };
+    // Added in 1.3: cycle-to-cycle vocal variation. Zero is the exact 1.2
+    // oscillator, which is also the compatibility value for older sessions;
+    // the plug-in gives fresh instances a modest non-zero setting.
+    float instability { 0.0f };
+    // Internal session-compatibility switch, not a published control. A host
+    // state saved before the 1.3 support model keeps its original level law;
+    // fresh patches and the standalone DSP default use the current model.
+    bool legacyRadiatedPowerBypass { false };
 };
 
 /** Lock-free snapshot of what the engine is currently doing, for the editor. */
@@ -72,6 +80,11 @@ class VoiceEngine
 public:
     VoiceEngine() noexcept;
 
+    /** Performs sample-rate setup and the process-wide source-bank cold build.
+        Full tract fidelity is supported from 44.1 to 192 kHz; lower rates down
+        to 8 kHz remain finite by Nyquist-clamping poles that may coalesce.
+        Call off the audio thread before noteOn() or process(); an unprepared
+        engine deliberately ignores notes and renders silence. */
     void prepare(double sampleRate, int maxBlockSize);
     void reset();
     void setParameters(const EngineParameters& parameters);
@@ -110,6 +123,20 @@ private:
     static constexpr int tableSize = 2048;
     static constexpr int tableMask = tableSize - 1;
     static constexpr int tableLevels = 9;
+    // Tension changes an LF pulse's physical parameters; it does not mix two
+    // pulses whose closures occur at different phases. Nine analysed shapes
+    // keep interpolation errors small while adding only about 0.5 MiB over the
+    // former endpoint pair. A gain lookup per mip restores that pair's legacy
+    // RMS curve at the harmonic count the oscillator actually selected, without
+    // a square root in render().
+    static constexpr int glottalShapeCount = 9;
+    static constexpr int glottalGainTableSize = 257;
+    static constexpr int radiatedPowerHarmonics = 8;
+    static constexpr int radiatedPowerOffsets = 8;
+    // Sixteen 16-sample controls at the 48 kHz reference rate, i.e. about
+    // 5.3 ms. prepare() scales the count so target freshness and analysis cost
+    // per second remain stable at other rates.
+    static constexpr int radiatedPowerReferenceUpdateControls = 16;
     // The aspiration envelope needs far less resolution than the source:
     // it is smooth, it multiplies noise, and 256 entries keep it in L1 next
     // to twelve voices' worth of tract state.
@@ -230,8 +257,8 @@ private:
     // engine renders depends on how the host splits a buffer.
     static constexpr int chunkSize = 64;
 
-    // Harmonic count per band-limited table level; shared by buildTables()
-    // (which fills the tables) and updateVoiceControl() (which picks the
+    // Harmonic count per band-limited table level; shared by sharedTableBank()
+    // (which fills the tables once) and updateVoiceControl() (which picks the
     // aliasing-safe level for the current pitch) so the two stay in sync.
     static constexpr std::array<int, tableLevels> harmonicsPerLevel {
         1, 2, 4, 8, 16, 32, 64, 128, 256
@@ -262,6 +289,8 @@ private:
         std::atomic<float> dynamics { 1.0f };
         std::atomic<float> intonation { 0.0f };
         std::atomic<float> nasal { 0.0f };
+        std::atomic<float> instability { 0.0f };
+        std::atomic<int> legacyRadiatedPowerBypass { 0 };
     };
 
     struct Resonator
@@ -269,12 +298,15 @@ private:
         float y1 { 0.0f };
         float y2 { 0.0f };
         float a1 { 0.0f };
+        float a2 { 0.0f };
         // Unit-peak normalisation, polarity and formant amplitude all folded
-        // into one coefficient by the control update. a2 depends only on the
-        // bandwidth, which every voice shares, so the caller passes it in.
+        // into one coefficient by the control update. Every voice now carries
+        // its own pole radius because a soprano releases the epilaryngeal
+        // cluster as the harmonic spacing opens through the upper register.
         float b0 { 0.0f };
+        float peakNormaliser { 0.0f };
 
-        float tick(float input, float a2) noexcept
+        float tick(float input) noexcept
         {
             const float value = b0 * input + a1 * y1 + a2 * y2;
             y2 = y1;
@@ -316,6 +348,10 @@ private:
         float releaseTendency { 0.0f };
         float vibratoRate { 5.1f };
         float vibratoDepth { 1.0f };
+        // Airflow/intensity vibrato generally leads F0 rather than peaking on
+        // the exact same sample. This is the singer's habitual phase lead;
+        // Instability fades it in so a zero setting remains bit-compatible.
+        float vibratoAmplitudePhase { 0.20f };
         // Sampled once per chunk, not once per voice control update: every
         // voice sharing a singer identity reads the same three values.
         float drift { 0.0f };
@@ -352,14 +388,45 @@ private:
         int controlCountdown { 0 };
         std::uint64_t generation { 0 };
         std::uint32_t noiseState { 1u };
+        // A separate deterministic stream for the modulation cycle. Sharing
+        // noiseState would make enabling this feature consume aspiration,
+        // shimmer and pitch-jitter samples and would change the old sound even
+        // with Instability at zero.
+        std::uint32_t vibratoSeed { 1u };
+        std::uint32_t vibratoCycle { 0u };
         std::uint64_t ageSamples { 0 };
         std::uint64_t lastControlAge { 0 };
         float vibratoPhase { 0.0f };
+        float vibratoRateScale { 1.0f };
+        float vibratoDepthScale { 1.0f };
+        // The preceding cycle's shape is retained briefly after a redraw.
+        // Pitch is zero at the redraw, but the airflow-led amplitude cycle is
+        // not; blending from these values keeps that phase lead continuous.
+        float vibratoPreviousDepthScale { 1.0f };
+        float vibratoPreviousContour { 0.0f };
+        float vibratoRateVariation { 0.0f };
+        float vibratoDepthVariation { 0.0f };
+        float vibratoContour { 0.0f };
+        float vibratoAmplitudePhase { 0.0f };
         float velocity { 0.0f };
         float amplitudeGain { 0.0f };
+        // How much deliberate high-register F1 tuning this articulation has
+        // actually reached, 0..1. Kept separately from the pole frequency so
+        // an ordinary vowel move cannot masquerade as costly jaw opening.
+        float formantTuningLift { 0.0f };
         // amplitudeGain after the formant-tuning efficiency trim. The render
         // loop reads this one, so the trim costs nothing per sample.
         float renderGain { 0.0f };
+        float renderGainStep { 0.0f };
+        // Accidental alignment between a strong source harmonic and a narrow
+        // tract pole changes radiation efficiency. A singer spends part of
+        // that support on reduced drive instead of allowing every crossing to
+        // become a 7 dB level jump. This gain is voiced-only, bounded and
+        // deliberately too slow to follow vibrato.
+        float radiatedPowerGain { 1.0f };
+        float radiatedPowerGainStep { 0.0f };
+        float radiatedPowerTarget { 1.0f };
+        int radiatedPowerCountdown { 0 };
         float phase { 0.0f };
         float phaseIncrement { 0.0f };
         float targetPhaseIncrement { 0.0f };
@@ -395,23 +462,20 @@ private:
         // What *one* stage applies: the square root of the note's broadband
         // gain, so the cascade's plateau is that gain exactly once.
         float presence { 1.0f };
-        // Laryngeal amplitude modulation on the vibrato cycle, as a gain on the
-        // voiced source and on the presence shelf. Both carry it, which is what
-        // makes a vibrato peak brighter as well as louder: the shelf gain is
-        // already the note's broadband gain, so multiplying both by the same
-        // factor moves the band above the corner by twice as many decibels as
-        // the fundamental, which is the same 2:1 law the dynamic obeys. Ramped
-        // across the control period rather than stepped, because a 6 Hz
-        // modulation applied as a staircase at the control rate leaves
-        // permanent sidebands 3 kHz either side of every partial.
+        // Laryngeal amplitude modulation on the vibrato cycle. The direct
+        // source and its two presence shelves have separate gains so the
+        // natural model can make the high band move twice as far in dB rather
+        // than accidentally applying one LFO three times. Both are ramped
+        // across the control period: a 6 Hz staircase would leave permanent
+        // sidebands 3 kHz either side of every partial.
         float vibratoGain { 1.0f };
         float vibratoGainStep { 0.0f };
         // The same modulation as it reaches one shelf stage: its square root,
         // because the two stages cascade and the pair between them must deliver
-        // the modulation once. Ramped on its own rather than derived per sample
-        // from vibratoGain, which would put a square root in the voice loop.
-        float shelfVibrato { 1.0f };
-        float shelfVibratoStep { 0.0f };
+        // the modulation once. It is ramped separately so the sample loop does
+        // not need to recover a square root from vibratoGain.
+        float vibratoShelfGain { 1.0f };
+        float vibratoShelfGainStep { 0.0f };
         // Velocity as the singer's own output, normalised to what the same note
         // reaches at velocity 1: the level term of amplitudeGain without the
         // ensemble trim. Constant for the note, so it is resolved at note-on.
@@ -451,18 +515,28 @@ private:
         float nasalY2 { 0.0f };
         Resonator nasal {};
         std::array<float, formantCount> formantHz {};
+        std::array<float, formantCount> formantBandwidth {};
+        std::array<float, formantCount> formantAmplitude {};
+        std::array<float, formantCount> formantGain {};
+        // Exact inputs used to build the cached poles and cascade-derived
+        // amplitudes. Bit equality is enough to skip a truly stationary tract
+        // without ever letting its gain describe different geometry.
+        std::array<float, formantCount> resolvedFormantHz {};
+        std::array<float, formantCount> resolvedFormantBandwidth {};
         std::array<Resonator, formantCount> tract {};
     };
 
+    struct TableBank;
     EngineParameters snapshotParameters() const noexcept;
     [[nodiscard]] float effectiveDynamics(const EngineParameters& parameters) const noexcept;
-    void buildTables();
+    [[nodiscard]] static const TableBank& sharedTableBank();
     void buildSingerIdentities();
     void initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, int singer,
                          float velocity, float groupGain, int singerTotal,
                          float glideFromCents, const EngineParameters& parameters);
     void updateChunkState(const EngineParameters& parameters, bool advanceSmoothers);
     void updateVoiceControl(Voice& voice, const EngineParameters& parameters);
+    void drawVibratoCycle(Voice& voice) noexcept;
     void renderVoice(Voice& voice, const EngineParameters& parameters, int count);
     void silenceVoice(Voice& voice) noexcept;
     void beginRelease(Voice& voice) noexcept;
@@ -478,6 +552,9 @@ private:
     int countActiveVoices() const noexcept;
     void updateIntonationRoot() noexcept;
     float glottalPair(int level, float phase, float tension) const noexcept;
+    float radiatedPowerTarget(const Voice& voice, float fundamental,
+                              float sourceTension,
+                              bool legacyBypass) const noexcept;
     float glottalFlow(float phase, float tension) const noexcept;
     float aspirationWindowGain(float tension, float depth) const noexcept;
     float sine(float phase) const noexcept;
@@ -511,20 +588,10 @@ private:
 
     std::array<Voice, maxVoices> voices_ {};
     std::array<SingerIdentity, singerCount> singers_ {};
-    // Interleaved lax/pressed glottal-derivative pairs: [2i] lax, [2i+1]
-    // pressed. Interleaving halves the cache lines the oscillator touches.
-    std::array<std::array<float, 2 * tableSize>, tableLevels> glottalTables_ {};
-    // The glottal flow that produced those derivatives, interleaved the same
-    // way and normalised to unit mean square over the period. Aspiration
-    // turbulence is generated by flow through the glottal constriction, so this
-    // is the noise's own envelope: no band limiting is needed because it never
-    // radiates on its own, it only multiplies a broadband noise stream.
-    std::array<float, 2 * flowTableSize> glottalFlowTable_ {};
-    // Mean of each normalised flow prototype, and the mean of their product.
-    // These are what aspirationWindowGain() needs to renormalise a crossfade.
-    std::array<float, 2> flowMean_ { 1.0f, 1.0f };
-    float flowCross_ { 1.0f };
-    std::array<float, tableSize> sineTable_ {};
+    // All sample-rate-independent waveform assets are immutable and shared by
+    // every engine instance. A raw pointer keeps the audio path ownership-free;
+    // prepare() obtains it from a thread-safe, process-lifetime heap allocation.
+    const TableBank* tables_ { nullptr };
 
     std::array<Voice*, maxVoices> activeVoices_ {};
     int activeTotal_ { 0 };
@@ -583,6 +650,14 @@ private:
     // 3 kHz more than 6 dB per octave away from 450 Hz however far its corner
     // is swept, and the measured law needs about twice that.
     float sourcePresenceCoefficient_ { 0.0f };
+    // Breath support follows the slowly changing radiation efficiency over
+    // 40 ms. The expensive target is refreshed about every 5.3 ms; both its
+    // control count and this coefficient are resolved for the prepared rate.
+    float radiatedPowerCoefficient_ { 0.0f };
+    int radiatedPowerUpdateControls_ { radiatedPowerReferenceUpdateControls };
+    // Fixed production depth. Tests set it to zero for a direct A/B against
+    // the otherwise identical source and tract.
+    float radiatedPowerDepth_ { 1.0f };
     float scoopMultiplier_ { 0.0f };
     float shimmerDepth_ { 0.0f };
     // Every one of these used to be a bare per-sample or per-control-period
@@ -625,9 +700,12 @@ private:
     std::array<float, formantCount> chunkFormantHz_ {};
     std::array<float, formantCount> chunkFormantGain_ {};
     std::array<float, formantCount> chunkBandwidth_ {};
-    std::array<float, formantCount> chunkPoleScale_ {};
-    std::array<float, formantCount> chunkA2_ {};
-    std::array<float, formantCount> chunkRadius_ {};
+    // The profile's ordinary vowel tract before the singer's-formant geometry.
+    // A female voice interpolates back to this endpoint through the high
+    // soprano range; the clustered arrays above remain the idle/display
+    // fallback and the exact low-register endpoint.
+    std::array<float, formantCount> chunkUnclusteredFormantHz_ {};
+    std::array<float, formantCount> chunkUnclusteredBandwidth_ {};
     // Vowel targets, formant shift and bandwidth scale the tract was last
     // resolved from. Resolving it costs more than the whole rest of the chunk
     // update, and on a sustained note none of these inputs move.
@@ -640,9 +718,17 @@ private:
     // with the vowel or with the singer, so every voice shares its coefficients
     // and pays only for its own two-sample state.
     float chunkNasalMix_ { 0.0f };
+    // Gentle level neutralisation for the body-size/formant-shift control.
+    // Its target follows the already-smoothed semitone value, and each voice
+    // reaches it through renderGainStep rather than stepping at a chunk edge.
+    float chunkFormantShiftGain_ { 1.0f };
+    // Physical tract-length ratio used by the per-voice soprano register law.
+    // The register displacement must scale with Formant Shift just as the
+    // vowel poles do, or a shortened tract can reorder R3 and R4.
+    float chunkFormantShiftRatio_ { 1.0f };
     float chunkNasalA1_ { 0.0f };
     float chunkNasalA2_ { 0.0f };
-    float chunkNasalB0_ { 0.0f };
+    float chunkNasalB0Scale_ { 0.0f };
     float chunkZeroB0_ { 1.0f };
     float chunkZeroB1_ { 0.0f };
     float chunkZeroB2_ { 0.0f };
@@ -659,12 +745,25 @@ private:
     // of extent in force. The pitch vibrato is a cricothyroid oscillation, and
     // the same oscillation moves subglottal pressure and glottal adduction, so
     // a sung vibrato carries an amplitude and a spectral component that the
-    // harmonics sweeping static formant skirts cannot account for. Measured
-    // amplitude vibrato runs a couple of decibels peak to peak at the extents
-    // singers actually use, so 0.0020 per cent puts a full solo extent at
-    // 0.217 -- 1.7 dB up, 2.1 dB down -- and the engine default at 0.35 dB.
-    static constexpr float laryngealAmPerCent_ = 0.0020f;
-    static constexpr float laryngealAmMaximum_ = 0.35f;
+    // harmonics sweeping static formant skirts cannot account for. Amplitude
+    // vibrato runs a couple of decibels peak to peak at the extents
+    // singers actually use. The legacy coefficient is retained below for a
+    // zero-Instability session; the natural-cycle coefficient is the quieter
+    // airflow-linked gesture used by new patches.
+    // The legacy values are retained at Instability 0 for exact session recall.
+    // A naturally varying cycle uses the lower values: the old gain was applied
+    // to the voiced drive and independently through two cascaded shelves,
+    // making the upper band receive three copies. The natural path shares one
+    // spectral copy across those shelves and approaches the intended 2:1 law.
+    static constexpr float laryngealAmLegacyPerCent_ = 0.0020f;
+    static constexpr float laryngealAmNaturalPerCent_ = 0.0011f;
+    static constexpr float laryngealAmLegacyMaximum_ = 0.35f;
+    static constexpr float laryngealAmNaturalMaximum_ = 0.18f;
+    // A cycle redraw happens at the pitch-vibrato zero crossing. Carry its new
+    // depth and contour in over the first 18 % of the cycle (26-32 ms across
+    // the singer-rate range), ending before the positive excursion reaches its
+    // peak. Phase rather than wall time keeps host buffer slicing irrelevant.
+    static constexpr float vibratoCycleTransitionPhase_ = 0.18f;
     float jitterHumanize_ { -1.0f };
     float glideAmount_ { -1.0f };
     // Dynamic response resolved once per chunk. The two gains it carries are
@@ -692,6 +791,7 @@ private:
     float smoothedResonance_ { 0.72f };
     float smoothedFormantShift_ { 0.0f };
     float smoothedNasal_ { 0.0f };
+    float smoothedInstability_ { 0.0f };
     float smoothedDynamics_ { 1.0f };
     float smoothedExpression_ { 1.0f };
     float roomEnvelope_ { 0.0f };

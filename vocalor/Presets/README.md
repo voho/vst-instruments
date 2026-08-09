@@ -4,22 +4,28 @@ Vocalor ships a bank of twelve factory programs. They are published through the
 host's own program interface, so they appear as Audio Unit factory presets in
 Logic and as the program list in a VST3 host, and selecting one writes its
 values into the
-[23 automatable parameters](../README.md#interface-and-controls).
+[24 automatable parameters](../README.md#interface-and-controls).
 
 | Program | What it is |
 | --- | --- |
 | Init Soprano | The shipping default sound, so a host that opens on program 0 opens on what the plug-in opens on |
 | Intimate Alto | Close solo voice, breathy, legato with a short glide and a shortened tract |
-| Pressed Tenor | Male solo at high tension, so the singer's-formant cluster is fully closed |
+| Pressed Tenor | Male solo at high tension, with deliberately restrained cycle instability |
 | Legato Soloist | Solo voice set up for phrasing: legato on, a long glide, dynamics at 82 % |
 | Breath And Air | Aspiration at full and the dynamic low, which is the breathiest the model goes |
 | Warm Bass Choir | Eight male singers on the close-back anchor, tract lengthened four semitones |
-| Cathedral Ensemble | Twelve singers, the largest room, and just intonation nearly full |
+| Cathedral Ensemble | Twelve singers, the largest room, just intonation nearly full, and looser cycles |
 | Closed Mouth Hum | The velum fully open: the nasal branch's murmur pole and notch |
 | Small Voices | Six singers with the tract shortened six semitones toward the close-front corner |
 | Vowel Morph Pad | Ten singers with the morph at full, so the pad and its two axes own the vowel |
 | Locked Major Chorale | Chord mode in full just intonation: one key, a locked triad |
-| Airy Minor Pad | Minor chord mode, breathy, wide, with the morph partly engaged |
+| Airy Minor Pad | Minor chord mode, breathy and wide, with the bank's highest cycle instability |
+
+Every program sets Instability explicitly. Vibrato chooses the intended extent;
+Instability adds bounded deterministic variation to each cycle's period, depth
+and contour, while Humanize controls the singers' ensemble identity, timing and
+vocal-tract differences. Pressed sounds stay disciplined, and airy or large
+choir programs are allowed to wander further without becoming nondeterministic.
 
 ## Where they live
 

@@ -206,15 +206,41 @@ private:
     std::vector<float> right_;
 };
 
-// The voice the parameter defaults describe, rendered well below the plug-in's
-// own default output. A twelve-singer choir with the room open sums far hotter
-// than a solo voice, and a demo must never approach full scale before
-// normalisation. Every take is normalised to a common level afterwards, so
-// rendering quietly costs nothing.
+// Spell out every setting so a change to EngineParameters' compatibility
+// defaults cannot silently revoice the demonstrations. Starting from the
+// published plug-in values, the neutral demo baseline deliberately backs
+// Resonance down from 0.64 to 0.42, eases Tension from 0.36 to 0.32, and
+// exposes a natural 0.44 Instability. Output stays below the plug-in's own
+// default because a twelve-singer room can sum far hotter than a solo voice;
+// every take is normalised to a common level afterwards, so rendering quietly
+// costs nothing.
 EngineParameters demoVoicing()
 {
     EngineParameters parameters;
+    parameters.profile = VoiceProfile::Female;
+    parameters.mode = PerformanceMode::Solo;
+    parameters.vowel = Vowel::Aah;
+    parameters.chordQuality = ChordQuality::Major;
+    parameters.choirSize = 8;
+    parameters.breath = 0.30f;
+    parameters.resonance = 0.42f;
+    parameters.vibrato = 0.38f;
+    parameters.humanize = 0.52f;
+    parameters.spread = 0.62f;
+    parameters.tension = 0.32f;
+    parameters.room = 0.24f;
     parameters.outputGain = 0.40f;
+    parameters.vowelX = 0.50f;
+    parameters.vowelY = 0.50f;
+    parameters.vowelMorph = 0.0f;
+    parameters.formantShift = 0.0f;
+    parameters.glide = 0.0f;
+    parameters.legato = false;
+    parameters.roomSize = 0.50f;
+    parameters.dynamics = 1.0f;
+    parameters.intonation = 0.0f;
+    parameters.nasal = 0.0f;
+    parameters.instability = 0.44f;
     return parameters;
 }
 
@@ -574,6 +600,48 @@ Take renderRoomSmallAndLarge()
     return take;
 }
 
+// One connected soprano line through the register the other demonstrations do
+// not reach. Below E-flat5 the upper reinforcement stays broad rather than
+// collapsing into a tenor-style singer's formant; from there to B-flat5 the
+// residual cluster releases back to the ordinary upper-vowel poles instead of
+// preserving one narrow 3 kHz peak. This take demonstrates a continuous tract
+// transition; it does not claim that every sparse high harmonic has equal level.
+Take renderSopranoRegister()
+{
+    auto parameters = demoVoicing();
+    parameters.mode = PerformanceMode::Solo;
+    parameters.profile = VoiceProfile::Female;
+    parameters.vowel = Vowel::Aah;
+    parameters.legato = true;
+    parameters.glide = 0.16f;
+    parameters.vibrato = 0.40f;
+    parameters.tension = 0.62f;
+    parameters.breath = 0.24f;
+    parameters.room = 0.16f;
+    parameters.roomSize = 0.34f;
+    Take take (parameters);
+    take.rest (0.15);
+
+    // A mostly stepwise C4-C6 ascent. E-flat5 through B-flat5 crosses the
+    // measured cluster-release region while one continuously articulated
+    // voice sounds, so a filter switch cannot hide between note attacks.
+    constexpr std::array<int, 12> line {
+        60, 62, 64, 67, 69, 72, 75, 77, 79, 80, 82, 84
+    };
+    int sounding = -1;
+    for (std::size_t step = 0; step < line.size(); ++step)
+    {
+        take.noteOn(line[step], step < 6 ? 0.66f : 0.74f);
+        if (sounding >= 0)
+            take.noteOff(sounding);
+        sounding = line[step];
+        take.rest(step + 1 == line.size() ? 1.45 : 0.52);
+    }
+    take.noteOff(sounding);
+    take.rest(2.8);
+    return take;
+}
+
 // ---------------------------------------------------------------------------
 // The demo table
 // ---------------------------------------------------------------------------
@@ -585,14 +653,14 @@ struct Demo
     Take (*render)();
 };
 
-const std::array<Demo, 9>& demos()
+const std::array<Demo, 10>& demos()
 {
-    static const std::array<Demo, 9> table {{
+    static const std::array<Demo, 10> table {{
         { "01-solo-legato-phrase.wav",
           "A solo soprano phrase sung legato, with a light glide between notes",
           renderSoloLegatoPhrase },
         { "02-vowel-anchors.wav",
-          "The three preset vowels on the female voice, then on the male",
+          "The three preset vowels on a less-resonant neutral female and male voice",
           renderVowelAnchors },
         { "03-vowel-space-morph.wav",
           "One held note while the morph target walks every cardinal vowel",
@@ -615,6 +683,9 @@ const std::array<Demo, 9>& demos()
         { "09-room-small-and-large.wav",
           "The same motif sung in a dry booth and in a large hall",
           renderRoomSmallAndLarge },
+        { "10-soprano-register.wav",
+          "A connected soprano line from C4 to C6 through the cluster release",
+          renderSopranoRegister },
     }};
     return table;
 }
