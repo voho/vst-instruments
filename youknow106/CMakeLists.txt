@@ -265,6 +265,21 @@ if(YOUKNOW106_BUILD_TOOLS)
         PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Tools")
     target_compile_features(YouKnow106VcfBbdQualityAudit PRIVATE cxx_std_20)
 
+    # The static, single-BBD-line oracle above deliberately uses a low-drive
+    # regime that effectively linearises the fitted transfer, and omits the
+    # LFO, second line, stereo mix and seeded line noise.  This companion drives
+    # the public Chorus::process path through the actual production rate selector
+    # and judges those combined mechanisms against an executable-local
+    # continuous/event reference.
+    add_executable(YouKnow106BbdDynamicQualityAudit
+        Tools/AuditBbdDynamicQuality.cpp
+        Tools/OversamplingQualitySupport.h)
+    target_link_libraries(YouKnow106BbdDynamicQualityAudit
+        PRIVATE YouKnow106DSP)
+    target_include_directories(YouKnow106BbdDynamicQualityAudit
+        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Tools")
+    target_compile_features(YouKnow106BbdDynamicQualityAudit PRIVATE cxx_std_20)
+
     # The static common-host audit above deliberately holds VCF controls and
     # Unit Character nominal.  This companion exercises the physical
     # time-varying equations: the normalized 23-write converter schedule,
@@ -305,6 +320,8 @@ if(YOUKNOW106_BUILD_TOOLS)
             PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106VcfBbdQualityAudit
             PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnow106BbdDynamicQualityAudit
+            PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106VcfDynamicQualityAudit
             PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106PassiveHoldTimingAudit
@@ -331,6 +348,8 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106DcoScanQualityAudit PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106VcfBbdQualityAudit PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnow106BbdDynamicQualityAudit PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106VcfDynamicQualityAudit PRIVATE
             -Wall -Wextra -Wpedantic)
@@ -412,6 +431,8 @@ if(BUILD_TESTING)
                  COMMAND YouKnow106DcoScanQualityAudit --self-test)
         add_test(NAME YouKnow106.VcfBbdQualityContract
                  COMMAND YouKnow106VcfBbdQualityAudit --self-test)
+        add_test(NAME YouKnow106.BbdDynamicQualityContract
+                 COMMAND YouKnow106BbdDynamicQualityAudit --self-test)
         add_test(NAME YouKnow106.VcfDynamicQualityContract
                  COMMAND YouKnow106VcfDynamicQualityAudit --self-test)
         add_test(NAME YouKnow106.PassiveHoldTimingContract
@@ -420,6 +441,8 @@ if(BUILD_TESTING)
                              YouKnow106.VcfBbdQualityContract
                              YouKnow106.VcfDynamicQualityContract
                              YouKnow106.PassiveHoldTimingContract
+                             PROPERTIES TIMEOUT 300)
+        set_tests_properties(YouKnow106.BbdDynamicQualityContract
                              PROPERTIES TIMEOUT 300)
     endif()
     # The engine suite renders the complete factory-balance corpus, while the

@@ -1909,6 +1909,13 @@ validation, not a measured hardware PSD. It does **not** close OQ-01's
 clock/delay law, OQ-03's stochastic model, OQ-04's physical loaded
 transfer/BGA response or OQ-20's wet switching.
 
+Step 14 leaves that dated low-drive fixture and its classifications unchanged.
+Its separate public-path contract now supplies the nonlinear, modulated,
+stereo and stochastic software evidence that the Step-9 fixture explicitly did
+not claim: six actual HQ selectors pass and four actual HQ-off q1 selectors
+reject. The complete current scope and unchanged OQ boundaries are recorded in
+the dynamic-BBD section near the end of this file.
+
 ### OQ-02 — the nominal common-VCA law is circuit-derived
 
 The first pass correctly identified that NEC specifies **−5.9 mV/dB typical**
@@ -4008,6 +4015,140 @@ canonical audio manifest remains
 `f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`.
 OQ-07/OQ-08/OQ-09/OQ-10/OQ-15/OQ-16/OQ-18/OQ-19 remain open with exactly the
 hardware-evidence boundaries already stated.
+
+## Dynamic BBD qualification — 2026-08-09 (broader audit; no OQ closed)
+
+**Work mode:** numerical audit of the current declared model. **No original
+unit was measured, no production DSP was changed and no hardware evidence was
+created.** Step 14 adds the separate JUCE-free
+`YouKnow106.BbdDynamicQualityContract`; it changes no `Source`/`Tests` file,
+selector, state, latency, CPU path, preset or audio. The dated Step 8/9 BBD and
+Step 13 VCF sections remain history rather than being rewritten as if they had
+always covered this scope.
+
+The candidate is public `Chorus::process`, including both production BBD lines.
+The audit obtains the real q4/q2/q1 factor from the Engine and crosses the real
+shipping `downsamplePair` implementation and q4 cascade. It does **not** run the
+surrounding full `Engine::process` clip/slew/output call site and therefore
+does not qualify that seam or its fixed 41-host-sample latency.
+
+An independently written reference integrates the triangle LFO, solves every
+affine clock edge continuously, advances two antiphase 128-cell lines through
+the nonlinear transfer and per-edge loss pole, and integrates the six-state
+output support systems across clock and mute-load changes. RK4×4/RK4×8,
+checked 4,097-tap q16 decimation, declared boundary delay and no lag search
+separate it from the shipping sample grid. Its rounded
+**7,234.0/9,688.0/10,377.0/23,461.38 Hz** support constants are frozen audit
+policy for the already declared model boundary. They are not promoted to
+measured JUNO-106 values and do not answer OQ-04.
+
+The 0.72 s public schedule is I `[0,.30)`, Off `[.30,.36)`, II `[.36,.60)`
+and Off `[.60,.72)`, with the oscillator, BBDs and RNG continuing through Off.
+Its 997/5,213 Hz analytic card reaches **1.500000010 Vrms** at the model
+input-support boundary against a 1.500000000 Vrms target. The unchanged gates
+are whole L/R/M/S NRMS ≤−40 dB, I and II ≤−50 dB, Off ≤−60 dB, aligned-II
+residual <−60 dBc and RK convergence ≤−80 dB. Whole/I/Off/II compare
+`[.12,.64)`, `[.15,.30)`, `[.30,.36)` and `[.40,.60)`; the aligned-II BH92
+residual examines every 20 Hz–20 kHz bin without masking:
+
+| Actual selector | Worst L/R/M/S | I / Off / II | Residual | Convergence | Result |
+| --- | ---: | --- | ---: | ---: | --- |
+| HQ 44.1 q4 | −60.761 dB | −68.498 / −66.911 / −57.884 dB | −75.664 dBc | −204.699 dB | **PASS** |
+| HQ 48 q4 | −60.497 dB | −62.899 / −70.748 / −57.590 dB | −76.378 dBc | −205.088 dB | **PASS** |
+| HQ 88.2 q2 | −58.580 dB | −74.118 / −73.000 / −55.643 dB | −75.549 dBc | −223.287 dB | **PASS** |
+| HQ 96 q2 | −59.249 dB | −74.753 / −74.063 / −56.313 dB | −76.229 dBc | −226.078 dB | **PASS** |
+| HQ 176.4 q1 | −58.574 dB | −74.177 / −73.204 / −55.639 dB | −75.454 dBc | −245.943 dB | **PASS** |
+| HQ 192 q1 | −59.246 dB | −74.809 / −74.023 / −56.311 dB | −76.123 dBc | −251.768 dB | **PASS** |
+| HQ-off 44.1 q1 | −24.133 dB | −24.077 / −23.733 / −24.056 dB | −24.841 dBc | −204.699 dB | **REJECT** |
+| HQ-off 48 q1 | −25.640 dB | −25.594 / −25.236 / −25.561 dB | −26.346 dBc | −205.088 dB | **REJECT** |
+| HQ-off 88.2 q1 | −36.300 dB | −36.337 / −35.999 / −36.204 dB | −36.993 dBc | −223.287 dB | **REJECT** |
+| HQ-off 96 q1 | −37.768 dB | −37.822 / −37.488 / −37.669 dB | −38.458 dBc | −226.078 dB | **REJECT** |
+
+The noise-only waveform NRMS is informational because differing fractional
+edge times decorrelate samples. The normative stochastic gates instead require
+plain-RMS level error ≤0.10 dB, four-band Welch-power error ≤0.75 dB,
+correlation error ≤0.02, absolute correlation ≤0.05 and II/I-delta error
+≤0.05 dB, together with exact edge/RNG/index/phase/LFO/mode/wet-gain ledgers,
+finite transfer state and a bit-exact held-noise relation to that production
+transfer. HQ maxima are **0.072/0.561/0.003/0.012** for
+level/band/correlation-error/mode-delta-error and pass. HQ-off level errors are
+**0.696/0.524/0.184/0.171 dB**, so all four reject; 44.1/48 kHz also exceed
+the band gate at **1.432/1.106 dB**. Four-band analysis uses 4,096-sample BH92
+windows, 2,048-sample hop and averaged unnormalized power over I `[.15,.30)`
+and II `[.40,.60)`.
+
+All ten rows retain PASS infrastructure—exact selector and internal rate,
+finite values and the structural schedule ledger—so an expected HQ-off quality
+failure cannot hide broken state. Complete mode-I and mode-II cycles pass at
+all six unique internal grids, including both triangle corners and wrap.
+Same-family raw internal renders match before decimation. The registered
+aggregate mutates captured output for disconnected/collapsed/inverted stereo
+and correlated noise, and fences frozen source-local controls for common
+clocks, linear transfer, snapped edge input, always-connected Off loading and
+doubled noise. Separate source-local review rejects disabled output correction.
+
+The result closes the prior **software-audit scope gap**: the declared BBD now
+has nonlinear, modulated, stereo and stochastic evidence in addition to the
+dated low-drive line fixture. It deliberately closes none of these hardware
+tasks:
+
+- **OQ-01 remains open:** exact model-LFO/clock integration does not measure a
+  JUNO-106 clock or decide the physical timing law.
+- **OQ-03 remains open:** exact RNG and statistical agreement validate the
+  declared product noise, not its absolute hardware PSD, correlation, spurs or
+  physical cause.
+- **OQ-04 remains open:** the audit-policy support corners do not resolve real
+  MN3009/source/loading transfer.
+- **OQ-20 remains open:** testing the declared connected/muted load and wet
+  gain does not measure TR11/TR12 on-resistance, leakage or switching transient.
+
+Production HQ-off repair remains deferred. A candidate needs a causal
+bandlimited local BBD boundary that clears the same ten-row gates; preserves
+both lines' bucket, phase, RNG, held-transfer and support state through quality,
+rate and block changes; proves the local decimator and surrounding full-engine
+alignment without lookahead or a change to the fixed 41-sample report; and
+passes paired BBD-only plus whole-engine CPU gates before any selector change.
+
+The Step-14 inventory is **13 plugin-off / 14 plugin-on** contracts. The
+targeted metric run passes in **44.12 s** (audit elapsed **43.89 s**). A fresh
+warning-clean native arm64 Release/plugin-off build registers **13
+JUCE-free contracts and passes 13/13 in 381.25 s**; the BBD dynamic, VCF dynamic
+and passive-hold tests take **43.46/37.30/0.62 s**. A fresh warning-clean
+ASan+UBSan build passes the existing static VCF/BBD seam and new dynamic BBD
+contract **2/2 in 126.85 s** (40.80/86.05 s), under halt-on-error with leak
+detection disabled and zero diagnostics. A fresh universal `arm64;x86_64`
+Release/plugin-on all-target build passes in **114.17 s**, targeting macOS
+11.0. Only nested-Make's inherited jobserver notice and the pre-existing
+`YouKnow106Engine.h:431/787` `-Wfloat-equal` warnings remain; the new audit is
+warning-clean. The universal serial matrix passes **14/14 in 400.62 s**; its
+BBD dynamic, VCF dynamic and PluginProcessor tests take
+**44.86/38.11/11.93 s**. The explicit universal full audit passes on arm64 in
+**43.69 s**; its binary contains `x86_64 arm64` and both slices target macOS
+11.0. A genuine translated full-oracle launch printed `uname -m=x86_64` and
+`sysctl.proc_translated=1` but was intentionally stopped at **2666.66 s**,
+still in the first hot RK4×4 solve: x86's 80-bit `long double` reference
+arithmetic is software-emulated on arm64 and projects to a multi-hour run. That
+incomplete launch is neither a PASS nor a quality failure; no full x86 audit is
+claimed or used as a portability admission gate. At frozen audit-source
+SHA-256 `33a0818c00560a502fa774223030409a4310ffe0053df3e23ae5bc5aad348228`, a
+warning-clean universal target rebuild passes in **3.15 s**. The bounded
+shipping-only `--shipping-self-test` bypasses all audit alignment, reference
+and audit-FIR work while retaining raw internal and actual shipping-decimator
+boundaries. It passes on arm64 in **0.90 s** self-reported (**1.37 s** external
+wall) and in a genuine translated Rosetta process in **3.75 s** self-reported
+(**3.96 s** external wall), where it prints `x86_64` and
+`sysctl.proc_translated=1`. All ten public `Chorus::process` selector rows pass
+the input-support card, raw-boundary and decimator-boundary finite checks,
+hot/noise schedule ledgers, within-run same-family identity and both full mode
+cycles at all six grids. No audit reference, audit FIR, RK, continuous-oracle,
+quality-classification or mutation path runs or prints in this mode. This is
+shipping/ledger portability evidence, not a continuous-reference x86
+pass. Prescribed isolated packaging passes in **3.41 s**: VST3, AU and
+Standalone each contain both slices with minimum macOS 11.0 and pass strict and
+deep ad-hoc verification; their respective CDHash prefixes are `7a102a35…`,
+`21b94c10…` and `fb7f0da6…`. No audio was rendered; the untouched Step-12
+canonical manifest remains
+`f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`.
 
 ## Settled guardrails — do not reopen without contradictory primary evidence
 

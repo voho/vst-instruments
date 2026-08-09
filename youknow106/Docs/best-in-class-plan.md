@@ -3533,3 +3533,123 @@ evidence about a physical JUNO-106.
   not DSP, latency, CPU, audio or hardware evidence. The Step-12 audio tree is
   untouched; its canonical manifest remains
   `f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`.
+
+- [x] **14. Qualify the dynamic BBD boundary without changing it.** Step 13's
+  low-drive scratch was a research lead, not a sufficient admission test. This
+  step adds a separate JUCE-free `YouKnow106.BbdDynamicQualityContract` and
+  changes no `Source`/`Tests` file or production equation, selector, state,
+  latency, CPU path, preset or audio sample. The old deterministic-line fixture remains
+  intact: its low drive effectively linearizes the model's nonlinear transfer;
+  the new contract is deliberately nonlinear, modulated, stereo and stochastic.
+
+  The candidate calls public `Chorus::process` for both BBD lines. It gets the
+  actual 4×/2×/1× factor from an Engine prepared with the requested quality and
+  uses the shipping `downsamplePair` implementation and real q4 cascade. This
+  is the public chorus plus selector/decimator boundary, not the surrounding
+  full `Engine::process` clip/slew/output call site and not a qualification of
+  that call site's fixed 41-sample latency.
+
+  The independent reference integrates the triangle LFO and affine clock
+  continuously, solves fractional edges for two antiphase 128-cell lines,
+  applies the nonlinear write and transfer-pole recurrence, and advances the
+  complete six-state output support systems. RK4×4/RK4×8 convergence crosses a
+  checked 4,097-tap q16 host-boundary FIR with declared decimator delay and no
+  lag search. Its rounded 7,234/9,688/10,377/23,461.38 Hz constants are frozen
+  audit policy for the declared model boundary, not new hardware evidence.
+
+  The 0.72 s public run is I `[0,.30)`, Off `[.30,.36)`, II `[.36,.60)`, Off
+  `[.60,.72)`. Its analytic 997/5,213 Hz input-support card reads
+  **1.500000010 Vrms** against a 1.500000000 Vrms target. Whole L/R/M/S NRMS
+  must be ≤−40 dB, I and II ≤−50 dB, Off ≤−60 dB, RK convergence ≤−80 dB
+  and the exhaustive aligned-II residual <−60 dBc. Whole/I/Off/II use
+  `[.12,.64)`, `[.15,.30)`, `[.30,.36)` and `[.40,.60)`; the last window's
+  BH92 residual inspects every 20 Hz–20 kHz bin with no mask. Final native
+  results are:
+
+  | Actual selector | Worst whole L/R/M/S | I / Off / II | Residual | Convergence | Result |
+  | --- | ---: | --- | ---: | ---: | --- |
+  | HQ 44.1 q4 | −60.761 dB | −68.498 / −66.911 / −57.884 dB | −75.664 dBc | −204.699 dB | **PASS** |
+  | HQ 48 q4 | −60.497 dB | −62.899 / −70.748 / −57.590 dB | −76.378 dBc | −205.088 dB | **PASS** |
+  | HQ 88.2 q2 | −58.580 dB | −74.118 / −73.000 / −55.643 dB | −75.549 dBc | −223.287 dB | **PASS** |
+  | HQ 96 q2 | −59.249 dB | −74.753 / −74.063 / −56.313 dB | −76.229 dBc | −226.078 dB | **PASS** |
+  | HQ 176.4 q1 | −58.574 dB | −74.177 / −73.204 / −55.639 dB | −75.454 dBc | −245.943 dB | **PASS** |
+  | HQ 192 q1 | −59.246 dB | −74.809 / −74.023 / −56.311 dB | −76.123 dBc | −251.768 dB | **PASS** |
+  | HQ-off 44.1 q1 | −24.133 dB | −24.077 / −23.733 / −24.056 dB | −24.841 dBc | −204.699 dB | **REJECT** |
+  | HQ-off 48 q1 | −25.640 dB | −25.594 / −25.236 / −25.561 dB | −26.346 dBc | −205.088 dB | **REJECT** |
+  | HQ-off 88.2 q1 | −36.300 dB | −36.337 / −35.999 / −36.204 dB | −36.993 dBc | −223.287 dB | **REJECT** |
+  | HQ-off 96 q1 | −37.768 dB | −37.822 / −37.488 / −37.669 dB | −38.458 dBc | −226.078 dB | **REJECT** |
+
+  Stochastic waveform NRMS is informational because fractional edge timing
+  decorrelates individual samples. Normative noise gates are maximum level
+  error ≤0.10 dB, four-band Welch-power error ≤0.75 dB, correlation error
+  ≤0.02, absolute candidate correlation ≤0.05 and II/I-delta error ≤0.05 dB,
+  backed by exact RNG/edge/index/phase/LFO/mode/wet-gain ledgers and a bit-exact
+  held-noise relation to the finite production transfer state. The six HQ
+  maxima are 0.072 dB level, 0.561 dB band, 0.003
+  correlation error and 0.012 dB mode-delta error. All pass. HQ-off level
+  errors are **0.696/0.524/0.184/0.171 dB** and therefore all reject; its
+  44.1/48 kHz band errors **1.432/1.106 dB** reject too.
+  Welch uses 4,096-sample BH92 windows, 2,048-sample hop and four bands of
+  averaged unnormalized power over I `[.15,.30)` and II `[.40,.60)`.
+
+  Full mode-I and mode-II cycles pass exact structural ledgers at all six
+  unique internal grids. Same-family raw internal renders are identical before
+  decimation. The registered aggregate mutates captured output for disconnected,
+  collapsed/inverted stereo and correlated noise, and fences frozen source-local
+  controls for shared clocks, snapped edge input, linear transfer, permanently
+  connected Off loading and doubled RNG. Separate source-local review also
+  rejects disabled output correction. Thus every expected HQ-off
+  quality rejection still has PASS infrastructure rather than hiding a state,
+  selector or finite-value fault.
+
+  **Verdict: close the broader BBD numerical-audit gap, not the production
+  repair or hardware questions.** Six actual HQ selectors are PASS and four
+  actual HQ-off q1 selectors are REJECT under one unchanged truth table.
+  OQ-01/OQ-03/OQ-04/OQ-20 remain open. A future shipping HQ-off repair needs a
+  causal bandlimited local BBD boundary, preserved bucket/clock/RNG/transfer
+  and support state through rate/quality/block changes, real decimator and
+  full-engine alignment without lookahead or a change to the fixed 41-sample
+  report, and paired BBD-only/whole-engine CPU gates before selector admission.
+
+  The Step-14 inventory is **13 plugin-off / 14 plugin-on** contracts. The
+  targeted metric run passes in **44.12 s** (self-reported audit elapsed
+  **43.89 s**). A fresh warning-clean native arm64 Release/plugin-off tree then
+  passes **13/13 in 381.25 s**; the BBD dynamic, VCF dynamic and passive-hold
+  contracts take **43.46/37.30/0.62 s**. A fresh warning-clean ASan+UBSan tree
+  passes the existing static VCF/BBD seam and new dynamic contract **2/2 in
+  126.85 s** (40.80/86.05 s), under halt-on-error with leak detection disabled
+  and zero diagnostics. A fresh universal `arm64;x86_64` Release/plugin-on
+  all-target build passes in **114.17 s**, targeting macOS 11.0. Its warnings
+  are only nested-Make's inherited jobserver notice and the pre-existing
+  `YouKnow106Engine.h:431/787` `-Wfloat-equal` sites; the new audit is
+  warning-clean. The universal serial matrix passes **14/14 in 400.62 s**; its
+  BBD dynamic, VCF dynamic and PluginProcessor tests take
+  **44.86/38.11/11.93 s**. The explicit universal full audit passes on arm64
+  in **43.69 s**; its binary contains `x86_64 arm64`, both slices targeting
+  macOS 11.0. A genuine translated full-oracle launch printed
+  `uname -m=x86_64` and `sysctl.proc_translated=1` but was intentionally stopped
+  at **2666.66 s**, still in the first hot RK4×4 solve: x86's 80-bit
+  `long double` reference is software-emulated on arm64 and projects to a
+  multi-hour run. That incomplete launch is neither a PASS nor a quality
+  failure; no full x86 oracle pass is claimed or used as an admission gate. At
+  frozen audit-source SHA-256
+  `33a0818c00560a502fa774223030409a4310ffe0053df3e23ae5bc5aad348228`, a
+  warning-clean universal target rebuild passes in **3.15 s**. The bounded
+  shipping-only `--shipping-self-test` bypasses all audit alignment, reference
+  and audit-FIR work while retaining raw internal and actual shipping decimator
+  boundaries. It passes on arm64 in **0.90 s** self-reported (**1.37 s**
+  external wall) and in a genuine translated Rosetta process in **3.75 s**
+  self-reported (**3.96 s** external wall), where it prints `x86_64` and
+  `sysctl.proc_translated=1`. All ten public `Chorus::process` selector rows
+  pass the input-support card, raw-boundary and decimator-boundary finite
+  checks, hot/noise schedule ledgers, within-run same-family identity and both
+  full mode cycles at all six grids. No audit reference, audit FIR, RK,
+  continuous-oracle, quality-classification or mutation path runs or prints in
+  this mode. This is shipping/ledger portability evidence, not a continuous-reference
+  x86 pass. Prescribed isolated packaging passes in **3.41 s**: VST3, AU and
+  Standalone each contain both slices with minimum macOS 11.0 and pass strict
+  and deep ad-hoc verification; their respective CDHash prefixes are `7a102a35…`,
+  `21b94c10…` and `fb7f0da6…`.
+  No audio was rendered; the Step-12 canonical 23-file manifest remains
+  unchanged at
+  `f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`.

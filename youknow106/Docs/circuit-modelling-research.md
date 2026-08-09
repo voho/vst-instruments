@@ -100,7 +100,7 @@ provenance-pending lead, not Roland-authored evidence.
 | Chorus support and coupling filters | Service-note component values show two emitter-follower Sallen-Key low-pass sections before and after each BBD, an extra passive input pole, a wet-input coupling high-pass, an output tap-summing pole, and C28/C25 wet-output coupling into the mute/summer loads | Two Sallen-Key sections at 9.69 kHz/Q 0.549 and 10.38 kHz/Q 1.291 on each side; R122 10 kΩ with C52 2.2 nF gives the 7.23 kHz input pole; C44/C47 0.1 µF with R120/R114 100 kΩ gives the 15.9 Hz wet-input high-pass; `(3.3 kΩ || 47 kΩ) × 2.2 nF` gives a nominal 23.46 kHz tap-summing low-pass. The numerical output-step reconstruction is inserted before this tap pole, not in place of it. With TR11/TR12 open (wet muted), C28/C25 see 22 kΩ (R103/R81), nominally 7.234 Hz; conducting puts R72/R74 39 kΩ in parallel, nominally 11.315 Hz. Step 9 advances each full side as one continuous six-state system under its causal cubic drive; output is exact at every rate, input exact at ≥176.4 kHz and legacy TPT below | The component topology and two low-frequency output loads are **anchored** — the 2026-08-07 p. 15 read confirms every support-filter capacitor code on the 106's own board (820 pF/680 pF and 1.8 nF/270 pF on both sides of each BBD, 22 kΩ pairs throughout, 10 kΩ/2.2 nF input poles, 3.3 kΩ taps into 47 kΩ/2.2 nF) — at ideal-source boundaries. Exact continuous integration removes numerical section warping; it does not strengthen the physical evidence or make the provisional ideal-source boundary exact hardware. The polyBLEP is another separate product reconstruction. MN3009 output impedance and emitter-follower source impedance remain OQ-04; TR11/TR12 on-resistance, leakage and switching remain OQ-20. The 23.46 kHz pole is explicitly **provisional** because it assumes an ideal active MN3009 output; the 2026-08-07 solve derives Rs ≈ 3.70 kΩ for the summed output pair from the Gi–RL panel, spanning loaded-pole candidates 11.9/15.1/22.2 kHz depending on the unresolved per-leg topology — recorded against OQ-04, not silently retuned |
 | Oversampling | Standard practice for nonlinear audio | The complete voice, filter, amplifier and both delay lines run at 4x for host rates below 88.2 kHz, 2x below 176.4 kHz, and natively above, followed by a 95-tap Kaiser (β = 7.857, the standard 80 dB design) half-band per stage. The longer boundary is required by the expanded DCO matrix at 44.1 kHz; 63 taps leaked a legitimate 25.1 kHz sixth pulse harmonic back near 19.0 kHz. Filter/VCA audio coefficients update at every internal sample, so their wall-clock bandwidth does not change with HQ. A requested live rate change waits for voices and musical tails, then a block-size-independent 5 ms fade brackets rebuilding sample-grid histories. Converter/LFO/DCO phases, BBD buckets/clock/RNG state, four physical VCF capacitor voltages and C14/C12/C17/C20 coupling states survive. The VCF's most recent input/control endpoint is mapped through the post-thermal cap and older old-grid interpolation history is collapsed before it refills; exact or legacy chorus support state, BBD input history and output polyBLEP slots deliberately clear at zero gain | Genuine internal oversampling with filtered decimation, not a quality label. Raw numerical centres are 24 host samples at 1×, 35.5 at 2× and 41.25 at 4×. Integer pads of 17/6/0 make them 41/41.5/41.25, so every path reports 41 host samples and remains within 0.5 sample of that coordinate. The report is 0.930 ms at 44.1 kHz, 0.854 ms at 48 kHz, 0.427 ms at 96 kHz and 0.214 ms at 192 kHz. It covers numerical oscillator reconstruction/decimation delay only, not converter scan, envelope/VCA holds, host/device buffers or BBD wet delay. Without HQ, physical BGA can fold according to the modeled BBD/support chain while polyBLEP reduces the additional SGA; HQ moves that numerical boundary and the filtered decimator defines what reaches the host. Neither mechanism is described as deleting all physical BGA. VCF retiming preserves physical charge and exact support coordinates are physical voltages, but chorus-support preservation/reseeding has not been qualified. The transition fade and selective numerical/support reset are click-prevention product policies, not reference-unit behavior |
 | Oversampling work attribution | No analogue-hardware claim: this row characterizes only how the numerical product realizes the circuit | The shipping library is timed uninstrumented with a thread-CPU clock. A separate Engine/Chorus build enables compile-time semantic counters for scan, DCO, all passive fractional events, the retained VCF/resonance subset, fixed Merson integration, BBD/BLEP, exact/legacy support and decimation; it is not linked into the plug-in. Raw-float fingerprints must equal the shipping build, and equal-wall-time factor pairs fence both passive and VCF-subset counts | **Model-internal measurement, not a rate-change decision.** In the 48 kHz resonant 2,048-frame window, HQ/HQ-off record 160/160 passive peeks and commits; the retained VCF/resonance subset is 70/70, with 120 exact intervals, 840 nodes and 720 maps in both. Fixed Merson work remains 49,152/12,288 VCF steps, 98,304/24,576 halfsteps and 491,520/122,880 RHS/feedback evaluations. BBD line frames scale 16,384/4,096 while physical shifts remain 3,162 in both. Three Step-11→12 paired CPU meta-medians are 4×/1×: 0.677068→0.682068/0.171473→0.172614 idle, 0.697359→0.696475/0.179268→0.180543 plain, 0.847179→0.853898/0.228095→0.231158 resonant and 0.731646→0.737013/0.191505→0.192318 full-mixer. Worst current is 0.853898× and worst regression +1.342855%; both `<1×` and `+5%` gates pass. VCF/BBD classifications, laws and selectors are unchanged; values remain machine/patch specific and no split rate is admitted |
-| Common-host numerical-quality qualification | No analogue-hardware claim: independent analytic/RK/closed-form references judge only the fidelity with which the product realizes its declared equations | `YouKnow106DcoScanQualityAudit` compares the isolated pre-VCF DCO spectrum, normalized 23-write schedule and DCO/PWM/SUB hold laws with analytic references. `YouKnow106VcfBbdQualityAudit` compares the nominal Character-0 input-to-fourth-pole cascade with a factor-independent fixed-16× RK4 reference and one deterministic BBD line with a closed-form component/128-edge/loss-pole/ZOH-phasor reference. `YouKnow106VcfDynamicQualityAudit` independently evaluates the exact 23-write trajectory, fractional VCF/shared-resonance 522 µs holds, all six physical cards and cold/warm Unit Character profiles at actual product selectors. It also probes the real scheduler's pure peek, payload latch, pass-wrap and once-only commit semantics, then replays the shipping `renderVoice` path both connected and under a rejected `nullptr` trajectory mutation. VCF/BBD references cross an independent 4,097-tap FIR to the same host boundary; candidates are never treated as truth | **Numerical qualification only; no hardware or split-rate claim.** DCO and the dated common-host VCF/BBD matrices retain their classifications. The dated Step-11 event-aware HQ matrix covers 19 physical/24 logical profiles and clears the unchanged −40 dB gate from 8 kHz/4× through 768 kHz/1×; its late/ceil and early/floor snap mutations reject at −33.245 and −32.007 dB. Step 13 separately qualifies actual HQ-off q1: its five moving-control rows pass, but static nominal hot rows reject at every standard 44.1/48/88.2/96 kHz host, so the combined rule admits none. Step 9 BBD q4 still passes at both common hosts and every actual HQ selector; lower rates remain as recorded. No physical constant, selector, split, or fixed 41-sample latency changed |
+| Common-host numerical-quality qualification | No analogue-hardware claim: independent analytic/RK/closed-form references judge only the fidelity with which the product realizes its declared equations | `YouKnow106DcoScanQualityAudit` compares the isolated pre-VCF DCO spectrum, normalized 23-write schedule and DCO/PWM/SUB hold laws with analytic references. `YouKnow106VcfBbdQualityAudit` compares the nominal Character-0 input-to-fourth-pole cascade with a factor-independent fixed-16× RK4 reference and one low-drive deterministic BBD line with a closed-form component/128-edge/loss-pole/ZOH-phasor reference; that regime effectively linearizes, rather than code-linearizing, the nonlinear transfer. `YouKnow106VcfDynamicQualityAudit` independently evaluates the exact 23-write trajectory, fractional VCF/shared-resonance 522 µs holds, all six physical cards and cold/warm Unit Character profiles at actual product selectors. It also probes the real scheduler's pure peek, payload latch, pass-wrap and once-only commit semantics, then replays the shipping `renderVoice` path both connected and under a rejected `nullptr` trajectory mutation. `YouKnow106BbdDynamicQualityAudit` calls public `Chorus::process` for both lines, uses the real Engine selector and shipping q2/q4 `downsamplePair` cascade, and compares nonlinear/modulated/stereo/noise renders plus exact state ledgers with an independent continuous-edge reference. VCF/BBD references cross independent checked 4,097-tap FIRs to the same host boundary; candidates are never treated as truth | **Numerical qualification only; no hardware or split-rate claim.** DCO and the dated common-host VCF/BBD matrices retain their classifications. The dated Step-11 event-aware HQ matrix covers 19 physical/24 logical profiles and clears the unchanged −40 dB gate from 8 kHz/4× through 768 kHz/1×; its late/ceil and early/floor snap mutations reject at −33.245 and −32.007 dB. Step 13 separately qualifies actual HQ-off q1: its five moving-control rows pass, but static nominal hot rows reject at every standard 44.1/48/88.2/96 kHz host, so the combined rule admits none. Step 14's broader BBD matrix passes all six actual HQ rows and rejects every actual HQ-off q1 row while retaining PASS infrastructure. Neither Step 13 nor Step 14 changes a physical constant, selector, split, shipping state or fixed 41-sample latency |
 | Output stage | Service-note signal order: voice VCAs, 0.1-per-voice summer, C14, shared HPF, C12/common VCA LEVEL and chorus/final summer IC6, identified on p. 15 as TA75558S. Each IC6 output then crosses C17/C20 10 µF and R54/R57 1.5 kΩ into one 10 kΩ track of the dual VR1 VOLUME control, marked `10KB×2`. Each wiper sees the complete 41.3 kΩ selector ladder in parallel with the 101 kΩ IC7/headphone input, or 29.313 kΩ, before any external load | C17/C20, R54/R57 and the nominal-linear tracks run as one position-dependent host-rate network. For shaft position `x`, `Z=(10kx)||29.313k` and `Vw/VIC6=Z/[1.5k+10k(1−x)+Z]`; gain is 0.39655 at half and 0.83252 at full (normalized midpoint 0.4763), while the same resistance moves the coupling corner. A 5 ms shaft glide prevents automation zippering. The fixed pre-jack High-tap product boundary then applies `digital=analogue*10^(-18/20)/Vref_rms`, permits floating samples beyond `+/-1`, and adds no limiter | IC6 identity, placement, named parts, fixed internal loading and linear transfer are **anchored/derived**. Panasonic's later JIS/EIAJ table maps plain B to the nominal-linear 1B resistance law, replacing the unsupported squared taper. A TA75558S identity and rail labels do not establish its loaded in-circuit swing. Real dual-gang tracking/tolerance, selected-tap loading, R64/R65, C21/C22, jack normaling, one-versus-two-plug transfer, external loads, loaded IC6 clipping (OQ-05), absolute `Vref_rms` and driven headphone output remain open |
 | Velocity and MIDI modulation | The keyboard is not velocity sensitive and Note On uses a fixed value; the owner's MIDI implementation chart recognizes CC 1 Modulation and CC 64 Hold | Velocity is an explicit extension defaulting to zero. When turned up it scales both the amplifier control and the ENV amount into the VCF by the same `1 − velocityDepth·(1 − velocity)` gain, so it rides the two paths the panel already has rather than a curve of its own. CC 1 drives the bender lever's forward/LFO modulation axis and is scaled by the panel BENDER LFO depth, matching the documented MIDI path | Velocity response is a plug-in extension inert at zero; CC 1/64 reception is **anchored**, not an extension |
 
@@ -868,8 +868,10 @@ No hardware was measured. Summary of what moved:
   pass. Step 9 then removes the remaining HQ support-grid warping with one
   combined exact continuous transition per side. The bounded four-case
   low-drive fixture now passes both common-host q4 cells and all six shipping HQ
-  selector paths; lower factors remain absolute REJECT. This does not qualify a
-  nonlinear whole-line domain, and OQ-01/OQ-03/OQ-04/OQ-20 remain open.
+  selector paths; lower factors remain absolute REJECT. That Step-9 fixture
+  alone does not qualify a nonlinear whole-line domain. Step 14 now adds a
+  separate public-path nonlinear/modulated/stereo/noise audit, while
+  OQ-01/OQ-03/OQ-04/OQ-20 remain open.
 - **OQ-02's nominal law is now derived.** A direct p. 15 schematic read identifies
   R30/C7/R32/R31/R165. Combined with p. 8's converter range, the ROM-resolved
   `d=b<<5` code and NEC's −5.9 mV/dB typical constant, it replaces the former
@@ -1404,6 +1406,159 @@ No audio was rendered. The canonical corpus remains Step 12 with manifest
 `f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`.
 No latency, CPU, audible-difference or original-hardware fact follows from this
 qualification, and no OQ closes.
+
+## Dynamic BBD boundary qualification — 2026-08-09
+
+Step 14 is **audit-only numerical evidence**. It adds one JUCE-free target and
+contract; it changes no `Source`/`Tests` file, shipping DSP, BBD equation,
+selector, state, latency, CPU path, preset or audio. The candidate calls public
+`Chorus::process` and therefore covers both production BBD lines and their
+public dry/wet result. It obtains the actual q4/q2/q1 choice from the Engine and
+uses the real shipping `downsamplePair` implementation and q4 cascade. It does
+not drive or qualify the surrounding full `Engine::process` clip/slew/output
+call site or that call site's fixed 41-host-sample latency.
+
+The reference is independent in realization. It integrates the declared
+triangle LFO and each affine delay segment, analytically inverts the clock
+integral to place every fractional edge, and advances two antiphase 128-cell
+lines with the declared nonlinear write, per-edge transfer pole and independent
+xorshift states. Each output's complete six-state support system is integrated
+across clock and mute-load events; RK4×4/RK4×8 convergence then crosses a
+checked 4,097-tap q16 FIR with explicit shipping-decimator delay and no lag
+search. The rounded reference corners **7,234.0, 9,688.0, 10,377.0 and
+23,461.38 Hz are frozen audit policy reproducing the declared model boundary,
+not measured component values or new hardware facts**.
+
+The 0.72 s public-mode schedule is I `[0,.30)`, Off `[.30,.36)`, II
+`[.36,.60)` and Off `[.60,.72)`. Off changes wet loading and gain while the
+oscillator, lines and RNG continue. The analytic two-tone card is
+`0.8157048·sin(2π·997t) + 0.1464086·sin(2π·5213t + .37)` and reaches
+**1.500000010 Vrms** at the model input-support boundary against a
+1.500000000 Vrms target. Whole-window L/R/M/S NRMS must be ≤−40 dB; I and II
+subwindows ≤−50 dB; the first Off transition ≤−60 dB; exhaustive aligned-II
+residual <−60 dBc; and RK convergence ≤−80 dB. Whole/I/Off/II compare
+`[.12,.64)`, `[.15,.30)`, `[.30,.36)` and `[.40,.60)`. The aligned-II BH92
+residual uses `8192·host/family-base` samples, where the family base is 44.1 or
+48 kHz, and inspects every 20 Hz–20 kHz bin without masking, taking the worst
+L/R/M/S coordinate against its own largest reference bin. The final native
+matrix is:
+
+| Actual selector | Worst L/R/M/S (dB) | I / Off / II (dB) | Residual (dBc) | Convergence (dB) | Classification |
+| --- | ---: | --- | ---: | ---: | --- |
+| HQ 44.1 kHz / q4 | −60.761 | −68.498 / −66.911 / −57.884 | −75.664 | −204.699 | **PASS** |
+| HQ 48 kHz / q4 | −60.497 | −62.899 / −70.748 / −57.590 | −76.378 | −205.088 | **PASS** |
+| HQ 88.2 kHz / q2 | −58.580 | −74.118 / −73.000 / −55.643 | −75.549 | −223.287 | **PASS** |
+| HQ 96 kHz / q2 | −59.249 | −74.753 / −74.063 / −56.313 | −76.229 | −226.078 | **PASS** |
+| HQ 176.4 kHz / q1 | −58.574 | −74.177 / −73.204 / −55.639 | −75.454 | −245.943 | **PASS** |
+| HQ 192 kHz / q1 | −59.246 | −74.809 / −74.023 / −56.311 | −76.123 | −251.768 | **PASS** |
+| HQ-off 44.1 kHz / q1 | −24.133 | −24.077 / −23.733 / −24.056 | −24.841 | −204.699 | **REJECT** |
+| HQ-off 48 kHz / q1 | −25.640 | −25.594 / −25.236 / −25.561 | −26.346 | −205.088 | **REJECT** |
+| HQ-off 88.2 kHz / q1 | −36.300 | −36.337 / −35.999 / −36.204 | −36.993 | −223.287 | **REJECT** |
+| HQ-off 96 kHz / q1 | −37.768 | −37.822 / −37.488 / −37.669 | −38.458 | −226.078 | **REJECT** |
+
+The table reports the worst of the separately gated L/R/M/S values; the full
+four-coordinate rows are preserved in the comparative assessment. Reference
+filter response, metadata and alignment pass at all six host rates. Every HQ
+row clears the hot gates; every HQ-off row fails them even though reference
+convergence remains far below its threshold.
+
+Noise uses zero input and production noise scale 1. Sample-aligned waveform
+NRMS is informational because a fractional edge-time difference decorrelates
+individual stochastic samples. Normative comparisons are maximum plain-RMS
+level error ≤0.10 dB, four-band `[20,200)`, `[200,2k)`, `[2k,10k)`,
+`[10k,20k)` Welch-power error ≤0.75 dB, correlation error ≤0.02, absolute
+candidate correlation ≤0.05 and II/I-delta error ≤0.05 dB. The final printed
+`level/band/correlation-error/mode-delta-error` rows are:
+
+Welch uses 4,096-sample BH92 windows, a 2,048-sample hop and averaged
+unnormalized power in the I `[.15,.30)` and II `[.40,.60)` windows.
+
+| Actual selector pair | Noise metrics for the two rows |
+| --- | --- |
+| HQ 44.1 / 48 | 0.072/0.561/0.003/0.006; 0.071/0.237/0.003/0.012 |
+| HQ 88.2 / 96 | 0.072/0.412/0.003/0.006; 0.071/0.210/0.003/0.012 |
+| HQ 176.4 / 192 | 0.072/0.248/0.003/0.006; 0.071/0.135/0.003/0.012 |
+| HQ-off 44.1 / 48 | 0.696/1.432/0.018/0.002; 0.524/1.106/0.013/0.043 |
+| HQ-off 88.2 / 96 | 0.184/0.328/0.008/0.001; 0.171/0.319/0.008/0.016 |
+
+The six HQ rows clear every stochastic gate. All four HQ-off rows fail level;
+44.1/48 kHz also fail band power. The contract simultaneously matches every
+production frame's edge counts, indices, clock/LFO phases, RNG states,
+mode/rate/centre/sweep, wet gain and priming state. The transfer state must stay
+finite; at each edge the held value's noise contribution is bit-exact relative
+to that production transfer state. A separate
+complete mode-I and mode-II traversal covers both triangle corners and wrap on
+each unique production grid:
+
+| Grid | I frames / edges A:B | II frames / edges A:B |
+| ---: | ---: | ---: |
+| 44.1 kHz | 79,705 / 70,320:70,320 | 49,095 / 43,314:43,314 |
+| 48 kHz | 86,754 / 70,321:70,320 | 53,437 / 43,315:43,314 |
+| 88.2 kHz | 159,410 / 70,320:70,320 | 98,190 / 43,314:43,314 |
+| 96 kHz | 173,507 / 70,320:70,320 | 106,874 / 43,315:43,314 |
+| 176.4 kHz | 318,819 / 70,320:70,319 | 196,380 / 43,314:43,314 |
+| 192 kHz | 347,013 / 70,319:70,319 | 213,747 / 43,314:43,314 |
+
+All ledgers pass. Raw same-family internal renders are identical before their
+different decimation boundaries. The registered aggregate mutates captured
+output for a disconnected, collapsed/inverted stereo path and correlated noise,
+and fences frozen source-local controls for a common line clock, linear
+transfer, edge-time snap, permanently connected Off load and doubled RNG.
+Reviewed source-local runs also reject disabled output correction.
+Expected quality rejections still require exact selector, finite state and
+structural PASS, preventing a broken HQ-off path from satisfying the truth
+table accidentally.
+
+The Step-14 inventory is **13 plugin-off / 14 plugin-on** contracts. The fresh
+warning-clean native arm64 Release/plugin-off tree registers **13 JUCE-free
+contracts and passes 13/13 in 381.25 s**. Within that suite the new
+BBD dynamic contract takes **43.46 s**, the VCF dynamic contract **37.30 s**
+and the passive-hold contract **0.62 s**. A fresh warning-clean ASan+UBSan build
+passes the existing static VCF/BBD seam and new dynamic BBD contract **2/2 in
+126.85 s** (40.80/86.05 s), with `ASAN_OPTIONS=halt_on_error=1:detect_leaks=0`,
+`UBSAN_OPTIONS=halt_on_error=1` and zero diagnostics. A fresh universal
+`arm64;x86_64` Release/plugin-on all-target build passes in **114.17 s**,
+targeting macOS 11.0. Only nested-Make's inherited jobserver notice and the
+pre-existing `YouKnow106Engine.h:431/787` `-Wfloat-equal` warnings remain; the
+new audit is warning-clean. The universal serial matrix passes **14/14 in
+400.62 s**; its BBD dynamic, VCF dynamic and PluginProcessor tests take
+**44.86/38.11/11.93 s**. The explicit universal full audit passes on arm64 in
+**43.69 s**; its binary contains `x86_64 arm64` and both slices target macOS
+11.0. A genuine translated full-oracle launch printed `uname -m=x86_64` and
+`sysctl.proc_translated=1` but was intentionally stopped at **2666.66 s**,
+still in the first hot RK4×4 solve: x86's 80-bit `long double` reference
+arithmetic is software-emulated on arm64 and projects to a multi-hour run. That
+incomplete launch is neither a PASS nor a quality failure; no full x86 audit is
+claimed, and the continuous reference is not the Rosetta admission gate. At
+frozen audit-source SHA-256
+`33a0818c00560a502fa774223030409a4310ffe0053df3e23ae5bc5aad348228`, a
+warning-clean universal target rebuild passes in **3.15 s**. The bounded
+shipping-only `--shipping-self-test` bypasses all audit alignment, reference
+and audit-FIR work while retaining raw internal and actual shipping-decimator
+boundaries. It passes on arm64 in **0.90 s** self-reported (**1.37 s** external
+wall) and in a genuine translated Rosetta process in **3.75 s** self-reported
+(**3.96 s** external wall), where it prints `x86_64` and
+`sysctl.proc_translated=1`. All ten public `Chorus::process` selector rows pass
+the input-support card, raw-boundary and decimator-boundary finite checks,
+hot/noise schedule ledgers, within-run same-family identity and both full mode
+cycles at all six grids. No audit reference, audit FIR, RK, continuous-oracle,
+quality-classification or mutation path runs or prints in this mode. This is
+shipping/ledger portability
+evidence, not a continuous-reference x86 pass. Prescribed isolated packaging
+passes in **3.41 s**: VST3, AU and
+Standalone each contain both slices with minimum macOS 11.0 and pass strict and
+deep ad-hoc verification; their respective CDHash prefixes are `7a102a35…`,
+`21b94c10…` and `fb7f0da6…`.
+
+This closes a numerical evidence gap, not a hardware question or production
+repair. OQ-01/OQ-03/OQ-04/OQ-20 remain open. A future HQ-off BBD candidate
+needs a causal bandlimited local boundary that clears these same-host gates;
+preserves bucket, phase, RNG, held-transfer and support state through quality,
+rate and block changes; proves local-decimator and surrounding full-engine
+alignment without lookahead or changing the fixed 41-sample report; and passes
+paired BBD-only and whole-engine CPU gates before a selector change. No audio
+was rendered. The canonical Step-12 23-file manifest remains unchanged at
+`f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`.
 
 ## Sources
 
