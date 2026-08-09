@@ -94,6 +94,7 @@ provenance-pending lead, not Roland-authored evidence.
 | Chorus noise, mode dependence | Same-chain real-JUNO-106 captures with Panasonic and Xvive MN3009 populations report an approximately 3.95 dB higher mode-II output floor; the printed true-peak pairs yield 3.96 and 3.95 dB. Their absolute dBFS levels are not portable, but the unchanged-chain difference cancels gain | The shipped default leaves mode I on the part anchor and multiplies mode II's edge-held line contribution by `10^(3.95/20) = 1.575796`. This empirical placement preserves the existing modeled spectrum and stereo statistics. The internal `useChorusRateNoiseHypothesis` profile substitutes, rather than compounds, a gain from the 1.6234799 mode-rate ratio: 4.2089 dB. The optional common/hum/spur layers stay on the plain Chorus Noise master | **Relative output calibration, moderate confidence; statistic, physical insertion point and cause open.** Treating the source's true-peak difference as a broadband RMS-amplitude factor is an approximation. The evidence does not show that the MN3009 part itself gets noisier or that rate proportionality causes it. OQ-03 still needs calibrated absolute PSD, bandwidth/weighting, stereo correlation and spurs; a third artificial rate on the same chain would distinguish the retained rate-law hypothesis from mode-switch-network noise |
 | Cascade elementary functions | Not a circuit claim. The implicit solve evaluates `tanh` for each differential pair and `ln cosh` for each path average, tens of times per stage per internal sample | Both come from one shared exponential: with `e = exp(-2|x|)`, `tanh x = sign(x)(1-e)/(1+e)` and `ln cosh x = |x| + ln(1+e) - ln 2`, and `ln(1+e)` on `[0,1]` uses `2 atanh(e/(2+e))` with a double-precision core. The path-start antiderivative is evaluated once per stage per call rather than once per Newton iteration | **A numerical product mechanism with no hardware counterpart.** It computes the same functions the model has always used; `testCascadeKernelsMatchTheStandardLibrary` fences agreement with `std::tanh` and `std::log1p` at one float ULP, and against the `std::log1p` form it replaced. No constant, level, corner or law moves |
 | Cascade convergence test | Not a circuit claim | The Newton step test is `1.0e-6 * (1 + max\|V\|)` rather than an absolute `1.0e-7`, which single precision cannot resolve on volt-scale capacitor states. The eight-iteration cap is unchanged | **A numerical product mechanism.** The former threshold was unsatisfiable wherever the filter was working — 7.99 iterations of 8 at resonance 0.95 — so the loop stopped at its cap rather than at convergence; its remaining step there measured a mean of 5.1e-5 V on states averaging 1.7 V. Because only the *stopping* rule changed and not the cap, the worst-case residual cannot grow. `testCascadeSolveStopsWhereItConverges` bounds the residual of the four stage equations, computed independently by quadrature on `std::tanh`, at 2e-4 V |
+| Fixed-solve-count cascade feasibility | Danish, Bilbao and Ducceschi's DAFx-21 paper derives a first-order, one-linear-solve port-Hamiltonian update for its Korg35 and Moog equations, with a zero-input stability proof over stated static parameter ranges. It does not derive this IR3109 law; the Moog section explicitly leaves time-varying resonance open and does not address aliasing or BIBO stability | A research-only one-step quasi-Newton candidate keeps the shipping path-average equations, nonlinear return, stage scales/offsets, temperature-conditioned headroom and Early effect, but performs exactly one system evaluation plus two bidiagonal solves. The circuit suite compares it with 16×/64× RK4, the shipping solve and the residual/retime/oscillation/fold-back classes, then drives all six VCF-card slots through the normalized 23-write sequence at both engine bounds and every standard 44.1–192 kHz internal grid | **Rejected candidate; not shipping DSP and not an inherited proof.** Static tests are strong (0.01368 dB worst small-signal error, −46.03 dB hot RK64 error, 1.84e-5 residual, −114.88 dB static-mechanism parity and −66.41 dBc fold-back), but nominal reachable scanned-control parity fails the −40 dB gate on every tested grid: worst +21.31 dB at 8 kHz/card 1, +18.50 dB at 44.1 kHz/card 0 and still +5.01 dB at 192 kHz. The +4.80 dB `g=30` result remains only an out-of-domain boundedness diagnostic. Counters prove fixed evaluation/solve counts, not invariant CPU time, a Juno Hamiltonian or a speedup. The shipping capped Newton solve remains unchanged |
 | Chorus support and coupling filters | Service-note component values show two emitter-follower Sallen-Key low-pass sections before and after each BBD, an extra passive input pole, a wet-input coupling high-pass, an output tap-summing pole, and C28/C25 wet-output coupling into the mute/summer loads | Two Sallen-Key sections at 9.69 kHz/Q 0.549 and 10.38 kHz/Q 1.291 on each side; R122 10 kΩ with C52 2.2 nF gives the 7.23 kHz input pole; C44/C47 0.1 µF with R120/R114 100 kΩ gives the 15.9 Hz wet-input high-pass; `(3.3 kΩ || 47 kΩ) × 2.2 nF` gives a nominal 23.46 kHz tap-summing low-pass. The numerical output-step reconstruction is inserted before this tap pole, not in place of it. With TR11/TR12 open (wet muted), C28/C25 see 22 kΩ (R103/R81), nominally 7.234 Hz; conducting puts R72/R74 39 kΩ in parallel, nominally 11.315 Hz | The component topology and two low-frequency output loads are **anchored** — the 2026-08-07 p. 15 read confirms every support-filter capacitor code on the 106's own board (820 pF/680 pF and 1.8 nF/270 pF on both sides of each BBD, 22 kΩ pairs throughout, 10 kΩ/2.2 nF input poles, 3.3 kΩ taps into 47 kΩ/2.2 nF) — at ideal-source boundaries. The polyBLEP is a separate product reconstruction and supplies no evidence for these physical filters. MN3009 output impedance and emitter-follower source impedance remain OQ-04; TR11/TR12 on-resistance, leakage and switching remain OQ-20. The 23.46 kHz pole is explicitly **provisional** because it assumes an ideal active MN3009 output; the 2026-08-07 solve derives Rs ≈ 3.70 kΩ for the summed output pair from the Gi–RL panel, spanning loaded-pole candidates 11.9/15.1/22.2 kHz depending on the unresolved per-leg topology — recorded against OQ-04, not silently retuned |
 | Oversampling | Standard practice for nonlinear audio | The complete voice, filter, amplifier and both delay lines run at 4x for host rates below 88.2 kHz, 2x below 176.4 kHz, and natively above, followed by a 63-tap Kaiser (β = 7.857, the standard 80 dB design) half-band per stage. Filter/VCA audio coefficients update at every internal sample, so their wall-clock bandwidth does not change with HQ. A requested live rate change waits for voices and musical tails, then a block-size-independent 5 ms fade brackets rebuilding sample-grid histories. Converter/LFO/DCO phases, BBD buckets/clock/RNG state and C14/C12/C17/C20 coupling states survive; OTA carries are retimed, while chorus support-filter carries and the BBD's grid-specific polyBLEP correction slots clear at zero gain | Genuine internal oversampling with filtered decimation, not a quality label. The engine's deepest nominal centre is 24.25 host samples (4×); 2× is 17.5 plus seven integer pad samples and 1× is four plus 20, so every path reports the same integer 24 samples through the processor. That is 0.500 ms at 48 kHz, 0.250 ms at 96 kHz and 0.125 ms at 192 kHz. It covers numerical oscillator reconstruction/decimation delay only, not converter scan, envelope/VCA holds, host/device buffers or BBD wet delay. Without HQ, physical BGA can fold according to the modeled BBD/support chain while polyBLEP reduces the additional SGA; HQ moves that numerical boundary and the filtered decimator defines what reaches the host. Neither mechanism is described as deleting all physical BGA. The transition fade and selective numerical/support reset are click-prevention product policies, not reference-unit behavior |
 | Output stage | Service-note signal order: voice VCAs, 0.1-per-voice summer, C14, shared HPF, C12/common VCA LEVEL and chorus/final summer IC6, identified on p. 15 as TA75558S. Each IC6 output then crosses C17/C20 10 µF and R54/R57 1.5 kΩ into one 10 kΩ track of the dual VR1 VOLUME control, marked `10KB×2`. Each wiper sees the complete 41.3 kΩ selector ladder in parallel with the 101 kΩ IC7/headphone input, or 29.313 kΩ, before any external load | C17/C20, R54/R57 and the nominal-linear tracks run as one position-dependent host-rate network. For shaft position `x`, `Z=(10kx)||29.313k` and `Vw/VIC6=Z/[1.5k+10k(1−x)+Z]`; gain is 0.39655 at half and 0.83252 at full (normalized midpoint 0.4763), while the same resistance moves the coupling corner. A 5 ms shaft glide prevents automation zippering. The fixed pre-jack High-tap product boundary then applies `digital=analogue*10^(-18/20)/Vref_rms`, permits floating samples beyond `+/-1`, and adds no limiter | IC6 identity, placement, named parts, fixed internal loading and linear transfer are **anchored/derived**. Panasonic's later JIS/EIAJ table maps plain B to the nominal-linear 1B resistance law, replacing the unsupported squared taper. A TA75558S identity and rail labels do not establish its loaded in-circuit swing. Real dual-gang tracking/tolerance, selected-tap loading, R64/R65, C21/C22, jack normaling, one-versus-two-plug transfer, external loads, loaded IC6 clipping (OQ-05), absolute `Vref_rms` and driven headphone output remain open |
@@ -746,6 +747,96 @@ No hardware was measured. Summary of what moved:
 Third-party forum and open-source measurements cited there are **not** promoted to
 anchored, and the JUNO-6 chorus and ADSR data referenced remain labelled comparative
 evidence under the rule above.
+
+## Fixed-solve-count VCF solver feasibility — 2026-08-09
+
+The primary source is Danish, Bilbao and Ducceschi,
+[“Applications of Port Hamiltonian Methods to Non-Iterative Stable Simulations
+of the Korg35 and Moog 4-Pole VCF”](https://www.dafx.de/paper-archive/2021/proceedings/papers/DAFx20in21_paper_37.pdf),
+DAFx20in21, pp. 33–40
+([DOI 10.23919/DAFx51585.2021.9768301](https://doi.org/10.23919/DAFx51585.2021.9768301)).
+For a separable positive storage function, the paper changes coordinates so
+the energy becomes quadratic and advances that transformed state with one
+state-dependent linear solve. That removes a nonlinear convergence loop. The
+result proved there is zero-input stability for the specifically derived
+Korg35 and Moog systems over their admitted static parameters. The Moog proof
+depends on resonance through its storage function; the authors explicitly say
+their argument does not extend to time-varying resonance. They do not establish
+BIBO/input stability, antialiasing behavior, or a bounded self-oscillation proof
+outside the proved range.
+
+That topology boundary matters here. The paper's Moog stages use separate
+`-tanh(x_i) + tanh(x_(i-1))` terms. This model instead solves one `tanh` of the
+stage difference, averaged from the carried previous drive to the new drive,
+and closes it through `Hfb*tanh(V4/Hfb)`. Each card can also carry distinct
+`gScale` and input offsets; headroom moves with modeled temperature; Early
+effect makes transconductance state-dependent; cutoff and resonance can change
+every sample; and the shipped maximum loop gain is 4.504. A direct transplant
+therefore has neither the same equations nor the paper's Hamiltonian, inverse
+state map, dissipativity range or retime rule. Calling it a free Lyapunov
+guarantee would be false, and calling it only a cost change would ignore its
+first-order response and unanalysed aliasing.
+
+The feasibility code in `Tools/VcfSolverCandidate.h` asks a narrower, useful
+question: if all of those production mechanisms stay in the equations, is one
+frozen-modulation quasi-Newton evaluation from the preceding state enough? It
+uses the same lower-bidiagonal-plus-corner approximation as one shipping
+iteration, once, with no tolerance or retry. The Early-effect multiplier is
+reevaluated but its voltage derivative is frozen, so “exact tangent” would be
+an overstatement. `testFixedSolveCountCascadeCandidateBakeoff` records the result:
+
+| Check | Result |
+| --- | ---: |
+| 12 small-signal cells, worst gain error vs 16× RK4 | 0.01368 dB |
+| Four hot cells, worst shipping error vs explicit 64× RK4 | −44.60 dB RMS at `k=4.4` |
+| Four hot cells, worst candidate error vs explicit 64× RK4 | −46.03 dB RMS at `k=4.4` |
+| Worst static-hot candidate residual divided by `1 + max|V|` | 1.84e-5 |
+| Static stage-scale/offset/headroom/Early parity vs shipping | −114.88 dB RMS |
+| Reachable scanned cutoff/resonance parity vs shipping | **+21.31 dB RMS worst case; fails the −40 dB gate** |
+| Maximum `g` reached through the production mapping/cap | 6.31375 |
+| Out-of-domain `g=30`/instantaneous-resonance/audio-rate-headroom diagnostic | +4.80 dB RMS; finite, no recovery |
+| Tail peak at loop gain 3.6 / 4.3 / 8.0 | 3.08e-7 / 1.269 / 6.369 V |
+| Hot C6/fc16k/k3.8 worst folded line | −66.41 dBc |
+| Fixed solve counts | one system evaluation + two bidiagonal solves per sample |
+
+The candidate passes the static reference, residual, retime, oscillation,
+boundedness and −60 dBc fold-back gates. The decisive reachable-control case
+covers all six physical VCF-card ordinals on the normalized 23-write pass at
+the 8/768 kHz engine bounds and 44.1/48/88.2/96/176.4/192 kHz standard grids.
+After four excluded low-setting settling passes, one coherent panel snapshot
+alternates between endpoints; resonance and each VCF hold acquire it only at
+their own production slot. The fixture applies the 522 µs slews,
+14-to-12-bit flooring, cutoff mapping/cap and resonance input compensation. The
+decisive matrix uses Unit Character zero: unity stage scales, zero offsets and
+ladder carry, nominal headroom and inert Early effect. The separate static case
+covers those mechanisms at nonzero values without combining unreachable
+extrema. Its declared base drive is a 2.4 V sine before compensation (the 6 V
+mixer coordinate through the model's 0.4 input attenuation):
+
+| Internal grid | Worst card | Relative RMS error | Maximum reachable `g` |
+| ---: | ---: | ---: | ---: |
+| 8 kHz (engine lower bound) | 1 | +21.31 dB | 6.31375 |
+| 44.1 kHz | 0 | +18.50 dB | 6.31375 |
+| 48 kHz | 0 | +18.55 dB | 6.31375 |
+| 88.2 kHz | 3 | +18.47 dB | 6.31375 |
+| 96 kHz | 3 | +18.00 dB | 6.31375 |
+| 176.4 kHz | 0 | +6.76 dB | 1.23580 |
+| 192 kHz | 0 | +5.01 dB | 1.06769 |
+| 768 kHz (engine upper bound) | 0 | −9.10 dB | 0.207431 |
+
+The earlier −97.56 dB figure is superseded: that incomplete fixture exercised
+only 192 kHz and placed cutoff/resonance writes at invented phases 0/0.5. The
+production-ordinal matrix fails on every grid, so this is a **circuit-level
+rejection**, not a promotion candidate. The +4.80 dB direct-solver torture
+result remains separate because its `g=30` jumps, instantaneous resonance and
+audio-rate headroom saw cannot be generated by the plug-in; it proves only
+finite behavior outside the admitted domain.
+
+Operation counters establish fixed evaluation and linear-solve counts; short
+and long path-average branches still differ in elementary-function work. No
+wall-clock speedup or hardware property is claimed, OQ-09 remains open, and the
+shipping capped Newton solver is unchanged. Any later bounded-work design must
+clear this same engine-bound/standard-grid six-card matrix before integration.
 
 ## Sources
 

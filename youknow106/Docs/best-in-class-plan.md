@@ -145,9 +145,9 @@ commit.
   instead of once per iteration.
   *Verified by:* a new circuit-suite fixture asserting the two kernels agree
   with `std::tanh` and `std::log1p` to within one float ULP across the whole
-  range the cascade drives them over, plus the unchanged service anchors
-  (4.83 Vpp at 248.0 Hz), the Runge-Kutta reference solve and the fold-back
-  fence.
+  range the cascade drives them over, plus the service-anchor result now
+  published as 4.8009 Vpp with 247.90 Hz predicted, the Runge-Kutta reference
+  solve and the fold-back fence.
 
 - [x] **3. Scale the cascade's convergence test to the volts it measures.**
   *Closes:* the wasted-iteration finding of §2.2. The absolute `1.0e-7` step
@@ -228,8 +228,8 @@ default position do not. The measured difference from the pre-pass engine is
 −102 dB RMS relative to signal on a plain six-voice patch and −95 dB on a full
 chorus patch. On a self-oscillating patch it is −20 dB, which is what a limit
 cycle does when its phase is perturbed at all: its amplitude and frequency
-stay on the 4.83 Vpp / 248.0 Hz service anchors, which is what the suite
-fences and what the instrument is calibrated against.
+stay within the 4.8 Vpp / 248 Hz service fences. The later amplitude-only solve
+publishes the current result as 4.8009 Vpp / 247.90 Hz.
 
 ## 5. What this pass deliberately does not do
 
@@ -579,7 +579,8 @@ The right action is a targeted read of the analysis scripts to establish unit
 and estimator, then record the result against OQ-09/OQ-15 as third-party
 measured. **No step below fits a constant to these numbers.**
 
-**A literature absence.** The research contract cites Zavalishin, Stilson &
+**Historical literature absence (2026-08-07; resolved by continuous step 4).**
+At the time of this sweep the research contract cited Zavalishin, Stilson &
 Smith, Huovilainen, D'Angelo & Välimäki, Välimäki/Pekonen/Nam, Holters & Parker
 and Gabrielli/D'Angelo/Squartini. It does not cite the *stateful* ADAA line —
 Holters, "Antiderivative Antialiasing for Stateful Systems", DAFx-19
@@ -1160,7 +1161,7 @@ may trade them away.
 - **Stable self-oscillation.** 124.5 / 993.2 / 7152.8 Hz at CUTOFF 0.30 / 0.50
   / 0.70, clean threshold, no blow-up at extremes, resonant alias floor
   −64.9 dB A/H at saw + resonance 0.85. Step 2 rewrites the trim that sits
-  under this and must keep the 4.83 Vpp / 248.0 Hz service anchors — noting
+  under this and must keep the 4.8 Vpp / 248 Hz service anchors — noting
   that the fixture's published tolerance is ±0.48 Vpp and ±4 Hz (±28 cents),
   which is a fence and not a pin, so "keeps the anchors" is a necessary
   condition and not a sufficient one.
@@ -2171,15 +2172,27 @@ name are real and a later pass will want the reasoning rather than the idea.
   quality, so it fails the "must change what the instrument sounds like" rule as
   a standalone step. Record the citation gap in the research contract now; carry
   the work with the oversampling item below.
-- **Replacing the capped Newton solve with a non-iterative discrete-gradient
-  scheme (Danish, Bilbao & Ducceschi, DAFx-21).** This is the literature answer
-  to the one gap the pass above measured and only half-closed — 1.395x realtime
-  at resonance 0.95 against 0.699x at resonance 0.10 — and it would come with a
-  Lyapunov stability guarantee the capped iteration does not have. It is also
-  a cost step, not a sound step, and it rewrites the single most load-bearing
-  routine in the engine (65% of all engine time, and the thing the 4.83 Vpp /
-  248.0 Hz anchors are calibrated against). It is the right next pass, not a
-  step in this one.
+- **Replacing the capped Newton solve with a bounded-work construction inspired
+  by Danish, Bilbao & Ducceschi, DAFx-21 — first feasibility candidate rejected
+  on 2026-08-09.** The paper gives a
+  one-linear-solve construction for
+  its specifically derived Korg35 and Moog systems; it is not a generic solver
+  substitution. Its Moog proof is zero-input, assumes a static resonance in
+  the paper's admitted range, and explicitly leaves time-varying resonance for
+  future work. This Juno cascade instead averages `tanh` over a carried drive
+  path and adds a nonlinear return, stage-specific pole scales and offsets,
+  dynamic headroom, Early effect and live cutoff/resonance changes. None of
+  those inherits the paper's Hamiltonian, state transform or Lyapunov proof,
+  and the first-order construction can change sound and aliasing. Continuous
+  step 4 therefore bakes off a research-only one-step
+  quasi-Newton candidate before touching the load-bearing shipping routine. It
+  passes the static, RK64, residual, oscillation, retime and fold-back gates but
+  fails reachable scanned-control parity at both engine bounds and every
+  standard 44.1–192 kHz host/HQ internal grid. The worst error is +21.31 dB RMS
+  at 8 kHz/card 1, with the production cap reaching `g=6.31375`; 44.1 kHz is
+  +18.50 dB and even 192 kHz reaches +5.01 dB. The separate +4.80 dB
+  `g=30` torture result remains only an out-of-domain boundedness diagnostic.
+  The candidate is rejected, and `OtaCascade::process` remains unchanged.
 - **Narrowing the oversampled domain, or offering an intermediate 2x.** KR-106
   exposes Off/2x/4x and confines oversampling to the nonlinear stages; this
   engine oversamples the DCO, the BBD and the scanned control system too. That
@@ -2504,3 +2517,84 @@ evidence about a physical JUNO-106.
   Exact acquisition/timing and audible-output captures remain OQ-07/OQ-08/OQ-12,
   and the BA662 onset law remains OQ-19. No production DSP, scheduler, preset or
   audio demonstration changes in this step.
+- [x] **4. Derive and bake off a fixed-solve-count VCF candidate before changing the
+  shipping cascade.** The primary DAFx-21 paper is now read rather than cited
+  by title. It transforms a circuit-specific separable Hamiltonian to a
+  quadratic energy and advances the transformed Moog or Korg35 state with one
+  state-dependent linear solve. Its supported claim is narrower than the old
+  plan: zero-input stability for those derived systems and admitted static
+  parameters. It does not derive an IR3109/BA662 cascade, prove BIBO behavior,
+  treat aliasing, or extend the Moog proof to time-varying resonance; the paper
+  names that last item as future work. Its first-order update is therefore not
+  automatically a sound-transparent or Lyapunov-stable replacement here.
+
+  `Tools/VcfSolverCandidate.h` contains the deliberately non-shipping
+  feasibility candidate. It retains this engine's actual discrete equations —
+  carried path-average `tanh`, nonlinear feedback return, per-stage pole scales
+  and offsets, dynamic headroom and Early effect — but performs exactly one
+  residual/frozen-modulation Jacobian evaluation and the two bidiagonal solves
+  needed for the rank-one feedback correction. There is no tolerance, retry or
+  convergence loop. The Early-effect multiplier is reevaluated from the
+  current state but its derivative is frozen, as in each shipping quasi-Newton
+  iteration. This is an engineering one-step quasi-Newton adaptation, not a
+  transcription of the paper and not a claim that the paper's proof transfers.
+
+  The circuit suite reuses the 12-cell 192 kHz small-signal matrix and adds four
+  explicit 64× RK4 hot cells (1.5 kHz cutoff, 3 V/220 Hz drive,
+  `k = 0/2/3.6/4.4`), the independent path-equation residual, stage scales and
+  offsets, static hot/cold headroom, Early effect, bidirectional/identity
+  retiming, the oscillation-threshold and boundedness fixtures, and the existing
+  hot C6/fc16k/k3.8 fold-back probe. A reachable-control fixture covers all six
+  physical VCF-card slots on the normalized 23-write schedule at the 8 kHz and
+  768 kHz engine bounds plus the 44.1, 48, 88.2, 96, 176.4 and 192 kHz standard
+  internal grids. After four low-setting settling passes it alternates one
+  coherent panel snapshot; the shared resonance and each selected-card VCF
+  hold acquire it only at their own ordinals. The fixture applies the
+  production 522 µs holds, 14-to-12-bit flooring, count-to-frequency law,
+  resonance input compensation and `min(50 kHz, 0.45·Fs)` cap. Its decisive
+  motion case uses Unit Character zero, so stage scales are unity, offsets and
+  ladder carry are zero, headroom is nominal and Early effect is inert; the
+  separate static fixture covers those mechanisms at nonzero settings. The
+  declared drive is a 2.4 V sine before compensation: the 6 V mixer coordinate
+  through the model's 0.4 input attenuation. The former
+  direct `g=30`/instantaneous
+  resonance/audio-rate-headroom sequence remains solely an out-of-domain
+  robustness diagnostic. Per-sample counters prove one system evaluation and
+  two bidiagonal solves; elementary-function branches make this bounded work,
+  not literally invariant CPU time.
+
+  | Admission result | Shipping Newton | One-step quasi-Newton candidate | Gate |
+  | --- | ---: | ---: | --- |
+  | Worst small-signal gain error vs 16× RK4 | already ≤0.6 dB | **0.01368 dB** | ≤0.6 dB |
+  | Worst hot waveform RMS error vs 64× RK4 | −44.60 dB at `k=4.4` | **−46.03 dB at `k=4.4`** | candidate ≤1.05× shipping RMS error in every cell |
+  | Worst static-hot normalized discrete-equation residual | ≤2e-4 fenced separately | **1.84e-5** | ≤2e-4 |
+  | Static scales/offsets/headroom/Early parity vs shipping | reference | **−114.88 dB RMS** | ≤−40 dB |
+  | Reachable scanned cutoff/resonance parity vs shipping | reference | **+21.31 dB RMS**, 8 kHz/card 1 | **fails** ≤−40 dB |
+  | Out-of-domain direct-solver torture parity | diagnostic only | **+4.80 dB RMS** | no parity gate; finite/no recovery |
+  | Tail peak at `k=3.6 / 4.3 / 8.0` | pass | **3.08e-7 / 1.269 / 6.369 V** | decay / sustain / finite <40 V |
+  | Worst hot folded line | <−60 dBc | **−66.41 dBc** | <−60 dBc |
+  | Solve structure per sample | 1–8 evaluations, two solves each | **1 evaluation + 2 solves** | fixed counts |
+
+  The engine-bound/standard-grid failure is not hidden by one aggregate number:
+
+  | Internal grid | Worst card | Relative RMS error | Maximum reachable `g` |
+  | ---: | ---: | ---: | ---: |
+  | 8 kHz (engine lower bound) | 1 | +21.31 dB | 6.31375 |
+  | 44.1 kHz | 0 | +18.50 dB | 6.31375 |
+  | 48 kHz | 0 | +18.55 dB | 6.31375 |
+  | 88.2 kHz | 3 | +18.47 dB | 6.31375 |
+  | 96 kHz | 3 | +18.00 dB | 6.31375 |
+  | 176.4 kHz | 0 | +6.76 dB | 1.23580 |
+  | 192 kHz | 0 | +5.01 dB | 1.06769 |
+  | 768 kHz (engine upper bound) | 0 | −9.10 dB | 0.207431 |
+
+  **Verdict: reject this candidate.** It is accurate for the static bake-off,
+  but one frozen-modulation step does not track the shipping solution under the
+  actual engine-bound/standard-grid scanned sequence. The earlier −97.56 dB
+  figure came from an incomplete 192 kHz fixture that placed cutoff at phase
+  zero and resonance at phase 0.5 instead of using the production ordinals; it is
+  superseded by the table above. No production code, constant, preset or
+  rendered sample changes here; OQ-09 remains open and the shipping capped
+  Newton solver is untouched. A future fixed-work candidate must clear this
+  same engine-bound/standard-grid six-card matrix before any engine integration
+  or CPU claim.
