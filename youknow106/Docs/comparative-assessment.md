@@ -248,8 +248,10 @@ t=524111) — and TAL is the field's light-CPU reference point.
 
 Measured on this project: one 2.8 GHz core, host rate 48 kHz, block 256, HQ on
 (4× internal, 192 kHz), Unit Character 1.0, best of three three-second
-renders, process CPU time. Before and after the pass, same harness, back to
-back:
+renders. Provenance correction, 2026-08-09: the harness uses
+`std::chrono::steady_clock`, so this is elapsed wall time rather than the
+“process CPU time” previously printed here. Before and after the pass, same
+harness, back to back:
 
 | Scenario | Before | After |
 |---|---|---|
@@ -260,8 +262,9 @@ back:
 | Six voices, chorus II, full mixer, HQ off | — | **0.449×** |
 | Sixteen-voice extension, chorus II, full mixer | 7.7× | **4.10×** |
 
-The figures are CPU seconds per second of audio, so under 1.0 is faster than
-realtime. Read straight, and the "before" column is the honest part: **this
+The figures are elapsed wall seconds per second of audio, so under 1.0
+completed faster than realtime under that run's machine load. Read straight,
+and the "before" column is the honest part: **this
 engine did not run in real time on that machine in any configuration, and it
 cost more with no key held than with six voices sounding.** That was the
 largest measurable gap the project had against the commercial field, and none
@@ -280,8 +283,66 @@ possible from published material: no vendor states a measurement condition,
 and the forum figures above are user reports, not benchmarks under a declared
 patch, host, buffer and rate. And a figure from one machine is a figure from
 one machine — what it supports is the before/after claim on this project's own
-code, not a ranking against a competitor. The suite fences the *ratio* of
-resonant to plain render cost rather than any wall-clock time, for that reason.
+code, not a ranking against a competitor. The suite fences a same-run
+wall-time *ratio* of resonant to plain render cost rather than an absolute
+duration for the solver-specific check; a separate `testCpuBudget` retains a
+deliberately coarse absolute runaway ceiling.
+
+### Oversampling work attribution: measured, no split admitted
+
+**Added 2026-08-09.** `YouKnow106OversamplingAudit` links the normal shipping
+DSP and times only `engine.process` with the current thread's CPU clock. The
+state is pre-rolled for two seconds, copied before the timer and rendered in
+256-frame blocks; seven 4×/1× pairs alternate order and retain every raw run,
+median, minimum, median absolute deviation and raw-float fingerprint. On an
+Apple M1 Max under macOS 26.5.1, native arm64 Release, 48 kHz, the 32,768-frame
+Unit-Character-1.0 windows measured:
+
+| Current fixture | 4× CPU s / audio s | 1× CPU s / audio s | Paired 4× / 1× |
+| --- | ---: | ---: | ---: |
+| Idle, six physical cards behind closed VCAs | **0.533** | **0.145** | **3.684×** |
+| Six voices, chorus off, cutoff 0.62, resonance 0.10 | **0.495** | **0.152** | **3.254×** |
+| Six voices, chorus off, cutoff 0.62, resonance 0.95 | **0.659** | **0.191** | **3.452×** |
+| Six voices, full mixer, chorus II/noise 1.0, resonance 0.70 | **0.766** | **0.292** | **2.589×** |
+
+Every timing median absolute deviation is below 1%. These are JUCE-free
+engine thread-CPU figures, not plug-in, host or device totals. The older table
+above remains useful as a same-machine before/after history, but its clock was
+`steady_clock`; it is not merged with this CPU-clock baseline.
+
+The companion `YouKnow106DSPWorkAudit` recompiles only Engine and Chorus with
+non-atomic semantic counters. That build is never timed and never linked into
+the plug-in. CTest renders both libraries and requires matching raw-float
+fingerprints with the counter sink active, then checks every structural identity. On the declared
+six-voice resonant fixture, a 2,048-host-frame window at 48 kHz gives:
+
+| Counted work | 4× | 1× | Scaling the fixture establishes |
+| --- | ---: | ---: | --- |
+| Internal frames / scan polls / chorus calls | 8,192 each | 2,048 each | internal grid, exactly `q·H` |
+| Six-card audio updates / DCO frames / VCF steps | 49,152 each | 12,288 each | six powered cards on every internal frame |
+| Sixteen-slot hold updates / PWM solves | 131,072 each | 32,768 each | all product slots on every internal frame |
+| Two BBD-line support frames | 16,384 | 4,096 | two lines on every internal frame, even Chorus Off |
+| Newton iterations, zero recoveries | 210,549 | 57,052 | 4.284 vs 4.643 iterations/VCF step; data/grid dependent |
+| Cutoff memo misses | 1,421 | 1,385 | nearly wall-time driven; 2.89% vs 11.27% of card updates |
+| Converter pass starts / writes | 10 / 234 | 10 / 233 | model's anchored nominal 4.2 ms pass, one numerical-window boundary write apart |
+| DCO cycle wraps / BBD shifts | 61 / 3,162 | 61 / 3,162 | oscillator and asynchronous BBD-clock events track elapsed time |
+| Past + future BLEP correction visits | 12,648 | 12,651 | edge/event driven, not four times larger at 4× |
+| Half-band calls / stereo nonzero-tap MACs | 6,144 / 405,504 | 0 / 0 | three decimations and 198 stereo MACs per 4× host frame |
+
+The same regression covers 96 kHz 2×/1× and 192 kHz 1×: one 2× decimator
+call and 66 stereo nonzero-tap MACs per host frame, none at 1×. It also proves
+four stage evaluations and two bidiagonal solves per Newton iteration, exact
+memo and path-average partitions, no recovery in the declared fixture, and
+the expected 23-write boundary tolerance.
+
+This is work attribution, not a selective-rate admission. Counters with
+different semantics are not cycle weights; the whole-engine 4×/1× ratios do
+not say what a future split architecture will save. More importantly, DCO,
+VCF/VCA, scan/holds, BBD/support processing and their reconstruction boundary
+currently share one loop. A lower-rate domain therefore still needs a
+common-host 1×/2×/4× error matrix against independent DCO, RK4 VCF, exact-edge
+BBD and analytic scan references. No DSP equation, rate selection or rendered
+sample changed in this step.
 
 ### Bounded-work VCF candidate: matrix rejection
 

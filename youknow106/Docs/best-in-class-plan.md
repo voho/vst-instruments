@@ -70,7 +70,9 @@ would be exactly the "choose a nicer-sounding constant" the queue forbids.
 
 Measured on this pass, on one 2.8 GHz Xeon core, host rate 48 kHz, block 256,
 HQ on (4× internal, 192 kHz), Unit Character 1.0, best of three three-second
-renders, process CPU time:
+renders. Historical provenance correction, 2026-08-09: the harness used
+`std::chrono::steady_clock`, so these are elapsed wall seconds per second of
+audio, not the “process CPU time” the original text called them:
 
 | Scenario | Cost, × realtime |
 |---|---|
@@ -87,7 +89,7 @@ measurable gap the project has, and it is entirely a product-engineering
 problem — not one line of it is a hardware-evidence question, which is why the
 open-questions queue correctly says nothing about it.
 
-Where the cost is, measured by profile rather than assumed:
+Where the cost was in that 2026-08-07 profile, measured rather than assumed:
 
 - **`OtaCascade::process` is 65% of all engine time.** Its cost is almost
   entirely libm: at resonance 0.95 the solve evaluates roughly 69 `tanhf`,
@@ -155,9 +157,10 @@ commit.
   round-off floor sits, so the loop stops when it has converged instead of
   when it runs out of iterations. The 8-iteration cap is unchanged, so the
   worst-case residual cannot get larger.
-  *Verified by:* a new engine-suite fence on the *ratio* of high-resonance to
-  plain-patch render cost — a machine-independent quantity — plus a direct
-  assertion that the converged step is inside the new bound.
+  *Verified by:* a new engine-suite fence on the same-run *ratio* of
+  high-resonance to plain-patch wall time — less machine/load-dependent than an
+  absolute duration, not machine-independent — plus a direct assertion that
+  the converged step is inside the new bound.
 
 - [x] **4. Stop recomputing settled per-card constants every internal sample.**
   *Closes:* the loop-invariant work of §2.2. The chassis gradient becomes a
@@ -207,8 +210,9 @@ by the pre-pass and post-pass engines:
 | Six voices, chorus II, full mixer, resonance 0.70 | 2.376 | **1.361** | −43% |
 | Six voices, chorus off, resonance 0.95 | 3.960 | **1.395** | −65% |
 
-Stated exactly: the figures are CPU seconds per second of audio, so under 1.0
-is faster than realtime. Two of the four scenarios crossed that line and two
+Stated exactly after the provenance correction above: the figures are elapsed
+wall seconds per second of audio, so under 1.0 completed faster than realtime
+under that run's machine load. Two of the four scenarios crossed that line and two
 did not. **Idle and ordinary six-voice playing now run in real time on this
 machine and did not before; the chorus-engaged and near-oscillation cases are
 still above it, at 1.36 and 1.40 against 2.38 and 3.96.** With the 4×
@@ -220,8 +224,9 @@ Two things that figure is not. It is not a claim about any other machine: this
 is one contended 2.8 GHz core, and the honest use of it is the before/after
 ratio on identical hardware, not an absolute product spec. And it is not a
 comparison with a competitor, because no vendor publishes a measurement
-condition — the CPU reports in §1 are user impressions, not benchmarks. What
-the suite fences is correspondingly a *ratio*, not a time.
+condition — the CPU reports in §1 are user impressions, not benchmarks. The
+solver-specific fence is correspondingly a same-run *ratio*; a separate
+`testCpuBudget` keeps only a deliberately coarse absolute runaway ceiling.
 
 Steps 2 and 3 change the last bits of the rendered samples; steps 4 and 5's
 default position do not. The measured difference from the pre-pass engine is
@@ -2199,9 +2204,13 @@ name are real and a later pass will want the reasoning rather than the idea.
   is the untried architectural lever on the cost axis and the only one the plan
   above never considered. It is not a free win — this DCO is a genuine
   ramp-and-comparator solve rather than a wavetable and the BBD is genuinely
-  bucket-clocked, so both may legitimately need the higher rate — and the honest
-  first move is to measure each domain's cost separately and publish which ones
-  actually need 4x. That measurement belongs with the solver rework above.
+  bucket-clocked, so both may legitimately need the higher rate. Continuous
+  step 5 now establishes exact scaling for selected semantic events by domain
+  and uninstrumented whole-engine thread-CPU baselines without changing the
+  signal path. It does **not** publish which domain needs 4×: that requires the
+  next, common-host
+  1×/2×/4× error matrix against independent DCO, RK4 VCF, exact-edge BBD and
+  analytic scan references, including reconstruction at every domain boundary.
 - **Note-on-to-first-sample latency — completed 2026-08-09.** Continuous-work
   step 3 measures and publishes the complete declared 48 kHz host/scan-phase
   distribution before any scheduler change. It became a step because making
@@ -2598,3 +2607,67 @@ evidence about a physical JUNO-106.
   Newton solver is untouched. A future fixed-work candidate must clear this
   same engine-bound/standard-grid six-card matrix before any engine integration
   or CPU claim.
+- [x] **5. Attribute oversampling work before proposing a split-rate engine.**
+  The old cost tables were first corrected at their source: the historical
+  helper uses `std::chrono::steady_clock`, so those numbers are elapsed wall
+  seconds per audio second, not the “process CPU time” the documents called
+  them. They remain useful as back-to-back history but are not mixed with the
+  new baseline.
+
+  `Tools/AuditOversamplingDomains.cpp` is built twice. The normal executable
+  links the shipping `YouKnow106DSP` and times only `engine.process` with the
+  current thread's CPU clock. Each fixture is pre-rolled for two seconds, then
+  copied outside the timer; buffers are allocated before timing, seven 4×/1×
+  pairs alternate order, and every raw run, median, minimum, median absolute
+  deviation and raw-float fingerprint is printed. The counter executable links
+  a separate Engine/Chorus library compiled with `YOUKNOW106_WORK_AUDIT`; that
+  macro and every increment are absent from the shipping translation units,
+  and the counter build is never timed or linked into the plug-in.
+
+  On Apple M1 Max, macOS 26.5.1, native arm64 Release, 48 kHz/block 256,
+  Unit Character 1.0, the uninstrumented 32,768-frame windows read. The six
+  notes are MIDI 36/48/55/60/64/67; the full-mixer row also keeps Chorus Noise
+  at its shipped 1.0 setting:
+
+  | Current fixture | 4× CPU/audio | 1× CPU/audio | Paired 4×/1× |
+  | --- | ---: | ---: | ---: |
+  | Idle, six powered cards closed | 0.533 | 0.145 | 3.684× |
+  | Six voices, cutoff .62/resonance .10, chorus off | 0.495 | 0.152 | 3.254× |
+  | Six voices, cutoff .62/resonance .95, chorus off | 0.659 | 0.191 | 3.452× |
+  | Six voices, full mixer/resonance .70, Chorus II | 0.766 | 0.292 | 2.589× |
+
+  Every timing MAD is below 1%. These are JUCE-free engine thread-CPU
+  measurements on one machine, not plug-in/host totals or competitor data.
+  They establish the global switch's present cost but cannot predict the
+  saving from moving only one part of a coupled loop.
+
+  The deterministic work window is the six-voice resonant fixture after the
+  same pre-roll, 2,048 host frames. At 48 kHz 4×/1× it counts 8,192/2,048
+  internal frames; 49,152/12,288 six-card audio/DCO/VCF steps;
+  131,072/32,768 sixteen-slot hold and PWM calls; 16,384/4,096 BBD-line support
+  frames; and 6,144/0 decimator calls, or 405,504/0 stereo nonzero-tap MACs.
+  Elapsed-time-driven model events stay put: both grids see 10 converter pass
+  starts, 61 DCO wraps and 3,162 BBD shifts, with converter writes differing
+  by one at the window boundary (234/233). Newton work is not a simple factor:
+  210,549/57,052 iterations, or 4.284/4.643 per step, with zero recovery.
+  Cutoff misses are likewise nearly event-driven at 1,421/1,385 rather than
+  4:1. The BBD correction loops visit 12,648/12,651 past-plus-future edge
+  events, even though their audio-rate support frames scale exactly 4:1.
+
+  The event-dependent values above are published observations, not goldens.
+  CTest covers the structural identities plus 96 kHz 2×/1× and 192 kHz 1×,
+  requires 33 nonzero half-band coefficients and two stereo MACs per visit,
+  partitions cutoff memo and VCF path-average work exactly, requires zero
+  recovery, and proves four stage evaluations/two bidiagonal solves per
+  Newton iteration. It separately
+  renders normal and instrumented executables and requires matching raw-float
+  fingerprints while the counter sink is active.
+
+  **Verdict: measurement baseline complete; no rate split admitted.** One DCO
+  frame, Newton iteration, BBD edge visit and FIR MAC are not equal-cost units,
+  and this step measures no cross-boundary error. Production equations,
+  oversampling selection, presets and audio files remain unchanged. The next
+  atomic qualification must compare 1×/2×/4× at the same 44.1/48 kHz output
+  boundary, use an independent reference rather than treating 4× as truth,
+  and reject a lower rate cell-by-cell if any DCO alias, VCF RK/fold-back,
+  BBD BGA/SGA, scan/hold, decimator, latency or whole-engine fence regresses.

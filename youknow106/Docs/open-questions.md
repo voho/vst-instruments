@@ -516,11 +516,12 @@ the recorded [−4.355, −1.33] dB cross-reading guard band.* The former additi
 that scaling: it gave −2.757 dB versus DC, or −2.732 dB versus 1 kHz, and swept
 the normalized 0.3-cycle response from about
 −3.04 to −2.14 dB over the modelled 23.9–77.1 kHz range. Removing it fixes an
-implementation inconsistency and unsupported LFO-correlated brightness; it does
+implementation inconsistency and unsupported LFO-correlated brightness; it
 does not quantitatively establish the real MN3009's transfer at other clocks.
 The datasheet itself contains low-resolution typical `Gi-fi` curves at fCP 10,
-40 and 100 kHz, so the remaining gap is extraction/calibration and installed-unit
-confirmation, not a total absence of multi-clock evidence.
+40 and 100 kHz. *Superseded by the later 600-dpi pass:* extraction is complete
+and exposes incompatible tracked and broadband readings; calibration and an
+installed-unit tracked sweep remain, not a total absence of multi-clock evidence.
 
 Those figures describe the raw held node before numerical output
 reconstruction. The emitted deterministic step now receives a compact polyBLEP
@@ -1600,9 +1601,9 @@ of numerical reconstruction. The extra affine clock multiplier instead produced
 and changed the normalized 0.3-cycle response from about −3.04 to −2.14 dB
 over the modelled 23.9–77.1 kHz sweep. It is removed as double scaling. This
 settles the renderer's internally consistent one-anchor law, **not** the real
-part's normalized response versus clock; that still requires quantitative
-extraction of the typical curves and preferably the multi-clock de-embedded
-installed-unit sweep specified above.
+part's normalized response versus clock. *Superseded by the later 600-dpi
+pass:* the extraction exists; its tracked/broadband ambiguity still requires
+the multi-clock de-embedded installed-unit sweep specified above.
 
 The upstream raw-hold/support-chain calculation evaluates to **−12.0 dB at
 10 kHz and −38.5 dB at 15 kHz** relative to 2 kHz (input Sallen-Key pair +
@@ -1627,9 +1628,10 @@ over-engineered for a ~43 kHz clock. **The wet-path bandwidth is a measurable pr
 that constrains the BBD clock, so OQ-01 and OQ-04 should be resolved together.**
 
 Status: **physical loaded transfer not resolved**, but the renderer's duplicate
-clock scaling is removed and the broader contradiction is quantified.
-Recommended next step is digitizing the datasheet's three curves with uncertainty,
-then checking them with a multi-clock de-embedded MN3009/installed-unit sweep,
+clock scaling is removed and the broader contradiction is quantified. The
+later 600-dpi digitization of all three curves is complete; its incompatible
+tracked/broadband readings now make the next step a multi-clock de-embedded
+MN3009/installed-unit tracked sweep,
 plus a schematic re-read of the capacitor codes behind
 `YouKnow106Chorus.cpp:73-83` — a single 10× code misread moves a corner by a decade.
 
@@ -1817,12 +1819,15 @@ These characterise the implementation, not the instrument, and are fully
 reproducible from source. They are recorded because two of them bear on audibility
 claims the suite cannot currently see.
 
-- **In-band alias floor** (≤20 kHz, re the loudest harmonic, C6 saw): oscillator
-  alone **−111.5 dB**; with the VCF wide open at resonance 0 **−85 dB**; with cutoff
-  16 kHz and resonance ≈0.85 **−55.5 dB**; the same case with the filter run at 2×
-  the internal rate **−87.7 dB**. The dominant in-band artefact is the VCF's `tanh`
-  set, not the oscillator. `testAliasFloor` cannot observe this: it runs at
-  resonance 0, calibration 0, and stops sweeping at 20 kHz.
+- **In-band alias-floor projection, superseded by implementation** (≤20 kHz,
+  re the loudest harmonic, C6 saw): the exploratory calculation reported the
+  oscillator alone at **−111.5 dB**, the VCF wide open at resonance 0 at
+  **−85 dB**, and cutoff 16 kHz/resonance ≈0.85 at **−55.5 dB**, projecting
+  **−87.7 dB** for a doubled filter grid. The doubled-grid build below did not
+  reproduce that projection: it measured **−48.5 → −54.4 dB**, limited by the
+  inter-domain interpolator. The dominant in-band artefact remains the VCF's
+  `tanh` set rather than the oscillator. `testAliasFloor` cannot observe this:
+  it runs at resonance 0, calibration 0, and stops sweeping at 20 kHz.
 - **Final half-band decimator at a 44.1 kHz host**: −0.85 dB at 20 kHz, −2.5 dB at
   21 kHz, with fold-back rejection of only −31.7 dB for content landing at 19.1 kHz.
   Both stages share the 63-tap kernel; the first stage's transition band is wide
