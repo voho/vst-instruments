@@ -1894,7 +1894,8 @@ void printReport(const AuditResult& audit)
                  "capture starts after 8192 host frames (>12 output-coupling "
                  "time constants). Candidates alone use the shipping TPT "
                  "support, polyBLEP, half-bands and the declared no-search "
-                 "0/15.5/23.25 host-frame advance. Scan/holds, DCO, VCA, LFO trajectory, "
+                 "0/23.5/35.25 host-frame advance. Scan/holds, DCO, VCA, "
+                 "LFO trajectory, "
                  "stochastic noise, stereo/IC6 mix, output stages, latency "
                  "padding and a split-domain interpolator are outside this audit.\n"
               << "Evidence caveat: these are numerical-consistency/product "
@@ -1955,7 +1956,7 @@ void selfTest(const AuditResult& audit)
             throw std::runtime_error(
                 "reference FIR published validity metric changed");
     }
-    constexpr std::array<double, 2> canonicalDelays { 15.5, 23.25 };
+    constexpr std::array<double, 2> canonicalDelays { 23.5, 35.25 };
     for (std::size_t index = 0u;
          index < audit.fractionalDelayChecks.size(); ++index)
     {
@@ -1966,7 +1967,7 @@ void selfTest(const AuditResult& audit)
             throw std::runtime_error(
                 "fractional-delay support self-check failed");
         constexpr std::array expectedFractionalRmsDb {
-            -152.346400, -149.484129
+            -152.346051, -149.483201
         };
         requireNear(check.alignedRms.relativeErrorDb,
                     expectedFractionalRmsDb[index], 2.0,
@@ -2046,13 +2047,13 @@ void selfTest(const AuditResult& audit)
         false, false, false, false, false, false
     };
     constexpr std::array<double, 6> expectedVcfRkDb {
-        -53.243, -65.286, -77.323, -54.730, -66.787, -78.824
+        -53.243, -65.282, -77.301, -54.730, -66.783, -78.803
     };
     constexpr std::array<double, 6> expectedVcfHotRmsDb {
-        -1.110, -12.232, -24.343, -1.062, -13.751, -25.810
+        -1.110, -12.233, -24.348, -1.062, -13.752, -25.810
     };
     constexpr std::array<double, 6> expectedVcfHotOffMaskDb {
-        -27.063, -67.588, -99.040, -19.658, -67.128, -99.618
+        -27.063, -67.589, -99.040, -19.658, -67.128, -99.620
     };
     constexpr std::array<double, 6> expectedVcfHotOracleOffMaskDb {
         -93.242, -93.242, -93.242, -93.163, -93.163, -93.163
@@ -2064,13 +2065,13 @@ void selfTest(const AuditResult& audit)
         0.004, 0.003, 0.003, 0.008, 0.007, 0.005
     };
     constexpr std::array<double, 6> expectedBbdAnalyticDb {
-        -3.099, -14.910, -27.043, -4.640, -16.427, -28.183
+        -3.099, -14.910, -27.045, -4.640, -16.426, -28.181
     };
     constexpr std::array<double, 6> expectedBbdHighToneDb {
-        -3.099, -14.910, -27.043, -4.640, -16.427, -28.183
+        -3.099, -14.910, -27.045, -4.640, -16.426, -28.181
     };
     constexpr std::array<double, 6> expectedBbdBgaDb {
-        34.389, 4.090, 0.869, 22.893, 3.257, 0.708
+        34.389, 4.088, 0.867, 22.893, 3.257, 0.708
     };
     constexpr std::array<double, 6> expectedBbdSgaDb {
         -24.854, -28.762, -47.635, -28.871, -31.329, -38.189

@@ -672,7 +672,7 @@ private:
     static constexpr int maximumOversampleFactor = 4;
     static constexpr double minimumHqProcessingRate = 176400.0;
     static constexpr double maximumSupportedSampleRate = 768000.0;
-    static constexpr int halfbandTaps = 63;
+    static constexpr int halfbandTaps = 95;
     static constexpr int halfbandRingSize = 128;
     static constexpr int latencyPadRingSize = 64;
 
@@ -859,11 +859,13 @@ private:
     };
 
     // Bandlimiting support. Every discontinuity the oscillator produces is
-    // repaired by adding a residual read from a table built by numerically
-    // integrating a windowed sinc, rather than from a closed-form polynomial
-    // fit. The table is exact to the window's own stopband, and the same table
-    // integrated once more repairs slope discontinuities.
-    static constexpr int correctionHalfWidth = 4;
+    // repaired from a continuous step response built by numerically integrating
+    // a windowed sinc, rather than from a closed-form polynomial fit. The ideal
+    // discontinuity is subtracted only after interpolation so lookup never
+    // crosses the residual's unit jump at t=0. Integrating once more and
+    // subtracting the ideal ramp yields the continuous slope residual used for
+    // slope discontinuities.
+    static constexpr int correctionHalfWidth = 24;
     static constexpr int correctionRing = 2 * correctionHalfWidth;
     static constexpr int correctionOversample = 64;
     static constexpr int correctionTableLength =
@@ -882,6 +884,15 @@ private:
         void reset() noexcept;
         void prime(float value) noexcept;
         [[nodiscard]] float advance(float naive) noexcept;
+    };
+
+    // Immutable reconstruction primitives are shared by all plug-in instances.
+    // H=24 at 64x is about 24 KiB, and rebuilding/copying those same values into
+    // every engine would add instance memory without adding any unit character.
+    struct CorrectionTables
+    {
+        std::array<float, correctionTableLength> stepResponse {};
+        std::array<float, correctionTableLength> slopeResidual {};
     };
 
     // Programmable divider, analogue ramp integrator, pulse comparator and
@@ -1128,7 +1139,7 @@ private:
     static float resetFraction(double periodSeconds) noexcept;
 
     void buildHalfbandKernel() noexcept;
-    void buildCorrectionTables() noexcept;
+    [[nodiscard]] static const CorrectionTables& correctionTables() noexcept;
     void buildVoiceCards() noexcept;
     // Copies each card's IR3109 per-stage trims -- input offset voltage and
     // integrating-capacitor tolerance -- into its voice, scaled by Unit
@@ -1401,8 +1412,6 @@ private:
     HalfbandDecimator firstDecimator_ {};
     HalfbandDecimator secondDecimator_ {};
     std::array<float, halfbandTaps> halfbandKernel_ {};
-    std::array<float, correctionTableLength> stepResidual_ {};
-    std::array<float, correctionTableLength> slopeResidual_ {};
     std::array<float, latencyPadRingSize> latencyPadLeft_ {};
     std::array<float, latencyPadRingSize> latencyPadRight_ {};
     int latencyPadWriteIndex_ { 0 };

@@ -1848,7 +1848,7 @@ std::string bbdHostGridAliasManifestPrefix(
            << bbdAliasFixedProbeFrames << ",\n"
            << "    \"fixed_clock_hz\": " << jsonNumber(minimumClock) << ",\n"
            << "    \"path\": \"one complete modeled Line per channel: input coupling, five input poles, asynchronous 128-cell-pair BBD, transfer loss, held output, tap pole, four output poles and output coupling; noise zero\",\n"
-           << "    \"hq_downsampling\": \"the engine's two shipping 63-tap half-band stages; no ad-hoc renderer resampler\",\n"
+           << "    \"hq_downsampling\": \"the engine's two shipping 95-tap half-band stages; no ad-hoc renderer resampler\",\n"
            << "    \"swept_output\": \"wet-only Chorus output after subtracting its mathematically identical dry IC6 leg\"\n"
            << "  },\n"
            << "  \"clock_program\": {\n"

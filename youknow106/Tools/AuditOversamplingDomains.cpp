@@ -592,9 +592,9 @@ void validateCounterAlgebra(const CounterCase& testCase,
     expectEqual(errors, testCase.name, "decimatorCalls",
                 counters.decimatorCalls, decimatorCalls);
     expectEqual(errors, testCase.name, "decimatorNonzeroTapVisits",
-                counters.decimatorNonzeroTapVisits, 33u * decimatorCalls);
+                counters.decimatorNonzeroTapVisits, 49u * decimatorCalls);
     expectEqual(errors, testCase.name, "decimatorStereoMacs",
-                counters.decimatorStereoMacs, 66u * decimatorCalls);
+                counters.decimatorStereoMacs, 98u * decimatorCalls);
 
     expectEqual(errors, testCase.name, "cutoff memo partition",
                 counters.cutoffMemoHits + counters.cutoffMemoMisses,
