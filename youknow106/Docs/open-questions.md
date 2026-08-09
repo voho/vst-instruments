@@ -360,11 +360,12 @@ implementation. The remaining question is real-unit variation: resistor and C7
 tolerances, +15 V rail error, DAC integral/end-point error, R32 scan
 transcription, and the NEC part's 5.8–6.1 mV/dB specified spread can move the
 curve and settling. The byte-exact factory bank remains a regression corpus,
-not a substitute for measurement. The targeted
-[before/after comparison](audio/realism-comparisons/common-vca-level/README.md)
-exercises bytes 0, 32, 64, 96 and 127 plus rapid transitions, dry and through
-Chorus II, with exact automation and shared listening gain; it measures the
-implementation change, not an original unit.
+not a substitute for measurement. The dated before/after corpus exercised
+bytes 0, 32, 64, 96 and 127 plus rapid transitions, dry and through Chorus II,
+with exact automation and shared listening gain; it measured the
+implementation change, not an original unit. Those files were retired in the
+2026-08-09 audio reset; the [current audio index](audio/README.md) owns
+replacement renders.
 
 ### Needed output (for LLM)
 
@@ -1812,14 +1813,16 @@ excluding physical-image bins. Full-line BGA deltas at 44.1 kHz LQ are
 −0.0281 and −0.0382 dB**. This qualifies strong SGA suppression and BGA
 preservation that is near-transparent at HQ, not exact image preservation at LQ.
 
-The strict [BBD host-grid alias comparison](audio/realism-comparisons/bbd-host-grid-alias/README.md)
-uses a 2.093 kHz probe at minimum clock. The wanted image moves **−0.0383 dB in
+The dated strict BBD host-grid comparison used a 2.093 kHz probe at minimum
+clock. The wanted image moves **−0.0383 dB in
 HQ**; its **−5.2986 dB LQ** movement starts from **−100.47 dBc**. The two false
 LQ second-image folds improve from **−26.87/−27.42 to −55.23/−53.61 dBc**,
 while the roughly **−116 dBc** HQ folds move to about **−171/−170 dBc**. The
 whole comparison's signed difference is **−15.95 dBc peak and −27.66 dBc RMS**
-at one fixed gain. These are deterministic software measurements and listening
-files, not a subjective test or a hardware measurement.
+at one fixed gain. These are deterministic software measurements, not a
+subjective test or a hardware measurement. The old files were retired in the
+2026-08-09 audio reset; replacement renders belong to the
+[current audio index](audio/README.md).
 
 The paper's experiment uses an ideal, linear, noiseless 4096-stage MN3005 at
 44.1 kHz; this engine models a nonlinear, noisy 256-stage MN3009 at several
@@ -2012,8 +2015,10 @@ claims the suite cannot currently see.
 - **Measured as *not* audible in that narrow C6/VCF experiment**, recorded so
   the work is not repeated under the same conditions: widening the BLEP kernel
   or interpolating its table more finely (then already −111 dB); `double`
-  state in `OtaCascade` (bit-indistinguishable from `float` at 40 Hz / 200 Hz /
-  1 kHz cutoff, resonance 3.9); more Newton iterations (the 8-iteration cap is
+  state in the former implicit `OtaCascade` (bit-indistinguishable from `float`
+  at 40 Hz / 200 Hz / 1 kHz cutoff, resonance 3.9—this narrow negative did not
+  test Step 10's high-order explicit path, which now retains double state);
+  more Newton iterations (the 8-iteration cap is
   reached 10–22 % of the time under hot resonant input, but the resulting error is
   −103 dBc); antiderivative antialiasing on `outputSummerClip` (no measurable
   aliasing at the rail, +3 dB or +6 dB in); and an exponential rather than linear
@@ -3403,9 +3408,9 @@ compensation factor 0.2749 does not reproduce from its own equation
   the internal oversampled grid with no antialiasing, because antiderivative
   antialiasing was built at this node and **measured as not audible** (no
   measurable aliasing at the rail, +3 dB or +6 dB in; recorded above under the
-  2026-08-06 evidence search). The engine's only antiderivative machinery is
-  the VCF cascade's Newton solve. And no ±12 V bound is recorded anywhere in
-  this project.
+  2026-08-06 evidence search). At this dated checkpoint the engine's only
+  antiderivative machinery was the VCF cascade's Newton solve; Step 10 removes
+  that discretization. And no ±12 V bound is recorded anywhere in this project.
   The pair reads like a 4558-family guaranteed-minimum output-swing row,
   but it arrives uncited; if a sourced TA75558S specification row is later
   produced it belongs in OQ-05's protocol as a datasheet bound, never as
@@ -3538,8 +3543,10 @@ Its exhaustive hot-residual off-mask values are
 | 48 kHz | 2× | −16.426 dB | 3.257 dB | −31.329 dBc | **REJECT** |
 | 48 kHz | 4× | −28.181 dB | 0.708 dB | −38.189 dBc | **REJECT** |
 
-Every one of those VCF/BBD cells still rejects its absolute domain gate. The
-4× candidate is not truth, and a DCO pass cannot admit a split-rate engine.
+At this DCO checkpoint, every one of those VCF/BBD cells still rejected its
+absolute domain gate. The 4× candidate was not truth, and a DCO pass could not
+admit a split-rate engine. Step 9 subsequently admitted the bounded BBD HQ
+fixture; the Step-10 section below supersedes this dated VCF row.
 
 The reconstruction/filter support also moves numerical latency. Raw
 1×/2×/4× centres and pads are 24+17=41, 35.5+6=41.5 and
@@ -3551,10 +3558,11 @@ report. Pitch-write, VoiceVca, 63.2% hold and scan results are unchanged. The
 nominal numerical centres align within 0.5 sample; the −80 dBFS onset proxy is
 signal dependent and sees different amounts of symmetric pre-ringing.
 
-In the updated work audit, 6,144 decimator calls visit 301,056 nonzero taps and
-perform 602,112 stereo MACs—49 visits and 98 MACs per call. VCF iteration
-counts are 205,008/56,604 at 48 kHz 4×/1×, 104,146/53,679 at 96 kHz
-2×/1× and 51,508 at 192 kHz 1×, with zero recovery. The informational
+In that checkpoint's work audit, 6,144 decimator calls visited 301,056 nonzero
+taps and performed 602,112 stereo MACs—49 visits and 98 MACs per call. The
+former VCF iteration counts were 205,008/56,604 at 48 kHz 4×/1×,
+104,146/53,679 at 96 kHz 2×/1× and 51,508 at 192 kHz 1×, with zero recovery;
+Step 10 retires those Newton counts. The informational
 M1 Max/arm64 Release timing rerun gives 4×/1× CPU/audio ratios of 3.543
 idle, 3.177 six-voice plain, 3.471 six-voice resonant and 2.655 full-mixer
 Chorus II. These measurements move no performance gate.
@@ -3566,6 +3574,82 @@ OQ-07 remains open on hold acquisition/droop, OQ-08 on exact scan/restart
 timing and forced state, OQ-11 on the pinned comparator leg's loaded behavior,
 and OQ-15 on oscillator/mixer levels. Passing a numerical equation-fidelity
 gate is not new hardware evidence.
+
+## VCF numerical-integration pass — 2026-08-09 (standard HQ admitted; no OQ closed)
+
+**Work mode:** direct numerical realization and independent qualification of
+the already declared continuous VCF equations. **No original unit was measured
+and no physical constant or evidence class moved.** The old float
+path-average/capped-Newton discretization and the rejected Step-4 one-step
+quasi-Newton candidate are implementation history, not current truth.
+
+Production now retains only four double-precision capacitor voltages as
+physical VCF state. Every internal interval uses two fixed half-step,
+five-evaluation Merson RK4 advances: 2 substeps, 10 right-hand-side and
+resonance-return evaluations, 40 stage evaluations, 40 full Early-effect
+evaluations when enabled, and 7 causal input phases. The current-plus-three-past
+polynomial ramps linear to quadratic to cubic at startup. Cutoff, resonance and
+thermal headroom interpolate between known endpoints at the same nodes. A
+quality-rate change preserves physical charge and the common endpoint, maps it
+through the cap-aware rate ratio, and collapses older old-grid history under the
+existing zero-gain transition. No future sample, lookahead or latency is added;
+the report stays fixed at 41 host samples. A final post-thermal product-grid
+bound limits `omega*dt` to `0.9π` (0.45 cycles/internal sample); that is a
+numerical policy, not JUNO-106 bandwidth evidence.
+
+The focused full-mechanism comparison with independent RK96 reads
+**−162.551 dB / 4.21471e-8 V**; an alternating-control trajectory reads
+**−95.2005 dB**. Every cold/warm product-cap tail is exactly zero across the
+six actual cards at Unit Character/calibration 2. The unchanged common-host
+classification is:
+
+| Host | 1× hot / driven / off-mask | 2× hot / driven / off-mask | 4× hot / driven / off-mask | Verdict |
+| --- | ---: | ---: | ---: | --- |
+| 44.1 kHz | −12.538 / −145.593 / −44.602 dB(c) | −30.414 / −113.526 / −85.968 dB(c) | **−50.351 / −112.144 / −133.278 dB(c)** | **REJECT / REJECT / PASS** |
+| 48 kHz | −14.269 / −144.364 / −48.081 dB(c) | −33.028 / −114.710 / −88.898 dB(c) | **−50.064 / −113.339 / −140.552 dB(c)** | **REJECT / REJECT / PASS** |
+
+Here “hot” and “driven” are RK NRMS; “off-mask” is the hot residual in dBc.
+Self-oscillation stays within 0.001 cent and 0.010 dB of the independent oracle.
+The 4× pass is a declared-model result, not hardware truth.
+
+The dynamic oracle evaluates the exact 23-write order, 522 µs trajectories and
+all actual cards at its RK nodes. Nineteen physical takes per rate family cover
+24 logical profiles because exact Character-0 card collapses are shared. The
+six actual standard HQ selector cells pass at **−48.585, −48.724, −48.557,
+−48.514, −48.324 and −48.293 dB** for 44.1/4×, 48/4×, 88.2/2×, 96/2×,
+176.4/1× and 192/1×. RK64/RK128 convergence is at or below −150.9 dB, with
+zero recovery, schedule or count mismatch. The 768 kHz/1× endpoint also passes
+at **−61.360 dB**.
+
+The 8 kHz/4× endpoint is deliberately an **expected REJECT** at **−33.245 dB**
+despite −139.820 dB convergence and finite/exact counts. Its maximum
+converter-event snap is 30.978 µs; the named steady,
+continuous-cutoff/resonance/headroom and all-exact diagnostic controls read
+−136.916, −60.546 and −100.713 dB. That diagnosis assigns the next atomic step
+to fractional, event-aware hold evaluation at 8 kHz—not a relaxed −40 dB gate.
+
+Merson is not labelled uniformly superior: fixed three-substep RK4 is about
+0.55 dB better in the rejected 44.1 kHz/1× hot high-mu cell. Merson wins the
+primary HQ trajectory, damping/Hopf/onset and product-cap stability bake-off
+while avoiding a runtime method selector.
+
+The 48 kHz, six-card resonant 2,048-frame HQ/HQ-off windows count
+49,152/12,288 VCF steps, 98,304/24,576 Merson substeps,
+491,520/122,880 RHS and feedback evaluations, 1,966,080/491,520 stage and
+full-Early evaluations, 344,064/86,016 input phases and zero recovery. Three
+alternating seven-repetition M1 Max audits put current 4×/1× CPU/audio at
+0.677/0.170 idle, 0.690/0.178 plain, 0.850/0.228 resonant and 0.736/0.191 full
+mixer Chorus II; the corresponding Step-9 baselines were 0.546/0.152,
+0.509/0.159, 0.670/0.192 and 0.786/0.296. The numbers are informational and
+patch-dependent; the hard `<5×` Release runaway gate is unchanged. The build
+registers 11 JUCE-free contracts.
+
+The pass changes no resonance byte-to-loop-gain or input-compensation law
+(OQ-09), card dispersion/drift evidence (OQ-10), oscillator/filter drive
+calibration (OQ-15), startup-noise mechanism (OQ-16), physical upper-cutoff law
+(OQ-18), or BA662 VCA law (OQ-19). Each remains open exactly because numerical
+agreement with the declared ODE cannot validate the hardware that ODE is meant
+to represent.
 
 ## Settled guardrails — do not reopen without contradictory primary evidence
 

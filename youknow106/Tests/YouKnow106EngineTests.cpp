@@ -44,9 +44,10 @@ struct YouKnow106TestAccess
                                parameters, 0.0f);
     }
 
-    static float filterG(const YouKnow106Engine& engine, int slot) noexcept
+    static float filterOmegaStep(const YouKnow106Engine& engine,
+                                 int slot) noexcept
     {
-        return engine.voices_[static_cast<std::size_t>(slot)].filterG;
+        return engine.voices_[static_cast<std::size_t>(slot)].filterOmegaStep;
     }
 
     static float stageGScale(const YouKnow106Engine& engine, int slot,
@@ -235,7 +236,10 @@ struct YouKnow106TestAccess
     static std::array<float, 4> filterState(const YouKnow106Engine& engine,
                                             int slot) noexcept
     {
-        return engine.voices_[static_cast<std::size_t>(slot)].filter.state;
+        const auto& state =
+            engine.voices_[static_cast<std::size_t>(slot)].filter.state;
+        return { static_cast<float>(state[0]), static_cast<float>(state[1]),
+                 static_cast<float>(state[2]), static_cast<float>(state[3]) };
     }
 
     // The fourth transconductor's capacitor voltage: the filter's output, in
@@ -243,7 +247,8 @@ struct YouKnow106TestAccess
     static float filterOutputVolts(const YouKnow106Engine& engine,
                                    int slot) noexcept
     {
-        return engine.voices_[static_cast<std::size_t>(slot)].filter.voltage[3];
+        return static_cast<float>(
+            engine.voices_[static_cast<std::size_t>(slot)].filter.state[3]);
     }
 
     // Pin 9 VCA IN: the filter output after C59, which is the value the voice
@@ -266,8 +271,8 @@ struct YouKnow106TestAccess
     {
         auto& filter =
             engine.voices_[static_cast<std::size_t>(slot)].filter;
-        filter.state = state;
-        filter.voltage = state;
+        for (std::size_t stage = 0; stage < state.size(); ++stage)
+            filter.state[stage] = static_cast<double>(state[stage]);
     }
 
     static std::uint32_t microscopicNoiseState(
@@ -304,7 +309,7 @@ struct YouKnow106TestAccess
         auto& card = engine.cards_[slot];
         engine.initialiseVoice(voice, slot, 60, 1.0f);
         voice.filter.reset();
-        voice.filterG = 0.0f;
+        voice.filterOmegaStep = 0.0f;
         voice.feedback = 0.0f;
         voice.vcaControl = 1.0f;
         voice.vcaControlTarget = 1.0f;
@@ -2725,15 +2730,20 @@ void testFixedOutputBoundaryCorpus()
         // phantom 1.76 dB the old Thevenin model took from every fixture
         // with both waveforms on. The waveform-free self-oscillation probe
         // is the control: only the first correction reaches it.
-        Baseline { 0.42033, 0.862052, 0.87213, 0, 0 },
-        Baseline { 1.07583, 3.04992, 3.04992, 3188, 12730 },
-        Baseline { 2.31987, 4.26482, 4.2802, 6402, 25626 },
+        // Step 10 re-pins the corpus after replacing the old discrete VCF
+        // solve with the independently qualified continuous-ODE Merson path.
+        // The fixtures, gain, window and broad four-percent guards are
+        // unchanged; this records the intentional waveform change instead of
+        // relaxing the product boundary.
+        Baseline { 0.419351, 0.851657, 0.863588, 0, 0 },
+        Baseline { 1.07258, 3.03933, 3.05536, 3220, 12830 },
+        Baseline { 2.30165, 4.39228, 4.39853, 6604, 26432 },
         // Raised when the resonance profile was re-solved against Roland's own
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
-        Baseline { 0.19852, 0.28071, 0.28071, 0, 0 },
-        Baseline { 0.749961, 1.5589, 1.59184, 1545, 6213 },
-        Baseline { 0.488373, 1.52319, 1.52458, 46, 185 },
+        Baseline { 0.196638, 0.279147, 0.279147, 0, 0 },
+        Baseline { 0.748344, 1.58686, 1.59534, 1528, 6132 },
+        Baseline { 0.489074, 1.52184, 1.52184, 42, 167 },
     };
 
     constexpr double sampleRate = 48000.0;
@@ -4367,7 +4377,7 @@ void testRailDroopTracksLoadAtOneWallClockRate()
     // starts to differ between oversampling factors (observed ratio 0.5x) --
     // a measurement artifact of this test's detector, not evidence that the
     // droop follower's own wall-clock rate has changed. Worth a closer look
-    // (Newton-solver convergence under combined nonlinearity, per the
+    // (the VCF integrator's response under combined nonlinearity, per the
     // engine's open follow-up list) but out of scope for what this test
     // isolates.
     const auto settlingSeconds = [](bool oversampled) {
@@ -5122,10 +5132,10 @@ void testResonanceDoesNotMoveTheRenderedCorner()
 {
     // The circuit suite checks the control law; this checks the coefficient
     // the render actually consumes, so a correction fixed in the pure
-    // function and never wired into audio still fails. `voice.filterG` is the
+    // function and never wired into audio still fails. `filterOmegaStep` is the
     // integrator coefficient the cascade runs on, memoised behind an exact
     // equality on its own inputs, and the corner it stands for is
-    // atan(g) * internal rate / pi.
+    // omegaStep * internal rate / (2*pi).
     //
     // Every source is off, the envelope is out of the cutoff path and Unit
     // Character is zero, so nothing but the frequency correction couples
@@ -5153,9 +5163,9 @@ void testResonanceDoesNotMoveTheRenderedCorner()
         render(engine, static_cast<int>(sampleRate * 0.25));
         const double internalRate =
             sampleRate * static_cast<double>(engine.getOversamplingFactor());
-        return std::atan(static_cast<double>(
-                   YouKnow106TestAccess::filterG(engine, 0)))
-             * internalRate / pi;
+        return static_cast<double>(
+                   YouKnow106TestAccess::filterOmegaStep(engine, 0))
+             * internalRate / (2.0 * pi);
     };
 
     struct Code { const char* name; float panel; double hertz; };
@@ -5243,11 +5253,11 @@ void testVelocityScalesTheEnvelopeIntoTheFilter()
                 // restatement of the control law: a routing fixed in the
                 // target computation and never reaching the cascade fails
                 // here.
-                take.cornerHz =
-                    std::atan(static_cast<double>(
-                        YouKnow106TestAccess::filterG(engine, 0)))
+                take.cornerHz = static_cast<double>(
+                        YouKnow106TestAccess::filterOmegaStep(engine, 0))
                     * sampleRate
-                    * static_cast<double>(engine.getOversamplingFactor()) / pi;
+                    * static_cast<double>(engine.getOversamplingFactor())
+                    / (2.0 * pi);
                 probed = true;
             }
         }
@@ -6024,8 +6034,8 @@ double realtimeCost(const EngineParameters& parameters, int notes,
 
 void testQualityChangeRefreshesTheFilterCoefficient()
 {
-    // updateVoiceAudio memoises the counts-to-coefficient chain -- an exp2,
-    // two double pow and a tan per card per internal sample -- on exact
+    // updateVoiceAudio memoises the counts-to-coefficient chain -- an exp2
+    // and two double pow calls per card per internal sample -- on exact
     // equality of the counts and loop gain it consumes. Those two survive a
     // quality change untouched while the coefficient they produce is measured
     // in internal samples and does not, so the memo has to be retired when
@@ -6047,7 +6057,8 @@ void testQualityChangeRefreshesTheFilterCoefficient()
     // change has to be able to interrupt. Playing a note afterwards would
     // hide the fault: a new note moves the counts and forces a solve.
     render(engine, static_cast<int>(sampleRate * 0.5));
-    const float hqCoefficient = YouKnow106TestAccess::filterG(engine, 0);
+    const float hqCoefficient =
+        YouKnow106TestAccess::filterOmegaStep(engine, 0);
     const int hqFactor = engine.getOversamplingFactor();
     expect(hqCoefficient > 0.0f, "the settled card has no filter coefficient");
 
@@ -6055,10 +6066,11 @@ void testQualityChangeRefreshesTheFilterCoefficient()
     render(engine, static_cast<int>(sampleRate * 0.5));
     expect(engine.getOversamplingFactor() != hqFactor,
            "the quality change never took effect");
-    const float plainCoefficient = YouKnow106TestAccess::filterG(engine, 0);
+    const float plainCoefficient =
+        YouKnow106TestAccess::filterOmegaStep(engine, 0);
 
-    // g = tan(pi f / rate), and for this cutoff the argument is small enough
-    // that the coefficient scales with the rate ratio to well inside 1%.
+    // omega*dt = 2*pi*f/rate, so the coefficient scales exactly with the
+    // internal-rate ratio while the physical cutoff remains fixed.
     const double expected = static_cast<double>(hqCoefficient) * hqFactor;
     expect(plainCoefficient != hqCoefficient,
            "the filter coefficient did not move when the internal rate did: "
@@ -6072,16 +6084,10 @@ void testQualityChangeRefreshesTheFilterCoefficient()
 void testResonanceDoesNotMultiplyTheSolveCost()
 {
     // A same-run wall-time ratio rather than an absolute duration reduces the
-    // machine dependence of this coarse fence. What this fences is a property
-    // of the solver: the implicit cascade must not cost several times more to
-    // run at high resonance than at low, which is what happens when its
-    // convergence test cannot be satisfied and every hot sample runs the
-    // iteration cap.
-    //
-    // Measured on one 2.8 GHz core at 48 kHz/HQ before the step test was
-    // scaled to the volts it measures: 2.21, 2.24, 2.23. After: 1.31, 1.30,
-    // 1.32. Both patches drive the same six cards through the same path and
-    // differ only in RESONANCE, so the ratio is the solver's own.
+    // machine dependence of this coarse fence. The fixed-work Merson path has
+    // no convergence loop, so resonance may change branch and elementary-
+    // function cost but must not multiply the cost of advancing the same six
+    // cards through the same ten right-hand-side evaluations.
     constexpr double sampleRate = 48000.0;
     auto parameters = plainPatch();
     parameters.chorus = ChorusMode::Off;
@@ -6098,8 +6104,8 @@ void testResonanceDoesNotMultiplyTheSolveCost()
     const double ratio = resonant / plain;
     expect(ratio < 1.7,
            "resonance 0.95 costs " + std::to_string(ratio)
-               + "x what resonance 0.10 costs; the cascade solve is running "
-                 "its iteration cap");
+               + "x what resonance 0.10 costs; the fixed-work VCF path has "
+                 "an unexpected data-dependent cost");
 }
 
 void testCpuBudget()

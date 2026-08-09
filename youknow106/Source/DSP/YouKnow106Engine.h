@@ -334,30 +334,6 @@ public:
         [[nodiscard]] static float frequencyTrim(float feedback) noexcept;
     };
 
-    // The two elementary functions the transconductor cascade runs on, and
-    // the helper they share. Both are functions of the same exponential --
-    // with `e = exp(-2|x|)`, `tanh x = sign(x)(1-e)/(1+e)` and
-    // `ln cosh x = |x| + ln(1+e) - ln 2` -- so evaluating `e` once serves the
-    // pair's transfer and its antiderivative together. That matters because
-    // the implicit solve calls them tens of times per stage per sample: the
-    // filter is 65% of the engine's cost and almost all of that is these two.
-    //
-    // `ln(1+e)` is taken on `[0, 1]` through `2 atanh(e/(2+e))`, whose series
-    // in `s^2` converges quickly there (`s <= 1/3`); the double-precision core
-    // keeps it inside one float ULP of `std::log1p`. These are numerical
-    // kernels, not circuit laws -- they compute the same functions the model
-    // has always used, and `Tests/YouKnow106CircuitTests.cpp` fences their
-    // agreement with the standard library rather than trusting that claim.
-    struct CascadeKernels
-    {
-        [[nodiscard]] static float log1pUnitInterval(float u) noexcept;
-        [[nodiscard]] static float tanh(float x) noexcept;
-        [[nodiscard]] static float lnCosh(float x) noexcept;
-        // Beyond this magnitude tanh is 1 to within half a float ULP, so the
-        // kernel returns the rail rather than exponentiating toward it.
-        static constexpr float tanhRailMagnitude = 10.0f;
-    };
-
     // Where the transconductor's own control current stops following the
     // anti-log converter. An AS3109 teardown reports the internal control
     // current saturating at 700 uA, which is a pole near 64 kHz on this
@@ -760,6 +736,9 @@ private:
     // set at operating temperature, so what a calibrated instrument carries is
     // the spread about that mean, not the mean itself.
     [[nodiscard]] static float chassisGradientMeanCelsius() noexcept;
+    [[nodiscard]] static float boundedThermalFilterOmegaStep(
+        float baseOmegaStep, const EngineParameters& parameters,
+        int cardIndex) noexcept;
     // Roland publishes an approximate 5 Hz--50 kHz range, but no qualifying
     // capture fixes the high-code saturation shape. Keep the established
     // exponential law and apply an explicit product safety cap at that stated
@@ -922,37 +901,65 @@ private:
         void reset() noexcept;
     };
 
-    // Four transconductor stages plus the inverting resonance return, solved
-    // together as one implicit system.
+    // Four transconductor stages plus the inverting resonance return. The
+    // physical continuous-time equations are advanced directly with two
+    // half-interval, five-stage Merson steps. A causal current-plus-three-past
+    // reconstruction supplies the input at every stage abscissa without
+    // lookahead.
     struct OtaCascade
     {
-        // Capacitor voltage after the previous completed step. The update
-        // integrates each stage from here, so a numerical-rate change leaves
-        // every physical charge untouched.
-        std::array<float, 4> state {};
-        std::array<float, 4> voltage {};
+        // Capacitor voltages are the complete physical state. Double precision
+        // keeps the explicit high-order step from throwing away the accuracy
+        // it gains over the former float path-average solve.
+        std::array<double, 4> state {};
         std::array<float, 4> offsetVoltage {};
-        // The previous step's converged differential-pair drive, in the
-        // pair's own dimensionless coordinate. Each step averages the pair's
-        // tanh along the straight path from this value to the new drive --
-        // the exact integral the trapezoid approximates by its endpoints --
-        // which leaves the linear response and the self-oscillation limit
-        // cycle bit-identical while denying the tanh set the fold-back the
-        // analogue circuit never had.
-        std::array<float, 4> driveMemory {};
+        // Sample-grid support, not circuit memory. Point zero is the most
+        // recent completed endpoint; the current endpoint supplied to process
+        // is the fourth point of the causal cubic interpolant.
+        std::array<double, 3> inputHistory {};
+        // Startup and a changed numerical grid do not yet own three uniformly
+        // spaced endpoints. Ramp linear -> quadratic -> cubic instead of
+        // treating reset zeros or old-grid points as measured history.
+        int inputHistoryCount { 0 };
         // Each stage integrates into its own 240 pF capacitor, so each pole
         // sits where that capacitor's tolerance puts it. Unity is the
         // calibrated nominal model, where all four coincide.
         std::array<float, 4> gScale { 1.0f, 1.0f, 1.0f, 1.0f };
+        // Cutoff, resonance and thermal headroom are physical controls which
+        // can slew between internal endpoints. Interpolating their two known
+        // endpoints at the RK nodes avoids turning the present endpoint into
+        // a zero-order hold. The first call is primed at its current values.
+        double previousOmegaStep { 0.0 };
+        double previousFeedback { 0.0 };
+        double previousHeadroom { 0.0 };
+        bool parameterHistoryPrimed { false };
+
+        static constexpr int integrationSubsteps = 2;
+        static constexpr int rhsEvaluationsPerInterval = 10;
+        // The renderer's product-grid safety cap is 0.45 cycles per internal
+        // sample. Apply the card's thermal spread before this numerical bound
+        // so Unit Character cannot make the Merson solver see a larger
+        // interval.
+        static constexpr double maximumOmegaStep =
+            2.8274333882308138; // 0.9*pi
+        static constexpr double maximumInputReconstructionL1 =
+            1.631131;
 
         void reset() noexcept;
-        // Re-express the trapezoidal derivative carry for a changed numerical
-        // timestep while retaining every physical capacitor voltage.
-        void retime(float previousG, float nextG) noexcept;
-        float process(float input, float g, float feedback,
+        // A rate change retains physical charge and the most recent input
+        // endpoint. Older uniformly-spaced samples belong to the old grid and
+        // are collapsed under the engine's existing zero-gain transition.
+        void retime(float previousOmegaStep,
+                    float nextOmegaStep) noexcept;
+        float process(float input, float omegaStep, float feedback,
                       float headroom = otaHeadroomVolts,
                       bool enableEarlyEffect = true,
                       float calibration = 0.70f) noexcept;
+
+        [[nodiscard]] static double reconstructInput(
+            double current, const std::array<double, 3>& history,
+            double intervalPosition) noexcept;
+        [[nodiscard]] static double clampOmegaStep(double value) noexcept;
     };
 
     struct HighPass
@@ -1054,12 +1061,15 @@ private:
         // assigner's physical-key domain above.
         int lastVoiceMidi { -1 };
         float glideSemitonesPerScan { 0.0f };
-        float filterG { 0.05f };
-        // The counts and loop gain `filterG` was last solved for. Both are
-        // compared for exact equality, so this memo cannot return anything
-        // the chain would not have recomputed; a sentinel that no real
-        // count can equal forces the first solve. The internal rate is not
-        // part of the key because a rate change rebuilds voice state.
+        // Dimensionless physical interval omega*dt for the current cutoff.
+        // Unlike the former TPT coefficient this is consumed directly by the
+        // continuous-time RK step and therefore needs no tan/atan round trip.
+        float filterOmegaStep { 0.1f };
+        // The counts and loop gain `filterOmegaStep` was last solved for.
+        // Both are compared for exact equality, so this memo cannot return
+        // anything the chain would not have recomputed; a sentinel that no
+        // real count can equal forces the first solve. The internal rate is
+        // not part of the key because a rate change rebuilds voice state.
         float cutoffChainCounts { -1.0e30f };
         float cutoffChainFeedback { -1.0e30f };
         // Converter counts and control voltages, before and after the sample

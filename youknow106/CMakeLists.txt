@@ -265,6 +265,17 @@ if(YOUKNOW106_BUILD_TOOLS)
         PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Tools")
     target_compile_features(YouKnow106VcfBbdQualityAudit PRIVATE cxx_std_20)
 
+    # The static common-host audit above deliberately holds VCF controls and
+    # Unit Character nominal.  This companion exercises the physical
+    # time-varying equations: the normalized 23-write converter schedule,
+    # continuous hold trajectories and all six voice-card profiles are judged
+    # against an executable-local double RK64/RK128 oracle.
+    add_executable(YouKnow106VcfDynamicQualityAudit
+        Tools/AuditVcfDynamicQuality.cpp)
+    target_link_libraries(YouKnow106VcfDynamicQualityAudit
+        PRIVATE YouKnow106DSP)
+    target_compile_features(YouKnow106VcfDynamicQualityAudit PRIVATE cxx_std_20)
+
     if(MSVC)
         target_compile_options(YouKnow106RenderDemos PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderSota PRIVATE /W4 /permissive-)
@@ -283,6 +294,8 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106DcoScanQualityAudit
             PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106VcfBbdQualityAudit
+            PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnow106VcfDynamicQualityAudit
             PRIVATE /W4 /permissive-)
     else()
         target_compile_options(YouKnow106RenderDemos PRIVATE
@@ -307,6 +320,8 @@ if(YOUKNOW106_BUILD_TOOLS)
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106VcfBbdQualityAudit PRIVATE
             -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnow106VcfDynamicQualityAudit PRIVATE
+            -Wall -Wextra -Wpedantic)
     endif()
 endif()
 
@@ -319,11 +334,17 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnow106CircuitTests PRIVATE YouKnow106DSP)
     target_compile_features(YouKnow106CircuitTests PRIVATE cxx_std_20)
 
+    add_executable(YouKnow106VcfIntegratorTests
+        Tests/YouKnow106VcfIntegratorTests.cpp)
+    target_link_libraries(YouKnow106VcfIntegratorTests PRIVATE YouKnow106DSP)
+    target_compile_features(YouKnow106VcfIntegratorTests PRIVATE cxx_std_20)
+
     add_executable(YouKnow106SysExTests Tests/YouKnow106SysExTests.cpp)
     target_link_libraries(YouKnow106SysExTests PRIVATE YouKnow106DSP)
     target_compile_features(YouKnow106SysExTests PRIVATE cxx_std_20)
 
-    foreach(target YouKnow106EngineTests YouKnow106CircuitTests YouKnow106SysExTests)
+    foreach(target YouKnow106EngineTests YouKnow106CircuitTests
+                   YouKnow106VcfIntegratorTests YouKnow106SysExTests)
         if(MSVC)
             target_compile_options(${target} PRIVATE /W4 /permissive-)
         else()
@@ -333,6 +354,7 @@ if(BUILD_TESTING)
 
     add_test(NAME YouKnow106.Engine COMMAND YouKnow106EngineTests)
     add_test(NAME YouKnow106.Circuit COMMAND YouKnow106CircuitTests)
+    add_test(NAME YouKnow106.VcfIntegrator COMMAND YouKnow106VcfIntegratorTests)
     add_test(NAME YouKnow106.SysEx COMMAND YouKnow106SysExTests)
 
     if(YOUKNOW106_BUILD_TOOLS)
@@ -376,8 +398,11 @@ if(BUILD_TESTING)
                  COMMAND YouKnow106DcoScanQualityAudit --self-test)
         add_test(NAME YouKnow106.VcfBbdQualityContract
                  COMMAND YouKnow106VcfBbdQualityAudit --self-test)
+        add_test(NAME YouKnow106.VcfDynamicQualityContract
+                 COMMAND YouKnow106VcfDynamicQualityAudit --self-test)
         set_tests_properties(YouKnow106.DcoScanQualityContract
                              YouKnow106.VcfBbdQualityContract
+                             YouKnow106.VcfDynamicQualityContract
                              PROPERTIES TIMEOUT 300)
     endif()
     # The engine suite renders the complete factory-balance corpus, while the
@@ -411,6 +436,7 @@ if(BUILD_TESTING)
         TIMEOUT ${YOUKNOW106_ENGINE_TEST_TIMEOUT})
     set_tests_properties(YouKnow106.Circuit PROPERTIES
         TIMEOUT ${YOUKNOW106_CIRCUIT_TEST_TIMEOUT})
+    set_tests_properties(YouKnow106.VcfIntegrator PROPERTIES TIMEOUT 60)
 
     if(YOUKNOW106_BUILD_PLUGIN)
         add_executable(YouKnow106PluginProcessorTests Tests/PluginProcessorTests.cpp)

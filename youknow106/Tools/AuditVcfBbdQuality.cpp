@@ -780,13 +780,13 @@ VcfMetrics auditVcf(double hostRate, int factor, const VcfOracle& oracle)
         YouKnow106TestAccess::Cascade production;
         production.reset();
         std::vector<float> actualInternal(internalFrames);
-        const float g = static_cast<float>(
-            std::tan(pi * vcfCutoffHz / internalRate));
+        const float omegaStep = static_cast<float>(
+            2.0 * pi * vcfCutoffHz / internalRate);
         for (std::size_t index = 0u; index < internalFrames; ++index)
         {
             const double time = static_cast<double>(index + 1u) / internalRate;
             actualInternal[index] = production.process(
-                static_cast<float>(tone(time)), g,
+                static_cast<float>(tone(time)), omegaStep,
                 static_cast<float>(reference.feedback),
                 YouKnow106TestAccess::otaHeadroom(), false, 0.0f);
         }
@@ -817,13 +817,13 @@ VcfMetrics auditVcf(double hostRate, int factor, const VcfOracle& oracle)
     YouKnow106TestAccess::Cascade ringProduction;
     ringProduction.reset();
     std::vector<float> ringInternal(ringInternalFrames);
-    const float ringG = static_cast<float>(
-        std::tan(pi * vcfRingCutoffHz / internalRate));
+    const float ringOmegaStep = static_cast<float>(
+        2.0 * pi * vcfRingCutoffHz / internalRate);
     for (std::size_t index = 0u; index < ringInternalFrames; ++index)
     {
         const float input = index == 0u ? 0.5f : 0.0f;
         ringInternal[index] = ringProduction.process(
-            input, ringG, vcfRingFeedback,
+            input, ringOmegaStep, vcfRingFeedback,
             YouKnow106TestAccess::otaHeadroom(), false, 0.0f);
     }
     const auto ringBoundary = YouKnow106TestAccess::decimate(
@@ -863,8 +863,8 @@ VcfMetrics auditVcf(double hostRate, int factor, const VcfOracle& oracle)
     hotCascade.reset();
     std::vector<float> hotInternal(
         vcfHotHostFrames * static_cast<std::size_t>(factor));
-    const float hotG = static_cast<float>(
-        std::tan(pi * vcfHotCutoffHz / internalRate));
+    const float hotOmegaStep = static_cast<float>(
+        2.0 * pi * vcfHotCutoffHz / internalRate);
     for (std::size_t index = 0; index < hotInternal.size(); ++index)
     {
         const double time = static_cast<double>(index + 1u) / internalRate;
@@ -875,7 +875,7 @@ VcfMetrics auditVcf(double hostRate, int factor, const VcfOracle& oracle)
         const float input = static_cast<float>(vcfHotDriveAmplitude())
                           * static_cast<float>(2.0 * sum / pi);
         hotInternal[index] = hotCascade.process(
-            input, hotG, vcfHotFeedback,
+            input, hotOmegaStep, vcfHotFeedback,
             YouKnow106TestAccess::otaHeadroom(), false, 0.0f);
     }
     const auto hotBoundary = YouKnow106TestAccess::decimate(
@@ -2542,7 +2542,7 @@ void selfTest(const AuditResult& audit)
     // admission classifications under the fixed gates above, not assertions
     // that a larger factor must win or that 4x is the reference.
     constexpr std::array<bool, 6> expectedVcf {
-        false, false, false, false, false, false
+        false, false, true, false, false, true
     };
     constexpr std::array<bool, 6> expectedBbd {
         false, false, true, false, false, true
@@ -2551,7 +2551,7 @@ void selfTest(const AuditResult& audit)
         true, true, true, true, true, true
     };
     constexpr std::array<bool, 6> expectedVcfHotRmsGate {
-        false, false, false, false, false, false
+        false, false, true, false, false, true
     };
     constexpr std::array<bool, 6> expectedVcfHotOffMaskGate {
         false, true, true, false, true, true
@@ -2566,22 +2566,22 @@ void selfTest(const AuditResult& audit)
         false, false, true, false, false, true
     };
     constexpr std::array<double, 6> expectedVcfRkDb {
-        -53.243, -65.282, -77.301, -54.730, -66.783, -78.803
+        -145.593, -113.526, -112.144, -144.364, -114.710, -113.339
     };
     constexpr std::array<double, 6> expectedVcfHotRmsDb {
-        -1.110, -12.233, -24.348, -1.062, -13.752, -25.810
+        -12.538, -30.414, -50.351, -14.269, -33.028, -50.064
     };
     constexpr std::array<double, 6> expectedVcfHotOffMaskDb {
-        -27.063, -67.589, -99.040, -19.658, -67.128, -99.620
+        -44.602, -85.968, -133.278, -48.081, -88.898, -140.552
     };
     constexpr std::array<double, 6> expectedVcfHotOracleOffMaskDb {
         -93.242, -93.242, -93.242, -93.163, -93.163, -93.163
     };
     constexpr std::array<double, 6> expectedVcfPitchCents {
-        0.232, 0.059, 0.015, 0.195, 0.047, 0.010
+        0.000, 0.000, 0.000, 0.001, 0.001, 0.001
     };
     constexpr std::array<double, 6> expectedVcfLevelDb {
-        0.004, 0.003, 0.003, 0.008, 0.007, 0.005
+        0.003, 0.003, 0.003, 0.010, 0.007, 0.005
     };
     constexpr std::array<double, 6> expectedBbdAnalyticDb {
         -3.511, -18.390, -53.442, -5.263, -20.051, -56.101

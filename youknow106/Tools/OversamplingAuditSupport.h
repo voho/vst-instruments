@@ -34,11 +34,12 @@ struct DomainWorkCounters
     std::uint64_t dcoComparatorTransitions {};
     std::uint64_t dcoSubTransitions {};
     std::uint64_t vcfSteps {};
-    std::uint64_t vcfIterations {};
+    std::uint64_t vcfIntegrationSubsteps {};
+    std::uint64_t vcfRhsEvaluations {};
     std::uint64_t vcfStageEvaluations {};
-    std::uint64_t vcfBidiagonalSolves {};
-    std::uint64_t vcfShortPathAverages {};
-    std::uint64_t vcfLongPathAverages {};
+    std::uint64_t vcfFeedbackEvaluations {};
+    std::uint64_t vcfEarlyEvaluations {};
+    std::uint64_t vcfInputReconstructions {};
     std::uint64_t vcfRecoveries {};
     std::uint64_t chorusFrames {};
     std::uint64_t bbdLineFrames {};
@@ -78,11 +79,12 @@ inline constexpr std::array counterDescriptors {
     CounterDescriptor { "dcoComparatorTransitions", &DomainWorkCounters::dcoComparatorTransitions },
     CounterDescriptor { "dcoSubTransitions", &DomainWorkCounters::dcoSubTransitions },
     CounterDescriptor { "vcfSteps", &DomainWorkCounters::vcfSteps },
-    CounterDescriptor { "vcfIterations", &DomainWorkCounters::vcfIterations },
+    CounterDescriptor { "vcfIntegrationSubsteps", &DomainWorkCounters::vcfIntegrationSubsteps },
+    CounterDescriptor { "vcfRhsEvaluations", &DomainWorkCounters::vcfRhsEvaluations },
     CounterDescriptor { "vcfStageEvaluations", &DomainWorkCounters::vcfStageEvaluations },
-    CounterDescriptor { "vcfBidiagonalSolves", &DomainWorkCounters::vcfBidiagonalSolves },
-    CounterDescriptor { "vcfShortPathAverages", &DomainWorkCounters::vcfShortPathAverages },
-    CounterDescriptor { "vcfLongPathAverages", &DomainWorkCounters::vcfLongPathAverages },
+    CounterDescriptor { "vcfFeedbackEvaluations", &DomainWorkCounters::vcfFeedbackEvaluations },
+    CounterDescriptor { "vcfEarlyEvaluations", &DomainWorkCounters::vcfEarlyEvaluations },
+    CounterDescriptor { "vcfInputReconstructions", &DomainWorkCounters::vcfInputReconstructions },
     CounterDescriptor { "vcfRecoveries", &DomainWorkCounters::vcfRecoveries },
     CounterDescriptor { "chorusFrames", &DomainWorkCounters::chorusFrames },
     CounterDescriptor { "bbdLineFrames", &DomainWorkCounters::bbdLineFrames },

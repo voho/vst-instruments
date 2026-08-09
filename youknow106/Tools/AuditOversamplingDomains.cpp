@@ -565,6 +565,35 @@ void expectTrue(std::vector<std::string>& errors, std::string_view caseName,
                          + std::string(expression));
 }
 
+void validateVcfCounterAlgebra(std::string_view caseName,
+                               const DomainWorkCounters& counters,
+                               std::uint64_t expectedSteps,
+                               std::vector<std::string>& errors)
+{
+    expectEqual(errors, caseName, "vcfSteps",
+                counters.vcfSteps, expectedSteps);
+    expectEqual(errors, caseName, "VCF Merson half-steps",
+                counters.vcfIntegrationSubsteps,
+                2u * counters.vcfSteps);
+    expectEqual(errors, caseName, "VCF RHS evaluations",
+                counters.vcfRhsEvaluations,
+                5u * counters.vcfIntegrationSubsteps);
+    expectEqual(errors, caseName, "VCF stage evaluations",
+                counters.vcfStageEvaluations,
+                4u * counters.vcfRhsEvaluations);
+    expectEqual(errors, caseName, "VCF feedback evaluations",
+                counters.vcfFeedbackEvaluations,
+                counters.vcfRhsEvaluations);
+    expectEqual(errors, caseName, "VCF Early-effect evaluations",
+                counters.vcfEarlyEvaluations,
+                counters.vcfStageEvaluations);
+    expectEqual(errors, caseName, "VCF input reconstructions",
+                counters.vcfInputReconstructions,
+                7u * counters.vcfSteps);
+    expectEqual(errors, caseName, "vcfRecoveries",
+                counters.vcfRecoveries, 0u);
+}
+
 void validateCounterAlgebra(const CounterCase& testCase,
                             const DomainWorkCounters& counters,
                             std::vector<std::string>& errors)
@@ -606,8 +635,6 @@ void validateCounterAlgebra(const CounterCase& testCase,
                 counters.voiceAudioUpdates, voiceCards);
     expectEqual(errors, testCase.name, "dcoFrames",
                 counters.dcoFrames, voiceCards);
-    expectEqual(errors, testCase.name, "vcfSteps",
-                counters.vcfSteps, voiceCards);
     expectEqual(errors, testCase.name, "chorusFrames",
                 counters.chorusFrames, internal);
     expectEqual(errors, testCase.name, "bbdLineFrames",
@@ -633,19 +660,7 @@ void validateCounterAlgebra(const CounterCase& testCase,
     expectEqual(errors, testCase.name, "cutoff memo partition",
                 counters.cutoffMemoHits + counters.cutoffMemoMisses,
                 counters.voiceAudioUpdates);
-    expectEqual(errors, testCase.name, "VCF stage evaluations",
-                counters.vcfStageEvaluations, 4u * counters.vcfIterations);
-    expectEqual(errors, testCase.name, "VCF bidiagonal solves",
-                counters.vcfBidiagonalSolves, 2u * counters.vcfIterations);
-    expectEqual(errors, testCase.name, "VCF path-average partition",
-                counters.vcfShortPathAverages + counters.vcfLongPathAverages,
-                counters.vcfStageEvaluations);
-    expectTrue(errors, testCase.name, "vcfIterations must cover every step",
-               counters.vcfIterations >= counters.vcfSteps);
-    expectTrue(errors, testCase.name, "vcfIterations exceeded the 8-step cap",
-               counters.vcfIterations <= 8u * counters.vcfSteps);
-    expectEqual(errors, testCase.name, "vcfRecoveries",
-                counters.vcfRecoveries, 0u);
+    validateVcfCounterAlgebra(testCase.name, counters, voiceCards, errors);
 
     // Ten extension slots receive one digital scan update at each pass start,
     // even though this six-voice contract does not render their audio cards.

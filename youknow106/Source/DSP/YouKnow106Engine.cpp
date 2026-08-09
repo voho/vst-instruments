@@ -571,6 +571,20 @@ float YouKnow106Engine::chassisGradientMeanCelsius() noexcept
     return mean;
 }
 
+float YouKnow106Engine::boundedThermalFilterOmegaStep(
+    float baseOmegaStep, const EngineParameters& parameters,
+    int cardIndex) noexcept
+{
+    const double spread = parameters.enableSpatialThermalGradient
+        ? 1.0 + static_cast<double>(vcfCutoffTempcoPerCelsius)
+            * static_cast<double>(parameters.calibration)
+            * (static_cast<double>(chassisGradientCelsius(cardIndex))
+               - static_cast<double>(chassisGradientMeanCelsius()))
+        : 1.0;
+    return static_cast<float>(OtaCascade::clampOmegaStep(
+        static_cast<double>(baseOmegaStep) * spread));
+}
+
 namespace
 {
 // Compact laws independently derived from the hash-matched B-2 regions. They
@@ -1714,132 +1728,83 @@ void YouKnow106Engine::restartDcoBandlimited(
 
 void YouKnow106Engine::OtaCascade::reset() noexcept
 {
-    state.fill(0.0f);
-    voltage.fill(0.0f);
-    driveMemory.fill(0.0f);
+    state.fill(0.0);
+    inputHistory.fill(0.0);
+    inputHistoryCount = 0;
+    previousOmegaStep = 0.0;
+    previousFeedback = 0.0;
+    previousHeadroom = 0.0;
+    parameterHistoryPrimed = false;
 }
 
-void YouKnow106Engine::OtaCascade::retime(float previousG,
-                                          float nextG) noexcept
+void YouKnow106Engine::OtaCascade::retime(float previousStep,
+                                          float nextStep) noexcept
 {
-    // A live HQ change alters dt (and therefore g), not the capacitor
-    // voltages or the transconductance. Both carried states survive a rate
-    // change untouched: `state` is a physical capacitor voltage, and
-    // `driveMemory` is the pair drive at the previous step's endpoint --
-    // dimensionless, so it needs no re-expression on the new grid. The
-    // earlier trapezoidal carry had to be rescaled here; the path-average
-    // form has nothing to rescale.
-    (void) previousG;
-    (void) nextG;
-    state = voltage;
-}
-
-// ln(1+u) on [0, 1] through 2 atanh(u/(2+u)). The substitution puts the
-// series argument at s <= 1/3, where seven terms are already below the float
-// grid; the double-precision core is what keeps the result inside one ULP of
-// std::log1p at both ends of the interval.
-float YouKnow106Engine::CascadeKernels::log1pUnitInterval(float uf) noexcept
-{
-    const double u = static_cast<double>(uf);
-    const double s = u / (2.0 + u);
-    const double s2 = s * s;
-    const double series = 1.0 + s2 * (1.0 / 3.0
-                          + s2 * (0.2 + s2 * (1.0 / 7.0
-                          + s2 * (1.0 / 9.0 + s2 * (1.0 / 11.0 + s2 / 13.0)))));
-    return static_cast<float>(2.0 * s * series);
-}
-
-// tanh and ln cosh from one exponential. Kept together so the two can never
-// be evaluated from different roundings of the same e.
-static inline void tanhAndLnCosh(float x, float& tanhOut,
-                                 float& lnCoshOut) noexcept
-{
-    const float magnitude = std::abs(x);
-    const float e = std::exp(-2.0f * magnitude);
-    lnCoshOut = magnitude
-              + YouKnow106Engine::CascadeKernels::log1pUnitInterval(e)
-              - 0.6931471805599453f;
-    const double eWide = static_cast<double>(e);
-    const double t = (1.0 - eWide) / (1.0 + eWide);
-    tanhOut = static_cast<float>(x < 0.0f ? -t : t);
-}
-
-// The pair's instantaneous transfer.
-float YouKnow106Engine::CascadeKernels::tanh(float x) noexcept
-{
-    const float magnitude = std::abs(x);
-    if (magnitude > tanhRailMagnitude)
-        return x < 0.0f ? -1.0f : 1.0f;
-    const double e = static_cast<double>(std::exp(-2.0f * magnitude));
-    const double t = (1.0 - e) / (1.0 + e);
-    return static_cast<float>(x < 0.0f ? -t : t);
-}
-
-// The same identity, expressed as one call for the callers that need only
-// the amplifier's antiderivative.
-
-// Its antiderivative, which gives the exact average of tanh along a straight
-// drive path -- what one step of the integrator physically consumes. Written
-// out stably: for large |x|, ln(cosh x) -> |x| - ln 2.
-float YouKnow106Engine::CascadeKernels::lnCosh(float x) noexcept
-{
-    const float magnitude = std::abs(x);
-    return magnitude + log1pUnitInterval(std::exp(-2.0f * magnitude))
-         - 0.6931471805599453f;
-}
-
-// Average of tanh from x0 to x1, and its derivative with respect to x1. The
-// short-path branch is the midpoint rule the divided difference converges to.
-// `lnCoshAtX0` is the antiderivative at the carried path start: it is fixed
-// for the whole solve, so the caller evaluates it once per stage instead of
-// once per Newton iteration.
-static inline void tanhPathAverage(float x1, float x0, float lnCoshAtX0,
-                                   float& average, float& slope) noexcept
-{
-    const float span = x1 - x0;
-    if (std::abs(span) < 1.0e-3f)
+    // The capacitor voltages are physical and remain untouched. The three
+    // older input endpoints are uniformly spaced on the old numerical grid;
+    // they cannot be reinterpreted as samples on the new grid. Collapse them
+    // to the one endpoint both grids share. updateProcessingRate calls this
+    // only inside the existing zero-gain rate transition, and three new
+    // internal samples refill the support before the fade is audible.
+    inputHistory.fill(inputHistory[0]);
+    inputHistoryCount = 0;
+    if (parameterHistoryPrimed)
     {
-#if defined(YOUKNOW106_WORK_AUDIT)
-        YOUKNOW106_COUNT_DOMAIN_WORK(vcfShortPathAverages, 1);
-#endif
-        const float t =
-            YouKnow106Engine::CascadeKernels::tanh(0.5f * (x1 + x0));
-        average = t;
-        slope = 0.5f * (1.0f - t * t);
-        return;
+        const double previous = std::max(
+            static_cast<double>(previousStep), 0.0);
+        const double next = std::max(static_cast<double>(nextStep), 0.0);
+        // Both arguments are the actual post-thermal, post-grid-cap
+        // intervals on their respective grids. Scaling by their ratio maps
+        // the last physical control endpoint exactly even when one side of a
+        // rate change is capped. The zero branch is only reachable at reset.
+        previousOmegaStep = std::clamp(
+            previous > 0.0 ? previousOmegaStep * next / previous : next,
+            0.0, maximumOmegaStep);
     }
-#if defined(YOUKNOW106_WORK_AUDIT)
-    YOUKNOW106_COUNT_DOMAIN_WORK(vcfLongPathAverages, 1);
-#endif
-    float tanhAtX1 = 0.0f;
-    float lnCoshAtX1 = 0.0f;
-    tanhAndLnCosh(x1, tanhAtX1, lnCoshAtX1);
-    average = (lnCoshAtX1 - lnCoshAtX0) / span;
-    slope = (tanhAtX1 - average) / span;
 }
 
-// One implicitly integrated step of the four transconductor stages with the
-// inverting resonance return closed around them. The unknowns are the four
-// stage voltages; the Jacobian is lower bidiagonal apart from a single corner
-// term contributed by the feedback, so the Newton step is solved directly
-// rather than with a general linear solver.
-//
-// Stage equation: Vn = Vn_prev + 2 g * H * avg(tanh; x_prev -> x), with
-// x = (V_{n-1} - V_n + offset) / H, H = 2 Vt / attenuation the differential
-// pair's linear span referred to the stage input, and V_0 = input - k *
-// fb(V_4). The average of tanh along the straight drive path from the
-// previous step's endpoint is the integral the trapezoid approximates by its
-// endpoints; taking it exactly (the divided difference of ln cosh) changes
-// nothing the endpoints already got right -- the linear response and the
-// self-oscillation limit cycle are measured identical -- but denies the tanh
-// set the spectral fold-back the analogue cascade never had: the hot
-// bright-resonant in-band alias floor drops 11.5 dB. The compatibility
-// profile uses a circuit-shaped nonlinear return, fb(V) = Hfb * tanh(V /
-// Hfb), so its loop remains bounded; the return stays an endpoint evaluation
-// because V4 arrives already band-limited by the fourth pole. The selected
-// divider and headroom are part of that voiced profile, not a measured
-// code-to-loop transfer.
-float YouKnow106Engine::OtaCascade::process(float input, float g,
+double YouKnow106Engine::OtaCascade::reconstructInput(
+    double current, const std::array<double, 3>& history,
+    double intervalPosition) noexcept
+{
+    // Lagrange interpolation through endpoint coordinates
+    // { current@1, previous@0, previous2@-1, previous3@-2 }.
+    // It is exact for every polynomial through degree three, uses no future
+    // endpoint and adds no delay. Its worst coefficient L1 norm on [0,1] is
+    // 1.631131; the circuit suite fences both that finite gain and the
+    // deliberately exposed Nyquist-alternating overshoot.
+    constexpr std::array<double, 4> nodes {
+        1.0, 0.0, -1.0, -2.0
+    };
+    const std::array<double, 4> samples {
+        current, history[0], history[1], history[2]
+    };
+    double result = 0.0;
+    for (std::size_t point = 0; point < nodes.size(); ++point)
+    {
+        double weight = 1.0;
+        for (std::size_t other = 0; other < nodes.size(); ++other)
+            if (other != point)
+                weight *= (intervalPosition - nodes[other])
+                        / (nodes[point] - nodes[other]);
+        result += weight * samples[point];
+    }
+    return result;
+}
+
+double YouKnow106Engine::OtaCascade::clampOmegaStep(double value) noexcept
+{
+    return std::clamp(std::isfinite(value) ? value : 0.0,
+                      0.0, maximumOmegaStep);
+}
+
+// Advance the continuous four-stage OTA equations over one internal interval.
+// Two fixed half-interval Merson steps use five right-hand-side evaluations
+// each. The only circuit state is capacitor voltage, and the causal cubic
+// supplies input between the two known sample endpoints.
+// The compatibility profile closes a circuit-shaped nonlinear resonance
+// return, Hfb*tanh(V4/Hfb), so the loop remains bounded beyond oscillation.
+float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
                                             float feedback,
                                             float headroom,
                                             bool enableEarlyEffect,
@@ -1848,167 +1813,207 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
 #if defined(YOUKNOW106_WORK_AUDIT)
     YOUKNOW106_COUNT_DOMAIN_WORK(vcfSteps, 1);
 #endif
-    const float inverseHeadroom = 1.0f / std::max(headroom, 1.0e-5f);
-    constexpr float feedbackHeadroom =
+    constexpr double feedbackHeadroom =
         VoicedResonanceCompatibilityProfile::loopHeadroomVolts;
-    constexpr int maximumIterations = 8;
+    const double currentOmega = clampOmegaStep(
+        static_cast<double>(omegaStep));
+    const double currentFeedback = std::clamp(
+        std::isfinite(feedback) ? static_cast<double>(feedback) : 0.0,
+        0.0, 8.0);
+    const double currentHeadroom = std::max(
+        std::isfinite(headroom) ? static_cast<double>(headroom) : 0.0,
+        1.0e-5);
+    const double currentInput = std::isfinite(input)
+        ? static_cast<double>(input) : 0.0;
+    const double currentCalibration = std::clamp(
+        std::isfinite(calibration) ? static_cast<double>(calibration) : 0.0,
+        0.0, static_cast<double>(EngineParameters::calibrationCeiling));
 
-    const float gLimited = std::clamp(g, 0.0f, 64.0f);
-    const float k = std::clamp(feedback, 0.0f, 8.0f);
+    if (!parameterHistoryPrimed)
+    {
+        previousOmegaStep = currentOmega;
+        previousFeedback = currentFeedback;
+        previousHeadroom = currentHeadroom;
+        parameterHistoryPrimed = true;
+    }
 
-    std::array<float, 4> selfDerivative {};
-    std::array<float, 4> previousDerivative {};
-    std::array<float, 4> residual {};
-    std::array<float, 4> drive {};
-
-    // The antiderivative at each stage's carried path start. It depends only
-    // on driveMemory, which this call does not move, so it belongs outside
-    // the Newton loop -- inside it, every iteration paid for the same four
-    // exponentials again.
-    std::array<float, 4> pathStart {};
-    for (int n = 0; n < 4; ++n)
-        pathStart[static_cast<std::size_t>(n)] =
-            CascadeKernels::lnCosh(driveMemory[static_cast<std::size_t>(n)]);
-
-    for (int iteration = 0; iteration < maximumIterations; ++iteration)
+    struct IntegrationNode
+    {
+        double position {};
+        std::array<double, 2> linear {};
+        std::array<double, 3> quadratic {};
+        std::array<double, 4> cubic {};
+    };
+    static constexpr auto makeNodes = []<std::size_t count>(
+        const std::array<double, count>& positions) {
+        std::array<IntegrationNode, count> result {};
+        for (std::size_t point = 0; point < count; ++point)
+        {
+            const double t = positions[point];
+            result[point] = {
+                t,
+                { t, 1.0 - t },
+                { 0.5 * t * (t + 1.0), 1.0 - t * t,
+                  0.5 * t * (t - 1.0) },
+                { t * (t + 1.0) * (t + 2.0) / 6.0,
+                  -(t - 1.0) * (t + 1.0) * (t + 2.0) / 2.0,
+                  (t - 1.0) * t * (t + 2.0) / 2.0,
+                  -(t - 1.0) * t * (t + 1.0) / 6.0 }
+            };
+        }
+        return result;
+    };
+    static constexpr auto nodes = makeNodes(std::array {
+        0.0, 1.0 / 6.0, 1.0 / 4.0, 1.0 / 2.0,
+        2.0 / 3.0, 3.0 / 4.0, 1.0
+    });
+    constexpr std::size_t pointCount = nodes.size();
+    constexpr double substep = 0.5;
+    std::array<double, pointCount> inputAt {};
+    std::array<double, pointCount> omegaAt {};
+    std::array<double, pointCount> feedbackAt {};
+    std::array<double, pointCount> headroomAt {};
+    for (std::size_t point = 0; point < pointCount; ++point)
     {
 #if defined(YOUKNOW106_WORK_AUDIT)
-        YOUKNOW106_COUNT_DOMAIN_WORK(vcfIterations, 1);
+        YOUKNOW106_COUNT_DOMAIN_WORK(vcfInputReconstructions, 1);
 #endif
-        const float feedbackTanh =
-            CascadeKernels::tanh(voltage[3] / feedbackHeadroom);
-        const float feedbackSech2 = 1.0f - feedbackTanh * feedbackTanh;
-        float previous = input - k * feedbackHeadroom * feedbackTanh;
-        for (int n = 0; n < 4; ++n)
+        if (inputHistoryCount == 0)
+            inputAt[point] = nodes[point].linear[0] * currentInput
+                           + nodes[point].linear[1] * inputHistory[0];
+        else if (inputHistoryCount == 1)
+            inputAt[point] = nodes[point].quadratic[0] * currentInput
+                + nodes[point].quadratic[1] * inputHistory[0]
+                + nodes[point].quadratic[2] * inputHistory[1];
+        else
+            inputAt[point] = nodes[point].cubic[0] * currentInput
+                + nodes[point].cubic[1] * inputHistory[0]
+                + nodes[point].cubic[2] * inputHistory[1]
+                + nodes[point].cubic[3] * inputHistory[2];
+        const double position = nodes[point].position;
+        omegaAt[point] = previousOmegaStep
+            + position * (currentOmega - previousOmegaStep);
+        feedbackAt[point] = previousFeedback
+            + position * (currentFeedback - previousFeedback);
+        headroomAt[point] = std::max(
+            previousHeadroom
+                + position * (currentHeadroom - previousHeadroom),
+            1.0e-5);
+    }
+
+    const auto derivative = [&](const std::array<double, 4>& value,
+                                double drive, std::size_t point) {
+        std::array<double, 4> result {};
+        const double runningHeadroom = headroomAt[point];
+#if defined(YOUKNOW106_WORK_AUDIT)
+        YOUKNOW106_COUNT_DOMAIN_WORK(vcfRhsEvaluations, 1);
+        YOUKNOW106_COUNT_DOMAIN_WORK(vcfFeedbackEvaluations, 1);
+        if (enableEarlyEffect && currentCalibration > 0.0)
+            YOUKNOW106_COUNT_DOMAIN_WORK(vcfEarlyEvaluations,
+                                         result.size());
+#endif
+        double previous = drive - feedbackAt[point] * feedbackHeadroom
+            * std::tanh(value[3] / feedbackHeadroom);
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
         {
 #if defined(YOUKNOW106_WORK_AUDIT)
             YOUKNOW106_COUNT_DOMAIN_WORK(vcfStageEvaluations, 1);
 #endif
-            const float earlyMod = (enableEarlyEffect && calibration > 0.0f)
-                ? (1.0f + otaEarlyEffectCoefficient * calibration
-                       * CascadeKernels::tanh(
-                             voltage[static_cast<std::size_t>(n)] * inverseHeadroom))
-                : 1.0f;
-            const float stageG = gLimited * gScale[static_cast<std::size_t>(n)]
-                               * earlyMod;
-            const float x = (previous - voltage[static_cast<std::size_t>(n)]
-                             + offsetVoltage[static_cast<std::size_t>(n)]) * inverseHeadroom;
-            drive[static_cast<std::size_t>(n)] = x;
-            float pathAverage = 0.0f;
-            float pathSlope = 0.0f;
-            tanhPathAverage(x, driveMemory[static_cast<std::size_t>(n)],
-                            pathStart[static_cast<std::size_t>(n)],
-                            pathAverage, pathSlope);
-            // The 2 restores the full step: the trapezoidal g carries the
-            // half that used to pair with the endpoint average.
-            residual[static_cast<std::size_t>(n)] =
-                voltage[static_cast<std::size_t>(n)]
-                - state[static_cast<std::size_t>(n)]
-                - 2.0f * stageG * headroom * pathAverage;
-            selfDerivative[static_cast<std::size_t>(n)] =
-                1.0f + 2.0f * stageG * pathSlope;
-            previousDerivative[static_cast<std::size_t>(n)] =
-                -2.0f * stageG * pathSlope;
-            previous = voltage[static_cast<std::size_t>(n)];
+            const double early = enableEarlyEffect
+                    && currentCalibration > 0.0
+                ? 1.0 + static_cast<double>(otaEarlyEffectCoefficient)
+                    * currentCalibration
+                    * std::tanh(value[stage] / runningHeadroom)
+                : 1.0;
+            result[stage] = omegaAt[point]
+                * static_cast<double>(gScale[stage])
+                * early * runningHeadroom
+                * std::tanh((previous - value[stage]
+                             + static_cast<double>(offsetVoltage[stage]))
+                            / runningHeadroom);
+            previous = value[stage];
         }
+        return result;
+    };
+    const auto advanceOne = [](const std::array<double, 4>& origin,
+                               const std::array<double, 4>& slope,
+                               double distance) {
+        std::array<double, 4> result {};
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+            result[stage] = origin[stage] + distance * slope[stage];
+        return result;
+    };
+    const auto advanceTwo = [](const std::array<double, 4>& origin,
+                               double step,
+                               const std::array<double, 4>& a, double wa,
+                               const std::array<double, 4>& b, double wb) {
+        std::array<double, 4> result {};
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+            result[stage] = origin[stage] + step
+                * (wa * a[stage] + wb * b[stage]);
+        return result;
+    };
+    const auto advanceThree = [](const std::array<double, 4>& origin,
+                                 double step,
+                                 const std::array<double, 4>& a, double wa,
+                                 const std::array<double, 4>& b, double wb,
+                                 const std::array<double, 4>& c, double wc) {
+        std::array<double, 4> result {};
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+            result[stage] = origin[stage] + step
+                * (wa * a[stage] + wb * b[stage] + wc * c[stage]);
+        return result;
+    };
 
-        // Solve the bidiagonal system twice: once for the residual and once for
-        // the corner column, then combine. This is the rank-one correction that
-        // closes the resonance loop without forming a 4x4 matrix.
-        const auto solveBidiagonal = [&](const std::array<float, 4>& rhs) {
-#if defined(YOUKNOW106_WORK_AUDIT)
-            YOUKNOW106_COUNT_DOMAIN_WORK(vcfBidiagonalSolves, 1);
-#endif
-            std::array<float, 4> x {};
-            x[0] = rhs[0] / selfDerivative[0];
-            for (int n = 1; n < 4; ++n)
-                x[static_cast<std::size_t>(n)] =
-                    (rhs[static_cast<std::size_t>(n)]
-                     - previousDerivative[static_cast<std::size_t>(n)]
-                       * x[static_cast<std::size_t>(n - 1)])
-                    / selfDerivative[static_cast<std::size_t>(n)];
-            return x;
-        };
-
-        const auto a = solveBidiagonal(residual);
-        std::array<float, 4> corner {};
-        // The corner column is the loop's derivative with respect to the
-        // fourth pole, which carries the return pair's own compression.
-        corner[0] = previousDerivative[0] * (-k * feedbackSech2);
-        const auto b = solveBidiagonal(corner);
-
-        float denominator = 1.0f + b[3];
-        if (std::abs(denominator) < 1.0e-9f)
-            denominator = denominator < 0.0f ? -1.0e-9f : 1.0e-9f;
-        const float scale = a[3] / denominator;
-
-        float largest = 0.0f;
-        float magnitude = 0.0f;
-        for (int n = 0; n < 4; ++n)
-        {
-            const float delta = std::clamp(
-                a[static_cast<std::size_t>(n)] - b[static_cast<std::size_t>(n)] * scale,
-                -32.0f, 32.0f);
-            voltage[static_cast<std::size_t>(n)] -= delta;
-            largest = std::max(largest, std::abs(delta));
-            magnitude = std::max(magnitude,
-                                 std::abs(voltage[static_cast<std::size_t>(n)]));
-        }
-
-        // Scaled to the states the step is measured against, because these
-        // are volts and single precision cannot resolve an absolute 1e-7 on
-        // them. With the former fixed threshold the test was unsatisfiable
-        // wherever the cascade was working: instrumented, the loop ran its
-        // full cap on 7.99 calls in 8 at resonance 0.95 and 6.22 in 8 with
-        // chorus engaged, against 2.86 on a quiet patch -- not because it had
-        // not converged, but because it could not say so. Its remaining step
-        // at the cap measured a mean of 5.1e-5 V on states averaging 1.7 V,
-        // several iterations after the iteration reached its own round-off
-        // floor of about 1e-6 relative. This threshold sits on that floor, so
-        // the loop now stops where it converges. The cap below is unchanged,
-        // so the worst-case residual cannot grow: a step that has not met
-        // this bound still gets every iteration it used to get.
-        if (largest < 1.0e-6f * (1.0f + magnitude))
-            break;
-    }
-
-    // Re-evaluate the drives at the converged voltages so the carried path
-    // start is exactly consistent with the carried charge.
+    for (int step = 0; step < integrationSubsteps; ++step)
     {
-        const float feedbackTanh =
-            CascadeKernels::tanh(voltage[3] / feedbackHeadroom);
-        float previous = input - k * feedbackHeadroom * feedbackTanh;
-        for (int n = 0; n < 4; ++n)
-        {
-            drive[static_cast<std::size_t>(n)] =
-                (previous - voltage[static_cast<std::size_t>(n)]
-                 + offsetVoltage[static_cast<std::size_t>(n)]) * inverseHeadroom;
-            previous = voltage[static_cast<std::size_t>(n)];
-        }
-    }
-
-    for (int n = 0; n < 4; ++n)
-    {
-        // Carry the converged step: the capacitor voltage becomes the next
-        // step's integration origin, and the converged drive becomes the next
-        // path's starting point.
-        state[static_cast<std::size_t>(n)] =
-            voltage[static_cast<std::size_t>(n)];
-        driveMemory[static_cast<std::size_t>(n)] =
-            drive[static_cast<std::size_t>(n)];
-        if (!std::isfinite(state[static_cast<std::size_t>(n)])
-            || !std::isfinite(driveMemory[static_cast<std::size_t>(n)]))
-        {
 #if defined(YOUKNOW106_WORK_AUDIT)
-            YOUKNOW106_COUNT_DOMAIN_WORK(vcfRecoveries, 1);
+        YOUKNOW106_COUNT_DOMAIN_WORK(vcfIntegrationSubsteps, 1);
 #endif
-            state[static_cast<std::size_t>(n)] = 0.0f;
-            voltage[static_cast<std::size_t>(n)] = 0.0f;
-            driveMemory[static_cast<std::size_t>(n)] = 0.0f;
-        }
+        const std::size_t origin = static_cast<std::size_t>(3 * step);
+        const auto k1 = derivative(state, inputAt[origin], origin);
+        const auto k2 = derivative(
+            advanceOne(state, k1, substep / 3.0),
+            inputAt[origin + 1u], origin + 1u);
+        const auto k3 = derivative(
+            advanceTwo(state, substep, k1, 1.0 / 6.0,
+                       k2, 1.0 / 6.0),
+            inputAt[origin + 1u], origin + 1u);
+        const auto k4 = derivative(
+            advanceTwo(state, substep, k1, 1.0 / 8.0,
+                       k3, 3.0 / 8.0),
+            inputAt[origin + 2u], origin + 2u);
+        const auto k5 = derivative(
+            advanceThree(state, substep, k1, 1.0 / 2.0,
+                         k3, -3.0 / 2.0, k4, 2.0),
+            inputAt[origin + 3u], origin + 3u);
+        state = advanceThree(state, substep, k1, 1.0 / 6.0,
+                             k4, 2.0 / 3.0, k5, 1.0 / 6.0);
     }
 
-    return voltage[3];
+    for (std::size_t point = inputHistory.size() - 1u; point > 0u; --point)
+        inputHistory[point] = inputHistory[point - 1u];
+    inputHistory[0] = currentInput;
+    inputHistoryCount = std::min(inputHistoryCount + 1, 2);
+    previousOmegaStep = currentOmega;
+    previousFeedback = currentFeedback;
+    previousHeadroom = currentHeadroom;
+
+    const bool valid = std::all_of(
+        state.begin(), state.end(), [](double value) {
+            return std::isfinite(value) && std::abs(value) <= 64.0;
+        });
+    if (!valid)
+    {
+#if defined(YOUKNOW106_WORK_AUDIT)
+        YOUKNOW106_COUNT_DOMAIN_WORK(vcfRecoveries, 1);
+#endif
+        state.fill(0.0);
+        inputHistory.fill(currentInput);
+        inputHistoryCount = 2;
+        return 0.0f;
+    }
+    return static_cast<float>(state[3]);
 }
 
 void YouKnow106Engine::HighPass::reset() noexcept
@@ -2393,7 +2398,10 @@ void YouKnow106Engine::rebuildRateDependentVoiceState() noexcept
 {
     for (auto& voice : voices_)
     {
-        const float previousFilterG = voice.filterG;
+        const float previousFilterOmegaStep = voice.filterOmegaStep;
+        const float previousEffectiveFilterOmegaStep =
+            boundedThermalFilterOmegaStep(
+                previousFilterOmegaStep, activeParameters_, voice.cardIndex);
         const double frequency = dcoQuantisedFrequency(
             voice.dco.divider, activeParameters_.range);
         voice.dco.periodSamples = frequency > 0.0
@@ -2419,7 +2427,11 @@ void YouKnow106Engine::rebuildRateDependentVoiceState() noexcept
         if (voice.active || voice.cardIndex < hardwareVoices)
         {
             updateVoiceAudio(voice, activeParameters_);
-            voice.filter.retime(previousFilterG, voice.filterG);
+            const float nextEffectiveFilterOmegaStep =
+                boundedThermalFilterOmegaStep(
+                    voice.filterOmegaStep, activeParameters_, voice.cardIndex);
+            voice.filter.retime(previousEffectiveFilterOmegaStep,
+                                nextEffectiveFilterOmegaStep);
         }
     }
 }
@@ -3621,8 +3633,8 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
         + card.cutoffOffsetError * 0.07f * vcfCountsPerOctave * tolerance
         + card.driftValue * 40.0f * tolerance
         + psuCutoffShift;
-    // The chain from counts to the integrator's coefficient costs an exp2,
-    // two double pow and a tan, per card, per internal sample -- and it is a
+    // The chain from counts to the physical omega*dt interval costs an exp2
+    // and two double pow calls per card, per internal sample -- and it is a
     // pure function of the two values compared here. A card whose hold has
     // settled and whose drift step has not landed presents bit-identical
     // inputs for thousands of samples in a row, which is most of what an idle
@@ -3637,7 +3649,7 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
         const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, voice.feedback);
         const float limited =
             std::min(cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
-        voice.filterG = std::tan(pi * limited * inverseOversampledRate_);
+        voice.filterOmegaStep = twoPi * limited * inverseOversampledRate_;
         voice.cutoffChainCounts = analogCounts;
         voice.cutoffChainFeedback = voice.feedback;
     }
@@ -4084,7 +4096,6 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     const float filterInput = coupled * filterInputAttenuation
                             * voice.inputCompensation
                             + microscopicNoise * noiseRateScale_;
-    const float cardGradient = chassisGradientCelsius(voice.cardIndex);
     // Physical thermal warmup curve: V_t(T) = k * T / q from 25°C to 40°C.
     const float dynamicHeadroom =
         dynamicOtaHeadroomVolts(parameters, voice.cardIndex);
@@ -4093,23 +4104,17 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // instrument warm, so a calibrated unit carries the spread and not the
     // mean. Roughly +/-10 cents at Unit Character 1, an upper bound on what
     // R111's positor leaves uncancelled.
-    const float thermalCutoffSpread = parameters.enableSpatialThermalGradient
-        ? 1.0f + vcfCutoffTempcoPerCelsius * parameters.calibration
-                     * (cardGradient - chassisGradientMeanCelsius())
-        : 1.0f;
-    // One solve per internal sample. Solving the cascade on a doubled grid was
-    // built and measured: on the bright resonant patch that shows the engine's
-    // worst in-band artefacts it moved the floor from -48.5 dB to -54.4 dB and
-    // cost about 40% of the whole engine, because the affordable per-voice
-    // interpolation and decimation either side of the doubled grid put back
-    // most of what the doubled grid removed. A published expectation of -87.7
-    // dB for the same change does not reproduce against this engine; see the
-    // modelling notes.
-    const float effectiveFilterG = voice.filterG * thermalCutoffSpread;
-    const float filtered = voice.filter.process(filterInput, effectiveFilterG,
-                                                voice.feedback, dynamicHeadroom,
-                                                parameters.enableVcfEarlyEffect,
-                                                parameters.calibration);
+    // The continuous cascade advances directly at this internal boundary.
+    // Two fixed Merson half-steps are a numerical solver, not a higher
+    // modelled sample rate: they add neither an inter-domain boundary nor
+    // latency. Apply the product-grid cap after the thermal card spread so Unit
+    // Character cannot push the numerical interval past the proven boundary.
+    const float effectiveFilterOmegaStep = boundedThermalFilterOmegaStep(
+        voice.filterOmegaStep, parameters, voice.cardIndex);
+    const float filtered = voice.filter.process(
+        filterInput, effectiveFilterOmegaStep, voice.feedback,
+        dynamicHeadroom, parameters.enableVcfEarlyEffect,
+        parameters.calibration);
 
     // C59 stands between pin 3 VCF OUT and pin 9 VCA IN, so the amplifier
     // never sees the filter's DC. The cascade makes DC of its own: the stage

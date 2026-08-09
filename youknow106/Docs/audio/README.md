@@ -1,109 +1,73 @@
-# YouKnow106 demonstration audio
+# YouKnow106 audio corpus
 
-Ten rendered examples of what YouKnow106 produces: the classic chorus pad and
-PWM strings, a 16' bassline, resonant filter brass, the filter played as a
-voice at full resonance, the effect's three states side by side, a unison lead
-under constant-rate portamento, the modulator's delayed onset, the four
-high-pass switch positions, and the same chord on a perfectly calibrated unit
-against the optional deterministic Unit Character profile. That last profile is
-a plug-in sound-design/compatibility choice, not a measured JUNO-106 dispersion
-distribution.
+This directory is a fresh Step 10 render of the current engine candidate. It
+intentionally contains only the ten maintained demonstration fixtures and the
+full [factory-preset audit](factory-presets/README.md). Historical
+before/after, fidelity, realism, and state-of-the-art comparison corpora were
+retired when this set was regenerated; they remain recoverable from the Step 9
+history and are not evidence for the Step 10 engine.
 
-Every file here is rendered by [`Tools/RenderDemos.cpp`](../../Tools/RenderDemos.cpp)
-from the shipping JUCE-free signal path — the same `YouKnow106Engine` the VST3,
-Audio Unit and Standalone run — so a demonstration cannot drift away from what
-the plug-in actually sounds like. No samples, impulse responses, reverbs or
-external processing are involved anywhere in this directory: the whole set
-comes out of the circuit model, including the chorus hiss, which is the
-uncompanded delay lines' own noise floor and part of the instrument.
+The snapshot was built in Release mode with the plug-in and tests disabled.
+Its VCF is the Step 10 bounded causal integrator: two fixed half-interval,
+five-stage Merson RK4 advances, current-plus-three-past cubic input
+reconstruction, and endpoint-linear controls. The exact DSP source provenance
+for this render is:
 
-## How to listen to them
+- `Source/DSP/YouKnow106Engine.cpp` SHA-256
+  `6b2f25b8e3b589c5fd5d0ec2ec69e0b3a99d2013cde43a0b74360ffb24bc651b`
+- `Source/DSP/YouKnow106Engine.h` SHA-256
+  `a32c0ba7e28f55c5022bf689ca47eaec6161865a51322feb05d9c89c897ea733`
 
-The set is ordered so it can be played straight through:
+## Demonstrations
 
-- **01–04** are the instrument's classic voices: the mode-I chorus pad, PWM
-  strings in mode II, a 16' bass whose punch is the generator's exponential
-  falling segments, and resonant filter-envelope brass ending on a full
-  bender push.
-- **05** is the filter alone: resonance past the oscillation threshold with
-  full key follow, played as a melodic voice. Its rendered target is the
-  service procedure's published cutoff pitch; the model's feedback-dependent
-  correction remains a voiced compatibility profile.
-- **06** is the effect switch heard as a switch: the same pad dry, in mode I,
-  then in mode II. Mode II is faster, not deeper, and its noise floor carries
-  the reported approximately 3.95 dB lift over mode I. Listen in headphones
-  for the antiphase width and the stronger hiss under the second wet mode.
-- **07–08** are performance behaviours: Solo Unison summing six free-running
-  DCOs — equal timer counts, no deliberate detune and no forced common phase —
-  under a constant-rate glide, and the modulator's hold-then-fade delay bringing
-  vibrato onto a held chord.
-- **09–10** are the switched network and optional Unit Character: one
-  bright chord through all four high-pass positions including the measured
-  bass boost, then a six-voice chord with Unit Character at zero and at full —
-  deterministic per-voice trims, offsets and wander whose current magnitudes
-  are voiced rather than measured.
-
-Every other file here renders at the shipped 100% Unit Character, which is what
-a new plug-in instance sounds like. Only `10-unit-character.wav` moves it, and
-its first half is genuinely the calibrated nominal model: the IR3109 stage
-offsets are scaled by Unit Character like every other card tolerance, so at
-zero the six cards are identical rather than merely close.
-
-## Levels
-
-Each take is rendered with generous headroom and then normalised to −3 dBFS,
-so the files can be auditioned one after another without reaching for the
-volume. Signal order is voice-module VCAs, voice sum, C14/R39 coupling, shared
-high-pass, C12/R36 coupling, the stored VCA LEVEL trim, chorus/IC6 output
-summers, the final host-rate stereo output coupling and then the VOLUME
-potentiometer. The final network solves each IC6 output's 10 µF capacitor,
-1.5 kΩ series resistor and nominal-linear `10KB×2` track together with the
-fixed 41.3 kΩ selector ladder and 101 kΩ headphone input load. Its unloaded
-full-track reference is 1.384 Hz and 0.8696 (−1.214 dB); the rendered corner
-and gain follow the actual shaft position. Real gang tracking and the physical
-selector/output-jack path—selected-tap loading, R64/R65 2.2 kΩ, C21/C22 1 nF,
-jack normaling and external loads—remain open. VCA LEVEL can therefore match
-patches and set how hard they drive the chorus without changing the per-voice
-envelope law. The level table retains every unnormalised engine peak, so gain
-changes remain reviewable. The renderer refuses silence or non-finite output.
-Within each wet chorus return, C28/C25 adds its own nominal 7.23 Hz coupling
-pole while muted and 11.315 Hz pole when the 39 kΩ IC6 wet input is connected;
-this is separate from the 15.9 Hz coupling before each MN3009. These files were
-regenerated after the Step-7 DCO reconstruction/95-tap output boundary, the
-Step-8 causal BBD input-edge reconstruction, and the Step-9 combined
-continuous-state BBD output support on every grid plus exact input support on
-the 176.4/192 kHz HQ grids, so their samples and the peak table below describe
-the current engine.
-After normalisation, it also rejects an absolute whole-file DC mean above
-0.005 FS or a first or last sample edge above 0.01 FS, so a DC-heavy or
-endpoint-clicking take cannot replace the committed demonstrations. It does not
-claim an invented dBFS clipping threshold for the ±15 V IC6 stage, whose loaded
-output swing is still an explicit measurement question.
+[`Tools/RenderDemos.cpp`](../../Tools/RenderDemos.cpp) renders every file
+through the JUCE-free `YouKnow106Engine` path used by the products. No samples,
+impulse responses, reverb, or external processing are added. Each take is
+normalised to -3 dBFS; the pre-normalisation peak remains visible below. The
+renderer rejects silence, non-finite output, excessive whole-file DC, and
+unsafe first or last samples.
 
 <!-- peaks-table-begin: regenerated by YouKnow106RenderDemos; edits between the markers are overwritten -->
 | File | What it is | Length | Rendered peak | Normalisation |
 | --- | --- | ---: | ---: | ---: |
 | `01-chorus-pad.wav` | Saw and sub through the mode-I chorus: the classic pad, hiss and all | 21.9 s | −4.3 dBFS | +1.3 dB |
-| `02-pwm-strings.wav` | Pulse-width-modulated strings in the faster mode-II chorus | 15.3 s | −2.0 dBFS | −1.0 dB |
+| `02-pwm-strings.wav` | Pulse-width-modulated strings in the faster mode-II chorus | 15.3 s | −2.1 dBFS | −0.9 dB |
 | `03-sixteen-foot-bass.wav` | A 16' bassline: the exponential envelope segments doing the punch | 13.8 s | −15.9 dBFS | +12.9 dB |
 | `04-filter-brass.wav` | Resonant filter-envelope stabs, ending on a full bender push | 10.3 s | −11.2 dBFS | +8.2 dB |
 | `05-self-oscillation.wav` | The filter played as a voice at full resonance and key follow | 12.9 s | −15.4 dBFS | +12.4 dB |
 | `06-chorus-modes.wav` | The same pad with the effect off, in mode I, then in mode II | 15.8 s | −4.9 dBFS | +1.9 dB |
 | `07-unison-glide.wav` | Six-voice unison lead with constant-rate portamento | 11.5 s | −0.5 dBFS | −2.5 dB |
-| `08-delayed-vibrato.wav` | The modulator's two-stage delay fading vibrato onto a held chord | 9.6 s | −9.9 dBFS | +6.9 dB |
-| `09-high-pass-ladder.wav` | One bright chord through all four high-pass switch positions | 10.6 s | −3.3 dBFS | +0.3 dB |
+| `08-delayed-vibrato.wav` | The modulator's two-stage delay fading vibrato onto a held chord | 9.6 s | −10.1 dBFS | +7.1 dB |
+| `09-high-pass-ladder.wav` | One bright chord through all four high-pass switch positions | 10.6 s | −3.4 dBFS | +0.4 dB |
 | `10-unit-character.wav` | A six-voice chord at nominal zero Unit Character, then at full amount | 12.9 s | −10.2 dBFS | +7.2 dB |
 <!-- peaks-table-end -->
 
-## Regenerating the set
+The fixtures cover the chorus pad, PWM strings, 16-foot bass, filter brass,
+VCF self-oscillation, all chorus modes, unison glide, delayed vibrato, the
+high-pass ladder, and calibrated-versus-Unit-Character operation. The last is
+a deterministic product profile, not a measured population distribution.
+
+## Factory bank
+
+`factory-presets/metrics.csv` is the complete 128-preset 48 kHz HQ stress-score
+audit. The ten fixed previews use one shared non-boosting gain and no per-file
+normalisation. The generated report documents the score, metrics, warnings,
+and preview inventory.
+
+## Reproducing the corpus
 
 ```bash
 cmake -S . -B build-dsp -DCMAKE_BUILD_TYPE=Release \
   -DYOUKNOW106_BUILD_PLUGIN=OFF -DBUILD_TESTING=OFF
-cmake --build build-dsp --parallel --target YouKnow106RenderDemos
+cmake --build build-dsp --parallel \
+  --target YouKnow106RenderDemos YouKnow106AuditFactoryPresets
 ./build-dsp/YouKnow106RenderDemos Docs/audio
+./build-dsp/YouKnow106AuditFactoryPresets Docs/audio/factory-presets
 ```
 
-The renderer rewrites the level table between the markers above in place, so
-the committed audio and its documentation cannot drift apart. The nightly
-workflow runs exactly this and commits whatever changed.
+For this snapshot both renderers were run twice into independent empty
+directories. The two demo sets and the two complete factory-audit directories
+were byte-identical before the canonical corpus was installed here. All WAVs
+decode as finite stereo PCM: demos are 44.1 kHz/16-bit, previews are
+48 kHz/16-bit, whole-file absolute DC is at most 0.000001 FS, and the worst
+file-edge sample peak is -47.02 dBFS.

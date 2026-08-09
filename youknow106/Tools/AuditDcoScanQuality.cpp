@@ -80,7 +80,7 @@ struct YouKnow106TestAccess
         voice.previousPulseDuty = duty;
         voice.pulseDutyPrimed = true;
         voice.feedback = 0.0f;
-        voice.filterG = 0.0f;
+        voice.filterOmegaStep = 0.0f;
         voice.inputCompensation = 1.0f;
         voice.moduleCoupling.reset();
         engine.subCv_ = waveform == Waveform::Sub ? 1.0f : 0.0f;
