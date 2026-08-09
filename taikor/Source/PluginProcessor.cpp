@@ -161,9 +161,9 @@ TaikorAudioProcessor::createParameterLayout()
     // --- The drum -------------------------------------------------------
     result.push_back (makeCentimetreParameter (
         ids::headDiameter, "Head Diameter", ids::minimumDiameterCentimetres,
-        ids::maximumDiameterCentimetres, 95.0f, 0.5f));
+        ids::maximumDiameterCentimetres, 150.0f, 0.5f));
     result.push_back (makePercentParameter (ids::bodyDepth, "Body Depth", 0.5f));
-    result.push_back (makePercentParameter (ids::tension, "Head Tension", 0.55f));
+    result.push_back (makePercentParameter (ids::tension, "Head Tension", 0.62f));
     result.push_back (makePercentParameter (ids::headMaterial, "Head Material", 0.75f));
     result.push_back (makePercentParameter (ids::shellMaterial, "Shell Material", 0.8f));
     result.push_back (makePercentParameter (
@@ -262,7 +262,7 @@ TaikorAudioProcessor::createParameterLayout()
         // loud as possible. A ghost stroke is about thirty-four decibels
         // below a full blow on the same drum, which is the range the model
         // actually covers.
-        juce::NormalisableRange<float> { -24.0f, 6.0f, 0.1f }, -20.0f,
+        juce::NormalisableRange<float> { -24.0f, 6.0f, 0.1f }, -22.5f,
         juce::AudioParameterFloatAttributes()
             .withLabel ("dB")
             .withStringFromValueFunction ([] (float value, int)

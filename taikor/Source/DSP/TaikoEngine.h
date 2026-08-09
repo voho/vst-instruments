@@ -105,7 +105,7 @@ struct DrumDescription
 // the physical drum, the second how it is struck, and the third the close pair
 // of microphones in front of it. Nothing here is a voicing preset: each field
 // feeds a term of the model, so the defaults describe one specific drum - a
-// 95 cm odaiko with a thick cowhide head on a heavy zelkova shell,
+// 1.50 m odaiko with a thick cowhide head on a heavy zelkova shell,
 // struck with a medium-hard oak bachi - rather than the midpoint of every axis.
 struct EngineParameters
 {
@@ -113,7 +113,7 @@ struct EngineParameters
     // Head diameter in metres. Sets the membrane radius directly, so it moves
     // pitch as 1/a. The modal ratios move too, but only through the head's own
     // bending stiffness measured against its tension - see stiffnessStretch.
-    float headDiameter { 0.95f };
+    float headDiameter { 1.50f };
     // Body depth as a fraction of the diameter, 0 -> 0.40, 1 -> 1.30. The
     // enclosed volume is what couples the two heads, so a shallow drum splits
     // its axisymmetric modes much further apart than a deep one.
@@ -121,7 +121,7 @@ struct EngineParameters
     // Head tension. Mapped geometrically onto 1.2..22 kN/m, the range a tacked
     // or rope-laced hide actually occupies. Wave speed is sqrt(T/sigma), so
     // this and the head material together set the pitch.
-    float tension { 0.55f };
+    float tension { 0.62f };
     // 0 = thin synthetic film, 1 = thick heavy cowhide. Sets the head's areal
     // density, its internal loss factor and its bending stiffness at once,
     // because all three come from the same piece of material - and the last of
@@ -207,8 +207,14 @@ struct EngineParameters
     float stereoWidth { 0.5f };
     // Gentle output-stage saturation, 0 = exactly bypassed.
     float drive { 0.0f };
-    // Linear output gain.
-    float outputGain { 0.100000f };
+    // Linear output gain. Set so that the loudest single stroke the instrument
+    // has - a full-velocity rim shot on the reference drum, with the humanising
+    // jitter pushing the impact speed as far as it goes - still clears the
+    // safety limiter. It came down from 0.100000 when the reference o-daiko went
+    // from three shaku to five: a rim shot catches the hoop and the body as well
+    // as the head, and the body of a five-shaku drum is a great deal more of
+    // the stroke.
+    float outputGain { 0.075000f };
 };
 
 // Snapshot of the drum for the editor's head display. Produced on the audio
@@ -277,6 +283,14 @@ public:
         // changes the body's volume well above the one that does not.
         float loadedFundamentalHz { 88.0f };
         float breathingModeHz { 140.0f };
+        // The pitch the drum is heard at, and the quantity the keyboard's
+        // octaves are solved against: the mode that reaches the microphones
+        // with the most energy over the window a struck note's pitch is taken
+        // from. On a small tightly laced head that is the loaded fundamental
+        // above; on a large slack one it is not, because the fundamental
+        // displaces no net air and the mounting empties it in half a second
+        // while the (1,1) mode a fifth and a half above it rings on.
+        float soundingHz { 88.0f };
         // How long the drum audibly rings: the longer-lived of the two
         // axisymmetric branches, each solved with its own radiation share.
         // Reporting only one of them described whichever mode happened to be
@@ -826,6 +840,41 @@ private:
     };
     [[nodiscard]] static AxisymmetricPair solveAxisymmetricPair (
         const DrumState& drum) noexcept;
+
+    // The window a struck note's pitch is taken from: from the end of the
+    // attack, where the stick's own noise has gone, to nine tenths of a second
+    // later, by which time even a large drum has said what it is. Everything
+    // that decides which mode a drum is heard at is a comparison over this
+    // window - a loud mode that empties in a third of a second and a quiet one
+    // that outlasts it are not ranked by level alone.
+    static constexpr float pitchWindowStart = 0.08f;
+    static constexpr float pitchWindowEnd = 0.98f;
+
+    // One membrane mode of a resolved drum: where it is, what a full open
+    // stroke is worth in it at the microphones, how fast it empties, and what
+    // the three together are worth over the window above.
+    struct ModeObservation
+    {
+        float frequencyHz { 0.0f };
+        float amplitude { 0.0f };
+        float decayRate { 0.0f };
+        float weight { 0.0f };
+    };
+    [[nodiscard]] static ModeObservation observeMode (const DrumState& drum,
+                                                      int entryIndex,
+                                                      int branch) noexcept;
+
+    // The mode a drum is heard at, which is the loudest one over that window
+    // and is not always the lowest. See soundingMode's definition for why half
+    // of this family is heard a fifth and a half above its own fundamental.
+    struct SoundingMode
+    {
+        float frequencyHz { 0.0f };
+        float weight { 0.0f };
+        std::uint8_t entryIndex { 0 };
+        std::uint8_t branch { 0 };
+    };
+    [[nodiscard]] static SoundingMode soundingMode (const DrumState& drum) noexcept;
 
     // The drum an octave is built from: the player's controls carried across
     // the family by whichever of the four instruments this octave plays, with

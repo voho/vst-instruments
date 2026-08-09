@@ -103,17 +103,17 @@ float renderNote (TaikorAudioProcessor& processor, int midiNote, float velocity,
 // The caller is expected to have stilled the strike as well; see the wheel
 // check below for why.
 //
-// The search band is deliberately narrow. Forty to seventy-five hertz is where
-// the default drum's lower axisymmetric branch sits, and it is the only thing
-// in there whether the wheel is up or down - the branch above it is at eighty
-// eight and does not reach seventy-five even bent two semitones. A wide band
+// The search band is deliberately narrow. Twenty-four to forty-eight hertz is
+// where the default drum's lower axisymmetric branch sits, and it is the only
+// thing in there whether the wheel is up or down - the branch above it is at
+// sixty-one and does not reach forty-eight even bent two semitones. A wide band
 // does not measure a pitch at all: it finds whichever partial is loudest, and
 // which one that is changes with the tuning, because bending the head moves its
 // modes out of the mounting loss while the shell's do not move at all. Sweeping
 // thirty-five to three hundred and twenty put the unbent drum on one partial
 // and the bent drum on another, and reported the wheel as having lowered it.
-constexpr double lowestSounded = 40.0;
-constexpr double highestSounded = 75.0;
+constexpr double lowestSounded = 24.0;
+constexpr double highestSounded = 48.0;
 
 double dominantLowPartial (TaikorAudioProcessor& processor, int midiNote,
                            const juce::MidiBuffer& before)
@@ -220,7 +220,7 @@ void testParameterLayoutAndDefaults()
     namespace pids = taikor::parameters;
     const std::array<std::pair<const char*, float>, 22> expectedDefaults {{
         { pids::headDiameter, 95.0f },   { pids::bodyDepth, 0.5f },
-        { pids::tension, 0.55f },        { pids::headMaterial, 0.75f },
+        { pids::tension, 0.62f },        { pids::headMaterial, 0.75f },
         { pids::shellMaterial, 0.8f },   { pids::resonantTension, 0.5f },
         { pids::cavityCoupling, 0.85f }, { pids::headDamping, 0.50f },
         { pids::shellResonance, 0.4f },  { pids::pitch, 0.0f },
@@ -239,7 +239,7 @@ void testParameterLayoutAndDefaults()
     // The engine block the processor hands the DSP must reflect the parameters,
     // including the two that are presented in centimetres.
     const auto engineParameters = processor.snapshotEngineParameters();
-    expect (std::abs (engineParameters.headDiameter - 0.95f) < 1.0e-4f,
+    expect (std::abs (engineParameters.headDiameter - 1.50f) < 1.0e-4f,
             "head diameter must reach the engine in metres");
     expect (std::abs (engineParameters.micDistance - (16.0f - 3.0f) / (40.0f - 3.0f))
                 < 1.0e-3f,
@@ -251,10 +251,10 @@ void testParameterLayoutAndDefaults()
     // The default drum must be the o-daiko the documentation describes. This
     // is the plug-in layer's half of the same statement the DSP suite makes:
     // the instrument opens on its heaviest voice rather than an octave above
-    // it, because that is what a taiko is for.
+    // it, because that is what a taiko is for. In the pitch the drum is heard
+    // at, which on a drum this size is not its lowest mode - see soundingMode.
     const auto measurements = processor.measureDrum (0);
-    expect (measurements.loadedFundamentalHz > 40.0f
-                && measurements.loadedFundamentalHz < 65.0f,
+    expect (measurements.soundingHz > 40.0f && measurements.soundingHz < 65.0f,
             "the default drum is not in the o-daiko range");
     expect (measurements.breathingModeHz > measurements.loadedFundamentalHz,
             "the cavity must lift the breathing mode above the fundamental");
@@ -598,12 +598,12 @@ void testParametersReachTheEngine()
     setParameterValue (processor, pids::tension, 0.95f);
     expect (fundamentalNow() > reference * 1.15f,
             "the tension control must reach the engine");
-    setParameterValue (processor, pids::tension, 0.55f);
+    setParameterValue (processor, pids::tension, 0.62f);
 
-    setParameterValue (processor, pids::headDiameter, 160.0f);
-    expect (fundamentalNow() < reference * 0.75f,
+    setParameterValue (processor, pids::headDiameter, 60.0f);
+    expect (fundamentalNow() > reference * 1.6f,
             "the head diameter control must reach the engine");
-    setParameterValue (processor, pids::headDiameter, 95.0f);
+    setParameterValue (processor, pids::headDiameter, 150.0f);
 
     setParameterValue (processor, pids::pitch, 12.0f);
     expect (std::abs (fundamentalNow() / reference - 2.0f) < 0.10f,

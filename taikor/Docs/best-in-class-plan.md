@@ -2615,3 +2615,225 @@ no microphone geometry and no calibration constant moved, apart from
 `stickCalibration` being deleted with the model it belonged to. The reference
 drum at C3 is bit-identical. Every open gap recorded above is exactly as open as
 it was, and gap 6 is one deletion further from being closed.
+
+---
+
+## Step 6 — the keyboard's octaves in the pitch a listener names
+
+### The regression
+
+Step 5 solved the octave transform against the drum's **loaded fundamental** —
+the lower branch of the air-loaded axisymmetric pair — and `measureDrum` duly
+reported four fundamentals on exact octaves: 50.747 / 101.495 / 202.990 /
+405.980 Hz, 0.0 cents out on every boundary.
+
+That is not the pitch the instrument sounded. Measured from rendered audio as
+the strongest partial of a 0.9 s window opening 80 ms after a Don, searched
+blind over 0.4× to 4× the fundamental:
+
+| Drum | loaded (0,1) | dominant radiated | ratio | heard interval | intended |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Ō-daiko | 50.75 | 88.96 | 1.753 | +0.00 | +0 |
+| Chū-daiko | 101.50 | 174.92 | 1.724 | +11.71 | +12 |
+| Okedo | 202.99 | 203.09 | 1.001 | **+14.29** | +24 |
+| Shime | 405.98 | 405.97 | 1.000 | **+26.28** | +36 |
+
+The four pads stepped 0 / 11.7 / 14.3 / 26.3 semitones. The okedo sat barely two
+semitones above the chū-daiko and the family spanned 26 semitones where it should
+have spanned 36. And the chū-daiko had no stable pitch at all: a Don at velocity
+0.85 read 174.92 Hz, the same stroke at 1.00 read 102.51, and a Tsu at 0.85 read
+101.59 — two of its modes were within a decibel of each other and which one won
+depended on how it was hit.
+
+### The cause
+
+On a large drum the (0,1) lower branch is not what is heard. It moves the two
+heads against each other, so it displaces no net air, radiates almost nothing,
+and reaches the microphones only through the near field — and it sits down where
+the mounting term is steepest. On the shipping ō-daiko its decay was 12.5 s⁻¹, of
+which 11.6 came from the stand and the hoops: a T60 of 0.55 s. The (1,1) mode a
+fifth and a half above it decayed at 3.8 s⁻¹, a T60 of 1.84 s, and over the
+window a listener takes a pitch from it won by five to seven decibels — at every
+microphone distance and spread, so this was a property of the drum and not of the
+pair.
+
+Whether it wins is decided almost entirely by where the fundamental sits against
+the mounting's corner, which scales as 1/a: the deciding quantity is *f₀₁·a*, and
+therefore the head's wave speed. Measured across the family it ran 24.1 / 28.0 /
+40.7 / 60.7 (m/s, up to a constant), with the crossover at about 35. The two
+tacked drums are below it and the two rope-laced ones are above it, which is the
+*byō-uchi* / *shirabe* divide and not a coincidence: a tacked cowhide simply
+cannot be brought to the wave speed a laced shime runs at.
+
+### The fix
+
+**The transform is now solved against the mode the drum is actually heard at.**
+`TaikoEngine::observeMode` builds one membrane mode exactly as `buildVoiceModes`
+builds it, reduced to the three numbers a comparison needs — where it is, what a
+full open stroke is worth in it at the pair, and how fast it empties — and
+weights it by `A/d · (e^{−d·t₀} − e^{−d·t₁})`, which is the closed form of what
+any measurement of "the strongest partial" over that window reads.
+`TaikoEngine::soundingMode` takes the largest of those over the modes low enough
+to be a drum's pitch at all: under twice the fundamental's wavenumber, which
+admits the two branches of the (0,1) pair and the (1,1) mode and nothing else.
+Measured against rendered audio the weights are good to about a decibel and a
+half over that set.
+
+`resolveDrumFor` picks that mode once, solves the bisection against its frequency,
+then asks the answer what *it* is heard at and solves again if it disagrees. The
+second pass only ever matters at Octave Body 0, where the whole octave is bought
+with tension and a drum retuned that far genuinely changes which mode it is heard
+at. `DrumMeasurements::soundingHz` reports it, and the editor's pitch readout is
+now that rather than the fundamental.
+
+**The drum table was retuned around what that implies.** A family heard at its
+(1,1) at the bottom and at its fundamental at the top has to span a factor of
+fourteen in the fundamental to span eight in what is heard. The shime's end of
+that is fixed by the tension a laced hide can hold — about 500 Hz on a 30 cm head
+at the model's 22 kN/m ceiling — so the ō-daiko's has to be near 33 Hz, and no
+95 cm head with a tacked cowhide on it is. A five-*shaku* ō-daiko at an ordinary
+7.3 kN/m is, and is also the drum the bottom of a kumi-daiko set actually is. The
+chū-daiko went to 2.5 *shaku* for the same reason and to get it decisively onto
+one of its modes: at 55 cm its fundamental, its breathing branch and its (1,1)
+were within a decibel of one another, which is exactly the tie that made its pitch
+unstable.
+
+| | Was | Now |
+| --- | --- | --- |
+| Ō-daiko | 95 cm, 5.9 kN/m, 1.05 kg/m² | **150 cm, 7.3 kN/m, 1.05 kg/m²** |
+| Chū-daiko | 55 cm, 5.5 kN/m, 0.78 kg/m² | **78 cm, 5.8 kN/m, 0.85 kg/m²** |
+| Okedo | 40 cm, 8.3 kN/m, 0.55 kg/m² | 40 cm, **11.5 kN/m**, 0.55 kg/m² |
+| Shime | 30 cm, 14.8 kN/m, 0.45 kg/m² | 30 cm, **19.1 kN/m, 0.41 kg/m²** |
+
+The anchor is the reference drum's own sounding pitch, as it has always been —
+the transform is the identity at octave 0 for every Octave Body — and that is now
+**59.66 Hz**. Anchoring on the shipping ō-daiko's 88.96 would have put the shime
+at 711.7 Hz, which needs a 24 cm head at the tension ceiling and is not a shime.
+
+### The measurements
+
+Factory settings, 48 kHz, strongest partial of a 0.9 s window opening 80 ms after
+the strike, each channel scanned on its own, over Don and Tsu at velocities 0.35,
+0.85 and 1.00:
+
+| Drum | Sounds at | Heard, over six strokes | Spread | Step |
+| --- | ---: | ---: | ---: | ---: |
+| Ō-daiko | 59.660 | 59.56 – 59.68 Hz | 3.3 ¢ | — |
+| Chū-daiko | 119.320 | 119.49 – 119.97 | 7.0 ¢ | +1207.1 ¢ |
+| Okedo | 238.639 | 238.65 – 238.81 | 1.1 ¢ | +1194.7 ¢ |
+| Shime | 477.279 | 477.25 – 477.39 | 0.5 ¢ | +1199.5 ¢ |
+
+Worst error from exact octaves: **7.1 cents**. Worst spread on any one pad across
+the six strokes: **7.0 cents**. Both were 970 and 948 cents before.
+
+The model's own figures step +1200.0000 / +1199.9999 / +1200.0000 cents, and the
+four fundamentals are now deliberately *not* octaves: 32.650 / 68.048 / 238.639 /
+477.278 Hz.
+
+### What guards it
+
+`testTheFourDrumsStepInHeardOctaves`, which reads nothing but rendered audio.
+Three clauses per drum: the strongest partial may not move more than 15 cents
+across Don and Tsu at three velocities each; it must sit within 20 cents of the
+pitch the engine reports; and the step onto each pad must be an octave within 20
+cents. The tolerances are twice the worst measured and no more; what is left in
+them is the attack glide, which starts the head sharp and is worth six cents on
+the slackest head of the family.
+
+Reverting the solve to the loaded fundamental and the drum table to the shipping
+one fails all three: the chū-daiko's strongest partial moves 101.52 to 175.49 Hz
+(948 cents) across the six strokes, its step reads 857 cents and the okedo's 571.
+Reverting only the solve still fails the two step clauses at 1140 and 219 cents.
+
+### Tests re-taken
+
+Four existing tests encoded the old (0,1)-based contract and now state the new
+one, because the claim they were written to make is about the pitch the
+instrument sounds:
+
+- `testTheDrumIsTunedByThePitchItSounds` — every octave boundary at three Octave
+  Body settings, the reference anchor, and the blind strongest-partial ladder,
+  all moved from `loadedFundamentalHz` onto `soundingHz`. Its Pitch-control guard
+  stayed on the fundamental, and the comment says why: an octave of Pitch really
+  does hand the reference ō-daiko from its (1,1) to its own fundamental, and the
+  strongest partial goes 59.7 → 84.4 → 94.7 → 65.3 Hz across that range. The
+  shipping tree does the same thing (89.0 → 101.5 over an octave of Pitch); it is
+  a property of the instrument and is **not fixed by this step**.
+- `testTheFourDrumsAreFourInstruments` — the octave clause moved onto
+  `soundingHz`; the built sizes, hides and dimensionless signatures re-taken.
+- `testTheCavityIsAColumnNotAnInfiniteSpring` — every literal re-measured against
+  the drums the table now describes, the lumped-spring references re-taken by
+  forcing the column factor to one. Two clauses — the cavity factor's
+  monotonicity in Body Depth, and the bound on how far the cavity can move the
+  lower branch — are now asserted at the reference octave only. The reason is in
+  the test: away from octave 0 the drum is not a fixed function of the controls,
+  and now that the transform follows whichever mode the drum is heard at, opening
+  the body far enough can hand it from one mode to another and move the answer by
+  a fifth and a half. At octave 0 the transform is the identity and both clauses
+  say exactly what they were written to say.
+- `testTheDrumSoundsLikeADrumAndNotLikeATone` — the register clause moved onto
+  `soundingHz`, where the reference drum reads 59.7 Hz.
+
+### Floors restated, with the measurement
+
+Five measured floors were fitted to a three-*shaku* reference drum and are
+restated against a five-*shaku* one. Each is a statement about the same
+mechanism at a different size, not a mechanism that has gone:
+
+| Clause | Was | Now | Why |
+| --- | ---: | ---: | --- |
+| Body between 250 Hz and 4 kHz | 10 % | 8.5 % | The whole resolved bank sits most of an octave lower; the same sum reads 10.9 % at 95 cm and 8.6 % at 150 |
+| A roll against eight strokes added offline | −3.0 dB | −0.5 dB | The head-stretch interaction goes as the fourth inverse power of the radius, so 1.58× in size is 6.2× in that term. Measured −0.95 dB |
+| Rim-shot high band against a centre stroke's | +2.0 dB | +1.5 dB | Measured 1.78 dB |
+| Slack head's modal spread against a tight one | ×1.02 | ×1.015 | *B* = D/(T a²) falls as the square of the radius: 0.72e−4 here against 2.19e−4 before. Measured 1.017 |
+| Sounding pitch against the rendered peak | −0.92 dB | −1.41 dB | The attack glide again, on the slackest head of the family. Measured 0.978 / 0.858 / 0.994 / 0.997 |
+
+The 4–10 kHz sample-rate spread went from 3.0 to 4.0 dB and is the estimator, not
+the audio: a rectangular window's sidelobes fall only as one over the offset and
+the drum's bottom two octaves have just moved. The windowed clause beside it —
+"which is the audio and not the estimator" — is unchanged at 1.5 dB and reads
+0.98.
+
+### Two model changes came with it
+
+- **The tack line is a spacing, not a count.** `tackPreload` was the head's
+  tension over a forty-eighth of the circumference, which made the force a stroke
+  has to beat rise with the drum: on a five-*shaku* head forty-eight tacks is one
+  every 98 mm, each holding down nearly three times what a nagado's does, and a
+  full rim shot could no longer lift one. Iron tacks are driven at a spacing —
+  about 36 mm, which is what forty-eight of them round a 1.8-*shaku* hoop is — so
+  the preload is now `tension × 0.036 m` and is the same force on every drum of
+  the family. Nothing else about the tack line scales with the drum.
+- **The factory output level came down 2.5 dB**, from −20.0 to −22.5 dBFS. A rim
+  shot catches the hoop and the body as well as the head, and the body of a
+  five-*shaku* drum is a great deal more of the stroke; the loudest of the sixteen
+  keys now peaks at −0.80 dBFS, still clear of the safety limiter, which is what
+  that level is set by.
+
+### What is still open
+
+The Pitch control does not transpose the heard pitch of the reference drum by an
+octave, because an octave of tension moves the ō-daiko across the balance between
+its (1,1) mode and its own fundamental. It is not a regression — the shipping
+tree does the same — but it is the obvious next thing: the fix would be to solve
+the pitch control the way the octave transform is solved, which means giving up
+the identity at octave 0.
+
+At Octave Body 0 the model's four sounding pitches are exact octaves —
+59.66 / 119.32 / 238.64 / 477.28 Hz, against 0 / 157 / 1341 / 2538 cents of step
+before this — but the C5 pad's Don is not: all three velocities read 96.6 Hz,
+which is the reference ō-daiko's own shell ringing. *Tuned* means one drum
+retuned, the shell is not retuned with the head, and a five-*shaku* carved body's
+first ring mode is at 98 Hz. Turning Shell Resonance down removes it. It is a
+statement about the body rather than about this solve, and it is new only in that
+the reference body is now big enough for its ring to land under the head two
+octaves up.
+
+Nothing in `soundingMode` accounts for the attack glide, which smears a partial
+out of its own bin for a time proportional to how high it is. That is why the
+comparison is bounded to the modes below twice the fundamental's wavenumber:
+above it the weights drift several decibels high. A glide-aware weight would let
+the bound go.
+
+The per-fix audio previews under `Docs/audio/` are one-time review evidence and
+are not re-rendered here.

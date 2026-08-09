@@ -1134,7 +1134,10 @@ void TaikorAudioProcessorEditor::timerCallback()
     headDisplay.setMicrophones (engineParameters.micSpread, engineParameters.micDistance);
 
     const auto measurements = audioProcessor.measureDrum (selectedOctave);
-    headDisplay.setMeasurements (measurements.loadedFundamentalHz,
+    // The pitch the drum is heard at rather than its lowest mode: on the two
+    // large drums of the family those are not the same partial, and a readout
+    // labelled with a pitch has to be the one the key just played.
+    headDisplay.setMeasurements (measurements.soundingHz,
                                  measurements.breathingModeHz,
                                  measurements.radiusMetres * 200.0f,
                                  measurements.tailSeconds);
