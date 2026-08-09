@@ -219,7 +219,7 @@ void testParameterLayoutAndDefaults()
 
     namespace pids = taikor::parameters;
     const std::array<std::pair<const char*, float>, 22> expectedDefaults {{
-        { pids::headDiameter, 95.0f },   { pids::bodyDepth, 0.5f },
+        { pids::headDiameter, 150.0f },  { pids::bodyDepth, 0.5f },
         { pids::tension, 0.62f },        { pids::headMaterial, 0.75f },
         { pids::shellMaterial, 0.8f },   { pids::resonantTension, 0.5f },
         { pids::cavityCoupling, 0.85f }, { pids::headDamping, 0.50f },
@@ -229,7 +229,7 @@ void testParameterLayoutAndDefaults()
         { pids::strikeNoise, 0.35f },    { pids::humanise, 0.4f },
         { pids::octaveBody, 1.0f },      { pids::micDistance, 16.0f },
         { pids::micSpread, 0.55f },      { pids::stereoWidth, 0.5f },
-        { pids::drive, 0.0f },           { pids::output, -20.0f },
+        { pids::drive, 0.0f },           { pids::output, -22.5f },
     }};
 
     for (const auto& [id, expected] : expectedDefaults)
@@ -245,7 +245,7 @@ void testParameterLayoutAndDefaults()
                 < 1.0e-3f,
             "mic distance must reach the engine normalised");
     expect (std::abs (engineParameters.outputGain
-                      - juce::Decibels::decibelsToGain (-20.0f)) < 1.0e-4f,
+                      - juce::Decibels::decibelsToGain (-22.5f)) < 1.0e-4f,
             "output must reach the engine as a linear gain");
 
     // The default drum must be the o-daiko the documentation describes. This
@@ -635,8 +635,12 @@ void testParametersReachTheEngine()
     // Both settings inside the control's linear region. A taiko has an enormous
     // crest factor and this one models all of it, so the top of the Output
     // range is deliberately far into the safety limiter - comparing a point up
-    // there against one below it would be measuring the limiter.
-    const auto loud = peakAtOutput (-12.0f);
+    // there against one below it would be measuring the limiter. The upper
+    // point moved down with the factory Output when the reference drum went to
+    // five shaku: the same reference stroke that peaked clear of the limiter at
+    // -12 dB on a three-shaku drum reaches 0.972 on this one, so this is the
+    // same headroom measured on a louder instrument. At -14.5 it reads 0.729.
+    const auto loud = peakAtOutput (-14.5f);
     const auto quiet = peakAtOutput (-24.0f);
     expect (loud < 0.95f, "the louder of the two output checks must not limit");
     expect (quiet < loud * 0.6f, "the output control must scale the rendered audio");
