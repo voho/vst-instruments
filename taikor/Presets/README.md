@@ -3,9 +3,9 @@
 The current plug-in stores its
 [22-parameter drum state](../README.md#controls) in the host session and exposes
 the version-1 defaults on first launch. Those defaults are not the midpoint of
-every control: they describe one specific instrument — a 95 cm ō-daiko with
-a thick cowhide head on a heavy carved zelkova shell, struck with a
-medium-hard oak bachi and heard through a close pair 16 cm off the head.
+every control: they describe one specific instrument — a five-shaku (150 cm)
+ō-daiko with a thick cowhide head on a heavy carved zelkova shell, struck with
+a medium-hard oak bachi and heard through a close pair 16 cm off the head.
 
 That is the drum the C3 octave plays. The other three octaves are three other
 instruments of the family — a chū-daiko, an okedo-daiko and a shime-daiko, each
@@ -32,10 +32,15 @@ the reference for anything dialled in on top of them.
 
 | Octave | Instrument | Diameter | Body depth | Tension | Head | Shell |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| C3 | Ō-daiko | 95 cm | 50 % | 55 % | 75 % | 80 % |
-| C4 | Chū-daiko | 55 cm | 89 % | 53 % | 57 % | 74 % |
-| C5 | Okedo-daiko | 40 cm | 94 % | 66 % | 36 % | 20 % |
-| C6 | Shime-daiko | 30 cm | 33 % | 86 % | 24 % | 92 % |
+| C3 | Ō-daiko | 150 cm | 50 % | 62 % | 75 % | 80 % |
+| C4 | Chū-daiko | 78 cm | 89 % | 54 % | 62 % | 74 % |
+| C5 | Okedo-daiko | 40 cm | 94 % | 78 % | 36 % | 20 % |
+| C6 | Shime-daiko | 30 cm | 33 % | 95 % | 18 % | 92 % |
+
+The two large drums are the size they are because of what the family has to
+span: three octaves of heard pitch is a factor of eight, and a laced hide caps
+the shime near 500 Hz, so the bottom of that span cannot be a 95 cm drum. Five
+shaku is what the bottom of a kumi-daiko set actually is.
 
 ## Moving the whole family from the controls
 
@@ -46,11 +51,14 @@ C3 ō-daiko, and the rest of the family follows it:
 
 | Character | Diameter | Body depth | Tension | Head | Shell |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Ō-daiko (factory) | 95 cm | 50 % | 55 % | 75 % | 80 % |
-| Larger battle drum | 100–120 cm | 60–80 % | 45–60 % | 85–100 % | 85–100 % |
-| Hira-daiko (shallow set) | 60–75 cm | 5–20 % | 50–65 % | 75–90 % | 70–85 % |
-| Tight and dry | 70–85 cm | 40–55 % | 75–90 % | 55–70 % | 60–80 % |
-| Light stave-built set | 70–90 cm | 55–75 % | 55–70 % | 65–80 % | 15–35 % |
+| Ō-daiko (factory) | 150 cm | 50 % | 62 % | 75 % | 80 % |
+| Larger battle drum | 160–180 cm | 60–80 % | 45–60 % | 85–100 % | 85–100 % |
+| Hira-daiko (shallow set) | 95–120 cm | 5–20 % | 50–65 % | 75–90 % | 70–85 % |
+| Tight and dry | 110–135 cm | 40–55 % | 75–90 % | 55–70 % | 60–80 % |
+| Light stave-built set | 110–145 cm | 55–75 % | 55–70 % | 65–80 % | 15–35 % |
+
+Head Diameter runs 15–180 cm, so the battle-drum row is close to the top of the
+control rather than in the middle of it.
 
 Turning Octave Body down towards *Tuned* collapses the family onto whichever
 drum these controls describe, so the four octaves become one drum retuned. That
