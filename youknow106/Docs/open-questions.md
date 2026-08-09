@@ -77,8 +77,9 @@ decision: the -18 dBFS RMS convention is settled, while its physical
 `Vref_rms` value must come from OQ-05/OQ-17 evidence. OQ-12 through OQ-14 are
 also deliberately narrow—their B-2 digital algorithms are resolved, leaving
 only physical timing/transfer and revision scope. OQ-21 is new: the latest
-schematic pass established C14's asymptotic loads but exposed the still-
-unmodelled interaction and switching memory of the complete HPF network.
+schematic pass established C14/HPF routing and parts but exposed the still-
+unmodelled coupled selected-leg load and switching memory of the complete
+network.
 
 | Priority | OQ | Question still unanswered | Already settled / do not redo |
 |---|---|---|---|
@@ -88,8 +89,8 @@ unmodelled interaction and switching memory of the complete HPF network.
 | P2 | 04 | Loaded post-BBD support transfer (tap-pole candidates 11.9/15.1/22.2 kHz vs the shipped ideal-source 23.46 kHz), the Gi–fi fixture reading (tracked vs broadband — one tracked ~40 kHz sweep decides, and with it the typical-part residual coefficient inside its recorded [−4.355, −1.33] dB span at 40 k/12 k), and emitter-follower source loading | Component topology with the 106's own p. 15 capacitor codes read at designator level; the two-phase OUT1/OUT2 composite solved as a full-period hold, confirming the shipped shift/hold/polyBLEP structure (2026-08-07); the fixed per-shift residual coefficient anchored to the guaranteed-minimum 40 kHz/12 kHz row, inside every candidate reading's band; Rs ≈ 3.70 kΩ summed-output source impedance and ≈ +1.10 dB intrinsic gain derived from the Gi–RL panel; the digitised 10/40/100 kHz typical family with its self-contradiction between panels recorded |
 | P0 | 05 | TA75558S IC6 and High-output clipping swing versus frequency and load | IC6 identity, linear resistor gains and ±15 V rails |
 | Dependency | 06 | Physical `Vref_rms` for a declared High-output/load condition | Final -18 dBFS RMS mapping, floating output and no-limiter policy |
-| P1 | 07 | Acquisition/tracking behaviour, droop and loading of every converter hold | Hold ownership, 4.2 ms pass, VCF 522 µs and voice-VCA 687 µs anchors, and the designator-complete inventory: all 23 holds are 0.01 µF (p. 13 ".01×7/.01×8"), with per-destination post-hold smoothing networks read in full (2026-08-07); the PWM (R117/C62 then R116/C63) and SUB (R11/C1) networks ship as derived slews |
-| P1 | 08 | Exact intra-pass timestamps/branches and the physical state forced by a changed-pitch write | Ordinal 23-write queue and normalized compatibility scheduler |
+| P1 | 07 | Acquisition/tracking behaviour, droop and loading of every converter hold | Hold ownership, 4.2 ms pass, VCF 522 µs and voice-VCA 687 µs anchors, and the designator-complete inventory: all 23 holds are 0.01 µF (p. 13 ".01×7/.01×8"), with per-destination post-hold smoothing networks read in full. The PWM 4.7/2.632 ms cascade, SUB 10 ms pole and common-VCA 9.08249 ms pole ship as derived slews; all supported passive paths evaluate the existing normalized policy event fractionally |
+| P1 | 08 | Exact intra-pass timestamps/branches and the physical state forced by a changed-pitch write | Ordinal 23-write queue and normalized compatibility scheduler; exact fractional realization for 16 passive destinations does not promote `ordinal/23` to hardware timing |
 | P1 | 09 | Resonance DAC/control voltage to loop gain, compensation and oscillation correction | BA662/IR3109 topology, 4.8 Vpp service trim, shared hold, exact B-2 byte-to-DAC mapping, and the netlist-verified compensation mechanism (lineage divider values recorded, unpromoted) |
 | P3 | 10 | Post-calibration six-card and multi-unit residual distributions and thermal drift | Zero-spread nominal policy and optional deterministic Unit Character |
 | P1 | 11 | Pulse-Off DC, bleed, loading and switching transient at the voice mixer | About -0.8 V pins the comparator; the final output capacitors are unrelated |
@@ -102,7 +103,7 @@ unmodelled interaction and switching memory of the complete HPF network.
 | P2 | 18 | Hardware cutoff-converter knee and upper saturation curve | Exponential audio-range law and transparent 50 kHz product cap |
 | P1 | 19 | Voice-module BA662 control-current-to-gain curve near cutoff and residual thump after the service null | BA662 pins and separate signal/control paths, ENV/GATE ownership, 6 Vpp endpoint, the per-card minimum-thump procedure, and the anchored +0.25…+0.27 V TP7 control-rail standoff the shipped 150 mV onset now sits relative to (2026-08-07) |
 | P2 | 20 | TR11/TR12 wet-mute switching envelope, leakage and click | Device identity, wet-only mute location, continuously running BBDs, and the full gate-drive network designators from p. 15 |
-| P2 | 21 | Coupled C14/HPF transfer, switch-state memory and mode-change transient | Parts, placement, asymptotic C14 loads, the established HPF endpoints, the adjudicated 225.8/720.5 Hz cut corners (the 1 MΩ pair biases the mux side and cannot move them — 2026-08-07), the mode→tap map from the p. 13 truth table, and the Boost shelf — its +10.50 dB/+1.41 dB/59.41 Hz constants are derived from the corrected 300 dpi p. 15 branch read, within 0.016 dB of the exact two-zero/two-pole solve (2026-08-07); the withdrawn band-boost branch must not return |
+| P2 | 21 | Coupled C14/HPF transfer, switch-state memory and mode-change transient | Parts, placement and control are settled: C14/R39 feeds TC4052BP YCOM directly, Tr3 drives INH rather than audio, Flat is R27 and Boost is R25. The established 225.8/720.5 Hz selected Cut corners stand; the deselected Cut decays are 15.705/4.9209 ms. The mode→tap map and Boost shelf are settled too: +10.50 dB/+1.41 dB/59.41 Hz, within 0.016 dB of the exact two-zero/two-pole solve. The withdrawn band-boost branch must not return |
 
 The most consequential audible blockers are OQ-01, OQ-03, OQ-05, OQ-09,
 OQ-15 and OQ-19. A well-instrumented original unit can also collect OQ-02, OQ-03,
@@ -818,6 +819,19 @@ tracks continuously, what it does while disconnected, or the size of droop,
 loading and charge injection. The DCO/NOISE 522 µs values and every other hold
 retain their declared paths. OQ-07 remains open at P1.
 
+**2026-08-09 Step-12 numerical-policy update — still not closure.** The same
+pure peek/latch/once-only-commit mechanism now classifies 16 passive
+destinations per pass: RESONANCE, common VCA, SUB, PWM, six VCF and six
+VoiceVca. Step 11's VCF/resonance path is unchanged. The six 687 µs
+VoiceVca states, derived 9.08249 ms common-VCA pole and 10 ms SUB pole advance
+by exact old/new-target segments; the 4.7/2.632 ms PWM cascade uses its exact
+continuous affine two-pole transition. Their physical states use `double`
+without adding a state. Pitch/DCO remains sample-grid because the timer write's
+physical consequences belong to OQ-08, and NOISE remains sample-grid because
+its hold/source law is unresolved here and under OQ-15/OQ-16. This is exact
+evaluation of an existing model schedule, not acquisition, droop, injection or
+disconnected-hold evidence. OQ-07 remains open at P1.
+
 ### Needed output (for LLM)
 
 - A schematic/measurement table for every destination: confirmed converter
@@ -915,6 +929,18 @@ evaluation agree with the timestamps the compatibility profile already
 declared; it neither measures nor infers the actual JUNO-106 offsets. Every
 absolute timestamp, jitter/data dependency and changed-pitch restart behavior
 requested below remains unknown. OQ-08 remains open at P1.
+
+**2026-08-09 Step-12 fractional-event update — compatibility policy, not
+timing evidence.** Production now applies the same fractional mechanism to all
+16 supported passive writes: RESONANCE/common VCA/SUB/PWM and six VCF/six
+VoiceVca. The six Pitch/DCO writes remain sample-grid specifically because this
+question has not established what an 8253 write forces in the ramp,
+comparator or sub-divider, and NOISE remains outside the fractional set under
+OQ-07/OQ-15/OQ-16. At 48 kHz the official VoiceVca target commit remains
+70/192/315 samples, while HQ-off can realize its fractional physical write and
+first gain at 69/191/314; the fixed numerical host report remains 41 samples.
+Neither coordinate identifies an original-unit timestamp or audible latency.
+OQ-08 remains open at P1.
 
 ### Needed output (for LLM)
 
@@ -1575,6 +1601,13 @@ pretending C14 is absent, but it is not the full coupled network: the Cut
 capacitors begin loading C14 as frequency rises, the Boost leg is multi-pole,
 and deselected capacitors plus CMOS-switch parasitics may retain charge across
 mode changes.
+
+A 2026-08-09 read-only schematic correction narrows, but does not close, this
+task: C14/R39 feeds TC4052BP YCOM pin 3 directly; Tr3 controls INH pin 6 and is
+not an audio buffer. Flat uses R27 and Boost uses R25. The deselected C10/C11
+Cut states have derived 15.705/4.9209 ms decays. OQ-21 remains deferred because
+the coupled MNA response, CMOS parasitics and directed mode-change transients
+are still unqualified.
 
 ### Needed output (for LLM)
 
@@ -2739,16 +2772,18 @@ in full, and the Panasonic **MN3009/MN3101 datasheets**
 
 ### OQ-21 — the 1 MΩ pair adjudicated; the cut corners stand
 
-The HPF ladder reads: Tr3 buffer → IC3 4052 Ycom pin 3; taps Y0/Y1/Y2/Y3 =
-pins 1/5/2/4; "47K×4" summing resistors R28/R26/R27/R25 into IC4a's virtual
-ground with R29 47 kΩ feedback; series caps C11 4.7 nF (Y0 leg) and C10
-15 nF (Y1 leg); **R23/R21 "1M×2" bias the mux side of the capacitor legs**,
-tying otherwise-floating deselected lines to ground. With the mode table
+The corrected full-resolution read has C14/R39 feeding TC4052BP YCOM pin 3
+directly. Tr3 controls INH pin 6; it is not an audio buffer. Taps
+Y0/Y1/Y2/Y3 are pins 1/5/2/4; "47K×4" summing resistors R28/R26/R27/R25
+feed IC4a's virtual ground with R29 47 kΩ feedback; series caps C11 4.7 nF
+(Y0 leg) and C10 15 nF (Y1 leg) form the Cut paths. **R23/R21 "1M×2" bias
+the mux side of the capacitor legs**: deselected C11/R23 decays in 4.9209 ms
+and C10/R21 in 15.705 ms. With the mode table
 (p. 13: MODE 0/1/2/3 → HPF B ① = 1,1,0,0; HPF A ② = 1,0,1,0, and the
 4052's (B,A) decoding) the map is: mode 0 = Y3 (boost: direct R25 plus the
 IC4b branch), mode 1 = Y2 (flat, direct R27), mode 2 = Y1 (C10 15 nF),
 mode 3 = Y0 (C11 4.7 nF). On the selected leg the 1 MΩ parallels the
-buffer's low output impedance and cannot move the pole; the corner remains
+low-impedance C14/R39 source and cannot move the pole; the corner remains
 the capacitor against its 47 kΩ virtual-ground leg: **225.8/720.5 Hz stand,
 and KR-106's 236/754 Hz (1 MΩ paralleling the 47 kΩ) put the bias on the
 wrong side of the capacitor.** The deselected-leg charge-memory question the
@@ -3755,6 +3790,118 @@ droop, loading, injection and the meaning of 522 µs. **OQ-08 remains open** on
 physical intra-pass offsets, jitter/data dependence and DCO restart effects.
 The other VCF evidence questions named in Step 10 remain open unchanged.
 
+## Fractional passive-hold pass — 2026-08-09 (supported scalar paths; no OQ closed)
+
+**Work mode:** exact event-time realization and independent numerical
+qualification under the existing compatibility profile. **No original unit
+was measured.** The 4.2 ms pass, 23-write order and normalized `ordinal/23`
+offsets are unchanged.
+
+The Step-11 pure peek/latch/once-only-commit path is now generic across the 16
+passive destinations in each pass: shared RESONANCE, common VCA, SUB and PWM,
+plus six VCF and six VoiceVca writes. VCF and resonance retain their exact
+522 µs endpoint and Merson-node behavior. Step 12 adds exact segmented
+evaluation for the six component-derived 687 µs VoiceVca holds, the derived
+9.08249 ms common-VCA pole and 10 ms SUB pole, and the exact continuous affine
+4.7/2.632 ms PWM cascade. The six VoiceVca states, common VCA, SUB and two PWM
+states move from `float` to `double`; state dimension does not change.
+
+Pitch/DCO is excluded because a converter write's physical timer/ramp/
+comparator/sub state remains OQ-08's question. NOISE is excluded because its
+held-control and source/level law remains open under OQ-07/OQ-15/OQ-16. Both
+destinations keep their sample-grid behavior. This boundary is intentional,
+not missing coverage. There is no future sample, lookahead, new domain split
+or latency.
+
+The new independent long-double contract runs **1,105** actual
+`Engine::process` state cases and **17** block-wrap cases, including a passive
+event in a later q4 internal substep. Maximum process error is
+**4.440892e-16**; state-to-float and consumer seams are **0 ULP**. Scheduler
+coverage observes **23** ordinals, classifies exactly **16** passive, and
+records zero Pitch/NOISE peeks, duplicates, payload failures, cursor/order
+failures or pass-wrap failures. The timing/disconnection mutations are:
+
+| Destination | Late | Early | Disconnected |
+| --- | ---: | ---: | ---: |
+| Common VCA | 0.009838067 | 0.009838067 | 0.009838067 |
+| SUB | 0.008684780 | 0.008684780 | 0.008684780 |
+| PWM | 0.02180667 | 0.02180667 | 0.02180667 |
+| VoiceVca | 0.1480581 | 0.1480581 | 0.1480581 |
+
+The separate sequential-PWM mutation is **0.000525998**. Common-VCA consumer
+wiring spans 495 samples, agrees within **8.961428e-7** relative and differs by
+**0.7034001** disconnected; SUB agrees exactly at printed precision and differs
+by **0.6666667** disconnected. Thus a correct helper without real consumer
+wiring cannot pass.
+
+The 48 kHz, six-card resonant 2,048-frame work contract is:
+
+| Semantic work | HQ 4× | HQ-off 1× |
+| --- | ---: | ---: |
+| Internal frames | 8,192 | 2,048 |
+| Passive peeks / commits | 160 / 160 | 160 / 160 |
+| VCF/resonance peeks / commits | 70 / 70 | 70 / 70 |
+| Exact VCF intervals / nodes / maps | 120 / 840 / 720 | 120 / 840 / 720 |
+| VCF steps / Merson halfsteps | 49,152 / 98,304 | 12,288 / 24,576 |
+| VCF RHS / feedback | 491,520 / 491,520 | 122,880 / 122,880 |
+| BBD line frames / shifts | 16,384 / 3,162 | 4,096 / 3,162 |
+
+Passive events/commits and the VCF subset are equal-wall-time invariant across
+the 44.1/48/88.2/96 kHz factor pairs. VCF and BBD work remains unchanged: the
+common-host quality matrix is still REJECT/REJECT/PASS at 1×/2×/4× for both
+44.1 and 48 kHz, and the Step-11 dynamic VCF results and fixed Merson counts do
+not move.
+
+The exhaustive 48 kHz latency fixture retains Pitch 0/100/201 and official
+VoiceVca commit 70/192/315. HQ-off physical write and first nonzero gain now
+land at **69/191/314**; HQ-on remains 70/192/315. Fixed host latency remains
+**41 samples**. These are compatibility-profile coordinates, not original-unit
+latency evidence.
+
+Three alternating seven-repetition Step-11/current CPU pairs give exact 4×/1×
+meta-medians of 0.677068→0.682068 / 0.171473→0.172614 idle,
+0.697359→0.696475 / 0.179268→0.180543 plain,
+0.847179→0.853898 / 0.228095→0.231158 resonant, and
+0.731646→0.737013 / 0.191505→0.192318 full-mixer Chorus II. Their changes
+are +0.738406/+0.665476%, −0.126874/+0.711718%,
++0.793131/+1.342855% and +0.733578/+0.424526%. Worst current load is
+**0.853898×** and worst regression **+1.342855%**; the `<1×` and `+5%`
+gates pass. These results are machine/patch specific.
+
+A fresh warning-clean native Release/plugin-off build registers **12 JUCE-free
+CTest contracts** and passes **12/12 in 323.07 s**, including the new passive-
+hold contract. Five focused ASan+UBSan gates pass with halt-on-error and no
+diagnostics: Engine passive-hold-only, independent passive hold, full DCO
+quality, oversampling normal/work parity and dynamic VCF. The universal
+Release/plugin-on build passes **13/13 in 344.05 s**. VST3, AU and Standalone
+each contain `x86_64 arm64` and pass strict/deep ad-hoc signature verification
+after packaging; all target macOS 11.0. A genuinely
+translated Rosetta `x86_64` passive-hold run passes in **0.55 s**. The only
+universal warnings are two inherited Step-11 `-Wfloat-equal` sites and nested-
+Make's jobserver notice; no Step-12 warning class is introduced.
+
+The user-authorized Step-12 audio regeneration is complete. Twin demo/factory
+trees are byte-identical with manifests
+`6e953be720d71a4947d41f4aa848dd228078b919520f7fccf006f27a19136667`
+and
+`dec0d91c6f2012519d713743e7c897c37d3c5cace2cec5db9e4648039791d57e`;
+the canonical 23-file manifest is
+`f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`.
+All 20 WAVs are finite stereo PCM16, with maximum absolute DC
+`0.000000592814 FS` and worst edge `−46.962652 dBFS`. The 128-row factory
+audit has exact median `−21.480711305 dBFS`, 31 overloads, zero silent rows,
+nine `±18 dB` outliers and common gain `0.543091`. Relative to dated Step 11,
+the median moves `+0.000034651 dB`, common gain moves
+`0.543089 → 0.543091`, and the largest sample-peak movement is B77's displayed peak,
+`+1.022040722 → +0.806945831 dBFS`; eight displayed rows change and every WAV
+byte changes. These deterministic differences make no audibility claim and
+close no hardware-evidence question.
+
+This pass changes no component, state dimension, converter order, VCF/BBD law,
+selector, split or fixed latency. It makes the normalized policy internally
+exact; it does not recover physical timestamps. **OQ-07 and OQ-08 remain open**
+with the same hardware-evidence requirements.
+
 ## Settled guardrails — do not reopen without contradictory primary evidence
 
 - **Chorus modes:** the JUNO-106 has Off, I and II. Its owner's manual says I
@@ -3771,16 +3918,21 @@ The other VCF evidence questions named in Step 10 remain open unchanged.
 - **Voice-summer gain and signal order:** each voice contributes `3.3/33 = 0.1`
   before C14/R39 and the shared high-pass. C12/R36 couples that result into the
   common VCA LEVEL; chorus and IC6 follow, then main VOLUME.
-- **C14/HPF established boundary:** placement, populated parts, asymptotic C14
-  loads, Boost/Flat endpoints and the 225.8/720.5 Hz cut anchors are settled.
-  OQ-21 owns only their full coupled transfer, switch parasitics and mode-change
-  memory; it is not permission to discard C14 or refit the established endpoints.
+- **C14/HPF established boundary:** placement, populated parts and control,
+  direct C14/R39→YCOM routing, Tr3→INH, Flat R27, Boost R25, the Boost/Flat
+  endpoints, 225.8/720.5 Hz cut anchors and 15.705/4.9209 ms deselected Cut
+  decays are settled. The current 0.482288 Hz selected-Cut C14 load is an
+  explicit approximation because the physical leg includes 1 MΩ. OQ-21 owns
+  the full coupled transfer, switch parasitics and mode-change memory; it is not
+  permission to discard C14 or refit the established endpoints.
 - **Converter ownership and ordinal order:** the 23 used holds are 18 per-card
   DCO/VCF/ENV-VCA destinations plus shared SUB, VCA LEVEL, PWM, RESONANCE and
   NOISE. The service timing chart orders shared RES/VCA/SUB, DCO 1–6, PWM,
   interleaved VCF/VCA 1–6, then NOISE. The current compatibility profile places
-  ordinal `n` at `n/23`; VCF and shared-resonance holds now evaluate that policy
-  event fractionally and commit its latched payload on the next ordinary poll.
+  ordinal `n` at `n/23`; RESONANCE/common VCA/SUB/PWM and six VCF/six VoiceVca
+  holds now evaluate that policy event fractionally and commit their latched
+  payload on the next ordinary poll. Pitch/DCO and NOISE remain sample-grid for
+  the explicit OQ-08 and OQ-07/OQ-15/OQ-16 evidence boundaries.
   Hold constants and physical event offsets remain OQ-07 and OQ-08 respectively.
   OQ-08 also owns the physical ramp/comparator/sub state forced by a changed-
   pitch timer write; the current bandlimited restart is a declared model.

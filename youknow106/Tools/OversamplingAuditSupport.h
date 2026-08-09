@@ -40,6 +40,13 @@ struct DomainWorkCounters
     std::uint64_t vcfFeedbackEvaluations {};
     std::uint64_t vcfEarlyEvaluations {};
     std::uint64_t vcfInputReconstructions {};
+    // The passive-hold scheduler owns sixteen physical destinations in every
+    // converter pass: RES, common VCA, SUB, PWM, six VCF and six voice-VCA
+    // writes.  Keep these totals separate from the seven VCF-path counters
+    // below so this audit can prove that broadening the latch did not change
+    // any of Step 11's filter work algebra.
+    std::uint64_t passiveHoldFractionalEventPeeks {};
+    std::uint64_t passiveHoldFractionalTargetCommits {};
     std::uint64_t vcfFractionalEventPeeks {};
     std::uint64_t vcfFractionalTargetCommits {};
     std::uint64_t vcfExactControlIntervals {};
@@ -90,6 +97,8 @@ inline constexpr std::array counterDescriptors {
     CounterDescriptor { "vcfFeedbackEvaluations", &DomainWorkCounters::vcfFeedbackEvaluations },
     CounterDescriptor { "vcfEarlyEvaluations", &DomainWorkCounters::vcfEarlyEvaluations },
     CounterDescriptor { "vcfInputReconstructions", &DomainWorkCounters::vcfInputReconstructions },
+    CounterDescriptor { "passiveHoldFractionalEventPeeks", &DomainWorkCounters::passiveHoldFractionalEventPeeks },
+    CounterDescriptor { "passiveHoldFractionalTargetCommits", &DomainWorkCounters::passiveHoldFractionalTargetCommits },
     CounterDescriptor { "vcfFractionalEventPeeks", &DomainWorkCounters::vcfFractionalEventPeeks },
     CounterDescriptor { "vcfFractionalTargetCommits", &DomainWorkCounters::vcfFractionalTargetCommits },
     CounterDescriptor { "vcfExactControlIntervals", &DomainWorkCounters::vcfExactControlIntervals },

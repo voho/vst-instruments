@@ -1076,13 +1076,14 @@ and the original description of the hardware is contradicted by this project's
 own adjudication.** Three findings, which together strike step 6.
 
 1. **The hardware does not carry four continuously-driven, already-settled
-   legs.** `Docs/open-questions.md:2420-2435` adjudicates this ladder at
-   designator level: `Tr3 buffer -> IC3 4052 **Ycom** pin 3`, with the taps
-   Y0/Y1/Y2/Y3 feeding the four 47 kOhm summing resistors into IC4a's virtual
-   ground. The multiplexer is on the **source** side: it connects the buffer to
-   exactly one leg, and R23/R21 "1M x 2" bias the mux side of the deselected
-   capacitor legs to ground. A deselected C10/C11 is not tracking the input at
-   225.8/720.5 Hz; it is bleeding to ground through 1 MOhm (10.6 ms / 4.7 ms).
+   legs.** A later full-resolution schematic read corrects the earlier Tr3
+   description: the C14/R39 audio node feeds TC4052BP YCOM pin 3 directly,
+   while Tr3 controls the switch's INH pin 6; it is not an audio buffer. The
+   Y0/Y1/Y2/Y3 taps feed the four 47 kOhm summing legs into IC4a's virtual
+   ground, with Flat on R27 and Boost on R25. The multiplexer connects the
+   common audio node to exactly one leg, and R23/R21 "1M x 2" discharge the
+   deselected capacitor legs. A deselected C10/C11 is not tracking the input at
+   225.8/720.5 Hz; its corrected Cut-state decay is 15.705/4.9209 ms.
    "Advance all four legs from the same input every sample" is therefore a
    *different* wrong model, not the circuit -- and the same OQ-21 entry names
    "the deselected-leg charge-memory question the 1 MOhms actually govern" as
@@ -2124,10 +2125,11 @@ name are real and a later pass will want the reasoning rather than the idea.
   forbids trusting.
 - **Giving the four high-pass legs four states (was step 6).** Struck on
   three counts, all measured under gap 9. The premise contradicts this
-  project's own OQ-21 adjudication at `Docs/open-questions.md:2420-2435`: IC3's
-  4052 sits on the **source** side (`Tr3 buffer → Ycom pin 3`), so the
-  deselected legs are not continuously driven at all — they are bled to ground
-  through R23/R21 1 MΩ, which is the charge-memory question OQ-21 still owns.
+  project's own OQ-21 adjudication: C14/R39 feeds TC4052BP YCOM pin 3
+  directly, Tr3 controls INH rather than buffering audio, and the switch
+  connects that common node to only one leg. The deselected Cut legs are not
+  continuously driven; R23/R21 discharge them with 15.705/4.9209 ms decays,
+  which is the charge-memory question OQ-21 still owns.
   Position One and position Boost share a pole in the model (59.4083 Hz both),
   and `HighPass::process`'s state update ignores the shelf and high gains, so
   1 → Boost has **no** shared-state defect: isolated, the error is −599.78 dB at
@@ -3288,3 +3290,134 @@ evidence about a physical JUNO-106.
   split-domain boundary or fixed 41-sample latency. Exact intra-pass offsets
   remain policy; OQ-07 remains open on acquisition, droop and true hold laws,
   and OQ-08 remains open on physical timestamps, jitter and restart behavior.
+
+- [x] **12. Resolve fractional timing for the remaining evidence-backed
+  passive holds.** Steps 1–11 remain the dated history above. The converter
+  still executes the same 23 writes over the same nominal 4.2 ms pass, and
+  `NormalizedServiceChart` still places ordinal `n` at policy offset `n/23`.
+  This step generalizes Step 11's pure peek/latch/once-only-commit mechanism to
+  16 passive destinations per pass: shared RESONANCE, VCA LEVEL, SUB and PWM,
+  plus six VCF and six VoiceVca writes. Step 11's VCF/shared-resonance 522 µs
+  behavior is retained; no recovered hardware timestamp is claimed.
+
+  The new exact paths are deliberately bounded by evidence. Six per-card
+  VoiceVca holds use the component-derived **687 µs** constant. The common
+  VCA LEVEL uses its designator-derived **9.08249 ms** pole, SUB its derived
+  **10 ms** pole, and PWM the exact continuous affine solution of its
+  **4.7/2.632 ms** two-pole cascade. Each state advances for the old-target
+  fraction and new-target fraction around an event, while the official
+  scheduler commits the latched payload at its next ordinary poll. The PWM
+  cascade is solved continuously rather than as two sequential discrete
+  one-pole endpoint updates.
+
+  Six Pitch/DCO writes remain on their sample-grid path because the physical
+  timer write is coupled to the unresolved ramp, comparator and sub-divider
+  restart state in OQ-08. NOISE also remains sample-grid because its held-law
+  and source/level coordinates are still owned by OQ-07/OQ-15/OQ-16. The six
+  VoiceVca states, common-VCA state, SUB state and two PWM states are promoted
+  from `float` to `double` so high-rate exponential tails cannot stall. This
+  changes representation only: physical state dimension, converter order,
+  selector, split-domain boundary, future-sample policy and latency are all
+  unchanged.
+
+  The independent passive-hold audit uses long-double piecewise one-pole and
+  exact affine two-pole oracles. It covers **1,105** actual
+  `Engine::process` cases plus **17** block-wrap cases, including an event in a
+  later q4 internal substep. Maximum process error is **4.440892e-16**;
+  state-to-float and
+  consumer comparisons are **0 ULP**. It observes all **23** ordinals,
+  classifies exactly **16** passive destinations, and records zero Pitch/NOISE
+  peeks, duplicate peeks, payload failures, cursor/order failures or pass-wrap
+  failures.
+
+  Per-destination timing and wiring mutations cannot hide behind a global
+  maximum:
+
+  | Destination | Late/ceil | Early/floor | Disconnected |
+  | --- | ---: | ---: | ---: |
+  | Common VCA | 0.009838067 | 0.009838067 | 0.009838067 |
+  | SUB | 0.008684780 | 0.008684780 | 0.008684780 |
+  | PWM | 0.02180667 | 0.02180667 | 0.02180667 |
+  | VoiceVca | 0.1480581 | 0.1480581 | 0.1480581 |
+
+  A separate sequential-PWM mutation differs by **0.000525998**. The common-
+  VCA consumer spans 495 samples, agrees within **8.961428e-7** relative and
+  moves by **0.7034001** when disconnected; SUB is exact at printed precision
+  and its disconnected consumer moves by **0.6666667**. These contracts fence
+  both the physical states and their real production consumers.
+
+  The 48 kHz, six-card resonant 2,048-frame work window now reads:
+
+  | Semantic work | HQ 4× | HQ-off 1× | Contract |
+  | --- | ---: | ---: | --- |
+  | Internal frames | 8,192 | 2,048 | factor-scaled |
+  | Passive peeks / commits | 160 / 160 | 160 / 160 | 16-per-pass invariant |
+  | VCF/resonance peeks / commits | 70 / 70 | 70 / 70 | Step-11 subset unchanged |
+  | Exact VCF intervals / nodes / maps | 120 / 840 / 720 | 120 / 840 / 720 | invariant |
+  | VCF steps / Merson halfsteps | 49,152 / 98,304 | 12,288 / 24,576 | fixed factor scaling |
+  | VCF RHS / feedback | 491,520 / 491,520 | 122,880 / 122,880 | fixed solve unchanged |
+  | BBD line frames / shifts | 16,384 / 3,162 | 4,096 / 3,162 | frame-scaled / physical invariant |
+
+  Equal-wall-time passive and VCF-subset invariance also pass for the
+  44.1/48/88.2/96 kHz factor pairs. The dated common-host VCF/BBD matrix stays
+  REJECT/REJECT/PASS at 1×/2×/4× for both 44.1 and 48 kHz, and Step 11's
+  dynamic VCF results and fixed Merson work remain unchanged. This is a scalar
+  passive-state correction, not a VCF or BBD quality reclassification.
+
+  The exhaustive 48 kHz playing-latency characterization now distinguishes a
+  physical fractional VoiceVca event from its later official target commit.
+  Pitch remains 0/100/201 samples and the commit remains 70/192/315 in both
+  modes. HQ-off physical write and first gain occur at **69/191/314**, one host
+  frame earlier; HQ-on still observes both at 70/192/315. The fixed host report
+  remains **41 samples**. These are model coordinates for one declared fixture,
+  not a JUNO-106 event-to-output measurement.
+
+  Three alternating seven-repetition Step-11/current pairs at 48 kHz/block 256
+  give these thread-CPU meta-medians:
+
+  | Scenario | Step 11 → Step 12, 4× | Change | Step 11 → Step 12, 1× | Change |
+  | --- | ---: | ---: | ---: | ---: |
+  | Idle | 0.677068 → **0.682068×** | +0.738406% | 0.171473 → **0.172614×** | +0.665476% |
+  | Six-voice plain | 0.697359 → **0.696475×** | −0.126874% | 0.179268 → **0.180543×** | +0.711718% |
+  | Six-voice resonant | 0.847179 → **0.853898×** | +0.793131% | 0.228095 → **0.231158×** | +1.342855% |
+  | Full mixer, Chorus II | 0.731646 → **0.737013×** | +0.733578% | 0.191505 → **0.192318×** | +0.424526% |
+
+  Worst current load is **0.853898×** realtime and worst paired regression
+  is **+1.342855%**; the predeclared `<1×` and `+5%` gates pass. The figures
+  are informational machine/patch-specific measurements.
+
+  A fresh warning-clean native Release/plugin-off build registers **12
+  JUCE-free CTest contracts** and passes **12/12 in 323.07 s**, including the
+  new passive-hold contract. Five focused ASan+UBSan gates pass with
+  halt-on-error and no diagnostics: Engine passive-hold-only, independent
+  passive hold, full DCO quality, oversampling normal/work parity and dynamic
+  VCF, in 0.55/0.48/68.31/45.36/17.88 s respectively. The universal
+  Release/plugin-on build passes **13/13 in 344.05 s**.
+  VST3, AU and Standalone each contain `x86_64 arm64`, pass strict/deep ad-hoc
+  signature verification after packaging and target macOS 11.0. A genuinely
+  translated Rosetta `x86_64` passive-hold run
+  passes in **0.55 s**. The only universal warnings are two inherited Step-11
+  `-Wfloat-equal` sites and nested-Make's jobserver notice; Step 12 adds none.
+
+  The user-authorized Step-12 audio regeneration is complete. The twin demo and
+  factory manifests are
+  `6e953be720d71a4947d41f4aa848dd228078b919520f7fccf006f27a19136667`
+  and
+  `dec0d91c6f2012519d713743e7c897c37d3c5cace2cec5db9e4648039791d57e`;
+  the canonical 23-file manifest is
+  `f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`.
+  Its 20 finite stereo PCM16 WAVs have maximum absolute DC
+  `0.000000592814 FS` and worst edge `−46.962652 dBFS`. The factory audit's
+  exact median is `−21.480711305 dBFS`, with 31 overload rows, zero silent
+  rows, nine `±18 dB` outliers and common gain `0.543091`. Relative to dated
+  Step 11 the median moves `+0.000034651 dB`, the common gain moves
+  `0.543089 → 0.543091`, and the largest sample-peak movement is B77's displayed peak,
+  `+1.022040722 → +0.806945831 dBFS`; eight displayed rows and all WAV bytes
+  change.
+  No audibility inference is made from those byte/metric deltas.
+
+  **Numerical verdict: admit exact fractional evaluation for the supported
+  passive scalar laws.** This is a more faithful realization of the existing
+  normalized compatibility policy, not hardware timing evidence. OQ-07 remains
+  open on acquisition, droop, loading and hold interpretation; OQ-08 remains
+  open on physical timestamps, jitter and DCO restart behavior.

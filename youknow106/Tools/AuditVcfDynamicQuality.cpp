@@ -333,7 +333,7 @@ struct YouKnow106TestAccess
             const std::size_t ordinal = 10u
                 + 2u * static_cast<std::size_t>(card);
             engine.nextConverterWrite_ = ordinal;
-            engine.vcfEventLatch_ = {};
+            engine.passiveHoldEventLatch_ = {};
             engine.converterPassLfoGated_ = -0.21f;
             auto& voice = engine.voices_[static_cast<std::size_t>(card)];
             voice.envelope.value = 0.18f + 0.03f * static_cast<float>(card);
@@ -347,7 +347,7 @@ struct YouKnow106TestAccess
             atEvent.keyFollow = 0.42f;
             atEvent.vcfLfoDepth = 0.38f;
             const auto& write = writes[ordinal];
-            const float wanted = engine.vcfWriteTarget(
+            const float wanted = engine.passiveHoldWriteTarget(
                 write, atEvent, engine.converterPassLfoGated_);
             const float targetBefore = voice.cutoffCountsTarget;
             const auto lfoBefore = engine.lfoAccumulator_;
@@ -356,9 +356,9 @@ struct YouKnow106TestAccess
                                / engine.oversampledRate_;
             const double phase = phases[ordinal] - 0.5 * delta;
             const std::size_t cursorBefore = engine.nextConverterWrite_;
-            const bool peeked = engine.latchUpcomingVcfEvent(
+            const bool peeked = engine.latchUpcomingPassiveHoldEvent(
                 phase, delta, atEvent);
-            const bool duplicatePeek = engine.latchUpcomingVcfEvent(
+            const bool duplicatePeek = engine.latchUpcomingPassiveHoldEvent(
                 phase, delta, atEvent);
             result.peeks += peeked ? 1u : 0u;
             result.purePeek = result.purePeek && peeked && !duplicatePeek
@@ -367,15 +367,15 @@ struct YouKnow106TestAccess
                 && engine.lfoAccumulator_ == lfoBefore
                 && voice.envelope.value == envelopeBefore;
             result.orderExact = result.orderExact
-                && engine.vcfEventLatch_.valid
-                && !engine.vcfEventLatch_.nextPass
-                && engine.vcfEventLatch_.ordinal == ordinal
-                && engine.vcfEventLatch_.write.destination
+                && engine.passiveHoldEventLatch_.valid
+                && !engine.passiveHoldEventLatch_.nextPass
+                && engine.passiveHoldEventLatch_.ordinal == ordinal
+                && engine.passiveHoldEventLatch_.write.destination
                        == YouKnow106Engine::ConverterDestination::Vcf
-                && engine.vcfEventLatch_.write.voice == card
-                && std::abs(engine.vcfEventLatch_.eventPosition - 0.5)
+                && engine.passiveHoldEventLatch_.write.voice == card
+                && std::abs(engine.passiveHoldEventLatch_.eventPosition - 0.5)
                        <= 1.0e-12;
-            const float latched = engine.vcfEventLatch_.target;
+            const float latched = engine.passiveHoldEventLatch_.target;
             result.payloadLatched = result.payloadLatched
                 && latched == wanted;
 
@@ -387,12 +387,12 @@ struct YouKnow106TestAccess
             voice.envelope.value = 0.93f;
             voice.currentMidi = 91.0f;
             engine.converterPassLfoGated_ = 0.74f;
-            const float changed = engine.vcfWriteTarget(
+            const float changed = engine.passiveHoldWriteTarget(
                 write, afterEvent, engine.converterPassLfoGated_);
             engine.performConverterWrite(
                 write, afterEvent, engine.converterPassLfoGated_, &latched);
             ++engine.nextConverterWrite_;
-            engine.vcfEventLatch_ = {};
+            engine.passiveHoldEventLatch_ = {};
             ++result.commits;
             result.payloadLatched = result.payloadLatched
                 && voice.cutoffCountsTarget == wanted
@@ -408,7 +408,7 @@ struct YouKnow106TestAccess
         engine.prepare(8000.0, 1, true);
         engine.converterEventPhases_ = phases;
         engine.nextConverterWrite_ = writes.size();
-        engine.vcfEventLatch_ = {};
+        engine.passiveHoldEventLatch_ = {};
         engine.resonanceCvTarget_ = 0.17f;
         EngineParameters atEvent;
         atEvent.resonance = 0.34f;
@@ -418,9 +418,9 @@ struct YouKnow106TestAccess
         const auto lfoBefore = engine.lfoAccumulator_;
         const float envelopeBefore = engine.voices_[0].envelope.value;
         const float targetBefore = engine.resonanceCvTarget_;
-        const float wanted = engine.vcfWriteTarget(
+        const float wanted = engine.passiveHoldWriteTarget(
             writes[0], atEvent, engine.converterPassLfoGated_);
-        const bool peeked = engine.latchUpcomingVcfEvent(
+        const bool peeked = engine.latchUpcomingPassiveHoldEvent(
             phase, delta, atEvent);
         ++result.peeks;
         result.purePeek = result.purePeek && peeked
@@ -429,22 +429,22 @@ struct YouKnow106TestAccess
             && engine.lfoAccumulator_ == lfoBefore
             && engine.voices_[0].envelope.value == envelopeBefore;
         result.passWrapExact = result.passWrapExact
-            && engine.vcfEventLatch_.valid
-            && engine.vcfEventLatch_.nextPass
-            && engine.vcfEventLatch_.ordinal == 0u
-            && engine.vcfEventLatch_.write.destination
+            && engine.passiveHoldEventLatch_.valid
+            && engine.passiveHoldEventLatch_.nextPass
+            && engine.passiveHoldEventLatch_.ordinal == 0u
+            && engine.passiveHoldEventLatch_.write.destination
                    == YouKnow106Engine::ConverterDestination::Resonance
-            && std::abs(engine.vcfEventLatch_.eventPosition - 0.5)
+            && std::abs(engine.passiveHoldEventLatch_.eventPosition - 0.5)
                    <= 1.0e-12;
-        const float latched = engine.vcfEventLatch_.target;
+        const float latched = engine.passiveHoldEventLatch_.target;
         EngineParameters afterEvent = atEvent;
         afterEvent.resonance = 0.91f;
-        const float changed = engine.vcfWriteTarget(
+        const float changed = engine.passiveHoldWriteTarget(
             writes[0], afterEvent, engine.converterPassLfoGated_);
         engine.nextConverterWrite_ = 0u;
         engine.performConverterWrite(
             writes[0], afterEvent, engine.converterPassLfoGated_, &latched);
-        engine.vcfEventLatch_ = {};
+        engine.passiveHoldEventLatch_ = {};
         ++engine.nextConverterWrite_;
         ++result.commits;
         result.payloadLatched = result.payloadLatched

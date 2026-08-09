@@ -992,7 +992,13 @@ private:
         float state, float target, bool hasEvent, double eventPosition,
         float eventTarget, double intervalSeconds) noexcept;
 
-    struct VcfEventLatch
+    // The same converter timing rule applies to every passive hold whose
+    // post-write trajectory is modelled, including resonance's explicitly
+    // voiced Step 11 companion trajectory. There can be at most one physical
+    // write inside an internal interval, so one scalar payload is sufficient:
+    // the firmware cursor still commits it at the next ordinary poll while
+    // the analogue network sees it at the fractional physical time.
+    struct PassiveHoldEventLatch
     {
         bool valid { false };
         bool nextPass { false };
@@ -1001,6 +1007,32 @@ private:
         float target { 0.0f };
         double eventPosition { 0.0 };
     };
+
+    [[nodiscard]] static double exactOnePoleHoldEndpoint(
+        double state, float target, bool hasEvent, double eventPosition,
+        float eventTarget, double intervalSeconds, double timeConstantSeconds,
+        double fullIntervalDecay) noexcept;
+
+    struct PwmHoldCoefficients
+    {
+        double firstDecay { 1.0 };
+        double secondDecay { 1.0 };
+        double firstToSecond { 0.0 };
+    };
+    struct PwmHoldState
+    {
+        double first { 0.0 };
+        double second { 0.0 };
+    };
+    [[nodiscard]] static PwmHoldCoefficients pwmHoldCoefficients(
+        double intervalSeconds) noexcept;
+    [[nodiscard]] static PwmHoldState advancePwmHold(
+        PwmHoldState state, double target,
+        const PwmHoldCoefficients& coefficients) noexcept;
+    [[nodiscard]] static PwmHoldState exactPwmHoldEndpoint(
+        PwmHoldState state, float target, bool hasEvent,
+        double eventPosition, float eventTarget, double intervalSeconds,
+        const PwmHoldCoefficients& fullIntervalCoefficients) noexcept;
 
     struct HighPass
     {
@@ -1121,7 +1153,10 @@ private:
         float cutoffCountsTarget { 0.0f };
         float cutoffCounts { 0.0f };
         float vcaControlTarget { 0.0f };
-        float vcaControl { 0.0f };
+        // Physical capacitor charge. Double precision keeps very slow tails
+        // moving at high internal rates after their float-sized increment has
+        // fallen below half an ULP of the present state.
+        double vcaControl { 0.0 };
         // Oscillator compensation CV, kept in the frequency it stands for.
         // The timer's count steps instantly; this voltage slews, and the
         // ratio of the two is the momentary amplitude error a pitch step
@@ -1269,6 +1304,8 @@ private:
         float lfoGated) const noexcept;
     void updateVoiceVcaTarget(Voice& voice,
                               const EngineParameters& parameters) noexcept;
+    [[nodiscard]] float voiceVcaTarget(
+        const Voice& voice, const EngineParameters& parameters) const noexcept;
     // The velocity extension's one gain. The modelled hardware has no velocity
     // input at all, so `velocityDepth` is 0 by default and this is identically
     // 1.0f -- a multiply by exactly one, which leaves the faithful render bit
@@ -1280,11 +1317,13 @@ private:
     void performConverterWrite(const ConverterWrite& write,
                                const EngineParameters& parameters,
                                float lfoGated,
-                               const float* vcfTargetOverride = nullptr) noexcept;
-    [[nodiscard]] float vcfWriteTarget(
+                               const float* passiveHoldTargetOverride = nullptr) noexcept;
+    [[nodiscard]] static bool isPassiveHoldWrite(
+        const ConverterWrite& write) noexcept;
+    [[nodiscard]] float passiveHoldWriteTarget(
         const ConverterWrite& write, const EngineParameters& parameters,
         float lfoGated) const noexcept;
-    [[nodiscard]] bool latchUpcomingVcfEvent(
+    [[nodiscard]] bool latchUpcomingPassiveHoldEvent(
         double phase, double phasePerInternalSample,
         const EngineParameters& parameters) noexcept;
     // Shared converter destinations are computed once per pass. Their proven
@@ -1380,7 +1419,7 @@ private:
     std::array<double, converterWritesPerPass> converterEventPhases_ {};
     std::size_t nextConverterWrite_ { 0 };
     float converterPassLfoGated_ { 0.0f };
-    VcfEventLatch vcfEventLatch_ {};
+    PassiveHoldEventLatch passiveHoldEventLatch_ {};
     VcfHoldInterval resonanceVcfHoldInterval_ {};
     std::array<VcfHoldInterval, maxVoices> cutoffVcfHoldIntervals_ {};
     std::array<bool, maxVoices> exactVcfControlInterval_ {};
@@ -1431,10 +1470,10 @@ private:
     // node as a second continuous state between the target and the value the
     // cards see.
     float pwmVoltsTarget_ { 6.0f };
-    float pwmVoltsFirstPole_ { 6.0f };
-    float pwmVolts_ { 6.0f };
+    double pwmVoltsFirstPole_ { 6.0 };
+    double pwmVolts_ { 6.0 };
     float subCvTarget_ { 0.0f };
-    float subCv_ { 0.0f };
+    double subCv_ { 0.0 };
     float noiseCvTarget_ { 0.0f };
     float noiseCv_ { 0.0f };
 
@@ -1516,7 +1555,7 @@ private:
     // VCA LEVEL controls the single jack-board VCA after the six voice cards
     // and shared HPF. It is not part of each voice's envelope VCA.
     float sharedVcaTarget_ { 0.0f };
-    float sharedVca_ { 0.0f };
+    double sharedVca_ { 0.0 };
 
     // Deterministic physical circuit state: voice card thermal warmup timer (s)
     // and power supply rail droop (V) under heavy polyphonic loading.

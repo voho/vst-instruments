@@ -43,18 +43,19 @@ strongest competitor named.
 |---|---|---|
 | DCO pitch generation | 8 MHz reference divided by 16-bit timer integers — the hardware's own pitch quantisation (A4\@8' = 440.044 Hz), range switch as clock change, and a scanned restart whose exact forced state remains declared model policy under OQ-08 | None models timer quantisation. KR-106 uses continuous phase with the firmware's 8.8 portamento rate law; junox has an integer-period *artifact* |
 | DCO numerical quality | The legacy full-engine HQ fence covers only the 8' saw at MIDI 60/84. The expanded common-host pre-VCF matrix uses MIDI 36/48/60/72/84/96, every range, saw/sub and 5/50/95% pulse. Its dated Step 6 baseline rejected all six cells, including 4× at −42.62/−41.45 dBc for 44.1/48 kHz. Step 7 fixes the numerical reconstruction without changing the divider/ramp/comparator/sub/scan laws: 1×/2×/4× now measure −83.48/−82.44/−82.43 and −84.88/−92.98/−92.98 dBc, and every alias, gain, analysis, scan and hold gate passes | No surveyed open project publishes an equivalent common-host, multi-waveform DCO reconstruction matrix |
-| Scanned control system | The p. 8 chart's exact 23-write order on a fractional 4.2 ms scheduler; per-destination hold networks, incl. the derived PWM (R117/C62, R116/C63) and SUB (R11/C1) slews; exact intra-pass timestamps declared open (OQ-08) rather than invented | KR-106: 4.2335 ms canonical tick plus per-slot DAC phase offsets from firmware cycle counting — it *claims* the timestamps this project deliberately leaves open; its offsets corroborate our provisional ~125 µs figure |
-| Playing latency | Exhaustive current-model characterization at 48 kHz: every one of the 1,008 host/scan boundary phases on all six cards, with Pitch write, ENV-mode VCA write, 687 µs hold milestone and a declared output-onset proxy reported separately from the fixed 41-sample host DSP report | KR-106 v2.5.12 says rebasing its DAC phase tables removed about 2 ms from tick-driven envelope/LFO updates. No like-for-like event-to-node/output distribution or original-JUNO capture is published in the surveyed open field |
+| Scanned control system | The p. 8 chart's exact 23-write order on a fractional 4.2 ms scheduler; per-destination hold networks, incl. the derived PWM (R117/C62, R116/C63) and SUB (R11/C1) slews. Step 12 generalizes the pure scalar event latch across all 16 passive destinations without moving the cursor/order/count; the six DCO/Pitch writes and NOISE stay sample-grid. Exact intra-pass timestamps and acquisition remain open (OQ-07/OQ-08), not invented | KR-106: 4.2335 ms canonical tick plus per-slot DAC phase offsets from firmware cycle counting — it *claims* the timestamps this project deliberately leaves open; its offsets corroborate our provisional ~125 µs figure |
+| Playing latency | Exhaustive current-model characterization at 48 kHz: every one of the 1,008 host/scan boundary phases on all six cards. Step 12 separates the fractional physical ENV-VCA write and first gain (HQ off 69/191/314, HQ on 70/192/315) from its official target poll (70/192/315 in both), while the fixed host DSP report remains 41 samples | KR-106 v2.5.12 says rebasing its DAC phase tables removed about 2 ms from tick-driven envelope/LFO updates. No like-for-like event-to-node/output distribution or original-JUNO capture is published in the surveyed open field |
+| Passive-hold numerical quality | Step 12 resolves writes inside the six 687 µs voice-VCA holds, the 9.08249 ms common VCA, derived 10 ms SUB and exact continuous 4.7/2.632 ms PWM cascade. Across 1,105 actual process cases plus 17 later-4×/block-wrap cases, independent long-double oracles bound helper/process error to `2.220446e-16`/`4.440892e-16` and float consumers to 0 ULP. Per-destination snap/disconnect and sequential-PWM mutations reject | No surveyed project publishes an equivalent live-scheduler, physical-state, consumer-wiring and mutation contract |
 | Firmware envelope | Hash-scoped B-2 recurrence: 14-bit state, exact Q(v,c) three-partial multiply with the dropped low×low term, `E>>2` DAC truncation, byte-exact fixtures in the suite | KR-106: the same law at instruction level (cleanroom, j106roms lineage), cross-checked against MAME — parity on the digital law; no automated fixtures |
 | Firmware LFO/delay/portamento | Hash-scoped exact laws with regression vectors | KR-106: ROM-table reconstructions verified against four hardware captures — parity in kind |
 | VCF | IR3109 cascade behind the anchored 68 kΩ/560 Ω divider; loop gain fitted only to the 4.8 Vpp service amplitude (rendered 4.8009 Vpp), with 247.90 Hz then predicted rather than fitted; 992 Hz WIDTH anchor (tracking exactly 1.00); AS3109 700 µA control-current knee; R-2R carry INL on the converter write | KR-106: IR3109 TPT cascade with BA662 67:1 feedback physics, self-osc calibrated to a named unit, and a **4096-point measured DAC→Hz table from a real card** — a data asset this project matches only by derivation (within 30 cents of that table's shape after the knee fix) |
 | VCF numerical quality | Step 10 advances the continuous four-stage equations with two fixed five-stage Merson RK4 halfsteps, causal cubic drive and endpoint-linear ordinary controls over four double capacitor states. Step 11 preserves its ten RHS evaluations but, only in intervals containing a cutoff or shared-resonance write, evaluates the exact segmented 522 µs hold at all seven Merson nodes. A pure scheduler peek latches the fractional event payload without consuming the official cursor/target; the normal poll commits it once. All six standard HQ cells plus 8/768 kHz engine bounds pass at −84.881…−119.340 dB against independent RK64/RK128 references and the unchanged −40 dB gate. Late/ceil and early/floor snap mutations reject at −33.245/−32.007 dB | KR-106: 2×/4× oversampling, no published equivalent common-host, converter-schedule dynamic or fold-back fence. No other surveyed project publishes one |
 | Chorus | Bucket-clocked two-phase 256-stage MN3009 model: full-period hold confirmed by the datasheet OUT1/OUT2 solve, per-shift transfer loss on the EC-row anchor, derived LFO rates 0.5533/0.8983 Hz from the 106's own timing network (ratio 1.6234799), measured 1.4–6.4 ms sweep, causal four-point Lagrange edge-input interpolation, bounded-polyBLEP BGA/SGA separation and combined exact continuous six-state support integration on every shipping HQ path, with no-compander hiss modelled | KR-106: deliberately *not* bucket-clocked (Hermite delay line with a written rationale), surrounded by measured side-effects (CTE gain modulation, leakage noise, clock-reset clicks); Chorus II rate marked "inherited, not re-verified". Hera has the field's only other bucket-level BBD — attached to an admittedly inaccurate alpha |
 | HPF incl. bass boost | The boost shelf **derived from the p. 15 branch** (+10.50 dB DC, +1.41 dB HF, 59.41 Hz; within 0.016 dB of the exact 2z/2p solve), cut corners from designators; asymptotic C14 coupling states | KR-106: the same 2p2z transfer from designators, verified 0.55 dB RMS against its (unpublished) hardware noise sweep — convergent result, one lineage of hardware corroboration |
-| Common VCA LEVEL | Derived dB-linear law from p. 8/p. 15/NEC (−16.32 + 0.1656·b dB), C7 9.08 ms settling | Not modelled as a distinct stage anywhere else surveyed |
+| Common VCA LEVEL | Derived dB-linear law from p. 8/p. 15/NEC (−16.32 + 0.1656·b dB), C7 9.08249 ms settling; Step 12 resolves its fractional write and independently probes the downstream gain consumer | Not modelled as a distinct stage anywhere else surveyed |
 | Output boundary | JIS-B volume law with internal 29.3 kΩ wiper loading, three coupling boundaries, −18 dBFS RMS declared policy | Generic gain staging everywhere else |
 | Patch compatibility | Exact 18-byte tone format, .syx load/save/drag-drop, factory bank in hardware order, PC 0–127 | KR-106 has patch banks; none document byte-exact SysEx round-tripping |
-| Deterministic verification | 11 JUCE-free CTest contracts; anchored laws are fenced, while reviewed numerical failures are also locked as explicit rejections rather than silently counted as passes | **None in the entire open field.** KR-106 ships manual offline analysis tools only |
+| Deterministic verification | 12 JUCE-free CTest contracts; anchored laws are fenced, while reviewed numerical failures are also locked as explicit rejections rather than silently counted as passes | **None in the entire open field.** KR-106 ships manual offline analysis tools only |
 | Evidence discipline | Public research contract with provenance classes (anchored / ROM-resolved / derived / voiced / policy), a 21-item open-questions queue with capture protocols, recorded rejections | KR-106 embeds measurement claims in comments and ships some raw CSVs (a genuine strength — this project records fixtures and hashes instead, and its raw-capture asks are still open); no other project documents provenance at all |
 
 Where the open field is genuinely ahead, stated plainly: KR-106 ships
@@ -161,18 +162,18 @@ the market has published one either.
 The 2026-08-07 head-to-head and the later before/after listening corpora remain
 recoverable from the Step 9 commit, preserving that dated history. They were
 removed when the maintained [audio corpus](audio/README.md) was regenerated
-from scratch, so neither their
-clips nor their deltas are presented as evidence for the current engine. The
-maintained corpus now contains only ten fresh demonstrations and the fresh
-[128-row factory report](audio/factory-presets/README.md) with ten common-gain
-previews. For Step 11, two independent demo renders and two independent full
-factory renders from the frozen engine produced byte-identical trees. The
+from scratch, so neither their clips nor their deltas are presented as current
+evidence. The Step 12 corpus contains only ten fresh demonstrations and the
+fresh [128-row factory report](audio/factory-presets/README.md) with ten
+common-gain previews. Two independent demo renders and two independent full
+factory renders from one frozen engine produced byte-identical pairs. The
 canonical 23-file manifest is
-`764f2770d21a138163c756025551dc8ead7925f4cf003eb98e960234afc098ea`;
+`f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`;
 all 20 WAVs are finite stereo PCM16, with maximum absolute DC
-`0.000000576 FS` and worst edge `−46.96 dBFS`. Current comparative claims
-rest on reproducible numerical contracts and primary-source mechanism coverage,
-not on an undocumented recording-chain comparison or a legacy listening delta.
+`0.000000592814 FS` and worst edge `−46.962652 dBFS`. Current comparative
+claims rest on reproducible numerical contracts and primary-source mechanism
+coverage, not on an undocumented recording-chain comparison or a legacy
+listening delta.
 
 ## Playing latency — characterized, hardware timing still open
 
@@ -190,10 +191,12 @@ samples from the timestamped Note On; each cell is min / median / max across
 | --- | ---: | ---: | --- |
 | Host-reported numerical DSP latency | 41 / 41 / 41 | 41 / 41 / 41 | 0.854 ms at 48 kHz; a nominal group-delay report, separate from scan/hold and external buffering |
 | Pitch/envelope write | 0 / 100 / 201 | 0 / 100 / 201 | Current normalized 23-write schedule |
-| VoiceVca target / first nonzero model gain | 70 / 192 / 315 | 70 / 192 / 315 | ENV mode; cannot precede that card's Pitch/envelope tick |
-| Held control reaches 63.2% | 102 / 224 / 347 | 103 / 225 / 348 | Current continuous realization of the component-derived 687 µs hold |
-| Raw output-onset proxy | 87 / 210 / 335 | 105 / 228 / 351 | First `max(abs(L),abs(R)) > 1e-4` (−80 dBFS amplitude); signal/patch dependent |
-| Nominal host-compensation coordinate | 46 / 169 / 294 | 64 / 187 / 310 | Raw proxy index minus the 41-sample report; not a claim of an exact threshold delay |
+| Fractional physical VoiceVca write | 69 / 191 / 314 | 70 / 192 / 315 | ENV mode; exact event inside the internal interval, never before that card's Pitch/envelope tick |
+| Official VoiceVca target poll | 70 / 192 / 315 | 70 / 192 / 315 | Commits the event-time payload once through the normal 23-write cursor |
+| First nonzero model gain | 69 / 191 / 314 | 70 / 192 / 315 | Follows the fractional physical hold rather than waiting for a later poll |
+| Held control reaches 63.2% | 102 / 224 / 347 | 102 / 225 / 348 | Current continuous realization of the component-derived 687 µs hold |
+| Raw output-onset proxy | 86 / 209 / 334 | 105 / 228 / 351 | First `max(abs(L),abs(R)) > 1e-4` (−80 dBFS amplitude); signal/patch dependent |
+| Nominal host-compensation coordinate | 45 / 168 / 293 | 64 / 187 / 310 | Raw proxy index minus the 41-sample report; not a claim of an exact threshold delay |
 
 The fixed report corresponds to raw reconstruction centers of 24 host samples
 plus 17 samples of padding at 1×, 35.5 plus 6 at 2×, and 41.25 at 4×: the
@@ -211,8 +214,9 @@ samples, even though the aggregate distributions align. That is scan-grid
 quantisation, not an extra 223 samples of output-path group delay.
 
 The 4.2 ms pass, 23-write order and qualitative non-simultaneity are anchored.
-The normalized sub-pass offsets, phase origin and continuously slewed hold are
-compatibility/product behavior. The output threshold is a numerical regression
+The normalized sub-pass offsets, phase origin, event interpretation and
+continuously slewed hold are compatibility/product behavior. The output
+threshold is a numerical regression
 proxy, not psychoacoustic audibility, and this sweep is exhaustive only over
 48 kHz converter phase for the declared patch and pre-roll. Exact hardware
 offsets, acquisition behavior and audible thresholds remain OQ-07, OQ-08 and
@@ -313,7 +317,7 @@ speedup or regression claim. The older wall-time table remains useful as dated
 history, but its `steady_clock` values are not merged with this thread-CPU
 series.
 
-The current Step 10 → Step 11 comparison uses three alternating pairs, each
+The dated Step 10 → Step 11 comparison uses three alternating pairs, each
 with seven repetitions, on the same declared 48 kHz/block-256 platform. The
 values below are authoritative meta-medians of the three run medians; their
 Step 10 baselines are contemporaneous pair controls, so deltas are evaluated
@@ -332,6 +336,22 @@ thread-CPU observations on one machine, not plug-in/host totals or competitor
 data. The consistent +1.096…+3.072% movement describes these fixtures and does
 not authorize a rate split. The event-counter results below remain semantic
 work attribution, not a substitute for these timings.
+
+The current Step 11 → Step 12 comparison repeats that protocol with three
+alternating pairs of seven repetitions. These meta-medians use their own
+contemporaneous Step 11 controls:
+
+| Scenario | Step 11 → Step 12, 4× | Change | Step 11 → Step 12, 1× | Change |
+| --- | ---: | ---: | ---: | ---: |
+| Idle, six physical cards behind closed VCAs | 0.677068 → **0.682068×** | +0.738406% | 0.171473 → **0.172614×** | +0.665476% |
+| Six voices, chorus off, cutoff 0.62, resonance 0.10 | 0.697359 → **0.696475×** | −0.126874% | 0.179268 → **0.180543×** | +0.711718% |
+| Six voices, chorus off, cutoff 0.62, resonance 0.95 | 0.847179 → **0.853898×** | +0.793131% | 0.228095 → **0.231158×** | +1.342855% |
+| Six voices, full mixer, chorus II/noise 1.0, resonance 0.70 | 0.731646 → **0.737013×** | +0.733578% | 0.191505 → **0.192318×** | +0.424526% |
+
+All eight Step 12 meta-medians remain below realtime; the worst is 0.853898×.
+The hard Engine CPU gate and predeclared 5% paired-regression gate pass. The
+−0.126874…+1.342855% movement describes these fixtures on this one machine;
+it is not a plug-in/host total, competitor comparison or rate-split admission.
 
 The companion `YouKnow106DSPWorkAudit` recompiles only Engine and Chorus with
 non-atomic semantic counters. That build is never timed and never linked into
@@ -352,6 +372,7 @@ six-voice resonant fixture, a 2,048-host-frame window at 48 kHz gives:
 | VCF RHS / feedback evaluations | 491,520 / 491,520 | 122,880 / 122,880 | exactly ten of each per VCF step |
 | VCF stage / full-Early evaluations | 1,966,080 / 1,966,080 | 491,520 / 491,520 | exactly 40 of each per VCF step for the enabled-Character fixture |
 | Causal-cubic input phases / recoveries | 344,064 / 0 | 86,016 / 0 | exactly seven phases and no normal-path recovery per VCF step |
+| Fractional passive peeks / latched-target commits | 160 / 160 | 160 / 160 | all 16 passive destinations per declared pass; DCO/Pitch and NOISE are excluded |
 | Fractional VCF peeks / latched-target commits | 70 / 70 | 70 / 70 | declared-schedule RES/VCF events; a peek neither consumes the cursor nor changes the official target |
 | Exact event-aware card intervals / control nodes / extra maps | 120 / 840 / 720 | 120 / 840 / 720 | seven Merson nodes and six additional maps per affected card interval; ten RHS evaluations per VCF step are unchanged |
 | Cutoff memo misses | 1,367 | 1,505 | nearly wall-time driven; 2.78% vs 12.25% of card updates |
@@ -374,8 +395,11 @@ performs 49 coefficient visits and 98 stereo MACs. The same regression covers
 MACs per host frame, none at 1×. It also proves the fixed Merson algebra above,
 the exact fractional-event counts across every shipping selector case, the
 expected 23-write boundary tolerance and raw-float identity between normal and
-active-counter renders. Shipping-target preprocessing plus symbol/string scans
-contain no audit instrumentation.
+active-counter renders. Step 12 expands the latch count from the retained 70
+RES/VCF events to all 160 passive events in both the shown 4× and 1× windows;
+the 120 VCF affected intervals and every fixed VCF/BBD count remain unchanged.
+Shipping-target preprocessing plus symbol/string scans contain no audit
+instrumentation.
 
 This is work attribution, not a selective-rate admission. Counters with
 different semantics are not cycle weights; the whole-engine 4×/1× ratios do
@@ -390,10 +414,12 @@ selector path. Step 10 makes the common-host VCF pass at 4× and all six
 standard actual-HQ VCF trajectories pass with the converter schedule and card
 mechanisms active. Step 11 retains the common-host classifications while making
 the event-aware dynamic VCF matrix pass all six standard HQ paths and both
-8/768 kHz engine bounds. Lower common-host VCF/BBD factors still reject their
+8/768 kHz engine bounds. Step 12 extends fractional event evaluation to the
+remaining evidence-backed passive RC paths without changing either numerical
+classification. Lower common-host VCF/BBD factors still reject their
 absolute gates. The matrix does not include the inter-domain reconstruction,
 whole-engine or
-latency proof a split architecture would require. Steps 8–11 add no future
+latency proof a split architecture would require. Steps 8–12 add no future
 audio-sample lookahead or latency. No domain split or rate-selector change is
 admitted.
 
@@ -637,7 +663,7 @@ cutoff/feedback/headroom diagnostics read −136.916 and −60.546 dB. The resul
 became the dated motivation for Step 11's fractional event-aware hold
 evaluation, not a gate relaxation.
 
-The current Step 11 audit keeps the same 19 physical takes per rate family and
+The dated Step 11 audit keeps the same 19 physical takes per rate family and
 24 logical card/Character/thermal profiles, the exact logical write count and
 order, finite-state and zero-recovery checks, and independent RK64/RK128
 references. Its direct production-scheduler contract observes six card-cutoff
@@ -669,15 +695,74 @@ domain boundary, VCF ODE/capacitor-state dimension or 41-sample latency changes,
 and no hardware timing is established. OQ-07 and OQ-08 remain open alongside the VCF
 measurement debts listed above.
 
-Step 11 regenerated the documentation audio from scratch. The maintained tree
+**Step 12, 2026-08-09.** The same event rule now covers every passive path
+whose physical control trajectory is declared. One allocation-free scalar
+latch recognizes 16 destinations per pass: shared RESONANCE, VCA LEVEL, SUB
+and PWM plus six VCF and six VoiceVca writes. Step 11's RES/VCF realization is
+retained. Step 12 adds exact two-segment one-pole endpoints for the six 687 µs
+voice-VCA holds, the derived 9.08249 ms common-VCA C7 pole and derived 10 ms
+SUB pole, plus the exact continuous affine transition of PWM's 4.7/2.632 ms
+two-pole cascade on both sides of an event. Its existing physical coordinates
+are stored in double precision with the same state dimension. The six
+DCO/Pitch writes and NOISE remain on their prior sample-grid paths.
+
+The independent contract runs the actual `Engine::process` scheduler and
+physical states through 1,105 host/rate/mode/event-position cases, plus 17
+block-wrap cases that require a later 4× internal substep. Its grid includes
+8 kHz at 1× and 4×, 768 kHz/1×, all six standard HQ selectors, and HQ-off at
+44.1/48/88.2/96 kHz. Long-double piecewise one-pole and affine two-pole
+oracles bound maximum helper error to `2.220446e-16` and live-process error to
+`4.440892e-16`; state-to-float and consumer comparisons are both 0 ULP. The
+scheduler reports 23 ordinals, exactly 16 passive classifications, zero
+Pitch/NOISE peeks, and no duplicate, payload, cursor, order or pass-wrap
+failure.
+
+The contract deliberately breaks each new destination rather than accepting a
+single global maximum:
+
+| Deliberate mutation | Common VCA | SUB | PWM | Voice VCA |
+| --- | ---: | ---: | ---: | ---: |
+| Late/ceil, early/floor or disconnected trajectory | 0.009838067 | 0.008684780 | 0.02180667 | 0.1480581 |
+
+Every value clears the `1e-8` rejection gate; replacing the simultaneous PWM
+cascade with sequential one-pole updates also diverges by `0.000525998`.
+Downstream wiring is independently observable: the common-VCA consumer stays
+within `8.961428e-7` relative error over 495 samples but reaches `0.7034001`
+when disconnected, while the SUB consumer reads zero relative error and
+`0.6666667` disconnected.
+
+This establishes equation fidelity only for the declared RC networks under the
+normalized `ordinal/23` event policy. It does not recover JUNO-106 timestamps,
+acquisition, droop or jitter, and it moves no physical constant, 23-write
+cursor/order/count, global factor, future audio sample or reported latency.
+OQ-07/OQ-08 remain open, as do the downstream VCA and source-level debts in
+OQ-15/OQ-16/OQ-19.
+
+Step 12 regenerated the documentation audio from scratch. The maintained tree
 contains ten fresh demos, a fresh 128-row factory report/CSV and ten common-gain
-previews. Two demo runs and two full factory runs produced byte-identical
-23-file trees; the factory report reconciles 128 finite unique rows at a
-`−21.48 dBFS` median gated RMS, with 31 overload flags, zero near-silent
-presets and nine outside `±18 dB` of the corpus median.
-Historical comparison/fidelity/realism/state-of-the-art trees remain
-recoverable from Step 9 and are intentionally not used for before/after claims
-about the current engine.
+previews. Two demo runs and two full factory runs produced byte-identical pairs;
+the canonical 23-file manifest is
+`f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`.
+The factory report reconciles 128 finite unique rows at an exact
+`−21.480711305 dBFS` median gated RMS, with 31 overload flags, zero near-silent
+presets and nine outside `±18 dB` of the corpus median; its common preview gain
+is `0.543091`. Relative to dated Step 11, the median moves
+`+0.000034651 dB`, the common gain moves `0.543089 → 0.543091`, and the
+largest sample-peak movement is B77's displayed peak,
+`+1.022040722 → +0.806945831 dBFS`. Eight displayed
+rows and every WAV byte change. Those deterministic observations do not
+establish audibility. Historical comparison/fidelity/realism/state-of-the-art
+trees remain recoverable from Step 9 and are intentionally not used for a
+listening-quality claim.
+
+A fresh warning-clean native Release/plugin-off build passes all **12/12**
+JUCE-free contracts in **323.07 s**. Five focused ASan+UBSan gates pass with
+halt-on-error and no diagnostics: Engine passive-hold-only, independent passive
+hold, full DCO quality, oversampling normal/work parity and dynamic VCF. The
+universal Release/plugin-on build passes **13/13 in 344.05 s**. VST3, AU and
+Standalone each contain `x86_64 arm64` and pass strict/deep ad-hoc signature
+verification after packaging; all target macOS 11.0. A genuinely translated
+Rosetta `x86_64` passive-hold run passes in **0.55 s**.
 
 ### Dated Step 4 bounded-work VCF candidate: matrix rejection
 

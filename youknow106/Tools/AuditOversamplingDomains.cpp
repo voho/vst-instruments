@@ -502,30 +502,33 @@ struct CounterCase
     int sampleRate;
     bool highQuality;
     int expectedFactor;
+    std::uint64_t expectedPassiveHoldEvents;
     std::uint64_t expectedFractionalEvents;
     std::uint64_t expectedExactControlIntervals;
 };
 
 constexpr std::array counterCases {
-    // The final two fields freeze fractional RES/VCF peeks (and commits) and
-    // affected voice intervals over this exact 2,048-host-frame window. A
-    // resonance event owns six physical-card intervals; a VCF event owns one.
-    CounterCase { "44.1k-4x", 44100, true, 4, 77u, 132u },
-    CounterCase { "44.1k-1x", 44100, false, 1, 77u, 132u },
-    CounterCase { "48k-4x", 48000, true, 4, 70u, 120u },
-    CounterCase { "48k-1x", 48000, false, 1, 70u, 120u },
+    // The final three fields freeze all sixteen passive fractional events,
+    // the RES+six-VCF subset and affected VCF-card intervals over this exact
+    // 2,048-host-frame window. A resonance event owns six physical-card
+    // intervals; a VCF event owns one. Keeping both totals makes Step 11's VCF
+    // work a golden subset of the broadened Step 12 scheduler.
+    CounterCase { "44.1k-4x", 44100, true, 4, 176u, 77u, 132u },
+    CounterCase { "44.1k-1x", 44100, false, 1, 176u, 77u, 132u },
+    CounterCase { "48k-4x", 48000, true, 4, 160u, 70u, 120u },
+    CounterCase { "48k-1x", 48000, false, 1, 160u, 70u, 120u },
     CounterCase {
-        "88.2k-2x", 88200, true, 2, 39u, 64u
+        "88.2k-2x", 88200, true, 2, 88u, 39u, 64u
     },
     CounterCase {
-        "88.2k-1x", 88200, false, 1, 39u, 64u
+        "88.2k-1x", 88200, false, 1, 88u, 39u, 64u
     },
-    CounterCase { "96k-2x", 96000, true, 2, 35u, 60u },
-    CounterCase { "96k-1x", 96000, false, 1, 35u, 60u },
+    CounterCase { "96k-2x", 96000, true, 2, 80u, 35u, 60u },
+    CounterCase { "96k-1x", 96000, false, 1, 80u, 35u, 60u },
     CounterCase {
-        "176.4k-1x", 176400, true, 1, 20u, 30u
+        "176.4k-1x", 176400, true, 1, 45u, 20u, 30u
     },
-    CounterCase { "192k-1x", 192000, true, 1, 18u, 28u },
+    CounterCase { "192k-1x", 192000, true, 1, 40u, 18u, 28u },
 };
 
 struct CounterRun
@@ -579,6 +582,7 @@ void expectTrue(std::vector<std::string>& errors, std::string_view caseName,
 void validateVcfCounterAlgebra(std::string_view caseName,
                                const DomainWorkCounters& counters,
                                std::uint64_t expectedSteps,
+                               std::uint64_t expectedPassiveHoldEvents,
                                std::uint64_t expectedFractionalEvents,
                                std::uint64_t expectedExactControlIntervals,
                                std::vector<std::string>& errors)
@@ -603,6 +607,12 @@ void validateVcfCounterAlgebra(std::string_view caseName,
     expectEqual(errors, caseName, "VCF input reconstructions",
                 counters.vcfInputReconstructions,
                 7u * counters.vcfSteps);
+    expectEqual(errors, caseName, "passive-hold fractional event peeks",
+                counters.passiveHoldFractionalEventPeeks,
+                expectedPassiveHoldEvents);
+    expectEqual(errors, caseName, "passive-hold fractional target commits",
+                counters.passiveHoldFractionalTargetCommits,
+                expectedPassiveHoldEvents);
     expectEqual(errors, caseName, "VCF exact control nodes",
                 counters.vcfExactControlNodes,
                 7u * counters.vcfExactControlIntervals);
@@ -690,6 +700,7 @@ void validateCounterAlgebra(const CounterCase& testCase,
                 counters.voiceAudioUpdates);
     validateVcfCounterAlgebra(
         testCase.name, counters, voiceCards,
+        testCase.expectedPassiveHoldEvents,
         testCase.expectedFractionalEvents,
         testCase.expectedExactControlIntervals, errors);
 
@@ -715,6 +726,7 @@ void validateCounterAlgebra(const CounterCase& testCase,
 int runCounterAudit(bool selfTestOnly)
 {
     std::vector<std::string> errors;
+    std::array<CounterRun, counterCases.size()> observed {};
     if (!selfTestOnly)
     {
         std::cout << "protocol block_size=" << blockSize
@@ -724,9 +736,11 @@ int runCounterAudit(bool selfTestOnly)
                   << " counters=semantic hash=fnv1a64-raw-interleaved-f32\n";
     }
 
-    for (const auto& testCase : counterCases)
+    for (std::size_t index = 0; index < counterCases.size(); ++index)
     {
+        const auto& testCase = counterCases[index];
         const auto run = runCounterCase(testCase);
+        observed[index] = run;
         validateCounterAlgebra(testCase, run.counters, errors);
         if (!selfTestOnly)
         {
@@ -742,6 +756,39 @@ int runCounterAudit(bool selfTestOnly)
         }
     }
 
+    // Equal wall time at a fixed host rate crosses the same physical
+    // converter events regardless of whether the audio domain runs q1, q2 or
+    // q4. These four pairs make that invariance explicit instead of relying
+    // only on their individually frozen totals. The VCF subset must remain
+    // invariant too; its Merson/BBD work is already checked above per actual
+    // internal frame, so broadening the passive latch cannot add a retry.
+    constexpr std::array<std::array<std::size_t, 2>, 4> factorPairs {{
+        { 0u, 1u }, { 2u, 3u }, { 4u, 5u }, { 6u, 7u }
+    }};
+    for (const auto& pair : factorPairs)
+    {
+        const auto& high = observed[pair[0]].counters;
+        const auto& one = observed[pair[1]].counters;
+        const std::string pairName = std::string(counterCases[pair[0]].name)
+                                   + " vs "
+                                   + std::string(counterCases[pair[1]].name);
+        expectEqual(errors, pairName, "passive event factor invariance",
+                    high.passiveHoldFractionalEventPeeks,
+                    one.passiveHoldFractionalEventPeeks);
+        expectEqual(errors, pairName, "passive commit factor invariance",
+                    high.passiveHoldFractionalTargetCommits,
+                    one.passiveHoldFractionalTargetCommits);
+        expectEqual(errors, pairName, "VCF event factor invariance",
+                    high.vcfFractionalEventPeeks,
+                    one.vcfFractionalEventPeeks);
+        expectEqual(errors, pairName, "VCF commit factor invariance",
+                    high.vcfFractionalTargetCommits,
+                    one.vcfFractionalTargetCommits);
+        expectEqual(errors, pairName, "exact VCF interval factor invariance",
+                    high.vcfExactControlIntervals,
+                    one.vcfExactControlIntervals);
+    }
+
     if (!errors.empty())
     {
         for (const auto& error : errors)
@@ -749,7 +796,8 @@ int runCounterAudit(bool selfTestOnly)
         return 1;
     }
     if (selfTestOnly)
-        std::cout << "oversampling work-counter algebra: PASS\n";
+        std::cout << "oversampling work-counter algebra and passive "
+                     "equal-wall-time factor invariance: PASS\n";
     return 0;
 }
 

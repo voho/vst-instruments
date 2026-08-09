@@ -276,6 +276,16 @@ if(YOUKNOW106_BUILD_TOOLS)
         PRIVATE YouKnow106DSP)
     target_compile_features(YouKnow106VcfDynamicQualityAudit PRIVATE cxx_std_20)
 
+    # Independent continuous-time qualification for the non-filter passive
+    # converter holds.  The executable-local friend probe drives the actual
+    # process scheduler; separately written long-double one/two-pole oracles
+    # decide the Voice VCA, common VCA, SUB and PWM states.
+    add_executable(YouKnow106PassiveHoldTimingAudit
+        Tools/AuditPassiveHoldTiming.cpp)
+    target_link_libraries(YouKnow106PassiveHoldTimingAudit
+        PRIVATE YouKnow106DSP)
+    target_compile_features(YouKnow106PassiveHoldTimingAudit PRIVATE cxx_std_20)
+
     if(MSVC)
         target_compile_options(YouKnow106RenderDemos PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderSota PRIVATE /W4 /permissive-)
@@ -296,6 +306,8 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106VcfBbdQualityAudit
             PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106VcfDynamicQualityAudit
+            PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnow106PassiveHoldTimingAudit
             PRIVATE /W4 /permissive-)
     else()
         target_compile_options(YouKnow106RenderDemos PRIVATE
@@ -321,6 +333,8 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106VcfBbdQualityAudit PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106VcfDynamicQualityAudit PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnow106PassiveHoldTimingAudit PRIVATE
             -Wall -Wextra -Wpedantic)
     endif()
 endif()
@@ -400,9 +414,12 @@ if(BUILD_TESTING)
                  COMMAND YouKnow106VcfBbdQualityAudit --self-test)
         add_test(NAME YouKnow106.VcfDynamicQualityContract
                  COMMAND YouKnow106VcfDynamicQualityAudit --self-test)
+        add_test(NAME YouKnow106.PassiveHoldTimingContract
+                 COMMAND YouKnow106PassiveHoldTimingAudit --self-test)
         set_tests_properties(YouKnow106.DcoScanQualityContract
                              YouKnow106.VcfBbdQualityContract
                              YouKnow106.VcfDynamicQualityContract
+                             YouKnow106.PassiveHoldTimingContract
                              PROPERTIES TIMEOUT 300)
     endif()
     # The engine suite renders the complete factory-balance corpus, while the

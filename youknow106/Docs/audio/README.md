@@ -1,32 +1,43 @@
 # YouKnow106 audio corpus
 
-This directory is a fresh Step 11 render of the current engine candidate. It
+This directory is a fresh Step 12 render of the current engine candidate. It
 intentionally contains only the ten maintained demonstration fixtures and the
 full [factory-preset audit](factory-presets/README.md). Historical
 before/after, fidelity, realism, and state-of-the-art comparison corpora were
 retired during the earlier corpus reset; they remain recoverable from
-repository history and are not evidence for the Step 11 engine.
+repository history and are not evidence for the Step 12 engine.
 
-The snapshot was built in Release mode with the plug-in disabled.
-Its VCF is the Step 11 event-aware scanned-control path on the bounded causal
-integrator. For the six voice-cutoff writes and shared resonance, including a
-pass-wrap resonance write, the engine purely peeks the normalized intra-pass
-event, latches its event-time payload, and evaluates the existing 522 µs
-exponential hold at the exact segmented endpoint and seven fixed Merson nodes
-only in the affected interval. The official scheduler then consumes and
-commits that latched payload exactly once at its next poll; its cursor, order,
-and write count do not move. The two fixed half-interval, five-stage Merson
-advances and current-plus-three-past cubic input reconstruction are unchanged.
-The exact DSP source provenance for this render is:
+The snapshot was built by the warning-clean native arm64 Release targets with
+the plug-in disabled. Step 12 generalizes Step 11's pure peek/latch/once-only
+commit path to the 16 declared passive destinations in every nominal 4.2 ms
+pass: shared RESONANCE, VCA LEVEL, SUB and PWM, plus six VCF and six VoiceVca
+writes. An affected one-pole state advances for the exact old-target and
+new-target segments around its normalized `ordinal/23` event. VCF and shared
+resonance retain the 522 µs endpoint and seven-node Merson trajectory; the new
+paths are the component-derived 687 µs VoiceVca holds, derived 9.08249 ms
+common-VCA pole, derived 10 ms SUB pole, and exact continuous affine solution
+of PWM's 4.7/2.632 ms two-pole cascade. The official 23-write scheduler still
+commits the captured event-time payload once at its next poll, without moving
+its cursor, order, or write count. Pitch/DCO and NOISE deliberately remain on
+their prior sample-grid paths. The relevant scalar states now use double
+precision without changing their physical state dimension.
+
+The exact source and frozen-binary provenance for this render is:
 
 - `Source/DSP/YouKnow106Engine.cpp` SHA-256
-  `bf6a98f4232a17ee9855f83af82aaa3674e00b2d5f161915cda22cccb3d02f08`
+  `f5331d8b67ff69b88b0391c7e83d3207c78d60acea9268e3025e71761f830985`
 - `Source/DSP/YouKnow106Engine.h` SHA-256
-  `7a71b7dfd221da6957cfaff76a47fbdaab45c2adc6aca6decfb597b09ae856c3`
+  `bc2f39387fccc19e45dbcfd4ebcef6862906c0dc6ff907754f4a5284b3f5356d`
+- `YouKnow106RenderDemos` SHA-256
+  `0ea94fea69baaa9273d826c0d4cb87869db6844f12bbf1c84707609dd8893bbe`
+- `YouKnow106AuditFactoryPresets` SHA-256
+  `2aee469e6a8f8d7a373b4d19c5fcfe054dac229bf3fc15b311fc21c1ae24243b`
 
-This is render evidence for the declared normalized product schedule, not a
-measurement of the hardware's absolute write offsets, jitter, or acquisition
-behavior; those timing questions remain open.
+This corpus is bounded render evidence for those declared RC/event equations
+and the normalized product schedule. It is not a measurement of hardware write
+offsets, jitter, acquisition, droop, loading, or audibility; shared resonance
+also remains a voiced compatibility law. Those timing and hold questions
+remain open.
 
 ## Demonstrations
 
@@ -80,5 +91,5 @@ independent empty or renderer-owned directories. The two demo sets and the two
 complete factory-audit directories had identical relative file sets and bytes
 before the canonical run was installed here. All WAVs decode as finite stereo
 PCM: demos are 44.1 kHz/16-bit, previews are 48 kHz/16-bit, whole-file absolute
-DC is at most 0.000000576 FS, and the worst file-edge sample peak is
+DC is at most 0.000000593 FS, and the worst file-edge sample peak is
 -46.96 dBFS.

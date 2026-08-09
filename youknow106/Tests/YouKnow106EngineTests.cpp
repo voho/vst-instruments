@@ -87,9 +87,14 @@ struct YouKnow106TestAccess
         return engine.lfoDelayLevel_;
     }
 
-    static float pwmHeld(const YouKnow106Engine& engine) noexcept
+    static double pwmHeld(const YouKnow106Engine& engine) noexcept
     {
         return engine.pwmVolts_;
+    }
+
+    static double pwmFirstPoleHeld(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.pwmVoltsFirstPole_;
     }
 
     static float subTarget(const YouKnow106Engine& engine) noexcept
@@ -170,7 +175,7 @@ struct YouKnow106TestAccess
         return engine.voices_[static_cast<std::size_t>(slot)].currentMidi;
     }
 
-    static float vcaControl(const YouKnow106Engine& engine, int slot) noexcept
+    static double vcaControl(const YouKnow106Engine& engine, int slot) noexcept
     {
         return engine.voices_[static_cast<std::size_t>(slot)].vcaControl;
     }
@@ -187,7 +192,7 @@ struct YouKnow106TestAccess
         return engine.voices_[static_cast<std::size_t>(slot)].vca;
     }
 
-    static float sharedVca(const YouKnow106Engine& engine) noexcept
+    static double sharedVca(const YouKnow106Engine& engine) noexcept
     {
         return engine.sharedVca_;
     }
@@ -197,10 +202,30 @@ struct YouKnow106TestAccess
         engine.sharedVca_ = state;
     }
 
-    static void setPwmHeld(YouKnow106Engine& engine, float state) noexcept
+    static float sharedVcaTarget(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.sharedVcaTarget_;
+    }
+
+    static void setSharedVcaHold(YouKnow106Engine& engine, double state,
+                                 float target) noexcept
+    {
+        engine.sharedVca_ = state;
+        engine.sharedVcaTarget_ = target;
+    }
+
+    static void setPwmHeld(YouKnow106Engine& engine, double state) noexcept
     {
         engine.pwmVoltsFirstPole_ = state;
         engine.pwmVolts_ = state;
+    }
+
+    static void setPwmHold(YouKnow106Engine& engine, double first,
+                           double second, float target) noexcept
+    {
+        engine.pwmVoltsFirstPole_ = first;
+        engine.pwmVolts_ = second;
+        engine.pwmVoltsTarget_ = target;
     }
 
     static constexpr float pwmFirstPoleSeconds() noexcept
@@ -213,12 +238,17 @@ struct YouKnow106TestAccess
         return YouKnow106Engine::pwmHoldSecondPoleSeconds;
     }
 
+    static constexpr float voiceVcaHoldSeconds() noexcept
+    {
+        return YouKnow106Engine::voiceVcaHoldSlewSeconds;
+    }
+
     static constexpr float subSlewSeconds() noexcept
     {
         return YouKnow106Engine::subHoldSlewSeconds;
     }
 
-    static float subHeld(const YouKnow106Engine& engine) noexcept
+    static double subHeld(const YouKnow106Engine& engine) noexcept
     {
         return engine.subCv_;
     }
@@ -226,6 +256,33 @@ struct YouKnow106TestAccess
     static void setSubHeld(YouKnow106Engine& engine, float state) noexcept
     {
         engine.subCv_ = state;
+    }
+
+    static void setSubHold(YouKnow106Engine& engine, double state,
+                           float target) noexcept
+    {
+        engine.subCv_ = state;
+        engine.subCvTarget_ = target;
+    }
+
+    static void setVoiceVcaHold(YouKnow106Engine& engine, int slot,
+                                double state, float target) noexcept
+    {
+        auto& voice = engine.voices_[static_cast<std::size_t>(slot)];
+        voice.vcaControl = state;
+        voice.vcaControlTarget = target;
+    }
+
+    static float noiseHeld(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.noiseCv_;
+    }
+
+    static void setNoiseHold(YouKnow106Engine& engine, float state,
+                             float target) noexcept
+    {
+        engine.noiseCv_ = state;
+        engine.noiseCvTarget_ = target;
     }
 
     static bool assignmentPending(const YouKnow106Engine& engine) noexcept
@@ -343,7 +400,12 @@ struct YouKnow106TestAccess
         return engine.controlScanPhase_;
     }
 
-    struct VcfLatchState
+    enum class PassiveHoldDestination
+    {
+        Resonance, CommonVca, Sub, Pwm, Vcf, VoiceVca
+    };
+
+    struct PassiveHoldLatchState
     {
         bool valid {};
         bool nextPass {};
@@ -354,10 +416,10 @@ struct YouKnow106TestAccess
         double eventPosition {};
     };
 
-    static VcfLatchState vcfLatch(
+    static PassiveHoldLatchState passiveHoldLatch(
         const YouKnow106Engine& engine) noexcept
     {
-        const auto& latch = engine.vcfEventLatch_;
+        const auto& latch = engine.passiveHoldEventLatch_;
         return {
             latch.valid, latch.nextPass, latch.ordinal,
             static_cast<int>(latch.write.destination), latch.write.voice,
@@ -383,6 +445,74 @@ struct YouKnow106TestAccess
             if (writes[ordinal].destination
                     == YouKnow106Engine::ConverterDestination::Vcf
                 && writes[ordinal].voice == voice)
+                return ordinal;
+        return writes.size();
+    }
+
+    static std::size_t passiveHoldOrdinal(
+        PassiveHoldDestination destination, int voice = -1) noexcept
+    {
+        YouKnow106Engine::ConverterDestination engineDestination =
+            YouKnow106Engine::ConverterDestination::Resonance;
+        switch (destination)
+        {
+            case PassiveHoldDestination::Resonance:
+                engineDestination =
+                    YouKnow106Engine::ConverterDestination::Resonance;
+                break;
+            case PassiveHoldDestination::CommonVca:
+                engineDestination =
+                    YouKnow106Engine::ConverterDestination::CommonVca;
+                break;
+            case PassiveHoldDestination::Sub:
+                engineDestination = YouKnow106Engine::ConverterDestination::Sub;
+                break;
+            case PassiveHoldDestination::Pwm:
+                engineDestination = YouKnow106Engine::ConverterDestination::Pwm;
+                break;
+            case PassiveHoldDestination::Vcf:
+                engineDestination = YouKnow106Engine::ConverterDestination::Vcf;
+                break;
+            case PassiveHoldDestination::VoiceVca:
+                engineDestination =
+                    YouKnow106Engine::ConverterDestination::VoiceVca;
+                break;
+        }
+        const auto& writes = YouKnow106Engine::converterWriteOrder();
+        for (std::size_t ordinal = 0; ordinal < writes.size(); ++ordinal)
+            if (writes[ordinal].destination == engineDestination
+                && writes[ordinal].voice == voice)
+                return ordinal;
+        return writes.size();
+    }
+
+    static int passiveHoldDestinationCode(
+        PassiveHoldDestination destination) noexcept
+    {
+        const auto ordinal = passiveHoldOrdinal(destination);
+        return ordinal < YouKnow106Engine::converterWritesPerPass
+            ? static_cast<int>(YouKnow106Engine::converterWriteOrder()[ordinal]
+                                   .destination)
+            : -1;
+    }
+
+    static std::size_t pitchOrdinal(int voice) noexcept
+    {
+        const auto& writes = YouKnow106Engine::converterWriteOrder();
+        for (std::size_t ordinal = 0; ordinal < writes.size(); ++ordinal)
+            if (writes[ordinal].destination
+                    == YouKnow106Engine::ConverterDestination::Pitch
+                && writes[ordinal].voice == voice)
+                return ordinal;
+        return writes.size();
+    }
+
+    static std::size_t noiseOrdinal() noexcept
+    {
+        const auto& writes = YouKnow106Engine::converterWriteOrder();
+        for (std::size_t ordinal = 0; ordinal < writes.size(); ++ordinal)
+            if (writes[ordinal].destination
+                    == YouKnow106Engine::ConverterDestination::Noise)
                 return ordinal;
         return writes.size();
     }
@@ -789,6 +919,69 @@ double independentVcfHoldValue(
     return static_cast<double>(eventTarget)
         + (stateAtEvent - eventTarget)
             * std::exp(-(position - eventPosition) * lambda);
+}
+
+long double independentOnePoleEndpoint(
+    long double state, long double target, bool hasEvent,
+    long double eventPosition, long double eventTarget,
+    long double intervalSeconds, long double timeConstantSeconds)
+{
+    const auto advance = [timeConstantSeconds](
+        long double value, long double heldTarget,
+        long double duration) {
+        return heldTarget + (value - heldTarget)
+            * std::exp(-duration / timeConstantSeconds);
+    };
+    if (!hasEvent)
+        return advance(state, target, intervalSeconds);
+    const long double event = std::clamp(
+        eventPosition, static_cast<long double>(0.0),
+        static_cast<long double>(1.0));
+    state = advance(state, target, event * intervalSeconds);
+    return advance(state, eventTarget, (1.0L - event) * intervalSeconds);
+}
+
+struct IndependentPwmHoldState
+{
+    long double first {};
+    long double second {};
+};
+
+IndependentPwmHoldState independentPwmAdvance(
+    IndependentPwmHoldState state, long double target,
+    long double duration)
+{
+    const long double firstTime =
+        static_cast<long double>(YouKnow106TestAccess::pwmFirstPoleSeconds());
+    const long double secondTime =
+        static_cast<long double>(YouKnow106TestAccess::pwmSecondPoleSeconds());
+    const long double firstDecay = std::exp(-duration / firstTime);
+    const long double secondDecay = std::exp(-duration / secondTime);
+    const long double firstToSecond = firstTime / (firstTime - secondTime)
+        * (firstDecay - secondDecay);
+    const long double initialFirst = state.first;
+    state.first = firstDecay * initialFirst
+                + (1.0L - firstDecay) * target;
+    state.second = firstToSecond * initialFirst
+                 + secondDecay * state.second
+                 + (1.0L - secondDecay - firstToSecond) * target;
+    return state;
+}
+
+IndependentPwmHoldState independentPwmEndpoint(
+    IndependentPwmHoldState state, long double target, bool hasEvent,
+    long double eventPosition, long double eventTarget,
+    long double intervalSeconds)
+{
+    if (!hasEvent)
+        return independentPwmAdvance(state, target, intervalSeconds);
+    const long double event = std::clamp(
+        eventPosition, static_cast<long double>(0.0),
+        static_cast<long double>(1.0));
+    state = independentPwmAdvance(
+        state, target, event * intervalSeconds);
+    return independentPwmAdvance(
+        state, eventTarget, (1.0L - event) * intervalSeconds);
 }
 
 struct Render
@@ -1988,7 +2181,7 @@ void testFractionalVcfWritesPeekWithoutConsumingTheScheduler()
     float left = 0.0f;
     float right = 0.0f;
     engine.process(&left, &right, 1);
-    const auto latch = YouKnow106TestAccess::vcfLatch(engine);
+    const auto latch = YouKnow106TestAccess::passiveHoldLatch(engine);
     expect(latch.valid && !latch.nextPass && latch.ordinal == ordinal
                && latch.voice == slot,
            "the fractional card-0 VCF write was not latched");
@@ -2043,11 +2236,13 @@ void testFractionalVcfWritesPeekWithoutConsumingTheScheduler()
     auto laterParameters = eventParameters;
     laterParameters.cutoff = 0.91f;
     engine.setParameters(laterParameters);
-    expect(YouKnow106TestAccess::vcfLatch(engine).valid,
+    expect(YouKnow106TestAccess::passiveHoldLatch(engine).valid,
            "live automation discarded a pending fractional VCF payload");
     engine.process(&left, &right, 1);
-    expect(!YouKnow106TestAccess::vcfLatch(engine).valid,
-           "the normal poll did not retire its VCF payload latch");
+    const auto followingLatch = YouKnow106TestAccess::passiveHoldLatch(engine);
+    expect(!followingLatch.valid || followingLatch.ordinal != latch.ordinal,
+           "the normal poll did not retire its VCF payload latch before "
+           "peeking the following passive hold");
     expect(YouKnow106TestAccess::nextConverterWrite(engine) == ordinal + 1u,
            "the normal poll did not consume exactly one converter write");
     expect(YouKnow106TestAccess::cutoffTarget(engine, slot) == latch.target,
@@ -2084,7 +2279,7 @@ void testFractionalResonancePeekCrossesThePassBoundary()
     float left = 0.0f;
     float right = 0.0f;
     engine.process(&left, &right, 1);
-    const auto latch = YouKnow106TestAccess::vcfLatch(engine);
+    const auto latch = YouKnow106TestAccess::passiveHoldLatch(engine);
     expect(latch.valid && latch.nextPass && latch.ordinal == 0u
                && latch.voice == -1,
            "the pass-wrap resonance write was not latched as next-pass ordinal zero");
@@ -2135,12 +2330,493 @@ void testFractionalResonancePeekCrossesThePassBoundary()
     laterParameters.resonance = 0.96f;
     engine.setParameters(laterParameters);
     engine.process(&left, &right, 1);
-    expect(!YouKnow106TestAccess::vcfLatch(engine).valid,
-           "next-pass resonance polling did not retire its latch");
+    const auto followingLatch = YouKnow106TestAccess::passiveHoldLatch(engine);
+    expect(!followingLatch.valid || followingLatch.ordinal != latch.ordinal,
+           "next-pass resonance polling did not retire its latch before "
+           "peeking the following passive hold");
     expect(YouKnow106TestAccess::nextConverterWrite(engine) == 1u,
            "pass-wrap polling consumed more than resonance ordinal zero");
     expect(YouKnow106TestAccess::resonanceTarget(engine) == latch.target,
            "next-pass resonance polling lost its physical-time payload");
+}
+
+void testFractionalPassiveHoldsUseTheirPhysicalWriteTime()
+{
+    using Destination = YouKnow106TestAccess::PassiveHoldDestination;
+    struct Fixture
+    {
+        Destination destination;
+        const char* name;
+        double eventPosition;
+        double initialFirst;
+        double initialSecond;
+        float oldTarget;
+    };
+    constexpr std::array<Fixture, 4> fixtures {{
+        { Destination::CommonVca, "common VCA", 0.19, 0.11, 0.0, 0.37f },
+        { Destination::Sub, "SUB", 0.43, 0.21, 0.0, 0.58f },
+        { Destination::Pwm, "PWM", 0.68, 1.70, 2.30, 3.10f },
+        { Destination::VoiceVca, "voice VCA", 0.91, 0.08, 0.0, 0.24f }
+    }};
+    constexpr double sampleRate = 8000.0;
+    constexpr double intervalSeconds = 1.0 / sampleRate;
+
+    for (const auto& fixture : fixtures)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, false);
+        auto parameters = plainPatch();
+        parameters.pulseEnabled = true;
+        parameters.pwmSource = PwmSource::Manual;
+        parameters.vcaMode = VcaMode::Gate;
+        parameters.velocityDepth = 0.0f;
+        engine.setParameters(parameters);
+        engine.noteOn(60, 0.37f);
+
+        auto eventParameters = parameters;
+        switch (fixture.destination)
+        {
+            case Destination::CommonVca:
+                eventParameters.vcaLevel = 0.89f;
+                break;
+            case Destination::Sub:
+                eventParameters.subLevel = 0.83f;
+                break;
+            case Destination::Pwm:
+                eventParameters.pwmDepth = 0.76f;
+                break;
+            case Destination::VoiceVca:
+            case Destination::Resonance:
+            case Destination::Vcf:
+                break;
+        }
+        engine.setParameters(eventParameters);
+        switch (fixture.destination)
+        {
+            case Destination::CommonVca:
+                YouKnow106TestAccess::setSharedVcaHold(
+                    engine, fixture.initialFirst, fixture.oldTarget);
+                break;
+            case Destination::Sub:
+                YouKnow106TestAccess::setSubHold(
+                    engine, fixture.initialFirst, fixture.oldTarget);
+                break;
+            case Destination::Pwm:
+                YouKnow106TestAccess::setPwmHold(
+                    engine, fixture.initialFirst, fixture.initialSecond,
+                    fixture.oldTarget);
+                break;
+            case Destination::VoiceVca:
+                YouKnow106TestAccess::setVoiceVcaHold(
+                    engine, 0, fixture.initialFirst, fixture.oldTarget);
+                break;
+            case Destination::Resonance:
+            case Destination::Vcf:
+                break;
+        }
+
+        const int voice = fixture.destination == Destination::VoiceVca ? 0 : -1;
+        const std::size_t ordinal = YouKnow106TestAccess::passiveHoldOrdinal(
+            fixture.destination, voice);
+        const double delta =
+            YouKnow106TestAccess::scanPhasePerInternalSample(engine);
+        const double eventPhase =
+            YouKnow106TestAccess::converterEventPhase(engine, ordinal);
+        YouKnow106TestAccess::setConverterScheduler(
+            engine, eventPhase - fixture.eventPosition * delta, ordinal);
+
+        float left = 0.0f;
+        float right = 0.0f;
+        engine.process(&left, &right, 1);
+        const auto latch = YouKnow106TestAccess::passiveHoldLatch(engine);
+        const std::string context = "fractional " + std::string(fixture.name);
+        expect(latch.valid && latch.ordinal == ordinal
+                   && latch.voice == voice,
+               context + " write was not latched");
+        expectNear(latch.eventPosition, fixture.eventPosition, 2.0e-12,
+                   context + " write was snapped to the host grid");
+        expect(YouKnow106TestAccess::nextConverterWrite(engine) == ordinal,
+               context + " peek consumed the firmware cursor");
+        expect(latch.target != fixture.oldTarget,
+               context + " fixture did not change converter payload");
+
+        if (fixture.destination == Destination::Pwm)
+        {
+            const auto expected = independentPwmEndpoint(
+                { fixture.initialFirst, fixture.initialSecond },
+                fixture.oldTarget, true, fixture.eventPosition,
+                latch.target, intervalSeconds);
+            expectNear(YouKnow106TestAccess::pwmFirstPoleHeld(engine),
+                       static_cast<double>(expected.first), 2.0e-13,
+                       context + " first node is not segmented-exact");
+            expectNear(YouKnow106TestAccess::pwmHeld(engine),
+                       static_cast<double>(expected.second), 2.0e-13,
+                       context + " second node is not segmented-exact");
+            expect(YouKnow106TestAccess::pwmTarget(engine)
+                       == fixture.oldTarget,
+                   context + " peek changed the official target");
+        }
+        else
+        {
+            const double timeConstant = fixture.destination
+                    == Destination::VoiceVca
+                ? YouKnow106TestAccess::voiceVcaHoldSeconds()
+                : (fixture.destination == Destination::CommonVca
+                       ? YouKnow106Engine::commonVcaHoldTimeConstantSeconds()
+                       : YouKnow106TestAccess::subSlewSeconds());
+            const long double expected = independentOnePoleEndpoint(
+                fixture.initialFirst, fixture.oldTarget, true,
+                fixture.eventPosition, latch.target, intervalSeconds,
+                timeConstant);
+            double actual = 0.0;
+            float officialTarget = 0.0f;
+            if (fixture.destination == Destination::CommonVca)
+            {
+                actual = YouKnow106TestAccess::sharedVca(engine);
+                officialTarget = YouKnow106TestAccess::sharedVcaTarget(engine);
+            }
+            else if (fixture.destination == Destination::Sub)
+            {
+                actual = YouKnow106TestAccess::subHeld(engine);
+                officialTarget = YouKnow106TestAccess::subTarget(engine);
+            }
+            else
+            {
+                actual = YouKnow106TestAccess::vcaControl(engine, 0);
+                officialTarget =
+                    YouKnow106TestAccess::vcaControlTarget(engine, 0);
+            }
+            expectNear(actual, static_cast<double>(expected), 5.0e-15,
+                       context + " endpoint is not segmented-exact");
+            expect(officialTarget == fixture.oldTarget,
+                   context + " peek changed the official target");
+        }
+
+        // The panel can move after the event but before the normal sample-grid
+        // poll. The committed target must remain the payload captured above.
+        auto laterParameters = eventParameters;
+        switch (fixture.destination)
+        {
+            case Destination::CommonVca:
+                laterParameters.vcaLevel = 0.04f;
+                break;
+            case Destination::Sub:
+                laterParameters.subLevel = 0.07f;
+                break;
+            case Destination::Pwm:
+                laterParameters.pwmDepth = 0.02f;
+                break;
+            case Destination::VoiceVca:
+                laterParameters.velocityDepth = 1.0f;
+                break;
+            case Destination::Resonance:
+            case Destination::Vcf:
+                break;
+        }
+        engine.setParameters(laterParameters);
+        engine.process(&left, &right, 1);
+        const auto followingLatch =
+            YouKnow106TestAccess::passiveHoldLatch(engine);
+        expect(!followingLatch.valid || followingLatch.ordinal != ordinal,
+               context + " payload was not retired before the next peek");
+        float committedTarget = 0.0f;
+        switch (fixture.destination)
+        {
+            case Destination::CommonVca:
+                committedTarget =
+                    YouKnow106TestAccess::sharedVcaTarget(engine);
+                break;
+            case Destination::Sub:
+                committedTarget = YouKnow106TestAccess::subTarget(engine);
+                break;
+            case Destination::Pwm:
+                committedTarget = YouKnow106TestAccess::pwmTarget(engine);
+                break;
+            case Destination::VoiceVca:
+                committedTarget =
+                    YouKnow106TestAccess::vcaControlTarget(engine, 0);
+                break;
+            case Destination::Resonance:
+            case Destination::Vcf:
+                break;
+        }
+        expect(committedTarget == latch.target,
+               context + " poll recomputed its payload from later automation");
+        expect(YouKnow106TestAccess::nextConverterWrite(engine) == ordinal + 1u,
+               context + " poll did not consume exactly one write");
+    }
+}
+
+void testPassiveHoldEventEndpointsRespectIntervalOwnership()
+{
+    using Destination = YouKnow106TestAccess::PassiveHoldDestination;
+    constexpr double sampleRate = 8000.0;
+    constexpr double intervalSeconds = 1.0 / sampleRate;
+    for (const auto destination : { Destination::CommonVca, Destination::Pwm })
+    {
+        for (const double eventPosition : { 0.0, 1.0 })
+        {
+            YouKnow106Engine engine;
+            engine.prepare(sampleRate, blockSize, false);
+            auto parameters = plainPatch();
+            parameters.pulseEnabled = true;
+            parameters.pwmSource = PwmSource::Manual;
+            engine.setParameters(parameters);
+            engine.noteOn(60, 1.0f);
+            auto eventParameters = parameters;
+            eventParameters.vcaLevel = 0.91f;
+            eventParameters.pwmDepth = 0.79f;
+            engine.setParameters(eventParameters);
+
+            constexpr double initialFirst = 0.31;
+            constexpr double initialSecond = 0.67;
+            constexpr float oldTarget = 0.48f;
+            if (destination == Destination::CommonVca)
+                YouKnow106TestAccess::setSharedVcaHold(
+                    engine, initialFirst, oldTarget);
+            else
+                YouKnow106TestAccess::setPwmHold(
+                    engine, initialFirst, initialSecond, oldTarget);
+
+            const std::size_t ordinal =
+                YouKnow106TestAccess::passiveHoldOrdinal(destination);
+            const double delta =
+                YouKnow106TestAccess::scanPhasePerInternalSample(engine);
+            const double eventPhase =
+                YouKnow106TestAccess::converterEventPhase(engine, ordinal);
+            YouKnow106TestAccess::setConverterScheduler(
+                engine, eventPhase - eventPosition * delta, ordinal);
+            float left = 0.0f;
+            float right = 0.0f;
+            engine.process(&left, &right, 1);
+            const auto latch =
+                YouKnow106TestAccess::passiveHoldLatch(engine);
+            const float newTarget = destination == Destination::CommonVca
+                ? (eventPosition == 0.0
+                       ? YouKnow106TestAccess::sharedVcaTarget(engine)
+                       : latch.target)
+                : (eventPosition == 0.0
+                       ? YouKnow106TestAccess::pwmTarget(engine)
+                       : latch.target);
+            const std::string context =
+                std::string(destination == Destination::CommonVca
+                                ? "common VCA" : "PWM")
+                + (eventPosition == 0.0 ? " left endpoint" : " right endpoint");
+
+            if (eventPosition == 0.0)
+            {
+                expect(!latch.valid || latch.ordinal != ordinal,
+                       context + " was peeked instead of normally polled");
+                expect(YouKnow106TestAccess::nextConverterWrite(engine)
+                           == ordinal + 1u,
+                       context + " did not consume its write");
+            }
+            else
+            {
+                expect(latch.valid && latch.ordinal == ordinal,
+                       context + " was not owned by the preceding interval");
+                expect(destination == Destination::CommonVca
+                           ? YouKnow106TestAccess::sharedVcaTarget(engine)
+                                 == oldTarget
+                           : YouKnow106TestAccess::pwmTarget(engine)
+                                 == oldTarget,
+                       context + " changed the official target early");
+            }
+
+            if (destination == Destination::CommonVca)
+            {
+                const auto expected = independentOnePoleEndpoint(
+                    initialFirst, oldTarget, true, eventPosition, newTarget,
+                    intervalSeconds,
+                    YouKnow106Engine::commonVcaHoldTimeConstantSeconds());
+                expectNear(YouKnow106TestAccess::sharedVca(engine),
+                           static_cast<double>(expected), 5.0e-15,
+                           context + " propagated the wrong target duration");
+            }
+            else
+            {
+                const auto expected = independentPwmEndpoint(
+                    { initialFirst, initialSecond }, oldTarget, true,
+                    eventPosition, newTarget, intervalSeconds);
+                expectNear(YouKnow106TestAccess::pwmFirstPoleHeld(engine),
+                           static_cast<double>(expected.first), 2.0e-13,
+                           context + " propagated the first node incorrectly");
+                expectNear(YouKnow106TestAccess::pwmHeld(engine),
+                           static_cast<double>(expected.second), 2.0e-13,
+                           context + " propagated the second node incorrectly");
+            }
+        }
+    }
+}
+
+void testFractionalPwmHoldIsHostBlockPartitionInvariant()
+{
+    using Destination = YouKnow106TestAccess::PassiveHoldDestination;
+    constexpr double sampleRate = 8000.0;
+    YouKnow106Engine contiguous;
+    contiguous.prepare(sampleRate, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.pulseEnabled = true;
+    parameters.pwmSource = PwmSource::Manual;
+    contiguous.setParameters(parameters);
+    contiguous.noteOn(60, 1.0f);
+    parameters.pwmDepth = 0.86f;
+    contiguous.setParameters(parameters);
+    YouKnow106TestAccess::setPwmHold(contiguous, 1.2, 2.4, 3.3f);
+    const std::size_t ordinal = YouKnow106TestAccess::passiveHoldOrdinal(
+        Destination::Pwm);
+    const double delta =
+        YouKnow106TestAccess::scanPhasePerInternalSample(contiguous);
+    YouKnow106TestAccess::setConverterScheduler(
+        contiguous,
+        YouKnow106TestAccess::converterEventPhase(contiguous, ordinal)
+            - 0.55 * delta,
+        ordinal);
+    YouKnow106Engine split = contiguous;
+
+    std::array<float, 2> contiguousLeft {};
+    std::array<float, 2> contiguousRight {};
+    contiguous.process(contiguousLeft.data(), contiguousRight.data(), 2);
+    for (int sample = 0; sample < 2; ++sample)
+    {
+        float left = 0.0f;
+        float right = 0.0f;
+        split.process(&left, &right, 1);
+        expect(left == contiguousLeft[static_cast<std::size_t>(sample)]
+                   && right == contiguousRight[static_cast<std::size_t>(sample)],
+               "fractional PWM audio changed at a host block boundary");
+    }
+    expect(YouKnow106TestAccess::pwmFirstPoleHeld(split)
+               == YouKnow106TestAccess::pwmFirstPoleHeld(contiguous)
+               && YouKnow106TestAccess::pwmHeld(split)
+                      == YouKnow106TestAccess::pwmHeld(contiguous)
+               && YouKnow106TestAccess::pwmTarget(split)
+                      == YouKnow106TestAccess::pwmTarget(contiguous),
+           "fractional PWM circuit state changed with host block partitioning");
+    expect(YouKnow106TestAccess::controlScanPhase(split)
+               == YouKnow106TestAccess::controlScanPhase(contiguous)
+               && YouKnow106TestAccess::nextConverterWrite(split)
+                      == YouKnow106TestAccess::nextConverterWrite(contiguous),
+           "fractional PWM scheduling changed with host block partitioning");
+    const auto contiguousLatch =
+        YouKnow106TestAccess::passiveHoldLatch(contiguous);
+    const auto splitLatch = YouKnow106TestAccess::passiveHoldLatch(split);
+    expect(contiguousLatch.valid == splitLatch.valid
+               && contiguousLatch.ordinal == splitLatch.ordinal
+               && contiguousLatch.target == splitLatch.target
+               && contiguousLatch.eventPosition == splitLatch.eventPosition,
+           "fractional PWM latch changed with host block partitioning");
+    expect(contiguous.getProcessingLatencySamples() == 41
+               && split.getProcessingLatencySamples() == 41,
+           "passive-hold timing changed the fixed host latency");
+}
+
+void testPitchAndNoiseRemainSampleGridWrites()
+{
+    constexpr double sampleRate = 8000.0;
+    constexpr double eventPosition = 0.5;
+
+    YouKnow106Engine pitch;
+    pitch.prepare(sampleRate, blockSize, false);
+    auto pitchParameters = plainPatch();
+    pitch.setParameters(pitchParameters);
+    pitch.noteOn(60, 1.0f);
+    const double oldPeriod = YouKnow106TestAccess::dcoPeriodSamples(pitch, 0);
+    pitchParameters.masterTuneCents = 47.0f;
+    pitch.setParameters(pitchParameters);
+    const std::size_t pitchOrdinal = YouKnow106TestAccess::pitchOrdinal(0);
+    const double pitchDelta =
+        YouKnow106TestAccess::scanPhasePerInternalSample(pitch);
+    YouKnow106TestAccess::setConverterScheduler(
+        pitch,
+        YouKnow106TestAccess::converterEventPhase(pitch, pitchOrdinal)
+            - eventPosition * pitchDelta,
+        pitchOrdinal);
+    float left = 0.0f;
+    float right = 0.0f;
+    pitch.process(&left, &right, 1);
+    expect(!YouKnow106TestAccess::passiveHoldLatch(pitch).valid,
+           "a DCO pitch write entered the passive-hold latch");
+    expect(YouKnow106TestAccess::nextConverterWrite(pitch) == pitchOrdinal
+               && YouKnow106TestAccess::dcoPeriodSamples(pitch, 0)
+                      == oldPeriod,
+           "a DCO pitch write moved from its established sample-grid poll");
+    pitch.process(&left, &right, 1);
+    expect(YouKnow106TestAccess::nextConverterWrite(pitch)
+               == pitchOrdinal + 1u
+               && YouKnow106TestAccess::dcoPeriodSamples(pitch, 0)
+                      != oldPeriod,
+           "the ordinary DCO pitch poll no longer commits exactly one write");
+
+    YouKnow106Engine noise;
+    noise.prepare(sampleRate, blockSize, false);
+    auto noiseParameters = plainPatch();
+    noise.setParameters(noiseParameters);
+    noise.noteOn(60, 1.0f);
+    constexpr float oldNoiseTarget = 0.29f;
+    noiseParameters.noiseLevel = 0.88f;
+    noise.setParameters(noiseParameters);
+    YouKnow106TestAccess::setNoiseHold(
+        noise, oldNoiseTarget, oldNoiseTarget);
+    const std::size_t noiseOrdinal = YouKnow106TestAccess::noiseOrdinal();
+    const double noiseDelta =
+        YouKnow106TestAccess::scanPhasePerInternalSample(noise);
+    YouKnow106TestAccess::setConverterScheduler(
+        noise,
+        YouKnow106TestAccess::converterEventPhase(noise, noiseOrdinal)
+            - eventPosition * noiseDelta,
+        noiseOrdinal);
+    noise.process(&left, &right, 1);
+    expect(!YouKnow106TestAccess::passiveHoldLatch(noise).valid,
+           "the unmeasured noise hold entered the passive-hold latch");
+    expect(YouKnow106TestAccess::nextConverterWrite(noise) == noiseOrdinal
+               && YouKnow106TestAccess::noiseTarget(noise) == oldNoiseTarget
+               && YouKnow106TestAccess::noiseHeld(noise) == oldNoiseTarget,
+           "the noise destination moved from its established sample-grid poll");
+    noise.process(&left, &right, 1);
+    expect(YouKnow106TestAccess::nextConverterWrite(noise)
+               == noiseOrdinal + 1u
+               && YouKnow106TestAccess::noiseTarget(noise)
+                      != oldNoiseTarget,
+           "the ordinary noise poll no longer commits exactly one write");
+}
+
+void testDoublePassiveHoldStatesDoNotStallAtHighRate()
+{
+    constexpr double sampleRate = 768000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto parameters = plainPatch();
+    engine.setParameters(parameters);
+    engine.noteOn(60, 1.0f);
+    const float nearOne = std::nextafter(1.0f, 0.0f);
+    const float nearSix = std::nextafter(6.0f, 0.0f);
+    YouKnow106TestAccess::setSharedVcaHold(engine, 1.0, nearOne);
+    YouKnow106TestAccess::setSubHold(engine, 1.0, nearOne);
+    YouKnow106TestAccess::setVoiceVcaHold(engine, 0, 1.0, nearOne);
+    YouKnow106TestAccess::setPwmHold(engine, 6.0, 6.0, nearSix);
+    // Keep the next converter write outside this interval: this test isolates
+    // ordinary physical-state motion rather than another target event.
+    YouKnow106TestAccess::setConverterScheduler(engine, 0.5, 12u);
+
+    float left = 0.0f;
+    float right = 0.0f;
+    engine.process(&left, &right, 1);
+    expect(YouKnow106TestAccess::sharedVca(engine) < 1.0
+               && YouKnow106TestAccess::sharedVca(engine) > nearOne,
+           "the double common-VCA state stalled at 768 kHz");
+    expect(YouKnow106TestAccess::subHeld(engine) < 1.0
+               && YouKnow106TestAccess::subHeld(engine) > nearOne,
+           "the double SUB state stalled at 768 kHz");
+    expect(YouKnow106TestAccess::vcaControl(engine, 0) < 1.0
+               && YouKnow106TestAccess::vcaControl(engine, 0) > nearOne,
+           "the double voice-VCA state stalled at 768 kHz");
+    expect(YouKnow106TestAccess::pwmFirstPoleHeld(engine) < 6.0
+               && YouKnow106TestAccess::pwmFirstPoleHeld(engine) > nearSix,
+           "the double PWM first node stalled at 768 kHz");
+    expect(YouKnow106TestAccess::pwmHeld(engine) < 6.0
+               && YouKnow106TestAccess::pwmHeld(engine) > nearSix,
+           "the double PWM second node stalled at 768 kHz");
 }
 
 void testPulseOffPinsComparatorWithoutResettingTheDco()
@@ -3308,7 +3984,7 @@ void testRetriggerDoesNotTouchVcaHoldBeforeConverterScan()
            "the retrigger fixture did not settle near half sustain");
 
     engine.noteOff(60);
-    const float heldBefore = YouKnow106TestAccess::vcaControl(engine, 0);
+    const double heldBefore = YouKnow106TestAccess::vcaControl(engine, 0);
     const double phaseBefore = YouKnow106TestAccess::controlScanPhase(engine);
     expect(std::isfinite(heldBefore) && heldBefore > 0.0f,
            "the retrigger fixture has no live analogue VCA hold");
@@ -3337,6 +4013,7 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
     struct Observation
     {
         int pitchWrite { -1 };
+        int vcaPhysicalWrite { -1 };
         int vcaTargetWrite { -1 };
         int firstVcaGain { -1 };
         int heldOneTimeConstant { -1 };
@@ -3398,7 +4075,10 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
                        "Note On bypassed the scheduled voice-VCA path");
 
                 Observation measured;
-                double peakBeforeCurrentSample = 0.0;
+                const std::size_t voiceVcaOrdinal =
+                    YouKnow106TestAccess::passiveHoldOrdinal(
+                        YouKnow106TestAccess::PassiveHoldDestination::VoiceVca,
+                        measuredSlot);
                 for (int sample = 0; sample < maximumObservedLatency; ++sample)
                 {
                     float left = 0.0f;
@@ -3412,13 +4092,26 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
                         && !YouKnow106TestAccess::dcoResetPending(
                             *probe, measuredSlot))
                         measured.pitchWrite = sample;
+                    const auto passiveLatch =
+                        YouKnow106TestAccess::passiveHoldLatch(*probe);
+                    if (measured.vcaPhysicalWrite < 0
+                        && passiveLatch.valid
+                        && passiveLatch.ordinal == voiceVcaOrdinal
+                        && passiveLatch.voice == measuredSlot
+                        && passiveLatch.target > 0.5f)
+                        measured.vcaPhysicalWrite = sample;
                     if (measured.vcaTargetWrite < 0
                         && YouKnow106TestAccess::vcaControlTarget(
                             *probe, measuredSlot) > 0.5f)
                     {
                         measured.vcaTargetWrite = sample;
-                        expect(peakBeforeCurrentSample == 0.0,
-                               "audio preceded the ENV-mode voice-VCA write");
+                        // A left-edge event is normally polled without a
+                        // payload latch. At 4x, a fractional event and its
+                        // following normal poll can also share one host
+                        // sample. In both cases this is the first observable
+                        // host frame that owns the physical write.
+                        if (measured.vcaPhysicalWrite < 0)
+                            measured.vcaPhysicalWrite = sample;
                     }
                     if (measured.firstVcaGain < 0
                         && YouKnow106TestAccess::voiceVcaGain(
@@ -3432,9 +4125,8 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
                         && outputPeak > outputOnsetThreshold)
                         measured.outputOnsetProxy = sample;
 
-                    peakBeforeCurrentSample =
-                        std::max(peakBeforeCurrentSample, outputPeak);
                     if (measured.pitchWrite >= 0
+                        && measured.vcaPhysicalWrite >= 0
                         && measured.vcaTargetWrite >= 0
                         && measured.firstVcaGain >= 0
                         && measured.heldOneTimeConstant >= 0
@@ -3448,14 +4140,27 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
                     + ", phase " + std::to_string(eventPhase) + ")";
                 expect(measured.pitchWrite >= 0,
                        "no pitch write was observed" + context);
+                expect(measured.vcaPhysicalWrite >= measured.pitchWrite,
+                       "the physical ENV-mode VCA write preceded its envelope tick"
+                           + context);
                 expect(measured.vcaTargetWrite >= measured.pitchWrite,
                        "the ENV-mode VCA write preceded its envelope tick"
                            + context);
-                expect(measured.firstVcaGain >= measured.vcaTargetWrite,
-                       "the held VCA gain preceded its converter write"
+                expect(measured.vcaTargetWrite
+                               >= measured.vcaPhysicalWrite
+                           && measured.vcaTargetWrite
+                                  <= measured.vcaPhysicalWrite + 1,
+                       "the official VCA target poll moved away from its "
+                       "fractional physical write"
                            + context);
-                expect(measured.firstVcaGain == measured.vcaTargetWrite,
-                       "the first held VCA gain left its converter host sample"
+                expect(measured.firstVcaGain
+                               >= measured.vcaPhysicalWrite
+                           && measured.firstVcaGain
+                                  <= measured.vcaPhysicalWrite + 1
+                           && measured.firstVcaGain
+                                  <= measured.vcaTargetWrite,
+                       "the first held VCA gain left its fractional physical "
+                       "write interval"
                            + context);
                 expect(measured.heldOneTimeConstant >= measured.firstVcaGain,
                        "the held VCA crossed one time constant before turn-on"
@@ -3485,7 +4190,8 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
                 expect(oversampled
                            ? (targetToOneTimeConstant == 32
                               || targetToOneTimeConstant == 33)
-                           : targetToOneTimeConstant == 32,
+                           : (targetToOneTimeConstant == 31
+                              || targetToOneTimeConstant == 32),
                        "the 687 us voice-VCA hold milestone moved" + context);
                 expect(measured.outputOnsetProxy
                            < measured.vcaTargetWrite + 96,
@@ -3543,25 +4249,50 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
         expectSummary(summary(values, &Observation::vcaTargetWrite),
                       { 70.0, 192.0, 315.0 }, 0.0,
                       mode + " VoiceVca-write");
+        expectSummary(summary(values, &Observation::vcaPhysicalWrite),
+                      quality != 0
+                          ? std::array<double, 3> { 70.0, 192.0, 315.0 }
+                          : std::array<double, 3> { 69.0, 191.0, 314.0 },
+                      0.0,
+                      mode + " VoiceVca-physical-write");
         expectSummary(summary(values, &Observation::firstVcaGain),
-                      { 70.0, 192.0, 315.0 }, 0.0,
+                      quality != 0
+                          ? std::array<double, 3> { 70.0, 192.0, 315.0 }
+                          : std::array<double, 3> { 69.0, 191.0, 314.0 },
+                      0.0,
                       mode + " first-VCA-gain");
         expectSummary(summary(values, &Observation::heldOneTimeConstant),
                       quality != 0
-                          ? std::array<double, 3> { 103.0, 225.0, 348.0 }
+                          ? std::array<double, 3> { 102.0, 225.0, 348.0 }
                           : std::array<double, 3> { 102.0, 224.0, 347.0 },
                       0.0, mode + " held-63.2-percent");
         const auto outputOnset =
             summary(values, &Observation::outputOnsetProxy);
         if (std::getenv("YOUKNOW106_AUDIT_LATENCY") != nullptr)
-            std::cout << mode << " output-onset-proxy "
-                      << outputOnset[0] << "/" << outputOnset[1] << "/"
-                      << outputOnset[2] << " samples\n";
+        {
+            const auto printSummary = [&mode](
+                const char* label, const std::array<double, 3>& measured) {
+                std::cout << mode << " " << label << " "
+                          << measured[0] << "/" << measured[1] << "/"
+                          << measured[2] << " samples\n";
+            };
+            printSummary("pitch-write",
+                         summary(values, &Observation::pitchWrite));
+            printSummary("voice-vca-physical-write",
+                         summary(values, &Observation::vcaPhysicalWrite));
+            printSummary("voice-vca-target-commit",
+                         summary(values, &Observation::vcaTargetWrite));
+            printSummary("first-vca-gain",
+                         summary(values, &Observation::firstVcaGain));
+            printSummary("held-63.2-percent",
+                         summary(values, &Observation::heldOneTimeConstant));
+            printSummary("output-onset-proxy", outputOnset);
+        }
         expectSummary(outputOnset,
                       quality != 0
                           ? std::array<double, 3> { 105.0, 228.0, 351.0 }
-                          : std::array<double, 3> { 87.0, 210.0, 335.0 },
-                      1.0, mode + " output-onset-proxy");
+                          : std::array<double, 3> { 86.0, 209.0, 334.0 },
+                      0.0, mode + " output-onset-proxy");
     }
     int maximumOnsetDifference = 0;
     int maximumPitchDifference = 0;
@@ -6494,6 +7225,36 @@ void testCpuBudget()
 
 int main()
 {
+    if (std::getenv("YOUKNOW106_LATENCY_TEST_ONLY") != nullptr)
+    {
+        testNoteOnPlayingLatencyAcrossConverterPhases();
+        if (failures != 0)
+        {
+            std::cerr << failures << " playing-latency check(s) failed.\n";
+            return EXIT_FAILURE;
+        }
+        std::cout << "The playing-latency matrix passed.\n";
+        return EXIT_SUCCESS;
+    }
+
+    if (std::getenv("YOUKNOW106_PASSIVE_HOLD_TESTS_ONLY") != nullptr)
+    {
+        testFractionalVcfWritesPeekWithoutConsumingTheScheduler();
+        testFractionalResonancePeekCrossesThePassBoundary();
+        testFractionalPassiveHoldsUseTheirPhysicalWriteTime();
+        testPassiveHoldEventEndpointsRespectIntervalOwnership();
+        testFractionalPwmHoldIsHostBlockPartitionInvariant();
+        testPitchAndNoiseRemainSampleGridWrites();
+        testDoublePassiveHoldStatesDoNotStallAtHighRate();
+        if (failures != 0)
+        {
+            std::cerr << failures << " passive-hold check(s) failed.\n";
+            return EXIT_FAILURE;
+        }
+        std::cout << "All passive-hold checks passed.\n";
+        return EXIT_SUCCESS;
+    }
+
     testRangeTransposesByOctaves();
     testSubIsOneOctaveDown();
     testSelfOscillationLandsOnTheServiceAnchor();
@@ -6517,6 +7278,11 @@ int main()
     testConverterSchedulerPreservesFractionalScanPeriod();
     testFractionalVcfWritesPeekWithoutConsumingTheScheduler();
     testFractionalResonancePeekCrossesThePassBoundary();
+    testFractionalPassiveHoldsUseTheirPhysicalWriteTime();
+    testPassiveHoldEventEndpointsRespectIntervalOwnership();
+    testFractionalPwmHoldIsHostBlockPartitionInvariant();
+    testPitchAndNoiseRemainSampleGridWrites();
+    testDoublePassiveHoldStatesDoNotStallAtHighRate();
     testPulseOffPinsComparatorWithoutResettingTheDco();
     testMovingPwmComparatorDoesNotMissThresholdCrossings();
     testModeChangesRebuildHeldKeys();

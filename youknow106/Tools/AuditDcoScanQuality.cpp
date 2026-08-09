@@ -43,9 +43,9 @@ struct YouKnow106TestAccess
     struct HoldState
     {
         float dco {};
-        float pwmFirst {};
-        float pwmSecond {};
-        float sub {};
+        double pwmFirst {};
+        double pwmSecond {};
+        double sub {};
     };
 
     static void configureDco(YouKnow106Engine& engine, double internalRate,
@@ -83,7 +83,7 @@ struct YouKnow106TestAccess
         voice.filterOmegaStep = 0.0f;
         voice.inputCompensation = 1.0f;
         voice.moduleCoupling.reset();
-        engine.subCv_ = waveform == Waveform::Sub ? 1.0f : 0.0f;
+        engine.subCv_ = waveform == Waveform::Sub ? 1.0 : 0.0;
         engine.subCvTarget_ = engine.subCv_;
     }
 
@@ -938,9 +938,9 @@ Cell runCell(int host, int factor)
                  && cell.scan.maximumQuantisationUs
                         < 1.0e6 / (host * factor) + 1.0e-6;
     cell.holdPass = cell.hold.dcoMaximumError <= 2.0e-5
-                 && cell.hold.pwmFirstMaximumError <= 3.5e-5
-                 && cell.hold.pwmMaximumError <= 5.0e-3
-                 && cell.hold.subMaximumError <= 2.0e-5;
+                 && cell.hold.pwmFirstMaximumError <= 2.0e-11
+                 && cell.hold.pwmMaximumError <= 2.0e-11
+                 && cell.hold.subMaximumError <= 2.0e-11;
     cell.absolutePass = cell.analysisPass && cell.dcoPass
                      && cell.scanPass && cell.holdPass;
     return cell;
@@ -1020,10 +1020,12 @@ void printCell(const Cell& cell)
               << " scan_passes=" << cell.scan.observedPasses
               << " scan_writes=" << cell.scan.observedWrites
               << " scan_quantisation_max_us=" << cell.scan.maximumQuantisationUs
+              << std::scientific << std::setprecision(9)
               << " dco_hold_max_abs=" << cell.hold.dcoMaximumError
               << " pwm_first_hold_max_abs=" << cell.hold.pwmFirstMaximumError
               << " pwm_hold_max_abs=" << cell.hold.pwmMaximumError
               << " sub_hold_max_abs=" << cell.hold.subMaximumError
+              << std::fixed << std::setprecision(6)
               << " analysis=" << (cell.analysisPass ? "PASS" : "INVALID")
               << " dco="
               << (!cell.analysisPass ? "ANALYSIS_INVALID"
@@ -1043,7 +1045,7 @@ int run(bool selfTest)
                  "shipping halfbands return q2/q4 to host; no whole-engine parity\n"
               << "reference finite-reset piecewise-linear saw Fourier integral, "
                  "rectangular pulse/sub Fourier series, ordinal/23 scheduler, "
-                 "exact exponential holds\n"
+                 "exact exponential one-poles and affine two-pole PWM cascade\n"
               << "frequency shipping dcoDivider+dcoQuantisedFrequency; fixture "
                  "directly injects periodSamples=internal_rate/quantised_frequency\n"
               << "grid host={44100,48000} factor={1,2,4} "
@@ -1106,14 +1108,6 @@ int run(bool selfTest)
     constexpr std::array<double, 6> expectedScanQuantisationUs {
         22.656019, 11.318150, 5.659075,
         20.652174, 10.326087, 5.163043
-    };
-    constexpr std::array<double, 6> expectedPwmSecondError {
-        0.001152, 0.000576, 0.000292,
-        0.001058, 0.000527, 0.000261
-    };
-    constexpr std::array<double, 6> expectedPwmFirstError {
-        0.000006, 0.000012, 0.000025,
-        0.000007, 0.000013, 0.000027
     };
     bool layoutClass = cells.size() == expectedAliasDb.size();
     bool analysisClass = layoutClass;
@@ -1208,12 +1202,10 @@ int run(bool selfTest)
             && std::isfinite(cell.hold.pwmFirstMaximumError)
             && std::isfinite(cell.hold.pwmMaximumError)
             && std::isfinite(cell.hold.subMaximumError)
-            && std::abs(cell.hold.pwmMaximumError
-                        - expectedPwmSecondError[index]) <= 1.0e-4
-            && std::abs(cell.hold.pwmFirstMaximumError
-                        - expectedPwmFirstError[index]) <= 5.0e-6
+            && cell.hold.pwmMaximumError <= 2.0e-11
+            && cell.hold.pwmFirstMaximumError <= 2.0e-11
             && cell.hold.dcoMaximumError <= 1.0e-5
-            && cell.hold.subMaximumError <= 1.2e-5
+            && cell.hold.subMaximumError <= 2.0e-11
             && cell.holdPass;
         bool foldMetric = cell.dco.foldCandidates.size()
                               == static_cast<std::size_t>(

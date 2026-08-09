@@ -1835,6 +1835,95 @@ YouKnow106Engine::exactVcfHoldInterval(
     return result;
 }
 
+double YouKnow106Engine::exactOnePoleHoldEndpoint(
+    double state, float target, bool hasEvent, double eventPosition,
+    float eventTarget, double intervalSeconds, double timeConstantSeconds,
+    double fullIntervalDecay) noexcept
+{
+    const double initial = std::isfinite(state) ? state : 0.0;
+    const double initialTarget = std::isfinite(target)
+        ? static_cast<double>(target) : initial;
+    const double duration = std::isfinite(intervalSeconds)
+        ? std::max(intervalSeconds, 0.0) : 0.0;
+    const double timeConstant = std::isfinite(timeConstantSeconds)
+                                    && timeConstantSeconds > 0.0
+        ? timeConstantSeconds : 1.0;
+    const double decay = std::isfinite(fullIntervalDecay)
+        ? std::clamp(fullIntervalDecay, 0.0, 1.0)
+        : std::exp(-duration / timeConstant);
+    double endpoint = initialTarget + (initial - initialTarget) * decay;
+    if (hasEvent)
+    {
+        const double event = std::clamp(
+            std::isfinite(eventPosition) ? eventPosition : 1.0,
+            0.0, 1.0);
+        const double nextTarget = std::isfinite(eventTarget)
+            ? static_cast<double>(eventTarget) : initialTarget;
+        // Superposition needs only the response of the target step over the
+        // suffix. At p=0 it is the whole interval; at p=1 expm1(0) is exactly
+        // zero, so a right-endpoint write cannot influence preceding time.
+        const double suffixResponse = -std::expm1(
+            -(1.0 - event) * duration / timeConstant);
+        endpoint += (nextTarget - initialTarget) * suffixResponse;
+    }
+    return endpoint;
+}
+
+YouKnow106Engine::PwmHoldCoefficients
+YouKnow106Engine::pwmHoldCoefficients(double intervalSeconds) noexcept
+{
+    const double duration = std::isfinite(intervalSeconds)
+        ? std::max(intervalSeconds, 0.0) : 0.0;
+    const double firstTime = static_cast<double>(pwmHoldFirstPoleSeconds);
+    const double secondTime = static_cast<double>(pwmHoldSecondPoleSeconds);
+    const double firstDecay = std::exp(-duration / firstTime);
+    const double secondDecay = std::exp(-duration / secondTime);
+    return {
+        firstDecay,
+        secondDecay,
+        firstTime / (firstTime - secondTime)
+            * (firstDecay - secondDecay)
+    };
+}
+
+YouKnow106Engine::PwmHoldState YouKnow106Engine::advancePwmHold(
+    PwmHoldState state, double target,
+    const PwmHoldCoefficients& coefficients) noexcept
+{
+    const double initialFirst = state.first;
+    state.first = coefficients.firstDecay * initialFirst
+                + (1.0 - coefficients.firstDecay) * target;
+    state.second = coefficients.firstToSecond * initialFirst
+                 + coefficients.secondDecay * state.second
+                 + (1.0 - coefficients.secondDecay
+                    - coefficients.firstToSecond) * target;
+    return state;
+}
+
+YouKnow106Engine::PwmHoldState YouKnow106Engine::exactPwmHoldEndpoint(
+    PwmHoldState state, float target, bool hasEvent,
+    double eventPosition, float eventTarget, double intervalSeconds,
+    const PwmHoldCoefficients& fullIntervalCoefficients) noexcept
+{
+    const double initialTarget = std::isfinite(target)
+        ? static_cast<double>(target) : state.first;
+    if (!hasEvent)
+        return advancePwmHold(state, initialTarget, fullIntervalCoefficients);
+
+    const double duration = std::isfinite(intervalSeconds)
+        ? std::max(intervalSeconds, 0.0) : 0.0;
+    const double event = std::clamp(
+        std::isfinite(eventPosition) ? eventPosition : 1.0,
+        0.0, 1.0);
+    const double nextTarget = std::isfinite(eventTarget)
+        ? static_cast<double>(eventTarget) : initialTarget;
+    state = advancePwmHold(
+        state, initialTarget, pwmHoldCoefficients(event * duration));
+    return advancePwmHold(
+        state, nextTarget,
+        pwmHoldCoefficients((1.0 - event) * duration));
+}
+
 // Advance the continuous four-stage OTA equations over one internal interval.
 // Two fixed half-interval Merson steps use five right-hand-side evaluations
 // each. The only circuit state is capacitor voltage, and the causal cubic
@@ -2589,7 +2678,7 @@ void YouKnow106Engine::reset()
         ConverterTimingProfile::NormalizedServiceChart);
     nextConverterWrite_ = 0;
     converterPassLfoGated_ = 0.0f;
-    vcfEventLatch_ = {};
+    passiveHoldEventLatch_ = {};
     exactVcfControlInterval_.fill(false);
     assignmentRescanPending_ = false;
     assignmentRescanPassArmed_ = false;
@@ -2717,8 +2806,8 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
     {
         // No audible interval owns a speculative physical write while the
         // output path is empty. A direct hold prime therefore supersedes any
-        // pending VCF/resonance payload from the last processed frame.
-        vcfEventLatch_ = {};
+        // pending passive-hold payload from the last processed frame.
+        passiveHoldEventLatch_ = {};
         exactVcfControlInterval_.fill(false);
         updateSharedScan(next, lfoValue_ * lfoDelayLevel_);
         resonanceCv_ = resonanceCvTarget_;
@@ -3538,6 +3627,12 @@ float YouKnow106Engine::voiceVcfTarget(
 void YouKnow106Engine::updateVoiceVcaTarget(
     Voice& voice, const EngineParameters& parameters) noexcept
 {
+    voice.vcaControlTarget = voiceVcaTarget(voice, parameters);
+}
+
+float YouKnow106Engine::voiceVcaTarget(
+    const Voice& voice, const EngineParameters& parameters) const noexcept
+{
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
     const float tolerance = parameters.calibration;
     const float envelope = voice.envelope.value;
@@ -3546,7 +3641,7 @@ void YouKnow106Engine::updateVoiceVcaTarget(
     const float control = parameters.vcaMode == VcaMode::Envelope
                         ? envelope
                         : (voice.keyDown || voice.sustained ? 1.0f : 0.0f);
-    voice.vcaControlTarget = clamp01(
+    return clamp01(
         control * velocityGain(parameters, voice)
         + card.vcaControlOffset * 0.004f * tolerance);
 }
@@ -3585,7 +3680,7 @@ void YouKnow106Engine::updateSharedScan(const EngineParameters& parameters,
 
 void YouKnow106Engine::performConverterWrite(
     const ConverterWrite& write, const EngineParameters& parameters,
-    float lfoGated, const float* vcfTargetOverride) noexcept
+    float lfoGated, const float* passiveHoldTargetOverride) noexcept
 {
 #if defined(YOUKNOW106_WORK_AUDIT)
     YOUKNOW106_COUNT_DOMAIN_WORK(converterWrites, 1);
@@ -3607,15 +3702,19 @@ void YouKnow106Engine::performConverterWrite(
     switch (write.destination)
     {
         case ConverterDestination::Resonance:
-            resonanceCvTarget_ = vcfTargetOverride != nullptr
-                ? *vcfTargetOverride
+            resonanceCvTarget_ = passiveHoldTargetOverride != nullptr
+                ? *passiveHoldTargetOverride
                 : converterFraction(parameters.resonance);
             break;
         case ConverterDestination::CommonVca:
-            sharedVcaTarget_ = converterFraction(parameters.vcaLevel);
+            sharedVcaTarget_ = passiveHoldTargetOverride != nullptr
+                ? *passiveHoldTargetOverride
+                : converterFraction(parameters.vcaLevel);
             break;
         case ConverterDestination::Sub:
-            subCvTarget_ = converterFraction(parameters.subLevel);
+            subCvTarget_ = passiveHoldTargetOverride != nullptr
+                ? *passiveHoldTargetOverride
+                : converterFraction(parameters.subLevel);
             break;
         case ConverterDestination::Pitch:
             if (validPhysicalVoice())
@@ -3635,6 +3734,11 @@ void YouKnow106Engine::performConverterWrite(
             // per destination: the firmware scales the single LFO value once
             // and then writes it out, so PWM sees the same gated product the
             // pitch and cutoff writes see and the panel LFO display shows.
+            if (passiveHoldTargetOverride != nullptr)
+            {
+                pwmVoltsTarget_ = *passiveHoldTargetOverride;
+                break;
+            }
             if (!parameters.pulseEnabled)
             {
                 pwmVoltsTarget_ = -0.8f;
@@ -3652,16 +3756,21 @@ void YouKnow106Engine::performConverterWrite(
             {
                 auto& voice =
                     voices_[static_cast<std::size_t>(write.voice)];
-                if (vcfTargetOverride != nullptr)
-                    voice.cutoffCountsTarget = *vcfTargetOverride;
+                if (passiveHoldTargetOverride != nullptr)
+                    voice.cutoffCountsTarget = *passiveHoldTargetOverride;
                 else
                     updateVoiceVcfTarget(voice, parameters, lfoGated);
             }
             break;
         case ConverterDestination::VoiceVca:
             if (validPhysicalVoice())
-                updateVoiceVcaTarget(
-                    voices_[static_cast<std::size_t>(write.voice)], parameters);
+            {
+                auto& voice = voices_[static_cast<std::size_t>(write.voice)];
+                if (passiveHoldTargetOverride != nullptr)
+                    voice.vcaControlTarget = *passiveHoldTargetOverride;
+                else
+                    updateVoiceVcaTarget(voice, parameters);
+            }
             break;
         case ConverterDestination::Noise:
             noiseCvTarget_ = converterFraction(parameters.noiseLevel);
@@ -3669,26 +3778,69 @@ void YouKnow106Engine::performConverterWrite(
     }
 }
 
-float YouKnow106Engine::vcfWriteTarget(
+bool YouKnow106Engine::isPassiveHoldWrite(
+    const ConverterWrite& write) noexcept
+{
+    switch (write.destination)
+    {
+        case ConverterDestination::Resonance:
+        case ConverterDestination::CommonVca:
+        case ConverterDestination::Sub:
+        case ConverterDestination::Pwm:
+            return true;
+        case ConverterDestination::Vcf:
+        case ConverterDestination::VoiceVca:
+            return write.voice >= 0 && write.voice < hardwareVoices;
+        case ConverterDestination::Pitch:
+        case ConverterDestination::Noise:
+            return false;
+    }
+    return false;
+}
+
+float YouKnow106Engine::passiveHoldWriteTarget(
     const ConverterWrite& write, const EngineParameters& parameters,
     float lfoGated) const noexcept
 {
-    if (write.destination == ConverterDestination::Resonance)
+    const auto converterFraction = [](float value) {
+        return static_cast<float>(storedControlDacCode(value)) / 4064.0f;
+    };
+    switch (write.destination)
     {
-        return static_cast<float>(storedControlDacCode(parameters.resonance))
-             / 4064.0f;
-    }
-    if (write.destination == ConverterDestination::Vcf
-        && write.voice >= 0 && write.voice < hardwareVoices)
-    {
-        return voiceVcfTarget(
-            voices_[static_cast<std::size_t>(write.voice)],
-            parameters, lfoGated);
+        case ConverterDestination::Resonance:
+            return converterFraction(parameters.resonance);
+        case ConverterDestination::CommonVca:
+            return converterFraction(parameters.vcaLevel);
+        case ConverterDestination::Sub:
+            return converterFraction(parameters.subLevel);
+        case ConverterDestination::Pwm:
+            if (!parameters.pulseEnabled)
+                return -0.8f;
+            {
+                float amount = converterFraction(parameters.pwmDepth);
+                if (parameters.pwmSource == PwmSource::Lfo)
+                    amount *= 0.5f * (1.0f + lfoGated);
+                return pwmControlVolts(clamp01(amount));
+            }
+        case ConverterDestination::Vcf:
+            if (write.voice >= 0 && write.voice < hardwareVoices)
+                return voiceVcfTarget(
+                    voices_[static_cast<std::size_t>(write.voice)],
+                    parameters, lfoGated);
+            break;
+        case ConverterDestination::VoiceVca:
+            if (write.voice >= 0 && write.voice < hardwareVoices)
+                return voiceVcaTarget(
+                    voices_[static_cast<std::size_t>(write.voice)], parameters);
+            break;
+        case ConverterDestination::Pitch:
+        case ConverterDestination::Noise:
+            break;
     }
     return 0.0f;
 }
 
-bool YouKnow106Engine::latchUpcomingVcfEvent(
+bool YouKnow106Engine::latchUpcomingPassiveHoldEvent(
     double phase, double phasePerInternalSample,
     const EngineParameters& parameters) noexcept
 {
@@ -3697,7 +3849,7 @@ bool YouKnow106Engine::latchUpcomingVcfEvent(
     // spacing, so a physical interval can contain no more than one converter
     // write. That fixed bound keeps this a scalar latch rather than a queue.
     static_assert(5.0 / 168.0 < 1.0 / converterWritesPerPass);
-    if (vcfEventLatch_.valid || !(phasePerInternalSample > 0.0))
+    if (passiveHoldEventLatch_.valid || !(phasePerInternalSample > 0.0))
         return false;
 
     const auto& writes = converterWriteOrder();
@@ -3723,22 +3875,22 @@ bool YouKnow106Engine::latchUpcomingVcfEvent(
         return false;
 
     const auto& write = writes[ordinal];
-    const bool relevant = write.destination == ConverterDestination::Resonance
-        || (write.destination == ConverterDestination::Vcf
-            && write.voice >= 0 && write.voice < hardwareVoices);
-    if (!relevant)
+    if (!isPassiveHoldWrite(write))
         return false;
 
-    vcfEventLatch_.valid = true;
-    vcfEventLatch_.nextPass = nextPass;
-    vcfEventLatch_.ordinal = ordinal;
-    vcfEventLatch_.write = write;
-    vcfEventLatch_.target = vcfWriteTarget(
+    passiveHoldEventLatch_.valid = true;
+    passiveHoldEventLatch_.nextPass = nextPass;
+    passiveHoldEventLatch_.ordinal = ordinal;
+    passiveHoldEventLatch_.write = write;
+    passiveHoldEventLatch_.target = passiveHoldWriteTarget(
         write, parameters, converterPassLfoGated_);
-    vcfEventLatch_.eventPosition = std::clamp(
+    passiveHoldEventLatch_.eventPosition = std::clamp(
         (eventPhase - phase) / phasePerInternalSample, 0.0, 1.0);
 #if defined(YOUKNOW106_WORK_AUDIT)
-    YOUKNOW106_COUNT_DOMAIN_WORK(vcfFractionalEventPeeks, 1);
+    YOUKNOW106_COUNT_DOMAIN_WORK(passiveHoldFractionalEventPeeks, 1);
+    if (write.destination == ConverterDestination::Resonance
+        || write.destination == ConverterDestination::Vcf)
+        YOUKNOW106_COUNT_DOMAIN_WORK(vcfFractionalEventPeeks, 1);
 #endif
     return true;
 }
@@ -3812,7 +3964,8 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     }
 #endif
 
-    voice.vca = VoiceVcaControlLaw::gain(voice.vcaControl)
+    voice.vca = VoiceVcaControlLaw::gain(
+                    static_cast<float>(voice.vcaControl))
               * (1.0f + card.vcaGainError * 0.03f * tolerance);
 
     // The IR3109 stage offsets used to be rewritten here, every audio sample,
@@ -3839,7 +3992,7 @@ void YouKnow106Engine::updatePulseComparator(
     // The alignment window is 48% to 52% duty across cards: +/-0.24 V is
     // +/-2 points on the 12 V ramp. Pulse Off remains separate at -0.8 V and
     // pins the comparator high even while this card's VCA is shut.
-    const float threshold = pwmVolts_
+    const float threshold = static_cast<float>(pwmVolts_)
                           + card.comparatorOffset * 0.24f
                                 * parameters.calibration;
     voice.pulseDuty = pwmDutyCycle(threshold, amplitudeScale);
@@ -4184,7 +4337,7 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
 #endif
         dco.subState = target;
     }
-    const float subGain = subMixVolts * subCv_
+    const float subGain = subMixVolts * static_cast<float>(subCv_)
         * (1.0f + card.subLevelError * 0.03f * parameters.calibration);
     // The divider's two levels are symmetric. A revision made them 0.3%
     // unequal in *amplitude*, which is a DC offset and even harmonics at about
@@ -4494,21 +4647,32 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     }
 
     // Each converter destination owns a separately named hold network. VCF,
-    // voice VCA, common VCA, PWM and SUB are evidence-backed; DCO, resonance
-    // and noise remain isolated compatibility policies until their RCs are
-    // established.
+    // voice VCA, common VCA, PWM and SUB have evidence-backed post-hold
+    // networks; resonance keeps Step 11's explicitly voiced 522 us companion
+    // trajectory, while DCO and noise retain their isolated compatibility
+    // policies until their RCs are established. Exact full-interval decays
+    // are precomputed once per call; only the rare interval that actually
+    // contains a fractional write needs an event-position exponential.
     const auto slewFor = [this](float seconds) {
         return 1.0f - std::exp(-inverseOversampledRate_ / seconds);
     };
     const float vcfSlew = slewFor(vcfHoldSlewSeconds);
-    const float voiceVcaSlew = slewFor(voiceVcaHoldSlewSeconds);
     const float dcoSlew = slewFor(dcoHoldSlewSecondsVoiced);
     const float resonanceSlew = slewFor(resonanceHoldSlewSecondsVoiced);
-    const float commonVcaSlew = slewFor(commonVcaHoldTimeConstantSeconds());
-    const float pwmSlewFirst = slewFor(pwmHoldFirstPoleSeconds);
-    const float pwmSlewSecond = slewFor(pwmHoldSecondPoleSeconds);
-    const float subSlew = slewFor(subHoldSlewSeconds);
     const float noiseSlew = slewFor(noiseHoldSlewSecondsVoiced);
+    const double internalIntervalSeconds = 1.0 / oversampledRate_;
+    const double voiceVcaDecay = std::exp(
+        -internalIntervalSeconds
+        / static_cast<double>(voiceVcaHoldSlewSeconds));
+    const double commonVcaTime =
+        static_cast<double>(commonVcaHoldTimeConstantSeconds());
+    const double commonVcaDecay = std::exp(
+        -internalIntervalSeconds / commonVcaTime);
+    const double subDecay = std::exp(
+        -internalIntervalSeconds
+        / static_cast<double>(subHoldSlewSeconds));
+    const PwmHoldCoefficients pwmFullInterval =
+        pwmHoldCoefficients(internalIntervalSeconds);
     voiceEnergyFollower_ = slewFor(voiceEnergyFollowerSeconds);
     const float outputGlide =
         1.0f - std::exp(-inverseSampleRate_ / panelGlideSeconds);
@@ -4536,14 +4700,43 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             YOUKNOW106_COUNT_DOMAIN_WORK(internalFrames, 1);
             YOUKNOW106_COUNT_DOMAIN_WORK(scanPolls, 1);
 #endif
-            struct PhysicalVcfEvent
+            struct PhysicalPassiveHoldEvent
             {
                 bool active { false };
                 ConverterWrite write { ConverterDestination::Resonance, -1 };
                 double position { 0.0 };
                 float previousTarget { 0.0f };
                 float target { 0.0f };
-            } physicalVcfEvent;
+            } physicalHoldEvent;
+            const auto currentPassiveHoldTarget = [this](
+                const ConverterWrite& write) noexcept
+            {
+                switch (write.destination)
+                {
+                    case ConverterDestination::Resonance:
+                        return resonanceCvTarget_;
+                    case ConverterDestination::CommonVca:
+                        return sharedVcaTarget_;
+                    case ConverterDestination::Sub:
+                        return subCvTarget_;
+                    case ConverterDestination::Pwm:
+                        return pwmVoltsTarget_;
+                    case ConverterDestination::Vcf:
+                        if (write.voice >= 0 && write.voice < hardwareVoices)
+                            return voices_[static_cast<std::size_t>(write.voice)]
+                                .cutoffCountsTarget;
+                        break;
+                    case ConverterDestination::VoiceVca:
+                        if (write.voice >= 0 && write.voice < hardwareVoices)
+                            return voices_[static_cast<std::size_t>(write.voice)]
+                                .vcaControlTarget;
+                        break;
+                    case ConverterDestination::Pitch:
+                    case ConverterDestination::Noise:
+                        break;
+                }
+                return 0.0f;
+            };
             const float resonanceIntervalStart = resonanceCv_;
             exactVcfControlInterval_.fill(false);
 
@@ -4597,103 +4790,122 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                           <= controlScanPhase_ + 1.0e-12)
             {
                 const auto& write = writes[nextConverterWrite_];
-                const bool relevant =
-                    write.destination == ConverterDestination::Resonance
-                    || (write.destination == ConverterDestination::Vcf
-                        && write.voice >= 0
-                        && write.voice < hardwareVoices);
-                const bool consumesLatch = vcfEventLatch_.valid
-                    && vcfEventLatch_.ordinal == nextConverterWrite_
-                    && vcfEventLatch_.write.destination == write.destination
-                    && vcfEventLatch_.write.voice == write.voice;
+                const bool relevant = isPassiveHoldWrite(write);
+                const bool consumesLatch = passiveHoldEventLatch_.valid
+                    && passiveHoldEventLatch_.ordinal == nextConverterWrite_
+                    && passiveHoldEventLatch_.write.destination
+                           == write.destination
+                    && passiveHoldEventLatch_.write.voice == write.voice;
                 float previousTarget = 0.0f;
                 if (relevant && !consumesLatch)
-                {
-                    previousTarget = write.destination
-                            == ConverterDestination::Resonance
-                        ? resonanceCvTarget_
-                        : voices_[static_cast<std::size_t>(write.voice)]
-                              .cutoffCountsTarget;
-                }
+                    previousTarget = currentPassiveHoldTarget(write);
                 const float latchedTarget = consumesLatch
-                    ? vcfEventLatch_.target : 0.0f;
+                    ? passiveHoldEventLatch_.target : 0.0f;
                 performConverterWrite(
                     write, parameters, converterPassLfoGated_,
                     consumesLatch ? &latchedTarget : nullptr);
-                if (relevant && !consumesLatch && !physicalVcfEvent.active)
+                if (relevant && !consumesLatch && !physicalHoldEvent.active)
                 {
-                    physicalVcfEvent.active = true;
-                    physicalVcfEvent.write = write;
-                    physicalVcfEvent.position = 0.0;
-                    physicalVcfEvent.previousTarget = previousTarget;
-                    physicalVcfEvent.target = write.destination
-                            == ConverterDestination::Resonance
-                        ? resonanceCvTarget_
-                        : voices_[static_cast<std::size_t>(write.voice)]
-                              .cutoffCountsTarget;
+                    physicalHoldEvent.active = true;
+                    physicalHoldEvent.write = write;
+                    physicalHoldEvent.position = 0.0;
+                    physicalHoldEvent.previousTarget = previousTarget;
+                    physicalHoldEvent.target =
+                        currentPassiveHoldTarget(write);
                 }
                 if (consumesLatch)
                 {
 #if defined(YOUKNOW106_WORK_AUDIT)
                     YOUKNOW106_COUNT_DOMAIN_WORK(
+                        passiveHoldFractionalTargetCommits, 1);
+                    if (write.destination == ConverterDestination::Resonance
+                        || write.destination == ConverterDestination::Vcf)
+                    YOUKNOW106_COUNT_DOMAIN_WORK(
                         vcfFractionalTargetCommits, 1);
 #endif
-                    vcfEventLatch_ = {};
+                    passiveHoldEventLatch_ = {};
                 }
                 ++nextConverterWrite_;
                 if (nextConverterWrite_ == writes.size())
                     converterPassCompleted = true;
             }
 
-            if (!physicalVcfEvent.active
-                && latchUpcomingVcfEvent(
+            if (!physicalHoldEvent.active
+                && latchUpcomingPassiveHoldEvent(
                     controlScanPhase_, scanPhasePerInternalSample,
                     parameters))
             {
-                physicalVcfEvent.active = true;
-                physicalVcfEvent.write = vcfEventLatch_.write;
-                physicalVcfEvent.position = vcfEventLatch_.eventPosition;
-                physicalVcfEvent.target = vcfEventLatch_.target;
-                physicalVcfEvent.previousTarget =
-                    physicalVcfEvent.write.destination
-                            == ConverterDestination::Resonance
-                        ? resonanceCvTarget_
-                        : voices_[static_cast<std::size_t>(
-                              physicalVcfEvent.write.voice)]
-                              .cutoffCountsTarget;
+                physicalHoldEvent.active = true;
+                physicalHoldEvent.write = passiveHoldEventLatch_.write;
+                physicalHoldEvent.position =
+                    passiveHoldEventLatch_.eventPosition;
+                physicalHoldEvent.target = passiveHoldEventLatch_.target;
+                physicalHoldEvent.previousTarget =
+                    currentPassiveHoldTarget(physicalHoldEvent.write);
             }
 
-            const bool resonanceEvent = physicalVcfEvent.active
-                && physicalVcfEvent.write.destination
+            const bool resonanceEvent = physicalHoldEvent.active
+                && physicalHoldEvent.write.destination
                        == ConverterDestination::Resonance;
+            const bool cutoffHoldEvent = physicalHoldEvent.active
+                && physicalHoldEvent.write.destination
+                       == ConverterDestination::Vcf;
             if (resonanceEvent)
             {
                 resonanceVcfHoldInterval_ = exactVcfHoldInterval(
                     resonanceIntervalStart,
-                    physicalVcfEvent.previousTarget, true,
-                    physicalVcfEvent.position, physicalVcfEvent.target,
-                    1.0 / oversampledRate_);
+                    physicalHoldEvent.previousTarget, true,
+                    physicalHoldEvent.position, physicalHoldEvent.target,
+                    internalIntervalSeconds);
                 resonanceCv_ = resonanceVcfHoldInterval_.endpoint;
             }
             else
             {
-                if (physicalVcfEvent.active)
+                if (cutoffHoldEvent)
                 {
                     resonanceVcfHoldInterval_ = exactVcfHoldInterval(
                         resonanceIntervalStart, resonanceCvTarget_, false,
-                        1.0, resonanceCvTarget_, 1.0 / oversampledRate_);
+                        1.0, resonanceCvTarget_, internalIntervalSeconds);
                     resonanceCv_ = resonanceVcfHoldInterval_.endpoint;
                 }
                 else
                     resonanceCv_ +=
                         (resonanceCvTarget_ - resonanceCv_) * resonanceSlew;
             }
-            sharedVca_ +=
-                (sharedVcaTarget_ - sharedVca_) * commonVcaSlew;
-            pwmVoltsFirstPole_ +=
-                (pwmVoltsTarget_ - pwmVoltsFirstPole_) * pwmSlewFirst;
-            pwmVolts_ += (pwmVoltsFirstPole_ - pwmVolts_) * pwmSlewSecond;
-            subCv_ += (subCvTarget_ - subCv_) * subSlew;
+            const bool commonVcaEvent = physicalHoldEvent.active
+                && physicalHoldEvent.write.destination
+                       == ConverterDestination::CommonVca;
+            sharedVca_ = exactOnePoleHoldEndpoint(
+                sharedVca_,
+                commonVcaEvent ? physicalHoldEvent.previousTarget
+                               : sharedVcaTarget_,
+                commonVcaEvent, physicalHoldEvent.position,
+                commonVcaEvent ? physicalHoldEvent.target : sharedVcaTarget_,
+                internalIntervalSeconds, commonVcaTime, commonVcaDecay);
+
+            const bool pwmEvent = physicalHoldEvent.active
+                && physicalHoldEvent.write.destination
+                       == ConverterDestination::Pwm;
+            PwmHoldState pwmState { pwmVoltsFirstPole_, pwmVolts_ };
+            pwmState = exactPwmHoldEndpoint(
+                pwmState,
+                pwmEvent ? physicalHoldEvent.previousTarget : pwmVoltsTarget_,
+                pwmEvent, physicalHoldEvent.position,
+                pwmEvent ? physicalHoldEvent.target : pwmVoltsTarget_,
+                internalIntervalSeconds, pwmFullInterval);
+            pwmVoltsFirstPole_ = pwmState.first;
+            pwmVolts_ = pwmState.second;
+
+            const bool subEvent = physicalHoldEvent.active
+                && physicalHoldEvent.write.destination
+                       == ConverterDestination::Sub;
+            subCv_ = exactOnePoleHoldEndpoint(
+                subCv_, subEvent ? physicalHoldEvent.previousTarget
+                                 : subCvTarget_,
+                subEvent, physicalHoldEvent.position,
+                subEvent ? physicalHoldEvent.target : subCvTarget_,
+                internalIntervalSeconds,
+                static_cast<double>(subHoldSlewSeconds), subDecay);
             noiseCv_ += (noiseCvTarget_ - noiseCv_) * noiseSlew;
             advanceThermalWarmup();
 
@@ -4764,20 +4976,20 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 // Each hold capacitor's own slew turns the scan's staircase
                 // back into a continuous control voltage before it reaches
                 // its converter. The amplifier's hold is the slow one.
-                const bool cutoffEvent = physicalVcfEvent.active
-                    && physicalVcfEvent.write.destination
+                const bool cutoffEvent = cutoffHoldEvent
+                    && physicalHoldEvent.write.destination
                            == ConverterDestination::Vcf
-                    && physicalVcfEvent.write.voice == slot;
+                    && physicalHoldEvent.write.voice == slot;
                 const float cutoffIntervalStart = voice.cutoffCounts;
                 if (cutoffEvent)
                 {
                     cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)] =
                         exactVcfHoldInterval(
                             cutoffIntervalStart,
-                            physicalVcfEvent.previousTarget, true,
-                            physicalVcfEvent.position,
-                            physicalVcfEvent.target,
-                            1.0 / oversampledRate_);
+                            physicalHoldEvent.previousTarget, true,
+                            physicalHoldEvent.position,
+                            physicalHoldEvent.target,
+                            internalIntervalSeconds);
                     voice.cutoffCounts =
                         cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)]
                             .endpoint;
@@ -4788,7 +5000,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                         exactVcfHoldInterval(
                             cutoffIntervalStart, voice.cutoffCountsTarget,
                             false, 1.0, voice.cutoffCountsTarget,
-                            1.0 / oversampledRate_);
+                            internalIntervalSeconds);
                     voice.cutoffCounts =
                         cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)]
                             .endpoint;
@@ -4803,8 +5015,20 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     resonanceEvent || cutoffEvent;
                 voice.dcoCv +=
                     (voice.dcoCvTarget - voice.dcoCv) * dcoSlew;
-                voice.vcaControl +=
-                    (voice.vcaControlTarget - voice.vcaControl) * voiceVcaSlew;
+                const bool voiceVcaEvent = physicalHoldEvent.active
+                    && physicalHoldEvent.write.destination
+                           == ConverterDestination::VoiceVca
+                    && physicalHoldEvent.write.voice == slot;
+                voice.vcaControl = exactOnePoleHoldEndpoint(
+                    voice.vcaControl,
+                    voiceVcaEvent ? physicalHoldEvent.previousTarget
+                                  : voice.vcaControlTarget,
+                    voiceVcaEvent, physicalHoldEvent.position,
+                    voiceVcaEvent ? physicalHoldEvent.target
+                                  : voice.vcaControlTarget,
+                    internalIntervalSeconds,
+                    static_cast<double>(voiceVcaHoldSlewSeconds),
+                    voiceVcaDecay);
                 updatePulseComparator(voice, parameters);
 
                 if (voice.active || slot < hardwareVoices)
@@ -4829,7 +5053,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 // quality change indefinitely.
                 if (voice.envelope.stage == EnvelopeStage::Idle
                     && !voice.keyDown && !voice.sustained
-                    && VoiceVcaControlLaw::gain(voice.vcaControl)
+                    && VoiceVcaControlLaw::gain(
+                           static_cast<float>(voice.vcaControl))
                            <= VoiceVcaControlLaw::silenceGain)
                     silenceVoice(voice);
                 else
@@ -4874,7 +5099,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // only by ENV/GATE (plus the optional velocity extension).
             const float vcaInput = commonVcaInputCoupling_.process(
                 shaped, commonVcaInputCouplingG_, 0.0f, 1.0f);
-            const float levelled = vcaInput * patchLevelGain(sharedVca_);
+            const float levelled = vcaInput * patchLevelGain(
+                static_cast<float>(sharedVca_));
 
             // The chorus input coupling capacitors sit in its two wet branches;
             // dry bypasses them. IC6 applies its component-derived dry/wet
