@@ -556,8 +556,8 @@ exhaustive image population. The reviewed matrix is:
 
 | Host | Analytic NRMS, 1× / 2× / 4× | Qualifying-line physical-image gain error, 1× / 2× / 4× | 20 Hz–20 kHz unmasked SGA, 1× / 2× / 4× | Result |
 | ---: | ---: | ---: | ---: | --- |
-| 44.1 kHz | −3.099 / −14.910 / −27.043 dB | 34.389 / 4.090 / 0.869 dB | −24.854 / −28.762 / −47.635 dBc | **all REJECT** |
-| 48 kHz | −4.640 / −16.427 / −28.183 dB | 22.893 / 3.257 / 0.708 dB | −28.871 / −31.329 / −38.189 dBc | **all REJECT** |
+| 44.1 kHz | −3.099 / −14.910 / −27.045 dB | 34.389 / 4.088 / 0.867 dB | −24.854 / −28.762 / −47.635 dBc | **all REJECT** |
+| 48 kHz | −4.640 / −16.426 / −28.181 dB | 22.893 / 3.257 / 0.708 dB | −28.871 / −31.329 / −38.189 dBc | **all REJECT** |
 
 The gates are ≤−40 dB analytic NRMS, ≤0.75 dB physical-image gain error
 and <−60 dBc SGA. The oracle's exhaustive 20 Hz–20 kHz off-mask controls are
@@ -723,12 +723,13 @@ Two model questions now depend on this task, both added 2026-08-06:
 `YouKnow106.DcoScanQualityContract` advances the current DCO, two-pole PWM and SUB
 recurrences at 44.1/48 kHz × 1×/2×/4× and compares them with their closed-form
 continuous exponentials. All six grid cells clear the declared absolute-error
-gates. This is only the hold-law subcheck: the DCO spectrum in all six of the
-same cells rejects its separate −70 dBc quality gate. The hold result validates
-the implementation of these three current model laws; it supplies no evidence
-for acquisition windows, droop, charge injection,
-continuous-versus-track-and-hold behaviour, or the voiced DCO/RESONANCE/NOISE
-constants. This question remains open at P1.
+gates. At the Step-6 checkpoint, this was only the hold-law subcheck: the DCO
+spectrum in all six of the same cells rejected its separate −70 dBc quality
+gate. Step 7 subsequently corrected interpolation across the numerical step
+residual's event-side jump, and all six spectral cells now pass; the scan/hold
+results did not move. Neither result supplies evidence for acquisition windows,
+droop, charge injection, continuous-versus-track-and-hold behaviour, or the
+voiced DCO/RESONANCE/NOISE constants. This question remains open at P1.
 
 ### Needed output (for LLM)
 
@@ -784,6 +785,17 @@ closely aligned aggregate distributions. This baseline characterizes
 origin or audible-threshold evidence. OQ-07, this question, OQ-12 and OQ-19 all
 remain open.
 
+That paragraph is the Step-3 pre-reconstruction baseline. Step 7 leaves its
+Pitch, VoiceVca and 63.2% hold distributions unchanged, but H=24 reconstruction
+and the 95-tap half-band move the signal-dependent raw output proxy to
+87/210/335 HQ-off and 105/228/351 HQ-on. The fixed numerical report is now 41
+samples; the corresponding nominal compensation coordinates are 46/169/294 and
+64/187/310. Raw 1×/2×/4× centres plus integer pads are 24+17=41,
+35.5+6=41.5 and 41.25+0=41.25, all within 0.5 sample of the report. The −80
+dBFS crossing is signal dependent and responds to factor-dependent symmetric
+pre-ringing, so neither the raw movement nor subtracting 41 supplies hardware
+timing.
+
 **2026-08-09 rate-grid baseline — numerical policy, not closure.** A separate
 `YouKnow106.DcoScanQualityContract` subcheck samples the normalized
 `ordinal/23` schedule at 44.1/48 kHz × 1×/2×/4× on
@@ -797,6 +809,13 @@ acquisition, jitter or pitch-restart evidence. The same audit's DCO spectral
 cells all reject their separate absolute quality gate, so these passing
 schedule/hold subchecks are not DCO-domain admission. OQ-07 and this question
 remain open at P1.
+
+The final two sentences above preserve the dated Step-6 state. Step 7 changes
+only its numerical DCO classification: all six spectral cells now pass after
+the step-response/event-side repair, while the 23-write, quantisation and hold
+measurements remain the same. That numerical pass is still not an original-unit
+timestamp, acquisition or restart capture. OQ-07 and this question remain open
+at P1.
 
 ### Needed output (for LLM)
 
@@ -1894,12 +1913,15 @@ claims the suite cannot currently see.
   inter-domain interpolator. The dominant in-band artefact remains the VCF's
   `tanh` set rather than the oscillator. `testAliasFloor` cannot observe this:
   it runs at resonance 0, calibration 0, and stops sweeping at 20 kHz.
-- **Final half-band decimator at a 44.1 kHz host**: −0.85 dB at 20 kHz, −2.5 dB at
-  21 kHz, with fold-back rejection of only −31.7 dB for content landing at 19.1 kHz.
-  Both stages share the 63-tap kernel; the first stage's transition band is wide
-  enough that only the last stage matters.
-- **Measured as *not* audible**, recorded so the work is not repeated: widening the
-  BLEP kernel or interpolating its table more finely (already −111 dB); `double`
+- **Historical pre-Step-7 half-band at a 44.1 kHz host**: −0.85 dB at 20 kHz,
+  −2.5 dB at 21 kHz, with fold-back rejection of only −31.7 dB for content
+  landing at 19.1 kHz. Both stages then shared the 63-tap kernel; the first
+  stage's transition band was wide enough that only the last stage mattered.
+  The later H=24/95-tap DCO reconstruction supersedes this as the current
+  boundary; these figures remain the dated Blackman-Harris before-state.
+- **Measured as *not* audible in that narrow C6/VCF experiment**, recorded so
+  the work is not repeated under the same conditions: widening the BLEP kernel
+  or interpolating its table more finely (then already −111 dB); `double`
   state in `OtaCascade` (bit-indistinguishable from `float` at 40 Hz / 200 Hz /
   1 kHz cutoff, resonance 3.9); more Newton iterations (the 8-iteration cap is
   reached 10–22 % of the time under hot resonant input, but the resulting error is
@@ -2269,7 +2291,9 @@ The ADJUSTMENT table's own numbers, taken seriously for the first time.
      internal rate and measure identically).
   3. Widening the oscillator's residual kernel from 4 to 8 half-widths moved the
      same case by **0.7 dB**, confirming the earlier note that the BLEP tables
-     are not the limit here.
+     are not the limit in this hot VCF fold-back experiment. It is not the later
+     all-waveform pre-VCF common-host audit, whose Step-7 diagnosis is recorded
+     below.
   4. The doubled grid is limited by the *interpolation*, not the decimation.
      Zero-order hold into the doubled grid measured −48.8 dB — no better than
      not doubling at all — while linear interpolation with no decimation filter
@@ -2315,7 +2339,9 @@ The ADJUSTMENT table's own numbers, taken seriously for the first time.
   measures the built kernel rather than trusting the design equations. The
   Bessel function is written out in the engine because the standard
   special-function header — the original reason a Kaiser window was avoided —
-  is not available on every toolchain this project builds with.
+  is not available on every toolchain this project builds with. This is the
+  dated 63-tap window comparison; Step 7 later selects 95 taps against the
+  expanded DCO matrix.
 
 ## Netlist-corroboration pass — 2026-08-06 (chorus board and third-source sweep)
 
@@ -3365,6 +3391,91 @@ service anchors.
 None of this is hardware evidence and none of it is a claim about the
 instrument. The queue's 20 open questions plus the OQ-06 dependency stand
 exactly as written above.
+
+## DCO numerical-reconstruction pass — 2026-08-09 (quality defect fixed; no OQ closed)
+
+**Work mode:** numerical mechanism diagnosis and production qualification
+against the existing analytic/common-host contracts. **No original unit was
+measured.** This pass changes the fidelity with which the engine realizes its
+declared oscillator equations; it does not add physical evidence to those
+equations.
+
+Step 6 exposed a broad DCO defect that the legacy two-note/full-engine fence
+could not see. The step correction table stored `bandlimited step − ideal
+step`, a residual with a unit jump at `t=0`, and then linearly interpolated it.
+The final lookup interval before zero therefore blended the two event sides and
+emitted a premature fractional edge. The corrected path stores/interpolates the
+continuous bandlimited step response and subtracts the exact Heaviside value
+only after lookup. The slope residual is continuous at zero and stays direct.
+A circular H=24 delay supplies the symmetric support; its immutable 64× tables
+are shared rather than rebuilt per engine. The selected global decimator is a
+95-tap Kaiser (β=7.857).
+
+The before/after classification uses the same six 90-take cells and unchanged
+−70 dBc gate:
+
+| DCO worst off-mask bin | 1×, Step 6 → current | 2×, Step 6 → current | 4×, Step 6 → current | Current result |
+| --- | ---: | ---: | ---: | --- |
+| 44.1 kHz | −12.780565 → **−83.476933 dBc** | −36.596878 → **−82.436627 dBc** | −42.618000 → **−82.432588 dBc** | **PASS / PASS / PASS** |
+| 48 kHz | −16.741087 → **−84.879008 dBc** | −36.344575 → **−92.976529 dBc** | −41.452375 → **−92.978397 dBc** | **PASS / PASS / PASS** |
+
+Analytic controls, strict/top harmonic gain, scan and DCO/PWM/SUB holds pass in
+every cell. Candidate selection kept margin rather than merely clearing the
+line: H=20/95 taps failed at −65.940893 dBc, H=24/79 failed at −68.0828,
+H=24/87 first passed at −77.8416, and the chosen H=24/95 combination has a
+−82.432588 dBc worst cell, 12.43 dB below the gate. H=32 added no useful
+gain. The longer half-band is necessary at 44.1 kHz because the shorter
+boundary leaked a legitimate 25.1 kHz sixth pulse harmonic back near 19.0 kHz.
+
+Because that half-band is global, the independent VCF/BBD contract was rerun.
+The VCF's decisive hot full-waveform row remains:
+
+| VCF hot NRMS vs RK128 | 1× | 2× | 4× | Result |
+| --- | ---: | ---: | ---: | --- |
+| 44.1 kHz | −1.110 dB | −12.233 dB | −24.348 dB | **REJECT / REJECT / REJECT** |
+| 48 kHz | −1.062 dB | −13.752 dB | −25.810 dB | **REJECT / REJECT / REJECT** |
+
+Its exhaustive hot-residual off-mask values are
+−27.063/−67.589/−99.040 dBc at 44.1 kHz and
+−19.658/−67.128/−99.620 dBc at 48 kHz. The BBD rerun is:
+
+| Host | Factor | Analytic NRMS | Qualifying-line BGA error | Unmasked SGA | Result |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 44.1 kHz | 1× | −3.099 dB | 34.389 dB | −24.854 dBc | **REJECT** |
+| 44.1 kHz | 2× | −14.910 dB | 4.088 dB | −28.762 dBc | **REJECT** |
+| 44.1 kHz | 4× | −27.045 dB | 0.867 dB | −47.635 dBc | **REJECT** |
+| 48 kHz | 1× | −4.640 dB | 22.893 dB | −28.871 dBc | **REJECT** |
+| 48 kHz | 2× | −16.426 dB | 3.257 dB | −31.329 dBc | **REJECT** |
+| 48 kHz | 4× | −28.181 dB | 0.708 dB | −38.189 dBc | **REJECT** |
+
+Every one of those VCF/BBD cells still rejects its absolute domain gate. The
+4× candidate is not truth, and a DCO pass cannot admit a split-rate engine.
+
+The reconstruction/filter support also moves numerical latency. Raw
+1×/2×/4× centres and pads are 24+17=41, 35.5+6=41.5 and
+41.25+0=41.25 host samples. The engine/processor report one fixed 41-sample
+coordinate: 0.930 ms at 44.1 kHz, 0.854 ms at 48 kHz, 0.427 ms at 96 kHz and
+0.214 ms at 192 kHz. The exhaustive playing proxy becomes 87/210/335 HQ-off
+and 105/228/351 HQ-on, or 46/169/294 and 64/187/310 after subtracting the
+report. Pitch-write, VoiceVca, 63.2% hold and scan results are unchanged. The
+nominal numerical centres align within 0.5 sample; the −80 dBFS onset proxy is
+signal dependent and sees different amounts of symmetric pre-ringing.
+
+In the updated work audit, 6,144 decimator calls visit 301,056 nonzero taps and
+perform 602,112 stereo MACs—49 visits and 98 MACs per call. VCF iteration
+counts are 205,008/56,604 at 48 kHz 4×/1×, 104,146/53,679 at 96 kHz
+2×/1× and 51,508 at 192 kHz 1×, with zero recovery. The informational
+M1 Max/arm64 Release timing rerun gives 4×/1× CPU/audio ratios of 3.543
+idle, 3.177 six-voice plain, 3.471 six-voice resonant and 2.655 full-mixer
+Chorus II. These measurements move no performance gate.
+
+The physical/model laws were deliberately held fixed: 8 MHz integer
+divider/range clocks, straight 12 V ramp, 2.2 µs reset, comparator geometry,
+sub divider, converter schedule/holds and changed-pitch restart policy. Thus
+OQ-07 remains open on hold acquisition/droop, OQ-08 on exact scan/restart
+timing and forced state, OQ-11 on the pinned comparator leg's loaded behavior,
+and OQ-15 on oscillator/mixer levels. Passing a numerical equation-fidelity
+gate is not new hardware evidence.
 
 ## Settled guardrails — do not reopen without contradictory primary evidence
 

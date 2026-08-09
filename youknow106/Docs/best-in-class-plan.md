@@ -2208,10 +2208,12 @@ name are real and a later pass will want the reasoning rather than the idea.
   step 5 now establishes exact scaling for selected semantic events by domain
   and uninstrumented whole-engine thread-CPU baselines without changing the
   signal path. It does **not** publish which domain needs 4×. Continuous step
-  6 below now supplies the common-host 1×/2×/4× isolated-domain matrix against
-  analytic DCO/scan, RK4 VCF and closed-form BBD references. Its DCO result alone
-  blocks every tested factor, and isolated passes cannot qualify a split before
-  inter-domain reconstruction, whole-engine and latency parity are measured.
+  6 below supplies the common-host 1×/2×/4× isolated-domain matrix against
+  analytic DCO/scan, RK4 VCF and closed-form BBD references. Its dated DCO
+  result blocked every tested factor; Step 7 subsequently clears those DCO
+  cells without changing the global selector, while every VCF/BBD cell still
+  rejects. Isolated passes cannot qualify a split before inter-domain
+  reconstruction, whole-engine and latency parity are measured.
 - **Note-on-to-first-sample latency — completed 2026-08-09.** Continuous-work
   step 3 measures and publishes the complete declared 48 kHz host/scan-phase
   distribution before any scheduler change. It became a step because making
@@ -2500,10 +2502,13 @@ evidence about a physical JUNO-106.
   | Raw output-onset proxy, `max(abs(L),abs(R)) > 1e-4` | 90 / 213 / 335 | 93 / 216 / 339 |
   | Nominal host-compensation coordinate (raw minus 24) | 66 / 189 / 311 | 69 / 192 / 315 |
 
-  The engine and plug-in separately report exactly 24 host samples for 4×, 2×
-  and 1× numerical paths: 0.500 ms only at 48 kHz, 0.250 ms at 96 kHz and
-  0.125 ms at 192 kHz. It is nominal oscillator-reconstruction/decimation group
-  delay, not a physical decomposition of the signal-dependent output threshold.
+  At this Step-3 checkpoint the engine and plug-in separately reported exactly
+  24 host samples for 4×, 2× and 1× numerical paths: 0.500 ms only at 48 kHz,
+  0.250 ms at 96 kHz and 0.125 ms at 192 kHz. It was nominal
+  oscillator-reconstruction/decimation group delay, not a physical
+  decomposition of the signal-dependent output threshold. Step 7 below
+  supersedes the reconstruction, report and proxy values while preserving this
+  measurement as the before-state.
   The processor fixture also keeps sample-positioned MIDI ahead of rendering
   and exact silence before a late event.
 
@@ -2630,7 +2635,7 @@ evidence about a physical JUNO-106.
   notes are MIDI 36/48/55/60/64/67; the full-mixer row also keeps Chorus Noise
   at its shipped 1.0 setting:
 
-  | Current fixture | 4× CPU/audio | 1× CPU/audio | Paired 4×/1× |
+  | Step-5 fixture | 4× CPU/audio | 1× CPU/audio | Paired 4×/1× |
   | --- | ---: | ---: | ---: |
   | Idle, six powered cards closed | 0.533 | 0.145 | 3.684× |
   | Six voices, cutoff .62/resonance .10, chorus off | 0.495 | 0.152 | 3.254× |
@@ -2642,8 +2647,8 @@ evidence about a physical JUNO-106.
   They establish the global switch's present cost but cannot predict the
   saving from moving only one part of a coupled loop.
 
-  The deterministic work window is the six-voice resonant fixture after the
-  same pre-roll, 2,048 host frames. At 48 kHz 4×/1× it counts 8,192/2,048
+  The Step-5 deterministic work window is the six-voice resonant fixture after
+  the same pre-roll, 2,048 host frames. At 48 kHz 4×/1× it counts 8,192/2,048
   internal frames; 49,152/12,288 six-card audio/DCO/VCF steps;
   131,072/32,768 sixteen-slot hold and PWM calls; 16,384/4,096 BBD-line support
   frames; and 6,144/0 decimator calls, or 405,504/0 stereo nonzero-tap MACs.
@@ -2656,8 +2661,9 @@ evidence about a physical JUNO-106.
   events, even though their audio-rate support frames scale exactly 4:1.
 
   The event-dependent values above are published observations, not goldens.
-  CTest covers the structural identities plus 96 kHz 2×/1× and 192 kHz 1×,
-  requires 33 nonzero half-band coefficients and two stereo MACs per visit,
+  CTest at this checkpoint covers the structural identities plus 96 kHz 2×/1×
+  and 192 kHz 1×, requires 33 nonzero half-band coefficients and two stereo
+  MACs per visit,
   partitions cutoff memo and VCF path-average work exactly, requires zero
   recovery, and proves four stage evaluations/two bidiagonal solves per
   Newton iteration. It separately
@@ -2681,8 +2687,8 @@ evidence about a physical JUNO-106.
   `Tools/OversamplingQualitySupport.h` supplies VCF/BBD with a factor-independent
   fixed-16× reference path: a 4,097-tap Kaiser FIR, zero-phase host-boundary
   decimation and explicit 0/15.5/23.25-frame alignment. Canonical filter,
-  stop-path, phase and fractional-delay self-checks guard that support. The 4×
-  shipping render remains one candidate under test, never the reference.
+  stop-path, phase and fractional-delay self-checks guard that support. The
+  then-shipping 4× render remains one candidate under test, never the reference.
 
   The isolated pre-VCF DCO matrix contains 90 takes per cell: the six
   octave-spaced notes MIDI 36/48/60/72/84/96 in 16'/8'/4', saw and sub, plus
@@ -2699,9 +2705,10 @@ evidence about a physical JUNO-106.
   Every per-take analytic multiline control passes its spur and gain gates.
   The separately fenced normalized 23-write scan and the declared DCO,
   two-pole PWM and SUB hold recurrences pass in every cell. Frequency-coincident
-  boundary-stopband and pre-grid fold families are diagnostics only: they do
-  not establish the source of the DCO result, whose cause remains
-  **unattributed**.
+  boundary-stopband and pre-grid fold families are diagnostics only: they did
+  not establish the source of the DCO result, whose cause remained
+  **unattributed at this checkpoint**. Step 7 below supplies the subsequent
+  mechanism diagnosis and passing rerun.
 
   The VCF reference solves the declared continuous four-stage equations at the
   fixed 16× grid with RK4 at four and eight substeps—effective 64×/128×—then
@@ -2761,8 +2768,107 @@ evidence about a physical JUNO-106.
   44.1/48 kHz.
 
   **Verdict: the common-host baseline is complete and admits no production rate
-  change.** All six DCO, nominal-VCF and BBD cells reject their absolute domain
-  gates, including the current 4× path. No source equation, quality selection,
+  change.** At this checkpoint all six DCO, nominal-VCF and BBD cells reject
+  their absolute domain gates, including the then-current 4× path. No source
+  equation, quality selection,
   preset or audio file changes in this step. Inter-domain reconstruction,
   Character 1, whole-engine output, latency parity and live transition behavior
   remain unqualified; none may be inferred from an isolated sub-fixture pass.
+- [x] **7. Correct the DCO reconstruction defect exposed by the common-host
+  matrix.** Step 6 is retained above as the dated before-state: its six DCO
+  cells all rejected −70 dBc. The defect was numerical, not a newly discovered
+  oscillator law. The old step table stored `bandlimited step − ideal step`,
+  which contains a unit jump at `t=0`, then linearly interpolated that
+  discontinuous residual. A query in the last interval before zero therefore
+  blended the two event sides and emitted a premature fractional edge.
+
+  The engine now stores and interpolates the *continuous bandlimited step
+  response*, then subtracts the exact Heaviside value at the query time. The
+  slope residual is continuous at zero and remains stored/interpolated
+  directly. A circular H=24 delay supplies the non-causal half of the
+  symmetric correction without shifting an array on every sample; immutable
+  64× construction tables are shared across engine instances. No oscillator
+  equation or source coordinate moved: the 8 MHz integer divider and range
+  clocks, 12 V straight ramp, 2.2 µs reset, comparator/duty geometry,
+  divide-by-two sub, pitch-write restart policy, scan schedule and held-control
+  laws are unchanged.
+
+  The same unchanged 90-take-per-cell audit now reads:
+
+  | DCO worst off-mask bin | 1×, Step 6 → Step 7 | 2×, Step 6 → Step 7 | 4×, Step 6 → Step 7 | −70 dBc gate |
+  | --- | ---: | ---: | ---: | --- |
+  | 44.1 kHz | −12.780565 → **−83.476933 dBc** | −36.596878 → **−82.436627 dBc** | −42.618000 → **−82.432588 dBc** | **PASS / PASS / PASS** |
+  | 48 kHz | −16.741087 → **−84.879008 dBc** | −36.344575 → **−92.976529 dBc** | −41.452375 → **−92.978397 dBc** | **PASS / PASS / PASS** |
+
+  Every cell still contains 90/90 finite candidate takes and 90 valid analytic
+  controls; spur, strict/top harmonic gain, normalized scan and DCO/PWM/SUB
+  hold gates all pass. Frequency-coincident fold-family labels remain
+  diagnostics rather than causal proof.
+
+  Support and decimation were selected together instead of stopping at the
+  first passing pair:
+
+  | Correction / half-band candidate | Worst DCO cell | Result |
+  | --- | ---: | --- |
+  | H=20 / 95 taps | −65.940893 dBc | **REJECT** |
+  | H=24 / 79 taps | −68.0828 dBc | **REJECT** |
+  | H=24 / 87 taps | −77.8416 dBc | PASS |
+  | **H=24 / 95 taps** | **−82.432588 dBc** | **selected; 12.43 dB margin** |
+
+  Extending the selected design to H=32 produced no useful additional
+  rejection. The 95-tap Kaiser (β=7.857) boundary is retained because the
+  shorter decimator leaked the legitimate 25.1 kHz sixth pulse harmonic back
+  near 19.0 kHz at a 44.1 kHz host. This global half-band change was therefore
+  rerun through the independent VCF/BBD audit. The VCF's decisive
+  production-compensated hot row remains:
+
+  | VCF hot waveform NRMS vs RK128 | 1× | 2× | 4× | −40 dB gate |
+  | --- | ---: | ---: | ---: | --- |
+  | 44.1 kHz | −1.110 dB | −12.233 dB | −24.348 dB | **REJECT / REJECT / REJECT** |
+  | 48 kHz | −1.062 dB | −13.752 dB | −25.810 dB | **REJECT / REJECT / REJECT** |
+
+  Its exhaustive hot-residual off-mask values are
+  −27.063/−67.589/−99.040 dBc at 44.1 kHz and
+  −19.658/−67.128/−99.620 dBc at 48 kHz; these passing 2×/4×
+  spectral subchecks do not override the full-waveform rejection. The complete
+  deterministic BBD rows are:
+
+  | Host | Factor | Analytic NRMS | Qualifying-line BGA error | Unmasked SGA | Result |
+  | ---: | ---: | ---: | ---: | ---: | --- |
+  | 44.1 kHz | 1× | −3.099 dB | 34.389 dB | −24.854 dBc | **REJECT** |
+  | 44.1 kHz | 2× | −14.910 dB | 4.088 dB | −28.762 dBc | **REJECT** |
+  | 44.1 kHz | 4× | −27.045 dB | 0.867 dB | −47.635 dBc | **REJECT** |
+  | 48 kHz | 1× | −4.640 dB | 22.893 dB | −28.871 dBc | **REJECT** |
+  | 48 kHz | 2× | −16.426 dB | 3.257 dB | −31.329 dBc | **REJECT** |
+  | 48 kHz | 4× | −28.181 dB | 0.708 dB | −38.189 dBc | **REJECT** |
+
+  The factor-independent oracle/support self-checks still pass, including the
+  updated 0/23.5/35.25-frame 1×/2×/4× candidate advances. These are
+  numerical-equation tests, the 4× render remains a candidate rather than
+  truth, and the surviving VCF/BBD rejections admit no split-rate engine.
+
+  H=24 and the 95-tap half-band change the numerical centres. The raw 1×/2×/4×
+  centres are 24/35.5/41.25 host samples; pads of 17/6/0 make them
+  41/41.5/41.25. The engine and processor therefore report one fixed 41-sample
+  latency, with every nominal centre within 0.5 sample: 0.930 ms at 44.1 kHz,
+  0.854 ms at 48 kHz, 0.427 ms at 96 kHz and 0.214 ms at 192 kHz.
+  The exhaustive 48 kHz playing-latency rerun leaves Pitch, VoiceVca and held
+  63.2% distributions unchanged. Its signal-dependent −80 dBFS output proxy
+  is now 87/210/335 HQ-off and 105/228/351 HQ-on; subtracting the fixed report
+  gives 46/169/294 and 64/187/310. That threshold sees factor-dependent
+  symmetric pre-ringing and is not an exact group-delay or audibility measure.
+
+  The updated 2,048-frame work audit counts 301,056 nonzero half-band visits
+  and 602,112 stereo MACs across 6,144 decimator calls at 48 kHz/4×—49 and 98
+  per call. VCF iterations are 205,008/56,604 at 48 kHz 4×/1×,
+  104,146/53,679 at 96 kHz 2×/1×, and 51,508 at 192 kHz 1×, all with zero
+  recovery. An informational rerun on the same M1 Max/arm64 Release protocol
+  gives 4×/1× CPU/audio ratios 3.543 idle, 3.177 six-voice plain, 3.471
+  six-voice resonant and 2.655 full-mixer Chorus II. These are observations,
+  not performance gates or evidence for a rate split.
+
+  **Verdict: the isolated DCO numerical defect is fixed, with no hardware
+  question silently answered.** OQ-07 (hold acquisition), OQ-08 (physical
+  write/restart timing), OQ-11 (pinned comparator leg) and OQ-15 (loaded
+  oscillator/mixer levels) remain open. Numerical agreement with the declared
+  model cannot substitute for an original-unit capture.

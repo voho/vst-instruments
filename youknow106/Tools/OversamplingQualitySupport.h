@@ -1373,8 +1373,8 @@ runFractionalDelaySelfCheck(double declaredDelayHostFrames)
 [[nodiscard]] inline std::array<FractionalDelaySelfCheck, 2>
 runCanonicalFractionalDelaySelfChecks()
 {
-    return { runFractionalDelaySelfCheck(15.5),
-             runFractionalDelaySelfCheck(23.25) };
+    return { runFractionalDelaySelfCheck(23.5),
+             runFractionalDelaySelfCheck(35.25) };
 }
 
 } // namespace youknow106::oversampling_quality

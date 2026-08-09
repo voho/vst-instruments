@@ -4887,7 +4887,7 @@ void testDecimatorProtectsTheTopOfTheBand()
     // own rate, only just below the quarter-rate crossover, and the content
     // that folds onto it comes from just above.
     const auto kernel = YouKnow106TestAccess::halfbandKernel();
-    expect(kernel.size() == 63, "the decimation kernel is not 63 taps");
+    expect(kernel.size() == 95, "the decimation kernel is not 95 taps");
 
     const auto response = [&kernel](double hertz, double stageRate) {
         std::complex<double> accumulator {};
@@ -4904,12 +4904,12 @@ void testDecimatorProtectsTheTopOfTheBand()
 
     struct HostCase { double host; double passbandDb; double foldDb; };
     // Both bounds are what this kernel measures, with a little margin. The
-    // Blackman-Harris design they replace could not meet either at 44.1 kHz:
-    // it was 0.85 dB down at 20 kHz and rejected the fold onto 19.1 kHz by
-    // only 31.7 dB.
+    // previous 63-tap Kaiser passed its original narrow transfer check but
+    // rejected the 25.1 kHz pulse harmonic folding onto 19.0 kHz by only
+    // about 50 dB in the expanded DCO matrix.
     constexpr std::array<HostCase, 2> cases {{
-        { 44100.0, -0.6, -44.0 },
-        { 48000.0, -0.1, -78.0 }
+        { 44100.0, -0.05, -79.0 },
+        { 48000.0, -0.01, -84.0 }
     }};
     for (const auto& host : cases)
     {
@@ -4931,6 +4931,16 @@ void testDecimatorProtectsTheTopOfTheBand()
                        + " Hz folds onto 19.1 kHz at only "
                        + std::to_string(response(source, stageRate)) + " dB");
     }
+
+    // Pin the exact expanded-matrix failure that selected this length: the
+    // sixth harmonic of the high 4' pulse at 44.1 kHz. Both spectral images
+    // fold onto about 18.995 kHz at the host boundary.
+    constexpr double causalLeakHz = 25104.602510;
+    constexpr double hardStageRate = 88200.0;
+    for (const double source : { causalLeakHz, hardStageRate - causalLeakHz })
+        expect(response(source, hardStageRate) < -79.0,
+               "the high-pulse sixth harmonic is rejected by only "
+                   + std::to_string(response(source, hardStageRate)) + " dB");
 }
 } // namespace
 

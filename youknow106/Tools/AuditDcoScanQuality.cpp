@@ -917,9 +917,19 @@ Cell runCell(int host, int factor)
                      && cell.dco.validCandidateTakes == 90
                      && cell.dco.invalidCandidateTakes == 0
                      && cell.dco.candidateFinite
+                     && std::isfinite(cell.dco.worstControlSpurDb)
+                     && std::isfinite(cell.dco.worstControlGainAbsDb)
+                     && !cell.dco.controlSpurCase.empty()
+                     && !cell.dco.controlGainCase.empty()
                      && cell.dco.worstControlSpurDb <= -85.0
                      && cell.dco.worstControlGainAbsDb <= 0.025;
-    cell.dcoPass = cell.dco.worstAliasDb <= -70.0
+    cell.dcoPass = std::isfinite(cell.dco.worstAliasDb)
+                && std::isfinite(cell.dco.worstStrictGainDb)
+                && std::isfinite(cell.dco.worstTopGainDb)
+                && !cell.dco.aliasCase.empty()
+                && cell.dco.strictWinner.harmonic > 0
+                && cell.dco.topWinner.harmonic > 0
+                && cell.dco.worstAliasDb <= -70.0
                 && cell.dco.worstStrictGainDb <= 0.25
                 && cell.dco.worstTopGainDb <= topGate;
     cell.scanPass = cell.scan.mismatches == 0
@@ -1063,8 +1073,8 @@ int run(bool selfTest)
     // only from a reviewed full-matrix run: the self-test is a deterministic
     // regression on that evidence, not a mechanism that blesses every result.
     constexpr std::array<double, 6> expectedAliasDb {
-        -12.780565, -36.596878, -42.618000,
-        -16.741087, -36.344575, -41.452375
+        -83.476933, -82.436627, -82.432588,
+        -84.879008, -92.976529, -92.978397
     };
     constexpr std::array<double, 6> expectedControlSpurDb {
         -92.954176, -92.954176, -92.954176,
@@ -1075,21 +1085,24 @@ int run(bool selfTest)
         0.000034, 0.000034, 0.000034
     };
     constexpr std::array<double, 6> expectedStrictGainDb {
-        0.907894, 0.186610, 0.090766,
-        0.738293, 0.579572, 0.203976
+        0.002208, 0.000536, 0.000196,
+        0.002242, 0.000448, 0.000179
     };
     constexpr std::array<double, 6> expectedStrictSignedDb {
-        -0.907894, 0.186610, 0.090766,
-        -0.738293, -0.579572, -0.203976
+        -0.002208, -0.000536, -0.000196,
+        -0.002242, -0.000448, 0.000179
     };
     constexpr std::array<double, 6> expectedTopGainDb {
-        3.836433, 0.536009, 0.467102,
-        3.093963, 0.581960, 0.200338
+        0.035644, 0.021486, 0.020735,
+        0.004093, 0.001001, 0.000528
     };
     constexpr std::array<double, 6> expectedTopSignedDb {
-        -3.836433, -0.536009, -0.467102,
-        -3.093963, -0.581960, -0.200338
+        -0.035644, -0.021486, -0.020735,
+        -0.004093, -0.001001, 0.000528
     };
+    constexpr std::array<int, 6> expectedFoldCandidates { 1, 1, 1, 5, 0, 0 };
+    constexpr std::array<int, 6> expectedBoundaryCandidates { 0, 1, 1, 0, 0, 0 };
+    constexpr std::array<int, 6> expectedPregridCandidates { 1, 0, 0, 5, 0, 0 };
     constexpr std::array<double, 6> expectedScanQuantisationUs {
         22.656019, 11.318150, 5.659075,
         20.652174, 10.326087, 5.163043
@@ -1138,7 +1151,7 @@ int run(bool selfTest)
             && !cell.dco.controlGainCase.empty()
             && cell.analysisPass;
         const bool aliasMetric = std::isfinite(cell.dco.worstAliasDb)
-            && cell.dco.worstAliasDb > -70.0
+            && cell.dco.worstAliasDb <= -70.0
             && std::abs(cell.dco.worstAliasDb
                         - expectedAliasDb[index]) <= 0.75
             && !cell.dco.aliasCase.empty();
@@ -1151,6 +1164,7 @@ int run(bool selfTest)
                         - expectedStrictSignedDb[index]) <= 0.10
             && std::abs(std::abs(cell.dco.worstStrictGainSignedDb)
                         - cell.dco.worstStrictGainDb) <= 1.0e-9
+            && cell.dco.worstStrictGainDb <= 0.25
             && cell.dco.strictWinner.note > 0
             && cell.dco.strictWinner.harmonic > 0
             && cell.dco.strictWinner.baseHz > 0.0
@@ -1169,6 +1183,8 @@ int run(bool selfTest)
                         - expectedTopSignedDb[index]) <= 0.10
             && std::abs(std::abs(cell.dco.worstTopGainSignedDb)
                         - cell.dco.worstTopGainDb) <= 1.0e-9
+            && cell.dco.worstTopGainDb
+                   <= (expectedHost == 44100 ? 0.75 : 0.25)
             && cell.dco.topWinner.note > 0
             && cell.dco.topWinner.harmonic > 0
             && cell.dco.topWinner.baseHz > 0.0
@@ -1199,11 +1215,15 @@ int run(bool selfTest)
             && cell.hold.dcoMaximumError <= 1.0e-5
             && cell.hold.subMaximumError <= 1.2e-5
             && cell.holdPass;
-        bool foldMetric = cell.dco.foldCandidateCount > 0
-                       && !cell.dco.foldCandidates.empty()
-                       && cell.dco.foldCandidates.size() <= 3
-                       && cell.dco.boundaryStopbandCandidateCount >= 0
-                       && cell.dco.pregridFoldCandidateCount > 0
+        bool foldMetric = cell.dco.foldCandidates.size()
+                              == static_cast<std::size_t>(
+                                  std::min(expectedFoldCandidates[index], 3))
+                       && cell.dco.foldCandidateCount
+                              == expectedFoldCandidates[index]
+                       && cell.dco.boundaryStopbandCandidateCount
+                              == expectedBoundaryCandidates[index]
+                       && cell.dco.pregridFoldCandidateCount
+                              == expectedPregridCandidates[index]
                        && cell.dco.foldCandidateCount
                               == cell.dco.boundaryStopbandCandidateCount
                                + cell.dco.pregridFoldCandidateCount
@@ -1237,9 +1257,9 @@ int run(bool selfTest)
                     && candidate.sourceHz > 0.5 * cell.host * cell.factor;
             previousAmplitude = candidate.expectedPeak;
         }
-        const bool classification = cell.analysisPass && !cell.dcoPass
+        const bool classification = cell.analysisPass && cell.dcoPass
                                  && cell.scanPass && cell.holdPass
-                                 && !cell.absolutePass;
+                                 && cell.absolutePass;
         layoutClass = layoutClass && layout;
         analysisClass = analysisClass && analysisMetric;
         aliasClass = aliasClass && aliasMetric;
@@ -1277,8 +1297,8 @@ int run(bool selfTest)
               << (foldCandidateClass ? "PASS" : "FAIL")
               << " classification="
               << (classificationClass ? "PASS" : "FAIL")
-              << " expected=44.1:REJECT,REJECT,REJECT;"
-                 "48:REJECT,REJECT,REJECT verdict="
+              << " expected=44.1:PASS,PASS,PASS;"
+                 "48:PASS,PASS,PASS verdict="
               << (pass ? "PASS" : "FAIL") << '\n';
     return pass ? 0 : 1;
 }

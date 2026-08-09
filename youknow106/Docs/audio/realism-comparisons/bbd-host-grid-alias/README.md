@@ -20,10 +20,11 @@ contract.
 Raw and listening WAVs are stereo 48 kHz float32. Protocol v1 uses one fixed
 0 dB gain for the whole concatenation and for both comparison stages: there
 is no section, quality, mode, or stage normalization. Chorus noise and clock
-bleed are disabled. The HQ direct probe uses the engine's shipping two-stage
-half-band decimator, not a renderer-only resampler. The after pass refuses
-a baseline unless its manifest binds the scenario, protocol, frame count,
-raw sample hash and a distinct pre-change DSP source fingerprint.
+bleed are disabled. At the archived source fingerprints, the HQ direct probe
+used the then-shipping 63-tap, two-stage half-band decimator rather than a
+renderer-only resampler. The after pass refuses a baseline unless its manifest
+binds the scenario, protocol, frame count, raw sample hash and a distinct
+pre-change DSP source fingerprint.
 
 Only the text between the generated markers below is renderer-owned.
 

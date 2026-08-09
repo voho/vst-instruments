@@ -378,6 +378,25 @@ struct YouKnow106TestAccess
         return { track.ring, track.delay, track.base, track.primed };
     }
 
+    static std::array<float, 3> stepCorrectionEventSides(
+        YouKnow106Engine& engine) noexcept
+    {
+        constexpr float epsilon = 0.25f
+                                / YouKnow106Engine::correctionOversample;
+        YouKnow106Engine::BandlimitedTrack before;
+        YouKnow106Engine::BandlimitedTrack at;
+        YouKnow106Engine::BandlimitedTrack after;
+        engine.addStep(before, 1.0f, 1.0f - epsilon);
+        engine.addStep(at, 1.0f, 0.0f);
+        engine.addStep(after, 1.0f, epsilon);
+        constexpr int centre = YouKnow106Engine::correctionHalfWidth;
+        return {
+            before.ring[static_cast<std::size_t>(centre - 1)],
+            at.ring[static_cast<std::size_t>(centre)],
+            after.ring[static_cast<std::size_t>(centre)]
+        };
+    }
+
     static void primeDcoRestartFixture(YouKnow106Engine& engine, int slot,
                                        double phase) noexcept
     {
@@ -408,11 +427,12 @@ struct YouKnow106TestAccess
             parameters, 0.0f);
     }
 
-    static std::array<float, 10> pulseTrackAfterRestart(
+    static std::array<float, YouKnow106Engine::correctionRing + 2>
+    pulseTrackAfterRestart(
         const YouKnow106Engine& engine, int slot) noexcept
     {
         auto track = engine.voices_[static_cast<std::size_t>(slot)].dco.pulse;
-        std::array<float, 10> output {};
+        std::array<float, YouKnow106Engine::correctionRing + 2> output {};
         for (auto& sample : output)
             sample = track.advance(-1.0f);
         return output;
@@ -422,6 +442,16 @@ struct YouKnow106TestAccess
                                 int slot) noexcept
     {
         return engine.voices_[static_cast<std::size_t>(slot)].dco.renderScale;
+    }
+
+    static double numericalLatencyCentre(int factor) noexcept
+    {
+        return YouKnow106Engine::totalLatencySamples(factor);
+    }
+
+    static int latencyPadSamples(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.latencyPadSamples_;
     }
 
     static double sawRestartEventSideError(
@@ -1108,17 +1138,34 @@ void testAliasFloor()
                 std::cout << "ALIAS note " << note << " at "
                           << static_cast<int>(sampleRate) << " Hz: "
                           << decibels << " dB\n";
-            // Tightened from -55 dB once the residual tables were read with
-            // interpolation. The worst case measures about -71.6 dB, so this
-            // is a real bound rather than a slack one; the remaining floor is
-            // not set by the residual tables, since neither interpolation nor
-            // a wider kernel moves it.
+            // This narrow full-engine saw fence complements the expanded
+            // common-host saw/sub/pulse grid. It remains useful because it
+            // traverses the complete voice and output path rather than the
+            // isolated pre-VCF reconstruction boundary.
             expect(decibels < -70.0,
                    "alias floor for note " + std::to_string(note) + " at "
                        + std::to_string(static_cast<int>(sampleRate))
                        + " Hz is only " + std::to_string(decibels) + " dB down");
         }
     }
+}
+
+void testStepCorrectionKeepsTheAnalyticEventSide()
+{
+    YouKnow106Engine engine;
+    const auto sides = YouKnow106TestAccess::stepCorrectionEventSides(engine);
+
+    // The continuous bandlimited step is about 0.5 at the event. Immediately
+    // before it, the residual is therefore positive; at and after it, the
+    // exact ideal step has occurred and the residual is negative. Interpolating
+    // the discontinuous residual table blended those two sides and emitted a
+    // premature fractional edge in the final lookup interval before zero.
+    expect(sides[0] > 0.45f,
+           "step correction crossed the ideal edge before the event");
+    expect(sides[1] < -0.45f && sides[2] < -0.45f,
+           "step correction did not apply the t >= 0 event-side convention");
+    expectNear(sides[0] + sides[2], 0.0, 0.02,
+               "step correction lost its two-sided event symmetry");
 }
 
 void testRampHasARampSpectrum()
@@ -3145,10 +3192,16 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
                           ? std::array<double, 3> { 103.0, 225.0, 348.0 }
                           : std::array<double, 3> { 102.0, 224.0, 347.0 },
                       0.0, mode + " held-63.2-percent");
-        expectSummary(summary(values, &Observation::outputOnsetProxy),
+        const auto outputOnset =
+            summary(values, &Observation::outputOnsetProxy);
+        if (std::getenv("YOUKNOW106_AUDIT_LATENCY") != nullptr)
+            std::cout << mode << " output-onset-proxy "
+                      << outputOnset[0] << "/" << outputOnset[1] << "/"
+                      << outputOnset[2] << " samples\n";
+        expectSummary(outputOnset,
                       quality != 0
-                          ? std::array<double, 3> { 93.0, 216.0, 339.0 }
-                          : std::array<double, 3> { 90.0, 213.0, 335.0 },
+                          ? std::array<double, 3> { 105.0, 228.0, 351.0 }
+                          : std::array<double, 3> { 87.0, 210.0, 335.0 },
                       1.0, mode + " output-onset-proxy");
     }
     int maximumOnsetDifference = 0;
@@ -3172,8 +3225,9 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
     expect(maximumPitchDifference == 201
                && maximumTargetDifference == 201,
            "the documented HQ scan-grid quantisation changed");
-    expect(std::abs(maximumOnsetDifference - 205) <= 2,
-           "the documented paired HQ onset-grid bound moved");
+    expect(std::abs(maximumOnsetDifference - 223) <= 2,
+           "the documented paired HQ onset-grid bound moved to "
+               + std::to_string(maximumOnsetDifference));
 }
 
 void testSilentVoiceDoesNotInventUnmeasuredVcaFeedthrough()
@@ -5000,8 +5054,18 @@ void testSampleRateAndOversamplingConsistency()
     engine.prepare(48000.0, blockSize, true);
     expect(engine.getOversamplingFactor() == 4, "48 kHz does not run oversampled");
     const int reported = engine.getProcessingLatencySamples();
-    expect(reported == 24,
-           "the engine no longer reports its 24-host-sample DSP latency");
+    expect(reported == 41,
+           "the engine no longer reports its 41-host-sample DSP latency");
+    const auto expectAlignedCentre = [&](const YouKnow106Engine& current) {
+        const double effective = YouKnow106TestAccess::numericalLatencyCentre(
+            current.getOversamplingFactor())
+            + YouKnow106TestAccess::latencyPadSamples(current);
+        expect(std::abs(effective - reported) <= 0.500001,
+               "the padded numerical centre is " + std::to_string(effective)
+                   + " samples against the " + std::to_string(reported)
+                   + "-sample host report");
+    };
+    expectAlignedCentre(engine);
 
     // The reported figure has to stay put across every configuration: the
     // quality setting can move while the host is playing, and a plug-in that
@@ -5012,14 +5076,17 @@ void testSampleRateAndOversamplingConsistency()
            "96 kHz does not use the two-times numerical path");
     expect(engine.getProcessingLatencySamples() == reported,
            "the reported latency moved on the two-times path");
+    expectAlignedCentre(engine);
     engine.prepare(192000.0, blockSize, true);
     expect(engine.getOversamplingFactor() == 1,
            "a high-rate host is oversampled unnecessarily");
     expect(engine.getProcessingLatencySamples() == reported,
            "the reported latency moved with the oversampling factor");
+    expectAlignedCentre(engine);
     engine.prepare(48000.0, blockSize, false);
     expect(engine.getProcessingLatencySamples() == reported,
            "the reported latency moved when oversampling was switched off");
+    expectAlignedCentre(engine);
 
     // And the shallower configurations must actually be padded out to it,
     // otherwise the constant figure would be a lie the host acts on.
@@ -5039,13 +5106,16 @@ void testSampleRateAndOversamplingConsistency()
     const int deep = onsetOffset(true);
     const int shallow = onsetOffset(false);
     expect(deep >= 0 && shallow >= 0, "a configuration produced no onset at all");
-    // The host-compensated numerical paths agree within four samples. The
-    // remaining threshold crossing includes the nonlinear analogue filter's
-    // own signal-dependent onset and is not reported as plug-in latency.
-    expect(std::abs(deep - shallow) <= 4,
-           "the two configurations do not share an onset (deep "
+    // The nominal numerical centres above are aligned within half a sample.
+    // This much earlier -80 dBFS threshold is signal-dependent: the symmetric
+    // 24-internal-sample correction begins 24 host samples before its centre
+    // at 1x but only six before it at 4x. Fence that reviewed pre-ringing
+    // difference separately rather than misreporting it as host latency.
+    const int onsetDifference = std::abs(deep - shallow);
+    expect(onsetDifference >= 17 && onsetDifference <= 21,
+           "the reviewed reconstruction pre-ringing difference moved (deep "
                + std::to_string(deep) + ", shallow "
-               + std::to_string(shallow) + "), so the padding is wrong");
+               + std::to_string(shallow) + ")");
 }
 
 void testResonanceDoesNotMoveTheRenderedCorner()
@@ -6075,6 +6145,7 @@ int main()
     testFilterPolesAreStaggeredOnlyByUnitCharacter();
     testMixerLevelIsContinuousInSubAndNoise();
     testUnisonDoesNotBeat();
+    testStepCorrectionKeepsTheAnalyticEventSide();
     testAliasFloor();
     testRampHasARampSpectrum();
     testKeyAssignerDropsRatherThanSteals();

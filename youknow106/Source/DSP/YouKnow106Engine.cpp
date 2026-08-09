@@ -1396,79 +1396,87 @@ float YouKnow106Engine::BandlimitedTrack::advance(float naive) noexcept
 {
     prime(naive);
 
-    const float output = delay[0] + ring[static_cast<std::size_t>(base)];
+    const int delayIndex = base % correctionHalfWidth;
+    const float output = delay[static_cast<std::size_t>(delayIndex)]
+                       + ring[static_cast<std::size_t>(base)];
     ring[static_cast<std::size_t>(base)] = 0.0f;
+    delay[static_cast<std::size_t>(delayIndex)] = naive;
     base = base + 1 < correctionRing ? base + 1 : 0;
-
-    for (int i = 0; i + 1 < correctionHalfWidth; ++i)
-        delay[static_cast<std::size_t>(i)] = delay[static_cast<std::size_t>(i + 1)];
-    delay[static_cast<std::size_t>(correctionHalfWidth - 1)] = naive;
 
     return output;
 }
 
-void YouKnow106Engine::buildCorrectionTables() noexcept
+const YouKnow106Engine::CorrectionTables&
+YouKnow106Engine::correctionTables() noexcept
 {
-    // Integrate a Blackman-windowed sinc to obtain the bandlimited step, then
-    // subtract the ideal step to leave the residual. Integrating once more
-    // gives the slope residual. Doing this numerically rather than fitting a
-    // polynomial means the residual is right by construction; the earlier
-    // closed-form attempt was not, and it raised the alias floor instead of
-    // lowering it.
-    constexpr int length = correctionTableLength;
-    constexpr double step = 1.0 / correctionOversample;
+    static const CorrectionTables tables = [] {
+        // Integrate a Blackman-windowed sinc to obtain the continuous
+        // bandlimited step. Integrating once more gives the bandlimited ramp.
+        // The ideal step is deliberately not subtracted here: its residual has
+        // a unit jump at t=0, and interpolating that discontinuous table made
+        // the lookup interval before zero emit a premature fractional edge.
+        // The slope residual is continuous at zero, so it remains stored
+        // directly and retains precision near the kernel boundary.
+        constexpr int length = correctionTableLength;
+        constexpr double step = 1.0 / correctionOversample;
 
-    std::array<double, length> impulse {};
-    for (int i = 0; i < length; ++i)
-    {
-        const double t = static_cast<double>(i) * step - correctionHalfWidth;
-        const double sinc = std::abs(t) < 1.0e-12
-            ? 1.0
-            : std::sin(3.14159265358979323846 * t) / (3.14159265358979323846 * t);
-        const double phase = static_cast<double>(i) / static_cast<double>(length - 1);
-        const double window = 0.42
-                            - 0.5 * std::cos(2.0 * 3.14159265358979323846 * phase)
-                            + 0.08 * std::cos(4.0 * 3.14159265358979323846 * phase);
-        impulse[static_cast<std::size_t>(i)] = sinc * window;
-    }
+        std::array<double, length> impulse {};
+        for (int i = 0; i < length; ++i)
+        {
+            const double t = static_cast<double>(i) * step
+                           - correctionHalfWidth;
+            const double sinc = std::abs(t) < 1.0e-12
+                ? 1.0
+                : std::sin(3.14159265358979323846 * t)
+                    / (3.14159265358979323846 * t);
+            const double phase = static_cast<double>(i)
+                               / static_cast<double>(length - 1);
+            const double window = 0.42
+                - 0.5 * std::cos(2.0 * 3.14159265358979323846 * phase)
+                + 0.08 * std::cos(4.0 * 3.14159265358979323846 * phase);
+            impulse[static_cast<std::size_t>(i)] = sinc * window;
+        }
 
-    // Trapezoidal running integral, normalised so the step ends at exactly one.
-    std::array<double, length> stepResponse {};
-    double accumulator = 0.0;
-    stepResponse[0] = 0.0;
-    for (int i = 1; i < length; ++i)
-    {
-        accumulator += 0.5 * step
-                     * (impulse[static_cast<std::size_t>(i - 1)]
-                        + impulse[static_cast<std::size_t>(i)]);
-        stepResponse[static_cast<std::size_t>(i)] = accumulator;
-    }
-    const double total = stepResponse[length - 1];
-    if (std::abs(total) > 1.0e-12)
-        for (auto& value : stepResponse)
-            value /= total;
+        // Trapezoidal running integral, normalised so the step ends at one.
+        std::array<double, length> stepResponse {};
+        double accumulator = 0.0;
+        for (int i = 1; i < length; ++i)
+        {
+            accumulator += 0.5 * step
+                         * (impulse[static_cast<std::size_t>(i - 1)]
+                            + impulse[static_cast<std::size_t>(i)]);
+            stepResponse[static_cast<std::size_t>(i)] = accumulator;
+        }
+        const double total = stepResponse[length - 1];
+        if (std::abs(total) > 1.0e-12)
+            for (auto& value : stepResponse)
+                value /= total;
 
-    std::array<double, length> rampResponse {};
-    accumulator = 0.0;
-    rampResponse[0] = 0.0;
-    for (int i = 1; i < length; ++i)
-    {
-        accumulator += 0.5 * step
-                     * (stepResponse[static_cast<std::size_t>(i - 1)]
-                        + stepResponse[static_cast<std::size_t>(i)]);
-        rampResponse[static_cast<std::size_t>(i)] = accumulator;
-    }
+        std::array<double, length> rampResponse {};
+        accumulator = 0.0;
+        for (int i = 1; i < length; ++i)
+        {
+            accumulator += 0.5 * step
+                         * (stepResponse[static_cast<std::size_t>(i - 1)]
+                            + stepResponse[static_cast<std::size_t>(i)]);
+            rampResponse[static_cast<std::size_t>(i)] = accumulator;
+        }
 
-    for (int i = 0; i < length; ++i)
-    {
-        const double t = static_cast<double>(i) * step - correctionHalfWidth;
-        const double idealStep = t >= 0.0 ? 1.0 : 0.0;
-        const double idealRamp = t >= 0.0 ? t : 0.0;
-        stepResidual_[static_cast<std::size_t>(i)] =
-            static_cast<float>(stepResponse[static_cast<std::size_t>(i)] - idealStep);
-        slopeResidual_[static_cast<std::size_t>(i)] =
-            static_cast<float>(rampResponse[static_cast<std::size_t>(i)] - idealRamp);
-    }
+        CorrectionTables result;
+        for (int i = 0; i < length; ++i)
+        {
+            result.stepResponse[static_cast<std::size_t>(i)] =
+                static_cast<float>(stepResponse[static_cast<std::size_t>(i)]);
+            const double t = static_cast<double>(i) * step
+                           - correctionHalfWidth;
+            const double idealRamp = t >= 0.0 ? t : 0.0;
+            result.slopeResidual[static_cast<std::size_t>(i)] =
+                static_cast<float>(rampResponse[static_cast<std::size_t>(i)]
+                                   - idealRamp);
+        }
+        return result;
+    }();
+    return tables;
 }
 
 // `samplesAgo` is how far back inside the sample just rendered the event sits,
@@ -1476,17 +1484,16 @@ void YouKnow106Engine::buildCorrectionTables() noexcept
 // samples away from the sample just rendered, so the residual is read at
 // `j - halfWidth + samplesAgo` and the table is offset by the half width.
 //
-// The table is read with linear interpolation, not nearest neighbour. The
-// table is built at 64x, so rounding to the nearest entry quantises every
-// edge's sub-sample position to 1/64 of an internal sample -- about 23 ns of
-// timing jitter at 192 kHz, applied to every comparator edge, divider edge and
-// ramp corner. That jitter is broadband and lands squarely in the alias floor
-// the residuals exist to lower.
+// The continuous response table is read with linear interpolation, not nearest
+// neighbour. The ideal step is then evaluated exactly at the query time.
+// Keeping the discontinuity out of the interpolated data is essential: even a
+// dense table otherwise blends across the unit jump immediately before t=0.
 void YouKnow106Engine::addStep(BandlimitedTrack& track, float height,
                                float samplesAgo) const noexcept
 {
     if (!(std::abs(height) > 0.0f))
         return;
+    const auto& table = correctionTables().stepResponse;
     const float offset = std::clamp(samplesAgo, 0.0f, 1.0f);
     for (int j = 0; j < correctionRing; ++j)
     {
@@ -1496,10 +1503,13 @@ void YouKnow106Engine::addStep(BandlimitedTrack& track, float height,
                                      correctionTableLength - 2);
         const float fraction = std::clamp(
             position - static_cast<float>(lower), 0.0f, 1.0f);
-        const float residual =
-            stepResidual_[static_cast<std::size_t>(lower)]
-            + (stepResidual_[static_cast<std::size_t>(lower + 1)]
-               - stepResidual_[static_cast<std::size_t>(lower)]) * fraction;
+        const float response =
+            table[static_cast<std::size_t>(lower)]
+            + (table[static_cast<std::size_t>(lower + 1)]
+               - table[static_cast<std::size_t>(lower)]) * fraction;
+        const float queryTime = static_cast<float>(j - correctionHalfWidth)
+                              + offset;
+        const float residual = response - (queryTime >= 0.0f ? 1.0f : 0.0f);
         const int slot = (track.base + j) % correctionRing;
         track.ring[static_cast<std::size_t>(slot)] += height * residual;
     }
@@ -1510,6 +1520,7 @@ void YouKnow106Engine::addSlope(BandlimitedTrack& track, float slopeStep,
 {
     if (!(std::abs(slopeStep) > 0.0f))
         return;
+    const auto& table = correctionTables().slopeResidual;
     const float offset = std::clamp(samplesAgo, 0.0f, 1.0f);
     for (int j = 0; j < correctionRing; ++j)
     {
@@ -1520,9 +1531,9 @@ void YouKnow106Engine::addSlope(BandlimitedTrack& track, float slopeStep,
         const float fraction = std::clamp(
             position - static_cast<float>(lower), 0.0f, 1.0f);
         const float residual =
-            slopeResidual_[static_cast<std::size_t>(lower)]
-            + (slopeResidual_[static_cast<std::size_t>(lower + 1)]
-               - slopeResidual_[static_cast<std::size_t>(lower)]) * fraction;
+            table[static_cast<std::size_t>(lower)]
+            + (table[static_cast<std::size_t>(lower + 1)]
+               - table[static_cast<std::size_t>(lower)]) * fraction;
         const int slot = (track.base + j) % correctionRing;
         track.ring[static_cast<std::size_t>(slot)] += slopeStep * residual;
     }
@@ -1675,9 +1686,10 @@ void YouKnow106Engine::restartDcoBandlimited(
 
     // The write happens before the current naive sample enters the track. In
     // this delayed-input residual convention that is offset zero: the track's
-    // own four-sample delay supplies the non-causal half of the symmetric
-    // correction. Offset one would advance the residual without advancing the
-    // delayed hard step and create a larger, double-sided discontinuity.
+    // own correction-half-width delay supplies the non-causal half of the
+    // symmetric correction. Offset one would advance the residual without
+    // advancing the delayed hard step and create a larger, double-sided
+    // discontinuity.
     constexpr float currentNaiveTimestamp = 0.0f;
     // renderVoice advances the normalized phase before it submits the next
     // naive sample. Express the value discontinuity on that same event-side
@@ -2038,30 +2050,27 @@ void YouKnow106Engine::HalfbandDecimator::reset() noexcept
 YouKnow106Engine::YouKnow106Engine() noexcept
 {
     buildHalfbandKernel();
-    buildCorrectionTables();
+    (void) correctionTables();
     buildVoiceCards();
     clearHeldNotes();
 }
 
 void YouKnow106Engine::buildHalfbandKernel() noexcept
 {
-    // Kaiser-windowed half-band. A Blackman-Harris window has a deeper
-    // stopband than this design but spends far too many of sixty-three taps
-    // reaching it: its main lobe is eight bins wide, which puts the last
-    // decimation stage's transition band at roughly 18 to 30 kHz. At a
-    // 44.1 kHz host that leaves the top of the audio band inside the
-    // transition -- 0.85 dB down at 20 kHz, and content folding onto 19.1 kHz
-    // rejected by only 31.7 dB, which is audible material rather than a
-    // theoretical figure.
+    // Kaiser-windowed half-band. The historical sixty-three-tap
+    // Blackman-Harris boundary had a deep far stopband but spent too many taps
+    // reaching it: its main lobe put the last decimation stage's transition at
+    // roughly 18 to 30 kHz. At a 44.1 kHz host that left the top of the audio
+    // band inside the transition -- 0.85 dB down at 20 kHz, and content
+    // folding onto 19.1 kHz rejected by only 31.7 dB.
     //
-    // Kaiser trades stopband depth for transition width continuously, and at
-    // beta = 7.857 (the standard design value for an 80 dB stopband) sixty-
-    // three taps put the transition at about 20 to 28 kHz instead. That is
-    // strictly better at both host rates the instrument is likely to see:
-    // 44.1 kHz improves from -31.7 to -46.2 dB of fold rejection at 19.1 kHz
-    // and from -0.85 to -0.43 dB at 20 kHz, and 48 kHz improves from -63.7 to
-    // -80.5 dB with no measurable passband cost at all. The remaining 80 dB
-    // stopband still sits below everything upstream of it.
+    // Kaiser trades stopband depth for transition width continuously. At
+    // beta = 7.857 (the standard design value for an 80 dB stopband), 95 taps
+    // are the selected comfortably passing common-host design in the expanded
+    // 44.1/48 kHz DCO audit: the shorter 63-tap boundary leaked the 25.1 kHz
+    // sixth pulse harmonic back onto 19.0 kHz at 44.1 kHz. The longer boundary
+    // keeps that line below the declared -70 dBc numerical-fidelity gate while
+    // retaining the 20 kHz passband contract.
     //
     // The Bessel function is written out below rather than taken from the
     // standard special-function header, which is not available on every
@@ -2084,7 +2093,7 @@ void YouKnow106Engine::buildHalfbandKernel() noexcept
     const double besselDenominator = besselI0(kaiserBeta);
 
     constexpr int centre = (halfbandTaps - 1) / 2;
-    float sum = 0.0f;
+    double sum = 0.0;
     for (int n = 0; n < halfbandTaps; ++n)
     {
         const float offset = static_cast<float>(n - centre);
@@ -2113,13 +2122,22 @@ void YouKnow106Engine::buildHalfbandKernel() noexcept
             / besselDenominator;
         halfbandKernel_[static_cast<std::size_t>(n)] =
             ideal * static_cast<float>(window);
-        sum += halfbandKernel_[static_cast<std::size_t>(n)];
+        sum += static_cast<double>(
+            halfbandKernel_[static_cast<std::size_t>(n)]);
     }
 
     // Normalise to exactly unity gain at DC so decimation cannot shift level.
-    if (sum > 1.0e-9f)
+    if (sum > 1.0e-9)
+    {
         for (auto& tap : halfbandKernel_)
-            tap /= sum;
+            tap = static_cast<float>(static_cast<double>(tap) / sum);
+
+        double normalisedSum = 0.0;
+        for (const float tap : halfbandKernel_)
+            normalisedSum += static_cast<double>(tap);
+        halfbandKernel_[static_cast<std::size_t>(centre)] +=
+            static_cast<float>(1.0 - normalisedSum);
+    }
 }
 
 void YouKnow106Engine::buildVoiceCards() noexcept
@@ -2425,8 +2443,8 @@ int YouKnow106Engine::getProcessingLatencySamples() const noexcept
     // Always the deepest configuration's figure, whatever is running. The
     // quality setting can change while the host is playing, and a plug-in that
     // renegotiated its latency mid-transport would make the host re-align
-    // everything around it; padding the shallower settings costs half a
-    // millisecond and keeps the number the host was told true.
+    // everything around it; padding the shallower settings by at most 17 host
+    // samples keeps the number the host was told true.
     return static_cast<int>(
         std::floor(totalLatencySamples(maximumOversampleFactor) + 0.5));
 }
