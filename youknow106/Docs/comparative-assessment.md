@@ -49,7 +49,7 @@ strongest competitor named.
 | Firmware envelope | Hash-scoped B-2 recurrence: 14-bit state, exact Q(v,c) three-partial multiply with the dropped low×low term, `E>>2` DAC truncation, byte-exact fixtures in the suite | KR-106: the same law at instruction level (cleanroom, j106roms lineage), cross-checked against MAME — parity on the digital law; no automated fixtures |
 | Firmware LFO/delay/portamento | Hash-scoped exact laws with regression vectors | KR-106: ROM-table reconstructions verified against four hardware captures — parity in kind |
 | VCF | IR3109 cascade behind the anchored 68 kΩ/560 Ω divider; loop gain fitted only to the 4.8 Vpp service amplitude (rendered 4.8009 Vpp), with 247.90 Hz then predicted rather than fitted; 992 Hz WIDTH anchor (tracking exactly 1.00); AS3109 700 µA control-current knee; R-2R carry INL on the converter write | KR-106: IR3109 TPT cascade with BA662 67:1 feedback physics, self-osc calibrated to a named unit, and a **4096-point measured DAC→Hz table from a real card** — a data asset this project matches only by derivation (within 30 cents of that table's shape after the knee fix) |
-| VCF numerical quality | Step 10 advances the continuous four-stage equations with two fixed five-stage Merson RK4 halfsteps, causal cubic drive and endpoint-linear ordinary controls over four double capacitor states. Step 11 preserves its ten RHS evaluations but, only in intervals containing a cutoff or shared-resonance write, evaluates the exact segmented 522 µs hold at all seven Merson nodes. A pure scheduler peek latches the fractional event payload without consuming the official cursor/target; the normal poll commits it once. All six standard HQ cells plus 8/768 kHz engine bounds pass at −84.881…−119.340 dB against independent RK64/RK128 references and the unchanged −40 dB gate. Late/ceil and early/floor snap mutations reject at −33.245/−32.007 dB | KR-106: 2×/4× oversampling, no published equivalent common-host, converter-schedule dynamic or fold-back fence. No other surveyed project publishes one |
+| VCF numerical quality | Step 10 advances the continuous four-stage equations with two fixed five-stage Merson RK4 halfsteps, causal cubic drive and endpoint-linear ordinary controls over four double capacitor states. Step 11 preserves its ten RHS evaluations but, only in intervals containing a cutoff or shared-resonance write, evaluates the exact segmented 522 µs hold at all seven Merson nodes. A pure scheduler peek latches the fractional event payload without consuming the official cursor/target; the normal poll commits it once. All six standard HQ cells plus 8/768 kHz engine bounds pass at −84.881…−119.340 dB against independent RK64/RK128 references and the unchanged −40 dB gate. Step 13 adds an audit-only actual-HQ-off q1 matrix: the complete 19/24 moving-control schedule passes five rows, including a separately labelled 8 kHz endpoint, but independent static nominal hot rows reject at every standard 44.1/48/88.2/96 kHz boundary, so no lower rate is admitted. Late/ceil and early/floor timing mutations and disconnected `renderVoice` wiring remain detected | KR-106: 2×/4× oversampling, no published equivalent common-host, converter-schedule dynamic or fold-back fence. No other surveyed project publishes one |
 | Chorus | Bucket-clocked two-phase 256-stage MN3009 model: full-period hold confirmed by the datasheet OUT1/OUT2 solve, per-shift transfer loss on the EC-row anchor, derived LFO rates 0.5533/0.8983 Hz from the 106's own timing network (ratio 1.6234799), measured 1.4–6.4 ms sweep, causal four-point Lagrange edge-input interpolation, bounded-polyBLEP BGA/SGA separation and combined exact continuous six-state support integration on every shipping HQ path, with no-compander hiss modelled | KR-106: deliberately *not* bucket-clocked (Hermite delay line with a written rationale), surrounded by measured side-effects (CTE gain modulation, leakage noise, clock-reset clicks); Chorus II rate marked "inherited, not re-verified". Hera has the field's only other bucket-level BBD — attached to an admittedly inaccurate alpha |
 | HPF incl. bass boost | The boost shelf **derived from the p. 15 branch** (+10.50 dB DC, +1.41 dB HF, 59.41 Hz; within 0.016 dB of the exact 2z/2p solve), cut corners from designators; asymptotic C14 coupling states | KR-106: the same 2p2z transfer from designators, verified 0.55 dB RMS against its (unpublished) hardware noise sweep — convergent result, one lineage of hardware corroboration |
 | Common VCA LEVEL | Derived dB-linear law from p. 8/p. 15/NEC (−16.32 + 0.1656·b dB), C7 9.08249 ms settling; Step 12 resolves its fractional write and independently probes the downstream gain consumer | Not modelled as a distinct stage anywhere else surveyed |
@@ -168,8 +168,10 @@ fresh [128-row factory report](audio/factory-presets/README.md) with ten
 common-gain previews. Two independent demo renders and two independent full
 factory renders from one frozen engine produced byte-identical pairs. The
 canonical 23-file manifest is
-`f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`;
-all 20 WAVs are finite stereo PCM16, with maximum absolute DC
+`f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`.
+Step 13 changed only the numerical audit and documentation, so this corpus was
+not regenerated and the Step 12 manifest remains current.
+All 20 WAVs are finite stereo PCM16, with maximum absolute DC
 `0.000000592814 FS` and worst edge `−46.962652 dBFS`. Current comparative
 claims rest on reproducible numerical contracts and primary-source mechanism
 coverage, not on an undocumented recording-chain comparison or a legacy
@@ -416,12 +418,15 @@ mechanisms active. Step 11 retains the common-host classifications while making
 the event-aware dynamic VCF matrix pass all six standard HQ paths and both
 8/768 kHz engine bounds. Step 12 extends fractional event evaluation to the
 remaining evidence-backed passive RC paths without changing either numerical
-classification. Lower common-host VCF/BBD factors still reject their
+classification. Step 13 changes only the VCF audit: it measures the actual
+HQ-off q1 selector at five moving-control rates and four standard static-hot
+rates. The moving schedule passes, but the combined standard truth table is
+REJECT/REJECT/REJECT/REJECT. Lower common-host VCF/BBD factors still reject their
 absolute gates. The matrix does not include the inter-domain reconstruction,
 whole-engine or
 latency proof a split architecture would require. Steps 8–12 add no future
-audio-sample lookahead or latency. No domain split or rate-selector change is
-admitted.
+audio-sample lookahead or latency, and Step 13 adds no shipping path at all. No
+domain split or rate-selector change is admitted.
 
 ### Common-host numerical quality: no split admitted
 
@@ -738,11 +743,79 @@ cursor/order/count, global factor, future audio sample or reported latency.
 OQ-07/OQ-08 remain open, as do the downstream VCA and source-level debts in
 OQ-15/OQ-16/OQ-19.
 
+**Step 13, 2026-08-09.** This is an audit-only qualification of the actual
+HQ-off VCF boundary. It changes no shipping DSP. The dynamic audit now prepares
+the real engine with HQ disabled and verifies that its factor and internal rate
+are q1 at 8, 44.1, 48, 88.2 and 96 kHz. A physically independent 12-pass
+schedule supplies enough FIR-supported q1 capture without changing any dated
+HQ family, filter, hash, metric or mutation golden. The supported 8 kHz engine
+minimum remains a separately labelled endpoint: the standard hot fixture uses
+a 16 kHz cutoff and is therefore not defined there.
+
+The moving-control profile repeats the Step 11 event-aware trajectory over all
+six card ordinals, nominal and full Unit Character, and cold/warm thermal
+states. Nineteen physical takes represent 24 logical profiles at each rate;
+that complete 19/24 scope belongs only to this profile, not to the static hot
+fixture below. Candidate NRMS retains the −40 dB gate and independent
+RK64/RK128 convergence retains the −80 dB gate:
+
+| Actual HQ-off selector | Scope | Moving-control NRMS | RK64/RK128 convergence | Moving admission |
+| ---: | --- | ---: | ---: | --- |
+| 8 kHz / q1 | supported endpoint | −53.279 dB | −110.051 dB | **PASS** |
+| 44.1 kHz / q1 | standard | −84.738 dB | −142.698 dB | **PASS** |
+| 48 kHz / q1 | standard | −86.568 dB | −144.403 dB | **PASS** |
+| 88.2 kHz / q1 | standard | −97.893 dB | −154.666 dB | **PASS** |
+| 96 kHz / q1 | standard | −99.618 dB | −157.689 dB | **PASS** |
+
+Passing that trajectory alone would be a false admission. The complementary
+fixture is deliberately static, nominal Character 0 only—not a claimed hot
+19/24 scheduled cross-product. It drives an analytic 20 kHz-band-limited
+1.046502 kHz saw at the production-compensated 2.4 V coordinate, 16 kHz cutoff
+and `k=3.8`. Each standard rate is admitted only when both the moving and hot
+profiles pass. The hot waveform gate remains NRMS ≤−40 dB, its exhaustive
+20 Hz–20 kHz residual off-mask gate remains <−60 dBc, and the independent
+oracle control remains ≤−85 dBc:
+
+| Actual HQ-off selector | Hot NRMS | RK64/RK128 convergence | Residual off-mask | Oracle off-mask | Combined admission |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 44.1 kHz / q1 | −12.538 dB | −135.643 dB | −44.602 dBc | −93.242 dBc | **REJECT** |
+| 48 kHz / q1 | −14.269 dB | −138.574 dB | −48.081 dBc | −93.163 dBc | **REJECT** |
+| 88.2 kHz / q1 | −30.417 dB | −159.637 dB | −85.765 dBc | −97.212 dBc | **REJECT** |
+| 96 kHz / q1 | −33.080 dB | −162.578 dB | −88.712 dBc | −97.141 dBc | **REJECT** |
+
+The four references converge and every oracle off-mask control passes. The
+44.1/48 kHz candidates fail both waveform and residual gates; 88.2/96 kHz pass
+the residual gate but still fail waveform NRMS. The frozen combined truth table
+is therefore **REJECT at all four standard HQ-off rates**, without weakening a
+threshold or relabelling a compatibility pass as absolute quality.
+
+This q1 classification exercises production scheduling and wiring rather than
+only an isolated cascade. At each of the five rates, an engine prepared with HQ
+off produces seven pure peeks and seven once-only normal-path commits spanning
+all six card-cutoff writes and the pass-wrapped shared-resonance write. Payload,
+cursor, order and pass-wrap checks pass. Five separate `renderVoice` probes—one
+per q1 rate—match the connected control trajectory exactly and reject the
+disconnected `nullptr` mutation. At the 8 kHz endpoint, otherwise structurally
+valid late/ceil and early/floor event snaps reject at −27.259 and −26.860 dB.
+Thus the moving-profile pass still depends on the intended fractional timing.
+
+All legacy HQ rows and their goldens remain unchanged. Step 13 moves no
+hardware or model constant, VCF equation or four-capacitor state, converter
+policy, selector, latency, CPU path, preset or audio sample. A future lower-rate
+repair has a clear boundary: it must pass both q1 profiles at all four standard
+rates under the current gates while preserving scheduler/wiring contracts, then
+qualify inter-domain reconstruction, whole-engine output, live transitions,
+the fixed 41-sample latency and CPU before any shipping-rate claim. The broader
+nonlinear, modulated, stereo and stochastic BBD oracle is deferred as a
+possible Step 14 audit; Step 13 neither extends that oracle nor changes any BBD
+classification.
+
 Step 12 regenerated the documentation audio from scratch. The maintained tree
 contains ten fresh demos, a fresh 128-row factory report/CSV and ten common-gain
 previews. Two demo runs and two full factory runs produced byte-identical pairs;
 the canonical 23-file manifest is
 `f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`.
+Step 13 did not regenerate the corpus; this Step 12 manifest remains current.
 The factory report reconciles 128 finite unique rows at an exact
 `−21.480711305 dBFS` median gated RMS, with 31 overload flags, zero near-silent
 presets and nine outside `±18 dB` of the corpus median; its common preview gain
@@ -755,14 +828,28 @@ establish audibility. Historical comparison/fidelity/realism/state-of-the-art
 trees remain recoverable from Step 9 and are intentionally not used for a
 listening-quality claim.
 
-A fresh warning-clean native Release/plugin-off build passes all **12/12**
-JUCE-free contracts in **323.07 s**. Five focused ASan+UBSan gates pass with
+The dated Step 12 shipping qualification used a warning-clean native
+Release/plugin-off build and passed all **12/12** JUCE-free contracts in
+**323.07 s**. Five focused ASan+UBSan gates passed with
 halt-on-error and no diagnostics: Engine passive-hold-only, independent passive
 hold, full DCO quality, oversampling normal/work parity and dynamic VCF. The
-universal Release/plugin-on build passes **13/13 in 344.05 s**. VST3, AU and
-Standalone each contain `x86_64 arm64` and pass strict/deep ad-hoc signature
-verification after packaging; all target macOS 11.0. A genuinely translated
-Rosetta `x86_64` passive-hold run passes in **0.55 s**.
+universal Release/plugin-on build passed **13/13 in 344.05 s**. VST3, AU and
+Standalone each contained `x86_64 arm64` and passed strict/deep ad-hoc
+signature verification after packaging; all targeted macOS 11.0. A genuinely
+translated Rosetta `x86_64` passive-hold run passed in **0.55 s**.
+
+Step 13's audit-only verification is separate. The final warning-clean native
+Release/plugin-off tree passed **12/12** contracts in **375.88 s** while the
+translated audit shared the machine; the rebuilt registered dynamic contract
+also passed alone in **38.90 s**. Its focused ASan+UBSan self-test passed with
+`halt_on_error=1`, `detect_leaks=0` and no diagnostics. A universal audit
+executable containing `x86_64 arm64` and targeting macOS 11.0 passed natively
+on arm64 and in a genuinely translated Rosetta `x86_64` process in
+**963.10 s**. Rosetta exposed a 0.103 dB variation only in the moving
+RK64/RK128 fingerprint near −158 dB, so that non-admission fingerprint has an
+explicit ±0.15 dB portability band; NRMS, snap and hot fingerprints remain at
+±0.05 dB and every absolute gate is unchanged. No shipping DSP, plug-in
+artifact, CPU path or audio corpus moved.
 
 ### Dated Step 4 bounded-work VCF candidate: matrix rejection
 

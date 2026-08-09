@@ -3421,3 +3421,115 @@ evidence about a physical JUNO-106.
   normalized compatibility policy, not hardware timing evidence. OQ-07 remains
   open on acquisition, droop, loading and hold interpretation; OQ-08 remains
   open on physical timestamps, jitter and DCO restart behavior.
+
+- [x] **13. Qualify the actual HQ-off VCF boundary without changing it.**
+  Steps 10–12 remain the dated implementation history above. This step changes
+  only `Tools/AuditVcfDynamicQuality.cpp`: no production equation, selector,
+  state, delay, preset, CMake target or audio sample changes. It asks two
+  deliberately separate questions so a smooth signal cannot admit a nonlinear
+  lower grid.
+
+  The moving-control side repeats the existing four stored-byte snapshots over
+  **12 converter passes**. At each rate it exercises the exact 23-write order,
+  fractional 522 µs VCF/resonance trajectories, 19 physical takes representing
+  24 logical card/Character/thermal profiles, independent RK64/RK128 references
+  and the actual HQ-off selector. The real scheduler and `renderVoice`
+  trajectory seam are probed at 8/44.1/48/88.2/96 kHz; a disconnected
+  trajectory must diverge. Every row has zero recovery, write/count or control-
+  contract mismatch. The −40 dB candidate-NRMS and −80 dB reference-
+  convergence gates are unchanged:
+
+  | HQ-off q1 moving-control row | Worst NRMS | RK64/RK128 | Minimum compared frames | Result |
+  | --- | ---: | ---: | ---: | --- |
+  | 8 kHz supported selector endpoint | −53.279 dB | −110.051 dB | 147 | **PASS — moving only** |
+  | 44.1 kHz standard host | −84.738 dB | −142.698 dB | 1,198 | **PASS** |
+  | 48 kHz standard host | −86.568 dB | −144.403 dB | 1,395 | **PASS** |
+  | 88.2 kHz standard host | −97.893 dB | −154.666 dB | 3,421 | **PASS** |
+  | 96 kHz standard host | −99.618 dB | −157.689 dB | 3,814 | **PASS** |
+
+  The 8 kHz row is not silently promoted into the standard set. Its late/ceil
+  and early/floor event-snap mutations remain structurally exact but reject at
+  **−27.259 and −26.860 dB**. Moving NRMS and both mutation metrics are frozen
+  with ±0.05 dB bands. Moving RK64/RK128 convergence uses a separate ±0.15 dB
+  cross-architecture fingerprint band at its roughly −110…−158 dB numerical
+  floor; the unchanged −80 dB convergence admission gate is not relaxed. Raw
+  hashes are compared only within one run, not frozen across architectures.
+
+  The second side reuses the nominal Character-0 nonlinear fixture: an analytic
+  19-harmonic, 20 kHz-band-limited 1,046.502 Hz saw at the production-
+  compensated 2.4 V coordinate, 16 kHz cutoff and `k=3.8`. It is **static
+  nominal coverage, not a hot × 19/24 scheduled cross-product**. Independent
+  RK64/RK128, a 4,097-tap oracle boundary, a 32,768-frame exhaustive spectrum,
+  exact unmasked-bin counts, finite/reset/recovery/selector checks and filter-
+  response convergence are structural gates. Quality requires waveform NRMS
+  ≤−40 dB and residual off-mask <−60 dBc; the oracle control must remain
+  ≤−85 dBc. The response grid keeps constant physical-Hz density at the doubled
+  88.2/96 kHz family rates without weakening any response threshold.
+
+  | Standard HQ-off q1 hot row | NRMS | RK64/RK128 | Residual / oracle off-mask | Unmasked bins | Combined result |
+  | --- | ---: | ---: | ---: | ---: | --- |
+  | 44.1 kHz | −12.538 dB | −135.643 dB | −44.602 / −93.242 dBc | 14,618 | **REJECT** |
+  | 48 kHz | −14.269 dB | −138.574 dB | −48.081 / −93.163 dBc | 13,412 | **REJECT** |
+  | 88.2 kHz | −30.417 dB | −159.637 dB | −85.765 / −97.212 dBc | 7,195 | **REJECT** |
+  | 96 kHz | −33.080 dB | −162.578 dB | −88.712 / −97.141 dBc | 6,592 | **REJECT** |
+
+  All four hot rows are structurally valid and all four fail waveform quality;
+  44.1/48 kHz also fail the residual off-mask gate. Each standard classification
+  is computed as `moving structural && moving quality && hot structural && hot
+  quality`, so every standard HQ-off row is frozen **REJECT** even though its
+  smooth moving-control side passes. Hot NRMS, convergence and both off-mask
+  values use ±0.05 dB goldens. The 16 kHz hot fixture is undefined at an
+  8 kHz host and is therefore not run or compared there.
+
+  The result identifies a numerical limitation, not a JUNO-106 property:
+  HQ-off supplies too few input/control samples before the nonlinear VCF grid,
+  so interpolation cannot reconstruct nonlinear pre-grid foldback already
+  created at q1. Increasing the host rate improves but does not clear the hot
+  waveform gate. A future production candidate may keep only the VCF at q4 for
+  44.1/48 kHz and q2 for 88.2/96 kHz while other domains remain q1, but it is
+  not admitted by this audit. That candidate must, in one atomic qualification:
+
+  - retain the same-host moving and hot gates, exact 23-write/fractional-
+    trajectory coverage, the existing ±0.05 dB signal/mutation and ±0.15 dB
+    moving-convergence fingerprint bands, actual production wiring, finite
+    state and zero recovery at every 44.1/48/88.2/96 kHz boundary;
+  - preserve the four capacitor voltages plus input/control history across
+    quality and local-rate changes, with block-boundary and mutation tests;
+  - account for the local decimator's fractional delay without changing the
+    fixed **41-host-sample** report or adding lookahead, and prove impulse/block
+    alignment at q4/q2→host boundaries;
+  - qualify DCO, sub and shaped-noise transfer into the denser VCF grid,
+    including wall-clock PSD/RNG-state invariance and the existing hot
+    residual/oracle masks, rather than repeating q1 samples by assumption; and
+  - publish paired whole-engine and VCF-only work/CPU results, keep the hard
+    `<1×` realtime and `+5%` regression fences, and demonstrate a useful saving
+    rather than inferring one from solve counts.
+
+  A separate **non-shipping, low-drive deterministic BBD scratch** remains only
+  a deferred research lead. Replacing its current q1 boundary with exact analog
+  input-at-edge plus exact fractional output events moves NRMS/BGA/SGA from
+  `−3.511/4.764/−26.934`, `−5.263/3.406/−30.746`,
+  `−18.390/0.071/−41.304`, `−20.051/0.016/−46.044` dB at
+  44.1/48/88.2/96 kHz to `−15.859/0.00123/−54.044`,
+  `−18.344/0.00103/−53.747`, `−37.660/0.00071/−97.307` and
+  `−40.408/0.00065/−96.646` dB. Only 96 kHz clears that scratch's complete
+  gates; stochastic/noise state is unqualified. Nothing from it ships in Step
+  13, and it does not reclassify the BBD.
+
+  Final Step-13 portability qualification is green. A warning-clean native
+  Release/plugin-off tree passes **12/12** contracts in **375.88 s** while the
+  translated audit shares the machine; the registered dynamic contract also
+  passes alone in **38.90 s**, and its focused ASan+UBSan self-test passes with
+  `halt_on_error=1`, `detect_leaks=0` and no diagnostics. The universal
+  `x86_64 arm64` audit binary
+  passes natively on arm64 and under genuine Rosetta translation in
+  **963.10 s**. The translated run exposed a 0.103 dB difference only at the
+  moving convergence fingerprint's roughly −158 dB floor, motivating its
+  explicit ±0.15 dB portability band without moving the −80 dB gate or any
+  signal/hot/mutation band.
+
+  **Verdict: HQ-off VCF remains rejected at every standard host under the
+  complete smooth-plus-hot rule.** Step 13 is an audit/truth-table improvement,
+  not DSP, latency, CPU, audio or hardware evidence. The Step-12 audio tree is
+  untouched; its canonical manifest remains
+  `f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`.

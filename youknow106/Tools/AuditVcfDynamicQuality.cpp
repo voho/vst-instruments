@@ -5,11 +5,13 @@
 // normalized 23-write service-chart schedule, analytically continuous 522 us
 // cutoff/resonance holds and the actual deterministic six-card profiles.  The
 // production cascade is compared with a separately written double-precision
-// continuous-ODE oracle.  One physical oracle grid serves each processing-rate
-// family at 16x its base; four/eight RK4 subdivisions make the two references
-// RK64/RK128 relative to that base.  The oracle is reduced once to the family's
-// physical VCF grid, then both sides cross identical production 4x/2x/1x
-// output boundaries. Four-times processing is never used as truth.
+// continuous-ODE oracle.  The established HQ matrix keeps one physical oracle
+// grid per processing-rate family at 16x its base; a separate twelve-pass
+// HQ-off matrix resolves the actual q1 boundary at 8/44.1/48/88.2/96 kHz. A
+// static nominal, band-limited hot saw closes the smooth-signal false-pass hole
+// at the four standard rates with waveform and exhaustive off-mask gates.
+// Four/eight RK4 subdivisions provide independent RK64/RK128 references;
+// four-times processing is never used as truth.
 
 #include "DSP/YouKnow106Engine.h"
 #include "OversamplingQualitySupport.h"
@@ -18,6 +20,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
@@ -169,10 +172,11 @@ struct YouKnow106TestAccess
         };
     }
 
-    static ProcessingRate shippingProcessingRate(double hostRate)
+    static ProcessingRate shippingProcessingRate(double hostRate,
+                                                  bool hqEnabled = true)
     {
         YouKnow106Engine engine;
-        engine.prepare(hostRate, 1, true);
+        engine.prepare(hostRate, 1, hqEnabled);
         return { engine.getOversamplingFactor(), engine.oversampledRate_ };
     }
 
@@ -314,7 +318,8 @@ struct YouKnow106TestAccess
         }
     };
 
-    static SchedulerContract schedulerContract()
+    static SchedulerContract schedulerContract(
+        double hostRate = 8000.0, bool hqEnabled = true)
     {
         SchedulerContract result;
         const auto phases = YouKnow106Engine::converterEventPhases(
@@ -328,7 +333,7 @@ struct YouKnow106TestAccess
         for (int card = 0; card < YouKnow106Engine::hardwareVoices; ++card)
         {
             YouKnow106Engine engine;
-            engine.prepare(8000.0, 1, true);
+            engine.prepare(hostRate, 1, hqEnabled);
             engine.converterEventPhases_ = phases;
             const std::size_t ordinal = 10u
                 + 2u * static_cast<std::size_t>(card);
@@ -405,7 +410,7 @@ struct YouKnow106TestAccess
         // already 23, then committed once after the pass-wrap reset. Neither
         // LFO nor envelope state may advance during that speculative peek.
         YouKnow106Engine engine;
-        engine.prepare(8000.0, 1, true);
+        engine.prepare(hostRate, 1, hqEnabled);
         engine.converterEventPhases_ = phases;
         engine.nextConverterWrite_ = writes.size();
         engine.passiveHoldEventLatch_ = {};
@@ -457,6 +462,7 @@ struct YouKnow106TestAccess
     struct ShippingWiringContract
     {
         std::size_t probes {};
+        std::size_t expectedProbes { 4u };
         double maximumConnectedStateDifference {};
         double minimumDisconnectedStateDifference {
             std::numeric_limits<double>::infinity()
@@ -467,7 +473,7 @@ struct YouKnow106TestAccess
 
         [[nodiscard]] bool passed() const noexcept
         {
-            return probes == 4u && connectedExact
+            return probes == expectedProbes && connectedExact
                 && disconnectedRejected && finite
                 && maximumConnectedStateDifference == 0.0
                 && minimumDisconnectedStateDifference > 0.0;
@@ -483,17 +489,25 @@ struct YouKnow106TestAccess
     // Consequently changing Engine.cpp's renderVoice call to pass nullptr
     // makes the actual shipping state coincide with the rejected mutation and
     // fails this contract even if every local OtaCascade test still passes.
-    static ShippingWiringContract shippingWiringContract()
+    static ShippingWiringContract shippingWiringContract(
+        bool hqEnabled = true)
     {
-        constexpr std::array<double, 4> hostRates {
+        constexpr std::array<double, 4> hqHostRates {
             8000.0, 44100.0, 48000.0, 768000.0
+        };
+        constexpr std::array<double, 5> lowerRateHostRates {
+            8000.0, 44100.0, 48000.0, 88200.0, 96000.0
         };
         constexpr float twoPi = 6.28318530717958647692f;
         ShippingWiringContract result;
-        for (std::size_t probe = 0; probe < hostRates.size(); ++probe)
+        result.expectedProbes = hqEnabled
+            ? hqHostRates.size() : lowerRateHostRates.size();
+        for (std::size_t probe = 0; probe < result.expectedProbes; ++probe)
         {
+            const double hostRate = hqEnabled
+                ? hqHostRates[probe] : lowerRateHostRates[probe];
             YouKnow106Engine engine;
-            engine.prepare(hostRates[probe], 1, true);
+            engine.prepare(hostRate, 1, hqEnabled);
             EngineParameters parameters;
             parameters.calibration = 0.0f;
             parameters.sawEnabled = true;
@@ -504,7 +518,9 @@ struct YouKnow106TestAccess
             parameters.enableSpatialThermalGradient = false;
             engine.setParameters(parameters);
 
-            const int card = static_cast<int>(probe);
+            const int card = static_cast<int>(
+                probe % static_cast<std::size_t>(
+                    YouKnow106Engine::hardwareVoices));
             auto& voice = engine.voices_[static_cast<std::size_t>(card)];
             engine.initialiseVoice(voice, card, 48 + 4 * card, 1.0f);
             voice.dco.reset();
@@ -759,6 +775,7 @@ constexpr double warmSeconds = 900.0;
 constexpr double converterPassSeconds = 21.0 / 5000.0;
 constexpr double converterScanRate = 5000.0 / 21.0;
 constexpr int renderedPasses = 4;
+constexpr int lowerRateQualificationPasses = 12;
 constexpr int captureFirstPass = 1;
 constexpr int rk64Substeps = 4;
 constexpr int rk128Substeps = 8;
@@ -773,6 +790,12 @@ constexpr std::size_t endpointReferenceFilterTaps = 1025u;
 // stored bytes, not arbitrary floating-point controls.
 constexpr std::array<int, renderedPasses> cutoffBytes { 58, 82, 66, 91 };
 constexpr std::array<int, renderedPasses> resonanceBytes { 20, 72, 38, 84 };
+
+constexpr std::size_t payloadIndex(int pass) noexcept
+{
+    return static_cast<std::size_t>(pass)
+         % static_cast<std::size_t>(renderedPasses);
+}
 
 struct Cell
 {
@@ -796,6 +819,77 @@ constexpr std::array<double, 4> familyBaseRates {
     44100.0, 48000.0, 8000.0, 192000.0
 };
 
+// HQ-off has a distinct selector boundary: its physical VCF grid is the host
+// grid.  Keep the supported 8 kHz endpoint separate from the four standard
+// host rows; the static 16 kHz hot fixture below is not defined at 8 kHz.
+constexpr std::array<Cell, 5> lowerRateMovingCells {{
+    { 8000.0, 1, 0 },
+    { 44100.0, 1, 1 },
+    { 48000.0, 1, 2 },
+    { 88200.0, 1, 3 },
+    { 96000.0, 1, 4 },
+}};
+constexpr std::array<double, 4> standardLowerRateHosts {
+    44100.0, 48000.0, 88200.0, 96000.0
+};
+
+constexpr std::size_t hotOracleFactor = 16u;
+constexpr double hotFundamentalHz = 1046.502;
+constexpr double hotAmplitude = 2.4;
+constexpr double hotCutoffHz = 16000.0;
+constexpr float hotFeedback = 3.8f;
+constexpr std::size_t hotWarmupHostFrames = 8192u;
+constexpr std::size_t hotCaptureHostFrames = 32768u;
+constexpr std::size_t hotMeasurementEndHostFrame =
+    hotWarmupHostFrames + hotCaptureHostFrames;
+constexpr std::size_t hotRenderTailHostFrames = 256u;
+constexpr std::size_t hotHostFrames =
+    hotMeasurementEndHostFrame + hotRenderTailHostFrames;
+constexpr double qualificationGoldenToleranceDb = 0.05;
+// The moving RK64/RK128 comparison reaches the platform's floating-point
+// floor. Apple Silicon and x86_64 long-double evaluation differ by up to
+// 0.103 dB near -158 dB while remaining almost 78 dB below the unchanged
+// -80 dB convergence gate. Keep the signal and mutation fingerprints at
+// 0.05 dB, but give this non-admission convergence fingerprint an explicit,
+// narrowly bounded cross-architecture allowance.
+constexpr double movingConvergenceGoldenToleranceDb = 0.15;
+
+struct MovingGolden
+{
+    double relativeRmsDb;
+    double convergenceDb;
+};
+
+constexpr std::array<MovingGolden, lowerRateMovingCells.size()>
+    lowerRateMovingGoldens {{
+        { -53.279, -110.051 },
+        { -84.738, -142.698 },
+        { -86.568, -144.403 },
+        { -97.893, -154.666 },
+        { -99.618, -157.689 },
+    }};
+
+struct HotGolden
+{
+    double relativeRmsDb;
+    double convergenceDb;
+    double residualOffMaskDb;
+    double oracleOffMaskDb;
+    std::size_t validBins;
+};
+
+constexpr std::array<HotGolden, standardLowerRateHosts.size()>
+    hotGoldens {{
+        { -12.538, -135.643, -44.602, -93.242, 14618u },
+        { -14.269, -138.574, -48.081, -93.163, 13412u },
+        { -30.417, -159.637, -85.765, -97.212, 7195u },
+        { -33.080, -162.578, -88.712, -97.141, 6592u },
+    }};
+
+constexpr std::array<double, 2> lowerRateSnapGoldensDb {
+    -27.259, -26.860
+};
+
 struct ScheduledEvent
 {
     double time;
@@ -808,12 +902,13 @@ struct ScheduledEvent
 struct Schedule
 {
     std::vector<ScheduledEvent> events;
+    int passes {};
     bool phasesExact {};
     bool orderExact {};
     bool scanRateExact {};
 };
 
-Schedule buildSchedule()
+Schedule buildSchedule(int passes = renderedPasses)
 {
     using Destination = YouKnow106TestAccess::Destination;
     constexpr std::array<YouKnow106TestAccess::Write, 23> expected {{
@@ -846,6 +941,7 @@ Schedule buildSchedule()
     const auto shippingPhases = YouKnow106TestAccess::eventPhases();
     const auto shippingWrites = YouKnow106TestAccess::writes();
     Schedule schedule;
+    schedule.passes = passes;
     schedule.phasesExact = true;
     schedule.orderExact = true;
     schedule.scanRateExact = std::abs(
@@ -869,8 +965,9 @@ Schedule buildSchedule()
     // from independent rational constants and the hard-coded service order
     // above.  The shipping tables are observed only by the exactness checks;
     // they cannot silently move the reference along with the candidate.
-    schedule.events.reserve(renderedPasses * expected.size());
-    for (int pass = 0; pass < renderedPasses; ++pass)
+    schedule.events.reserve(static_cast<std::size_t>(passes)
+                            * expected.size());
+    for (int pass = 0; pass < passes; ++pass)
     {
         for (std::size_t ordinal = 0; ordinal < expected.size(); ++ordinal)
         {
@@ -986,7 +1083,7 @@ ControlTrajectories buildTrajectories(
         {
             cutoffEvents.push_back({ eventTime(event.time),
                 YouKnow106TestAccess::cutoffTargetForByte(
-                    cutoffBytes[static_cast<std::size_t>(event.pass)],
+                    cutoffBytes[payloadIndex(event.pass)],
                     profile.character) });
         }
         else if (event.destination
@@ -994,7 +1091,7 @@ ControlTrajectories buildTrajectories(
         {
             resonanceEvents.push_back({ eventTime(event.time),
                 YouKnow106TestAccess::resonanceTargetForByte(
-                    resonanceBytes[static_cast<std::size_t>(event.pass)]) });
+                    resonanceBytes[payloadIndex(event.pass)]) });
         }
     }
 
@@ -1436,10 +1533,11 @@ public:
     [[nodiscard]] bool contractExact() const noexcept
     {
         constexpr std::size_t relevantWritesPerPass = 7u;
-        constexpr std::size_t expectedFractionalPeeks =
-            renderedPasses * relevantWritesPerPass - 1u;
-        constexpr std::size_t expectedControlIntervals =
-            renderedPasses * 2u;
+        const std::size_t expectedFractionalPeeks =
+            static_cast<std::size_t>(schedule_.passes)
+                * relevantWritesPerPass - 1u;
+        const std::size_t expectedControlIntervals =
+            static_cast<std::size_t>(schedule_.passes) * 2u;
         return cursorExact_ && peekPure_ && payloadLatched_
             && singleEventBound_ && directHoldExact_
             && oracleHoldExact_ && endpointExact_
@@ -1475,12 +1573,12 @@ private:
                 == YouKnow106TestAccess::Destination::Resonance)
         {
             return YouKnow106TestAccess::resonanceTargetForByte(
-                resonanceBytes[static_cast<std::size_t>(event.pass)]);
+                resonanceBytes[payloadIndex(event.pass)]);
         }
         if (event.destination == YouKnow106TestAccess::Destination::Vcf)
         {
             return YouKnow106TestAccess::cutoffTargetForByte(
-                cutoffBytes[static_cast<std::size_t>(event.pass)],
+                cutoffBytes[payloadIndex(event.pass)],
                 profile_.character);
         }
         return 0.0f;
@@ -1974,11 +2072,16 @@ struct CandidateRender
 CandidateRender renderCandidate(
     const Schedule& schedule,
     const YouKnow106TestAccess::CardProfile& profile,
-    double internalRate)
+    double internalRate,
+    std::size_t frameAlignment = 4u)
 {
     const auto framesUnaligned = static_cast<std::size_t>(std::floor(
-        renderedPasses * converterPassSeconds * internalRate));
-    const std::size_t frames = framesUnaligned - framesUnaligned % 4u;
+        static_cast<double>(schedule.passes)
+            * converterPassSeconds * internalRate));
+    if (frameAlignment == 0u)
+        throw std::runtime_error("candidate frame alignment is zero");
+    const std::size_t frames = framesUnaligned
+                             - framesUnaligned % frameAlignment;
     CandidateRender render;
     render.samples.resize(frames);
 
@@ -2025,16 +2128,20 @@ CandidateRender renderCandidate(
     return render;
 }
 
-Take renderTake(const Schedule& schedule,
-                const YouKnow106TestAccess::CardProfile& profile,
-                double baseRate, std::string name)
+Take renderTakeAtInternalRate(
+    const Schedule& schedule,
+    const YouKnow106TestAccess::CardProfile& profile,
+    double internalRate, std::string name,
+    std::size_t frameAlignment)
 {
-    const double internalRate = baseRate * 4.0;
-    const double oracleRate = baseRate * 16.0;
+    const double oracleRate = internalRate * 4.0;
     const auto framesUnaligned = static_cast<std::size_t>(std::floor(
-        renderedPasses * converterPassSeconds * internalRate));
+        static_cast<double>(schedule.passes)
+            * converterPassSeconds * internalRate));
+    if (frameAlignment == 0u)
+        throw std::runtime_error("take frame alignment is zero");
     const std::size_t candidateFrames = framesUnaligned
-                                      - framesUnaligned % 4u;
+                                      - framesUnaligned % frameAlignment;
     const std::size_t oracleFrames = candidateFrames * 4u;
     const auto trajectories = buildTrajectories(
         schedule, profile.card, profile);
@@ -2047,7 +2154,8 @@ Take renderTake(const Schedule& schedule,
     take.oracleWrites = trajectories.totalWrites;
     take.oracleCutoffWrites = trajectories.cutoffWrites;
     take.oracleResonanceWrites = trajectories.resonanceWrites;
-    auto candidateRender = renderCandidate(schedule, profile, internalRate);
+    auto candidateRender = renderCandidate(
+        schedule, profile, internalRate, frameAlignment);
     if (candidateRender.samples.size() != candidateFrames)
         throw std::runtime_error("candidate render length mismatch");
     take.candidate = std::move(candidateRender.samples);
@@ -2080,6 +2188,14 @@ Take renderTake(const Schedule& schedule,
     return take;
 }
 
+Take renderTake(const Schedule& schedule,
+                const YouKnow106TestAccess::CardProfile& profile,
+                double baseRate, std::string name)
+{
+    return renderTakeAtInternalRate(
+        schedule, profile, baseRate * 4.0, std::move(name), 4u);
+}
+
 std::vector<double> endpointPhase(const std::vector<double>& high,
                                   std::size_t factor)
 {
@@ -2109,7 +2225,8 @@ struct ReducedTake
 };
 
 ReducedTake reduceTake(const Take& take,
-                       const quality::KaiserLowPass& filter)
+                       const quality::KaiserLowPass& filter,
+                       std::size_t frameAlignment = 4u)
 {
     constexpr std::size_t oracleToInternal = 4u;
     const auto rk64 = quality::decimateToHostBoundary(
@@ -2126,7 +2243,9 @@ ReducedTake reduceTake(const Take& take,
         rk64.samples.size(), rk128.samples.size(),
         take.candidate.size() > first ? take.candidate.size() - first : 0u
     });
-    const std::size_t count = available - available % 4u;
+    if (frameAlignment == 0u)
+        throw std::runtime_error("reduced frame alignment is zero");
+    const std::size_t count = available - available % frameAlignment;
     if (count == 0u)
         throw std::runtime_error("reduced oracle has no aligned samples");
     ReducedTake result;
@@ -2506,19 +2625,23 @@ struct CellMetrics
 
 CellMetrics auditCell(const Cell& cell,
                       const std::vector<ReducedTake>& takes,
-                      const std::vector<CandidateRender>& selectorCandidates)
+                      const std::vector<CandidateRender>& selectorCandidates,
+                      bool hqEnabled = true,
+                      double explicitInternalRate = 0.0,
+                      int expectedPasses = renderedPasses)
 {
     if (takes.size() != selectorCandidates.size())
         throw std::runtime_error("selector candidate profile mismatch");
-    const double internalRate = familyBaseRates[
-        static_cast<std::size_t>(cell.family)] * 4.0;
+    const double internalRate = explicitInternalRate > 0.0
+        ? explicitInternalRate
+        : familyBaseRates[static_cast<std::size_t>(cell.family)] * 4.0;
     CellMetrics metrics;
     metrics.cell = cell;
     metrics.rawHash = 1469598103934665603ull;
     metrics.familyRateExact = cell.hostRate
         * static_cast<double>(cell.factor) == internalRate;
     const auto prepared = YouKnow106TestAccess::shippingProcessingRate(
-        cell.hostRate);
+        cell.hostRate, hqEnabled);
     metrics.preparedFactor = prepared.factor;
     metrics.preparedInternalRate = prepared.internalRate;
     metrics.shippingSelectorExact = prepared.factor == cell.factor
@@ -2581,19 +2704,20 @@ CellMetrics auditCell(const Cell& cell,
             rawCandidate.maximumHoldDifference);
         metrics.rawHash ^= hashSamples(rawCandidate.samples);
         metrics.rawHash *= 1099511628211ull;
-        constexpr std::size_t expectedWrites =
-            renderedPasses * YouKnow106TestAccess::writeCount();
+        const std::size_t expectedWrites =
+            static_cast<std::size_t>(expectedPasses)
+                * YouKnow106TestAccess::writeCount();
         if (rawCandidate.writes != expectedWrites
             || rawCandidate.cursor != expectedWrites
             || take.oracleWrites != expectedWrites
             || rawCandidate.cutoffWrites
-                   != static_cast<std::size_t>(renderedPasses)
+                   != static_cast<std::size_t>(expectedPasses)
             || take.oracleCutoffWrites
-                   != static_cast<std::size_t>(renderedPasses)
+                   != static_cast<std::size_t>(expectedPasses)
             || rawCandidate.resonanceWrites
-                   != static_cast<std::size_t>(renderedPasses)
+                   != static_cast<std::size_t>(expectedPasses)
             || take.oracleResonanceWrites
-                   != static_cast<std::size_t>(renderedPasses))
+                   != static_cast<std::size_t>(expectedPasses))
             ++metrics.writeMismatches;
         if (!rawCandidate.controlContractExact)
             ++metrics.controlContractMismatches;
@@ -2626,6 +2750,420 @@ CellMetrics auditCell(const Cell& cell,
     return metrics;
 }
 
+double hotDriveAmplitude()
+{
+    return hotAmplitude
+         * static_cast<double>(
+             YouKnow106TestAccess::inputCompensation(hotFeedback));
+}
+
+double hotInputAt(double time)
+{
+    constexpr int inputHarmonics = static_cast<int>(
+        20000.0 / hotFundamentalHz);
+    const double phase = 2.0 * pi * hotFundamentalHz * time;
+    double sum = 0.0;
+    for (int harmonic = 1; harmonic <= inputHarmonics; ++harmonic)
+        sum += std::sin(static_cast<double>(harmonic) * phase)
+             / static_cast<double>(harmonic);
+    return hotDriveAmplitude() * 2.0 * sum / pi;
+}
+
+constexpr std::size_t hotSpectrumMaskHalfWidthBins = 6u;
+
+struct HotSpectrum
+{
+    std::vector<double> amplitudes;
+    double binWidthHz {};
+    std::size_t frameCount {};
+    bool finite {};
+};
+
+HotSpectrum hotSpectrum(std::span<const double> signal, double sampleRate)
+{
+    if (signal.empty() || (signal.size() & (signal.size() - 1u)) != 0u
+        || !(sampleRate > 0.0) || !std::isfinite(sampleRate))
+        throw std::runtime_error("hot spectrum requires power-of-two audio");
+    std::vector<std::complex<double>> bins(signal.size());
+    long double windowSum = 0.0L;
+    for (std::size_t frame = 0; frame < signal.size(); ++frame)
+    {
+        const double window = quality::projectionWindowValue(
+            quality::ProjectionWindow::BlackmanHarris92Db,
+            frame, signal.size());
+        bins[frame] = signal[frame] * window;
+        windowSum += static_cast<long double>(window);
+    }
+    const bool signalFinite = std::all_of(
+        signal.begin(), signal.end(), [](double sample) {
+            return std::isfinite(sample);
+        });
+    if (!(windowSum > 0.0L) || !signalFinite)
+        throw std::runtime_error("hot spectrum input/window is invalid");
+
+    for (std::size_t index = 1u, reverse = 0u;
+         index < bins.size(); ++index)
+    {
+        std::size_t bit = bins.size() >> 1u;
+        while ((reverse & bit) != 0u)
+        {
+            reverse ^= bit;
+            bit >>= 1u;
+        }
+        reverse ^= bit;
+        if (index < reverse)
+            std::swap(bins[index], bins[reverse]);
+    }
+    for (std::size_t length = 2u; length <= bins.size(); length <<= 1u)
+    {
+        const auto step = std::polar(
+            1.0, -2.0 * pi / static_cast<double>(length));
+        for (std::size_t base = 0u; base < bins.size(); base += length)
+        {
+            std::complex<double> twiddle(1.0, 0.0);
+            const std::size_t half = length >> 1u;
+            for (std::size_t offset = 0u; offset < half; ++offset)
+            {
+                const auto even = bins[base + offset];
+                const auto odd = bins[base + offset + half] * twiddle;
+                bins[base + offset] = even + odd;
+                bins[base + offset + half] = even - odd;
+                twiddle *= step;
+            }
+        }
+    }
+
+    HotSpectrum result;
+    result.frameCount = signal.size();
+    result.binWidthHz = sampleRate / static_cast<double>(signal.size());
+    result.amplitudes.resize(signal.size() / 2u + 1u);
+    const double twoSidedScale = 2.0 / static_cast<double>(windowSum);
+    for (std::size_t bin = 0u; bin < result.amplitudes.size(); ++bin)
+    {
+        const bool edge = bin == 0u || 2u * bin == signal.size();
+        result.amplitudes[bin] = std::abs(bins[bin])
+            * (edge ? 0.5 * twoSidedScale : twoSidedScale);
+    }
+    result.finite = std::isfinite(result.binWidthHz)
+        && allFinite(result.amplitudes);
+    return result;
+}
+
+bool hotSpectrumBinIsMasked(double frequencyHz,
+                            double binWidthHz) noexcept
+{
+    constexpr int inputHarmonics = static_cast<int>(
+        20000.0 / hotFundamentalHz);
+    const double maskHz = static_cast<double>(
+        hotSpectrumMaskHalfWidthBins) * binWidthHz;
+    for (int harmonic = 1; harmonic <= inputHarmonics; ++harmonic)
+    {
+        if (std::abs(frequencyHz
+                     - static_cast<double>(harmonic) * hotFundamentalHz)
+                <= maskHz)
+            return true;
+    }
+    return false;
+}
+
+double ratioDecibels(double ratio) noexcept
+{
+    return 20.0 * std::log10(std::max(ratio, 1.0e-30));
+}
+
+bool matchesQualificationGolden(
+    double ratio,
+    double expectedDb,
+    double toleranceDb = qualificationGoldenToleranceDb) noexcept
+{
+    return std::isfinite(ratio)
+        && std::abs(ratioDecibels(ratio) - expectedDb)
+               <= toleranceDb;
+}
+
+// Static nominal Character-0 nonlinear control. This deliberately matches the
+// common-host hot-saw fixture, but lives here so HQ-off q1 is admitted against
+// an independent RK64/RK128 answer at all four standard host boundaries.
+class HotReferenceCascade
+{
+public:
+    explicit HotReferenceCascade(double headroom)
+        : headroom_(headroom)
+    {
+    }
+
+    double advance(double start, double interval, int subdivisions)
+    {
+        const double step = interval / static_cast<double>(subdivisions);
+        for (int subdivision = 0; subdivision < subdivisions; ++subdivision)
+        {
+            const double time = start
+                + static_cast<double>(subdivision) * step;
+            const auto k1 = derivative(state_, hotInputAt(time));
+            const auto k2 = derivative(
+                add(state_, k1, 0.5 * step), hotInputAt(time + 0.5 * step));
+            const auto k3 = derivative(
+                add(state_, k2, 0.5 * step), hotInputAt(time + 0.5 * step));
+            const auto k4 = derivative(
+                add(state_, k3, step), hotInputAt(time + step));
+            for (std::size_t stage = 0; stage < state_.size(); ++stage)
+                state_[stage] += step * (k1[stage] + 2.0 * k2[stage]
+                                      + 2.0 * k3[stage] + k4[stage]) / 6.0;
+        }
+        return state_[3];
+    }
+
+    [[nodiscard]] bool finite() const noexcept
+    {
+        return std::all_of(state_.begin(), state_.end(), [](double value) {
+            return std::isfinite(value) && std::abs(value) <= 64.0;
+        });
+    }
+
+private:
+    static std::array<double, 4> add(
+        const std::array<double, 4>& origin,
+        const std::array<double, 4>& slope, double scale) noexcept
+    {
+        std::array<double, 4> result {};
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+            result[stage] = origin[stage] + scale * slope[stage];
+        return result;
+    }
+
+    std::array<double, 4> derivative(
+        const std::array<double, 4>& value, double input) const
+    {
+        const double feedbackHeadroom =
+            YouKnow106TestAccess::feedbackHeadroom();
+        std::array<double, 4> result {};
+        double drive = input - static_cast<double>(hotFeedback)
+            * feedbackHeadroom * std::tanh(value[3] / feedbackHeadroom);
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+        {
+            result[stage] = 2.0 * pi * hotCutoffHz * headroom_
+                * std::tanh((drive - value[stage]) / headroom_);
+            drive = value[stage];
+        }
+        return result;
+    }
+
+    double headroom_ {};
+    std::array<double, 4> state_ {};
+};
+
+struct HotCellMetrics
+{
+    double hostRate {};
+    double relativeRms {};
+    double convergence {};
+    double referenceRms {};
+    double fundamentalAmplitude {};
+    double worstResidualOffMaskDb { -300.0 };
+    double oracleOffMaskDb { -300.0 };
+    double filterPassbandRippleDb {};
+    double filterStopbandMaximumDb {};
+    double filterGridConvergenceDb {};
+    double maximumState {};
+    std::size_t frames {};
+    std::size_t spectrumFrames {};
+    std::size_t validResidualBins {};
+    std::size_t validOracleBins {};
+    std::size_t recoveries {};
+    int preparedFactor {};
+    double preparedInternalRate {};
+    bool selectorExact {};
+    bool filterPassed {};
+    bool resetExact {};
+    bool finite { true };
+    bool structuralPass {};
+    bool qualityPass {};
+};
+
+std::vector<double> renderHotReference(
+    double hostRate, double headroom, int subdivisions,
+    bool& finite)
+{
+    const double oracleRate = hostRate
+                            * static_cast<double>(hotOracleFactor);
+    const double interval = 1.0 / oracleRate;
+    const std::size_t frames = hotHostFrames * hotOracleFactor;
+    HotReferenceCascade reference(headroom);
+    std::vector<double> result(frames);
+    for (std::size_t frame = 0; frame < frames; ++frame)
+    {
+        const double start = static_cast<double>(frame) * interval;
+        result[frame] = reference.advance(start, interval, subdivisions);
+        finite = finite && reference.finite()
+            && std::isfinite(result[frame]);
+    }
+    finite = finite && allFinite(result);
+    return result;
+}
+
+HotCellMetrics auditHotCell(double hostRate)
+{
+    HotCellMetrics metrics;
+    metrics.hostRate = hostRate;
+    const auto prepared = YouKnow106TestAccess::shippingProcessingRate(
+        hostRate, false);
+    metrics.preparedFactor = prepared.factor;
+    metrics.preparedInternalRate = prepared.internalRate;
+    metrics.selectorExact = prepared.factor == 1
+        && prepared.internalRate == hostRate;
+
+    const auto profile = YouKnow106TestAccess::cardProfile(0, 0.0f, 0.0);
+    YouKnow106TestAccess::Cascade candidate;
+    candidate.reset();
+    YouKnow106TestAccess::configure(candidate, profile);
+    metrics.resetExact = YouKnow106TestAccess::stateExactlyZero(candidate);
+    std::vector<float> actual(hotHostFrames);
+    const float omegaStep = static_cast<float>(
+        2.0 * pi * hotCutoffHz / hostRate);
+    for (std::size_t frame = 0; frame < actual.size(); ++frame)
+    {
+        const double time = static_cast<double>(frame + 1u) / hostRate;
+        actual[frame] = candidate.process(
+            static_cast<float>(hotInputAt(time)), omegaStep, hotFeedback,
+            profile.headroom, false, 0.0f);
+        const bool stateOkay =
+            YouKnow106TestAccess::stateFiniteAndBounded(candidate);
+        metrics.finite = metrics.finite && stateOkay
+            && std::isfinite(actual[frame]);
+        metrics.maximumState = std::max(
+            metrics.maximumState,
+            YouKnow106TestAccess::maximumStateMagnitude(candidate));
+        if (frame > 8u && YouKnow106TestAccess::stateExactlyZero(candidate))
+            ++metrics.recoveries;
+    }
+    metrics.finite = metrics.finite && allFinite(actual);
+
+    bool referenceFinite = true;
+    const auto rk64High = renderHotReference(
+        hostRate, profile.headroom, rk64Substeps, referenceFinite);
+    const auto rk128High = renderHotReference(
+        hostRate, profile.headroom, rk128Substeps, referenceFinite);
+    const auto filter = quality::designKaiserLowPass({
+        hostRate * static_cast<double>(hotOracleFactor), 20000.0,
+        0.5 * hostRate, quality::referenceFilterAttenuationDb,
+        referenceFilterTaps
+    });
+    quality::ReferenceFilterRequirements filterRequirements;
+    const double filterFamilyBase =
+        hostRate == 44100.0 || hostRate == 88200.0 ? 44100.0 : 48000.0;
+    const auto filterGridMultiplier = static_cast<std::size_t>(
+        std::llround(hostRate / filterFamilyBase));
+    filterRequirements.coarseGridIntervals *= filterGridMultiplier;
+    const auto filterCheck = quality::checkReferenceFilter(
+        filter, filterRequirements);
+    metrics.filterPassed = filterCheck.passed();
+    metrics.filterPassbandRippleDb =
+        filterCheck.convergence.fine.passbandRippleDb;
+    metrics.filterStopbandMaximumDb =
+        filterCheck.convergence.fine.stopbandMaximumDb;
+    metrics.filterGridConvergenceDb =
+        filterCheck.convergence.maximumExtremumDeltaDb;
+    const auto rk64 = quality::decimateToHostBoundary(
+        endpointPhase(rk64High, hotOracleFactor), hotOracleFactor, filter);
+    const auto rk128 = quality::decimateToHostBoundary(
+        endpointPhase(rk128High, hotOracleFactor), hotOracleFactor, filter);
+    const std::int64_t first = std::max<std::int64_t>({
+        static_cast<std::int64_t>(hotWarmupHostFrames),
+        rk64.firstHostFrame, rk128.firstHostFrame });
+    const std::int64_t end = std::min<std::int64_t>({
+        static_cast<std::int64_t>(hotMeasurementEndHostFrame),
+        rk64.endHostFrameExclusive(), rk128.endHostFrameExclusive(),
+        static_cast<std::int64_t>(actual.size()) });
+    if (end <= first)
+        throw std::runtime_error("hot-saw aligned interval is empty");
+    metrics.frames = static_cast<std::size_t>(end - first);
+    const auto rk64Span = quality::hostFrameSpan(
+        rk64, first, metrics.frames);
+    const auto rk128Span = quality::hostFrameSpan(
+        rk128, first, metrics.frames);
+    const auto actualSpan = std::span<const float>(actual).subspan(
+        static_cast<std::size_t>(first), metrics.frames);
+    const auto comparison = quality::compareRms(rk128Span, actualSpan);
+    const auto convergence = quality::compareRms(rk128Span, rk64Span);
+    metrics.relativeRms = comparison.relativeError;
+    metrics.convergence = convergence.relativeError;
+    metrics.referenceRms = comparison.referenceRms;
+    const auto fundamental = quality::projectTone(
+        rk128Span, hostRate, hotFundamentalHz,
+        quality::ProjectionWindow::BlackmanHarris92Db, first);
+    metrics.fundamentalAmplitude = fundamental.amplitude;
+    const bool fundamentalFinite =
+        std::isfinite(fundamental.complexAmplitude.real())
+        && std::isfinite(fundamental.complexAmplitude.imag())
+        && std::isfinite(fundamental.amplitude)
+        && std::isfinite(fundamental.rms)
+        && std::isfinite(fundamental.phaseRadians)
+        && fundamental.amplitude > 1.0e-8;
+    std::vector<double> candidateMeasurement(metrics.frames);
+    std::vector<double> residual(metrics.frames);
+    for (std::size_t frame = 0; frame < metrics.frames; ++frame)
+    {
+        candidateMeasurement[frame] =
+            static_cast<double>(actualSpan[frame]);
+        residual[frame] = candidateMeasurement[frame] - rk128Span[frame];
+    }
+    const auto referenceSpectrum = hotSpectrum(rk128Span, hostRate);
+    const auto residualSpectrum = hotSpectrum(residual, hostRate);
+    const bool spectraFinite = referenceSpectrum.finite
+        && residualSpectrum.finite
+        && referenceSpectrum.frameCount == hotCaptureHostFrames
+        && residualSpectrum.frameCount == hotCaptureHostFrames
+        && referenceSpectrum.frameCount == residualSpectrum.frameCount
+        && referenceSpectrum.binWidthHz == residualSpectrum.binWidthHz;
+    if (spectraFinite && fundamentalFinite)
+    {
+        metrics.spectrumFrames = residualSpectrum.frameCount;
+        for (std::size_t bin = 1u;
+             bin < residualSpectrum.amplitudes.size(); ++bin)
+        {
+            const double frequencyHz = residualSpectrum.binWidthHz
+                                     * static_cast<double>(bin);
+            if (frequencyHz < 20.0 || frequencyHz > 20000.0
+                || hotSpectrumBinIsMasked(
+                    frequencyHz, residualSpectrum.binWidthHz))
+                continue;
+            metrics.worstResidualOffMaskDb = std::max(
+                metrics.worstResidualOffMaskDb,
+                ratioDecibels(residualSpectrum.amplitudes[bin]
+                              / metrics.fundamentalAmplitude));
+            metrics.oracleOffMaskDb = std::max(
+                metrics.oracleOffMaskDb,
+                ratioDecibels(referenceSpectrum.amplitudes[bin]
+                              / metrics.fundamentalAmplitude));
+            ++metrics.validResidualBins;
+            ++metrics.validOracleBins;
+        }
+    }
+    metrics.finite = metrics.finite && referenceFinite
+        && allFinite(rk64.samples) && allFinite(rk128.samples)
+        && allFinite(candidateMeasurement) && allFinite(residual)
+        && spectraFinite && fundamentalFinite
+        && std::isfinite(metrics.relativeRms)
+        && std::isfinite(metrics.convergence)
+        && std::isfinite(metrics.referenceRms)
+        && std::isfinite(metrics.worstResidualOffMaskDb)
+        && std::isfinite(metrics.oracleOffMaskDb);
+    metrics.structuralPass = metrics.finite && metrics.selectorExact
+        && metrics.filterPassed && metrics.resetExact
+        && metrics.frames == hotCaptureHostFrames
+        && metrics.spectrumFrames == hotCaptureHostFrames
+        && metrics.validResidualBins > 0u
+        && metrics.validOracleBins == metrics.validResidualBins
+        && metrics.recoveries == 0u && metrics.referenceRms > 1.0e-5
+        && metrics.maximumState > 0.1 && metrics.maximumState <= 64.0
+        && metrics.convergence <= convergenceGate
+        && metrics.oracleOffMaskDb <= -85.0;
+    metrics.qualityPass = metrics.structuralPass
+        && metrics.relativeRms <= relativeRmsGate
+        && metrics.worstResidualOffMaskDb < -60.0;
+    return metrics;
+}
+
 bool sameProfile(const YouKnow106TestAccess::CardProfile& left,
                  const YouKnow106TestAccess::CardProfile& right) noexcept
 {
@@ -2655,6 +3193,29 @@ struct Audit
     CellMetrics lateSnap;
     CellMetrics earlySnap;
     bool snapNegativeControlsExact {};
+    std::array<CellMetrics, lowerRateMovingCells.size()>
+        lowerRateMoving {};
+    std::array<quality::ReferenceFilterCheck,
+               lowerRateMovingCells.size()> lowerRateFilterChecks {};
+    std::array<std::uint64_t, lowerRateMovingCells.size()>
+        lowerRateFamilyHashes {};
+    std::array<YouKnow106TestAccess::SchedulerContract,
+               lowerRateMovingCells.size()> lowerRateSchedulerContracts {};
+    YouKnow106TestAccess::ShippingWiringContract lowerRateWiringContract;
+    CellMetrics lowerRateLateSnap;
+    CellMetrics lowerRateEarlySnap;
+    std::array<HotCellMetrics, standardLowerRateHosts.size()> hot {};
+    std::array<bool, standardLowerRateHosts.size()> combinedAdmission {};
+    bool lowerRateScheduleExact {};
+    bool lowerRateNominalColdWarmRenderExact {};
+    bool lowerRateRowsShareRaw {};
+    bool lowerRateMovingAdmissionPass {};
+    bool lowerRateSnapNegativeControlsExact {};
+    bool lowerRateSchedulerContractsPass {};
+    bool lowerRateMovingGoldensExact {};
+    bool lowerRateSnapGoldensExact {};
+    bool hotGoldensExact {};
+    bool lowerRateTruthTableExact {};
     EightKDiagnostics eightKDiagnostics;
     bool pass {};
 };
@@ -2790,6 +3351,175 @@ Audit runAudit(bool diagnoseEightKCell = false)
         && audit.earlySnap.structuralPass
         && !audit.earlySnap.qualityPass && audit.earlySnap.finite;
 
+    // Keep the HQ-off qualification physically and numerically independent of
+    // the four-pass HQ families above. Twelve repeated service snapshots leave
+    // enough FIR-supported q1 frames without changing any established HQ row,
+    // hash, filter, capture or mutation golden.
+    const Schedule lowerRateSchedule = buildSchedule(
+        lowerRateQualificationPasses);
+    audit.lowerRateScheduleExact = lowerRateSchedule.phasesExact
+        && lowerRateSchedule.orderExact && lowerRateSchedule.scanRateExact
+        && lowerRateSchedule.events.size()
+            == static_cast<std::size_t>(lowerRateQualificationPasses)
+                * YouKnow106TestAccess::writeCount();
+    audit.lowerRateWiringContract =
+        YouKnow106TestAccess::shippingWiringContract(false);
+    audit.lowerRateSchedulerContractsPass = true;
+    for (std::size_t index = 0;
+         index < lowerRateMovingCells.size(); ++index)
+    {
+        audit.lowerRateSchedulerContracts[index] =
+            YouKnow106TestAccess::schedulerContract(
+                lowerRateMovingCells[index].hostRate, false);
+        audit.lowerRateSchedulerContractsPass =
+            audit.lowerRateSchedulerContractsPass
+            && audit.lowerRateSchedulerContracts[index].passed();
+    }
+
+    std::array<std::vector<ReducedTake>,
+               lowerRateMovingCells.size()> lowerRateFamilies;
+    std::array<std::array<std::uint64_t, 2>,
+               lowerRateMovingCells.size()> lowerRateNominalHashes {};
+    for (std::size_t family = 0;
+         family < lowerRateMovingCells.size(); ++family)
+    {
+        const double internalRate = lowerRateMovingCells[family].hostRate;
+        const double oracleRate = internalRate * 4.0;
+        const double passbandEdge = std::min(
+            20000.0, 0.45 * internalRate);
+        const std::size_t tapCount = internalRate == 8000.0
+            ? endpointReferenceFilterTaps : referenceFilterTaps;
+        const auto filter = quality::designKaiserLowPass({
+            oracleRate, passbandEdge, 0.5 * internalRate,
+            quality::referenceFilterAttenuationDb, tapCount
+        });
+        audit.lowerRateFilterChecks[family] =
+            quality::checkReferenceFilter(filter);
+        std::uint64_t familyHash = 1469598103934665603ull;
+        for (std::size_t profileIndex = 0;
+             profileIndex < profiles.size(); ++profileIndex)
+        {
+            const auto& profile = profiles[profileIndex];
+            const std::string name = profile.character == 0.0f
+                ? std::string("card") + std::to_string(profile.card + 1)
+                    + "-character0-"
+                    + (profile.warmSeconds > 0.0 ? "warm" : "cold")
+                : std::string("card") + std::to_string(profile.card + 1)
+                    + "-character1-"
+                    + (profile.warmSeconds > 0.0 ? "warm" : "cold");
+            auto take = renderTakeAtInternalRate(
+                lowerRateSchedule, profile, internalRate, name, 1u);
+            const std::uint64_t takeHash = hashSamples(take.candidate);
+            if (profileIndex < 2u)
+                lowerRateNominalHashes[family][profileIndex] = takeHash;
+            familyHash ^= takeHash;
+            familyHash *= 1099511628211ull;
+            lowerRateFamilies[family].push_back(
+                reduceTake(take, filter, 1u));
+        }
+        audit.lowerRateFamilyHashes[family] = familyHash;
+
+        const auto prepared = YouKnow106TestAccess::shippingProcessingRate(
+            internalRate, false);
+        std::vector<CandidateRender> selectorCandidates;
+        selectorCandidates.reserve(profiles.size());
+        for (const auto& profile : profiles)
+            selectorCandidates.push_back(renderCandidate(
+                lowerRateSchedule, profile, prepared.internalRate, 1u));
+        audit.lowerRateMoving[family] = auditCell(
+            lowerRateMovingCells[family], lowerRateFamilies[family],
+            selectorCandidates, false, internalRate,
+            lowerRateQualificationPasses);
+    }
+    audit.lowerRateNominalColdWarmRenderExact = true;
+    for (const auto& hashes : lowerRateNominalHashes)
+        audit.lowerRateNominalColdWarmRenderExact =
+            audit.lowerRateNominalColdWarmRenderExact
+            && hashes[0] == hashes[1];
+    audit.lowerRateRowsShareRaw = true;
+    audit.lowerRateMovingAdmissionPass = true;
+    audit.lowerRateMovingGoldensExact = true;
+    for (std::size_t index = 0;
+         index < audit.lowerRateMoving.size(); ++index)
+    {
+        audit.lowerRateRowsShareRaw = audit.lowerRateRowsShareRaw
+            && audit.lowerRateMoving[index].rawHash
+                == audit.lowerRateFamilyHashes[index];
+        audit.lowerRateMovingAdmissionPass =
+            audit.lowerRateMovingAdmissionPass
+            && audit.lowerRateMoving[index].structuralPass
+            && audit.lowerRateMoving[index].qualityPass;
+        audit.lowerRateMovingGoldensExact =
+            audit.lowerRateMovingGoldensExact
+            && matchesQualificationGolden(
+                audit.lowerRateMoving[index].worstRelative,
+                lowerRateMovingGoldens[index].relativeRmsDb)
+            && matchesQualificationGolden(
+                audit.lowerRateMoving[index].worstConvergence,
+                lowerRateMovingGoldens[index].convergenceDb,
+                movingConvergenceGoldenToleranceDb);
+    }
+
+    const auto auditLowerRateSnapMutation = [&](bool early) {
+        const auto snapped = snapScheduleToInternalGrid(
+            lowerRateSchedule, 8000.0, early);
+        std::vector<CandidateRender> candidates;
+        candidates.reserve(profiles.size());
+        for (const auto& profile : profiles)
+            candidates.push_back(renderCandidate(
+                snapped, profile, 8000.0, 1u));
+        return auditCell(
+            lowerRateMovingCells[0], lowerRateFamilies[0], candidates,
+            false, 8000.0, lowerRateQualificationPasses);
+    };
+    audit.lowerRateLateSnap = auditLowerRateSnapMutation(false);
+    audit.lowerRateEarlySnap = auditLowerRateSnapMutation(true);
+    audit.lowerRateSnapNegativeControlsExact =
+        audit.lowerRateLateSnap.structuralPass
+        && !audit.lowerRateLateSnap.qualityPass
+        && audit.lowerRateLateSnap.finite
+        && audit.lowerRateEarlySnap.structuralPass
+        && !audit.lowerRateEarlySnap.qualityPass
+        && audit.lowerRateEarlySnap.finite;
+    audit.lowerRateSnapGoldensExact = matchesQualificationGolden(
+        audit.lowerRateLateSnap.worstRelative,
+        lowerRateSnapGoldensDb[0])
+        && matchesQualificationGolden(
+            audit.lowerRateEarlySnap.worstRelative,
+            lowerRateSnapGoldensDb[1]);
+
+    // The hot fixture is intentionally static nominal Character-0, not a
+    // claimed hot x 19/24 scheduled cross-product. It closes the smooth-signal
+    // false-pass hole: each standard row is admitted only if both independent
+    // profiles pass every structural and quality gate.
+    audit.lowerRateTruthTableExact = true;
+    audit.hotGoldensExact = true;
+    for (std::size_t index = 0; index < audit.hot.size(); ++index)
+    {
+        audit.hot[index] = auditHotCell(standardLowerRateHosts[index]);
+        const auto& moving = audit.lowerRateMoving[index + 1u];
+        const auto& hot = audit.hot[index];
+        audit.combinedAdmission[index] = moving.structuralPass
+            && moving.qualityPass && hot.structuralPass && hot.qualityPass;
+        audit.lowerRateTruthTableExact = audit.lowerRateTruthTableExact
+            && moving.structuralPass && moving.qualityPass
+            && hot.structuralPass && !hot.qualityPass
+            && !audit.combinedAdmission[index];
+        audit.hotGoldensExact = audit.hotGoldensExact
+            && matchesQualificationGolden(
+                hot.relativeRms, hotGoldens[index].relativeRmsDb)
+            && matchesQualificationGolden(
+                hot.convergence, hotGoldens[index].convergenceDb)
+            && std::abs(hot.worstResidualOffMaskDb
+                        - hotGoldens[index].residualOffMaskDb)
+                   <= qualificationGoldenToleranceDb
+            && std::abs(hot.oracleOffMaskDb
+                        - hotGoldens[index].oracleOffMaskDb)
+                   <= qualificationGoldenToleranceDb
+            && hot.validResidualBins == hotGoldens[index].validBins
+            && hot.validOracleBins == hotGoldens[index].validBins;
+    }
+
     audit.familyRowsShareRaw = true;
     for (const auto& cell : audit.cells)
         audit.familyRowsShareRaw = audit.familyRowsShareRaw
@@ -2837,7 +3567,20 @@ Audit runAudit(bool diagnoseEightKCell = false)
         audit.pass = audit.pass && audit.filterChecks[family].passed();
     audit.pass = audit.pass && audit.standardAdmissionPass
         && audit.endpointClassificationsExact
-        && audit.snapNegativeControlsExact;
+        && audit.snapNegativeControlsExact
+        && audit.lowerRateScheduleExact
+        && audit.lowerRateWiringContract.passed()
+        && audit.lowerRateSchedulerContractsPass
+        && audit.lowerRateNominalColdWarmRenderExact
+        && audit.lowerRateRowsShareRaw
+        && audit.lowerRateMovingAdmissionPass
+        && audit.lowerRateMovingGoldensExact
+        && audit.lowerRateSnapNegativeControlsExact
+        && audit.lowerRateSnapGoldensExact
+        && audit.hotGoldensExact
+        && audit.lowerRateTruthTableExact;
+    for (const auto& check : audit.lowerRateFilterChecks)
+        audit.pass = audit.pass && check.passed();
     return audit;
 }
 
@@ -2975,6 +3718,121 @@ void printAudit(const Audit& audit)
     };
     printSnap("late/ceil-snap", audit.lateSnap);
     printSnap("early/floor-snap", audit.earlySnap);
+
+    std::cout << "HQ-off q1 moving-control qualification:\n"
+              << "  scope=12 repeated service passes; 19 physical/24 "
+                 "logical card/Character/thermal profiles; 8 kHz is a "
+                 "separately labelled supported endpoint.\n"
+              << "  schedule="
+              << (audit.lowerRateScheduleExact ? "PASS" : "FAIL")
+              << " renderVoice_wiring="
+              << (audit.lowerRateWiringContract.passed() ? "PASS" : "FAIL")
+              << " probes=" << audit.lowerRateWiringContract.probes
+              << " scheduler_q1="
+              << (audit.lowerRateSchedulerContractsPass ? "PASS" : "FAIL")
+              << " nominal_cold_warm_raw="
+              << (audit.lowerRateNominalColdWarmRenderExact
+                      ? "PASS" : "FAIL")
+              << " raw_identity="
+              << (audit.lowerRateRowsShareRaw ? "PASS" : "FAIL")
+              << " moving_admission="
+              << (audit.lowerRateMovingAdmissionPass ? "PASS" : "FAIL")
+              << " metric_goldens="
+              << (audit.lowerRateMovingGoldensExact ? "PASS" : "FAIL")
+              << " snap_negative_controls="
+              << (audit.lowerRateSnapNegativeControlsExact
+                      ? "PASS" : "FAIL")
+              << " snap_goldens="
+              << (audit.lowerRateSnapGoldensExact ? "PASS" : "FAIL")
+              << " metric_tolerance=" << qualificationGoldenToleranceDb
+              << " dB convergence_tolerance="
+              << movingConvergenceGoldenToleranceDb << " dB\n";
+    for (std::size_t index = 0;
+         index < audit.lowerRateMoving.size(); ++index)
+    {
+        const auto& check = audit.lowerRateFilterChecks[index];
+        const auto& scheduler = audit.lowerRateSchedulerContracts[index];
+        const auto& metrics = audit.lowerRateMoving[index];
+        std::cout << "  " << std::setprecision(1) << metrics.cell.hostRate
+                  << " Hz q1 "
+                  << (metrics.cell.hostRate == 8000.0
+                          ? "endpoint " : "standard ")
+                  << (metrics.qualityPass ? "PASS" : "FAIL")
+                  << std::setprecision(3)
+                  << " nrms=" << decibels(metrics.worstRelative) << " dB"
+                  << " convergence=" << decibels(metrics.worstConvergence)
+                  << " dB frames=" << metrics.minimumFrames
+                  << " takes=" << metrics.takes
+                  << " recoveries=" << metrics.recoveries
+                  << " write_mismatches=" << metrics.writeMismatches
+                  << " control_mismatches="
+                  << metrics.controlContractMismatches
+                  << " peeks=" << metrics.peeks
+                  << " exact_intervals=" << metrics.exactControlIntervals
+                  << " hold_diff=" << std::scientific
+                  << metrics.maximumHoldDifference << std::fixed
+                  << " selector=q" << metrics.preparedFactor << '@'
+                  << metrics.preparedInternalRate
+                  << (metrics.shippingSelectorExact ? " exact" : " mismatch")
+                  << " filter=" << (check.passed() ? "PASS" : "FAIL")
+                  << " scheduler="
+                  << (scheduler.passed() ? "PASS" : "FAIL")
+                  << " raw_hash=0x" << std::hex
+                  << audit.lowerRateFamilyHashes[index] << std::dec
+                  << " worst=" << metrics.worstTake << '\n';
+    }
+    printSnap("q1-8k-late/ceil-snap", audit.lowerRateLateSnap);
+    printSnap("q1-8k-early/floor-snap", audit.lowerRateEarlySnap);
+
+    std::cout << "HQ-off q1 hot-saw standard-host qualification:\n"
+              << "  scope=static nominal Character-0 only (not the 19/24 "
+                 "scheduled hot cross-product); analytic 20 kHz-band-limited "
+                 "1046.502 Hz saw, production-compensated 2.4 V, 16 kHz "
+                 "cutoff, k=3.8.\n"
+              << "  combined formula=moving_structural && moving_quality && "
+                 "hot_structural && hot_quality; expected standard result="
+                 "REJECT.\n";
+    for (std::size_t index = 0; index < audit.hot.size(); ++index)
+    {
+        const auto& hot = audit.hot[index];
+        const auto& moving = audit.lowerRateMoving[index + 1u];
+        std::cout << "  " << std::setprecision(1) << hot.hostRate
+                  << " Hz q1 "
+                  << (audit.combinedAdmission[index] ? "ADMIT" : "REJECT")
+                  << std::setprecision(3)
+                  << " moving_structural="
+                  << (moving.structuralPass ? "PASS" : "FAIL")
+                  << " moving_quality="
+                  << (moving.qualityPass ? "PASS" : "FAIL")
+                  << " hot_structural="
+                  << (hot.structuralPass ? "PASS" : "FAIL")
+                  << " hot_quality="
+                  << (hot.qualityPass ? "PASS" : "FAIL")
+                  << " hot_nrms=" << decibels(hot.relativeRms) << " dB"
+                  << " hot_convergence=" << decibels(hot.convergence)
+                  << " dB residual_offmask="
+                  << hot.worstResidualOffMaskDb
+                  << " dBc oracle_offmask=" << hot.oracleOffMaskDb
+                  << " dBc fundamental=" << hot.fundamentalAmplitude << " V"
+                  << " frames=" << hot.frames
+                  << " spectrum_frames=" << hot.spectrumFrames
+                  << " bins=" << hot.validResidualBins
+                  << " recoveries=" << hot.recoveries
+                  << " filter=" << (hot.filterPassed ? "PASS" : "FAIL")
+                  << " ripple=" << hot.filterPassbandRippleDb
+                  << " dB stop=" << hot.filterStopbandMaximumDb
+                  << " dB grid_delta=" << hot.filterGridConvergenceDb
+                  << " dB"
+                  << " selector=q" << hot.preparedFactor << '@'
+                  << hot.preparedInternalRate
+                  << (hot.selectorExact ? " exact" : " mismatch") << '\n';
+    }
+    std::cout << "  frozen_truth_table="
+              << (audit.lowerRateTruthTableExact ? "PASS" : "FAIL")
+              << " metric_goldens="
+              << (audit.hotGoldensExact ? "PASS" : "FAIL")
+              << " tolerance=" << qualificationGoldenToleranceDb << " dB"
+              << '\n';
     std::cout << "Overall: " << (audit.pass ? "PASS" : "FAIL") << '\n';
 
     if (audit.eightKDiagnostics.ran)
