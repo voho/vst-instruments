@@ -243,6 +243,28 @@ if(YOUKNOW106_BUILD_TOOLS)
     target_compile_definitions(YouKnow106OversamplingWorkAudit
         PRIVATE YOUKNOW106_WORK_AUDIT=1)
 
+    # Common-host numerical-quality audits are deliberately separate from the
+    # work counters above.  Each executable links the untouched shipping DSP
+    # and defines only an executable-local friend probe.  Analytic DCO/scan,
+    # RK4 VCF and closed-form component/transfer-pole/zero-order-hold BBD
+    # references decide whether 1x/2x/4x domain renders are admissible at the
+    # same 44.1/48 kHz output boundary.
+    add_executable(YouKnow106DcoScanQualityAudit
+        Tools/AuditDcoScanQuality.cpp
+        Tools/OversamplingQualitySupport.h)
+    target_link_libraries(YouKnow106DcoScanQualityAudit PRIVATE YouKnow106DSP)
+    target_include_directories(YouKnow106DcoScanQualityAudit
+        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Tools")
+    target_compile_features(YouKnow106DcoScanQualityAudit PRIVATE cxx_std_20)
+
+    add_executable(YouKnow106VcfBbdQualityAudit
+        Tools/AuditVcfBbdQuality.cpp
+        Tools/OversamplingQualitySupport.h)
+    target_link_libraries(YouKnow106VcfBbdQualityAudit PRIVATE YouKnow106DSP)
+    target_include_directories(YouKnow106VcfBbdQualityAudit
+        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Tools")
+    target_compile_features(YouKnow106VcfBbdQualityAudit PRIVATE cxx_std_20)
+
     if(MSVC)
         target_compile_options(YouKnow106RenderDemos PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderSota PRIVATE /W4 /permissive-)
@@ -257,6 +279,10 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106DSPWorkAudit
             PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106OversamplingWorkAudit
+            PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnow106DcoScanQualityAudit
+            PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnow106VcfBbdQualityAudit
             PRIVATE /W4 /permissive-)
     else()
         target_compile_options(YouKnow106RenderDemos PRIVATE
@@ -276,6 +302,10 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106DSPWorkAudit PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106OversamplingWorkAudit PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnow106DcoScanQualityAudit PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnow106VcfBbdQualityAudit PRIVATE
             -Wall -Wextra -Wpedantic)
     endif()
 endif()
@@ -340,6 +370,14 @@ if(BUILD_TESTING)
                          "-DWORK_AUDIT=$<TARGET_FILE:YouKnow106OversamplingWorkAudit>"
                          -P "${CMAKE_CURRENT_SOURCE_DIR}/Tools/CheckOversamplingAudit.cmake")
         set_tests_properties(YouKnow106.OversamplingAuditContract
+                             PROPERTIES TIMEOUT 300)
+
+        add_test(NAME YouKnow106.DcoScanQualityContract
+                 COMMAND YouKnow106DcoScanQualityAudit --self-test)
+        add_test(NAME YouKnow106.VcfBbdQualityContract
+                 COMMAND YouKnow106VcfBbdQualityAudit --self-test)
+        set_tests_properties(YouKnow106.DcoScanQualityContract
+                             YouKnow106.VcfBbdQualityContract
                              PROPERTIES TIMEOUT 300)
     endif()
     # The engine suite renders the complete factory-balance corpus, while the

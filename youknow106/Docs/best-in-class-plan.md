@@ -2207,10 +2207,11 @@ name are real and a later pass will want the reasoning rather than the idea.
   bucket-clocked, so both may legitimately need the higher rate. Continuous
   step 5 now establishes exact scaling for selected semantic events by domain
   and uninstrumented whole-engine thread-CPU baselines without changing the
-  signal path. It does **not** publish which domain needs 4×: that requires the
-  next, common-host
-  1×/2×/4× error matrix against independent DCO, RK4 VCF, exact-edge BBD and
-  analytic scan references, including reconstruction at every domain boundary.
+  signal path. It does **not** publish which domain needs 4×. Continuous step
+  6 below now supplies the common-host 1×/2×/4× isolated-domain matrix against
+  analytic DCO/scan, RK4 VCF and closed-form BBD references. Its DCO result alone
+  blocks every tested factor, and isolated passes cannot qualify a split before
+  inter-domain reconstruction, whole-engine and latency parity are measured.
 - **Note-on-to-first-sample latency — completed 2026-08-09.** Continuous-work
   step 3 measures and publishes the complete declared 48 kHz host/scan-phase
   distribution before any scheduler change. It became a step because making
@@ -2666,8 +2667,102 @@ evidence about a physical JUNO-106.
   **Verdict: measurement baseline complete; no rate split admitted.** One DCO
   frame, Newton iteration, BBD edge visit and FIR MAC are not equal-cost units,
   and this step measures no cross-boundary error. Production equations,
-  oversampling selection, presets and audio files remain unchanged. The next
-  atomic qualification must compare 1×/2×/4× at the same 44.1/48 kHz output
-  boundary, use an independent reference rather than treating 4× as truth,
-  and reject a lower rate cell-by-cell if any DCO alias, VCF RK/fold-back,
-  BBD BGA/SGA, scan/hold, decimator, latency or whole-engine fence regresses.
+  oversampling selection, presets and audio files remain unchanged. Step 6
+  below performs the same-host isolated-domain qualification, uses independent
+  references rather than treating 4× as truth, and rejects rate admission; a
+  later production split would still need inter-domain, latency and whole-engine
+  parity before it could ship.
+- [x] **6. Qualify isolated numerical domains at one common host boundary before
+  proposing any rate split.** `Tools/AuditDcoScanQuality.cpp` and
+  `Tools/AuditVcfBbdQuality.cpp` link the untouched shipping DSP and render every
+  44.1/48 kHz × 1×/2×/4× cell to the same host coordinate. Their registered
+  contracts are `YouKnow106.DcoScanQualityContract` and
+  `YouKnow106.VcfBbdQualityContract`. Shared
+  `Tools/OversamplingQualitySupport.h` supplies VCF/BBD with a factor-independent
+  fixed-16× reference path: a 4,097-tap Kaiser FIR, zero-phase host-boundary
+  decimation and explicit 0/15.5/23.25-frame alignment. Canonical filter,
+  stop-path, phase and fractional-delay self-checks guard that support. The 4×
+  shipping render remains one candidate under test, never the reference.
+
+  The isolated pre-VCF DCO matrix contains 90 takes per cell: the six
+  octave-spaced notes MIDI 36/48/60/72/84/96 in 16'/8'/4', saw and sub, plus
+  pulse at 5/50/95% duty. Its absolute metric is
+  the worst single FFT bin outside the analytic harmonic mask, relative to the
+  fundamental; it is not integrated alias energy or a claim about the complete
+  audible floor.
+
+  | DCO worst off-mask bin | 1× | 2× | 4× | −70 dBc gate |
+  | --- | ---: | ---: | ---: | --- |
+  | 44.1 kHz | −12.780565 dBc | −36.596878 dBc | −42.618000 dBc | **REJECT / REJECT / REJECT** |
+  | 48 kHz | −16.741087 dBc | −36.344575 dBc | −41.452375 dBc | **REJECT / REJECT / REJECT** |
+
+  Every per-take analytic multiline control passes its spur and gain gates.
+  The separately fenced normalized 23-write scan and the declared DCO,
+  two-pole PWM and SUB hold recurrences pass in every cell. Frequency-coincident
+  boundary-stopband and pre-grid fold families are diagnostics only: they do
+  not establish the source of the DCO result, whose cause remains
+  **unattributed**.
+
+  The VCF reference solves the declared continuous four-stage equations at the
+  fixed 16× grid with RK4 at four and eight substeps—effective 64×/128×—then
+  crosses the independent FIR. The domain is deliberately nominal Character 0:
+  input to fourth pole, calibration/offsets zero, `gScale=1`, nominal fixed
+  headroom and Early off. Its decisive hot fixture is a 1,046.502 Hz saw,
+  16 kHz cutoff and `k=3.8`; the normal 2.4 V mixer coordinate becomes
+  4.493952 V after the shipping resonance input compensation.
+
+  | VCF hot waveform NRMS vs RK128 | 1× | 2× | 4× | −40 dB gate |
+  | --- | ---: | ---: | ---: | --- |
+  | 44.1 kHz | −1.110 dB | −12.232 dB | −24.343 dB | **REJECT / REJECT / REJECT** |
+  | 48 kHz | −1.062 dB | −13.751 dB | −25.810 dB | **REJECT / REJECT / REJECT** |
+
+  The exhaustive 20 Hz–20 kHz hot-residual FFT uses 32,768 frames and masks
+  only ±6 bins around each legitimate output harmonic, leaving 14,618/13,412
+  bins at 44.1/48 kHz under direct review. Its 1×/2×/4× maxima are
+  −27.063/−67.588/−99.040 dBc at 44.1 kHz and
+  −19.658/−67.128/−99.618 dBc at 48 kHz against a <−60 dBc gate; the matching
+  oracle-only off-mask controls are −93.242/−93.163 dBc. The narrower
+  3 V/220 Hz driven-sine RK fixtures and 500 Hz-cutoff self-oscillation
+  pitch/level fixtures also pass their own gates. None overrides the
+  production-compensated full-waveform rejection or admits the VCF domain.
+  Character 1 remains untested by this matrix.
+
+  The deterministic one-line BBD reference is closed-form rather than a higher
+  shipping grid: continuous input/output component responses, the exact
+  128-edge sequence delay and loss pole, and full-period zero-order-hold image
+  phasors cross the same independent FIR. Four low-drive cases cover 20 kHz,
+  50 kHz and 91.429 kHz clocks plus 50 kHz/12 kHz; the declared amplitude
+  `A=0.02` keeps the fitted saturation inside its independently fenced
+  linearization bound.
+
+  The SGA metric is the maximum remaining 20 Hz–20 kHz Blackman–Harris FFT bin
+  across all four cases after masking only the fundamental and analytically
+  validated wanted physical-image lines at or below 20 kHz. Physical sources
+  above that boundary are not silently protected. Exactly one non-fundamental
+  wanted image line clears the projection threshold in each cell, so the BGA
+  column below is that qualifying line's error rather than an exhaustive image
+  population.
+
+  | Host | Factor | Analytic NRMS (gate ≤ −40 dB) | Qualifying-line BGA gain error (gate ≤ 0.75 dB) | 20 Hz–20 kHz unmasked SGA (gate < −60 dBc) | Result |
+  | ---: | ---: | ---: | ---: | ---: | --- |
+  | 44.1 kHz | 1× | −3.099 dB | 34.389 dB | −24.854 dBc | **REJECT** |
+  | 44.1 kHz | 2× | −14.910 dB | 4.090 dB | −28.762 dBc | **REJECT** |
+  | 44.1 kHz | 4× | −27.043 dB | 0.869 dB | −47.635 dBc | **REJECT** |
+  | 48 kHz | 1× | −4.640 dB | 22.893 dB | −28.871 dBc | **REJECT** |
+  | 48 kHz | 2× | −16.427 dB | 3.257 dB | −31.329 dBc | **REJECT** |
+  | 48 kHz | 4× | −28.183 dB | 0.708 dB | −38.189 dBc | **REJECT** |
+
+  This BBD oracle independently evaluates the same declared component values
+  and fitted transfer pole; it is not a second hardware fit or a measurement of
+  an original JUNO-106. Edge-state, phase and projection controls pass; the
+  exhaustive 20 Hz–20 kHz oracle off-mask controls are
+  −93.046/−135.607 dBc and the
+  independently bounded post-FIR image tails are −198.030/−202.098 dBc at
+  44.1/48 kHz.
+
+  **Verdict: the common-host baseline is complete and admits no production rate
+  change.** All six DCO, nominal-VCF and BBD cells reject their absolute domain
+  gates, including the current 4× path. No source equation, quality selection,
+  preset or audio file changes in this step. Inter-domain reconstruction,
+  Character 1, whole-engine output, latency parity and live transition behavior
+  remain unqualified; none may be inferred from an isolated sub-fixture pass.

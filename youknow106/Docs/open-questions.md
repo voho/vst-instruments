@@ -533,6 +533,43 @@ identify whether they address the raw held model, the reconstructed emitted
 node, or an installed device, and de-embed the numerical reconstruction when
 comparing the first two.
 
+**2026-08-09 common-host numerical baseline — implementation check, not
+closure.** `YouKnow106VcfBbdQualityAudit` compares one deterministic modeled
+line at 44.1/48 kHz × 1×/2×/4× with a closed-form reference: the declared
+continuous input/output component responses, exact 128-edge sequence delay,
+fixed per-edge transfer-loss pole and full-period zero-order-hold image phasors,
+followed by an independently designed fixed-16×, 4,097-tap host-boundary FIR.
+The low coherent drive `A=0.02` keeps the fitted BBD saturation within a fenced
+`1e-6` linearization bound; cases cover 20, 50 and 91.429 kHz clocks at a low
+tone plus 50 kHz clock/12 kHz tone. This oracle independently evaluates the
+same declared component and fitted-transfer anchors. It is not a second
+hardware fit, an installed-unit measurement or evidence for selecting among
+the unresolved loaded poles in this question.
+
+The SGA measure is the exhaustive 20 Hz–20 kHz unmasked Blackman–Harris FFT
+maximum across all four cases after masking only the fundamental and
+analytically validated wanted physical-image lines at or below 20 kHz. Sources
+above 20 kHz do not receive an unmeasured BGA exemption. Exactly one
+non-fundamental wanted image clears the projection threshold in each cell, so
+the physical-image column is that qualifying line's error rather than an
+exhaustive image population. The reviewed matrix is:
+
+| Host | Analytic NRMS, 1× / 2× / 4× | Qualifying-line physical-image gain error, 1× / 2× / 4× | 20 Hz–20 kHz unmasked SGA, 1× / 2× / 4× | Result |
+| ---: | ---: | ---: | ---: | --- |
+| 44.1 kHz | −3.099 / −14.910 / −27.043 dB | 34.389 / 4.090 / 0.869 dB | −24.854 / −28.762 / −47.635 dBc | **all REJECT** |
+| 48 kHz | −4.640 / −16.427 / −28.183 dB | 22.893 / 3.257 / 0.708 dB | −28.871 / −31.329 / −38.189 dBc | **all REJECT** |
+
+The gates are ≤−40 dB analytic NRMS, ≤0.75 dB physical-image gain error
+and <−60 dBc SGA. The oracle's exhaustive 20 Hz–20 kHz off-mask controls are
+−93.046/−135.607 dBc and its post-FIR image-tail bounds are
+−198.030/−202.098 dBc at 44.1/48 kHz; clock-phase, exact edge-state, projection,
+finite-value and independent-filter controls also pass. Four-times remains a
+candidate, not truth, and every BBD rate is unadmitted.
+
+This matrix characterizes only the current deterministic model boundary; it
+cannot close the real MN3009 normalized transfer, BGA, source impedance or
+loaded time-varying support chain. OQ-04 therefore remains open at P2.
+
 ### Needed output (for LLM)
 
 - The selected route and why its evidence is sufficient.
@@ -682,6 +719,17 @@ Two model questions now depend on this task, both added 2026-08-06:
    same reason: it wrote up to 0.8 V straight into the VCA hold at host Note On,
    before any converter slot or mux transition could physically occur.
 
+**2026-08-09 numerical-grid baseline — implementation check, not closure.**
+`YouKnow106.DcoScanQualityContract` advances the current DCO, two-pole PWM and SUB
+recurrences at 44.1/48 kHz × 1×/2×/4× and compares them with their closed-form
+continuous exponentials. All six grid cells clear the declared absolute-error
+gates. This is only the hold-law subcheck: the DCO spectrum in all six of the
+same cells rejects its separate −70 dBc quality gate. The hold result validates
+the implementation of these three current model laws; it supplies no evidence
+for acquisition windows, droop, charge injection,
+continuous-versus-track-and-hold behaviour, or the voiced DCO/RESONANCE/NOISE
+constants. This question remains open at P1.
+
 ### Needed output (for LLM)
 
 - A schematic/measurement table for every destination: confirmed converter
@@ -735,6 +783,20 @@ closely aligned aggregate distributions. This baseline characterizes
 `NormalizedServiceChart`; it supplies no physical offset, acquisition, phase
 origin or audible-threshold evidence. OQ-07, this question, OQ-12 and OQ-19 all
 remain open.
+
+**2026-08-09 rate-grid baseline — numerical policy, not closure.** A separate
+`YouKnow106.DcoScanQualityContract` subcheck samples the normalized
+`ordinal/23` schedule at 44.1/48 kHz × 1×/2×/4× on
+each internal grid. It observes exactly 23 ordered model writes per pass over
+50 complete 44.1 kHz passes and five complete 48 kHz passes, with zero frame
+mismatch and less than one internal-sample interval of quantisation. Its
+DCO/PWM/SUB hold checks also match the current recurrence laws. Those
+references encode `NormalizedServiceChart` and the compatibility constants
+already under test; they provide no original-unit sub-pass timestamp,
+acquisition, jitter or pitch-restart evidence. The same audit's DCO spectral
+cells all reject their separate absolute quality gate, so these passing
+schedule/hold subchecks are not DCO-domain admission. OQ-07 and this question
+remain open at P1.
 
 ### Needed output (for LLM)
 
@@ -1635,7 +1697,7 @@ MN3009/installed-unit tracked sweep,
 plus a schematic re-read of the capacitor codes behind
 `YouKnow106Chorus.cpp:73-83` — a single 10× code misread moves a corner by a decade.
 
-### Deterministic BBD host-grid aliasing — implementation resolved
+### Deterministic BBD host-grid aliasing — mechanism implemented; absolute gate rejects
 
 Gabrielli, D'Angelo and Squartini distinguish wanted BBD-generated aliasing
 (BGA) at `k·Fclock ± f` from the simulation-generated aliasing (SGA) introduced
@@ -1669,10 +1731,14 @@ The paper's experiment uses an ideal, linear, noiseless 4096-stage MN3005 at
 internal rates. Its published SNR numbers are therefore not reused as product
 claims. The peer-reviewed result supports the BGA/SGA classification and method
 family; the exact bounded scheduler and the figures above are engine validation.
-This deterministic numerical issue is resolved, but it does **not** close
-OQ-03's stochastic model or OQ-04's physical loaded transfer and BGA response.
-A noise-on fixed/swept HQ/LQ PSD test and audition section are still required
-before extending the same reconstruction claim to the default hiss path.
+The reconstruction mechanism is implemented and the relative-improvement
+fixture above remains useful, but numerical fidelity is not resolved. The
+2026-08-09 common-host absolute audit now rejects every factor: even 4× reaches
+only −47.635/−38.189 dBc for exhaustive 20 Hz–20 kHz unmasked SGA at
+44.1/48 kHz, against <−60. This does **not** close OQ-03's stochastic model or
+OQ-04's physical loaded transfer and BGA response. A noise-on fixed/swept HQ/LQ
+PSD test and audition section are still required before extending the same
+reconstruction claim to the default hiss path.
 
 ### OQ-02 — the nominal common-VCA law is circuit-derived
 
@@ -3369,7 +3435,7 @@ exactly as written above.
   deterministic polyBLEP; the emitted waveform is no longer a literal
   rectangle. Its residual coefficient is fixed per BBD shift; the removed
   affine clock multiplier double-counted clock scaling. The paper-motivated
-  host-grid reconstruction is a resolved numerical product mechanism: it acts
+  host-grid reconstruction is an implemented numerical product mechanism: it acts
   after transfer loss and before the tap pole, leaves physical BBD/RNG state and
   noise unchanged, and clears only its grid-specific slots at a rate change.
   The two-phase OUT1/OUT2 pair presents one sample per clock period — the
