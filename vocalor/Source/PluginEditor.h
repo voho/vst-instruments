@@ -192,6 +192,7 @@ private:
     VocalorKnob tensionKnob { "TENSION" };
     VocalorKnob nasalKnob { "NASAL" };
     VocalorKnob vibratoKnob { "VIBRATO" };
+    VocalorKnob instabilityKnob { "INSTABILITY" };
     VocalorKnob humanizeKnob { "HUMANIZE" };
     VocalorKnob dynamicsKnob { "DYNAMICS" };
     VocalorKnob intonationKnob { "INTONATION" };
@@ -218,6 +219,7 @@ private:
     std::unique_ptr<SliderAttachment> resonanceAttachment;
     std::unique_ptr<SliderAttachment> tensionAttachment;
     std::unique_ptr<SliderAttachment> vibratoAttachment;
+    std::unique_ptr<SliderAttachment> instabilityAttachment;
     std::unique_ptr<SliderAttachment> humanizeAttachment;
     std::unique_ptr<SliderAttachment> nasalAttachment;
     std::unique_ptr<SliderAttachment> dynamicsAttachment;

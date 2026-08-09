@@ -246,9 +246,12 @@ float formantResonatorGain (float poleRadius, float sinPoleAngle) noexcept
     return gap * std::sqrt (gap * gap + 4.0f * radius * sine * sine);
 }
 
-void parallelFormantAmplitudes (const float* formantHz, const float* formantBandwidth,
-                                int count, float sampleRate, float floorGain,
-                                float* outGain) noexcept
+void parallelFormantCoefficients (const float* formantHz,
+                                  const float* formantBandwidth,
+                                  int count, float sampleRate, float floorGain,
+                                  float* outGain, float* outPoleA1,
+                                  float* outPoleA2,
+                                  float* outPeakNormaliser) noexcept
 {
     if (formantHz == nullptr || formantBandwidth == nullptr || outGain == nullptr
         || count <= 0 || ! (sampleRate > 0.0f))
@@ -279,6 +282,12 @@ void parallelFormantAmplitudes (const float* formantHz, const float* formantBand
         // On its own pole the general expression below is a difference of two
         // near-equal numbers; the closed form is not.
         peakDenominator[index] = formantResonatorGain (radius, sinOmega[index]);
+        if (outPoleA1 != nullptr)
+            outPoleA1[i] = a1[index];
+        if (outPoleA2 != nullptr)
+            outPoleA2[i] = a2[index];
+        if (outPeakNormaliser != nullptr)
+            outPeakNormaliser[i] = peakDenominator[index];
     }
 
     float largest = 0.0f;
@@ -318,6 +327,14 @@ void parallelFormantAmplitudes (const float* formantHz, const float* formantBand
     const float floor = std::clamp (floorGain, 0.0f, 1.0f) * largest * scale;
     for (int i = 0; i < count; ++i)
         outGain[i] = std::max (floor, outGain[i] * scale);
+}
+
+void parallelFormantAmplitudes (const float* formantHz, const float* formantBandwidth,
+                                int count, float sampleRate, float floorGain,
+                                float* outGain) noexcept
+{
+    parallelFormantCoefficients (formantHz, formantBandwidth, count, sampleRate,
+                                 floorGain, outGain, nullptr, nullptr, nullptr);
 }
 
 float formantResponseDb (float frequencyHz, const float* formantHz,

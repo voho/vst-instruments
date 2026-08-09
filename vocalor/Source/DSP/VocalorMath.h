@@ -159,6 +159,17 @@ void parallelFormantAmplitudes (const float* formantHz, const float* formantBand
                                 int count, float sampleRate, float floorGain,
                                 float* outGain) noexcept;
 
+/** Resolves the cascade-derived parallel gains and the two-pole coefficients
+    from the same geometry in one pass. The coefficient outputs may be null.
+    @c outPeakNormaliser is the numerator which makes each isolated resonator
+    unity at its own centre frequency; multiply it by the signed formant gain
+    to obtain b0. */
+void parallelFormantCoefficients (const float* formantHz,
+                                  const float* formantBandwidth,
+                                  int count, float sampleRate, float floorGain,
+                                  float* outGain, float* outA1, float* outA2,
+                                  float* outPeakNormaliser) noexcept;
+
 /** Magnitude of the summed two-pole formant bank at @c frequencyHz, in dB.
     This is the transfer function the engine actually realises, so the editor's
     curve is a measurement of the running tract rather than a decoration. */

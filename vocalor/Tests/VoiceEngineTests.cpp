@@ -11,6 +11,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <set>
 #include <string>
 #include <string_view>
@@ -21,6 +22,24 @@ namespace vocalor
 {
 struct VoiceEngineTestAccess
 {
+    struct TractSnapshot
+    {
+        std::array<float, kFormantCount> hz {};
+        std::array<float, kFormantCount> bandwidth {};
+        std::array<float, kFormantCount> gain {};
+        std::array<float, kFormantCount> a1 {};
+        std::array<float, kFormantCount> a2 {};
+        std::array<float, kFormantCount> b0 {};
+        std::array<float, kFormantCount> peakNormaliser {};
+    };
+
+    struct SingerTractSnapshot
+    {
+        int singer = -1;
+        float intentionalFundamental = 0.0f;
+        TractSnapshot tract {};
+    };
+
     /** The engine's render chunk, in samples. Chunk boundaries are aligned to
         absolute sample positions, so a buffer split on a multiple of it renders
         the same chunks a single block would have rendered. */
@@ -150,6 +169,112 @@ struct VoiceEngineTestAccess
         return {};
     }
 
+    /** Complete running tract for one sounding pitch. Frequencies, widths and
+        gains must belong to the same voice: a shared bandwidth can look
+        plausible in isolation while describing a different set of poles. */
+    static TractSnapshot voiceTract(const VoiceEngine& engine, int midiNote) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+        {
+            if (!voice.active || voice.releasing || voice.midiNote != midiNote)
+                continue;
+            TractSnapshot result;
+            result.hz = voice.formantHz;
+            result.bandwidth = voice.formantBandwidth;
+            result.gain = voice.formantGain;
+            for (int i = 0; i < kFormantCount; ++i)
+            {
+                const auto index = static_cast<std::size_t>(i);
+                result.a1[index] = voice.tract[index].a1;
+                result.a2[index] = voice.tract[index].a2;
+                result.b0[index] = voice.tract[index].b0;
+                result.peakNormaliser[index] = voice.tract[index].peakNormaliser;
+            }
+            return result;
+        }
+        return {};
+    }
+
+    /** Every singer's running tract on one sounding note, tagged by stable
+        identity. The intentional fundamental follows glide, just intonation
+        and pitch bend but excludes vibrato, jitter, drift and the onset scoop,
+        exactly as register-dependent tract gestures do. */
+    static std::vector<SingerTractSnapshot> singerTracts(
+        const VoiceEngine& engine, int midiNote)
+    {
+        std::vector<SingerTractSnapshot> result;
+        for (const auto& voice : engine.voices_)
+        {
+            if (!voice.active || voice.releasing || voice.midiNote != midiNote)
+                continue;
+            SingerTractSnapshot entry;
+            entry.singer = voice.singer;
+            const float tractCents = voice.glideCents + voice.justCents
+                + 100.0f * engine.pitchBendSemitones_;
+            entry.intentionalFundamental = voice.baseFrequency
+                * std::exp2(tractCents * (1.0f / 1200.0f));
+            entry.tract.hz = voice.formantHz;
+            entry.tract.bandwidth = voice.formantBandwidth;
+            entry.tract.gain = voice.formantGain;
+            for (int formant = 0; formant < kFormantCount; ++formant)
+            {
+                const auto index = static_cast<std::size_t>(formant);
+                entry.tract.a1[index] = voice.tract[index].a1;
+                entry.tract.a2[index] = voice.tract[index].a2;
+                entry.tract.b0[index] = voice.tract[index].b0;
+                entry.tract.peakNormaliser[index] = voice.tract[index].peakNormaliser;
+            }
+            result.push_back(entry);
+        }
+        std::sort(result.begin(), result.end(), [](const auto& left, const auto& right)
+        {
+            return left.singer < right.singer;
+        });
+        return result;
+    }
+
+    /** Running high-register effort compensation for one sounding pitch:
+        realised gain, per-sample ramp and the 0..1 F1-lift gesture. */
+    static std::array<float, 3> efficiencyForNote(
+        const VoiceEngine& engine, int midiNote) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+            if (voice.active && !voice.releasing && voice.midiNote == midiNote)
+                return { voice.renderGain, voice.renderGainStep,
+                         voice.formantTuningLift };
+        return {};
+    }
+
+    /** Running breath-support regulation for one sounding pitch: realised
+        gain, per-sample ramp, smoothed target and the freshly measured raw
+        target from the same intentional (non-vibrato) f0. */
+    static std::array<float, 4> radiatedPowerForNote(
+        const VoiceEngine& engine, int midiNote) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+        {
+            if (!voice.active || voice.releasing || voice.midiNote != midiNote)
+                continue;
+            const float tractCents = voice.glideCents + voice.justCents
+                + 100.0f * engine.pitchBendSemitones_;
+            const float fundamental = voice.baseFrequency
+                * std::exp2(tractCents / 1200.0f);
+            const float raw = engine.radiatedPowerTarget(
+                voice, fundamental,
+                engine.smoothedTension_
+                    * engine.chunkResponse_.sourceTensionScale,
+                engine.blockParameters_.legacyRadiatedPowerBypass);
+            return { voice.radiatedPowerGain, voice.radiatedPowerGainStep,
+                     voice.radiatedPowerTarget, raw };
+        }
+        return {};
+    }
+
+    static void setRadiatedPowerDepth(VoiceEngine& engine, float depth) noexcept
+    {
+        engine.radiatedPowerDepth_ = depth;
+    }
+
     /** The two per-sample level scalars the dynamic reaches, as the render loop
         sees them: the voiced drive and the aspiration drive. Their ratio is the
         breath-to-voice balance, which has to rise as the dynamic falls. */
@@ -171,13 +296,10 @@ struct VoiceEngineTestAccess
 
     /** How far below the block's tension the sounding voice's glottal source
         actually started, after the note's own velocity has scaled the engine's
-        depth. Read from the voice rather than from a render because the two
-        glottal prototypes are crossfaded in the time domain: their harmonics
-        cancel non-monotonically at intermediate tensions, so no band share
-        moves monotonically with this. Measured on the shipping engine, the
-        2-5 kHz share at 10-35 ms with the ramp in minus the same share with it
-        forced out reads 3.06, 1.53, 2.14 and 2.17 dB at velocity 0.10, 0.40,
-        0.80 and 1.00, which is the notch rather than the depth. */
+        depth. Read from the voice rather than inferring it from one output
+        band: the source shape, aspiration and tract all move that band. The
+        source-bank test below measures the physical LF morph directly, before
+        those later stages can disguise it. */
     static float sourceTensionSag(const VoiceEngine& engine) noexcept
     {
         for (const auto& voice : engine.voices_)
@@ -191,6 +313,37 @@ struct VoiceEngineTestAccess
     static float sourceTensionRampDepth(const VoiceEngine& engine) noexcept
     {
         return engine.sourceTensionRampDepth_;
+    }
+
+    /** One exact cycle of the voiced glottal source before its presence
+        shelves, envelope and tract. Measuring here separates the LF source
+        morph from every formant: a tract peak must not be able to hide a
+        harmonic cancelled inside the excitation itself. */
+    static std::vector<float> glottalSourceCycle(const VoiceEngine& engine,
+                                                 int level, float tension)
+    {
+        std::vector<float> result(static_cast<std::size_t>(VoiceEngine::tableSize));
+        for (int sample = 0; sample < VoiceEngine::tableSize; ++sample)
+        {
+            const float phase = static_cast<float>(sample)
+                              / static_cast<float>(VoiceEngine::tableSize);
+            result[static_cast<std::size_t>(sample)] =
+                engine.glottalPair(level, phase, tension);
+        }
+        return result;
+    }
+
+    static constexpr int fullestGlottalTableLevel = VoiceEngine::tableLevels - 1;
+    static constexpr int glottalTableLevelCount = VoiceEngine::tableLevels;
+
+    static constexpr int glottalHarmonicsForLevel(int level) noexcept
+    {
+        return VoiceEngine::harmonicsPerLevel[static_cast<std::size_t>(level)];
+    }
+
+    static const void* tableBankIdentity(const VoiceEngine& engine) noexcept
+    {
+        return engine.tables_;
     }
 
     /** Forces the depth of the pitch-synchronous aspiration window. 1 is the
@@ -416,6 +569,20 @@ struct VoiceEngineTestAccess
         for (const auto& entry : byIdentity)
             result.push_back (entry.second);
         return result;
+    }
+
+    /** Observable modulation state of the first held voice: F0 phase, direct
+        source gain and the gain of each of the two cascaded presence shelves.
+        The last two are the values the sample loop actually multiplies, after
+        their control-period ramps, so their product is the effective high-band
+        AM law rather than an unevaluated target. */
+    static std::array<float, 3> vibratoModulationState (const VoiceEngine& engine) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing)
+                return { voice.vibratoPhase, voice.vibratoGain,
+                         voice.vibratoShelfGain };
+        return { 0.0f, 1.0f, 1.0f };
     }
 
     /** The voiced envelope of every voice, indexed by singer identity, with a
@@ -1781,6 +1948,7 @@ void testDenormalAndNaNSafety()
     poisoned.resonance = infinity;
     poisoned.vibrato = -infinity;
     poisoned.humanize = notANumber;
+    poisoned.instability = infinity;
     poisoned.spread = infinity;
     poisoned.tension = notANumber;
     poisoned.room = infinity;
@@ -1934,6 +2102,16 @@ void testDisplayStateTracksTheEngine()
         expect (state.formantGain[index] > 0.0f && state.formantGain[index] < 4.0f,
                 "the published formant gain is out of range");
     }
+    const auto runningTract = vocalor::VoiceEngineTestAccess::voiceTract(engine, 62);
+    for (int i = 0; i < vocalor::kFormantCount; ++i)
+    {
+        const auto index = static_cast<std::size_t>(i);
+        expect(std::abs(state.formantHz[index] - runningTract.hz[index]) < 0.01f
+                   && std::abs(state.formantBandwidth[index]
+                               - runningTract.bandwidth[index]) < 0.01f
+                   && std::abs(state.formantGain[index] - runningTract.gain[index]) < 1.0e-5f,
+               "the display combined frequency, bandwidth and gain from different tracts");
+    }
     const auto corner = vocalor::cardinalVowelPosition (0);
     expect (std::abs (state.vowelX - corner.x) < 0.02f && std::abs (state.vowelY - corner.y) < 0.02f,
             "the published vowel position did not follow a full morph");
@@ -1982,6 +2160,38 @@ double harmonicMagnitude (const std::vector<float>& samples, double frequency, d
     }
     return std::sqrt (real * real + imaginary * imaginary) * 2.0
          / std::max (static_cast<double> (samples.size()), 1.0);
+}
+
+/** Harmonics of one exact glottal-table cycle, before the source shelves and
+    vocal tract. The first 24 are the calibration band used by buildTables(). */
+struct GlottalSourceSpectrum
+{
+    static constexpr int harmonicCount = 24;
+    std::array<double, harmonicCount + 1> magnitude {};
+    double cycleRms = 0.0;
+    double bandRms = 0.0;
+};
+
+GlottalSourceSpectrum glottalSourceSpectrum(const std::vector<float>& cycle)
+{
+    GlottalSourceSpectrum result;
+    double square = 0.0;
+    for (const float sample : cycle)
+        square += static_cast<double>(sample) * static_cast<double>(sample);
+    result.cycleRms = std::sqrt(square
+        / std::max(static_cast<double>(cycle.size()), 1.0));
+
+    double bandSquare = 0.0;
+    const double cycleRate = static_cast<double>(cycle.size());
+    for (int harmonic = 1; harmonic <= GlottalSourceSpectrum::harmonicCount; ++harmonic)
+    {
+        const double magnitude = harmonicMagnitude(
+            cycle, static_cast<double>(harmonic), cycleRate);
+        result.magnitude[static_cast<std::size_t>(harmonic)] = magnitude;
+        bandSquare += 0.5 * magnitude * magnitude;
+    }
+    result.bandRms = std::sqrt(bandSquare);
+    return result;
 }
 
 vocalor::EngineParameters steadyParameters()
@@ -2186,8 +2396,11 @@ void testTractLevelStability()
     down.formantShift = -12.0f;
     auto up = steadyParameters();
     up.formantShift = 12.0f;
-    expect (std::abs (steadyLevelDb (sampleRate, down, 60)
-                      - steadyLevelDb (sampleRate, up, 60)) < 6.0,
+    const auto downLevel = steadyLevelDb (sampleRate, down, 60);
+    const auto upLevel = steadyLevelDb (sampleRate, up, 60);
+    std::cout << "formant-shift endpoints: " << downLevel << " / "
+              << upLevel << " dB\n";
+    expect (std::abs (downLevel - upLevel) < 6.0,
             "shifting the formants up an octave still acts as a fader");
 }
 
@@ -2425,6 +2638,660 @@ vocalor::EngineParameters makeReferenceParameters()
     return parameters;
 }
 
+/** Source-table construction is deliberately outside the real-time API.
+
+    A host that violates the prepare-before-audio contract must get silence,
+    not a hidden heap allocation and a multi-millisecond table build in its
+    callback. Once prepared, the same engine must accept notes normally. */
+void testPreparationIsExplicit()
+{
+    vocalor::VoiceEngine engine;
+    std::array<float, 64> left {};
+    std::array<float, 64> right {};
+    left.fill(1.0f);
+    right.fill(-1.0f);
+    engine.noteOn(60, 0.8f);
+    engine.process(left.data(), right.data(), static_cast<int>(left.size()));
+    expect(engine.getActiveVoiceCount() == 0
+               && std::all_of(left.begin(), left.end(), [](float value)
+                              { return value == 0.0f; })
+               && std::all_of(right.begin(), right.end(), [](float value)
+                              { return value == 0.0f; }),
+           "an unprepared engine allocated/rendered instead of returning silence");
+
+    engine.prepare(48000.0, blockSize);
+    engine.reset();
+    engine.noteOn(60, 0.8f);
+    engine.process(left.data(), right.data(), static_cast<int>(left.size()));
+    expect(engine.getActiveVoiceCount() == 1,
+           "an explicitly prepared engine did not accept its first note");
+}
+
+/** Tension is a physical change of the LF source, not a crossfade between two
+    unrelated recordings of a pulse. The lax and pressed endpoint tables have
+    different closure phases; mixing only those endpoints used to cancel H2 by
+    19.6 dB and H5 by 9.1 dB at intermediate settings even though neither
+    physical endpoint contained the notch. Probe the source before the tract so
+    no formant can fill that hole and make the regression pass accidentally. */
+void testGlottalSourceTensionBank()
+{
+    constexpr auto level = vocalor::VoiceEngineTestAccess::fullestGlottalTableLevel;
+    constexpr std::array<double, 6> expectedLax {
+        0.0, 0.70240, 0.29779, 0.24195, 0.14807, 0.07937
+    };
+    constexpr std::array<double, 6> expectedPressed {
+        0.0, 0.30246, 0.35838, 0.22130, 0.18155, 0.16822
+    };
+
+    auto reference = std::make_unique<vocalor::VoiceEngine>();
+    reference->prepare(48000.0, blockSize);
+    reference->reset();
+    const auto laxCycle = vocalor::VoiceEngineTestAccess::glottalSourceCycle(
+        *reference, level, 0.0f);
+    const auto pressedCycle = vocalor::VoiceEngineTestAccess::glottalSourceCycle(
+        *reference, level, 1.0f);
+    const auto lax = glottalSourceSpectrum(laxCycle);
+    const auto pressed = glottalSourceSpectrum(pressedCycle);
+
+    // The physical endpoints and their historical 1..24-harmonic calibration
+    // are intentionally unchanged by adding the shapes between them.
+    expect(std::abs(lax.bandRms - 0.587) < 0.002
+               && std::abs(pressed.bandRms - 0.441) < 0.002,
+           "the glottal source bank moved its calibrated endpoint band levels");
+    expect(std::abs(lax.cycleRms - 0.58733) < 0.003
+               && std::abs(pressed.cycleRms - 0.44409) < 0.003,
+           "the glottal source bank moved its full-cycle endpoint levels");
+    for (int harmonic = 1; harmonic <= 5; ++harmonic)
+    {
+        const auto index = static_cast<std::size_t>(harmonic);
+        expect(std::abs(lax.magnitude[index] - expectedLax[index]) < 0.002
+                   && std::abs(pressed.magnitude[index] - expectedPressed[index]) < 0.002,
+               "the glottal source bank changed endpoint H"
+                   + std::to_string(harmonic));
+    }
+
+    std::array<double, 6> minimumRelativeToEndpoints {};
+    minimumRelativeToEndpoints.fill(std::numeric_limits<double>::infinity());
+    double largestBandErrorDb = 0.0;
+    double largestLowHarmonicStepDb = 0.0;
+    double largestCycleStep = 0.0;
+    auto previousCycle = laxCycle;
+    auto previousSpectrum = lax;
+    // Mean product of the former, closure-unaligned lax and pressed endpoint
+    // spectra over H1-H24. Together with the two endpoint energies this defines
+    // the exact quadratic RMS curve that existing Tension settings rendered;
+    // preserving it keeps session loudness while the physical shape bank fixes
+    // the individual harmonic holes.
+    constexpr double legacyEndpointBandCross = 0.00206635;
+    constexpr int sweepSteps = 256;
+    for (int step = 0; step <= sweepSteps; ++step)
+    {
+        const float tension = static_cast<float>(step)
+                            / static_cast<float>(sweepSteps);
+        const auto cycle = vocalor::VoiceEngineTestAccess::glottalSourceCycle(
+            *reference, level, tension);
+        const auto spectrum = glottalSourceSpectrum(cycle);
+        const double pressedAmount = static_cast<double>(tension);
+        const double laxAmount = 1.0 - pressedAmount;
+        const double targetBandRms = std::sqrt(
+            laxAmount * laxAmount * 0.587 * 0.587
+            + pressedAmount * pressedAmount * 0.441 * 0.441
+            + 2.0 * laxAmount * pressedAmount * legacyEndpointBandCross);
+        largestBandErrorDb = std::max(largestBandErrorDb, std::abs(
+            20.0 * std::log10(std::max(spectrum.bandRms, 1.0e-30)
+                              / targetBandRms)));
+
+        for (int harmonic = 1; harmonic <= 5; ++harmonic)
+        {
+            const auto index = static_cast<std::size_t>(harmonic);
+            const double endpointFloor = std::min(lax.magnitude[index],
+                                                  pressed.magnitude[index]);
+            minimumRelativeToEndpoints[index] = std::min(
+                minimumRelativeToEndpoints[index],
+                spectrum.magnitude[index] / std::max(endpointFloor, 1.0e-30));
+            if (step > 0)
+            {
+                largestLowHarmonicStepDb = std::max(largestLowHarmonicStepDb,
+                    std::abs(20.0 * std::log10(
+                        std::max(spectrum.magnitude[index], 1.0e-30)
+                        / std::max(previousSpectrum.magnitude[index], 1.0e-30))));
+            }
+        }
+
+        if (step > 0)
+        {
+            double deltaSquare = 0.0;
+            for (std::size_t sample = 0; sample < cycle.size(); ++sample)
+            {
+                const double delta = static_cast<double>(cycle[sample])
+                                   - static_cast<double>(previousCycle[sample]);
+                deltaSquare += delta * delta;
+            }
+            const double deltaRms = std::sqrt(deltaSquare
+                / std::max(static_cast<double>(cycle.size()), 1.0));
+            largestCycleStep = std::max(largestCycleStep,
+                deltaRms / std::max(previousSpectrum.cycleRms, 1.0e-30));
+        }
+        previousCycle = cycle;
+        previousSpectrum = spectrum;
+    }
+
+    std::cout << "glottal source morph: max legacy 1-24 RMS error " << std::fixed
+              << std::setprecision(4) << largestBandErrorDb << " dB, H1-H5 minima ";
+    for (int harmonic = 1; harmonic <= 5; ++harmonic)
+        std::cout << (harmonic == 1 ? "" : "/")
+                  << minimumRelativeToEndpoints[static_cast<std::size_t>(harmonic)];
+    std::cout << ", max 1/256-tension harmonic/cycle step "
+              << largestLowHarmonicStepDb << " dB/" << largestCycleStep << "\n";
+
+    // This is level calibration, not a demand for flat harmonics. Each partial
+    // keeps its own endpoint trajectory; the test only rejects a deep notch
+    // below both physical endpoints. The former H2/H5 ratios were 0.104/0.350.
+    for (int harmonic = 1; harmonic <= 5; ++harmonic)
+        expect(minimumRelativeToEndpoints[static_cast<std::size_t>(harmonic)] > 0.55,
+               "the glottal tension morph destructively cancelled H"
+                   + std::to_string(harmonic));
+    expect(largestBandErrorDb < 0.03,
+           "the glottal tension morph changed the legacy 1-24-harmonic RMS curve");
+    expect(largestLowHarmonicStepDb < 0.35 && largestCycleStep < 0.025,
+           "the physical glottal shapes do not join smoothly across Tension");
+
+    // The voice selects a different harmonic mip as pitch rises. Compensation
+    // derived only from the 24-harmonic calibration band can be exact here yet
+    // move a one- or two-harmonic soprano source by more than a decibel. Recover
+    // the legacy pressed endpoint's pre-alignment phase, then require every mip
+    // to preserve its own former endpoint-crossfade RMS curve.
+    const auto coefficients = [](const std::vector<float>& cycle, int harmonics)
+    {
+        std::vector<std::pair<double, double>> result(
+            static_cast<std::size_t>(harmonics + 1));
+        const double count = static_cast<double>(cycle.size());
+        for (int harmonic = 1; harmonic <= harmonics; ++harmonic)
+        {
+            double cosine = 0.0;
+            double sine = 0.0;
+            for (std::size_t sample = 0; sample < cycle.size(); ++sample)
+            {
+                const double angle = 2.0 * 3.14159265358979323846
+                    * static_cast<double>(harmonic)
+                    * static_cast<double>(sample) / count;
+                cosine += static_cast<double>(cycle[sample]) * std::cos(angle);
+                sine += static_cast<double>(cycle[sample]) * std::sin(angle);
+            }
+            result[static_cast<std::size_t>(harmonic)] = {
+                2.0 * cosine / count, 2.0 * sine / count
+            };
+        }
+        return result;
+    };
+    const auto cycleRms = [](const std::vector<float>& cycle)
+    {
+        double square = 0.0;
+        for (const float sample : cycle)
+            square += static_cast<double>(sample) * static_cast<double>(sample);
+        return std::sqrt(square / static_cast<double>(cycle.size()));
+    };
+
+    double largestMipRmsErrorDb = 0.0;
+    for (int tableLevel = 0;
+         tableLevel < vocalor::VoiceEngineTestAccess::glottalTableLevelCount;
+         ++tableLevel)
+    {
+        const int harmonics = vocalor::VoiceEngineTestAccess::glottalHarmonicsForLevel(
+            tableLevel);
+        const auto levelLaxCycle = vocalor::VoiceEngineTestAccess::glottalSourceCycle(
+            *reference, tableLevel, 0.0f);
+        const auto levelPressedCycle = vocalor::VoiceEngineTestAccess::glottalSourceCycle(
+            *reference, tableLevel, 1.0f);
+        const auto levelLax = coefficients(levelLaxCycle, harmonics);
+        const auto levelPressedAligned = coefficients(levelPressedCycle, harmonics);
+
+        double laxEnergy = 0.0;
+        double pressedEnergy = 0.0;
+        double legacyCross = 0.0;
+        for (int harmonic = 1; harmonic <= harmonics; ++harmonic)
+        {
+            const auto index = static_cast<std::size_t>(harmonic);
+            const auto [laxCosine, laxSine] = levelLax[index];
+            const auto [alignedCosine, alignedSine] = levelPressedAligned[index];
+            // The pressed shape was delayed by 0.78-0.46=0.32 cycle to put its
+            // closure at the lax endpoint's phase. Rotate it back before taking
+            // the old endpoint cross term.
+            const double angle = 2.0 * 3.14159265358979323846
+                               * static_cast<double>(harmonic) * 0.32;
+            const double rotationCosine = std::cos(angle);
+            const double rotationSine = std::sin(angle);
+            const double legacyCosine = alignedCosine * rotationCosine
+                                      + alignedSine * rotationSine;
+            const double legacySine = -alignedCosine * rotationSine
+                                    + alignedSine * rotationCosine;
+            laxEnergy += 0.5 * (laxCosine * laxCosine + laxSine * laxSine);
+            pressedEnergy += 0.5 * (legacyCosine * legacyCosine
+                                  + legacySine * legacySine);
+            legacyCross += 0.5 * (laxCosine * legacyCosine
+                               + laxSine * legacySine);
+        }
+
+        for (int step = 0; step <= sweepSteps; ++step)
+        {
+            const double tension = static_cast<double>(step)
+                                 / static_cast<double>(sweepSteps);
+            const double laxAmount = 1.0 - tension;
+            const double targetRms = std::sqrt(std::max(
+                laxAmount * laxAmount * laxEnergy
+                    + tension * tension * pressedEnergy
+                    + 2.0 * laxAmount * tension * legacyCross,
+                1.0e-30));
+            const auto cycle = vocalor::VoiceEngineTestAccess::glottalSourceCycle(
+                *reference, tableLevel, static_cast<float>(tension));
+            const double measuredRms = cycleRms(cycle);
+            largestMipRmsErrorDb = std::max(largestMipRmsErrorDb,
+                std::abs(20.0 * std::log10(
+                    std::max(measuredRms, 1.0e-30) / targetRms)));
+        }
+    }
+    std::cout << "glottal mip legacy-RMS error: " << std::fixed
+              << std::setprecision(4) << largestMipRmsErrorDb << " dB\n";
+    expect(largestMipRmsErrorDb < 0.03,
+           "a pitch-selected glottal mip changed the legacy source drive");
+
+    // The table is an oscillator property, not a sample-rate property. Every
+    // engine deliberately shares the same immutable bank; prove that ownership
+    // contract and require identical samples before any rate-dependent shelf or
+    // tract rather than pretending each prepare rebuilt an independent table.
+    constexpr std::array<float, 6> probeTensions {
+        0.0f, 0.125f, 0.371f, 0.5f, 0.873f, 1.0f
+    };
+    constexpr std::array<int, 3> probeLevels { 0, 4, level };
+    for (const double sampleRate : { 44100.0, 48000.0, 96000.0 })
+    {
+        auto rebuilt = std::make_unique<vocalor::VoiceEngine>();
+        rebuilt->prepare(sampleRate, blockSize);
+        rebuilt->reset();
+        expect(vocalor::VoiceEngineTestAccess::tableBankIdentity(*rebuilt)
+                   == vocalor::VoiceEngineTestAccess::tableBankIdentity(*reference),
+               "VoiceEngine instances did not share the immutable source bank");
+        for (const int probeLevel : probeLevels)
+        {
+            for (const float tension : probeTensions)
+            {
+                const auto expected = vocalor::VoiceEngineTestAccess::glottalSourceCycle(
+                    *reference, probeLevel, tension);
+                const auto actual = vocalor::VoiceEngineTestAccess::glottalSourceCycle(
+                    *rebuilt, probeLevel, tension);
+                expect(actual == expected,
+                       "the glottal source bank depends on sample rate or construction order");
+            }
+        }
+    }
+}
+
+/** A singer does not drive every note with identical breath support when a
+    sparse harmonic happens to land on a narrow tract resonance. The regulator
+    returns half of that local radiated-power error, bounded to +/-3 dB and
+    slowly enough that vibrato remains vibrato rather than an AGC detector.
+
+    Exercise the public render as well as the control state: a plausible target
+    is not useful if it fails to flatten the connected C4-C6 line, changes the
+    spectrum, steps on a legato retune, or depends on sample rate/buffer cuts. */
+void testRadiatedPowerRegulation()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr std::array<int, 12> line {
+        60, 62, 64, 67, 69, 72, 75, 77, 79, 80, 82, 84
+    };
+    constexpr float minimumGain = 0.70794578f;
+    constexpr float maximumGain = 1.41253754f;
+
+    auto parameters = makeReferenceParameters();
+    parameters.profile = vocalor::VoiceProfile::Female;
+    parameters.mode = vocalor::PerformanceMode::Solo;
+    parameters.vowel = vocalor::Vowel::Aah;
+    parameters.resonance = 0.42f;
+    parameters.tension = 0.62f;
+    parameters.breath = 0.0f;
+    parameters.legato = true;
+    parameters.glide = 0.16f;
+    parameters.instability = 0.0f;
+
+    struct Sweep
+    {
+        std::array<double, 12> levelDb {};
+        std::array<std::array<float, 4>, 12> regulation {};
+    };
+    const auto sweep = [&parameters, &line](float depth)
+    {
+        Sweep result;
+        vocalor::VoiceEngine engine;
+        engine.prepare(sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters(parameters);
+        vocalor::VoiceEngineTestAccess::setRadiatedPowerDepth(engine, depth);
+        // Keep the source spectrum stationary inside each level window. The
+        // production onset gesture is covered by the onset tests; here it would
+        // only obscure the tract/harmonic alignment under measurement.
+        vocalor::VoiceEngineTestAccess::setSourceTensionRampDepth(engine, 0.0f);
+
+        int sounding = -1;
+        constexpr int stepSamples = static_cast<int>(0.52 * sampleRate);
+        constexpr int levelSamples = static_cast<int>(0.18 * sampleRate);
+        for (std::size_t step = 0; step < line.size(); ++step)
+        {
+            engine.noteOn(line[step], 0.74f);
+            if (sounding >= 0)
+                engine.noteOff(sounding);
+            sounding = line[step];
+
+            const auto audio = renderMono(engine, stepSamples);
+            double square = 0.0;
+            for (int sample = stepSamples - levelSamples;
+                 sample < stepSamples; ++sample)
+            {
+                const double value = audio[static_cast<std::size_t>(sample)];
+                square += value * value;
+            }
+            result.levelDb[step] = 10.0 * std::log10(
+                std::max(square / static_cast<double>(levelSamples), 1.0e-30));
+            result.regulation[step]
+                = vocalor::VoiceEngineTestAccess::radiatedPowerForNote(
+                    engine, line[step]);
+        }
+        return result;
+    };
+
+    const auto unregulated = sweep(0.0f);
+    const auto regulated = sweep(1.0f);
+    const auto span = [](const auto& values)
+    {
+        const auto [minimum, maximum] = std::minmax_element(
+            values.begin(), values.end());
+        return *maximum - *minimum;
+    };
+    const auto maximumAdjacent = [](const auto& values)
+    {
+        double largest = 0.0;
+        for (std::size_t index = 1; index < values.size(); ++index)
+            largest = std::max(largest,
+                std::abs(values[index] - values[index - 1]));
+        return largest;
+    };
+    const double rawSpan = span(unregulated.levelDb);
+    const double regulatedSpan = span(regulated.levelDb);
+    const double regulatedAdjacent = maximumAdjacent(regulated.levelDb);
+    std::cout << "radiated-power C4-C6 level span: " << std::fixed
+              << std::setprecision(2) << rawSpan << " -> " << regulatedSpan
+              << " dB, regulated max adjacent " << regulatedAdjacent << " dB\n";
+    expect(rawSpan > 9.0,
+           "the unregulated soprano fixture no longer exposes harmonic/tract level jumps");
+    expect(regulatedSpan <= 7.0,
+           "bounded breath support left more than 7 dB across the C4-C6 line");
+    expect(regulatedAdjacent <= 4.7,
+           "bounded breath support left an adjacent register jump above 4.7 dB");
+    expect(rawSpan - regulatedSpan >= 3.0,
+           "the radiated-power law did not materially reduce the register plateau span");
+
+    // Production state must obey the same +/-3 dB bound as the analytical
+    // target and settle onto it after each half-second step.
+    for (std::size_t step = 0; step < line.size(); ++step)
+    {
+        const auto state = regulated.regulation[step];
+        for (const int field : { 0, 2, 3 })
+            expect(state[static_cast<std::size_t>(field)] >= minimumGain - 2.0e-5f
+                       && state[static_cast<std::size_t>(field)] <= maximumGain + 2.0e-5f,
+                   "radiated-power gain escaped its +/-3 dB bound on MIDI "
+                       + std::to_string(line[step]));
+        expect(std::abs(state[0] - state[2]) < 2.0e-3f
+                   && std::abs(state[2] - state[3]) < 3.0e-3f,
+               "radiated-power gain did not settle onto its target on MIDI "
+                   + std::to_string(line[step]));
+    }
+
+    // With aspiration removed the production A/B differs by one voiced-source
+    // scalar. Least-squares-normalise the complete steady waveform rather than
+    // checking a few bins, so any spectral or phase change leaves a residual.
+    auto scalarParameters = parameters;
+    scalarParameters.legato = false;
+    scalarParameters.glide = 0.0f;
+    auto unregulatedEngine = std::make_unique<vocalor::VoiceEngine>();
+    auto regulatedEngine = std::make_unique<vocalor::VoiceEngine>();
+    for (auto* engine : { unregulatedEngine.get(), regulatedEngine.get() })
+    {
+        engine->prepare(sampleRate, blockSize);
+        engine->reset();
+        engine->setParameters(scalarParameters);
+        vocalor::VoiceEngineTestAccess::setSourceTensionRampDepth(*engine, 0.0f);
+    }
+    vocalor::VoiceEngineTestAccess::setRadiatedPowerDepth(*unregulatedEngine, 0.0f);
+    vocalor::VoiceEngineTestAccess::setRadiatedPowerDepth(*regulatedEngine, 1.0f);
+    unregulatedEngine->noteOn(79, 0.74f);
+    regulatedEngine->noteOn(79, 0.74f);
+    render(*unregulatedEngine, static_cast<int>(0.8 * sampleRate));
+    render(*regulatedEngine, static_cast<int>(0.8 * sampleRate));
+    const auto rawWave = renderMono(*unregulatedEngine,
+                                    static_cast<int>(0.25 * sampleRate));
+    const auto regulatedWave = renderMono(*regulatedEngine,
+                                          static_cast<int>(0.25 * sampleRate));
+    double cross = 0.0;
+    double rawSquare = 0.0;
+    double regulatedSquare = 0.0;
+    for (std::size_t sample = 0; sample < rawWave.size(); ++sample)
+    {
+        cross += static_cast<double>(rawWave[sample]) * regulatedWave[sample];
+        rawSquare += static_cast<double>(rawWave[sample]) * rawWave[sample];
+        regulatedSquare += static_cast<double>(regulatedWave[sample])
+                         * regulatedWave[sample];
+    }
+    const double fittedGain = cross / std::max(rawSquare, 1.0e-30);
+    double residualSquare = 0.0;
+    for (std::size_t sample = 0; sample < rawWave.size(); ++sample)
+    {
+        const double residual = regulatedWave[sample]
+            - fittedGain * static_cast<double>(rawWave[sample]);
+        residualSquare += residual * residual;
+    }
+    const double normalisedResidual = std::sqrt(
+        residualSquare / std::max(regulatedSquare, 1.0e-30));
+    const auto scalarState
+        = vocalor::VoiceEngineTestAccess::radiatedPowerForNote(
+            *regulatedEngine, 79);
+    std::cout << "radiated-power scalar residual: " << std::scientific
+              << normalisedResidual << ", fitted/state gain " << std::fixed
+              << std::setprecision(5) << fittedGain << "/" << scalarState[0]
+              << "\n";
+    expect(normalisedResidual < 2.0e-5,
+           "radiated-power support changed the steady voiced spectrum or phase");
+    expect(std::abs(fittedGain - scalarState[0]) < 2.0e-4,
+           "the rendered voiced scalar did not match the regulator state");
+
+    // Use the two largest analytical extremes from the line for a connected
+    // retune. noteOn() may aim a new tract immediately, but neither the running
+    // gain nor its smoothed target may snap to the new raw answer.
+    const auto minimumRaw = std::min_element(
+        regulated.regulation.begin(), regulated.regulation.end(),
+        [](const auto& left, const auto& right) { return left[3] < right[3]; });
+    const auto maximumRaw = std::max_element(
+        regulated.regulation.begin(), regulated.regulation.end(),
+        [](const auto& left, const auto& right) { return left[3] < right[3]; });
+    const auto fromIndex = static_cast<std::size_t>(
+        std::distance(regulated.regulation.begin(), minimumRaw));
+    const auto toIndex = static_cast<std::size_t>(
+        std::distance(regulated.regulation.begin(), maximumRaw));
+    vocalor::VoiceEngine legato;
+    legato.prepare(sampleRate, blockSize);
+    legato.reset();
+    legato.setParameters(parameters);
+    vocalor::VoiceEngineTestAccess::setSourceTensionRampDepth(legato, 0.0f);
+    legato.noteOn(line[fromIndex], 0.74f);
+    render(legato, static_cast<int>(0.8 * sampleRate)); // exactly 150 updates
+    const auto before = vocalor::VoiceEngineTestAccess::radiatedPowerForNote(
+        legato, line[fromIndex]);
+    legato.noteOn(line[toIndex], 0.74f);
+    legato.noteOff(line[fromIndex]);
+    const auto immediate = vocalor::VoiceEngineTestAccess::radiatedPowerForNote(
+        legato, line[toIndex]);
+    expect(std::abs(immediate[0] - before[0]) < 2.0e-5f
+               && std::abs(immediate[2] - before[2]) < 2.0e-5f,
+           "a legato register move snapped the breath-support gain or target");
+    render(legato, static_cast<int>(0.025 * sampleRate));
+    const auto early = vocalor::VoiceEngineTestAccess::radiatedPowerForNote(
+        legato, line[toIndex]);
+    render(legato, static_cast<int>(0.575 * sampleRate));
+    const auto settled = vocalor::VoiceEngineTestAccess::radiatedPowerForNote(
+        legato, line[toIndex]);
+    const float completeMove = std::abs(settled[0] - before[0]);
+    expect(completeMove > 0.08f,
+           "the legato smoothing fixture did not cross a material power target");
+    expect(std::abs(early[0] - before[0]) < 0.80f * completeMove,
+           "the radiated-power target completed a register jump inside 25 ms");
+    expect(std::abs(settled[0] - settled[2]) < 0.01f
+               && std::abs(settled[2] - settled[3]) < 0.03f,
+           "radiated-power support did not settle after the legato transition");
+
+    // Pitch vibrato is explicitly excluded from the intentional fundamental.
+    // Prove the oscillator is moving while the power detector remains still.
+    auto vibratoParameters = scalarParameters;
+    vibratoParameters.vibrato = 1.0f;
+    vibratoParameters.instability = 1.0f;
+    vocalor::VoiceEngine vibrato;
+    vibrato.prepare(sampleRate, blockSize);
+    vibrato.reset();
+    vibrato.setParameters(vibratoParameters);
+    vocalor::VoiceEngineTestAccess::setSourceTensionRampDepth(vibrato, 0.0f);
+    // F5 sits beside the 16/32-harmonic mip boundary at 48 kHz, so the
+    // fully modulated oscillator crosses it during this probe. The regulator's
+    // analysis mip must still remain tied to the intentional f0.
+    constexpr int vibratoMipBoundaryNote = 77;
+    vibrato.noteOn(vibratoMipBoundaryNote, 0.74f);
+    render(vibrato, static_cast<int>(1.0 * sampleRate));
+    float minimumPitch = std::numeric_limits<float>::infinity();
+    float maximumPitch = 0.0f;
+    float minimumTarget = std::numeric_limits<float>::infinity();
+    float maximumTarget = 0.0f;
+    float minimumRawTarget = std::numeric_limits<float>::infinity();
+    float maximumRawTarget = 0.0f;
+    for (int observation = 0; observation < 500; ++observation)
+    {
+        render(vibrato, 64);
+        const float pitch = vocalor::VoiceEngineTestAccess::frequencyForRoot(
+            vibrato, vibratoMipBoundaryNote);
+        const auto state = vocalor::VoiceEngineTestAccess::radiatedPowerForNote(
+            vibrato, vibratoMipBoundaryNote);
+        minimumPitch = std::min(minimumPitch, pitch);
+        maximumPitch = std::max(maximumPitch, pitch);
+        minimumTarget = std::min(minimumTarget, state[2]);
+        maximumTarget = std::max(maximumTarget, state[2]);
+        minimumRawTarget = std::min(minimumRawTarget, state[3]);
+        maximumRawTarget = std::max(maximumRawTarget, state[3]);
+    }
+    expect(maximumPitch - minimumPitch > 20.0f,
+           "the regulator's vibrato-exclusion fixture did not move pitch");
+    expect(maximumTarget - minimumTarget < 2.0e-5f
+               && maximumRawTarget - minimumRawTarget < 2.0e-5f,
+           "pitch vibrato pumped the radiated-power target");
+
+    // The source filters and tract poles are sample-rate-normalised. Compare
+    // two representative registers at every full-fidelity shipping rate.
+    std::array<std::array<double, 4>, 2> rateGainDb {};
+    constexpr std::array<double, 4> rates { 44100.0, 48000.0, 96000.0, 192000.0 };
+    constexpr std::array<int, 2> rateNotes { 60, 79 };
+    for (std::size_t note = 0; note < rateNotes.size(); ++note)
+    {
+        for (std::size_t rate = 0; rate < rates.size(); ++rate)
+        {
+            vocalor::VoiceEngine engine;
+            engine.prepare(rates[rate], blockSize);
+            engine.reset();
+            engine.setParameters(scalarParameters);
+            vocalor::VoiceEngineTestAccess::setSourceTensionRampDepth(engine, 0.0f);
+            engine.noteOn(rateNotes[note], 0.74f);
+            render(engine, static_cast<int>(0.35 * rates[rate]));
+            const auto state
+                = vocalor::VoiceEngineTestAccess::radiatedPowerForNote(
+                    engine, rateNotes[note]);
+            rateGainDb[note][rate] = 20.0 * std::log10(
+                std::max(static_cast<double>(state[0]), 1.0e-30));
+            expect(std::abs(state[0] - state[2]) < 3.0e-3f,
+                   "radiated-power gain did not settle at "
+                       + std::to_string(static_cast<int>(rates[rate])) + " Hz");
+        }
+        expect(span(rateGainDb[note]) < 0.20,
+               "radiated-power support changed with sample rate on MIDI "
+                   + std::to_string(rateNotes[note]));
+    }
+
+    // Absolute voice age, not host callback size, owns the expensive ~5.3 ms
+    // update cadence. Aligned blocks are exact; an arbitrary split retains the
+    // engine's existing sub-chunk residual and the same regulator state.
+    auto contiguous = std::make_unique<vocalor::VoiceEngine>();
+    auto split = std::make_unique<vocalor::VoiceEngine>();
+    for (auto* engine : { contiguous.get(), split.get() })
+    {
+        engine->prepare(sampleRate, blockSize);
+        engine->reset();
+        engine->setParameters(scalarParameters);
+        vocalor::VoiceEngineTestAccess::setSourceTensionRampDepth(*engine, 0.0f);
+        engine->noteOn(79, 0.74f);
+    }
+    const auto contiguousAudio = renderInterleaved(
+        *contiguous, static_cast<int>(0.5 * sampleRate), blockSize);
+    const auto splitAudio = renderInterleaved(
+        *split, static_cast<int>(0.5 * sampleRate), 37);
+    float largestResidual = 0.0f;
+    for (std::size_t sample = 0; sample < contiguousAudio.size(); ++sample)
+        largestResidual = std::max(largestResidual,
+            std::abs(contiguousAudio[sample] - splitAudio[sample]));
+    const auto contiguousState
+        = vocalor::VoiceEngineTestAccess::radiatedPowerForNote(*contiguous, 79);
+    const auto splitState
+        = vocalor::VoiceEngineTestAccess::radiatedPowerForNote(*split, 79);
+    expect(largestResidual < 2.0e-5f,
+           "radiated-power updates exceeded the arbitrary-buffer residual");
+    expect(std::abs(contiguousState[0] - splitState[0]) < 1.0e-6f
+               && std::abs(contiguousState[2] - splitState[2]) < 1.0e-6f,
+           "radiated-power state depends on host buffer partitioning");
+
+    // Sessions saved before the automatic support law existed carry a hidden
+    // model marker rather than coupling compatibility to the Instability knob.
+    auto legacyParameters = scalarParameters;
+    legacyParameters.legacyRadiatedPowerBypass = true;
+    vocalor::VoiceEngine legacy;
+    legacy.prepare(sampleRate, blockSize);
+    legacy.reset();
+    legacy.setParameters(legacyParameters);
+    legacy.noteOn(79, 0.74f);
+    render(legacy, static_cast<int>(0.4 * sampleRate));
+    const auto legacyState
+        = vocalor::VoiceEngineTestAccess::radiatedPowerForNote(legacy, 79);
+    expect(legacyState[0] == 1.0f && legacyState[2] == 1.0f
+               && legacyState[3] == 1.0f,
+           "the legacy voice-model marker did not bypass register support");
+
+    // At analysis rates and pitches above their Nyquist limit, the source mip
+    // can contain only H1 (or a few partials). The estimator must follow that
+    // selected table rather than reading the otherwise valid H1-H8 power bank.
+    for (const double lowRate : { 8000.0, 16000.0 })
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare(lowRate, blockSize);
+        engine.reset();
+        engine.setParameters(scalarParameters);
+        vocalor::VoiceEngineTestAccess::setSourceTensionRampDepth(engine, 0.0f);
+        engine.noteOn(127, 0.74f);
+        const auto audio = render(engine, static_cast<int>(0.1 * lowRate));
+        const auto state
+            = vocalor::VoiceEngineTestAccess::radiatedPowerForNote(engine, 127);
+        expect(audio.finite && audio.rms() > 1.0e-8,
+               "the low-rate/high-note source mip produced invalid audio");
+        for (const int field : { 0, 2, 3 })
+            expect(std::isfinite(state[static_cast<std::size_t>(field)])
+                       && state[static_cast<std::size_t>(field)]
+                              >= minimumGain - 2.0e-5f
+                       && state[static_cast<std::size_t>(field)]
+                              <= maximumGain + 2.0e-5f,
+                   "the low-rate/high-note source mip produced an invalid power target");
+    }
+}
+
 /** The tract level is calibrated so a solo AAH at the default settings lands at
     a known level, and the whole voice is expressed in time constants and corner
     frequencies so that level does not depend on the sample rate.
@@ -2436,15 +3303,22 @@ vocalor::EngineParameters makeReferenceParameters()
 void testSourceLevelCalibration()
 {
     // Measured from the calibrated engine. The window is loose enough for
-    // platform floating-point differences and far tighter than the ~1.9 dB a
+    // platform floating-point differences and far tighter than the ~2 dB a
     // second radiation stage across the excitation path costs.
     // Moved from -15.53 when the source slope started following the note's own
     // loudness: the reference render is at velocity 0.85, which is 1.4 dB below
     // full voice, so its partials above the 850 Hz shelf corner sit 2.8 dB down
     // and the broadband RMS with them. Nothing about the source's absolute
     // calibration or its single radiation accounting moved -- at velocity 1.00
-    // and full dynamic the shelf is exactly transparent.
-    constexpr double referenceRmsDb = -17.03;
+    // and full dynamic the shelf is exactly transparent. The coherent LF bank
+    // then moved this tract-weighted reference from -17.03 to -19.01 while
+    // preserving the former source RMS: removing harmonic cancellation changes
+    // which partials the AAH poles receive, not the broadband source drive. The
+    // bounded register-support regulator brings the same note to -17.91 by
+    // returning half of its local harmonic-alignment power error; that is a
+    // voice-specific efficiency law rather than another radiation stage or a
+    // global calibration gain.
+    constexpr double referenceRmsDb = -17.91;
     constexpr double toleranceDb = 0.9;
 
     for (const auto sampleRate : { 44100.0, 48000.0, 96000.0 })
@@ -2504,7 +3378,7 @@ void testFactoryPresets()
         expect (wanted.outputGain > 0.0f && wanted.outputGain <= 2.0f,
                 name + " asks for an output gain outside the published range");
         for (const float unit : { wanted.breath, wanted.resonance, wanted.vibrato,
-                                  wanted.humanize, wanted.spread, wanted.tension,
+                                  wanted.humanize, wanted.instability, wanted.spread, wanted.tension,
                                   wanted.room, wanted.vowelX, wanted.vowelY,
                                   wanted.vowelMorph, wanted.glide, wanted.roomSize,
                                   wanted.dynamics, wanted.intonation, wanted.nasal })
@@ -2664,6 +3538,944 @@ void testSingersFormantCluster()
     }
 }
 
+/** A soprano's upper reinforcement is not a tenor singer's formant moved up an
+    octave. At low and middle pitches it spans roughly two kilohertz; once the
+    fundamental reaches the upper soprano range the narrow cluster disappears
+    and the ordinary F3-F5 tract resonances reinforce the sparse harmonics.
+
+    The two notes in the simultaneous leg are deliberate. A chunk-wide width
+    can make either C4 or B-flat5 correct in isolation, but never both at once.
+*/
+void testSopranoClusterReleaseIsPerVoice()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr float releaseStartHz = 622.25f;
+    using Snapshot = vocalor::VoiceEngineTestAccess::TractSnapshot;
+
+    const auto probe = [] (int midiNote, float tension)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare(sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.profile = vocalor::VoiceProfile::Female;
+        parameters.tension = tension;
+        engine.setParameters(parameters);
+        engine.noteOn(midiNote, 0.80f);
+        render(engine, static_cast<int>(sampleRate * 0.7));
+        return vocalor::VoiceEngineTestAccess::voiceTract(engine, midiNote);
+    };
+
+    const auto outerWidth = [] (const Snapshot& tract)
+    {
+        return tract.hz[4] + 0.5f * tract.bandwidth[4]
+             - tract.hz[2] + 0.5f * tract.bandwidth[2];
+    };
+
+    const auto lowRelaxed = probe(60, 0.0f);
+    const auto lowPressed = probe(60, 0.95f);
+    const auto highRelaxed = probe(82, 0.0f);  // B-flat5, 932.3 Hz
+    const auto highPressed = probe(82, 0.95f);
+
+    std::cout << "soprano reinforcement: C4 outer F3-F5 width "
+              << std::fixed << std::setprecision(0) << outerWidth(lowRelaxed)
+              << " -> " << outerWidth(lowPressed) << " Hz; B-flat5 "
+              << outerWidth(highRelaxed) << " -> " << outerWidth(highPressed)
+              << " Hz\n";
+
+    expect(lowPressed.hz[2] > lowRelaxed.hz[2]
+               && lowPressed.hz[4] < lowRelaxed.hz[4],
+           "the low soprano reinforcement no longer converges from both sides");
+    expect(lowPressed.bandwidth[2] < lowRelaxed.bandwidth[2]
+               && lowPressed.bandwidth[4] < lowRelaxed.bandwidth[4],
+           "the low soprano reinforcement no longer changes the pole widths");
+    expect(outerWidth(lowPressed) >= 1900.0f,
+           "the low soprano inherited a narrow lower-voice singer's formant");
+
+    for (int formant = 2; formant < vocalor::kFormantCount; ++formant)
+    {
+        const auto index = static_cast<std::size_t>(formant);
+        expect(std::abs(highPressed.hz[index] - highRelaxed.hz[index])
+                   <= 0.002f * highRelaxed.hz[index],
+               "the upper soprano still pulls F" + std::to_string(formant + 1)
+                   + " into the epilaryngeal cluster");
+        expect(std::abs(highPressed.bandwidth[index] - highRelaxed.bandwidth[index])
+                   <= 0.002f * highRelaxed.bandwidth[index],
+                   "the upper soprano still narrows F" + std::to_string(formant + 1));
+    }
+
+    // The release law is a curve across the register, not a hidden switch at
+    // either study pitch. A pitch near the geometric midpoint must sit strictly
+    // between the engaged and released geometries.
+    const auto startRelaxed = probe(75, 0.0f);  // E-flat5, 622.3 Hz
+    const auto startPressed = probe(75, 0.95f);
+    const auto middleRelaxed = probe(79, 0.0f); // G5, 784.0 Hz
+    const auto middlePressed = probe(79, 0.95f);
+    const auto clusterDistance = [] (const Snapshot& relaxed, const Snapshot& pressed)
+    {
+        float result = 0.0f;
+        for (int formant = 2; formant < vocalor::kFormantCount; ++formant)
+        {
+            const auto index = static_cast<std::size_t>(formant);
+            result += std::abs(pressed.hz[index] - relaxed.hz[index]);
+            result += 2.0f * std::abs(pressed.bandwidth[index]
+                                     - relaxed.bandwidth[index]);
+        }
+        return result;
+    };
+    const float startDistance = clusterDistance(startRelaxed, startPressed);
+    const float middleDistance = clusterDistance(middleRelaxed, middlePressed);
+    const float endDistance = clusterDistance(highRelaxed, highPressed);
+    expect(startDistance > middleDistance && middleDistance > endDistance + 0.1f,
+           "the soprano cluster release is not monotonic through the crossover");
+    expect(outerWidth(startPressed) < outerWidth(middlePressed)
+               && outerWidth(middlePressed) < outerWidth(highPressed),
+           "the soprano reinforcement width stepped across the crossover");
+
+    // Both geometries must coexist behind one parameter/chunk state.
+    auto together = std::make_unique<vocalor::VoiceEngine>();
+    together->prepare(sampleRate, blockSize);
+    together->reset();
+    auto parameters = steadyParameters();
+    parameters.profile = vocalor::VoiceProfile::Female;
+    parameters.tension = 0.95f;
+    together->setParameters(parameters);
+    together->noteOn(60, 0.80f);
+    together->noteOn(82, 0.80f);
+    render(*together, static_cast<int>(sampleRate * 0.7));
+    const auto simultaneousLow = vocalor::VoiceEngineTestAccess::voiceTract(*together, 60);
+    const auto simultaneousHigh = vocalor::VoiceEngineTestAccess::voiceTract(*together, 82);
+    for (int formant = 0; formant < vocalor::kFormantCount; ++formant)
+    {
+        const auto index = static_cast<std::size_t>(formant);
+        expect(std::abs(simultaneousLow.bandwidth[index] - lowPressed.bandwidth[index]) < 0.05f,
+               "adding a high soprano note changed the low voice's pole width");
+        expect(std::abs(simultaneousHigh.bandwidth[index] - highPressed.bandwidth[index]) < 0.05f,
+               "adding a low soprano note changed the high voice's pole width");
+    }
+
+    // The cascade amplitudes and rendered resonators have to describe those
+    // exact per-voice poles, not the nominal chunk endpoint.
+    for (const auto& tract : { simultaneousLow, simultaneousHigh })
+    {
+        std::array<float, vocalor::kFormantCount> expected {};
+        vocalor::parallelFormantAmplitudes(
+            tract.hz.data(), tract.bandwidth.data(), vocalor::kFormantCount,
+            static_cast<float>(sampleRate), 0.010f, expected.data());
+        for (int formant = 0; formant < vocalor::kFormantCount; ++formant)
+        {
+            const auto index = static_cast<std::size_t>(formant);
+            const float scale = std::max(1.0e-6f, expected[index]);
+            expect(std::abs(tract.gain[index] - expected[index]) <= 2.0e-5f * scale,
+                   "a per-voice formant gain was derived from different poles");
+            const float signedGain = vocalor::formantPolarity(formant) * tract.gain[index];
+            expect(std::abs(tract.b0[index]
+                            - signedGain * tract.peakNormaliser[index]) <= 1.0e-7f,
+                   "the rendered b0 does not contain the measured per-voice gain");
+            const float radius = std::exp(-3.14159265358979323846f
+                                          * tract.bandwidth[index]
+                                          / static_cast<float>(sampleRate));
+            const float expectedA1 = 2.0f * radius * std::cos(
+                2.0f * 3.14159265358979323846f * tract.hz[index]
+                / static_cast<float>(sampleRate));
+            expect(std::abs(tract.a1[index] - expectedA1) <= 3.0e-6f,
+                   "the rendered pole angle does not contain the per-voice frequency");
+            expect(std::abs(tract.a2[index] + radius * radius) <= 2.0e-6f,
+                   "the rendered pole radius does not contain the per-voice bandwidth");
+        }
+    }
+
+    // Sparse high harmonics are the output-side reason for releasing the
+    // cluster. At the study's 932 Hz pitch the ordinary F3, F4 and F5 poles
+    // should support H3-H5 instead of leaving the fifth harmonic beyond one
+    // narrow 3 kHz peak. These are conservative synthesis guardrails, not
+    // values claimed by the listening study.
+    auto harmonicEngine = std::make_unique<vocalor::VoiceEngine>();
+    harmonicEngine->prepare(sampleRate, blockSize);
+    harmonicEngine->reset();
+    harmonicEngine->setParameters(parameters);
+    harmonicEngine->noteOn(82, 0.80f);
+    renderMono(*harmonicEngine, static_cast<int>(sampleRate * 0.7));
+    const auto highAudio = renderMono(*harmonicEngine, static_cast<int>(sampleRate * 0.7));
+    constexpr double highFundamental = 932.327523;
+    const double fundamentalMagnitude = harmonicMagnitude(
+        highAudio, highFundamental, sampleRate);
+    std::array<double, 5> harmonicDb {};
+    for (int harmonic = 1; harmonic <= 5; ++harmonic)
+    {
+        const double magnitude = harmonicMagnitude(
+            highAudio, highFundamental * harmonic, sampleRate);
+        harmonicDb[static_cast<std::size_t>(harmonic - 1)] = 20.0 * std::log10(
+            std::max(magnitude, 1.0e-18) / std::max(fundamentalMagnitude, 1.0e-18));
+    }
+    std::cout << "B-flat5 harmonics against H1: H2 " << std::setprecision(1)
+              << harmonicDb[1] << ", H3 " << harmonicDb[2] << ", H4 "
+              << harmonicDb[3] << ", H5 " << harmonicDb[4] << " dB\n";
+    expect(harmonicDb[4] > -60.0,
+           "the released soprano tract still abandons the fifth harmonic");
+    for (int harmonic = 2; harmonic < 5; ++harmonic)
+        expect(harmonicDb[static_cast<std::size_t>(harmonic)]
+                   - harmonicDb[static_cast<std::size_t>(harmonic - 1)] > -20.0,
+               "the upper soprano harmonic support falls through a narrow spectral gap");
+    const auto highDisplay = harmonicEngine->getDisplayState();
+    const auto highDisplayTract = vocalor::VoiceEngineTestAccess::voiceTract(
+        *harmonicEngine, 82);
+    for (int formant = 0; formant < vocalor::kFormantCount; ++formant)
+    {
+        const auto index = static_cast<std::size_t>(formant);
+        expect(std::abs(highDisplay.formantHz[index] - highDisplayTract.hz[index]) < 0.01f
+                   && std::abs(highDisplay.formantBandwidth[index]
+                               - highDisplayTract.bandwidth[index]) < 0.01f
+                   && std::abs(highDisplay.formantGain[index]
+                               - highDisplayTract.gain[index]) < 1.0e-5f,
+               "the high-register display does not publish one coherent voice tract");
+    }
+
+    // Legato crosses the release region by moving the tract, not by replacing
+    // one filter with another on the note event.
+    auto legatoParameters = parameters;
+    legatoParameters.legato = true;
+    auto legato = std::make_unique<vocalor::VoiceEngine>();
+    legato->prepare(sampleRate, blockSize);
+    legato->reset();
+    legato->setParameters(legatoParameters);
+    legato->noteOn(60, 0.80f);
+    render(*legato, static_cast<int>(sampleRate * 0.7));
+    const auto before = vocalor::VoiceEngineTestAccess::voiceTract(*legato, 60);
+    legato->noteOn(82, 0.80f);
+    const auto first = vocalor::VoiceEngineTestAccess::voiceTract(*legato, 82);
+    const float fullSpan = highPressed.bandwidth[4] - before.bandwidth[4];
+    const float firstMove = first.bandwidth[4] - before.bandwidth[4];
+    expect(firstMove > 0.0f && firstMove < 0.25f * fullSpan,
+           "the soprano cluster release stepped instead of articulating");
+
+    // The high-F1 efficiency trim is part of the same jaw gesture. It once
+    // jumped to the destination at the first control tick and left a broadband
+    // click even though every tract pole was moving smoothly.
+    auto previousEfficiency = vocalor::VoiceEngineTestAccess::efficiencyForNote(
+        *legato, 82)[0];
+    float largestEfficiencyStep = 0.0f;
+    std::array<float, 1> transitionLeft {};
+    std::array<float, 1> transitionRight {};
+    for (int sample = 0; sample < 2048; ++sample)
+    {
+        legato->process(transitionLeft.data(), transitionRight.data(), 1);
+        const float efficiency = vocalor::VoiceEngineTestAccess::efficiencyForNote(
+            *legato, 82)[0];
+        largestEfficiencyStep = std::max(
+            largestEfficiencyStep, std::abs(efficiency - previousEfficiency));
+        previousEfficiency = efficiency;
+    }
+    expect(largestEfficiencyStep < 0.002f,
+           "the high-register efficiency trim stepped during legato");
+    const auto transition = render(*legato, static_cast<int>(sampleRate * 0.7));
+    const auto after = vocalor::VoiceEngineTestAccess::voiceTract(*legato, 82);
+    expect(transition.finite && transition.peak < 4.0,
+           "the soprano cluster transition produced invalid or unbounded audio");
+    expect(std::abs(after.bandwidth[4] - highPressed.bandwidth[4]) < 0.5f,
+           "the soprano cluster release did not reach its high-register endpoint");
+
+    // A slow portamento must carry the tract through the same register as the
+    // sounding pitch. Jumping the release target directly to the destination
+    // makes the filter sound like a second, disconnected performer during the
+    // glide even if its coefficient transition itself is smooth.
+    auto longGlideParameters = parameters;
+    longGlideParameters.legato = true;
+    longGlideParameters.glide = 1.0f;
+    auto longGlide = std::make_unique<vocalor::VoiceEngine>();
+    longGlide->prepare(sampleRate, blockSize);
+    longGlide->reset();
+    longGlide->setParameters(longGlideParameters);
+    longGlide->noteOn(60, 0.80f);
+    render(*longGlide, static_cast<int>(sampleRate * 0.7));
+    longGlide->noteOn(82, 0.80f);
+    render(*longGlide, static_cast<int>(sampleRate * 0.08));
+    const auto duringGlide = vocalor::VoiceEngineTestAccess::voiceTract(*longGlide, 82);
+    const auto duringFrequency = vocalor::VoiceEngineTestAccess::frequencyForRoot(
+        *longGlide, 82);
+    expect(duringFrequency < releaseStartHz,
+           "the long-glide fixture crossed the soprano release range too early");
+    expect(duringGlide.bandwidth[4] < lowPressed.bandwidth[4]
+               + 0.40f * (highPressed.bandwidth[4] - lowPressed.bandwidth[4]),
+           "the soprano tract arrived at the destination before a long glide did");
+    render(*longGlide, static_cast<int>(sampleRate * 3.0));
+    const auto afterLongGlide = vocalor::VoiceEngineTestAccess::voiceTract(*longGlide, 82);
+    expect(std::abs(afterLongGlide.bandwidth[4] - highPressed.bandwidth[4]) < 0.5f,
+           "the tract did not finish a long pitch-and-formant glide together");
+
+    // Pitch bend is another intentional change of sung F0. Bending the high
+    // note down an octave should recover the same clustered tract as an
+    // attacked B-flat4, then return to the released endpoint without allowing
+    // the cycle-by-cycle vibrato to drag the tract around.
+    auto bent = std::make_unique<vocalor::VoiceEngine>();
+    bent->prepare(sampleRate, blockSize);
+    bent->reset();
+    bent->setParameters(parameters);
+    bent->noteOn(82, 0.80f);
+    render(*bent, static_cast<int>(sampleRate * 0.7));
+    bent->setPitchBend(-12.0f);
+    render(*bent, static_cast<int>(sampleRate * 0.9));
+    const auto bentDown = vocalor::VoiceEngineTestAccess::voiceTract(*bent, 82);
+    const auto attackedDown = probe(70, 0.95f);
+    for (int formant = 2; formant < vocalor::kFormantCount; ++formant)
+    {
+        const auto index = static_cast<std::size_t>(formant);
+        expect(std::abs(bentDown.hz[index] - attackedDown.hz[index])
+                   < 0.003f * attackedDown.hz[index]
+                   && std::abs(bentDown.bandwidth[index] - attackedDown.bandwidth[index])
+                   < 0.003f * attackedDown.bandwidth[index],
+               "pitch bend left the soprano tract at the MIDI-note register");
+    }
+    bent->setPitchBend(0.0f);
+    render(*bent, static_cast<int>(sampleRate * 0.9));
+    const auto bentReturned = vocalor::VoiceEngineTestAccess::voiceTract(*bent, 82);
+    expect(std::abs(bentReturned.bandwidth[4] - highPressed.bandwidth[4]) < 0.5f,
+           "the soprano tract did not return after pitch bend");
+
+    for (const double rate : { 44100.0, 96000.0 })
+    {
+        auto rateEngine = std::make_unique<vocalor::VoiceEngine>();
+        rateEngine->prepare(rate, blockSize);
+        rateEngine->reset();
+        rateEngine->setParameters(parameters);
+        rateEngine->noteOn(82, 0.80f);
+        render(*rateEngine, static_cast<int>(rate * 0.7));
+        const auto tract = vocalor::VoiceEngineTestAccess::voiceTract(*rateEngine, 82);
+        for (int formant = 0; formant < vocalor::kFormantCount; ++formant)
+        {
+            const auto index = static_cast<std::size_t>(formant);
+            expect(std::abs(tract.hz[index] - highPressed.hz[index])
+                       < 0.001f * highPressed.hz[index]
+                       && std::abs(tract.bandwidth[index] - highPressed.bandwidth[index])
+                       < 0.001f * highPressed.bandwidth[index],
+                   "the soprano tract geometry depends on sample rate");
+        }
+    }
+
+    auto oneBlock = std::make_unique<vocalor::VoiceEngine>();
+    auto splitBlocks = std::make_unique<vocalor::VoiceEngine>();
+    for (auto* engine : { oneBlock.get(), splitBlocks.get() })
+    {
+        engine->prepare(sampleRate, blockSize);
+        engine->reset();
+        engine->setParameters(parameters);
+        engine->noteOn(82, 0.80f);
+    }
+    const auto contiguous = renderInterleaved(
+        *oneBlock, static_cast<int>(sampleRate * 0.8), blockSize);
+    const auto split = renderInterleaved(
+        *splitBlocks, static_cast<int>(sampleRate * 0.8), 37);
+    float largestResidual = 0.0f;
+    std::size_t largestResidualIndex = 0;
+    for (std::size_t i = 0; i < contiguous.size(); ++i)
+    {
+        const float residual = std::abs(contiguous[i] - split[i]);
+        if (residual > largestResidual)
+        {
+            largestResidual = residual;
+            largestResidualIndex = i;
+        }
+    }
+    std::cout << "soprano buffer-split residual: " << std::scientific
+              << largestResidual << std::fixed << " peak at frame "
+              << largestResidualIndex / 2 << "\n";
+    // Arbitrary sub-chunk host buffers change floating-point summation at a
+    // residual below one 16-bit PCM step; aligned render chunks remain exact.
+    // This is deliberately five times stricter than the engine-wide 1e-4
+    // sub-chunk guardrail, without pretending the two process paths are bitwise
+    // associative.
+    expect(largestResidual < 2.0e-5f,
+           "the soprano tract exceeded its bounded host-buffer residual");
+
+    auto alignedLarge = std::make_unique<vocalor::VoiceEngine>();
+    auto alignedSmall = std::make_unique<vocalor::VoiceEngine>();
+    for (auto* engine : { alignedLarge.get(), alignedSmall.get() })
+    {
+        engine->prepare(sampleRate, blockSize);
+        engine->reset();
+        engine->setParameters(parameters);
+        engine->noteOn(82, 0.80f);
+    }
+    const auto largeChunks = renderInterleaved(
+        *alignedLarge, static_cast<int>(sampleRate * 0.25), blockSize);
+    const auto smallChunks = renderInterleaved(
+        *alignedSmall, static_cast<int>(sampleRate * 0.25),
+        vocalor::VoiceEngineTestAccess::chunkSize);
+    expect(largeChunks == smallChunks,
+           "aligned host buffers changed the soprano tract render");
+}
+
+/** Direct broadband excitation found that soprano R3 and R4 rise with f0 at
+    about 0.48 and 0.46 Hz/Hz, with large but bounded singer-to-singer scatter.
+    This is a resonance trajectory, not harmonic locking: inspect the running
+    pole geometry directly and make no demand that H3-H5 be flat or aligned. */
+void testSopranoUpperResonanceRise()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int lowMidi = 60;   // C4
+    constexpr int highMidi = 82;  // B-flat5
+    constexpr float lowFundamental = 261.625565f;
+    constexpr float highFundamental = 932.327523f;
+    constexpr float riseAnchor = 261.63f;
+    constexpr float riseSpan = highFundamental - riseAnchor;
+    using SingerSnapshot = vocalor::VoiceEngineTestAccess::SingerTractSnapshot;
+    using Tract = vocalor::VoiceEngineTestAccess::TractSnapshot;
+
+    const auto parametersFor = [](vocalor::VoiceProfile profile, float humanize,
+                                  vocalor::PerformanceMode mode)
+    {
+        auto parameters = steadyParameters();
+        parameters.profile = profile;
+        parameters.mode = mode;
+        parameters.choirSize = mode == vocalor::PerformanceMode::Choir ? 12 : 1;
+        parameters.vowel = vocalor::Vowel::Aah;
+        // Zero tension removes the independent singer's-formant cluster, so
+        // the measured movement here belongs only to the R3/R4 register law.
+        parameters.tension = 0.0f;
+        parameters.breath = 0.0f;
+        parameters.humanize = humanize;
+        parameters.vibrato = 0.0f;
+        parameters.instability = 0.0f;
+        parameters.room = 0.0f;
+        parameters.intonation = 0.0f;
+        return parameters;
+    };
+
+    const auto probe = [&](double rate, const vocalor::EngineParameters& parameters,
+                           int midiNote)
+    {
+        auto engine = std::make_unique<vocalor::VoiceEngine>();
+        engine->prepare(rate, blockSize);
+        engine->reset();
+        engine->setParameters(parameters);
+        engine->noteOn(midiNote, 0.80f);
+        render(*engine, static_cast<int>(rate * 0.9));
+        return vocalor::VoiceEngineTestAccess::singerTracts(*engine, midiNote);
+    };
+
+    const auto femaleParameters = parametersFor(
+        vocalor::VoiceProfile::Female, 0.0f, vocalor::PerformanceMode::Solo);
+    const auto maleParameters = parametersFor(
+        vocalor::VoiceProfile::Male, 0.0f, vocalor::PerformanceMode::Solo);
+    const auto femaleLowVoices = probe(sampleRate, femaleParameters, lowMidi);
+    const auto femaleHighVoices = probe(sampleRate, femaleParameters, highMidi);
+    const auto maleLowVoices = probe(sampleRate, maleParameters, lowMidi);
+    const auto maleHighVoices = probe(sampleRate, maleParameters, highMidi);
+    expect(femaleLowVoices.size() == 1 && femaleHighVoices.size() == 1
+               && maleLowVoices.size() == 1 && maleHighVoices.size() == 1,
+           "the R3/R4 probe did not render one solo tract");
+    if (femaleLowVoices.empty() || femaleHighVoices.empty()
+        || maleLowVoices.empty() || maleHighVoices.empty())
+        return;
+
+    const auto& femaleLow = femaleLowVoices.front().tract;
+    const auto& femaleHigh = femaleHighVoices.front().tract;
+    const auto& maleLow = maleLowVoices.front().tract;
+    const auto& maleHigh = maleHighVoices.front().tract;
+
+    // C4 is the hinge, not the first already-shifted sample. These are the
+    // pre-existing AAH targets at Humanize zero and zero epilaryngeal tension.
+    constexpr std::array<float, 3> femaleC4 { 2810.0f, 3650.0f, 4950.0f };
+    constexpr std::array<float, 3> maleC4 { 2440.0f, 3250.0f, 4300.0f };
+    for (int upper = 0; upper < 3; ++upper)
+    {
+        const auto index = static_cast<std::size_t>(upper + 2);
+        expect(std::abs(femaleLow.hz[index] - femaleC4[static_cast<std::size_t>(upper)])
+                   < 0.2f,
+               "the soprano register rise moved the C4 hinge");
+        expect(std::abs(maleLow.hz[index] - maleC4[static_cast<std::size_t>(upper)])
+                   < 0.2f,
+               "the female register work changed the male C4 tract");
+    }
+
+    // The older, very small high-register tract shortening applies equally to
+    // R3-R5. Remove that common ratio with R5, which receives no new soprano
+    // rise, before reading the evidence-backed R3/R4 slopes.
+    const float femaleUpperTune = femaleHigh.hz[4] / femaleLow.hz[4];
+    const float r3Slope = (femaleHigh.hz[2] - femaleUpperTune * femaleLow.hz[2])
+                        / riseSpan;
+    const float r4Slope = (femaleHigh.hz[3] - femaleUpperTune * femaleLow.hz[3])
+                        / riseSpan;
+    std::cout << "soprano R3/R4 rise C4->B-flat5: " << std::fixed
+              << std::setprecision(3) << r3Slope << "/" << r4Slope
+              << " Hz/Hz; R5 " << femaleLow.hz[4] << " -> "
+              << femaleHigh.hz[4] << " Hz\n";
+    expect(std::abs(r3Slope - 0.48f) < 0.015f
+               && std::abs(r4Slope - 0.46f) < 0.015f,
+           "the Humanize-zero soprano R3/R4 trajectory left its measured means");
+
+    // Formant Shift changes tract length, so the additive register movement
+    // has to scale with it. Normalise the observed displacement back out at
+    // both endpoints of the published control and recover the same law.
+    for (const float formantShift : { -12.0f, 12.0f })
+    {
+        auto shiftedParameters = femaleParameters;
+        shiftedParameters.formantShift = formantShift;
+        const auto shiftedLowVoices = probe(
+            sampleRate, shiftedParameters, lowMidi);
+        const auto shiftedHighVoices = probe(
+            sampleRate, shiftedParameters, highMidi);
+        expect(shiftedLowVoices.size() == 1 && shiftedHighVoices.size() == 1,
+               "the shifted R3/R4 slope probe lost its voice");
+        if (shiftedLowVoices.empty() || shiftedHighVoices.empty())
+            continue;
+        const auto& shiftedLow = shiftedLowVoices.front().tract;
+        const auto& shiftedHigh = shiftedHighVoices.front().tract;
+        const float shiftedTune = shiftedHigh.hz[4] / shiftedLow.hz[4];
+        const float shiftRatio = vocalor::formantShiftRatio(formantShift);
+        const float shiftedR3 = (shiftedHigh.hz[2]
+            - shiftedTune * shiftedLow.hz[2]) / (riseSpan * shiftRatio);
+        const float shiftedR4 = (shiftedHigh.hz[3]
+            - shiftedTune * shiftedLow.hz[3]) / (riseSpan * shiftRatio);
+        expect(std::abs(shiftedR3 - 0.48f) < 0.015f
+                   && std::abs(shiftedR4 - 0.46f) < 0.015f,
+               "Formant Shift did not scale the soprano register displacement");
+    }
+
+    const float highSemitones = 12.0f * std::log2(highFundamental / 440.0f);
+    const float legacyUpperTune = 1.0f + 0.0003f * highSemitones;
+    expect(std::abs(femaleHigh.hz[4] - legacyUpperTune * femaleLow.hz[4]) < 0.5f,
+           "the R3/R4 register gesture also shifted R5");
+
+    // Male keeps precisely the former common highTune law. Dividing by R5
+    // removes it and must leave no pitch-proportional R3/R4 gesture.
+    const float maleUpperTune = maleHigh.hz[4] / maleLow.hz[4];
+    expect(std::abs(maleUpperTune - legacyUpperTune) < 1.0e-4f
+               && std::abs(femaleUpperTune - maleUpperTune) < 1.0e-4f,
+           "the female R3/R4 work changed the common R5/highTune law");
+    for (int formant : { 2, 3, 4 })
+    {
+        const auto index = static_cast<std::size_t>(formant);
+        expect(std::abs(maleHigh.hz[index] - legacyUpperTune * maleLow.hz[index])
+                   < 0.5f,
+               "the soprano register rise leaked into the male profile");
+    }
+
+    // Humanize one resolves the reported inter-singer scatter, but every
+    // identity remains inside one measured standard deviation. Pair two
+    // deterministic choir renders by singer identity so anatomy cancels.
+    const auto choirParameters = parametersFor(
+        vocalor::VoiceProfile::Female, 1.0f, vocalor::PerformanceMode::Choir);
+    const auto choirLow = probe(sampleRate, choirParameters, lowMidi);
+    const auto choirHigh = probe(sampleRate, choirParameters, highMidi);
+    expect(choirLow.size() == 12 && choirHigh.size() == 12,
+           "the per-singer R3/R4 probe did not render twelve identities");
+    float minimumR3 = std::numeric_limits<float>::infinity();
+    float maximumR3 = -std::numeric_limits<float>::infinity();
+    float minimumR4 = std::numeric_limits<float>::infinity();
+    float maximumR4 = -std::numeric_limits<float>::infinity();
+    const auto singerCount = std::min(choirLow.size(), choirHigh.size());
+    for (std::size_t singer = 0; singer < singerCount; ++singer)
+    {
+        expect(choirLow[singer].singer == choirHigh[singer].singer,
+               "the R3/R4 population probe mismatched singer identities");
+        const float identityUpperTune = choirHigh[singer].tract.hz[4]
+                                      / choirLow[singer].tract.hz[4];
+        const float singerR3 = (choirHigh[singer].tract.hz[2]
+            - identityUpperTune * choirLow[singer].tract.hz[2]) / riseSpan;
+        const float singerR4 = (choirHigh[singer].tract.hz[3]
+            - identityUpperTune * choirLow[singer].tract.hz[3]) / riseSpan;
+        minimumR3 = std::min(minimumR3, singerR3);
+        maximumR3 = std::max(maximumR3, singerR3);
+        minimumR4 = std::min(minimumR4, singerR4);
+        maximumR4 = std::max(maximumR4, singerR4);
+        expect(singerR3 >= 0.08f && singerR3 <= 0.88f,
+               "a singer's R3 rise escaped the measured population bound");
+        expect(singerR4 >= 0.07f && singerR4 <= 0.85f,
+               "a singer's R4 rise escaped the measured population bound");
+        expect(std::abs(identityUpperTune - legacyUpperTune) < 2.0e-4f,
+               "per-singer register variation leaked into R5");
+    }
+    std::cout << "soprano identity slopes: R3 " << minimumR3 << "-" << maximumR3
+              << ", R4 " << minimumR4 << "-" << maximumR4 << " Hz/Hz\n";
+    expect(maximumR3 - minimumR3 > 0.20f
+               && maximumR4 - minimumR4 > 0.20f,
+           "Humanize one collapsed the measured R3/R4 inter-singer variation");
+
+    const auto expectUpperOrder = [](const Tract& tract)
+    {
+        for (int formant = 2; formant < 4; ++formant)
+        {
+            const auto lower = static_cast<std::size_t>(formant);
+            const auto upper = static_cast<std::size_t>(formant + 1);
+            const float meanBandwidth = 0.5f
+                * (tract.bandwidth[lower] + tract.bandwidth[upper]);
+            expect(tract.hz[upper] - tract.hz[lower] >= meanBandwidth,
+                   "the extrapolated soprano rise collapsed opposite-polarity upper poles");
+        }
+    };
+
+    // The measured regression is a human-register law, not a line to extend
+    // through all 128 MIDI notes. At the top of MIDI, check every shipped
+    // vowel, all five pad anchors and both extremes of the synthetic
+    // tract-length transform and the four legal Resonance/Breath corners. The
+    // saturated, shift-scaled and correlated rise must keep opposite-polarity
+    // poles at least their mean bandwidth apart, not merely retain their
+    // numeric labels. The broadest corner is the important one: without the
+    // per-voice bandwidth guard EE/-12 at C-sharp6 reached only 0.837x this
+    // declared geometric separation. This guard rejects near-coincident modes;
+    // it does not claim that an alternating-polarity bank is cancellation-free.
+    constexpr std::array<std::pair<float, float>, 4> bandwidthCorners {
+        std::pair { 0.0f, 0.0f }, std::pair { 0.0f, 1.0f },
+        std::pair { 1.0f, 0.0f }, std::pair { 1.0f, 1.0f }
+    };
+    for (const auto vowel : { vocalor::Vowel::Aah, vocalor::Vowel::Ooh,
+                              vocalor::Vowel::Uuh })
+    {
+        for (const float formantShift : { -12.0f, 12.0f })
+        {
+            for (const auto [resonance, breath] : bandwidthCorners)
+            {
+                auto extremeParameters = choirParameters;
+                extremeParameters.vowel = vowel;
+                extremeParameters.formantShift = formantShift;
+                extremeParameters.resonance = resonance;
+                extremeParameters.breath = breath;
+                for (const int midiNote : { 84, 85, 127 })
+                {
+                    const auto extreme = probe(
+                        sampleRate, extremeParameters, midiNote);
+                    expect(extreme.size() == 12,
+                           "the extreme-register formant-order probe lost a singer");
+                    for (const auto& singer : extreme)
+                        expectUpperOrder(singer.tract);
+                }
+            }
+        }
+    }
+    for (int cardinal = 0; cardinal < vocalor::kCardinalVowelCount; ++cardinal)
+    {
+        const auto point = vocalor::cardinalVowelPosition(cardinal);
+        for (const float formantShift : { -12.0f, 12.0f })
+        {
+            for (const auto [resonance, breath] : bandwidthCorners)
+            {
+                auto extremeParameters = choirParameters;
+                extremeParameters.vowel = vocalor::Vowel::Aah;
+                extremeParameters.vowelMorph = 1.0f;
+                extremeParameters.vowelX = point.x;
+                extremeParameters.vowelY = point.y;
+                extremeParameters.formantShift = formantShift;
+                extremeParameters.resonance = resonance;
+                extremeParameters.breath = breath;
+                for (const int midiNote : { 84, 85, 127 })
+                {
+                    const auto extreme = probe(
+                        sampleRate, extremeParameters, midiNote);
+                    expect(extreme.size() == 12,
+                           "the extreme-register vowel-pad probe lost a singer");
+                    for (const auto& singer : extreme)
+                        expectUpperOrder(singer.tract);
+                }
+            }
+        }
+    }
+
+    // Safe endpoints are not sufficient when cavity centres and widths move at
+    // different articulation rates. Drive the known worst identity geometry
+    // from a narrow back vowel into broad EE and inspect every rendered chunk,
+    // so the realised-pole projection is covered as well as its settled target.
+    auto movingParameters = choirParameters;
+    movingParameters.vowel = vocalor::Vowel::Ooh;
+    movingParameters.formantShift = -12.0f;
+    movingParameters.resonance = 1.0f;
+    movingParameters.breath = 0.0f;
+    auto moving = std::make_unique<vocalor::VoiceEngine>();
+    moving->prepare(sampleRate, blockSize);
+    moving->reset();
+    moving->setParameters(movingParameters);
+    moving->noteOn(85, 0.80f);
+    render(*moving, static_cast<int>(0.5 * sampleRate));
+    const auto ee = vocalor::cardinalVowelPosition(0);
+    movingParameters.vowel = vocalor::Vowel::Aah;
+    movingParameters.vowelMorph = 1.0f;
+    movingParameters.vowelX = ee.x;
+    movingParameters.vowelY = ee.y;
+    movingParameters.resonance = 0.0f;
+    movingParameters.breath = 1.0f;
+    moving->setParameters(movingParameters);
+    const int transitionChunks = static_cast<int>(
+        0.5 * sampleRate / vocalor::VoiceEngineTestAccess::chunkSize);
+    for (int chunk = 0; chunk < transitionChunks; ++chunk)
+    {
+        render(*moving, vocalor::VoiceEngineTestAccess::chunkSize);
+        const auto movingVoices = vocalor::VoiceEngineTestAccess::singerTracts(
+            *moving, 85);
+        expect(movingVoices.size() == 12,
+               "the moving upper-pole order probe lost a singer");
+        for (const auto& singer : movingVoices)
+            expectUpperOrder(singer.tract);
+    }
+
+    // C-sharp6 is the end of the smooth evidence-range saturation. Above it,
+    // sounding F0 and the old common highTune continue to rise, but the added
+    // R3/R4 displacement must not. Divide that common motion out with R5.
+    const auto cappedVoices = probe(sampleRate, femaleParameters, 85);
+    const auto beyondVoices = probe(sampleRate, femaleParameters, 127);
+    expect(cappedVoices.size() == 1 && beyondVoices.size() == 1,
+           "the soprano rise-cap probe lost its solo voice");
+    if (!cappedVoices.empty() && !beyondVoices.empty())
+    {
+        const auto displacement = [&femaleLow](const Tract& tract, int formant)
+        {
+            const float commonTune = tract.hz[4] / femaleLow.hz[4];
+            const auto index = static_cast<std::size_t>(formant);
+            return tract.hz[index] - commonTune * femaleLow.hz[index];
+        };
+        for (int formant : { 2, 3 })
+            expect(std::abs(displacement(cappedVoices.front().tract, formant)
+                                - displacement(beyondVoices.front().tract, formant))
+                       < 0.5f,
+                   "the soprano register regression extrapolated beyond its cap");
+    }
+
+    const auto oneTract = [](const vocalor::VoiceEngine& engine, int midiNote)
+    {
+        const auto voices = vocalor::VoiceEngineTestAccess::singerTracts(
+            engine, midiNote);
+        return voices.empty() ? SingerSnapshot {} : voices.front();
+    };
+
+    // A slow portamento must carry the resonances with its current intentional
+    // F0 rather than applying the destination note's entire rise immediately.
+    auto glideParameters = femaleParameters;
+    glideParameters.legato = true;
+    glideParameters.glide = 1.0f;
+    auto glided = std::make_unique<vocalor::VoiceEngine>();
+    glided->prepare(sampleRate, blockSize);
+    glided->reset();
+    glided->setParameters(glideParameters);
+    glided->noteOn(lowMidi, 0.80f);
+    render(*glided, static_cast<int>(sampleRate * 0.8));
+    glided->noteOn(highMidi, 0.80f);
+    render(*glided, static_cast<int>(sampleRate * 0.08));
+    const auto duringGlide = oneTract(*glided, highMidi);
+    expect(duringGlide.intentionalFundamental > lowFundamental
+               && duringGlide.intentionalFundamental < 500.0f,
+           "the slow-glide R3/R4 fixture did not remain in its lower register");
+    for (int formant : { 2, 3 })
+    {
+        const auto index = static_cast<std::size_t>(formant);
+        expect(duringGlide.tract.hz[index] < femaleLow.hz[index]
+                   + 0.45f * (femaleHigh.hz[index] - femaleLow.hz[index]),
+               "the soprano resonances arrived before the portamento pitch");
+    }
+    // The maximum Glide setting is a 600 ms exponential. Seven time constants
+    // leave less than one hertz of the full 300+ Hz resonance journey.
+    render(*glided, static_cast<int>(sampleRate * 4.2));
+    const auto afterGlide = oneTract(*glided, highMidi).tract;
+    expect(std::abs(afterGlide.hz[2] - femaleHigh.hz[2]) < 1.0f
+               && std::abs(afterGlide.hz[3] - femaleHigh.hz[3]) < 1.0f,
+           "R3/R4 did not finish the intentional pitch glide");
+
+    // Pitch bend is intentional pitch too. Bending B-flat5 to C4 must recover
+    // the C4 tract and return, rather than leaving the rise tied to MIDI note.
+    auto bent = std::make_unique<vocalor::VoiceEngine>();
+    bent->prepare(sampleRate, blockSize);
+    bent->reset();
+    bent->setParameters(femaleParameters);
+    bent->noteOn(highMidi, 0.80f);
+    render(*bent, static_cast<int>(sampleRate * 0.9));
+    bent->setPitchBend(-22.0f);
+    render(*bent, static_cast<int>(sampleRate * 1.2));
+    const auto bentLow = oneTract(*bent, highMidi);
+    expect(std::abs(bentLow.intentionalFundamental - lowFundamental) < 0.1f
+               && std::abs(bentLow.tract.hz[2] - femaleLow.hz[2]) < 1.0f
+               && std::abs(bentLow.tract.hz[3] - femaleLow.hz[3]) < 1.0f,
+           "pitch bend left the soprano R3/R4 rise at the MIDI-note register");
+    bent->setPitchBend(0.0f);
+    render(*bent, static_cast<int>(sampleRate * 1.2));
+    const auto bentReturned = oneTract(*bent, highMidi).tract;
+    expect(std::abs(bentReturned.hz[2] - femaleHigh.hz[2]) < 1.0f
+               && std::abs(bentReturned.hz[3] - femaleHigh.hz[3]) < 1.0f,
+           "the soprano R3/R4 rise did not return after pitch bend");
+
+    // Vibrato is deliberately excluded from tractFundamental. Prove that the
+    // pitch is moving while the resonances remain stationary.
+    auto vibratoParameters = femaleParameters;
+    vibratoParameters.vibrato = 1.0f;
+    vibratoParameters.instability = 1.0f;
+    auto vibrato = std::make_unique<vocalor::VoiceEngine>();
+    vibrato->prepare(sampleRate, blockSize);
+    vibrato->reset();
+    vibrato->setParameters(vibratoParameters);
+    vibrato->noteOn(79, 0.80f); // G5
+    render(*vibrato, static_cast<int>(sampleRate * 1.2));
+    float minimumPitch = std::numeric_limits<float>::infinity();
+    float maximumPitch = 0.0f;
+    std::array<float, 2> minimumFormant {
+        std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity()
+    };
+    std::array<float, 2> maximumFormant { 0.0f, 0.0f };
+    for (int step = 0; step < 400; ++step)
+    {
+        render(*vibrato, 64);
+        const float pitch = vocalor::VoiceEngineTestAccess::frequencyForRoot(*vibrato, 79);
+        const auto tract = oneTract(*vibrato, 79).tract;
+        minimumPitch = std::min(minimumPitch, pitch);
+        maximumPitch = std::max(maximumPitch, pitch);
+        for (int upper = 0; upper < 2; ++upper)
+        {
+            const auto index = static_cast<std::size_t>(upper + 2);
+            minimumFormant[static_cast<std::size_t>(upper)] = std::min(
+                minimumFormant[static_cast<std::size_t>(upper)], tract.hz[index]);
+            maximumFormant[static_cast<std::size_t>(upper)] = std::max(
+                maximumFormant[static_cast<std::size_t>(upper)], tract.hz[index]);
+        }
+    }
+    expect(maximumPitch - minimumPitch > 50.0f,
+           "the non-vibrato tract fixture did not contain audible pitch vibrato");
+    expect(maximumFormant[0] - minimumFormant[0] < 0.05f
+               && maximumFormant[1] - minimumFormant[1] < 0.05f,
+           "cycle-by-cycle vibrato dragged the soprano resonances around");
+
+    // Any added register offset must be included before the exact per-voice
+    // gains and poles are resolved, at every supported sample rate.
+    for (const double rate : { 44100.0, 48000.0, 88200.0, 96000.0, 192000.0 })
+    {
+        const auto voices = probe(rate, femaleParameters, highMidi);
+        expect(voices.size() == 1, "the sample-rate R3/R4 probe lost its voice");
+        if (voices.empty())
+            continue;
+        const Tract& tract = voices.front().tract;
+        for (int formant = 0; formant < vocalor::kFormantCount; ++formant)
+        {
+            const auto index = static_cast<std::size_t>(formant);
+            expect(std::abs(tract.hz[index] - femaleHigh.hz[index])
+                       < 0.001f * femaleHigh.hz[index]
+                       && std::abs(tract.bandwidth[index] - femaleHigh.bandwidth[index])
+                       < 0.001f * femaleHigh.bandwidth[index],
+                   "the soprano R3/R4 geometry depends on sample rate");
+        }
+        std::array<float, vocalor::kFormantCount> expectedGain {};
+        vocalor::parallelFormantAmplitudes(
+            tract.hz.data(), tract.bandwidth.data(), vocalor::kFormantCount,
+            static_cast<float>(rate), 0.010f, expectedGain.data());
+        for (int formant = 0; formant < vocalor::kFormantCount; ++formant)
+        {
+            const auto index = static_cast<std::size_t>(formant);
+            const float gainScale = std::max(expectedGain[index], 1.0e-6f);
+            expect(std::abs(tract.gain[index] - expectedGain[index])
+                       <= 2.0e-5f * gainScale,
+                   "the R3/R4 rise gain was derived from different poles");
+            const float radius = std::exp(-3.14159265358979323846f
+                * tract.bandwidth[index] / static_cast<float>(rate));
+            const float expectedA1 = 2.0f * radius * std::cos(
+                2.0f * 3.14159265358979323846f * tract.hz[index]
+                / static_cast<float>(rate));
+            expect(std::abs(tract.a1[index] - expectedA1) <= 3.0e-6f
+                       && std::abs(tract.a2[index] + radius * radius) <= 2.0e-6f,
+                   "the R3/R4 rise was applied after the pole coefficients");
+            const float expectedB0 = vocalor::formantPolarity(formant)
+                * tract.gain[index] * tract.peakNormaliser[index];
+            expect(std::abs(tract.b0[index] - expectedB0) <= 1.0e-7f,
+                   "the R3/R4 rise was applied after the rendered gain");
+        }
+    }
+
+    // The public engine also accepts analysis-rate 8/16 kHz audio. Those rates
+    // cannot represent five independently ordered upper vocal-tract modes: the
+    // 0.465*fs guard deliberately coalesces whichever centres exceed it. What
+    // remains a hard contract is finite audio geometry and one coherent tuple
+    // of displayed Hz/BW/gain and rendered pole coefficients after the clamp.
+    for (const double rate : { 8000.0, 16000.0 })
+    {
+        bool reachedNyquistGuard = false;
+        for (int cardinal = 0; cardinal < vocalor::kCardinalVowelCount; ++cardinal)
+        {
+            const auto point = vocalor::cardinalVowelPosition(cardinal);
+            auto lowRateParameters = choirParameters;
+            lowRateParameters.vowel = vocalor::Vowel::Aah;
+            lowRateParameters.vowelMorph = 1.0f;
+            lowRateParameters.vowelX = point.x;
+            lowRateParameters.vowelY = point.y;
+            lowRateParameters.formantShift = 12.0f;
+            lowRateParameters.resonance = 0.0f;
+            lowRateParameters.breath = 1.0f;
+            const auto voices = probe(rate, lowRateParameters, 127);
+            expect(voices.size() == 12,
+                   "the low-rate soprano clamp probe lost a singer");
+            for (const auto& singer : voices)
+            {
+                const auto& tract = singer.tract;
+                std::array<float, vocalor::kFormantCount> expectedGain {};
+                vocalor::parallelFormantAmplitudes(
+                    tract.hz.data(), tract.bandwidth.data(),
+                    vocalor::kFormantCount, static_cast<float>(rate), 0.010f,
+                    expectedGain.data());
+                for (int formant = 0; formant < vocalor::kFormantCount; ++formant)
+                {
+                    const auto index = static_cast<std::size_t>(formant);
+                    const float upperGuard = 0.465f * static_cast<float>(rate);
+                    reachedNyquistGuard = reachedNyquistGuard
+                        || std::abs(tract.hz[index] - upperGuard) < 0.1f;
+                    expect(std::isfinite(tract.hz[index])
+                               && std::isfinite(tract.bandwidth[index])
+                               && std::isfinite(tract.gain[index])
+                               && std::isfinite(tract.a1[index])
+                               && std::isfinite(tract.a2[index])
+                               && std::isfinite(tract.b0[index])
+                               && std::isfinite(tract.peakNormaliser[index])
+                               && tract.hz[index] >= 25.0f
+                               && tract.hz[index] <= upperGuard + 0.1f
+                               && tract.bandwidth[index] >= 20.0f
+                               && tract.bandwidth[index]
+                                      <= 0.25f * static_cast<float>(rate) + 0.1f,
+                           "the low-rate soprano Nyquist clamp produced invalid geometry");
+                    const float radius = std::exp(-3.14159265358979323846f
+                        * tract.bandwidth[index] / static_cast<float>(rate));
+                    const float expectedA1 = 2.0f * radius * std::cos(
+                        2.0f * 3.14159265358979323846f * tract.hz[index]
+                        / static_cast<float>(rate));
+                    const float expectedB0 = vocalor::formantPolarity(formant)
+                        * tract.gain[index] * tract.peakNormaliser[index];
+                    const float gainScale = std::max(expectedGain[index], 1.0e-6f);
+                    expect(std::abs(tract.gain[index] - expectedGain[index])
+                                   <= 2.0e-5f * gainScale
+                               && std::abs(tract.a1[index] - expectedA1) <= 3.0e-6f
+                               && std::abs(tract.a2[index] + radius * radius) <= 2.0e-6f
+                               && std::abs(tract.b0[index] - expectedB0) <= 1.0e-7f,
+                           "the low-rate soprano pole did not match its clamped geometry");
+                }
+            }
+        }
+        expect(reachedNyquistGuard,
+               "the low-rate soprano fixture did not exercise the Nyquist clamp");
+    }
+
+    // A connected register crossing must retain the engine's bounded
+    // arbitrary-host-buffer residual; chunk-aligned exactness is covered by
+    // the shared soprano tract fixture immediately above this test.
+    auto splitParameters = femaleParameters;
+    splitParameters.legato = true;
+    splitParameters.glide = 0.72f;
+    auto contiguousEngine = std::make_unique<vocalor::VoiceEngine>();
+    auto splitEngine = std::make_unique<vocalor::VoiceEngine>();
+    for (auto* engine : { contiguousEngine.get(), splitEngine.get() })
+    {
+        engine->prepare(sampleRate, blockSize);
+        engine->reset();
+        engine->setParameters(splitParameters);
+        engine->noteOn(lowMidi, 0.80f);
+    }
+    renderInterleaved(*contiguousEngine, 24000, blockSize);
+    renderInterleaved(*splitEngine, 24000, 37);
+    contiguousEngine->noteOn(highMidi, 0.80f);
+    splitEngine->noteOn(highMidi, 0.80f);
+    const auto contiguous = renderInterleaved(
+        *contiguousEngine, static_cast<int>(sampleRate), blockSize);
+    const auto split = renderInterleaved(
+        *splitEngine, static_cast<int>(sampleRate), 37);
+    float largestResidual = 0.0f;
+    for (std::size_t sample = 0; sample < contiguous.size(); ++sample)
+        largestResidual = std::max(largestResidual,
+            std::abs(contiguous[sample] - split[sample]));
+    std::cout << "soprano R3/R4 glide buffer residual: " << std::scientific
+              << largestResidual << std::fixed << "\n";
+    expect(largestResidual < 2.0e-5f,
+           "the soprano R3/R4 glide depends on host buffer splits");
+}
+
 /** Energy in [lowHz, highHz) of a Blackman-Harris window of @c length samples
     starting at @c start, in dB. Per-bin DFT: the windows are 25 ms, which is
     1200 bins at 48 kHz, and the bands are narrow, so this costs less than the
@@ -2785,20 +4597,25 @@ void testOnsetSpectrum()
     // The tract is present from sample zero. With the source ramp switched out
     // nothing is left to develop but the envelope, so the band the singer's
     // formant sits in has to arrive with the note. Measured 2.71 dB, against
-    // 17.68 dB for the two-formant onset stage this replaces.
-    expect (offDeficit <= 3.5,
+    // 17.68 dB for the two-formant onset stage this replaces. The coherent LF
+    // bank reads 3.44 dB here; the earlier 2.71 included an endpoint-phase
+    // cancellation that was not a property of an intermediate glottal pulse.
+    expect (offDeficit <= 4.5,
             "the upper formants are still missing from the attack");
 
     // And the gap stays closed once the source ramp is doing its work.
-    // Measured 0.44 dB.
-    expect (onDeficit <= 8.0,
+    // Measured 3.96 dB with the coherent source bank.
+    expect (onDeficit <= 5.0,
             "the source-tension ramp reopened the singer's-formant gap at the onset");
 
     // The ramp is doing the remaining work. A lax fold configuration is an
     // abducted one, so the note has to speak with more aspiration per unit of
     // voiced output than the same note started at the block's tension.
-    // Measured 5.56 dB.
-    expect (onAir - offAir >= 3.0,
+    // Measured 0.94 dB. The earlier 5.56 dB included the phase-misaligned
+    // endpoint crossfade's missing voiced harmonics; the positive direction is
+    // the physical contract, while the separate source-bank test now owns the
+    // harmonic shape.
+    expect (onAir - offAir >= 0.5,
             "the source-tension ramp does not make the onset breathier than a note "
             "started at the block's tension");
 
@@ -3465,25 +5282,23 @@ void testAspirationIsPitchSynchronous()
 
     // The window is the glottal flow, which is zero while the folds are closed;
     // what fills the closed phase at the output is the tract ringing on from
-    // the open phase. Measured 8.35 dB. It is pitch-dependent for that reason:
+    // the open phase. Measured 10.46 dB. It is pitch-dependent for that reason:
     // the same measurement reads 9.96 dB at C3 and 4.84 dB at C5, where one
     // period is shorter than the tract's own ring time, so the note is pinned.
-    // It is also tension-dependent, at 9.73 dB at the engine's default 0.48,
-    // where the glottis is open for less of the cycle, so the tension is
-    // pinned too. This is the tightest bound in the test: 0.35 dB of margin.
+    // It is also tension-dependent because the glottis is open for less of the
+    // cycle at higher Tension, so the tension is pinned too.
     expect (span (modulatedBins) >= 8.0,
             "the aspiration carries no glottal-cycle modulation");
 
     // Turbulence rises with the flow and is extinguished at closure, so the
-    // energy has to peak in the open phase. At Tension 0.30 the crossfaded
-    // prototypes close at 0.684 of the period; measured peak 0.396, against the
-    // window's own peak at 0.375. On its own this one cannot fail against a
+    // energy has to peak in the open phase. Every physical flow shape is aligned
+    // to close at phase 0.78; the measured peak is 0.604. On its own this one cannot fail against a
     // flat fold, whose peak bin is wherever the estimator's noise put it, so it
     // is paired with the closed-phase margin below.
-    expect (peakPhase < 0.684,
+    expect (peakPhase < 0.78,
             "the aspiration peaks in the closed phase rather than the open one");
 
-    // Both prototypes are shut by 0.78 of the period, so the last five bins are
+    // Every aligned shape is shut by 0.78 of the period, so the last five bins are
     // closed glottis whatever the tension is. What is left there is the tract
     // ringing on from the open phase, and it has to sit well below the peak.
     double closedEnergy = 0.0;
@@ -3492,31 +5307,29 @@ void testAspirationIsPitchSynchronous()
     const auto closedMargin = modulatedBins[peakBin]
         - 10.0 * std::log10 (closedEnergy / static_cast<double> (bins - 19));
     std::cout << "aspiration closed-phase margin: " << closedMargin << " dB\n";
-    // Measured 4.32 dB, against 0.19 dB with the window switched out, where the
+    // Measured 3.51 dB, against the estimator floor with the window switched out, where the
     // peak bin lands at phase 0.646 and the assertion above passes by luck.
-    expect (closedMargin >= 3.5,
+    expect (closedMargin >= 3.0,
             "the aspiration is not extinguished while the folds are closed");
 
     // This moves the noise about inside the period. It must not change how much
     // noise there is -- which is why the window is normalised to unit mean
-    // square and its crossfade renormalised at the control rate, since a
-    // mid-tension crossfade of the two prototypes otherwise loses 0.96 dB here
-    // and 1.17 dB at the engine's default tension, both measured by forcing
-    // aspirationWindowGain() to 1. Measured with it in: 0.01 dB at either.
+    // square and each adjacent physical-shape interpolation is renormalised at
+    // the control rate from its stored mean and cross term.
     const auto levelChange = 20.0 * std::log10 (rms (modulated) / rms (stationary));
     expect (std::abs (levelChange) < 1.0,
             "the glottal window changed the aspiration level instead of its distribution");
 
     // The prize is on the Breath axis and nowhere else, so the same isolation
-    // is reported at the shipping default to keep that honest: 41.07 dB down.
+    // is reported at the shipping default to keep that honest: 40.73 dB down.
     const auto defaultBreath = isolate (0.28f, 1.0f);
     const auto defaultBins = fold (defaultBreath);
     std::cout << "aspiration at Breath 0.28: "
               << 20.0 * std::log10 (rms (defaultBreath) / std::sqrt (2.0) / defaultBreath.fullRms)
               << " dB below the full signal, peak-to-trough " << span (defaultBins) << " dB\n";
-    // 8.14 dB, so this bound has 0.14 dB of margin: the aspiration is 41 dB
-    // down here and the difference trick is measuring it against a much louder
-    // voiced signal, so the fold's own floor is a larger share of the span.
+    // 10.12 dB: the aspiration is about 41 dB down here and the difference
+    // trick is measuring it against a much louder voiced signal, so the fold's
+    // own floor is a larger share of the span.
     expect (span (defaultBins) >= 8.0,
             "the glottal window does not reach the default patch");
 }
@@ -3841,6 +5654,7 @@ void testVibratoRateAndExtent()
         parameters.choirSize = choirSize;
         parameters.vibrato = 1.0f;
         parameters.humanize = 0.0f;
+        parameters.instability = 0.0f;
         parameters.dynamics = 1.0f;
         engine.setParameters (parameters);
         rates = vocalor::VoiceEngineTestAccess::singerVibratoRates (engine);
@@ -3962,6 +5776,180 @@ void testVibratoRateAndExtent()
             "the ensemble vibrato extent is outside the band a section sings");
 }
 
+/** Instability turns a clocked LFO into a sequence of related sung gestures.
+
+    Rate is the more stable dimension of a trained vibrato: published cycle
+    measurements put ordinary rate scatter around a few percent, while extent
+    moves appreciably more. The contour is not exactly sinusoidal either; F0
+    commonly rises a little faster than it falls. Measure those properties on
+    the oscillator's sounding-frequency trajectory so a random value that is
+    drawn but never reaches the voice cannot satisfy the test.
+*/
+void testVibratoInstability()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr int hop = 16;
+    constexpr double trackRate = sampleRate / hop;
+    constexpr double concertC4 = 261.6255653005986;
+
+    struct CycleStatistics
+    {
+        std::vector<double> periods;
+        std::vector<double> extents;
+        std::vector<double> riseToFall;
+        double periodCv = 0.0;
+        double extentCv = 0.0;
+        double meanRate = 0.0;
+    };
+
+    const auto coefficientOfVariation = [] (const std::vector<double>& values)
+    {
+        double mean = 0.0;
+        for (const auto value : values)
+            mean += value;
+        mean /= static_cast<double> (values.size());
+
+        double squared = 0.0;
+        for (const auto value : values)
+            squared += (value - mean) * (value - mean);
+        return std::sqrt (squared / static_cast<double> (values.size())) / mean;
+    };
+
+    const auto measure = [&] (float instability)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        vocalor::EngineParameters parameters;
+        parameters.mode = vocalor::PerformanceMode::Solo;
+        parameters.vibrato = 1.0f;
+        parameters.humanize = 0.0f;
+        parameters.instability = instability;
+        parameters.dynamics = 1.0f;
+        parameters.room = 0.0f;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.85f);
+
+        // Two seconds clears the scoop and vibrato fade. The following eight
+        // seconds contain roughly fifty cycles: enough to measure variation,
+        // short enough that this remains a focused DSP regression.
+        constexpr double discardSeconds = 2.0;
+        constexpr double measuredSeconds = 8.0;
+        const auto steps = static_cast<int> ((discardSeconds + measuredSeconds) * trackRate);
+        const auto discardSteps = static_cast<int> (discardSeconds * trackRate);
+        std::vector<double> cents;
+        cents.reserve (static_cast<std::size_t> (steps - discardSteps));
+        std::array<float, hop> left {};
+        std::array<float, hop> right {};
+        for (int step = 0; step < steps; ++step)
+        {
+            engine.process (left.data(), right.data(), hop);
+            if (step < discardSteps)
+                continue;
+            const auto frequencies = vocalor::VoiceEngineTestAccess::soundingFrequencies (engine);
+            if (! frequencies.empty())
+                cents.push_back (1200.0 * std::log2 (
+                    static_cast<double> (frequencies.front()) / concertC4));
+        }
+
+        // Phase zero is the rising centre crossing for both the sine and the
+        // asymmetric triangle blended into it. Interpolation removes the
+        // control-rate quantisation from the period statistic.
+        std::vector<double> crossings;
+        for (std::size_t i = 1; i < cents.size(); ++i)
+            if (cents[i - 1] <= 0.0 && cents[i] > 0.0)
+                crossings.push_back (static_cast<double> (i - 1)
+                    - cents[i - 1] / (cents[i] - cents[i - 1]));
+
+        CycleStatistics result;
+        std::vector<std::size_t> maxima;
+        std::vector<std::size_t> minima;
+        for (std::size_t cycle = 0; cycle + 1 < crossings.size(); ++cycle)
+        {
+            result.periods.push_back ((crossings[cycle + 1] - crossings[cycle]) / trackRate);
+            const auto first = static_cast<std::size_t> (std::ceil (crossings[cycle]));
+            const auto last = std::min (
+                static_cast<std::size_t> (std::floor (crossings[cycle + 1])),
+                cents.size() - 1);
+            if (last <= first)
+                continue;
+
+            const auto maximum = std::max_element (cents.begin() + static_cast<std::ptrdiff_t> (first),
+                                                    cents.begin() + static_cast<std::ptrdiff_t> (last + 1));
+            const auto minimum = std::min_element (cents.begin() + static_cast<std::ptrdiff_t> (first),
+                                                    cents.begin() + static_cast<std::ptrdiff_t> (last + 1));
+            maxima.push_back (static_cast<std::size_t> (maximum - cents.begin()));
+            minima.push_back (static_cast<std::size_t> (minimum - cents.begin()));
+            result.extents.push_back (0.5 * (*maximum - *minimum));
+        }
+
+        for (std::size_t cycle = 0; cycle + 1 < maxima.size(); ++cycle)
+        {
+            if (minima[cycle] <= maxima[cycle]
+                || maxima[cycle + 1] <= minima[cycle])
+                continue;
+            const auto fall = static_cast<double> (minima[cycle] - maxima[cycle]);
+            const auto rise = static_cast<double> (maxima[cycle + 1] - minima[cycle]);
+            result.riseToFall.push_back (rise / fall);
+        }
+
+        if (! result.periods.empty() && ! result.extents.empty())
+        {
+            result.periodCv = coefficientOfVariation (result.periods);
+            result.extentCv = coefficientOfVariation (result.extents);
+            double meanPeriod = 0.0;
+            for (const auto period : result.periods)
+                meanPeriod += period;
+            result.meanRate = static_cast<double> (result.periods.size()) / meanPeriod;
+        }
+        return result;
+    };
+
+    const auto fixed = measure (0.0f);
+    const auto natural = measure (1.0f);
+    expect (fixed.periods.size() > 30 && natural.periods.size() > 30,
+            "the instability probe did not observe enough complete vibrato cycles");
+    if (fixed.periods.size() <= 30 || natural.periods.size() <= 30)
+        return;
+
+    std::cout << "vibrato instability: fixed CV rate/depth " << std::fixed
+              << std::setprecision (3) << 100.0 * fixed.periodCv << "/"
+              << 100.0 * fixed.extentCv << " %, natural "
+              << 100.0 * natural.periodCv << "/" << 100.0 * natural.extentCv
+              << " %, mean " << std::setprecision (2) << natural.meanRate << " Hz\n";
+
+    expect (fixed.periodCv < 0.002 && fixed.extentCv < 0.005,
+            "Instability at zero did not restore effectively fixed vibrato cycles");
+    expect (natural.periodCv > 0.025 && natural.periodCv < 0.16,
+            "full Instability produced implausibly little or unbounded rate variation");
+    expect (natural.extentCv > 0.08 && natural.extentCv < 0.35,
+            "full Instability produced implausibly little or unbounded extent variation");
+    expect (natural.extentCv > 1.5 * natural.periodCv,
+            "vibrato extent is not materially less regular than vibrato rate");
+    expect (natural.meanRate > 4.5 && natural.meanRate < 8.0,
+            "Instability moved the mean vibrato rate outside a broad human range");
+
+    const auto slowestPeriod = *std::max_element (natural.periods.begin(), natural.periods.end());
+    const auto fastestPeriod = *std::min_element (natural.periods.begin(), natural.periods.end());
+    const auto narrowest = *std::min_element (natural.extents.begin(), natural.extents.end());
+    const auto widest = *std::max_element (natural.extents.begin(), natural.extents.end());
+    expect (1.0 / slowestPeriod > 4.0 && 1.0 / fastestPeriod < 9.0
+                && narrowest > 40.0 && widest < 175.0,
+            "full Instability allowed an individual cycle to leave expressive bounds");
+
+    double meanRiseToFall = 0.0;
+    for (const auto ratio : natural.riseToFall)
+        meanRiseToFall += ratio;
+    if (! natural.riseToFall.empty())
+        meanRiseToFall /= static_cast<double> (natural.riseToFall.size());
+    std::cout << "vibrato contour: mean rise/fall duration " << std::fixed
+              << std::setprecision (3) << meanRiseToFall << "\n";
+    expect (! natural.riseToFall.empty(),
+            "the instability probe could not resolve the vibrato rise and fall");
+    expect (meanRiseToFall > 0.65 && meanRiseToFall < 0.95,
+            "the unstable vibrato contour does not rise mildly faster than it falls");
+}
+
 /** A sung vibrato modulates the amplitude, not only the pitch.
 
     The engine had one amplitude source and it was the passive one: harmonics
@@ -3992,6 +5980,7 @@ void testVibratoAmplitude()
         parameters.mode = vocalor::PerformanceMode::Solo;
         parameters.vibrato = vibrato;
         parameters.humanize = 0.0f;
+        parameters.instability = 0.0f;
         parameters.dynamics = 1.0f;
         engine.setParameters (parameters);
         // Solo sounds singer 0, so the rate the metric selects on is known
@@ -4056,6 +6045,165 @@ void testVibratoAmplitude()
         expect (none < 0.05,
                 "the amplitude modulation is not tied to the vibrato extent: "
                 "it is present with the vibrato switched off");
+    }
+}
+
+/** Natural vibrato keeps its airflow lead without turning each cycle redraw
+    into a tiny amplitude step.
+
+    The direct source gain and the two cascaded shelf gains are sampled after
+    the exact ramps used by renderVoice(). Their product is therefore the
+    effective high-band AM law. A discontinuity at the F0 wrap would appear as
+    an outlying one-hop change and, more strongly, as a first-difference kink:
+    the broadband control edge that creates sidebands around every partial.
+*/
+void testNaturalVibratoAmplitudeAndContinuity()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr int hop = 16;
+    constexpr double trackRate = sampleRate / hop;
+
+    struct AmStatistics
+    {
+        double directMinimum = 1.0e9;
+        double directMaximum = -1.0e9;
+        double highMinimum = 1.0e9;
+        double highMaximum = -1.0e9;
+        double boundaryDirectStep = 0.0;
+        double boundaryHighStep = 0.0;
+        double boundaryDirectKink = 0.0;
+        double boundaryHighKink = 0.0;
+        std::size_t boundaries = 0;
+
+        [[nodiscard]] double directDb() const noexcept
+        {
+            return 20.0 * std::log10 (directMaximum / directMinimum);
+        }
+
+        [[nodiscard]] double highDb() const noexcept
+        {
+            return 20.0 * std::log10 (highMaximum / highMinimum);
+        }
+    };
+
+    const auto measure = [&] (float vibrato, float instability)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        vocalor::EngineParameters parameters;
+        parameters.mode = vocalor::PerformanceMode::Solo;
+        parameters.vibrato = vibrato;
+        parameters.humanize = 0.0f;
+        parameters.instability = instability;
+        parameters.dynamics = 1.0f;
+        parameters.room = 0.0f;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.85f);
+
+        constexpr double discardSeconds = 1.0;
+        constexpr double measuredSeconds = 9.0;
+        const auto steps = static_cast<int> ((discardSeconds + measuredSeconds) * trackRate);
+        const auto discardSteps = static_cast<int> (discardSeconds * trackRate);
+        std::array<float, hop> left {};
+        std::array<float, hop> right {};
+        AmStatistics result;
+        std::array<double, 3> previous {};
+        std::array<double, 3> beforePrevious {};
+        bool havePrevious = false;
+        bool haveBeforePrevious = false;
+
+        for (int step = 0; step < steps; ++step)
+        {
+            engine.process (left.data(), right.data(), hop);
+            const auto state = vocalor::VoiceEngineTestAccess::vibratoModulationState (engine);
+            const double phase = state[0];
+            const double direct = state[1];
+            const double shelf = state[2];
+            const double high = direct * shelf * shelf;
+
+            if (step >= discardSteps)
+            {
+                result.directMinimum = std::min (result.directMinimum, direct);
+                result.directMaximum = std::max (result.directMaximum, direct);
+                result.highMinimum = std::min (result.highMinimum, high);
+                result.highMaximum = std::max (result.highMaximum, high);
+
+                if (havePrevious && phase < previous[0])
+                {
+                    ++result.boundaries;
+                    const double directStep = direct - previous[1];
+                    const double highStep = high - previous[2];
+                    result.boundaryDirectStep = std::max (
+                        result.boundaryDirectStep, std::abs (directStep));
+                    result.boundaryHighStep = std::max (
+                        result.boundaryHighStep, std::abs (highStep));
+                    if (haveBeforePrevious)
+                    {
+                        result.boundaryDirectKink = std::max (
+                            result.boundaryDirectKink,
+                            std::abs (directStep - (previous[1] - beforePrevious[1])));
+                        result.boundaryHighKink = std::max (
+                            result.boundaryHighKink,
+                            std::abs (highStep - (previous[2] - beforePrevious[2])));
+                    }
+                }
+            }
+
+            beforePrevious = previous;
+            haveBeforePrevious = havePrevious;
+            previous = { phase, direct, high };
+            havePrevious = true;
+        }
+        return result;
+    };
+
+    const auto shipping = measure (0.38f, 0.38f);
+    const auto demo = measure (0.50f, 0.44f);
+    const auto natural = measure (1.0f, 1.0f);
+    const auto report = [] (const char* label, const AmStatistics& result)
+    {
+        std::cout << label << " vibrato AM: direct/high " << std::fixed
+                  << std::setprecision (3) << result.directDb() << "/"
+                  << result.highDb() << " dB peak-to-trough; redraw step "
+                  << std::scientific << result.boundaryDirectStep << "/"
+                  << result.boundaryHighStep
+                  << ", kink " << result.boundaryDirectKink << "/"
+                  << result.boundaryHighKink << "\n" << std::defaultfloat;
+    };
+    report ("shipping V.38/I.38", shipping);
+    report ("demo V.50/I.44", demo);
+    report ("full-natural V1/I1", natural);
+
+    // These are control-domain peak-to-trough figures over the deterministic
+    // nine-second probe, not the fixed-rate audio projection above. Pin both
+    // useful non-zero settings so reducing clicks cannot silently remove the
+    // airflow gesture or reintroduce the old three-deep high-band modulation.
+    expect (std::abs (shipping.directDb() - 0.575) < 0.15
+                && std::abs (shipping.highDb() - 1.371) < 0.30,
+            "the shipping Instability setting changed its direct/high-band AM law");
+    expect (std::abs (natural.directDb() - 2.93) < 0.45
+                && std::abs (natural.highDb() - 5.85) < 0.65,
+            "full Instability changed its direct/high-band AM law");
+
+    for (const auto* result : { &shipping, &natural })
+    {
+        expect (result->boundaries > 40,
+                "the natural-AM probe did not observe enough cycle redraws");
+        expect (result->highDb() > 1.7 * result->directDb()
+                    && result->highDb() < 2.8 * result->directDb(),
+                "the two presence shelves no longer give the high band roughly twice the AM");
+        expect (result->boundaryDirectStep < 0.005
+                    && result->boundaryHighStep < 0.012,
+                "a cycle redraw introduced an amplitude step large enough to create sidebands");
+        expect (result->boundaryDirectKink < 0.002
+                    && result->boundaryHighKink < 0.005,
+                "a cycle redraw left a broadband kink in the amplitude trajectory");
+        expect (result->boundaryDirectKink
+                        < 0.35 * result->boundaryDirectStep + 1.0e-5
+                    && result->boundaryHighKink
+                        < 0.35 * result->boundaryHighStep + 1.0e-5,
+                "the redraw kink is an outlier rather than the slope of continuous AM");
     }
 }
 
@@ -4319,6 +6467,7 @@ void testTimingRedrawIsDeterministic()
         auto parameters = makeParameters (1, 0, 0, 0);   // Choir
         parameters.choirSize = 12;
         parameters.humanize = 1.0f;
+        parameters.instability = 0.82f;
 
         vocalor::VoiceEngine engine;
         engine.prepare (sampleRate, 512);
@@ -4838,6 +6987,7 @@ void testPerformanceExpression()
 
 int main()
 {
+    testPreparationIsExplicit();
     testRenderMatrix();
     testReleaseCompletes();
     testAllSoundOffIsImmediate();
@@ -4855,6 +7005,8 @@ int main()
     testParallelFormantBank();
     testEnsembleSizeIsExact();
     testTractCoefficientSmoothing();
+    testGlottalSourceTensionBank();
+    testRadiatedPowerRegulation();
     testSourceLevelCalibration();
     testPerformanceExpression();
     testFormantTuningAtHighPitch();
@@ -4864,7 +7016,9 @@ int main()
     testReleaseStagger();
     testTimingRedrawIsDeterministic();
     testVibratoRateAndExtent();
+    testVibratoInstability();
     testVibratoAmplitude();
+    testNaturalVibratoAmplitudeAndContinuity();
     testNasalBranch();
     testOnsetSpectrum();
     testVelocityShapesOnset();
@@ -4873,6 +7027,8 @@ int main()
     testAspirationIsPitchSynchronous();
     testCoarticulationTiming();
     testSingersFormantCluster();
+    testSopranoClusterReleaseIsPerVoice();
+    testSopranoUpperResonanceRise();
     testFactoryPresets();
     testDenormalAndNaNSafety();
     testParameterSmoothingHasNoZipper();
