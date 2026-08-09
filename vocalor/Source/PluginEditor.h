@@ -192,7 +192,7 @@ private:
     VocalorKnob tensionKnob { "TENSION" };
     VocalorKnob nasalKnob { "NASAL" };
     VocalorKnob vibratoKnob { "VIBRATO" };
-    VocalorKnob instabilityKnob { "INSTABILITY" };
+    VocalorKnob instabilityKnob { "DRIFT" };
     VocalorKnob humanizeKnob { "HUMANIZE" };
     VocalorKnob dynamicsKnob { "DYNAMICS" };
     VocalorKnob intonationKnob { "INTONATION" };

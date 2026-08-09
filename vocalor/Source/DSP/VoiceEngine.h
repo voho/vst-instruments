@@ -23,7 +23,7 @@ struct EngineParameters
     int choirSize { 8 };
     float breath { 0.28f };
     float resonance { 0.72f };
-    float vibrato { 0.42f };
+    float vibrato { 0.0f };
     float humanize { 0.55f };
     float spread { 0.65f };
     float tension { 0.48f };
@@ -48,14 +48,19 @@ struct EngineParameters
     // Velum coupling: 0 is a closed velum and the purely oral tract the engine
     // has always had, 1 is a closed-mouth hum. 0 reproduces 1.1 exactly.
     float nasal { 0.0f };
-    // Added in 1.3: cycle-to-cycle vocal variation. Zero is the exact 1.2
-    // oscillator, which is also the compatibility value for older sessions;
-    // the plug-in gives fresh instances a modest non-zero setting.
-    float instability { 0.0f };
+    // Added in 1.3 and broadened in 1.4: the user-facing Drift control. It
+    // loosens an intentional vibrato and, in the current voice model, also
+    // drives bounded aperiodic pitch and articulation motion. Zero remains the
+    // exact compatibility value for sessions which predate the control.
+    float instability { 0.38f };
     // Internal session-compatibility switch, not a published control. A host
     // state saved before the 1.3 support model keeps its original level law;
     // fresh patches and the standalone DSP default use the current model.
     bool legacyRadiatedPowerBypass { false };
+    // A 1.3 session already has a non-zero Instability value, but that value
+    // affected only its vibrato cycles. Keep that model on recall; fresh
+    // sounds use the broader Drift macro without changing the host parameter.
+    bool legacyDriftBypass { false };
 };
 
 /** Lock-free snapshot of what the engine is currently doing, for the editor. */
@@ -137,6 +142,26 @@ private:
     // 5.3 ms. prepare() scales the count so target freshness and analysis cost
     // per second remain stable at other rates.
     static constexpr int radiatedPowerReferenceUpdateControls = 16;
+    // Aperiodic pitch motion. Both processes are stationary AR(1)/OU paths at
+    // the 16-sample voice-control rate. Their standardised triangular
+    // innovations and hard state limit make the output deterministic and
+    // bounded without a periodic carrier.
+    static constexpr float pitchDriftFastSeconds = 0.030f;
+    static constexpr float pitchDriftSlowSeconds = 0.700f;
+    static constexpr float pitchDriftFastMix = 0.78f;
+    static constexpr float pitchDriftSlowMix = 0.22f;
+    static constexpr float pitchDriftDepthCents = 4.8f;
+    static constexpr float driftStateLimit = 2.5f;
+    // Articulation moves far more slowly and need not redraw the vowel target
+    // at the 3 kHz voice-control rate. The sample-rate-scaled scheduler lands
+    // near 25 ms; existing articulator inertia makes those targets continuous.
+    static constexpr float vowelDriftUpdateSeconds = 0.025f;
+    static constexpr float vowelDriftMorphSeconds = 2.8f;
+    static constexpr float vowelDriftXSeconds = 1.6f;
+    static constexpr float vowelDriftYSeconds = 2.3f;
+    static constexpr float vowelDriftMorphMidpointDepth = 0.040f;
+    static constexpr float vowelDriftXDepth = 0.035f;
+    static constexpr float vowelDriftYDepth = 0.025f;
     // The aspiration envelope needs far less resolution than the source:
     // it is smooth, it multiplies noise, and 256 entries keep it in L1 next
     // to twelve voices' worth of tract state.
@@ -273,7 +298,7 @@ private:
         std::atomic<int> choirSize { 8 };
         std::atomic<float> breath { 0.28f };
         std::atomic<float> resonance { 0.72f };
-        std::atomic<float> vibrato { 0.42f };
+        std::atomic<float> vibrato { 0.0f };
         std::atomic<float> humanize { 0.55f };
         std::atomic<float> spread { 0.65f };
         std::atomic<float> tension { 0.48f };
@@ -289,8 +314,9 @@ private:
         std::atomic<float> dynamics { 1.0f };
         std::atomic<float> intonation { 0.0f };
         std::atomic<float> nasal { 0.0f };
-        std::atomic<float> instability { 0.0f };
+        std::atomic<float> instability { 0.38f };
         std::atomic<int> legacyRadiatedPowerBypass { 0 };
+        std::atomic<int> legacyDriftBypass { 0 };
     };
 
     struct Resonator
@@ -388,6 +414,11 @@ private:
         int controlCountdown { 0 };
         std::uint64_t generation { 0 };
         std::uint32_t noiseState { 1u };
+        // Drift owns independent streams. It must never consume the aspiration,
+        // shimmer, legacy jitter or vibrato-cycle sequence merely because the
+        // macro is enabled.
+        std::uint32_t pitchDriftState { 1u };
+        std::uint32_t vowelDriftState { 1u };
         // A separate deterministic stream for the modulation cycle. Sharing
         // noiseState would make enabling this feature consume aspiration,
         // shimmer and pitch-jitter samples and would change the old sound even
@@ -408,6 +439,37 @@ private:
         float vibratoDepthVariation { 0.0f };
         float vibratoContour { 0.0f };
         float vibratoAmplitudePhase { 0.0f };
+        // Note-specific natural-vibrato onset targets. Drift zero ignores them
+        // and retains the historical 160 ms start / 340 ms fade exactly.
+        float vibratoFadeStart { 0.16f };
+        float vibratoFadeDuration { 0.34f };
+        // Fast fold jitter and slow support wander, both unit-variance OU
+        // states clamped to driftStateLimit. pitchDriftCents is the resolved
+        // final contribution used by tests and the oscillator.
+        float pitchDriftFast { 0.0f };
+        float pitchDriftSlow { 0.0f };
+        float pitchDriftCents { 0.0f };
+        // Slow articulation has three independent dimensions: how far the
+        // vowel-pad morph opens, and motion in the pad's front/back and
+        // open/close axes. The first formant array publishes the actual
+        // unshifted vowel-space point for display/tests; the second is its
+        // differential from the base point and is the only one added to the
+        // exact legacy render target, so a zero macro is bit-identical.
+        int vowelDriftCountdown { 0 };
+        int vowelDriftProfile { -1 };
+        int vowelDriftVowel { -1 };
+        float vowelDriftInputMorph { -1.0f };
+        float vowelDriftInputX { -1.0f };
+        float vowelDriftInputY { -1.0f };
+        bool vowelDriftWasEnabled { false };
+        float vowelDriftMorph { 0.0f };
+        float vowelDriftX { 0.0f };
+        float vowelDriftY { 0.0f };
+        float effectiveVowelMorph { 0.0f };
+        float effectiveVowelX { 0.5f };
+        float effectiveVowelY { 0.5f };
+        std::array<float, formantCount> vowelDriftFormantHz {};
+        std::array<float, formantCount> vowelDriftFormantDeltaHz {};
         float velocity { 0.0f };
         float amplitudeGain { 0.0f };
         // How much deliberate high-register F1 tuning this articulation has
@@ -535,8 +597,11 @@ private:
                          float velocity, float groupGain, int singerTotal,
                          float glideFromCents, const EngineParameters& parameters);
     void updateChunkState(const EngineParameters& parameters, bool advanceSmoothers);
-    void updateVoiceControl(Voice& voice, const EngineParameters& parameters);
+    void updateVoiceControl(Voice& voice, const EngineParameters& parameters,
+                            bool advanceDriftClock);
     void drawVibratoCycle(Voice& voice) noexcept;
+    void updateVowelDrift(Voice& voice, const EngineParameters& parameters,
+                          float driftAmount, bool advanceState) noexcept;
     void renderVoice(Voice& voice, const EngineParameters& parameters, int count);
     void silenceVoice(Voice& voice) noexcept;
     void beginRelease(Voice& voice) noexcept;
@@ -560,6 +625,9 @@ private:
     float sine(float phase) const noexcept;
     SineCosine sineCosineFromCycles(float cycles) const noexcept;
     static float randomBipolar(std::uint32_t& state) noexcept;
+    static float triangularUnitVariance(std::uint32_t& state) noexcept;
+    static float advanceBoundedOu(float current, std::uint32_t& state,
+                                  float retention, float innovationScale) noexcept;
     void updateRoom(float inputLeft, float inputRight, float& wetLeft, float& wetRight) noexcept;
     void clearRoom() noexcept;
     /** Resolve the twelve positions into delays and gains. Runs at the chunk
@@ -689,6 +757,17 @@ private:
     float justGlide_ { 0.0f };
     float jitterCoefficient_ { 0.0f };
     float jitterSlowCoefficient_ { 0.0f };
+    float pitchDriftFastRetention_ { 0.0f };
+    float pitchDriftFastInnovation_ { 0.0f };
+    float pitchDriftSlowRetention_ { 0.0f };
+    float pitchDriftSlowInnovation_ { 0.0f };
+    float vowelDriftMorphRetention_ { 0.0f };
+    float vowelDriftMorphInnovation_ { 0.0f };
+    float vowelDriftXRetention_ { 0.0f };
+    float vowelDriftXInnovation_ { 0.0f };
+    float vowelDriftYRetention_ { 0.0f };
+    float vowelDriftYInnovation_ { 0.0f };
+    int vowelDriftUpdateControls_ { 1 };
     // A noise-driven one-pole's output variance is c / (2 - c), so once c comes
     // from a time constant the depth of the shimmer and of the pitch jitter
     // would fall as 1/sqrt(sampleRate). These restore the 48 kHz depth.
@@ -706,6 +785,9 @@ private:
     // fallback and the exact low-register endpoint.
     std::array<float, formantCount> chunkUnclusteredFormantHz_ {};
     std::array<float, formantCount> chunkUnclusteredBandwidth_ {};
+    // Fraction of a local vowel-space formant displacement which survives the
+    // epilaryngeal cluster. The soprano release interpolates it back to one.
+    std::array<float, formantCount> chunkVowelDriftScale_ {};
     // Vowel targets, formant shift and bandwidth scale the tract was last
     // resolved from. Resolving it costs more than the whole rest of the chunk
     // update, and on a sustained note none of these inputs move.

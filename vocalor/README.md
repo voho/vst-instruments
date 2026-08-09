@@ -22,10 +22,12 @@ The screenshot above was captured from the 1.0 Standalone application and shows
 the previous layout. The 1.1 editor added the vowel-space pad, the live
 vocal-tract analyser with output meters, and the phrasing and room-geometry
 controls; 1.2 added Dynamics, Intonation and Nasal to the same row and regrouped
-it into voice character, performance, space and master. 1.3 adds Instability to
-that voice-character group. The visual language is unchanged. The repository
-screenshot remains the earlier layout; automated editor-rendering tests exercise
-the current one. The VST3 and Audio Unit use the same resizable JUCE editor.
+it into voice character, performance, space and master. 1.3 appended the control
+whose immutable host identifier is `instability`; 1.4 publishes it as **Drift**
+and broadens it from vibrato-cycle variation into a natural-performance macro.
+The visual language is unchanged. The repository screenshot remains the earlier
+layout; automated editor-rendering tests exercise the current one. The VST3 and
+Audio Unit use the same resizable JUCE editor.
 
 The interface remains fully resolution-independent: the layered hardware knobs,
 choice states, panel depth, vowel pad, response curve, and complete vocal-range
@@ -48,8 +50,10 @@ The project builds three products from one JUCE codebase:
 ## Interface and controls
 
 Vocalor exposes 24 automatable host parameters. Every parameter keeps its
-identifier, range, default, and host ordering, so existing sessions and any
-automation written against them recall in place.
+identifier, range, and host ordering, so existing sessions and any automation
+written against them recall in place. Version 1.4 changes the fresh Vibrato
+default to 0 % and broadens Drift from vibrato irregularity into a naturalness
+macro; stored projects carry explicit values and retain their saved model law.
 
 **Ensemble size** advertises 2 – 16 but used to quantise to three tiers of 4, 8,
 or 12 singers, so ten of its fifteen settings were silently identical to a
@@ -68,7 +72,7 @@ different singer count.
 | `choirSize` | Ensemble size | 2 – 16 (13 – 16 render 12) | 8 | 1.0 |
 | `breath` | Breath | 0 – 100 % | 30 % | 1.0 |
 | `resonance` | Resonance | 0 – 100 % | 64 % | 1.0 |
-| `vibrato` | Vibrato | 0 – 100 % | 38 % | 1.0 |
+| `vibrato` | Vibrato | 0 – 100 % | 0 % | 1.0 |
 | `humanize` | Humanize | 0 – 100 % | 52 % | 1.0 |
 | `spread` | Stereo spread | 0 – 100 % | 62 % | 1.0 |
 | `tension` | Vocal tension | 0 – 100 % | 36 % | 1.0 |
@@ -84,15 +88,20 @@ different singer count.
 | `dynamics` | Dynamics | 0 – 100 % | 100 % | 1.2 |
 | `intonation` | Just intonation | 0 – 100 % | 0 % | 1.2 |
 | `nasal` | Nasality | 0 – 100 % | 0 % | 1.2 |
-| `instability` | Instability | 0 – 100 % | 38 % | 1.3 |
+| `instability` | Drift | 0 – 100 % | 38 % | 1.3 |
 
 Saved state also carries a hidden voice-model version, not exposed as a host
-parameter. A project written before 1.3 restores Instability at 0 % and bypasses
-the new automatic register-support gain, so neither the legacy vibrato path nor
-the absence of that ±3 dB support law changes on recall; re-saving preserves the
-marker. A fresh instance or a newly selected 1.3 factory program uses the
-current model. The separately documented LF-source and soprano-tract upgrades
-are intentional 1.3 revoicing, not covered by this narrow compatibility switch.
+parameter. Model 2 identifies a project written before 1.3: a missing Drift
+value restores at 0 % and the automatic ±3 dB register-support gain stays
+bypassed. Model 3 is the 1.3 sound, where `instability` varies vibrato cycles but
+does not move a straight tone or its vowel. Model 4 is the 1.4 Drift macro used
+by fresh instances and newly selected factory programs. Re-saving preserves the
+model marker, while the parameter ID, range, position 24, Audio Unit ordering
+hint, and stored automation remain unchanged. A complete older state already
+contains Vibrato and recalls that explicit value; a partial legacy tree missing
+it uses the historical 38 % fallback rather than silently adopting the new 0 %
+default. The separately documented LF-source and soprano-tract upgrades are
+intentional 1.3 revoicing, not covered by this narrow compatibility switch.
 
 The top row selects the voice profile, the performance mode, the chord quality,
 and the vowel anchor. **Ensemble size** renders exactly that many independently
@@ -106,29 +115,32 @@ The **vowel-space pad** places a morph target anywhere between five cardinal
 vowels (front to back on the horizontal axis, close to open on the vertical
 axis). **Morph** crossfades from the selected preset vowel to that target, so
 at 0 % the pad and its two axes have no effect at all and the vowel anchor
-alone decides the tract. **Shift** moves every formant by up to an octave in either
-direction without touching the pitch, which is an effective vocal-tract-length
-or body-size control; it changes the timbre without doubling as a fader. Next
-to the pad, the **vocal-tract response** display draws the live magnitude
+decides the intended tract centre; Drift may still move locally around it.
+**Shift** moves every formant by up to an octave in either direction without
+touching the pitch, which is an effective vocal-tract-length or body-size
+control; it changes the timbre without doubling as a fader. Next to the pad,
+the **vocal-tract response** display draws the live magnitude
 response of the five formant resonators of a sounding voice on a logarithmic
 axis, marks F1 to F5, and carries the stereo output meters.
 
 Fourteen continuous controls fill the bottom row in four groups. **Voice
 character** holds **Breath**, **Resonance**, **Tension**, **Nasal**,
-**Vibrato**, **Instability** and **Humanize**; **performance** holds **Dynamics**,
+**Vibrato**, **Drift** and **Humanize**; **performance** holds **Dynamics**,
 **Intonation** and **Glide**; **space** holds **Spread**, **Room** and room
 **Size**; and **master** holds the **Output** level. **Vibrato** is calibrated in
 cents rather than in an arbitrary depth — the top of the knob is the ±1 semitone
-that defines a sung vibrato. **Instability** adds bounded, deterministic
-cycle-to-cycle variation in its period, depth and contour. **Humanize** owns the
-between-singer differences in pitch, timing and anatomy, so at zero twelve
-singers enter and release exactly together and at full they do not. **Spread**
-now places the section rather than panning it, so it moves twelve positions in
-a room and not twelve gains. The status display reports
+that defines a sung vibrato, while its fresh default is off. **Drift** supplies
+bounded aperiodic pitch movement even then; when Vibrato is enabled it also
+loosens rate, depth, contour and onset, and it slowly moves the vowel morph and
+pad coordinates. **Humanize** remains the separate control for between-singer
+pitch identity, timing, anatomy and placement, so at zero twelve singers enter
+and release exactly together and at full they do not. **Spread** now places the
+section rather than panning it, so it moves twelve positions in a room and not
+twelve gains. The status display reports
 active voices and sample rate, the Panic button mutes immediately, and the
 on-screen keyboard is also mapped to the computer keys shown above it. The
 editor remains usable at its 1120 px minimum; fourteen equal cells share the
-row, while the 1240 px default gives the longer Instability label more room.
+row, while the 1240 px default leaves room for every value label.
 
 ## Factory presets
 
@@ -608,12 +620,12 @@ unsteadiness rather than as vibrato, with every factory preset below that again.
 
 The identities are reseeded over 5.6 – 7.0 Hz and land on 5.72 – 6.84 Hz. The
 extent is `100 × knob^1.75` cents: the top of the knob is the definition, and
-the exponent is fixed by requiring the compatibility engine default of 42 % to
-land at 21.9 cents rather than by taste. Before the singer's own depth, the
-published 38 % setting is 18.4 cents, 42 % is 21.9 and 46 % is 25.7. That curve
-is why the control could be rescaled without re-dialling
-the bank — eleven of the twelve presets sit at or below 44 %, and a linear
-rescale would have taken every one of them to a soloist's full vibrato.
+the exponent is fixed by requiring the historical 42 % compatibility anchor to
+land at 21.9 cents rather than by taste. Before the singer's own depth, 38 % is
+18.4 cents, 42 % is 21.9 and 46 % is 25.7. The 1.4 fresh default is exactly
+0 %, so a new patch does not acquire an intentional periodic modulation until
+the player asks for one. The curve still lets the existing factory sounds opt
+into useful vibrato without re-dialling their musical extent.
 
 A section does not sing a soloist's extent, but what a section imposes is a
 limit and not a scale: a singer sings the gesture she would sing alone until it
@@ -626,10 +638,11 @@ section extents land between ±27.8 and ±40.0 cents.
 
 A sung vibrato is not only a pitch modulation. The same laryngeal gesture moves
 airflow and intensity, while harmonics sweeping static formant skirts contribute
-only 0.10 dB on a held C5. Instability-zero sessions retain the established
+only 0.10 dB on a held C5. Drift-zero sessions retain the established
 0.0020-per-cent, in-phase gesture and pure sinusoidal contour. Fresh sounds use
-the natural path instead. Each singer's airflow-linked gain leads F0 by a
-bounded 45–150 degrees, a conservative interior of the 34–197-degree range
+the natural path whenever Vibrato is enabled. Each singer's airflow-linked gain
+leads F0 by a bounded 45–150 degrees, a conservative interior of the
+34–197-degree range
 reported by [Nandamudi and Scherer](https://pubmed.ncbi.nlm.nih.gov/30190093/),
 and its coefficient moves toward 0.0011 per cent with a 0.18 ceiling. Each of
 the two presence shelves carries the square root of that gesture, so together
@@ -637,28 +650,57 @@ they apply it once; with the direct source, the upper band follows the intended
 2:1 movement rather than accidentally receiving three copies.
 
 Every target is ramped across the control period, including the hand-off between
-cycle draws. In a nine-second control-domain measurement, the actual fresh patch
-(Vibrato 38 %, Instability 38 %) moves 0.575 dB peak to peak at the direct source
-and 1.150 dB in the upper band. The solo demo's 50/44 % setting measures
-0.922/1.845 dB, and the full 100/100 % corner remains bounded at
+cycle draws. In the current model a moderate Vibrato 38 % / Drift 38 % setting
+measures 0.624 dB peak to peak at the direct source and 1.249 dB in the upper
+band. The solo demo's 50/44 % setting measures 0.995/1.991 dB, and the full
+100/100 % corner remains bounded at
 2.933/5.866 dB. The upper band therefore follows the intended 2:1
-spectral law without the old, perfectly phase-locked pulse.
+spectral law without the old, perfectly phase-locked pulse. At the fresh
+Vibrato default of 0 %, the intentional vibrato depth is exactly zero and its
+direct and shelf gains are unity; Drift's straight-tone pitch motion is not
+reused as a hidden amplitude LFO.
 
-**Instability.** Vibrato owns the intended extent; Instability controls how
-perfectly the gesture repeats. At zero the legacy sinusoid is exact. Above zero,
-each singer makes bounded cycle-to-cycle changes to period and depth and blends
-toward a mildly asymmetric contour instead of tracing the same ideal LFO
-forever. The dimensions are deliberately unequal: at full Instability the
-measured period/extent coefficients of variation are 7.622/20.585 %, the mean
-rate remains 5.92 Hz, and the pitch rise takes 0.825 times the fall duration.
-That follows [Horii's cycle analysis](https://pubs.asha.org/doi/10.1044/jshr.3204.829),
+**Drift.** Vibrato owns the intended musical extent; Drift controls the amount
+of bounded imperfection around the performance. With Vibrato at 0 %, each voice
+still receives an aperiodic pitch path made from 30 ms and 700 ms stationary
+OU processes, mixed 78:22 and refreshed at the 16-sample voice-control rate.
+The hard pitch bound is ±4.56 cents at the 38 % default and ±12 cents at full
+Drift. The state is drawn from its stationary distribution at note-on rather
+than ramped from perfect pitch, while legato retains it. Separate deterministic
+random streams keep this motion independent of aspiration, shimmer and the
+intentional vibrato.
+
+When Vibrato is above zero, Drift also varies its per-cycle rate and depth,
+blends toward a mildly asymmetric contour, and varies the note-specific fade
+onset and duration. Cycle changes remain correlated and cross smoothly into the
+next gesture; zero Drift preserves the exact model-3 sinusoidal path. The
+full-Drift model-3 measurements of 7.622/20.585 % period/extent coefficient of
+variation, a 5.92 Hz mean rate and a 0.825 rise/fall-duration ratio remain
+historical calibration evidence, not new model-4 measurements. The asymmetric
+direction follows [Horii's cycle analysis](https://pubs.asha.org/doi/10.1044/jshr.3204.829),
 which found rate more regular than extent, predominantly linear contours and a
-faster F0 rise than fall. Correlated draws retain a tendency for several cycles,
-then depth and contour cross smoothly into the next gesture over its first
-18 %. The pseudo-random stream belongs to the voice and is seeded from the note
-sequence, so repeated renders are deterministic even though neighbouring cycles
-and neighbouring singers differ. Parameter changes are smoothed before they
-reach a sounding voice.
+faster F0 rise than fall.
+
+Drift also moves articulation independently for every voice. Morph, vowel-space
+X and vowel-space Y use 2.8, 1.6 and 2.3 s OU time constants, with new targets
+about every 25 ms; the existing formant inertia turns those targets into a
+continuous tract motion. The morph term is multiplied by
+`4 × Morph × (1 − Morph)`, so it closes exactly at both endpoints. At full
+Drift its midpoint coefficient permits at most ±0.10 of morph movement, while
+the raw X and Y offset terms are bounded at ±0.0875 and ±0.0625 before the
+vowel-space coordinate clamp. At 38 % those coefficient bounds are ±0.038,
+±0.03325 and ±0.02375. Only the local displacement of the nonlinear vowel
+surface is added to the established formant target, preserving the exact old
+target when Drift is zero. The analyser follows the reference voice's effective
+moving coordinate rather than drawing only the static knob target. Every
+pseudo-random stream is seeded from the note sequence, so the motion is
+repeatable and independent between voices without becoming periodic. The
+integrated trajectory gate measures 1.388 cents RMS at the 38 % default and
+3.652 cents at full, with a largest 3–10 Hz sine fit of 0.017 and a
+vibrato-period-lag recurrence of 0.092. At full Drift the vowel coordinate has
+0.0576 vector RMS and no tested cardinal- or preset-vowel identity
+misclassification; worst mean F1/F2 bias is 0.91 % on the cardinal matrix and
+2.36 % on the AAH/OOH/UUH preset anchors across both profiles.
 
 **Humanisation.** Humanize owns ensemble identity: the slowly moving pitch,
 spectral and breath differences, vocal-tract anatomy, position, and note-entry
@@ -666,8 +708,11 @@ and release timing that keep singers from collapsing into one oscillator. Pitch
 jitter runs through two nested smoothers for a 1/f-like spectrum, and ensemble
 and chord modes instantiate independent singers. Humanize also multiplies each
 note's attack time constant and scales the ensemble's entry and release scatter,
-so at zero the section is locked in pitch *and* in time. It is deliberately not
-a second control for the cycle-to-cycle extent set by Instability.
+so at zero its identity detune, anatomy and timing scatter disappear. Non-zero
+Drift can still move each performance around that common identity. Humanize is
+deliberately not a second depth for Drift: Drift is within-performance
+imperfection, while Humanize is the amount of between-singer identity, anatomy
+and timing.
 
 **Ensemble dispersion.** How far apart twelve singers sit is what separates a
 section from one thick voice, and Vocalor's section used to be far too tight.
@@ -684,9 +729,10 @@ evenly across the extremes, as a real one does — and each singer carries two
 incommensurate slow wanders instead of one, so the section never returns to the
 same relative configuration. Twelve singers now measure 12.7 cents of standard
 deviation at full Humanize and the largest singer moves 10.5 cents over nine
-seconds. Humanize is the dial between the two: at zero the section is perfectly
-locked, at its 52 % default it sits at about 6 cents, and at full it is a
-rehearsal room.
+seconds. Humanize is the dial between the two: at zero its identity and slow
+ensemble wander are perfectly locked, at its 52 % default they sit at about
+6 cents, and at full it is a rehearsal room. Drift is an additional per-voice
+performance motion and is excluded from those Humanize measurements.
 
 Formant dispersion is deliberately *not* widened with it. Ternström and Sundberg
 measured the inter-subject scatter of the three lowest formants as smaller in
@@ -840,10 +886,10 @@ from one shared sine table. The larger bank takes about 23 ms on its one cold
 build and roughly 0.1 ms on later prepares; that work is explicitly outside the
 audio callback.
 
-Chunk boundaries are aligned to the absolute sample position, and every drift
-oscillator and every per-note draw is a pure function of the note sequence
-rather than of a running random state, so how a host splits its buffers does not
-change what the instrument plays. The test suite asserts both halves of that:
+Chunk and control boundaries are aligned to the absolute sample position, and
+every deterministic random stream is seeded from the note sequence and advanced
+on that fixed schedule, so how a host splits its buffers does not change what
+the instrument plays. The test suite asserts both halves of that:
 buffer sizes that are multiples of the 64-sample render chunk reproduce a
 single-block render bit for bit, and splits that land inside a chunk agree with
 it to within 1.3e−6 peak on the general timing fixture and 2.9e−6 through the
@@ -1047,8 +1093,9 @@ or a constant instead:
 - the just intervals must measure their own ratios to within a cent, in chord
   mode and in played polyphony, and must re-tune when a bass arrives after them,
   gliding rather than stepping
-- twelve singers must disperse inside the band real choirs measure, lock
-  perfectly at zero Humanize, and drift without running away
+- twelve singers must disperse inside the band real choirs measure, remove all
+  Humanize-owned dispersion at zero Humanize, and wander without running away;
+  zero Drift is pinned separately when an exactly locked pitch fixture is needed
 - the nasal branch must cut its own band by 20 dB or more, raise the murmur
   band, leave the overall level alone, and stay stable at every coupling
 - a full vowel step must produce 10 – 90 % formant rise times inside a stated
@@ -1089,6 +1136,14 @@ or a constant instead:
   knob and a section's in Choir and Chord, and the vibrato must carry more than a
   decibel of amplitude modulation at its own rate, which the passive
   formant-skirt contribution alone cannot reach
+- a fresh patch must expose exactly zero intentional vibrato while its default
+  Drift still produces deterministic, aperiodic pitch motion inside ±4.56
+  cents; full Drift must remain inside ±12 cents, depth must increase with the
+  control, and neither path may depend on host buffer splits or sample rate
+- Drift must leave the old vowel target bit-static at zero, move its morph and
+  X/Y coordinates continuously and independently above zero, close morph motion
+  at both endpoints, preserve the intended vowel identity, and remain bounded
+  from 44.1 through 192 kHz
 - repeated identical note-ons must produce different entry delays and different
   vibrato phases every time, inside a two-sided scatter window and under a span
   ceiling so a loose entry does not become a flam; the section must let go

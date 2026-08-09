@@ -611,6 +611,97 @@ struct VoiceEngineTestAccess
         return { 0.0f, 1.0f, 1.0f };
     }
 
+    /** Give a held voice an older clock without advancing its phase or random
+        streams. Used only to build a matched, fully-faded reference whose
+        cycle waveform is sample-for-sample identical to a new note. */
+    static void offsetHeldVoiceAge (VoiceEngine& engine,
+                                    std::uint64_t samples) noexcept
+    {
+        for (auto& voice : engine.voices_)
+        {
+            if (! voice.active || voice.releasing)
+                continue;
+            voice.ageSamples += samples;
+            voice.lastControlAge += samples;
+        }
+    }
+
+    /** Mean musical vibrato extent resolved for the current render chunk. This
+        is distinct from sounding pitch: at Vibrato zero the latter must still
+        carry Drift, while this structural contribution must be exactly zero. */
+    static float resolvedVibratoCents (const VoiceEngine& engine) noexcept
+    {
+        return engine.chunkVibratoCents_;
+    }
+
+    /** Independent stochastic pitch displacement that Drift contributes to
+        the first held voice, before it is summed with intentional vibrato. */
+    static float independentPitchDriftCents (const VoiceEngine& engine) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing)
+                return voice.pitchDriftCents;
+        return 0.0f;
+    }
+
+    static float smoothedDrift (const VoiceEngine& engine) noexcept
+    {
+        return engine.smoothedInstability_;
+    }
+
+    /** Per-voice vowel position after the slow Drift process but before
+        register-dependent formant tuning. The formants are the effective
+        vowel's own target, so a high-note jaw strategy cannot masquerade as a
+        change of phoneme in the identity tests. */
+    static std::array<float, 3> effectiveVowel (const VoiceEngine& engine) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing)
+                return { voice.effectiveVowelMorph, voice.effectiveVowelX,
+                         voice.effectiveVowelY };
+        return { 0.0f, 0.5f, 0.5f };
+    }
+
+    static std::array<float, kFormantCount> driftedVowelFormants (
+        const VoiceEngine& engine) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing)
+                return voice.vowelDriftFormantHz;
+        return {};
+    }
+
+    /** Complete fixed-clock Drift state for the first held voice. A legato
+        articulation may re-resolve pitch and tract targets, but it must not
+        consume an OU innovation or move the 25 ms vowel scheduler. */
+    static std::array<std::uint32_t, 2> driftRandomStates (
+        const VoiceEngine& engine) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing)
+                return { voice.pitchDriftState, voice.vowelDriftState };
+        return {};
+    }
+
+    static std::array<float, 5> driftOuStates (
+        const VoiceEngine& engine) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing)
+                return { voice.pitchDriftFast, voice.pitchDriftSlow,
+                         voice.vowelDriftMorph, voice.vowelDriftX,
+                         voice.vowelDriftY };
+        return {};
+    }
+
+    static int vowelDriftCountdown (const VoiceEngine& engine) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing)
+                return voice.vowelDriftCountdown;
+        return -1;
+    }
+
     /** The voiced envelope of every voice, indexed by singer identity, with a
         negative entry where that identity is not sounding. A twelve-voice mix
         cannot be resolved back into twelve envelopes, so this is the seam the
@@ -655,6 +746,177 @@ void expect (bool condition, const std::string& message)
         ++failureCount;
         std::cerr << "FAIL: " << message << '\n';
     }
+}
+
+double seriesMean (const std::vector<double>& values) noexcept
+{
+    if (values.empty())
+        return 0.0;
+    double sum = 0.0;
+    for (const auto value : values)
+        sum += value;
+    return sum / static_cast<double> (values.size());
+}
+
+double seriesDeviation (const std::vector<double>& values) noexcept
+{
+    if (values.empty())
+        return 0.0;
+    const auto mean = seriesMean (values);
+    double square = 0.0;
+    for (const auto value : values)
+        square += (value - mean) * (value - mean);
+    return std::sqrt (square / static_cast<double> (values.size()));
+}
+
+double seriesMaximumMagnitude (const std::vector<double>& values) noexcept
+{
+    double largest = 0.0;
+    for (const auto value : values)
+        largest = std::max (largest, std::abs (value));
+    return largest;
+}
+
+std::vector<double> firstDifference (const std::vector<double>& values)
+{
+    std::vector<double> result;
+    if (values.size() < 2)
+        return result;
+    result.reserve (values.size() - 1);
+    for (std::size_t i = 1; i < values.size(); ++i)
+        result.push_back (values[i] - values[i - 1]);
+    return result;
+}
+
+double normalisedCorrelation (const std::vector<double>& left,
+                              const std::vector<double>& right) noexcept
+{
+    const auto count = std::min (left.size(), right.size());
+    if (count < 2)
+        return 0.0;
+    double leftMean = 0.0;
+    double rightMean = 0.0;
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        leftMean += left[i];
+        rightMean += right[i];
+    }
+    leftMean /= static_cast<double> (count);
+    rightMean /= static_cast<double> (count);
+
+    double product = 0.0;
+    double leftSquare = 0.0;
+    double rightSquare = 0.0;
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        const auto l = left[i] - leftMean;
+        const auto r = right[i] - rightMean;
+        product += l * r;
+        leftSquare += l * l;
+        rightSquare += r * r;
+    }
+    return product / std::sqrt (std::max (leftSquare * rightSquare, 1.0e-30));
+}
+
+double maximumAutocorrelation (const std::vector<double>& values,
+                               double sampleRate, double minimumLagSeconds,
+                               double maximumLagSeconds) noexcept
+{
+    if (values.size() < 3 || ! (sampleRate > 0.0))
+        return 0.0;
+    const auto mean = seriesMean (values);
+    const int firstLag = std::max (1, static_cast<int> (std::ceil (
+        minimumLagSeconds * sampleRate)));
+    const int finalLag = std::min (
+        static_cast<int> (values.size()) - 2,
+        static_cast<int> (std::floor (maximumLagSeconds * sampleRate)));
+    double largest = -1.0;
+    for (int lag = firstLag; lag <= finalLag; ++lag)
+    {
+        double product = 0.0;
+        double beforeSquare = 0.0;
+        double afterSquare = 0.0;
+        for (std::size_t i = 0; i + static_cast<std::size_t> (lag) < values.size(); ++i)
+        {
+            const auto before = values[i] - mean;
+            const auto after = values[i + static_cast<std::size_t> (lag)] - mean;
+            product += before * after;
+            beforeSquare += before * before;
+            afterSquare += after * after;
+        }
+        largest = std::max (largest, product
+            / std::sqrt (std::max (beforeSquare * afterSquare, 1.0e-30)));
+    }
+    return largest;
+}
+
+/** Largest fraction of a trajectory's variance explained by one sinusoid.
+
+    The sine and cosine columns are centred and solved as a two-column least-
+    squares fit, so this remains valid at the low frequencies where a window
+    contains only a few cycles. A fixed LFO approaches one; correlated random
+    motion distributes its power over many fits. */
+double maximumSineFitFraction (const std::vector<double>& values,
+                               double sampleRate, double minimumHz,
+                               double maximumHz) noexcept
+{
+    if (values.size() < 8 || ! (sampleRate > 0.0) || ! (maximumHz > minimumHz))
+        return 0.0;
+    const auto mean = seriesMean (values);
+    double totalSquare = 0.0;
+    for (const auto value : values)
+        totalSquare += (value - mean) * (value - mean);
+    if (totalSquare < 1.0e-24)
+        return 0.0;
+
+    const double duration = static_cast<double> (values.size()) / sampleRate;
+    const double frequencyStep = 1.0 / std::max (4.0 * duration, 1.0);
+    double largest = 0.0;
+    for (double frequency = minimumHz; frequency <= maximumHz;
+         frequency += frequencyStep)
+    {
+        double sineMean = 0.0;
+        double cosineMean = 0.0;
+        for (std::size_t i = 0; i < values.size(); ++i)
+        {
+            const auto phase = 2.0 * 3.14159265358979323846 * frequency
+                             * static_cast<double> (i) / sampleRate;
+            sineMean += std::sin (phase);
+            cosineMean += std::cos (phase);
+        }
+        sineMean /= static_cast<double> (values.size());
+        cosineMean /= static_cast<double> (values.size());
+
+        double sineSquare = 0.0;
+        double cosineSquare = 0.0;
+        double cross = 0.0;
+        double valueSine = 0.0;
+        double valueCosine = 0.0;
+        for (std::size_t i = 0; i < values.size(); ++i)
+        {
+            const auto phase = 2.0 * 3.14159265358979323846 * frequency
+                             * static_cast<double> (i) / sampleRate;
+            const auto sine = std::sin (phase) - sineMean;
+            const auto cosine = std::cos (phase) - cosineMean;
+            const auto value = values[i] - mean;
+            sineSquare += sine * sine;
+            cosineSquare += cosine * cosine;
+            cross += sine * cosine;
+            valueSine += value * sine;
+            valueCosine += value * cosine;
+        }
+        const auto determinant = sineSquare * cosineSquare - cross * cross;
+        if (determinant < 1.0e-18)
+            continue;
+        const auto sineCoefficient = (valueSine * cosineSquare - valueCosine * cross)
+                                   / determinant;
+        const auto cosineCoefficient = (valueCosine * sineSquare - valueSine * cross)
+                                     / determinant;
+        const auto explained = sineCoefficient * valueSine
+                             + cosineCoefficient * valueCosine;
+        largest = std::max (largest, explained / totalSquare);
+    }
+    return std::clamp (largest, 0.0, 1.0);
 }
 
 struct RenderMetrics
@@ -1330,8 +1592,12 @@ std::vector<float> placementImpulseResponse (const vocalor::EngineParameters& pa
     constexpr auto sampleRate = 48000.0;
     vocalor::VoiceEngine engine;
     engine.prepare (sampleRate, blockSize);
-    engine.reset();
     engine.setParameters (parameters);
+    // Reset after publishing the fixture parameters so every smoothed control
+    // starts on the requested value. Otherwise a D=0 probe spends its first
+    // seconds asymptotically leaving the fresh D=.38 default and cannot prove
+    // the exact-zero branch it names.
+    engine.reset();
     // Rendering silence still advances every smoother to its target, which is
     // what the taps and the room coefficients are resolved from.
     render (engine, static_cast<int> (sampleRate * 1.0));
@@ -1725,6 +1991,7 @@ void testSingerPlacement()
     soloParameters.mode = vocalor::PerformanceMode::Solo;
     soloParameters.humanize = 0.0f;
     soloParameters.vibrato = 0.0f;
+    soloParameters.instability = 0.0f;
     soloParameters.spread = 0.0f;
     soloParameters.roomSize = 0.0f;
     solo.setParameters (soloParameters);
@@ -2327,6 +2594,8 @@ vocalor::EngineParameters steadyParameters()
     auto parameters = makeParameters (0, 0, 0, 0);
     parameters.vibrato = 0.0f;
     parameters.humanize = 0.0f;
+    parameters.instability = 0.0f;
+    parameters.legacyDriftBypass = false;
     parameters.room = 0.0f;
     return parameters;
 }
@@ -3579,7 +3848,7 @@ void testFactoryPresets()
         std::cout << "preset level: " << std::left << std::setw (22) << entry.name
                   << std::right << std::fixed << std::setprecision (2) << levelDb
                   << " dB against " << entry.db << " dB\n";
-        expect (std::abs (levelDb - entry.db) <= 1.0,
+        expect (std::abs (levelDb - entry.db) <= 0.03,
                 std::string (entry.name) + " renders at " + std::to_string (levelDb)
                     + " dB against the " + std::to_string (entry.db)
                     + " dB it shipped at: the preset bank was not re-trimmed");
@@ -4422,7 +4691,9 @@ void testSopranoUpperResonanceRise()
     // pitch is moving while the resonances remain stationary.
     auto vibratoParameters = femaleParameters;
     vibratoParameters.vibrato = 1.0f;
-    vibratoParameters.instability = 1.0f;
+    // This fixture isolates whether intentional pitch vibrato drags the tract.
+    // Drift now owns deliberate slow vowel motion, so leave it out here.
+    vibratoParameters.instability = 0.0f;
     auto vibrato = std::make_unique<vocalor::VoiceEngine>();
     vibrato->prepare(sampleRate, blockSize);
     vibrato->reset();
@@ -5829,6 +6100,995 @@ void testEnsembleDispersion()
             "the per-singer drift is unbounded rather than a wander around the target");
 }
 
+struct NaturalTrajectory
+{
+    double observationRate = 0.0;
+    std::vector<double> pitchCents;
+    std::vector<double> independentPitchCents;
+    std::vector<double> vowelMorph;
+    std::vector<double> vowelX;
+    std::vector<double> vowelY;
+    std::array<std::vector<double>, vocalor::kFormantCount> vowelFormants;
+    double maximumDirectVibratoGainError = 0.0;
+    double maximumShelfVibratoGainError = 0.0;
+    float resolvedVibratoCents = 0.0f;
+};
+
+NaturalTrajectory captureNaturalTrajectory (
+    double sampleRate, const vocalor::EngineParameters& parameters,
+    double discardSeconds, double measuredSeconds, double observationRate,
+    int midiNote = 60, int seedAdvance = 0,
+    const std::vector<int>& splitPattern = {})
+{
+    vocalor::VoiceEngine engine;
+    engine.prepare (sampleRate, blockSize);
+    engine.setParameters (parameters);
+    // Reset after publishing the fixture parameters so smoothed controls begin
+    // on their requested values instead of ramping away from fresh defaults.
+    engine.reset();
+
+    // Advance only the note-generation seed. No audio time passes, so two
+    // takes made this way differ in their stochastic draw without acquiring a
+    // different absolute drift phase or a different analysis window.
+    for (int generation = 0; generation < seedAdvance; ++generation)
+    {
+        engine.noteOn (midiNote + 1, 0.75f);
+        engine.allSoundOff();
+    }
+    engine.noteOn (midiNote, 0.80f);
+
+    const int stride = std::max (1, static_cast<int> (std::lround (
+        sampleRate / observationRate)));
+    const double realisedRate = sampleRate / static_cast<double> (stride);
+    int maximumProcess = stride;
+    for (const auto split : splitPattern)
+        maximumProcess = std::max (maximumProcess, split);
+    std::vector<float> left (static_cast<std::size_t> (maximumProcess), 0.0f);
+    std::vector<float> right (static_cast<std::size_t> (maximumProcess), 0.0f);
+    std::size_t splitIndex = 0;
+
+    const auto advance = [&] (int samples)
+    {
+        while (samples > 0)
+        {
+            const int requested = splitPattern.empty()
+                ? samples
+                : std::max (1, splitPattern[splitIndex++ % splitPattern.size()]);
+            const int count = std::min (samples, requested);
+            engine.process (left.data(), right.data(), count);
+            samples -= count;
+        }
+    };
+
+    const int discardObservations = static_cast<int> (std::ceil (
+        discardSeconds * realisedRate));
+    for (int observation = 0; observation < discardObservations; ++observation)
+        advance (stride);
+
+    NaturalTrajectory result;
+    result.observationRate = realisedRate;
+    const int observations = static_cast<int> (std::ceil (
+        measuredSeconds * realisedRate));
+    result.pitchCents.reserve (static_cast<std::size_t> (observations));
+    result.independentPitchCents.reserve (static_cast<std::size_t> (observations));
+    result.vowelMorph.reserve (static_cast<std::size_t> (observations));
+    result.vowelX.reserve (static_cast<std::size_t> (observations));
+    result.vowelY.reserve (static_cast<std::size_t> (observations));
+    for (auto& formant : result.vowelFormants)
+        formant.reserve (static_cast<std::size_t> (observations));
+
+    const double nominal = 440.0 * std::exp2 (
+        (static_cast<double> (midiNote) - 69.0) / 12.0);
+    for (int observation = 0; observation < observations; ++observation)
+    {
+        advance (stride);
+        const auto frequencies =
+            vocalor::VoiceEngineTestAccess::soundingFrequencies (engine);
+        if (frequencies.empty())
+            continue;
+        result.pitchCents.push_back (1200.0 * std::log2 (
+            static_cast<double> (frequencies.front()) / nominal));
+        result.independentPitchCents.push_back (
+            vocalor::VoiceEngineTestAccess::independentPitchDriftCents (engine));
+        const auto vowel = vocalor::VoiceEngineTestAccess::effectiveVowel (engine);
+        result.vowelMorph.push_back (vowel[0]);
+        result.vowelX.push_back (vowel[1]);
+        result.vowelY.push_back (vowel[2]);
+        const auto formants =
+            vocalor::VoiceEngineTestAccess::driftedVowelFormants (engine);
+        for (int formant = 0; formant < vocalor::kFormantCount; ++formant)
+            result.vowelFormants[static_cast<std::size_t> (formant)].push_back (
+                formants[static_cast<std::size_t> (formant)]);
+
+        const auto modulation =
+            vocalor::VoiceEngineTestAccess::vibratoModulationState (engine);
+        result.maximumDirectVibratoGainError = std::max (
+            result.maximumDirectVibratoGainError,
+            std::abs (static_cast<double> (modulation[1]) - 1.0));
+        result.maximumShelfVibratoGainError = std::max (
+            result.maximumShelfVibratoGainError,
+            std::abs (static_cast<double> (modulation[2]) - 1.0));
+    }
+    result.resolvedVibratoCents =
+        vocalor::VoiceEngineTestAccess::resolvedVibratoCents (engine);
+    return result;
+}
+
+/** Fresh straight tone has no intentional vibrato, but it is not a test
+    oscillator: Drift contributes bounded, aperiodic pitch motion of adjustable
+    depth. Measure the oscillator's actual F0, not a random state that might be
+    disconnected from it. */
+void testStraightTonePitchDrift()
+{
+    vocalor::EngineParameters fresh;
+    expect (fresh.vibrato == 0.0f,
+            "the standalone DSP default still enables intentional vibrato");
+    expect (std::abs (fresh.instability - 0.38f) < 1.0e-7f,
+            "the standalone DSP default no longer carries 38 % Drift");
+    expect (! fresh.legacyDriftBypass,
+            "a fresh DSP instance selected the legacy Drift bypass");
+
+    auto parameters = fresh;
+    parameters.mode = vocalor::PerformanceMode::Solo;
+    parameters.vibrato = 0.0f;
+    parameters.humanize = 0.0f;
+    parameters.room = 0.0f;
+    parameters.dynamics = 1.0f;
+    parameters.instability = 0.0f;
+    parameters.legacyDriftBypass = false;
+
+    const auto staticTake = captureNaturalTrajectory (
+        48000.0, parameters, 4.0, 2.0, 100.0);
+    const bool staticPitch = ! staticTake.pitchCents.empty()
+        && std::all_of (staticTake.pitchCents.begin(), staticTake.pitchCents.end(),
+                       [&staticTake] (double value)
+                       { return value == staticTake.pitchCents.front(); });
+    expect (staticPitch,
+            "Vibrato/Humanize/Drift at zero did not leave an exactly static F0");
+    expect (std::all_of (staticTake.independentPitchCents.begin(),
+                         staticTake.independentPitchCents.end(),
+                         [] (double value) { return value == 0.0; }),
+            "Drift at zero left an independent pitch displacement running");
+    expect (staticTake.resolvedVibratoCents == 0.0f,
+            "Vibrato zero did not resolve to exactly zero cents");
+    expect (staticTake.maximumDirectVibratoGainError == 0.0
+                && staticTake.maximumShelfVibratoGainError == 0.0,
+            "Vibrato zero left laryngeal amplitude modulation running");
+
+    const auto driftTake = [&parameters] (float depth, double sampleRate = 48000.0,
+                                          int seedAdvance = 0,
+                                          const std::vector<int>& splits = {})
+    {
+        auto moved = parameters;
+        moved.instability = depth;
+        return captureNaturalTrajectory (sampleRate, moved, 3.0, 24.0, 100.0,
+                                         60, seedAdvance, splits);
+    };
+
+    const auto quarter = driftTake (0.25f);
+    const auto half = driftTake (0.50f);
+    const auto shipping = driftTake (0.38f);
+    const auto full = driftTake (1.0f);
+    const auto quarterRms = seriesDeviation (quarter.pitchCents);
+    const auto halfRms = seriesDeviation (half.pitchCents);
+    const auto shippingRms = seriesDeviation (shipping.pitchCents);
+    const auto fullRms = seriesDeviation (full.pitchCents);
+    const auto shippingSine = maximumSineFitFraction (
+        shipping.pitchCents, shipping.observationRate, 3.0, 10.0);
+    const auto fullSine = maximumSineFitFraction (
+        full.pitchCents, full.observationRate, 3.0, 10.0);
+    const auto shippingRecurrence = maximumAutocorrelation (
+        shipping.pitchCents, shipping.observationRate, 0.10, 0.34);
+
+    std::cout << "straight-tone Drift: RMS D.25/.38/.50/1 " << std::fixed
+              << std::setprecision (3) << quarterRms << "/" << shippingRms
+              << "/" << halfRms << "/" << fullRms
+              << " cents; 3-10 Hz sine share D.38/1 "
+              << shippingSine << "/" << fullSine
+              << ", recurrence " << shippingRecurrence << "\n";
+
+    // The OU law is 4.8*Drift times a bounded blend. Its stationary result is
+    // about 3.8 cents RMS at full depth; these broad limits reject inaudible and
+    // unruly substitutes without pinning one deterministic draw.
+    expect (shippingRms > 0.70 && shippingRms < 2.40,
+            "the fresh 38 % Drift pitch motion is inaudible or no longer subtle");
+    expect (shipping.resolvedVibratoCents == 0.0f
+                && shipping.maximumDirectVibratoGainError == 0.0
+                && shipping.maximumShelfVibratoGainError == 0.0,
+            "fresh Drift activated an intentional vibrato or its AM path");
+    expect (fullRms > 2.0 && fullRms < 6.0,
+            "full Drift left the intended bounded pitch-motion range");
+    expect (quarterRms > 0.35 && quarterRms < halfRms
+                && halfRms < fullRms
+                && halfRms > 1.6 * quarterRms
+                && fullRms > 1.6 * halfRms,
+            "the Drift control no longer increases pitch depth monotonically");
+    expect (seriesMaximumMagnitude (quarter.pitchCents) < 3.1
+                && seriesMaximumMagnitude (shipping.pitchCents) < 4.7
+                && seriesMaximumMagnitude (half.pitchCents) < 6.1
+                && seriesMaximumMagnitude (full.pitchCents) < 12.1,
+            "an independent pitch excursion escaped the OU hard bound");
+    expect (shippingSine < 0.20 && fullSine < 0.20,
+            "straight-tone Drift collapsed into a theremin-like 3-10 Hz LFO");
+    expect (shippingRecurrence < 0.35,
+            "straight-tone Drift repeats almost exactly at a vibrato-period lag");
+
+    // The public state is not enough: confirm that the same motion reaches the
+    // oscillator. Constant identity offsets disappear under demeaning.
+    expect (normalisedCorrelation (shipping.pitchCents,
+                                   shipping.independentPitchCents) > 0.999,
+            "the independent pitch state is not the motion sounding at F0");
+
+    const auto repeat = driftTake (0.38f);
+    expect (repeat.pitchCents == shipping.pitchCents,
+            "the same note sequence did not reproduce its Drift trajectory");
+    const auto differentSeed = driftTake (0.38f, 48000.0, 1);
+    expect (std::abs (normalisedCorrelation (shipping.pitchCents,
+                                             differentSeed.pitchCents)) < 0.90,
+            "a new note seed repeated the previous pitch imperfection");
+
+    const auto oddSplit = driftTake (0.38f, 48000.0, 0,
+                                     { 37, 211, 5, 89, 16, 173 });
+    double splitResidual = 0.0;
+    for (std::size_t i = 0; i < shipping.pitchCents.size()
+                            && i < oddSplit.pitchCents.size(); ++i)
+        splitResidual = std::max (splitResidual,
+                                  std::abs (shipping.pitchCents[i]
+                                            - oddSplit.pitchCents[i]));
+    expect (splitResidual < 1.0e-5,
+            "host buffer splits changed the straight-tone pitch trajectory");
+
+    double quietest = 1.0e9;
+    double loudest = -1.0e9;
+    double worstRateSine = 0.0;
+    for (const auto sampleRate : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    {
+        const auto take = driftTake (1.0f, sampleRate);
+        const auto rms = seriesDeviation (take.pitchCents);
+        quietest = std::min (quietest, rms);
+        loudest = std::max (loudest, rms);
+        worstRateSine = std::max (worstRateSine, maximumSineFitFraction (
+            take.pitchCents, take.observationRate, 3.0, 10.0));
+        expect (seriesMaximumMagnitude (take.pitchCents) < 12.1,
+                "sample-rate testing found an unbounded pitch excursion");
+    }
+    const auto rateDepthSpreadDb = 20.0 * std::log10 (
+        loudest / std::max (quietest, 1.0e-12));
+    std::cout << "straight-tone Drift rate invariance: " << std::setprecision (2)
+              << rateDepthSpreadDb << " dB RMS spread; worst sine share "
+              << std::setprecision (3) << worstRateSine << "\n";
+    expect (rateDepthSpreadDb < 2.0,
+            "the independent pitch depth depends on sample rate");
+    expect (worstRateSine < 0.22,
+            "a supported sample rate turned Drift into a periodic LFO");
+
+    // A pre-Drift session may carry a live host value, but its model marker
+    // must bypass every independent pitch effect.
+    auto legacy = parameters;
+    legacy.instability = 1.0f;
+    legacy.legacyDriftBypass = true;
+    const auto legacyTake = captureNaturalTrajectory (
+        48000.0, legacy, 4.0, 2.0, 100.0);
+    const bool legacyPitchIsConstant = ! legacyTake.pitchCents.empty()
+        && std::all_of (legacyTake.pitchCents.begin(), legacyTake.pitchCents.end(),
+                       [&legacyTake] (double value)
+                       { return value == legacyTake.pitchCents.front(); });
+    expect (legacyPitchIsConstant
+                && std::all_of (legacyTake.independentPitchCents.begin(),
+                                legacyTake.independentPitchCents.end(),
+                                [] (double value) { return value == 0.0; }),
+            "legacyDriftBypass did not preserve the pre-Drift straight tone");
+}
+
+/** Drift advances on elapsed control intervals, not on calls which merely
+    re-resolve an articulation. In particular, initialiseVoice() and the first
+    render sample both visit age zero, while an off-grid legato note asks for an
+    immediate pitch/tract update between two scheduled controls. Neither visit
+    may consume a pitch/vowel innovation or shorten the vowel scheduler. */
+void testDriftClockIgnoresLegatoEvents()
+{
+    constexpr auto sampleRate = 48000.0;
+    auto parameters = steadyParameters();
+    parameters.legato = true;
+    parameters.instability = 1.0f;
+    parameters.legacyDriftBypass = false;
+
+    const auto makeEngine = [&parameters]
+    {
+        auto engine = std::make_unique<vocalor::VoiceEngine>();
+        engine->prepare (sampleRate, blockSize);
+        engine->setParameters (parameters);
+        engine->reset();
+        engine->noteOn (60, 0.80f);
+        return engine;
+    };
+    auto reference = makeEngine();
+    auto articulated = makeEngine();
+
+    std::array<float, 32> left {};
+    std::array<float, 32> right {};
+    const auto processBoth = [&] (int samples)
+    {
+        reference->process (left.data(), right.data(), samples);
+        articulated->process (left.data(), right.data(), samples);
+    };
+    const auto sameDriftClock = [&]
+    {
+        return vocalor::VoiceEngineTestAccess::driftRandomStates (*reference)
+                   == vocalor::VoiceEngineTestAccess::driftRandomStates (*articulated)
+            && vocalor::VoiceEngineTestAccess::driftOuStates (*reference)
+                   == vocalor::VoiceEngineTestAccess::driftOuStates (*articulated)
+            && vocalor::VoiceEngineTestAccess::vowelDriftCountdown (*reference)
+                   == vocalor::VoiceEngineTestAccess::vowelDriftCountdown (*articulated);
+    };
+
+    const auto noteOnRandom =
+        vocalor::VoiceEngineTestAccess::driftRandomStates (*articulated);
+    const auto noteOnOu = vocalor::VoiceEngineTestAccess::driftOuStates (*articulated);
+    const auto noteOnVowelCountdown =
+        vocalor::VoiceEngineTestAccess::vowelDriftCountdown (*articulated);
+    processBoth (1);
+    expect (vocalor::VoiceEngineTestAccess::driftRandomStates (*articulated)
+                == noteOnRandom
+                && vocalor::VoiceEngineTestAccess::driftOuStates (*articulated)
+                    == noteOnOu
+                && vocalor::VoiceEngineTestAccess::vowelDriftCountdown (*articulated)
+                    == noteOnVowelCountdown,
+            "the first render sample advanced Drift a second time at age zero");
+
+    // Age seven lies strictly between the controls at ages zero and sixteen.
+    processBoth (6);
+    const auto beforeLegatoRandom =
+        vocalor::VoiceEngineTestAccess::driftRandomStates (*articulated);
+    const auto beforeLegatoOu =
+        vocalor::VoiceEngineTestAccess::driftOuStates (*articulated);
+    const auto beforeLegatoVowelCountdown =
+        vocalor::VoiceEngineTestAccess::vowelDriftCountdown (*articulated);
+    articulated->noteOn (62, 0.80f);
+    expect (articulated->getActiveVoiceCount() == 1,
+            "the Drift-clock fixture retriggered instead of retuning legato");
+    expect (vocalor::VoiceEngineTestAccess::driftRandomStates (*articulated)
+                == beforeLegatoRandom
+                && vocalor::VoiceEngineTestAccess::driftOuStates (*articulated)
+                    == beforeLegatoOu
+                && vocalor::VoiceEngineTestAccess::vowelDriftCountdown (*articulated)
+                    == beforeLegatoVowelCountdown,
+            "an off-grid legato event consumed a Drift control interval");
+
+    // The next scheduled age-16 update must draw exactly what the uninterrupted
+    // reference draws; the intervening articulation changes pitch, not time.
+    processBoth (10);
+    expect (sameDriftClock(),
+            "legato changed the fixed-schedule Drift trajectory after the next control");
+}
+
+/** A host may ride Drift while a note is already sounding. Both the fast pitch
+    path and the slower tract path must enter and leave continuously; returning
+    the control to zero must converge to the exact straight-tone targets, not
+    leave a tiny modulation running or quantise the macro into audible steps. */
+void testLiveDriftAutomation()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr int hop = 64;
+    constexpr double trackRate = sampleRate / hop;
+    constexpr double concertC4 = 261.6255653005986;
+
+    struct AutomationTake
+    {
+        bool finite = true;
+        std::size_t returnBegin = 0;
+        std::vector<double> smoothed;
+        std::vector<double> pitch;
+        std::vector<double> independentPitch;
+        std::vector<double> morph;
+        std::vector<double> x;
+        std::vector<double> y;
+        std::array<std::vector<double>, vocalor::kFormantCount> targetFormants;
+        std::array<std::vector<double>, vocalor::kFormantCount> renderedFormants;
+        std::vector<std::array<std::uint32_t, 2>> randomStates;
+        std::vector<std::array<float, 5>> ouStates;
+        std::vector<int> vowelCountdowns;
+    };
+
+    const auto perform = [=]
+    {
+        vocalor::EngineParameters parameters;
+        parameters.mode = vocalor::PerformanceMode::Solo;
+        parameters.vibrato = 0.0f;
+        parameters.humanize = 0.0f;
+        parameters.instability = 0.0f;
+        parameters.legacyDriftBypass = false;
+        parameters.room = 0.0f;
+        parameters.dynamics = 1.0f;
+        parameters.vowel = vocalor::Vowel::Aah;
+        parameters.vowelMorph = 0.50f;
+        parameters.vowelX = 0.50f;
+        parameters.vowelY = 0.50f;
+
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.setParameters (parameters);
+        engine.reset();
+        engine.noteOn (60, 0.80f);
+
+        AutomationTake take;
+        std::array<float, hop> left {};
+        std::array<float, hop> right {};
+        const auto observe = [&]
+        {
+            const auto frequencies =
+                vocalor::VoiceEngineTestAccess::soundingFrequencies (engine);
+            if (frequencies.empty())
+            {
+                take.finite = false;
+                return;
+            }
+            const auto vowel = vocalor::VoiceEngineTestAccess::effectiveVowel (engine);
+            const auto formants =
+                vocalor::VoiceEngineTestAccess::driftedVowelFormants (engine);
+            const auto renderedTract =
+                vocalor::VoiceEngineTestAccess::voiceTract (engine, 60);
+            const auto macro = static_cast<double> (
+                vocalor::VoiceEngineTestAccess::smoothedDrift (engine));
+            const auto pitch = 1200.0 * std::log2 (
+                static_cast<double> (frequencies.front()) / concertC4);
+            const auto independentPitch = static_cast<double> (
+                vocalor::VoiceEngineTestAccess::independentPitchDriftCents (engine));
+            take.finite = take.finite && std::isfinite (macro)
+                && std::isfinite (pitch) && std::isfinite (independentPitch)
+                && std::all_of (vowel.begin(), vowel.end(),
+                                [] (float value) { return std::isfinite (value); });
+            take.smoothed.push_back (macro);
+            take.pitch.push_back (pitch);
+            take.independentPitch.push_back (independentPitch);
+            take.morph.push_back (vowel[0]);
+            take.x.push_back (vowel[1]);
+            take.y.push_back (vowel[2]);
+            for (int formant = 0; formant < vocalor::kFormantCount; ++formant)
+            {
+                const auto index = static_cast<std::size_t> (formant);
+                const auto target = static_cast<double> (formants[index]);
+                const auto rendered = static_cast<double> (renderedTract.hz[index]);
+                take.finite = take.finite && std::isfinite (target)
+                    && std::isfinite (rendered) && target > 0.0 && rendered > 0.0;
+                take.targetFormants[index].push_back (target);
+                take.renderedFormants[index].push_back (rendered);
+            }
+            take.randomStates.push_back (
+                vocalor::VoiceEngineTestAccess::driftRandomStates (engine));
+            take.ouStates.push_back (
+                vocalor::VoiceEngineTestAccess::driftOuStates (engine));
+            take.vowelCountdowns.push_back (
+                vocalor::VoiceEngineTestAccess::vowelDriftCountdown (engine));
+        };
+        const auto processChunk = [&] (bool record)
+        {
+            engine.process (left.data(), right.data(), hop);
+            take.finite = take.finite
+                && std::all_of (left.begin(), left.end(),
+                                [] (float value) { return std::isfinite (value); })
+                && std::all_of (right.begin(), right.end(),
+                                [] (float value) { return std::isfinite (value); });
+            if (record)
+                observe();
+        };
+
+        for (int chunk = 0; chunk < static_cast<int> (0.5 * trackRate); ++chunk)
+            processChunk (false);
+        // Include the D=0 state in every first-difference and exact-return
+        // comparison. Full Drift remains up for 300 chunks, enough to exercise
+        // the fast pitch process and several 25 ms vowel updates.
+        observe();
+        parameters.instability = 1.0f;
+        engine.setParameters (parameters);
+        constexpr int activeChunks = 300;
+        for (int chunk = 0; chunk < activeChunks; ++chunk)
+            processChunk (true);
+
+        take.returnBegin = take.pitch.size();
+        parameters.instability = 0.0f;
+        engine.setParameters (parameters);
+        constexpr int returnChunks = 192;
+        for (int chunk = 0; chunk < returnChunks; ++chunk)
+            processChunk (true);
+        return take;
+    };
+
+    const auto take = perform();
+    const auto repeat = perform();
+    expect (take.finite && repeat.finite,
+            "live Drift automation produced a non-finite sample or state");
+    expect (take.returnBegin == repeat.returnBegin
+                && take.smoothed == repeat.smoothed
+                && take.pitch == repeat.pitch
+                && take.independentPitch == repeat.independentPitch
+                && take.morph == repeat.morph && take.x == repeat.x
+                && take.y == repeat.y
+                && take.targetFormants == repeat.targetFormants
+                && take.renderedFormants == repeat.renderedFormants
+                && take.randomStates == repeat.randomStates
+                && take.ouStates == repeat.ouStates
+                && take.vowelCountdowns == repeat.vowelCountdowns,
+            "repeating the same Drift automation changed its trajectory");
+
+    const auto maximumStep = [] (const std::vector<double>& values)
+    {
+        double largest = 0.0;
+        for (std::size_t i = 1; i < values.size(); ++i)
+            largest = std::max (largest, std::abs (values[i] - values[i - 1]));
+        return largest;
+    };
+    const auto maximumPitchStep = maximumStep (take.pitch);
+    const auto maximumVowelStep = std::max ({ maximumStep (take.morph),
+                                               maximumStep (take.x),
+                                               maximumStep (take.y) });
+    double maximumRenderedFormantStepCents = 0.0;
+    for (const auto& formant : take.renderedFormants)
+        for (std::size_t i = 1; i < formant.size(); ++i)
+            maximumRenderedFormantStepCents = std::max (
+                maximumRenderedFormantStepCents,
+                1200.0 * std::abs (std::log2 (formant[i] / formant[i - 1])));
+    double maximumMacroDrop = 0.0;
+    double maximumMacroStep = 0.0;
+    bool monotonicRise = take.returnBegin > 1;
+    for (std::size_t i = 2; i < take.returnBegin; ++i)
+    {
+        maximumMacroStep = std::max (
+            maximumMacroStep, take.smoothed[i] - take.smoothed[i - 1]);
+        monotonicRise = monotonicRise && take.smoothed[i] >= take.smoothed[i - 1];
+    }
+    bool monotonicReturn = take.returnBegin < take.smoothed.size();
+    for (std::size_t i = take.returnBegin + 1; i < take.smoothed.size(); ++i)
+    {
+        maximumMacroDrop = std::max (
+            maximumMacroDrop, take.smoothed[i - 1] - take.smoothed[i]);
+        monotonicReturn = monotonicReturn
+            && take.smoothed[i] <= take.smoothed[i - 1];
+    }
+
+    const auto activeEnd = static_cast<std::ptrdiff_t> (take.returnBegin);
+    const std::vector<double> activeMorph (take.morph.begin() + 1,
+                                          take.morph.begin() + activeEnd);
+    const std::vector<double> activeX (take.x.begin() + 1,
+                                      take.x.begin() + activeEnd);
+    const std::vector<double> activeY (take.y.begin() + 1,
+                                      take.y.begin() + activeEnd);
+    const auto activeVowelDepth = std::sqrt (
+        std::pow (seriesDeviation (activeMorph), 2.0)
+        + std::pow (seriesDeviation (activeX), 2.0)
+        + std::pow (seriesDeviation (activeY), 2.0));
+    const auto activePitchMinimum = *std::min_element (
+        take.independentPitch.begin() + 1,
+        take.independentPitch.begin() + activeEnd);
+    const auto activePitchMaximum = *std::max_element (
+        take.independentPitch.begin() + 1,
+        take.independentPitch.begin() + activeEnd);
+
+    const auto baseMorph = take.morph.front();
+    const auto baseX = take.x.front();
+    const auto baseY = take.y.front();
+    bool pitchBoundedByMacro = true;
+    bool vowelBounded = true;
+    for (std::size_t i = 1; i < take.smoothed.size(); ++i)
+    {
+        pitchBoundedByMacro = pitchBoundedByMacro
+            && std::abs (take.independentPitch[i]) <= 12.0 * take.smoothed[i] + 1.0e-5;
+        vowelBounded = vowelBounded
+            && std::abs (take.morph[i] - baseMorph) <= 0.101
+            && std::abs (take.x[i] - baseX) <= 0.088
+            && std::abs (take.y[i] - baseY) <= 0.114;
+    }
+
+    std::size_t zeroIndex = take.smoothed.size();
+    for (std::size_t i = take.returnBegin; i < take.smoothed.size(); ++i)
+        if (take.smoothed[i] == 0.0)
+        {
+            zeroIndex = i;
+            break;
+        }
+    bool frozenAtZero = zeroIndex < take.smoothed.size();
+    for (std::size_t i = zeroIndex + 1; frozenAtZero && i < take.smoothed.size(); ++i)
+    {
+        frozenAtZero = take.smoothed[i] == 0.0
+            && take.independentPitch[i] == 0.0
+            && take.morph[i] == baseMorph && take.x[i] == baseX
+            && take.y[i] == baseY
+            && take.randomStates[i] == take.randomStates[zeroIndex]
+            && take.ouStates[i] == take.ouStates[zeroIndex]
+            && take.vowelCountdowns[i] == take.vowelCountdowns[zeroIndex];
+        for (const auto& formant : take.targetFormants)
+            frozenAtZero = frozenAtZero && formant[i] == formant.front();
+    }
+    for (const auto& formant : take.targetFormants)
+        frozenAtZero = frozenAtZero && formant.back() == formant.front();
+
+    double finalRenderedResidualCents = 0.0;
+    for (const auto& formant : take.renderedFormants)
+        finalRenderedResidualCents = std::max (
+            finalRenderedResidualCents,
+            1200.0 * std::abs (std::log2 (formant.back() / formant.front())));
+    constexpr std::size_t hundredMillisecondChunk = 75;
+    const auto atHundredMilliseconds = take.returnBegin
+        + hundredMillisecondChunk - 1;
+
+    std::cout << "live Drift automation: first up/down "
+              << std::fixed << std::setprecision (6) << take.smoothed[1] << "/"
+              << take.smoothed[take.returnBegin] << ", pitch/vowel/rendered-formant max step "
+              << std::fixed << std::setprecision (4) << maximumPitchStep
+              << " cents / " << maximumVowelStep << " / "
+              << std::setprecision (2) << maximumRenderedFormantStepCents
+              << " cents; max macro return step " << std::setprecision (4)
+              << maximumMacroDrop << ", exact-zero chunk "
+              << (zeroIndex < take.smoothed.size()
+                      ? static_cast<int> (zeroIndex - take.returnBegin + 1) : -1)
+              << ", final macro/pitch "
+              << std::scientific << take.smoothed.back() << "/"
+              << take.independentPitch.back() << ", final tract residual "
+              << finalRenderedResidualCents << " cents\n";
+    expect (take.smoothed[1] > 0.064 && take.smoothed[1] < 0.065
+                && take.smoothed[take.returnBegin] > 0.935
+                && take.smoothed[take.returnBegin] < 0.936,
+            "live Drift automation did not enter or leave on the 20 ms smoothing law");
+    expect (monotonicRise && monotonicReturn
+                && maximumMacroStep < 0.065 && maximumMacroDrop < 0.065,
+            "Drift automation did not glide monotonically between its endpoints");
+    expect (take.smoothed[atHundredMilliseconds] < 0.0068
+                && std::abs (take.independentPitch[atHundredMilliseconds]) < 0.081,
+            "Drift remained materially audible 100 ms after automation to zero");
+    expect (activePitchMaximum - activePitchMinimum > 4.0
+                && activeVowelDepth > 0.010,
+            "live Drift automation did not create material pitch and vowel motion");
+    expect (pitchBoundedByMacro && vowelBounded
+                && std::abs (take.independentPitch[1]) < 0.78,
+            "a live Drift excursion escaped its macro-scaled hard bound");
+    expect (maximumPitchStep < 8.3 && maximumVowelStep < 0.065
+                && maximumRenderedFormantStepCents < 8.0,
+            "live Drift automation stepped or zippered a sounding target");
+    expect (zeroIndex < take.returnBegin + 145 && frozenAtZero
+                && take.smoothed.back() == 0.0
+                && take.independentPitch.back() == 0.0,
+            "Drift automation did not settle and freeze at structural zero");
+    expect (finalRenderedResidualCents < 0.02,
+            "the running tract did not settle smoothly after Drift returned to zero");
+}
+
+/** Drift also gives a held tract slow, bounded articulatory motion. It must be
+    a depth control over a stochastic path, not another pair of LFOs, and even
+    its full setting must leave the commanded vowel identifiable. */
+void testVowelDriftTrajectory()
+{
+    vocalor::EngineParameters parameters;
+    parameters.mode = vocalor::PerformanceMode::Solo;
+    parameters.vibrato = 0.0f;
+    parameters.humanize = 0.0f;
+    parameters.room = 0.0f;
+    parameters.dynamics = 1.0f;
+    parameters.vowelMorph = 0.50f;
+    parameters.vowelX = 0.50f;
+    parameters.vowelY = 0.50f;
+    parameters.instability = 0.0f;
+    parameters.legacyDriftBypass = false;
+
+    const auto takeAt = [&parameters] (float depth, double sampleRate = 48000.0,
+                                       int seedAdvance = 0,
+                                       const std::vector<int>& splits = {})
+    {
+        auto moved = parameters;
+        moved.instability = depth;
+        return captureNaturalTrajectory (sampleRate, moved, 5.0, 60.0, 20.0,
+                                         60, seedAdvance, splits);
+    };
+    const auto staticTake = takeAt (0.0f);
+    const auto exactlyConstant = [] (const std::vector<double>& values)
+    {
+        return ! values.empty()
+            && std::all_of (values.begin(), values.end(), [&values] (double value)
+                            { return value == values.front(); });
+    };
+    expect (exactlyConstant (staticTake.vowelMorph)
+                && exactlyConstant (staticTake.vowelX)
+                && exactlyConstant (staticTake.vowelY),
+            "Drift zero left the effective vowel position moving");
+    const auto anchor = vocalor::presetVowelPosition (0);
+    const double baseX = anchor.x
+        + parameters.vowelMorph * (parameters.vowelX - anchor.x);
+    const double baseY = anchor.y
+        + parameters.vowelMorph * (parameters.vowelY - anchor.y);
+    expect (! staticTake.vowelMorph.empty()
+                && staticTake.vowelMorph.front() == 0.50
+                && staticTake.vowelX.front() == baseX
+                && staticTake.vowelY.front() == baseY,
+            "Drift zero did not preserve the exact commanded vowel position");
+    bool staticFormants = true;
+    std::array<float, vocalor::kFormantCount> expectedStaticFormants {};
+    vocalor::formantsForVowelPoint (
+        parameters.profile == vocalor::VoiceProfile::Male,
+        static_cast<float> (baseX), static_cast<float> (baseY),
+        expectedStaticFormants.data());
+    for (int formant = 0; formant < vocalor::kFormantCount; ++formant)
+    {
+        const auto index = static_cast<std::size_t> (formant);
+        staticFormants = staticFormants
+            && exactlyConstant (staticTake.vowelFormants[index])
+            && staticTake.vowelFormants[index].front()
+                == expectedStaticFormants[index];
+    }
+    expect (staticFormants,
+            "Drift zero did not preserve the exact effective vowel formants");
+
+    const auto quarter = takeAt (0.25f);
+    const auto half = takeAt (0.50f);
+    const auto full = takeAt (1.0f);
+    const auto depthOf = [] (const NaturalTrajectory& take)
+    {
+        const auto morph = seriesDeviation (take.vowelMorph);
+        const auto x = seriesDeviation (take.vowelX);
+        const auto y = seriesDeviation (take.vowelY);
+        return std::sqrt (morph * morph + x * x + y * y);
+    };
+    const auto quarterDepth = depthOf (quarter);
+    const auto halfDepth = depthOf (half);
+    const auto fullDepth = depthOf (full);
+    const auto componentSine = [] (const NaturalTrajectory& take)
+    {
+        double largest = 0.0;
+        for (const auto* component : { &take.vowelMorph, &take.vowelX,
+                                      &take.vowelY })
+            largest = std::max (largest, maximumSineFitFraction (
+                firstDifference (*component), take.observationRate,
+                0.02, 1.0));
+        return largest;
+    };
+    const auto fullSine = componentSine (full);
+    std::cout << "vowel Drift: vector RMS D.25/.50/1 " << std::fixed
+              << std::setprecision (4) << quarterDepth << "/" << halfDepth
+              << "/" << fullDepth << "; largest differentiated sine share "
+              << std::setprecision (3) << fullSine << "\n";
+
+    expect (quarterDepth > 0.008 && quarterDepth < halfDepth
+                && halfDepth < fullDepth
+                && halfDepth > 1.6 * quarterDepth
+                && fullDepth > 1.6 * halfDepth,
+            "the Drift control no longer increases vowel-motion depth monotonically");
+    expect (fullDepth > 0.03 && fullDepth < 0.15,
+            "full Drift made the vowel path static or articulatorily excessive");
+    expect (fullSine < 0.30,
+            "vowel Drift collapsed into a periodic low-frequency line");
+    expect (std::abs (normalisedCorrelation (full.vowelX, full.vowelY)) < 0.90,
+            "the two vowel articulators collapsed onto one repeated path");
+
+    bool allCoordinatesBounded = true;
+    for (std::size_t i = 0; i < full.vowelMorph.size(); ++i)
+        allCoordinatesBounded = allCoordinatesBounded
+            && std::abs (full.vowelMorph[i] - 0.50) <= 0.101
+            && std::abs (full.vowelX[i] - baseX) <= 0.088
+            && std::abs (full.vowelY[i] - baseY) <= 0.114;
+    expect (allCoordinatesBounded,
+            "an effective vowel coordinate escaped its Drift hard bound");
+
+    const auto repeat = takeAt (1.0f);
+    expect (repeat.vowelMorph == full.vowelMorph
+                && repeat.vowelX == full.vowelX
+                && repeat.vowelY == full.vowelY,
+            "the same note sequence did not reproduce its vowel Drift path");
+    const auto differentSeed = takeAt (1.0f, 48000.0, 1);
+    expect (std::abs (normalisedCorrelation (full.vowelX,
+                                             differentSeed.vowelX)) < 0.90
+                || std::abs (normalisedCorrelation (full.vowelY,
+                                                    differentSeed.vowelY)) < 0.90,
+            "a new note seed repeated the previous vowel path");
+
+    const auto oddSplit = takeAt (1.0f, 48000.0, 0,
+                                  { 19, 173, 7, 251, 64, 31 });
+    double splitResidual = 0.0;
+    for (std::size_t i = 0; i < full.vowelMorph.size()
+                            && i < oddSplit.vowelMorph.size(); ++i)
+    {
+        splitResidual = std::max ({ splitResidual,
+            std::abs (full.vowelMorph[i] - oddSplit.vowelMorph[i]),
+            std::abs (full.vowelX[i] - oddSplit.vowelX[i]),
+            std::abs (full.vowelY[i] - oddSplit.vowelY[i]) });
+    }
+    expect (splitResidual < 1.0e-7,
+            "host buffer splits changed the effective vowel path");
+
+    double shallowestRateDepth = 1.0e9;
+    double deepestRateDepth = -1.0e9;
+    double worstRateSine = 0.0;
+    for (const auto sampleRate : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    {
+        const auto take = takeAt (1.0f, sampleRate);
+        const auto depth = depthOf (take);
+        shallowestRateDepth = std::min (shallowestRateDepth, depth);
+        deepestRateDepth = std::max (deepestRateDepth, depth);
+        worstRateSine = std::max (worstRateSine, componentSine (take));
+    }
+    const auto rateDepthSpreadDb = 20.0 * std::log10 (
+        deepestRateDepth / std::max (shallowestRateDepth, 1.0e-12));
+    std::cout << "vowel Drift rate invariance: " << std::setprecision (2)
+              << rateDepthSpreadDb << " dB vector-depth spread; worst sine share "
+              << std::setprecision (3) << worstRateSine << "\n";
+    expect (rateDepthSpreadDb < 2.0,
+            "vowel Drift depth depends on sample rate");
+    expect (worstRateSine < 0.35,
+            "a supported sample rate turned vowel Drift into an LFO");
+
+    // Classify the actual pre-register F1/F2 against all five vowel centroids.
+    // Back anchors drift toward the related OOH preset and front/open anchors
+    // toward AAH, so the morph motion stays within the intended phoneme family.
+    int identityFailures = 0;
+    double worstMeanFormantError = 0.0;
+    for (const bool male : { false, true })
+    {
+        std::array<std::array<float, vocalor::kFormantCount>,
+                   vocalor::kCardinalVowelCount> centroids {};
+        for (int cardinal = 0; cardinal < vocalor::kCardinalVowelCount; ++cardinal)
+        {
+            const auto point = vocalor::cardinalVowelPosition (cardinal);
+            vocalor::formantsForVowelPoint (
+                male, point.x, point.y,
+                centroids[static_cast<std::size_t> (cardinal)].data());
+        }
+
+        for (int cardinal = 0; cardinal < vocalor::kCardinalVowelCount; ++cardinal)
+        {
+            auto identity = parameters;
+            identity.profile = male ? vocalor::VoiceProfile::Male
+                                    : vocalor::VoiceProfile::Female;
+            identity.vowel = cardinal >= 3 ? vocalor::Vowel::Ooh
+                                           : vocalor::Vowel::Aah;
+            identity.vowelMorph = 1.0f;
+            const auto point = vocalor::cardinalVowelPosition (cardinal);
+            identity.vowelX = point.x;
+            identity.vowelY = point.y;
+            identity.instability = 1.0f;
+            const auto take = captureNaturalTrajectory (
+                48000.0, identity, 5.0, 24.0, 20.0, male ? 48 : 60);
+
+            for (std::size_t frame = 0;
+                 frame < take.vowelFormants[0].size(); ++frame)
+            {
+                int nearest = -1;
+                double nearestDistance = 1.0e9;
+                for (int candidate = 0; candidate < vocalor::kCardinalVowelCount;
+                     ++candidate)
+                {
+                    const auto& target = centroids[static_cast<std::size_t> (candidate)];
+                    const auto f1 = std::log (take.vowelFormants[0][frame]
+                                              / static_cast<double> (target[0]));
+                    const auto f2 = std::log (take.vowelFormants[1][frame]
+                                              / static_cast<double> (target[1]));
+                    const auto distance = f1 * f1 + f2 * f2;
+                    if (distance < nearestDistance)
+                    {
+                        nearestDistance = distance;
+                        nearest = candidate;
+                    }
+                }
+                if (nearest != cardinal)
+                    ++identityFailures;
+            }
+
+            for (int formant = 0; formant < 2; ++formant)
+            {
+                const auto target = centroids[static_cast<std::size_t> (cardinal)]
+                                             [static_cast<std::size_t> (formant)];
+                const auto error = std::abs (
+                    seriesMean (take.vowelFormants[static_cast<std::size_t> (formant)])
+                        / static_cast<double> (target) - 1.0);
+                worstMeanFormantError = std::max (worstMeanFormantError, error);
+            }
+        }
+    }
+    std::cout << "vowel identity under full Drift: " << identityFailures
+              << " misclassified frames, worst mean F1/F2 error "
+              << std::setprecision (2) << 100.0 * worstMeanFormantError << " %\n";
+    expect (identityFailures == 0,
+            "full Drift moved an effective tract into a different cardinal vowel");
+    expect (worstMeanFormantError < 0.08,
+            "vowel Drift biased the mean phoneme too far from its target");
+
+    // Morph zero selects one of the three shipped preset anchors. Its endpoint
+    // window must remain exactly closed while X/Y still breathe around that
+    // anchor, and that local motion must not turn AAH, OOH or UUH into one
+    // another. Exercise both tract profiles and deliberately point the ignored
+    // pad coordinates away from the anchor.
+    constexpr std::array presetVowels {
+        vocalor::Vowel::Aah, vocalor::Vowel::Ooh, vocalor::Vowel::Uuh
+    };
+    int presetIdentityFailures = 0;
+    int presetMorphEndpointFailures = 0;
+    double worstPresetMeanFormantError = 0.0;
+    for (const bool male : { false, true })
+    {
+        std::array<std::array<float, vocalor::kFormantCount>, 3> presetCentroids {};
+        std::array<std::array<float, vocalor::kFormantCount>, 3> presetSpaceAnchors {};
+        for (int preset = 0; preset < 3; ++preset)
+        {
+            vocalor::formantsForPresetVowel (
+                male, preset,
+                presetCentroids[static_cast<std::size_t> (preset)].data());
+            const auto point = vocalor::presetVowelPosition (preset);
+            vocalor::formantsForVowelPoint (
+                male, point.x, point.y,
+                presetSpaceAnchors[static_cast<std::size_t> (preset)].data());
+        }
+
+        for (int preset = 0; preset < 3; ++preset)
+        {
+            auto identity = parameters;
+            identity.profile = male ? vocalor::VoiceProfile::Male
+                                    : vocalor::VoiceProfile::Female;
+            identity.vowel = presetVowels[static_cast<std::size_t> (preset)];
+            identity.vowelMorph = 0.0f;
+            const auto anchorPoint = vocalor::presetVowelPosition (preset);
+            identity.vowelX = 1.0f - anchorPoint.x;
+            identity.vowelY = 1.0f - anchorPoint.y;
+            identity.instability = 1.0f;
+            const auto take = captureNaturalTrajectory (
+                48000.0, identity, 5.0, 16.0, 20.0, male ? 48 : 60);
+
+            for (std::size_t frame = 0;
+                 frame < take.vowelFormants[0].size(); ++frame)
+            {
+                if (take.vowelMorph[frame] != 0.0)
+                    ++presetMorphEndpointFailures;
+                int nearest = -1;
+                double nearestDistance = 1.0e9;
+                for (int candidate = 0; candidate < 3; ++candidate)
+                {
+                    const auto& target =
+                        presetCentroids[static_cast<std::size_t> (candidate)];
+                    const auto f1 = std::log (take.vowelFormants[0][frame]
+                                              / static_cast<double> (target[0]));
+                    const auto f2 = std::log (take.vowelFormants[1][frame]
+                                              / static_cast<double> (target[1]));
+                    const auto distance = f1 * f1 + f2 * f2;
+                    if (distance < nearestDistance)
+                    {
+                        nearestDistance = distance;
+                        nearest = candidate;
+                    }
+                }
+                if (nearest != preset)
+                    ++presetIdentityFailures;
+            }
+
+            for (int formant = 0; formant < 2; ++formant)
+            {
+                const auto target = presetSpaceAnchors[static_cast<std::size_t> (preset)]
+                                                      [static_cast<std::size_t> (formant)];
+                const auto error = std::abs (
+                    seriesMean (take.vowelFormants[static_cast<std::size_t> (formant)])
+                        / static_cast<double> (target) - 1.0);
+                worstPresetMeanFormantError = std::max (
+                    worstPresetMeanFormantError, error);
+            }
+        }
+    }
+    std::cout << "preset-anchor identity under full Drift: "
+              << presetIdentityFailures << " misclassified frames, "
+              << presetMorphEndpointFailures
+              << " open Morph endpoints, worst mean anchor-space F1/F2 bias "
+              << std::setprecision (2) << 100.0 * worstPresetMeanFormantError << " %\n";
+    expect (presetIdentityFailures == 0,
+            "full Drift moved a Morph-zero preset into another preset vowel");
+    expect (presetMorphEndpointFailures == 0,
+            "full Drift opened the Morph-zero preset endpoint");
+    expect (worstPresetMeanFormantError < 0.08,
+            "full Drift biased a preset anchor too far from its phoneme target");
+
+    auto legacy = parameters;
+    legacy.instability = 1.0f;
+    legacy.legacyDriftBypass = true;
+    const auto legacyTake = captureNaturalTrajectory (
+        48000.0, legacy, 5.0, 4.0, 20.0);
+    expect (seriesDeviation (legacyTake.vowelMorph) == 0.0
+                && seriesDeviation (legacyTake.vowelX) == 0.0
+                && seriesDeviation (legacyTake.vowelY) == 0.0,
+            "legacyDriftBypass did not preserve the pre-Drift static vowel");
+}
+
 /** A sung vibrato is 5-7 Hz at an extent of about a semitone.
 
     The identities used to be seeded across 4.65-5.37 Hz, which is below
@@ -6010,6 +7270,9 @@ void testVibratoInstability()
         double periodCv = 0.0;
         double extentCv = 0.0;
         double meanRate = 0.0;
+        double meanExtent = 0.0;
+        double boundaryStep = 0.0;
+        double boundaryKink = 0.0;
     };
 
     const auto coefficientOfVariation = [] (const std::vector<double>& values)
@@ -6025,19 +7288,21 @@ void testVibratoInstability()
         return std::sqrt (squared / static_cast<double> (values.size())) / mean;
     };
 
-    const auto measure = [&] (float instability)
+    const auto measure = [&] (float vibrato, float instability,
+                              bool legacyDriftBypass = false)
     {
         vocalor::VoiceEngine engine;
         engine.prepare (sampleRate, blockSize);
-        engine.reset();
         vocalor::EngineParameters parameters;
         parameters.mode = vocalor::PerformanceMode::Solo;
-        parameters.vibrato = 1.0f;
+        parameters.vibrato = vibrato;
         parameters.humanize = 0.0f;
         parameters.instability = instability;
+        parameters.legacyDriftBypass = legacyDriftBypass;
         parameters.dynamics = 1.0f;
         parameters.room = 0.0f;
         engine.setParameters (parameters);
+        engine.reset();
         engine.noteOn (60, 0.85f);
 
         // Two seconds clears the scoop and vibrato fade. The following eight
@@ -6048,7 +7313,11 @@ void testVibratoInstability()
         const auto steps = static_cast<int> ((discardSeconds + measuredSeconds) * trackRate);
         const auto discardSteps = static_cast<int> (discardSeconds * trackRate);
         std::vector<double> cents;
+        std::vector<double> phases;
+        std::vector<double> independentPitch;
         cents.reserve (static_cast<std::size_t> (steps - discardSteps));
+        phases.reserve (static_cast<std::size_t> (steps - discardSteps));
+        independentPitch.reserve (static_cast<std::size_t> (steps - discardSteps));
         std::array<float, hop> left {};
         std::array<float, hop> right {};
         for (int step = 0; step < steps; ++step)
@@ -6058,20 +7327,48 @@ void testVibratoInstability()
                 continue;
             const auto frequencies = vocalor::VoiceEngineTestAccess::soundingFrequencies (engine);
             if (! frequencies.empty())
+            {
                 cents.push_back (1200.0 * std::log2 (
                     static_cast<double> (frequencies.front()) / concertC4));
+                phases.push_back (
+                    vocalor::VoiceEngineTestAccess::vibratoModulationState (engine)[0]);
+                independentPitch.push_back (
+                    vocalor::VoiceEngineTestAccess::independentPitchDriftCents (engine));
+            }
         }
 
-        // Phase zero is the rising centre crossing for both the sine and the
-        // asymmetric triangle blended into it. Interpolation removes the
-        // control-rate quantisation from the period statistic.
+        // Isolate the deliberate vibrato here: the straight-tone test above
+        // already validates the independently sounding OU pitch component.
+        // Leaving it in would attribute unrelated fold wander to cycle depth
+        // and to a redraw kink. The remainder is still measured at the actual
+        // oscillator rather than by inspecting a random modulation target.
+        for (std::size_t i = 0; i < cents.size(); ++i)
+            cents[i] -= independentPitch[i];
+
+        // Read cycle boundaries from oscillator phase rather than from an F0
+        // centre crossing, which can be shifted or multiplied by noise.
         std::vector<double> crossings;
-        for (std::size_t i = 1; i < cents.size(); ++i)
-            if (cents[i - 1] <= 0.0 && cents[i] > 0.0)
-                crossings.push_back (static_cast<double> (i - 1)
-                    - cents[i - 1] / (cents[i] - cents[i - 1]));
+        for (std::size_t i = 1; i < phases.size(); ++i)
+        {
+            if (phases[i] >= phases[i - 1])
+                continue;
+            const auto before = 1.0 - phases[i - 1];
+            const auto after = phases[i];
+            crossings.push_back (static_cast<double> (i - 1)
+                + before / std::max (before + after, 1.0e-12));
+        }
 
         CycleStatistics result;
+        for (std::size_t i = 2; i < cents.size() && i < phases.size(); ++i)
+        {
+            if (phases[i] >= phases[i - 1])
+                continue;
+            const auto step = cents[i] - cents[i - 1];
+            const auto precedingStep = cents[i - 1] - cents[i - 2];
+            result.boundaryStep = std::max (result.boundaryStep, std::abs (step));
+            result.boundaryKink = std::max (
+                result.boundaryKink, std::abs (step - precedingStep));
+        }
         std::vector<std::size_t> maxima;
         std::vector<std::size_t> minima;
         for (std::size_t cycle = 0; cycle + 1 < crossings.size(); ++cycle)
@@ -6111,12 +7408,17 @@ void testVibratoInstability()
             for (const auto period : result.periods)
                 meanPeriod += period;
             result.meanRate = static_cast<double> (result.periods.size()) / meanPeriod;
+            result.meanExtent = seriesMean (result.extents);
         }
         return result;
     };
 
-    const auto fixed = measure (0.0f);
-    const auto natural = measure (1.0f);
+    const auto fixed = measure (1.0f, 0.0f);
+    const auto natural = measure (1.0f, 1.0f);
+    const auto moderate = measure (0.40f, 0.40f);
+    const auto legacyAt40 = measure (0.40f, 0.40f, true);
+    const auto linearEquivalent = measure (0.40f, 0.16f, false);
+    const auto legacyFull = measure (0.40f, 1.0f, true);
     expect (fixed.periods.size() > 30 && natural.periods.size() > 30,
             "the instability probe did not observe enough complete vibrato cycles");
     if (fixed.periods.size() <= 30 || natural.periods.size() <= 30)
@@ -6158,6 +7460,148 @@ void testVibratoInstability()
             "the instability probe could not resolve the vibrato rise and fall");
     expect (meanRiseToFall > 0.65 && meanRiseToFall < 0.95,
             "the unstable vibrato contour does not rise mildly faster than it falls");
+
+    std::cout << "moderate vibrato V.40/D.40: CV rate/depth "
+              << std::fixed << std::setprecision (3)
+              << 100.0 * moderate.periodCv << "/"
+              << 100.0 * moderate.extentCv << " %, mean "
+              << std::setprecision (2) << moderate.meanRate << " Hz, +/-"
+              << moderate.meanExtent << " cents; wrap step/kink "
+              << std::setprecision (4) << moderate.boundaryStep << "/"
+              << moderate.boundaryKink << " cents\n";
+    expect (moderate.periods.size() > 30 && moderate.extents.size() > 30,
+            "the moderate-vibrato probe did not observe enough complete cycles");
+    expect (moderate.meanRate > 5.0 && moderate.meanRate < 7.5,
+            "moderate vibrato left the natural sung-rate band");
+    expect (moderate.meanExtent > 14.0 && moderate.meanExtent < 32.0,
+            "moderate Vibrato no longer produces a restrained musical extent");
+    expect (moderate.periodCv > 0.01 && moderate.periodCv < 0.12,
+            "moderate Drift produced a clocked or unbounded vibrato rate");
+    expect (moderate.extentCv > 0.03 && moderate.extentCv < 0.25,
+            "moderate Drift produced a fixed or unbounded vibrato extent");
+    if (! moderate.periods.empty() && ! moderate.extents.empty())
+    {
+        const auto slowest = *std::max_element (moderate.periods.begin(),
+                                                moderate.periods.end());
+        const auto fastest = *std::min_element (moderate.periods.begin(),
+                                                moderate.periods.end());
+        const auto narrowestModerate = *std::min_element (moderate.extents.begin(),
+                                                          moderate.extents.end());
+        const auto widestModerate = *std::max_element (moderate.extents.begin(),
+                                                       moderate.extents.end());
+        expect (1.0 / slowest > 4.0 && 1.0 / fastest < 9.0
+                    && narrowestModerate > 8.0 && widestModerate < 45.0,
+                "a moderate vibrato cycle escaped expressive bounds");
+    }
+    expect (moderate.boundaryStep < 1.0 && moderate.boundaryKink < 0.10,
+            "a moderate-vibrato redraw left an audible pitch step or kink");
+
+    // Old sessions may contain a non-zero value for the repurposed control.
+    // Their model marker must retain 1.3's *linear* cycle-variation law. The
+    // current model at D=.16 has the same sqrt(D)=.40 cycle amount as a legacy
+    // patch at D=.40; their phase periods must therefore coincide even though
+    // only the current model also receives independent pitch/vowel motion.
+    double largestLegacyPeriodResidual = 0.0;
+    const auto comparablePeriods = std::min (legacyAt40.periods.size(),
+                                             linearEquivalent.periods.size());
+    for (std::size_t i = 0; i < comparablePeriods; ++i)
+        largestLegacyPeriodResidual = std::max (
+            largestLegacyPeriodResidual,
+            std::abs (legacyAt40.periods[i] - linearEquivalent.periods[i]));
+    std::cout << "legacy vibrato law: D.40/full CV rate/depth "
+              << std::fixed << std::setprecision (3)
+              << 100.0 * legacyAt40.periodCv << "/"
+              << 100.0 * legacyAt40.extentCv << " %, "
+              << 100.0 * legacyFull.periodCv << "/"
+              << 100.0 * legacyFull.extentCv
+              << " %; equivalent-period residual " << std::scientific
+              << largestLegacyPeriodResidual << " s\n";
+    expect (legacyAt40.periodCv > 0.01
+                && legacyAt40.periodCv < moderate.periodCv,
+            "legacyDriftBypass lost the old linear rate variation law");
+    expect (legacyAt40.extentCv > 0.03
+                && legacyAt40.extentCv < moderate.extentCv,
+            "legacyDriftBypass lost the old linear depth variation law");
+    expect (legacyFull.periodCv > 0.04 && legacyFull.periodCv < 0.12
+                && legacyFull.extentCv > 0.10 && legacyFull.extentCv < 0.30,
+            "legacyDriftBypass no longer exposes the bounded full 1.3 variation");
+    expect (comparablePeriods > 30
+                && comparablePeriods == legacyAt40.periods.size()
+                && comparablePeriods == linearEquivalent.periods.size()
+                && largestLegacyPeriodResidual < 1.0e-6,
+            "legacyDriftBypass no longer maps Drift linearly onto cycle rate");
+
+    // Match a newly started legacy note with an otherwise identical copy whose
+    // age alone is offset beyond the fade. Since phase, cycle draws and shape
+    // stay identical, the ratio of their direct-gain excursions is the actual
+    // fade envelope. This observes (rather than merely reads) 1.3's fixed
+    // 160 ms start / 340 ms smoothstep even when the recalled Drift is nonzero.
+    vocalor::EngineParameters legacyOnsetParameters;
+    legacyOnsetParameters.mode = vocalor::PerformanceMode::Solo;
+    legacyOnsetParameters.vibrato = 0.20f;
+    legacyOnsetParameters.humanize = 0.0f;
+    legacyOnsetParameters.instability = 0.40f;
+    legacyOnsetParameters.legacyDriftBypass = true;
+    legacyOnsetParameters.dynamics = 1.0f;
+    legacyOnsetParameters.room = 0.0f;
+    const auto makeLegacyOnsetEngine = [&legacyOnsetParameters]
+    {
+        auto engine = std::make_unique<vocalor::VoiceEngine>();
+        engine->prepare (sampleRate, blockSize);
+        engine->setParameters (legacyOnsetParameters);
+        engine->reset();
+        engine->noteOn (60, 0.85f);
+        return engine;
+    };
+    auto fadingLegacy = makeLegacyOnsetEngine();
+    auto fullyFadedLegacy = makeLegacyOnsetEngine();
+    vocalor::VoiceEngineTestAccess::offsetHeldVoiceAge (
+        *fullyFadedLegacy, static_cast<std::uint64_t> (sampleRate));
+
+    std::array<float, hop> onsetLeft {};
+    std::array<float, hop> onsetRight {};
+    std::array<float, hop> referenceLeft {};
+    std::array<float, hop> referenceRight {};
+    bool legacyPreFadeWasUnity = true;
+    double largestFadeResidual = 0.0;
+    int resolvedFadeSamples = 0;
+    int resolvedMidFadeSamples = 0;
+    const int onsetSteps = static_cast<int> (0.65 * trackRate);
+    for (int step = 0; step < onsetSteps; ++step)
+    {
+        fadingLegacy->process (onsetLeft.data(), onsetRight.data(), hop);
+        fullyFadedLegacy->process (
+            referenceLeft.data(), referenceRight.data(), hop);
+        const auto fadingGain = vocalor::VoiceEngineTestAccess::vibratoModulationState (
+            *fadingLegacy)[1];
+        const auto referenceGain =
+            vocalor::VoiceEngineTestAccess::vibratoModulationState (
+                *fullyFadedLegacy)[1];
+        const double controlAge = static_cast<double> (step) / trackRate;
+        if (controlAge < 0.16)
+            legacyPreFadeWasUnity = legacyPreFadeWasUnity && fadingGain == 1.0f;
+
+        const auto referenceExcursion = static_cast<double> (referenceGain) - 1.0;
+        if (std::abs (referenceExcursion) < 1.0e-4)
+            continue;
+        const auto position = std::clamp ((controlAge - 0.16) / 0.34, 0.0, 1.0);
+        const auto expectedFade = position * position * (3.0 - 2.0 * position);
+        const auto observedFade = (static_cast<double> (fadingGain) - 1.0)
+                                / referenceExcursion;
+        largestFadeResidual = std::max (
+            largestFadeResidual, std::abs (observedFade - expectedFade));
+        ++resolvedFadeSamples;
+        if (position > 0.05 && position < 0.95)
+            ++resolvedMidFadeSamples;
+    }
+    std::cout << "legacy vibrato fade: 160/340 ms smoothstep residual "
+              << std::scientific << largestFadeResidual << " across "
+              << resolvedMidFadeSamples << " mid-fade controls\n";
+    expect (legacyPreFadeWasUnity,
+            "legacyDriftBypass started vibrato before the historical 160 ms delay");
+    expect (resolvedFadeSamples > 500 && resolvedMidFadeSamples > 300
+                && largestFadeResidual < 0.01,
+            "legacyDriftBypass changed the historical 340 ms vibrato fade");
 }
 
 /** A sung vibrato modulates the amplitude, not only the pitch.
@@ -6368,7 +7812,7 @@ void testNaturalVibratoAmplitudeAndContinuity()
         return result;
     };
 
-    const auto shipping = measure (0.38f, 0.38f);
+    const auto moderate = measure (0.38f, 0.38f);
     const auto demo = measure (0.50f, 0.44f);
     const auto natural = measure (1.0f, 1.0f);
     const auto report = [] (const char* label, const AmStatistics& result)
@@ -6381,7 +7825,7 @@ void testNaturalVibratoAmplitudeAndContinuity()
                   << ", kink " << result.boundaryDirectKink << "/"
                   << result.boundaryHighKink << "\n" << std::defaultfloat;
     };
-    report ("shipping V.38/I.38", shipping);
+    report ("model-4 V.38/D.38", moderate);
     report ("demo V.50/I.44", demo);
     report ("full-natural V1/I1", natural);
 
@@ -6389,17 +7833,17 @@ void testNaturalVibratoAmplitudeAndContinuity()
     // nine-second probe, not the fixed-rate audio projection above. Pin both
     // useful non-zero settings so reducing clicks cannot silently remove the
     // airflow gesture or reintroduce the old three-deep high-band modulation.
-    expect (std::abs (shipping.directDb() - 0.575) < 0.15
-                && std::abs (shipping.highDb() - 1.150) < 0.18,
-            "the shipping Instability setting changed its direct/high-band AM law");
+    expect (std::abs (moderate.directDb() - 0.624) < 0.15
+                && std::abs (moderate.highDb() - 1.249) < 0.18,
+            "the moderate Drift setting changed its direct/high-band AM law");
     expect (std::abs (demo.directDb() - 0.922) < 0.18
                 && std::abs (demo.highDb() - 1.845) < 0.25,
-            "the demonstration Instability setting changed its direct/high-band AM law");
+            "the demonstration Drift setting changed its direct/high-band AM law");
     expect (std::abs (natural.directDb() - 2.93) < 0.45
                 && std::abs (natural.highDb() - 5.85) < 0.65,
-            "full Instability changed its direct/high-band AM law");
+            "full Drift changed its direct/high-band AM law");
 
-    for (const auto* result : { &shipping, &natural })
+    for (const auto* result : { &moderate, &natural })
     {
         expect (result->boundaries > 40,
                 "the natural-AM probe did not observe enough cycle redraws");
@@ -7253,6 +8697,10 @@ int main()
     testFormantTuningAtHighPitch();
     testJustIntonation();
     testEnsembleDispersion();
+    testStraightTonePitchDrift();
+    testDriftClockIgnoresLegatoEvents();
+    testLiveDriftAutomation();
+    testVowelDriftTrajectory();
     testEnsembleTimingIsRedrawn();
     testReleaseStagger();
     testTimingRedrawIsDeterministic();

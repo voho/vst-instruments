@@ -22,10 +22,13 @@ which is a stage of individually panned singers rather than a widener.
 The renderer spells out every setting instead of inheriting the DSP struct's
 backward-compatibility defaults. It starts from the published plug-in values,
 with a deliberately less-resonant neutral baseline at **Resonance 42 %** and
-**Tension 32 %**, **Instability 44 %**, and a reduced 40 % output for headroom.
-Vibrato chooses the intended extent; Instability adds bounded deterministic
-cycle-to-cycle variation in period, depth and contour, while Humanize controls
-ensemble identity, timing and vocal-tract differences. Against the old demo
+**Tension 32 %**, **Vibrato 0 %**, **Drift 44 %**, and a reduced 40 % output for
+headroom. At that straight-tone baseline Drift supplies bounded aperiodic pitch
+and slow vowel-space motion without hiding a regular LFO. Takes 01, 03, 04, 05,
+08 and 10 opt into musical vibrato explicitly; 02, 06, 07 and 09 inherit the
+zero setting. On an enabled vibrato Drift also varies rate, depth, contour and
+onset. Humanize remains the separate control for between-singer identity,
+timing and vocal-tract differences. Against the old demo
 baseline, the female AAH F3–F5 bandwidths widen from
 106.6/157.8/221.8 Hz to approximately 133.2/197.2/277.1 Hz. More importantly,
 the female profile no longer inherits one narrow lower-voice cluster: the outer
@@ -53,11 +56,15 @@ The set is ordered so it can be played straight through:
   notes. Listen for the release at the end falling back down the phrase.
 - **02** is the raw material: the AAH, OOH and UUH anchor vowels on the
   less-resonant neutral female voice, then the same three an octave and a bit
-  lower on the male voice. Only the tract changes between profiles — the
-  glottal source is the same model.
-- **03–04** each hold a single note and move nothing but the tract. 03 engages
+  lower on the male voice. It has no intentional vibrato; the small pitch
+  movement comes from aperiodic Drift and Humanize rather than a disguised
+  periodic gesture. Only the tract changes between profiles — the glottal
+  source is the same model.
+- **03–04** each hold a single MIDI note and deliberately automate only the
+  tract. 03 engages
   the vowel morph and walks the pad through every cardinal vowel, so the pitch
-  is constant while the vowel is continuously somewhere between real targets.
+  centre stays on the held note while the vowel is continuously somewhere
+  between real targets.
   04 shifts every formant an octave up and then an octave down: a body-size
   control at work, clearly not a pitch bend.
 - **05–07** are the ensembles. 05 is twelve independently humanised singers
@@ -68,8 +75,11 @@ The set is ordered so it can be played straight through:
   five-limit just — listen for the third settling as it narrows 13.7 cents and
   stops beating against the root. 07 is an eight-singer phrase where only the
   MIDI velocity changes, then a held fifth swelled on the Dynamics control
-  alone: the keys are struck once, so everything that moves after that is the
-  dynamic reaching the source tilt, the pulse shape and the breath balance.
+  alone: the keys are struck once, so the only deliberate control move after
+  that is the dynamic reaching the source tilt, the pulse shape and the breath
+  balance.
+  Takes 06 and 07 keep Vibrato at 0 %, so their movement does not come from a
+  perfectly repeating vibrato oscillator.
 - **08** is the voice itself under the three most physical controls, all on
   one held male note: driven from a lax to a firmly pressed glottis — a
   closure-aligned interpolation through nine analysed LF pulse shapes that
@@ -79,7 +89,8 @@ The set is ordered so it can be played straight through:
   branch's murmur pole and anti-resonance take over.
 - **09** sings the same three-note motif in a small dry booth and then in a
   large hall. Room size moves the reflections apart and lengthens the tail; it
-  is geometry, not just a wet/dry fader.
+  is geometry, not just a wet/dry fader. Vibrato remains at 0 %, isolating the
+  room without making the voice unnaturally pitch-static.
 - **10** is the register the other examples omit: one continuously articulated
   female voice climbs from C4 to C6. From E-flat5 to B-flat5 its residual broad
   upper reinforcement releases into the ordinary vowel poles instead of
@@ -107,14 +118,14 @@ the twelve-singer pad genuinely sums far louder than a single lax voice.
 | --- | --- | ---: | ---: | ---: |
 | `01-solo-legato-phrase.wav` | A solo soprano phrase sung legato, with a light glide between notes | 10.5 s | −18.6 dBFS | +15.6 dB |
 | `02-vowel-anchors.wav` | The three preset vowels on a less-resonant neutral female and male voice | 11.3 s | −18.5 dBFS | +15.5 dB |
-| `03-vowel-space-morph.wav` | One held note while the morph target walks every cardinal vowel | 13.2 s | −18.9 dBFS | +15.9 dB |
-| `04-formant-shift.wav` | The whole tract shifted an octave up and down at a fixed pitch | 12.2 s | −17.7 dBFS | +14.7 dB |
-| `05-ensemble-pad.wav` | Twelve independently humanised singers holding a chord pad | 11.6 s | −9.6 dBFS | +6.6 dB |
-| `06-chord-mode-harmony.wav` | Single keys each rendered as a six-singer chord, major and minor | 15.1 s | −18.4 dBFS | +15.4 dB |
-| `07-choir-dynamics.wav` | An eight-singer choir phrase sung from pianissimo to forte | 11.5 s | −12.7 dBFS | +9.7 dB |
-| `08-tension-and-breath.wav` | A held male note from a lax to a pressed glottis, then into breath | 16.9 s | −18.6 dBFS | +15.6 dB |
+| `03-vowel-space-morph.wav` | One held note while the morph target walks every cardinal vowel | 13.2 s | −18.8 dBFS | +15.8 dB |
+| `04-formant-shift.wav` | The whole tract shifted an octave up and down around one held MIDI note | 12.2 s | −17.9 dBFS | +14.9 dB |
+| `05-ensemble-pad.wav` | Twelve independently humanised singers holding a chord pad | 11.6 s | −10.5 dBFS | +7.5 dB |
+| `06-chord-mode-harmony.wav` | Single keys each rendered as a six-singer chord, major and minor | 15.1 s | −17.9 dBFS | +14.9 dB |
+| `07-choir-dynamics.wav` | An eight-singer choir phrase sung from pianissimo to forte | 11.5 s | −13.4 dBFS | +10.4 dB |
+| `08-tension-and-breath.wav` | A held male note from a lax to a pressed glottis, then into breath | 16.9 s | −18.5 dBFS | +15.5 dB |
 | `09-room-small-and-large.wav` | The same motif sung in a dry booth and in a large hall | 11.5 s | −17.3 dBFS | +14.3 dB |
-| `10-soprano-register.wav` | A connected soprano line from C4 to C6 through the cluster release | 10.1 s | −17.2 dBFS | +14.2 dB |
+| `10-soprano-register.wav` | A connected soprano line from C4 to C6 through the cluster release | 10.1 s | −16.9 dBFS | +13.9 dB |
 <!-- peaks-table-end -->
 
 ## Regenerating them
@@ -129,11 +140,11 @@ cmake --build build-dsp --parallel --target VocalorRenderDemos
 
 The render is deterministic, so running it on an unchanged model rewrites the
 same bytes and commits nothing. All of the engine's variation — singer
-identities, pitch jitter, shimmer, ensemble drift and the cycle-to-cycle
-Instability draws — is seeded by counters and hashes rather than by a clock,
-which is what makes an expressive render repeatable. The table above is
-regenerated in place by the same command, so the documented levels cannot drift
-away from the committed files either.
+identities, pitch jitter, shimmer, ensemble wander, aperiodic pitch and vowel
+Drift, and enabled-vibrato cycle draws — is seeded by counters and hashes rather
+than by a clock, which is what makes an expressive render repeatable. The table
+above is regenerated in place by the same command, so the documented levels
+cannot drift away from the committed files either.
 
 A take that is renamed or removed from the renderer's table is deleted from this
 directory on the next full render, so a stale WAV cannot survive here after the
