@@ -1356,8 +1356,8 @@ void TaikoEngine::resolveDrumGeometry (const EngineParameters& applied,
 // axis: that is the loudest member a stroke can drive, and the sin member is
 // the same mode rotated a quarter period, so nothing is lost by leaving it out.
 TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
-                                                       int entryIndex,
-                                                       int branch) noexcept
+                                                       int entryIndex, int branch,
+                                                       float strikeRadius) noexcept
 {
     ModeObservation result;
 
@@ -1373,8 +1373,11 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
     // the stick lands decides which modes it can reach at all, so this has to
     // be a real stroke rather than a point at the centre - a strike on the
     // exact middle of the head drives the axisymmetric family and nothing else.
-    const float rho = clampFloat (strikeProfile (Articulation::Don).radius,
-                                  0.0f, 0.995f);
+    // The caller supplies it, because the two questions asked of this function
+    // want two different strokes: the readout wants the stroke the controls
+    // actually produce, and the octave transform wants the centred one, so that
+    // moving Strike Position cannot retune the keyboard.
+    const float rho = clampFloat (strikeRadius, 0.0f, 0.995f);
     const float micRho = drum.micRadius / radius;
     const float micDistance = drum.micDistanceMetres;
     const float propagatingSpread = 1.0f / (1.0f + micDistance / 0.12f);
@@ -1516,17 +1519,27 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
 // Which of a drum's modes is the one it is heard at: the loudest over the window
 // above, among the modes low enough to be a drum's pitch at all.
 //
-// Low enough means under twice the fundamental's wavenumber, which admits the
-// two branches of the (0,1) pair and the (1,1) mode and nothing else - the next
-// entry in the table, (2,1), is already 2.14 times the fundamental and (0,2) is
-// 2.30. Nobody names a drum by a partial that high, and the model has no
-// business claiming they might: it is not what a pitch is. The bound is also
-// where this comparison is worth trusting. Measured against the rendered audio
-// the weights below are good to about a decibel and a half over the bottom of
-// the bank and drift several decibels high by the fourth radial order, because
-// the attack glide starts the head sharp and smears a partial out of its own
-// bin for a time proportional to how high it is - a real effect on what is
-// heard, and one that only ever pushes the modes above this bound further down.
+// Low enough means below the head's third radial order, which admits the two
+// branches of the (0,1) pair, the (1,1), the (2,1), the (3,1) and both branches
+// of the (0,2). It used to stop at twice the fundamental's wavenumber, which
+// admitted the (0,1) pair and the (1,1) and nothing else, and that was tenable
+// only while this function was asked about one fixed stroke a hand's width in
+// from the middle. It is now asked where the stick actually lands, and the whole
+// point of asking is that a stroke towards the middle of the head stops driving
+// the modes with a nodal diameter and drives the radial orders instead: measured
+// on the chu-daiko struck at the centre, the loudest partial of the rendered take
+// is the (0,2) lower branch at 172 Hz, and a bound that excluded it left the
+// readout naming a mode 1035 cents below what anybody could hear.
+//
+// The bound is also where this comparison is worth trusting. Measured against
+// the rendered audio the weights below are good to about a decibel and a half
+// over the bottom of the bank and drift several decibels high by the fourth
+// radial order, because the attack glide starts the head sharp and smears a
+// partial out of its own bin for a time proportional to how high it is - a real
+// effect on what is heard, and one that only ever pushes the modes above this
+// bound further down. On the o-daiko struck at the very centre three partials
+// land within a decibel of one another and the ranking is inside that error;
+// that drum has no single pitch there, and no bound can give it one.
 //
 // This is not the same question as which mode is lowest, and on half of this
 // family it is not the same answer. The (0,1) pair's lower branch moves the two
@@ -1537,10 +1550,12 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
 // a half above it, and that is the pitch the drum is heard at. On a small
 // tightly laced head the fundamental sits far above the corner, keeps its ring,
 // and wins by fifteen decibels. Both are the same physics read at two sizes.
-TaikoEngine::SoundingMode TaikoEngine::soundingMode (const DrumState& drum) noexcept
+TaikoEngine::SoundingMode TaikoEngine::soundingMode (const DrumState& drum,
+                                                     float strikeRadius) noexcept
 {
     SoundingMode best;
-    const double pitchBearingZero = 2.0 * membraneModes()[0].besselZero;
+    // (0,3), which is the third radial order and the first mode excluded.
+    const double pitchBearingZero = membraneModes()[2].besselZero;
 
     for (int entryIndex = 0; entryIndex < modeEntryCount; ++entryIndex)
     {
@@ -1553,7 +1568,8 @@ TaikoEngine::SoundingMode TaikoEngine::soundingMode (const DrumState& drum) noex
 
         for (int branch = 0; branch < branches; ++branch)
         {
-            const auto observation = observeMode (drum, entryIndex, branch);
+            const auto observation =
+                observeMode (drum, entryIndex, branch, strikeRadius);
 
             if (! (observation.frequencyHz > 0.0f)
                 || ! (observation.weight > best.weight))
@@ -1561,12 +1577,133 @@ TaikoEngine::SoundingMode TaikoEngine::soundingMode (const DrumState& drum) noex
 
             best.frequencyHz = observation.frequencyHz;
             best.weight = observation.weight;
-            best.entryIndex = static_cast<std::uint8_t> (entryIndex);
-            best.branch = static_cast<std::uint8_t> (branch);
+            best.identity.entryIndex = static_cast<std::uint8_t> (entryIndex);
+            best.identity.branch = static_cast<std::uint8_t> (branch);
         }
     }
 
     return best;
+}
+
+// Where the octave transform reads a pitch, and where the readout does.
+//
+// The transform is anchored at the centred stroke on purpose. An off-centre
+// strike really does excite a different balance of modes and really is heard at
+// a different pitch - that physics is in observeMode above and stays there - but
+// making the octave solve follow it would turn Strike Position into a tuning
+// control: nudging the stick towards the middle of the head would retune the
+// whole keyboard and re-solve every drum's size. So the solve always asks what
+// the drum sounds under a centred full open stroke, and Strike Position moves
+// only what is heard and what is reported.
+float TaikoEngine::tuningStrikeRadius() noexcept
+{
+    return clampFloat (strikeProfile (Articulation::Don).radius, 0.0f, 0.995f);
+}
+
+float TaikoEngine::readoutStrikeRadius (const EngineParameters& parameters) noexcept
+{
+    // The same arithmetic trigger() uses to place a Don, minus the humanising
+    // jitter: the readout describes the stroke the controls ask for, not the
+    // scatter around it.
+    const float offset = clampFloat (parameters.strikePosition, -1.0f, 1.0f) * 0.32f;
+    return clampFloat (strikeProfile (Articulation::Don).radius + offset, 0.0f,
+                       0.985f);
+}
+
+// The mode each octave of the family is tuned by.
+//
+// This is the fix for a regression the octave solve shipped with. Solving the
+// transform against soundingMode() - an argmax over the drum's modes - is what
+// puts the four heard octaves where they belong, but an argmax is a
+// discontinuous function of everything that feeds it. Two of this family's modes
+// are within a decibel of each other over a wide stretch of the controls, and
+// wherever they crossed, the reference drum's reported pitch stepped by up to a
+// tenth of an octave and every transformed octave re-solved for radically
+// different geometry. Measured on the shipping code at factory settings, a
+// single 0.01-semitone step of Pitch at 7.48 -> 7.49 dropped the chu-daiko from
+// 183.8 Hz to 100.6 Hz - 1043 cents - and moved its head from 0.238 m to
+// 0.404 m, so the timbre lurched with the pitch. Head Tension crossed the same
+// balance at 0.4142 and 0.9175, Head Diameter at 0.5958, and Resonant Tension
+// and Mic Spread further in, all of them doing the same thing.
+//
+// So the identity is latched instead of re-chosen. Which mode an instrument is
+// heard at is a property of the instrument - the o-daiko and the chu-daiko are
+// named by their (1,1), because their own fundamentals displace no net air and
+// the mounting empties them in half a second, while the okedo and the shime are
+// named by their fundamentals - and that is a fact about the four drums the
+// family table describes, not about where the player has left Head Tension. So
+// it is read off those four drums, at the factory controls, and the solve then
+// tracks that same mode as the player's controls move.
+//
+// The one control it does depend on is Octave Body, and it has to: that control
+// decides what the four drums *are*. At Family they are four instruments and the
+// chu-daiko is heard at its (1,1); at Tuned they are one o-daiko retuned, and an
+// o-daiko taken up an octave is a drum whose own fundamental has climbed clear
+// of the mounting and become the loudest thing it has - which is the mode
+// handover the README describes as the reason the first octave at Tuned costs
+// x13.49 in tension rather than x4. No single assignment can serve both ends:
+// tuning the chu-daiko's fundamental onto the octave breaks the family grid, and
+// tuning a retuned o-daiko's (1,1) onto it makes the first octave at Tuned a
+// step of 157 cents. So this reads the identity off the drum the family would
+// build at the current Octave Body, and one handover survives, in the control
+// whose whole job is to change which instrument an octave plays.
+//
+// Everything else the latch has to be, it is, because past Octave Body it is a
+// constant: it cannot depend on what was struck, because no stroke is involved;
+// a host that sets the parameters in a different order lands on the same drum,
+// because this is a pure function of one of them; and it persists across
+// setParameters for the same reason. Anything narrower - latching on the first
+// setParameters, or latching from the current controls with only Pitch held back
+// - is either path dependent or still discontinuous in whatever control was left
+// live.
+//
+// Which drum to read it off is the one subtlety. Not the untransformed
+// instrument: at Tuned that is the reference drum itself, and it is heard at its
+// (1,1), which is exactly the answer that costs the first octave 1043 cents of
+// the handover. It has to be the instrument as the key will actually leave it,
+// and that is not known until the solve has run. So it is taken at the transform
+// that would put the drum's *ideal* membrane fundamental on its octave - a
+// closed form, continuous in the controls, and within a per cent of the answer
+// at Family, where the drums are already an octave apart, and exactly an octave
+// of tension at Tuned, where they are not.
+TaikoEngine::ModeIdentity TaikoEngine::tuningModeFor (int octaveOffset,
+                                                      float octaveBody) noexcept
+{
+    const int clamped =
+        std::clamp (octaveOffset, lowestOctaveOffset, highestOctaveOffset);
+
+    // The family as the table builds it, at the factory controls. Nothing the
+    // player has done to the drum reaches this.
+    auto controls = sanitise (EngineParameters {});
+    controls.octaveBody = clampFloat (octaveBody, 0.0f, 1.0f);
+    const float body = controls.octaveBody;
+
+    DrumState referenceState;
+    resolveDrumGeometry (controls, 1.0f, 1.0f, 1.0f, referenceState);
+
+    if (clamped == 0)
+        return soundingMode (referenceState, tuningStrikeRadius()).identity;
+
+    const auto applied = parametersForOctave (controls, clamped);
+    DrumState untransformed;
+    resolveDrumGeometry (applied, 1.0f, 1.0f, 1.0f, untransformed);
+
+    // How much transform it takes to put the ideal membrane fundamental - wave
+    // speed over radius, up to a constant - where the key asks. Both halves of
+    // the transform move that quantity by exactly 2^amount, whatever the mixture,
+    // so this inverts in closed form.
+    float amount = static_cast<float> (clamped);
+    const float idealReference = referenceState.waveSpeed / referenceState.radius;
+    const float idealHere = untransformed.waveSpeed / untransformed.radius;
+
+    if (idealReference > 0.0f && idealHere > 0.0f)
+        amount += std::log2 (idealReference / idealHere);
+
+    DrumState canonical;
+    resolveDrumGeometry (applied, std::exp2 (-body * amount),
+                         std::exp2 (2.0f * (1.0f - body) * amount), 1.0f, canonical);
+
+    return soundingMode (canonical, tuningStrikeRadius()).identity;
 }
 
 // The player's controls carried onto whichever of the four drums this octave
@@ -1675,15 +1812,13 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
     // reference would have tuned each of them an octave above itself and left
     // the keyboard reading the family's own intervals rather than octaves.
     //
-    // Which mode is heard is decided once, on the untransformed drum, and the
-    // solve then follows that one mode. Re-deciding it inside the loop would
-    // make the quantity being solved for jump by a fifth and a half wherever a
-    // trial crossed the balance, and a bisection cannot bracket a step it
-    // creates itself. It costs nothing in fidelity: the transform is at most a
-    // couple of per cent of the drum's size at Octave Body 1, and where it is
-    // the whole octave - at Octave Body 0 - the drum genuinely does change
-    // which mode it is heard at as it is retuned up the keyboard, and this is
-    // the arrangement that lets each octave follow its own.
+    // Which mode that is, on both sides of the comparison, is latched rather
+    // than taken as an argmax over the drum's modes - see tuningModeFor. It has
+    // to be: an argmax is discontinuous in every control that feeds it, so
+    // re-running it per parameter update made a hundredth of a semitone of Pitch
+    // automation drop a drum by a tenth of an octave and re-solve its size.
+    // Re-deciding it inside the bisection would be worse still, because a
+    // bisection cannot bracket a step it creates itself.
     //
     // That frequency is monotone increasing in the amount of transform applied,
     // because more tension and less radius both raise every mode of the head
@@ -1718,34 +1853,26 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
     }
     else
     {
+        // The two latched identities: the mode the reference drum is tuned by
+        // and the mode this octave's instrument is tuned by. They are not the
+        // same row of the table across this family - the two large drums are
+        // named by their (1,1) and the two small ones by their fundamentals -
+        // and that difference is exactly what puts the four heard pitches on
+        // octaves. What matters here is only that neither of them is re-decided
+        // when a control moves.
+        const auto referenceIdentity = tuningModeFor (0, applied.octaveBody);
+        const auto identity = tuningModeFor (octaveOffset, applied.octaveBody);
+        // Always the centred stroke, on both sides. Strike Position moves what
+        // the drum is heard at, and it must not move what it is tuned to.
+        const float strikeRadius = tuningStrikeRadius();
+
         DrumState referenceState;
         resolveDrumGeometry (controls, 1.0f, 1.0f, tensionPitchFactor,
                              referenceState);
-        const float reference = soundingMode (referenceState).frequencyHz;
-
-        // And which mode this drum is heard at. The solve follows one mode, so
-        // it has to be told which, and the honest answer is the one the drum it
-        // ends up as is heard at - which is not knowable until the solve has
-        // run. So it is a fixed point: guess from the untransformed drum, solve,
-        // ask the answer what it is heard at, and solve again if it disagrees.
-        //
-        // It disagrees only where the transform is large enough to move the drum
-        // from one regime into the other, which is Octave Body 0 - there the
-        // whole octave is bought with tension, and a drum retuned an octave up is
-        // genuinely a drum whose fundamental has climbed clear of the mounting
-        // and is now the loudest thing it has. Following the mode the drum
-        // started in would have tuned the (1,1) of a drum that had stopped being
-        // heard at it. At Octave Body 1 the first guess is always right, because
-        // the transform is a couple of per cent of the drum's size.
-        //
-        // Two rounds, and the better of them is kept. A third would only matter
-        // if the two regimes swapped back and forth, which is a drum sitting
-        // exactly on the balance, and there the two answers are a fifth and a
-        // half apart with nothing to choose between them: taking whichever lands
-        // nearer the octave asked for is the best that can be said.
-        DrumState untransformed;
-        transformed (0.0f, untransformed);
-        auto heard = soundingMode (untransformed);
+        const float reference =
+            observeMode (referenceState, referenceIdentity.entryIndex,
+                         referenceIdentity.branch, strikeRadius)
+                .frequencyHz;
 
         if (! (reference > 0.0f))
         {
@@ -1753,129 +1880,99 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
         }
         else
         {
-            float bestError = 0.0f;
-            bool haveBest = false;
+            // The bracket is carried as a pair of resolved drums rather than as
+            // a pair of numbers, and the one that wins is the drum that is
+            // handed on. Re-resolving the winning amount at the end instead
+            // would be the same arithmetic written twice, and the two copies do
+            // not always round the same way: where the tracked mode steps - see
+            // below - a difference in the last place of the exponentials is
+            // enough to put the final resolve the other side of the step from
+            // the trial that chose it, and the drum that ships is then not the
+            // drum that was measured.
+            DrumState lowState;
+            DrumState highState;
 
-            for (int attempt = 0; attempt < 2; ++attempt)
+            // In octaves above where the reference drum sounds, so the answer
+            // wanted is exactly `octave` and the function is increasing in the
+            // amount of transform whichever side of zero it starts.
+            const auto reached = [&transformed, reference, identity, strikeRadius] (
+                                     float amount, DrumState& state)
             {
-                // The bracket is carried as a pair of resolved drums rather than
-                // as a pair of numbers, and the one that wins is the drum that is
-                // handed on. Re-resolving the winning amount at the end instead
-                // would be the same arithmetic written twice, and the two copies
-                // do not always round the same way: where the sounding pitch
-                // steps - see below - a difference in the last place of the
-                // exponentials is enough to put the final resolve the other side
-                // of the step from the trial that chose it, and the drum that
-                // ships is then not the drum that was measured.
-                DrumState lowState;
-                DrumState highState;
+                transformed (amount, state);
+                const float sounded =
+                    observeMode (state, identity.entryIndex, identity.branch,
+                                 strikeRadius)
+                        .frequencyHz;
+                return sounded > 0.0f ? std::log2 (sounded / reference) : -100.0f;
+            };
 
-                // In octaves above where the reference drum sounds, so the answer
-                // wanted is exactly `octave` and the function is increasing in the
-                // amount of transform whichever side of zero it starts.
-                const auto reached = [&transformed, reference, &heard] (
-                                         float amount, DrumState& state)
-                {
-                    transformed (amount, state);
-                    const float sounded =
-                        observeMode (state, heard.entryIndex, heard.branch)
-                            .frequencyHz;
-                    return sounded > 0.0f ? std::log2 (sounded / reference)
-                                          : -100.0f;
-                };
+            // One octave either side of the answer if the drum were already in
+            // tune, which straddles it for every drum in the table at Octave
+            // Body 1 and is widened for the settings where it does not - at
+            // Octave Body 0 the drum has not changed at all and the whole octave
+            // has to come out of the tension.
+            float low = octave - 1.0f;
+            float high = octave + 1.0f;
+            float atLow = reached (low, lowState);
+            float atHigh = reached (high, highState);
 
-                // One octave either side of the answer if the drum were already
-                // in tune, which straddles it for every drum in the table at
-                // Octave Body 1 and is widened for the settings where it does not
-                // - at Octave Body 0 the drum has not changed at all and the
-                // whole octave has to come out of the tension.
-                float low = octave - 1.0f;
-                float high = octave + 1.0f;
-                float atLow = reached (low, lowState);
-                float atHigh = reached (high, highState);
-
-                for (int widen = 0; widen < 5 && atLow > octave; ++widen)
-                {
-                    high = low;
-                    atHigh = atLow;
-                    highState = lowState;
-                    low -= 1.0f;
-                    atLow = reached (low, lowState);
-                }
-
-                for (int widen = 0; widen < 5 && atHigh < octave; ++widen)
-                {
-                    low = high;
-                    atLow = atHigh;
-                    lowState = highState;
-                    high += 1.0f;
-                    atHigh = reached (high, highState);
-                }
-
-                DrumState middleState;
-
-                for (int iteration = 0; iteration < 24; ++iteration)
-                {
-                    const float middle = 0.5f * (low + high);
-                    const float here = reached (middle, middleState);
-
-                    if (here < octave)
-                    {
-                        low = middle;
-                        atLow = here;
-                        lowState = middleState;
-                    }
-                    else
-                    {
-                        high = middle;
-                        atHigh = here;
-                        highState = middleState;
-                    }
-                }
-
-                // Whichever end of the converged bracket is nearer, rather than
-                // its midpoint. Wherever the sounding pitch is continuous in the
-                // transform the two ends agree to a ten-millionth of an octave
-                // and this is the same answer either way.
-                //
-                // Where they do not agree, the bracket has not failed to converge
-                // - it has found a step in the quantity being solved for, and the
-                // drum is saying that the octave it is being asked for does not
-                // exist. At the transform where the air column reaches its
-                // quarter-wave the two heads stop being tied together; the lower
-                // branch becomes the far head's alone, a stroke on the batter
-                // head can no longer sound it, and what the drum sounds steps up
-                // to the batter head's own mode. There is a band of pitches on
-                // the far side of that step which no amount of transform reaches.
-                // The near side of it is the closest an octave can be got to, and
-                // taking the midpoint would land past it.
-                const bool takeLow =
-                    std::abs (atLow - octave) <= std::abs (atHigh - octave);
-                const DrumState& candidate = takeLow ? lowState : highState;
-
-                // How far this answer's own sounding pitch - the mode it is
-                // really heard at, whichever that turns out to be - lands from
-                // the octave the key asked for.
-                const auto sounded = soundingMode (candidate);
-                const float error =
-                    sounded.frequencyHz > 0.0f
-                        ? std::abs (std::log2 (sounded.frequencyHz / reference)
-                                    - octave)
-                        : 100.0f;
-
-                if (! haveBest || error < bestError)
-                {
-                    bestError = error;
-                    haveBest = true;
-                    drum = candidate;
-                }
-
-                if (sounded.entryIndex == heard.entryIndex
-                    && sounded.branch == heard.branch)
-                    break;
-
-                heard = sounded;
+            for (int widen = 0; widen < 5 && atLow > octave; ++widen)
+            {
+                high = low;
+                atHigh = atLow;
+                highState = lowState;
+                low -= 1.0f;
+                atLow = reached (low, lowState);
             }
+
+            for (int widen = 0; widen < 5 && atHigh < octave; ++widen)
+            {
+                low = high;
+                atLow = atHigh;
+                lowState = highState;
+                high += 1.0f;
+                atHigh = reached (high, highState);
+            }
+
+            DrumState middleState;
+
+            for (int iteration = 0; iteration < 24; ++iteration)
+            {
+                const float middle = 0.5f * (low + high);
+                const float here = reached (middle, middleState);
+
+                if (here < octave)
+                {
+                    low = middle;
+                    atLow = here;
+                    lowState = middleState;
+                }
+                else
+                {
+                    high = middle;
+                    atHigh = here;
+                    highState = middleState;
+                }
+            }
+
+            // Whichever end of the converged bracket is nearer, rather than its
+            // midpoint. Wherever the tracked mode is continuous in the transform
+            // the two ends agree to a ten-millionth of an octave and this is the
+            // same answer either way.
+            //
+            // Where they do not agree, the bracket has not failed to converge -
+            // it has found a step in the quantity being solved for, and the drum
+            // is saying that the octave it is being asked for does not exist. At
+            // the transform where the air column reaches its quarter-wave the
+            // two heads stop being tied together; the lower branch becomes the
+            // far head's alone, a stroke on the batter head can no longer sound
+            // it, and the mode being tracked steps up to the batter head's own.
+            // There is a band of pitches on the far side of that step which no
+            // amount of transform reaches. The near side of it is the closest an
+            // octave can be got to, and taking the midpoint would land past it.
+            const bool takeLow =
+                std::abs (atLow - octave) <= std::abs (atHigh - octave);
+            drum = takeLow ? lowState : highState;
         }
     }
 
@@ -3946,10 +4043,11 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
     // Both branches, solved through the same routine the render path and the
     // octave transform use, so the readout, the audio and the keyboard cannot
     // disagree about the drum - including at zero coupling, where the pair is
-    // degenerate. The transform in particular is now solved against exactly the
-    // number reported here, which is what makes the keyboard's octave and the
-    // panel's fundamental the same claim rather than two that have to be kept
-    // in step by hand.
+    // degenerate. The transform reads the same drum through the same
+    // observeMode this readout does - it differs only in tracking a latched mode
+    // at the centred stroke rather than the loudest one at the player's - so the
+    // keyboard's octave and the panel's figures stay one claim about one drum
+    // rather than two that have to be kept in step by hand.
     const auto pair = solveAxisymmetricPair (drum);
     // The tail sweep below solves every mode's own branches, including this
     // one's, so it needs the threshold rather than the pair's own verdict.
@@ -3957,9 +4055,20 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
 
     result.breathingModeHz = pair.breathingHz;
     result.loadedFundamentalHz = pair.loadedFundamentalHz;
-    // What the keyboard is tuned by, and what the panel should say the drum is
-    // at: the mode it is actually heard at rather than the lowest one it has.
-    result.soundingHz = soundingMode (drum).frequencyHz;
+    // What the panel should say the drum is at: the mode it is actually heard
+    // at rather than the lowest one it has, and heard under the stroke the
+    // controls currently describe rather than under a centred one.
+    //
+    // Strike Position is the reason those are two different questions. An
+    // off-centre stroke drives a different balance of modes - it is why a Ka out
+    // by the tacks is thin and cutting - and on the two large drums of this
+    // family it moves which mode wins by a fourth and more. The readout has to
+    // follow that, or the number on the panel is the pitch of a stroke nobody
+    // played. The octave transform deliberately does not: it is anchored at the
+    // centred stroke inside resolveDrumFor, so Strike Position stays a timbre
+    // control and cannot retune the keyboard. See tuningStrikeRadius.
+    result.soundingHz =
+        soundingMode (drum, readoutStrikeRadius (sanitise (parameters))).frequencyHz;
 
     // How long a branch rings, with its own radiation share. Two branches of the
     // same mode differ a great deal on a sealed drum, because only the one that

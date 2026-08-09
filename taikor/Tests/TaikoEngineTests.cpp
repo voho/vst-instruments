@@ -1312,6 +1312,19 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
     // same drum with a lumped spring in it under step 5's keyboard, measured by
     // forcing the column factor to one. The worst of the five moves 0.086 %,
     // and the largest anywhere in the scan clause below is 1.9085 %.
+    //
+    // Two of the five moved again when the octave transform stopped tuning
+    // against an argmax and started tracking a latched mode - see tuningModeFor.
+    // Both are away from the reference octave, where the drum is the answer to a
+    // solve rather than a fixed function of the controls, and the solve now
+    // answers differently at settings a long way from the four instruments the
+    // family table describes: 167.8403 -> 284.9433 Hz at octave 1 and
+    // 458.8257 -> 988.7020 at octave 3. Neither of those is this clause failing -
+    // the drift between the column answer and the lumped one is exactly zero at
+    // both, because both land on a decoupled column - it is the drum underneath
+    // the clause having changed. The two corners are kept, with the new drums
+    // recorded, and the two the scan now finds worst are added below them so the
+    // clause keeps its teeth: 1.0733 % and 0.9997 %, against a tolerance of 1.5.
     {
         struct Corner
         {
@@ -1322,10 +1335,14 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
 
         const Corner corners[] = {
             { 1.00f, 0.50f, 0.50f, 1.00f, 0.95f, 0.35f, 2, 391.7268f },
-            { 1.00f, 1.00f, 1.00f, 1.00f, 0.95f, 0.35f, 1, 167.8403f },
+            { 1.00f, 1.00f, 1.00f, 1.00f, 0.95f, 0.35f, 1, 284.9433f },
             { 0.00f, 0.00f, 0.50f, 1.00f, 0.95f, 0.00f, 3, 1051.0128f },
-            { 1.00f, 0.00f, 1.00f, 1.00f, 1.80f, 1.00f, 3, 458.8257f },
+            { 1.00f, 0.00f, 1.00f, 1.00f, 1.80f, 1.00f, 3, 988.7020f },
             { 0.50f, 0.50f, 0.50f, 0.85f, 0.95f, 0.70f, 3, 783.4537f },
+            // The two the scan finds worst under the latched-mode transform,
+            // both with a live column rather than a decoupled one.
+            { 0.75f, 1.00f, 1.00f, 1.00f, 1.80f, 0.70f, 2, 287.1501f },
+            { 0.75f, 1.00f, 0.50f, 1.00f, 1.80f, 0.35f, 3, 277.8394f },
         };
 
         for (const auto& corner : corners)
@@ -1488,7 +1505,19 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
         // like. None of them is a taiko, and the point
         // of recording the count is that a change which quietly decoupled the
         // instrument would move it.
-        expect (decoupled > 0 && decoupled < total / 4,
+        //
+        // A third rather than a quarter, and the bound moved because the count
+        // did: 2513 of 10800 (23.27 %) before the octave transform stopped
+        // tuning against an argmax, 3045 (28.19 %) after. Every one of the 532
+        // that crossed is away from the reference octave and at a corner of this
+        // scan - a 20 cm head at zero tension, a 1.8 m head at full - where the
+        // latched tuning mode leaves the drum at a different tension than
+        // chasing the loudest partial did, and a tighter head is a shorter
+        // wavelength against the same body. At octave 0, where the transform is
+        // the identity and the drum is a fixed function of the controls, the
+        // count is unchanged. The bound is a sanity band on a number that is
+        // recorded rather than derived, and 28.19 % is what it now is.
+        expect (decoupled > 0 && decoupled < total / 3,
                 "the number of drums whose column has passed its quarter-wave "
                 "changed: " + std::to_string (decoupled) + " of "
                 + std::to_string (total));
@@ -1702,6 +1731,288 @@ void testTheFourDrumsStepInHeardOctaves()
 
         previous = centre;
     }
+}
+
+// The strongest partial of one rendered take, found blind: a coarse geometric
+// scan over the band the drum's own modes occupy, then three refinements. The
+// band is fixed by the octave and by nothing the engine reports, so this cannot
+// be fooled by a readout that has gone wrong - which is the whole point, because
+// two of the clauses below are about the readout being wrong.
+//
+// Coarser on the first pass than testTheFourDrumsStepInHeardOctaves's scan
+// because it runs a hundred times rather than twenty-four; the refinements bring
+// it back to about a third of a cent, which is well under every tolerance stated
+// here.
+double blindStrongestPartial (const std::vector<float>& channel, double lowHz,
+                              double highHz, double sampleRate, std::size_t first,
+                              std::size_t last)
+{
+    const auto power = [&] (double frequency)
+    {
+        const auto magnitude =
+            binMagnitude (channel, frequency, sampleRate, first, last);
+        return magnitude * magnitude;
+    };
+
+    double best = -1.0;
+    double bestFrequency = lowHz;
+    for (double frequency = lowHz; frequency <= highHz; frequency *= 1.005)
+    {
+        const auto here = power (frequency);
+        if (here > best) { best = here; bestFrequency = frequency; }
+    }
+    for (double step : { 1.0015, 1.0004, 1.0001 })
+        for (int around = -4; around <= 4; ++around)
+        {
+            const auto frequency = bestFrequency * std::pow (step, around);
+            const auto here = power (frequency);
+            if (here > best) { best = here; bestFrequency = frequency; }
+        }
+    return bestFrequency;
+}
+
+// One Don, rendered and summed to mono. Mono rather than the two channels
+// separately because these clauses ask where one stroke sits rather than whether
+// the pad has one pitch: with the two capsules reading a nodal-diameter mode
+// differently, a geometric mean of two channels that have landed on two
+// different partials of a near-tie is a frequency that is in neither of them,
+// and that is an artefact of the estimator rather than anything about the drum.
+std::vector<float> monoDon (const taikor::EngineParameters& parameters, int octave)
+{
+    constexpr double sampleRate = 48000.0;
+    const auto rendered = static_cast<int> (1.10 * sampleRate);
+    return strike (parameters, taikor::Articulation::Don, octave, 0.9f, sampleRate,
+                   rendered)
+        .mono();
+}
+
+// Where one Don on one drum is actually heard, from the rendered audio alone.
+double heardPitchOf (const taikor::EngineParameters& parameters, int octave)
+{
+    constexpr double sampleRate = 48000.0;
+    const auto first = static_cast<std::size_t> (0.08 * sampleRate);
+    const auto last = first + static_cast<std::size_t> (0.90 * sampleRate);
+    // The four drums as the family table builds them, at the factory controls.
+    // Two octaves either side of that is far wider than anything a boundary
+    // crossing can move the pitch to.
+    const double nominal = 59.66 * std::pow (2.0, static_cast<double> (octave));
+    return blindStrongestPartial (monoDon (parameters, octave), nominal * 0.25,
+                                  nominal * 6.0, sampleRate, first, last);
+}
+
+// The octave transform has to be continuous in every control, and the readout has
+// to describe the stroke the player is actually playing. Both of these were
+// broken by the same thing, and it is worth saying what it was in one place.
+//
+// The transform is solved against the pitch a drum is heard at, and "heard at"
+// was taken as an argmax over the drum's modes, re-run on every parameter update.
+// Two of this family's modes sit within a decibel of each other over wide
+// stretches of the control space, and an argmax across a near-tie is a step. So
+// wherever the reference drum's two modes crossed, the quantity every other
+// octave was solved against jumped by up to a tenth of an octave and every
+// transformed drum re-solved for radically different geometry. Measured on the
+// tree this landed on, at factory settings:
+//
+//   Pitch        7.48 -> 7.49 st      chu-daiko 183.8 -> 100.6 Hz, -1043 cents,
+//                                     head 0.238 -> 0.404 m
+//   Pitch       -5.19 -> -5.18 st     chu-daiko            -507 cents
+//   Head Tension 0.9170 -> 0.9175     chu-daiko           -1043 cents
+//
+// A hundredth of a semitone is one step of ordinary Pitch automation, so the
+// first of those is a lane a player cannot ride across. The same crossing is
+// reachable from Head Tension, Head Diameter, Head Material, Air Coupling,
+// Resonant Tension, Mic Distance and Mic Spread - it is not a property of the
+// Pitch control, it is a property of tuning against an argmax.
+//
+// The fix latches the mode identity instead of re-choosing it, so the solve
+// tracks one named mode of one named drum as the controls move. What the
+// clauses below assert is the consequence: a fine sweep across each crossing
+// moves the heard pitch by no more than the sweep itself is worth.
+//
+// Everything is measured from rendered audio. A change that moved the readout
+// alone would pass anything asked of measure().
+void testThePitchTransformIsContinuousUnderAutomation()
+{
+    // Three crossings: the one ordinary Pitch automation runs into, the next one
+    // down the Pitch range, and the same balance reached from Head Tension
+    // instead - because the defect was never about the Pitch control.
+    //
+    // A step of 0.01 semitones is a cent of transposition in itself, and a step
+    // of 0.0005 in Head Tension is 1.26 cents through that control's own
+    // geometric map, so a continuous solve cannot read zero here. Measured over
+    // these three sweeps it reads at most 2.3 cents - the transposition, plus
+    // what the estimator loses reading a decaying partial through the tail of the
+    // attack glide. Eight cents is three and a half times that and a hundred and
+    // thirty times under what the defect produced.
+    constexpr double tolerance = 8.0;
+
+    struct Sweep
+    {
+        const char* what;
+        bool headTension;
+        double from, to, step;
+    };
+    const Sweep sweeps[] = {
+        { "Pitch across 7.49 semitones", false, 7.46, 7.52, 0.01 },
+        { "Pitch across -5.18 semitones", false, -5.21, -5.15, 0.01 },
+        { "Head Tension across 0.9175", true, 0.9160, 0.9190, 0.0005 },
+    };
+
+    for (const auto& sweep : sweeps)
+        for (int octave = taikor::lowestOctaveOffset;
+             octave <= taikor::highestOctaveOffset; ++octave)
+        {
+            double previous = 0.0;
+            double previousValue = 0.0;
+
+            for (double value = sweep.from; value <= sweep.to + 1.0e-9;
+                 value += sweep.step)
+            {
+                auto parameters = defaultParameters();
+                // Humanise off: the question is what one setting sounds like, and
+                // per-stroke scatter in where the stick lands is not part of it.
+                parameters.humanise = 0.0f;
+                if (sweep.headTension)
+                    parameters.tension = static_cast<float> (value);
+                else
+                    parameters.pitch = static_cast<float> (value);
+
+                const auto heard = heardPitchOf (parameters, octave);
+                expect (heard > 0.0, "no partial was found at all");
+
+                if (previous > 0.0)
+                {
+                    const auto cents = 1200.0 * std::log2 (heard / previous);
+                    expect (std::abs (cents) < tolerance,
+                            std::string ("the heard pitch lurches under automation: ")
+                                + sweep.what + ", octave "
+                                + std::to_string (octave) + ", "
+                                + std::to_string (previousValue) + " -> "
+                                + std::to_string (value) + " moved it "
+                                + std::to_string (previous) + " -> "
+                                + std::to_string (heard) + " Hz, "
+                                + std::to_string (cents) + " cents");
+                }
+
+                previous = heard;
+                previousValue = value;
+            }
+        }
+}
+
+// And the second half of the same defect: the readout evaluated a Don at the
+// profile's factory radius whatever Strike Position said, so the number on the
+// panel was the pitch of a stroke nobody had played.
+//
+// An off-centre stroke really is heard at a different pitch - a stroke towards
+// the middle of the head stops driving the modes with a nodal diameter and drives
+// the radial orders instead - and that physics was always in the model. What was
+// missing was the readout following it. Measured on the tree this landed on, with
+// the reported figure frozen at the centred stroke:
+//
+//   Strike Position   chu-daiko heard   chu-daiko reported   error
+//    0.00              119.8 Hz          119.3 Hz              -7 cents
+//   -0.25              171.9              119.3              -633
+//   -0.50              172.0              119.3              -633
+//
+// The octave solve is deliberately *not* strike-aware - see tuningStrikeRadius -
+// so Strike Position moves the timbre and the readout and leaves the tuning
+// alone. testEveryParameterSurvivesTheCache and the sweeps above would both catch
+// it if that changed.
+void testTheReadoutFollowsTheStrikePosition()
+{
+    constexpr double sampleRate = 48000.0;
+    const auto first = static_cast<std::size_t> (0.08 * sampleRate);
+    const auto last = first + static_cast<std::size_t> (0.90 * sampleRate);
+
+    int pinned = 0;
+    double worstPinnedCents = 0.0;
+    double worstShare = 1.0;
+
+    for (const float position : { 0.00f, -0.25f, -0.50f })
+        for (int octave = taikor::lowestOctaveOffset;
+             octave <= taikor::highestOctaveOffset; ++octave)
+        {
+            auto parameters = defaultParameters();
+            parameters.strikePosition = position;
+            parameters.humanise = 0.0f;
+
+            const auto reported =
+                taikor::TaikoEngine::measure (parameters, octave).soundingHz;
+            const auto mono = monoDon (parameters, octave);
+            const double nominal = 59.66 * std::pow (2.0, static_cast<double> (octave));
+            const double lowHz = nominal * 0.25, highHz = nominal * 6.0;
+            const auto heard = blindStrongestPartial (mono, lowHz, highHz, sampleRate,
+                                                      first, last);
+
+            const auto where = ", strike position " + std::to_string (position)
+                             + ", octave " + std::to_string (octave);
+
+            // The strongest partial more than four per cent away from the winner,
+            // which is what says whether this take has one pitch or several. On
+            // the o-daiko struck at or near the very middle it does not: three
+            // partials land within a decibel of one another, the model's own
+            // ranking of them is inside its stated accuracy, and no readout can
+            // name one of them and be right. Everywhere else there is a clear
+            // winner and the readout has to be on it.
+            double rivalBest = -1.0, rival = lowHz;
+            for (double frequency = lowHz; frequency <= highHz; frequency *= 1.005)
+            {
+                if (frequency > heard / 1.04 && frequency < heard * 1.04)
+                    continue;
+                const auto magnitude =
+                    binMagnitude (mono, frequency, sampleRate, first, last);
+                if (magnitude > rivalBest) { rivalBest = magnitude; rival = frequency; }
+            }
+            (void) rival;
+
+            const auto heardMagnitude =
+                binMagnitude (mono, heard, sampleRate, first, last);
+            const auto clearDb = 20.0 * std::log10 (heardMagnitude
+                                                    / std::max (rivalBest, 1.0e-30));
+
+            if (clearDb > 1.5)
+            {
+                ++pinned;
+                const auto cents = 1200.0 * std::log2 (reported / heard);
+                worstPinnedCents = std::max (worstPinnedCents, std::abs (cents));
+                // Twenty cents, and the worst of the ten cases this fires on is
+                // 7.0 - the chu-daiko struck normally, where the attack glide has
+                // not quite settled by the time the window opens. Before the
+                // readout was told where the stick lands it was 633.
+                expect (std::abs (cents) < 20.0,
+                        "the reported pitch is not the one the stroke is heard at: "
+                            + std::to_string (reported) + " against "
+                            + std::to_string (heard) + " Hz, "
+                            + std::to_string (cents) + " cents" + where);
+            }
+
+            // And for every take, including the ones with no single pitch: the
+            // rendered level at the reported frequency has to be within a couple
+            // of decibels of the strongest partial there is. Measured worst 0.798
+            // - the chu-daiko at the centred stroke, seven cents off a narrow
+            // peak - against 0.068 before, which is the o-daiko's reported pitch
+            // sitting twenty-three decibels down in a take it is not in.
+            const auto atReported =
+                binMagnitude (mono, reported, sampleRate, first, last);
+            const auto share = atReported / std::max (heardMagnitude, 1.0e-30);
+            worstShare = std::min (worstShare, share);
+            expect (share > 0.75,
+                    "the reported pitch is not where the energy is: "
+                        + std::to_string (share) + " of the strongest partial"
+                        + where);
+        }
+
+    // The guard on the guard: the clear-winner test must not be quietly
+    // disabling the clause. Ten of the twelve takes have one pitch; the two that
+    // do not are the o-daiko at -0.25 and -0.50, where the winner is 0.55 and
+    // 0.51 dB clear.
+    expect (pinned >= 8,
+            "only " + std::to_string (pinned)
+                + " of the twelve takes had an unambiguous pitch, so the clause "
+                  "above has stopped saying anything");
+    (void) worstPinnedCents;
+    (void) worstShare;
 }
 
 void testTheDrumIsTunedByThePitchItSounds()
@@ -4812,6 +5123,8 @@ int main()
     testTheCavityIsAColumnNotAnInfiniteSpring();
     testTheDrumIsTunedByThePitchItSounds();
     testTheFourDrumsStepInHeardOctaves();
+    testThePitchTransformIsContinuousUnderAutomation();
+    testTheReadoutFollowsTheStrikePosition();
     testEveryArticulationAndSampleRate();
     testSampleRateConsistency();
     testTheContinuumDoesNotDependOnTheSampleRate();

@@ -2837,3 +2837,198 @@ the bound go.
 
 The per-fix audio previews under `Docs/audio/` are one-time review evidence and
 are not re-rendered here.
+
+### Step 6, follow-up — the argmax that tuned the keyboard
+
+Two defects, one cause. Both were introduced by this step and both are fixed
+here.
+
+**Defect 1: Pitch automation lurched.** `resolveDrumFor` solved the octave
+transform against `soundingMode()` — the loudest of a drum's modes over the
+window a pitch is taken from. That argmax is what puts the four heard octaves
+where they belong, and it is also a step function of every control that feeds
+it. Two of this family's modes sit within a decibel of each other over wide
+stretches of the control space, and wherever they crossed on the *reference*
+drum, the quantity every other octave was solved against jumped and every
+transformed drum re-solved for radically different geometry. Measured at factory
+settings, from rendered audio:
+
+| Pitch | chū-daiko heard | reported | head radius |
+| ---: | ---: | ---: | ---: |
+| 7.48 st | 183.84 Hz | 183.77 | 0.238 m |
+| **7.49 st** | **100.65 Hz** | 100.63 | **0.404 m** |
+
+A hundredth of a semitone — one step of ordinary Pitch automation — dropped the
+drum 1043 cents and moved its head by 70 %, so the timbre lurched with it. It
+was never a property of the Pitch control. A geometry scan of eleven controls
+crossed with three Octave Body settings, 9,600 steps each, found the same
+crossing reachable from nine of them. At Octave Body 1, thirty-six crossings in
+all:
+
+| Control | crossings | worst single-step change in the solved drum |
+| --- | ---: | ---: |
+| Pitch | 10 | 117.8 % |
+| Head Tension | 9 | 70.5 % |
+| Head Diameter | 6 | 62.3 % |
+| Mic Spread | 4 | 63.8 % |
+| Air Coupling | 2 | 65.5 % |
+| Resonant Tension | 2 | 7.2 % |
+| Head Material | 1 | 68.3 % |
+| Mic Distance | 1 | 23.2 % |
+| Octave Body | 1 | 52.5 % |
+
+Head Damping joins them at Octave Body 0.5 (one crossing, 40.9 %), and at
+Octave Body 0 the worst single step is 234.8 % of the drum's tension, on Pitch
+at −4.52 semitones.
+
+**Defect 2: the readout lied when the strike moved.** `observeMode` always
+evaluated a Don at the profile's factory radius, ignoring
+`EngineParameters::strikePosition`. An off-centre stroke genuinely excites a
+different balance of modes — that physics was right and stays — but the reported
+pitch did not follow it:
+
+| Strike Position | chū-daiko heard | chū-daiko reported | error |
+| ---: | ---: | ---: | ---: |
+| 0.00 | 119.80 Hz | 119.32 | −7 cents |
+| −0.25 | 171.94 | 119.32 | −633 |
+| −0.50 | 171.96 | 119.32 | −633 |
+
+At −0.50 the reported frequency sat 23.4 dB below the strongest partial in the
+take. Same cause: one function was being asked two different questions, and its
+one fixed stroke could only answer one of them.
+
+#### The fix
+
+`TaikoEngine::tuningModeFor` latches a mode *identity* — a row of the mode table
+and a branch of the cavity-split pair — rather than taking an argmax. The octave
+solve uses it on both sides of the comparison: the reference drum's tuning mode
+and this octave's tuning mode, both read off the family the drum table describes
+at the factory controls. Which mode an instrument is heard at is a property of
+the instrument, not of where the player has left Head Tension. The two-round
+fixed point inside `resolveDrumFor` is gone with it; the solve is now one
+bisection tracking one named mode.
+
+It depends on exactly one control, and it has to. Octave Body decides what the
+four drums *are*: at *Family* the chū-daiko is heard at its (1,1), and at *Tuned*
+the four collapse onto one ō-daiko, which taken up an octave is a drum whose own
+fundamental has climbed clear of the mounting and become the loudest thing it
+has. That handover is what makes the first octave at *Tuned* cost ×13.49 in
+tension rather than ×4, and it is documented in the README. No single assignment
+serves both ends: tuning the chū-daiko's fundamental onto the octave breaks the
+family grid, and tuning a retuned ō-daiko's (1,1) onto it makes the first octave
+at *Tuned* a step of 157 cents. So the identity is read off the drum the family
+would build at the current Octave Body, transformed by the amount that would put
+its *ideal* membrane fundamental on its octave — a closed form, so nothing
+circular and nothing iterative. Past Octave Body it is a constant, which is what
+makes it deterministic, independent of what was struck, and independent of the
+order a host sets parameters in.
+
+`observeMode` and `soundingMode` now take the strike radius from the caller.
+The octave solve passes `tuningStrikeRadius()` — the centred full open stroke —
+and says so in a comment, so Strike Position remains a timbre control with no
+tuning side effect. `measure()` passes `readoutStrikeRadius(parameters)`, which
+is the same arithmetic `trigger()` uses to place a Don, minus the humanising
+jitter. `getFundamentalHz` and the editor's readout both come through
+`measure()`, so both follow.
+
+One consequence: the pitch-bearing bound in `soundingMode` had to widen from
+twice the fundamental's wavenumber to the head's third radial order. The old
+bound admitted the (0,1) pair and the (1,1) and nothing else, which was tenable
+while the function was only ever asked about one fixed stroke. Asked where the
+stick actually lands, it was excluding the mode the stroke drives: the
+chū-daiko struck at the centre is heard at its (0,2) lower branch, and the old
+bound left the readout naming a mode 1035 cents below anything audible.
+
+#### The measurements
+
+Continuity, from rendered audio, sweeping across each crossing:
+
+| Sweep | worst step before | worst step after |
+| --- | ---: | ---: |
+| Pitch, 7.46 → 7.52 st, 0.01 st steps | 1042.9 cents | 1.2 |
+| Pitch, −5.21 → −5.15 st, 0.01 st steps | 506.5 | 2.3 |
+| Head Tension, 0.9160 → 0.9190, 0.0005 steps | 1042.7 | 1.4 |
+
+A 0.01-semitone step is a cent of transposition in itself and a 0.0005 step of
+Head Tension is 1.26 cents through that control's geometric map, so the "after"
+column is the sweep itself plus estimator noise. The geometry scan above now
+finds **one** crossing across all three Octave Body settings instead of
+eighty-six, and it is the Octave Body handover, which was already there: 0.3189
+before, 0.3589 after, 52.5 % and 50.1 % of the head's radius, with the sounding
+pitch continuous through it either way.
+
+The readout against the strike, from rendered audio, twelve takes:
+
+| | before | after |
+| --- | ---: | ---: |
+| worst reported-vs-heard error, takes with one clear pitch | 632.7 cents | 7.0 |
+| worst rendered level at the reported pitch | 0.068 (−23.4 dB) | 0.798 (−2.0 dB) |
+
+Ten of the twelve takes have a partial at least 1.5 dB clear of everything else.
+The two that do not are the ō-daiko at −0.25 and −0.50, where three partials land
+within 0.6 dB; that drum has no single pitch struck near its middle, and the
+model's ranking of the three is inside its own stated accuracy.
+
+The factory heard-octave grid is bit-identical: 59.66 / 119.32 / 238.64 /
+477.28 Hz reported and 59.64 / 119.76 / 238.74 / 477.33 heard, stepping
+1207 / 1194 / 1200 cents, at every Octave Body setting the suite checks.
+*Tuned*'s ×13.49 / ×4.05 / ×4.00 tension ladder and *Family*'s
+150.0 / 78.0 / 40.0 / 30.0 cm diameters are unchanged.
+
+#### What it costs
+
+The keyboard is now exact octaves in the latched mode at every setting, and what
+drifts instead is whether that mode is still the one the drum is heard at. Over
+twelve settings spread across the controls, measured from rendered audio, five
+have all three octave steps within 7 cents: the factory drum, Octave Body 0.5,
+the body opened, a shallow body and a damped head. Before the fix eight of the
+twelve were within 10 cents. The seven that are not, after, are Pitch ±7
+semitones, a much tighter head, a much slacker one, a thin film, a much smaller
+drum, and Octave Body 0 — the last of which was already broken and for an
+unrelated reason, the reference shell's own 96.6 Hz ring, recorded above. On the
+other six it is the bottom step that goes, and it goes a long way: C3 → C4 reads
+33 cents on a thin film, 76 at Pitch −7, and 224 / 224 / 308 / 327 on the rest,
+with C4 → C5 taking up the difference. The four instruments cross from their
+(1,1) to their fundamental at different settings, and between one drum's
+crossing and the next the two pads are heard in different modes.
+
+That is the trade. The argmax chase hid those crossings by rebuilding the drum,
+which is what produced the lurch in the first place — and which also meant Pitch
+at +7 semitones shrank the chū-daiko's head from 39 cm to 24 cm, which is not
+something a transposition control should do. Pitch now transposes and leaves the
+instrument alone, the tuning is exact in one named mode everywhere, and nothing
+moves in a step.
+
+#### Tests
+
+`testThePitchTransformIsContinuousUnderAutomation` sweeps the three crossings
+above and asserts, from rendered audio, that no step moves the heard pitch by
+more than 8 cents. `testTheReadoutFollowsTheStrikePosition` pins the reported
+pitch to the rendered one across Strike Position 0.00 / −0.25 / −0.50 on all four
+drums, within 20 cents wherever the take has one pitch, and pins the rendered
+level at the reported frequency to within 2.5 dB of the strongest partial
+everywhere. Both fail on the pre-fix engine — by 1043 cents and 633 cents
+respectively — and pass after.
+
+Two clauses of `testTheCavityIsAColumnNotAnInfiniteSpring` were re-taken. Two of
+its five recorded corners moved because the drum under them did (167.8403 →
+284.9433 Hz at octave 1 and 458.8257 → 988.7020 at octave 3, both away from the
+reference octave and both at settings a long way from the four instruments); they
+are kept with the new drums recorded, and the two corners the scan now finds
+worst are added beside them, at 1.07 % and 1.00 % against a 1.5 % tolerance. The
+count of scanned drums whose air column has passed its quarter-wave went from
+2513 of 10800 (23.27 %) to 3045 (28.19 %) — all of the change away from the
+reference octave, where the latched mode leaves a drum at a different tension
+than the argmax chase did — so the sanity band moved from a quarter to a third
+with both numbers recorded.
+
+#### Still open
+
+`soundingMode`'s weights and the rendered spectrum disagree by about a decibel
+at a near-tie, which is inside the accuracy the function claims but is enough to
+flip an argmax. It shows at the reference octave around Pitch 7.49, where the
+readout steps from 91.9 to 50.3 Hz while the rendered take moves smoothly from
+91.8 to 92.3 — the drum has not moved at all there, only the model's opinion of
+which of its two partials is louder. That is a readout accuracy question rather
+than a tuning one now that the tuning no longer reads the argmax, and it wants
+the glide-aware weight the previous section already asks for.

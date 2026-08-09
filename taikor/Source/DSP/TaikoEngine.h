@@ -283,13 +283,25 @@ public:
         // changes the body's volume well above the one that does not.
         float loadedFundamentalHz { 88.0f };
         float breathingModeHz { 140.0f };
-        // The pitch the drum is heard at, and the quantity the keyboard's
-        // octaves are solved against: the mode that reaches the microphones
+        // The pitch the drum is heard at: the mode that reaches the microphones
         // with the most energy over the window a struck note's pitch is taken
-        // from. On a small tightly laced head that is the loaded fundamental
-        // above; on a large slack one it is not, because the fundamental
-        // displaces no net air and the mounting empties it in half a second
-        // while the (1,1) mode a fifth and a half above it rings on.
+        // from, under the stroke Strike Position currently describes. On a small
+        // tightly laced head that is the loaded fundamental above; on a large
+        // slack one it is not, because the fundamental displaces no net air and
+        // the mounting empties it in half a second while the (1,1) mode a fifth
+        // and a half above it rings on. Moving the stick towards the middle of
+        // the head changes it again, because a centred stroke cannot drive a
+        // mode with a nodal diameter at all.
+        //
+        // Closely related to, but not the same as, the quantity the keyboard's
+        // octaves are solved against. That one is a *latched* mode of the drum
+        // evaluated at the centred stroke - see tuningModeFor and
+        // tuningStrikeRadius - so that neither Strike Position nor a near-tie
+        // between two modes can retune the instrument. The two agree at and
+        // near the four instruments the family table describes, which is what
+        // puts the factory keyboard on heard octaves; they part company on a
+        // drum the controls have taken a long way from those, and where they do
+        // it is this figure that is right about what you can hear.
         float soundingHz { 88.0f };
         // How long the drum audibly rings: the longer-lived of the two
         // axisymmetric branches, each solved with its own radiation share.
@@ -850,9 +862,9 @@ private:
     static constexpr float pitchWindowStart = 0.08f;
     static constexpr float pitchWindowEnd = 0.98f;
 
-    // One membrane mode of a resolved drum: where it is, what a full open
-    // stroke is worth in it at the microphones, how fast it empties, and what
-    // the three together are worth over the window above.
+    // One membrane mode of a resolved drum: where it is, what a stroke at
+    // `strikeRadius` is worth in it at the microphones, how fast it empties,
+    // and what the three together are worth over the window above.
     struct ModeObservation
     {
         float frequencyHz { 0.0f };
@@ -861,8 +873,23 @@ private:
         float weight { 0.0f };
     };
     [[nodiscard]] static ModeObservation observeMode (const DrumState& drum,
-                                                      int entryIndex,
-                                                      int branch) noexcept;
+                                                      int entryIndex, int branch,
+                                                      float strikeRadius) noexcept;
+
+    // Which mode a pitch is being taken in: a row of the mode table, and for
+    // the axisymmetric rows which branch of the cavity-split pair. This is an
+    // identity rather than a frequency, and it is the thing the octave
+    // transform holds fixed - see tuningModeFor.
+    struct ModeIdentity
+    {
+        std::uint8_t entryIndex { 0 };
+        std::uint8_t branch { 0 };
+
+        [[nodiscard]] bool operator== (const ModeIdentity& other) const noexcept
+        {
+            return entryIndex == other.entryIndex && branch == other.branch;
+        }
+    };
 
     // The mode a drum is heard at, which is the loudest one over that window
     // and is not always the lowest. See soundingMode's definition for why half
@@ -871,10 +898,30 @@ private:
     {
         float frequencyHz { 0.0f };
         float weight { 0.0f };
-        std::uint8_t entryIndex { 0 };
-        std::uint8_t branch { 0 };
+        ModeIdentity identity {};
     };
-    [[nodiscard]] static SoundingMode soundingMode (const DrumState& drum) noexcept;
+    [[nodiscard]] static SoundingMode soundingMode (const DrumState& drum,
+                                                    float strikeRadius) noexcept;
+
+    // The mode each octave of the family is tuned by: an identity latched from
+    // the four instruments the table describes, and never re-chosen from the
+    // player's controls. An argmax is a discontinuous function of every control
+    // that feeds it, so tuning against one made a hundredth of a semitone of
+    // Pitch automation drop a drum by a tenth of an octave and re-solve its
+    // size; a latched identity is what lets the same solve be written
+    // continuously. See the definition for what it does and does not depend on.
+    [[nodiscard]] static ModeIdentity tuningModeFor (int octaveOffset,
+                                                     float octaveBody) noexcept;
+    // Where the octave transform takes its pitches from: a full open stroke on
+    // the head with Strike Position centred. The transform is deliberately
+    // anchored here rather than at the player's own strike position, so that
+    // Strike Position stays a timbre control with no tuning side effect.
+    [[nodiscard]] static float tuningStrikeRadius() noexcept;
+    // Where a Don actually lands with the controls as they are, which is what
+    // the readout has to describe: an off-centre strike drives a different
+    // balance of modes and is genuinely heard at a different pitch.
+    [[nodiscard]] static float readoutStrikeRadius (
+        const EngineParameters& parameters) noexcept;
 
     // The drum an octave is built from: the player's controls carried across
     // the family by whichever of the four instruments this octave plays, with

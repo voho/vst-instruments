@@ -157,7 +157,9 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME Taikor.TaikoEngine COMMAND TaikorTaikoEngineTests)
-    set_tests_properties(Taikor.TaikoEngine PROPERTIES TIMEOUT 120)
+    # 69 s on the reference machine, up from 55 when the automation-continuity
+    # sweeps landed: those render a hundred takes and scan each of them blind.
+    set_tests_properties(Taikor.TaikoEngine PROPERTIES TIMEOUT 240)
 
     if(TAIKOR_BUILD_TOOLS)
         # Guards the renderer that produces the committed demonstration WAVs:

@@ -70,6 +70,39 @@ sits far above where the mounting reaches and wins by fifteen decibels. **The
 keyboard is octaves in the column that is heard, and it is deliberately not
 octaves in the other one** — see [Octave Body](#octave-body).
 
+Two things scope that claim, and both are properties of the instrument rather
+than of the tuning.
+
+The first is the stroke. The table is a centred full open stroke, which is what
+Strike Position leaves the vocabulary at, and moving the stick changes which
+partial a drum is heard at because it changes which modes the stroke can reach
+at all. Towards the middle of the head every mode with a nodal diameter goes to
+nothing — *J<sub>m</sub>*(0) = 0 — and what is left is the radial family, which
+is higher. Measured from rendered audio, the chū-daiko is heard at 119.8 Hz at
+Strike Position 0.00 and at 171.9 Hz at −0.25 and −0.50, a tritone up, because
+its (0,2) branch has taken over from its (1,1). The panel's pitch
+readout follows the stroke, so the number shown is the pitch of the stroke you
+are playing; the keyboard's tuning does not, so Strike Position stays a timbre
+control and cannot retune the instrument. On the ō-daiko struck at or very near
+the middle there is no single answer to report: three partials land within a
+decibel of one another and the drum has no one pitch there.
+
+The second is how far the controls have been taken from the four instruments the
+table describes. The mode each drum is tuned by is fixed to the mode that
+instrument is heard at, rather than re-chosen from whatever is loudest at the
+current settings, because re-choosing it makes the tuning a step function of
+every control that feeds it — a hundredth of a semitone of Pitch automation used
+to drop a drum by 1043 cents and re-solve its head from 24 cm to 40 cm. The
+price is that a drum retuned a long way does eventually change which partial it
+is heard at, and the four do not all change at the same point: with Pitch at
++7 semitones the ō-daiko is still heard at its (1,1) and the chū-daiko has
+already crossed to its fundamental, and the step between those two pads reads
+224 cents instead of 1200 until the ō-daiko crosses too, half a semitone later.
+The same happens at a tight or a slack head, or a much smaller drum. Near the
+factory instruments — which is where the table above is, and where the octave
+strip's four drums are the four drums — every step is within seven cents of an
+octave.
+
 That is also why the ō-daiko is five *shaku* and not three. Three octaves of
 sounding pitch is a factor of eight, and a family heard at its (1,1) at one end
 and at its fundamental at the other has to span a factor of fourteen in the
@@ -197,7 +230,7 @@ a voicing offset.
 | Control | Range | Default | What it changes |
 | --- | --- | --- | --- |
 | Bachi Hardness | 0–100 % | 70 % | Felt beater → seasoned oak. Sets the Hertz contact stiffness |
-| Strike Position | Centre 100 → Rim 100 | As written | Offsets every stroke's own radius |
+| Strike Position | Centre 100 → Rim 100 | As written | Offsets every stroke's own radius. It moves which partial the drum is heard at, and the pitch readout follows it; it does not retune the keyboard |
 | Velocity Depth | 0–100 % | 75 % | How far MIDI velocity moves the impact speed |
 | Tension Mod | 0–100 % | 40 % | Depth of the attack pitch glide, which is the head stretching itself: a hard stroke displaces the hide, a displaced hide is a longer and therefore tighter one, and the drum starts sharp. At 0 the head is treated as linear |
 | Stick Noise | 0–100 % | 35 % | Broadband contact noise on the hide, and the rattle of the tack line when a stroke beats the preload holding the head down |
@@ -656,11 +689,26 @@ tenth of a per cent, because the instruments were already chosen to sit an octav
 apart: the resolved diameters come out 150.0 / 78.0 / 40.0 / 30.0 cm against the
 150 / 78 / 40 / 30 the table states.
 
-It holds across the controls and not only at their defaults. Over a scan of
-eight controls crossed with the four octaves — 43,740 octave boundaries — the
-worst is 56 cents out and 81 of them miss by more than 20 cents, 0.19 %, every
-one of those a drum whose air column has passed its quarter-wave or whose
-geometry has run into a clamp.
+How far it holds as the controls move away from those instruments is a real
+limit, and it is worth stating rather than claiming a scan. The mode each drum
+is tuned by is latched to the mode that instrument is heard at rather than
+re-chosen from whatever is loudest at the current settings — the alternative
+makes the tuning a step function of every control, and it did: a hundredth of a
+semitone of Pitch, or half a thousandth of Head Tension, used to drop a drum by
+1043 cents and re-solve its head from 24 cm to 40 cm mid-automation. With the
+mode latched, the keyboard is exact octaves in that mode at every setting, and
+what drifts instead is whether that mode is still the one the drum is heard at.
+Measured from rendered audio over twelve settings spread across the controls,
+the three octave steps are within 7 cents at the factory drum, at Octave Body
+0.5, with the body opened, with a shallow body and with the head damped. Where
+they are not — a drum retuned ±7 semitones, a much tighter or slacker head, a
+thin film, a much smaller drum — it is the bottom step that goes: it reads
+between 33 and 327 cents instead of 1200, and the step above it takes up the
+difference, because the ō-daiko and the chū-daiko cross from their (1,1) to
+their fundamental at different settings and between those two points the two
+pads are being heard in different modes. Nothing there is a jump: every one of
+those errors moves smoothly with the control that caused it, and the four drums
+are exact octaves apart in the mode they are tuned by at every setting.
 
 What is solved is the mode each drum is actually heard at, and that is not the
 same mode on all four of them. It used to be the drum's own lowest mode, and the
@@ -668,9 +716,10 @@ four fundamentals then landed on exact octaves — 0.0 cents out, every one —
 while the instrument stepped 0 / 11.7 / 14.3 / 26.3 semitones, because on the
 ō-daiko and the chū-daiko the fundamental is not what anyone hears. Measured
 from the rendered audio as the strongest partial of a 0.9 s window opening 80 ms
-after the strike, over Don and Tsu at three velocities each, the four pads now
-read 59.6 / 119.5–120.0 / 238.7 / 477.3 Hz: **at worst 7 cents from exact
-octaves, and at worst 7 cents of spread across the six strokes on any one pad.**
+after the strike, over Don and Tsu at three velocities each and struck where the
+vocabulary puts them, the four pads now read 59.6 / 119.5–120.0 / 238.7 /
+477.3 Hz: **at worst 7 cents from exact octaves, and at worst 7 cents of spread
+across the six strokes on any one pad.**
 
 The breathing branch above the fundamental is still not an octave, and this does
 not make it one.
@@ -787,7 +836,12 @@ The JUCE-free suite covers the playing grid and its MIDI mapping — sixteen not
 and exact silence everywhere else — the four drums being four instruments rather
 than one rescaled, the four strokes being mutually distinct, the octave contract
 at every Octave Body setting including that the octave is an octave in the pitch
-the drum sounds, in the readout and in the rendered partial, all four strokes at
+the drum sounds, in the readout and in the rendered partial, that the tuning is
+continuous under automation — a fine sweep across three settings where two of a
+drum's modes cross, asserting from rendered audio that no automation step moves
+the heard pitch by more than a fraction of what the step itself is worth — that
+the reported pitch is the pitch of the stroke actually being played across
+Strike Position, all four strokes at
 five sample rates, sample-rate and block-size invariance
 including the level of the head's continuum, bit-exact determinism, the velocity
 and contact-time laws, the instrument's dynamic range and the evenness of its
