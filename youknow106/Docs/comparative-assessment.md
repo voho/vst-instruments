@@ -41,19 +41,20 @@ strongest competitor named.
 
 | Mechanism | YouKnow106 | Strongest open competitor |
 |---|---|---|
-| DCO pitch generation | 8 MHz reference divided by 16-bit timer integers — the hardware's own pitch quantisation (A4\@8' = 440.044 Hz), range switch as clock change, scanned restart semantics | None models timer quantisation. KR-106 uses continuous phase with the firmware's 8.8 portamento rate law; junox has an integer-period *artifact* |
+| DCO pitch generation | 8 MHz reference divided by 16-bit timer integers — the hardware's own pitch quantisation (A4\@8' = 440.044 Hz), range switch as clock change, and a scanned restart whose exact forced state remains declared model policy under OQ-08 | None models timer quantisation. KR-106 uses continuous phase with the firmware's 8.8 portamento rate law; junox has an integer-period *artifact* |
+| DCO numerical quality | The legacy full-engine HQ fence covers only the 8' saw at MIDI 60/84 and clears −70 dBc. An expanded common-host pre-VCF matrix uses the six octave-spaced notes MIDI 36/48/60/72/84/96, every range, saw/sub and 5/50/95% pulse; all 1×/2×/4× cells reject the same worst-single-bin gate, including 4× at −42.62/−41.45 dBc for 44.1/48 kHz. Analytic controls validate the spectrum mask, but the fold cause remains unattributed | No surveyed open project publishes an equivalent common-host, multi-waveform DCO reconstruction matrix |
 | Scanned control system | The p. 8 chart's exact 23-write order on a fractional 4.2 ms scheduler; per-destination hold networks, incl. the derived PWM (R117/C62, R116/C63) and SUB (R11/C1) slews; exact intra-pass timestamps declared open (OQ-08) rather than invented | KR-106: 4.2335 ms canonical tick plus per-slot DAC phase offsets from firmware cycle counting — it *claims* the timestamps this project deliberately leaves open; its offsets corroborate our provisional ~125 µs figure |
 | Playing latency | Exhaustive current-model characterization at 48 kHz: every one of the 1,008 host/scan boundary phases on all six cards, with Pitch write, ENV-mode VCA write, 687 µs hold milestone and a declared output-onset proxy reported separately from the fixed 24-sample host DSP report | KR-106 v2.5.12 says rebasing its DAC phase tables removed about 2 ms from tick-driven envelope/LFO updates. No like-for-like event-to-node/output distribution or original-JUNO capture is published in the surveyed open field |
 | Firmware envelope | Hash-scoped B-2 recurrence: 14-bit state, exact Q(v,c) three-partial multiply with the dropped low×low term, `E>>2` DAC truncation, byte-exact fixtures in the suite | KR-106: the same law at instruction level (cleanroom, j106roms lineage), cross-checked against MAME — parity on the digital law; no automated fixtures |
 | Firmware LFO/delay/portamento | Hash-scoped exact laws with regression vectors | KR-106: ROM-table reconstructions verified against four hardware captures — parity in kind |
 | VCF | IR3109 cascade behind the anchored 68 kΩ/560 Ω divider; loop gain fitted only to the 4.8 Vpp service amplitude (rendered 4.8009 Vpp), with 247.90 Hz then predicted rather than fitted; 992 Hz WIDTH anchor (tracking exactly 1.00); AS3109 700 µA control-current knee; R-2R carry INL on the converter write | KR-106: IR3109 TPT cascade with BA662 67:1 feedback physics, self-osc calibrated to a named unit, and a **4096-point measured DAC→Hz table from a real card** — a data asset this project matches only by derivation (within 30 cents of that table's shape after the knee fix) |
-| VCF numerical quality | Path-average antiderivative/divided-difference evaluation inside the Newton solve: hot-case folded lines below −60 dBc, fenced by `testCascadeDeniesTheFoldback`; linear response and limit cycle measured identical. A one-step bounded-work candidate passes the static/RK/fold-back classes but is rejected after failing the engine-bound/standard-grid scanned-control matrix | KR-106: 2×/4× oversampling, no published equivalent fold-back fence. No other surveyed project publishes one |
+| VCF numerical quality | Path-average antiderivative/divided-difference evaluation inside the Newton solve. An exhaustive 20 Hz–20 kHz hot-residual FFT clears −60 dBc at 2×/4× with an independent-oracle off-mask control below −93 dBc, but the independent common-host RK64/RK128 comparison rejects every 1×/2×/4× nominal-Character-0 cell on full-waveform NRMS for the production-compensated hot-saw fixture; 4× is still only −24.34/−25.81 dB at 44.1/48 kHz against −40. A one-step bounded-work candidate separately fails the engine-bound/standard-grid scanned-control matrix | KR-106: 2×/4× oversampling, no published equivalent common-host or fold-back fence. No other surveyed project publishes one |
 | Chorus | Bucket-clocked two-phase 256-stage MN3009 model: full-period hold confirmed by the datasheet OUT1/OUT2 solve, per-shift transfer loss on the EC-row anchor, derived LFO rates 0.5533/0.8983 Hz from the 106's own timing network (ratio 1.6234799), measured 1.4–6.4 ms sweep, BGA/SGA separation via bounded polyBLEP, no-compander hiss modelled | KR-106: deliberately *not* bucket-clocked (Hermite delay line with a written rationale), surrounded by measured side-effects (CTE gain modulation, leakage noise, clock-reset clicks); Chorus II rate marked "inherited, not re-verified". Hera has the field's only other bucket-level BBD — attached to an admittedly inaccurate alpha |
 | HPF incl. bass boost | The boost shelf **derived from the p. 15 branch** (+10.50 dB DC, +1.41 dB HF, 59.41 Hz; within 0.016 dB of the exact 2z/2p solve), cut corners from designators; asymptotic C14 coupling states | KR-106: the same 2p2z transfer from designators, verified 0.55 dB RMS against its (unpublished) hardware noise sweep — convergent result, one lineage of hardware corroboration |
 | Common VCA LEVEL | Derived dB-linear law from p. 8/p. 15/NEC (−16.32 + 0.1656·b dB), C7 9.08 ms settling | Not modelled as a distinct stage anywhere else surveyed |
 | Output boundary | JIS-B volume law with internal 29.3 kΩ wiper loading, three coupling boundaries, −18 dBFS RMS declared policy | Generic gain staging everywhere else |
 | Patch compatibility | Exact 18-byte tone format, .syx load/save/drag-drop, factory bank in hardware order, PC 0–127 | KR-106 has patch banks; none document byte-exact SysEx round-tripping |
-| Deterministic verification | Six suites; every anchored claim above is fenced by a test that fails if the constant or law drifts | **None in the entire open field.** KR-106 ships manual offline analysis tools only |
+| Deterministic verification | Nine JUCE-free CTest contracts; anchored laws are fenced, while reviewed numerical failures are also locked as explicit rejections rather than silently counted as passes | **None in the entire open field.** KR-106 ships manual offline analysis tools only |
 | Evidence discipline | Public research contract with provenance classes (anchored / ROM-resolved / derived / voiced / policy), a 21-item open-questions queue with capture protocols, recorded rejections | KR-106 embeds measurement claims in comments and ships some raw CSVs (a genuine strength — this project records fixtures and hashes instead, and its raw-capture asks are still open); no other project documents provenance at all |
 
 Where the open field is genuinely ahead, stated plainly: KR-106 ships
@@ -188,8 +189,9 @@ near-carrier sidebands being each engine's own per-voice drift
 mechanism, not aliasing. Recorded as measured rather than escalated:
 hunting progressively adversarial corners until one engine loses would
 be motivated measurement. The standing difference on this axis is
-verification, not the number — YouKnow106's worst-case fold-back is
-deterministically fenced in its suite; no competitor fences theirs. Pitch is
+verification, not the number — YouKnow106 deterministically fences the
+exhaustive 20 Hz–20 kHz hot-VCF residual spectrum and now records the expanded DCO, full-waveform VCF and
+BBD matrix rejections; no competitor publishes equivalent gates. Pitch is
 essentially exact on both. The axes this material cannot measure — scan
 stepping, BBD clock behaviour, alias floors, and every deterministically
 fenced anchor — remain where the two projects genuinely differ, per the
@@ -339,10 +341,78 @@ This is work attribution, not a selective-rate admission. Counters with
 different semantics are not cycle weights; the whole-engine 4×/1× ratios do
 not say what a future split architecture will save. More importantly, DCO,
 VCF/VCA, scan/holds, BBD/support processing and their reconstruction boundary
-currently share one loop. A lower-rate domain therefore still needs a
-common-host 1×/2×/4× error matrix against independent DCO, RK4 VCF, exact-edge
-BBD and analytic scan references. No DSP equation, rate selection or rendered
-sample changed in this step.
+currently share one loop. The common-host qualification below now supplies the
+isolated DCO, RK64/RK128 VCF, closed-form BBD and analytic scan comparisons. It
+admits no split: the three rejecting audio fixtures block every tested factor,
+and the
+matrix does not include the inter-domain reconstruction, whole-engine or
+latency proof a production architecture would require. No DSP equation, rate
+selection or rendered sample changed in either measurement step.
+
+### Common-host numerical quality: no split admitted
+
+**Added 2026-08-09.** Each audited boundary or declared fixture was rendered at
+44.1 and 48 kHz through candidate internal factors 1×, 2× and 4×. DCO harmonic
+coefficients and analytic controls define its wanted mask and gain references;
+the VCF and BBD oracles cross an independent 4,097-tap `q=16` Kaiser FIR with
+explicit delay compensation. Four times is a candidate under test, never the
+reference truth. Every audited fixture/factor cell is **REJECT**, so the current
+global quality selector remains untouched.
+
+The DCO grid uses the six octave-spaced notes MIDI 36/48/60/72/84/96, all three
+ranges, saw and sub, and pulse at 5/50/95% duty. Its gate is ≤−70 dBc; the
+reported value is the worst single
+off-mask FFT bin, not integrated alias energy or a full-band floor. Independent
+analytic multiline controls validate the mask. The normalized scan-ordinal
+checks and declared DCO/PWM/SUB recurrences pass, but they neither identify the
+fold mechanism — which remains **UNATTRIBUTED** — nor establish hardware scan
+timing.
+
+| Audited boundary/fixture and rejecting metric | Host | 1× | 2× | 4× | Gate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| DCO worst off-mask bin (dBc) | 44.1 kHz | −12.780565 | −36.596878 | −42.618000 | ≤−70 |
+| DCO worst off-mask bin (dBc) | 48 kHz | −16.741087 | −36.344575 | −41.452375 | ≤−70 |
+| VCF hot-saw NRMS (dB) | 44.1 kHz | −1.110 | −12.232 | −24.343 | ≤−40 |
+| VCF hot-saw NRMS (dB) | 48 kHz | −1.062 | −13.751 | −25.810 | ≤−40 |
+
+The VCF reference is an explicit RK128 solve whose convergence is cross-checked
+against RK64. The
+listed nominal-Character-0 fixture applies the production resonance input
+compensation to the hot saw. The exhaustive 20 Hz–20 kHz residual FFT masks
+only ±6 bins around each legitimate output harmonic; its 1×/2×/4× maxima are
+−27.063/−67.588/−99.040 dBc at 44.1 kHz and
+−19.658/−67.128/−99.618 dBc at 48 kHz against a <−60 dBc gate. The matching
+oracle-only off-mask controls are −93.242/−93.163 dBc. Those 2×/4× passes do
+not override the complete-waveform NRMS rejection or qualify Character 1.
+
+The deterministic BBD oracle evaluates the documented component filters, the
+128-edge transfer and complete zero-order-hold image phasors at a bounded
+linearized drive. It deliberately uses the same model anchors, so it is an
+independent numerical implementation, not a new hardware measurement or truth.
+BGA is absolute error in wanted physical-image level; exactly one
+non-fundamental wanted line clears the projection threshold per cell, so its
+column is not an exhaustive image population. SGA is unwanted host-grid level
+reported as the maximum over every unmasked 20 Hz–20 kHz Blackman–Harris FFT
+bin. Only validated wanted physical lines whose source is ≤20 kHz may be masked.
+
+| BBD metric | Host | 1× | 2× | 4× | Gate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Analytic NRMS (dB) | 44.1 kHz | −3.099 | −14.910 | −27.043 | ≤−40 |
+| Analytic NRMS (dB) | 48 kHz | −4.640 | −16.427 | −28.183 | ≤−40 |
+| Qualifying-line BGA level error (dB) | 44.1 kHz | 34.389 | 4.090 | 0.869 | ≤0.75 |
+| Qualifying-line BGA level error (dB) | 48 kHz | 22.893 | 3.257 | 0.708 | ≤0.75 |
+| 20 Hz–20 kHz unmasked SGA max (dBc) | 44.1 kHz | −24.854 | −28.762 | −47.635 | <−60 |
+| 20 Hz–20 kHz unmasked SGA max (dBc) | 48 kHz | −28.871 | −31.329 | −38.189 | <−60 |
+
+Individual submetrics can pass without admitting a domain: for example, the
+48 kHz/4× BGA error is inside 0.75 dB, while that cell still fails analytic
+NRMS and SGA. Oracle controls put the post-FIR omitted-image tail at
+−198.030/−202.098 dBc and exhaustive 20 Hz–20 kHz off-mask content at
+−93.046/−135.607 dBc for 44.1/48 kHz. The same admission rule applies to
+the exhaustive VCF residual spectrum and to the scan/hold controls. No production
+selector, rate, audio path or preset changed. Inter-domain reconstruction,
+whole-engine equivalence and latency qualification remain mandatory even after
+a future isolated domain clears all of its gates.
 
 ### Bounded-work VCF candidate: matrix rejection
 
