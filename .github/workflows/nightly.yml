@@ -47,7 +47,7 @@ jobs:
           # a stale WAV committed forever. Adding or removing a take means
           # updating the number here in the same change.
           instruments=(
-            "vocalor:VocalorRenderDemos:9"
+            "vocalor:VocalorRenderDemos:10"
             "drumalor:DrumalorRenderDemos:7"
             "neuramar:NeuramarRenderDemos:8"
             "electry:ElectryRenderDemos:14"

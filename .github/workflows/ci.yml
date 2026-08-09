@@ -23,7 +23,7 @@ jobs:
             directory: vocalor
             build_plugin_option: VOCALOR_BUILD_PLUGIN
             target_demo: VocalorRenderDemos
-            expected_demos: 9
+            expected_demos: 10
           - name: Drumalor
             directory: drumalor
             build_plugin_option: DRUMALOR_BUILD_PLUGIN
