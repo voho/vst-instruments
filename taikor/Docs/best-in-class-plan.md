@@ -3235,3 +3235,162 @@ themselves within a decibel.
 
 The per-fix audio previews under `Docs/audio/` are one-time review evidence and
 are not re-rendered here.
+
+### Step 6, third follow-up — a readout with no number in it, and a pair read as one capsule
+
+Two more defects in the same comparison, both found by review of the step above.
+Neither touches the audio: all 25 demonstration WAVs are byte-identical before
+and after, which is the sharpest check this repository has and the one that says
+a readout change stayed a readout change.
+
+#### Defect A — the readout returned 0 Hz
+
+`ModeObservation::weight` is `A/d · (e^{−d·t₀} − e^{−d·t₁})`, and `soundingMode`
+accepted a mode only if that beat a zero-initialised best. On a small head at
+the tension ceiling every mode of the drum is emptied before the pitch window
+opens — at Head Diameter 15 cm, Head Tension 1.0, Head Material 0 and Pitch +12,
+the okedo pad's longest-lived mode decays at nine hundred inverse seconds — so
+both exponentials underflow to exactly zero, every weight on the drum is zero,
+nothing is ever accepted, and the panel prints the default:
+
+| octave | reported, before | reported, after | loaded fundamental |
+| ---: | ---: | ---: | ---: |
+| 0 | 2466.33 Hz | 2466.33 Hz | 2466.33 |
+| 1 | 5097.77 | 5097.77 | 5097.77 |
+| 2 | **0.00** | **16793.35** | 16793.35 |
+| 3 | **0.00** | **25565.09** | 25565.08 |
+
+It is not one corner. Swept over the drum controls — diameter, tension, head
+material, air coupling, Pitch, Octave Body, body depth, resonant tension and
+head damping — it was **23265 of 729000** combinations, and over the stroke and
+microphone controls at the extremes of the drum a further **7125 of 162000**:
+3.4 % of the space, all of it on small tight heads, every one of them a drum
+that plainly sounds. **After: 0 of 891000.**
+
+The fix keeps `weight` exactly as it was and adds the same quantity in nepers
+beside it, computed through the exponents rather than the exponentials —
+`log A − log d − d·t₀ + log(−expm1(−d·(t₁−t₀)))`, which is finite as far down as
+a float exponent reaches. `soundingMode` compares on `weight` and falls back to
+`logWeight` only when `weight` has run out of exponent on both sides of the
+comparison, and it always takes the first valid mode, so a drum that sounds can
+no longer be reported as having no pitch. Where the old comparison had an
+answer it returns the same one, by construction rather than by measurement.
+
+#### Defect B — Stereo Width was not in the ranking
+
+`observeMode` ranked the modes with a nodal diameter through the **left
+capsule**. The output stage does not put the left capsule out: it puts out
+`mid ± width·(L−R)`, so at Stereo Width 0.5 the pair is handed through untouched,
+at 0 the two capsules are summed, and above 0.5 their difference is exaggerated.
+
+With the pair fully opened the two capsules straddle the nodal diameters of the
+low orders, and at width 0 a mode of order three arrives at them within a per
+cent of anti-phase and all but cancels in the sum. Measured, octave 1, Mic
+Spread 1.00, Mic Distance 0.00, Strike Position +1.00, Stereo Width 0.00:
+
+| | before | after |
+| --- | ---: | ---: |
+| reported | 210.13 Hz | **119.32 Hz** |
+| rendered strongest partial | 119.89 Hz | 119.89 Hz |
+| error | **+972 ¢** | **−8 ¢** |
+| rendered amplitude at the reported pitch | 3.4 % (−29.3 dB) | 100 % (0.0 dB) |
+
+`observeMode` now builds both capsule terms and combines them with the width the
+output stage will use. It is still the **left channel** that is ranked — the left
+*output* rather than the left capsule, which is what the function always claimed
+and what it should always have computed.
+
+Ranking on the louder of the two finished channels instead would be a better
+description of a stereo instrument, and it is not done, for a measured reason:
+at width 0.5 that is max(|L|,|R|) rather than |L|, which is up to 1.8 dB on the
+modes of order one — enough to move the chū-daiko's Octave Body handover from
+0.359 to 0.209 and with it the drum every octave above it is solved from. The
+tuning path reads this function. So the combination is written as a pair of
+gains, `0.5 ± width`, which are exactly 1 and 0 at the factory width, and the
+association of the surviving product is left exactly as it was, so the factory
+answer is bit-identical rather than nearly so. Both were checked: with the
+combination written the other way the latched identity moves at Octave Body 0.21
+to 0.35, and `testTheCavityIsAColumnNotAnInfiniteSpring` catches it.
+
+#### The sweep
+
+180 settings — Strike Position × Mic Spread × Stereo Width, and Strike Position ×
+Mic Distance × Stereo Width with the pair fully opened, on all four drums —
+Humanise off, each rendered six times, judged by the same majority-of-six rule
+and measured on the left output channel:
+
+| | before | after |
+| --- | ---: | ---: |
+| settings with a pitch | 155 of 180 | 155 of 180 |
+| of those, readout wrong by more than 50 ¢ | **12** | **2** |
+| worst rendered level at the reported pitch | 0.036 | 0.603 |
+
+The two that remain are the chū-daiko's (1,3) with the pair fully open and
+backed all the way off, which is the residual near-tie the section above already
+records and is not a Stereo Width failure: it reads the same at width 0 and at
+width 1.
+
+On the suite's own twenty-six pinned settings, which now include six at Stereo
+Width 0.00 and 1.00:
+
+| | committed tree | after |
+| --- | ---: | ---: |
+| settings with a pitch | 23 of 26 | 23 of 26 |
+| of those, readout wrong by more than 25 ¢ | **4** | **0** |
+| worst error where there is a pitch | 1019 ¢ | **6 ¢** |
+| worst rendered level at the reported pitch | 0.034 | 0.999 |
+
+#### Hard constraints, re-verified
+
+- **All 25 demonstration WAVs are byte-identical** to the committed ones,
+  rendered to a scratch directory and compared with `cmp`. No audio moved.
+- The factory grid is bit-identical: 59.659817 / 119.319626 / 238.639236 /
+  477.278473 Hz at Octave Body 0 and 59.659817 / 119.319633 / 238.639252 /
+  477.278503 at *Family*, stepping 1200.0000 / 1199.9999 / 1200.0000 cents, with
+  the same tensions and radii to the last digit printed.
+- The latched tuning identities are identical to the committed tree at **all 101
+  hundredths of Octave Body**, checked directly rather than at four points.
+- `testThePitchTransformIsContinuousUnderAutomation`,
+  `testTheReadoutFollowsTheStrikePosition`,
+  `testTheFourDrumsStepInHeardOctaves`, `testTheFourDrumsAreFourInstruments`,
+  `testTheCavityIsAColumnNotAnInfiniteSpring` and
+  `testTheReadoutNamesThePartialTheDrumIsHeardAt` — including octave 1 at Strike
+  Position +0.50 with the pair coincident, which reads 68.05 Hz against 68.19
+  measured — all pass.
+
+#### Tests
+
+`testTheReadoutIsAlwaysAFrequency` is new and reads the reported value directly,
+because the defect is a literal zero and there is no pitch to measure it
+against. It pins the reported case by name and sweeps 6336 more drums across the
+drum, stroke and microphone controls. `testTheReadoutNamesThePartialTheDrumIsHeardAt`
+gains six Stereo Width settings, including the reported one, and now measures
+the left *output* channel rather than the left capsule — which is the same
+signal only at width 0.5, and saying which one is meant is half of what defect B
+was.
+
+Reverting the two changes by hand — the width gains forced to 1 and 0, and the
+`logWeight` fallback taken out of `soundingMode` — fails eleven assertions: four
+pitch clauses at 973, 1019, 416 and 402 cents, two level clauses at 0.034 and
+0.117, the reported zero at two octaves, and the sweep at 340 of 6336 drums.
+Restoring them passes all of it.
+
+#### What is still open
+
+The six settings the section above lists are unchanged, and the two the sweep
+here finds are two of them. Nothing in this step moves that residual: it is the
+weights being good to about a decibel and a half where two partials are within a
+decibel and a half of each other.
+
+One thing this step deliberately did not do is rank on both output channels. A
+partial that survives in the right channel and cancels in the left is a partial
+a listener hears, and the readout will not name it — measured, that costs the
+okedo at the rim with the pair fully open and the width exaggerated, where the
+left channel is heard at 238.6 Hz and the right at 412.3 and the readout reports
+238.6. Fixing it means giving `soundingMode` two behaviours, one for the readout
+and one for the octave transform, and that split is exactly the shape of the
+defect the first follow-up removed. It wants the tuning identity taken off this
+function first.
+
+The per-fix audio previews under `Docs/audio/` are one-time review evidence and
+are not re-rendered here.
