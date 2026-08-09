@@ -161,9 +161,9 @@ TaikorAudioProcessor::createParameterLayout()
     // --- The drum -------------------------------------------------------
     result.push_back (makeCentimetreParameter (
         ids::headDiameter, "Head Diameter", ids::minimumDiameterCentimetres,
-        ids::maximumDiameterCentimetres, 95.0f, 0.5f));
+        ids::maximumDiameterCentimetres, 150.0f, 0.5f));
     result.push_back (makePercentParameter (ids::bodyDepth, "Body Depth", 0.5f));
-    result.push_back (makePercentParameter (ids::tension, "Head Tension", 0.55f));
+    result.push_back (makePercentParameter (ids::tension, "Head Tension", 0.62f));
     result.push_back (makePercentParameter (ids::headMaterial, "Head Material", 0.75f));
     result.push_back (makePercentParameter (ids::shellMaterial, "Shell Material", 0.8f));
     result.push_back (makePercentParameter (
@@ -262,7 +262,7 @@ TaikorAudioProcessor::createParameterLayout()
         // loud as possible. A ghost stroke is about thirty-four decibels
         // below a full blow on the same drum, which is the range the model
         // actually covers.
-        juce::NormalisableRange<float> { -24.0f, 6.0f, 0.1f }, -20.0f,
+        juce::NormalisableRange<float> { -24.0f, 6.0f, 0.1f }, -22.5f,
         juce::AudioParameterFloatAttributes()
             .withLabel ("dB")
             .withStringFromValueFunction ([] (float value, int)
@@ -317,7 +317,15 @@ taikor::EngineParameters TaikorAudioProcessor::snapshotEngineParameters() const 
 taikor::TaikoEngine::DrumMeasurements TaikorAudioProcessor::measureDrum (
     int octaveOffset) const noexcept
 {
-    return taikor::TaikoEngine::measure (snapshotEngineParameters(), octaveOffset);
+    // The host's rate, because the pitch this reports has to be a partial the
+    // engine will actually instantiate at it - see TaikoEngine::soundingMode.
+    // Zero means the host has not prepared us yet, and then the measurement's
+    // own default stands.
+    const auto rate = displaySampleRate.load (std::memory_order_relaxed);
+    return rate > 0.0
+             ? taikor::TaikoEngine::measure (snapshotEngineParameters(), octaveOffset,
+                                             0.0f, rate)
+             : taikor::TaikoEngine::measure (snapshotEngineParameters(), octaveOffset);
 }
 
 void TaikorAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)

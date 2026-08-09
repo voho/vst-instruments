@@ -410,6 +410,18 @@ void TaikorHeadDisplay::setMicrophones (float spread, float normalisedDistance)
     repaint();
 }
 
+// The engine reports zero when no membrane mode of the drum survives the
+// renderer's Nyquist cutoff, which is a drum with no pitch rather than a drum at
+// nought hertz - a 15 cm head at the tension ceiling, taken to the top of the
+// keyboard, has its own fundamental above 25 kHz. Printing "0.0 Hz" there would
+// be the same untruth in the other direction. See
+// TaikoEngine::DrumMeasurements::soundingHz.
+static juce::String describeSoundingPitch (float soundingHz)
+{
+    return soundingHz > 0.0f ? juce::String (soundingHz, 1) + " Hz"
+                             : juce::String ("no pitch");
+}
+
 void TaikorHeadDisplay::setMeasurements (float fundamentalHz, float breathingHz,
                                          float diameterCentimetres, float tailSeconds)
 {
@@ -531,7 +543,7 @@ void TaikorHeadDisplay::paint (juce::Graphics& g)
 
     g.setColour (textColour);
     g.setFont (juce::Font (juce::FontOptions (12.0f).withStyle ("Bold")));
-    g.drawText (juce::String (fundamental, 1) + " Hz  +  "
+    g.drawText (describeSoundingPitch (fundamental) + "  +  "
                     + juce::String (breathing, 1) + " Hz breathing",
                 readout, juce::Justification::centred, false);
 }
@@ -553,8 +565,11 @@ TaikorHeadDisplay::createAccessibilityHandler()
             const auto stroke =
                 taikor::getArticulationDisplayName (owner.lastArticulation);
             return "Drum head. " + juce::String (owner.diameter, 1)
-                 + " centimetre head sounding " + juce::String (owner.fundamental, 1)
-                 + " hertz with a " + juce::String (owner.breathing, 1)
+                 + " centimetre head sounding "
+                 + (owner.fundamental > 0.0f
+                        ? juce::String (owner.fundamental, 1) + " hertz"
+                        : juce::String ("no membrane tone at this sample rate"))
+                 + " with a " + juce::String (owner.breathing, 1)
                  + " hertz breathing mode, and a " + juce::String (owner.tail, 2)
                  + " second tail. Last stroke: "
                  + juce::String (stroke.data(), stroke.size()) + " at "
@@ -1134,7 +1149,10 @@ void TaikorAudioProcessorEditor::timerCallback()
     headDisplay.setMicrophones (engineParameters.micSpread, engineParameters.micDistance);
 
     const auto measurements = audioProcessor.measureDrum (selectedOctave);
-    headDisplay.setMeasurements (measurements.loadedFundamentalHz,
+    // The pitch the drum is heard at rather than its lowest mode: on the two
+    // large drums of the family those are not the same partial, and a readout
+    // labelled with a pitch has to be the one the key just played.
+    headDisplay.setMeasurements (measurements.soundingHz,
                                  measurements.breathingModeHz,
                                  measurements.radiusMetres * 200.0f,
                                  measurements.tailSeconds);

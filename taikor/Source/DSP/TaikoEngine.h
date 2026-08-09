@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string_view>
 
@@ -47,6 +48,11 @@ inline constexpr int referenceNote = 48;        // C3
 inline constexpr int lowestOctaveOffset = 0;
 inline constexpr int highestOctaveOffset = 3;
 inline constexpr int drumCount = highestOctaveOffset - lowestOctaveOffset + 1;
+
+// The rate the static measurement assumes when a caller has no host to ask.
+// It matters because which of a drum's modes the renderer can instantiate at
+// all is a question about the host's clock - see TaikoEngine::measure.
+inline constexpr double defaultSampleRate = 48000.0;
 
 struct ArticulationMetadata
 {
@@ -105,7 +111,7 @@ struct DrumDescription
 // the physical drum, the second how it is struck, and the third the close pair
 // of microphones in front of it. Nothing here is a voicing preset: each field
 // feeds a term of the model, so the defaults describe one specific drum - a
-// 95 cm odaiko with a thick cowhide head on a heavy zelkova shell,
+// 1.50 m odaiko with a thick cowhide head on a heavy zelkova shell,
 // struck with a medium-hard oak bachi - rather than the midpoint of every axis.
 struct EngineParameters
 {
@@ -113,7 +119,7 @@ struct EngineParameters
     // Head diameter in metres. Sets the membrane radius directly, so it moves
     // pitch as 1/a. The modal ratios move too, but only through the head's own
     // bending stiffness measured against its tension - see stiffnessStretch.
-    float headDiameter { 0.95f };
+    float headDiameter { 1.50f };
     // Body depth as a fraction of the diameter, 0 -> 0.40, 1 -> 1.30. The
     // enclosed volume is what couples the two heads, so a shallow drum splits
     // its axisymmetric modes much further apart than a deep one.
@@ -121,7 +127,7 @@ struct EngineParameters
     // Head tension. Mapped geometrically onto 1.2..22 kN/m, the range a tacked
     // or rope-laced hide actually occupies. Wave speed is sqrt(T/sigma), so
     // this and the head material together set the pitch.
-    float tension { 0.55f };
+    float tension { 0.62f };
     // 0 = thin synthetic film, 1 = thick heavy cowhide. Sets the head's areal
     // density, its internal loss factor and its bending stiffness at once,
     // because all three come from the same piece of material - and the last of
@@ -207,8 +213,14 @@ struct EngineParameters
     float stereoWidth { 0.5f };
     // Gentle output-stage saturation, 0 = exactly bypassed.
     float drive { 0.0f };
-    // Linear output gain.
-    float outputGain { 0.100000f };
+    // Linear output gain. Set so that the loudest single stroke the instrument
+    // has - a full-velocity rim shot on the reference drum, with the humanising
+    // jitter pushing the impact speed as far as it goes - still clears the
+    // safety limiter. It came down from 0.100000 when the reference o-daiko went
+    // from three shaku to five: a rim shot catches the hoop and the body as well
+    // as the head, and the body of a five-shaku drum is a great deal more of
+    // the stroke.
+    float outputGain { 0.075000f };
 };
 
 // Snapshot of the drum for the editor's head display. Produced on the audio
@@ -277,6 +289,37 @@ public:
         // changes the body's volume well above the one that does not.
         float loadedFundamentalHz { 88.0f };
         float breathingModeHz { 140.0f };
+        // The pitch the drum is heard at: the mode that reaches the microphones
+        // with the most energy over the window a struck note's pitch is taken
+        // from, under the stroke Strike Position currently describes. On a small
+        // tightly laced head that is the loaded fundamental above; on a large
+        // slack one it is not, because the fundamental displaces no net air and
+        // the mounting empties it in half a second while the (1,1) mode a fifth
+        // and a half above it rings on. Moving the stick towards the middle of
+        // the head changes it again, because a centred stroke cannot drive a
+        // mode with a nodal diameter at all.
+        //
+        // Closely related to, but not the same as, the quantity the keyboard's
+        // octaves are solved against. That one is a *latched* mode of the drum
+        // evaluated at the centred stroke - see tuningModeFor and
+        // tuningStrikeRadius - so that neither Strike Position nor a near-tie
+        // between two modes can retune the instrument. The two agree at and
+        // near the four instruments the family table describes, which is what
+        // puts the factory keyboard on heard octaves; they part company on a
+        // drum the controls have taken a long way from those, and where they do
+        // it is this figure that is right about what you can hear.
+        //
+        // Zero means the drum has no membrane tone at this sample rate, and it
+        // is the only value in this struct that is a marker rather than a
+        // measurement. The renderer refuses every mode at or above 0.98 of
+        // Nyquist, and a very small head at the tension ceiling taken up the
+        // keyboard can put its *lowest* membrane mode past that: at Head
+        // Diameter 15 cm, Head Tension 1.0, a thin film and Pitch +12 the top
+        // pad's fundamental is 25565 Hz, which no 44.1 or 48 kHz host will ever
+        // sound. There is then no partial to name, and naming one anyway - as
+        // this used to, by ranking modes the renderer had already thrown away -
+        // is reporting a pitch that is not in the audio. See soundingMode.
+        float soundingHz { 88.0f };
         // How long the drum audibly rings: the longer-lived of the two
         // axisymmetric branches, each solved with its own radiation share.
         // Reporting only one of them described whichever mode happened to be
@@ -305,9 +348,17 @@ public:
     // The same measurement without an engine instance, so the editor can show
     // what drum the current controls describe without keeping a second copy of
     // the whole voice pool alive to ask.
+    //
+    // The sample rate is here because one of the figures depends on it:
+    // `soundingHz` names a partial the renderer will actually instantiate, and
+    // which partials those are is decided by the host's clock. Everything else
+    // in the struct describes the drum rather than the render and is the same
+    // at every rate. An instance uses its own prepared rate; a caller without
+    // one gets 48 kHz.
     [[nodiscard]] static DrumMeasurements measure (
         const EngineParameters& parameters, int octaveOffset,
-        float pitchBendSemitones = 0.0f) noexcept;
+        float pitchBendSemitones = 0.0f,
+        double sampleRateHz = defaultSampleRate) noexcept;
 
     // Contact time of a stroke in seconds, as the Hertz impact solve returns
     // it. Exposed because the velocity-to-timbre law is the single most
@@ -716,6 +767,12 @@ private:
         float micAngleRight { 0.0f };
         float micDistanceMetres { 0.16f };
         float micProximity { 0.6f };
+        // The width trim the output stage will apply to the finished pair. It
+        // belongs to the drum's resolved state because it decides what a mode
+        // is worth once the two capsules have been combined - and at width 0
+        // that is a mono sum, in which a mode with a nodal diameter between the
+        // two capsules very nearly cancels. See observeMode.
+        float stereoWidth { 0.5f };
         std::array<float, shellResonatorCount> shellFrequencies {};
         std::array<float, shellResonatorCount> shellDecays {};
         // Modal mass of the shell wall, so a stroke on the body drives it
@@ -727,6 +784,15 @@ private:
         // a mode is long enough to move them.
         float mountLoss { 0.0f };
         float mountCorner { 80.0f };
+        // How long a full open stroke stays on this head, as the Hertz impact
+        // solve returns it for the neutral impact speed. A stroke is a force
+        // pulse of finite length, not an impulse, so it cannot drive a mode
+        // whose period is shorter than the contact: everything above about
+        // 1/tau comes out of the stroke already attenuated. That is the whole
+        // of why a felt beater sounds dull, and it is the term that decides
+        // which mode is loudest whenever two of them straddle 1/tau - see
+        // observeMode and contactSpectrum.
+        float contactSeconds { 0.0015f };
     };
 
     [[nodiscard]] static EngineParameters sanitise (
@@ -826,6 +892,107 @@ private:
     };
     [[nodiscard]] static AxisymmetricPair solveAxisymmetricPair (
         const DrumState& drum) noexcept;
+
+    // The window a struck note's pitch is taken from: from the end of the
+    // attack, where the stick's own noise has gone, to nine tenths of a second
+    // later, by which time even a large drum has said what it is. Everything
+    // that decides which mode a drum is heard at is a comparison over this
+    // window - a loud mode that empties in a third of a second and a quiet one
+    // that outlasts it are not ranked by level alone.
+    static constexpr float pitchWindowStart = 0.08f;
+    static constexpr float pitchWindowEnd = 0.98f;
+
+    // How much of a stroke reaches a mode at `omegaTau`, where tau is the
+    // contact time: the magnitude of the Hertz force pulse's own transform,
+    // normalised at zero. The pulse the render drives the bank with is a
+    // sin^1.5 arch of length tau, so this is
+    //   |integral of sin(pi u)^1.5 e^(-i x u) du over [0,1]| / (2.3963 / pi),
+    // which has no elementary closed form and is fitted here.
+    [[nodiscard]] static float contactSpectrum (float omegaTau) noexcept;
+
+    // One membrane mode of a resolved drum: where it is, what a stroke at
+    // `strikeRadius` is worth in it at the microphones, how fast it empties,
+    // and what the three together are worth over the window above.
+    struct ModeObservation
+    {
+        float frequencyHz { 0.0f };
+        float amplitude { 0.0f };
+        float decayRate { 0.0f };
+        float weight { 0.0f };
+        // The same quantity in nepers, which is the one that survives a drum
+        // whose modes are all emptied inside the pitch window. `weight` holds a
+        // difference of two exponentials, and on a 15 cm head at the tension
+        // ceiling both of them underflow to zero for every mode of the drum -
+        // whereupon a comparison on `weight` alone has nothing to choose
+        // between and reports no mode at all. This is computed from the
+        // exponents rather than from the exponentials, so it stays finite as
+        // far down as a float exponent reaches.
+        float logWeight { -std::numeric_limits<float>::infinity() };
+    };
+    [[nodiscard]] static ModeObservation observeMode (const DrumState& drum,
+                                                      int entryIndex, int branch,
+                                                      float strikeRadius) noexcept;
+
+    // Which mode a pitch is being taken in: a row of the mode table, and for
+    // the axisymmetric rows which branch of the cavity-split pair. This is an
+    // identity rather than a frequency, and it is the thing the octave
+    // transform holds fixed - see tuningModeFor.
+    struct ModeIdentity
+    {
+        std::uint8_t entryIndex { 0 };
+        std::uint8_t branch { 0 };
+
+        [[nodiscard]] bool operator== (const ModeIdentity& other) const noexcept
+        {
+            return entryIndex == other.entryIndex && branch == other.branch;
+        }
+    };
+
+    // The mode a drum is heard at, which is the loudest one over that window
+    // and is not always the lowest. See soundingMode's definition for why half
+    // of this family is heard a fifth and a half above its own fundamental.
+    struct SoundingMode
+    {
+        float frequencyHz { 0.0f };
+        float weight { 0.0f };
+        ModeIdentity identity {};
+    };
+    // `ceilingHz` bounds the comparison to the modes the caller's question is
+    // about. The readout passes the renderer's own cutoff, so it can only name
+    // a partial that will be in the audio; the octave transform passes
+    // infinity, because which mode an instrument is tuned by is a property of
+    // the instrument and must not follow the host's clock. See the definition.
+    [[nodiscard]] static SoundingMode soundingMode (const DrumState& drum,
+                                                    float strikeRadius,
+                                                    float ceilingHz) noexcept;
+
+    // The highest frequency the render will instantiate a resonator at. This
+    // is configureResonator's own test, written once so the readout and the
+    // renderer cannot drift apart: a mode at or above it is silently dropped
+    // from the bank, so a readout that names one names a partial that is not
+    // in the audio.
+    [[nodiscard]] static float renderedModeCeilingHz (double sampleRateHz) noexcept;
+
+    // The mode each octave of the family is tuned by: an identity latched from
+    // the four instruments the table describes, and never re-chosen from the
+    // player's controls. An argmax is a discontinuous function of every control
+    // that feeds it, so tuning against one made a hundredth of a semitone of
+    // Pitch automation drop a drum by a tenth of an octave and re-solve its
+    // size; a latched identity is what lets the same solve be written
+    // continuously. See the definition for what it does and does not depend on.
+    [[nodiscard]] static ModeIdentity tuningModeFor (int octaveOffset,
+                                                     float octaveBody) noexcept;
+
+    // Where the octave transform takes its pitches from: a full open stroke on
+    // the head with Strike Position centred. The transform is deliberately
+    // anchored here rather than at the player's own strike position, so that
+    // Strike Position stays a timbre control with no tuning side effect.
+    [[nodiscard]] static float tuningStrikeRadius() noexcept;
+    // Where a Don actually lands with the controls as they are, which is what
+    // the readout has to describe: an off-centre strike drives a different
+    // balance of modes and is genuinely heard at a different pitch.
+    [[nodiscard]] static float readoutStrikeRadius (
+        const EngineParameters& parameters) noexcept;
 
     // The drum an octave is built from: the player's controls carried across
     // the family by whichever of the four instruments this octave plays, with
