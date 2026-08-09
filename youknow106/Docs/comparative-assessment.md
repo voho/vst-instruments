@@ -46,8 +46,8 @@ strongest competitor named.
 | Playing latency | Exhaustive current-model characterization at 48 kHz: every one of the 1,008 host/scan boundary phases on all six cards, with Pitch write, ENV-mode VCA write, 687 µs hold milestone and a declared output-onset proxy reported separately from the fixed 24-sample host DSP report | KR-106 v2.5.12 says rebasing its DAC phase tables removed about 2 ms from tick-driven envelope/LFO updates. No like-for-like event-to-node/output distribution or original-JUNO capture is published in the surveyed open field |
 | Firmware envelope | Hash-scoped B-2 recurrence: 14-bit state, exact Q(v,c) three-partial multiply with the dropped low×low term, `E>>2` DAC truncation, byte-exact fixtures in the suite | KR-106: the same law at instruction level (cleanroom, j106roms lineage), cross-checked against MAME — parity on the digital law; no automated fixtures |
 | Firmware LFO/delay/portamento | Hash-scoped exact laws with regression vectors | KR-106: ROM-table reconstructions verified against four hardware captures — parity in kind |
-| VCF | IR3109 cascade behind the anchored 68 kΩ/560 Ω divider; jointly solved 4.83 Vpp/248.0 Hz self-oscillation endpoints; 992 Hz WIDTH anchor (tracking exactly 1.00); AS3109 700 µA control-current knee; R-2R carry INL on the converter write | KR-106: IR3109 TPT cascade with BA662 67:1 feedback physics, self-osc calibrated to a named unit, and a **4096-point measured DAC→Hz table from a real card** — a data asset this project matches only by derivation (within 30 cents of that table's shape after the knee fix) |
-| VCF numerical quality | Path-average ADAA inside the Newton solve: hot-case folded lines below −60 dBc, fenced by `testCascadeDeniesTheFoldback`; linear response and limit cycle measured identical | KR-106: 2×/4× oversampling, no ADAA; no fence. No other project has either |
+| VCF | IR3109 cascade behind the anchored 68 kΩ/560 Ω divider; loop gain fitted only to the 4.8 Vpp service amplitude (rendered 4.8009 Vpp), with 247.90 Hz then predicted rather than fitted; 992 Hz WIDTH anchor (tracking exactly 1.00); AS3109 700 µA control-current knee; R-2R carry INL on the converter write | KR-106: IR3109 TPT cascade with BA662 67:1 feedback physics, self-osc calibrated to a named unit, and a **4096-point measured DAC→Hz table from a real card** — a data asset this project matches only by derivation (within 30 cents of that table's shape after the knee fix) |
+| VCF numerical quality | Path-average antiderivative/divided-difference evaluation inside the Newton solve: hot-case folded lines below −60 dBc, fenced by `testCascadeDeniesTheFoldback`; linear response and limit cycle measured identical. A one-step bounded-work candidate passes the static/RK/fold-back classes but is rejected after failing the engine-bound/standard-grid scanned-control matrix | KR-106: 2×/4× oversampling, no published equivalent fold-back fence. No other surveyed project publishes one |
 | Chorus | Bucket-clocked two-phase 256-stage MN3009 model: full-period hold confirmed by the datasheet OUT1/OUT2 solve, per-shift transfer loss on the EC-row anchor, derived LFO rates 0.5533/0.8983 Hz from the 106's own timing network (ratio 1.6234799), measured 1.4–6.4 ms sweep, BGA/SGA separation via bounded polyBLEP, no-compander hiss modelled | KR-106: deliberately *not* bucket-clocked (Hermite delay line with a written rationale), surrounded by measured side-effects (CTE gain modulation, leakage noise, clock-reset clicks); Chorus II rate marked "inherited, not re-verified". Hera has the field's only other bucket-level BBD — attached to an admittedly inaccurate alpha |
 | HPF incl. bass boost | The boost shelf **derived from the p. 15 branch** (+10.50 dB DC, +1.41 dB HF, 59.41 Hz; within 0.016 dB of the exact 2z/2p solve), cut corners from designators; asymptotic C14 coupling states | KR-106: the same 2p2z transfer from designators, verified 0.55 dB RMS against its (unpublished) hardware noise sweep — convergent result, one lineage of hardware corroboration |
 | Common VCA LEVEL | Derived dB-linear law from p. 8/p. 15/NEC (−16.32 + 0.1656·b dB), C7 9.08 ms settling | Not modelled as a distinct stage anywhere else surveyed |
@@ -142,7 +142,7 @@ drifts off the value.
 |---|---|---|---|
 | VCF cutoff, full range | A real 106 voice card's measured DAC→Hz curve (93 measured codes, log-interpolated to 4096, gain-calibrated at the service anchor; third-party, GPL — measurements cited as facts, comparison re-derived) | Shipping law re-computed at every code (2026-08-07): **musical core 100 Hz–8 kHz within ±20 cents, RMS 10.3 cents** at nominal; audible-band RMS 19.7 cents; extremes carry the recorded deliberate base/slope trade pinned to Roland's own 248 Hz anchor (+0.4 cents there). Part of the residual is the card's raw slope, which its own WIDTH trim absorbs in service | Measured against one real card |
 | VCF R-2R carry steps | The same card's bit-boundary steps: −0.50/+27.49/−0.33 cents locally at codes 1024/2048/3072 | −0.44/+27.49/−0.27 cents at Unit Character 1.0 — **the audible mid-sweep step class reproduced to under 0.1 cent** | Measured; carry constants sourced from this data |
-| Self-oscillation endpoint | Service ADJUSTMENT: 4.8 Vpp sine at 248 Hz, every card | 4.83 Vpp at 248.0 Hz | Anchored, fenced |
+| Self-oscillation endpoint | Service ADJUSTMENT: 4.8 Vpp sine at 248 Hz, every card | 4.8009 Vpp; 247.90 Hz predicted after fitting amplitude alone | Anchored, fenced |
 | Key tracking | Service WIDTH anchor: C6 self-oscillates at 992 Hz = exactly two octaves over C4's 248 Hz | Exactly 4×, end-to-end through the converter path | Anchored, fenced |
 | PWM duty windows | Service: 48–52% at PWM 50, 93–97% at PWM 10 | Inside both windows | Anchored, fenced |
 | Chorus mode rates | A 106-chorus clone's scope readings 0.537/0.879 Hz; owner's manual "about 0.5/0.8" | Derived 0.5533/0.8983 Hz from the 106's own timing network (−3.0%/−2.2% vs the scope) | Derived, corroborated |
@@ -282,6 +282,43 @@ patch, host, buffer and rate. And a figure from one machine is a figure from
 one machine — what it supports is the before/after claim on this project's own
 code, not a ranking against a competitor. The suite fences the *ratio* of
 resonant to plain render cost rather than any wall-clock time, for that reason.
+
+### Bounded-work VCF candidate: matrix rejection
+
+**Added 2026-08-09.** The cited DAFx-21 port-Hamiltonian construction is a
+promising bounded-work method for its own Korg35 and Moog equations, not a generic
+replacement or an automatic stability proof for this IR3109 model. A
+research-only one-step quasi-Newton candidate therefore keeps the complete shipping
+equations and is judged before any production switch exists. It uses exactly
+one system evaluation and two bidiagonal solves per sample instead of up to
+eight shipping iterations; its Early-effect derivative is frozen, so it is not
+described as an exact tangent.
+
+The candidate is excellent under static parameters: worst small-signal gain
+error is 0.01368 dB, its worst hot waveform error against explicit 64× RK4 is
+−46.03 dB RMS versus shipping's −44.60 dB (both at `k=4.4`), its normalized residual is 1.84e-5,
+static stage-tolerance/headroom/Early-effect parity is −114.88 dB RMS, and the
+existing hot fold-back probe reads −66.41 dBc. It also preserves the retime and
+oscillation/boundedness classes. The decisive reachable-control fixture covers
+all six VCF-card ordinals on the normalized 23-write pass at both engine bounds
+and the 44.1/48/88.2/96/176.4/192 kHz standard internal grids. It applies the
+production holds, flooring, compensation and mapping/caps with Unit Character
+zero, keeping the decisive motion case nominal while a separate static fixture
+covers character mechanisms. It fails the ≤−40 dB parity gate everywhere: the
+worst error is +21.31 dB RMS at 8 kHz/card 1 (`g=6.31375`), 44.1 kHz is
++18.50 dB, and even 192 kHz reads +5.01 dB.
+The separately retained +4.80 dB result comes from `g=30` jumps, instantaneous
+resonance and audio-rate thermal-headroom changes the plug-in cannot generate;
+it is an out-of-domain boundedness diagnostic, not automation evidence.
+
+The isolated matrix therefore **rejects the candidate**. The superseded
+−97.56 dB result used only a 192 kHz fixture with invented cutoff/resonance
+phases rather than the production ordinals. Fixed evaluation/solve counts are
+not invariant CPU time, and a fast solver that fails the reachable signal
+contract has no production value. No production DSP changed; the market
+comparison above continues to describe the shipping Newton solver. A later
+bounded-work design must first clear the same engine-bound/standard-grid six-card circuit
+matrix before engine integration or benchmarking.
 
 ## Market-presence note
 

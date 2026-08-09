@@ -7,6 +7,7 @@
 
 #include "DSP/YouKnow106Chorus.h"
 #include "DSP/YouKnow106Engine.h"
+#include "../Tools/VcfSolverCandidate.h"
 
 #include <algorithm>
 #include <array>
@@ -14,6 +15,7 @@
 #include <complex>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -40,6 +42,45 @@ struct YouKnow106TestAccess
             loopHeadroomVolts;
     }
 
+    static constexpr float earlyEffectCoefficient() noexcept
+    {
+        return YouKnow106Engine::otaEarlyEffectCoefficient;
+    }
+
+    static constexpr float vcfHoldSeconds() noexcept
+    {
+        return YouKnow106Engine::vcfHoldSlewSeconds;
+    }
+
+    static constexpr float resonanceHoldSeconds() noexcept
+    {
+        return YouKnow106Engine::resonanceHoldSlewSecondsVoiced;
+    }
+
+    static float resonanceLoopGain(float panel) noexcept
+    {
+        return YouKnow106Engine::VoicedResonanceCompatibilityProfile::
+            loopGain(panel);
+    }
+
+    static float resonanceInputCompensation(float feedback) noexcept
+    {
+        return YouKnow106Engine::VoicedResonanceCompatibilityProfile::
+            inputCompensation(feedback);
+    }
+
+    static float vcfPanelTargetCounts(float panel,
+                                      float calibration) noexcept
+    {
+        float counts = YouKnow106Engine::vcfPanelCounts(panel);
+        counts = std::clamp(counts, 0.0f,
+                            YouKnow106Engine::vcfCountsCeiling);
+        const float code = YouKnow106Engine::vcfDacCountStep
+            * std::floor(counts / YouKnow106Engine::vcfDacCountStep);
+        return code + YouKnow106Engine::vcfConverterCarryCounts(code)
+                        * calibration;
+    }
+
     static constexpr float pwmFirstPoleSeconds() noexcept
     {
         return YouKnow106Engine::pwmHoldFirstPoleSeconds;
@@ -63,6 +104,24 @@ struct YouKnow106TestAccess
         std::vector<float> output(input.size());
         for (std::size_t index = 0; index < input.size(); ++index)
             output[index] = cascade.process(input[index], g, feedback);
+        return output;
+    }
+
+    static std::vector<float> renderCascadeConfigured(
+        const std::vector<float>& input, float g, float feedback,
+        float headroom, bool enableEarlyEffect, float calibration,
+        const std::array<float, 4>& gScale = { 1.0f, 1.0f, 1.0f, 1.0f },
+        const std::array<float, 4>& offsetVoltage = {})
+    {
+        Cascade cascade;
+        cascade.gScale = gScale;
+        cascade.offsetVoltage = offsetVoltage;
+        cascade.reset();
+        std::vector<float> output(input.size());
+        for (std::size_t index = 0; index < input.size(); ++index)
+            output[index] = cascade.process(input[index], g, feedback,
+                                            headroom, enableEarlyEffect,
+                                            calibration);
         return output;
     }
 
@@ -736,7 +795,8 @@ double selectedToneResidualRms(const std::vector<float>& signal,
 
 // --------------------------------------------------------------------------
 // Independent reference: the four transconductor stages integrated with a
-// fourth-order Runge-Kutta step at 64x the model's rate, straight from
+// fourth-order Runge-Kutta step at 16x the model's rate by default, straight
+// from
 //     C dVn/dt = Ig tanh((V(n-1) - Vn) / H),  V0 = input - k fb(V4)
 // with fb the compatibility profile's declared nonlinear return. This is an
 // independent numerical check of the implementation's ODE, not evidence that
@@ -823,6 +883,140 @@ double steadyStatePeak(const std::vector<float>& signal)
     for (std::size_t index = signal.size() * 3 / 4; index < signal.size(); ++index)
         peak = std::max(peak, static_cast<double>(std::abs(signal[index])));
     return peak;
+}
+
+template <typename Actual, typename Reference>
+double relativeRmsError(const std::vector<Actual>& actual,
+                        const std::vector<Reference>& reference,
+                        std::size_t start = 0)
+{
+    double errorSquared = 0.0;
+    double referenceSquared = 0.0;
+    for (std::size_t index = start; index < actual.size(); ++index)
+    {
+        const double wanted = static_cast<double>(reference[index]);
+        const double error = static_cast<double>(actual[index]) - wanted;
+        errorSquared += error * error;
+        referenceSquared += wanted * wanted;
+    }
+    return std::sqrt(errorSquared / std::max(referenceSquared, 1.0e-30));
+}
+
+struct FixedCandidateRender
+{
+    std::vector<float> output;
+    double worstNormalizedResidual { 0.0 };
+    std::size_t systemEvaluations { 0 };
+    std::size_t bidiagonalSolves { 0 };
+    std::size_t recoveries { 0 };
+};
+
+FixedCandidateRender renderFixedCandidate(
+    const std::vector<float>& input, float g, float feedback,
+    float headroom, bool enableEarlyEffect, float calibration,
+    const std::array<float, 4>& gScale = { 1.0f, 1.0f, 1.0f, 1.0f },
+    const std::array<float, 4>& offsetVoltage = {},
+    bool measureResidual = false)
+{
+    vcf_audit::FixedQuasiNewtonCascade cascade;
+    cascade.gScale = gScale;
+    cascade.offsetVoltage = offsetVoltage;
+    cascade.reset();
+
+    FixedCandidateRender rendered;
+    rendered.output.resize(input.size());
+    const float feedbackHeadroom = YouKnow106TestAccess::feedbackHeadroom();
+    const float earlyCoefficient = YouKnow106TestAccess::earlyEffectCoefficient();
+    const float gLimited = std::clamp(g, 0.0f, 64.0f);
+    const float k = std::clamp(feedback, 0.0f, 8.0f);
+    for (std::size_t index = 0; index < input.size(); ++index)
+    {
+        const auto previousState = cascade.state;
+        const auto previousDrive = cascade.driveMemory;
+        rendered.output[index] = cascade.process(
+            input[index], g, feedback, headroom, feedbackHeadroom,
+            earlyCoefficient, enableEarlyEffect, calibration);
+
+        if (!measureResidual)
+            continue;
+
+        float previous = input[index] - k * feedbackHeadroom
+            * static_cast<float>(std::tanh(
+                static_cast<double>(cascade.voltage[3] / feedbackHeadroom)));
+        float magnitude = 0.0f;
+        for (std::size_t stage = 0; stage < cascade.voltage.size(); ++stage)
+        {
+            const float voltage = cascade.voltage[stage];
+            const float drive = (previous - voltage + cascade.offsetVoltage[stage])
+                              / headroom;
+            const float earlyMod = enableEarlyEffect && calibration > 0.0f
+                ? 1.0f + earlyCoefficient * calibration
+                    * static_cast<float>(std::tanh(
+                        static_cast<double>(voltage / headroom)))
+                : 1.0f;
+            const float stageG = gLimited * cascade.gScale[stage] * earlyMod;
+            constexpr int quadrature = 256;
+            double average = 0.0;
+            for (int point = 0; point < quadrature; ++point)
+                average += std::tanh(
+                    static_cast<double>(previousDrive[stage])
+                    + static_cast<double>(drive - previousDrive[stage])
+                        * (point + 0.5) / quadrature);
+            average /= quadrature;
+            const double residual = static_cast<double>(voltage)
+                - static_cast<double>(previousState[stage])
+                - 2.0 * static_cast<double>(stageG)
+                    * static_cast<double>(headroom) * average;
+            magnitude = std::max(magnitude, std::abs(voltage));
+            rendered.worstNormalizedResidual = std::max(
+                rendered.worstNormalizedResidual,
+                std::abs(residual) / (1.0 + static_cast<double>(magnitude)));
+            previous = voltage;
+        }
+    }
+
+    rendered.systemEvaluations = cascade.systemEvaluations;
+    rendered.bidiagonalSolves = cascade.bidiagonalSolves;
+    rendered.recoveries = cascade.recoveries;
+    return rendered;
+}
+
+double worstFoldedLineDb(const std::vector<float>& output,
+                         double sampleRate, double fundamental,
+                         std::size_t settle, std::size_t capture)
+{
+    const auto magnitudeAt = [&] (double frequency) {
+        double re = 0.0;
+        double im = 0.0;
+        for (std::size_t index = 0; index < capture; ++index)
+        {
+            const double window = 0.35875
+                - 0.48829 * std::cos(2.0 * pi * index / (capture - 1))
+                + 0.14128 * std::cos(4.0 * pi * index / (capture - 1))
+                - 0.01168 * std::cos(6.0 * pi * index / (capture - 1));
+            const double phase = 2.0 * pi * frequency
+                * static_cast<double>(settle + index) / sampleRate;
+            const double value =
+                window * static_cast<double>(output[settle + index]);
+            re += value * std::cos(phase);
+            im += value * std::sin(phase);
+        }
+        return std::sqrt(re * re + im * im);
+    };
+
+    const double reference = magnitudeAt(fundamental);
+    if (!(reference > 0.0))
+        return 0.0;
+    double worstDb = -300.0;
+    for (int harmonic = 165; harmonic <= 201; ++harmonic)
+    {
+        const double alias = std::abs(sampleRate - harmonic * fundamental);
+        if (alias < 20.0 || alias > 20000.0)
+            continue;
+        worstDb = std::max(
+            worstDb, 20.0 * std::log10(magnitudeAt(alias) / reference));
+    }
+    return worstDb;
 }
 
 // --------------------------------------------------------------------------
@@ -970,6 +1164,7 @@ void testCascadeSolveStopsWhereItConverges()
 void testCascadeAgainstReferenceSolve()
 {
     constexpr double sampleRate = 192000.0;
+    double candidateWorstReferenceDb = 0.0;
 
     for (double cutoff : { 120.0, 900.0, 4200.0 })
     {
@@ -998,9 +1193,13 @@ void testCascadeAgainstReferenceSolve()
             const float g = static_cast<float>(std::tan(pi * cutoff / sampleRate));
             const auto model = YouKnow106TestAccess::renderCascade(
                 modelInput, g, static_cast<float>(feedback));
+            const auto candidate = renderFixedCandidate(
+                modelInput, g, static_cast<float>(feedback),
+                YouKnow106TestAccess::headroom(), true, 0.70f);
 
             const double referenceGain = steadyStatePeak(reference) / amplitude;
             const double modelGain = steadyStatePeak(model) / amplitude;
+            const double candidateGain = steadyStatePeak(candidate.output) / amplitude;
             const double theory = 1.0 / (4.0 - feedback);
 
             const std::string label = "cascade fc=" + std::to_string(cutoff)
@@ -1009,8 +1208,19 @@ void testCascadeAgainstReferenceSolve()
                        label + ": reference solve does not meet the analytic result");
             expectNear(20.0 * std::log10(modelGain / referenceGain), 0.0, 0.6,
                        label + ": model disagrees with the reference solve");
+            const double candidateReferenceDb =
+                20.0 * std::log10(candidateGain / referenceGain);
+            candidateWorstReferenceDb = std::max(
+                candidateWorstReferenceDb, std::abs(candidateReferenceDb));
+            expectNear(candidateReferenceDb, 0.0, 0.6,
+                       label + ": fixed-solve candidate misses the linear reference");
         }
     }
+
+    std::cout << "VCF fixed-solve candidate: small-signal worst |gain error|="
+              << candidateWorstReferenceDb << " dB\n";
+    expectNear(candidateWorstReferenceDb, 0.01368, 0.002,
+               "the documented fixed-solve small-signal result is stale");
 
     // Changing HQ changes dt, not a voice card's capacitor charge or drive
     // history. The path-average form carries a physical voltage and a
@@ -1118,38 +1328,576 @@ void testCascadeDeniesTheFoldback()
 
     // Windowed single-bin magnitude; Blackman-Harris keeps the saw's own
     // harmonics from leaking into the measured alias lines.
-    const auto magnitudeAt = [&] (double frequency) {
-        double re = 0.0;
-        double im = 0.0;
-        for (std::size_t index = 0; index < capture; ++index)
-        {
-            const double window = 0.35875
-                - 0.48829 * std::cos(2.0 * pi * index / (capture - 1))
-                + 0.14128 * std::cos(4.0 * pi * index / (capture - 1))
-                - 0.01168 * std::cos(6.0 * pi * index / (capture - 1));
-            const double phase = 2.0 * pi * frequency
-                * static_cast<double>(settle + index) / sampleRate;
-            const double value =
-                window * static_cast<double>(output[settle + index]);
-            re += value * std::cos(phase);
-            im += value * std::sin(phase);
-        }
-        return std::sqrt(re * re + im * im);
-    };
-
-    const double reference = magnitudeAt(fundamental);
-    expect(reference > 0.0, "the alias fixture lost its fundamental");
-    double worstDb = -300.0;
-    for (int n = 165; n <= 201; ++n)
-    {
-        const double alias = std::abs(sampleRate - n * fundamental);
-        if (alias < 20.0 || alias > 20000.0)
-            continue;
-        worstDb = std::max(worstDb,
-                           20.0 * std::log10(magnitudeAt(alias) / reference));
-    }
+    const double worstDb = worstFoldedLineDb(
+        output, sampleRate, fundamental, settle, capture);
     expect(worstDb < -60.0,
            "a folded tanh line rose above -60 dBc in the hot resonant case");
+}
+
+void testFixedSolveCountCascadeCandidateBakeoff()
+{
+    // This is intentionally an admissibility regression. The DAFx-21
+    // port-Hamiltonian construction is topology-specific, so the closest
+    // production-compatible probe keeps this cascade's own path-average
+    // equations and replaces the convergence loop with one frozen-modulation
+    // quasi-Newton solve. A candidate stays outside Source/ until it meets
+    // every existing numerical contract; this test records its bounded solve
+    // structure and admission result without making it a shipping path.
+    constexpr double sampleRate = 192000.0;
+    constexpr double cutoff = 1500.0;
+    constexpr double tone = 220.0;
+    constexpr float amplitude = 3.0f;
+    constexpr std::size_t length = 4096;
+    const float g = static_cast<float>(std::tan(pi * cutoff / sampleRate));
+    const float headroom = YouKnow106TestAccess::headroom();
+
+    std::vector<double> referenceInput(length);
+    std::vector<float> input(length);
+    for (std::size_t index = 0; index < length; ++index)
+    {
+        const double value = amplitude * std::sin(
+            2.0 * pi * tone * static_cast<double>(index) / sampleRate);
+        referenceInput[index] = value;
+        input[index] = static_cast<float>(value);
+    }
+
+    double worstShippingRmsError = 0.0;
+    double worstCandidateRmsError = 0.0;
+    double worstShippingFeedback = 0.0;
+    double worstCandidateFeedback = 0.0;
+    double worstCandidateResidual = 0.0;
+    bool hotReferencePass = true;
+    std::size_t totalCandidateSamples = 0;
+    std::size_t totalCandidateEvaluations = 0;
+    std::size_t totalCandidateSolves = 0;
+    std::size_t totalCandidateRecoveries = 0;
+    for (double feedback : { 0.0, 2.0, 3.6, 4.4 })
+    {
+        // Explicit 64x here: the general linear-response fixture uses 16x,
+        // but this hot nonlinear comparison needs the tighter reference.
+        const auto reference = referenceCascade(
+            referenceInput, sampleRate, cutoff, feedback, 64);
+        const auto shipping = YouKnow106TestAccess::renderCascadeConfigured(
+            input, g, static_cast<float>(feedback), headroom, false, 0.0f);
+        const auto candidate = renderFixedCandidate(
+            input, g, static_cast<float>(feedback), headroom, false, 0.0f,
+            { 1.0f, 1.0f, 1.0f, 1.0f }, {}, true);
+
+        const double shippingRmsError =
+            relativeRmsError(shipping, reference, length / 4);
+        const double candidateRmsError =
+            relativeRmsError(candidate.output, reference, length / 4);
+        if (shippingRmsError > worstShippingRmsError)
+        {
+            worstShippingRmsError = shippingRmsError;
+            worstShippingFeedback = feedback;
+        }
+        if (candidateRmsError > worstCandidateRmsError)
+        {
+            worstCandidateRmsError = candidateRmsError;
+            worstCandidateFeedback = feedback;
+        }
+        const bool cellPass = std::isfinite(shippingRmsError)
+                           && std::isfinite(candidateRmsError)
+                           && candidateRmsError <= 1.05 * shippingRmsError;
+        hotReferencePass = hotReferencePass && cellPass;
+        expect(cellPass,
+               "fixed-solve candidate regresses its hot RK64 cell at k="
+                   + std::to_string(feedback));
+        worstCandidateResidual = std::max(
+            worstCandidateResidual, candidate.worstNormalizedResidual);
+        totalCandidateSamples += candidate.output.size();
+        totalCandidateEvaluations += candidate.systemEvaluations;
+        totalCandidateSolves += candidate.bidiagonalSolves;
+        totalCandidateRecoveries += candidate.recoveries;
+    }
+
+    // First combine the static production mechanisms the paper's canonical
+    // Moog equations omit: stage-specific g, offsets, temperature-conditioned
+    // headroom and Early effect. This is parity to the shipping discrete model,
+    // not a hardware or RK-reference claim.
+    constexpr std::array<float, 4> gScale { 0.98f, 1.01f, 1.02f, 0.99f };
+    constexpr std::array<float, 4> offsets {
+        0.0015f, -0.0010f, 0.0005f, -0.0015f
+    };
+    const float variedHeadroom = headroom * 1.06f;
+    const float variedG = static_cast<float>(
+        std::tan(pi * 4200.0 / sampleRate));
+    const auto shippingVaried = YouKnow106TestAccess::renderCascadeConfigured(
+        input, variedG, 3.8f, variedHeadroom, true, 0.70f, gScale, offsets);
+    const auto candidateVaried = renderFixedCandidate(
+        input, variedG, 3.8f, variedHeadroom, true, 0.70f, gScale, offsets);
+    const double variedRelativeRms = relativeRmsError(
+        candidateVaried.output, shippingVaried, length / 4);
+    totalCandidateSamples += candidateVaried.output.size();
+    totalCandidateEvaluations += candidateVaried.systemEvaluations;
+    totalCandidateSolves += candidateVaried.bidiagonalSolves;
+    totalCandidateRecoveries += candidateVaried.recoveries;
+
+    // Reachable worst-case control motion at the engine bounds, every standard
+    // 44.1--192 kHz host/HQ internal grid and all six physical cards. One
+    // coherent low/high panel snapshot changes at a pass boundary; resonance
+    // and each card's VCF target acquire it only at their real normalized
+    // service-chart converter slots. The holds then use their production
+    // 522 us slews. Cutoff passes through the real 14-to-12-bit flooring,
+    // ladder carry, frequency law and 0.45*Fs cap. This decisive motion matrix
+    // uses Unit Character zero: unity stage scales, zero offsets, nominal
+    // headroom, no carry and no Early effect. The separate static fixture above
+    // already covers those character mechanisms without combining mutually
+    // unreachable extrema.
+    constexpr float reachableCalibration = 0.0f;
+    const float lowCutoffTarget = YouKnow106TestAccess::vcfPanelTargetCounts(
+        0.0f, reachableCalibration);
+    const float highCutoffTarget = YouKnow106TestAccess::vcfPanelTargetCounts(
+        1.0f, reachableCalibration);
+    constexpr double converterPassSeconds = 0.0042;
+    constexpr double reachableDurationSeconds = 0.21;
+    constexpr std::array<double, 8> reachableInternalRates {
+        8000.0, 44100.0, 48000.0, 88200.0,
+        96000.0, 176400.0, 192000.0, 768000.0
+    };
+    const auto& converterWrites = YouKnow106Engine::converterWriteOrder();
+    const auto converterPhases = YouKnow106Engine::converterEventPhases(
+        YouKnow106Engine::ConverterTimingProfile::NormalizedServiceChart);
+    std::array<double, reachableInternalRates.size()>
+        worstReachableRelativeRmsByRate {};
+    std::array<int, reachableInternalRates.size()>
+        worstReachableCardByRate { -1, -1, -1, -1, -1, -1, -1, -1 };
+    std::array<float, reachableInternalRates.size()>
+        maximumReachableGByRate {};
+    double worstReachableRelativeRms = 0.0;
+    double worstReachableRate = 0.0;
+    int worstReachableCard = -1;
+    double reachableCandidatePeak = 0.0;
+    float maximumReachableG = 0.0f;
+    bool reachableControlPass = true;
+    bool reachableControlFinite = true;
+    for (std::size_t rateIndex = 0;
+         rateIndex < reachableInternalRates.size(); ++rateIndex)
+    {
+        const double reachableRate = reachableInternalRates[rateIndex];
+        const float vcfSlew = 1.0f - std::exp(
+            -1.0f / static_cast<float>(
+                reachableRate * YouKnow106TestAccess::vcfHoldSeconds()));
+        const float resonanceSlew = 1.0f - std::exp(
+            -1.0f / static_cast<float>(
+                reachableRate
+                * YouKnow106TestAccess::resonanceHoldSeconds()));
+        const double scanPhaseIncrement =
+            1.0 / (reachableRate * converterPassSeconds);
+        const std::size_t reachableLength = static_cast<std::size_t>(
+            std::ceil(reachableRate * reachableDurationSeconds));
+
+        std::array<YouKnow106TestAccess::Cascade,
+                   YouKnow106Engine::hardwareVoices> shippingReachable;
+        std::array<vcf_audit::FixedQuasiNewtonCascade,
+                   YouKnow106Engine::hardwareVoices> candidateReachable;
+        std::array<float, YouKnow106Engine::hardwareVoices> cutoffTarget;
+        std::array<float, YouKnow106Engine::hardwareVoices> cutoffCounts;
+        std::array<double, YouKnow106Engine::hardwareVoices> errorSquared {};
+        std::array<double, YouKnow106Engine::hardwareVoices> referenceSquared {};
+        cutoffTarget.fill(lowCutoffTarget);
+        cutoffCounts.fill(lowCutoffTarget);
+        for (int card = 0; card < YouKnow106Engine::hardwareVoices; ++card)
+        {
+            shippingReachable[static_cast<std::size_t>(card)].reset();
+            candidateReachable[static_cast<std::size_t>(card)].reset();
+        }
+
+        float resonanceTarget = 0.0f;
+        float resonanceControl = 0.0f;
+        double scanPhase = 0.0;
+        std::size_t nextConverterWrite = 0;
+        std::size_t converterPass = 0;
+        bool highPanelSnapshot = false;
+
+        for (std::size_t index = 0; index < reachableLength; ++index)
+        {
+            if (scanPhase >= 1.0)
+            {
+                scanPhase -= 1.0;
+                nextConverterWrite = 0;
+                ++converterPass;
+                if (converterPass >= 4)
+                    highPanelSnapshot = (converterPass % 2) == 0;
+            }
+            while (nextConverterWrite < converterWrites.size()
+                   && converterPhases[nextConverterWrite]
+                          <= scanPhase + 1.0e-12)
+            {
+                const auto& write = converterWrites[nextConverterWrite];
+                if (write.destination
+                    == YouKnow106Engine::ConverterDestination::Resonance)
+                    resonanceTarget = highPanelSnapshot ? 1.0f : 0.0f;
+                else if (write.destination
+                             == YouKnow106Engine::ConverterDestination::Vcf
+                         && write.voice >= 0
+                         && write.voice < YouKnow106Engine::hardwareVoices)
+                {
+                    cutoffTarget[static_cast<std::size_t>(write.voice)] =
+                        highPanelSnapshot ? highCutoffTarget : lowCutoffTarget;
+                }
+                ++nextConverterWrite;
+            }
+
+            resonanceControl +=
+                (resonanceTarget - resonanceControl) * resonanceSlew;
+            const float feedback =
+                YouKnow106TestAccess::resonanceLoopGain(resonanceControl);
+            const float compensatedDrive = 2.4f
+                * YouKnow106TestAccess::resonanceInputCompensation(feedback)
+                * static_cast<float>(std::sin(
+                    2.0 * pi * 220.0 * static_cast<double>(index)
+                    / reachableRate));
+            for (int card = 0; card < YouKnow106Engine::hardwareVoices; ++card)
+            {
+                const auto slot = static_cast<std::size_t>(card);
+                cutoffCounts[slot] +=
+                    (cutoffTarget[slot] - cutoffCounts[slot]) * vcfSlew;
+                const float cutoffHz = YouKnow106Engine::vcfEffectiveCutoffHz(
+                    cutoffCounts[slot], feedback);
+                const float limitedCutoff = std::min(
+                    cutoffHz, static_cast<float>(reachableRate * 0.45));
+                const float changingG = static_cast<float>(
+                    std::tan(pi * limitedCutoff / reachableRate));
+                maximumReachableG = std::max(maximumReachableG, changingG);
+                maximumReachableGByRate[rateIndex] = std::max(
+                    maximumReachableGByRate[rateIndex], changingG);
+                const float wanted = shippingReachable[slot].process(
+                    compensatedDrive, changingG, feedback,
+                    headroom, true, reachableCalibration);
+                const float actual = candidateReachable[slot].process(
+                    compensatedDrive, changingG, feedback, headroom,
+                    YouKnow106TestAccess::feedbackHeadroom(),
+                    YouKnow106TestAccess::earlyEffectCoefficient(),
+                    true, reachableCalibration);
+                const double error = static_cast<double>(actual) - wanted;
+                if (converterPass >= 4)
+                {
+                    errorSquared[slot] += error * error;
+                    referenceSquared[slot] +=
+                        static_cast<double>(wanted) * wanted;
+                }
+                reachableCandidatePeak = std::max(
+                    reachableCandidatePeak,
+                    static_cast<double>(std::abs(actual)));
+            }
+            scanPhase += scanPhaseIncrement;
+        }
+
+        for (int card = 0; card < YouKnow106Engine::hardwareVoices; ++card)
+        {
+            const auto slot = static_cast<std::size_t>(card);
+            const double relativeRms = std::sqrt(
+                errorSquared[slot]
+                / std::max(referenceSquared[slot], 1.0e-30));
+            if (relativeRms > worstReachableRelativeRms)
+            {
+                worstReachableRelativeRms = relativeRms;
+                worstReachableRate = reachableRate;
+                worstReachableCard = card;
+            }
+            if (relativeRms > worstReachableRelativeRmsByRate[rateIndex])
+            {
+                worstReachableRelativeRmsByRate[rateIndex] = relativeRms;
+                worstReachableCardByRate[rateIndex] = card;
+            }
+            reachableControlFinite = reachableControlFinite
+                && std::isfinite(relativeRms);
+            reachableControlPass = reachableControlPass
+                && std::isfinite(relativeRms) && relativeRms <= 0.01;
+            totalCandidateSamples += candidateReachable[slot].samples;
+            totalCandidateEvaluations +=
+                candidateReachable[slot].systemEvaluations;
+            totalCandidateSolves += candidateReachable[slot].bidiagonalSolves;
+            totalCandidateRecoveries += candidateReachable[slot].recoveries;
+        }
+    }
+
+    // Retain the old direct-solver torture trajectory only as an out-of-domain
+    // boundedness diagnostic.  Its g=30 jumps and audio-rate headroom changes
+    // cannot be produced by the shipping control path and do not decide
+    // admission or support a claim about musical automation.
+    YouKnow106TestAccess::Cascade shippingStress;
+    shippingStress.gScale = gScale;
+    shippingStress.offsetVoltage = offsets;
+    shippingStress.reset();
+    vcf_audit::FixedQuasiNewtonCascade candidateStress;
+    candidateStress.gScale = gScale;
+    candidateStress.offsetVoltage = offsets;
+    candidateStress.reset();
+
+    double stressErrorSquared = 0.0;
+    double stressReferenceSquared = 0.0;
+    double candidateStressPeak = 0.0;
+    std::size_t minimumEvaluationsPerSample =
+        std::numeric_limits<std::size_t>::max();
+    std::size_t maximumEvaluationsPerSample = 0;
+    std::size_t minimumSolvesPerSample =
+        std::numeric_limits<std::size_t>::max();
+    std::size_t maximumSolvesPerSample = 0;
+    constexpr std::size_t stressLength = 20000;
+    for (std::size_t index = 0; index < stressLength; ++index)
+    {
+        const float sample = 3.0f * std::sin(0.31f * static_cast<float>(index));
+        const float changingG = index % 2 == 0 ? 0.0004f : 30.0f;
+        const float feedback = index % 3 == 0 ? 0.0f : 4.4f;
+        const float dynamicHeadroom = headroom
+            * (0.96f + 0.10f * static_cast<float>(index % 127) / 126.0f);
+        const float wanted = shippingStress.process(
+            sample, changingG, feedback, dynamicHeadroom, true, 0.70f);
+        const auto evaluationsBefore = candidateStress.systemEvaluations;
+        const auto solvesBefore = candidateStress.bidiagonalSolves;
+        const float actual = candidateStress.process(
+            sample, changingG, feedback, dynamicHeadroom,
+            YouKnow106TestAccess::feedbackHeadroom(),
+            YouKnow106TestAccess::earlyEffectCoefficient(), true, 0.70f);
+        const auto evaluationsThisSample =
+            candidateStress.systemEvaluations - evaluationsBefore;
+        const auto solvesThisSample =
+            candidateStress.bidiagonalSolves - solvesBefore;
+        minimumEvaluationsPerSample = std::min(
+            minimumEvaluationsPerSample, evaluationsThisSample);
+        maximumEvaluationsPerSample = std::max(
+            maximumEvaluationsPerSample, evaluationsThisSample);
+        minimumSolvesPerSample = std::min(
+            minimumSolvesPerSample, solvesThisSample);
+        maximumSolvesPerSample = std::max(
+            maximumSolvesPerSample, solvesThisSample);
+        const double error = static_cast<double>(actual) - wanted;
+        stressErrorSquared += error * error;
+        stressReferenceSquared += static_cast<double>(wanted) * wanted;
+        candidateStressPeak = std::max(
+            candidateStressPeak, static_cast<double>(std::abs(actual)));
+    }
+    const double stressRelativeRms = std::sqrt(
+        stressErrorSquared / std::max(stressReferenceSquared, 1.0e-30));
+    totalCandidateSamples += candidateStress.samples;
+    totalCandidateEvaluations += candidateStress.systemEvaluations;
+    totalCandidateSolves += candidateStress.bidiagonalSolves;
+    totalCandidateRecoveries += candidateStress.recoveries;
+
+    const auto candidateRing = [&](float feedback) {
+        std::vector<float> impulse(24000, 0.0f);
+        impulse[0] = 0.5f;
+        const float ringG = static_cast<float>(
+            std::tan(pi * 500.0 / sampleRate));
+        const auto rendered = renderFixedCandidate(
+            impulse, ringG, feedback, headroom, true, 0.70f);
+        double peak = 0.0;
+        for (std::size_t index = rendered.output.size() - 4000;
+             index < rendered.output.size(); ++index)
+            peak = std::max(
+                peak, static_cast<double>(std::abs(rendered.output[index])));
+        totalCandidateSamples += rendered.output.size();
+        totalCandidateEvaluations += rendered.systemEvaluations;
+        totalCandidateSolves += rendered.bidiagonalSolves;
+        totalCandidateRecoveries += rendered.recoveries;
+        return peak;
+    };
+    const double ringBelow = candidateRing(3.6f);
+    const double ringAbove = candidateRing(4.3f);
+    const double ringHard = candidateRing(8.0f);
+
+    // Retime is a state contract independent of the matrix's waveform metrics.
+    vcf_audit::FixedQuasiNewtonCascade retimed;
+    retimed.voltage = { 0.25f, -0.5f, 0.75f, -1.0f };
+    retimed.state = retimed.voltage;
+    const auto beforeRetime = retimed.voltage;
+    retimed.retime(0.03125f, 0.125f);
+    expect(retimed.voltage == beforeRetime,
+           "fixed-solve candidate retime disturbed capacitor charge");
+
+    const auto retimeStep = [&](float previousG, float nextG) {
+        vcf_audit::FixedQuasiNewtonCascade cascade;
+        float settled = 0.0f;
+        for (int index = 0; index < 20000; ++index)
+            settled = cascade.process(
+                0.5f, previousG, 0.0f, headroom,
+                YouKnow106TestAccess::feedbackHeadroom(),
+                YouKnow106TestAccess::earlyEffectCoefficient());
+        cascade.retime(previousG, nextG);
+        return std::abs(cascade.process(
+            0.5f, nextG, 0.0f, headroom,
+            YouKnow106TestAccess::feedbackHeadroom(),
+            YouKnow106TestAccess::earlyEffectCoefficient()) - settled);
+    };
+    const double refineStep = retimeStep(0.03125f, 0.125f);
+    const double coarsenStep = retimeStep(0.125f, 0.03125f);
+    expect(refineStep < 1.0e-5 && coarsenStep < 1.0e-5,
+           "fixed-solve candidate cannot preserve a settled DC state across retime");
+
+    vcf_audit::FixedQuasiNewtonCascade identityA;
+    vcf_audit::FixedQuasiNewtonCascade identityB;
+    constexpr float identityG = 0.05f;
+    for (int index = 0; index < 64; ++index)
+    {
+        const float sample = index == 0 ? 1.0f : 0.0f;
+        identityA.process(sample, identityG, 3.0f, headroom,
+                          YouKnow106TestAccess::feedbackHeadroom(),
+                          YouKnow106TestAccess::earlyEffectCoefficient());
+        identityB.process(sample, identityG, 3.0f, headroom,
+                          YouKnow106TestAccess::feedbackHeadroom(),
+                          YouKnow106TestAccess::earlyEffectCoefficient());
+    }
+    identityB.retime(identityG, identityG);
+    double identityError = 0.0;
+    for (int index = 0; index < 256; ++index)
+        identityError = std::max(
+            identityError,
+            static_cast<double>(std::abs(
+                identityA.process(0.0f, identityG, 3.0f, headroom,
+                                  YouKnow106TestAccess::feedbackHeadroom(),
+                                  YouKnow106TestAccess::earlyEffectCoefficient())
+                - identityB.process(0.0f, identityG, 3.0f, headroom,
+                                    YouKnow106TestAccess::feedbackHeadroom(),
+                                    YouKnow106TestAccess::earlyEffectCoefficient()))));
+    expect(identityError == 0.0,
+           "fixed-solve candidate identity retime changed its trajectory");
+
+    // Reuse the shipping foldback stimulus verbatim.
+    constexpr double aliasFundamental = 1046.502;
+    constexpr std::size_t aliasSettle = std::size_t { 1 } << 15;
+    constexpr std::size_t aliasCapture = std::size_t { 1 } << 17;
+    const int harmonics = static_cast<int>(0.5 * sampleRate / aliasFundamental);
+    std::vector<float> aliasInput(aliasSettle + aliasCapture);
+    for (std::size_t index = 0; index < aliasInput.size(); ++index)
+    {
+        double sum = 0.0;
+        const double phase = 2.0 * pi * aliasFundamental
+            * static_cast<double>(index) / sampleRate;
+        for (int harmonic = 1; harmonic <= harmonics; ++harmonic)
+            sum += std::sin(harmonic * phase) / harmonic;
+        aliasInput[index] = 2.4f * static_cast<float>(sum * 2.0 / pi);
+    }
+    const float aliasG = static_cast<float>(
+        std::tan(pi * 16000.0 / sampleRate));
+    const auto aliasCandidate = renderFixedCandidate(
+        aliasInput, aliasG, 3.8f, headroom, true, 0.70f);
+    const double candidateFoldback = worstFoldedLineDb(
+        aliasCandidate.output, sampleRate, aliasFundamental,
+        aliasSettle, aliasCapture);
+    totalCandidateSamples += aliasCandidate.output.size();
+    totalCandidateEvaluations += aliasCandidate.systemEvaluations;
+    totalCandidateSolves += aliasCandidate.bidiagonalSolves;
+    totalCandidateRecoveries += aliasCandidate.recoveries;
+
+    expect(totalCandidateEvaluations == totalCandidateSamples,
+           "fixed-solve candidate did not use exactly one system evaluation per sample");
+    expect(totalCandidateSolves == 2 * totalCandidateSamples,
+           "fixed-solve candidate did not use exactly two bidiagonal solves per sample");
+    expect(minimumEvaluationsPerSample == 1 && maximumEvaluationsPerSample == 1
+               && minimumSolvesPerSample == 2 && maximumSolvesPerSample == 2,
+           "fixed-solve candidate solve count varies with the sample or control state");
+    expect(totalCandidateRecoveries == 0 && candidateStressPeak < 1.0e4,
+           "fixed-solve candidate required a hidden recovery or became unbounded");
+
+    const bool equationPass = worstCandidateResidual <= 2.0e-4;
+    const bool staticMechanismPass = variedRelativeRms <= 0.01;
+    const bool oscillationPass = ringBelow < 1.0e-4
+                              && ringAbove > 1.0e-3
+                              && std::isfinite(ringHard) && ringHard < 40.0;
+    const bool foldbackPass = candidateFoldback < -60.0;
+    const bool admissionMatrixPass = hotReferencePass && equationPass
+                                  && staticMechanismPass
+                                  && reachableControlPass
+                                  && oscillationPass && foldbackPass
+                                  && totalCandidateRecoveries == 0;
+    expect(equationPass,
+           "fixed-solve candidate fails the discrete-equation residual gate");
+    expect(staticMechanismPass,
+           "fixed-solve candidate fails static production-mechanism parity");
+    expect(!reachableControlPass,
+           "fixed-solve candidate now passes reachable scanned-control parity; update the documented verdict");
+    expect(oscillationPass,
+           "fixed-solve candidate fails the oscillation or boundedness gate");
+    expect(foldbackPass,
+           "fixed-solve candidate fails the hot fold-back gate");
+    expect(reachableControlFinite
+               && std::isfinite(worstReachableRelativeRms)
+               && reachableCandidatePeak < 1.0e4,
+           "fixed-solve candidate is non-finite on reachable control motion");
+    expect(!admissionMatrixPass,
+           "fixed-solve candidate now passes the documented admission matrix; update the verdict");
+
+    const auto errorDb = [](double error) {
+        return 20.0 * std::log10(std::max(error, 1.0e-15));
+    };
+    expectNear(errorDb(worstShippingRmsError), -44.60, 0.25,
+               "the documented hot shipping/RK64 result is stale");
+    expectNear(errorDb(worstCandidateRmsError), -46.03, 0.25,
+               "the documented hot candidate/RK64 result is stale");
+    expect(worstCandidateResidual >= 1.0e-5
+               && worstCandidateResidual <= 3.0e-5,
+           "the documented fixed-solve residual result is stale");
+    expectNear(errorDb(variedRelativeRms), -114.88, 5.0,
+               "the documented static-mechanism parity result is stale");
+    expectNear(errorDb(worstReachableRelativeRms), 21.31, 1.0,
+               "the documented reachable-control parity result is stale");
+    expectNear(maximumReachableG,
+               std::tan(0.45 * pi), 1.0e-4,
+               "the reachable-control fixture no longer reaches the production cap");
+    constexpr std::array<double, reachableInternalRates.size()>
+        expectedReachableErrorDb {
+            21.3108, 18.4961, 18.5508, 18.4705,
+            18.0038, 6.75683, 5.01139, -9.09869
+        };
+    constexpr std::array<int, reachableInternalRates.size()>
+        expectedWorstReachableCard { 1, 0, 0, 3, 3, 0, 0, 0 };
+    constexpr std::array<double, reachableInternalRates.size()>
+        expectedMaximumReachableG {
+            6.31375, 6.31375, 6.31375, 6.31375,
+            6.31375, 1.23580, 1.06769, 0.207431
+        };
+    for (std::size_t rateIndex = 0;
+         rateIndex < reachableInternalRates.size(); ++rateIndex)
+    {
+        expectNear(errorDb(worstReachableRelativeRmsByRate[rateIndex]),
+                   expectedReachableErrorDb[rateIndex], 1.0,
+                   "the documented per-rate reachable-control result is stale");
+        expect(worstReachableCardByRate[rateIndex]
+                   == expectedWorstReachableCard[rateIndex],
+               "the documented per-rate worst VCF-card slot is stale");
+        expectNear(maximumReachableGByRate[rateIndex],
+                   expectedMaximumReachableG[rateIndex], 1.0e-4,
+                   "the documented per-rate reachable coefficient is stale");
+    }
+    expectNear(errorDb(stressRelativeRms), 4.80, 0.5,
+               "the documented out-of-domain torture result is stale");
+    expectNear(ringAbove, 1.269, 0.05,
+               "the documented candidate oscillation result is stale");
+    expectNear(ringHard, 6.369, 0.15,
+               "the documented candidate bounded-limit-cycle result is stale");
+    expectNear(candidateFoldback, -66.41, 1.0,
+               "the documented candidate fold-back result is stale");
+    std::cout << "VCF fixed-solve bake-off: hot_RK64_shipping="
+              << errorDb(worstShippingRmsError)
+              << " dB@k=" << worstShippingFeedback
+              << " hot_RK64_candidate=" << errorDb(worstCandidateRmsError)
+              << " dB@k=" << worstCandidateFeedback
+              << " candidate_residual=" << worstCandidateResidual
+              << " static_mechanism_parity=" << errorDb(variedRelativeRms)
+              << " dB"
+              << " reachable_control_parity="
+              << errorDb(worstReachableRelativeRms)
+              << " dB@" << worstReachableRate << "Hz/card" << worstReachableCard
+              << " max_reachable_g=" << maximumReachableG
+              << " adversarial_out_of_domain_parity=" << errorDb(stressRelativeRms)
+              << " dB ring=" << ringBelow << '/' << ringAbove << '/' << ringHard
+              << " foldback=" << candidateFoldback
+              << " dBc reachable_grid=";
+    for (std::size_t rateIndex = 0;
+         rateIndex < reachableInternalRates.size(); ++rateIndex)
+    {
+        if (rateIndex != 0)
+            std::cout << ',';
+        std::cout << reachableInternalRates[rateIndex] << ':'
+                  << errorDb(worstReachableRelativeRmsByRate[rateIndex])
+                  << "dB/card" << worstReachableCardByRate[rateIndex]
+                  << "/g" << maximumReachableGByRate[rateIndex];
+    }
+    std::cout << " work=1eval+2solves verdict="
+              << (admissionMatrixPass ? "MATRIX-PASS" : "REJECT") << '\n';
 }
 
 void testNoteTimerLaw()
@@ -4197,6 +4945,7 @@ int main()
     testCascadeOscillationThreshold();
     testCascadeSurvivesAdversarialControl();
     testCascadeDeniesTheFoldback();
+    testFixedSolveCountCascadeCandidateBakeoff();
     testNoteTimerLaw();
     testCutoffControlLaw();
     testStoredControlDigitalVectors();

@@ -2451,8 +2451,9 @@ dksynth thread as the ÷17.0/÷67.7 figures already on file, so the agreement
 is depth within one lineage — now netlist-explicit and build-validated by
 ear — not a second independent source. The constant is unchanged on that
 provenance ground alone. A future refit is also *cheap*: the multiplier acts
-only on the mixed source signal entering the cascade, and the
-4.83 Vp-p/248 Hz endpoint pair is solved with every source silenced, so the
+only on the mixed source signal entering the cascade, and the 4.8 Vp-p/248 Hz
+service endpoint calibration is evaluated with every source silenced (the
+current amplitude-only result is 4.8009 Vp-p / 247.90 Hz), so the
 two calibrations are independent and re-fitting the compensation would not
 disturb the endpoint solve. Status: **mechanism resolved, magnitude still
 open** — the 128-point family OQ-09 asks for owns it.
@@ -2981,7 +2982,8 @@ not argued: the divided difference degenerates to the endpoint average in
 the linear region, so the **small-signal response is identical to six
 decimal places**, and the **self-oscillation limit cycle is identical in
 amplitude and frequency** (4.7578 Vpp at 221.56 Hz in the fixture, both
-variants), so the 4.83 Vpp/248 Hz endpoint solve is untouched. A live
+variants), so the then-current 4.83 Vpp/248 Hz joint endpoint solve was
+untouched. The later amplitude-only solve publishes 4.8009 Vpp / 247.90 Hz. A live
 grid change also simplifies: the carried states are now a physical
 capacitor voltage and a dimensionless drive, both rate-invariant, so
 `retime` re-expresses nothing. `testCascadeDeniesTheFoldback` fences the
@@ -3285,8 +3287,9 @@ voices 1.105 → **0.699**, six voices with chorus II and the full mixer 2.376 �
 **1.361**, resonance 0.95 3.960 → **1.395**. The difference from the pre-pass
 engine is −102 dB RMS relative to signal on a plain six-voice patch and −95 dB
 on a full chorus patch; on a self-oscillating patch it is −20 dB, a limit
-cycle's phase rather than its amplitude or frequency, both of which stay on the
-4.83 Vpp / 248.0 Hz service anchors.
+cycle's phase rather than its amplitude or frequency. The current amplitude-only
+calibration publishes 4.8009 Vpp / 247.90 Hz against the 4.8 Vpp / 248 Hz
+service anchors.
 
 None of this is hardware evidence and none of it is a claim about the
 instrument. The queue's 20 open questions plus the OQ-06 dependency stand
