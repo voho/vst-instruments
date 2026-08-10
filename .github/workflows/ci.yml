@@ -138,3 +138,41 @@ jobs:
             exit 1
           fi
           echo "Rendered $screenshot ($(wc -c < "$screenshot") bytes)."
+
+  plugin-windows:
+    name: Plug-in build (${{ matrix.name }}, Windows x64)
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Vocalor
+            directory: vocalor
+            build_plugin_option: VOCALOR_BUILD_PLUGIN
+          - name: Drumalor
+            directory: drumalor
+            build_plugin_option: DRUMALOR_BUILD_PLUGIN
+          - name: Neuramar
+            directory: neuramar
+            build_plugin_option: NEURAMAR_BUILD_PLUGIN
+          - name: Electry
+            directory: electry
+            build_plugin_option: ELECTRY_BUILD_PLUGIN
+          - name: Taikor
+            directory: taikor
+            build_plugin_option: TAIKOR_BUILD_PLUGIN
+          - name: YouKnow106
+            directory: youknow106
+            build_plugin_option: YOUKNOW106_BUILD_PLUGIN
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: |
+          cmake -S "${{ matrix.directory }}" -B "${{ matrix.directory }}/build-win" -DCMAKE_BUILD_TYPE=Release "-D${{ matrix.build_plugin_option }}=ON" -DBUILD_TESTING=ON
+
+      - name: Build plug-in and run tests
+        run: |
+          cmake --build "${{ matrix.directory }}/build-win" --config Release --parallel
+          ctest --test-dir "${{ matrix.directory }}/build-win" -C Release --output-on-failure
+

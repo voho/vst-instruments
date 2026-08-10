@@ -303,6 +303,80 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  build-windows:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    name: Windows build and package (${{ matrix.name }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Vocalor
+            directory: vocalor
+            version: "1.4.0"
+            build_plugin_option: VOCALOR_BUILD_PLUGIN
+          - name: Drumalor
+            directory: drumalor
+            version: "1.1.0"
+            build_plugin_option: DRUMALOR_BUILD_PLUGIN
+          - name: Neuramar
+            directory: neuramar
+            version: "1.1.0"
+            build_plugin_option: NEURAMAR_BUILD_PLUGIN
+          - name: Electry
+            directory: electry
+            version: "1.2.0"
+            build_plugin_option: ELECTRY_BUILD_PLUGIN
+          - name: Taikor
+            directory: taikor
+            version: "1.0.0"
+            build_plugin_option: TAIKOR_BUILD_PLUGIN
+          - name: YouKnow106
+            directory: youknow106
+            version: "1.1.0"
+            build_plugin_option: YOUKNOW106_BUILD_PLUGIN
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Configure
+        run: |
+          cmake -S "${{ matrix.directory }}" -B "${{ matrix.directory }}/build-win" -DCMAKE_BUILD_TYPE=Release "-D${{ matrix.build_plugin_option }}=ON" -DBUILD_TESTING=ON
+
+      - name: Build ${{ matrix.name }} and run tests
+        run: |
+          cmake --build "${{ matrix.directory }}/build-win" --config Release --parallel
+          ctest --test-dir "${{ matrix.directory }}/build-win" -C Release --output-on-failure
+
+      - name: Package ${{ matrix.name }} (Windows x64 ZIP)
+        shell: pwsh
+        run: |
+          $dist = "${{ matrix.directory }}/build-win/dist"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          $zipName = "${{ matrix.name }}-${{ matrix.version }}-Windows-x64.zip"
+          $zipPath = Join-Path $dist $zipName
+          $artefactDir = "${{ matrix.directory }}/build-win/${{ matrix.name }}_artefacts/Release"
+          Compress-Archive -Path "$artefactDir\VST3\*", "$artefactDir\Standalone\*" -DestinationPath $zipPath
+
+      - name: Check that Windows package was produced
+        shell: pwsh
+        run: |
+          $zipPath = "${{ matrix.directory }}/build-win/dist/${{ matrix.name }}-${{ matrix.version }}-Windows-x64.zip"
+          if (-not (Test-Path $zipPath)) {
+            Write-Error "expected $zipPath to exist"
+            exit 1
+          }
+          Write-Host "Packaged $zipPath"
+
+      - name: Upload the distributable Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-packages-win-${{ matrix.directory }}
+          path: ${{ matrix.directory }}/build-win/dist/${{ matrix.name }}-*-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 1
+
   # Every suite renders its committed editor screenshot while it runs, so the
   # images in the READMEs track the real editors. This runs even when an
   # instrument failed to build: the screenshots that were rendered are still
@@ -429,7 +503,7 @@ jobs:
   publish-release:
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     name: Publish the rolling nightly release
-    needs: build-macos
+    needs: [build-macos, build-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Download every instrument's packages
@@ -439,7 +513,7 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Check the twelve-file manifest
+      - name: Check the eighteen-file manifest
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -452,10 +526,16 @@ jobs:
                 exit 1
               fi
             done
+            win_matches=(dist/${product}-*-Windows-x64.zip)
+            if (( ${#win_matches[@]} != 1 )); then
+              echo "error: expected exactly one ${product} Windows zip, found ${#win_matches[@]}" >&2
+              printf '  %s\n' "${win_matches[@]:-(none)}" >&2
+              exit 1
+            fi
           done
           assets=(dist/*)
-          if (( ${#assets[@]} != 12 )); then
-            echo "error: expected exactly twelve release assets, found ${#assets[@]}" >&2
+          if (( ${#assets[@]} != 18 )); then
+            echo "error: expected exactly eighteen release assets, found ${#assets[@]}" >&2
             printf '  %s\n' "${assets[@]:-(none)}" >&2
             exit 1
           fi
@@ -466,7 +546,7 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vst-instruments-nightly-macOS-universal
+          name: vst-instruments-nightly-all-platforms
           path: dist
           if-no-files-found: error
           retention-days: 14
@@ -503,17 +583,12 @@ jobs:
           done
 
           TITLE="VST instruments nightly ($DATE)"
-          NOTES="Automated universal (arm64 + x86_64) macOS builds of Vocalor, Drumalor, Neuramar, Electry, Taikor, and YouKnow106 from \`main\` ($SHORT_SHA).
+          NOTES="Automated macOS (universal arm64 + x86_64) and Windows (x64) builds of Vocalor, Drumalor, Neuramar, Electry, Taikor, and YouKnow106 from \`main\` ($SHORT_SHA).
 
-          **These bundles are ad-hoc signed and not notarized**, so Gatekeeper will warn. To run a nightly locally, clear the quarantine flag after unzipping, e.g.:
+          **macOS bundles are ad-hoc signed and not notarized**, so Gatekeeper will warn. To run a nightly locally on macOS, clear the quarantine flag after unzipping:
 
           \`\`\`bash
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Vocalor.vst3 Library/Audio/Plug-Ins/Components/Vocalor.component Applications/Vocalor.app
-          xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Drumalor.vst3 Library/Audio/Plug-Ins/Components/Drumalor.component Applications/Drumalor.app
-          xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Neuramar.vst3 Library/Audio/Plug-Ins/Components/Neuramar.component Applications/Neuramar.app
-          xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Electry.vst3 Library/Audio/Plug-Ins/Components/Electry.component Applications/Electry.app
-          xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Taikor.vst3 Library/Audio/Plug-Ins/Components/Taikor.component Applications/Taikor.app
-          xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/YouKnow106.vst3 Library/Audio/Plug-Ins/Components/YouKnow106.component Applications/YouKnow106.app
           \`\`\`
 
           Not intended for production distribution."
