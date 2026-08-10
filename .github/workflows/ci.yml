@@ -173,6 +173,6 @@ jobs:
 
       - name: Build and test DSP engine
         run: |
-          cmake --build "${{ matrix.directory }}/build-win" --parallel
-          ctest --test-dir "${{ matrix.directory }}/build-win" --output-on-failure
+          cmake --build "${{ matrix.directory }}/build-win" --config Release --parallel
+          ctest --test-dir "${{ matrix.directory }}/build-win" -C Release --output-on-failure
 

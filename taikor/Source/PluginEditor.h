@@ -24,12 +24,11 @@ public:
 };
 
 // One stroke of the vocabulary. The pad shows the stroke's name, the spoken
-// syllable it is named for, and the key it currently answers to - which moves
-// with the selected octave, because the octave is the drum.
+// syllable it is named for, and the key it currently answers to.
 class TaikorPad final : public juce::Button
 {
 public:
-    explicit TaikorPad (taikor::Articulation articulation);
+    explicit TaikorPad (taikor::Articulation articulation, int octaveOffset = 0);
 
     void setSelected (bool shouldBeSelected);
     void setOctaveOffset (int octaveOffset);
@@ -43,6 +42,11 @@ public:
         return articulation;
     }
 
+    [[nodiscard]] int getOctaveOffset() const noexcept
+    {
+        return octaveOffset;
+    }
+
     // What a screen reader is told this pad does. Built on demand because the
     // note it plays follows the selected octave.
     [[nodiscard]] juce::String accessibleHelpText() const;
@@ -51,10 +55,11 @@ private:
     void refreshNoteText();
 
     taikor::Articulation articulation;
+    int octaveOffset = 0;
+    juce::String drumNameText;
     juce::String nameText;
     juce::String mnemonicText;
     juce::String noteText;
-    int octaveOffset = 0;
     float flashLevel = 0.0f;
     bool selected = false;
 };
@@ -161,13 +166,16 @@ private:
 
     static constexpr int octaveCount =
         taikor::highestOctaveOffset - taikor::lowestOctaveOffset + 1;
+    static constexpr std::size_t totalPadCount =
+        taikor::drumCount * taikor::articulationCount;
 
     struct LayoutAreas
     {
         juce::Rectangle<int> header;
-        juce::Rectangle<int> pads;
-        juce::Rectangle<int> octaveStrip;
+        juce::Rectangle<int> gridArea;
+        juce::Rectangle<int> rightUpperArea;
         juce::Rectangle<int> head;
+        juce::Rectangle<int> octaveStrip;
         juce::Rectangle<int> drumDeck;
         juce::Rectangle<int> strokeDeck;
         juce::Rectangle<int> microphoneDeck;
@@ -189,10 +197,11 @@ private:
     TaikorMeter meter;
     juce::TextButton panicButton { "PANIC" };
 
+    juce::Label gridCaption;
     TaikorHeadDisplay headDisplay;
     juce::Label headCaption;
 
-    std::array<std::unique_ptr<TaikorPad>, taikor::articulationCount> pads;
+    std::array<std::unique_ptr<TaikorPad>, totalPadCount> pads;
     std::array<std::uint32_t, taikor::articulationCount> observedTriggerCounters {};
 
     juce::Label octaveLabel;
