@@ -38,7 +38,7 @@ constexpr float voltsToSample = 1.0f / YouKnow106Engine::internalVoltsPerUnit;
 constexpr float sawMixVolts = 6.0f;
 constexpr float pulseMixVolts = 6.0f;
 constexpr float subMixVolts = 5.0f;
-constexpr float noiseMixVolts = 6.0f;
+constexpr float noiseMixVolts = 2.0f;
 
 // The noise generator's support circuit, module board p. 13: Tr21 (2SC945,
 // factory-selected for noise) with R104 470 kOhm collector load, coupled by

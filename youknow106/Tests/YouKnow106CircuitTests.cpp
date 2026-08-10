@@ -4173,6 +4173,15 @@ void testNoiseSourceShapingFollowsItsCircuit()
         differenceEnergy += difference * difference;
     }
     expect(energy > 1.0e-6, "the noise fixture rendered nothing to measure");
+    const double rms = std::sqrt(
+        energy / static_cast<double>(left.size() - half - 1));
+    // The compatibility profile declares a bounded +/-2 V source before the
+    // 0.40 mixer coordinate. A mistaken +/-6 V multiplier remained finite but
+    // drove this same fixture to 0.0173 RMS and made high Noise settings sound
+    // broken, while a dead source would fall through the lower bound.
+    expect(std::isfinite(rms) && rms > 0.004 && rms < 0.008,
+           "full-level main-noise RMS left its +/-2 V compatibility range: "
+               + std::to_string(rms));
     expect(differenceEnergy / energy < 1.2,
            "the rendered noise is too bright for the C41/R79-shaped source");
     expect(differenceEnergy / energy > 0.05,
