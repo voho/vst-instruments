@@ -80,7 +80,11 @@ only physical timing/transfer and revision scope. OQ-21 is new: the latest
 schematic pass established C14/HPF routing and parts. Step 15 now models the
 selected-leg asymptotic load and qualifies the nominal fixed-position transfer;
 switch-device parasitics, deselected-capacitor memory and directed mode-change
-transients of the complete network remain open.
+transients of the complete network remain open. Step 16 keeps the physical
+main-noise corner at 4822.877063 Hz but bounds its TPT design corner to
+`min(fc, 0.45 * internal_rate)`, closing an 8 kHz numerical-instability defect
+without supplying the raw amplitude/PSD or mixer-drive evidence requested by
+OQ-15/OQ-16; both questions remain open.
 
 | Priority | OQ | Question still unanswered | Already settled / do not redo |
 |---|---|---|---|
@@ -98,8 +102,8 @@ transients of the complete network remain open.
 | P2 | 12 | Envelope wall-clock timing/jitter, analogue/audible thresholds and other firmware revisions | Exact hash-scoped B-2 recurrence and physical `E>>2` DAC truncation |
 | P2 | 13 | LFO/delay wall-clock timing, analogue smoothing/output scale and revision differences | Exact hash-scoped B-2 rate, delay and fade algorithms |
 | P2 | 14 | Portamento pot/ADC transfer, hysteresis, cadence and revision differences | Exact hash-scoped B-2 coefficient and 8.8-state law |
-| P0 | 15 | Loaded oscillator/sub/noise mixer levels and their actual filter-drive budget (chiefly the WAVE output's source impedance; the 39 kΩ noise leg and 33 kΩ sub-emitter path are traced readings from 2026-08-07 with one crossing below junction-dot certainty) | Node-specific 12 Vpp/4 Vpp anchors, the 68 kΩ/560 Ω core attenuator, and the mixer topology from the p. 13 read: one summed WAVE output per voice, sub via 27 kΩ + diode, C56/C50 coupling, sources muted at their generators — legs never switch (2026-08-07) |
-| P2 | 16 | Calibrated TP8 capture (PSD/distribution against the shaped model), and physical filter-startup excitation | Shared generator topology, TP8 4.0 Vpp adjustment, and the 33.9 Hz/4.82 kHz band-shaping derived from the p. 13 designators (C42/4.7 kΩ and C41/R79, 2026-08-07) |
+| P0 | 15 | Loaded oscillator/sub/noise mixer levels and their actual filter-drive budget (chiefly the WAVE output's source impedance; the 39 kΩ noise leg and 33 kΩ sub-emitter path are traced readings from 2026-08-07 with one crossing below junction-dot certainty) | Node-specific 12 Vpp/4 Vpp anchors, the 68 kΩ/560 Ω core attenuator, and the mixer topology from the p. 13 read: one summed WAVE output per voice, sub via 27 kΩ + diode, C56/C50 coupling, sources muted at their generators — legs never switch (2026-08-07). Issue 16's one Borish-module unit offers VCA/oscillator capture leads only; it does not retune the nominal laws |
+| P2 | 16 | Calibrated raw TP8 capture (PSD/distribution/amplitude against the shaped model), and physical filter-startup excitation | Shared generator topology, TP8 4.0 Vpp adjustment, and the 33.9 Hz/**4822.877063 Hz** band-shaping derived from the p. 13 designators (C42/4.7 kΩ and C41/R79, 2026-08-07). Step 16 numerically caps only the low-pass TPT design corner at `0.45 * internal_rate`, with 4,007-cell/state/mutation qualification; it makes no hardware-PSD claim |
 | P3 / dependency | 17 | Real VOLUME gang tracking plus selector, jack, headphone and external-load transfer | Nominal-linear `10KB×2` law and fixed 29.313 kΩ internal wiper load |
 | P2 | 18 | Hardware cutoff-converter knee and upper saturation curve | Exponential audio-range law and transparent 50 kHz product cap |
 | P1 | 19 | Voice-module BA662 control-current-to-gain curve near cutoff and residual thump after the service null | BA662 pins and separate signal/control paths, ENV/GATE ownership, 6 Vpp endpoint, the per-card minimum-thump procedure, and the anchored +0.25…+0.27 V TP7 control-rail standoff the shipped 150 mV onset now sits relative to (2026-08-07) |
@@ -1325,8 +1329,23 @@ scalar, so the shared source is shaped once with unity passband, keeping the
 established in-band density. This settles the *shape* class (the earlier
 flat-white placeholder, and KR-106's uncorroborated 34 Hz–5.3 kHz trace, are
 superseded by the direct read); the generator's bounded uniform amplitude
-distribution and the absolute pre-filter coordinate remain voiced. The model
-also uses an unexplained
+distribution and the absolute pre-filter coordinate remain voiced.
+
+Step 16 resolves only a numerical endpoint defect in that declared low-pass.
+The physical C41/R79 helper remains
+`1/(2π·100 pF·330 kΩ) = 4822.877063391 Hz`, but the TPT coefficient now uses
+`min(4822.877063391 Hz, 0.45 * internal_rate)`. Former direct evaluation at
+8 kHz q1 gave `g = -2.986132794`, state pole `-2.006982013`, and a hidden
+private state near `7.87e294` after 0.25 s even when downstream finite recovery
+made final audio look safe. The bound is active below
+`10717.504585313 Hz`; the old instability seam is
+`9645.754126782 Hz`. At 8 kHz q1 it gives
+`g = 6.313755512`, pole `-0.726542677`, while 8 kHz q4 uses its 32 kHz
+internal grid and retains the physical component corner. It adds no state,
+storage, latency or per-sample work and supplies no amplitude, distribution or
+PSD evidence.
+
+The model also uses an unexplained
 20 µV per-card white excitation at the filter input, after the open 0.40 source
 coordinate scale. Each of the six physical card filters now runs continuously
 behind its closed VCA, preserving filter history and its deterministic per-card
@@ -1361,6 +1380,16 @@ hiss in OQ-03.
 - Separate proposed models and regression tests for shared audible noise and
   microscopic startup excitation, with uncertainty or **protocol only** where
   hardware evidence is unavailable.
+
+KR-106 issue 16 records 96 kHz/24-bit calibration work on one JUNO-106
+(serial 439522) fitted with Borish replacement voice chips and recalibrated in
+2022; surviving archive provenance is incomplete. It remains a capture lead,
+not closure. The common source/mixer may
+remain original, but voice VCF/VCA and output filtering traverse replacement
+modules. Candidate VCA slope/endpoint and oscillator ratios belong to OQ-15's
+future protocol and do not retune the nominal law; this mixed path cannot
+replace the raw TP8 capture, bandwidth/load declaration and population scope
+required here.
 
 ## OQ-17 — Main VOLUME tracking/loading and output-selector transfer
 
@@ -4272,6 +4301,98 @@ index, generated factory README and metrics CSV.
 These render differences are bounded provenance, not an audibility result,
 switch-click measurement or full switched-network validation. OQ-21 remains
 open. **Step 15 is complete. DOCS FROZEN.**
+
+### Step 16 — low-rate main-noise TPT safety, not OQ-15/OQ-16 closure
+
+**Dated 2026-08-10.** C41 100 pF and R79 330 kΩ independently derive the
+physical main-noise low-pass at **4822.877063391 Hz**. The former direct
+`tan(pi*fc/internal_rate)` updater became unstable at a supported endpoint:
+8 kHz q1 gave `g = -2.986132794`, pole `-2.006982013`. Its private low-pass
+state grew to approximately `7.87e294` in 0.25 s; downstream VCF/output finite
+recovery could hide the state poison, so finite final audio was a false pass.
+
+Production now designs at
+`min(4822.877063391 Hz, 0.45 * internal_rate)`. The old `2fc` instability seam
+is **9645.754126782 Hz** and the cap releases at
+**10717.504585313 Hz**. The fixed 8 kHz q1 coefficient/pole are
+`6.313755512/-0.726542677`; 8 kHz q4 correctly uses its 32 kHz internal grid
+and keeps the physical corner. State/reset/rate-transition semantics and the
+physical-corner helper remain unchanged. This block/rate-time coefficient
+choice adds no state, storage, latency or per-sample work.
+
+The JUCE-free `YouKnow106.NoiseSourceQualityContract` uses an independent
+long-double component oracle. It exercises 21 explicit rate rows, 4,007 dense
+8–12 kHz and adjacent-float seam cells, a 4,096-frame TPT impulse, and the real
+public Engine seeded trajectory from idle/no-note processing into driven noise
+without reset, plus block partitions, reset and q1/q4 transitions. It requires
+finite positive `g` and `|pole| < 1`; worst cap-active error against the
+physical analogue RC is **1.697765947 dB**. Twelve cap-inactive
+current-versus-legacy families remain exact within each architecture/run. All
+nine named controls reject: no cap, host-rate cap, 0.44/0.46/0.49/0.55 caps,
+`abs(tan)`, post-tan clamp and sanitize-only.
+
+The current inventory is **15 plugin-off / 16 plugin-on**. Fresh native arm64
+Release/plugin-off configure/build takes **1.21/18.57 s**, warning-free; the
+serial matrix passes **15/15 in 381.56 s** (Engine/Circuit/Noise
+**181.42/4.12/1.81 s**). Fresh ASan+UBSan configure/build takes
+**1.31/15.04 s**, warning-free; Circuit/Noise passes **2/2 in 10.29 s**
+(7.64/2.65 s) with halt-on-error, leak detection disabled and zero
+diagnostics. Fresh universal `arm64;x86_64` Release/plugin-on configure/build
+takes **33.9/121.7 s**; its exact serial matrix passes **16/16 in 401.47 s**.
+The new audit is warning-clean; universal translation units repeat only two
+pre-existing Engine-header `-Wfloat-equal` sites.
+
+Prescribed packaging takes **3.92 s**. VST3, AU and Standalone contain both
+slices, target minimum macOS 11.0 and pass strict/deep ad-hoc codesign, with
+CDHashes `340ce9f3a80aeb589582911db16d66b37b49cab5`,
+`39d3767acba6afca02d0a0402fd641d8d44c5293` and
+`afc0333071a2b1ebdd3f7414d8bcc1402eed361c`. Explicit audit runs pass on
+native arm64 in **1.769 s** and under genuine Rosetta `x86_64` in
+**56.952 s**, printing `sysctl.proc_translated=1`. Scalar metrics agree; raw
+identity is claimed only within each architecture, not across libm/FP paths.
+
+Three alternating seven-repetition CPU pairs retain exact normal/work/base/
+current fingerprints and show no counter leakage. Eight 4×/1× meta-medians
+span −0.471% to **+0.334%**, global ratio is **1.000678**, worst pair median is
++3.068%, and worst current raw load is **0.972737× realtime**. One isolated
++12.766% raw timing outlier is preserved in the record but does not change the
+robust paired classification.
+
+Issue 16 records 96 kHz/24-bit calibration work on one serial-439522 JUNO-106
+using Borish replacement voice chips, recalibrated in 2022; surviving archive
+provenance is incomplete. Its candidate VCA slope/endpoint and oscillator
+ratios may guide
+OQ-15 captures but do not retune the nominal laws. The mixed original-board/
+replacement-module path cannot establish OQ-16's raw TP8 main-noise PSD,
+amplitude or distribution. This step is numerical repair and qualification,
+not a hardware or audibility claim; **OQ-15 and OQ-16 remain open**.
+
+Final audio qualification is exact identity, not an audibility result.
+Sequential demo A/B renders take **96.24/94.13 s** and full factory A/B takes
+**440.98/461.15 s**. Both pairs are byte-identical and exactly match Step 15.
+Demo/factory manifests remain
+`b42e87351748d79ad91cfbfb29ca85fce99a08b0c2a090754c4cba7bf69a9434`
+and
+`0783040d94af15527450f8062813ac03ae6c6def0184574c037a5cf4106767e8`;
+the renderer-owned 22-file manifest remains
+`bc1564713b46151a77fbbc3c5403f8bd829955cd9ff9dbcb5b2bd6cc1e13c614`
+and the current canonical 23-file manifest is
+`8346a817bd215808112510dc3d37b5a8fac3a5f401aa93d117b2b9f0912ba8dd`.
+Only `Docs/audio/README.md` changes for Step-16 provenance, at SHA-256
+`8e4333223c3d58406be7919d7959327029094a7559e57d1733c9c5c943dd2483`.
+Candidate demo/factory binary hashes are
+`0ae8dec6e0ddec230aab5fbb8b8efbd63a4875900721ee60aff5371468fd9cd3`
+and
+`e74569b26d5bc8437a0c88b325d55db4bba7730e8fa40a391b2273b18aa08498`.
+
+All 20 WAVs are finite non-silent stereo PCM16 (ten 44.1 kHz, ten 48 kHz),
+with maximum absolute DC **0.000000592814 FS** and worst edge
+**0.004486083984 FS / −46.962652 dBFS**. The CSV has 128 finite unique
+slots/tones, median **−21.480711305 dBFS**, 31 overload, zero near-silent and
+nine outliers, range A86 **−61.956882039 dBFS** to A48
+**−8.749547764 dBFS**, and common gain **0.543092**. No WAV, metric CSV,
+preview or renderer-generated factory-text output changes. **Step 16 is
+complete. DOCS FROZEN.**
 
 ## Settled guardrails — do not reopen without contradictory primary evidence
 

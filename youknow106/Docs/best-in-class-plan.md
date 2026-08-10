@@ -3774,3 +3774,105 @@ evidence about a physical JUNO-106.
   These render differences are bounded provenance, not an audibility result,
   switch-click measurement or full switched-network validation. OQ-21 remains
   open. **Step 15 is complete. DOCS FROZEN.**
+
+- [x] **16. Stabilize the shared-noise support at low internal rates without
+  retuning its physical corner.**
+  C41 100 pF and R79 330 kΩ derive
+  `fc = 4822.877063391 Hz`. Production formerly used that value directly in
+  `g = tan(pi*fc/internal_rate)`. At the supported 8 kHz HQ-off endpoint this
+  yields `g = -2.986132794` and TPT state pole
+  `(1-g)/(1+g) = -2.006982013`. Direct inspection found the private low-pass
+  state near `7.87e294` after 0.25 s; finite VCF/output recovery can conceal
+  that poison, so finite final audio is not a valid stability gate.
+
+  The bounded correction chooses
+  `design_fc = min(4822.877063391 Hz, 0.45 * internal_rate)` before the
+  tangent. The cap is active below its
+  `fc/0.45 = 10717.504585313 Hz` release point and crosses the old
+  `2fc = 9645.754126782 Hz` instability seam. At 8 kHz q1 the fixed
+  coefficient/pole are `6.313755512/-0.726542677`. At 8 kHz q4 the source
+  runs on the actual 32 kHz internal grid and correctly retains the physical
+  corner; a cap based on host rate is therefore a rejected policy. The helper
+  still reports the component corner. No state, storage, latency, per-sample
+  section or per-sample work is added.
+
+  The new JUCE-free `YouKnow106.NoiseSourceQualityContract` derives the parts
+  in long double without treating the production helper as its oracle. It
+  exercises 21 explicit rate rows; 4,007 dense 8–12 kHz updater cells including
+  adjacent-float instability/release seams; an independent 4,096-frame TPT
+  impulse; the actual public Engine's seeded idle/no-note trajectory before
+  enabling a noise voice without reset; block partitions; reset; and q1/q4
+  transitions. Every coefficient is finite and positive with `|pole| < 1`.
+  Worst cap-active response deviation from the physical analogue RC is
+  **1.697765947 dB**, inside the predeclared 1.70 dB fence. Twelve cap-inactive
+  current-versus-legacy raw families remain exactly identical within each
+  architecture/run. Nine controls reject: no cap, host-rate cap, 0.44, 0.46,
+  0.49 and 0.55 caps, `abs(tan)`, post-tan clamp and sanitize-only.
+
+  The current inventory is **15 plugin-off / 16 plugin-on** contracts. Fresh
+  native arm64 Release/plugin-off configure/build completes in
+  **1.21/18.57 s** with zero warnings; serial CTest passes **15/15 in
+  381.56 s**, with Engine/Circuit/Noise at **181.42/4.12/1.81 s**. Fresh
+  ASan+UBSan configure/build completes in **1.31/15.04 s**, also warning-free;
+  focused Circuit/Noise passes **2/2 in 10.29 s** (7.64/2.65 s) under
+  `halt_on_error=1`, `detect_leaks=0`, with zero diagnostics.
+
+  A fresh universal `arm64;x86_64` Release/plugin-on configure/all-target build
+  completes in **33.9/121.7 s**. Its exact 16-contract serial matrix passes
+  **16/16 in 401.47 s**; Noise/PluginProcessor take **1.69/11.97 s**. The
+  audit target is warning-clean; only two pre-existing Engine-header
+  `-Wfloat-equal` sites repeat through universal translation units. Prescribed
+  packaging completes in **3.92 s**. VST3, AU and Standalone contain both
+  slices, target minimum macOS 11.0 and pass strict/deep ad-hoc verification,
+  with respective CDHashes
+  `340ce9f3a80aeb589582911db16d66b37b49cab5`,
+  `39d3767acba6afca02d0a0402fd641d8d44c5293` and
+  `afc0333071a2b1ebdd3f7414d8bcc1402eed361c`. Native arm64 and genuine
+  translated Rosetta `x86_64` audit launches pass in **1.769/56.952 s**;
+  Rosetta reports `sysctl.proc_translated=1`. Their scalar metrics agree, but
+  raw identities are intentionally within-architecture current-versus-legacy
+  claims, not cross-libm/FP hashes.
+
+  Three alternating seven-repetition CPU pairs retain exact normal/work/base/
+  current semantic fingerprints and show no counter leakage. The eight 4×/1×
+  meta-medians span −0.471% to **+0.334%**, global ratio is **1.000678**, worst
+  pair median is +3.068%, and worst current raw load is
+  **0.972737× realtime**. One isolated +12.766% raw timing outlier is recorded
+  but does not change the robust paired classification.
+
+  Issue 16 records 96 kHz/24-bit calibration work on one JUNO-106, serial
+  439522, fitted with Borish replacement voice chips and recalibrated in 2022;
+  surviving archive provenance is incomplete. Candidate VCA slope/endpoint
+  and oscillator ratios can
+  guide OQ-15 captures, but do not retune the nominal laws. Nor does the mixed
+  original-board/replacement-module path establish raw TP8 main-noise PSD,
+  amplitude or distribution for OQ-16. This step is numerical repair and
+  qualification only; it makes no hardware-noise or audibility claim, and
+  OQ-15/OQ-16 stay open.
+
+  Final audio qualification is exact identity rather than an audibility
+  claim. Sequential demo A/B renders take **96.24/94.13 s** and full factory
+  A/B renders take **440.98/461.15 s**. Each pair is byte-identical and exactly
+  matches Step 15. Demo/factory manifests remain
+  `b42e87351748d79ad91cfbfb29ca85fce99a08b0c2a090754c4cba7bf69a9434`
+  and
+  `0783040d94af15527450f8062813ac03ae6c6def0184574c037a5cf4106767e8`;
+  the renderer-owned 22-file manifest remains
+  `bc1564713b46151a77fbbc3c5403f8bd829955cd9ff9dbcb5b2bd6cc1e13c614`
+  and the current canonical 23-file manifest is
+  `8346a817bd215808112510dc3d37b5a8fac3a5f401aa93d117b2b9f0912ba8dd`.
+  Only `Docs/audio/README.md` changes for Step-16 provenance, at SHA-256
+  `8e4333223c3d58406be7919d7959327029094a7559e57d1733c9c5c943dd2483`.
+  Candidate demo/factory binary hashes are
+  `0ae8dec6e0ddec230aab5fbb8b8efbd63a4875900721ee60aff5371468fd9cd3`
+  and
+  `e74569b26d5bc8437a0c88b325d55db4bba7730e8fa40a391b2273b18aa08498`.
+
+  All 20 WAVs are finite non-silent stereo PCM16 (ten 44.1 kHz, ten 48 kHz),
+  with maximum absolute DC **0.000000592814 FS** and worst edge
+  **0.004486083984 FS / −46.962652 dBFS**. The CSV has 128 finite unique
+  slots/tones, median **−21.480711305 dBFS**, 31 overload, zero near-silent and
+  nine outliers, range A86 **−61.956882039 dBFS** to A48
+  **−8.749547764 dBFS**, and common gain **0.543092**. No WAV, metric CSV,
+  preview or renderer-generated factory-text output changes. **Step 16 is
+  complete. DOCS FROZEN.**

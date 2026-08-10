@@ -1,41 +1,39 @@
 # YouKnow106 audio corpus
 
-This directory is a fresh Step 15 render of the current engine candidate. It
-intentionally contains only the ten maintained demonstration fixtures and the
-full [factory-preset audit](factory-presets/README.md). Historical
+This directory is a fresh Step 16 verification render of the current engine
+candidate. It intentionally contains only the ten maintained demonstration
+fixtures and the full [factory-preset audit](factory-presets/README.md).
+Historical
 before/after, fidelity, realism, and state-of-the-art comparison corpora were
 retired during the earlier corpus reset; they remain recoverable from
-repository history and are not evidence for the Step 15 engine.
+repository history and are not evidence for the Step 16 engine.
 
 The snapshot was built by the warning-clean native arm64 Release targets with
-the plug-in disabled. Step 15 makes one selected-Cut constant correction at
-the shared voice-bus coupling. In either Cut position the mux-side R21/R23
-1 MΩ bleed remains connected to the C14/TC4052 YCOM node, so C14 now sees
-`R39 || 1 MΩ = 31,945.788964 Ω`, a 319.457890 ms time constant and a
-0.498203201 Hz corner. This supersedes the R39-only 0.482287706 Hz Cut scalar.
-Boost and Flat remain at 0.820915 Hz from `33 kΩ || 47 kΩ`; the separate
-225.8/720.5 Hz Cut sections and the Boost shelf do not move. The implementation
-retains one continuous C14 state across mode, numerical-rate and preserving
-HQ changes; hard output-path clears (including public panic) and engine reset
-discharge it. No state, selector,
-latency or per-sample section was added.
+the plug-in disabled. Step 16 leaves the physical C41/R79 noise-source pole at
+4,822.877063 Hz, but limits its TPT *design* corner to at most 0.45 times the
+actual internal rate. The former 8 kHz HQ-off path fed an above-Nyquist corner
+to `tan()`, producing a negative coefficient and an unstable hidden support
+state even while the Noise control was zero. The bound is active only below
+about 10,717.5 Hz internal; every maintained 44.1/48 kHz HQ render remains on
+the exact component corner. No state, selector, latency or per-sample section
+was added.
 
 The exact source and frozen-binary provenance for this render is:
 
 - `Source/DSP/YouKnow106Engine.cpp` SHA-256
-  `ed8fef679a94b0667569e1b0281f4381a46aa942c490be9b4765b445e1963182`
+  `752e585b356903a5b67b85ed73ee091dc49f7d4ab3dc195a12bed08389b7f5aa`
 - `Source/DSP/YouKnow106Engine.h` SHA-256
   `9ae15f16b795bf752693eb146c137a63f486d1ee29148dce0b38c58fec453b52`
 - `YouKnow106RenderDemos` SHA-256
-  `1b25d541faae90f984982346f2a13c950e4eebaf54b56b1d8d798013c79caee0`
+  `0ae8dec6e0ddec230aab5fbb8b8efbd63a4875900721ee60aff5371468fd9cd3`
 - `YouKnow106AuditFactoryPresets` SHA-256
-  `dff272a2c6aee535a8a46e5b74d8056bc8799d35d28bc72970d459d084a66eef`
+  `e74569b26d5bc8437a0c88b325d55db4bba7730e8fa40a391b2273b18aa08498`
 
-This corpus is bounded render evidence for that declared fixed-mode correction
-and the product paths exercised by the fixtures. It is not a measurement of
-TC4052 on-resistance, leakage, off-capacitance, charge injection, switch timing
-or audibility, and it does not establish a click-free hardware transition or a
-full switched-network model. Those mode-change questions remain open.
+This corpus is bounded standard-grid non-regression evidence for the declared
+low-rate numerical correction and the product paths exercised by the fixtures.
+It does not exercise the 8--10.7 kHz endpoint, measure TP8 noise statistics,
+establish the transistor source's amplitude distribution, or qualify physical
+self-oscillation startup. Those hardware questions remain open under OQ-16.
 
 ## Demonstrations
 
@@ -85,13 +83,15 @@ cmake --build build-dsp --parallel \
 ```
 
 For this snapshot each fresh warning-clean Release renderer was run twice into
-independent empty or renderer-owned directories. The two demo sets and the two
-complete factory-audit directories had identical relative file sets and bytes
-before the canonical run was installed here. Their SHA-256 tree manifests are
+independent empty directories. The two demo sets and the two complete
+factory-audit directories had identical relative file sets and bytes, and all
+22 renderer-owned files were also byte-identical to the installed Step 15
+corpus. Their SHA-256 tree manifests remain
 `b42e87351748d79ad91cfbfb29ca85fce99a08b0c2a090754c4cba7bf69a9434`
 for the ten demos and
 `0783040d94af15527450f8062813ac03ae6c6def0184574c037a5cf4106767e8`
-for the complete factory directory.
+for the complete factory directory; the combined renderer-owned manifest is
+`bc1564713b46151a77fbbc3c5403f8bd829955cd9ff9dbcb5b2bd6cc1e13c614`.
 
 All 20 WAVs decode as finite, non-silent stereo PCM: demos are
 44.1 kHz/16-bit, previews are 48 kHz/16-bit, whole-file absolute DC is at most
@@ -100,7 +100,9 @@ The factory CSV contains 128 finite, uniquely slotted rows and 128 unique
 18-byte tone states. Its median gated RMS is -21.480711305 dBFS, with 31
 overload, zero near-silent and nine median-outlier rows.
 
-Against the prior Step-12 canonical 23-file manifest
+The Step 16 renderer-owned payload is byte-identical to Step 15; only this root
+README advances its source and verification provenance. For historical scale,
+against the earlier Step-12 canonical 23-file manifest
 `f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`,
 nine demos are byte-identical. The high-pass demo and all ten fixed factory
 previews change by no more than two 16-bit sample steps. Twenty-nine factory

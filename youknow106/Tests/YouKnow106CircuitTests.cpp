@@ -528,6 +528,50 @@ struct YouKnow106TestAccess
         return result;
     }
 
+    static float noiseSourceLowPassG(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return engine.noiseSourceLowPassG_;
+    }
+
+    static double noiseSourceProcessingRate(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return engine.oversampledRate_;
+    }
+
+    static std::array<double, 2> noiseSourceSupportState(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return { engine.noiseSourceHighPass_.state,
+                 engine.noiseSourceLowPass_.state };
+    }
+
+    static void setNoiseSourceSupportState(
+        YouKnow106Engine& engine, double highPass, double lowPass) noexcept
+    {
+        engine.noiseSourceHighPass_.state = highPass;
+        engine.noiseSourceLowPass_.state = lowPass;
+    }
+
+    static float processNoiseSourceSupport(
+        YouKnow106Engine& engine, float input) noexcept
+    {
+        return engine.noiseSourceLowPass_.process(
+            engine.noiseSourceHighPass_.process(
+                input, engine.noiseSourceHighPassG_, 0.0f, 1.0f),
+            engine.noiseSourceLowPassG_, 1.0f, 0.0f);
+    }
+
+    static void forceNoiseSourceProcessingQuality(
+        YouKnow106Engine& engine, bool enabled) noexcept
+    {
+        engine.oversamplingRequested_ = enabled;
+        engine.oversamplingEnabled_ = enabled;
+        engine.updateProcessingRate(true);
+        engine.clearRateDependentOutputPath(true);
+    }
+
     static std::vector<float> renderCommonVcaInputCoupling(
         const std::vector<float>& input, double sampleRate)
     {
@@ -4135,6 +4179,282 @@ void testNoiseSourceShapingFollowsItsCircuit()
            "the rendered noise lost its passband as well as its top");
 }
 
+void testNoiseSourceLowRateSafetyAndStateSemantics()
+{
+    constexpr double endpointRate = 8000.0;
+    const double physicalCorner = YouKnow106Engine::noiseSourceLowPassHz();
+    const auto expectedCoefficient = [=](double internalRate) {
+        const float designCorner = std::min(
+            static_cast<float>(physicalCorner),
+            static_cast<float>(internalRate) * 0.45f);
+        const float inverseRate = static_cast<float>(1.0 / internalRate);
+        return std::tan(static_cast<float>(pi) * designCorner * inverseRate);
+    };
+    const auto statePole = [](double g) {
+        return (1.0 - g) / (1.0 + g);
+    };
+
+    // The helper remains the physical C41/R79 corner. Only the TPT design
+    // corner is limited, and it must be limited against the internal rate --
+    // 8 kHz HQ runs this source at 32 kHz and needs no endpoint substitution.
+    struct RateCase
+    {
+        double hostRate;
+        bool hq;
+        double internalRate;
+        const char* name;
+    };
+    constexpr std::array<RateCase, 7> rateCases {{
+        { 8000.0,  false, 8000.0,  "8k q1" },
+        { 9000.0,  false, 9000.0,  "9k q1" },
+        { 10000.0, false, 10000.0, "10k q1" },
+        { 11025.0, false, 11025.0, "11.025k q1" },
+        { 8000.0,  true,  32000.0, "8k q4" },
+        { 44100.0, false, 44100.0, "44.1k q1" },
+        { 48000.0, false, 48000.0, "48k q1" }
+    }};
+    for (const auto& item : rateCases)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(item.hostRate, 64, item.hq);
+        const double actualRate =
+            YouKnow106TestAccess::noiseSourceProcessingRate(engine);
+        const double g =
+            YouKnow106TestAccess::noiseSourceLowPassG(engine);
+        const std::string where = std::string(" at ") + item.name;
+        expectNear(actualRate, item.internalRate, 0.0,
+                   "noise-source support used the wrong internal rate" + where);
+        expectNear(g, expectedCoefficient(item.internalRate), 1.0e-5,
+                   "noise-source low-pass used the wrong design corner" + where);
+        expect(std::isfinite(g) && g > 0.0
+                   && std::abs(statePole(g)) < 1.0,
+               "noise-source low-pass has an unstable TPT pole" + where);
+    }
+
+    {
+        YouKnow106Engine hqEndpoint;
+        hqEndpoint.prepare(endpointRate, 64, true);
+        const double actual =
+            YouKnow106TestAccess::noiseSourceLowPassG(hqEndpoint);
+        const double hostRateMutation = std::tan(
+            pi * (0.45 * endpointRate) / (4.0 * endpointRate));
+        expect(std::abs(actual - hostRateMutation) > 0.05,
+               "noise-source safety cap used the host rate on the 8k q4 path");
+    }
+
+    // Drive the two private support states directly. The former unclamped
+    // 8 kHz coefficient has pole -2.007: one impulse reaches float infinity
+    // in roughly 128 steps before the double-state finite guard eventually
+    // resets it. The bounded endpoint recursion must instead decay normally.
+    {
+        YouKnow106Engine engine;
+        engine.prepare(endpointRate, 64, false);
+        bool finiteAndBounded = true;
+        double worstState = 0.0;
+        for (int index = 0; index < 4096; ++index)
+        {
+            const float output = YouKnow106TestAccess::processNoiseSourceSupport(
+                engine, index == 0 ? 1.0f : 0.0f);
+            const auto state =
+                YouKnow106TestAccess::noiseSourceSupportState(engine);
+            worstState = std::max({ worstState, std::abs(state[0]),
+                                    std::abs(state[1]) });
+            finiteAndBounded = finiteAndBounded
+                && std::isfinite(output)
+                && std::isfinite(state[0]) && std::isfinite(state[1])
+                && std::abs(state[0]) < 8.0 && std::abs(state[1]) < 8.0;
+            if (!finiteAndBounded)
+                break;
+        }
+        expect(finiteAndBounded,
+               "8k q1 noise-support impulse poisoned or escaped its states");
+        expect(worstState > 0.01,
+               "8k q1 noise-support state fixture did not exercise the pole");
+    }
+
+    EngineParameters noisePatch;
+    noisePatch.sawEnabled = false;
+    noisePatch.pulseEnabled = false;
+    noisePatch.subLevel = 0.0f;
+    noisePatch.noiseLevel = 1.0f;
+    noisePatch.cutoff = 1.0f;
+    noisePatch.resonance = 0.0f;
+    noisePatch.envDepth = 0.0f;
+    noisePatch.vcaMode = VcaMode::Gate;
+    noisePatch.vcaLevel = 1.0f;
+    noisePatch.attack = 0.0f;
+    noisePatch.decay = 0.0f;
+    noisePatch.sustain = 1.0f;
+    noisePatch.release = 0.0f;
+    noisePatch.chorus = ChorusMode::Off;
+    noisePatch.volume = 1.0f;
+    noisePatch.calibration = 0.0f;
+
+    // The shared generator advances even with Noise at zero and no assigned
+    // note. Check that idle path first, then enable a noise voice without a
+    // reset: an endpoint bug must not hide as latent state poison behind the
+    // later VCF/output finite guards.
+    {
+        YouKnow106Engine engine;
+        engine.prepare(endpointRate, 32, false);
+        std::array<float, 32> left {};
+        std::array<float, 32> right {};
+        bool idleStateSafe = true;
+        for (int block = 0; block < 64; ++block)
+        {
+            engine.process(left.data(), right.data(),
+                           static_cast<int>(left.size()));
+            const auto state =
+                YouKnow106TestAccess::noiseSourceSupportState(engine);
+            idleStateSafe = idleStateSafe
+                && std::isfinite(state[0]) && std::isfinite(state[1])
+                && std::abs(state[0]) < 8.0 && std::abs(state[1]) < 8.0;
+            if (!idleStateSafe)
+                break;
+        }
+        const auto idleState =
+            YouKnow106TestAccess::noiseSourceSupportState(engine);
+        expect(idleStateSafe,
+               "idle 8k q1 processing poisoned the unconditional noise source");
+        expect(idleState[0] != 0.0 || idleState[1] != 0.0,
+               "idle processing did not advance the shared noise support");
+
+        engine.setParameters(noisePatch);
+        engine.noteOn(60, 1.0f);
+        double energy = 0.0;
+        bool enabledStateSafe = true;
+        for (int block = 0; block < 64; ++block)
+        {
+            engine.process(left.data(), right.data(),
+                           static_cast<int>(left.size()));
+            const auto state =
+                YouKnow106TestAccess::noiseSourceSupportState(engine);
+            enabledStateSafe = enabledStateSafe
+                && std::isfinite(state[0]) && std::isfinite(state[1])
+                && std::abs(state[0]) < 8.0 && std::abs(state[1]) < 8.0;
+            for (const float sample : left)
+            {
+                enabledStateSafe = enabledStateSafe && std::isfinite(sample);
+                energy += static_cast<double>(sample) * sample;
+            }
+            if (!enabledStateSafe)
+                break;
+        }
+        expect(enabledStateSafe,
+               "enabling Noise after an idle 8k q1 run exposed latent poison");
+        expect(energy > 1.0e-8,
+               "the post-idle 8k q1 noise voice rendered nothing");
+    }
+
+    // Host block boundaries must not change the free-running generator, its
+    // two physical support states, or the downstream audio sequence.
+    struct BlockRender
+    {
+        std::vector<float> left;
+        std::vector<float> right;
+        std::array<double, 2> state {};
+    };
+    const auto renderInBlocks = [&](int blockSize) {
+        constexpr int length = 2048;
+        YouKnow106Engine engine;
+        engine.prepare(endpointRate, 256, false);
+        engine.setParameters(noisePatch);
+        engine.noteOn(60, 1.0f);
+        BlockRender result;
+        result.left.resize(length);
+        result.right.resize(length);
+        for (int offset = 0; offset < length; offset += blockSize)
+        {
+            const int count = std::min(blockSize, length - offset);
+            engine.process(result.left.data() + offset,
+                           result.right.data() + offset, count);
+        }
+        result.state =
+            YouKnow106TestAccess::noiseSourceSupportState(engine);
+        return result;
+    };
+    const auto singleBlock = renderInBlocks(2048);
+    const auto oddBlocks = renderInBlocks(37);
+    expect(singleBlock.left == oddBlocks.left
+               && singleBlock.right == oddBlocks.right
+               && singleBlock.state == oddBlocks.state,
+           "8k q1 noise support changed with host block partitioning");
+
+    // A hard reset clears both support voltages but does not redesign the
+    // coefficient. A live numerical-rate rebuild preserves both voltages and
+    // switches between the component corner at 32 kHz and the endpoint cap at
+    // 8 kHz. This also rejects a cap accidentally based on the host rate.
+    {
+        YouKnow106Engine engine;
+        engine.prepare(endpointRate, 64, true);
+        const double hqG =
+            YouKnow106TestAccess::noiseSourceLowPassG(engine);
+        YouKnow106TestAccess::setNoiseSourceSupportState(engine, -0.125, 0.375);
+        YouKnow106TestAccess::forceNoiseSourceProcessingQuality(engine, false);
+        expect(engine.getOversamplingFactor() == 1,
+               "forced 8k noise-support rate did not select q1");
+        expect(YouKnow106TestAccess::noiseSourceSupportState(engine)
+                   == std::array<double, 2> { -0.125, 0.375 },
+               "q4-to-q1 rebuild reset the physical noise-support state");
+        expectNear(YouKnow106TestAccess::noiseSourceLowPassG(engine),
+                   expectedCoefficient(endpointRate), 1.0e-5,
+                   "q4-to-q1 rebuild missed the 8k endpoint cap");
+
+        YouKnow106TestAccess::forceNoiseSourceProcessingQuality(engine, true);
+        expect(engine.getOversamplingFactor() == 4,
+               "forced 8k noise-support rate did not return to q4");
+        expect(YouKnow106TestAccess::noiseSourceSupportState(engine)
+                   == std::array<double, 2> { -0.125, 0.375 },
+               "q1-to-q4 rebuild reset the physical noise-support state");
+        expectNear(YouKnow106TestAccess::noiseSourceLowPassG(engine), hqG,
+                   0.0, "q1-to-q4 rebuild did not restore the physical corner");
+
+        engine.reset();
+        expect(YouKnow106TestAccess::noiseSourceSupportState(engine)
+                   == std::array<double, 2> { 0.0, 0.0 },
+               "hard reset retained noise-support voltage");
+        expectNear(YouKnow106TestAccess::noiseSourceLowPassG(engine), hqG,
+                   0.0, "hard reset redesigned the noise-support coefficient");
+    }
+
+    // Exercise the same q4<->q1 choice through the public idle safety fade,
+    // not only the narrow state seam above.
+    {
+        YouKnow106Engine engine;
+        engine.prepare(endpointRate, 16, true);
+        std::array<float, 16> left {};
+        std::array<float, 16> right {};
+        const auto finishToggle = [&](bool enabled, int wantedFactor) {
+            expect(!engine.setOversamplingEnabled(enabled),
+                   "idle 8k quality toggle skipped its safety fade");
+            bool safe = true;
+            for (int block = 0;
+                 block < 64 && engine.getOversamplingFactor() != wantedFactor;
+                 ++block)
+            {
+                engine.process(left.data(), right.data(),
+                               static_cast<int>(left.size()));
+                const auto state =
+                    YouKnow106TestAccess::noiseSourceSupportState(engine);
+                safe = safe && std::isfinite(state[0]) && std::isfinite(state[1])
+                    && std::abs(state[0]) < 8.0 && std::abs(state[1]) < 8.0;
+            }
+            expect(safe, "live 8k quality toggle poisoned noise-support state");
+            expect(engine.getOversamplingFactor() == wantedFactor,
+                   "live 8k quality toggle did not reach its requested factor");
+        };
+
+        finishToggle(false, 1);
+        expectNear(YouKnow106TestAccess::noiseSourceLowPassG(engine),
+                   expectedCoefficient(endpointRate), 1.0e-5,
+                   "live 8k q1 path missed its internal-rate cap");
+        finishToggle(true, 4);
+        expectNear(YouKnow106TestAccess::noiseSourceLowPassG(engine),
+                   expectedCoefficient(4.0 * endpointRate), 1.0e-5,
+                   "live 8k q4 path retained a host-rate cap");
+    }
+}
+
 void testCombinedBbdSupportTransitionAndStateSafety()
 {
     using Transition = Chorus::SupportChain::ExactTransition;
@@ -4829,6 +5149,7 @@ int main()
     testSupportFilterCornersLandWhereAsked();
     testHighPassReachesTheSummedSignal();
     testNoiseSourceShapingFollowsItsCircuit();
+    testNoiseSourceLowRateSafetyAndStateSemantics();
     testCorrectionResidualsVanishAtTheEdges();
     
     // SOTA physical modeling tests

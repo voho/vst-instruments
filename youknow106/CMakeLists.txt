@@ -310,6 +310,16 @@ if(YOUKNOW106_BUILD_TOOLS)
         PRIVATE YouKnow106DSP)
     target_compile_features(YouKnow106HighPassNetworkAudit PRIVATE cxx_std_20)
 
+    # Independent numerical qualification for the shared main-noise support
+    # circuit. The physical C41/R79 corner is re-derived locally, while the
+    # actual production updater and hidden filter states are probed across the
+    # supported low-rate endpoint and ordinary selector grids.
+    add_executable(YouKnow106NoiseSourceQualityAudit
+        Tools/AuditNoiseSourceQuality.cpp)
+    target_link_libraries(YouKnow106NoiseSourceQualityAudit
+        PRIVATE YouKnow106DSP)
+    target_compile_features(YouKnow106NoiseSourceQualityAudit PRIVATE cxx_std_20)
+
     if(MSVC)
         target_compile_options(YouKnow106RenderDemos PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderSota PRIVATE /W4 /permissive-)
@@ -336,6 +346,8 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106PassiveHoldTimingAudit
             PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106HighPassNetworkAudit
+            PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnow106NoiseSourceQualityAudit
             PRIVATE /W4 /permissive-)
     else()
         target_compile_options(YouKnow106RenderDemos PRIVATE
@@ -367,6 +379,8 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106PassiveHoldTimingAudit PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106HighPassNetworkAudit PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnow106NoiseSourceQualityAudit PRIVATE
             -Wall -Wextra -Wpedantic)
     endif()
 endif()
@@ -452,11 +466,14 @@ if(BUILD_TESTING)
                  COMMAND YouKnow106PassiveHoldTimingAudit --self-test)
         add_test(NAME YouKnow106.HighPassNetworkContract
                  COMMAND YouKnow106HighPassNetworkAudit --self-test)
+        add_test(NAME YouKnow106.NoiseSourceQualityContract
+                 COMMAND YouKnow106NoiseSourceQualityAudit --self-test)
         set_tests_properties(YouKnow106.DcoScanQualityContract
                              YouKnow106.VcfBbdQualityContract
                              YouKnow106.VcfDynamicQualityContract
                              YouKnow106.PassiveHoldTimingContract
                              YouKnow106.HighPassNetworkContract
+                             YouKnow106.NoiseSourceQualityContract
                              PROPERTIES TIMEOUT 300)
         set_tests_properties(YouKnow106.BbdDynamicQualityContract
                              PROPERTIES TIMEOUT 300)

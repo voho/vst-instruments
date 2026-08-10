@@ -2414,8 +2414,17 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
         pi * commonVcaInputCouplingCornerHz() * inverseOversampledRate_);
     noiseSourceHighPassG_ = std::tan(
         pi * noiseSourceHighPassHz() * inverseOversampledRate_);
+    // C41/R79's physical 4.82 kHz corner lies above Nyquist on the supported
+    // 8--9.6 kHz HQ-off endpoint grids. Feeding that frequency straight to
+    // tan() makes the TPT coefficient negative and its state recursion
+    // unstable. Keep the component-derived helper unchanged, but limit this
+    // numerical design corner on the actual internal grid, as the other TPT
+    // support filters do. Standard rates and 8 kHz HQ (32 kHz internal) remain
+    // on the exact component corner.
+    const float noiseSourceLowPassDesignHz = std::min(
+        noiseSourceLowPassHz(), static_cast<float>(oversampledRate_) * 0.45f);
     noiseSourceLowPassG_ = std::tan(
-        pi * noiseSourceLowPassHz() * inverseOversampledRate_);
+        pi * noiseSourceLowPassDesignHz * inverseOversampledRate_);
     outputCouplingG_ = std::tan(
         pi * outputCouplingCornerHz() * inverseSampleRate_);
     const double deepest = totalLatencySamples(maximumOversampleFactor);
