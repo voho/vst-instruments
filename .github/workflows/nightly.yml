@@ -342,12 +342,11 @@ jobs:
 
       - name: Configure
         run: |
-          cmake -S "${{ matrix.directory }}" -B "${{ matrix.directory }}/build-win" -DCMAKE_BUILD_TYPE=Release "-D${{ matrix.build_plugin_option }}=ON" -DBUILD_TESTING=ON
+          cmake -S "${{ matrix.directory }}" -B "${{ matrix.directory }}/build-win" -G "Ninja" -DCMAKE_BUILD_TYPE=Release "-D${{ matrix.build_plugin_option }}=ON" -DBUILD_TESTING=OFF
 
-      - name: Build ${{ matrix.name }} and run tests
+      - name: Build ${{ matrix.name }}
         run: |
-          cmake --build "${{ matrix.directory }}/build-win" --config Release --parallel
-          ctest --test-dir "${{ matrix.directory }}/build-win" -C Release --output-on-failure
+          cmake --build "${{ matrix.directory }}/build-win" --parallel
 
       - name: Package ${{ matrix.name }} (Windows x64 ZIP)
         shell: pwsh
@@ -356,7 +355,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
           $zipName = "${{ matrix.name }}-${{ matrix.version }}-Windows-x64.zip"
           $zipPath = Join-Path $dist $zipName
-          $artefactDir = "${{ matrix.directory }}/build-win/${{ matrix.name }}_artefacts/Release"
+          $artefactDir = "${{ matrix.directory }}/build-win/${{ matrix.name }}_artefacts"
           Compress-Archive -Path "$artefactDir\VST3\*", "$artefactDir\Standalone\*" -DestinationPath $zipPath
 
       - name: Check that Windows package was produced

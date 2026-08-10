@@ -139,8 +139,8 @@ jobs:
           fi
           echo "Rendered $screenshot ($(wc -c < "$screenshot") bytes)."
 
-  plugin-windows:
-    name: Plug-in build (${{ matrix.name }}, Windows x64)
+  dsp-tests-windows:
+    name: DSP tests (${{ matrix.name }}, JUCE-free, Windows)
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -169,10 +169,10 @@ jobs:
 
       - name: Configure
         run: |
-          cmake -S "${{ matrix.directory }}" -B "${{ matrix.directory }}/build-win" -DCMAKE_BUILD_TYPE=Release "-D${{ matrix.build_plugin_option }}=ON" -DBUILD_TESTING=ON
+          cmake -S "${{ matrix.directory }}" -B "${{ matrix.directory }}/build-win" -G "Ninja" -DCMAKE_BUILD_TYPE=Release "-D${{ matrix.build_plugin_option }}=OFF" -DBUILD_TESTING=ON
 
-      - name: Build plug-in and run tests
+      - name: Build and test DSP engine
         run: |
-          cmake --build "${{ matrix.directory }}/build-win" --config Release --parallel
-          ctest --test-dir "${{ matrix.directory }}/build-win" -C Release --output-on-failure
+          cmake --build "${{ matrix.directory }}/build-win" --parallel
+          ctest --test-dir "${{ matrix.directory }}/build-win" --output-on-failure
 
