@@ -194,19 +194,40 @@ The demo/factory twins remain byte-identical to Step 15, so this repair creates
 no WAV or renderer-generated factory-text delta; only the maintained audio
 index gains Step-16 provenance.
 
+**Step 17, 2026-08-10.** A lifecycle audit found that the
+startup snapshot exception was not actually confined to startup. After the
+declared 40 ms output-path quiet interval, every host-block
+`setParameters()` call could directly replace the shared RESONANCE, common
+VCA LEVEL, PWM, SUB and NOISE target and held values. That skipped the normal
+23-write converter queue and jumped past the declared 522 µs resonance/noise,
+9.08249 ms common-VCA, 4.7 ms + 2.632 ms PWM and 10 ms SUB trajectories. A
+parameter move during a long silence could therefore reach the next attack by
+a path the continuously powered hardware does not have.
+
+The correction confines direct shared-hold priming to the startup
+window before the first valid positive-length prepared `process()` call. Once
+that call begins, ordinary host snapshots can update panel intent but all five
+shared destinations remain owned by their normal scan slots and hold
+networks, however long the engine later stays silent. Only hard reset or
+`prepare()` opens a new startup window. Startup priming remains an explicit
+plug-in policy for restoring a saved patch before audio begins; this boundary
+does not claim a hardware startup sequence, exact hardware write timestamps,
+acquisition, droop or jitter. It closes no open question and adds no state,
+storage, latency or per-sample work. Final qualification is recorded below.
+
 > **Listen first.** Ten [rendered demonstrations](Docs/audio/README.md) cover
 > the classic pad and PWM strings, the 16' bass, the self-oscillating filter,
 > the chorus modes, unison glide, the delayed vibrato, the high-pass ladder
-> and the optional deterministic Unit Character profile. Step 16 reran the
+> and the optional deterministic Unit Character profile. Step 17 reran the
 > maintained corpus twice from one frozen native Release engine into
 > independent renderer-owned directories: demo and complete factory pairs are
-> byte-identical to each other and to Step 15, with manifests
+> byte-identical to each other and to Steps 15/16, with manifests
 > `b42e87351748d79ad91cfbfb29ca85fce99a08b0c2a090754c4cba7bf69a9434`
 > and
 > `0783040d94af15527450f8062813ac03ae6c6def0184574c037a5cf4106767e8`.
 > The current installed canonical 23-file manifest, including its updated
-> Step-16 provenance index, is
-> `8346a817bd215808112510dc3d37b5a8fac3a5f401aa93d117b2b9f0912ba8dd`.
+> Step-17 provenance index, is
+> `19053f2cb7b57eef5fccb7bfa9f7f5e14ab2e1e932af1672b5138565430d196c`.
 > Ten additional
 > [factory-preset previews](Docs/audio/factory-presets/README.md)
 > retain their relative levels with one shared gain rather than per-file
@@ -381,8 +402,9 @@ index gains Step-16 provenance.
   constant derive `gain_dB=-16.3196647+0.165581014*b`. C7 and its loaded
   resistance give the shared control a 9.08249 ms time constant, so changes on
   an active signal path settle like the hardware node instead of following a
-  voiced curve. Initial idle host-snapshot priming remains an explicit startup
-  policy, not a circuit claim.
+  voiced curve. Direct host-snapshot priming ends at the first valid prepared
+  audio interval; later silence remains scan-owned. That startup exception is
+  product policy, not a circuit claim.
 - **The chorus has no compander**, so it hisses — the hiss is modelled, and
   there is a control to defeat it that the hardware does not have. Its level
   is the MN3009's own noise row rather than a chosen one: the datasheet that
@@ -551,7 +573,7 @@ remain external-validation debts, is the
 | --- | --- | --- |
 | Patch memory and selection | All 128 locations are in hardware order A11…A88, then B11…B88. Each tone is the exact 16 continuous bytes plus two packed switch bytes used by the hardware, decoded by the SysEx path. Program Change 0…127 maps directly to those slots. | The hardware stores no names; displayed names are archival metadata. A host preset also restores plug-in/performance controls, while hardware Program Change and SysEx correctly restore tone memory only. |
 | Key assigner and POLY modes | Six-card allocation, POLY 1/POLY 2, note dropping instead of stealing, held-key rescans and Solo Unison behavior are ROM-resolved for the stated A-5 image. The physical keybed is represented as 61 keys. | Velocity, more than six voices and host notes beyond the drawn keybed are extensions. Velocity defaults to zero depth and is then exactly inert; turned up, it scales the voice amplifier's control and the ENV amount into that voice's filter by the same `1 − depth·(1 − velocity)`, so it rides the two paths the panel already has and adds no curve of its own. The mouse Shift-click gesture is a UI equivalent for pressing both momentary POLY contacts. |
-| Shared digital control generator | Envelope recurrence, sustain mapping, DAC truncation, LFO/delay arithmetic and portamento are ROM-resolved for the stated B-2 image. The 23 converter destinations, their ownership and the 4.2 ms pass are anchored. VCF and voice-VCA hold constants are component-derived, as is the common VCA LEVEL path's 9.08249 ms post-S/H C7 pole. | Writes retain the exact logical order but use normalized sub-pass spacing; exact timestamps, acquisition and jitter remain open. Step 12 resolves the declared fractional event inside the six 687 µs voice-VCA holds, 9.08249 ms common-VCA pole, derived 10 ms SUB pole and derived PWM 4.7/2.632 ms two-pole cascade. A generalized scalar latch covers 16 passive destinations, including Step 11's unchanged RES/VCF path; DCO/Pitch and NOISE remain sample-grid. The existing passive physical states use double precision with no new coordinate. A 48 kHz model characterization sweeps all 1,008 host-boundary phases and six cards, separating the fractional physical VCA write from its official target poll and a declared output-onset proxy; its numbers describe this compatibility profile, not hardware. Initial idle host-snapshot priming is product policy. The delay envelope gating the PWM write alongside the pitch and filter writes is internal consistency with the firmware's one attenuator and one LFO, not a documented statement that DELAY reaches PWM. |
+| Shared digital control generator | Envelope recurrence, sustain mapping, DAC truncation, LFO/delay arithmetic and portamento are ROM-resolved for the stated B-2 image. The 23 converter destinations, their ownership and the 4.2 ms pass are anchored. VCF and voice-VCA hold constants are component-derived, as is the common VCA LEVEL path's 9.08249 ms post-S/H C7 pole. | Writes retain the exact logical order but use normalized sub-pass spacing; exact timestamps, acquisition and jitter remain open. Step 12 resolves the declared fractional event inside the six 687 µs voice-VCA holds, 9.08249 ms common-VCA pole, derived 10 ms SUB pole and derived PWM 4.7/2.632 ms two-pole cascade. A generalized scalar latch covers 16 passive destinations, including Step 11's unchanged RES/VCF path; DCO/Pitch and NOISE remain sample-grid. The existing passive physical states use double precision with no new coordinate. A 48 kHz model characterization sweeps all 1,008 host-boundary phases and six cards, separating the fractional physical VCA write from its official target poll and a declared output-onset proxy; its numbers describe this compatibility profile, not hardware. Direct host-snapshot priming is startup-only and remains product policy; after the first valid prepared interval, silence and panic do not bypass the scanner. The delay envelope gating the PWM write alongside the pitch and filter writes is internal consistency with the firmware's one attenuator and one LFO, not a documented statement that DELAY reaches PWM. |
 | DCO, ramp, pulse, sub and mixer | The 8 MHz master reference, integer timer division, range clocks, pitch quantization, constant-current ramp, PWM comparator and divide-by-two sub topology are anchored/derived. A changed-pitch write occurs at that card’s converter slot. The moving-threshold solver prevents a digital-only missed PWM edge and full-cycle blip. | BLEP/BLAMP repairs are numerical antialiasing mechanisms, not evidence of hardware transparency by themselves. Step 7 keeps a circular 24-internal-sample naive delay behind a symmetric `H=24` correction. It linearly interpolates the continuous bandlimited step response and only then subtracts the exact ideal step, avoiding interpolation across the residual's unit jump; the continuous slope residual remains stored directly. A 95-tap Kaiser half-band (`beta=7.857`) closes the common-host boundary. The expanded saw/sub/5–50–95% pulse grid now passes all six 1×/2×/4× cells: −83.48/−82.44/−82.43 dBc at 44.1 kHz and −84.88/−92.98/−92.98 dBc at 48 kHz against −70. None of this changes the hardware/model laws or proves them against an original unit. Exact restart electrical state, loaded saw/pulse/sub/noise levels, filter-drive budget and live waveform-switch transients remain approximated or open. Pulse currently uses a provisional instantaneous audio gate; no invented anti-click envelope is presented as hardware behavior. |
 | Shared main noise | One Tr21 source, the C42/4.7 kΩ 33.9 Hz input high-pass and the C41/R79 **4822.877063 Hz** output low-pass feed one scanned NOISE LEVEL rail shared by all voices. | The bounded-uniform generator coordinate, absolute amplitude/distribution and microscopic per-card startup excitation remain voiced under OQ-15/OQ-16. Step 16 limits only the output TPT design corner to `min(4822.877063 Hz, 0.45 * internal_rate)`: 8 kHz q1 is stable while 8 kHz q4 and all common cap-inactive families retain their old response exactly. The 1.697765947 dB cap-active error is against the declared physical analogue RC, not a hardware capture. |
 | Per-voice VCF | Four IR3109/BA662 transconductor stages, the 68 kΩ/560 Ω attenuation, 240 pF stages, per-card cutoff trims and service calibration anchors are hardware-fixed. Cutoff modulation is summed in converter counts before the exponential law. The upper knee is the transconductor's own control-current saturation near 64 kHz, and the converter's R-2R carry error rides on the code it produces. | Step 10 introduced two fixed five-stage Merson halfsteps over the same continuous four-stage equations. Step 11 leaves their four double capacitor states, causal cubic drive, ten RHS evaluations, product-grid cap and endpoint-linear ordinary path unchanged. Only an interval containing a fractional cutoff or shared-resonance write receives exact segmented 522 µs hold values at the seven Merson nodes; the normal poll later commits the payload latched at the declared event. The dated Step-11 19/24-profile matrix clears all eight HQ/engine-bound paths from 8 kHz/4× through 768 kHz/1× at −84.881…−119.340 dB; its deliberate late/ceil and early/floor snap mutations reject at −33.245/−32.007 dB. Step 13 separately qualifies actual HQ-off q1: five moving-control rows pass, but static nominal hot rows reject at all four standard 44.1/48/88.2/96 kHz hosts, so none is admitted by the combined rule. Connected/disconnected shipping `renderVoice` probes remain mutation-sensitive. Resonance byte-to-loop gain, input compensation and feedback saturation are voiced pending measurements; the maximum loop gain (4.504) remains fitted only to the 4.8 Vp-p anchor. The saturation exponent and carry sizes are fitted to a third-party measured card, not to a Roland document. Neither Merson nor event-aware evaluation is hardware evidence, and OQ-07/OQ-08 remain open. |
@@ -1242,6 +1264,101 @@ zero near-silent and nine outliers; its range is A86
 **−61.956882039 dBFS** to A48 **−8.749547764 dBFS**, with common gain
 **0.543092**. No WAV, metric CSV, preview or renderer-generated factory text
 changes. **Step 16 is complete. DOCS FROZEN.**
+
+### Step 17 qualification — startup-only shared-hold priming
+
+Step 17 repairs one verified product-lifecycle defect. The old
+`outputPathIdle` predicate became true again after 40 ms of silence, so a
+host's routine block snapshot could directly rewrite RESONANCE, common VCA,
+PWM, SUB and NOISE holds. That shortcut bypassed the exact 23-write scan and
+the existing 522 µs, 9.08249 ms, 4.7/2.632 ms and 10 ms hold dynamics. The
+correction permits that shortcut only before the first valid positive-length
+prepared process call; later silence cannot re-arm it, while hard reset and
+`prepare()` deliberately begin a new startup window.
+
+This is a lifecycle correction to the already declared compatibility model,
+not a new hardware-timing measurement. The normalized scan phase, queue order,
+destination ownership, component/voiced hold laws and their evidence labels
+remain unchanged; OQ-07 and OQ-08 stay open, as do every other standing open
+question. The correction reuses the existing lifecycle state and
+adds no state, storage, latency or per-sample work.
+
+- **Focused regression and mutation evidence:** the expanded
+  `testIdleSnapshotPrimesEverySharedHold` and new
+  `testStartedIdleEditsUseTheOrderedConverterScan` pass together. They cover
+  repeated pre-start snapshots, invalid/zero/unprepared process calls, more
+  than 40 ms silence, immediate Note On, exact half-interval common-VCA event
+  and next-poll commit, 257-frame block partitioning, panic, reset and the
+  unchanged 41-sample latency. Restoring the recurring `outputPathIdle`
+  policy rejects with six assertions.
+
+A fresh warning-clean native arm64 Release/plugin-off all-target build takes
+**8.23 s** and the exact serial matrix passes **15/15 in 473.02 s**, including
+Engine/Circuit at **206.86/7.56 s**. A fresh ASan+UBSan Engine-target build is
+also warning-clean in **8.81 s**; the two-regression startup gate passes in
+**0.64 s** under `halt_on_error=1`, `detect_leaks=0`, with no diagnostic.
+
+The final universal plugin-on all-target build takes **127.43 s**, registers
+the exact 16-contract inventory and emits only the two inherited
+Engine-header `-Wfloat-equal` warnings at lines 431/789. Its initial serial run
+passed tests 1–15 before PluginProcessor exposed a stale test chronology: its
+reference had startup-primed pulse while the MIDI path changed pulse at sample
+1. The test-only correction keeps the full dump at sample 0 only on the
+MIDI-driven path, preloads the reference from the same quantized dump before
+prepare, and gives both paths the pulse edit at sample 1 and Note On at sample
+2. That yields equivalent pre-first-render converter/hold chronology without
+relaxing a threshold; the registered PluginProcessor contract then passes in
+**11.40 s**. Thus all 16
+exact contracts are green, transparently as the retained first 15 plus the
+corrected focused rerun rather than one uninterrupted 16/16 log.
+
+Prescribed packaging passes in **3.11 s**. VST3, AU and Standalone each
+contain `arm64` and `x86_64`, target macOS 11.0 in both slices and pass
+strict/deep signature verification. Their arm64/x86_64 CDHash prefixes are
+respectively `8f07692a/059a8e10`, `1975c99e/17f254d8` and
+`5a3f7ec2/8e46ef3b`. The ZIP/PKG SHA-256 values are
+`a066e7d122c082e39702c5b5524f1de455c93c8ab756b86a0d2ed9ecc1fa7097`
+and
+`2e7972005be2944520acf86265201ddda99ff6d73819d24756a55c08f2f707c7`.
+The focused startup gate also passes natively in **0.04 s** and under genuine
+Rosetta (`uname -m=x86_64`, `sysctl.proc_translated=1`) in **0.24 s**.
+
+Three alternating seven-repetition CPU pairs retain exact normal/work/base/
+current semantic fingerprints and pass both work-counter self-tests. The
+largest positive 4×/1× meta-median is **+1.630160%**, worst pair median is
+**+2.939967%**, aggregate ratio is **1.003069949 (+0.306995%)**, worst
+candidate median is **0.868× realtime** and worst raw repetition is
+**0.882116×**. All remain below the predeclared 5% and realtime gates.
+
+The final non-document source SHA-256 set is:
+
+| Source | SHA-256 |
+| --- | --- |
+| `CMakeLists.txt` | `e200a56a5801f8e2ca80e42602ed6f4f65896b06d82e9153d16c89b7c657dae3` |
+| `Source/DSP/YouKnow106Engine.cpp` | `45254c5659df29b3efbeebe6717af96544192bdc4ace7228df6bbdd1d875a824` |
+| `Source/DSP/YouKnow106Engine.h` | `d0bb7d99a3de16dd0756ee43ff573283cf468d551fbc7e37797b26ab9054bbc1` |
+| `Tests/YouKnow106EngineTests.cpp` | `5b59e992e956dbc4b640c2f096954ada627bc8476a02cb552d0b741984c3933d` |
+| `Tests/PluginProcessorTests.cpp` | `3940edf6a9e695f8a56d14c83e51613b2214801d0cbb45b91b58b0df19d51d06` |
+
+Exactly two sequential demo and two full-factory renders take
+**92.32/92.70 s** and **454.40/509.67 s**. Both pairs and all 22 installed
+Step-16 renderer-owned files are byte-identical, with demo/factory/combined
+manifests
+`b42e87351748d79ad91cfbfb29ca85fce99a08b0c2a090754c4cba7bf69a9434`,
+`0783040d94af15527450f8062813ac03ae6c6def0184574c037a5cf4106767e8`
+and
+`bc1564713b46151a77fbbc3c5403f8bd829955cd9ff9dbcb5b2bd6cc1e13c614`.
+The render binaries hash to
+`ab1aa091310e764313ee91d0d8edd422cfe5b11863f69503a47f2fa008991bf4`
+and
+`415d4021f59d377142f8de9c59bb5f0051de44d647df338cbbbdd91dab995d91`.
+Only `Docs/audio/README.md` changes for Step-17 provenance, at SHA-256
+`a6bb49018b312bab2a8e82dcabb9bc105ccd19e076bf39ec0e580631108ed3aa`;
+the installed canonical 23-file manifest is
+`19053f2cb7b57eef5fccb7bfa9f7f5e14ab2e1e932af1672b5138565430d196c`.
+All 20 WAVs and the 128-row factory audit retain their frozen Step-16 metrics.
+No WAV, generated factory README, metrics CSV or preview changes. **Step 17 is
+complete. DOCS FROZEN.**
 
 To regenerate the full factory report and previews after a signal-path change:
 

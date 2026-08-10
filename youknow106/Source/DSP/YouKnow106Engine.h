@@ -1382,9 +1382,14 @@ private:
     // be a pot in the signal path.
     static constexpr float panelGlideSeconds = 0.005f;
     float glidedVolume_ { 0.8f };
-    // A glide needs somewhere to start. The first render after a reset takes
-    // the panel as it stands rather than sliding up to it, or a patch loaded
-    // while stopped would fade in when the transport rolled.
+    // A glide needs somewhere to start. The first valid, positive-length
+    // render after a reset takes the panel as it stands rather than sliding up
+    // to it, or a startup snapshot would fade in when the transport rolled.
+    // That same one-shot boundary owns startup hold priming: repeated snapshots
+    // may replace the reset image until this flag is set, but later silence or
+    // panic must not turn an ordinary panel edit into a direct converter write.
+    // The historic name is retained because executable-local audit probes read
+    // this private state as the Volume glide's first-render marker.
     bool panelGlidePrimed_ { false };
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };

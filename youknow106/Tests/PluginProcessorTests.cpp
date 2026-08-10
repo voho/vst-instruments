@@ -1727,8 +1727,9 @@ void testOrderedSysExAffectsAudioWithoutTheMessageThread()
     // pulse without disturbing the full dump's other switches.
     std::array<std::uint8_t, sysex::toneByteCount> toneBytes {};
     sysex::toneBytesFromPatch (sent, toneBytes.data());
-    auto expected = sysex::patchFromToneBytes (toneBytes.data());
-    auto afterSwitch = expected;
+    const auto dumpPatch = sysex::patchFromToneBytes (toneBytes.data());
+    auto expected = dumpPatch;
+    auto afterSwitch = dumpPatch;
     afterSwitch.pulse = true;
     const int switchParameter =
         static_cast<int> (sysex::ToneParameter::SwitchesOne);
@@ -1749,16 +1750,17 @@ void testOrderedSysExAffectsAudioWithoutTheMessageThread()
 
     YouKnow106AudioProcessor midiDriven;
     YouKnow106AudioProcessor reference;
+    auto wrongPatch = dumpPatch;
+    wrongPatch.chorus = ChorusMode::One;
     // Give the MIDI-driven instance the dump's quantised continuous values but
-    // deliberately leave its switches at another audible tone. This removes
-    // parameter-smoother history from the comparison: any difference now is
-    // specifically whether the two switch messages took effect in order.
-    midiDriven.applyPatch (expected);
-    setParameterValue (midiDriven, parameters::range,
-                       static_cast<float> (DcoRange::Eight));
-    setParameterValue (midiDriven, parameters::saw, 1.0f);
-    setParameterValue (midiDriven, parameters::pulse, 0.0f);
-    reference.applyPatch (expected);
+    // deliberately leave chorus at another audible tone. The reference
+    // starts from the quantised dump itself, before pulse is enabled. It then
+    // receives only the same parameter SysEx at sample 1 below. Thus the full
+    // dump at sample 0 still has to replace the MIDI-driven tone, while both
+    // engines cross the startup boundary with pulse off and put pulse on the
+    // same physical converter/hold chronology.
+    midiDriven.applyPatch (wrongPatch);
+    reference.applyPatch (dumpPatch);
     for (auto* processor : { &midiDriven, &reference })
     {
         setParameterValue (*processor, parameters::calibration, 0.0f);
@@ -1786,6 +1788,10 @@ void testOrderedSysExAffectsAudioWithoutTheMessageThread()
                                parameterMessage.data() + 1,
                                static_cast<int> (parameterWritten) - 2),
                            1);
+            referenceMidi.addEvent (juce::MidiMessage::createSysExMessage (
+                                        parameterMessage.data() + 1,
+                                        static_cast<int> (parameterWritten) - 2),
+                                    1);
             midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 2);
             referenceMidi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 2);
         }
@@ -1806,7 +1812,7 @@ void testOrderedSysExAffectsAudioWithoutTheMessageThread()
 
         if (block == 5)
         {
-            expect (parameterValue (midiDriven, parameters::saw) > 0.5f
+            expect (parameterValue (midiDriven, parameters::chorusI) > 0.5f
                         && parameterValue (midiDriven, parameters::pulse) < 0.5f,
                     "SysEx wrote APVTS from the audio callback");
             midiDriven.flushPendingMidiEvents();
@@ -1821,35 +1827,25 @@ void testOrderedSysExAffectsAudioWithoutTheMessageThread()
     }
 
     expect (peak > 0.001f, "ordered SysEx regression rendered silence");
-    // The audio-side dump and edit arrive one host sample apart, while the
-    // reference tone existed before prepare. That event history advances the
-    // modeled free-running state differently and the symmetric reconstruction
-    // retains a very small phase residual; judge it relative to the rendered
-    // signal rather than freezing one reconstruction's absolute floor.
+    // A sample-zero full dump is a startup snapshot, equivalent to preparing
+    // the reference from those same quantised bytes. Both paths then receive
+    // the pulse edit at sample 1 and the note at sample 2, so their converter
+    // and hold histories are genuinely equivalent. Omitting or delaying the
+    // full dump leaves the MIDI path's audible chorus behind;
+    // omitting or reordering the edit leaves pulse off. Judge the remaining
+    // numerical comparison relative to the rendered signal without weakening
+    // either of those much larger ordered-event failures.
     const float toneMismatchGuard = 1.0e-3f * peak;
     expect (differenceBeforeReflection < toneMismatchGuard,
             "ordered SysEx did not match its prepared audio-side reference "
                 "(max difference "
                 + std::to_string (differenceBeforeReflection)
                 + " against peak " + std::to_string (peak) + ")");
-    // The two paths do NOT reconverge bit-exactly, and an earlier revision of
-    // this fixture asserted that they must. Arriving mid-block is not the same
-    // as having been there since prepareToPlay: the engine models the
-    // hardware's converter/DCO write, so an instance that takes the dump at
-    // sample 0 keeps a permanent free-running phase offset against one prepared
-    // with the same values up front. Measured, that offset does not decay --
-    // it sits flat around -82 dB of peak out to 1.9 s of render -- and
-    // suppressing only the two SysEx events drops the difference to exactly
-    // zero, which is what identifies the mid-block write as its source rather
-    // than any parameter mismatch.
-    //
-    // What this fixture actually guards is that later reflection does not
-    // revert the *tone*, and that failure is four orders of magnitude larger:
-    // forcing pulse back off after reflection measures 0.991 of peak
-    // (-0.1 dB) against this residual's 8.3e-5 (-81.6 dB). The bound below
-    // sits between them with roughly 20 dB of margin above the residual and
-    // 60 dB below a real reversion. The byte-exact patch comparison at block 5
-    // above remains the primary, exact guard against reversion.
+    // After block 5 only the MIDI-driven processor reflects its deferred host
+    // state. The reference deliberately leaves its identical audio-side shadow
+    // pending, so continued audio equality proves that reflection did not pull
+    // the MIDI path back to the older full dump. The byte-exact patch comparison
+    // above remains the primary exact guard against that reversion.
     expect (differenceAfterReflection < toneMismatchGuard,
             "later host reflection reverted the ordered SysEx tone "
                 "(max difference "

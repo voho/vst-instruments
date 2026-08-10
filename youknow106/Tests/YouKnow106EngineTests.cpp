@@ -1941,34 +1941,84 @@ void testDuplicateAndUnmatchedKeyEdgesAreIgnored()
 
 void testIdleSnapshotPrimesEverySharedHold()
 {
-    // Loading a host snapshot immediately after prepare must be equivalent to
-    // having that snapshot in place when prepare resets the engine. Otherwise
-    // the first attack slews from stale resonance, PWM, sub, noise or LEVEL.
+    // Repeated restore snapshots before the first valid audio interval replace
+    // one startup image. Invalid/zero process calls do not consume that window,
+    // and loading before prepare remains identical to loading after it.
     constexpr double sampleRate = 48000.0;
-    auto parameters = plainPatch();
+    auto first = plainPatch();
+    first.vcaLevel = 0.91f;
+    first.resonance = 0.07f;
+    first.pulseEnabled = true;
+    first.pwmSource = PwmSource::Manual;
+    first.pwmDepth = 0.12f;
+    first.subLevel = 0.18f;
+    first.noiseLevel = 0.84f;
+    auto parameters = first;
     parameters.vcaLevel = 0.05f;
     parameters.resonance = 0.43f;
-    parameters.pulseEnabled = true;
-    parameters.pwmSource = PwmSource::Manual;
     parameters.pwmDepth = 0.81f;
     parameters.subLevel = 0.63f;
     parameters.noiseLevel = 0.27f;
 
+    const auto converterFraction = [](float value) {
+        return static_cast<float>(
+            YouKnow106Engine::storedControlDacCode(value)) / 4064.0f;
+    };
+    const auto expectPrimed = [&](const YouKnow106Engine& engine,
+                                  const EngineParameters& snapshot,
+                                  const std::string& context) {
+        const double resonance = converterFraction(snapshot.resonance);
+        const double level = converterFraction(snapshot.vcaLevel);
+        const double sub = converterFraction(snapshot.subLevel);
+        const double noise = converterFraction(snapshot.noiseLevel);
+        const double pwm = YouKnow106Engine::pwmControlVolts(
+            static_cast<float>(converterFraction(snapshot.pwmDepth)));
+        expect(YouKnow106TestAccess::resonanceTarget(engine) == resonance
+                   && YouKnow106TestAccess::resonanceHeld(engine) == resonance,
+               context + " did not prime resonance");
+        expect(YouKnow106TestAccess::sharedVcaTarget(engine) == level
+                   && YouKnow106TestAccess::sharedVca(engine) == level,
+               context + " did not prime common VCA LEVEL");
+        expect(YouKnow106TestAccess::subTarget(engine) == sub
+                   && YouKnow106TestAccess::subHeld(engine) == sub,
+               context + " did not prime SUB");
+        expect(YouKnow106TestAccess::noiseTarget(engine) == noise
+                   && YouKnow106TestAccess::noiseHeld(engine) == noise,
+               context + " did not prime NOISE");
+        expect(YouKnow106TestAccess::pwmTarget(engine) == pwm
+                   && YouKnow106TestAccess::pwmFirstPoleHeld(engine) == pwm
+                   && YouKnow106TestAccess::pwmHeld(engine) == pwm,
+               context + " did not prime both PWM hold poles");
+    };
+
     YouKnow106Engine hostOrder;
     hostOrder.prepare(sampleRate, blockSize, false);
+    hostOrder.setParameters(first);
+    float invalidLeft = 1.0f;
+    float invalidRight = -1.0f;
+    hostOrder.process(nullptr, &invalidRight, 1);
+    hostOrder.process(&invalidLeft, nullptr, 1);
+    hostOrder.process(&invalidLeft, &invalidRight, 0);
     hostOrder.setParameters(parameters);
+    expectPrimed(hostOrder, parameters, "the repeated post-prepare snapshot");
+    expect(YouKnow106TestAccess::controlScanPhase(hostOrder) == 1.0
+               && YouKnow106TestAccess::nextConverterWrite(hostOrder) == 0u,
+           "an invalid startup process call advanced the converter");
 
     YouKnow106Engine preloaded;
+    preloaded.setParameters(first);
+    float unpreparedLeft = 1.0f;
+    float unpreparedRight = -1.0f;
+    preloaded.process(&unpreparedLeft, &unpreparedRight, 1);
+    expect(unpreparedLeft == 0.0f && unpreparedRight == 0.0f,
+           "an unprepared startup process call was not silent");
     preloaded.setParameters(parameters);
+    expectPrimed(preloaded, parameters, "the repeated pre-prepare snapshot");
     preloaded.prepare(sampleRate, blockSize, false);
-
-    expectNear(YouKnow106TestAccess::pwmTarget(hostOrder),
-               YouKnow106Engine::pwmControlVolts(103.0f / 127.0f), 1.0e-6,
-               "idle snapshot did not prime the one shared PWM hold");
-    expectNear(YouKnow106TestAccess::subTarget(hostOrder), 80.0 / 127.0, 1.0e-6,
-               "idle snapshot did not prime the one shared sub hold");
-    expectNear(YouKnow106TestAccess::noiseTarget(hostOrder), 34.0 / 127.0, 1.0e-6,
-               "idle snapshot did not prime the one shared noise hold");
+    expectPrimed(preloaded, parameters, "the prepare reset image");
+    expect(hostOrder.getProcessingLatencySamples() == 41
+               && preloaded.getProcessingLatencySamples() == 41,
+           "startup snapshot order changed the fixed 41-sample latency");
 
     hostOrder.noteOn(60, 1.0f);
     preloaded.noteOn(60, 1.0f);
@@ -1977,6 +2027,193 @@ void testIdleSnapshotPrimesEverySharedHold()
     expect(maximumDifference(afterHostSnapshot.left,
                              preparedWithSnapshot.left) < 1.0e-7,
            "the first attack used a stale shared hold after prepare");
+}
+
+void testStartedIdleEditsUseTheOrderedConverterScan()
+{
+    // Audio time, rather than whether a tail is currently audible, closes the
+    // startup window. After more than the output-path quiet threshold, an edit
+    // and an immediate note must still leave the physical holds and the
+    // firmware cursor untouched until their ordered converter slots.
+    constexpr double sampleRate = 48000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto initial = plainPatch();
+    initial.pulseEnabled = true;
+    initial.pwmSource = PwmSource::Manual;
+    initial.resonance = 0.11f;
+    initial.vcaLevel = 0.22f;
+    initial.subLevel = 0.33f;
+    initial.pwmDepth = 0.44f;
+    initial.noiseLevel = 0.55f;
+    engine.setParameters(initial);
+    renderExact(engine, static_cast<int>(sampleRate * 0.05));
+
+    const auto observe = [](const YouKnow106Engine& value) {
+        return std::array<double, 11> {
+            YouKnow106TestAccess::resonanceTarget(value),
+            YouKnow106TestAccess::resonanceHeld(value),
+            YouKnow106TestAccess::sharedVcaTarget(value),
+            YouKnow106TestAccess::sharedVca(value),
+            YouKnow106TestAccess::subTarget(value),
+            YouKnow106TestAccess::subHeld(value),
+            YouKnow106TestAccess::pwmTarget(value),
+            YouKnow106TestAccess::pwmFirstPoleHeld(value),
+            YouKnow106TestAccess::pwmHeld(value),
+            YouKnow106TestAccess::noiseTarget(value),
+            YouKnow106TestAccess::noiseHeld(value)
+        };
+    };
+    const auto sameLatch = [](const auto& first, const auto& second) {
+        return first.valid == second.valid
+            && first.nextPass == second.nextPass
+            && first.ordinal == second.ordinal
+            && first.destination == second.destination
+            && first.voice == second.voice
+            && first.target == second.target
+            && first.eventPosition == second.eventPosition;
+    };
+
+    const auto before = observe(engine);
+    const double phaseBefore = YouKnow106TestAccess::controlScanPhase(engine);
+    const std::size_t cursorBefore =
+        YouKnow106TestAccess::nextConverterWrite(engine);
+    const auto latchBefore = YouKnow106TestAccess::passiveHoldLatch(engine);
+    auto edited = initial;
+    edited.resonance = 0.82f;
+    edited.vcaLevel = 0.73f;
+    edited.subLevel = 0.64f;
+    edited.pwmDepth = 0.91f;
+    edited.noiseLevel = 0.06f;
+    engine.setParameters(edited);
+    expect(observe(engine) == before,
+           "an idle edit after audio time directly primed a shared hold");
+    expect(YouKnow106TestAccess::controlScanPhase(engine) == phaseBefore
+               && YouKnow106TestAccess::nextConverterWrite(engine)
+                      == cursorBefore
+               && sameLatch(YouKnow106TestAccess::passiveHoldLatch(engine),
+                            latchBefore),
+           "an idle edit after audio time changed the scanner state");
+
+    engine.noteOn(60, 1.0f);
+    expect(observe(engine) == before
+               && YouKnow106TestAccess::controlScanPhase(engine) == phaseBefore
+               && YouKnow106TestAccess::nextConverterWrite(engine)
+                      == cursorBefore,
+           "a note immediately after an idle edit bypassed the scanner");
+
+    // Host partitioning cannot change when the pending edit reaches its holds.
+    YouKnow106Engine contiguous = engine;
+    YouKnow106Engine partitioned = engine;
+    constexpr int partitionSamples = 257;
+    std::vector<float> contiguousLeft(partitionSamples, 0.0f);
+    std::vector<float> contiguousRight(partitionSamples, 0.0f);
+    std::vector<float> partitionedLeft(partitionSamples, 0.0f);
+    std::vector<float> partitionedRight(partitionSamples, 0.0f);
+    contiguous.process(contiguousLeft.data(), contiguousRight.data(),
+                       partitionSamples);
+    constexpr std::array<int, 5> partitions { 1, 17, 3, 64, 5 };
+    int offset = 0;
+    std::size_t partition = 0;
+    while (offset < partitionSamples)
+    {
+        const int count = std::min(
+            partitions[partition++ % partitions.size()],
+            partitionSamples - offset);
+        partitioned.process(partitionedLeft.data() + offset,
+                            partitionedRight.data() + offset, count);
+        offset += count;
+    }
+    expect(maximumDifference(contiguousLeft, partitionedLeft) == 0.0
+               && maximumDifference(contiguousRight, partitionedRight) == 0.0
+               && observe(contiguous) == observe(partitioned)
+               && YouKnow106TestAccess::controlScanPhase(contiguous)
+                      == YouKnow106TestAccess::controlScanPhase(partitioned)
+               && YouKnow106TestAccess::nextConverterWrite(contiguous)
+                      == YouKnow106TestAccess::nextConverterWrite(partitioned),
+           "idle-edit converter timing depends on host block partitioning");
+
+    // Put the common-VCA event halfway through one internal interval. The
+    // physical RC sees the new payload there, while the official target and
+    // cursor remain old until the following sample-grid poll.
+    using Destination = YouKnow106TestAccess::PassiveHoldDestination;
+    const std::size_t ordinal = YouKnow106TestAccess::passiveHoldOrdinal(
+        Destination::CommonVca);
+    const double delta =
+        YouKnow106TestAccess::scanPhasePerInternalSample(engine);
+    const double eventPhase =
+        YouKnow106TestAccess::converterEventPhase(engine, ordinal);
+    YouKnow106TestAccess::setConverterScheduler(
+        engine, eventPhase - 0.5 * delta, ordinal);
+    const double oldTarget = before[2];
+    const double oldState = before[3];
+    const float newTarget = static_cast<float>(
+        YouKnow106Engine::storedControlDacCode(edited.vcaLevel)) / 4064.0f;
+    float left = 0.0f;
+    float right = 0.0f;
+    engine.process(&left, &right, 1);
+    const auto eventLatch = YouKnow106TestAccess::passiveHoldLatch(engine);
+    const auto expectedEventState = independentOnePoleEndpoint(
+        oldState, oldTarget, true, 0.5, newTarget, 1.0 / sampleRate,
+        YouKnow106Engine::commonVcaHoldTimeConstantSeconds());
+    expect(eventLatch.valid && eventLatch.ordinal == ordinal
+               && eventLatch.target == newTarget
+               && YouKnow106TestAccess::sharedVcaTarget(engine) == oldTarget
+               && YouKnow106TestAccess::nextConverterWrite(engine) == ordinal,
+           "the common-VCA physical event consumed its ordinal too early");
+    expectNear(YouKnow106TestAccess::sharedVca(engine),
+               static_cast<double>(expectedEventState), 5.0e-15,
+               "the idle edit missed the exact common-VCA hold trajectory");
+    engine.process(&left, &right, 1);
+    const auto expectedCommittedState = independentOnePoleEndpoint(
+        expectedEventState, newTarget, false, 0.0, newTarget,
+        1.0 / sampleRate,
+        YouKnow106Engine::commonVcaHoldTimeConstantSeconds());
+    expect(YouKnow106TestAccess::sharedVcaTarget(engine) == newTarget
+               && YouKnow106TestAccess::nextConverterWrite(engine)
+                      == ordinal + 1u,
+           "the common-VCA edit did not commit at its exact ordinal");
+    expectNear(YouKnow106TestAccess::sharedVca(engine),
+               static_cast<double>(expectedCommittedState), 5.0e-15,
+               "the committed common-VCA hold evolved from the wrong state");
+
+    // Panic clears sound, not the free-running scanner's ownership of edits.
+    YouKnow106Engine panic = partitioned;
+    panic.allNotesOff();
+    const auto beforePanicEdit = observe(panic);
+    const double panicPhase = YouKnow106TestAccess::controlScanPhase(panic);
+    const std::size_t panicCursor =
+        YouKnow106TestAccess::nextConverterWrite(panic);
+    auto afterPanic = edited;
+    afterPanic.resonance = 0.21f;
+    afterPanic.vcaLevel = 0.31f;
+    afterPanic.subLevel = 0.41f;
+    afterPanic.pwmDepth = 0.51f;
+    afterPanic.noiseLevel = 0.61f;
+    panic.setParameters(afterPanic);
+    expect(observe(panic) == beforePanicEdit
+               && YouKnow106TestAccess::controlScanPhase(panic) == panicPhase
+               && YouKnow106TestAccess::nextConverterWrite(panic)
+                      == panicCursor,
+           "panic rearmed direct shared-hold priming");
+
+    // A true engine reset does start a new run and therefore reopens the
+    // restore window for repeated snapshots.
+    panic.reset();
+    auto afterReset = afterPanic;
+    afterReset.resonance = 0.92f;
+    afterReset.vcaLevel = 0.81f;
+    afterReset.subLevel = 0.71f;
+    afterReset.pwmDepth = 0.61f;
+    afterReset.noiseLevel = 0.51f;
+    panic.setParameters(afterReset);
+    const float resetLevel = static_cast<float>(
+        YouKnow106Engine::storedControlDacCode(afterReset.vcaLevel)) / 4064.0f;
+    expect(YouKnow106TestAccess::sharedVcaTarget(panic) == resetLevel
+               && YouKnow106TestAccess::sharedVca(panic) == resetLevel
+               && YouKnow106TestAccess::controlScanPhase(panic) == 1.0
+               && YouKnow106TestAccess::nextConverterWrite(panic) == 0u,
+           "a hard reset did not rearm startup snapshot priming");
 }
 
 void testPhysicalFiltersKeepRunningBehindClosedVcas()
@@ -4631,13 +4868,16 @@ void testModulationDelayGatesPulseWidthToo()
                "gating the converter write changed full-depth pulse-width "
                "modulation");
 
-    // The same distribution runs on the host thread when a snapshot arrives
-    // with the output path empty. A patch change during a silence must prime
-    // the one shared PWM hold from the gated value as well, or the next attack
-    // starts at a duty the delay envelope has not authorised.
+    // The same gated distribution seeds the one startup snapshot before audio
+    // time begins. Once process() runs, even an empty output path stays on the
+    // converter schedule; ordinary silence is not another restore window.
     YouKnow106Engine idle;
     idle.prepare(sampleRate, blockSize, false);
     idle.setParameters(parameters);
+    // pwmControlVolts(0.5) is +3.3 V, the middle of the comparator's travel.
+    expectNear(YouKnow106TestAccess::pwmHeld(idle),
+               YouKnow106Engine::pwmControlVolts(0.5f), 1.0e-6,
+               "the startup snapshot did not prime gated PWM");
     // 30 ms of idle running puts the LFO on its positive peak with the delay
     // envelope still shut, which is where the two values are furthest apart.
     advance(idle, 0.030);
@@ -4645,12 +4885,9 @@ void testModulationDelayGatesPulseWidthToo()
            "the idle LFO did not reach its positive peak in 30 ms");
     expect(YouKnow106TestAccess::lfoDelayLevel(idle) == 0.0f,
            "the idle delay envelope had already released after 30 ms");
-    idle.setParameters(parameters);
-    // pwmControlVolts(0.5) is +3.3 V, the middle of the comparator's travel;
-    // the ungated peak would prime +0.6 V, the far end of it.
     expectNear(YouKnow106TestAccess::pwmHeld(idle),
                YouKnow106Engine::pwmControlVolts(0.5f), 1.0e-6,
-               "the idle snapshot primed the PWM hold from the ungated LFO");
+               "the scanned PWM hold used the ungated idle LFO");
 }
 
 void testScanTimingSurvivesAProcessingRateChange()
@@ -7225,6 +7462,19 @@ void testCpuBudget()
 
 int main()
 {
+    if (std::getenv("YOUKNOW106_STARTUP_HOLD_TESTS_ONLY") != nullptr)
+    {
+        testIdleSnapshotPrimesEverySharedHold();
+        testStartedIdleEditsUseTheOrderedConverterScan();
+        if (failures != 0)
+        {
+            std::cerr << failures << " startup-hold check(s) failed.\n";
+            return EXIT_FAILURE;
+        }
+        std::cout << "All startup-hold checks passed.\n";
+        return EXIT_SUCCESS;
+    }
+
     if (std::getenv("YOUKNOW106_LATENCY_TEST_ONLY") != nullptr)
     {
         testNoteOnPlayingLatencyAcrossConverterPhases();
@@ -7273,6 +7523,7 @@ int main()
     testRescanGateOffReachesTheVoiceCpu();
     testDuplicateAndUnmatchedKeyEdgesAreIgnored();
     testIdleSnapshotPrimesEverySharedHold();
+    testStartedIdleEditsUseTheOrderedConverterScan();
     testPhysicalFiltersKeepRunningBehindClosedVcas();
     testPhysicalCardStateSurvivesVoiceAssignments();
     testConverterSchedulerPreservesFractionalScanPeriod();

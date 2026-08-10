@@ -43,7 +43,7 @@ strongest competitor named.
 |---|---|---|
 | DCO pitch generation | 8 MHz reference divided by 16-bit timer integers — the hardware's own pitch quantisation (A4\@8' = 440.044 Hz), range switch as clock change, and a scanned restart whose exact forced state remains declared model policy under OQ-08 | None models timer quantisation. KR-106 uses continuous phase with the firmware's 8.8 portamento rate law; junox has an integer-period *artifact* |
 | DCO numerical quality | The legacy full-engine HQ fence covers only the 8' saw at MIDI 60/84. The expanded common-host pre-VCF matrix uses MIDI 36/48/60/72/84/96, every range, saw/sub and 5/50/95% pulse. Its dated Step 6 baseline rejected all six cells, including 4× at −42.62/−41.45 dBc for 44.1/48 kHz. Step 7 fixes the numerical reconstruction without changing the divider/ramp/comparator/sub/scan laws: 1×/2×/4× now measure −83.48/−82.44/−82.43 and −84.88/−92.98/−92.98 dBc, and every alias, gain, analysis, scan and hold gate passes | No surveyed open project publishes an equivalent common-host, multi-waveform DCO reconstruction matrix |
-| Scanned control system | The p. 8 chart's exact 23-write order on a fractional 4.2 ms scheduler; per-destination hold networks, incl. the derived PWM (R117/C62, R116/C63) and SUB (R11/C1) slews. Step 12 generalizes the pure scalar event latch across all 16 passive destinations without moving the cursor/order/count; the six DCO/Pitch writes and NOISE stay sample-grid. Exact intra-pass timestamps and acquisition remain open (OQ-07/OQ-08), not invented | KR-106: 4.2335 ms canonical tick plus per-slot DAC phase offsets from firmware cycle counting — it *claims* the timestamps this project deliberately leaves open; its offsets corroborate our provisional ~125 µs figure |
+| Scanned control system | The p. 8 chart's exact 23-write order on a fractional 4.2 ms scheduler; per-destination hold networks, incl. the derived PWM (R117/C62, R116/C63) and SUB (R11/C1) slews. Step 12 generalizes the pure scalar event latch across all 16 passive destinations without moving the cursor/order/count; the six DCO/Pitch writes and NOISE stay sample-grid. Step 17 limits direct host-snapshot priming to the first valid prepared interval; later silence and panic remain scan-owned. That startup exception is product policy. Exact intra-pass timestamps and acquisition remain open (OQ-07/OQ-08), not invented | KR-106: 4.2335 ms canonical tick plus per-slot DAC phase offsets from firmware cycle counting — it *claims* the timestamps this project deliberately leaves open; its offsets corroborate our provisional ~125 µs figure |
 | Playing latency | Exhaustive current-model characterization at 48 kHz: every one of the 1,008 host/scan boundary phases on all six cards. Step 12 separates the fractional physical ENV-VCA write and first gain (HQ off 69/191/314, HQ on 70/192/315) from its official target poll (70/192/315 in both), while the fixed host DSP report remains 41 samples | KR-106 v2.5.12 says rebasing its DAC phase tables removed about 2 ms from tick-driven envelope/LFO updates. No like-for-like event-to-node/output distribution or original-JUNO capture is published in the surveyed open field |
 | Passive-hold numerical quality | Step 12 resolves writes inside the six 687 µs voice-VCA holds, the 9.08249 ms common VCA, derived 10 ms SUB and exact continuous 4.7/2.632 ms PWM cascade. Across 1,105 actual process cases plus 17 later-4×/block-wrap cases, independent long-double oracles bound helper/process error to `2.220446e-16`/`4.440892e-16` and float consumers to 0 ULP. Per-destination snap/disconnect and sequential-PWM mutations reject | No surveyed project publishes an equivalent live-scheduler, physical-state, consumer-wiring and mutation contract |
 | Firmware envelope | Hash-scoped B-2 recurrence: 14-bit state, exact Q(v,c) three-partial multiply with the dropped low×low term, `E>>2` DAC truncation, byte-exact fixtures in the suite | KR-106: the same law at instruction level (cleanroom, j106roms lineage), cross-checked against MAME — parity on the digital law; no automated fixtures |
@@ -1191,6 +1191,76 @@ nine outliers; range is A86 **−61.956882039 dBFS** to A48
 **−8.749547764 dBFS**, common gain **0.543092**. No WAV, metric CSV, preview
 or renderer-generated factory-text output changes. **Step 16 is complete.
 DOCS FROZEN.**
+
+### Step 17 — idle host snapshots no longer bypass the scanner
+
+**Dated 2026-08-10.** The existing startup accommodation
+had a broader lifetime than its documentation implied. Following 40 ms with
+an empty output path, every normal host-block `setParameters()` call could
+directly overwrite the shared RESONANCE, common VCA LEVEL, PWM, SUB and NOISE
+holds. That product shortcut skipped the exact 23-write logical order and the
+declared 522 µs resonance/noise, 9.08249 ms common-VCA, 4.7/2.632 ms PWM and
+10 ms SUB dynamics. It therefore weakened this project's claimed scanner
+fidelity specifically after silence, even though active-note automation still
+used the ordinary queue.
+
+The Step-17 correction limits the exception to the interval before the first
+valid positive-length prepared process call. After that boundary, an idle
+engine is still a continuously powered scanned instrument: host snapshots
+update panel intent, while the five shared destinations change only through
+their existing converter slots and hold networks. Hard reset or `prepare()` begins a fresh
+startup window so a restored patch need not expose constructor defaults on
+sample zero.
+
+This improves internal consistency with the anchored destination ownership
+and ordering; it does not strengthen the evidence category of the normalized
+slot offsets or any hold constant. Startup priming remains product policy, not
+a Roland power-up/patch-load timing claim. No acquisition, droop, jitter or
+hardware event timestamp is inferred, no OQ is closed, and the correction adds
+no state, storage, latency or per-sample work.
+
+Focused lifecycle coverage now passes through the expanded startup snapshot
+test and the new ordered-idle-edit test. It checks null/zero/unprepared calls,
+repeated snapshots, more than 40 ms silence, immediate Note On, exact
+half-interval common-VCA evolution and next-poll commit, 257-frame partition
+identity, panic, reset and fixed 41-sample latency. The old recurring-idle
+mutation rejects with six assertions.
+
+Fresh native Release passes **15/15 in 473.02 s** after an **8.23 s**
+warning-clean build; focused ASan+UBSan passes in **0.64 s** with no
+diagnostic. The **127.43 s** universal build registers 16 contracts and emits
+only two inherited Engine-header warnings. Tests 1–15 passed in its initial
+serial log. PluginProcessor then exposed a stale reference chronology, not a
+production failure. The test-only correction keeps the full dump at sample 0
+only on the MIDI-driven path, preloads the reference from the same quantized
+dump before prepare, and gives both paths the edit at sample 1 and note at
+sample 2. This yields equivalent pre-first-render converter/hold chronology
+without threshold relaxation; the registered suite passes in **11.40 s**.
+This is transparently the retained 15 plus a focused corrected run, not one
+uninterrupted 16/16 log. The startup gate also passes natively/
+under genuine Rosetta in **0.04/0.24 s**.
+
+Packaging passes in **3.11 s**; all three products contain both architectures,
+target macOS 11.0 and pass strict/deep signature verification. ZIP/PKG hashes
+are
+`a066e7d122c082e39702c5b5524f1de455c93c8ab756b86a0d2ed9ecc1fa7097`
+and
+`2e7972005be2944520acf86265201ddda99ff6d73819d24756a55c08f2f707c7`.
+CPU's largest meta-median is **+1.630160%**, worst pair median
+**+2.939967%**, aggregate **+0.306995%** and worst candidate median
+**0.868× realtime**, with exact semantic/work fingerprints.
+
+Two demo and two full-factory renders are pairwise and Step-16 byte-identical.
+Their unchanged demo/factory/22-file manifests are
+`b42e87351748d79ad91cfbfb29ca85fce99a08b0c2a090754c4cba7bf69a9434`,
+`0783040d94af15527450f8062813ac03ae6c6def0184574c037a5cf4106767e8`
+and
+`bc1564713b46151a77fbbc3c5403f8bd829955cd9ff9dbcb5b2bd6cc1e13c614`;
+the final audio index/canonical-23 hashes are
+`a6bb49018b312bab2a8e82dcabb9bc105ccd19e076bf39ec0e580631108ed3aa`
+and
+`19053f2cb7b57eef5fccb7bfa9f7f5e14ab2e1e932af1672b5138565430d196c`.
+No renderer-owned payload changes. **Step 17 is complete. DOCS FROZEN.**
 
 ### Dated Step 4 bounded-work VCF candidate: matrix rejection
 

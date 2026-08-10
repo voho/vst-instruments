@@ -4394,6 +4394,62 @@ nine outliers, range A86 **−61.956882039 dBFS** to A48
 preview or renderer-generated factory-text output changes. **Step 16 is
 complete. DOCS FROZEN.**
 
+### Step 17 — lifecycle correction, no OQ closure
+
+**Dated 2026-08-10.** A code-path audit verified that the documented
+"initial idle host-snapshot priming" exception could recur. After the output
+path had remained quiet for its 40 ms drain interval, each ordinary host-block
+`setParameters()` call directly replaced the shared RESONANCE, common VCA,
+PWM, SUB and NOISE target/held states and cancelled a pending passive-hold
+event. It bypassed the 23-write cursor and therefore the existing 522 µs
+resonance/noise, 9.08249 ms common-VCA, 4.7/2.632 ms PWM and 10 ms SUB
+trajectories.
+
+The Step-17 correction permits direct priming only before the first valid
+positive-length process call in a prepared lifecycle. Once processing starts,
+silence cannot re-arm it; shared controls wait for their normal scan writes
+and hold responses until the next hard reset or `prepare()`. This preserves a
+practical saved-state startup while removing an unphysical post-startup
+shortcut.
+
+This result settles only a software lifecycle contradiction. It supplies no
+new hardware capture and does **not** answer OQ-07's sample/hold capacitance,
+mux, acquisition, droop, jitter or physical scan-timing questions; it does not
+answer OQ-08's exact event offsets or changed-pitch electrical state; and it
+does not change any other OQ. The startup behavior remains product policy.
+No state, storage, latency or per-sample work was added.
+
+Focused lifecycle qualification passes: the expanded startup test and new
+ordered-idle-edit test cover repeated restore snapshots, invalid/zero/
+unprepared calls, more than 40 ms silence, immediate Note On, the exact
+half-interval common-VCA event and next-poll commit, 257-frame partition
+identity, panic, reset and unchanged 41-sample latency. The old recurring-idle
+mutation rejects with six assertions.
+
+Final qualification is green within its declared chronology. Native Release
+passes **15/15 in 473.02 s** after an **8.23 s** warning-clean build;
+ASan+UBSan focused lifecycle coverage passes in **0.64 s** without a
+diagnostic. Universal compilation passes in **127.43 s** with only the two
+inherited Engine-header warnings. Its initial serial run retained tests 1–15;
+a stale PluginProcessor reference chronology then failed. The test-only
+correction keeps the full dump at sample 0 only on the MIDI-driven path,
+preloads the reference from the same quantized dump before prepare, and gives
+both paths the edit/note at samples 1/2. This yields equivalent pre-first-render
+converter/hold chronology, relaxes no threshold and passes the registered
+suite in **11.40 s**, so all 16 contracts are green without misstating them as
+one uninterrupted 16/16 log. Native/genuine-Rosetta focused
+startup runs pass in **0.04/0.24 s**. Packaging and CPU gates pass; worst CPU
+meta-median/pair-median/aggregate are **+1.630160%/+2.939967%/+0.306995%**,
+with worst candidate median **0.868× realtime** and exact fingerprints.
+
+Two demo and two full-factory renders are pairwise and Step-16 byte-identical.
+The unchanged renderer-owned manifest is
+`bc1564713b46151a77fbbc3c5403f8bd829955cd9ff9dbcb5b2bd6cc1e13c614`;
+the final audio-index/canonical-23 hashes are
+`a6bb49018b312bab2a8e82dcabb9bc105ccd19e076bf39ec0e580631108ed3aa` /
+`19053f2cb7b57eef5fccb7bfa9f7f5e14ab2e1e932af1672b5138565430d196c`.
+No renderer-owned payload changes. **Step 17 is complete. DOCS FROZEN.**
+
 ## Settled guardrails — do not reopen without contradictory primary evidence
 
 - **Chorus modes:** the JUNO-106 has Off, I and II. Its owner's manual says I
@@ -4427,6 +4483,10 @@ complete. DOCS FROZEN.**
   holds now evaluate that policy event fractionally and commit their latched
   payload on the next ordinary poll. Pitch/DCO and NOISE remain sample-grid for
   the explicit OQ-08 and OQ-07/OQ-15/OQ-16 evidence boundaries.
+  Direct host-snapshot priming is allowed only until the first valid prepared
+  audio interval; later silence and panic do not re-arm it, while hard reset or
+  `prepare()` begins a new startup window. That exception is product policy,
+  not hardware timing evidence.
   Hold constants and physical event offsets remain OQ-07 and OQ-08 respectively.
   OQ-08 also owns the physical ramp/comparator/sub state forced by a changed-
   pitch timer write; the current bandlimited restart is a declared model.

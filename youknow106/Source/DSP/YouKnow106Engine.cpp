@@ -2807,9 +2807,13 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
                                       && (next.keyMode == KeyMode::Unison
                                           || activeParameters_.keyMode
                                                  == KeyMode::Unison);
-    const bool outputPathIdle = !prepared_
-        || (!anyVoiceActive_
-            && oversamplingIdleSamples_ >= oversamplingQuietSamples_);
+    // Before the first valid prepared audio interval, a host snapshot is the
+    // power-up image rather than a timed panel move. `panelGlidePrimed_` is
+    // already the exact one-shot marker for that boundary: invalid/zero calls
+    // return before setting it, and reset clears it. Do not use output-path
+    // silence here. Once audio time has started, the hardware scanner keeps
+    // running through ordinary silence and after panic.
+    const bool startupSnapshot = !prepared_ || !panelGlidePrimed_;
     targetParameters_ = next;
     // Switch positions land immediately. Main VOLUME is the only continuous
     // panel control applied outside the scanned converter path; it glides in
@@ -2818,16 +2822,18 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
     // Unit Character scales the stage offsets, so they follow the panel.
     refreshVoiceCardStageTrims();
 
-    // A host normally delivers its saved snapshot after prepare(). If the
-    // output path is empty, prime every shared hold from that snapshot instead
-    // of letting the first attack hear the constructor's stale patch. This is
-    // especially important now that PWM, sub and noise correctly have one hold
-    // for all cards rather than six incidental opportunities to catch up.
-    if (outputPathIdle)
+    // A host may deliver its saved snapshot before prepare(), after prepare(),
+    // or more than once while restoring state. Until audio time begins, prime
+    // every shared hold from the newest complete snapshot instead of letting
+    // the first attack hear the constructor's stale patch. Once any valid
+    // prepared interval has run, every edit takes the normal ordered 23-write
+    // converter path, even if the instrument has been quiet long enough for a
+    // quality switch or has just received panic.
+    if (startupSnapshot)
     {
-        // No audible interval owns a speculative physical write while the
-        // output path is empty. A direct hold prime therefore supersedes any
-        // pending passive-hold payload from the last processed frame.
+        // No audio interval can own a pending physical write before startup.
+        // A newer restore snapshot therefore supersedes any speculative latch
+        // assembled by a test/host sequence that has not yet processed audio.
         passiveHoldEventLatch_ = {};
         exactVcfControlInterval_.fill(false);
         updateSharedScan(next, lfoValue_ * lfoDelayLevel_);

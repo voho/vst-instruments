@@ -3876,3 +3876,126 @@ evidence about a physical JUNO-106.
   **−8.749547764 dBFS**, and common gain **0.543092**. No WAV, metric CSV,
   preview or renderer-generated factory-text output changes. **Step 16 is
   complete. DOCS FROZEN.**
+
+- [x] **17. Confine the shared-hold snapshot exception to engine startup.**
+  **Completed 2026-08-10.** Inspection of the public lifecycle found
+  a fidelity defect in the existing host-snapshot accommodation. Once the
+  engine had been silent for the declared 40 ms output-path quiet interval,
+  every subsequent host-block `setParameters()` call satisfied
+  `outputPathIdle`. It then directly rewrote the target and held coordinates
+  for shared RESONANCE, common VCA LEVEL, PWM, SUB and NOISE, cleared a pending
+  passive-hold latch, and bypassed the hardware-derived 23-write destination
+  order. The jump also skipped the model's 522 µs resonance/noise,
+  9.08249 ms common-VCA, continuous 4.7 ms + 2.632 ms PWM and 10 ms SUB
+  trajectories. A silent automation change could therefore be fully present
+  at the next note instead of first reaching the relevant converter slot and
+  hold network.
+
+  The bounded correction changes only the eligibility for that direct prime.
+  A saved snapshot may prime the five shared holds until the first
+  valid positive-length process call made after `prepare()`. The first real
+  process call consumes the startup window. Thereafter, repeated
+  `setParameters()`
+  calls update parameter intent but cannot bypass the scan, even after an
+  arbitrarily long silence; only a hard reset or a new `prepare()` opens a new
+  startup window. The normal 23-write cursor, slot ownership, target capture,
+  four-shared-destination fractional passive-hold latch and all five
+  physical/compatibility slew laws remain untouched. NOISE retains its
+  separate sample-grid converter target and 522 µs compatibility slew.
+
+  The startup snapshot remains product policy, because the project has no
+  source establishing an equivalent hardware power-up or patch-load sequence.
+  Tightening its lifetime does not promote the normalized `ordinal/23`
+  schedule, hold constants, event offsets, acquisition, droop or jitter into
+  measured hardware timing. It closes no OQ; in particular OQ-07 and OQ-08
+  retain their existing timing/electrical-state scope. The implementation is
+  constrained to reuse the existing lifecycle predicate and add no state,
+  storage, latency or per-sample work.
+
+  Acceptance must prove both halves of the boundary: every legal pre-render
+  host ordering must still prime the saved snapshot, and post-render changes
+  must remain scan-owned after short silence, after at least 40 ms silence,
+  at scan/pass boundaries and across block partitions until reset/prepare.
+  A direct-prime-after-render mutation must reject. Existing scheduler,
+  first-attack, PWM-delay-gating, state-preservation and audio contracts must
+  remain green.
+
+  - Focused contract/result and mutation classification: the expanded
+    `testIdleSnapshotPrimesEverySharedHold` and new
+    `testStartedIdleEditsUseTheOrderedConverterScan` pass together. They bind
+    repeated pre-start snapshots; null, zero-length and unprepared calls;
+    more than 40 ms silence followed by an immediate note; unchanged scanner
+    phase/cursor/latch; exact half-interval common-VCA physical event and
+    next-poll target commit; bit/state-identical 257-frame partitions; panic;
+    reset; and fixed 41-sample latency. Restoring the old `outputPathIdle`
+    condition rejects with six assertions: direct idle prime, immediate-note
+    bypass, early common-VCA ordinal, wrong fractional and committed states,
+    and panic re-arm.
+  Fresh native arm64 Release/plugin-off all-target compilation is
+  warning-clean in **8.23 s**. The exact serial matrix passes **15/15 in
+  473.02 s**, including Engine/Circuit at **206.86/7.56 s**. A fresh
+  warning-clean ASan+UBSan Engine-target build takes **8.81 s**; the focused
+  two-regression startup gate passes in **0.64 s** under `halt_on_error=1`,
+  `detect_leaks=0`, with no diagnostic.
+
+  The final universal plugin-on all-target build passes in **127.43 s** with
+  the exact 16-contract inventory. It repeats only the two inherited
+  Engine-header `-Wfloat-equal` warnings at lines 431/789. The initial serial
+  log passed tests 1–15 before PluginProcessor correctly exposed a stale
+  reference chronology: it compared startup-primed pulse against a sample-1
+  live edit. The test-only repair keeps the full dump at sample 0 only on the
+  MIDI-driven path, preloads the reference from the same quantized dump before
+  prepare, and gives both paths the pulse edit at sample 1 and Note On at
+  sample 2. This yields equivalent pre-first-render converter/hold chronology
+  and relaxes no threshold. The registered PluginProcessor suite then passes
+  in **11.40 s**.
+  All 16 exact contracts are therefore green as the retained first 15 plus
+  that corrected focused run; this record deliberately does not call it one
+  uninterrupted 16/16 execution.
+
+  Packaging passes in **3.11 s**. VST3, AU and Standalone each contain
+  `arm64` and `x86_64`, target macOS 11.0 in both slices and pass strict/deep
+  signature verification. Their arm64/x86_64 CDHash prefixes are
+  `8f07692a/059a8e10`, `1975c99e/17f254d8` and
+  `5a3f7ec2/8e46ef3b`. ZIP/PKG SHA-256 values are
+  `a066e7d122c082e39702c5b5524f1de455c93c8ab756b86a0d2ed9ecc1fa7097`
+  and
+  `2e7972005be2944520acf86265201ddda99ff6d73819d24756a55c08f2f707c7`.
+  The focused startup mode passes in **0.04 s** natively and **0.24 s** under
+  genuine Rosetta (`uname -m=x86_64`, `sysctl.proc_translated=1`).
+
+  Three alternating seven-repetition CPU pairs preserve all exact normal/
+  work/base/current fingerprints and pass both counter self-tests. Largest
+  positive meta-median is **+1.630160%**, worst pair median **+2.939967%**,
+  aggregate ratio **1.003069949 (+0.306995%)**, worst candidate median
+  **0.868× realtime** and worst raw repetition **0.882116×**. All clear the
+  predeclared 5% and realtime fences.
+
+  The frozen non-document source SHA-256 set is:
+
+  | Source | SHA-256 |
+  | --- | --- |
+  | `CMakeLists.txt` | `e200a56a5801f8e2ca80e42602ed6f4f65896b06d82e9153d16c89b7c657dae3` |
+  | `Source/DSP/YouKnow106Engine.cpp` | `45254c5659df29b3efbeebe6717af96544192bdc4ace7228df6bbdd1d875a824` |
+  | `Source/DSP/YouKnow106Engine.h` | `d0bb7d99a3de16dd0756ee43ff573283cf468d551fbc7e37797b26ab9054bbc1` |
+  | `Tests/YouKnow106EngineTests.cpp` | `5b59e992e956dbc4b640c2f096954ada627bc8476a02cb552d0b741984c3933d` |
+  | `Tests/PluginProcessorTests.cpp` | `3940edf6a9e695f8a56d14c83e51613b2214801d0cbb45b91b58b0df19d51d06` |
+
+  Exactly two sequential demo and two full-factory renders take
+  **92.32/92.70 s** and **454.40/509.67 s**. Both pairs and all 22 maintained
+  Step-16 renderer-owned files are byte-identical. Demo/factory/combined
+  manifests remain
+  `b42e87351748d79ad91cfbfb29ca85fce99a08b0c2a090754c4cba7bf69a9434`,
+  `0783040d94af15527450f8062813ac03ae6c6def0184574c037a5cf4106767e8`
+  and
+  `bc1564713b46151a77fbbc3c5403f8bd829955cd9ff9dbcb5b2bd6cc1e13c614`.
+  Renderer binaries hash to
+  `ab1aa091310e764313ee91d0d8edd422cfe5b11863f69503a47f2fa008991bf4`
+  and
+  `415d4021f59d377142f8de9c59bb5f0051de44d647df338cbbbdd91dab995d91`.
+  `Docs/audio/README.md` hashes to
+  `a6bb49018b312bab2a8e82dcabb9bc105ccd19e076bf39ec0e580631108ed3aa`;
+  the canonical 23-file manifest is
+  `19053f2cb7b57eef5fccb7bfa9f7f5e14ab2e1e932af1672b5138565430d196c`.
+  The 20 WAV/128-row validation metrics remain frozen and no renderer-owned
+  payload changes. **Step 17 is complete. DOCS FROZEN.**

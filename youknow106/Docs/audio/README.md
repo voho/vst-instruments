@@ -1,12 +1,19 @@
 # YouKnow106 audio corpus
 
-This directory is a fresh Step 16 verification render of the current engine
-candidate. It intentionally contains only the ten maintained demonstration
-fixtures and the full [factory-preset audit](factory-presets/README.md).
-Historical
+This directory is the final Step 17 verification render of the current engine.
+It intentionally contains only the ten maintained demonstration fixtures and
+the full [factory-preset audit](factory-presets/README.md). Historical
 before/after, fidelity, realism, and state-of-the-art comparison corpora were
 retired during the earlier corpus reset; they remain recoverable from
-repository history and are not evidence for the Step 16 engine.
+repository history and are not evidence for the Step 17 engine.
+
+Step 17 confines direct priming of shared RESONANCE, common VCA LEVEL, PWM,
+SUB and NOISE holds to startup, before the first valid positive-length prepared
+process call. The former recurring path could reopen after 40 ms of silence
+and bypass the 23-write scan plus its existing hold responses. Later silence
+now retains scan ownership until hard reset or `prepare()`. This is a
+product-lifecycle correction, not a hardware timing claim; no OQ closes and no
+state, storage, latency or per-sample work was added.
 
 The snapshot was built by the warning-clean native arm64 Release targets with
 the plug-in disabled. Step 16 leaves the physical C41/R79 noise-source pole at
@@ -21,19 +28,25 @@ was added.
 The exact source and frozen-binary provenance for this render is:
 
 - `Source/DSP/YouKnow106Engine.cpp` SHA-256
-  `752e585b356903a5b67b85ed73ee091dc49f7d4ab3dc195a12bed08389b7f5aa`
+  `45254c5659df29b3efbeebe6717af96544192bdc4ace7228df6bbdd1d875a824`
 - `Source/DSP/YouKnow106Engine.h` SHA-256
-  `9ae15f16b795bf752693eb146c137a63f486d1ee29148dce0b38c58fec453b52`
+  `d0bb7d99a3de16dd0756ee43ff573283cf468d551fbc7e37797b26ab9054bbc1`
+- `Tools/RenderDemos.cpp` SHA-256
+  `9e923646b8f34668c6a0edbe34e3c19a370b4a958f77151c1d93284d72307edd`
+- `Tools/AuditFactoryPresets.cpp` SHA-256
+  `1aab8f56cbf6831838925f507109bbd8c0aa11e196a3a2f6ef538b7e00f26b3c`
 - `YouKnow106RenderDemos` SHA-256
-  `0ae8dec6e0ddec230aab5fbb8b8efbd63a4875900721ee60aff5371468fd9cd3`
+  `ab1aa091310e764313ee91d0d8edd422cfe5b11863f69503a47f2fa008991bf4`
 - `YouKnow106AuditFactoryPresets` SHA-256
-  `e74569b26d5bc8437a0c88b325d55db4bba7730e8fa40a391b2273b18aa08498`
+  `415d4021f59d377142f8de9c59bb5f0051de44d647df338cbbbdd91dab995d91`
 
-This corpus is bounded standard-grid non-regression evidence for the declared
-low-rate numerical correction and the product paths exercised by the fixtures.
-It does not exercise the 8--10.7 kHz endpoint, measure TP8 noise statistics,
-establish the transistor source's amplitude distribution, or qualify physical
-self-oscillation startup. Those hardware questions remain open under OQ-16.
+This corpus is bounded standard-grid non-regression evidence: the existing
+startup render paths remain byte-identical after the lifecycle correction.
+The dedicated Engine regressions, rather than these fixed musical fixtures,
+exercise a post-start parameter edit after long silence. The corpus does not
+measure converter timing, acquisition, droop or jitter, TP8 noise statistics,
+the transistor source's amplitude distribution, or physical self-oscillation
+startup. The corresponding hardware questions remain open.
 
 ## Demonstrations
 
@@ -82,11 +95,12 @@ cmake --build build-dsp --parallel \
 ./build-dsp/YouKnow106AuditFactoryPresets Docs/audio/factory-presets
 ```
 
-For this snapshot each fresh warning-clean Release renderer was run twice into
-independent empty directories. The two demo sets and the two complete
-factory-audit directories had identical relative file sets and bytes, and all
-22 renderer-owned files were also byte-identical to the installed Step 15
-corpus. Their SHA-256 tree manifests remain
+For this snapshot each fresh warning-clean Release renderer was run twice,
+sequentially, into independent empty directories. Demo A/B took
+**92.32/92.70 s** and full-factory A/B took **454.40/509.67 s**. Both pairs
+had identical relative file sets and bytes, and all 22 renderer-owned files
+were also byte-identical to the installed Step-16 corpus. Their SHA-256 tree
+manifests remain
 `b42e87351748d79ad91cfbfb29ca85fce99a08b0c2a090754c4cba7bf69a9434`
 for the ten demos and
 `0783040d94af15527450f8062813ac03ae6c6def0184574c037a5cf4106767e8`
@@ -100,8 +114,9 @@ The factory CSV contains 128 finite, uniquely slotted rows and 128 unique
 18-byte tone states. Its median gated RMS is -21.480711305 dBFS, with 31
 overload, zero near-silent and nine median-outlier rows.
 
-The Step 16 renderer-owned payload is byte-identical to Step 15; only this root
-README advances its source and verification provenance. For historical scale,
+The Step-17 renderer-owned payload is byte-identical to Steps 15 and 16; only
+this root README advances its source and verification provenance. For
+historical scale,
 against the earlier Step-12 canonical 23-file manifest
 `f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`,
 nine demos are byte-identical. The high-pass demo and all ten fixed factory
@@ -109,3 +124,20 @@ previews change by no more than two 16-bit sample steps. Twenty-nine factory
 metric rows change only at fine precision; the generated common preview gain
 moves from 0.543091 to 0.543092, A17's overload count from 7000 to 6999, and
 B51's displayed crest from 23.36 to 23.35 dB.
+
+## Step 17 audio handoff
+
+The two demo trees are identical across **10/10** files, the two factory trees
+across **12/12** files, and both verification trees match the installed Step-16
+payload with zero differing renderer-owned files. All 20 WAVs are finite,
+non-silent stereo PCM16 (ten 44.1 kHz and ten 48 kHz), with maximum absolute
+DC **0.000000592814 FS** and worst edge **−46.962652004 dBFS**. The factory
+CSV contains 128 finite unique slots and unique 18-byte tones, median
+**−21.480711305 dBFS**, 31 overload, zero near-silent and nine outliers; its
+range remains A86 **−61.956882039 dBFS** to A48
+**−8.749547764 dBFS**, with common gain **0.543092**.
+
+No WAV, generated factory README, metrics CSV or preview changed. The current
+canonical 23-file manifest, which necessarily includes this maintained index,
+is recorded after hashing in the five core Step-17 records. **Step 17 audio is
+complete. DOCS FROZEN.**
