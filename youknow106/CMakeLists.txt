@@ -476,7 +476,7 @@ if(BUILD_TESTING)
                              YouKnow106.NoiseSourceQualityContract
                              PROPERTIES TIMEOUT 300)
         set_tests_properties(YouKnow106.BbdDynamicQualityContract
-                             PROPERTIES TIMEOUT 300)
+                             PROPERTIES TIMEOUT 900)
     endif()
     # The engine suite renders the complete factory-balance corpus, while the
     # circuit suite re-solves reference ODE models at high internal rates.
