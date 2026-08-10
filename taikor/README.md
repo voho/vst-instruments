@@ -801,13 +801,14 @@ stroke is computed.
 
 ## Interface
 
-A resizable editor built around a drawing of the head itself. The four stroke
-pads sit across the top with the note each one currently answers to; the drum
-strip below picks which of the four instruments they play. The head display
-shows where the last stroke
-landed, where the close pair is standing, and what the model says the drum is —
-the pitch it is heard at, its breathing mode and its tail length — all read from
-the same solve the audio comes from.
+A resizable editor built around a drawing of the head itself. Each painted drum
+portrait sits directly beside the four strokes that trigger it, so the playing
+surface reads as the same four-by-four map as the keyboard: one drum per row and
+one stroke per column. Clicking a portrait selects that drum for the live head
+readout. The head display shows where the last stroke landed, where the close
+pair is standing, and what the model says the drum is — the pitch it is heard
+at, its breathing mode and its tail length — all read from the same solve the
+audio comes from.
 
 The pitch it names is always a partial the engine will actually build at the
 host's sample rate. A resonator at or above 0.98 of Nyquist is refused, and on
@@ -818,7 +819,10 @@ Where a drum has no membrane mode the engine can sound at all, the display says
 **no pitch** rather than naming one nothing will play. It still has a body and a
 head continuum; what it does not have is a partial to be tuned to.
 
-The panel is drawn procedurally, so the project carries no binary image assets.
+The controls, strike maps and live head are drawn procedurally over an embedded
+dark sumi-e landscape. The four drum portraits are a second embedded
+ink-and-mineral-pigment atlas. Both ship inside every plug-in format and require
+no files beside the bundle.
 
 ## Requirements
 

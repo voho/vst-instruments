@@ -103,6 +103,11 @@ if(TAIKOR_BUILD_PLUGIN)
 
     juce_generate_juce_header(Taikor)
 
+    juce_add_binary_data(TaikorAssets
+        SOURCES
+            Assets/taiko-drum-atlas.png
+            Assets/taikor-sumi-background.png)
+
     target_sources(Taikor PRIVATE
         Source/PluginProcessor.cpp
         Source/PluginProcessor.h
@@ -112,6 +117,7 @@ if(TAIKOR_BUILD_PLUGIN)
     target_link_libraries(Taikor
         PRIVATE
             TaikorDSP
+            TaikorAssets
             juce::juce_audio_utils
             juce::juce_dsp
         PUBLIC

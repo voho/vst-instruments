@@ -57,18 +57,33 @@ private:
     taikor::Articulation articulation;
     int octaveOffset = 0;
     juce::String drumNameText;
-    juce::String nameText;
-    juce::String mnemonicText;
     juce::String noteText;
+    juce::String keyText;
     float flashLevel = 0.0f;
     bool selected = false;
+};
+
+// The drum family is part of the playing surface rather than a detached mode
+// switch. Each row header is therefore both a painted portrait of the drum and
+// the control that selects it for the live head readout.
+class TaikorDrumButton final : public juce::Button
+{
+public:
+    TaikorDrumButton (int octaveOffset, juce::Image drumAtlas);
+
+    void paintButton (juce::Graphics&, bool isMouseOver, bool isButtonDown) override;
+
+private:
+    juce::Image drumPainting;
+    juce::String noteName;
+    juce::String drumName;
 };
 
 class TaikorKnob final : public juce::Component,
                          public juce::SettableTooltipClient
 {
 public:
-    enum class ValueStyle { Percent, Semitones, Centimetres, Decibels };
+    enum class ValueStyle { Plain, Percent, Semitones, Centimetres, Decibels };
     enum class VisualRole { Drum, Stroke, Microphone, Master };
 
     TaikorKnob (juce::String name, ValueStyle style, VisualRole role);
@@ -175,7 +190,6 @@ private:
         juce::Rectangle<int> gridArea;
         juce::Rectangle<int> rightUpperArea;
         juce::Rectangle<int> head;
-        juce::Rectangle<int> octaveStrip;
         juce::Rectangle<int> drumDeck;
         juce::Rectangle<int> strokeDeck;
         juce::Rectangle<int> microphoneDeck;
@@ -196,16 +210,19 @@ private:
     TaikorStatusDisplay statusDisplay;
     TaikorMeter meter;
     juce::TextButton panicButton { "PANIC" };
+    juce::Label sealLabel;
 
     juce::Label gridCaption;
+    std::array<juce::Label, taikor::articulationCount> strokeLabels;
     TaikorHeadDisplay headDisplay;
     juce::Label headCaption;
+    juce::Image drumAtlas;
+    juce::Image backgroundPainting;
 
     std::array<std::unique_ptr<TaikorPad>, totalPadCount> pads;
     std::array<std::uint32_t, taikor::articulationCount> observedTriggerCounters {};
 
-    juce::Label octaveLabel;
-    std::array<std::unique_ptr<juce::TextButton>, octaveCount> octaveButtons;
+    std::array<std::unique_ptr<TaikorDrumButton>, octaveCount> octaveButtons;
     int selectedOctave = 0;
 
     juce::Label drumDeckLabel;
@@ -235,7 +252,7 @@ private:
 
     TaikorKnob hardnessKnob { "BACHI", TaikorKnob::ValueStyle::Percent,
                               TaikorKnob::VisualRole::Stroke };
-    TaikorKnob strikePositionKnob { "POSITION", TaikorKnob::ValueStyle::Percent,
+    TaikorKnob strikePositionKnob { "POSITION", TaikorKnob::ValueStyle::Plain,
                                     TaikorKnob::VisualRole::Stroke };
     TaikorKnob velocityDepthKnob { "VELOCITY", TaikorKnob::ValueStyle::Percent,
                                    TaikorKnob::VisualRole::Stroke };
@@ -245,7 +262,7 @@ private:
                                  TaikorKnob::VisualRole::Stroke };
     TaikorKnob humaniseKnob { "HUMANISE", TaikorKnob::ValueStyle::Percent,
                               TaikorKnob::VisualRole::Stroke };
-    TaikorKnob octaveBodyKnob { "OCTAVE BODY", TaikorKnob::ValueStyle::Percent,
+    TaikorKnob octaveBodyKnob { "OCTAVE BODY", TaikorKnob::ValueStyle::Plain,
                                 TaikorKnob::VisualRole::Stroke };
 
     TaikorKnob micDistanceKnob { "MIC DISTANCE", TaikorKnob::ValueStyle::Centimetres,
