@@ -38,7 +38,7 @@ constexpr float voltsToSample = 1.0f / YouKnow106Engine::internalVoltsPerUnit;
 constexpr float sawMixVolts = 6.0f;
 constexpr float pulseMixVolts = 6.0f;
 constexpr float subMixVolts = 5.0f;
-constexpr float noiseMixVolts = 2.0f;
+constexpr float noiseMixVolts = 6.0f;
 
 // The noise generator's support circuit, module board p. 13: Tr21 (2SC945,
 // factory-selected for noise) with R104 470 kOhm collector load, coupled by
@@ -4956,6 +4956,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // so shaping the shared source once here is exact for every
             // voice; the passband stays at unity, so in-band density keeps
             // its established rate normalisation.
+            if (noiseState_ == 0u)
+                noiseState_ = 0x6d2b79f5u;
             noiseState_ ^= noiseState_ << 13;
             noiseState_ ^= noiseState_ >> 17;
             noiseState_ ^= noiseState_ << 5;

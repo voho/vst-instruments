@@ -449,6 +449,8 @@ void advanceExactSupport(
 
 std::uint32_t nextNoiseState(std::uint32_t state) noexcept
 {
+    if (state == 0u)
+        state = 0xd1b54a35u;
     state ^= state << 13;
     state ^= state >> 17;
     state ^= state << 5;
