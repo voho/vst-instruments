@@ -1,43 +1,41 @@
 # YouKnow106 audio corpus
 
-This directory is a fresh Step 12 render of the current engine candidate. It
+This directory is a fresh Step 15 render of the current engine candidate. It
 intentionally contains only the ten maintained demonstration fixtures and the
 full [factory-preset audit](factory-presets/README.md). Historical
 before/after, fidelity, realism, and state-of-the-art comparison corpora were
 retired during the earlier corpus reset; they remain recoverable from
-repository history and are not evidence for the Step 12 engine.
+repository history and are not evidence for the Step 15 engine.
 
 The snapshot was built by the warning-clean native arm64 Release targets with
-the plug-in disabled. Step 12 generalizes Step 11's pure peek/latch/once-only
-commit path to the 16 declared passive destinations in every nominal 4.2 ms
-pass: shared RESONANCE, VCA LEVEL, SUB and PWM, plus six VCF and six VoiceVca
-writes. An affected one-pole state advances for the exact old-target and
-new-target segments around its normalized `ordinal/23` event. VCF and shared
-resonance retain the 522 µs endpoint and seven-node Merson trajectory; the new
-paths are the component-derived 687 µs VoiceVca holds, derived 9.08249 ms
-common-VCA pole, derived 10 ms SUB pole, and exact continuous affine solution
-of PWM's 4.7/2.632 ms two-pole cascade. The official 23-write scheduler still
-commits the captured event-time payload once at its next poll, without moving
-its cursor, order, or write count. Pitch/DCO and NOISE deliberately remain on
-their prior sample-grid paths. The relevant scalar states now use double
-precision without changing their physical state dimension.
+the plug-in disabled. Step 15 makes one selected-Cut constant correction at
+the shared voice-bus coupling. In either Cut position the mux-side R21/R23
+1 MΩ bleed remains connected to the C14/TC4052 YCOM node, so C14 now sees
+`R39 || 1 MΩ = 31,945.788964 Ω`, a 319.457890 ms time constant and a
+0.498203201 Hz corner. This supersedes the R39-only 0.482287706 Hz Cut scalar.
+Boost and Flat remain at 0.820915 Hz from `33 kΩ || 47 kΩ`; the separate
+225.8/720.5 Hz Cut sections and the Boost shelf do not move. The implementation
+retains one continuous C14 state across mode, numerical-rate and preserving
+HQ changes; hard output-path clears (including public panic) and engine reset
+discharge it. No state, selector,
+latency or per-sample section was added.
 
 The exact source and frozen-binary provenance for this render is:
 
 - `Source/DSP/YouKnow106Engine.cpp` SHA-256
-  `f5331d8b67ff69b88b0391c7e83d3207c78d60acea9268e3025e71761f830985`
+  `ed8fef679a94b0667569e1b0281f4381a46aa942c490be9b4765b445e1963182`
 - `Source/DSP/YouKnow106Engine.h` SHA-256
-  `bc2f39387fccc19e45dbcfd4ebcef6862906c0dc6ff907754f4a5284b3f5356d`
+  `9ae15f16b795bf752693eb146c137a63f486d1ee29148dce0b38c58fec453b52`
 - `YouKnow106RenderDemos` SHA-256
-  `0ea94fea69baaa9273d826c0d4cb87869db6844f12bbf1c84707609dd8893bbe`
+  `1b25d541faae90f984982346f2a13c950e4eebaf54b56b1d8d798013c79caee0`
 - `YouKnow106AuditFactoryPresets` SHA-256
-  `2aee469e6a8f8d7a373b4d19c5fcfe054dac229bf3fc15b311fc21c1ae24243b`
+  `dff272a2c6aee535a8a46e5b74d8056bc8799d35d28bc72970d459d084a66eef`
 
-This corpus is bounded render evidence for those declared RC/event equations
-and the normalized product schedule. It is not a measurement of hardware write
-offsets, jitter, acquisition, droop, loading, or audibility; shared resonance
-also remains a voiced compatibility law. Those timing and hold questions
-remain open.
+This corpus is bounded render evidence for that declared fixed-mode correction
+and the product paths exercised by the fixtures. It is not a measurement of
+TC4052 on-resistance, leakage, off-capacitance, charge injection, switch timing
+or audibility, and it does not establish a click-free hardware transition or a
+full switched-network model. Those mode-change questions remain open.
 
 ## Demonstrations
 
@@ -89,7 +87,23 @@ cmake --build build-dsp --parallel \
 For this snapshot each fresh warning-clean Release renderer was run twice into
 independent empty or renderer-owned directories. The two demo sets and the two
 complete factory-audit directories had identical relative file sets and bytes
-before the canonical run was installed here. All WAVs decode as finite stereo
-PCM: demos are 44.1 kHz/16-bit, previews are 48 kHz/16-bit, whole-file absolute
-DC is at most 0.000000593 FS, and the worst file-edge sample peak is
--46.96 dBFS.
+before the canonical run was installed here. Their SHA-256 tree manifests are
+`b42e87351748d79ad91cfbfb29ca85fce99a08b0c2a090754c4cba7bf69a9434`
+for the ten demos and
+`0783040d94af15527450f8062813ac03ae6c6def0184574c037a5cf4106767e8`
+for the complete factory directory.
+
+All 20 WAVs decode as finite, non-silent stereo PCM: demos are
+44.1 kHz/16-bit, previews are 48 kHz/16-bit, whole-file absolute DC is at most
+0.000000592814 FS, and the worst file-edge sample peak is -46.962652 dBFS.
+The factory CSV contains 128 finite, uniquely slotted rows and 128 unique
+18-byte tone states. Its median gated RMS is -21.480711305 dBFS, with 31
+overload, zero near-silent and nine median-outlier rows.
+
+Against the prior Step-12 canonical 23-file manifest
+`f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`,
+nine demos are byte-identical. The high-pass demo and all ten fixed factory
+previews change by no more than two 16-bit sample steps. Twenty-nine factory
+metric rows change only at fine precision; the generated common preview gain
+moves from 0.543091 to 0.543092, A17's overload count from 7000 to 6999, and
+B51's displayed crest from 23.36 to 23.35 dB.

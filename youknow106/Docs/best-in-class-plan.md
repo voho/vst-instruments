@@ -1106,16 +1106,20 @@ own adjudication.** Three findings, which together strike step 6.
    225.8 Hz or 720.5 Hz, time constants of 0.70 ms and 0.22 ms. The engine-level
    numbers in the original (-25.87 / -12.78 / -29.78 dB out to 50 ms, and my own
    engine-level reruns at -31.7 / -55.5 / -49.6 dB, still -41.8 dB at 200 ms)
-   are dominated by `voiceBusCoupling_`, whose corner **also** changes with the
-   HPF mode (0.8209 Hz for Boost/One against 0.4823 Hz for Two/Three) and whose
-   330 ms time constant no change to `struct HighPass` touches.
+   were dominated by the then-current `voiceBusCoupling_`, whose corner also
+   changed with the HPF mode (0.8209 Hz for Boost/One against the former
+   R39-only 0.4823 Hz for Two/Three) and whose nominal 330 ms time constant no
+   change to `struct HighPass` touched. Step 15 later corrects the selected-Cut
+   scalar to 0.498203 Hz / 319.458 ms; it does not rehabilitate the rejected
+   four-always-driven-leg proposal or establish a switching transient.
 
-The switch step itself is large and physical: isolated, it measures 0.290622
-(1 -> 2), 0.291814 (1 -> 3) and 0.710782 (1 -> Boost) against a steady-tone
-maximum step of 0.005447, i.e. +34.5 dB and +42.3 dB. That click is what a
-listener hears, and the proposed step preserves it by design. Audibility of the
-part the step would actually remove -- a sub-millisecond residual at -20 to
--46 dB: **none**.
+The simplified-engine harness emits a large instantaneous numerical step:
+0.290622 (1 -> 2), 0.291814 (1 -> 3) and 0.710782 (1 -> Boost) against a
+steady-tone maximum step of 0.005447, i.e. +34.5 dB and +42.3 dB. The proposed
+step preserves that model output by design. These values are sensitivity
+evidence, not a measured TC4052 transient, click waveform or audibility result;
+the sub-millisecond residual it would remove is likewise not assigned an
+audibility classification.
 
 **Gap 10 — two circuit mechanisms that are enabled by default are numerically
 inert.** `Source/DSP/YouKnow106Engine.cpp:3974-3980`
@@ -2137,15 +2141,19 @@ name are real and a later pass will want the reasoning rather than the idea.
   millisecond** — 1 → 3 measures −45.81 dB at 1 ms and −580 dB by 10 ms, 1 → 2
   −20.15 dB at 1 ms and −131.14 dB at 10 ms — because the destination leg's own
   pole is 225.8 Hz or 720.5 Hz. The tens-of-milliseconds residual the original
-  measured at the engine output is `voiceBusCoupling_`, whose corner also
-  changes with the HPF mode (0.8209 Hz against 0.4823 Hz) and whose 330 ms time
-  constant the proposed change does not touch — so the step could not have met
-  its own −60 dB assertion. What a listener actually hears at the switch is the
-  instantaneous gain step (+34.5 to +42.3 dB above the steady-tone step), which
-  the step preserves by design. Cost: three extra first-order sections on the
-  shared bus per internal sample, to remove something inaudible. The right home
-  for this is OQ-21's transient ask, with the 1 MΩ bleed in the model rather
-  than four always-driven legs.
+  measured at the engine output was the then-current `voiceBusCoupling_`, whose
+  corner changed with the HPF mode (0.8209 Hz against the former R39-only
+  0.4823 Hz) and whose nominal 330 ms time constant the proposed change did not
+  touch — so the step could not have met its own −60 dB assertion. Step 15
+  subsequently corrects that selected-Cut scalar to 0.498203 Hz / 319.458 ms,
+  without adding four continuously driven legs or making a click claim. The
+  simplified-engine harness emits an instantaneous gain step (+34.5 to +42.3 dB
+  above its steady-tone step), which the proposal preserves by design; that is
+  not hardware or listener evidence. Cost: three extra first-order sections on
+  the shared bus per internal sample, to remove a sub-millisecond modeled
+  residual with no demonstrated audibility. The right home for this is OQ-21's
+  transient ask, with the 1 MΩ bleed in the model rather than four
+  always-driven legs.
 
 - **An always-on electronics noise floor (gap 7).** The only part of it this
   project can derive today is Johnson noise of the anchored summing network —
@@ -3653,3 +3661,116 @@ evidence about a physical JUNO-106.
   No audio was rendered; the Step-12 canonical 23-file manifest remains
   unchanged at
   `f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`.
+
+- [x] **15. Correct the selected-Cut C14 load and qualify the nominal
+  fixed-mode network.**
+  Service Notes p. 15 puts R39 33 kΩ from the C14/TC4052 YCOM node to ground.
+  When Y1 or Y0 is selected, its mux-side R21/R23 1 MΩ bleed is another direct
+  shunt at that node even though C10/C11 opens the far side at the sub-hertz
+  asymptote. The smallest production correction is therefore to replace the
+  Cut positions' R39-only C14 scalar with
+  `R39 || 1 MΩ = 31,945.788964 Ω`, giving
+  `τ = 319.457890 ms` and `fc = 0.498203201 Hz`. Boost and Flat retain
+  `R39 || 47 kΩ` and 0.820915 Hz; the separate 225.8/720.5 Hz Cut poles and
+  Boost shelf remain untouched. The same one-state C14 coordinate survives
+  mode, rate and preserving-clear changes; hard output-path clears (including
+  public panic) and engine reset discharge it. There is no additional state,
+  storage, latency or per-sample DSP section/work; the existing block-rate
+  coefficient recomputation remains.
+
+  `YouKnow106.HighPassNetworkContract` independently stamps the nominal p. 15
+  fixed-position circuit with long-double complex MNA. Its converged
+  240,001-point 0.001 Hz–20 kHz comparison reports maximum absolute
+  magnitude/phase residuals of
+  **0.008363013 dB/0.056091136°** Boost,
+  **0.000000391 dB/0.000001289°** Flat,
+  **0.011136100 dB/0.042871357°** Cut II and
+  **0.003887336 dB/0.013452200°** Cut III. It rejects the old R39-only load,
+  a 1 MΩ placed across the 47 kΩ leg, swapped C10/C11 and reset-on-mode-change
+  mutations.
+
+  Thirty-six production-updater probes bind four modes to the nine declared
+  endpoint/common/oversampled policy grids. A separate helper-derived scalar
+  TPT prediction covers **147,492 finite frequency responses**: four modes,
+  4,097 frequencies and the explicit
+  8/32/44.1/48/88.2/96/176.4/192/768 kHz grids. The seven common
+  audio/oversampled families stay inside 0.02 dB/1.65°. At 8 kHz the
+  comparison ends at 3.92 kHz; Cut II and III are honestly labelled
+  **ENDPOINT_LIMITED** relative to that standard envelope at
+  0.024664910 dB/3.147789295° and
+  0.236403340 dB/9.902784181°, while passing a separately declared
+  0.25 dB/10° endpoint finite/convergence fence. At the 32 kHz endpoint-HQ
+  grid, Cut III alone is **ENDPOINT_HQ_LIMITED** at
+  0.014694508 dB/2.506236943° while passing its 0.03 dB/3° fence. Boost/Flat
+  retain the standard envelope on both endpoint grids, as does Cut II at
+  32 kHz.
+
+  This does **not** solve an ideal four-position switching trajectory, infer an
+  arbitrary capacitor-charge projection or claim the TC4052's on resistance,
+  off leakage/capacitance, charge injection, break-before-make timing or click.
+  OQ-21 stays open for those directed transitions and hardware parameters.
+  The scalar correction adds no per-sample work, state, storage or latency.
+
+  Final non-audio qualification is green. A fresh warning-clean native
+  Release/plugin-off tree registers 14 contracts and passes
+  **14/14 in 367.27 s**: Engine **175.77 s**, Circuit **3.88 s** and HPF
+  **0.77 s**. Focused ASan+UBSan Circuit/HPF coverage passes
+  **2/2 in 8.41 s** (7.50/0.91 s) with `halt_on_error=1`, leak detection
+  disabled and no diagnostic. A fresh universal `x86_64;arm64`
+  Release/plugin-on build completes in **102.30 s**, registers 15 contracts and
+  passes **15/15 in 382.36 s**; HPF and PluginProcessor take
+  **0.98/11.49 s**.
+
+  VST3, AU and Standalone each contain `x86_64 arm64`, target minimum macOS
+  11.0 and pass strict/deep ad-hoc signature verification. Their CDHash
+  prefixes are `965c40c0`, `9290dacb` and `26f74b2a`. The explicit HPF audit
+  passes on arm64 in **0.42 s** and in genuine translated Rosetta `x86_64` in
+  **73.91 s**. All printed metrics agree to displayed precision; only three
+  harmless equal-valued frequency locations differ for Flat's near-zero
+  magnitude maxima in the analog, 8 kHz endpoint and 32 kHz endpoint-HQ rows.
+  No gate or result moves.
+
+  Three alternating base/current CPU pairs preserve exact raw-float
+  fingerprint identities. Worst current load is **0.837× realtime**, largest
+  positive meta-median change **+0.1128%** and worst individual paired change
+  **+2.1991%**; all clear the 5% fence.
+
+  The verified non-audio source SHA-256 set is:
+
+  | Source | SHA-256 |
+  | --- | --- |
+  | `CMakeLists.txt` | `33b31ca661c1538d19dcafac12add1838e576ff074399069eb2a7744d60ba524` |
+  | `Source/DSP/YouKnow106Engine.cpp` | `ed8fef679a94b0667569e1b0281f4381a46aa942c490be9b4765b445e1963182` |
+  | `Source/DSP/YouKnow106Engine.h` | `9ae15f16b795bf752693eb146c137a63f486d1ee29148dce0b38c58fec453b52` |
+  | `Tests/YouKnow106CircuitTests.cpp` | `a3f6168c3602cee5345e21e1e2b564b67e7a3981082ca0604dca74be3d59d998` |
+  | `Tools/AuditHighPassNetwork.cpp` | `341030ab93d8506547176dd30c27ea65684bd96a0a92d0ee681da23b953866eb` |
+
+  The audio handoff is complete. Two independent demo renders and two
+  independent full factory renders are pairwise byte-identical, with manifests
+  `b42e87351748d79ad91cfbfb29ca85fce99a08b0c2a090754c4cba7bf69a9434`
+  and
+  `0783040d94af15527450f8062813ac03ae6c6def0184574c037a5cf4106767e8`.
+  The renderer-owned 22-file and installed canonical 23-file manifests are
+  `bc1564713b46151a77fbbc3c5403f8bd829955cd9ff9dbcb5b2bd6cc1e13c614`
+  and
+  `0280ae697c209f513283b0c1cac3ad451528f5e6909046ba26d592dce459a430`,
+  superseding Step 12's
+  `f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`.
+
+  All 20 WAVs are non-silent finite stereo PCM16, with maximum absolute DC
+  **0.000000592814 FS** and worst edge **−46.962652 dBFS**. The CSV contains
+  128 finite unique slots and tone states, median **−21.480711305 dBFS**,
+  31 overload, zero near-silent and nine median-outlier rows. Nine demos are
+  byte-identical to Step 12. Only demo 09 and the ten common-gain previews
+  change, each by at most two PCM16 LSB: demo 09 reads
+  **−85.129 dB NRMS**. A86 is worst by L2 NRMS at **−54.771 dB**; A17 reads
+  **−83.872 dB** and uniquely reaches a two-LSB peak. Twenty-nine
+  CSV rows move only at fine precision: A17's overload-sample count
+  **7000 → 6999**, common gain **0.543091 → 0.543092**, and B51's
+  displayed crest **23.36 → 23.35 dB**. Exactly 14 tracked `Docs/audio`
+  files change—one demo, ten previews, the audio index, generated factory
+  README and metrics CSV.
+
+  These render differences are bounded provenance, not an audibility result,
+  switch-click measurement or full switched-network validation. OQ-21 remains
+  open. **Step 15 is complete. DOCS FROZEN.**

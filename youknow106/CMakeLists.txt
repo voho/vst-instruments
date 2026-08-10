@@ -301,6 +301,15 @@ if(YOUKNOW106_BUILD_TOOLS)
         PRIVATE YouKnow106DSP)
     target_compile_features(YouKnow106PassiveHoldTimingAudit PRIVATE cxx_std_20)
 
+    # Independent nominal-component MNA qualification for C14 and the shared
+    # four-position HPF.  The audit covers fixed-mode transfer and the existing
+    # C14 state continuity, but intentionally makes no CMOS switch-click claim.
+    add_executable(YouKnow106HighPassNetworkAudit
+        Tools/AuditHighPassNetwork.cpp)
+    target_link_libraries(YouKnow106HighPassNetworkAudit
+        PRIVATE YouKnow106DSP)
+    target_compile_features(YouKnow106HighPassNetworkAudit PRIVATE cxx_std_20)
+
     if(MSVC)
         target_compile_options(YouKnow106RenderDemos PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderSota PRIVATE /W4 /permissive-)
@@ -325,6 +334,8 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106VcfDynamicQualityAudit
             PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106PassiveHoldTimingAudit
+            PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnow106HighPassNetworkAudit
             PRIVATE /W4 /permissive-)
     else()
         target_compile_options(YouKnow106RenderDemos PRIVATE
@@ -354,6 +365,8 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106VcfDynamicQualityAudit PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106PassiveHoldTimingAudit PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnow106HighPassNetworkAudit PRIVATE
             -Wall -Wextra -Wpedantic)
     endif()
 endif()
@@ -437,10 +450,13 @@ if(BUILD_TESTING)
                  COMMAND YouKnow106VcfDynamicQualityAudit --self-test)
         add_test(NAME YouKnow106.PassiveHoldTimingContract
                  COMMAND YouKnow106PassiveHoldTimingAudit --self-test)
+        add_test(NAME YouKnow106.HighPassNetworkContract
+                 COMMAND YouKnow106HighPassNetworkAudit --self-test)
         set_tests_properties(YouKnow106.DcoScanQualityContract
                              YouKnow106.VcfBbdQualityContract
                              YouKnow106.VcfDynamicQualityContract
                              YouKnow106.PassiveHoldTimingContract
+                             YouKnow106.HighPassNetworkContract
                              PROPERTIES TIMEOUT 300)
         set_tests_properties(YouKnow106.BbdDynamicQualityContract
                              PROPERTIES TIMEOUT 300)

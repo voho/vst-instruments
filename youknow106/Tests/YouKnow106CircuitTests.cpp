@@ -456,6 +456,78 @@ struct YouKnow106TestAccess
         return output;
     }
 
+    static std::vector<float> renderVoiceBusCoupling(
+        const std::vector<float>& input, double sampleRate,
+        HighPassMode mode)
+    {
+        YouKnow106Engine::HighPass coupling;
+        coupling.reset();
+        const float g = std::tan(
+            static_cast<float>(3.14159265358979323846)
+            * YouKnow106Engine::voiceBusCouplingCornerHz(mode)
+            / static_cast<float>(sampleRate));
+        std::vector<float> output(input.size());
+        for (std::size_t index = 0; index < input.size(); ++index)
+            output[index] = coupling.process(input[index], g, 0.0f, 1.0f);
+        return output;
+    }
+
+    static std::vector<float> renderVoiceBusCouplingInBlocks(
+        const std::vector<float>& input, double sampleRate,
+        HighPassMode mode, std::size_t blockSize)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, 256, false);
+        EngineParameters parameters;
+        parameters.highPass = mode;
+        blockSize = std::max<std::size_t>(1, blockSize);
+
+        std::vector<float> output(input.size());
+        for (std::size_t begin = 0; begin < input.size(); begin += blockSize)
+        {
+            engine.updateSharedHighPass(parameters);
+            const std::size_t end = std::min(input.size(), begin + blockSize);
+            for (std::size_t index = begin; index < end; ++index)
+                output[index] = engine.voiceBusCoupling_.process(
+                    input[index], engine.voiceBusCouplingG_, 0.0f, 1.0f);
+        }
+        return output;
+    }
+
+    struct VoiceBusCouplingStateContract
+    {
+        double beforeModeChange {};
+        double afterModeChange {};
+        double afterRateChange {};
+        double afterPreservingClear {};
+        double afterHardReset {};
+    };
+
+    static VoiceBusCouplingStateContract voiceBusCouplingStateContract()
+    {
+        YouKnow106Engine engine;
+        engine.prepare(48000.0, 64, true);
+        engine.voiceBusCoupling_.state = 0.375;
+
+        VoiceBusCouplingStateContract result;
+        result.beforeModeChange = engine.voiceBusCoupling_.state;
+        EngineParameters parameters;
+        parameters.highPass = HighPassMode::Two;
+        engine.setParameters(parameters);
+        engine.updateSharedHighPass(engine.activeParameters_);
+        result.afterModeChange = engine.voiceBusCoupling_.state;
+
+        engine.oversamplingEnabled_ = false;
+        engine.updateProcessingRate(true);
+        engine.updateSharedHighPass(parameters);
+        result.afterRateChange = engine.voiceBusCoupling_.state;
+        engine.clearRateDependentOutputPath(true);
+        result.afterPreservingClear = engine.voiceBusCoupling_.state;
+        engine.reset();
+        result.afterHardReset = engine.voiceBusCoupling_.state;
+        return result;
+    }
+
     static std::vector<float> renderCommonVcaInputCoupling(
         const std::vector<float>& input, double sampleRate)
     {
@@ -1570,12 +1642,18 @@ void testEnvelopeAndAmplifierLaws()
     expectNear(YouKnow106Engine::voiceBusCouplingCornerHz(HighPassMode::Boost),
                loadedBusCorner, 1.0e-6,
                "boost HPF leg does not load C14 through R25");
+    constexpr double selectedCutBleedResistance = 1.0e6;
+    const double cutLoadedBusResistance =
+        busResistance * selectedCutBleedResistance
+        / (busResistance + selectedCutBleedResistance);
+    const double cutLoadedBusCorner =
+        1.0 / (2.0 * pi * busCapacitance * cutLoadedBusResistance);
     expectNear(YouKnow106Engine::voiceBusCouplingCornerHz(HighPassMode::Two),
-               expectedBusCorner, 1.0e-6,
-               "C10 incorrectly loads C14 at sub-hertz frequencies");
+               cutLoadedBusCorner, 1.0e-6,
+               "Cut II does not load C14 through its mux-side R21 bleed");
     expectNear(YouKnow106Engine::voiceBusCouplingCornerHz(HighPassMode::Three),
-               expectedBusCorner, 1.0e-6,
-               "C11 incorrectly loads C14 at sub-hertz frequencies");
+               cutLoadedBusCorner, 1.0e-6,
+               "Cut III does not load C14 through its mux-side R23 bleed");
     expectNear(YouKnow106Engine::commonVcaInputCouplingCornerHz(),
                expectedBusCorner, 1.0e-6,
                "common-VCA C12/R36 input-coupling corner");
@@ -1828,9 +1906,8 @@ void testPulseWidthAndHighPassLaws()
     }
 
 
-    // C14/R39 precedes the switch and therefore remains in circuit for every
-    // HPF position. Verify its 330 ms R39-only boundary at host-rate and HQ-rate
-    // families; the mode-specific 47 kOhm loading was checked separately above.
+    // Keep the no-argument C14/R39 reference boundary independently realised.
+    // Runtime mode selection applies the documented leg loads tested below.
     constexpr double busCapacitance = 10.0e-6;
     constexpr double busResistance = 33000.0;
     constexpr double busTimeConstant = busCapacitance * busResistance;
@@ -1864,6 +1941,255 @@ void testPulseWidthAndHighPassLaws()
                        + std::to_string(static_cast<int>(sampleRate)) + " Hz");
         expectNear(vcaResponse.back(), expectedStepAt(samples - 1), 2.0e-7,
                    "common-VCA input coupling has a sample-rate-dependent decay");
+    }
+
+    // In either Cut position, R21/R23 remains a direct 1 MOhm shunt from the
+    // selected mux input to ground even though C10/C11 opens the far side at
+    // the sub-hertz asymptote. Exercise the realised 319.458 ms TPT state at
+    // each relevant processing-rate family, not just the scalar helper.
+    constexpr double cutBleedResistance = 1.0e6;
+    constexpr double cutLoadedResistance =
+        busResistance * cutBleedResistance
+        / (busResistance + cutBleedResistance);
+    constexpr double cutBusTimeConstant =
+        busCapacitance * cutLoadedResistance;
+    for (const double sampleRate : { 44100.0, 48000.0, 192000.0 })
+    {
+        const int samples = static_cast<int>(std::ceil(sampleRate * 1.2));
+        const std::vector<float> step(static_cast<std::size_t>(samples), 1.0f);
+        const int atTau = static_cast<int>(std::llround(
+            sampleRate * cutBusTimeConstant));
+        for (const HighPassMode mode :
+             { HighPassMode::Two, HighPassMode::Three })
+        {
+            const double corner =
+                YouKnow106Engine::voiceBusCouplingCornerHz(mode);
+            const double g = std::tan(pi * corner / sampleRate);
+            const double pole = (1.0 - g) / (1.0 + g);
+            const auto expectedStepAt = [&](int sample) {
+                return std::pow(pole, sample) / (1.0 + g);
+            };
+            const auto response = YouKnow106TestAccess::renderVoiceBusCoupling(
+                step, sampleRate, mode);
+            expectNear(response[static_cast<std::size_t>(atTau)],
+                       expectedStepAt(atTau), 2.0e-6,
+                       "selected-Cut C14 state misses its loaded time constant at "
+                           + std::to_string(static_cast<int>(sampleRate)) + " Hz");
+            expectNear(response.back(), expectedStepAt(samples - 1), 2.0e-7,
+                       "selected-Cut C14 decay changes with processing rate");
+        }
+    }
+
+    // Re-reading the shared coefficient at a host block boundary must not
+    // restart the physical C14 state. An irregular partition therefore has
+    // to be sample-identical to one large block.
+    std::vector<float> blockInput(4099);
+    for (std::size_t index = 0; index < blockInput.size(); ++index)
+        blockInput[index] = static_cast<float>(
+            0.4 * std::sin(2.0 * pi * 37.0 * static_cast<double>(index) / 48000.0)
+            + (index >= 997 ? 0.2 : -0.1));
+    const auto wholeBlock = YouKnow106TestAccess::renderVoiceBusCouplingInBlocks(
+        blockInput, 48000.0, HighPassMode::Two, blockInput.size());
+    const auto splitBlocks = YouKnow106TestAccess::renderVoiceBusCouplingInBlocks(
+        blockInput, 48000.0, HighPassMode::Two, 37);
+    expect(wholeBlock == splitBlocks,
+           "selected-Cut C14 state changes with host block partitioning");
+
+    // A mode or numerical-rate change only replaces g. The existing C14
+    // coordinate survives both it and the live-HQ preserving-clear path. Hard
+    // output-path clears (including public panic) and engine reset discharge
+    // it; this fixture exercises the reset boundary.
+    const auto stateContract =
+        YouKnow106TestAccess::voiceBusCouplingStateContract();
+    expect(stateContract.afterModeChange == stateContract.beforeModeChange,
+           "changing HPF mode reinterprets or clears the C14 state");
+    expect(stateContract.afterRateChange == stateContract.beforeModeChange,
+           "changing the internal rate reinterprets or clears the C14 state");
+    expect(stateContract.afterPreservingClear == stateContract.beforeModeChange,
+           "the live-HQ output rebuild clears the C14 state");
+    expect(stateContract.afterHardReset == 0.0,
+           "a hard output reset does not clear the C14 state");
+}
+
+void testSharedHighPassAgainstNominalNetwork()
+{
+    // Solve the nominal p. 15 network twice: first as a dense nodal system,
+    // then as independently reduced closed forms. The realtime path remains
+    // the deliberately small cascade, so the final gate bounds its residual
+    // without claiming unmeasured TC4052 switching transients.
+    using Complex = std::complex<double>;
+    using Matrix = std::array<std::array<Complex, 3>, 3>;
+    using Vector = std::array<Complex, 3>;
+
+    constexpr double c14 = 10.0e-6;
+    constexpr double r39 = 33.0e3;
+    constexpr double rBleed = 1.0e6;
+    constexpr double r = 47.0e3;
+    constexpr double r22 = 47.0e3;
+    constexpr double r24 = 220.0e3;
+    constexpr double r25 = 47.0e3;
+    constexpr double r29 = 47.0e3;
+    constexpr double r18 = 100.0e3;
+    constexpr double r19 = 10.0e3;
+    constexpr double c9 = 47.0e-9;
+    constexpr double c8 = 10.0e-9;
+    constexpr double c6 = 22.0e-9;
+
+    const auto solve = [](Matrix matrix, Vector right) {
+        for (std::size_t column = 0; column < matrix.size(); ++column)
+        {
+            std::size_t pivot = column;
+            for (std::size_t row = column + 1; row < matrix.size(); ++row)
+                if (std::abs(matrix[row][column])
+                    > std::abs(matrix[pivot][column]))
+                    pivot = row;
+            std::swap(matrix[column], matrix[pivot]);
+            std::swap(right[column], right[pivot]);
+
+            const Complex diagonal = matrix[column][column];
+            for (std::size_t entry = 0; entry < matrix.size(); ++entry)
+                matrix[column][entry] /= diagonal;
+            right[column] /= diagonal;
+            for (std::size_t row = 0; row < matrix.size(); ++row)
+            {
+                if (row == column)
+                    continue;
+                const Complex factor = matrix[row][column];
+                for (std::size_t entry = 0; entry < matrix.size(); ++entry)
+                    matrix[row][entry] -= factor * matrix[column][entry];
+                right[row] -= factor * right[column];
+            }
+        }
+        return right;
+    };
+
+    const auto mnaResponse = [&](HighPassMode mode, Complex s) {
+        Matrix matrix {};
+        Vector right {};
+        const Complex y14 = s * c14;
+        right[0] = y14;
+
+        if (mode == HighPassMode::One)
+        {
+            matrix[0][0] = y14 + 1.0 / r39 + 1.0 / r;
+            matrix[1][1] = 1.0;
+            matrix[2][2] = 1.0;
+            return solve(matrix, right)[0];
+        }
+        if (mode == HighPassMode::Two || mode == HighPassMode::Three)
+        {
+            const double capacitance = mode == HighPassMode::Two
+                ? 15.0e-9 : 4.7e-9;
+            const Complex yCut = s * capacitance;
+            matrix[0][0] = y14 + 1.0 / r39 + 1.0 / rBleed + yCut;
+            matrix[0][1] = -yCut;
+            matrix[1][0] = -yCut;
+            matrix[1][1] = yCut + 1.0 / r;
+            matrix[2][2] = 1.0;
+            return solve(matrix, right)[1];
+        }
+
+        const Complex yLink = 1.0 / r22 + s * c9;
+        matrix[0][0] = y14 + 1.0 / r39 + 1.0 / r25 + yLink;
+        matrix[0][1] = -yLink;
+        matrix[1][0] = -yLink;
+        matrix[1][1] = yLink + s * c8;
+        matrix[2][1] = 1.0 / r19 + 1.0 / r18 + s * c6;
+        matrix[2][2] = -(1.0 / r18 + s * c6);
+        const Vector nodes = solve(matrix, right);
+        return (r29 / r25) * nodes[0] + (r29 / r24) * nodes[2];
+    };
+
+    const auto analyticResponse = [&](HighPassMode mode, Complex s) {
+        const Complex y14 = s * c14;
+        if (mode == HighPassMode::One)
+            return y14 / (y14 + 1.0 / r39 + 1.0 / r);
+        if (mode == HighPassMode::Two || mode == HighPassMode::Three)
+        {
+            const double capacitance = mode == HighPassMode::Two
+                ? 15.0e-9 : 4.7e-9;
+            const Complex cutAdmittance =
+                s * capacitance / (1.0 + s * r * capacitance);
+            const Complex common = y14
+                / (y14 + 1.0 / r39 + 1.0 / rBleed + cutAdmittance);
+            return common * (s * r * capacitance)
+                / (1.0 + s * r * capacitance);
+        }
+
+        const Complex firstStage =
+            (1.0 + s * r22 * c9) / (1.0 + s * r22 * (c9 + c8));
+        const Complex amplifier =
+            (1.0 + r18 / r19 + s * r18 * c6)
+            / (1.0 + s * r18 * c6);
+        const Complex common = y14
+            / (y14 + 1.0 / r39 + 1.0 / r25 + s * c8 * firstStage);
+        return common
+            * (r29 / r25 + (r29 / r24) * firstStage * amplifier);
+    };
+
+    const auto shippedResponse = [](HighPassMode mode, Complex s) {
+        const double couplingCorner =
+            YouKnow106Engine::voiceBusCouplingCornerHz(mode);
+        const Complex coupling = s / (s + 2.0 * pi * couplingCorner);
+        if (mode == HighPassMode::One)
+            return coupling;
+        const double corner = YouKnow106Engine::highPassCornerHz(mode);
+        if (mode == HighPassMode::Two || mode == HighPassMode::Three)
+            return coupling * s / (s + 2.0 * pi * corner);
+        const double shelf =
+            YouKnow106Engine::highPassShelfGain(HighPassMode::Boost);
+        const double high =
+            YouKnow106Engine::highPassHighGain(HighPassMode::Boost);
+        const Complex boost = high
+            + (shelf - high) / (1.0 + s / (2.0 * pi * corner));
+        return coupling * boost;
+    };
+
+    struct ResponseCase
+    {
+        HighPassMode mode;
+        const char* name;
+        double maximumDb;
+        double maximumPhaseDegrees;
+    };
+    constexpr std::array<ResponseCase, 4> cases {{
+        { HighPassMode::Boost, "Boost", 0.010, 0.060 },
+        { HighPassMode::One, "Flat", 1.0e-5, 1.0e-5 },
+        { HighPassMode::Two, "Cut II", 0.014, 0.045 },
+        { HighPassMode::Three, "Cut III", 0.005, 0.015 }
+    }};
+    constexpr int frequencyPoints = 4097;
+    for (const auto& responseCase : cases)
+    {
+        double worstMnaRelative = 0.0;
+        double worstDb = 0.0;
+        double worstPhase = 0.0;
+        for (int index = 0; index < frequencyPoints; ++index)
+        {
+            const double fraction = static_cast<double>(index)
+                                  / static_cast<double>(frequencyPoints - 1);
+            const double frequency = 0.1 * std::pow(200000.0, fraction);
+            const Complex s { 0.0, 2.0 * pi * frequency };
+            const Complex mna = mnaResponse(responseCase.mode, s);
+            const Complex analytic = analyticResponse(responseCase.mode, s);
+            const Complex shipped = shippedResponse(responseCase.mode, s);
+            worstMnaRelative = std::max(
+                worstMnaRelative,
+                std::abs(mna - analytic)
+                    / std::max(std::abs(analytic), 1.0e-30));
+            const Complex ratio = analytic / shipped;
+            worstDb = std::max(
+                worstDb, std::abs(20.0 * std::log10(std::abs(ratio))));
+            worstPhase = std::max(
+                worstPhase, std::abs(std::arg(ratio) * 180.0 / pi));
+        }
+        const std::string where = " for " + std::string(responseCase.name);
+        expect(worstMnaRelative < 2.0e-12,
+               "closed-form HPF solve disagrees with nodal MNA" + where);
+        expect(worstDb < responseCase.maximumDb,
+               "shared HPF approximation exceeds its dB bound" + where);
+        expect(worstPhase < responseCase.maximumPhaseDegrees,
+               "shared HPF approximation exceeds its phase bound" + where);
     }
 }
 
@@ -4484,6 +4810,7 @@ int main()
     testVoicedResonanceCompatibilityProfile();
     testEnvelopeAndAmplifierLaws();
     testPulseWidthAndHighPassLaws();
+    testSharedHighPassAgainstNominalNetwork();
     testModulationAndGlideLaws();
     testConverterQueueAndOutputReference();
     testPanelLawsInvert();

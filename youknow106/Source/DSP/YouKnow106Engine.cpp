@@ -55,9 +55,12 @@ constexpr float noiseOtaLoadCapacitanceF = 100.0e-12f;    // C41
 constexpr float noiseOtaLoadResistanceOhms = 330000.0f;   // R79
 
 // Voice-summer output coupling ahead of the four-position HPF selector:
-// IC1a -> C14 10 uF NP -> R39 33 kOhm -> IC3 common input.
+// IC1a -> C14 10 uF NP -> IC3 common input, with R39 33 kOhm from that
+// common node to ground. The selected Cut leg also leaves its mux-side
+// 1 MOhm bleed connected directly to the common node.
 constexpr float voiceBusCouplingCapacitanceF = 10.0e-6f;
 constexpr float voiceBusCouplingResistanceOhms = 33000.0f;
+constexpr float highPassCutBleedResistanceOhms = 1000000.0f; // R21 / R23
 
 // Per-voice module-input coupling, module board p. 13: the summed WAVE node
 // reaches the voice module's pin 1 VCF IN only through C56/C50 10 uF NP. The
@@ -1281,15 +1284,24 @@ float YouKnow106Engine::voiceBusCouplingCornerHz() noexcept
 
 float YouKnow106Engine::voiceBusCouplingCornerHz(HighPassMode mode) noexcept
 {
-    if (mode == HighPassMode::Boost || mode == HighPassMode::One)
+    float selectedInputOhms = 0.0f;
+    switch (mode)
     {
-        constexpr float selectedInputOhms = 47000.0f;
-        constexpr float parallelOhms =
-            voiceBusCouplingResistanceOhms * selectedInputOhms
-            / (voiceBusCouplingResistanceOhms + selectedInputOhms);
-        return 1.0f / (twoPi * voiceBusCouplingCapacitanceF * parallelOhms);
+        case HighPassMode::Boost:
+        case HighPassMode::One:
+            selectedInputOhms = 47000.0f;
+            break;
+        case HighPassMode::Two:
+        case HighPassMode::Three:
+            selectedInputOhms = highPassCutBleedResistanceOhms;
+            break;
+        default:
+            return voiceBusCouplingCornerHz();
     }
-    return voiceBusCouplingCornerHz();
+    const float parallelOhms =
+        voiceBusCouplingResistanceOhms * selectedInputOhms
+        / (voiceBusCouplingResistanceOhms + selectedInputOhms);
+    return 1.0f / (twoPi * voiceBusCouplingCapacitanceF * parallelOhms);
 }
 
 float YouKnow106Engine::commonVcaInputCouplingCornerHz() noexcept

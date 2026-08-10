@@ -77,9 +77,10 @@ decision: the -18 dBFS RMS convention is settled, while its physical
 `Vref_rms` value must come from OQ-05/OQ-17 evidence. OQ-12 through OQ-14 are
 also deliberately narrow—their B-2 digital algorithms are resolved, leaving
 only physical timing/transfer and revision scope. OQ-21 is new: the latest
-schematic pass established C14/HPF routing and parts but exposed the still-
-unmodelled coupled selected-leg load and switching memory of the complete
-network.
+schematic pass established C14/HPF routing and parts. Step 15 now models the
+selected-leg asymptotic load and qualifies the nominal fixed-position transfer;
+switch-device parasitics, deselected-capacitor memory and directed mode-change
+transients of the complete network remain open.
 
 | Priority | OQ | Question still unanswered | Already settled / do not redo |
 |---|---|---|---|
@@ -103,7 +104,7 @@ network.
 | P2 | 18 | Hardware cutoff-converter knee and upper saturation curve | Exponential audio-range law and transparent 50 kHz product cap |
 | P1 | 19 | Voice-module BA662 control-current-to-gain curve near cutoff and residual thump after the service null | BA662 pins and separate signal/control paths, ENV/GATE ownership, 6 Vpp endpoint, the per-card minimum-thump procedure, and the anchored +0.25…+0.27 V TP7 control-rail standoff the shipped 150 mV onset now sits relative to (2026-08-07) |
 | P2 | 20 | TR11/TR12 wet-mute switching envelope, leakage and click | Device identity, wet-only mute location, continuously running BBDs, and the full gate-drive network designators from p. 15 |
-| P2 | 21 | Coupled C14/HPF transfer, switch-state memory and mode-change transient | Parts, placement and control are settled: C14/R39 feeds TC4052BP YCOM directly, Tr3 drives INH rather than audio, Flat is R27 and Boost is R25. The established 225.8/720.5 Hz selected Cut corners stand; the deselected Cut decays are 15.705/4.9209 ms. The mode→tap map and Boost shelf are settled too: +10.50 dB/+1.41 dB/59.41 Hz, within 0.016 dB of the exact two-zero/two-pole solve. The withdrawn band-boost branch must not return |
+| P2 | 21 | TC4052 parasitics, deselected-Cut charge memory and directed HPF mode-change transient | Parts, placement and control are settled: C14 feeds TC4052BP YCOM with R39 to ground, Tr3 drives INH rather than audio, Flat is R27 and Boost is R25. Step 15 includes the selected R21/R23 1 MΩ load: `R39 || 1 MΩ = 31,945.788964 Ω`, `τ = 319.457890 ms`, `fc = 0.498203201 Hz`. Independent nominal fixed-mode MNA bounds the scalar cascade at 0.011137 dB/0.056092° or below. The established 225.8/720.5 Hz selected Cut corners and 15.705/4.9209 ms deselected decays stand. The mode→tap map and Boost shelf are settled too: +10.50 dB/+1.41 dB/59.41 Hz, within 0.016 dB of the exact two-zero/two-pole solve. The withdrawn band-boost branch must not return |
 
 The most consequential audible blockers are OQ-01, OQ-03, OQ-05, OQ-09,
 OQ-15 and OQ-19. A well-instrumented original unit can also collect OQ-02, OQ-03,
@@ -1594,33 +1595,38 @@ later full-output shunts.
 
 Resolve the complete linear and switching behavior from IC1a's voice-summer
 output through C14/R39 and the IC3-selected HPF network. Placement and populated
-parts are settled. The implementation currently gives C14 one state whose
+parts are settled. The implementation gives C14 one continuous state whose
 sub-hertz pole uses the selected leg's asymptotic load, then runs an independent
-Boost/Flat/Cut-I/Cut-II filter. This captures the correct endpoints without
-pretending C14 is absent, but it is not the full coupled network: the Cut
-capacitors begin loading C14 as frequency rises, the Boost leg is multi-pole,
-and deselected capacitors plus CMOS-switch parasitics may retain charge across
-mode changes.
+Boost/Flat/Cut-II/Cut-III filter. In either Cut position that load now includes
+the mux-side R21/R23 1 MΩ in parallel with R39. This captures a nominal
+fixed-position response without pretending C14 is absent, but it is not the
+full switched network: deselected capacitors plus CMOS-switch parasitics may
+retain charge across mode changes.
 
-A 2026-08-09 read-only schematic correction narrows, but does not close, this
-task: C14/R39 feeds TC4052BP YCOM pin 3 directly; Tr3 controls INH pin 6 and is
-not an audio buffer. Flat uses R27 and Boost uses R25. The deselected C10/C11
-Cut states have derived 15.705/4.9209 ms decays. OQ-21 remains deferred because
-the coupled MNA response, CMOS parasitics and directed mode-change transients
-are still unqualified.
+A 2026-08-09 read-only schematic correction established that C14 feeds
+TC4052BP YCOM pin 3 with R39 from that node to ground; Tr3 controls INH pin 6
+and is not an audio buffer. Flat uses R27 and Boost uses R25. The deselected
+C10/C11 Cut states have derived 15.705/4.9209 ms decays. Step 15 on 2026-08-10
+then independently stamped the ideal fixed-mode nominal network and bounded
+the production scalar residual. OQ-21 remains open because measured TC4052
+parasitics, the complete switched state-space and directed mode-change
+transients are still unqualified.
 
 ### Needed output (for LLM)
 
 - A designator-complete netlist from IC1a through C14, R39, IC3 and every HPF
   leg, including source/load impedance, CMOS-switch on-resistance, off leakage
   and capacitance, component tolerances and all selected/deselected states.
-- A symbolic or numerical modified-nodal/state-space solution for every switch
-  position, with magnitude, phase and group delay from below the C14 pole
-  through the audio band. Separate exact component results from measured or
-  assumed device parasitics.
-- A direct comparison with the implemented cascaded approximation at minimum:
-  DC/asymptotic gain, 0.1/0.5/1/10/59.4/225.8/720.5 Hz, 1/10/20 kHz, and each
-  mode's maximum magnitude/phase error.
+- Extend the Step-15 ideal fixed-position MNA baseline to a complete switched
+  state-space with measured or explicitly bounded device parasitics, including
+  magnitude, phase and group delay from below the C14 pole through the audio
+  band. Keep exact nominal-component results separate from measured or assumed
+  switch terms.
+- Re-run the fixed-mode comparison at minimum at
+  DC/asymptotic gain, 0.1/0.5/1/10/59.4/225.8/720.5 Hz, 1/10/20 kHz and each
+  mode's maximum magnitude/phase error after adding those parasitics; the
+  published Step-15 nominal maxima are the non-parasitic baseline, not work to
+  repeat unchanged.
 - Mode-change captures or a validated transient simulation for all directed
   switch pairs under silence, a centred sine and asymmetric PWM. Report charge
   memory, click amplitude/spectrum, settling and dependence on initial state.
@@ -2789,12 +2795,13 @@ and C10/R21 in 15.705 ms. With the mode table
 (p. 13: MODE 0/1/2/3 → HPF B ① = 1,1,0,0; HPF A ② = 1,0,1,0, and the
 4052's (B,A) decoding) the map is: mode 0 = Y3 (boost: direct R25 plus the
 IC4b branch), mode 1 = Y2 (flat, direct R27), mode 2 = Y1 (C10 15 nF),
-mode 3 = Y0 (C11 4.7 nF). On the selected leg the 1 MΩ parallels the
-low-impedance C14/R39 source and cannot move the pole; the corner remains
-the capacitor against its 47 kΩ virtual-ground leg: **225.8/720.5 Hz stand,
+mode 3 = Y0 (C11 4.7 nF). On the selected leg the 1 MΩ does not redefine the
+C10/C11 pole against its 47 kΩ virtual-ground leg, so **225.8/720.5 Hz stand,
 and KR-106's 236/754 Hz (1 MΩ paralleling the 47 kΩ) put the bias on the
-wrong side of the capacitor.** The deselected-leg charge-memory question the
-1 MΩs actually govern remains OQ-21's transient ask.
+wrong side of the capacitor.** It does, however, directly load the C14/YCOM
+node; Step 15 supersedes the old R39-only C14 value with 0.498203201 Hz from
+`R39 || 1 MΩ`. The deselected-leg charge-memory question remains OQ-21's
+transient ask.
 
 ### OQ-21 — the Boost branch is designator-complete, and contradicts the fitted shelf's shape
 
@@ -4150,6 +4157,122 @@ deep ad-hoc verification; their respective CDHash prefixes are `7a102a35…`,
 canonical manifest remains
 `f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`.
 
+## Selected-Cut C14 load correction — 2026-08-10 (nominal fixed modes qualified; OQ-21 remains open)
+
+**Work mode:** narrow production correction plus independent nominal-circuit
+audit. **No original unit was measured, no switch click was inferred and no
+full switched-network state-space was claimed.**
+
+Service Notes p. 15 places C14 10 µF NP ahead of TC4052BP YCOM and R39
+33 kΩ from that common node to ground. In either selected Cut position,
+R21/R23 1 MΩ remains a direct mux-side shunt even though C10/C11 opens the
+far-side 47 kΩ path at the sub-hertz asymptote. Production now uses
+
+`Rload = R39 || 1 MΩ = 31,945.788964 Ω`,
+`τ = C14 · Rload = 319.457890 ms`, and
+`fc = 1/(2πτ) = 0.498203201 Hz`.
+
+The previous R39-only 0.482287706 Hz selected-Cut result is superseded. Boost
+and Flat remain 0.820915 Hz from `33 kΩ || 47 kΩ`; C10/C11 retain their
+225.8/720.5 Hz selected Cut poles, and the Boost shelf does not move. The
+single C14 state survives mode, numerical-rate and preserving-clear changes.
+Hard output-path clears (including public panic) and engine reset discharge it.
+Whole versus 37-sample block partitions are
+sample-identical in the circuit fixture.
+
+The new JUCE-free `YouKnow106.HighPassNetworkContract` independently stamps
+the nominal p. 15 fixed-position components into long-double complex MNA. Its
+converged 240,001-point 0.001 Hz–20 kHz sweep reports maximum absolute
+production magnitude/phase residuals of:
+
+| Fixed mode | Magnitude | Phase |
+| --- | ---: | ---: |
+| Boost | 0.008363013 dB | 0.056091136° |
+| Flat | 0.000000391 dB | 0.000001289° |
+| Cut II | 0.011136100 dB | 0.042871357° |
+| Cut III | 0.003887336 dB | 0.013452200° |
+
+The old R39-only load, a 1 MΩ incorrectly placed across the 47 kΩ leg and
+swapped C10/C11 mutations reject. A reset-on-mode-change mutation is observable.
+Thirty-six production-updater probes bind all four modes to the nine declared
+endpoint/common/oversampled policy grids. A separate helper-derived scalar TPT
+prediction evaluates **147,492 finite frequency responses** over the explicit
+8/32/44.1/48/88.2/96/176.4/192/768 kHz grids. The seven common grids remain
+inside 0.02 dB/1.65°. At 8 kHz, Cut II/III are explicitly
+**ENDPOINT_LIMITED** at 0.024664910 dB/3.147789295° and
+0.236403340 dB/9.902784181° but pass the separate 0.25 dB/10° fence. At the
+32 kHz endpoint-HQ grid, Cut III alone is **ENDPOINT_HQ_LIMITED** at
+0.014694508 dB/2.506236943° and passes the 0.03 dB/3° fence.
+
+Those are numerical endpoint classifications, not TC4052 evidence. The ideal
+fixed-mode solve does not determine on resistance, leakage, off-capacitance,
+charge injection, break-before-make timing or the initial-charge projection of
+deselected C10/C11. Consequently **OQ-21 stays P2 and open** for the complete
+switched state-space and every directed mode-change transient.
+
+CMake now registers **14 plugin-off / 15 plugin-on** contracts. A fresh
+warning-clean native Release/plugin-off tree passes **14/14 in 367.27 s**;
+Engine, Circuit and HPF take **175.77/3.88/0.77 s**. Focused ASan+UBSan
+Circuit/HPF passes **2/2 in 8.41 s** (7.50/0.91 s), under halt-on-error with
+leak detection disabled and no diagnostic. A fresh universal
+`x86_64;arm64` Release/plugin-on build completes in **102.30 s**, registers 15
+contracts and passes **15/15 in 382.36 s**; HPF and PluginProcessor take
+**0.98/11.49 s**.
+
+VST3, AU and Standalone each contain `x86_64 arm64`, target minimum macOS 11.0
+and pass strict/deep ad-hoc signature verification. Their CDHash prefixes are
+`965c40c0`, `9290dacb` and `26f74b2a`. The explicit HPF audit passes on arm64
+in **0.42 s** and under genuine Rosetta `x86_64` translation in **73.91 s**.
+All printed metrics agree to displayed precision; only three harmless
+equal-valued frequency locations differ for Flat's near-zero magnitude maxima
+in the analog, 8 kHz endpoint and 32 kHz endpoint-HQ rows. No result moves.
+
+Three alternating base/current CPU pairs retain exact raw-float fingerprint
+identity. Worst current load is **0.837× realtime**, largest positive
+meta-median change **+0.1128%** and worst individual paired change
+**+2.1991%**; every result remains below 5%. The scalar change adds no
+per-sample work, state, storage or latency and does not promote the model into
+a hardware-switch claim.
+
+The verified non-audio source SHA-256 set is:
+
+| Source | SHA-256 |
+| --- | --- |
+| `CMakeLists.txt` | `33b31ca661c1538d19dcafac12add1838e576ff074399069eb2a7744d60ba524` |
+| `Source/DSP/YouKnow106Engine.cpp` | `ed8fef679a94b0667569e1b0281f4381a46aa942c490be9b4765b445e1963182` |
+| `Source/DSP/YouKnow106Engine.h` | `9ae15f16b795bf752693eb146c137a63f486d1ee29148dce0b38c58fec453b52` |
+| `Tests/YouKnow106CircuitTests.cpp` | `a3f6168c3602cee5345e21e1e2b564b67e7a3981082ca0604dca74be3d59d998` |
+| `Tools/AuditHighPassNetwork.cpp` | `341030ab93d8506547176dd30c27ea65684bd96a0a92d0ee681da23b953866eb` |
+
+The Step-15 audio handoff is complete. Two independent demo renders and two
+independent full factory renders are pairwise byte-identical, with manifests
+`b42e87351748d79ad91cfbfb29ca85fce99a08b0c2a090754c4cba7bf69a9434`
+and
+`0783040d94af15527450f8062813ac03ae6c6def0184574c037a5cf4106767e8`.
+The renderer-owned 22-file and installed canonical 23-file manifests are
+`bc1564713b46151a77fbbc3c5403f8bd829955cd9ff9dbcb5b2bd6cc1e13c614`
+and
+`0280ae697c209f513283b0c1cac3ad451528f5e6909046ba26d592dce459a430`,
+superseding Step 12's
+`f9a6b274e7efb857a712ecaed1061e5251bd554e22462adce986e5e4d8158cbd`.
+
+All 20 WAVs are non-silent finite stereo PCM16, with maximum absolute DC
+**0.000000592814 FS** and worst edge **−46.962652 dBFS**. The CSV contains
+128 finite unique slots and tone states, median **−21.480711305 dBFS**,
+31 overload, zero near-silent and nine median-outlier rows. Nine demos remain
+byte-identical to Step 12. Only demo 09 and the ten common-gain previews
+change, each by at most two PCM16 LSB: demo 09 reads **−85.129 dB NRMS**.
+A86 is worst by L2 NRMS at **−54.771 dB**; A17 reads **−83.872 dB** and
+uniquely reaches a two-LSB peak. Twenty-nine CSV rows move only at fine
+precision: A17's overload-sample count **7000 → 6999**, common gain
+**0.543091 → 0.543092**, and B51's displayed crest **23.36 → 23.35 dB**.
+Exactly 14 tracked `Docs/audio` files change—one demo, ten previews, the audio
+index, generated factory README and metrics CSV.
+
+These render differences are bounded provenance, not an audibility result,
+switch-click measurement or full switched-network validation. OQ-21 remains
+open. **Step 15 is complete. DOCS FROZEN.**
+
 ## Settled guardrails — do not reopen without contradictory primary evidence
 
 - **Chorus modes:** the JUNO-106 has Off, I and II. Its owner's manual says I
@@ -4169,10 +4292,12 @@ canonical manifest remains
 - **C14/HPF established boundary:** placement, populated parts and control,
   direct C14/R39→YCOM routing, Tr3→INH, Flat R27, Boost R25, the Boost/Flat
   endpoints, 225.8/720.5 Hz cut anchors and 15.705/4.9209 ms deselected Cut
-  decays are settled. The current 0.482288 Hz selected-Cut C14 load is an
-  explicit approximation because the physical leg includes 1 MΩ. OQ-21 owns
-  the full coupled transfer, switch parasitics and mode-change memory; it is not
-  permission to discard C14 or refit the established endpoints.
+  decays are settled. The selected-Cut C14 load is now
+  `R39 || 1 MΩ = 31,945.788964 Ω`, or 0.498203201 Hz / 319.457890 ms, and
+  the nominal fixed-position cascade is MNA-qualified to 0.011137 dB/0.056092°
+  or below. OQ-21 owns switch parasitics, deselected-capacitor charge memory and
+  mode-change transients; it is not permission to discard C14 or refit the
+  established endpoints.
 - **Converter ownership and ordinal order:** the 23 used holds are 18 per-card
   DCO/VCF/ENV-VCA destinations plus shared SUB, VCA LEVEL, PWM, RESONANCE and
   NOISE. The service timing chart orders shared RES/VCA/SUB, DCO 1–6, PWM,

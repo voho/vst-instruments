@@ -609,12 +609,14 @@ public:
     {
         return summedVoices * voiceSummerGain;
     }
-    // The summed bus crosses C14 (10 uF bipolar) into R39 (33 kOhm) before
-    // IC3 selects one of the four HPF legs. IC1a's output impedance and the
-    // CMOS input loading are negligible against R39 at this boundary.
+    // The summed bus crosses C14 (10 uF bipolar) into the IC3 common node,
+    // where R39 (33 kOhm) returns it to ground. IC1a's output impedance and
+    // the CMOS input loading are negligible against R39 at this boundary.
     [[nodiscard]] static float voiceBusCouplingCornerHz() noexcept;
     // Flat and Boost add a selected 47 kOhm virtual-ground input in parallel
-    // with R39 at the C14 pole. The capacitor-selected cut legs are open there.
+    // with R39 at the C14 pole. In either Cut mode, the series C10/C11 path is
+    // open at the sub-hertz asymptote but its mux-side 1 MOhm bleed remains a
+    // direct parallel load on the common node.
     [[nodiscard]] static float voiceBusCouplingCornerHz(
         HighPassMode mode) noexcept;
     // IC5/uPC1252H2 follows the switched HPF through the manufacturer's
