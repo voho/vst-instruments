@@ -501,7 +501,11 @@ private:
         // transcendental functions at every hit.
         double liveOmega { 0.0 };
         double poleRadius { 0.0 };
+        // Structural amplitude-decay rate. The resonator radius also includes
+        // appliedPalmDecay while a hand is down; keeping the two separate lets
+        // retuning recompute material/radiation loss without dropping the palm.
         float decayRate { 0.0f };
+        float appliedPalmDecay { 0.0f };
         // The decay split into what moves with the head and what does not, so a
         // mode retuned while it is still sounding can be re-damped rather than
         // keeping the rate it was built with. The hide's loss goes as omega and
@@ -520,9 +524,13 @@ private:
         // fixed, so it is kept here and the efficiency re-evaluated at whatever
         // frequency the head has been stretched to.
         float radiationPrefactor { 0.0f };
-        // Velocity retention contributed by a palm-sized local damping patch,
-        // applied only while a muted articulation keeps the hand on the head.
-        float localMuteControlGain { 1.0f };
+        // Velocity-loss rate contributed while a muted articulation keeps its
+        // palm-sized local damping patch on the batter head.
+        float localMuteDampingRate { 0.0f };
+        // Full-pressure CC1 palm loss at this mode, in inverse seconds. CC1
+        // has no position channel, so the controller uses one fixed central
+        // palm patch and scales this physical rate by the squared pressure.
+        float handDampingRate { 0.0f };
         std::uint8_t circumferentialOrder { 0 };
         // Which row of the mode table this came from, so a later stroke can
         // find the mode's shape at its own contact point without the whole
@@ -761,11 +769,14 @@ private:
         // and kept so a recomputed lifetime can have it put back.
         std::uint64_t retirementOffset { 0 };
 
-        // Accumulated hand damping, folded into the resonator states at the
-        // control tick so the envelope never runs away.
-        float handGain { 1.0f };
         int localMuteTicksRemaining { 0 };
-        float continuumMuteControlGain { 1.0f };
+        float continuumMuteDampingRate { 0.0f };
+        bool palmDampingActive { false };
+        // Full-pressure CC1 velocity-loss rate for unresolved modal energy.
+        // Its RMS envelope receives half this exponent; the rate is the
+        // high-density limit of the same finite palm-area projection used by
+        // the resolved modes.
+        float continuumHandDampingRate { 0.0f };
 
         // A low-loss drum can ring far longer than the tail the host is told
         // to expect, so a voice still has to end at the cap - but it has to be
@@ -1166,16 +1177,15 @@ private:
         float strikeRadius, float strikerMass) noexcept;
     void buildVoiceModes (Voice& voice, const DrumState& drum,
                           const StrikeProfile& profile, float extraDamping) noexcept;
-    // A bachi arriving on a head that is already sounding takes energy out of
-    // it. Every stroke after the first on one drum lands on a moving membrane,
-    // and the stick is a mass meeting it: with restitution e it removes
-    // (1 - e^2) of the share of the mode's momentum it can reach, which is set
-    // by its own mass against the mode's and by the mode's shape under the
-    // contact. Nothing else in this instrument couples two strokes together,
-    // and without it a roll is arithmetic - eight identical strokes were
-    // bit-identical to eight copies of one added offline.
+    // A muted Tsu leaves a finite-area free-hand damper on the one canonical
+    // head. This schedules that local passive loss; bachi/head momentum
+    // exchange belongs to advancePhysicalContacts().
     void dampPhysicalDrum (Voice& physical, const StrikeProfile& profile,
                            float strikeRadius, const DrumState& drum) noexcept;
+    static void palmDampingRates (
+        const DrumState& drum, float strikeRadius,
+        std::array<float, modeEntryCount>& modeRates,
+        float& continuumRate) noexcept;
     void ensurePhysicalDrum (int octave, const DrumState& drum) noexcept;
     void scheduleContacts (Voice& voice, const StrikeProfile& profile,
                            float contactSeconds, float peakForce,
@@ -1189,8 +1199,11 @@ private:
     void silenceVoice (Voice& voice) noexcept;
     void updateActiveVoiceCount() noexcept;
     void refreshDrumIfNeeded() noexcept;
-    // Instantaneous collision with an already-moving mode. Displacement stays
-    // continuous; only modal velocity receives the restitution impulse.
+    // Changes continuous pole loss while preserving instantaneous displacement
+    // and physical velocity. `amplitudeDecay` is the palm's extra exponent.
+    void setPalmDecay (Mode& mode, float amplitudeDecay) noexcept;
+    // Legacy/test utility for an instantaneous passive velocity-retention step.
+    // Continuous Tsu and CC1 palms use setPalmDecay() instead.
     static void applyCollisionRetention (Mode& mode, float retention) noexcept;
     // Radial coordinates of the symmetric centre-plus-cardinals palm rule.
     static std::array<float, 5> palmPatchRadii (float centreRadius,

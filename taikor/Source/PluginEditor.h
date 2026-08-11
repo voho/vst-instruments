@@ -262,7 +262,7 @@ private:
                                  TaikorKnob::VisualRole::Stroke };
     TaikorKnob humaniseKnob { "HUMANISE", TaikorKnob::ValueStyle::Percent,
                               TaikorKnob::VisualRole::Stroke };
-    TaikorKnob octaveBodyKnob { "OCTAVE BODY", TaikorKnob::ValueStyle::Plain,
+    TaikorKnob octaveBodyKnob { "DRUM LAYOUT", TaikorKnob::ValueStyle::Plain,
                                 TaikorKnob::VisualRole::Stroke };
 
     TaikorKnob micDistanceKnob { "MIC DISTANCE", TaikorKnob::ValueStyle::Centimetres,

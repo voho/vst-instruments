@@ -1114,9 +1114,9 @@ TaikorAudioProcessorEditor::TaikorAudioProcessorEditor (TaikorAudioProcessor& pr
     addKnob (humaniseKnob, ids::humanise,
              "Per-stroke variation in position, angle, impact speed and contact time.");
     addKnob (octaveBodyKnob, ids::octaveBody,
-             "What an octave changes: at zero the same drum is retuned up the "
-             "keyboard, at full each octave is its own instrument of the family. "
-             "Both reach the same four pitches and neither sounds the same.");
+             "Switches the keyboard between one drum design retuned across four "
+             "rows and four independent physical family drums. Both keep "
+             "independent ringing state so chords and overlapping tails remain physical.");
 
     addKnob (micDistanceKnob, ids::micDistance,
              "How far the close pair stands off the head. Near in it reads the shape "

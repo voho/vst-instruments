@@ -217,6 +217,28 @@ void testParameterLayoutAndDefaults()
     expect (ids.size() == static_cast<std::size_t> (taikor::parameters::parameterCount),
             "parameter IDs are not unique");
 
+    // The former continuous Octave Body morph is now a two-position product
+    // choice. Its established ID and normalised endpoints remain so old
+    // projects restore; automation values snap to the nearest named layout.
+    if (auto* layout = processor.parameters.getParameter (
+            taikor::parameters::octaveBody))
+    {
+        expect (layout->getName (64) == "Drum Layout",
+                "the layout switch still presents itself as a continuous morph");
+        expect (dynamic_cast<juce::AudioParameterChoice*> (layout) != nullptr
+                    && layout->isDiscrete() && layout->getNumSteps() == 2,
+                "Drum Layout is not a two-position switch");
+        expect (layout->getText (0.0f, 64) == "1 Drum"
+                    && layout->getText (1.0f, 64) == "4 Drums",
+                "Drum Layout does not name its two physical meanings");
+        setParameterValue (processor, taikor::parameters::octaveBody, 0.24f);
+        expect (parameterValue (processor, taikor::parameters::octaveBody) == 0.0f,
+                "a low Drum Layout automation value did not snap to 1 Drum");
+        setParameterValue (processor, taikor::parameters::octaveBody, 0.76f);
+        expect (parameterValue (processor, taikor::parameters::octaveBody) == 1.0f,
+                "a high Drum Layout automation value did not snap to 4 Drums");
+    }
+
     namespace pids = taikor::parameters;
     const std::array<std::pair<const char*, float>, 22> expectedDefaults {{
         { pids::headDiameter, 150.0f },  { pids::bodyDepth, 0.5f },
@@ -695,6 +717,31 @@ void testStateRoundTrip()
             "a stored parameter must be restored");
     expect (std::abs (parameterValue (partial, pids::humanise) - 0.4f) < 1.0e-3f,
             "a parameter missing from the stored tree must return to its default");
+
+    // Octave Body was continuous in older sessions. The retained parameter ID
+    // must let those raw values restore into the nearest Drum Layout endpoint.
+    TaikorAudioProcessor legacyLayout;
+    juce::ValueTree legacyTree { legacyLayout.parameters.state.getType() };
+    juce::ValueTree legacyValue { "PARAM" };
+    legacyValue.setProperty ("id", pids::octaveBody, nullptr);
+    legacyValue.setProperty ("value", 0.70f, nullptr);
+    legacyTree.appendChild (legacyValue, nullptr);
+    juce::MemoryBlock legacyState;
+    if (const auto xml = legacyTree.createXml())
+        legacyLayout.copyXmlToBinary (*xml, legacyState);
+    legacyLayout.setStateInformation (legacyState.getData(),
+                                      static_cast<int> (legacyState.getSize()));
+    expect (parameterValue (legacyLayout, pids::octaveBody) == 1.0f,
+            "a legacy Octave Body value above the midpoint did not restore as 4 Drums");
+
+    legacyValue.setProperty ("value", 0.30f, nullptr);
+    legacyState.reset();
+    if (const auto xml = legacyTree.createXml())
+        legacyLayout.copyXmlToBinary (*xml, legacyState);
+    legacyLayout.setStateInformation (legacyState.getData(),
+                                      static_cast<int> (legacyState.getSize()));
+    expect (parameterValue (legacyLayout, pids::octaveBody) == 0.0f,
+            "a legacy Octave Body value below the midpoint did not restore as 1 Drum");
 
     // Garbage must be refused rather than crash.
     const char rubbish[] = "not a Taikor session";

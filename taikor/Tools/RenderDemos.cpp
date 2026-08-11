@@ -198,7 +198,7 @@ private:
     std::vector<float> right_;
 };
 
-// The drum the parameter defaults describe: a 95 cm odaiko with a thick
+// The drum the parameter defaults describe: a 150 cm odaiko with a thick
 // cowhide head on a heavy zelkova shell.
 //
 // The output gain is well below the plug-in's own default because a rim shot on
@@ -299,7 +299,9 @@ Take renderFamilyPhrase (int octave, double beat, double tail)
 // so the harder strokes brighten on their own.
 Take renderVelocityDynamics()
 {
-    Take take (defaultVoicing());
+    auto parameters = defaultVoicing();
+    parameters.humanise = 0.0f;
+    Take take (parameters);
     take.rest (0.10);
     for (const float velocity : { 0.08f, 0.20f, 0.33f, 0.46f, 0.60f, 0.74f, 0.87f, 1.0f })
         take.hit (Articulation::Don, 0, velocity, 0.52);
@@ -318,6 +320,10 @@ Take renderParameterSweep (float EngineParameters::* field,
                            double tail, float gain = 0.0f)
 {
     auto parameters = defaultVoicing();
+    // A diagnostic sweep must move only the named axis. Humanise deliberately
+    // perturbs position, angle, speed and contact, so leave it to performance
+    // takes and make these five strikes exactly comparable.
+    parameters.humanise = 0.0f;
     if (gain > 0.0f)
         parameters.outputGain = gain;
     Take take (parameters);
@@ -337,7 +343,9 @@ Take renderParameterSweep (float EngineParameters::* field,
 // A hand laid on the head part way through a ringing stroke, from MIDI CC1.
 Take renderHandDamping()
 {
-    Take take (defaultVoicing());
+    auto parameters = defaultVoicing();
+    parameters.humanise = 0.0f;
+    Take take (parameters);
     take.rest (0.08);
 
     take.hit (Articulation::Don, 0, 0.95f, 2.2);   // left to ring out
@@ -541,12 +549,13 @@ Take renderHeadDampingSweep()
                                  Articulation::Don, 0, 0.85, 2.0);
 }
 
-Take renderOctaveBodySweep()
+Take renderDrumLayout()
 {
     // The keyboard twice over: first as one drum retuned four times, then as
     // the four instruments of the family. Both land on the same four pitches,
     // and they do not sound remotely alike.
     auto parameters = defaultVoicing();
+    parameters.humanise = 0.0f;
     Take take (parameters);
     take.rest (0.10);
 
@@ -620,7 +629,7 @@ const std::array<Demo, 25>& demos()
           renderHeadDampingSweep },
         { "20-octave-body.wav",
           "The keyboard as one drum retuned four times, then as the four drums",
-          renderOctaveBodySweep },
+          renderDrumLayout },
         { "21-mic-distance.wav", "The close pair from 3 cm out to 40 cm",
           renderMicDistanceSweep },
         { "22-mic-spread.wav", "The close pair from coincident to fully opened",

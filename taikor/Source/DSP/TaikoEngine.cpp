@@ -1011,7 +1011,12 @@ EngineParameters TaikoEngine::sanitise (const EngineParameters& parameters) noex
     result.tensionModulation = clampFloat (parameters.tensionModulation, 0.0f, 1.0f);
     result.strikeNoise = clampFloat (parameters.strikeNoise, 0.0f, 1.0f);
     result.humanise = clampFloat (parameters.humanise, 0.0f, 1.0f);
-    result.octaveBody = clampFloat (parameters.octaveBody, 0.0f, 1.0f);
+    // The old continuous Octave Body morph exposed a necessary modal-identity
+    // handover inside the range. Drum Layout now presents only its two useful
+    // physical endpoints; threshold here as well as in the host parameter so
+    // direct API callers and legacy state restore get the same result.
+    result.octaveBody = clampFloat (parameters.octaveBody, 0.0f, 1.0f) < 0.5f
+        ? 0.0f : 1.0f;
     result.micDistance = clampFloat (parameters.micDistance, 0.0f, 1.0f);
     result.micSpread = clampFloat (parameters.micSpread, 0.0f, 1.0f);
     result.stereoWidth = clampFloat (parameters.stereoWidth, 0.0f, 1.0f);
@@ -1180,9 +1185,10 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.nextContact = 0;
     voice.contactRemaining = 0u;
     voice.ageSamples = 0;
-    voice.handGain = 1.0f;
     voice.localMuteTicksRemaining = 0;
-    voice.continuumMuteControlGain = 1.0f;
+    voice.continuumMuteDampingRate = 0.0f;
+    voice.palmDampingActive = false;
+    voice.continuumHandDampingRate = 0.0f;
     voice.retireGain = 1.0f;
     voice.retireStep = 0.0f;
     voice.peakLevel = 0.0f;
@@ -1256,7 +1262,10 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
         mode.micRight = 0.0f;
         mode.liveOmega = 0.0;
         mode.poleRadius = 0.0;
-        mode.localMuteControlGain = 1.0f;
+        mode.decayRate = 0.0f;
+        mode.appliedPalmDecay = 0.0f;
+        mode.localMuteDampingRate = 0.0f;
+        mode.handDampingRate = 0.0f;
     }
 }
 
@@ -2474,9 +2483,10 @@ void TaikoEngine::drumContactTerms (const DrumState& drum, float& strikerMass,
     strikerMass = bachiMass
                 * clampFloat (drum.radius / referenceRadius, minimumBachiScale,
                               maximumBachiScale);
-    // A membrane does not behave like a half-space: it carries the energy away
-    // resistively at 8*sqrt(T*sigma), so the stick cannot leave the head any
-    // faster than the wave does.
+    // Legacy per-unit-length mobility calibration used only to scale the
+    // observed statistical tail and the direct-path contact estimate. It is
+    // not loaded into the reciprocal resolved-mode solve: a physical point
+    // impedance needs a measured contact length or complex mobility fit.
     impedance = 8.0f * std::sqrt (drum.tension * drum.batterDensity);
 }
 
@@ -2527,10 +2537,9 @@ void TaikoEngine::solveContact (float collisionMass, float targetImpedance,
                           * std::pow (5.0f * mass / (4.0f * stiffness), 0.4f)
                           * std::pow (speed, -0.2f);
 
-    // The struck body carries the energy away resistively, so the stick cannot
-    // leave it any faster than that. This is the floor that stops a very hard
-    // bachi from producing an impulse the drum - or the other stick - could
-    // never make.
+    // Residual/direct-path duration prior. The dynamic contact below does not
+    // use this as a mechanical resistance; an uncalibrated memoryless load
+    // captures soft and edge strokes instead of returning high-mode energy.
     const float impedanceTime = mass / std::max (targetImpedance, 1.0f);
 
     contactSeconds = std::sqrt (hertzTime * hertzTime + impedanceTime * impedanceTime);
@@ -2617,6 +2626,74 @@ void TaikoEngine::configureResonator (Resonator& resonator, float frequencyHz,
     resonator.b0 = static_cast<double> (gain) * std::sin (omega);
 }
 
+void TaikoEngine::setPalmDecay (Mode& mode, float amplitudeDecay) noexcept
+{
+    const float requested = std::isfinite (amplitudeDecay)
+        ? std::max (amplitudeDecay, 0.0f) : 0.0f;
+    if (requested == mode.appliedPalmDecay)
+        return;
+
+    auto& resonator = mode.resonator;
+    const double displacement = resonator.y1;
+    double sine = resonator.b0;
+    double cosine = 1.0;
+    double velocity = 0.0;
+    if (mode.poleRadius > 0.0 && std::abs (resonator.b0) > 1.0e-12
+        && mode.liveOmega > 0.0)
+    {
+        cosine = -resonator.a1 / (2.0 * mode.poleRadius);
+        const double quadrature =
+            (displacement * cosine - mode.poleRadius * resonator.y2)
+            / sine;
+        velocity = mode.liveOmega * quadrature
+                 - static_cast<double> (mode.decayRate + mode.appliedPalmDecay)
+                       * displacement;
+    }
+    else
+    {
+        velocity = (displacement - resonator.y2) * sampleRate_;
+    }
+
+    mode.appliedPalmDecay = requested;
+    if (! (mode.liveOmega > 0.0))
+        return;
+
+    if (std::abs (sine) <= 1.0e-12)
+    {
+        const double angle = mode.liveOmega / sampleRate_;
+        sine = std::sin (angle);
+        cosine = std::cos (angle);
+    }
+
+    // Keep the mode's damped frequency and change only its pole radius. This
+    // applies the palm continuously on every recurrence sample instead of as a
+    // 32-sample velocity kick, which can repeatedly land at a high mode's
+    // turning points and almost miss it at one host rate while overdamping it
+    // at another.
+    const double totalDecay = static_cast<double> (
+        mode.decayRate + mode.appliedPalmDecay);
+    const double radius = std::exp (-totalDecay / sampleRate_);
+    resonator.a1 = -2.0 * radius * cosine;
+    resonator.a2 = radius * radius;
+    resonator.b0 = sine;
+    mode.poleRadius = radius;
+
+    // Changing coefficients is a control action, not another collision. Map
+    // the old physical q and qdot into the new pole so the hand cannot create a
+    // displacement or velocity step when it touches or leaves the hide.
+    if (std::abs (sine) > 1.0e-12 && radius > 0.0)
+    {
+        const double quadrature =
+            (velocity + totalDecay * displacement) / mode.liveOmega;
+        resonator.y2 =
+            (displacement * cosine - quadrature * sine) / radius;
+    }
+    else
+    {
+        resonator.y2 = displacement - velocity / sampleRate_;
+    }
+}
+
 void TaikoEngine::applyCollisionRetention (Mode& mode, float retention) noexcept
 {
     auto& resonator = mode.resonator;
@@ -2643,7 +2720,8 @@ void TaikoEngine::applyCollisionRetention (Mode& mode, float retention) noexcept
     const double cosine = -resonator.a1 / (2.0 * radius);
     const double quadrature =
         (displacement * cosine - radius * resonator.y2) / sine;
-    const double dampingRatio = static_cast<double> (mode.decayRate) / mode.liveOmega;
+    const double dampingRatio = static_cast<double> (
+        mode.decayRate + mode.appliedPalmDecay) / mode.liveOmega;
     const double retainedQuadrature =
         static_cast<double> (retention) * quadrature
         + (1.0 - static_cast<double> (retention)) * dampingRatio * displacement;
@@ -2881,6 +2959,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.liveOmega = 2.0 * static_cast<double> (piFloat)
                                * static_cast<double> (frequency);
                 mode.decayRate = decay;
+                mode.appliedPalmDecay = 0.0f;
                 mode.decayFixed = decayFixed;
                 mode.lossOmega = lossOmega;
                 mode.lossOmegaSquared = lossOmegaSquared;
@@ -2889,7 +2968,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.modeEntry = static_cast<std::uint8_t> (entryIndex);
                 mode.physicalIndex = static_cast<std::uint8_t> (2 * entryIndex + branch);
                 mode.membrane = true;
-                mode.localMuteControlGain = 1.0f;
+                mode.localMuteDampingRate = 0.0f;
+                mode.handDampingRate = 0.0f;
                 mode.inverseModalMass = 1.0f / std::max (geometricMass, 1.0e-9f);
                 mode.contactShape = shapeStrike * batterShare
                                   * profile.membraneGain * profile.levelScale;
@@ -2995,6 +3075,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.liveOmega = 2.0 * static_cast<double> (piFloat)
                                * static_cast<double> (frequency);
                 mode.decayRate = decay;
+                mode.appliedPalmDecay = 0.0f;
                 mode.decayFixed = decayFixed;
                 mode.lossOmega = lossOmega;
                 mode.lossOmegaSquared = lossOmegaSquared;
@@ -3003,7 +3084,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.modeEntry = static_cast<std::uint8_t> (entryIndex);
                 mode.physicalIndex = static_cast<std::uint8_t> (2 * entryIndex + branch);
                 mode.membrane = true;
-                mode.localMuteControlGain = 1.0f;
+                mode.localMuteDampingRate = 0.0f;
+                mode.handDampingRate = 0.0f;
                 mode.inverseModalMass = 1.0f / std::max (geometricMass, 1.0e-9f);
                 mode.contactShape = shapeStrike * strikeAngular
                                   * profile.membraneGain * profile.levelScale;
@@ -3083,10 +3165,12 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         mode.liveOmega = 2.0 * static_cast<double> (piFloat)
                        * static_cast<double> (frequency);
         mode.decayRate = decay;
+        mode.appliedPalmDecay = 0.0f;
         mode.membrane = false;
         mode.physicalIndex = static_cast<std::uint8_t> (
             membraneResonatorCount + index);
-        mode.localMuteControlGain = 1.0f;
+        mode.localMuteDampingRate = 0.0f;
+        mode.handDampingRate = 0.0f;
         mode.inverseModalMass = 1.0f / std::max (woodModalMass, 1.0e-9f);
         mode.contactShape = 0.0f;
         mode.batterParticipation = 0.0f;
@@ -3375,7 +3459,7 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
     {
         double displacement { 0.0 };
         double velocity { 0.0 };
-        float muteGain { 1.0f };
+        float muteDampingRate { 0.0f };
         bool valid { false };
     };
 
@@ -3388,9 +3472,9 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
     const auto savedInput = physical.modalInput;
     const auto savedContinuum = physical.continuum;
     const float savedTensionEnvelope = physical.tensionEnvelope;
-    const float savedHandGain = physical.handGain;
     const int savedMuteTicks = physical.localMuteTicksRemaining;
-    const float savedContinuumMute = physical.continuumMuteControlGain;
+    const float savedContinuumMute = physical.continuumMuteDampingRate;
+    const bool savedPalmActive = physical.palmDampingActive;
     const float savedRetireGain = physical.retireGain;
     const float savedRetireStep = physical.retireStep;
 
@@ -3405,7 +3489,7 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
 
             auto& saved = savedModes[id];
             saved.displacement = mode.resonator.y1;
-            saved.muteGain = mode.localMuteControlGain;
+            saved.muteDampingRate = mode.localMuteDampingRate;
 
             const double radius = mode.poleRadius;
             const double sine = mode.resonator.b0;
@@ -3417,7 +3501,8 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
                     (mode.resonator.y1 * cosine
                      - radius * mode.resonator.y2) / sine;
                 saved.velocity = mode.liveOmega * quadrature
-                               - static_cast<double> (mode.decayRate)
+                               - static_cast<double> (
+                                     mode.decayRate + mode.appliedPalmDecay)
                                      * mode.resonator.y1;
             }
             else
@@ -3447,6 +3532,25 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
     // through the existing builder while strike-specific coupling remains in
     // the transient slot. No state from that scratch excitation is retained.
     buildVoiceModes (physical, drum, strikeProfile (Articulation::Don), 0.0f);
+    // CC1 has pressure but no position channel. Anchor its palm at the same
+    // central hand position as Tsu, and cache physical loss rates. Control
+    // updates change each pole's loss; that pole then damps every audio sample.
+    std::array<float, modeEntryCount> handRates {};
+    palmDampingRates (drum, strikeProfile (Articulation::Tsu).radius,
+                      handRates, physical.continuumHandDampingRate);
+    for (int index = 0; index < physical.modeCount; ++index)
+    {
+        auto& mode = physical.modes[static_cast<std::size_t> (index)];
+        float batterFraction = 1.0f;
+        if (mode.circumferentialOrder == 0)
+            batterFraction = clampFloat (
+                drum.batterDensity * mode.batterParticipation
+                    * mode.batterParticipation,
+                0.0f, 1.0f);
+        mode.handDampingRate = mode.membrane
+            ? handRates[static_cast<std::size_t> (mode.modeEntry)] * batterFraction
+            : 0.0f;
+    }
     physical.configurationRevision = physicalConfigurationRevision_;
     physical.configurationPitch = applied_.pitch;
     physical.activeModeCount = physical.modeCount;
@@ -3472,7 +3576,7 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
 
         const auto& saved = savedModes[id];
         mode.resonator.y1 = saved.displacement;
-        mode.localMuteControlGain = saved.muteGain;
+        mode.localMuteDampingRate = saved.muteDampingRate;
         const double radius = mode.poleRadius;
         const double sine = mode.resonator.b0;
         if (radius > 0.0 && std::abs (sine) > 1.0e-12
@@ -3536,39 +3640,25 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
     physical.maximumSamples = rebuilding
         ? savedDeadline
         : static_cast<std::uint64_t> (maximumTailSeconds * sampleRate_);
-    physical.controlCountdown = rebuilding ? savedCountdown : 0;
+    physical.controlCountdown = rebuilding && ! savedPalmActive ? savedCountdown : 0;
     physical.active = rebuilding ? wasActive : false;
     physical.tensionEnvelope = rebuilding ? savedTensionEnvelope : 0.0f;
-    physical.handGain = rebuilding ? savedHandGain : 1.0f;
     physical.localMuteTicksRemaining = rebuilding ? savedMuteTicks : 0;
-    physical.continuumMuteControlGain = rebuilding ? savedContinuumMute : 1.0f;
+    physical.continuumMuteDampingRate = rebuilding ? savedContinuumMute : 0.0f;
+    physical.palmDampingActive = rebuilding ? savedPalmActive : false;
     physical.retireGain = rebuilding ? savedRetireGain : 1.0f;
     physical.retireStep = rebuilding ? savedRetireStep : 0.0f;
 }
 
-void TaikoEngine::dampPhysicalDrum (Voice& physical,
-                                    const StrikeProfile& profile, float strikeRadius,
-                                    const DrumState& drum) noexcept
+void TaikoEngine::palmDampingRates (
+    const DrumState& drum, float strikeRadius,
+    std::array<float, modeEntryCount>& modeRates,
+    float& continuumRate) noexcept
 {
-    // Only a stroke that actually lands on the hide. The profile's own
-    // membrane gain is the statement of how much of the stroke reaches the
-    // head, so it is what scales this.
-    if (! (profile.membraneGain > 0.0f))
-        return;
-
-    // Bachi/head momentum exchange now belongs to the one coupled dynamic
-    // contact solve. This function is only the free hand that remains on the
-    // membrane for a Tsu.
-    if (! profile.palmContact)
-        return;
-
     const auto& entries = membraneModes();
     const float rho = clampFloat (strikeRadius, 0.0f, 0.995f);
     const float area = piFloat * drum.radius * drum.radius;
-    std::array<float, modeEntryCount> muteControlGain {};
-    muteControlGain.fill (1.0f);
-    const float muteAmount = profile.palmContact
-        ? profile.muteAmount * profile.muteAmount : 0.0f;
+    modeRates.fill (0.0f);
     // The hand has a size in metres, not as a fraction of the instrument. On a
     // head too small to contain the full palm, use the largest centred patch
     // the radial quadrature can represent without crossing the rim.
@@ -3587,42 +3677,55 @@ void TaikoEngine::dampPhysicalDrum (Voice& physical,
         // disagree about how heavy a mode is.
         const float modalMass = (order == 0 ? 1.0f : 0.5f) * area * besselSquared
                               * drum.batterDensity;
-        if (muteAmount > 0.0f)
+        // Five-point area quadrature over a palm-sized patch. A point damper
+        // disappears whenever it happens to land on a nodal line; a real hand
+        // covers both sides and absorbs the surrounding motion. For a
+        // degenerate pair the unknown angular orientation contributes its mean
+        // square, one half.
+        const auto radii = palmPatchRadii (rho, palmRadius);
+        float meanSquare = 0.0f;
+        for (std::size_t sample = 0; sample < radii.size(); ++sample)
         {
-            // Five-point area quadrature over a palm-sized patch. A point
-            // damper disappears whenever it happens to land on a nodal line;
-            // a real hand covers both sides of that line and still absorbs the
-            // surrounding motion. For a degenerate pair the unknown angular
-            // orientation contributes its mean square, one half.
-            // A symmetric disk rule: half the weight at the centre and one
-            // eighth at each cardinal point on the patch boundary. The two
-            // tangential points have the same radius because the modal branch
-            // orientation is averaged below.
-            const auto radii = palmPatchRadii (rho, palmRadius);
-            float meanSquare = 0.0f;
-            for (std::size_t sample = 0; sample < radii.size(); ++sample)
-            {
-                const float sampleShape = static_cast<float> (
-                    besselJ (order, entry.besselZero * radii[sample]));
-                const float weight = sample == 0 ? 0.5f : 0.125f;
-                meanSquare += weight * sampleShape * sampleShape;
-            }
-            meanSquare *= order == 0 ? 1.0f : 0.5f;
-            // Project the distributed viscous contact onto this mode. The
-            // patch integral is A_p <phi^2>. Its share of the whole modal norm
-            // cannot exceed one; multiplying by c_A / sigma then gives the
-            // velocity-loss rate in 1/s.
-            const float modalNorm = modalMass / drum.batterDensity;
-            const float participation = clampFloat (
-                palmArea * meanSquare / std::max (modalNorm, 1.0e-9f), 0.0f, 1.0f);
-            const float dampingRate = muteSurfaceDamping / drum.batterDensity
-                                    * muteAmount * participation;
-            muteControlGain[static_cast<std::size_t> (index)] =
-                std::exp (-dampingRate
-                          * static_cast<float> (controlPeriod)
-                          / static_cast<float> (sampleRate_));
+            const float sampleShape = static_cast<float> (
+                besselJ (order, entry.besselZero * radii[sample]));
+            const float weight = sample == 0 ? 0.5f : 0.125f;
+            meanSquare += weight * sampleShape * sampleShape;
         }
+        meanSquare *= order == 0 ? 1.0f : 0.5f;
+
+        // Project the distributed viscous contact onto this mode. The patch
+        // integral is A_p <phi^2>. Its share of the whole modal norm cannot
+        // exceed one; c_A / sigma then gives a velocity-loss rate in 1/s.
+        const float modalNorm = modalMass / drum.batterDensity;
+        const float participation = clampFloat (
+            palmArea * meanSquare / std::max (modalNorm, 1.0e-9f), 0.0f, 1.0f);
+        // Axisymmetric cavity branches apply their batter-head energy fraction
+        // when this base rate is assigned; the table entry itself is shared by
+        // both orthogonal eigen-coordinates.
+        modeRates[static_cast<std::size_t> (index)] =
+            muteSurfaceDamping / drum.batterDensity * participation;
     }
+
+    // In the high-density limit the local mean square cancels between patch
+    // and whole-head modal norms. The area ratio is the unresolved field's
+    // physical size law.
+    continuumRate = muteSurfaceDamping / drum.batterDensity
+                  * clampFloat (palmArea / area, 0.0f, 1.0f);
+}
+
+void TaikoEngine::dampPhysicalDrum (Voice& physical,
+                                    const StrikeProfile& profile, float strikeRadius,
+                                    const DrumState& drum) noexcept
+{
+    // Bachi/head momentum exchange belongs to the coupled dynamic contact.
+    // This function is only the free hand that remains on the hide for a Tsu.
+    if (! (profile.membraneGain > 0.0f) || ! profile.palmContact)
+        return;
+
+    std::array<float, modeEntryCount> dampingRates {};
+    float continuumRate = 0.0f;
+    palmDampingRates (drum, strikeRadius, dampingRates, continuumRate);
+    const float muteAmount = profile.muteAmount * profile.muteAmount;
 
     if (muteAmount > 0.0f)
     {
@@ -3630,28 +3733,31 @@ void TaikoEngine::dampPhysicalDrum (Voice& physical,
         {
             auto& mode = physical.modes[static_cast<std::size_t> (index)];
             if (mode.membrane)
-                mode.localMuteControlGain = std::min (
-                    mode.localMuteControlGain,
-                    muteControlGain[static_cast<std::size_t> (mode.modeEntry)]);
+            {
+                float batterFraction = 1.0f;
+                if (mode.circumferentialOrder == 0)
+                    batterFraction = clampFloat (
+                        drum.batterDensity * mode.batterParticipation
+                            * mode.batterParticipation,
+                        0.0f, 1.0f);
+                mode.localMuteDampingRate = std::max (
+                    mode.localMuteDampingRate,
+                    dampingRates[static_cast<std::size_t> (mode.modeEntry)]
+                        * batterFraction * muteAmount);
+            }
         }
 
-        // In the high-density limit the local mean square cancels between the
-        // patch integral and whole-head modal mass. The remaining area ratio
-        // gives the statistical tail the same size law as the resolved modes.
-        const float continuumDampingRate = muteSurfaceDamping / drum.batterDensity
-                                          * muteAmount
-                                          * clampFloat (palmArea / area, 0.0f, 1.0f);
-        physical.continuumMuteControlGain = std::min (
-            physical.continuumMuteControlGain,
-            std::exp (-0.5f * continuumDampingRate
-                      * static_cast<float> (controlPeriod)
-                      / static_cast<float> (sampleRate_)));
+        physical.continuumMuteDampingRate = std::max (
+            physical.continuumMuteDampingRate, continuumRate * muteAmount);
         const int ticks = std::max (
             1, static_cast<int> (std::ceil (
                    muteContactSeconds * static_cast<float> (sampleRate_)
                    / static_cast<float> (controlPeriod))));
         physical.localMuteTicksRemaining =
             std::max (physical.localMuteTicksRemaining, ticks);
+        // The held palm must reach the pole before the next audio sample, not
+        // whenever this drum's previous control interval happens to end.
+        physical.controlCountdown = 0;
     }
 }
 
@@ -3855,12 +3961,9 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     const float collisionMass = contactCollisionMass (
         drum, profile, voice.strikeRadius, strikerMass);
 
-    // Before anything is built: the head this stroke is about to land on may
-    // already be moving, and a stick arriving on a moving membrane takes energy
-    // out of it. The finite palm contact is likewise attached to every older
-    // bank on this physical drum. The newly excited articulation retains its
-    // established constrained-head voicing below; unifying both paths requires
-    // the future shared per-drum bank, where there is no old/new distinction.
+    // A Tsu leaves the free hand on the one canonical head, so it damps motion
+    // already ringing on this physical drum as well as energy the new contact
+    // injects while the palm remains there.
     dampPhysicalDrum (physical, profile, voice.strikeRadius, drum);
 
     const float extraDamping = profile.muteAmount;
@@ -4120,7 +4223,6 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     physical.retireGain = 1.0f;
     physical.retireStep = 0.0f;
 
-    voice.handGain = 1.0f;
     voice.tuningAtStrike = applied_.pitch + 2.0f * pitchBend_;
     voice.ageSamples = 0;
     voice.peakLevel = 0.0f;
@@ -4211,7 +4313,9 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
         // careful build.
         const auto omega = 2.0 * static_cast<double> (piFloat)
                          * static_cast<double> (frequency) / sampleRate_;
-        const auto poleRadius = std::exp (-static_cast<double> (mode.decayRate)
+        const auto poleRadius = std::exp (-static_cast<double> (
+                                              mode.decayRate
+                                              + mode.appliedPalmDecay)
                                           / sampleRate_);
         mode.resonator.a1 = -2.0 * poleRadius * std::cos (omega);
         mode.resonator.a2 = poleRadius * poleRadius;
@@ -4366,55 +4470,49 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
         voice.modes[static_cast<std::size_t> (voice.activeModeCount)].resonator.clear();
     }
 
-    // Fold the accumulated hand damping into the resonator states. Applying it
-    // to a freely decaying resonator's output and applying it to its state are
-    // the same operation, so this is exact rather than an approximation - and
-    // it keeps the envelope from drifting towards zero without bound.
-    if (voice.handGain < 0.9999f)
+    // CC1 and Tsu are palms on the hide, not gain controls. Give each mode a
+    // continuous extra pole decay derived from its finite-area velocity-loss
+    // rate. Updating the radius only at control rate is cheap; the new radius
+    // then acts on every audio sample, so a high mode cannot evade the hand by
+    // landing near a turning point whenever a 32-sample damping kick arrives.
+    const float handAmount = handDamping_ * handDamping_;
+    const bool localMuteActive = voice.localMuteTicksRemaining > 0;
+    const bool palmRequested = handAmount > 1.0e-6f || localMuteActive;
+    if (voice.physicalBank && (palmRequested || voice.palmDampingActive))
     {
+        const float secondsPerTick = static_cast<float> (controlPeriod)
+                                   / static_cast<float> (sampleRate_);
         for (int index = 0; index < voice.activeModeCount; ++index)
         {
             auto& mode = voice.modes[static_cast<std::size_t> (index)];
             if (! mode.membrane)
                 continue;
-            mode.resonator.y1 *= voice.handGain;
-            mode.resonator.y2 *= voice.handGain;
+            const float velocityLoss = mode.handDampingRate * handAmount
+                                     + (localMuteActive
+                                            ? mode.localMuteDampingRate : 0.0f);
+            setPalmDecay (mode, 0.5f * velocityLoss);
         }
+        voice.palmDampingActive = palmRequested;
 
-        // And the continuum with them. It is the head above where its modes can
-        // be told apart, so a hand laid on the head damps it for exactly the
-        // same reason - and by the time it was left out, it was most of what
-        // there was to damp.
+        // The statistical field's state is already RMS amplitude, so it can
+        // take the equivalent phase-averaged exponent directly at this tick.
+        const float continuumVelocityLoss =
+            voice.continuumHandDampingRate * handAmount
+            + (localMuteActive ? voice.continuumMuteDampingRate : 0.0f);
+        const float continuumGain = std::exp (
+            -0.5f * continuumVelocityLoss * secondsPerTick);
         for (auto& band : voice.continuum)
-            band.envelope *= voice.handGain;
-
-        voice.handGain = 1.0f;
+            band.envelope *= continuumGain;
     }
 
-    // A muted articulation leaves the free hand on this already-ringing head.
-    // Apply its distributed modal loss with an operator-split viscous step at
-    // the control rate. A dashpot changes velocity, not displacement, so each
-    // substep keeps q continuous and exponentially retains qdot. This avoids
-    // the tiny periodic displacement jumps produced by scaling both resonator
-    // histories, and costs nothing after the 180 ms contact has ended.
-    if (voice.localMuteTicksRemaining > 0)
+    if (localMuteActive)
     {
-        for (int index = 0; index < voice.activeModeCount; ++index)
-        {
-            auto& mode = voice.modes[static_cast<std::size_t> (index)];
-            if (! mode.membrane)
-                continue;
-            applyCollisionRetention (mode, mode.localMuteControlGain);
-        }
-        for (auto& band : voice.continuum)
-            band.envelope *= voice.continuumMuteControlGain;
-
         --voice.localMuteTicksRemaining;
         if (voice.localMuteTicksRemaining == 0)
         {
             for (int index = 0; index < voice.modeCount; ++index)
-                voice.modes[static_cast<std::size_t> (index)].localMuteControlGain = 1.0f;
-            voice.continuumMuteControlGain = 1.0f;
+                voice.modes[static_cast<std::size_t> (index)].localMuteDampingRate = 0.0f;
+            voice.continuumMuteDampingRate = 0.0f;
         }
     }
 
@@ -5169,8 +5267,8 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
     // resting on, the stick-on-stick stroke has nothing to do with the drum at
     // all, and the airborne click of the impact itself reaches the microphones
     // through the air rather than through the head.
-    left += membraneLeft * voice.handGain;
-    right += membraneRight * voice.handGain;
+    left += membraneLeft;
+    right += membraneRight;
 
     // The forced fade at the tail cap. Zero step until the cap is in sight, so
     // an ordinary stroke - which retires because its modes ran out, not because
@@ -5230,10 +5328,6 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
     const float targetDrive = applied_.drive;
     const float targetWidth = applied_.stereoWidth;
 
-    // A hand laid on the head, as a per-sample multiplier the voices
-    // accumulate and the control tick folds into their states.
-    const auto rate = static_cast<float> (sampleRate_);
-
     for (int sample = 0; sample < numSamples; ++sample)
     {
         handDamping_ += handDampingCoefficient_ * (handDampingTarget_ - handDamping_);
@@ -5241,11 +5335,6 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
         // A tenth of a cent, measured against where the cache actually stands.
         if (std::abs (pitchBend_ - drumCacheBend_) > 0.0005f)
             drumCacheValid_ = false;
-
-        // Up to about 26 dB per second of extra loss at full pressure, which
-        // is roughly what a palm flat on a taiko head does.
-        const float handRate = 12.0f * handDamping_ * handDamping_;
-        const float handStep = handRate > 0.0f ? std::exp (-handRate / rate) : 1.0f;
 
         smoothedOutputGain_ += gainSmoothing_ * (targetGain - smoothedOutputGain_);
         smoothedDrive_ += gainSmoothing_ * (targetDrive - smoothedDrive_);
@@ -5328,9 +5417,6 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
             if (! physical.active)
                 continue;
             anyVoiceActive = true;
-
-            if (handStep < 1.0f)
-                physical.handGain *= handStep;
 
             float drumRight = 0.0f;
             const float drumLeft = renderVoice (physical, nullptr, drumRight);
@@ -5652,7 +5738,8 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
                                                      float pitchBendSemitones,
                                                      double sampleRateHz) noexcept
 {
-    const auto drum = resolveDrumFor (parameters, pitchBendSemitones, octaveOffset);
+    const auto applied = sanitise (parameters);
+    const auto drum = resolveDrumFor (applied, pitchBendSemitones, octaveOffset);
     const auto& entry = membraneModes()[0]; // the (0,1) mode
     const auto lambda = static_cast<float> (entry.besselZero);
 
@@ -5707,7 +5794,7 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
     // marker for a drum with no membrane tone rather than a frequency. See
     // soundingMode and DrumMeasurements::soundingHz.
     result.soundingHz = dynamicSoundingMode (
-        parameters, octaveOffset, pitchBendSemitones, sampleRateHz).frequencyHz;
+        applied, octaveOffset, pitchBendSemitones, sampleRateHz).frequencyHz;
 
     // How long a branch rings, with its own radiation share. Two branches of the
     // same mode differ a great deal on a sealed drum, because only the one that

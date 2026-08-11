@@ -163,9 +163,8 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME Taikor.TaikoEngine COMMAND TaikorTaikoEngineTests)
-    # 75 s on the reference machine, up from 69 when the Octave Body handover
-    # and the readout's Nyquist clauses landed: those sweep the control in
-    # ten-thousandths and build a voice bank per drum at four sample rates.
+    # Includes broad physical-control scans and voice-bank builds at four sample
+    # rates; keep a generous ceiling for slower CI workers.
     set_tests_properties(Taikor.TaikoEngine PROPERTIES TIMEOUT 240)
 
     if(TAIKOR_BUILD_TOOLS)

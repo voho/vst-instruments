@@ -219,30 +219,34 @@ TaikorAudioProcessor::createParameterLayout()
     result.push_back (makePercentParameter (ids::strikeNoise, "Strike Noise", 0.35f));
     result.push_back (makePercentParameter (ids::humanise, "Humanise", 0.4f));
 
-    result.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { ids::octaveBody, 1 }, "Octave Body",
-        juce::NormalisableRange<float> { 0.0f, 1.0f, 0.001f }, 1.0f,
-        juce::AudioParameterFloatAttributes()
-            .withLabel ("%")
-            .withStringFromValueFunction ([] (float value, int)
+    result.push_back (std::make_unique<juce::AudioParameterChoice> (
+        // Keep the established ID, order and normalised endpoints so old
+        // projects restore, but advertise a real indexed choice to every host.
+        // A legacy value below/above the midpoint snaps to the nearest endpoint.
+        juce::ParameterID { ids::octaveBody, 1 }, "Drum Layout",
+        juce::StringArray { "1 Drum", "4 Drums" }, 1,
+        juce::AudioParameterChoiceAttributes()
+            .withStringFromValueFunction ([] (int index, int)
             {
-                // The two ends are different instruments, not different
-                // amounts of one, so the readout says which. Family is the
-                // default: the keyboard's four octaves are four drums.
-                if (value <= 0.02f)
-                    return juce::String ("Tuned");
-                if (value >= 0.98f)
-                    return juce::String ("Family");
-                return juce::String (juce::roundToInt (value * 100.0f));
+                return index == 0 ? juce::String ("1 Drum")
+                                  : juce::String ("4 Drums");
             })
             .withValueFromStringFunction ([] (const juce::String& text)
             {
                 const auto trimmed = text.trim().toUpperCase();
-                if (trimmed.startsWith ("TUNED"))
-                    return 0.0f;
-                if (trimmed.startsWith ("FAMILY"))
-                    return 1.0f;
-                return text.retainCharacters ("0123456789.-").getFloatValue() / 100.0f;
+                if (trimmed.startsWith ("SINGLE")
+                    || trimmed.startsWith ("TUNED")
+                    || trimmed.startsWith ("1 DRUM"))
+                    return 0;
+                if (trimmed.startsWith ("FOUR")
+                    || trimmed.startsWith ("FAMILY")
+                    || trimmed.startsWith ("4 DRUM"))
+                    return 1;
+                const float number =
+                    text.retainCharacters ("0123456789.-").getFloatValue();
+                const float normalised = std::abs (number) > 1.0f
+                    ? number * 0.01f : number;
+                return normalised < 0.5f ? 0 : 1;
             })));
 
     // --- The close pair and the output ----------------------------------

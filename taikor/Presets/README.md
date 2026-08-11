@@ -18,15 +18,15 @@ them out avoids silently changing sound design while the physical model is still
 being refined, and every parameter here is a physical quantity rather than a
 voicing choice, so a preset is a description of a drum rather than a patch.
 
-When presets are added, name them after the *set* of drums they describe —
-`Kumi-daiko`, `Hira-daiko set`, `Studio kit` — rather than after a mood or after
-a single instrument, because a preset is now four drums rather than one. Only
-include original settings. Taikor contains no samples, and presets must not
-introduce uncleared sample or impulse-response assets.
+When presets are added, name **4 Drums** settings after the *set* they describe —
+`Kumi-daiko`, `Hira-daiko set`, `Studio kit` — rather than after a mood. A
+**1 Drum** setting may instead name the one physical design it retunes across
+the keyboard. Only include original settings. Taikor contains no samples, and
+presets must not introduce uncleared sample or impulse-response assets.
 
 ## What the four drums already are
 
-At the default Octave Body (*Family*) the four octaves are already four
+At the default Drum Layout (**4 Drums**) the four octaves are already four
 instruments, and these are the numbers the engine's own table holds. They are
 the reference for anything dialled in on top of them.
 
@@ -60,6 +60,6 @@ C3 ō-daiko, and the rest of the family follows it:
 Head Diameter runs 15–180 cm, so the battle-drum row is close to the top of the
 control rather than in the middle of it.
 
-Turning Octave Body down towards *Tuned* collapses the family onto whichever
-drum these controls describe, so the four octaves become one drum retuned. That
-is a useful thing to reach for and it is not what the instrument is for.
+Switching Drum Layout to **1 Drum** uses whichever drum these controls describe
+as one physical design retuned over the four octaves. **4 Drums** is the default:
+each octave instead uses the corresponding family instrument above.

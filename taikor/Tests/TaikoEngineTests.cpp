@@ -310,6 +310,8 @@ struct TaikoEngineTestAccess
         LocalMuteState result;
         if (! oldest->active)
             return result;
+        const float secondsPerTick = static_cast<float> (TaikoEngine::controlPeriod)
+                                   / static_cast<float> (engine.sampleRate_);
         result.ticks = oldest->localMuteTicksRemaining;
         result.minimumGain = 1.0f;
         result.maximumGain = 0.0f;
@@ -318,12 +320,13 @@ struct TaikoEngineTestAccess
             const auto& mode = oldest->modes[static_cast<std::size_t> (index)];
             if (! mode.membrane)
                 continue;
+            const float gain = std::exp (-mode.localMuteDampingRate * secondsPerTick);
             result.minimumGain = std::min (result.minimumGain,
-                                           mode.localMuteControlGain);
+                                           gain);
             result.maximumGain = std::max (result.maximumGain,
-                                           mode.localMuteControlGain);
+                                           gain);
             if (mode.modeEntry == 0)
-                result.fundamentalGain = mode.localMuteControlGain;
+                result.fundamentalGain = gain;
         }
         return result;
     }
@@ -335,9 +338,9 @@ struct TaikoEngineTestAccess
             return;
 
         oldest->localMuteTicksRemaining = 0;
-        oldest->continuumMuteControlGain = 1.0f;
+        oldest->continuumMuteDampingRate = 0.0f;
         for (int index = 0; index < oldest->modeCount; ++index)
-            oldest->modes[static_cast<std::size_t> (index)].localMuteControlGain = 1.0f;
+            oldest->modes[static_cast<std::size_t> (index)].localMuteDampingRate = 0.0f;
     }
 
     struct MuteTickState
@@ -346,6 +349,7 @@ struct TaikoEngineTestAccess
         double displacementError { 0.0 };
         double velocityError { 0.0 };
         double kineticError { 0.0 };
+        double decayError { 0.0 };
         double shellStateError { 0.0 };
     };
 
@@ -378,7 +382,7 @@ struct TaikoEngineTestAccess
             double y1 { 0.0 };
             double y2 { 0.0 };
             double velocity { 0.0 };
-            double gain { 1.0 };
+            float localRate { 0.0f };
             bool membrane { false };
         };
         std::vector<Before> before (static_cast<std::size_t> (oldest->activeModeCount));
@@ -394,7 +398,8 @@ struct TaikoEngineTestAccess
                 (resonator.y1 * cosine - mode.poleRadius * resonator.y2)
                 / resonator.b0;
             return mode.liveOmega * quadrature
-                 - static_cast<double> (mode.decayRate) * resonator.y1;
+                 - static_cast<double> (
+                       mode.decayRate + mode.appliedPalmDecay) * resonator.y1;
         };
 
         for (int index = 0; index < oldest->activeModeCount; ++index)
@@ -404,7 +409,7 @@ struct TaikoEngineTestAccess
             state.y1 = mode.resonator.y1;
             state.y2 = mode.resonator.y2;
             state.velocity = velocityOf (mode);
-            state.gain = mode.localMuteControlGain;
+            state.localRate = mode.localMuteDampingRate;
             state.membrane = mode.membrane;
         }
 
@@ -428,15 +433,236 @@ struct TaikoEngineTestAccess
                 result.displacementError,
                 std::abs (mode.resonator.y1 - state.y1));
             const double velocity = velocityOf (mode);
-            const double expected = state.gain * state.velocity;
             result.velocityError = std::max (
                 result.velocityError,
-                std::abs (velocity - expected) / std::max (std::abs (state.velocity), 1.0));
+                std::abs (velocity - state.velocity)
+                    / std::max (std::abs (state.velocity), 1.0));
             result.kineticError = std::max (
                 result.kineticError,
-                std::abs (velocity * velocity - expected * expected)
+                std::abs (velocity * velocity - state.velocity * state.velocity)
                     / std::max (state.velocity * state.velocity, 1.0));
+            const double recoveredDecay =
+                -48000.0 * std::log (std::max (mode.poleRadius, 1.0e-30));
+            const double expectedDecay = mode.decayRate + 0.5 * state.localRate;
+            result.decayError = std::max (
+                result.decayError,
+                std::abs (recoveredDecay - expectedDecay)
+                    / std::max (std::abs (expectedDecay), 1.0));
         }
+        return result;
+    }
+
+    struct HandTickState
+    {
+        int membraneModes { 0 };
+        double displacementError { 0.0 };
+        double velocityError { 0.0 };
+        double kineticIncrease { 0.0 };
+        double shellStateError { 0.0 };
+        double continuumError { 0.0 };
+        double poleDecayError { 0.0 };
+        double releaseError { 0.0 };
+        double axisBranchScalingError { 0.0 };
+        int axisBranchPairs { 0 };
+        int modesAboveControlNyquist { 0 };
+        float minimumRate { std::numeric_limits<float>::max() };
+        float maximumRate { 0.0f };
+        float fundamentalRate { 0.0f };
+        float continuumRate { 0.0f };
+    };
+
+    static HandTickState probeHandTick (double sampleRate, int octave = 3) noexcept
+    {
+        EngineParameters parameters;
+        parameters.humanise = 0.0f;
+        parameters.tensionModulation = 0.0f;
+        parameters.strikeNoise = 0.0f;
+
+        TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (sampleRate, 64);
+        engine.trigger (Articulation::Don, octave, 0.92f);
+        engine.handDamping_ = 1.0f;
+        engine.handDampingTarget_ = 1.0f;
+
+        auto& physical = physicalForOctave (engine, octave);
+        HandTickState result;
+        result.continuumRate = physical.continuumHandDampingRate;
+
+        struct Before
+        {
+            double y1 { 0.0 };
+            double y2 { 0.0 };
+            double a1 { 0.0 };
+            double a2 { 0.0 };
+            double velocity { 0.0 };
+            float rate { 0.0f };
+            bool membrane { false };
+        };
+        std::vector<Before> before (static_cast<std::size_t> (physical.activeModeCount));
+        std::array<double, TaikoEngine::modeEntryCount> axisBaseRate {};
+        std::array<bool, TaikoEngine::modeEntryCount> axisBaseSeen {};
+        const float batterDensity = engine.drumCache_[static_cast<std::size_t> (
+            octave - lowestOctaveOffset)].batterDensity;
+
+        const auto velocityOf = [] (const TaikoEngine::Mode& mode)
+        {
+            const auto& resonator = mode.resonator;
+            if (! (mode.poleRadius > 0.0) || ! (mode.liveOmega > 0.0)
+                || std::abs (resonator.b0) < 1.0e-12)
+                return 0.0;
+            const double cosine = -resonator.a1 / (2.0 * mode.poleRadius);
+            const double quadrature =
+                (resonator.y1 * cosine - mode.poleRadius * resonator.y2)
+                / resonator.b0;
+            return mode.liveOmega * quadrature
+                 - static_cast<double> (
+                       mode.decayRate + mode.appliedPalmDecay) * resonator.y1;
+        };
+
+        for (int index = 0; index < physical.activeModeCount; ++index)
+        {
+            auto& mode = physical.modes[static_cast<std::size_t> (index)];
+            const double state = 1.0e-5 * static_cast<double> (index + 1);
+            mode.resonator.y1 = state;
+            mode.resonator.y2 = -0.37 * state;
+
+            auto& captured = before[static_cast<std::size_t> (index)];
+            captured.y1 = mode.resonator.y1;
+            captured.y2 = mode.resonator.y2;
+            captured.a1 = mode.resonator.a1;
+            captured.a2 = mode.resonator.a2;
+            captured.velocity = velocityOf (mode);
+            captured.rate = mode.handDampingRate;
+            captured.membrane = mode.membrane;
+            if (! mode.membrane)
+                continue;
+
+            ++result.membraneModes;
+            result.minimumRate = std::min (result.minimumRate, mode.handDampingRate);
+            result.maximumRate = std::max (result.maximumRate, mode.handDampingRate);
+            if (mode.modeEntry == 0)
+                result.fundamentalRate = mode.handDampingRate;
+            if (mode.liveOmega / (2.0 * 3.14159265358979)
+                    > sampleRate / (2.0 * TaikoEngine::controlPeriod))
+                ++result.modesAboveControlNyquist;
+            if (mode.circumferentialOrder == 0)
+            {
+                const double batterFraction = std::clamp (
+                    static_cast<double> (batterDensity)
+                        * mode.batterParticipation * mode.batterParticipation,
+                    0.0, 1.0);
+                if (batterFraction <= 1.0e-5)
+                    continue;
+                const auto entry = static_cast<std::size_t> (mode.modeEntry);
+                const double baseRate = mode.handDampingRate / batterFraction;
+                if (axisBaseSeen[entry])
+                {
+                    ++result.axisBranchPairs;
+                    result.axisBranchScalingError = std::max (
+                        result.axisBranchScalingError,
+                        std::abs (baseRate - axisBaseRate[entry])
+                            / std::max ({ std::abs (baseRate),
+                                         std::abs (axisBaseRate[entry]), 1.0 }));
+                }
+                else
+                {
+                    axisBaseRate[entry] = baseRate;
+                    axisBaseSeen[entry] = true;
+                }
+            }
+        }
+
+        for (auto& band : physical.continuum)
+            band.envelope = band.centre > 0.0f ? 1.0f : 0.0f;
+
+        engine.updateVoiceControl (physical);
+
+        const float secondsPerTick = static_cast<float> (TaikoEngine::controlPeriod)
+                                   / static_cast<float> (sampleRate);
+        for (int index = 0; index < physical.activeModeCount; ++index)
+        {
+            const auto& mode = physical.modes[static_cast<std::size_t> (index)];
+            const auto& captured = before[static_cast<std::size_t> (index)];
+            if (! captured.membrane)
+            {
+                result.shellStateError = std::max (
+                    result.shellStateError,
+                    std::max ({ std::abs (mode.resonator.y1 - captured.y1),
+                                std::abs (mode.resonator.y2 - captured.y2),
+                                std::abs (mode.resonator.a1 - captured.a1),
+                                std::abs (mode.resonator.a2 - captured.a2) }));
+                continue;
+            }
+
+            result.displacementError = std::max (
+                result.displacementError,
+                std::abs (mode.resonator.y1 - captured.y1));
+            const double velocity = velocityOf (mode);
+            result.velocityError = std::max (
+                result.velocityError,
+                std::abs (velocity - captured.velocity)
+                    / std::max (std::abs (captured.velocity), 1.0));
+            result.kineticIncrease = std::max (
+                result.kineticIncrease,
+                (velocity * velocity - captured.velocity * captured.velocity)
+                    / std::max (captured.velocity * captured.velocity, 1.0));
+            const double recoveredExtra =
+                -sampleRate * std::log (std::max (mode.poleRadius, 1.0e-30))
+                - mode.decayRate;
+            const double expectedExtra = 0.5 * captured.rate;
+            if (expectedExtra > 1.0e-3)
+                result.poleDecayError = std::max (
+                    result.poleDecayError,
+                    std::abs (recoveredExtra - expectedExtra)
+                        / std::max (expectedExtra, 1.0));
+        }
+
+        const float expectedContinuum = std::exp (
+            -0.5f * result.continuumRate * secondsPerTick);
+        for (const auto& band : physical.continuum)
+            if (band.centre > 0.0f)
+                result.continuumError = std::max (
+                    result.continuumError,
+                    std::abs (static_cast<double> (band.envelope)
+                              - expectedContinuum));
+
+        struct ReleaseState
+        {
+            double displacement { 0.0 };
+            double velocity { 0.0 };
+        };
+        std::vector<ReleaseState> release (
+            static_cast<std::size_t> (physical.activeModeCount));
+        for (int index = 0; index < physical.activeModeCount; ++index)
+        {
+            const auto& mode = physical.modes[static_cast<std::size_t> (index)];
+            release[static_cast<std::size_t> (index)] = {
+                mode.resonator.y1, velocityOf (mode)
+            };
+        }
+        engine.handDamping_ = 0.0f;
+        engine.handDampingTarget_ = 0.0f;
+        engine.updateVoiceControl (physical);
+        for (int index = 0; index < physical.activeModeCount; ++index)
+        {
+            const auto& mode = physical.modes[static_cast<std::size_t> (index)];
+            if (! mode.membrane)
+                continue;
+            const auto& state = release[static_cast<std::size_t> (index)];
+            const double recovered =
+                -sampleRate * std::log (std::max (mode.poleRadius, 1.0e-30));
+            result.releaseError = std::max (
+                result.releaseError,
+                std::max ({ std::abs (mode.resonator.y1 - state.displacement),
+                            std::abs (velocityOf (mode) - state.velocity)
+                                / std::max (std::abs (state.velocity), 1.0),
+                            std::abs (recovered - mode.decayRate)
+                                / std::max (std::abs (
+                                                static_cast<double> (mode.decayRate)),
+                                            1.0) }));
+        }
+
         return result;
     }
 
@@ -2154,18 +2380,9 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
     // forcing the column factor to one. The worst of the five moves 0.086 %,
     // and the largest anywhere in the scan clause below is 1.9085 %.
     //
-    // Two of the five moved again when the octave transform stopped tuning
-    // against an argmax and started tracking a latched mode - see tuningModeFor.
-    // Both are away from the reference octave, where the drum is the answer to a
-    // solve rather than a fixed function of the controls, and the solve now
-    // answers differently at settings a long way from the four instruments the
-    // family table describes: 167.8403 -> 284.9433 Hz at octave 1 and
-    // 458.8257 -> 988.7020 at octave 3. Neither of those is this clause failing -
-    // the drift between the column answer and the lumped one is exactly zero at
-    // both, because both land on a decoupled column - it is the drum underneath
-    // the clause having changed. The two corners are kept, with the new drums
-    // recorded, and the two the scan now finds worst are added below them so the
-    // clause keeps its teeth: 1.0733 % and 0.9997 %, against a tolerance of 1.5.
+    // Keep one recorded corner from each shipping Drum Layout. Intermediate
+    // Octave Body geometries are no longer reachable product states; the full
+    // endpoint scan below supplies the broader coverage.
     {
         struct Corner
         {
@@ -2175,15 +2392,8 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
         };
 
         const Corner corners[] = {
-            { 1.00f, 0.50f, 0.50f, 1.00f, 0.95f, 0.35f, 2, 391.7268f },
-            { 1.00f, 1.00f, 1.00f, 1.00f, 0.95f, 0.35f, 1, 284.9433f },
             { 0.00f, 0.00f, 0.50f, 1.00f, 0.95f, 0.00f, 3, 1051.0128f },
             { 1.00f, 0.00f, 1.00f, 1.00f, 1.80f, 1.00f, 3, 988.7020f },
-            { 0.50f, 0.50f, 0.50f, 0.85f, 0.95f, 0.70f, 3, 783.4537f },
-            // The two the scan finds worst under the latched-mode transform,
-            // both with a live column rather than a decoupled one.
-            { 0.75f, 1.00f, 1.00f, 1.00f, 1.80f, 0.70f, 2, 287.1501f },
-            { 0.75f, 1.00f, 0.50f, 1.00f, 1.80f, 0.35f, 3, 277.8394f },
         };
 
         for (const auto& corner : corners)
@@ -2218,7 +2428,7 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
             for (const float headMaterial : { 0.0f, 0.5f, 1.0f })
                 for (const float tension : { 0.0f, 0.5f, 1.0f })
                     for (const float diameter : { 0.2f, 0.95f, 1.8f })
-                        for (const float octaveBody : { 0.0f, 0.35f, 0.7f, 1.0f })
+                        for (const float octaveBody : { 0.0f, 1.0f })
                             for (int octave = taikor::lowestOctaveOffset;
                                  octave <= taikor::highestOctaveOffset; ++octave)
                             {
@@ -2338,7 +2548,7 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
                                 }
                             }
 
-        expect (total == 10800, "the cavity scan did not cover what it says it does");
+        expect (total == 5400, "the cavity scan did not cover both Drum Layouts");
         // Every one that lands on the floor is a body longer than half the
         // wavelength of its own head, which is the same statement as its half
         // column having passed its quarter-wave: an 8 cm body under a head at
@@ -2347,17 +2557,9 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
         // of recording the count is that a change which quietly decoupled the
         // instrument would move it.
         //
-        // A third rather than a quarter, and the bound moved because the count
-        // did: 2513 of 10800 (23.27 %) before the octave transform stopped
-        // tuning against an argmax, 3045 (28.19 %) after. Every one of the 532
-        // that crossed is away from the reference octave and at a corner of this
-        // scan - a 20 cm head at zero tension, a 1.8 m head at full - where the
-        // latched tuning mode leaves the drum at a different tension than
-        // chasing the loudest partial did, and a tighter head is a shorter
-        // wavelength against the same body. At octave 0, where the transform is
-        // the identity and the drum is a fixed function of the controls, the
-        // count is unchanged. The bound is a sanity band on a number that is
-        // recorded rather than derived, and 28.19 % is what it now is.
+        // A third is a broad sanity bound rather than a fitted count: these are
+        // deliberately hostile geometries, but decoupling most of either
+        // shipping layout would mean the column solve had collapsed.
         expect (decoupled > 0 && decoupled < total / 3,
                 "the number of drums whose column has passed its quarter-wave "
                 "changed: " + std::to_string (decoupled) + " of "
@@ -3401,170 +3603,84 @@ void testTheReadoutIsAlwaysAFrequency()
                 + std::to_string (silent) + " of " + std::to_string (total));
 }
 
-// Octave Body hands the keyboard from one drum retuned to four instruments, and
-// somewhere in that travel the mode each octave is tuned by has to change hands.
-// This pins what that handover may and may not do.
-//
-// The handover is forced. Family needs octave 1 tuned by its (1,1) - that is
-// what puts the factory grid on heard octaves - and Tuned needs it tuned by its
-// (0,1), which is what makes the first octave there cost x13.49 in tension
-// rather than x4. No single assignment serves both ends.
-//
-// What is *not* obvious, and is the reason this test exists rather than a morph,
-// is that the handover cannot be spread out. The solve puts one named mode of a
-// one-parameter family of drums exactly on the octave. The two candidate modes
-// are the (0,1) and the (1,1), whose wavenumbers are fixed Bessel zeros in the
-// ratio 3.8317 / 2.4048 = 1.5934, and every other term in the model - the air
-// load, which bears on the lower mode hardest, and the head's bending stiffness,
-// which bears on the higher one hardest - only opens that ratio further. It is
-// 1.766 on this drum at the handover. So no drum this model can build has its
-// (0,1) and its (1,1) at the same frequency, and therefore no continuous path of
-// drums can carry the octave from one to the other: somewhere along it the
-// loudest partial must jump by the gap between them.
-//
-// Measured, by morphing the solved transform across a band 0.10 wide in Octave
-// Body: the geometry did go continuous - the worst 0.0001 step fell from 21.80 %
-// to 0.02 % in the radius and from 49.66 % to 0.13 % in the tension - and the
-// drum went 800 cents flat doing it. At Octave Body 0.3652 the morphed drum's
-// loudest partial sits at 89.68 Hz, 12.2 dB clear of everything else, where the
-// key asks for 119.32; at 0.3900 it is 73.82 Hz. The reported pitch then steps
-// 76.5 % where the two partials finally cross. A keyboard that plays a fifth to
-// an octave flat over a tenth of a control is a far worse instrument than one
-// that changes timbre at a point, so the step stays and this is what guards the
-// trade.
-//
-// So: the tuning target may not move anywhere, the geometry may not move except
-// at the handovers, and there is exactly one handover. The strike-dependent
-// readout is deliberately not used here: it is an argmax over modes and a
-// near-tied pair can exchange places without the tuned drum moving at all.
-void testOctaveBodyHandsOverWithoutMovingTheTuning()
+// Drum Layout has two physical meanings. Keep the old float in the engine-facing
+// parameter block for session/API compatibility, but collapse every value onto
+// the nearest endpoint before it can select geometry or invalidate a drum cache.
+void testDrumLayoutHasOnlyPhysicalEndpoints()
 {
-    // Away from a handover the solved drum is a smooth function of Octave Body,
-    // and this is what "smooth" measures out at over the whole sweep: the
-    // steepest 0.0001 step anywhere is 4.30e-4 in the radius and 1.10e-3 in the
-    // tension, both at the Tuned end of octave 3 where the control's own
-    // gradient is worst. Two parts in a thousand is that with a little room.
-    constexpr double geometryStep = 2.0e-3;
-    // The pitch, by contrast, must not move at all. The worst step measured
-    // over all four octaves is 4.8e-7 - a ten-thousandth of a cent, which is
-    // float noise in the bisection - so a hundredth of a cent is four orders of
-    // margin and still catches anything real. The rejected morph moved it by
-    // 76.5 % here.
-    constexpr double pitchStep = 1.0e-5;
-
-    struct Handover
+    const auto sameDrum = [] (
+        const taikor::TaikoEngineTestAccess::TuningPathMeasurement& left,
+        const taikor::TaikoEngineTestAccess::TuningPathMeasurement& right)
     {
-        int octave;
-        float body;
-        double radius, tension, fundamental;
+        return left.radiusMetres == right.radiusMetres
+            && left.tensionNewtonsPerMetre == right.tensionNewtonsPerMetre
+            && left.loadedFundamentalHz == right.loadedFundamentalHz
+            && left.tuningHz == right.tuningHz;
     };
-    std::vector<Handover> handovers;
-
-    double worstRadius = 0.0, worstTension = 0.0, worstFundamental = 0.0;
-    double worstPitch = 0.0;
 
     for (int octave = taikor::lowestOctaveOffset; octave <= taikor::highestOctaveOffset;
          ++octave)
     {
-        taikor::EngineParameters parameters = defaultParameters();
-        parameters.octaveBody = 0.0f;
-        auto previous =
-            taikor::TaikoEngineTestAccess::tuningPathMeasurement (parameters, octave);
-
-        for (int step = 1; step <= 10000; ++step)
+        const auto at = [octave] (float rawLayout)
         {
-            parameters.octaveBody = static_cast<float> (step) * 0.0001f;
-            const auto here =
-                taikor::TaikoEngineTestAccess::tuningPathMeasurement (parameters,
-                                                                       octave);
+            auto parameters = defaultParameters();
+            parameters.octaveBody = rawLayout;
+            return taikor::TaikoEngineTestAccess::tuningPathMeasurement (parameters,
+                                                                          octave);
+        };
+        const auto oneDrum = at (0.0f);
+        const auto fourDrums = at (1.0f);
 
-            const double radius = std::abs (here.radiusMetres / previous.radiusMetres - 1.0);
-            const double tension = std::abs (here.tensionNewtonsPerMetre
-                                             / previous.tensionNewtonsPerMetre - 1.0);
-            const double fundamental = std::abs (here.loadedFundamentalHz
-                                                 / previous.loadedFundamentalHz - 1.0);
-            const double pitch = std::abs (here.tuningHz / previous.tuningHz - 1.0);
-
-            // A handover is a step in the geometry, and it is allowed to be one.
-            // Everywhere else the three have to move like a function of a
-            // control rather than like a switch.
-            if (radius > geometryStep || tension > geometryStep
-                || fundamental > geometryStep)
-            {
-                handovers.push_back ({ octave, parameters.octaveBody,
-                                       100.0 * (here.radiusMetres / previous.radiusMetres - 1.0),
-                                       100.0 * (here.tensionNewtonsPerMetre
-                                                / previous.tensionNewtonsPerMetre - 1.0),
-                                       100.0 * (here.loadedFundamentalHz
-                                                / previous.loadedFundamentalHz - 1.0) });
-            }
-            else
-            {
-                worstRadius = std::max (worstRadius, radius);
-                worstTension = std::max (worstTension, tension);
-                worstFundamental = std::max (worstFundamental, fundamental);
-            }
-
-            // The latched tuning target is exempt from nothing. This is the
-            // clause the morph failed, and it is why the geometry step stays.
-            expect (pitch < pitchStep,
-                    "the tuning target moved " + std::to_string (100.0 * pitch)
-                        + " % in one 0.0001 step of Octave Body, at "
-                        + std::to_string (parameters.octaveBody) + ", octave "
-                        + std::to_string (octave));
-            worstPitch = std::max (worstPitch, pitch);
-
-            previous = here;
-        }
+        for (const float raw : { -1.0f, 0.24f, 0.4999f })
+            expect (sameDrum (at (raw), oneDrum),
+                    "a low legacy Drum Layout value did not resolve as 1 Drum at "
+                        "octave " + std::to_string (octave) + ": "
+                        + std::to_string (raw));
+        for (const float raw : { 0.5f, 0.76f, 2.0f })
+            expect (sameDrum (at (raw), fourDrums),
+                    "a high legacy Drum Layout value did not resolve as 4 Drums at "
+                        "octave " + std::to_string (octave) + ": "
+                        + std::to_string (raw));
     }
 
-    expect (worstRadius < geometryStep && worstTension < geometryStep
-                && worstFundamental < geometryStep,
-            "the solved drum is not smooth away from the handovers: radius "
-                + std::to_string (worstRadius) + ", tension "
-                + std::to_string (worstTension) + ", fundamental "
-                + std::to_string (worstFundamental));
-    expect (worstPitch < pitchStep,
-            "the tuning target is not constant across Octave Body: worst step "
-                + std::to_string (worstPitch));
-
-    // Exactly one handover in the whole control, on one octave, recorded where
-    // it is and how big it is. Two would mean the family had grown a crossing;
-    // none would mean the identity latch had stopped depending on the one
-    // control it is allowed to depend on, and Tuned or Family would be wrong.
-    expect (handovers.size() == 1,
-            "the number of latched-mode handovers across Octave Body is "
-                + std::to_string (handovers.size()) + ", recorded as 1");
-
-    if (handovers.size() == 1)
+    // Quantisation belongs before cache invalidation as well as before the solve:
+    // redundant legacy automation inside one layout must not rebuild four drums.
     {
-        const auto& only = handovers.front();
-        // Measured: octave 1, Octave Body 0.3652, radius +21.7977 %, tension
-        // -49.6566 %, loaded fundamental -43.5718 %. The tolerances are wide
-        // because what is being pinned is where the crossing is and roughly how
-        // big, not the last digit of a solve.
-        expect (only.octave == 1,
-                "the handover moved to octave " + std::to_string (only.octave));
-        expect (std::abs (only.body - 0.3652f) < 0.01f,
-                "the handover moved to Octave Body " + std::to_string (only.body)
-                    + ", recorded at 0.3652");
-        expect (std::abs (only.radius - 21.7977) < 2.0
-                    && std::abs (only.tension + 49.6566) < 2.0
-                    && std::abs (only.fundamental + 43.5718) < 2.0,
-                "the handover changed size: radius " + std::to_string (only.radius)
-                    + " %, tension " + std::to_string (only.tension)
-                    + " %, fundamental " + std::to_string (only.fundamental) + " %");
+        auto parameters = defaultParameters();
+        parameters.octaveBody = 0.10f;
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        const auto oneDrumRevision =
+            taikor::TaikoEngineTestAccess::physicalConfigurationRevision (engine);
+
+        parameters.octaveBody = 0.40f;
+        engine.setParameters (parameters);
+        expect (taikor::TaikoEngineTestAccess::physicalConfigurationRevision (engine)
+                    == oneDrumRevision,
+                "automation inside 1 Drum invalidated the physical drum cache");
+
+        parameters.octaveBody = 0.50f;
+        engine.setParameters (parameters);
+        const auto fourDrumRevision =
+            taikor::TaikoEngineTestAccess::physicalConfigurationRevision (engine);
+        expect (fourDrumRevision == oneDrumRevision + 1,
+                "crossing into 4 Drums did not invalidate the physical drum cache once");
+
+        parameters.octaveBody = 0.90f;
+        engine.setParameters (parameters);
+        expect (taikor::TaikoEngineTestAccess::physicalConfigurationRevision (engine)
+                    == fourDrumRevision,
+                "automation inside 4 Drums invalidated the physical drum cache");
     }
 
-    // And the two ends of the control, which are the two things the interior is
-    // not allowed to buy its smoothness with. Tuned's tension ladder is the
-    // documented x13.49 / x4.05 / x4.00 and its radius never moves; Family's
-    // four diameters are the instruments the table names.
+    // The endpoints keep their recorded physical meanings. 1 Drum's tension
+    // ladder is x13.49 / x4.05 / x4.00 and its radius never moves; 4 Drums uses
+    // the four diameters the instrument table names.
     {
-        auto tuned = defaultParameters();
-        tuned.octaveBody = 0.0f;
-        auto family = defaultParameters();
-        family.octaveBody = 1.0f;
+        auto oneDrum = defaultParameters();
+        oneDrum.octaveBody = 0.0f;
+        auto fourDrums = defaultParameters();
+        fourDrums.octaveBody = 1.0f;
 
         const double ladder[3] = { 13.4879, 4.0517, 4.0000 };
         double previousTension = 0.0;
@@ -3572,29 +3688,29 @@ void testOctaveBodyHandsOverWithoutMovingTheTuning()
         for (int octave = taikor::lowestOctaveOffset;
              octave <= taikor::highestOctaveOffset; ++octave)
         {
-            const auto atTuned = taikor::TaikoEngine::measure (tuned, octave);
-            expect (std::abs (atTuned.radiusMetres - 0.75f) < 1.0e-4f,
-                    "Tuned moved the drum's size at octave " + std::to_string (octave));
+            const auto atOneDrum = taikor::TaikoEngine::measure (oneDrum, octave);
+            expect (std::abs (atOneDrum.radiusMetres - 0.75f) < 1.0e-4f,
+                    "1 Drum moved the drum's size at octave " + std::to_string (octave));
 
             if (previousTension > 0.0)
             {
                 const auto index =
                     static_cast<std::size_t> (octave - taikor::lowestOctaveOffset - 1);
-                const double ratio = atTuned.tensionNewtonsPerMetre / previousTension;
+                const double ratio = atOneDrum.tensionNewtonsPerMetre / previousTension;
                 expect (std::abs (ratio - ladder[index]) < ladder[index] * 0.001,
-                        "Tuned's tension ladder step into octave "
+                        "1 Drum's tension ladder step into octave "
                             + std::to_string (octave) + " is "
                             + std::to_string (ratio) + ", recorded as "
                             + std::to_string (ladder[index]));
             }
-            previousTension = atTuned.tensionNewtonsPerMetre;
+            previousTension = atOneDrum.tensionNewtonsPerMetre;
 
             const auto& description = taikor::getDrumDescription (octave);
-            expect (std::abs (2.0f * taikor::TaikoEngine::measure (family, octave)
+            expect (std::abs (2.0f * taikor::TaikoEngine::measure (fourDrums, octave)
                                          .radiusMetres
                               - description.headDiameterMetres)
                         < 0.005f,
-                    "Family is not the instrument the table names at octave "
+                    "4 Drums is not the instrument the table names at octave "
                         + std::to_string (octave));
         }
     }
@@ -3778,8 +3894,7 @@ void testTheDrumIsTunedByThePitchItSounds()
     const auto measure = [] (taikor::EngineParameters parameters, int octave)
     { return taikor::TaikoEngine::measure (parameters, octave); };
 
-    // The clause the step is for. Every octave boundary, at three settings of
-    // the control that buys the octave.
+    // The clause the step is for. Every octave boundary, in both layouts.
     //
     // Measured in the pitch the drum is heard at rather than in its loaded
     // fundamental, and that is the contract this test now states. The two are
@@ -3790,7 +3905,7 @@ void testTheDrumIsTunedByThePitchItSounds()
     // Putting the four fundamentals on exact octaves - which the tree before
     // this step did, to a hundredth of a cent - left the four sounding pitches
     // stepping 0 / 11.7 / 14.3 / 26.3 semitones.
-    for (const float body : { 0.0f, 0.7f, 1.0f })
+    for (const float body : { 0.0f, 1.0f })
     {
         auto tuned = defaultParameters();
         tuned.octaveBody = body;
@@ -3805,38 +3920,36 @@ void testTheDrumIsTunedByThePitchItSounds()
             expect (std::abs (cents - 1200.0f) < 20.0f,
                     "the octave into " + std::to_string (octave + 1)
                         + " is " + std::to_string (cents)
-                        + " cents at octave body " + std::to_string (body));
+                        + " cents in Drum Layout " + std::to_string (body));
         }
     }
 
-    // The anchor. The transform is the identity at octave 0 for every Octave
-    // Body - radiusFactor and tensionOctaveFactor are both one there - so the
-    // reference octave must not move at all, and must be the same drum whatever
-    // Octave Body says. Without this a solve that met every ratio above by
+    // The anchor. The transform is the identity at octave 0 in both layouts, so
+    // the reference octave must not move at all. Without this a solve that met
+    // every ratio above by
     // moving the whole keyboard down would pass the lot.
-    for (const float body : { 0.0f, 0.7f, 1.0f })
+    for (const float body : { 0.0f, 1.0f })
     {
         auto tuned = defaultParameters();
         tuned.octaveBody = body;
         const auto reported = measure (tuned, 0);
 
         expect (std::abs (reported.soundingHz - 59.7474f) < 0.01f,
-                "the reference octave's sounding pitch moved at octave body "
+                "the reference octave's sounding pitch moved in Drum Layout "
                     + std::to_string (body));
         expect (std::abs (reported.loadedFundamentalHz - 32.6503f) < 0.01f,
-                "the reference octave's loaded fundamental moved at octave body "
+                "the reference octave's loaded fundamental moved in Drum Layout "
                     + std::to_string (body));
         expect (std::abs (reported.radiusMetres - 0.7500f) < 1.0e-4f,
-                "the reference octave is not the same drum at octave body "
+                "the reference octave is not the same drum in Drum Layout "
                     + std::to_string (body));
     }
 
-    // Octave Body has to keep its meaning. At 0 the four octaves are one drum
-    // retuned, so the size never moves and the whole octave comes out of the
-    // tension. At 1 each octave is the instrument the table describes, so the
-    // tension is that instrument's own to the last place: the residual tuning
-    // is taken as size there, which is what the control chose, and the solve is
-    // not free to buy any of it on the axis the control does not own.
+    // Drum Layout has to keep its meaning. In 1 Drum the size never moves and
+    // the whole octave comes out of the tension. In 4 Drums each octave is the
+    // instrument the table describes, so its tension stays that instrument's
+    // own to the last place: residual tuning is taken as size there, and the
+    // solve is not free to buy any of it on the other axis.
     //
     // 7284.35 / 5834.53 / 11467.18 / 19110.93 N/m are the four drums' tensions as
     // the table states them, mapped through the control's own geometric range.
@@ -3859,12 +3972,12 @@ void testTheDrumIsTunedByThePitchItSounds()
 
             expect (std::abs (measure (byTension, octave).radiusMetres - 0.7500f)
                         < 1.0e-4f,
-                    "octave body 0 changed the drum's size at octave "
+                    "1 Drum changed the drum's size at octave "
                         + std::to_string (octave));
             expect (std::abs (measure (bySize, octave).tensionNewtonsPerMetre
                               - tensions[index])
                         < tensions[index] * 1.0e-3f,
-                    "octave body 1 did not leave the drum on its own tension at "
+                    "4 Drums did not leave the drum on its own tension at "
                     "octave " + std::to_string (octave) + ": "
                         + std::to_string (
                               measure (bySize, octave).tensionNewtonsPerMetre));
@@ -5275,16 +5388,16 @@ void testMutedStrokeChokesTheRingingHead()
             "the real palm-tick probe found no membrane state to inspect");
     expect (tick.displacementError < 1.0e-14,
             "a viscous palm tick stepped modal displacement");
-    expect (tick.velocityError < 1.0e-10 && tick.kineticError < 1.0e-10,
-            "a viscous palm tick did not retain velocity and kinetic energy by "
-            "g and g squared");
+    expect (tick.velocityError < 1.0e-7 && tick.kineticError < 1.0e-7
+                && tick.decayError < 1.0e-6,
+            "a Tsu palm did not enter the continuous pole without stepping state");
     expect (tick.shellStateError == 0.0,
             "a palm resting on the head changed the wooden shell state");
 
-    // The palm has a fixed physical area. Recover the continuous damping rate
-    // from its per-tick velocity retention and check the area/modal-mass law
-    // directly, rather than relying on a rendered level that also contains the
-    // articulation and microphones.
+    // The palm has a fixed physical area. Recover its continuous damping rate
+    // from the equivalent control-interval gain and check the area/modal-mass
+    // law directly, rather than relying on a rendered level that also contains
+    // the articulation and microphones.
     const auto muteState = [&parameters] (float diameter, double sampleRate)
     {
         auto sized = parameters;
@@ -5321,6 +5434,50 @@ void testMutedStrokeChokesTheRingingHead()
         muteState (1.50f, 96000.0).fundamentalGain, 96000.0);
     expect (std::abs (rate44 - rate96) < std::max (rate44, rate96) * 0.001,
             "the palm's physical damping rate changed with the host sample rate");
+}
+
+void testHandControllerIsAPhysicalPalm()
+{
+    const auto at48 = taikor::TaikoEngineTestAccess::probeHandTick (48000.0);
+    expect (at48.membraneModes > 0,
+            "the CC1 palm probe found no membrane modes");
+    expect (at48.displacementError < 1.0e-14,
+            "CC1 stepped head displacement instead of applying viscous loss");
+    expect (at48.velocityError < 1.0e-7 && at48.kineticIncrease < 1.0e-10,
+            "changing CC1 pole loss stepped modal velocity: relative error "
+                + std::to_string (at48.velocityError) + ", kinetic increase "
+                + std::to_string (at48.kineticIncrease));
+    expect (at48.shellStateError == 0.0,
+            "CC1 damped the wooden shell instead of the hide");
+    expect (at48.continuumRate > 0.0f && at48.continuumError < 1.0e-7,
+            "CC1 did not damp the unresolved head with the palm-area energy law");
+    expect (at48.minimumRate > 0.0f
+                && at48.maximumRate > at48.minimumRate * 1.1f,
+            "CC1 collapsed a finite palm patch into one global gain");
+    expect (at48.poleDecayError < 1.0e-6
+                && at48.modesAboveControlNyquist > 0,
+            "CC1 was not realised as continuous per-sample pole damping");
+    expect (at48.releaseError < 1.0e-7,
+            "lifting the CC1 palm stepped state or left damping in the pole");
+
+    const auto largeDrum =
+        taikor::TaikoEngineTestAccess::probeHandTick (48000.0, 0);
+    expect (largeDrum.axisBranchPairs > 0
+                && largeDrum.axisBranchScalingError < 1.0e-6,
+            "CC1 ignored the batter-head energy fraction of a cavity-split mode");
+
+    const auto at44 = taikor::TaikoEngineTestAccess::probeHandTick (44100.0);
+    const auto at96 = taikor::TaikoEngineTestAccess::probeHandTick (96000.0);
+    const auto sameRate = [] (float left, float right)
+    {
+        return std::abs (left - right)
+             < 0.001f * std::max ({ std::abs (left), std::abs (right), 1.0f });
+    };
+    expect (sameRate (at44.fundamentalRate, at96.fundamentalRate)
+                && sameRate (at44.minimumRate, at96.minimumRate)
+                && sameRate (at44.maximumRate, at96.maximumRate)
+                && sameRate (at44.continuumRate, at96.continuumRate),
+            "CC1's physical damping rates changed with the host sample rate");
 }
 
 // A drum has one head, and a stroke lands on whatever that head is already
@@ -5855,7 +6012,7 @@ void testEveryParameterSurvivesTheCache()
         { "Velocity Depth",     [] (taikor::EngineParameters& p, float v) { p.velocityDepth = v; } },
         { "Tension Modulation", [] (taikor::EngineParameters& p, float v) { p.tensionModulation = v; } },
         { "Strike Noise",       [] (taikor::EngineParameters& p, float v) { p.strikeNoise = v; } },
-        { "Octave Body",        [] (taikor::EngineParameters& p, float v) { p.octaveBody = v; } },
+        { "Drum Layout",        [] (taikor::EngineParameters& p, float v) { p.octaveBody = v; } },
         { "Mic Distance",       [] (taikor::EngineParameters& p, float v) { p.micDistance = v; } },
         { "Mic Spread",         [] (taikor::EngineParameters& p, float v) { p.micSpread = v; } },
         { "Stereo Width",       [] (taikor::EngineParameters& p, float v) { p.stereoWidth = v; } },
@@ -7488,7 +7645,7 @@ int main()
     testTheReadoutNamesThePartialTheDrumIsHeardAt();
     testTheReadoutIsAlwaysAFrequency();
     testTheReadoutNamesAPartialTheRendererBuilds();
-    testOctaveBodyHandsOverWithoutMovingTheTuning();
+    testDrumLayoutHasOnlyPhysicalEndpoints();
     testEveryArticulationAndSampleRate();
     testSampleRateConsistency();
     testTheContinuumDoesNotDependOnTheSampleRate();
@@ -7504,6 +7661,7 @@ int main()
     testShellResonanceHasNoStepInIt();
     testCollisionChangesVelocityNotDisplacement();
     testMutedStrokeChokesTheRingingHead();
+    testHandControllerIsAPhysicalPalm();
     testAStrokeLandsOnAHeadThatIsAlreadyMoving();
     testTheTackLineRattlesOnlyWhenItIsBeaten();
     testTheDynamicRangeReachesFromAGhostStrokeToAFullBlow();

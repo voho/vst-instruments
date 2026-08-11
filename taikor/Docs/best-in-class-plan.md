@@ -3788,3 +3788,108 @@ specified below.
    [Zhu et al. (2022)](https://doi.org/10.1016/j.jsv.2022.117221), with
    modal-plus-residual synthesis demonstrated by
    [Ren, Yeh and Lin (2012)](https://gamma-web.iacs.umd.edu/AUDIO_MATERIAL/examplebasedsoundsynthesis.pdf).
+
+## Passive contact and controller palm — 2026-08-11
+
+This section supersedes the preceding checkpoint's statements that bachi
+contact was still a prescribed pulse and that the engine suite was red. The
+older measurements remain above as history of the shared-state migration.
+
+### What landed
+
+**The bachi is now a dynamic contact.** Each stroke owns a stick mass and two
+position histories. Compression against the one already-moving physical head
+drives a Hertzian `delta^1.5` potential with constrained Hunt–Crossley loss. A
+matched-pole IMP-2 discrete gradient advances stick and membrane together; the
+same dimensionless contact vector senses `p^T q` and spreads `p F`, and all
+same-drum contacts in a sample are solved in one symmetric system. The force is
+non-adhesive, release follows geometric separation, and the free modal poles are
+exactly the poles the renderer already uses.
+
+**CC1 is now the physical palm operator, not a volume envelope.** The controller
+uses the same 55 mm finite-area, five-point projection as Tsu at a fixed central
+hand position. Full-pressure loss is cached per mode when the drum is built and
+scaled by squared controller pressure at each control tick. The split update
+preserves displacement and physical velocity while moving the loss into a pole
+that acts on every audio sample; the shell and airborne click are untouched.
+The unresolved RMS envelope receives the corresponding phase-averaged half
+exponent.
+
+**Diagnostic renders isolate their stated axes.** Parameter sweeps, Octave Body
+and the velocity/hand demonstrations force Humanise to zero. Performance takes
+retain variation. A sweep can therefore be used as evidence without hidden
+changes in strike radius, angle, speed or contact duration.
+
+### Proof and cost gates
+
+- `testPassiveNonlinearContact` checks finite, non-negative force, release and
+  exact half-step energy monotonicity from 8 to 384 kHz. Ordinary-rate Don
+  duration, impulse and peak converge within 6, 1 and 4 percent respectively.
+  `testStrokesShareOnePhysicalDrumState` owns the same-sample recurrence/order
+  check; `testSimultaneousStrokesDoNotShareOneVoice` owns pool-full allocation
+  and finite-output coverage.
+- `testHandControllerIsAPhysicalPalm` checks one real control tick directly:
+  membrane displacement and physical velocity are unchanged as the predicted
+  continuous pole loss is applied, the shell is bit-identical, modal rates are
+  nonuniform, the continuum follows the same area law, high modes cannot strobe
+  past the palm, and recovered rates agree from 44.1 to 96 kHz.
+- On the Apple M1 Max acceptance run, sparse CC1-off audio remained bit-exact
+  and used 0.726 percent of one core. Dense mixed articulation used 1.93 percent
+  (51.8x real time), while full-pressure CC1 on all four drums used 1.50 percent
+  (66.6x). Its callback p50/p99/p99.9 was 18.2 / 46.0 / 111 microseconds at
+  48 kHz/64 samples, with zero deadline misses in 67,500 callbacks and a
+  431-microsecond worst case against the 1.333 ms budget.
+
+### Boundary of the claim
+
+The five-band continuum is still an observation-only statistical tail. Its
+force-squared energy estimate is formed after the contact solve, so omitted
+high modes do not mechanically load the bachi. On the factory ō-daiko the forty
+resolved membrane resonators end near 226 Hz and the first statistical band is
+centred near 283 Hz, while an independent Weyl/modal-bandwidth estimate does not
+reach overlap until roughly 412 Hz and about 128 resonators. The other estimated
+overlap counts are about 114 / 70 / 52 for chū-daiko, okedo and shime.
+
+Neither obvious shortcut is release-ready. Extending every bank to 118 modes
+roughly doubled dense CPU and changed the reciprocal contact itself; a ten-state
+positive-real Foster prototype was passive and sample-rate stable but, without
+measured mobility calibration, captured Ka and rim contacts for several
+milliseconds. The correct conclusion is not to pick the cheaper wrong answer.
+
+### Next work, in order
+
+1. Record controlled force/velocity driving-point mobility, repeated strikes
+   and two microphone distances on representative taiko. The current repository
+   has no real-taiko calibration set, so external single-mic recordings are
+   leads rather than acceptance references.
+2. Give the bachi a measured finite footprint and fit a positive-real omitted-
+   mode mobility jointly with deterministic modes carried to measured overlap.
+   The fit must preserve contact duration/rebound across sample rates before its
+   energy may drive the stochastic observer.
+3. Fit complex near/far radiation for the continuum; its current one-number
+   distance gain can make a far Ka relatively brighter.
+4. Promote higher cavity modes and the rear head to reciprocal runtime states,
+   then split the temporary `Voice` storage and add energy-based mode sleep.
+
+## Two-state Drum Layout — 2026-08-11
+
+This note supersedes the historical sections above that describe **Octave Body**
+as a continuous morph. The parameter keeps its established `octaveBody` ID,
+version, order, 0/1 endpoints and default so existing projects and automation
+remain attached. Its product name is now **Drum Layout**, with two meanings:
+**1 Drum** retunes one physical design across the keyboard, and **4 Drums** uses
+the four independent family instruments. Legacy values below 0.5 map to 1 Drum;
+values at or above 0.5 map to 4 Drums.
+
+The DSP performs the same threshold in `TaikoEngine::sanitise`, before cache
+invalidation. Direct engine callers therefore cannot recover an undocumented
+intermediate drum, and redundant legacy automation within either half does not
+rebuild the four solved instruments. The two endpoint sounds and their tuning
+contract are unchanged; only the physically unhelpful interior and its forced
+modal-identity handover are gone.
+
+`testDrumLayoutHasOnlyPhysicalEndpoints` checks endpoint equivalence for legacy
+and out-of-range values at every octave, the exact 0.5 boundary, cache-revision
+behaviour, the 1 Drum tension ladder and the 4 Drums family diameters. The demo
+asset keeps its stable `20-octave-body.wav` filename, but already renders only
+the two endpoint layouts with Humanise disabled.

@@ -4,8 +4,8 @@ Taikor is a real-time **physically modeled taiko** for macOS. It does not load
 samples, replay a recording, or emulate a particular branded instrument. Every
 stroke is solved from a struck circular membrane: the head's modes come from the
 zeros of a Bessel function, the air hanging off it lowers them, the enclosed body
-couples the two heads together, the wooden shell rings underneath, and a bachi
-meets the hide through a Hertz contact whose duration follows the impact speed.
+couples the two heads together, the wooden shell rings underneath, and a dynamic
+Hertzian bachi contact exchanges force with whatever the head is already doing.
 
 Change the diameter and the pitch moves as one over the radius. Change the head
 material and the drum gets heavier, darker, and more strongly loaded by the air.
@@ -68,7 +68,7 @@ emptied by the stand and the hoops in half a second, while the (1,1) mode a
 fifth and a half above it rings for two. On the two small drums the fundamental
 sits far above where the mounting reaches and wins by fifteen decibels. **The
 keyboard is octaves in the column that is heard, and it is deliberately not
-octaves in the other one** — see [Octave Body](#octave-body).
+octaves in the other one** — see [Drum Layout](#drum-layout).
 
 Two things scope that claim, and both are properties of the instrument rather
 than of the tuning.
@@ -166,10 +166,10 @@ These are not four presets. Each one is a strike position, a contact stiffness
 and a mute state fed into the same model. A Ka is bright because striking the
 head at 0.91 of its radius drives the modes that have a circumferential order
 and barely moves the axisymmetric ones — which is exactly why it is bright on a
-real taiko. On one axis they are presets, and it is worth naming: a stroke's own
-loudness is a trim applied after the contact has been solved, so it moves the
-level without moving the shorter, brighter contact that level would have come
-with.
+real taiko. Their relative loudness still includes one calibrated articulation
+factor, so it is not claimed to fall wholly out of impact speed; that same
+factor now also participates reciprocally in the contact, so it is no longer
+only a post-solve output trim.
 
 There were eight. **Su** was a light Don, and velocity already covers it —
 33 dB of it at full Velocity Depth. **Katsu** (bachi on the bare shell),
@@ -191,19 +191,20 @@ that is 33.6 dB between a ghost stroke and a full blow on an open Don on the
 sampled taiko libraries this competes with is that they have very little of
 that; it is not a limitation a model has any reason to inherit.
 
-**MIDI CC1** lays a hand on the head. It damps whatever is still ringing, and
-it goes on damping while it is held — so a stroke played with the hand down is
-a muted stroke. Release the wheel and the head is open again. It shortens the
-drum without darkening it, which is not the whole of what a real hand does; that
-limit is measured below under what is not modelled.
+**MIDI CC1** lays a finite palm-sized damping patch on the head. It damps
+whatever is still ringing, and it goes on damping while it is held — so a stroke
+played with the hand down is a muted stroke. Each mode loses energy according to
+how much of its shape lies under that patch; the wooden shell and airborne stick
+click remain untouched. Release CC1 and the head is open again.
 **The pitch wheel** presses the head, which raises its
 tension and bends the drum sharp; a stroke that is already ringing bends with
 it rather than waiting for the next one.
 
 The controls describe the ō-daiko at C3, and every control is carried across the
 family as a trim on all four drums: turn Head Diameter down and the whole set
-shrinks, keeping its proportions. **Octave Body** decides how much of the family
-there is at all — see below.
+shrinks, keeping its proportions. **Drum Layout** switches between one design
+retuned over the keyboard and the four independently scaled family members —
+see below.
 
 ## Controls
 
@@ -235,7 +236,7 @@ a voicing offset.
 | Tension Mod | 0–100 % | 40 % | Depth of the attack pitch glide, which is the head stretching itself: a hard stroke displaces the hide, a displaced hide is a longer and therefore tighter one, and the drum starts sharp. At 0 the head is treated as linear |
 | Stick Noise | 0–100 % | 35 % | Broadband contact noise on the hide, and the rattle of the tack line when a stroke beats the preload holding the head down |
 | Humanise | 0–100 % | 40 % | Per-stroke variation in position, angle, speed and contact time. At 0 the drum is a machine and repeats exactly |
-| Octave Body | Tuned → Family | Family | What an octave changes: one drum retuned, or four instruments (see below) |
+| Drum Layout | 1 Drum / 4 Drums | 4 Drums | What a keyboard row represents: one design retuned, or an independently sized family member (see below) |
 
 ### The close pair and the output
 
@@ -293,9 +294,9 @@ absolutely, because a drum is tuned by the pitch it sounds. A player brings the
 fundamental back where it belongs with the ropes or the tacks, and what
 stiffness leaves behind afterwards is the spread above it. That is also what
 keeps an octave an octave: the stiffness parameter falls as the tension rises
-and as the square of the radius, so the two halves of the Octave Body transform
-move it in opposite directions and an absolute shift would put the keyboard out
-of tune with itself.
+and as the square of the radius, so the two Drum Layout constructions reach the
+same tuning by different physical routes and an absolute shift would put the
+keyboard out of tune with itself.
 
 No stroke lands on the geometric centre, because every mode with a
 circumferential order has *J(m)(0) = 0* and a strike at radius zero drives the
@@ -517,11 +518,18 @@ staves do.
 
 ### The stick
 
-A bachi meets the hide as a Hertz contact. Contact duration goes as
-*v^(−1/5)*, and is floored by the membrane's own resistive impedance
-*8√(Tσ)*, because a stick cannot leave the head faster than the wave does. The
-force pulse is the asymmetric *sin^1.5* arch a rounded tip actually produces, not
-a symmetric bump.
+A bachi is a moving mass, not a prescribed force envelope. MIDI velocity gives
+it an incoming speed; its compression against the moving head produces a
+Hertzian *δ^1.5* force with constrained Hunt–Crossley loss, and contact ends
+when stick and hide actually separate. Duration, peak force and rebound all
+emerge from that coupled motion.
+
+The contact is advanced with a discrete-gradient IMP-2 scheme whose free modal
+poles exactly match the drum's existing resonators. The same spatial projection
+senses head displacement and spreads force back into the modes, so the coupling
+is reciprocal and cannot pull on the hide. Simultaneous bachi contacts are solved
+together through one small symmetric compliance system, rather than in an
+audibly order-dependent sequence.
 
 The stick's mass scales with the drum being played, because nobody hits a
 shime-daiko with an odaiko club. Leaving it fixed made the smallest drums about
@@ -588,47 +596,36 @@ of the force and leaves the tacks alone.
 
 ### A drum has one head
 
-A stroke lands on whatever the head is already doing. The bachi arriving on a
-moving membrane is a collision, and a collision with restitution *e* leaves a
-mass *M* moving at *v* going at *v(M − em)/(M + m)*: the stick takes some of
-what is there and gives back only part of it. The mass it meets is not the
-whole head but each mode's own, referred to the point of contact — a mode's
-modal mass divided by the square of its shape under the stick.
+A stroke lands on whatever the head is already doing. Each bachi senses the
+surface velocity made by all resolved membrane modes at its own strike point,
+and its force is returned through exactly the same shapes and modal masses. A
+centre stroke therefore couples strongly to the boom; an edge stroke largely
+leaves that boom alone and works on the circumferential modes instead. A second
+stroke can shorten, reinforce or delay its contact according to the phase of the
+already-moving hide—none of those interactions is scripted.
 
-Three things follow, and none of them are written down anywhere as rules. A
-centre stroke very largely resets the drum's boom, because a bachi is heavier
-than the fundamental's modal mass and lands where that mode is largest. An edge
-stroke leaves the boom alone and dries up the edge instead, because that is
-where its shape is. And the high modes, whose modal masses are a fraction of a
-stick's, are simply turned round by it.
-
-The collision is an impulse: it changes modal velocity and leaves displacement,
-and therefore stored potential energy, continuous. Its state recovery uses live
-pole coordinates synchronized whenever the resonator is built or retuned, so it
-remains exact after the attack glide, automation or pitch wheel has moved a
-ringing mode. An earlier implementation multiplied both resonator histories and
-exaggerated what a roll lost against offline
-superposition by deleting potential energy at every hit; the current regression
-requires the interaction to be measurably nonzero without treating that old
-three-decibel figure as physical calibration.
+The nonlinear solve is passive in the resolved head-plus-stick coordinates: it
+never creates an adhesive force, and without player input their discrete total
+energy cannot rise. Modal displacement stays continuous through every contact.
+The live poles used by the solve follow attack glide, automation and pitch-wheel
+retuning, so the contact never exchanges energy with a different recurrence from
+the one that is actually rendered.
 
 A Tsu goes further. Its free hand remains for 180 ms as a 55 mm-radius local
 dashpot on motion already ringing on that drum. A symmetric five-point patch
 quadrature projects the contact into every membrane mode; patch area and modal
 mass make the same palm bite harder on a small head than on a five-shaku one.
-At each control step only modal velocity is attenuated, never displacement. The
-continuum receives the corresponding phase-averaged RMS loss, while every other
-drum remains bit-identical.
+Control updates set a continuous extra pole loss without stepping either modal
+displacement or physical velocity. The continuum receives the corresponding
+phase-averaged RMS loss, while every other drum remains bit-identical.
 
 Each playable drum now has one canonical ringing state. MIDI notes allocate
 contact transients, project their forces into stable physical-mode IDs, and are
 summed before the bank advances once; they do not own another rendered head.
 The residual continuum is likewise one persistent field per drum, with new
-contacts adding energy in quadrature. The migration still uses the old `Voice`
-storage type on both sides, so contact slots temporarily carry unused arrays,
-and the prescribed force pulse is not yet the planned active Hunt–Crossley
-solve. The ownership is shared; the storage cleanup and nonlinear contact are
-the next steps.
+contacts adding energy in quadrature. Contact slots still reuse the old `Voice`
+storage type and therefore carry some unused arrays; that is storage debt, not a
+second physical drum.
 
 ### Two microphones, and where the stereo comes from
 
@@ -676,87 +673,38 @@ pair close in and fully opened that can push strokes out of phase — the same
 thing that happens when a real wide spaced pair is pushed through a widener, and
 worth a phase check if the mix has to fold down.
 
-### Octave Body
+### Drum Layout
 
-The four octaves are four instruments, and **Octave Body** decides how much of
-that is true. At *Family* — the default — each octave resolves to the drum the
-table describes: its own diameter, body depth, hide and shell. At *Tuned* all
-four collapse onto the ō-daiko the controls describe and the keyboard is one drum
-retuned, which is what a sampler's pitch knob does. In between, the drum is
-blended from one towards the other.
+**Drum Layout** is a two-position physical choice:
 
-Both ends land on the same four pitches — 59.66 / 119.32 / 238.64 / 477.28 Hz —
-and they do not sound remotely alike, because the air load, the cavity stiffness
-and the radiation efficiency all depend on the radius and none of them scale
-with the tension.
+- **1 Drum** uses the ō-daiko design described by the controls on every keyboard
+  row and reaches the four pitches by retuning its head.
+- **4 Drums** — the default — resolves each row as its own ō-daiko, chū-daiko,
+  okedo-daiko or shime-daiko, with an independent diameter, body, hide and shell.
 
-How the keyboard is brought to those pitches is solved rather than written down,
-and that is the same principle the head's stiffness already follows: a drum is
-tuned by the pitch it sounds. A real okedo-daiko does not sit exactly an octave
-above a real chū-daiko, so each drum is tuned onto its key the way a drum is
-actually tuned — by moving one of the two things that set its pitch. At *Tuned*
-that is the head tension and it is the whole octave, because the drum has not
-changed: ×13.49 / ×4.05 / ×4.00 per octave up the keyboard. The first of those
-is not a rounding error — it is the ō-daiko being retuned far enough that its own
-fundamental finally climbs clear of the mounting and becomes the loudest thing it
-has, so the octave has to carry the drum from one of its modes to the other as
-well as up. At *Family* the residual is the drum's own size and it is under a
-tenth of a per cent, because the instruments were already chosen to sit an octave
-apart: the resolved diameters come out 150.0 / 78.0 / 40.0 / 30.0 cm against the
-150 / 78 / 40 / 30 the table states.
+Both layouts land on the same four sounding pitches — 59.66 / 119.32 / 238.64 /
+477.28 Hz — but they do not sound alike. Air load, cavity stiffness, radiation
+and modal density depend on physical size and cannot be reproduced by pitch
+shifting one body. The model therefore solves the required tension/size rather
+than transposing a recording.
 
-How far it holds as the controls move away from those instruments is a real
-limit, and it is worth stating rather than claiming a scan. The mode each drum
-is tuned by is latched to the mode that instrument is heard at rather than
-re-chosen from whatever is loudest at the current settings — the alternative
-makes the tuning a step function of every control, and it did: a hundredth of a
-semitone of Pitch, or half a thousandth of Head Tension, used to drop a drum by
-1043 cents and re-solve its head from 24 cm to 40 cm mid-automation. With the
-mode latched, the keyboard is exact octaves in that mode at every setting, and
-what drifts instead is whether that mode is still the one the drum is heard at.
-Measured from rendered audio over twelve settings spread across the controls,
-the three octave steps are within 7 cents at the factory drum, at Octave Body
-0.5, with the body opened, with a shallow body and with the head damped. Where
-they are not — a drum retuned ±7 semitones, a much tighter or slacker head, a
-thin film, a much smaller drum — it is the bottom step that goes: it reads
-between 33 and 327 cents instead of 1200, and the step above it takes up the
-difference, because the ō-daiko and the chū-daiko cross from their (1,1) to
-their fundamental at different settings and between those two points the two
-pads are being heard in different modes. Every one of those errors moves
-smoothly with the control that caused it, and the four drums are exact octaves
-apart in the mode they are tuned by at every setting.
+“1 Drum” describes one physical *design*, not monophony. Each row still owns an
+independent ringing state, so a chord can hold four differently tuned copies and
+a new row never steals another row's tail. “4 Drums” instead gives those four
+states the four family geometries in the table.
 
-The pitch never jumps anywhere in this control. The **drum** jumps once, and it
-has to. Sweeping Octave Body from *Tuned* to *Family*, the chū-daiko pad's
-latched mode changes hands at 0.3652: below it the pad is tuned by its (0,1),
-above it by its (1,1), and at that one ten-thousandth the solved head grows
-21.8 %, the tension halves and the tail goes from 2.5 to 3.5 seconds while the
-pitch stays at 119.32 Hz throughout. The handover is forced — *Family* needs the
-(1,1) or the factory grid is not octaves, *Tuned* needs the (0,1) or its first
-octave is 157 cents wide — and so, less obviously, is the fact that it is a
-step. The two candidate modes are set apart by their Bessel zeros, 3.8317 over
-2.4048, and everything else in the model only opens that ratio further; it is
-1.766 here. No drum this model can build has those two modes at the same
-frequency, so no continuous path of drums can carry the octave from one to the
-other without the loudest partial moving by that ratio somewhere along it.
-Morphing the geometry across a band was tried and measured: it does make the
-solved drum continuous, and it takes the pad up to 800 cents flat in the middle
-of the band. The step in the timbre is the cheaper of the two, and it is placed
-where the pitch is continuous through it.
+This used to be a continuous morph called Octave Body. Intermediate geometry
+was not physically useful: one necessary modal-identity handover changed head
+size and decay abruptly even though the target pitch stayed fixed. Old projects
+keep the same parameter ID and restore safely, with values below the midpoint
+mapping to 1 Drum and values at or above it mapping to 4 Drums.
 
-What is solved is the mode each drum is actually heard at, and that is not the
-same mode on all four of them. It used to be the drum's own lowest mode, and the
-four fundamentals then landed on exact octaves — 0.0 cents out, every one —
-while the instrument stepped 0 / 11.7 / 14.3 / 26.3 semitones, because on the
-ō-daiko and the chū-daiko the fundamental is not what anyone hears. Measured
-from the rendered audio as the strongest partial of a 0.9 s window opening 80 ms
-after the strike, over Don and Tsu at three velocities each and struck where the
-vocabulary puts them, the four pads now read 59.6 / 119.5–120.0 / 238.7 /
-477.3 Hz: **at worst 7 cents from exact octaves, and at worst 7 cents of spread
-across the six strokes on any one pad.**
-
-The breathing branch above the fundamental is still not an octave, and this does
-not make it one.
+The mode each row is tuned by is latched to the one that instrument is heard at,
+rather than re-selected from whichever peak happens to win under automation.
+At the factory voicing, rendered Don and Tsu strokes across the rows are within
+7 cents of exact octaves. Far from the calibrated family a different partial can
+become dominant; the tuning itself remains continuous, but a listener may then
+name another partial as the drum's pitch.
 
 ### What is not modelled
 
@@ -780,12 +728,14 @@ that is not theirs. Solving each pair on its own factor instead moves the
 second, third and fourth of them by 8.0, 3.6 and 1.0 cents on the ō-daiko, and
 leaves the pair the keyboard is tuned by exactly where it is.
 
-The hand CC1 lays on the head is a level rather than a damper. It multiplies
-every membrane mode and every continuum band by the same envelope, so at CC1 = 1
-it takes 10.1 dB out of 50–150 Hz and 11.5 dB out of 4–10 kHz — 1.4 dB of tilt
-over seven octaves. The mute a Tsu carries is the physical one by contrast: it
-feeds the head's own loss terms instead, and tilts 6.2 dB across the same bands.
-Two mechanisms sit side by side and only one of them is a damper.
+The statistical continuum is not yet a mechanical load in the bachi solve.
+Contact sees the forty resolved membrane coordinates; afterwards its force
+history excites the higher stochastic bands, but those bands exert no reciprocal
+force on the stick. On the two large drums the first continuum band also begins
+before the deterministic modes have reached statistical overlap. Closing that
+gap needs a measured complex driving-point mobility and a passive dynamic
+residual—not an uncalibrated resistance, which captures soft and edge strokes
+instead of returning their stored energy.
 
 Above the resolved bank the microphones have a level and not a shape. The
 near-field and proximity terms that make the pair decorrelate are computed per
@@ -880,12 +830,10 @@ ctest --test-dir build-dsp --output-on-failure
 ```
 
 The JUCE-free suite covers the playing grid and its MIDI mapping — sixteen notes
-and exact silence everywhere else — the four drums being four instruments rather
-than one rescaled, the four strokes being mutually distinct, the octave contract
-at every Octave Body setting including that the octave is an octave in the pitch
-the drum sounds, in the readout and in the rendered partial, that Octave Body
-moves the drum smoothly everywhere except at the one latched-mode handover and
-moves the heard pitch nowhere at all, that the pitch the panel reports is always
+and exact silence everywhere else — both Drum Layout endpoints, the four strokes
+being mutually distinct, the octave contract including that an octave is an
+octave in the pitch the drum sounds, in the readout and in the rendered partial,
+that the pitch the panel reports is always
 a partial the renderer will actually build at the host's sample rate, that the
 tuning is continuous under automation — a fine sweep across three settings where two of a
 drum's modes cross, asserting from rendered audio that no automation step moves
@@ -898,11 +846,12 @@ and contact-time laws, the instrument's dynamic range and the evenness of its
 velocity response, the head's bending stiffness and the modal ratios it opens
 out, the enclosed air solved as a finite column rather than an infinite spring,
 the attack glide's dependence on the head rather than on a clock and its silence
-above the resolved bank, the tack line's threshold, what one stroke takes out of
-a head another stroke left ringing — including pole-shifted restitution that
-changes velocity without stepping displacement, a palm whose recovered damping
-rate follows physical head area rather than host sample rate, and a muted Tsu
-that damps only the already-ringing drum — every isolated continuum octave's
+above the resolved bank, the tack line's threshold, what one passive,
+non-adhesive nonlinear contact does to a head another stroke left ringing —
+including simultaneous-contact order invariance and energy checks at every
+supported rate, finite-area Tsu and CC1 palms whose recovered damping follows
+physical head area rather than host sample rate, and a muted Tsu that damps only
+the already-ringing drum — every isolated continuum octave's
 ownership of its own band, every physical control's effect on the
 solved drum *and* on the rendered audio, the close pair's decorrelation and mono
 compatibility, tail termination and exact idle silence, voice stealing, hostile
