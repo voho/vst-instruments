@@ -2425,13 +2425,13 @@ void testFactoryKitIsHarmonicallyTuned()
         const int to = static_cast<int> (0.300 * sampleRate);
         const auto magnitude = [&mono, from, to, sampleRate] (double hz)
         {
-            const double w = 2.0 * M_PI * hz / sampleRate;
+            const double w = 2.0 * analysisPi * hz / sampleRate;
             const double c = 2.0 * std::cos (w);
             double s1 = 0.0, s2 = 0.0;
             for (int i = from; i < to && i < static_cast<int> (mono.size()); ++i)
             {
                 const double window = 0.5 - 0.5 * std::cos (
-                    2.0 * M_PI * (i - from) / std::max (1, to - from - 1));
+                    2.0 * analysisPi * (i - from) / std::max (1, to - from - 1));
                 const double s0 = window * mono[static_cast<std::size_t> (i)] + c * s1 - s2;
                 s2 = s1;
                 s1 = s0;

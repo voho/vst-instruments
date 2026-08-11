@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 # A newer push to the same branch/PR cancels the older, still-running check.
 concurrency:
   group: ci-${{ github.ref }}
@@ -14,7 +17,7 @@ concurrency:
 jobs:
   dsp-tests:
     name: DSP tests (${{ matrix.name }}, JUCE-free, Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -51,12 +54,25 @@ jobs:
             expected_demos: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install JUCE Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config \
+            libasound2-dev \
+            libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev
 
       - name: Configure
         run: |
           cmake \
             -S "${{ matrix.directory }}" \
             -B "${{ matrix.directory }}/build-dsp" \
+            -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             "-D${{ matrix.build_plugin_option }}=OFF" \
             -DBUILD_TESTING=ON
@@ -77,6 +93,43 @@ jobs:
             exit 1
           fi
           echo "${{ matrix.name }}: rendered all $rendered demo WAVs"
+
+      - name: Configure Linux plug-in build
+        run: |
+          cmake \
+            -S "${{ matrix.directory }}" \
+            -B "${{ matrix.directory }}/build-dsp" \
+            -DCMAKE_BUILD_TYPE=Release \
+            "-D${{ matrix.build_plugin_option }}=ON" \
+            -DBUILD_TESTING=OFF
+
+      - name: Build Linux VST3 and standalone
+        run: |
+          cmake --build "${{ matrix.directory }}/build-dsp" --parallel \
+            --target "${{ matrix.name }}_VST3" "${{ matrix.name }}_Standalone"
+
+      - name: Package Linux VST3 and standalone
+        run: |
+          set -euo pipefail
+          artefacts="${{ matrix.directory }}/build-dsp/${{ matrix.name }}_artefacts/Release"
+          test -d "$artefacts/VST3/${{ matrix.name }}.vst3"
+          test -x "$artefacts/Standalone/${{ matrix.name }}"
+          dist="${{ matrix.directory }}/build-dsp/dist"
+          mkdir -p "$dist"
+          archive="$dist/${{ matrix.name }}-Linux-x64.tar.gz"
+          tar -czf "$archive" -C "$artefacts" \
+            "VST3/${{ matrix.name }}.vst3" \
+            "Standalone/${{ matrix.name }}"
+          test -s "$archive"
+          tar -tzf "$archive" >/dev/null
+
+      - name: Upload Linux package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-linux-${{ matrix.directory }}
+          path: ${{ matrix.directory }}/build-dsp/dist/${{ matrix.name }}-Linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 7
 
   plugin-macos:
     name: Plug-in build (${{ matrix.name }}, macOS native arch)
@@ -105,6 +158,8 @@ jobs:
             snapshot_variable: YOUKNOW106_EDITOR_SNAPSHOT
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       # Clear any committed screenshot before rendering to ensure this build produces it
       - name: Clear screenshot before rendering
@@ -141,7 +196,7 @@ jobs:
 
   dsp-tests-windows:
     name: DSP tests (${{ matrix.name }}, JUCE-free, Windows)
-    runs-on: windows-latest
+    runs-on: windows-2025
     strategy:
       fail-fast: false
       matrix:
@@ -166,13 +221,51 @@ jobs:
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: Configure
+      - name: Configure DSP tests
         run: |
-          cmake -S "${{ matrix.directory }}" -B "${{ matrix.directory }}/build-win" -G "Ninja" -DCMAKE_BUILD_TYPE=Release "-D${{ matrix.build_plugin_option }}=OFF" -DBUILD_TESTING=ON
+          cmake -S "${{ matrix.directory }}" -B "${{ matrix.directory }}/build-win" -A x64 "-D${{ matrix.build_plugin_option }}=OFF" -DBUILD_TESTING=ON "-DCMAKE_EXE_LINKER_FLAGS=/STACK:33554432"
 
       - name: Build and test DSP engine
         run: |
           cmake --build "${{ matrix.directory }}/build-win" --config Release --parallel
           ctest --test-dir "${{ matrix.directory }}/build-win" -C Release --output-on-failure
 
+      - name: Configure Windows plug-in build
+        run: |
+          cmake -S "${{ matrix.directory }}" -B "${{ matrix.directory }}/build-win" "-D${{ matrix.build_plugin_option }}=ON" -DBUILD_TESTING=OFF
+
+      - name: Build Windows VST3 and standalone
+        run: |
+          cmake --build "${{ matrix.directory }}/build-win" --config Release --parallel --target "${{ matrix.name }}_VST3" "${{ matrix.name }}_Standalone"
+
+      - name: Package Windows VST3 and standalone
+        shell: pwsh
+        run: |
+          $artefacts = "${{ matrix.directory }}/build-win/${{ matrix.name }}_artefacts/Release"
+          $vst3 = Join-Path $artefacts "VST3/${{ matrix.name }}.vst3"
+          $standalone = Join-Path $artefacts "Standalone/${{ matrix.name }}.exe"
+          if (-not (Test-Path -LiteralPath $vst3 -PathType Container)) {
+            throw "expected VST3 bundle at $vst3"
+          }
+          if (-not (Test-Path -LiteralPath $standalone -PathType Leaf)) {
+            throw "expected standalone executable at $standalone"
+          }
+          $dist = "${{ matrix.directory }}/build-win/dist"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          $zip = Join-Path $dist "${{ matrix.name }}-Windows-x64.zip"
+          Compress-Archive -LiteralPath (Join-Path $artefacts "VST3"), (Join-Path $artefacts "Standalone") -DestinationPath $zip
+          if (-not (Test-Path -LiteralPath $zip -PathType Leaf) -or
+              (Get-Item -LiteralPath $zip).Length -eq 0) {
+            throw "expected package at $zip"
+          }
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-windows-${{ matrix.directory }}
+          path: ${{ matrix.directory }}/build-win/dist/${{ matrix.name }}-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 7

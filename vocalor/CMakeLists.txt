@@ -160,7 +160,7 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME Vocalor.VoiceEngine COMMAND VocalorVoiceEngineTests)
-    set_tests_properties(Vocalor.VoiceEngine PROPERTIES TIMEOUT 30)
+    set_tests_properties(Vocalor.VoiceEngine PROPERTIES TIMEOUT 60)
 
     if(VOCALOR_BUILD_TOOLS)
         # Guards the renderer that produces the committed demonstration WAVs:

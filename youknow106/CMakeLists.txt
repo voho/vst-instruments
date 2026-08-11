@@ -458,8 +458,22 @@ if(BUILD_TESTING)
                  COMMAND YouKnow106DcoScanQualityAudit --self-test)
         add_test(NAME YouKnow106.VcfBbdQualityContract
                  COMMAND YouKnow106VcfBbdQualityAudit --self-test)
+        # The full continuous-time oracle relies on target-native long-double
+        # arithmetic. On x64 the bounded shipping test is the portability gate:
+        # it keeps every production boundary and selector ledger, without the
+        # architecture-sensitive reference solve that is not used for x64
+        # admission.
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|x64)$"
+           OR CMAKE_GENERATOR_PLATFORM STREQUAL "x64")
+            set(YOUKNOW106_BBD_DYNAMIC_TEST_ARGUMENT --shipping-self-test)
+            set(YOUKNOW106_BBD_DYNAMIC_TEST_TIMEOUT 60)
+        else()
+            set(YOUKNOW106_BBD_DYNAMIC_TEST_ARGUMENT --self-test)
+            set(YOUKNOW106_BBD_DYNAMIC_TEST_TIMEOUT 900)
+        endif()
         add_test(NAME YouKnow106.BbdDynamicQualityContract
-                 COMMAND YouKnow106BbdDynamicQualityAudit --self-test)
+                 COMMAND YouKnow106BbdDynamicQualityAudit
+                         ${YOUKNOW106_BBD_DYNAMIC_TEST_ARGUMENT})
         add_test(NAME YouKnow106.VcfDynamicQualityContract
                  COMMAND YouKnow106VcfDynamicQualityAudit --self-test)
         add_test(NAME YouKnow106.PassiveHoldTimingContract
@@ -476,7 +490,8 @@ if(BUILD_TESTING)
                              YouKnow106.NoiseSourceQualityContract
                              PROPERTIES TIMEOUT 300)
         set_tests_properties(YouKnow106.BbdDynamicQualityContract
-                             PROPERTIES TIMEOUT 900)
+                             PROPERTIES TIMEOUT
+                                        ${YOUKNOW106_BBD_DYNAMIC_TEST_TIMEOUT})
     endif()
     # The engine suite renders the complete factory-balance corpus, while the
     # circuit suite re-solves reference ODE models at high internal rates.

@@ -9,7 +9,7 @@ on:
 
 # Refresh the rolling "nightly" release so the latest build is always available.
 permissions:
-  contents: write
+  contents: read
 
 # Never interrupt an in-progress publish; just don't run two at once.
 concurrency:
@@ -24,9 +24,11 @@ jobs:
   # renderer, and a run on an unchanged model commits nothing because every
   # render is deterministic.
   refresh-audio-demos:
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: github.ref == 'refs/heads/main'
     name: Re-render the committed demo audio of every instrument
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -274,7 +276,14 @@ jobs:
 
       - name: Package ${{ matrix.name }} (ad-hoc-signed bundles)
         working-directory: ${{ matrix.directory }}
-        run: ./scripts/sign-and-package-macos.sh
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' build-macos/CMakeCache.txt)"
+          if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+            echo "error: invalid CMake project version: ${version:-missing}" >&2
+            exit 1
+          fi
+          VERSION="$version" ./scripts/sign-and-package-macos.sh
 
       - name: Check that both distributable packages were produced
         run: |
@@ -292,7 +301,7 @@ jobs:
           printf 'Packaged %s\n' "${packages[@]}"
 
       # Handed to the release job rather than published here, so the rolling
-      # release is switched once, as one complete twelve-asset set.
+      # release is switched once, as one complete cross-platform set.
       - name: Upload the distributable packages
         uses: actions/upload-artifact@v4
         with:
@@ -303,37 +312,116 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  build-windows:
+  build-linux:
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-    name: Windows build and package (${{ matrix.name }})
-    runs-on: windows-latest
+    name: Linux build and package (${{ matrix.name }})
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: Vocalor
             directory: vocalor
-            version: "1.4.0"
             build_plugin_option: VOCALOR_BUILD_PLUGIN
           - name: Drumalor
             directory: drumalor
-            version: "1.1.0"
             build_plugin_option: DRUMALOR_BUILD_PLUGIN
           - name: Neuramar
             directory: neuramar
-            version: "1.1.0"
             build_plugin_option: NEURAMAR_BUILD_PLUGIN
           - name: Electry
             directory: electry
-            version: "1.2.0"
             build_plugin_option: ELECTRY_BUILD_PLUGIN
           - name: Taikor
             directory: taikor
-            version: "1.0.0"
             build_plugin_option: TAIKOR_BUILD_PLUGIN
           - name: YouKnow106
             directory: youknow106
-            version: "1.1.0"
+            build_plugin_option: YOUKNOW106_BUILD_PLUGIN
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install JUCE Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config \
+            libasound2-dev \
+            libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev
+
+      - name: Configure
+        run: |
+          cmake \
+            -S "${{ matrix.directory }}" \
+            -B "${{ matrix.directory }}/build-linux" \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            "-D${{ matrix.build_plugin_option }}=ON" \
+            -DBUILD_TESTING=OFF
+
+      - name: Build ${{ matrix.name }} VST3 and standalone
+        run: |
+          cmake --build "${{ matrix.directory }}/build-linux" --parallel \
+            --target "${{ matrix.name }}_VST3" "${{ matrix.name }}_Standalone"
+
+      - name: Package ${{ matrix.name }} (Linux x64 tarball)
+        run: |
+          set -euo pipefail
+          artefacts="${{ matrix.directory }}/build-linux/${{ matrix.name }}_artefacts/Release"
+          test -d "$artefacts/VST3/${{ matrix.name }}.vst3"
+          test -x "$artefacts/Standalone/${{ matrix.name }}"
+          dist="${{ matrix.directory }}/build-linux/dist"
+          mkdir -p "$dist"
+          version="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' \
+            "${{ matrix.directory }}/build-linux/CMakeCache.txt")"
+          if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+            echo "error: invalid CMake project version: ${version:-missing}" >&2
+            exit 1
+          fi
+          archive="$dist/${{ matrix.name }}-${version}-Linux-x64.tar.gz"
+          tar -czf "$archive" -C "$artefacts" \
+            "VST3/${{ matrix.name }}.vst3" \
+            "Standalone/${{ matrix.name }}"
+          test -s "$archive"
+          tar -tzf "$archive" >/dev/null
+
+      - name: Upload the distributable Linux package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-packages-linux-${{ matrix.directory }}
+          path: ${{ matrix.directory }}/build-linux/dist/${{ matrix.name }}-*-Linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  build-windows:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    name: Windows build and package (${{ matrix.name }})
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Vocalor
+            directory: vocalor
+            build_plugin_option: VOCALOR_BUILD_PLUGIN
+          - name: Drumalor
+            directory: drumalor
+            build_plugin_option: DRUMALOR_BUILD_PLUGIN
+          - name: Neuramar
+            directory: neuramar
+            build_plugin_option: NEURAMAR_BUILD_PLUGIN
+          - name: Electry
+            directory: electry
+            build_plugin_option: ELECTRY_BUILD_PLUGIN
+          - name: Taikor
+            directory: taikor
+            build_plugin_option: TAIKOR_BUILD_PLUGIN
+          - name: YouKnow106
+            directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@v4
@@ -342,29 +430,40 @@ jobs:
 
       - name: Configure
         run: |
-          cmake -S "${{ matrix.directory }}" -B "${{ matrix.directory }}/build-win" -G "Ninja" -DCMAKE_BUILD_TYPE=Release "-D${{ matrix.build_plugin_option }}=ON" -DBUILD_TESTING=OFF
+          cmake -S "${{ matrix.directory }}" -B "${{ matrix.directory }}/build-win" -A x64 "-D${{ matrix.build_plugin_option }}=ON" -DBUILD_TESTING=OFF
 
-      - name: Build ${{ matrix.name }}
+      - name: Build ${{ matrix.name }} VST3 and standalone
         run: |
-          cmake --build "${{ matrix.directory }}/build-win" --parallel
+          cmake --build "${{ matrix.directory }}/build-win" --config Release --parallel --target "${{ matrix.name }}_VST3" "${{ matrix.name }}_Standalone"
 
       - name: Package ${{ matrix.name }} (Windows x64 ZIP)
         shell: pwsh
         run: |
+          $artefactDir = "${{ matrix.directory }}/build-win/${{ matrix.name }}_artefacts/Release"
+          $vst3 = Join-Path $artefactDir "VST3/${{ matrix.name }}.vst3"
+          $standalone = Join-Path $artefactDir "Standalone/${{ matrix.name }}.exe"
+          if (-not (Test-Path -LiteralPath $vst3 -PathType Container)) {
+            throw "expected VST3 bundle at $vst3"
+          }
+          if (-not (Test-Path -LiteralPath $standalone -PathType Leaf)) {
+            throw "expected standalone executable at $standalone"
+          }
+          $versionLines = @(Get-Content -LiteralPath "${{ matrix.directory }}/build-win/CMakeCache.txt" | Where-Object { $_ -match '^CMAKE_PROJECT_VERSION:STATIC=' })
+          if ($versionLines.Count -ne 1) {
+            throw "expected one CMAKE_PROJECT_VERSION entry, found $($versionLines.Count)"
+          }
+          $version = $versionLines[0] -replace '^CMAKE_PROJECT_VERSION:STATIC=', ''
+          if ($version -notmatch '^\d+(\.\d+){1,3}$') {
+            throw "invalid CMake project version: $version"
+          }
           $dist = "${{ matrix.directory }}/build-win/dist"
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
-          $zipName = "${{ matrix.name }}-${{ matrix.version }}-Windows-x64.zip"
+          $zipName = "${{ matrix.name }}-$version-Windows-x64.zip"
           $zipPath = Join-Path $dist $zipName
-          $artefactDir = "${{ matrix.directory }}/build-win/${{ matrix.name }}_artefacts"
-          Compress-Archive -Path "$artefactDir\VST3\*", "$artefactDir\Standalone\*" -DestinationPath $zipPath
-
-      - name: Check that Windows package was produced
-        shell: pwsh
-        run: |
-          $zipPath = "${{ matrix.directory }}/build-win/dist/${{ matrix.name }}-${{ matrix.version }}-Windows-x64.zip"
-          if (-not (Test-Path $zipPath)) {
-            Write-Error "expected $zipPath to exist"
-            exit 1
+          Compress-Archive -LiteralPath (Join-Path $artefactDir "VST3"), (Join-Path $artefactDir "Standalone") -DestinationPath $zipPath
+          if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf) -or
+              (Get-Item -LiteralPath $zipPath).Length -eq 0) {
+            throw "expected non-empty package at $zipPath"
           }
           Write-Host "Packaged $zipPath"
 
@@ -381,10 +480,12 @@ jobs:
   # instrument failed to build: the screenshots that were rendered are still
   # worth committing, and the missing ones are reported at the end.
   commit-screenshots:
-    if: ${{ !cancelled() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
     name: Commit the regenerated editor screenshots
     needs: build-macos
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -500,10 +601,12 @@ jobs:
   # stable public download URL. It needs every instrument, so it runs only when
   # all six built: a release is a complete set or it is not published at all.
   publish-release:
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: github.ref == 'refs/heads/main'
     name: Publish the rolling nightly release
-    needs: [build-macos, build-windows]
+    needs: [build-macos, build-linux, build-windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download every instrument's packages
         uses: actions/download-artifact@v4
@@ -512,29 +615,40 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Check the eighteen-file manifest
+      - name: Check the twenty-four-file manifest
         run: |
           set -euo pipefail
           shopt -s nullglob
           for product in Vocalor Drumalor Neuramar Electry Taikor YouKnow106; do
-            for extension in zip pkg; do
-              matches=(dist/${product}-*-macOS-universal.${extension})
-              if (( ${#matches[@]} != 1 )); then
-                echo "error: expected exactly one ${product} ${extension}, found ${#matches[@]}" >&2
-                printf '  %s\n' "${matches[@]:-(none)}" >&2
+            mac_zips=(dist/${product}-*-macOS-universal.zip)
+            if (( ${#mac_zips[@]} != 1 )); then
+              echo "error: expected exactly one ${product} macOS zip, found ${#mac_zips[@]}" >&2
+              printf '  %s\n' "${mac_zips[@]:-(none)}" >&2
+              exit 1
+            fi
+            filename="${mac_zips[0]##*/}"
+            version="${filename#${product}-}"
+            version="${version%-macOS-universal.zip}"
+            if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+              echo "error: invalid ${product} version in $filename" >&2
+              exit 1
+            fi
+            expected=(
+              "dist/${product}-${version}-macOS-universal.zip"
+              "dist/${product}-${version}-macOS-universal.pkg"
+              "dist/${product}-${version}-Linux-x64.tar.gz"
+              "dist/${product}-${version}-Windows-x64.zip"
+            )
+            for asset in "${expected[@]}"; do
+              if [[ ! -s "$asset" ]]; then
+                echo "error: missing, empty, or version-mismatched asset: $asset" >&2
                 exit 1
               fi
             done
-            win_matches=(dist/${product}-*-Windows-x64.zip)
-            if (( ${#win_matches[@]} != 1 )); then
-              echo "error: expected exactly one ${product} Windows zip, found ${#win_matches[@]}" >&2
-              printf '  %s\n' "${win_matches[@]:-(none)}" >&2
-              exit 1
-            fi
           done
           assets=(dist/*)
-          if (( ${#assets[@]} != 18 )); then
-            echo "error: expected exactly eighteen release assets, found ${#assets[@]}" >&2
+          if (( ${#assets[@]} != 24 )); then
+            echo "error: expected exactly twenty-four release assets, found ${#assets[@]}" >&2
             printf '  %s\n' "${assets[@]:-(none)}" >&2
             exit 1
           fi
@@ -556,25 +670,33 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          shopt -s nullglob
           DATE="$(date -u +%Y-%m-%d)"
           SHORT_SHA="${GITHUB_SHA:0:7}"
 
-          assets=(dist/*)
-
-          # Unique names let the previous complete release remain downloadable
-          # throughout this upload. A rerun for the same commit may safely
-          # replace only that commit's staged files.
+          # Release-facing names stay stable so documentation can link directly
+          # to each rolling nightly download. The source packages retain their
+          # CMake-derived versions and were checked as one complete manifest
+          # before any release asset is replaced.
           STAGING_DIR="${RUNNER_TEMP}/nightly-release-assets"
           rm -rf "$STAGING_DIR"
           mkdir -p "$STAGING_DIR"
           staged_assets=()
-          for asset in "${assets[@]}"; do
-            filename="${asset##*/}"
-            stem="${filename%.*}"
-            extension="${filename##*.}"
-            staged="${STAGING_DIR}/${stem}-g${SHORT_SHA}.${extension}"
-            cp -p "$asset" "$staged"
-            staged_assets+=("$staged")
+          for product in Vocalor Drumalor Neuramar Electry Taikor YouKnow106; do
+            for suffix in \
+              macOS-universal.zip \
+              macOS-universal.pkg \
+              Linux-x64.tar.gz \
+              Windows-x64.zip; do
+              matches=(dist/${product}-*-${suffix})
+              if (( ${#matches[@]} != 1 )); then
+                echo "error: expected one ${product} ${suffix} source, found ${#matches[@]}" >&2
+                exit 1
+              fi
+              staged="${STAGING_DIR}/${product}-nightly-${suffix}"
+              cp -p "${matches[0]}" "$staged"
+              staged_assets+=("$staged")
+            done
           done
           expected_asset_names=()
           for asset in "${staged_assets[@]}"; do
@@ -582,7 +704,9 @@ jobs:
           done
 
           TITLE="VST instruments nightly ($DATE)"
-          NOTES="Automated macOS (universal arm64 + x86_64) and Windows (x64) builds of Vocalor, Drumalor, Neuramar, Electry, Taikor, and YouKnow106 from \`main\` ($SHORT_SHA).
+          NOTES="Automated macOS (universal arm64 + x86_64), Linux (x64), and Windows (x64) builds of Vocalor, Drumalor, Neuramar, Electry, Taikor, and YouKnow106 from \`main\` ($SHORT_SHA).
+
+          Linux packages are built on Ubuntu 24.04 x64 and target that runtime or newer.
 
           **macOS bundles are ad-hoc signed and not notarized**, so Gatekeeper will warn. To run a nightly locally on macOS, clear the quarantine flag after unzipping:
 
@@ -621,7 +745,8 @@ jobs:
             gh release edit nightly --title "$TITLE" --prerelease --notes "$NOTES"
 
             # Prune only after upload verification and metadata/tag switching.
-            # If pruning itself fails, both complete generations remain usable.
+            # A pruning failure only leaves stale names beside the verified
+            # stable downloads.
             while IFS=$'\t' read -r asset_id asset_name; do
               is_expected=0
               for expected_name in "${expected_asset_names[@]}"; do
