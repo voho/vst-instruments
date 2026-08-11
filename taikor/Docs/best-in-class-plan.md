@@ -3618,3 +3618,173 @@ that sounds reported as having no pitch — fails it exactly as it did before, a
 
 The per-fix audio previews under `Docs/audio/` are one-time review evidence and
 are not re-rendered here.
+
+## Interaction and continuum correction — 2026-08-10
+
+This tranche began by correcting three approximations found while auditing the
+next physical-model architecture, and now also contains the first persistent
+shared-state migration. The four keyboard drums own canonical modal and
+statistical-tail state; strikes are scheduled contacts that project force into
+those banks. It is not yet the finished architecture: contact is still a
+prescribed force pulse, and the temporary storage type still contains fields
+that belong on only one side of the physical/contact split.
+
+### What landed
+
+**Collision state continuity.** A strike on an already-ringing head now applies
+restitution to modal velocity while leaving modal displacement continuous. The
+former implementation multiplied both resonator histories and therefore
+removed potential energy instantaneously. State recovery uses live pole
+coordinates cached whenever the resonator is built or retuned, rather than a
+mode's unshifted build frequency, so it remains correct after Tension Mod, pitch
+automation or the wheel has moved a ringing mode without decomposing every pole
+again at every hit.
+
+**A muted stroke leaves a physical local contact.** Tsu now leaves its free
+hand on motion already ringing on that drum for 180 ms. A symmetric five-point
+quadrature covers a 55 mm-radius palm patch. Its projection is divided by each
+mode's physical norm, so the velocity-loss rate is
+
+`d_i = (c_A / sigma) mute^2 clamp(A_p <phi_i^2>_p / N_i, 0, 1)`,
+
+with `c_A = 5000 kg m^-2 s^-1`; each control interval retains velocity by
+`exp(-d_i dt)` without stepping displacement. The statistical continuum uses
+the same physical patch/head area law and half the velocity exponent because
+its envelope is phase-averaged RMS amplitude. The contact reaches older voices
+belonging to the same drum and no other octave.
+
+**The unresolved head owns five real octaves.** Each continuum band is now a
+serial two-pole high-pass and seven-pole low-pass rather than a difference of
+low-passes. Its exact discrete white-noise variance is solved once at trigger
+time from `P = A P A^T + B B^T` by squared Smith iteration, so the requested
+RMS does not inherit filter geometry or host sample rate. The level law includes
+the approximately constant modes-per-hertz density of a two-dimensional
+membrane: unresolved amplitudes add in quadrature as `sqrt(f)` before contact
+bandwidth and hide loss shape the audible slope.
+
+**One ringing object per physical drum.** The renderer now advances at most one
+46-mode recurrence and one residual field per playable drum per sample.
+Simultaneous contacts accumulate into stable physical-mode IDs before that one
+tick; no contact retains resonator state after trigger setup. Structural
+automation rebuilds a canonical bank by stable ID while preserving modal
+displacement and velocity, residual energy, age, deadline, local constraints
+and RNG state. A new hit extends the shared tail from the time it lands rather
+than resetting or stealing it.
+
+### Regression evidence
+
+- `testCollisionChangesVelocityNotDisplacement` checks positive, zero and
+  negative retention at three live-pole shifts. Displacement agrees to `1e-14`,
+  velocity is multiplied by the requested retention to relative `1e-10`, and a
+  modal turning point cannot acquire velocity.
+- `testMutedStrokeChokesTheRingingHead` compares the same Tsu contact with only
+  its subsequent palm hold enabled or cancelled. Another drum remains unchanged
+  within `1e-6`; modal gains must be nonuniform; and the held Don tail must fall
+  below 65 percent of its collision-only control. The recovered fundamental
+  damping rate for 0.75 m versus 1.50 m heads must scale within the physically
+  expected inverse-area interval 2.5–6.5, and the recovered rate at 44.1 and
+  96 kHz must agree within 0.1 percent. The same regression proves that Ka's
+  small voicing loss does not schedule a palm, that a centre-crossing patch is
+  radially symmetric, and that one real mute-control tick leaves displacement
+  exact while multiplying velocity and kinetic energy by `g` and `g^2`; shell
+  state stays bit-identical.
+- `testTheContinuumDoesNotDependOnTheSampleRate` isolates the upper statistical
+  band at 44.1, 48, 96 and 192 kHz. The complete 4–10 kHz response must stay
+  within 1.5 dB, the isolated band within 2 dB, the resolved low bank within
+  0.5 dB, and the whole response above 400 Hz within 1.5 dB.
+- `testContinuumBandsOwnTheirOctaves` requires the first band's leakage two
+  octaves above it to be at least 24 dB down and every higher band to beat all
+  lower-band leakage in its own octave by at least 0.5 dB.
+- `testContinuumVarianceCacheLifecycle` requires a coefficient-cache hit after
+  reset to reproduce its miss bit for bit. A reused engine must also match a
+  fresh one exactly after sample-rate, diameter and pitch changes, in both its
+  continuum band data and 4096 rendered stereo samples.
+
+### Validation and cost
+
+- The interaction/continuum snapshot immediately before the shared-state
+  migration passed the native and complete JUCE suites. Those figures are
+  historical evidence for that snapshot, not a green claim for the worktree
+  after the topology change.
+- The current complete JUCE Release build succeeds for Standalone, VST3 and AU;
+  `Taikor.RenderDemos` and `Taikor.PluginProcessor` pass. The focused engine
+  suite currently has 14 assertions still being reconciled: a narrow modal
+  handoff in the pitch estimator, finite-window sample-rate statistics, two
+  articulation-tail expectations inherited from per-strike poles, and the
+  collision roll-energy comparison. This is therefore a checkpoint of the
+  migration, not a release-qualified final state.
+- Immediately before the shared-state migration, a 120-second 48 kHz/256
+  dense-roll stress at 18.75 hits/s sustained all 16 voices at 10.400 percent
+  of one CPU core, or 9.62 times real time. That was an 11.05 percent relative
+  increase over the preserved clean engine, or 1.035 percentage points of one
+  core. The final cache only removes trigger work, so this is a conservative
+  measurement for the interaction/continuum snapshot, not for the current
+  shared renderer. A new paired benchmark is required once its regressions are
+  closed.
+- The deliberately harsher 16-simultaneous-note case shows that final trigger
+  optimization directly. At 48 kHz/64, lazy exact-variance caching reduces
+  median trigger cost from 629.467 to 331.892 microseconds and complete callback
+  work from 59.48 to 37.15 percent of the 1.333 ms budget. At 48 kHz/32 the
+  cached engine uses 60.79 percent of the 0.667 ms budget and records no
+  CPU-time deadline miss in 10,000 trials (worst 542 microseconds). At 64
+  samples, four of 10,000 aggregate trials cross the deadline in one clustered
+  run (worst 1.445 ms), while the other four runs' 99.9th percentiles remain at
+  or below 620 microseconds; those tails are retained here rather than hidden
+  behind the median.
+- Rendering all 25 demonstrations produces 147.5 seconds of audio at 56.30
+  times real time, averaging 1.776 percent of one core. The relative CPU change
+  is 9.17 percent. A 1 ms profile puts 81.65 percent of samples in
+  `renderVoice`; cached live pole coordinates remove `acos`, `log` and scalar
+  `sin` from the collision hot path.
+
+### Boundary of the claim
+
+The engine now owns one rendered modal bank and one continuum per drum, and a
+new Tsu constraint acts on that same bank before its own energy enters. During
+the migration, however, contacts and physical drums still reuse the old `Voice`
+storage type; contact slots clear their temporary mode states but continue to
+carry unused arrays. The palm projection is a mode-dependent diagonal passive
+operator, not yet the exact low-rank cross-modal patch. The two heads and
+finite-column cavity remain folded into coupled eigenmodes rather than explicit
+reciprocal runtime states. The residual field is shared per drum, but is still
+statistically shaped audio rather than a calibrated physical modal-energy
+reservoir. Most importantly, bachi contact is still a scheduled `sin^1.5` force
+pulse plus instantaneous restitution, not the active passive nonlinear solve
+specified below.
+
+### Next architecture tranche, ranked
+
+1. **Finish the persistent-state split.** Replace the temporary shared `Voice`
+   storage with explicit physical-drum and lightweight contact types, remove
+   unused per-contact mode/filter arrays, and give the bank explicit batter,
+   rear-head, cavity and residual-energy ownership. Rolls, flams, muting and
+   retuning already feed one canonical recurrence; the remaining work is to
+   make that ownership complete and energy-auditable. Repeated excitation must
+   remain energy-stable; see
+   [Risse, Hélie and Bilbao (2025)](https://www.dafx.de/paper-archive/2025/DAFx25_paper_24.pdf).
+
+2. **Active nonlinear bachi contact.** Replace the scheduled force pulse with a
+   dynamic stick mass and finite footprint using the passive Hunt–Crossley law
+   `F = K[delta]+^alpha (1 + beta deltaDot)`. Solve its one scalar implicit
+   contact equation per active strike, oversampling only this local block.
+   Contact duration, rebound, brightness and energy exchange then follow
+   velocity and the head's current velocity. Primary method:
+   [Bilbao, Torin and Chatziioannou (2014)](https://arxiv.org/abs/1405.2589).
+
+3. **Promote the second head and cavity to dynamic states.** Keep the current
+   finite-column solve for calibration, but render batter and carry-head modes
+   plus a rank-one volume-compression coupling and several higher cavity poles.
+   Validate the coupled doublet and its rear-tension dependence against
+   [Suzuki and Hwang (2008)](https://www.jstage.jst.go.jp/article/ast/29/3/29_3_215/_pdf/-char/ja).
+
+4. **Exact local loss and a shared statistical tail.** Project a patch into the
+   modal basis as `f_d = -c g(g^T qDot)`: one dot product and one vector update
+   per patch, symmetric positive-semidefinite and `O(M)`. This restores
+   cross-modal damping omitted by the present diagonal gains; see
+   [Zheng and James (2011)](https://www.cs.cornell.edu/projects/Sound/mc/ModalContactSound2011.pdf).
+   Keep repeatable modes deterministic and cross to a shared band-energy field
+   only where measured modal bandwidth exceeds spacing. Hybrid deterministic /
+   statistical vibroacoustics is supported by
+   [Zhu et al. (2022)](https://doi.org/10.1016/j.jsv.2022.117221), with
+   modal-plus-residual synthesis demonstrated by
+   [Ren, Yeh and Lin (2012)](https://gamma-web.iacs.umd.edu/AUDIO_MATERIAL/examplebasedsoundsynthesis.pdf).

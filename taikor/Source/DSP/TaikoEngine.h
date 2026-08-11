@@ -395,6 +395,14 @@ private:
     // above about three hundred hertz at all.
     static constexpr int continuumBandCount = 5;
 
+    struct ContinuumVarianceCacheEntry
+    {
+        float lowCoefficient { 0.0f };
+        float highCoefficient { 0.0f };
+        float variance { 1.0f };
+        bool valid { false };
+    };
+
     // Contact solves and mode retirement run on this stride rather than per
     // sample. 32 samples is 0.67 ms at 48 kHz, well under the shortest glide.
     static constexpr int controlPeriod = 32;
@@ -465,9 +473,16 @@ private:
         float drive { 0.0f };
         float micLeft { 0.0f };
         float micRight { 0.0f };
-        // Undamped frequency in radians per sample, kept so the tension glide
-        // can retune the resonator without redoing the whole physical solve.
+        // Resting angular frequency in radians per second, kept so the tension
+        // glide can retune the resonator without redoing the physical solve.
         float omega { 0.0f };
+        // The physical radian frequency and pole radius currently encoded in
+        // the resonator. Unlike omega, these follow Tension Mod, automation and
+        // the wheel. A collision needs both, and caching values already known
+        // when the coefficients move avoids decomposing every live pole with
+        // transcendental functions at every hit.
+        double liveOmega { 0.0 };
+        double poleRadius { 0.0 };
         float decayRate { 0.0f };
         // The decay split into what moves with the head and what does not, so a
         // mode retuned while it is still sounding can be re-damped rather than
@@ -487,11 +502,20 @@ private:
         // fixed, so it is kept here and the efficiency re-evaluated at whatever
         // frequency the head has been stretched to.
         float radiationPrefactor { 0.0f };
+        // Velocity retention contributed by a palm-sized local damping patch,
+        // applied only while a muted articulation keeps the hand on the head.
+        float localMuteControlGain { 1.0f };
         std::uint8_t circumferentialOrder { 0 };
         // Which row of the mode table this came from, so a later stroke can
         // find the mode's shape at its own contact point without the whole
         // Bessel solve being redone per mode. Membrane modes only.
         std::uint8_t modeEntry { 0 };
+        // Stable construction identity inside one physical drum: two slots per
+        // membrane table row, followed by the six shell modes. Per-contact
+        // projections use this key to sum their forces before the one canonical
+        // resonator bank is advanced; lifetime sorting may move the Mode object
+        // but can never change which physical degree of freedom it names.
+        std::uint8_t physicalIndex { 0 };
         // log(level / retirement floor), so the lifetime below can be redone
         // from a new decay rate without the whole bank's levels to hand. Zero
         // for a mode that was never audible.
@@ -518,6 +542,18 @@ private:
 
     struct Voice
     {
+        // False for a lightweight strike/contact slot, true for one of the four
+        // canonical physical drum banks. During the migration the two share a
+        // storage type so the extensively tested geometry/projection builder
+        // remains one source of truth; only a physical bank's resonator and
+        // continuum states are ever rendered.
+        bool physicalBank { false };
+        // Generation of the drum geometry, material, loss and observation
+        // parameters used to build a canonical bank. Strike slots leave this
+        // at zero. A changed generation is rebuilt by stable physical mode ID
+        // while preserving displacement and velocity, so automation cannot
+        // leave a shared bank frozen at the first value it happened to see.
+        std::uint64_t configurationRevision { 0 };
         bool active { false };
         Articulation articulation { Articulation::Don };
         int octaveOffset { 0 };
@@ -529,6 +565,15 @@ private:
         std::array<Mode, resonatorCount> modes {};
         int modeCount { 0 };
         int activeModeCount { 0 };
+        // Force already projected into stable physical-mode order. Every due
+        // contact on this drum adds here, then the bank consumes and clears it
+        // in one tick. This is the structural guarantee that two simultaneous
+        // hits feed one recurrence rather than create two copies of the drum.
+        std::array<float, resonatorCount> modalInput {};
+        // Strike slots keep only these stable-ID force projections after the
+        // geometry builder has run; their temporary Mode objects are cleared
+        // before trigger() returns. Physical banks leave this array unused.
+        std::array<float, resonatorCount> modeProjection {};
 
         std::array<ContactEvent, maxContactEvents> contacts {};
         int contactCount { 0 };
@@ -571,27 +616,39 @@ private:
         float tackLowCoefficient { 0.5f };
         float tackHighCoefficient { 0.5f };
 
-        // One band of the continuum: noise through a one-pole band-pass, under
-        // its own decaying envelope. It belongs to the head, so the hand damps
-        // it along with the resolved modes.
+        // One band of the continuum: noise through a ninth-order band-pass,
+        // under its own decaying envelope. It belongs to the head, so the hand
+        // damps it along with the resolved modes.
         struct ContinuumBand
         {
-            // Two one-poles per side, cascaded, so each edge falls at twelve
-            // decibels an octave rather than six. A single pole is not enough
-            // to make a band: its skirt falls so slowly that the lowest band,
-            // which is also the loudest, was louder four octaves up than the
-            // band that belongs there, and the whole continuum above the first
-            // octave was inaudible under it. Nothing that shaped the upper
-            // bands - their tilt, their contact-duration cut - could be heard
-            // at all, because none of them were what the ear was hearing.
+            // The low states are two cascaded high-pass stages and the high
+            // states are seven cascaded low-pass stages. This is deliberately a
+            // serial band-pass rather than the difference of two low-passes:
+            // two low-passes both approach unity at DC, so their difference
+            // only has a first-order zero however many poles each side has.
+            // That old topology let the loudest, lowest continuum band mask
+            // all four bands above it. The serial topology has a genuine
+            // second-order lower skirt and a seventh-order upper skirt. The extra
+            // poles are spent only where masking can happen: a louder
+            // low band leaking upward into a quieter high one.
             float lowStateLeft { 0.0f };
             float lowStateLeft2 { 0.0f };
             float highStateLeft { 0.0f };
             float highStateLeft2 { 0.0f };
+            float highStateLeft3 { 0.0f };
+            float highStateLeft4 { 0.0f };
+            float highStateLeft5 { 0.0f };
+            float highStateLeft6 { 0.0f };
+            float highStateLeft7 { 0.0f };
             float lowStateRight { 0.0f };
             float lowStateRight2 { 0.0f };
             float highStateRight { 0.0f };
             float highStateRight2 { 0.0f };
+            float highStateRight3 { 0.0f };
+            float highStateRight4 { 0.0f };
+            float highStateRight5 { 0.0f };
+            float highStateRight6 { 0.0f };
+            float highStateRight7 { 0.0f };
             float lowCoefficient { 0.5f };
             float highCoefficient { 0.5f };
             // What the rim takes from this band, which is a constant of the
@@ -601,6 +658,10 @@ private:
             // raises omega and c together, so that number does not move. Only
             // the hide's share follows the bend.
             float lossFixed { 0.0f };
+            // Physical RMS before the band-pass throws most of a white-noise
+            // input away. Kept separately so tests can inspect the calibrated
+            // energy rather than the filter's compensating input gain.
+            float targetRms { 0.0f };
             float level { 0.0f };
             float envelope { 0.0f };
             float envelopeDecay { 0.99f };
@@ -615,6 +676,10 @@ private:
             float independent { 0.0f };
         };
         std::array<ContinuumBand, continuumBandCount> continuum {};
+        // Calibrated RMS injected into the one physical residual field when a
+        // scheduled contact begins. Kept outside ContinuumBand because a
+        // strike owns an injection, never filter or noise state.
+        std::array<float, continuumBandCount> continuumInjection {};
 
         // Attack pitch glide. A membrane held at a fixed rim cannot move
         // transversely without getting longer, and a longer head is a tighter
@@ -655,6 +720,8 @@ private:
         // Accumulated hand damping, folded into the resonator states at the
         // control tick so the envelope never runs away.
         float handGain { 1.0f };
+        int localMuteTicksRemaining { 0 };
+        float continuumMuteControlGain { 1.0f };
 
         // A low-loss drum can ring far longer than the tail the host is told
         // to expect, so a voice still has to end at the cap - but it has to be
@@ -709,6 +776,10 @@ private:
         float levelScale { 1.0f };
         // Extra head damping the free hand applies for a muted stroke.
         float muteAmount { 0.0f };
+        // A finite palm contact on motion that was already ringing. Kept
+        // separate because Ka's small muteAmount is part of its established
+        // constrained-head voicing, not a free hand left on the membrane.
+        bool palmContact { false };
         // Contact schedule: single, flam, or press roll.
         int contactCount { 1 };
         // Rim contribution: a shot that catches the hoop as well as the head.
@@ -841,6 +912,11 @@ private:
     // one head.
     [[nodiscard]] static float materialDamping (const DrumState& drum, float omega,
                                                 float extraDamping) noexcept;
+    // Exact white-noise variance of the continuum's two-high-pass/seven-low-pass
+    // cascade. Computed only while a voice is built; rendering needs the nine
+    // one-pole state updates per channel and band, but no matrix work.
+    [[nodiscard]] static float continuumBandVariance (float lowCoefficient,
+                                                       float highCoefficient) noexcept;
     // Fractional read of the airborne-path delay line. Extracted from the
     // render loop so the trickiest index arithmetic in this file can be tested
     // against a known ramp rather than inferred from the stereo image.
@@ -1040,19 +1116,27 @@ private:
     // contact. Nothing else in this instrument couples two strokes together,
     // and without it a roll is arithmetic - eight identical strokes were
     // bit-identical to eight copies of one added offline.
-    void dampRingingHeads (int excludedSlot, int octave, const StrikeProfile& profile,
+    void dampPhysicalDrum (Voice& physical, const StrikeProfile& profile,
                            float strikeRadius, const DrumState& drum,
                            float strikerMass) noexcept;
+    void ensurePhysicalDrum (int octave, const DrumState& drum) noexcept;
     void scheduleContacts (Voice& voice, const StrikeProfile& profile,
                            float contactSeconds, float peakForce,
                            float noiseLevel) noexcept;
     void applyTensionShift (Voice& voice, float shift) noexcept;
     void updateVoiceControl (Voice& voice) noexcept;
-    [[nodiscard]] float renderVoice (Voice& voice, float& rightOut) noexcept;
+    [[nodiscard]] float renderVoice (Voice& voice, Voice* physical,
+                                     float& rightOut) noexcept;
     [[nodiscard]] int findVoiceSlot() noexcept;
     void silenceVoice (Voice& voice) noexcept;
     void updateActiveVoiceCount() noexcept;
     void refreshDrumIfNeeded() noexcept;
+    // Instantaneous collision with an already-moving mode. Displacement stays
+    // continuous; only modal velocity receives the restitution impulse.
+    static void applyCollisionRetention (Mode& mode, float retention) noexcept;
+    // Radial coordinates of the symmetric centre-plus-cardinals palm rule.
+    static std::array<float, 5> palmPatchRadii (float centreRadius,
+                                                float patchRadius) noexcept;
     // Configures one resonator from a physical frequency and decay rate.
     void configureResonator (Resonator& resonator, float frequencyHz,
                              float decayRate, float gain) const noexcept;
@@ -1064,11 +1148,24 @@ private:
     EngineParameters applied_ {};
 
     std::array<Voice, maxVoices> voices_ {};
+    // The four keyboard octaves are four physical instruments. Strikes are
+    // transient contacts routed into these banks; they never own resonators.
+    std::array<Voice, drumCount> physicalDrums_ {};
+    // Incremented only by controls that alter the physical bank. Pitch-bend
+    // smoothing deliberately does not touch it: a wheel retunes the live poles
+    // instead of rebuilding forty-six modes at audio rate.
+    std::uint64_t physicalConfigurationRevision_ { 1 };
     // One resolved drum per playable octave - which is now one per instrument
     // of the family. Strokes are common and the solve involves a Bessel series
     // and an eigen-decomposition per mode, so it is done once per parameter
     // change rather than once per stroke.
     std::array<DrumState, drumCount> drumCache_ {};
+    // Filter variance depends only on its two coefficients, yet the exact
+    // Lyapunov solve used to be repeated five times for every simultaneous
+    // note. One lazy entry per physical drum and band makes a chord reuse the
+    // first note's exact result without changing any rendered state.
+    std::array<std::array<ContinuumVarianceCacheEntry, continuumBandCount>, drumCount>
+        continuumVarianceCache_ {};
     bool drumCacheValid_ { false };
     // The wheel position the cache was built at. Comparing against this rather
     // than against the per-sample increment matters at high sample rates, where

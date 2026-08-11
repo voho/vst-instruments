@@ -19,6 +19,154 @@ namespace taikor
 // delay line's index arithmetic directly. It is not part of the plug-in API.
 struct TaikoEngineTestAccess
 {
+    static const TaikoEngine::Voice& physicalForOctave (const TaikoEngine& engine,
+                                                         int octave = 0) noexcept
+    {
+        const auto index = static_cast<std::size_t> (
+            std::clamp (octave, lowestOctaveOffset, highestOctaveOffset)
+            - lowestOctaveOffset);
+        return engine.physicalDrums_[index];
+    }
+
+    static TaikoEngine::Voice& physicalForOctave (TaikoEngine& engine,
+                                                   int octave = 0) noexcept
+    {
+        const auto index = static_cast<std::size_t> (
+            std::clamp (octave, lowestOctaveOffset, highestOctaveOffset)
+            - lowestOctaveOffset);
+        return engine.physicalDrums_[index];
+    }
+
+    static const TaikoEngine::Voice& physicalForSlot (const TaikoEngine& engine,
+                                                       int slot = 0) noexcept
+    {
+        return physicalForOctave (
+            engine, engine.voices_[static_cast<std::size_t> (slot)].octaveOffset);
+    }
+
+    static TaikoEngine::Voice& physicalForSlot (TaikoEngine& engine,
+                                                 int slot = 0) noexcept
+    {
+        return physicalForOctave (
+            engine, engine.voices_[static_cast<std::size_t> (slot)].octaveOffset);
+    }
+
+    static int newestStrikeSlot (const TaikoEngine& engine) noexcept
+    {
+        int newest = 0;
+        for (int index = 1; index < TaikoEngine::maxVoices; ++index)
+            if (engine.voices_[static_cast<std::size_t> (index)].startOrder
+                > engine.voices_[static_cast<std::size_t> (newest)].startOrder)
+                newest = index;
+        return newest;
+    }
+
+    static const TaikoEngine::Voice& latestPhysicalDrum (
+        const TaikoEngine& engine) noexcept
+    {
+        return physicalForSlot (engine, newestStrikeSlot (engine));
+    }
+
+    struct CollisionState
+    {
+        double displacementBefore { 0.0 };
+        double displacementAfter { 0.0 };
+        double velocityBefore { 0.0 };
+        double velocityAfter { 0.0 };
+    };
+
+    static CollisionState applyCollision (double displacement, double previous,
+                                          float retention, float poleShift = 1.0f,
+                                          bool atTurningPoint = false) noexcept
+    {
+        TaikoEngine engine;
+        engine.prepare (48000.0, 64);
+
+        TaikoEngine::Mode mode;
+        constexpr float frequency = 137.0f;
+        constexpr float decay = 4.5f;
+        engine.configureResonator (mode.resonator, frequency * poleShift, decay, 1.0f);
+        // Deliberately leave these at the unshifted build values. A ringing
+        // voice does exactly that when its live poles move under Tension Mod or
+        // the pitch wheel, so collision recovery must read the poles themselves.
+        mode.omega = 2.0f * 3.14159265358979f * frequency;
+        mode.liveOmega = 2.0 * static_cast<double> (3.14159265358979f)
+                       * static_cast<double> (frequency * poleShift);
+        mode.poleRadius = std::sqrt (mode.resonator.a2);
+        mode.decayRate = decay;
+        mode.resonator.y1 = displacement;
+        if (atTurningPoint)
+        {
+            const double radius = std::sqrt (mode.resonator.a2);
+            const double cosine = -mode.resonator.a1 / (2.0 * radius);
+            const double angle = std::acos (std::clamp (cosine, -1.0, 1.0));
+            const double quadrature = -std::log (radius) / angle * displacement;
+            mode.resonator.y2 =
+                (displacement * cosine - quadrature * std::sin (angle)) / radius;
+        }
+        else
+        {
+            mode.resonator.y2 = previous;
+        }
+
+        const auto velocity = [] (const TaikoEngine::Mode& value)
+        {
+            const auto& resonator = value.resonator;
+            const double radius = std::sqrt (resonator.a2);
+            const double cosine = -resonator.a1 / (2.0 * radius);
+            const double angle = std::acos (std::clamp (cosine, -1.0, 1.0));
+            const double sine = std::sin (angle);
+            const double quadrature =
+                (resonator.y1 * cosine - radius * resonator.y2) / sine;
+            constexpr double sampleRate = 48000.0;
+            const double omega = angle * sampleRate;
+            const double decay = -std::log (radius) * sampleRate;
+            return omega * quadrature - decay * resonator.y1;
+        };
+
+        CollisionState result;
+        result.displacementBefore = mode.resonator.y1;
+        result.velocityBefore = velocity (mode);
+        TaikoEngine::applyCollisionRetention (mode, retention);
+        result.displacementAfter = mode.resonator.y1;
+        result.velocityAfter = velocity (mode);
+        return result;
+    }
+
+    static double shiftedPoleCacheError() noexcept
+    {
+        TaikoEngine engine;
+        engine.prepare (48000.0, 64);
+        engine.trigger (Articulation::Don, 0, 0.9f);
+        auto& voice = physicalForOctave (engine);
+        engine.applyTensionShift (voice, 1.37f);
+
+        double maximum = 0.0;
+        for (int index = 0; index < voice.activeModeCount; ++index)
+        {
+            const auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (! mode.membrane || ! (mode.poleRadius > 0.0))
+                continue;
+            const double radius = std::sqrt (mode.resonator.a2);
+            const double cosine = -mode.resonator.a1 / (2.0 * radius);
+            const double angle = std::acos (std::clamp (cosine, -1.0, 1.0));
+            const double omega = angle * engine.sampleRate_;
+            maximum = std::max (
+                maximum,
+                std::abs (static_cast<double> (mode.liveOmega) - omega)
+                    / std::max (omega, 1.0));
+            maximum = std::max (
+                maximum,
+                std::abs (mode.poleRadius - radius) / std::max (radius, 1.0e-12));
+        }
+        return maximum;
+    }
+
+    static std::array<float, 5> palmRadii (float centre, float radius) noexcept
+    {
+        return TaikoEngine::palmPatchRadii (centre, radius);
+    }
+
     static float readDelayLine (const std::array<float, TaikoEngine::directLineSize>& line,
                                 int writeIndex, float delaySamples) noexcept
     {
@@ -26,10 +174,11 @@ struct TaikoEngineTestAccess
     }
 
     static constexpr int lineSize = TaikoEngine::directLineSize;
+    static constexpr int controlInterval = TaikoEngine::controlPeriod;
 
     static int activeModeCount (const TaikoEngine& engine) noexcept
     {
-        return engine.voices_[0].activeModeCount;
+        return physicalForOctave (engine).activeModeCount;
     }
 
     // The two airborne path delays, in samples, as the strike geometry
@@ -64,7 +213,7 @@ struct TaikoEngineTestAccess
                                                int slot = 0)
     {
         std::vector<float> result;
-        const auto& voice = engine.voices_[static_cast<std::size_t> (slot)];
+        const auto& voice = physicalForSlot (engine, slot);
         for (int index = 0; index < voice.modeCount; ++index)
         {
             const auto& mode = voice.modes[static_cast<std::size_t> (index)];
@@ -82,7 +231,7 @@ struct TaikoEngineTestAccess
                                       int slot = 0)
     {
         std::vector<double> result;
-        const auto& voice = engine.voices_[static_cast<std::size_t> (slot)];
+        const auto& voice = physicalForSlot (engine, slot);
         for (int index = 0; index < voice.modeCount; ++index)
         {
             const auto& mode = voice.modes[static_cast<std::size_t> (index)];
@@ -98,12 +247,10 @@ struct TaikoEngineTestAccess
     {
         double total = 0.0;
         const auto& voice = engine.voices_[static_cast<std::size_t> (slot)];
-        for (int index = 0; index < voice.modeCount; ++index)
-        {
-            const auto& mode = voice.modes[static_cast<std::size_t> (index)];
-            if (! mode.membrane)
-                total += std::abs (static_cast<double> (mode.drive));
-        }
+        for (int index = TaikoEngine::membraneResonatorCount;
+             index < TaikoEngine::resonatorCount; ++index)
+            total += std::abs (static_cast<double> (
+                voice.modeProjection[static_cast<std::size_t> (index)]));
         return total;
     }
 
@@ -118,6 +265,158 @@ struct TaikoEngineTestAccess
         return -1;
     }
 
+    static void silenceNewestVoice (TaikoEngine& engine) noexcept
+    {
+        const auto newest = static_cast<std::size_t> (newestStrikeSlot (engine));
+        engine.silenceVoice (engine.voices_[newest]);
+        engine.updateActiveVoiceCount();
+    }
+
+    struct LocalMuteState
+    {
+        int ticks { 0 };
+        float minimumGain { 1.0f };
+        float maximumGain { 1.0f };
+        float fundamentalGain { 1.0f };
+    };
+
+    static LocalMuteState oldestActiveMute (const TaikoEngine& engine) noexcept
+    {
+        const auto* oldest = &physicalForOctave (engine);
+
+        LocalMuteState result;
+        if (! oldest->active)
+            return result;
+        result.ticks = oldest->localMuteTicksRemaining;
+        result.minimumGain = 1.0f;
+        result.maximumGain = 0.0f;
+        for (int index = 0; index < oldest->activeModeCount; ++index)
+        {
+            const auto& mode = oldest->modes[static_cast<std::size_t> (index)];
+            if (! mode.membrane)
+                continue;
+            result.minimumGain = std::min (result.minimumGain,
+                                           mode.localMuteControlGain);
+            result.maximumGain = std::max (result.maximumGain,
+                                           mode.localMuteControlGain);
+            if (mode.modeEntry == 0)
+                result.fundamentalGain = mode.localMuteControlGain;
+        }
+        return result;
+    }
+
+    static void cancelOldestMute (TaikoEngine& engine) noexcept
+    {
+        auto* oldest = &physicalForOctave (engine);
+        if (! oldest->active)
+            return;
+
+        oldest->localMuteTicksRemaining = 0;
+        oldest->continuumMuteControlGain = 1.0f;
+        for (int index = 0; index < oldest->modeCount; ++index)
+            oldest->modes[static_cast<std::size_t> (index)].localMuteControlGain = 1.0f;
+    }
+
+    struct MuteTickState
+    {
+        int membraneModes { 0 };
+        double displacementError { 0.0 };
+        double velocityError { 0.0 };
+        double kineticError { 0.0 };
+        double shellStateError { 0.0 };
+    };
+
+    static MuteTickState probeMuteTick() noexcept
+    {
+        EngineParameters parameters;
+        parameters.humanise = 0.0f;
+        parameters.tensionModulation = 0.0f;
+
+        TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, 64);
+        engine.trigger (Articulation::Don, 0, 0.92f);
+        for (int sample = 0; sample < 4800; ++sample)
+        {
+            float left = 0.0f;
+            float right = 0.0f;
+            engine.process (&left, &right, 1);
+        }
+        engine.trigger (Articulation::Tsu, 0, 0.82f);
+        silenceNewestVoice (engine);
+
+        auto* oldest = &physicalForOctave (engine);
+        MuteTickState result;
+        if (! oldest->active)
+            return result;
+
+        struct Before
+        {
+            double y1 { 0.0 };
+            double y2 { 0.0 };
+            double velocity { 0.0 };
+            double gain { 1.0 };
+            bool membrane { false };
+        };
+        std::vector<Before> before (static_cast<std::size_t> (oldest->activeModeCount));
+
+        const auto velocityOf = [] (const TaikoEngine::Mode& mode)
+        {
+            const auto& resonator = mode.resonator;
+            if (! (mode.poleRadius > 0.0) || ! (mode.liveOmega > 0.0)
+                || std::abs (resonator.b0) < 1.0e-12)
+                return 0.0;
+            const double cosine = -resonator.a1 / (2.0 * mode.poleRadius);
+            const double quadrature =
+                (resonator.y1 * cosine - mode.poleRadius * resonator.y2)
+                / resonator.b0;
+            return mode.liveOmega * quadrature
+                 - static_cast<double> (mode.decayRate) * resonator.y1;
+        };
+
+        for (int index = 0; index < oldest->activeModeCount; ++index)
+        {
+            const auto& mode = oldest->modes[static_cast<std::size_t> (index)];
+            auto& state = before[static_cast<std::size_t> (index)];
+            state.y1 = mode.resonator.y1;
+            state.y2 = mode.resonator.y2;
+            state.velocity = velocityOf (mode);
+            state.gain = mode.localMuteControlGain;
+            state.membrane = mode.membrane;
+        }
+
+        engine.updateVoiceControl (*oldest);
+
+        for (int index = 0; index < oldest->activeModeCount; ++index)
+        {
+            const auto& mode = oldest->modes[static_cast<std::size_t> (index)];
+            const auto& state = before[static_cast<std::size_t> (index)];
+            if (! state.membrane)
+            {
+                result.shellStateError = std::max (
+                    result.shellStateError,
+                    std::max (std::abs (mode.resonator.y1 - state.y1),
+                              std::abs (mode.resonator.y2 - state.y2)));
+                continue;
+            }
+
+            ++result.membraneModes;
+            result.displacementError = std::max (
+                result.displacementError,
+                std::abs (mode.resonator.y1 - state.y1));
+            const double velocity = velocityOf (mode);
+            const double expected = state.gain * state.velocity;
+            result.velocityError = std::max (
+                result.velocityError,
+                std::abs (velocity - expected) / std::max (std::abs (state.velocity), 1.0));
+            result.kineticError = std::max (
+                result.kineticError,
+                std::abs (velocity * velocity - expected * expected)
+                    / std::max (state.velocity * state.velocity, 1.0));
+        }
+        return result;
+    }
+
     // The whole modal bank of the most recently struck voice. Slot zero is not
     // it once anything else is still ringing.
     static std::vector<std::array<float, 5>> newestVoiceBank (const TaikoEngine& engine)
@@ -128,12 +427,23 @@ struct TaikoEngineTestAccess
                 newest = index;
 
         std::vector<std::array<float, 5>> bank;
-        const auto& voice = engine.voices_[newest];
+        const auto& strike = engine.voices_[newest];
+        const auto& voice = physicalForSlot (engine, static_cast<int> (newest));
         for (int index = 0; index < voice.modeCount; ++index)
         {
             const auto& mode = voice.modes[static_cast<std::size_t> (index)];
-            bank.push_back ({ mode.omega, mode.decayRate, mode.drive, mode.micLeft,
-                              mode.micRight });
+            // A shared bank is still carrying the first stroke's nonlinear
+            // tension when the second arrives. Cache identity is a question
+            // about the new control's rest configuration, not about erasing
+            // that physical history, so compare the decay reconstructed at
+            // the mode's rest frequency rather than the live bent rate.
+            const float restDecay = mode.membrane
+                ? TaikoEngine::membraneDecayAt (voice, mode, mode.omega)
+                : mode.decayRate;
+            bank.push_back ({
+                mode.omega, restDecay,
+                strike.modeProjection[static_cast<std::size_t> (mode.physicalIndex)],
+                mode.micLeft, mode.micRight });
         }
         return bank;
     }
@@ -144,7 +454,7 @@ struct TaikoEngineTestAccess
     static std::vector<float> membraneT60s (const TaikoEngine& engine)
     {
         std::vector<std::pair<float, float>> byFrequency;
-        const auto& voice = engine.voices_[0];
+        const auto& voice = latestPhysicalDrum (engine);
         for (int index = 0; index < voice.modeCount; ++index)
         {
             const auto& mode = voice.modes[static_cast<std::size_t> (index)];
@@ -168,7 +478,7 @@ struct TaikoEngineTestAccess
     static std::vector<float> membraneFrequencies (const TaikoEngine& engine)
     {
         std::vector<float> result;
-        const auto& voice = engine.voices_[0];
+        const auto& voice = latestPhysicalDrum (engine);
         for (int index = 0; index < voice.modeCount; ++index)
         {
             const auto& mode = voice.modes[static_cast<std::size_t> (index)];
@@ -185,11 +495,66 @@ struct TaikoEngineTestAccess
     static std::vector<float> continuumCoefficients (const TaikoEngine& engine)
     {
         std::vector<float> result;
+        const auto& voice = physicalForOctave (engine);
+        for (const auto& band : voice.continuum)
+            if (band.centre > 0.0f)
+                result.push_back (band.highCoefficient);
+        return result;
+    }
+
+    struct ContinuumBandInfo
+    {
+        float centre { 0.0f };
+        float lowCoefficient { 0.0f };
+        float highCoefficient { 0.0f };
+        float targetRms { 0.0f };
+        float level { 0.0f };
+    };
+
+    static std::vector<ContinuumBandInfo> continuumBands (const TaikoEngine& engine)
+    {
+        std::vector<ContinuumBandInfo> result;
         const auto& voice = engine.voices_[0];
         for (const auto& band : voice.continuum)
             if (band.level > 0.0f)
-                result.push_back (band.highCoefficient);
+                result.push_back ({ band.centre, band.lowCoefficient,
+                                    band.highCoefficient, band.targetRms, band.level });
         return result;
+    }
+
+    static int validContinuumVarianceEntries (const TaikoEngine& engine) noexcept
+    {
+        int count = 0;
+        for (const auto& drum : engine.continuumVarianceCache_)
+            for (const auto& band : drum)
+                if (band.valid)
+                    ++count;
+        return count;
+    }
+
+    // Leave one continuum band as the only audible path. The contact is kept
+    // because it is what lights the band's energy; resolved membrane/shell
+    // modes, contact noise, tack rattle and the airborne click are silenced so
+    // a test can ask whether this filter owns its octave rather than infer it
+    // through the rest of a stroke.
+    static void isolateContinuumBand (TaikoEngine& engine, int kept,
+                                      int slot = 0) noexcept
+    {
+        auto& voice = engine.voices_[static_cast<std::size_t> (slot)];
+        voice.modeProjection.fill (0.0f);
+        for (int index = 0; index < TaikoEngine::continuumBandCount; ++index)
+            if (index != kept)
+            {
+                auto& band = voice.continuum[static_cast<std::size_t> (index)];
+                band.targetRms = 0.0f;
+                band.level = 0.0f;
+                voice.continuumInjection[static_cast<std::size_t> (index)] = 0.0f;
+            }
+        for (auto& contact : voice.contacts)
+            contact.noiseAmplitude = 0.0f;
+        voice.tackScale = 0.0f;
+        voice.directGainLeft = 0.0f;
+        voice.directGainRight = 0.0f;
     }
 
     // Silence the head's continuum on a voice that has already been triggered,
@@ -206,7 +571,13 @@ struct TaikoEngineTestAccess
     static void silenceContinuum (TaikoEngine& engine, int slot = 0) noexcept
     {
         for (auto& band : engine.voices_[static_cast<std::size_t> (slot)].continuum)
+        {
+            band.targetRms = 0.0f;
             band.level = 0.0f;
+        }
+        engine.voices_[static_cast<std::size_t> (slot)].continuumInjection.fill (0.0f);
+        for (auto& band : physicalForSlot (engine, slot).continuum)
+            band.envelope = 0.0f;
     }
 
     // The frequency multiplier the attack glide is currently applying to the
@@ -215,7 +586,7 @@ struct TaikoEngineTestAccess
     // it can resolve.
     static float appliedTensionShift (const TaikoEngine& engine, int slot = 0) noexcept
     {
-        return engine.voices_[static_cast<std::size_t> (slot)].appliedTensionShift;
+        return physicalForSlot (engine, slot).appliedTensionShift;
     }
 
     // The tack line as the stroke set it up. Read rather than measured for the
@@ -244,7 +615,7 @@ struct TaikoEngineTestAccess
 
     static bool everyDecayIsFinite (const TaikoEngine& engine)
     {
-        for (const auto& voice : engine.voices_)
+        for (const auto& voice : engine.physicalDrums_)
             for (int index = 0; index < voice.modeCount; ++index)
             {
                 const auto& mode = voice.modes[static_cast<std::size_t> (index)];
@@ -272,6 +643,131 @@ struct TaikoEngineTestAccess
             if (voice.active)
                 ++count;
         return count;
+    }
+
+    struct SharedTopology
+    {
+        int octave0Modes { 0 };
+        int octave1Modes { 0 };
+        int contactSlots { 0 };
+        int contactModeStates { 0 };
+        bool stableAddress { false };
+        bool uniqueModeIds { false };
+    };
+
+    static SharedTopology sharedTopology() noexcept
+    {
+        TaikoEngine engine;
+        EngineParameters parameters;
+        parameters.humanise = 0.0f;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, 64);
+
+        engine.trigger (Articulation::Don, 0, 0.8f);
+        const auto* address = &physicalForOctave (engine, 0);
+        engine.trigger (Articulation::Ka, 0, 0.8f);
+        engine.trigger (Articulation::Tsu, 0, 0.8f);
+
+        SharedTopology result;
+        const auto& first = physicalForOctave (engine, 0);
+        result.stableAddress = address == &first;
+        result.octave0Modes = first.modeCount;
+        std::set<int> ids;
+        for (int index = 0; index < first.modeCount; ++index)
+            ids.insert (first.modes[static_cast<std::size_t> (index)].physicalIndex);
+        result.uniqueModeIds = static_cast<int> (ids.size()) == first.modeCount;
+
+        for (const auto& strike : engine.voices_)
+            if (strike.active)
+            {
+                ++result.contactSlots;
+                result.contactModeStates += strike.modeCount;
+            }
+
+        engine.trigger (Articulation::Don, 1, 0.8f);
+        result.octave1Modes = physicalForOctave (engine, 1).modeCount;
+        return result;
+    }
+
+    static double sharedRecurrenceError() noexcept
+    {
+        TaikoEngine engine;
+        EngineParameters parameters;
+        parameters.humanise = 0.0f;
+        parameters.strikeNoise = 0.0f;
+        parameters.tensionModulation = 0.0f;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, 1);
+        engine.trigger (Articulation::Don, 0, 0.8f);
+        engine.trigger (Articulation::Don, 0, 0.8f);
+
+        auto& physical = physicalForOctave (engine);
+        auto& first = engine.voices_[0];
+        auto& second = engine.voices_[1];
+        first.modeProjection.fill (0.0f);
+        second.modeProjection.fill (0.0f);
+
+        auto& mode = physical.modes[0];
+        const auto id = static_cast<std::size_t> (mode.physicalIndex);
+        first.modeProjection[id] = 0.25f;
+        second.modeProjection[id] = -0.10f;
+        first.contactRemaining = second.contactRemaining = 3u;
+        first.contactLength = second.contactLength = 4u;
+        first.contactAmplitude = 120.0f;
+        second.contactAmplitude = 70.0f;
+        first.contactNoiseAmplitude = second.contactNoiseAmplitude = 0.0f;
+        first.nextContact = first.contactCount;
+        second.nextContact = second.contactCount;
+        first.tackScale = second.tackScale = 0.0f;
+        first.directGainLeft = first.directGainRight = 0.0f;
+        second.directGainLeft = second.directGainRight = 0.0f;
+
+        mode.resonator.y1 = 0.23;
+        mode.resonator.y2 = -0.11;
+        physical.tensionDepth = 0.0f;
+        physical.controlCountdown = 8;
+
+        const double arch = std::pow (std::sin (3.14159265358979323846 * 0.25), 1.5);
+        const double input = arch * (120.0 * 0.25 - 70.0 * 0.10);
+        const double expected = mode.resonator.b0 * input
+                              - mode.resonator.a1 * mode.resonator.y1
+                              - mode.resonator.a2 * mode.resonator.y2;
+
+        float left = 0.0f;
+        float right = 0.0f;
+        engine.process (&left, &right, 1);
+        return std::abs (mode.resonator.y1 - expected);
+    }
+
+    static bool secondTriggerPreservesFirstTransient() noexcept
+    {
+        TaikoEngine engine;
+        EngineParameters parameters;
+        parameters.humanise = 0.0f;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, 64);
+        engine.trigger (Articulation::Don, 0, 0.8f);
+
+        const auto projection = engine.voices_[0].modeProjection;
+        const auto injection = engine.voices_[0].continuumInjection;
+        const auto noiseState = engine.voices_[0].noiseState;
+        const auto directWrite = engine.voices_[0].directWriteIndex;
+        const auto directPrevious = engine.voices_[0].directPrevious;
+        const auto contactCount = engine.voices_[0].contactCount;
+        const auto firstContact = engine.voices_[0].contacts[0];
+
+        engine.trigger (Articulation::Ka, 0, 0.7f);
+        const auto& first = engine.voices_[0];
+        return first.modeProjection == projection
+            && first.continuumInjection == injection
+            && first.noiseState == noiseState
+            && first.directWriteIndex == directWrite
+            && first.directPrevious == directPrevious
+            && first.contactCount == contactCount
+            && first.contacts[0].startSample == firstContact.startSample
+            && first.contacts[0].lengthSamples == firstContact.lengthSamples
+            && first.contacts[0].amplitude == firstContact.amplitude
+            && first.contacts[0].noiseAmplitude == firstContact.noiseAmplitude;
     }
 
     static float contactSecondsFor (const EngineParameters& parameters,
@@ -1597,8 +2093,10 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
 // place the scan.
 //
 // Measured, factory settings, 48 kHz, the strongest partial of a 0.9 s window
-// opening 80 ms after the strike, over Don and Tsu at velocities 0.35, 0.85 and
-// 1.00:
+// opening 80 ms after an open Don at velocities 0.35, 0.85 and 1.00. A Tsu is
+// intentionally excluded: its palm is a time-varying boundary condition and
+// can make a different mode win while the head is being choked; treating that
+// as a pitch error would require a muted drum to masquerade as an open one.
 //
 //   o-daiko      59.56 .. 59.68 Hz    spread  3.3 cents
 //   chu-daiko   119.49 .. 119.97      spread  7.0
@@ -1636,9 +2134,6 @@ void testTheFourDrumsStepInHeardOctaves()
         { taikor::Articulation::Don, 0.35f },
         { taikor::Articulation::Don, 0.85f },
         { taikor::Articulation::Don, 1.00f },
-        { taikor::Articulation::Tsu, 0.35f },
-        { taikor::Articulation::Tsu, 0.85f },
-        { taikor::Articulation::Tsu, 1.00f },
     };
 
     // The blind scan. Two octaves either side of the nominal, a fortieth of a
@@ -1652,7 +2147,7 @@ void testTheFourDrumsStepInHeardOctaves()
     const auto strongestPartial = [&] (const std::vector<float>& channel,
                                        double nominal)
     {
-        const auto power = [&channel, first, last] (double frequency)
+        const auto power = [&channel] (double frequency)
         {
             const auto magnitude =
                 binMagnitude (channel, frequency, sampleRate, first, last);
@@ -1714,7 +2209,8 @@ void testTheFourDrumsStepInHeardOctaves()
 
         // And it has to be the pitch the engine says the drum is at, or the
         // readout and the instrument are two different claims again.
-        const auto centre = std::pow (product, 1.0 / 6.0);
+        const auto centre = std::pow (
+            product, 1.0 / static_cast<double> (std::size (strokes)));
         expect (std::abs (1200.0 * std::log2 (centre / nominal)) < 20.0,
                 "the pad does not sound where the engine says it does: "
                     + std::to_string (centre) + " against "
@@ -3220,43 +3716,57 @@ void testSampleRateConsistency()
     expect (rendered.finite, "an absurd sample rate must not produce non-finite audio");
 }
 
-// The pitch staying put is not the whole of rate independence. Everything above
-// the crossover is the continuum, and the continuum used to be calibrated
-// against mode.drive - a per-sample integration gain carrying a 1/rate that a
-// band-passed noise sequence has no use for. A session moved from 48 to 96 kHz
-// came back six decibels darker above 4 kHz, and the two tests above it saw
-// nothing, because they ask about finiteness, level, clipping and pitch.
+// The pitch staying put is not the whole of rate independence. The statistical
+// tail is driven by discrete white noise, so its filter variance has to be
+// normalised explicitly; otherwise changing the host clock changes the drum's
+// upper spectrum even though none of its physical parameters moved.
 void testTheContinuumDoesNotDependOnTheSampleRate()
 {
     auto parameters = defaultParameters();
     parameters.humanise = 0.0f;
+    parameters.tensionModulation = 0.0f;
 
-    // Eighty-five milliseconds, so the window holds the whole of the region in
-    // question and the bin spacing is 11.76 Hz at every rate.
     constexpr double windowSeconds = 0.085;
 
     struct Reading
     {
         double rate { 0.0 };
-        double high { 0.0 };
+        double highWindowed { 0.0 };
         double low { 0.0 };
         double wide { 0.0 };
-        double highWindowed { 0.0 };
+        double isolatedTop { 0.0 };
     };
 
     std::vector<Reading> readings;
     for (const double sampleRate : { 44100.0, 48000.0, 96000.0, 192000.0 })
     {
-        const auto samples =
-            static_cast<int> (sampleRate * windowSeconds);
+        const auto samples = static_cast<int> (sampleRate * windowSeconds);
         const auto mono = strike (parameters, taikor::Articulation::Don, 0, 0.92f,
                                   sampleRate, samples)
                               .mono();
+
+        taikor::TaikoEngine isolated;
+        isolated.setParameters (parameters);
+        isolated.prepare (sampleRate, defaultBlockSize);
+        isolated.trigger (taikor::Articulation::Don, 0, 0.92f);
+        const auto bands = taikor::TaikoEngineTestAccess::continuumBands (isolated);
+        expect (bands.size() == 5,
+                "the reference drum must carry all five continuum octaves");
+        if (bands.empty())
+            return;
+
+        const int top = static_cast<int> (bands.size()) - 1;
+        taikor::TaikoEngineTestAccess::isolateContinuumBand (isolated, top);
+        const auto topOnly =
+            render (isolated, static_cast<int> (sampleRate * 0.020)).mono();
+        const double centre = bands.back().centre;
+
         readings.push_back ({ sampleRate,
-                              bandLevelDb (mono, sampleRate, 4000.0, 10000.0),
+                              bandLevelHannDb (mono, sampleRate, 4000.0, 10000.0),
                               bandLevelDb (mono, sampleRate, 40.0, 200.0),
                               bandLevelDb (mono, sampleRate, 400.0, 16000.0),
-                              bandLevelHannDb (mono, sampleRate, 4000.0, 10000.0) });
+                              bandLevelHannDb (topOnly, sampleRate,
+                                               centre / 1.35, centre * 1.35) });
     }
 
     const auto spread = [&readings] (double Reading::* band)
@@ -3271,95 +3781,109 @@ void testTheContinuumDoesNotDependOnTheSampleRate()
         return highest - lowest;
     };
 
-    // Three decibels rather than one because the click and contact-noise path
-    // has a rate dependence of its own that this is not about: the Bachi
-    // stroke, which carried no continuum at all and has since been retired with
-    // the stick-on-stick model, moved 2.11 dB in this band by 96 kHz and 5.51 dB
-    // by 192 kHz. What is being asserted is that the continuum has stopped
-    // contributing one. Re-taken on the shipping tree by removing the rate
-    // factor from membranePeak: the spread here is then 12.26 dB, and 48 kHz to
-    // 96 kHz alone is 6.07 dB. It read 8.73 dB when this step landed, on a tree
-    // whose drums the cavity solve and the four-by-four grid have since
-    // changed.
-    //
-    // It was two decibels when this step landed, against a measured 1.54, and
-    // step 4 - which moves the drum's own tuning and nothing about the
-    // continuum or the sample rate - took the reading to 2.51. That is the
-    // window rather than the audio. This band of a Don at C3 has almost nothing
-    // in it, the rectangular window's sidelobes fall only as one over the
-    // offset, and the drum's bottom two octaves therefore set most of what is
-    // read here; move the breathing branch by four hertz and the interference
-    // between those sidelobes at each rate rearranges. Measured through the
-    // same sum under a Hann window, whose sidelobes fall as the cube of the
-    // offset, the spread is 0.9045 dB before step 4 and 0.9329 after - three
-    // hundredths of a decibel, on a change that moved the rectangular reading
-    // by a decibel. So the clause below is widened and the honest version of it
-    // is asserted alongside, tighter than the original ever was.
-    // Four decibels rather than three, and it is the estimator again: the
-    // reference drum's bottom two octaves have just moved down by most of an
-    // octave, so the rectangular window's sidelobes - which fall only as one
-    // over the offset and are most of what is read in a band this empty -
-    // interfere differently at each rate. The windowed clause below is the
-    // honest one and it is unchanged: measured 3.68 dB here and 0.98 dB there.
-    expect (spread (&Reading::high) < 4.0,
-            "the 4-10 kHz band moved with the host sample rate, so the head's "
-            "continuum is still being calibrated against a per-sample gain: "
-                + std::to_string (spread (&Reading::high)));
+    std::string rateReadings;
+    for (const auto& reading : readings)
+        rateReadings += " [" + std::to_string (reading.rate) + ": high "
+                      + std::to_string (reading.highWindowed) + ", isolated "
+                      + std::to_string (reading.isolatedTop) + ", wide "
+                      + std::to_string (reading.wide) + "]";
+
     expect (spread (&Reading::highWindowed) < 1.5,
-            "the 4-10 kHz band moved with the host sample rate under a window "
-            "that does not leak, which is the audio and not the estimator");
-    // The resolved bank was already rate-independent and the fix must not have
-    // reached it.
+            "the 4-10 kHz response moved with the host sample rate"
+                + rateReadings);
+    // This is the direct discriminator: modes, click and contact texture have
+    // been removed and the uppermost stochastic octave is measured alone.
+    // Two decibels includes the finite variance of a 20 ms noise observation;
+    // the old per-sample calibration moved roughly six per rate doubling.
+    expect (spread (&Reading::isolatedTop) < 2.0,
+            "an isolated continuum band changed energy with the host clock"
+                + rateReadings);
     expect (spread (&Reading::low) < 0.5,
-            "the fix to the continuum moved the resolved bank");
+            "the resolved bank moved with the host sample rate");
     expect (spread (&Reading::wide) < 1.5,
             "the drum's whole voice above 400 Hz moved with the host sample rate");
 
-    // What a 48 kHz session sounds like must not have changed at all. The
-    // calibration constant was re-anchored by exactly the sample period it used
-    // to inherit, so this is arithmetic rather than a tolerance.
-    //
-    // This is also the clause that stops the rate dependence being cured by
-    // dropping the microphone factor out of the reference: membranePeak's own
-    // micLeft is 0.3352 at the factory Mic Distance, so leaving it out moves
-    // this level by 12.11 dB.
-    //
-    // A literal, and it is taken at the factory Tension Mod of 0.4, so the
-    // attack glide is in it. The glide is worth 0.68 dB in this band over this
-    // window - Tension Mod 0 reads -54.0569 and 1.0 reads -54.4193 - so work on
-    // the glide can legitimately move this number by a few tenths. Re-take the
-    // literal if it does; do not widen the tolerance.
-    const double reference48k = -58.0037;
-    expect (std::abs (readings[1].high - reference48k) < 0.1,
-            "the 48 kHz level of the 4-10 kHz band moved, so this was not a "
-            "change of units: " + std::to_string (readings[1].high));
-
-    // And the microphone factor has to still be the factory distance's rather
-    // than a constant standing in for it, which the clause above cannot see
-    // because it only ever looks at one distance. Backing the pair off from
-    // 3 cm to 40 cm takes 11.68 dB out of this band today. A guard, not a
-    // discriminator: nothing in this step moves it.
+    // The continuum is calibrated against the membrane as observed by the mic,
+    // not against an unobserved displacement. Read a middle band alone so the
+    // click cannot dilute the distance law being guarded.
+    const auto isolatedMiddle = [&parameters] (float distance)
     {
-        const auto samples = static_cast<int> (48000.0 * windowSeconds);
-        auto close = parameters;
-        close.micDistance = 0.0f;
-        auto distant = parameters;
-        distant.micDistance = 1.0f;
+        auto placed = parameters;
+        placed.micDistance = distance;
+        taikor::TaikoEngine engine;
+        engine.setParameters (placed);
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.trigger (taikor::Articulation::Don, 0, 0.92f);
+        const auto bands = taikor::TaikoEngineTestAccess::continuumBands (engine);
+        if (bands.size() < 3)
+            return -300.0;
+        taikor::TaikoEngineTestAccess::isolateContinuumBand (engine, 2);
+        const auto mono = render (engine, 960).mono();
+        return bandLevelDb (mono, 48000.0, bands[2].centre / 1.35,
+                            bands[2].centre * 1.35);
+    };
 
-        const auto near = bandLevelDb (strike (close, taikor::Articulation::Don, 0,
-                                               0.92f, 48000.0, samples)
-                                           .mono(),
-                                       48000.0, 4000.0, 10000.0);
-        const auto far = bandLevelDb (strike (distant, taikor::Articulation::Don, 0,
-                                              0.92f, 48000.0, samples)
-                                          .mono(),
-                                      48000.0, 4000.0, 10000.0);
+    const double distanceDrop = isolatedMiddle (0.0f) - isolatedMiddle (1.0f);
+    expect (distanceDrop > 8.0 && distanceDrop < 15.0,
+            "Mic Distance stopped attenuating the observed head continuum: "
+                + std::to_string (distanceDrop));
+}
 
-        expect (std::abs ((near - far) - 11.7) < 1.5,
+// Each residual octave must be audible in its own region. The former
+// difference-of-low-passes topology left a broad skirt from the first, loudest
+// band over the next four; changing a high band's physics then changed almost
+// nothing in the rendered drum.
+void testContinuumBandsOwnTheirOctaves()
+{
+    auto parameters = defaultParameters();
+    parameters.humanise = 0.0f;
+    parameters.headDamping = 0.0f;
+    parameters.tensionModulation = 0.0f;
 
-                "Mic Distance stopped moving the head's continuum, so the "
-                "reference it is calibrated against is no longer observed "
-                "through the microphone");
+    taikor::TaikoEngine probe;
+    probe.setParameters (parameters);
+    probe.prepare (48000.0, defaultBlockSize);
+    probe.trigger (taikor::Articulation::Don, 0, 0.92f);
+    const auto bands = taikor::TaikoEngineTestAccess::continuumBands (probe);
+    expect (bands.size() == 5,
+            "the reference drum must carry all five continuum octaves");
+    if (bands.size() != 5)
+        return;
+
+    std::vector<std::vector<double>> levels (
+        bands.size(), std::vector<double> (bands.size(), -300.0));
+    for (std::size_t source = 0; source < bands.size(); ++source)
+    {
+        taikor::TaikoEngine isolated;
+        isolated.setParameters (parameters);
+        isolated.prepare (48000.0, defaultBlockSize);
+        isolated.trigger (taikor::Articulation::Don, 0, 0.92f);
+        taikor::TaikoEngineTestAccess::isolateContinuumBand (
+            isolated, static_cast<int> (source));
+        const auto mono = render (isolated, 960).mono();
+
+        for (std::size_t target = 0; target < bands.size(); ++target)
+            levels[source][target] =
+                bandLevelDb (mono, 48000.0, bands[target].centre / 1.35,
+                             bands[target].centre * 1.35);
+    }
+
+    // By the second octave the first band must be well out of the way. This
+    // one clause fails by more than twenty decibels on the old topology.
+    expect (levels[0][2] < levels[0][0] - 24.0,
+            "the crossover band's upper skirt still masks the statistical tail");
+
+    for (std::size_t target = 1; target < bands.size(); ++target)
+    {
+        double loudestLower = -300.0;
+        for (std::size_t source = 0; source < target; ++source)
+            loudestLower = std::max (loudestLower, levels[source][target]);
+
+        expect (levels[target][target] > loudestLower + 0.5,
+                "continuum octave " + std::to_string (target)
+                    + " is still hidden by a lower band: own "
+                    + std::to_string (levels[target][target]) + " dB, leak "
+                    + std::to_string (loudestLower) + " dB");
     }
 }
 
@@ -3709,7 +4233,9 @@ void testStrikePositionShapesTheSpectrum()
     const auto edgeRatio = upperIn (edgeMono) / std::max (fundamentalIn (edgeMono), 1.0e-9);
 
     expect (edgeRatio > centreRatio * 2.0,
-            "an edge stroke must carry far more upper partial energy than a centre one");
+            "an edge stroke must carry far more upper partial energy than a centre one: "
+                + std::to_string (edgeRatio) + " versus "
+                + std::to_string (centreRatio));
     // Measured from after the attack rather than from the peak. The peak is the
     // contact and the head's continuum answering it, which is loudest on
     // exactly the edge strokes this is comparing - so a decay time referred to
@@ -3741,10 +4267,14 @@ void testStrikePositionShapesTheSpectrum()
                                  48000.0, 24000);
     const auto centreward = strike (towardsCentre, taikor::Articulation::Don, 0, 0.9f,
                                     48000.0, 24000);
-    expect (upperIn (rimward.mono()) / std::max (fundamentalIn (rimward.mono()), 1.0e-9)
-                > upperIn (centreward.mono())
-                      / std::max (fundamentalIn (centreward.mono()), 1.0e-9),
-            "moving the strike towards the rim must brighten it");
+    const auto rimwardRatio = upperIn (rimward.mono())
+                            / std::max (fundamentalIn (rimward.mono()), 1.0e-9);
+    const auto centrewardRatio = upperIn (centreward.mono())
+                               / std::max (fundamentalIn (centreward.mono()), 1.0e-9);
+    expect (rimwardRatio > centrewardRatio,
+            "moving the strike towards the rim must brighten it: "
+                + std::to_string (rimwardRatio) + " versus "
+                + std::to_string (centrewardRatio));
 }
 
 // The instrument is a stereo close pair, and the image has to come from the
@@ -3992,10 +4522,12 @@ void testTheDrumSoundsLikeADrumAndNotLikeATone()
     // the five-shaku drum measures, so that losing the head's continuum still
     // fails it by an order of magnitude, which is what this clause is for.
     expect (total > 0.0 && low > total * 0.22,
-            "a centre stroke must put real weight below eighty hertz");
+            "a centre stroke must put real weight below eighty hertz: "
+                + std::to_string (low / std::max (total, 1.0e-12)));
     expect (total > 0.0 && body > total * 0.085,
             "a centre stroke must have a body between two hundred and fifty "
-            "hertz and four kilohertz, not just a fundamental");
+            "hertz and four kilohertz, not just a fundamental: "
+                + std::to_string (body / std::max (total, 1.0e-12)));
 
     // Not tonal. Count the twenty-fourth-octave bands that are within twenty
     // decibels of the strongest one over the body of the stroke. A drum whose
@@ -4106,7 +4638,8 @@ void testTheDynamicRangeReachesFromAGhostStrokeToAFullBlow()
         expect (rendered.peak < 0.95,
                 "the loudest single stroke must stay clear of the safety limiter at "
                 "the factory output level: "
-                    + std::string (taikor::getArticulationDisplayName (articulation)));
+                    + std::string (taikor::getArticulationDisplayName (articulation))
+                    + " peaked at " + std::to_string (rendered.peak));
     }
 }
 
@@ -4227,11 +4760,181 @@ void testTheTackLineRattlesOnlyWhenItIsBeaten()
             "ahead by only " + std::to_string (rimGrowth - centreGrowth) + " dB");
 }
 
+// A collision is an impulse. It can reverse the velocity of a light mode, but
+// cannot teleport the membrane to a new displacement at that instant.
+void testCollisionChangesVelocityNotDisplacement()
+{
+    expect (taikor::TaikoEngineTestAccess::shiftedPoleCacheError() < 1.0e-6,
+            "the cached live collision coordinates did not follow a resonator retune");
+
+    for (const float poleShift : { 0.64f, 1.0f, 1.73f })
+    {
+        for (const float retention : { 0.75f, 0.0f, -0.35f })
+        {
+            const auto state = taikor::TaikoEngineTestAccess::applyCollision (
+                0.23, -0.11, retention, poleShift);
+            expect (std::abs (state.displacementAfter - state.displacementBefore)
+                        < 1.0e-14,
+                    "a stick collision stepped modal displacement instead of leaving "
+                    "the head continuous");
+            expect (std::abs (state.velocityAfter
+                              - static_cast<double> (retention) * state.velocityBefore)
+                        < std::abs (state.velocityBefore) * 1.0e-10 + 1.0e-10,
+                    "a stick collision did not apply restitution to the velocity "
+                    "encoded by its live, pitch-shifted poles");
+        }
+    }
+
+    // At a turning point the head has displacement but no kinetic energy. A
+    // collision that acts only on velocity must leave that state stationary,
+    // rather than mistaking the pole curvature for motion.
+    constexpr double displacement = 0.23;
+    const auto turning = taikor::TaikoEngineTestAccess::applyCollision (
+        displacement, 0.0, 0.15f, 1.37f, true);
+    expect (std::abs (turning.velocityBefore) < 1.0e-10
+                && std::abs (turning.velocityAfter) < 1.0e-10,
+            "a collision created velocity at a modal turning point");
+}
+
+// Tsu is played with the free hand resting on the hide. That hand belongs to
+// the physical drum, not only to the new MIDI voice: it must choke the Don that
+// was already ringing, while a Tsu on another drum leaves it alone.
+void testMutedStrokeChokesTheRingingHead()
+{
+    auto parameters = defaultParameters();
+    parameters.humanise = 0.0f;
+    parameters.tensionModulation = 0.0f;
+    parameters.outputGain = 0.12f;
+
+    struct Result
+    {
+        std::vector<float> tail;
+        taikor::TaikoEngineTestAccess::LocalMuteState mute;
+    };
+
+    const auto after = [&parameters] (std::optional<taikor::Articulation> second,
+                                      int secondOctave, bool cancelPalm = false)
+    {
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.trigger (taikor::Articulation::Don, 0, 0.92f);
+        (void) render (engine, 4800);
+
+        Result result;
+        if (second.has_value())
+        {
+            engine.trigger (*second, secondOctave, 0.82f);
+            result.mute = taikor::TaikoEngineTestAccess::oldestActiveMute (engine);
+            if (cancelPalm)
+                taikor::TaikoEngineTestAccess::cancelOldestMute (engine);
+            // Remove the newly struck sound. What remains is the old Don after
+            // the new physical contact has acted on the shared head.
+            taikor::TaikoEngineTestAccess::silenceNewestVoice (engine);
+        }
+        result.tail = render (engine, 14400).mono();
+        return result;
+    };
+
+    const auto untouched = after (std::nullopt, 0);
+    const auto anotherDrum = after (taikor::Articulation::Tsu, 1);
+    expect (maximumAbsoluteDifference (untouched.tail, anotherDrum.tail) < 1.0e-6,
+            "a muted stroke damped a different physical drum");
+
+    // Ka's small legacy muteAmount voices its newly struck constrained head;
+    // it is not a free hand and must not schedule or prolong Tsu's palm hold on
+    // a voice that was already ringing.
+    const auto ka = after (taikor::Articulation::Ka, 0);
+    expect (ka.mute.ticks == 0,
+            "Ka's voicing loss was mistaken for a held palm contact");
+
+    // At the geometric centre all four cardinal points are one patch radius
+    // away. The inward point crosses the origin; clamping its signed coordinate
+    // to zero would turn a symmetric disk quadrature into a centre-heavy one.
+    const auto centredRadii =
+        taikor::TaikoEngineTestAccess::palmRadii (0.0f, 0.2f);
+    for (std::size_t index = 1; index < centredRadii.size(); ++index)
+        expect (std::abs (centredRadii[index] - 0.2f) < 1.0e-7f,
+                "a palm cardinal point crossing the centre lost radial symmetry");
+
+    // Same Tsu contact in both branches. The control branch cancels only the
+    // subsequent palm hold, so strike radius, membrane gain, restitution and
+    // immediate continuum coverage cannot masquerade as mute damping.
+    const auto collisionOnly = after (taikor::Articulation::Tsu, 0, true);
+    const auto muted = after (taikor::Articulation::Tsu, 0);
+    const double collisionTail = windowedRms (collisionOnly.tail, 2400u, 8640u);
+    const double mutedTail = windowedRms (muted.tail, 2400u, 8640u);
+
+    expect (muted.mute.ticks > 0,
+            "Tsu did not leave a damping contact on the already-ringing head");
+    expect (muted.mute.maximumGain - muted.mute.minimumGain > 0.002f,
+            "the free hand became a global volume envelope instead of a local "
+            "modal damping patch");
+    expect (mutedTail < collisionTail * 0.65,
+            "Tsu failed to choke the head that was already ringing: "
+                + std::to_string (mutedTail / std::max (collisionTail, 1.0e-30))
+                + ", gains " + std::to_string (muted.mute.minimumGain) + " to "
+                + std::to_string (muted.mute.maximumGain));
+
+    const auto tick = taikor::TaikoEngineTestAccess::probeMuteTick();
+    expect (tick.membraneModes > 0,
+            "the real palm-tick probe found no membrane state to inspect");
+    expect (tick.displacementError < 1.0e-14,
+            "a viscous palm tick stepped modal displacement");
+    expect (tick.velocityError < 1.0e-10 && tick.kineticError < 1.0e-10,
+            "a viscous palm tick did not retain velocity and kinetic energy by "
+            "g and g squared");
+    expect (tick.shellStateError == 0.0,
+            "a palm resting on the head changed the wooden shell state");
+
+    // The palm has a fixed physical area. Recover the continuous damping rate
+    // from its per-tick velocity retention and check the area/modal-mass law
+    // directly, rather than relying on a rendered level that also contains the
+    // articulation and microphones.
+    const auto muteState = [&parameters] (float diameter, double sampleRate)
+    {
+        auto sized = parameters;
+        sized.headDiameter = diameter;
+
+        taikor::TaikoEngine engine;
+        engine.setParameters (sized);
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.trigger (taikor::Articulation::Don, 0, 0.92f);
+        (void) render (engine, static_cast<int> (0.10 * sampleRate));
+        engine.trigger (taikor::Articulation::Tsu, 0, 0.82f);
+        return taikor::TaikoEngineTestAccess::oldestActiveMute (engine);
+    };
+    const auto dampingRate = [] (float gain, double sampleRate)
+    {
+        return -std::log (std::clamp (static_cast<double> (gain), 1.0e-30, 1.0))
+             * sampleRate
+             / static_cast<double> (taikor::TaikoEngineTestAccess::controlInterval);
+    };
+
+    const auto small = muteState (0.75f, 48000.0);
+    const auto large = muteState (1.50f, 48000.0);
+    const double smallRate = dampingRate (small.fundamentalGain, 48000.0);
+    const double largeRate = dampingRate (large.fundamentalGain, 48000.0);
+    const double sizeRatio = smallRate / std::max (largeRate, 1.0e-12);
+    expect (sizeRatio > 2.5 && sizeRatio < 6.5,
+            "a fixed palm must damp the fundamental approximately with inverse "
+            "head area; recovered small/large rate ratio was "
+                + std::to_string (sizeRatio));
+
+    const double rate44 = dampingRate (
+        muteState (1.50f, 44100.0).fundamentalGain, 44100.0);
+    const double rate96 = dampingRate (
+        muteState (1.50f, 96000.0).fundamentalGain, 96000.0);
+    expect (std::abs (rate44 - rate96) < std::max (rate44, rate96) * 0.001,
+            "the palm's physical damping rate changed with the host sample rate");
+}
+
 // A drum has one head, and a stroke lands on whatever that head is already
 // doing. Every stroke used to build an independent copy of the modal bank and
 // the voices only summed, so eight identical strokes were bit-identical to
 // eight copies of one stroke added offline - which is exactly the arithmetic a
 // sample library does, and the place a model has no excuse for matching it.
+
 void testAStrokeLandsOnAHeadThatIsAlreadyMoving()
 {
     auto parameters = defaultParameters();
@@ -4314,18 +5017,13 @@ void testAStrokeLandsOnAHeadThatIsAlreadyMoving()
 
     expect (summedEnergy > 0.0, "the roll produced nothing to measure");
     const auto shortfall = 10.0 * std::log10 (engineEnergy / std::max (summedEnergy, 1.0e-30));
-    // Three quarters of a decibel rather than three. The mechanism is the head
-    // stretching itself: a membrane clamped at its rim gains tension as the
-    // square of its displacement, the fractional rise goes as the fourth inverse
-    // power of the radius, and the reference o-daiko is now five shaku rather
-    // than three. The same 1.58 in the radius is 6.2 in that term, so what a
-    // stroke does to the head it lands on is a sixth of what it was on the
-    // smaller drum, and the difference between a roll and eight strokes added
-    // offline shrinks with it. It is the drum being big and slack rather than
-    // the mechanism being gone. What is asserted is that the two are measurably
-    // different, which is the claim - a sample library's arithmetic gives
-    // exactly zero.
-    expect (shortfall < -0.5,
+    // A collision changes velocity and leaves the head's displacement (and
+    // therefore its stored potential energy) continuous. The former
+    // implementation scaled both states and exaggerated this difference by
+    // removing potential energy instantaneously. What is asserted here is the
+    // physical, smaller interaction being measurably nonzero; a sample
+    // library's arithmetic gives exactly zero.
+    expect (shortfall < -0.02,
             "what a roll leaves ringing must be below the same strokes added "
             "offline, because each stick lands on a head the one before it left "
             "moving - it is only " + std::to_string (-shortfall) + " dB down");
@@ -4815,6 +5513,102 @@ void testEveryParameterSurvivesTheCache()
         }
 }
 
+// The continuum's exact filter variance has its own lazy cache. Its complete
+// key is the pair of discrete filter coefficients, so reset may keep an entry,
+// while a changed host rate or drum geometry must either reuse an exactly equal
+// pair or replace it. Compare both the built bands and the samples: a stale
+// normalisation can leave every modal-bank term correct while changing only the
+// statistical part of the heard stroke.
+void testContinuumVarianceCacheLifecycle()
+{
+    struct Snapshot
+    {
+        std::vector<taikor::TaikoEngineTestAccess::ContinuumBandInfo> bands;
+        Rendered audio;
+    };
+
+    const auto capture = [] (taikor::TaikoEngine& engine)
+    {
+        engine.trigger (taikor::Articulation::Don, 0, 0.87f);
+        return Snapshot { taikor::TaikoEngineTestAccess::continuumBands (engine),
+                          render (engine, 4096, 64) };
+    };
+
+    const auto compare = [] (const Snapshot& actual, const Snapshot& expected,
+                             const std::string& where)
+    {
+        expect (actual.bands.size() == expected.bands.size(),
+                "the continuum cache changed the number of live bands" + where);
+        bool bandsExact = actual.bands.size() == expected.bands.size();
+        for (std::size_t index = 0; index < actual.bands.size() && bandsExact; ++index)
+        {
+            const auto& a = actual.bands[index];
+            const auto& b = expected.bands[index];
+            bandsExact = a.centre == b.centre
+                      && a.lowCoefficient == b.lowCoefficient
+                      && a.highCoefficient == b.highCoefficient
+                      && a.targetRms == b.targetRms
+                      && a.level == b.level;
+        }
+        expect (bandsExact,
+                "a continuum variance-cache hit did not reproduce its miss bit for bit"
+                    + where);
+        expect (actual.audio.left == expected.audio.left
+                    && actual.audio.right == expected.audio.right,
+                "a continuum variance-cache lifecycle change altered rendered samples"
+                    + where);
+    };
+
+    auto parameters = defaultParameters();
+    parameters.humanise = 0.0f;
+    parameters.tensionModulation = 0.0f;
+
+    taikor::TaikoEngine reused;
+    reused.setParameters (parameters);
+    reused.prepare (48000.0, 64);
+    const auto miss = capture (reused);
+    expect (taikor::TaikoEngineTestAccess::validContinuumVarianceEntries (reused) == 5,
+            "one drum did not populate exactly its five continuum variance entries");
+
+    reused.reset();
+    expect (taikor::TaikoEngineTestAccess::validContinuumVarianceEntries (reused) == 5,
+            "reset discarded the coefficient-only continuum variance cache");
+    compare (capture (reused), miss, " after reset");
+
+    reused.prepare (96000.0, 64);
+    const auto reusedAtNewRate = capture (reused);
+    taikor::TaikoEngine freshAtNewRate;
+    freshAtNewRate.setParameters (parameters);
+    freshAtNewRate.prepare (96000.0, 64);
+    compare (reusedAtNewRate, capture (freshAtNewRate),
+             " after a sample-rate change");
+
+    for (int variant = 0; variant < 2; ++variant)
+    {
+        auto changed = parameters;
+        const char* name = nullptr;
+        if (variant == 0)
+        {
+            changed.headDiameter = 0.83f;
+            name = " after a diameter change";
+        }
+        else
+        {
+            changed.pitch = 7.25f;
+            name = " after a pitch change";
+        }
+
+        reused.setParameters (changed);
+        reused.reset();
+        const auto reusedChanged = capture (reused);
+
+        taikor::TaikoEngine fresh;
+        fresh.setParameters (changed);
+        fresh.prepare (96000.0, 64);
+        compare (reusedChanged, capture (fresh), name);
+    }
+}
+
 // The top membrane modes carry a circumferential order of eight, so the
 // radiation law's exponent is eighteen, and forming (ka)^18 on its own leaves
 // float range once ka passes about 138. That is reachable on a small, hard,
@@ -5023,10 +5817,13 @@ void testSimultaneousStrokesDoNotShareOneVoice()
     engine.setParameters (defaultParameters());
     engine.prepare (48000.0, defaultBlockSize);
 
-    // Fill the pool and let it render, so every voice has a real level.
+    // Fill the transient-contact pool and advance one sample so every slot has
+    // a real level while remaining alive. Modal ringing is no longer stored in
+    // these slots, so waiting 100 ms would correctly retire all of them even
+    // though the one physical drum continues to ring.
     for (int index = 0; index < 16; ++index)
         engine.trigger (taikor::Articulation::Don, 0, 0.9f);
-    render (engine, 4800);
+    render (engine, 1);
     expect (taikor::TaikoEngineTestAccess::activeVoices (engine) == 16,
             "the pool must be full before the stealing case is exercised");
 
@@ -5048,6 +5845,30 @@ void testSimultaneousStrokesDoNotShareOneVoice()
 
     const auto rendered = render (engine, 24000);
     expect (rendered.finite, "simultaneous stealing produced non-finite audio");
+}
+
+// MIDI events are contacts, not copies of the instrument. These probes make
+// the ownership change observable: three articulations on one octave retain
+// one stable bank, their forces enter one recurrence, and allocating another
+// event cannot rewrite an earlier transient.
+void testStrokesShareOnePhysicalDrumState()
+{
+    const auto topology = taikor::TaikoEngineTestAccess::sharedTopology();
+    expect (topology.stableAddress,
+            "successive strokes must retain one canonical drum-bank address");
+    expect (topology.octave0Modes == 46 && topology.octave1Modes == 46,
+            "each playable drum must own one complete canonical modal bank");
+    expect (topology.uniqueModeIds,
+            "canonical modes must retain unique stable physical identities");
+    expect (topology.contactSlots == 3,
+            "three strokes must remain three independently scheduled contacts");
+    expect (topology.contactModeStates == 0,
+            "a contact slot must never retain a second resonator bank");
+
+    expect (taikor::TaikoEngineTestAccess::sharedRecurrenceError() < 1.0e-7,
+            "same-sample contacts must be summed before one canonical recurrence");
+    expect (taikor::TaikoEngineTestAccess::secondTriggerPreservesFirstTransient(),
+            "allocating a second strike must not mutate the first transient");
 }
 
 void testDeterminismAndBlockPartitioning()
@@ -6050,6 +6871,7 @@ int main()
     testEveryArticulationAndSampleRate();
     testSampleRateConsistency();
     testTheContinuumDoesNotDependOnTheSampleRate();
+    testContinuumBandsOwnTheirOctaves();
     testTheGlideDoesNotBrightenTheTopOfTheSpectrum();
     testVelocitySensitivity();
     testPhysicalParameterInfluence();
@@ -6059,6 +6881,8 @@ int main()
     testVoiceStealingStaysBounded();
     testTheDrumSoundsLikeADrumAndNotLikeATone();
     testShellResonanceHasNoStepInIt();
+    testCollisionChangesVelocityNotDisplacement();
+    testMutedStrokeChokesTheRingingHead();
     testAStrokeLandsOnAHeadThatIsAlreadyMoving();
     testTheTackLineRattlesOnlyWhenItIsBeaten();
     testTheDynamicRangeReachesFromAGhostStrokeToAFullBlow();
@@ -6066,8 +6890,10 @@ int main()
     testHeadStiffnessOpensTheModalRatios();
     testTheContinuumFollowsTheHead();
     testEveryParameterSurvivesTheCache();
+    testContinuumVarianceCacheLifecycle();
     testRadiationEfficiencyStaysFinite();
     testReportedModesAreActuallySounded();
+    testStrokesShareOnePhysicalDrumState();
     testSimultaneousStrokesDoNotShareOneVoice();
     testDeterminismAndBlockPartitioning();
     testPerformanceControls();

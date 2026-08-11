@@ -412,12 +412,12 @@ from the top down, so that is what Taikor models: five overlapping bands of
 noise, each carrying the head's own loss law and each lit by the same contact
 that drives the modes.
 
-Each band edge is a pair of one-poles in series, falling at twelve decibels an
-octave rather than six. That is not a detail. A single pole's skirt falls so
-slowly that the lowest band — which is also the loudest — was louder four
-octaves up than the band that belonged there, so the whole continuum above its
-first octave was inaudible underneath it and nothing that shaped the upper
-bands could be heard at all.
+Each octave is a serial two-pole high-pass followed by a seven-pole low-pass.
+Its lower skirt therefore falls at twelve decibels per octave and its upper one
+at forty-two, keeping the loud crossover region out of the four octaves above
+it. The exact stationary variance of that nine-state filter is solved once when
+the stroke is built, so its target RMS does not inherit the filter geometry or
+where the band lies against Nyquist.
 
 It is not a decoration. Third-octave analysis of recorded taiko shows the attack
 is nearly flat from sixty hertz to a kilohertz and still within twenty-five
@@ -430,15 +430,11 @@ hundred hertz upward.
 What sets its weight is the head's own modal receptance — the velocity a unit
 force gets out of the drum — observed through the same microphone factor the
 resolved modes are observed through. That is a property of the drum and of
-nothing else, so the region sits at the same level whatever clock the host is
-running: across 44.1, 48, 96 and 192 kHz the 4–10 kHz band of a Don holds within
-0.93 dB, read under a window that does not leak the drum's own bottom two
-octaves into a band that has almost nothing in it. Weighed instead against a
-resonator's per-sample integration gain, which carries a *1/rate* because a
-resonator accumulates a force over a sample period and a variance-normalised
-noise band accumulates nothing, the same band falls 6.1 dB between 48 and 96 kHz
-and 11.1 dB between 48 and 192 — 12.3 dB across the four rates — and a session
-moved from 48 kHz to 96 kHz is a different instrument.
+nothing else. Regression tests isolate the uppermost statistical band at 44.1,
+48, 96 and 192 kHz and require it to remain within 2 dB; the complete 4–10 kHz
+response remains within 1.5 dB. Every higher octave is also measured in
+isolation, so a lower band's skirt cannot masquerade as the whole statistical
+tail.
 
 It has to stay in its place, though, and its place is much smaller than it
 looks. Left too loud it does not sit above the resolved bank, it buries it: the
@@ -606,13 +602,33 @@ stroke leaves the boom alone and dries up the edge instead, because that is
 where its shape is. And the high modes, whose modal masses are a fraction of a
 stick's, are simply turned round by it.
 
-That is the whole of the answer to what a sample library calls the machine-gun
-problem, and it is not a variation mechanism: it is the reason a roll on one
-drum is not eight separate drums. Eight identical strokes 62 ms apart used to be
-bit-identical to eight copies of one stroke added together offline; what they
-leave ringing afterwards is now more than three decibels under what that
-arithmetic predicts, while the strokes themselves are untouched. Round robins
-are an attempt to hide the fact that a sampler cannot do this at all.
+The collision is an impulse: it changes modal velocity and leaves displacement,
+and therefore stored potential energy, continuous. Its state recovery uses live
+pole coordinates synchronized whenever the resonator is built or retuned, so it
+remains exact after the attack glide, automation or pitch wheel has moved a
+ringing mode. An earlier implementation multiplied both resonator histories and
+exaggerated what a roll lost against offline
+superposition by deleting potential energy at every hit; the current regression
+requires the interaction to be measurably nonzero without treating that old
+three-decibel figure as physical calibration.
+
+A Tsu goes further. Its free hand remains for 180 ms as a 55 mm-radius local
+dashpot on motion already ringing on that drum. A symmetric five-point patch
+quadrature projects the contact into every membrane mode; patch area and modal
+mass make the same palm bite harder on a small head than on a five-shaku one.
+At each control step only modal velocity is attenuated, never displacement. The
+continuum receives the corresponding phase-averaged RMS loss, while every other
+drum remains bit-identical.
+
+Each playable drum now has one canonical ringing state. MIDI notes allocate
+contact transients, project their forces into stable physical-mode IDs, and are
+summed before the bank advances once; they do not own another rendered head.
+The residual continuum is likewise one persistent field per drum, with new
+contacts adding energy in quadrature. The migration still uses the old `Voice`
+storage type on both sides, so contact slots temporarily carry unused arrays,
+and the prescribed force pulse is not yet the planned active Hunt–Crossley
+solve. The ownership is shared; the storage cleanup and nonlinear contact are
+the next steps.
 
 ### Two microphones, and where the stereo comes from
 
@@ -883,7 +899,11 @@ velocity response, the head's bending stiffness and the modal ratios it opens
 out, the enclosed air solved as a finite column rather than an infinite spring,
 the attack glide's dependence on the head rather than on a clock and its silence
 above the resolved bank, the tack line's threshold, what one stroke takes out of
-a head another stroke left ringing, every physical control's effect on the
+a head another stroke left ringing — including pole-shifted restitution that
+changes velocity without stepping displacement, a palm whose recovered damping
+rate follows physical head area rather than host sample rate, and a muted Tsu
+that damps only the already-ringing drum — every isolated continuum octave's
+ownership of its own band, every physical control's effect on the
 solved drum *and* on the rendered audio, the close pair's decorrelation and mono
 compatibility, tail termination and exact idle silence, voice stealing, hostile
 input, and the presentation mathematics the editor draws with. It also
