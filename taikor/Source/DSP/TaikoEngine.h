@@ -221,6 +221,8 @@ struct EngineParameters
     // as the head, and the body of a five-shaku drum is a great deal more of
     // the stroke.
     float outputGain { 0.075000f };
+
+    [[nodiscard]] bool operator== (const EngineParameters&) const noexcept = default;
 };
 
 // Snapshot of the drum for the editor's head display. Produced on the audio
@@ -232,7 +234,9 @@ struct DrumVisualState
     float strikeRadius { 0.0f };   // 0 centre .. 1 rim
     float strikeAngle { 0.0f };    // radians
     float strikeLevel { 0.0f };    // 0..1, decays after the stroke
-    // Sounding fundamental of the drum as currently configured, in hertz.
+    // Lightweight analytic pitch estimate for the head animation, in hertz.
+    // The numerical editor readout uses measureDrum(), whose soundingHz runs
+    // the exact nonlinear contact audit off the audio thread.
     float fundamentalHz { 0.0f };
     Articulation lastArticulation { Articulation::Don };
     int lastOctaveOffset { 0 };
@@ -268,7 +272,9 @@ public:
 
     [[nodiscard]] int getActiveVoiceCount() const noexcept;
     [[nodiscard]] float getOutputLevel (int channel) const noexcept;
-    // Sounding fundamental of the drum for the octave last played, in hertz.
+    // Lightweight analytic pitch estimate for the octave last played. This is
+    // safe to publish from trigger(); use measureDrum().soundingHz when the
+    // exact post-contact sounding partial is required.
     [[nodiscard]] float getFundamentalHz() const noexcept;
     void getVisualState (DrumVisualState& destination) const noexcept;
 
@@ -471,6 +477,18 @@ private:
         // Drive gain: mode shape at the strike point over modal mass, already
         // divided by the sample rate so the resonator integrates a force.
         float drive { 0.0f };
+        // Physical contact data kept separate from the legacy force-integration
+        // gain above. inverseModalMass belongs to the canonical degree of
+        // freedom; contactShape belongs to the strike used while building a
+        // scratch projection. The nonlinear contact path uses the same shape
+        // to sense head displacement and to spread force back into the bank.
+        float inverseModalMass { 0.0f };
+        float contactShape { 0.0f };
+        // Batter-head participation and the area-averaged gradient norm of
+        // this spatial basis. Together they recover the membrane strain that
+        // drives Berger/von Karman tension without depending on output scale.
+        float batterParticipation { 0.0f };
+        float stretchNorm { 0.0f };
         float micLeft { 0.0f };
         float micRight { 0.0f };
         // Resting angular frequency in radians per second, kept so the tension
@@ -554,6 +572,11 @@ private:
         // while preserving displacement and velocity, so automation cannot
         // leave a shared bank frozen at the first value it happened to see.
         std::uint64_t configurationRevision { 0 };
+        // APVTS Pitch used by the exact drum solve that built this bank. Pitch
+        // automation retunes a ringing bank cheaply; the next strike compares
+        // this value and remaps the bank once, outside the render loop, so its
+        // exact eigenvectors and modal masses match the new contact projection.
+        float configurationPitch { 0.0f };
         bool active { false };
         Articulation articulation { Articulation::Don };
         int octaveOffset { 0 };
@@ -574,6 +597,10 @@ private:
         // geometry builder has run; their temporary Mode objects are cleared
         // before trigger() returns. Physical banks leave this array unused.
         std::array<float, resonatorCount> modeProjection {};
+        // Dimensionless, reciprocal membrane footprint in the same stable-ID
+        // order. Unlike modeProjection this contains neither modal mass nor a
+        // time-integration gain, so it can both sense p^T q and apply p F.
+        std::array<float, resonatorCount> contactProjection {};
 
         std::array<ContactEvent, maxContactEvents> contacts {};
         int contactCount { 0 };
@@ -583,6 +610,22 @@ private:
         std::uint32_t contactLength { 0u };
         float contactAmplitude { 0.0f };
         float contactNoiseAmplitude { 0.0f };
+        // Dynamic bachi state for the reciprocal Hunt-Crossley contact. The
+        // stick coordinate is positive into the head. Its two positions share
+        // the same sample instants as every modal y1/y2 pair, so compression is
+        // obtained directly without a separately integrated velocity state.
+        bool nonlinearContactActive { false };
+        bool nonlinearContactHasForce { false };
+        bool continuumInjected { false };
+        double stickPosition { 0.0 };
+        double stickPrevious { 0.0 };
+        double stickMass { 0.1 };
+        double contactStiffness { 0.0 };
+        double contactDamping { 0.0 };
+        double residualImpedance { 1.0 };
+        double referenceContactEnergy { 1.0 };
+        double solvedContactEnergyStep { 0.0 };
+        float solvedContactForce { 0.0f };
         // Amplitude of the stroke's first contact, so a later one can relight
         // the continuum in proportion to it.
         float contactReference { 0.0f };
@@ -688,12 +731,13 @@ private:
         // of the mechanism, and it is why the glide has no clock of its own -
         // it decays because the head does.
         //
-        // tensionEnvelope is a peak-following mean square of the membrane
-        // modes' states, which stands in for the head's squared displacement;
-        // tensionDecay is its release per control tick; tensionDepth is
-        // everything in front of it - the head's in-plane stiffness against its
-        // tension, over the radius squared, over the square of the model's
-        // output calibration so that calibration cannot reach the pitch.
+        // tensionEnvelope is a peak-following area-mean squared slope recovered
+        // from the membrane modes' Bessel gradient norms;
+        // tensionDecay is its release per control tick; tensionDepth is the
+        // geometry/material coefficient in front of it - the head's in-plane
+        // stiffness against its tension, over radius squared and modelScale
+        // squared. The live Tension Mod control multiplies it at each control
+        // tick, so automation reaches a head that is already ringing.
         float tensionEnvelope { 0.0f };
         float tensionDecay { 0.999f };
         float tensionDepth { 0.0f };
@@ -1041,6 +1085,12 @@ private:
     [[nodiscard]] static SoundingMode soundingMode (const DrumState& drum,
                                                     float strikeRadius,
                                                     float ceilingHz) noexcept;
+    // The readout's excitation spectrum comes from the same passive contact
+    // solve as the renderer. A felt bachi can ride a low mode for milliseconds,
+    // which no prescribed pulse duration can predict truthfully.
+    [[nodiscard]] static SoundingMode dynamicSoundingMode (
+        const EngineParameters& parameters, int octaveOffset,
+        float pitchBendSemitones, double sampleRateHz) noexcept;
 
     // The highest frequency the render will instantiate a resonator at. This
     // is configureResonator's own test, written once so the readout and the
@@ -1099,13 +1149,21 @@ private:
     // faster than that body carries the energy away. The caller supplies both
     // the striking mass and that impedance, so the same solver serves a stick
     // meeting a head and a stick meeting another stick.
-    static void solveContact (float strikerMass, float targetImpedance,
+    static void solveContact (float collisionMass, float targetImpedance,
                               const StrikeProfile& profile, float bachiHardness,
                               float impactSpeed, float& contactSeconds,
                               float& peakForce) noexcept;
+    [[nodiscard]] static float contactStiffnessFor (
+        const StrikeProfile& profile, float bachiHardness) noexcept;
     // The striking mass and the head's resistive impedance for a drum stroke.
     static void drumContactTerms (const DrumState& drum, float& strikerMass,
                                   float& impedance) noexcept;
+    // Reduced mass of the bachi and the resolved head at one contact patch.
+    // The paired angular/cavity branches are complete orthogonal bases, so
+    // their squared participation sums without knowing their orientation.
+    [[nodiscard]] static float contactCollisionMass (
+        const DrumState& drum, const StrikeProfile& profile,
+        float strikeRadius, float strikerMass) noexcept;
     void buildVoiceModes (Voice& voice, const DrumState& drum,
                           const StrikeProfile& profile, float extraDamping) noexcept;
     // A bachi arriving on a head that is already sounding takes energy out of
@@ -1117,14 +1175,14 @@ private:
     // and without it a roll is arithmetic - eight identical strokes were
     // bit-identical to eight copies of one added offline.
     void dampPhysicalDrum (Voice& physical, const StrikeProfile& profile,
-                           float strikeRadius, const DrumState& drum,
-                           float strikerMass) noexcept;
+                           float strikeRadius, const DrumState& drum) noexcept;
     void ensurePhysicalDrum (int octave, const DrumState& drum) noexcept;
     void scheduleContacts (Voice& voice, const StrikeProfile& profile,
                            float contactSeconds, float peakForce,
                            float noiseLevel) noexcept;
     void applyTensionShift (Voice& voice, float shift) noexcept;
     void updateVoiceControl (Voice& voice) noexcept;
+    void advancePhysicalContacts (Voice& physical) noexcept;
     [[nodiscard]] float renderVoice (Voice& voice, Voice* physical,
                                      float& rightOut) noexcept;
     [[nodiscard]] int findVoiceSlot() noexcept;

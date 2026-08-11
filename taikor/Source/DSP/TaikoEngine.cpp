@@ -83,6 +83,12 @@ constexpr float maximumBachiScale = 13.7f;
 constexpr float minimumContactStiffness = 2.0e6f;
 constexpr float maximumContactStiffness = 6.0e8f;
 constexpr float restitution = 0.42f;
+// Exact Gonthier damping factor for restitution 0.42, obtained from
+//   (1 + d/e) / (1 - d) = exp (d (1 + 1/e)).
+// Sun's closed-form approximation gave 2.20952 and an actual restitution of
+// about 0.384; this root gives the coefficient the control claims, without any
+// extra work in the audio loop.
+constexpr double contactDampingFactor = 1.9314911227;
 
 // A muted Tsu is made with the free hand resting on the hide. The palm remains
 // for a short articulation rather than only for the millisecond in which the
@@ -176,7 +182,7 @@ constexpr float modelScale = 292.0f;
 // drum's pitch. It used to: the term this replaced summed the raw resonator
 // states, which are in units of that calibration, and at full velocity a third
 // of the bend came from it.
-constexpr float tensionStretchCalibration = 0.044f;
+constexpr float tensionStretchCalibration = 0.10f;
 // Where that expansion stops describing the head. Berger's result is the first
 // term of a series in the displacement, and it is meaningless once the tension
 // a single stroke adds is comparable with the tension already there, so it is
@@ -1051,6 +1057,8 @@ void TaikoEngine::reset() noexcept
 
     handDamping_ = handDampingTarget_;
     pitchBend_ = pitchBendTarget_;
+    if (std::abs (pitchBend_ - drumCacheBend_) > 5.0e-4f)
+        drumCacheValid_ = false;
     smoothedOutputGain_ = applied_.outputGain;
     smoothedDrive_ = applied_.drive;
     smoothedWidth_ = applied_.stereoWidth;
@@ -1073,10 +1081,11 @@ void TaikoEngine::setParameters (const EngineParameters& parameters) noexcept
 {
     const auto next = sanitise (parameters);
 
-    // Only the terms that actually enter the physical solve invalidate the
-    // cached drums. Mic placement does too, because the mode weights are baked
-    // per stroke; the output stage does not.
-    const bool physicsChanged =
+    // Only terms that enter the solved drum invalidate its lazy strike cache.
+    // Pitch belongs here because a new contact needs projections at its current
+    // frequencies, but it does not change the topology of an already-ringing
+    // bank: applyTensionShift moves those poles continuously and cheaply.
+    const bool physicalConfigurationChanged =
         next.headDiameter != applied_.headDiameter
         || next.bodyDepth != applied_.bodyDepth
         || next.tension != applied_.tension
@@ -1085,17 +1094,20 @@ void TaikoEngine::setParameters (const EngineParameters& parameters) noexcept
         || next.resonantTension != applied_.resonantTension
         || next.cavityCoupling != applied_.cavityCoupling
         || next.headDamping != applied_.headDamping
-        || next.shellResonance != applied_.shellResonance
-        || next.pitch != applied_.pitch
         || next.octaveBody != applied_.octaveBody
         || next.micDistance != applied_.micDistance
         || next.micSpread != applied_.micSpread;
+    const bool drumCacheChanged = physicalConfigurationChanged
+                               || next.pitch != applied_.pitch
+                               || next.shellResonance != applied_.shellResonance;
 
     applied_ = next;
 
-    if (physicsChanged)
-    {
+    if (drumCacheChanged)
         drumCacheValid_ = false;
+
+    if (physicalConfigurationChanged)
+    {
         ++physicalConfigurationRevision_;
         if (physicalConfigurationRevision_ == 0)
             physicalConfigurationRevision_ = 1;
@@ -1161,6 +1173,7 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
 {
     voice.active = false;
     voice.configurationRevision = 0;
+    voice.configurationPitch = 0.0f;
     voice.modeCount = 0;
     voice.activeModeCount = 0;
     voice.contactCount = 0;
@@ -1180,7 +1193,20 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.tensionDepth = 0.0f;
     voice.modalInput.fill (0.0f);
     voice.modeProjection.fill (0.0f);
+    voice.contactProjection.fill (0.0f);
     voice.continuumInjection.fill (0.0f);
+    voice.nonlinearContactActive = false;
+    voice.nonlinearContactHasForce = false;
+    voice.continuumInjected = false;
+    voice.stickPosition = 0.0;
+    voice.stickPrevious = 0.0;
+    voice.stickMass = 0.1;
+    voice.contactStiffness = 0.0;
+    voice.contactDamping = 0.0;
+    voice.residualImpedance = 1.0;
+    voice.referenceContactEnergy = 1.0;
+    voice.solvedContactEnergyStep = 0.0;
+    voice.solvedContactForce = 0.0f;
     voice.appliedTensionShift = 1.0f;
     // Belongs to the stroke, not to the slot. The attack glide runs before the
     // new contact schedule is known - Tension Mod is on by default, so that is
@@ -1224,6 +1250,8 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     {
         mode.resonator.clear();
         mode.drive = 0.0f;
+        mode.inverseModalMass = 0.0f;
+        mode.contactShape = 0.0f;
         mode.micLeft = 0.0f;
         mode.micRight = 0.0f;
         mode.liveOmega = 0.0;
@@ -1235,8 +1263,8 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
 void TaikoEngine::updateActiveVoiceCount() noexcept
 {
     int count = 0;
-    for (const auto& voice : voices_)
-        if (voice.active)
+    for (const auto& drum : physicalDrums_)
+        if (drum.active)
             ++count;
     activeVoiceCount_.store (count, std::memory_order_relaxed);
 }
@@ -1537,9 +1565,11 @@ void TaikoEngine::resolveDrumGeometry (const EngineParameters& applied,
         float strikerMass = 0.0f;
         float impedance = 0.0f;
         drumContactTerms (drum, strikerMass, impedance);
+        const auto& profile = strikeProfile (Articulation::Don);
+        const float collisionMass = contactCollisionMass (
+            drum, profile, tuningStrikeRadius(), strikerMass);
         float peakForce = 0.0f;
-        solveContact (strikerMass, impedance, strikeProfile (Articulation::Don),
-                      applied.bachiHardness,
+        solveContact (collisionMass, impedance, profile, applied.bachiHardness,
                       geometricLerp (minimumImpactSpeed, maximumImpactSpeed, 0.72f),
                       drum.contactSeconds, peakForce);
     }
@@ -2450,21 +2480,49 @@ void TaikoEngine::drumContactTerms (const DrumState& drum, float& strikerMass,
     impedance = 8.0f * std::sqrt (drum.tension * drum.batterDensity);
 }
 
-void TaikoEngine::solveContact (float strikerMass, float targetImpedance,
+float TaikoEngine::contactCollisionMass (const DrumState& drum,
+                                         const StrikeProfile& profile,
+                                         float strikeRadius,
+                                         float strikerMass) noexcept
+{
+    const float area = piFloat * drum.radius * drum.radius;
+    const float rho = clampFloat (strikeRadius, 0.0f, 0.995f);
+    const float coupling = profile.membraneGain * profile.levelScale;
+    double inverseHeadMass = 0.0;
+
+    for (const auto& entry : membraneModes())
+    {
+        const int order = entry.circumferentialOrder;
+        const double lambda = entry.besselZero;
+        const double shape = besselJ (order, lambda * rho);
+        const double boundary = besselJ (order + 1, lambda);
+        const double angularNorm = order == 0 ? 1.0 : 0.5;
+        const double modalMass = angularNorm * static_cast<double> (area)
+                               * boundary * boundary * drum.batterDensity;
+        if (modalMass > 0.0)
+            inverseHeadMass += static_cast<double> (coupling) * coupling
+                             * shape * shape / modalMass;
+    }
+
+    const double inverseStickMass = 1.0 / std::max (
+        static_cast<double> (strikerMass), 1.0e-6);
+    if (! (inverseHeadMass > 0.0) || ! std::isfinite (inverseHeadMass))
+        return static_cast<float> (1.0 / inverseStickMass);
+    return static_cast<float> (1.0 / (inverseStickMass + inverseHeadMass));
+}
+
+void TaikoEngine::solveContact (float collisionMass, float targetImpedance,
                                 const StrikeProfile& profile, float bachiHardness,
                                 float impactSpeed, float& contactSeconds,
                                 float& peakForce) noexcept
 {
-    const float stiffness = clampFloat (
-        geometricLerp (minimumContactStiffness, maximumContactStiffness,
-                       bachiHardness) * profile.hardnessScale,
-        minimumContactStiffness * 0.25f, maximumContactStiffness * 4.0f);
+    const float stiffness = contactStiffnessFor (profile, bachiHardness);
 
     // Hertz impact of a rounded tip against a stiff surface. The contact time
     // falls as the fifth root of the impact speed, which is the whole reason a
     // hard stroke is brighter and not merely louder.
     const float speed = std::max (impactSpeed, 0.05f);
-    const float mass = std::max (strikerMass, 1.0e-4f);
+    const float mass = std::max (collisionMass, 1.0e-4f);
     const float hertzTime = 2.94f
                           * std::pow (5.0f * mass / (4.0f * stiffness), 0.4f)
                           * std::pow (speed, -0.2f);
@@ -2482,6 +2540,15 @@ void TaikoEngine::solveContact (float strikerMass, float targetImpedance,
     // The integral of sin(x)^1.5 over one arch is 2.3963.
     const float impulse = mass * speed * (1.0f + restitution);
     peakForce = impulse * piFloat / (2.3963f * contactSeconds);
+}
+
+float TaikoEngine::contactStiffnessFor (const StrikeProfile& profile,
+                                        float bachiHardness) noexcept
+{
+    return clampFloat (
+        geometricLerp (minimumContactStiffness, maximumContactStiffness,
+                       bachiHardness) * profile.hardnessScale,
+        minimumContactStiffness * 0.25f, maximumContactStiffness * 4.0f);
 }
 
 float TaikoEngine::measureContactSeconds (Articulation articulation, int octaveOffset,
@@ -2503,12 +2570,16 @@ float TaikoEngine::measureContact (const EngineParameters& raw,
 
     float strikerMass = 0.0f;
     float impedance = 0.0f;
-    drumContactTerms (resolveDrumFor (parameters, 0.0f, octaveOffset), strikerMass,
-                      impedance);
+    const auto drum = resolveDrumFor (parameters, 0.0f, octaveOffset);
+    drumContactTerms (drum, strikerMass, impedance);
+    const float radius = clampFloat (
+        profile.radius + parameters.strikePosition * 0.32f, 0.0f, 0.985f);
+    const float collisionMass = contactCollisionMass (drum, profile, radius,
+                                                       strikerMass);
 
     float contactSeconds = 0.0f;
     float peakForce = 0.0f;
-    solveContact (strikerMass, impedance, profile, parameters.bachiHardness, speed,
+    solveContact (collisionMass, impedance, profile, parameters.bachiHardness, speed,
                   contactSeconds, peakForce);
     return contactSeconds;
 }
@@ -2819,6 +2890,11 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.physicalIndex = static_cast<std::uint8_t> (2 * entryIndex + branch);
                 mode.membrane = true;
                 mode.localMuteControlGain = 1.0f;
+                mode.inverseModalMass = 1.0f / std::max (geometricMass, 1.0e-9f);
+                mode.contactShape = shapeStrike * batterShare
+                                  * profile.membraneGain * profile.levelScale;
+                mode.batterParticipation = batterShare;
+                mode.stretchNorm = lambda * lambda * besselSquared;
                 mode.drive = drive * profile.membraneGain * modelScale;
                 // Axisymmetric modes look identical from both sides of the
                 // head, so they are the part of the image that stays centred.
@@ -2928,6 +3004,11 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.physicalIndex = static_cast<std::uint8_t> (2 * entryIndex + branch);
                 mode.membrane = true;
                 mode.localMuteControlGain = 1.0f;
+                mode.inverseModalMass = 1.0f / std::max (geometricMass, 1.0e-9f);
+                mode.contactShape = shapeStrike * strikeAngular
+                                  * profile.membraneGain * profile.levelScale;
+                mode.batterParticipation = 1.0f;
+                mode.stretchNorm = 0.5f * lambda * lambda * besselSquared;
                 mode.drive = drive * profile.membraneGain * modelScale;
                 mode.micLeft = observedL;
                 mode.micRight = observedR;
@@ -3006,6 +3087,10 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         mode.physicalIndex = static_cast<std::uint8_t> (
             membraneResonatorCount + index);
         mode.localMuteControlGain = 1.0f;
+        mode.inverseModalMass = 1.0f / std::max (woodModalMass, 1.0e-9f);
+        mode.contactShape = 0.0f;
+        mode.batterParticipation = 0.0f;
+        mode.stretchNorm = 0.0f;
         mode.drive = level * modelScale;
         mode.micLeft = shellL;
         mode.micRight = shellR;
@@ -3282,7 +3367,8 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
         - lowestOctaveOffset);
     auto& physical = physicalDrums_[drumIndex];
     if (physical.modeCount > 0
-        && physical.configurationRevision == physicalConfigurationRevision_)
+        && physical.configurationRevision == physicalConfigurationRevision_
+        && physical.configurationPitch == applied_.pitch)
         return;
 
     struct SavedModeState
@@ -3362,6 +3448,7 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
     // the transient slot. No state from that scratch excitation is retained.
     buildVoiceModes (physical, drum, strikeProfile (Articulation::Don), 0.0f);
     physical.configurationRevision = physicalConfigurationRevision_;
+    physical.configurationPitch = applied_.pitch;
     physical.activeModeCount = physical.modeCount;
     physical.modalInput = rebuilding ? savedInput
                                      : std::array<float, resonatorCount> {};
@@ -3439,7 +3526,6 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
 
     constexpr float inverseModelScaleSquared = 1.0f / (modelScale * modelScale);
     physical.tensionDepth = tensionStretchCalibration
-                          * applied_.tensionModulation
                           * drum.stretchStiffness * inverseModelScaleSquared
                           / std::max (drum.radius * drum.radius, 1.0e-6f);
     physical.tensionDecay =
@@ -3462,7 +3548,7 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
 
 void TaikoEngine::dampPhysicalDrum (Voice& physical,
                                     const StrikeProfile& profile, float strikeRadius,
-                                    const DrumState& drum, float strikerMass) noexcept
+                                    const DrumState& drum) noexcept
 {
     // Only a stroke that actually lands on the hide. The profile's own
     // membrane gain is the statement of how much of the stroke reaches the
@@ -3470,30 +3556,15 @@ void TaikoEngine::dampPhysicalDrum (Voice& physical,
     if (! (profile.membraneGain > 0.0f))
         return;
 
-    // A fresh unmuted drum has no stored energy for restitution. A Tsu is
-    // different: its palm constraint must already exist when that Tsu's own
-    // force enters the shared bank, removing the old/new-bank distinction.
-    const bool hasStoredMotion = physical.active && physical.ageSamples > 0;
-    if (! hasStoredMotion && ! profile.palmContact)
+    // Bachi/head momentum exchange now belongs to the one coupled dynamic
+    // contact solve. This function is only the free hand that remains on the
+    // membrane for a Tsu.
+    if (! profile.palmContact)
         return;
 
     const auto& entries = membraneModes();
     const float rho = clampFloat (strikeRadius, 0.0f, 0.995f);
     const float area = piFloat * drum.radius * drum.radius;
-    // How much of the stroke actually reaches the hide. It is the same figure
-    // the excitation is scaled by, so a ghost stroke that barely drives the
-    // head barely stops it either.
-    const float reach = strikerMass * profile.membraneGain;
-
-    // What each mode keeps. A contact lasting a millisecond is instantaneous
-    // against a mode whose period is twenty, so the collision is the textbook
-    // one: a mass m meeting a mass M moving at v leaves it at v(M - e m)/(M + m).
-    // The mass the stick actually meets is the mode's own referred to the
-    // contact point, M / shape^2 - which is why a stroke out by the tacks
-    // leaves a centre boom running and dries up the edge instead, and why the
-    // high modes, whose modal masses are a fraction of a bachi's, are simply
-    // bounced back.
-    std::array<float, modeEntryCount> retained {};
     std::array<float, modeEntryCount> muteControlGain {};
     muteControlGain.fill (1.0f);
     const float muteAmount = profile.palmContact
@@ -3516,20 +3587,6 @@ void TaikoEngine::dampPhysicalDrum (Voice& physical,
         // disagree about how heavy a mode is.
         const float modalMass = (order == 0 ? 1.0f : 0.5f) * area * besselSquared
                               * drum.batterDensity;
-        const auto shape =
-            static_cast<float> (besselJ (order, entry.besselZero * rho));
-        // A mode with a circumferential order comes as a pair a quarter of its
-        // own period apart, so the contact meets the two at the cosine and the
-        // sine of one angle. Both branches are damped by the mean of the two,
-        // because the branch a mode ended up in is not stored and the stroke
-        // that is arriving lands at its own angle anyway.
-        const float angular = order == 0 ? 1.0f : 0.5f;
-
-        const float massRatio = reach * shape * shape * angular
-                              / std::max (modalMass, 1.0e-6f);
-        retained[static_cast<std::size_t> (index)] =
-            (1.0f - restitution * massRatio) / (1.0f + massRatio);
-
         if (muteAmount > 0.0f)
         {
             // Five-point area quadrature over a palm-sized patch. A point
@@ -3566,38 +3623,6 @@ void TaikoEngine::dampPhysicalDrum (Voice& physical,
                           / static_cast<float> (sampleRate_));
         }
     }
-
-    // And the continuum above them. It stands for the short-wavelength modes,
-    // whose modal masses are far below a bachi's, so the stick is a wall to
-    // them and what survives is whatever share of them the contact did not
-    // cover. Their shapes pile up against the rim, so that share follows the
-    // same function of radius the strike lights them with, normalised so it is
-    // a fraction rather than a gain: a stroke out by the tacks takes nearly all
-    // of it and one over the middle barely touches it.
-    constexpr float edgeBoostAtRim = edgeBoostBase + 2.0f * edgeBoostSlope;
-    const float coverage =
-        clampFloat (profile.membraneGain
-                        * (edgeBoostBase + edgeBoostSlope * rho * (1.0f + rho))
-                        / edgeBoostAtRim,
-                    0.0f, 1.0f);
-    const float continuumGain = 1.0f - coverage;
-
-    if (hasStoredMotion)
-    for (int index = 0; index < physical.activeModeCount; ++index)
-    {
-        auto& mode = physical.modes[static_cast<std::size_t> (index)];
-        if (! mode.membrane)
-            continue;
-
-        // An impulse changes velocity, never displacement. The factor may be
-        // negative: a mode light against the bachi rebounds from it.
-        const float gain = retained[static_cast<std::size_t> (mode.modeEntry)];
-        applyCollisionRetention (mode, gain);
-    }
-
-    if (hasStoredMotion)
-        for (auto& band : physical.continuum)
-            band.envelope *= continuumGain;
 
     if (muteAmount > 0.0f)
     {
@@ -3750,6 +3775,24 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     ensurePhysicalDrum (octave, drum);
     auto& physical = physicalDrums_[cacheIndex];
 
+    // A bank near its hard deadline may already be part-way through the final
+    // output fade. Retriggering extends that bank instead of replacing it, so
+    // first fold the audible fade into its stored energy; simply restoring the
+    // gain to one would reveal the hidden, unfaded tail as a step.
+    if (physical.retireGain < 1.0f)
+    {
+        const float gain = clampFloat (physical.retireGain, 0.0f, 1.0f);
+        for (int index = 0; index < physical.modeCount; ++index)
+        {
+            auto& resonator = physical.modes[static_cast<std::size_t> (index)].resonator;
+            resonator.y1 *= gain;
+            resonator.y2 *= gain;
+        }
+        for (auto& band : physical.continuum)
+            band.envelope *= gain;
+        physical.tensionEnvelope *= gain * gain;
+    }
+
     const int slot = findVoiceSlot();
     auto& voice = voices_[static_cast<std::size_t> (slot)];
     silenceVoice (voice);
@@ -3809,12 +3852,8 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     float strikerMass = 0.0f;
     float targetImpedance = 0.0f;
     drumContactTerms (drum, strikerMass, targetImpedance);
-
-    float contactSeconds = 0.0f;
-    float peakForce = 0.0f;
-    solveContact (strikerMass, targetImpedance, profile, applied_.bachiHardness,
-                  impactSpeed, contactSeconds, peakForce);
-    contactSeconds *= 1.0f + 0.08f * humanise * signedUnitFromHash (seed + 4u);
+    const float collisionMass = contactCollisionMass (
+        drum, profile, voice.strikeRadius, strikerMass);
 
     // Before anything is built: the head this stroke is about to land on may
     // already be moving, and a stick arriving on a moving membrane takes energy
@@ -3822,16 +3861,18 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     // bank on this physical drum. The newly excited articulation retains its
     // established constrained-head voicing below; unifying both paths requires
     // the future shared per-drum bank, where there is no old/new distinction.
-    dampPhysicalDrum (physical, profile, voice.strikeRadius, drum, strikerMass);
+    dampPhysicalDrum (physical, profile, voice.strikeRadius, drum);
 
     const float extraDamping = profile.muteAmount;
     buildVoiceModes (voice, drum, profile, extraDamping);
     voice.modeProjection.fill (0.0f);
+    voice.contactProjection.fill (0.0f);
     for (int index = 0; index < voice.modeCount; ++index)
     {
         auto& mode = voice.modes[static_cast<std::size_t> (index)];
-        voice.modeProjection[static_cast<std::size_t> (mode.physicalIndex)] =
-            mode.drive;
+        const auto physicalIndex = static_cast<std::size_t> (mode.physicalIndex);
+        voice.modeProjection[physicalIndex] = mode.drive;
+        voice.contactProjection[physicalIndex] = mode.contactShape;
         // A strike slot must not retain a second physical state. The remaining
         // metadata array is temporary migration storage only and is outside
         // every render/control path after trigger returns.
@@ -3840,9 +3881,70 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     voice.modeCount = 0;
     voice.activeModeCount = 0;
 
+    // Start the bachi exactly at the moving surface with its incoming speed in
+    // the preceding sample. From here the contact force is solved from the
+    // shared head and stick states; the Hertz calculation above remains only a
+    // useful duration/peak estimate for residual and direct-path calibration.
+    double surface = 0.0;
+    double previousSurface = 0.0;
+    for (int index = 0; index < physical.modeCount; ++index)
+    {
+        const auto& mode = physical.modes[static_cast<std::size_t> (index)];
+        if (! mode.membrane)
+            continue;
+        const auto id = static_cast<std::size_t> (mode.physicalIndex);
+        surface += static_cast<double> (voice.contactProjection[id])
+                 * mode.resonator.y1 / static_cast<double> (modelScale);
+        previousSurface += static_cast<double> (voice.contactProjection[id])
+                         * mode.resonator.y2 / static_cast<double> (modelScale);
+    }
+
+    voice.stickMass = std::max (static_cast<double> (strikerMass), 1.0e-6);
+    const double step = 1.0 / sampleRate_;
+    const float relativeImpactSpeed = std::max (
+        impactSpeed - static_cast<float> ((surface - previousSurface) / step),
+        0.05f);
+    float contactSeconds = 0.0f;
+    float peakForce = 0.0f;
+    solveContact (collisionMass, targetImpedance, profile, applied_.bachiHardness,
+                  relativeImpactSpeed, contactSeconds, peakForce);
+    contactSeconds *= 1.0f + 0.08f * humanise * signedUnitFromHash (seed + 4u);
     const float noiseLevel = applied_.strikeNoise * profile.noiseGain * 0.35f;
     const float excitationScale = peakForce * profile.levelScale;
     scheduleContacts (voice, profile, contactSeconds, excitationScale, noiseLevel);
+
+    voice.stickPosition = surface;
+    voice.stickPrevious = surface - step * static_cast<double> (impactSpeed);
+    // IMP-2 is implicit and passive even when a deliberately hostile host rate
+    // leaves only a handful of samples in the collision. Softening K to force a
+    // six-sample pulse instead made the stick follow the returning fundamental
+    // for seventeen milliseconds at 8 kHz; preserve the physical stiffness.
+    voice.contactStiffness = contactStiffnessFor (profile, applied_.bachiHardness);
+    voice.contactDamping = contactDampingFactor
+                         / static_cast<double> (relativeImpactSpeed);
+    voice.residualImpedance = std::max (static_cast<double> (targetImpedance), 1.0);
+    const double coupling = static_cast<double> (profile.membraneGain)
+                          * profile.levelScale;
+    const double referenceTailAdmittance = coupling * coupling
+                                         / voice.residualImpedance;
+
+    // Integral of sin(pi t/tau)^3 over the contact, through the same omitted-
+    // mode admittance the dynamic solve uses. Dividing solved residual work by
+    // this reference preserves the recording-led tail calibration without
+    // applying the articulation transformer a second time.
+    constexpr double squaredHertzPulseIntegral = 4.0 / (3.0 * piFloat);
+    voice.referenceContactEnergy = static_cast<double> (peakForce) * peakForce
+                                 * static_cast<double> (contactSeconds)
+                                 * squaredHertzPulseIntegral
+                                 * referenceTailAdmittance;
+    voice.solvedContactEnergyStep = 0.0;
+    voice.contactAmplitude = excitationScale;
+    voice.contactNoiseAmplitude = excitationScale * noiseLevel;
+    voice.nonlinearContactActive = profile.membraneGain > 0.0f;
+    voice.nonlinearContactHasForce = false;
+    voice.continuumInjected = false;
+    voice.solvedContactForce = 0.0f;
+    voice.nextContact = voice.contactCount;
 
     // The continuum was built against the resolved bank's drive; the modes are
     // then driven by the contact, so the continuum has to be scaled by the same
@@ -3916,7 +4018,7 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     // inside the model, and the term this replaces let it set a third of the
     // bend.
     constexpr float inverseModelScaleSquared = 1.0f / (modelScale * modelScale);
-    physical.tensionDepth = tensionStretchCalibration * applied_.tensionModulation
+    physical.tensionDepth = tensionStretchCalibration
                           * drum.stretchStiffness * inverseModelScaleSquared
                           / std::max (drum.radius * drum.radius, 1.0e-6f);
     physical.tensionDecay =
@@ -4036,12 +4138,14 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     visualOctave_.store (octave, std::memory_order_relaxed);
     visualLevel_ = std::max (visualLevel_, voice.velocity);
 
-    const auto measurements = measureDrum (octave);
-    // The pitch the drum is heard at, because that is what a readout labelled
-    // with a pitch has to be: on the two large drums of the family the loaded
-    // fundamental is a mode nobody hears, and naming it left the display a
-    // fifth and a half below the note the key had just played.
-    fundamentalHz_.store (measurements.soundingHz, std::memory_order_relaxed);
+    // This atomic belongs only to the lightweight visual snapshot. The editor's
+    // numerical readout calls measure(), which runs the exact dry-contact audit
+    // off the audio thread. Keep trigger bounded by using the analytic estimate
+    // here; doing another contact render in a MIDI callback would undo the
+    // shared-bank real-time work above.
+    const auto visualPitch = soundingMode (
+        drum, voice.strikeRadius, renderedModeCeilingHz (sampleRate_));
+    fundamentalHz_.store (visualPitch.frequencyHz, std::memory_order_relaxed);
 }
 
 bool TaikoEngine::triggerMidi (int midiNote, float velocity) noexcept
@@ -4320,31 +4424,49 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
     // with the wheel, rather than the wheel only reaching the next stroke.
     //
     // The glide is the head's own doing. A membrane clamped at its rim gets
-    // longer when it moves, so its tension rises with the square of the
-    // displacement - the Berger/von Karman term - and the frequency with the
-    // square root of the tension. What the head is doing right now is in the
-    // resonator states, so that is what this reads: a peak follower over their
-    // mean square, released slowly enough to sit still through a cycle of the
-    // lowest mode and quickly enough to follow the head as it empties.
+    // longer when it moves, so its tension rises with the area-mean square of
+    // its slope - the Berger/von Karman term - and the frequency with the
+    // square root of the tension. The Bessel gradient norm weights each mode;
+    // the two cavity-coupled axisymmetric branches are combined coherently
+    // because they are two coordinates of the same batter-head shape.
     //
-    // There is no envelope and no time constant of its own in any of this. The
-    // glide is over when the head has stopped moving, which is why a slack
-    // o-daiko bends further and for longer than a shime-daiko does at four
-    // times the tension.
-    if (voice.tensionDepth > 0.0f)
+    // A short peak follower removes cycle-rate ripple but contributes no attack
+    // schedule: the glide is over when the head has stopped moving. That is why
+    // a slack o-daiko bends further and for longer than a shime-daiko does at
+    // four times the tension.
+    const float liveTensionDepth = voice.tensionDepth * applied_.tensionModulation;
+    if (liveTensionDepth > 0.0f)
     {
-        float squaredDisplacement = 0.0f;
+        std::array<double, modeEntryCount> axisymmetricAmplitude {};
+        std::array<double, modeEntryCount> axisymmetricNorm {};
+        double squaredSlope = 0.0;
         for (int index = 0; index < voice.activeModeCount; ++index)
         {
             const auto& mode = voice.modes[static_cast<std::size_t> (index)];
             if (! mode.membrane)
                 continue;
-            const auto state = static_cast<float> (mode.resonator.y1);
-            squaredDisplacement += state * state;
+            const double state = mode.resonator.y1;
+            if (mode.circumferentialOrder == 0)
+            {
+                const auto entry = static_cast<std::size_t> (mode.modeEntry);
+                axisymmetricAmplitude[entry] +=
+                    static_cast<double> (mode.batterParticipation) * state;
+                axisymmetricNorm[entry] = mode.stretchNorm;
+            }
+            else
+            {
+                squaredSlope += static_cast<double> (mode.stretchNorm)
+                              * state * state;
+            }
         }
+        for (std::size_t entry = 0; entry < axisymmetricAmplitude.size(); ++entry)
+            squaredSlope += axisymmetricNorm[entry]
+                          * axisymmetricAmplitude[entry]
+                          * axisymmetricAmplitude[entry];
 
-        voice.tensionEnvelope = std::max (squaredDisplacement,
-                                          voice.tensionEnvelope * voice.tensionDecay);
+        voice.tensionEnvelope = std::max (
+            static_cast<float> (squaredSlope),
+            voice.tensionEnvelope * voice.tensionDecay);
     }
     else
     {
@@ -4357,7 +4479,7 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
     // tail retunes it for the same reason the wheel does - so they are carried
     // together as one offset in semitones.
     const float tuningNow = applied_.pitch + 2.0f * pitchBend_;
-    const float raw = voice.tensionDepth * voice.tensionEnvelope;
+    const float raw = liveTensionDepth * voice.tensionEnvelope;
     const float rise = tensionStretchLimit * raw / (tensionStretchLimit + raw);
     const float stretch = std::sqrt (1.0f + rise);
     const float shift = stretch * std::exp2 ((tuningNow - voice.tuningAtStrike) / 12.0f);
@@ -4366,11 +4488,389 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
         applyTensionShift (voice, shift);
 }
 
+void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
+{
+    std::array<Voice*, maxVoices> contacts {};
+    int contactCount = 0;
+    for (auto& voice : voices_)
+        if (voice.active && voice.nonlinearContactActive
+            && voice.octaveOffset == physical.octaveOffset)
+            contacts[static_cast<std::size_t> (contactCount++)] = &voice;
+
+    if (contactCount == 0)
+        return;
+
+    // Slot reuse must not make a simultaneous solve order-dependent. Stroke
+    // order is stable even when an overflowing transient pool chooses different
+    // storage slots.
+    std::sort (contacts.begin(), contacts.begin() + contactCount,
+               [] (const Voice* left, const Voice* right)
+               {
+                   return left->startOrder < right->startOrder;
+               });
+
+    const double h = 1.0 / sampleRate_;
+    const double hSquared = h * h;
+    constexpr double inverseModelScale = 1.0 / static_cast<double> (modelScale);
+
+    std::array<double, maxVoices> xFree {};
+    std::array<double, maxVoices> deltaPrevious {};
+    std::array<double, maxVoices> deltaCurrent {};
+    std::array<double, maxVoices> sFree {};
+    std::array<double, maxVoices> midpointCompression {};
+    std::array<double, maxVoices> s {};
+    std::array<double, maxVoices> force {};
+    std::array<double, maxVoices> forceDerivative {};
+    std::array<double, resonatorCount> matchedCompliance {};
+    std::array<std::array<double, maxVoices>, maxVoices> compliance {};
+
+    for (int contact = 0; contact < contactCount; ++contact)
+    {
+        auto& voice = *contacts[static_cast<std::size_t> (contact)];
+        xFree[static_cast<std::size_t> (contact)] =
+            2.0 * voice.stickPosition - voice.stickPrevious;
+        compliance[static_cast<std::size_t> (contact)]
+                  [static_cast<std::size_t> (contact)] =
+            hSquared / voice.stickMass;
+    }
+
+    // Each exact free pole is matched by the IMP-2 compliance
+    //   C = h^2 (1 + r^2 + 2 r cos(theta)) / (4 M)
+    //     = h^2 (1 + a2 - a1) / (4 M).
+    // The same p senses the surface and spreads force, making the contact
+    // matrix symmetric positive definite and simultaneous sticks independent
+    // of processing order.
+    for (int index = 0; index < physical.modeCount; ++index)
+    {
+        const auto& mode = physical.modes[static_cast<std::size_t> (index)];
+        if (! mode.membrane || ! (mode.inverseModalMass > 0.0f)
+            || std::abs (mode.resonator.b0) < 1.0e-14)
+            continue;
+
+        const auto id = static_cast<std::size_t> (mode.physicalIndex);
+        const double c = 0.25 * hSquared
+                       * static_cast<double> (mode.inverseModalMass)
+                       * (1.0 + mode.resonator.a2 - mode.resonator.a1);
+        if (! (c > 0.0) || ! std::isfinite (c))
+            continue;
+        matchedCompliance[id] = c;
+
+        const double qCurrent = mode.resonator.y1 * inverseModelScale;
+        const double qPrevious = mode.resonator.y2 * inverseModelScale;
+        const double qFree = (-mode.resonator.a1 * mode.resonator.y1
+                              - mode.resonator.a2 * mode.resonator.y2)
+                           * inverseModelScale;
+
+        for (int contact = 0; contact < contactCount; ++contact)
+        {
+            const double p = contacts[static_cast<std::size_t> (contact)]
+                                 ->contactProjection[id];
+            deltaCurrent[static_cast<std::size_t> (contact)] -= p * qCurrent;
+            deltaPrevious[static_cast<std::size_t> (contact)] -= p * qPrevious;
+            sFree[static_cast<std::size_t> (contact)] -= p * qFree;
+        }
+
+        for (int row = 0; row < contactCount; ++row)
+        {
+            const double pRow = contacts[static_cast<std::size_t> (row)]
+                                    ->contactProjection[id];
+            for (int column = 0; column < contactCount; ++column)
+            {
+                const double pColumn = contacts[static_cast<std::size_t> (column)]
+                                           ->contactProjection[id];
+                compliance[static_cast<std::size_t> (row)]
+                          [static_cast<std::size_t> (column)] += c * pRow * pColumn;
+            }
+        }
+    }
+
+    for (int contact = 0; contact < contactCount; ++contact)
+    {
+        auto& voice = *contacts[static_cast<std::size_t> (contact)];
+        const auto slot = static_cast<std::size_t> (contact);
+        deltaCurrent[slot] += voice.stickPosition;
+        deltaPrevious[slot] += voice.stickPrevious;
+        sFree[slot] += xFree[slot] - deltaPrevious[slot];
+        midpointCompression[slot] =
+            0.5 * (deltaCurrent[slot] + deltaPrevious[slot]);
+        s[slot] = sFree[slot];
+
+        // A second bachi can be triggered while the head is moving away faster
+        // than the stick. Its actual collision then begins later, when the
+        // membrane turns back. Sun's constrained Hunt-Crossley eta is defined
+        // from that onset velocity, not from the MIDI-time estimate, so update
+        // it while the contact is still in free approach and freeze it at the
+        // first positive force.
+        if (! voice.nonlinearContactHasForce && sFree[slot] > 0.0)
+        {
+            const double impactSpeed = std::max (sFree[slot] / (2.0 * h), 0.05);
+            voice.contactDamping = contactDampingFactor / impactSpeed;
+        }
+    }
+
+    const auto evaluateLaw = [h] (const Voice& voice, double midpoint, double step,
+                                  double& value, double& derivative) noexcept
+    {
+        constexpr double alpha = 1.5;
+        constexpr double alphaPlusOne = alpha + 1.0;
+        const auto positive = [] (double x) noexcept { return std::max (x, 0.0); };
+        const auto potential = [&] (double x) noexcept
+        {
+            const double z = positive (x);
+            return voice.contactStiffness / alphaPlusOne * z * z * std::sqrt (z);
+        };
+        const auto potentialSlope = [&] (double x) noexcept
+        {
+            const double z = positive (x);
+            return voice.contactStiffness * z * std::sqrt (z);
+        };
+
+        const double nextMidpoint = midpoint + 0.5 * step;
+        const double phi0 = potential (midpoint);
+        const double phi1 = potential (nextMidpoint);
+        const double scale = 1.0 + std::abs (midpoint);
+        double discreteGradient = 0.0;
+        double gradientDerivative = 0.0;
+        if (std::abs (step) > 1.0e-12 * scale)
+        {
+            const double difference = phi1 - phi0;
+            discreteGradient = 2.0 * difference / step;
+            gradientDerivative = (potentialSlope (nextMidpoint) * step
+                                  - 2.0 * difference) / (step * step);
+        }
+        else
+        {
+            const double z = positive (midpoint);
+            discreteGradient = potentialSlope (midpoint);
+            gradientDerivative = 0.25 * alpha * voice.contactStiffness
+                               * std::sqrt (z);
+        }
+
+        // Roundoff at a vanishing crossing can only make these infinitesimally
+        // negative; convexity says their physical values are non-negative.
+        discreteGradient = std::max (discreteGradient, 0.0);
+        gradientDerivative = std::max (gradientDerivative, 0.0);
+        const double multiplier = 1.0 + voice.contactDamping * step / (2.0 * h);
+        if (! (multiplier > 0.0))
+        {
+            value = 0.0;
+            derivative = 0.0;
+            return;
+        }
+
+        value = discreteGradient * multiplier;
+        derivative = gradientDerivative * multiplier
+                   + discreteGradient * voice.contactDamping / (2.0 * h);
+    };
+
+    const auto residual = [&] (const std::array<double, maxVoices>& candidate,
+                               std::array<double, maxVoices>* values,
+                               std::array<double, maxVoices>* derivatives,
+                               std::array<double, maxVoices>* equations) noexcept
+    {
+        std::array<double, maxVoices> localForce {};
+        std::array<double, maxVoices> localDerivative {};
+        for (int contact = 0; contact < contactCount; ++contact)
+            evaluateLaw (*contacts[static_cast<std::size_t> (contact)],
+                         midpointCompression[static_cast<std::size_t> (contact)],
+                         candidate[static_cast<std::size_t> (contact)],
+                         localForce[static_cast<std::size_t> (contact)],
+                         localDerivative[static_cast<std::size_t> (contact)]);
+
+        double norm = 0.0;
+        for (int row = 0; row < contactCount; ++row)
+        {
+            const auto rowSlot = static_cast<std::size_t> (row);
+            double equation = candidate[rowSlot] - sFree[rowSlot];
+            for (int column = 0; column < contactCount; ++column)
+                equation += compliance[rowSlot][static_cast<std::size_t> (column)]
+                          * localForce[static_cast<std::size_t> (column)];
+            if (equations != nullptr)
+                (*equations)[rowSlot] = equation;
+            norm = std::max (norm, std::abs (equation));
+        }
+        if (values != nullptr)
+            *values = localForce;
+        if (derivatives != nullptr)
+            *derivatives = localDerivative;
+        return norm;
+    };
+
+    double scale = 1.0;
+    for (int contact = 0; contact < contactCount; ++contact)
+        scale = std::max (scale, std::abs (sFree[static_cast<std::size_t> (contact)]));
+    const double tolerance = 2.0e-12 * scale;
+    bool converged = false;
+
+    for (int iteration = 0; iteration < 14; ++iteration)
+    {
+        std::array<double, maxVoices> equations {};
+        const double norm = residual (s, &force, &forceDerivative, &equations);
+        if (norm <= tolerance)
+        {
+            converged = true;
+            break;
+        }
+
+        std::array<std::array<double, maxVoices>, maxVoices> jacobian {};
+        std::array<double, maxVoices> increment {};
+        for (int row = 0; row < contactCount; ++row)
+        {
+            const auto rowSlot = static_cast<std::size_t> (row);
+            increment[rowSlot] = -equations[rowSlot];
+            for (int column = 0; column < contactCount; ++column)
+            {
+                const auto columnSlot = static_cast<std::size_t> (column);
+                jacobian[rowSlot][columnSlot] = (row == column ? 1.0 : 0.0)
+                    + compliance[rowSlot][columnSlot] * forceDerivative[columnSlot];
+            }
+        }
+
+        bool solvable = true;
+        for (int pivot = 0; pivot < contactCount; ++pivot)
+        {
+            int best = pivot;
+            for (int row = pivot + 1; row < contactCount; ++row)
+                if (std::abs (jacobian[static_cast<std::size_t> (row)]
+                                      [static_cast<std::size_t> (pivot)])
+                    > std::abs (jacobian[static_cast<std::size_t> (best)]
+                                        [static_cast<std::size_t> (pivot)]))
+                    best = row;
+            if (std::abs (jacobian[static_cast<std::size_t> (best)]
+                                  [static_cast<std::size_t> (pivot)]) < 1.0e-14)
+            {
+                solvable = false;
+                break;
+            }
+            if (best != pivot)
+            {
+                std::swap (jacobian[static_cast<std::size_t> (best)],
+                           jacobian[static_cast<std::size_t> (pivot)]);
+                std::swap (increment[static_cast<std::size_t> (best)],
+                           increment[static_cast<std::size_t> (pivot)]);
+            }
+            for (int row = pivot + 1; row < contactCount; ++row)
+            {
+                const double factor = jacobian[static_cast<std::size_t> (row)]
+                                              [static_cast<std::size_t> (pivot)]
+                                    / jacobian[static_cast<std::size_t> (pivot)]
+                                              [static_cast<std::size_t> (pivot)];
+                for (int column = pivot; column < contactCount; ++column)
+                    jacobian[static_cast<std::size_t> (row)]
+                            [static_cast<std::size_t> (column)] -=
+                        factor * jacobian[static_cast<std::size_t> (pivot)]
+                                         [static_cast<std::size_t> (column)];
+                increment[static_cast<std::size_t> (row)] -=
+                    factor * increment[static_cast<std::size_t> (pivot)];
+            }
+        }
+        if (! solvable)
+            break;
+
+        for (int row = contactCount - 1; row >= 0; --row)
+        {
+            double value = increment[static_cast<std::size_t> (row)];
+            for (int column = row + 1; column < contactCount; ++column)
+                value -= jacobian[static_cast<std::size_t> (row)]
+                                 [static_cast<std::size_t> (column)]
+                       * increment[static_cast<std::size_t> (column)];
+            increment[static_cast<std::size_t> (row)] =
+                value / jacobian[static_cast<std::size_t> (row)]
+                                [static_cast<std::size_t> (row)];
+        }
+
+        bool accepted = false;
+        double fraction = 1.0;
+        for (int search = 0; search < 10; ++search)
+        {
+            auto candidate = s;
+            for (int contact = 0; contact < contactCount; ++contact)
+                candidate[static_cast<std::size_t> (contact)] +=
+                    fraction * increment[static_cast<std::size_t> (contact)];
+            const double candidateNorm = residual (candidate, nullptr, nullptr, nullptr);
+            if (std::isfinite (candidateNorm) && candidateNorm < norm)
+            {
+                s = candidate;
+                accepted = true;
+                break;
+            }
+            fraction *= 0.5;
+        }
+        if (! accepted)
+            break;
+    }
+
+    const double finalResidual = residual (s, &force, nullptr, nullptr);
+    if (! converged && finalResidual <= 16.0 * tolerance)
+        converged = true;
+    if (! converged)
+    {
+        // A failed solve must never manufacture energy or an adhesive force.
+        // Free flight is the passive fallback; the still-active contact retries
+        // on the next sample rather than committing a non-finite state.
+        force.fill (0.0);
+        s = sFree;
+    }
+
+    for (int contact = 0; contact < contactCount; ++contact)
+    {
+        auto& voice = *contacts[static_cast<std::size_t> (contact)];
+        const auto slot = static_cast<std::size_t> (contact);
+        const double next = xFree[slot] - hSquared * force[slot] / voice.stickMass;
+        voice.stickPrevious = voice.stickPosition;
+        voice.stickPosition = next;
+        voice.solvedContactForce = static_cast<float> (force[slot]);
+        const auto& profile = strikeProfile (voice.articulation);
+        const double coupling = static_cast<double> (profile.membraneGain)
+                              * profile.levelScale;
+        // The stochastic field is currently an observed high-mode residual,
+        // not a memoryless mechanical dashpot. A pure resistance captured soft
+        // and edge strikes for several milliseconds because it omitted the
+        // reactive storage that returns energy from real high modes. Use the
+        // solved force history to drive the calibrated observation until that
+        // omitted-mode impedance is represented by fitted dynamic states.
+        voice.solvedContactEnergyStep = h * force[slot] * force[slot]
+                                      * coupling * coupling
+                                      / voice.residualImpedance;
+        if (force[slot] > 1.0e-6)
+            voice.nonlinearContactHasForce = true;
+
+        const double nextMidpoint = midpointCompression[slot] + 0.5 * s[slot];
+        if (voice.nonlinearContactHasForce
+            && nextMidpoint <= 0.0 && s[slot] <= 0.0)
+            voice.nonlinearContactActive = false;
+    }
+
+    for (int index = 0; index < physical.modeCount; ++index)
+    {
+        const auto& mode = physical.modes[static_cast<std::size_t> (index)];
+        if (! mode.membrane)
+            continue;
+        const auto id = static_cast<std::size_t> (mode.physicalIndex);
+        const double c = matchedCompliance[id];
+        if (! (c > 0.0) || std::abs (mode.resonator.b0) < 1.0e-14)
+            continue;
+
+        double generalisedForce = 0.0;
+        for (int contact = 0; contact < contactCount; ++contact)
+            generalisedForce += contacts[static_cast<std::size_t> (contact)]
+                                    ->contactProjection[id]
+                              * force[static_cast<std::size_t> (contact)];
+        const double storedIncrement = static_cast<double> (modelScale) * c
+                                     * generalisedForce;
+        physical.modalInput[id] += static_cast<float> (
+            storedIncrement / mode.resonator.b0);
+    }
+}
+
 float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
                                 float& rightOut) noexcept
 {
+    const bool nonlinearContact = voice.nonlinearContactActive
+                               || voice.nonlinearContactHasForce;
     // Start the next scheduled contact if it is due.
-    if (voice.contactRemaining == 0u && voice.nextContact < voice.contactCount)
+    if (! nonlinearContact && voice.contactRemaining == 0u
+        && voice.nextContact < voice.contactCount)
     {
         const auto& contact =
             voice.contacts[static_cast<std::size_t> (voice.nextContact)];
@@ -4411,7 +4911,37 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
     float force = 0.0f;
     float contactEnvelope = 0.0f;
 
-    if (voice.contactRemaining > 0u)
+    if (nonlinearContact)
+    {
+        force = std::max (voice.solvedContactForce, 0.0f)
+              * strikeProfile (voice.articulation).levelScale;
+        contactEnvelope = force
+            / std::max (voice.contactAmplitude, 1.0e-9f);
+
+        // Feed the unresolved field from the actual solved contact, one energy
+        // increment at a time. Its existing calibration describes the complete
+        // reference Hertz pulse, so each sample contributes the square root of
+        // its share of that pulse's F^2/Z energy; hypot then adds the independent
+        // high modes in energy. This removes the old full-strength burst that
+        // appeared on the first positive force sample regardless of what the
+        // moving head let the stick deliver.
+        if (voice.solvedContactEnergyStep > 0.0
+            && voice.referenceContactEnergy > 0.0 && physical != nullptr)
+        {
+            const float share = static_cast<float> (std::sqrt (
+                voice.solvedContactEnergyStep / voice.referenceContactEnergy));
+            for (std::size_t index = 0; index < voice.continuumInjection.size(); ++index)
+            {
+                if (! (physical->continuum[index].centre > 0.0f))
+                    continue;
+                auto& destination = physical->continuum[index].envelope;
+                destination = std::hypot (destination,
+                                          voice.continuumInjection[index] * share);
+            }
+            voice.continuumInjected = true;
+        }
+    }
+    else if (voice.contactRemaining > 0u)
     {
         const float position =
             1.0f - static_cast<float> (voice.contactRemaining)
@@ -4552,9 +5082,28 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
 
     if (! voice.physicalBank)
     {
-        if (physical != nullptr && excitation != 0.0f)
-            for (std::size_t index = 0; index < voice.modeProjection.size(); ++index)
-                physical->modalInput[index] += excitation * voice.modeProjection[index];
+        if (physical != nullptr)
+        {
+            if (nonlinearContact)
+            {
+                // The normal membrane force was integrated by the reciprocal
+                // IMP-2 solve. Texture remains an explicitly external roughness
+                // source, while the wooden/rim bank follows the solved force
+                // through its established linear observation path.
+                for (std::size_t index = 0; index < voice.modeProjection.size(); ++index)
+                {
+                    float input = noise * voice.modeProjection[index];
+                    if (index >= static_cast<std::size_t> (membraneResonatorCount))
+                        input += force * voice.modeProjection[index];
+                    physical->modalInput[index] += input;
+                }
+            }
+            else if (excitation != 0.0f)
+            {
+                for (std::size_t index = 0; index < voice.modeProjection.size(); ++index)
+                    physical->modalInput[index] += excitation * voice.modeProjection[index];
+            }
+        }
     }
 
     const int renderModeCount = voice.physicalBank ? voice.activeModeCount : 0;
@@ -4663,7 +5212,19 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
         return;
     }
 
-    refreshDrumIfNeeded();
+    // Pitch bend invalidates the lazy geometry cache for the next strike, but
+    // live banks already follow it through applyTensionShift. Re-solving four
+    // drums here on every small host block is necessary only when a structural
+    // control changed underneath an existing bank.
+    if (! drumCacheValid_
+        && std::any_of (physicalDrums_.begin(), physicalDrums_.end(),
+                        [this] (const Voice& drum)
+                        {
+                            return drum.modeCount > 0
+                                && drum.configurationRevision
+                                       != physicalConfigurationRevision_;
+                        }))
+        refreshDrumIfNeeded();
 
     const float targetGain = applied_.outputGain;
     const float targetDrive = applied_.drive;
@@ -4695,6 +5256,37 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
         float mixRight = 0.0f;
         bool anyVoiceActive = false;
 
+        // Retune/control the canonical poles before forming the matched contact
+        // compliance. Changing a1/a2 between the solve and the recurrence would
+        // make the force step describe a different free system from the one
+        // actually advanced below.
+        for (auto& physical : physicalDrums_)
+        {
+            if (! physical.active)
+                continue;
+            if (physical.controlCountdown <= 0)
+            {
+                updateVoiceControl (physical);
+                physical.controlCountdown = controlPeriod;
+                if (physical.ageSamples >= physical.maximumSamples)
+                {
+                    silenceVoice (physical);
+                    physical.physicalBank = true;
+                    continue;
+                }
+            }
+            --physical.controlCountdown;
+        }
+
+        for (auto& voice : voices_)
+        {
+            voice.solvedContactForce = 0.0f;
+            voice.solvedContactEnergyStep = 0.0;
+        }
+        for (auto& physical : physicalDrums_)
+            if (physical.active)
+                advancePhysicalContacts (physical);
+
         // Gather every due contact before any physical recurrence advances.
         // Same-sample hits therefore see the same pre-step head and their
         // projected forces enter one canonical modal update.
@@ -4709,6 +5301,7 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
                 voice.controlCountdown = controlPeriod;
                 if (voice.ageSamples >= voice.maximumSamples
                     && voice.contactRemaining == 0u
+                    && ! voice.nonlinearContactActive
                     && voice.nextContact >= voice.contactCount)
                 {
                     silenceVoice (voice);
@@ -4735,19 +5328,6 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
             if (! physical.active)
                 continue;
             anyVoiceActive = true;
-
-            if (physical.controlCountdown <= 0)
-            {
-                updateVoiceControl (physical);
-                physical.controlCountdown = controlPeriod;
-                if (physical.ageSamples >= physical.maximumSamples)
-                {
-                    silenceVoice (physical);
-                    physical.physicalBank = true;
-                    continue;
-                }
-            }
-            --physical.controlCountdown;
 
             if (handStep < 1.0f)
                 physical.handGain *= handStep;
@@ -4925,6 +5505,148 @@ TaikoEngine::DrumMeasurements TaikoEngine::measureDrum (int octaveOffset) const 
     return measure (applied_, octaveOffset, 2.0f * pitchBend_, sampleRate_);
 }
 
+TaikoEngine::SoundingMode TaikoEngine::dynamicSoundingMode (
+    const EngineParameters& rawParameters, int octaveOffset,
+    float pitchBendSemitones, double sampleRateHz) noexcept
+{
+    auto parameters = sanitise (rawParameters);
+    // The panel names the settled drum under a neutral open stroke. Noise has
+    // no stable pitch, humanising deliberately moves the contact, and the
+    // nonlinear tension glide shifts every mode by the same ratio rather than
+    // changing which one wins.
+    parameters.humanise = 0.0f;
+    parameters.strikeNoise = 0.0f;
+    parameters.tensionModulation = 0.0f;
+    parameters.drive = 0.0f;
+    parameters.outputGain = 0.0f;
+
+    struct ReadoutCache
+    {
+        EngineParameters parameters {};
+        int octave { 0 };
+        float pitchBend { 0.0f };
+        double sampleRate { 0.0 };
+        SoundingMode result {};
+        bool valid { false };
+    };
+    static thread_local ReadoutCache cache;
+    const int octave = std::clamp (octaveOffset, lowestOctaveOffset,
+                                   highestOctaveOffset);
+    if (cache.valid && cache.parameters == parameters && cache.octave == octave
+        && cache.pitchBend == pitchBendSemitones
+        && cache.sampleRate == sampleRateHz)
+        return cache.result;
+
+    const auto cacheResult = [&] (SoundingMode result) noexcept
+    {
+        cache.parameters = parameters;
+        cache.octave = octave;
+        cache.pitchBend = pitchBendSemitones;
+        cache.sampleRate = sampleRateHz;
+        cache.result = result;
+        cache.valid = true;
+        return result;
+    };
+
+    // Reusing one scratch engine per caller avoids both an 800 kB stack object
+    // and allocation in this noexcept readout. trigger() deliberately uses the
+    // cheap analytic visual estimate above, so this cannot recurse.
+    static thread_local TaikoEngine audit;
+    audit.setParameters (parameters);
+    audit.setPitchBend (0.5f * pitchBendSemitones);
+    audit.prepare (sampleRateHz, 1);
+
+    constexpr float neutralVelocity = 0.72f;
+    audit.trigger (Articulation::Don, octave, neutralVelocity);
+
+    auto& contact = audit.voices_[0];
+    const auto drumIndex = static_cast<std::size_t> (octave - lowestOctaveOffset);
+    auto& physical = audit.physicalDrums_[drumIndex];
+    if (! contact.active || physical.modeCount <= 0)
+        return cacheResult ({});
+
+    // Only the normal force is being audited. These paths do not feed back into
+    // the solve, so silencing them saves work and prevents a future observation
+    // change from affecting the physical ranking.
+    contact.continuumInjection.fill (0.0f);
+    contact.contactNoiseAmplitude = 0.0f;
+    contact.tackScale = 0.0f;
+    contact.directGainLeft = 0.0f;
+    contact.directGainRight = 0.0f;
+
+    bool receivedForce = false;
+    int elapsedSamples = 0;
+    const int maximumSamples = static_cast<int> (
+        std::ceil (0.05 * audit.sampleRate_)) + 2;
+    for (int sample = 0; sample < maximumSamples; ++sample)
+    {
+        float left = 0.0f;
+        float right = 0.0f;
+        audit.process (&left, &right, 1);
+        const double force = contact.solvedContactForce;
+        receivedForce = receivedForce || force > 0.0;
+        ++elapsedSamples;
+
+        if (receivedForce && ! contact.nonlinearContactActive)
+            break;
+    }
+
+    SoundingMode best;
+    double bestWeight = 0.0;
+    const double releaseSeconds = static_cast<double> (elapsedSamples)
+                                / audit.sampleRate_;
+    const double windowStart = std::max (
+        static_cast<double> (pitchWindowStart) - releaseSeconds, 0.0);
+    const double windowEnd = std::max (
+        static_cast<double> (pitchWindowEnd) - releaseSeconds, windowStart);
+    for (int index = 0; index < physical.modeCount; ++index)
+    {
+        const auto& mode = physical.modes[static_cast<std::size_t> (index)];
+        if (! mode.membrane || ! (mode.omega > 0.0f))
+            continue;
+
+        // The exact-pole contact recurrence has already integrated the force
+        // into this modal state. Reading its quadrature is both more exact than
+        // reconstructing a continuous force transfer (especially near Nyquist)
+        // and avoids one complex accumulator per mode per contact sample.
+        const double radius = std::sqrt (mode.resonator.a2);
+        const double sine = mode.resonator.b0;
+        if (! (radius > 0.0) || std::abs (sine) < 1.0e-14)
+            continue;
+        const double cosine = -mode.resonator.a1 / (2.0 * radius);
+        const double quadrature =
+            (mode.resonator.y1 * cosine - radius * mode.resonator.y2) / sine;
+        const double amplitude = std::hypot (mode.resonator.y1, quadrature);
+        const double decay = mode.decayRate;
+        const double window = decay > 0.0
+            ? (std::exp (-decay * windowStart)
+               - std::exp (-decay * windowEnd)) / decay
+            : 0.0;
+        const double ownGain = 0.5 + static_cast<double> (parameters.stereoWidth);
+        const double otherGain = 0.5 - static_cast<double> (parameters.stereoWidth);
+        const double observed = ownGain * static_cast<double> (mode.micLeft)
+                              + otherGain * static_cast<double> (mode.micRight);
+        const double weight = amplitude * std::abs (observed)
+                            * window;
+        if (! (weight > bestWeight))
+            continue;
+
+        bestWeight = weight;
+        best.frequencyHz = mode.omega / (2.0f * piFloat);
+        best.weight = static_cast<float> (weight);
+        best.identity.entryIndex = mode.modeEntry;
+        best.identity.branch = static_cast<std::uint8_t> (
+            static_cast<int> (mode.physicalIndex) - 2 * mode.modeEntry);
+    }
+
+    if (bestWeight > 0.0)
+        return cacheResult (best);
+
+    const auto drum = resolveDrumFor (parameters, pitchBendSemitones, octave);
+    return cacheResult (soundingMode (drum, readoutStrikeRadius (parameters),
+                                     renderedModeCeilingHz (sampleRateHz)));
+}
+
 TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& parameters,
                                                      int octaveOffset,
                                                      float pitchBendSemitones,
@@ -4984,10 +5706,8 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
     // that can be all of them - at which point this is zero, which is the
     // marker for a drum with no membrane tone rather than a frequency. See
     // soundingMode and DrumMeasurements::soundingHz.
-    result.soundingHz =
-        soundingMode (drum, readoutStrikeRadius (sanitise (parameters)),
-                      renderedModeCeilingHz (sampleRateHz))
-            .frequencyHz;
+    result.soundingHz = dynamicSoundingMode (
+        parameters, octaveOffset, pitchBendSemitones, sampleRateHz).frequencyHz;
 
     // How long a branch rings, with its own radiation share. Two branches of the
     // same mode differ a great deal on a sealed drum, because only the one that
