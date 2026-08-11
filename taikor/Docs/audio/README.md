@@ -62,29 +62,29 @@ ghost strokes in the velocity take.
 | --- | --- | ---: | ---: | ---: |
 | `01-stroke-vocabulary.wav` | All four strokes on the o-daiko, in keyboard order | 4.2 s | −9.4 dBFS | +6.4 dB |
 | `02-the-four-drums.wav` | A Don on each of the four drums: o-daiko, chu-daiko, okedo, shime | 6.3 s | −17.3 dBFS | +14.3 dB |
-| `03-the-playing-grid.wav` | The whole grid: four strokes on each of the four drums | 10.1 s | −6.1 dBFS | +3.1 dB |
+| `03-the-playing-grid.wav` | The whole grid: four strokes on each of the four drums | 10.1 s | −5.8 dBFS | +2.8 dB |
 | `04-drums-ka.wav` | An edge Ka on each of the four drums | 3.9 s | −10.4 dBFS | +7.4 dB |
 | `05-drums-rim-shot.wav` | A rim shot on each of the four drums | 5.1 s | −5.8 dBFS | +2.8 dB |
-| `06-odaiko-phrase.wav` | A phrase on the o-daiko | 10.0 s | −8.2 dBFS | +5.2 dB |
-| `07-chudaiko-phrase.wav` | The same phrase on the chu-daiko | 6.7 s | −10.9 dBFS | +7.9 dB |
-| `08-okedo-phrase.wav` | The same phrase on the okedo-daiko | 5.1 s | −4.3 dBFS | +1.3 dB |
-| `09-shime-phrase.wav` | The same phrase on the shime-daiko | 4.2 s | −9.2 dBFS | +6.2 dB |
-| `10-velocity-dynamics.wav` | One stroke from a ghost note to a full-arm hit | 5.9 s | −12.6 dBFS | +9.6 dB |
-| `11-rolls-and-presses.wav` | Press rolls, a played flam and a roll accelerating into a rim shot | 5.4 s | −3.7 dBFS | +0.7 dB |
-| `12-bachi-hardness.wav` | Felt beater through to a hard oak bachi | 4.8 s | −6.9 dBFS | +3.9 dB |
-| `13-strike-position.wav` | The same stroke walked from centre to rim | 4.6 s | −12.3 dBFS | +9.3 dB |
-| `14-head-tension.wav` | Slack head through to fully tacked | 5.5 s | −12.0 dBFS | +9.0 dB |
-| `15-head-material.wav` | Thin synthetic film through to thick cowhide | 5.5 s | −16.0 dBFS | +13.0 dB |
-| `16-shell-material.wav` | Light laminated staves through to dense carved zelkova, on a rim shot | 5.4 s | −4.6 dBFS | +1.6 dB |
-| `17-air-coupling.wav` | Open body through to a fully sealed one | 5.5 s | −13.2 dBFS | +10.2 dB |
-| `18-body-depth.wav` | Shallow body through to deep | 5.5 s | −15.5 dBFS | +12.5 dB |
-| `19-head-damping.wav` | Open head through to heavily damped | 6.3 s | −17.5 dBFS | +14.5 dB |
-| `20-octave-body.wav` | The keyboard as one drum retuned four times, then as the four drums | 7.8 s | −16.5 dBFS | +13.5 dB |
-| `21-mic-distance.wav` | The close pair from 3 cm out to 40 cm | 4.5 s | −6.7 dBFS | +3.7 dB |
-| `22-mic-spread.wav` | The close pair from coincident to fully opened | 4.5 s | −14.1 dBFS | +11.1 dB |
-| `23-hand-damping.wav` | A hand laid on a ringing head, from MIDI CC1 | 6.0 s | −15.9 dBFS | +12.9 dB |
+| `06-odaiko-phrase.wav` | A phrase on the o-daiko | 10.0 s | −8.5 dBFS | +5.5 dB |
+| `07-chudaiko-phrase.wav` | The same phrase on the chu-daiko | 6.7 s | −10.8 dBFS | +7.8 dB |
+| `08-okedo-phrase.wav` | The same phrase on the okedo-daiko | 5.1 s | −4.6 dBFS | +1.6 dB |
+| `09-shime-phrase.wav` | The same phrase on the shime-daiko | 4.2 s | −11.1 dBFS | +8.1 dB |
+| `10-velocity-dynamics.wav` | One stroke from a ghost note to a full-arm hit | 5.9 s | −17.0 dBFS | +14.0 dB |
+| `11-rolls-and-presses.wav` | Press rolls, a played flam and a roll accelerating into a rim shot | 5.4 s | −2.9 dBFS | −0.1 dB |
+| `12-bachi-hardness.wav` | Felt beater through to a hard oak bachi | 4.8 s | −10.4 dBFS | +7.4 dB |
+| `13-strike-position.wav` | The same stroke walked from centre to rim | 4.6 s | −8.7 dBFS | +5.7 dB |
+| `14-head-tension.wav` | Slack head through to fully tacked | 5.5 s | −12.5 dBFS | +9.5 dB |
+| `15-head-material.wav` | Thin synthetic film through to thick cowhide | 5.5 s | −17.0 dBFS | +14.0 dB |
+| `16-shell-material.wav` | Light laminated staves through to dense carved zelkova, on a rim shot | 5.4 s | −4.1 dBFS | +1.1 dB |
+| `17-air-coupling.wav` | Open body through to a fully sealed one | 5.5 s | −13.8 dBFS | +10.8 dB |
+| `18-body-depth.wav` | Shallow body through to deep | 5.5 s | −16.4 dBFS | +13.4 dB |
+| `19-head-damping.wav` | Open head through to heavily damped | 6.3 s | −18.2 dBFS | +15.2 dB |
+| `20-octave-body.wav` | The keyboard as one drum retuned four times, then as the four drums | 7.8 s | −17.1 dBFS | +14.1 dB |
+| `21-mic-distance.wav` | The close pair from 3 cm out to 40 cm | 4.5 s | −7.1 dBFS | +4.1 dB |
+| `22-mic-spread.wav` | The close pair from coincident to fully opened | 4.5 s | −10.9 dBFS | +7.9 dB |
+| `23-hand-damping.wav` | A hand laid on a ringing head, from MIDI CC1 | 6.0 s | −16.0 dBFS | +13.0 dB |
 | `24-pitch-wheel.wav` | The wheel pressing the head sharp and flat | 4.3 s | −17.0 dBFS | +14.0 dB |
-| `25-ensemble-piece.wav` | A longer piece moving between all four drums of the grid | 10.4 s | −8.1 dBFS | +5.1 dB |
+| `25-ensemble-piece.wav` | A longer piece moving between all four drums of the grid | 10.4 s | −7.9 dBFS | +4.9 dB |
 <!-- peaks-table-end -->
 
 ## Regenerating them
