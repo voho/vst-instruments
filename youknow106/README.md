@@ -10,9 +10,9 @@ is an independent original implementation, not affiliated with or licensed by
 Roland Corporation, and it contains no firmware, ROM data, samples or captured
 audio. It does include the original 128 factory tone-memory states as functional
 18-byte parameter data, independently decoded and checksum-verified as described
-below; no Roland Cloud content was extracted. Its panel retains that
-instrument's functional control set and its left-to-right reading order, under
-an original livery; its composition, palette, typography and name are its own.
+below; no Roland Cloud content was extracted. Its panel follows that
+instrument's functional geometry and 1980s colour vocabulary while retaining
+independent branding, typography and project-drawn controls.
 
 What is modelled from documentation and what remains a voiced choice is set out
 control by control in the
@@ -684,30 +684,35 @@ of requiring a second clock multiplier.
 ## Interface
 
 The interface keeps the reference instrument's control inventory **and its
-reading order**. It is a 1120×628 console whose sound-shaping controls occupy
-one continuous left-to-right row — VOLUME, LFO, DCO, HPF, VCF, VCA, ENV,
-CHORUS — because that order *is* the instrument's ergonomics. An earlier
-revision folded it into two rows; doing so broke the one relationship the panel
-exists to show, and it is not worth the space it saved.
+reading order** in a 1280×702 console. The continuous synthesis strip is LFO,
+DCO, HPF, VCF, VCA, ENV and CHORUS. VOLUME and PORTAMENTO return to the left
+performance cheek with the three bender-depth faders, the portamento switch and
+spring lever; the 61-key keyboard begins beside that cheek instead of spanning
+under it.
 
-- Every section is as wide as what it holds, so a one-fader section is one
-  fader wide and no card carries dead area. The two exceptions are VOLUME and
-  CHORUS, widened to their own headers rather than left with a gap.
-- Blue reads as the audio path — VOLUME, DCO, HPF, VCF, VCA and CHORUS; green
-  identifies LFO and envelope modulation.
-- Everything the hardware does not carry on that row sits on a separate lower
-  deck: the vector lever, BENDER depths, assign mode, and the explicitly
-  non-hardware CHARACTER and KEYBOARD CONTROL cards, drawn in a secondary
-  weight so no extension can be mistaken for a stored tone parameter.
-- The five service keys are not performance controls at all, so they sit on the
-  utility bar beside the help text rather than on the instrument surface.
+Directly below the synthesis strip is the hardware programmer tier: KEY
+TRANSPOSE, POLY 1/2, MIDI channel, A/B group, eight BANK keys, the recessed red
+display, eight PATCH keys, MANUAL, WRITE and tape SAVE/VERIFY/LOAD. The immutable
+factory bank makes MIDI CH, WRITE and VERIFY explanatory disabled controls;
+bank/patch selection, MANUAL and SysEx SAVE/LOAD are live. OFF/I/II chorus keys
+and the original horizontal range and waveform keys restore the smaller panel
+relationships as well as the broad section order.
 
-What remains deliberately this project's own is the livery, not the layout: the
-slate/green/blue palette, the masthead and its telemetry, the clipped service
-cards, the oscilloscope-grid motifs and the illuminated vector lever. Functional
-waveform and foot-register marks are redrawn as project-native vectors. The
-panel reads as a relative rather than a copy. This is a design choice, not a
-claim of legal clearance.
+The original surface is planar charcoal metal with red synthesis rails, a blue
+programmer rail, warm rectangular keys, red lamps and graphite fader caps.
+Thin dividers and small recesses provide depth without turning each section into
+a rounded dashboard card. Functional waveform and foot-register marks remain
+project-native vectors. Small programmer legends use an open system sans rather
+than condensed display type, and the resize floor keeps them above the tested
+readability threshold.
+
+A slim host-preset navigator sits directly below the programmer, aligned with
+the BANK keys but isolated by its own recessed blue rail. The remaining
+plugin-only features are visibly bolted on below the keyboard in three separate
+cards: model extensions (Unit Character, chorus noise, HQ and a mouse-friendly
+UNISON key), performance extensions (transpose, rear-panel tune, velocity and
+variable polyphony), and live telemetry. Panic, reset and randomisation stay in
+the bottom service bar beside contextual help.
 
 Sliders, switches and buttons are still placed by the JUCE-free description in
 `Source/DSP/YouKnow106Panel.cpp`, so tests prove that the row does not overlap,
@@ -716,22 +721,22 @@ at the smallest window, which is the binding case and is what fixes the lower
 deck's depth. A bundled low-contrast material scan adds maintained ABS grain,
 polished touch wear, cleaning swirls and sparse hairline scuffs. Recessed fader
 channels, bevelled and grooved caps, and inset illuminated switches add a
-refined vintage material language while remaining project-drawn vectors. Those
-legacy cues sit inside the distinct blue/green livery; they do not recreate the
-reference faceplate.
+refined vintage material language while remaining project-drawn vectors. The
+hardware-inspired red/blue hierarchy remains under independent branding rather
+than reproducing a manufacturer mark.
 
 Descriptions no longer float over the instrument. Hovering any interactive
 element updates the fixed help display below the keys immediately.
-All 55 public controls are covered: the dominant synthesis panel, six extension
-knobs, compact operation and patch controls, program selector, 61-key keyboard
-and pitch/mod lever. That strip also carries the hovered control's **current
+All 83 public controls are covered: the synthesis and controller panel, original
+programmer tier, six extension knobs, utility and host patch controls, 61-key
+keyboard and pitch/mod lever. That strip also carries the hovered control's **current
 setting**, in its own lit right-hand column and in the parameter's own units, so
 reading a value no longer requires starting a drag. The same TooltipClient
 strings remain accessibility metadata, while every no-text-box slider retains a
 separate numeric value bubble during adjustment. Routing, minimum explanatory
 length, stable help geometry and value-bubble presence are regression-tested.
 
-The masthead oscilloscope ranges itself. The instrument's output convention puts
+The live status card's oscilloscope ranges itself. The instrument's output convention puts
 an ordinary patch near a tenth of full scale, so a fixed ±1 trace was a flat line
 for most of what it plays; the trace now follows a slow-release peak, snaps to a
 power-of-two gain and prints that gain on the screen, because a scope whose
@@ -739,7 +744,7 @@ sensitivity moves silently is not telling the truth about level. Its trigger
 carries a hysteresis band scaled to the trace, so a near-silent buffer no longer
 latches onto its own dither.
 
-The vector lever is live performance input rather than a saved parameter. Drag
+The bender lever is live performance input rather than a saved parameter. Drag
 left/right for pitch bend and upward for modulation; both axes spring exactly
 to zero. Its latest two-axis position crosses to the audio thread through one
 coalescing lock-free mailbox, so dense drags cannot fill the keyboard event
@@ -765,7 +770,7 @@ extension in both paths: at depth zero, and at velocity 1.0 whatever the depth,
 the gain is exactly 1.0 and the render is bit-identical to the hardware-faithful
 one, which is what the suite asserts rather than a recorded hash.
 
-The masthead patch bar recalls the factory bank with a stepper, name list,
+The host preset rail recalls the factory bank with a stepper, name list,
 RELOAD and EDITED lamp. It shows the same program as the host and the controls
 are synchronised to the complete selected program on the first editor frame,
 before the first audio block. Cold construction explicitly applies INIT through
@@ -835,10 +840,10 @@ redistribution caveats.
 
 The on-screen keyboard matches the instrument's physical 61-key C2-C7 span.
 That visual limit does not discard host MIDI notes outside the keybed.
-The adjacent on-screen vector lever feeds the instrument internally and springs
+The adjacent on-screen bender lever feeds the instrument internally and springs
 back when released; it does not emit MIDI. YouKnow106 also receives external
 pitch bend, modulation (CC 1), hold (CC 64), all-notes-off and the reference
-instrument's Patch Selection Program Changes. CC 1 and the vector lever's
+instrument's Patch Selection Program Changes. CC 1 and the bender lever's
 upward axis drive the same LFO trigger path; BENDER LFO determines its depth.
 The modelled keybed is not velocity sensitive, so incoming note velocity
 reaches the engine through the VELOCITY extension and nowhere else: at its

@@ -195,12 +195,14 @@ private:
     void buildPanelControls();
     void buildUtilityStrip();
     void buildPresetBar();
+    void buildHardwareProgrammer();
     // Loads a program and brings the bar's own display back in step with it.
     void selectProgram (int index);
     // Steps by one, stopping at the ends rather than wrapping: a bank has a
     // first and a last patch and arriving back at INIT from the end is not what
     // a nudge of the button means.
     void stepProgram (int delta);
+    void selectHardwareProgram();
     void refreshPresetBar();
     // Patch-file transfer, LOAD/SAVE keys and drag-and-drop alike. Files
     // carry the hardware's own F0 41 30 patch dumps and nothing else.
@@ -212,9 +214,12 @@ private:
     void attachButton (juce::Button&, const char* parameterId);
     void attachPolyButton (juce::Button&, const char* parameterId,
                            const char* otherParameterId);
-    // The third MODE latch. It owns no parameter of its own: it closes both
-    // momentary POLY contacts, which is how the hardware selects Solo Unison.
+    // Mouse-friendly extension for the hardware's simultaneous POLY 1 + POLY 2
+    // gesture. It owns no parameter; the two contacts remain authoritative.
     void attachUnisonButton (juce::Button&);
+    void attachChorusOffButton (juce::Button&);
+    void attachPortamentoToggle (juce::Button&);
+    void attachKeyTransposeButton (juce::Button&);
     void attachExclusiveButton (juce::Button&, const char* parameterId,
                                 const char* otherParameterId);
     void attachRadio (juce::Button&, const char* parameterId, int value);
@@ -248,6 +253,8 @@ private:
     juce::TextButton randomize10Button { "RND10%" };
     juce::TextButton randomize50Button { "RND50%" };
     juce::TextButton resetButton { "RESET" };
+    juce::TextButton unisonButton { "UNISON" };
+    juce::TextButton portamentoToggleButton { "ON" };
     // The tape section's own pairing: LOAD and SAVE move one patch between
     // the panel and a .syx file.
     juce::TextButton syxLoadButton { "LOAD" };
@@ -260,6 +267,24 @@ private:
     juce::Slider chorusNoiseSlider;
     juce::Slider polyphonySlider;
     std::array<juce::Label, 6> utilityLabels {};
+
+    // The original programmer tier. The immutable factory bank maps directly
+    // to GROUP A/B, BANK 1..8 and PATCH 1..8; unsupported write/verify
+    // operations remain present and honestly disabled.
+    juce::TextButton keyTransposeButton { "KEY TRANSPOSE" };
+    juce::TextButton midiChannelButton { "MIDI CH" };
+    std::array<juce::TextButton, 2> groupButtons {};
+    std::array<juce::TextButton, 8> bankButtons {};
+    std::array<juce::TextButton, 8> patchButtons {};
+    juce::Label hardwarePatchDisplay;
+    juce::TextButton manualButton { "MANUAL" };
+    juce::TextButton writeButton { "WRITE" };
+    juce::TextButton verifyButton { "VERIFY" };
+    int selectedHardwareGroup = 0;
+    int selectedHardwareBank = 0;
+    int selectedHardwarePatch = 0;
+    float lastPortamentoTime = 0.25f;
+    int lastTransposeSemitones = 12;
 
     // The patch bar. The programs live on the processor -- the host addresses
     // them too -- so this only names them and asks it to switch.

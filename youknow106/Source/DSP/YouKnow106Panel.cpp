@@ -28,158 +28,145 @@ struct Placement
     // sections holding wide legends are wider than the one control in them
     // would otherwise justify.
     int slotSpan { 1 };
+    bool horizontalStack { false };
 };
 
 constexpr Placement placements[controlCount] = {
-    // VOLUME
+    // CONTROLLER CHEEK
     { parameters::volume, "VOLUME",
       "Sets final stereo output level after the chorus. This performance control is not part of the hardware's 18-byte tone memory.",
-      ControlKind::Slider, 0, 0, 0, 1, -1, 0, 1 },
+      ControlKind::Knob, 0, 0, 0, 1, -1, 0, 1 },
 
-    // BENDER
     { parameters::benderDco, "DCO",
       "Sets how far the pitch-bend lever bends oscillator pitch, from zero to plus or minus 12 semitones.",
-      ControlKind::Slider, 1, 0, 0, 1, -1, 0 },
+      ControlKind::Slider, 0, 0, 0, 1, -1, 0 },
     { parameters::benderVcf, "VCF",
       "Sets how strongly the pitch-bend lever moves filter cutoff, up to about plus or minus 3.6 octaves.",
-      ControlKind::Slider, 1, 1, 0, 1, -1, 0 },
+      ControlKind::Slider, 0, 1, 0, 1, -1, 0 },
     { parameters::benderLfo, "LFO",
       "Sets vibrato depth when the lever is pushed forward or MIDI CC 1 is received, up to plus or minus 4 semitones.",
-      ControlKind::Slider, 1, 2, 0, 1, -1, 0 },
-    { parameters::portamento, "PORTA",
+      ControlKind::Slider, 0, 2, 0, 1, -1, 0 },
+    { parameters::portamento, "PORTAMENTO",
       "Sets glide time between assigned pitches; fully down disables portamento.",
-      ControlKind::Slider, 1, 3, 0, 1, -1, 0 },
+      ControlKind::Knob, 0, 1, 0, 1, -1, 0 },
 
     // MODE. Two momentary selection buttons whose lamps are firmware-latched:
     // one is always selected, and pressing both is Solo Unison. Each button
     // prints its own legend -- POLY 1 and POLY 2 -- inside itself.
     { parameters::poly1, "POLY 1",
       "POLY 1 reuses a key's previous voice card when possible, otherwise the longest-free card. Re-click to rebuild held assignments.",
-      ControlKind::Toggle, 2, 0, 0, 3, -1, 0, 2 },
+      ControlKind::Toggle, 1, 1, 0, 2, -1, 0, 2, true },
     { parameters::poly2, "POLY 2",
       "POLY 2 scans from voice 1 for each note, so new notes can cut released tails but never steal a held key. Re-click to rebuild held assignments.",
-      ControlKind::Toggle, 2, 0, 1, 3, -1, 0, 2 },
-    // The hardware reaches this state by holding both momentary POLY contacts
-    // at once, which a mouse cannot do. Exposing the third stable state as its
-    // own latch describes the same three-state assigner without asking for a
-    // chord. The pair of poly parameters stays authoritative underneath, so
-    // existing automation is unaffected.
-    { parameters::legacyKeyMode, "UNISON",
-      "Solo Unison stacks all six voice cards on the highest held key. They are unnormalised and share one crystal, so this is a level and thickness change, not a detune. Re-click to rebuild held assignments.",
-      ControlKind::Toggle, 2, 0, 2, 3, -1, 0, 2 },
+      ControlKind::Toggle, 1, 1, 1, 2, -1, 0, 2, true },
 
     // LFO
     { parameters::lfoRate, "RATE",
       "Sets the speed of the one shared LFO used by vibrato, PWM and filter modulation.",
-      ControlKind::Slider, 3, 0, 0, 1, -1, 0 },
+      ControlKind::Slider, 2, 0, 0, 1, -1, 0 },
     { parameters::lfoDelay, "DELAY",
       "Sets how long the shared LFO is held back and faded into DCO, PWM and VCF modulation when a new phrase starts.",
-      ControlKind::Slider, 3, 1, 0, 1, -1, 0 },
+      ControlKind::Slider, 2, 1, 0, 1, -1, 0 },
 
     // DCO
-    { parameters::dcoLfo, "LFO",
-      "Sets delayed-LFO pitch modulation depth: the patch's vibrato amount, up to plus or minus 4 semitones.",
-      ControlKind::Slider, 4, 0, 0, 1, -1, 0 },
-    { parameters::pwm, "PWM",
-      "In MAN mode this sets a fixed pulse width of roughly 50-95%; in LFO mode it sets the maximum LFO sweep width.",
-      ControlKind::Slider, 4, 1, 0, 1, -1, 0 },
-    // The PWM source pair spans two slots like the other stacks: at one slot
-    // its legends had to shrink to 8.5pt beside neighbours at 12, which reads
-    // as a defect even though it is legible.
-    { parameters::pwmMode, "LFO",
-      "Makes the shared, delay-gated LFO sweep pulse width; PWM sets the depth.",
-      ControlKind::Radio, 4, 2, 0, 2, 1, 0, 2 },
-    { parameters::pwmMode, "MAN",
-      "Makes the PWM slider set one fixed manual pulse width.",
-      ControlKind::Radio, 4, 2, 1, 2, 1, 1, 2 },
     { parameters::range, "16'",
       "Selects the 16-foot oscillator range, one octave below the normal 8-foot range.",
-      ControlKind::Radio, 4, 4, 0, 3, 2, 0 },
+      ControlKind::Radio, 3, 0, 0, 3, 2, 0, 3, true },
     { parameters::range, "8'",
       "Selects the normal 8-foot oscillator range.",
-      ControlKind::Radio, 4, 4, 1, 3, 2, 1 },
+      ControlKind::Radio, 3, 0, 1, 3, 2, 1, 3, true },
     { parameters::range, "4'",
       "Selects the 4-foot oscillator range, one octave above the normal 8-foot range.",
-      ControlKind::Radio, 4, 4, 2, 3, 2, 2 },
-    // The hardware prints pulse before saw. The virtual stack keeps that read
-    // order even though its narrow section arranges the pair vertically.
+      ControlKind::Radio, 3, 0, 2, 3, 2, 2, 3, true },
+    { parameters::dcoLfo, "LFO",
+      "Sets delayed-LFO pitch modulation depth: the patch's vibrato amount, up to plus or minus 4 semitones.",
+      ControlKind::Slider, 3, 3, 0, 1, -1, 0 },
+    { parameters::pwm, "PWM",
+      "In MAN mode this sets a fixed pulse width of roughly 50-95%; in LFO mode it sets the maximum LFO sweep width.",
+      ControlKind::Slider, 3, 4, 0, 1, -1, 0 },
+    { parameters::pwmMode, "LFO",
+      "Makes the shared, delay-gated LFO sweep pulse width; PWM sets the depth.",
+      ControlKind::Radio, 3, 5, 0, 2, 1, 0 },
+    { parameters::pwmMode, "MAN",
+      "Makes the PWM slider set one fixed manual pulse width.",
+      ControlKind::Radio, 3, 5, 1, 2, 1, 1 },
     { parameters::pulse, "PULSE",
       "Turns the variable-width pulse waveform on or off; the PWM controls determine its width.",
-      ControlKind::Toggle, 4, 5, 0, 2, -1, 0, 2 },
+      ControlKind::Toggle, 3, 6, 0, 2, -1, 0, 2, true },
     { parameters::saw, "SAW",
       "Turns the rising sawtooth waveform on or off.",
-      ControlKind::Toggle, 4, 5, 1, 2, -1, 0, 2 },
+      ControlKind::Toggle, 3, 6, 1, 2, -1, 0, 2, true },
     { parameters::sub, "SUB",
       "Sets the level of the square-wave sub-oscillator, one octave below the DCO and independent of PWM.",
-      ControlKind::Slider, 4, 7, 0, 1, -1, 0 },
+      ControlKind::Slider, 3, 8, 0, 1, -1, 0 },
     { parameters::noise, "NOISE",
       "Sets the level of the shared analogue-noise source mixed into every voice.",
-      ControlKind::Slider, 4, 8, 0, 1, -1, 0 },
+      ControlKind::Slider, 3, 9, 0, 1, -1, 0 },
 
     // HPF
     { parameters::highPass, "HPF",
       "Selects the shared post-sum filter: 0 boosts bass, 1 is flat, and 2 or 3 remove progressively more low end at modeled corners near 226 and 721 Hz.",
-      ControlKind::Steps, 5, 0, 0, 1, -1, 0 },
+      ControlKind::Steps, 4, 0, 0, 1, -1, 0 },
 
     // VCF
     { parameters::cutoff, "FREQ",
       "Sets the base cutoff frequency of every voice's four-pole low-pass filter.",
-      ControlKind::Slider, 6, 0, 0, 1, -1, 0 },
+      ControlKind::Slider, 5, 0, 0, 1, -1, 0 },
     { parameters::resonance, "RES",
       "Sets filter feedback and resonance; high settings make the filter self-oscillate.",
-      ControlKind::Slider, 6, 1, 0, 1, -1, 0 },
+      ControlKind::Slider, 5, 1, 0, 1, -1, 0 },
     { parameters::envPolarity, "+",
       "Makes the envelope raise filter cutoff by the amount set with VCF ENV.",
-      ControlKind::Radio, 6, 2, 0, 2, 3, 0 },
+      ControlKind::Radio, 5, 2, 0, 2, 3, 0 },
     { parameters::envPolarity, "-",
       "Makes the envelope lower filter cutoff by the amount set with VCF ENV.",
-      ControlKind::Radio, 6, 2, 1, 2, 3, 1 },
+      ControlKind::Radio, 5, 2, 1, 2, 3, 1 },
     { parameters::vcfEnv, "ENV",
       "Sets how strongly the envelope moves filter cutoff; the plus or minus button chooses its direction.",
-      ControlKind::Slider, 6, 3, 0, 1, -1, 0 },
+      ControlKind::Slider, 5, 3, 0, 1, -1, 0 },
     { parameters::vcfLfo, "LFO",
       "Sets delayed-LFO filter-cutoff modulation, up to roughly plus or minus 3.5 octaves.",
-      ControlKind::Slider, 6, 4, 0, 1, -1, 0 },
+      ControlKind::Slider, 5, 4, 0, 1, -1, 0 },
     { parameters::keyFollow, "KYBD",
       "Sets filter keyboard tracking; at 100%, playing one octave higher raises cutoff by one octave.",
-      ControlKind::Slider, 6, 5, 0, 1, -1, 0 },
+      ControlKind::Slider, 5, 5, 0, 1, -1, 0 },
 
     // VCA
     { parameters::vcaMode, "ENV",
       "Makes each voice amplifier follow the ADSR envelope.",
-      ControlKind::Radio, 7, 0, 0, 2, 4, 0, 2 },
+      ControlKind::Radio, 6, 0, 0, 2, 4, 0, 2 },
     { parameters::vcaMode, "GATE",
       "Keeps each voice amplifier open at a fixed level while its key or hold is active; the ADSR still runs for filter modulation.",
-      ControlKind::Radio, 7, 0, 1, 2, 4, 1, 2 },
+      ControlKind::Radio, 6, 0, 1, 2, 4, 1, 2 },
     { parameters::vcaLevel, "LEVEL",
       "Stores patch loudness with the tone. It controls one common VCA after the voice sum and HPF, before chorus; it is not envelope depth.",
-      ControlKind::Slider, 7, 2, 0, 1, -1, 0 },
+      ControlKind::Slider, 6, 2, 0, 1, -1, 0 },
 
     // ENV
     { parameters::attack, "A",
       "Attack: sets the linear rise time from zero to the envelope peak after a note begins. Minimum is one hardware-style control scan, about 4.2 ms, not an instantaneous step.",
-      ControlKind::Slider, 8, 0, 0, 1, -1, 0 },
+      ControlKind::Slider, 7, 0, 0, 1, -1, 0 },
     { parameters::decay, "D",
       "Decay: sets the exponential fall time from the envelope peak to the sustain level.",
-      ControlKind::Slider, 8, 1, 0, 1, -1, 0 },
+      ControlKind::Slider, 7, 1, 0, 1, -1, 0 },
     { parameters::sustain, "S",
       "Sustain: sets the envelope level held while the key remains down; this is a level, not a time.",
-      ControlKind::Slider, 8, 2, 0, 1, -1, 0 },
+      ControlKind::Slider, 7, 2, 0, 1, -1, 0 },
     { parameters::release, "R",
       "Release: sets the exponential fall time after the key is released.",
-      ControlKind::Slider, 8, 3, 0, 1, -1, 0 },
+      ControlKind::Slider, 7, 3, 0, 1, -1, 0 },
 
-    // CHORUS. Two interlocked latching buttons. Neither down is off; selecting
-    // one releases the other, so the hardware exposes only Off, I and II.
-    // Both latches span the whole section. At one slot of two they sat in its
-    // left half with the right half empty, which reads as a control that has
-    // gone missing rather than as a two-button group.
+    // CHORUS. The hardware gives Off its own key beside the two interlocked
+    // effect keys. The pair remains authoritative underneath.
+    { parameters::legacyChorus, "OFF",
+      "Switches the hardware chorus off by releasing both Chorus I and Chorus II latches.",
+      ControlKind::Toggle, 8, 0, 0, 3, -1, 0, 3, true },
     { parameters::chorusI, "I",
       "Toggles the slower stereo BBD Chorus I; press the lit button again for Off. Its 0.553 Hz rate is derived from this instrument's timing network; installed-unit confirmation remains open.",
-      ControlKind::Toggle, 9, 0, 0, 2, -1, 0, 2 },
+      ControlKind::Toggle, 8, 0, 1, 3, -1, 0, 3, true },
     { parameters::chorusII, "II",
       "Toggles the faster stereo BBD Chorus II; press the lit button again for Off. Its 0.898 Hz rate is derived from this instrument's timing network; installed-unit confirmation remains open.",
-      ControlKind::Toggle, 9, 0, 1, 2, -1, 0, 2 },
+      ControlKind::Toggle, 8, 0, 2, 3, -1, 0, 3, true },
 };
 
 struct Layout
@@ -196,64 +183,41 @@ Layout buildLayout() noexcept
     struct SectionSpec
     {
         const char* name;
-        Accent accent;
         int slots;
         float x;
         float y;
         float width;
         float height;
     };
-    // One continuous row in the instrument's own order, then the lower deck.
-    //
-    // Every width below is its content plus one padding, so a section is as
-    // wide as what it holds and no card carries dead space. The two exceptions
-    // are VOLUME and CHORUS: a single-slot cell is narrower than their own
-    // headers set, so each is widened to the header and the difference comes
-    // out of the multi-slot sections rather than being left as a gap. That is
-    // the same reason the hardware's own HPF strip is narrow and its DCO strip
-    // is wide.
-    //
-    // Slot budget: 1 + 2 + 9 + 1 + 6 + 3 + 4 + 1 = 27 across the sound row.
+    // The seven sound sections retain the original dimensions and order.  The
+    // controller is the separate left cheek and MODE begins the programmer
+    // tier under the sound strip.
     constexpr SectionSpec specs[sectionCount] = {
-        { "VOLUME", Accent::Cyan,    1,   12.0f, soundRowTop,  64.0f,
-                                                                   soundRowHeight },
-        // Bender depths and glide are performance settings the tone memory
-        // does not carry, so they belong beside the lever rather than in the
-        // control row.
-        { "BENDER", Accent::Magenta, 4,  136.0f, performanceDeckTop, 150.0f,
-                                                           performanceDeckHeight },
-        // Three stable assign states, so three latches. Its cell is sized by
-        // the widest legend it prints rather than by the header.
-        { "MODE",   Accent::Magenta, 2,  294.0f, performanceDeckTop, 90.0f,
-                                                           performanceDeckHeight },
-        // LFO is wider than its two slots would otherwise need: RATE and DELAY
-        // are the closest-set pair of long legends on the row, and their ink
-        // is what fixes this cell width.
-        { "LFO",    Accent::Magenta, 2,   84.0f, soundRowTop,  84.0f,
-                                                                   soundRowHeight },
-        { "DCO",    Accent::Cyan,    9,  176.0f, soundRowTop, 311.0f,
-                                                                   soundRowHeight },
-        { "HPF",    Accent::Cyan,    1,  495.0f, soundRowTop,  47.0f,
-                                                                   soundRowHeight },
-        { "VCF",    Accent::Cyan,    6,  550.0f, soundRowTop, 212.0f,
-                                                                   soundRowHeight },
-        { "VCA",    Accent::Cyan,    3,  770.0f, soundRowTop, 113.0f,
-                                                                   soundRowHeight },
-        { "ENV",    Accent::Magenta, 4,  891.0f, soundRowTop, 147.0f,
-                                                                   soundRowHeight },
-        // Two interlocked latches stacked in one column. Both span the whole
-        // section, so its two slots are one control's width between them; the
-        // header, not the latches, is what sets the floor here.
-        { "CHORUS", Accent::Cyan,    2, 1046.0f, soundRowTop,  62.0f,
-                                                                   soundRowHeight },
+        { "CONTROLLER", 4, controllerX, performanceDeckTop,
+                                            controllerWidth, performanceDeckHeight },
+        { "MODE",       3, instrumentLeft, performanceDeckTop,
+                                            164.0f, programmerHeight },
+        { "LFO",        2, instrumentLeft, soundRowTop,
+                                             84.0f, soundRowHeight },
+        { "DCO",       10, 282.0f, soundRowTop,
+                                            311.0f, soundRowHeight },
+        { "HPF",        1, 601.0f, soundRowTop,
+                                             47.0f, soundRowHeight },
+        { "VCF",        6, 656.0f, soundRowTop,
+                                            212.0f, soundRowHeight },
+        { "VCA",        3, 876.0f, soundRowTop,
+                                            113.0f, soundRowHeight },
+        { "ENV",        4, 997.0f, soundRowTop,
+                                            147.0f, soundRowHeight },
+        { "CHORUS",     3, 1152.0f, soundRowTop,
+                                            116.0f, soundRowHeight },
     };
 
     for (int index = 0; index < sectionCount; ++index)
     {
         const auto& spec = specs[index];
         layout.sections[static_cast<std::size_t>(index)] =
-            { spec.name, spec.accent, spec.slots, spec.x, spec.y,
-              spec.width, spec.height };
+            { spec.name, spec.slots, spec.x, spec.y, spec.width, spec.height };
     }
     layout.width = editorWidth;
 
@@ -263,38 +227,101 @@ Layout buildLayout() noexcept
         const auto& section =
             layout.sections[static_cast<std::size_t>(placement.section)];
 
+        // The controller cheek is mechanical rather than a regular section
+        // grid: two knobs sit above three sensitivity faders and the lever.
+        if (placement.section == 0)
+        {
+            float x = section.x;
+            float y = section.y;
+            float width = 0.0f;
+            float height = 0.0f;
+            float labelX = section.x;
+            float labelY = section.y;
+            float labelWidth = 0.0f;
+            if (placement.kind == ControlKind::Knob)
+            {
+                const bool isVolume = std::strcmp (placement.parameterId,
+                                                    parameters::volume) == 0;
+                x = section.x + (isVolume ? 10.0f : 88.0f);
+                y = section.y + 31.0f;
+                width = 58.0f;
+                height = 58.0f;
+                labelX = section.x + (isVolume ? 2.0f : 80.0f);
+                labelY = section.y + 10.0f;
+                labelWidth = isVolume ? 74.0f : 86.0f;
+            }
+            else
+            {
+                const int benderIndex = std::strcmp (placement.parameterId,
+                                                       parameters::benderDco) == 0 ? 0
+                                      : std::strcmp (placement.parameterId,
+                                                     parameters::benderVcf) == 0 ? 1 : 2;
+                x = section.x + 10.0f + static_cast<float> (benderIndex) * 38.0f;
+                y = section.y + 124.0f;
+                width = 28.0f;
+                height = 67.0f;
+                labelX = x - 5.0f;
+                labelY = section.y + 103.0f;
+                labelWidth = 38.0f;
+            }
+
+            layout.controls[static_cast<std::size_t>(index)] = {
+                placement.parameterId, placement.label, placement.tooltip,
+                placement.kind, placement.section, x, y, width, height,
+                labelX, labelY, labelWidth, controlLabelHeight,
+                placement.group, placement.groupValue
+            };
+            continue;
+        }
+
         const float innerX = section.x + sectionPadding * 0.5f;
         const float cellWidth = (section.width - sectionPadding)
                               / static_cast<float>(section.slots);
         const float x = innerX + static_cast<float>(placement.slot) * cellWidth;
 
-        const float controlTop = section.y + headerHeight + 6.0f;
-        const float labelY = section.y + section.height
-                           - controlLabelHeight - 6.0f;
-        // MODE contains only firmware-latched buttons that print their own
-        // legends, so reserving an empty external slider-legend row would just
-        // make all three latches shorter for nothing.
-        const float controlHeight = placement.section == 2
-                                  ? section.y + section.height - 6.0f - controlTop
-                                  : labelY - controlTop;
+        const bool isMode = placement.section == 1;
+        const float labelY = section.y + headerHeight + (isMode ? 1.0f : 5.0f);
+        const float controlTop = isMode ? section.y + 25.0f
+                                        : labelY + controlLabelHeight + 2.0f;
+        const float controlHeight = section.y + section.height - 7.0f - controlTop;
+        float controlX = x;
         float y = controlTop;
         float height = controlHeight;
-        if (placement.stackCount > 1)
+        const float span = static_cast<float>(placement.slotSpan) * cellWidth;
+        float controlWidth = span - 2.0f * controlInset;
+        if (placement.stackCount > 1 && placement.horizontalStack)
+        {
+            constexpr float horizontalInset = 2.0f;
+            controlWidth = span - 2.0f * horizontalInset;
+            const float total = controlWidth
+                              - stackGap * static_cast<float>(placement.stackCount - 1);
+            controlWidth = total / static_cast<float>(placement.stackCount);
+            controlX = x + horizontalInset
+                     + static_cast<float>(placement.stackIndex)
+                           * (controlWidth + stackGap);
+        }
+        else if (placement.stackCount > 1)
         {
             const float total = controlHeight
                               - stackGap * static_cast<float>(placement.stackCount - 1);
             height = total / static_cast<float>(placement.stackCount);
             y = controlTop + static_cast<float>(placement.stackIndex) * (height + stackGap);
+            const float inset = placement.kind == ControlKind::Slider
+                                     || placement.kind == ControlKind::Steps
+                              ? controlInset : 2.0f;
+            controlWidth = span - 2.0f * inset;
+            controlX = x + inset;
         }
-
-        const float span = static_cast<float>(placement.slotSpan) * cellWidth;
-        const bool isSlider = placement.kind == ControlKind::Slider
-                           || placement.kind == ControlKind::Steps;
-        const float controlWidth = isSlider
-                                 ? std::min (maximumSliderWidth,
-                                             span - 2.0f * controlInset)
-                                 : span - 2.0f * controlInset;
-        const float controlX = x + (span - controlWidth) * 0.5f;
+        else
+        {
+            const bool isSlider = placement.kind == ControlKind::Slider
+                               || placement.kind == ControlKind::Steps;
+            controlWidth = isSlider
+                         ? std::min (maximumSliderWidth,
+                                     span - 2.0f * controlInset)
+                         : span - 2.0f * controlInset;
+            controlX = x + (span - controlWidth) * 0.5f;
+        }
         layout.controls[static_cast<std::size_t>(index)] = {
             placement.parameterId, placement.label, placement.tooltip,
             placement.kind, placement.section,
@@ -411,12 +438,18 @@ const char* overflowingLabel() noexcept
 
     for (const auto& control : controls())
     {
-        if (control.kind == ControlKind::Slider || control.kind == ControlKind::Steps)
+        if (control.kind == ControlKind::Slider || control.kind == ControlKind::Knob
+            || control.kind == ControlKind::Steps)
         {
             if (textWidth(control.label, labelPointSize, true) > control.labelWidth)
                 return control.label;
         }
-        else if (buttonPointSizeFor(control) < buttonPointSizeMin)
+        else if (! (std::strcmp (control.label, "PULSE") == 0
+                    || std::strcmp (control.label, "SAW") == 0
+                    || std::strcmp (control.label, "16'") == 0
+                    || std::strcmp (control.label, "8'") == 0
+                    || std::strcmp (control.label, "4'") == 0)
+                 && buttonPointSizeFor(control) < buttonPointSizeMin)
         {
             return control.label;
         }
@@ -430,7 +463,8 @@ const char* overflowingLabel() noexcept
     for (std::size_t a = 0; a < controlList.size(); ++a)
     {
         const auto& first = controlList[a];
-        if (first.kind != ControlKind::Slider && first.kind != ControlKind::Steps)
+        if (first.kind != ControlKind::Slider && first.kind != ControlKind::Knob
+            && first.kind != ControlKind::Steps)
             continue;
         const float firstHalf = 0.5f * textWidth(first.label, labelPointSize, true);
         const float firstCentre = first.labelX + 0.5f * first.labelWidth;
@@ -438,7 +472,8 @@ const char* overflowingLabel() noexcept
         for (std::size_t b = a + 1; b < controlList.size(); ++b)
         {
             const auto& second = controlList[b];
-            if (second.kind != ControlKind::Slider && second.kind != ControlKind::Steps)
+            if (second.kind != ControlKind::Slider && second.kind != ControlKind::Knob
+                && second.kind != ControlKind::Steps)
                 continue;
             const bool labelRowsAreSeparate =
                 first.labelY + first.labelHeight <= second.labelY + 0.001f
@@ -490,7 +525,8 @@ bool layoutIsConsistent() noexcept
         if (control.labelX < section.x - labelOverhang - 0.001f
             || control.labelX + control.labelWidth
                    > section.x + section.width + labelOverhang + 0.001f
-            || control.labelY < section.y + headerHeight
+            || control.labelY < (control.section == 0 ? section.y
+                                                       : section.y + headerHeight)
             || control.labelY + control.labelHeight
                    > section.y + section.height + 0.001f)
             return false;

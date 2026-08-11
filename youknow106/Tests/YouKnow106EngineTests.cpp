@@ -7238,10 +7238,11 @@ void testPanelLayout()
                    + (control.label != nullptr ? control.label : ""));
     }
 
-    const std::array<const char*, 11> mustAppear {
+    const std::array<const char*, 12> mustAppear {
         parameters::cutoff, parameters::resonance, parameters::attack,
         parameters::release, parameters::chorusI, parameters::chorusII,
-        parameters::range, parameters::highPass, parameters::vcaLevel,
+        parameters::legacyChorus, parameters::range, parameters::highPass,
+        parameters::vcaLevel,
         parameters::poly1, parameters::poly2
     };
     for (const auto* wanted : mustAppear)
@@ -7253,24 +7254,27 @@ void testPanelLayout()
         expect(found >= 1, std::string("panel does not expose ") + wanted);
     }
 
-    // Accent colour now carries signal meaning instead of merely alternating:
-    // green is modulation/performance, blue is the audio path. Keeping that
-    // contract explicit prevents a visual polish pass from turning the traces
-    // back into decoration.
+    // Preserve the hardware's two-tier composition: the performance cheek and
+    // mode keys are separate from the seven-section synthesis strip, whose
+    // order is the strongest front-panel navigation cue.
     const auto& sections = panel::sections();
-    for (const auto& section : sections)
-    {
-        const bool isModulation = std::strcmp(section.name, "BENDER") == 0
-                               || std::strcmp(section.name, "MODE") == 0
-                               || std::strcmp(section.name, "LFO") == 0
-                               || std::strcmp(section.name, "ENV") == 0;
-        expect(section.accent == (isModulation ? panel::Accent::Magenta
-                                               : panel::Accent::Cyan),
-               std::string("section has the wrong signal-flow accent: ")
-                   + section.name);
-    }
+    constexpr std::array<const char*, panel::sectionCount> expectedSections {
+        "CONTROLLER", "MODE", "LFO", "DCO", "HPF", "VCF", "VCA", "ENV",
+        "CHORUS"
+    };
+    for (std::size_t index = 0; index < sections.size(); ++index)
+        expect(std::strcmp(sections[index].name, expectedSections[index]) == 0,
+               std::string("panel section is out of hardware order: ")
+                   + sections[index].name);
+    for (std::size_t index = 3; index < sections.size(); ++index)
+        expect(sections[index - 1].x + sections[index - 1].width
+                   < sections[index].x,
+               "adjacent synthesis sections lost their divider gap");
+    expect(sections[2].x == panel::instrumentLeft
+               && sections[2].y == panel::soundRowTop,
+           "the hardware synthesis strip no longer begins with LFO");
     expect(std::abs(panel::panelWidth() - panel::editorWidth) < 1.0e-5f,
-           "the folded panel width disagrees with the editor contract");
+           "the panel width disagrees with the editor contract");
 }
 
 // The panel help is part of the instrument contract, not decoration. The

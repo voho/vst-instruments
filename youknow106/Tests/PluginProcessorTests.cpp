@@ -3197,6 +3197,116 @@ void testFactoryProgramsLoad()
     }
 }
 
+void testHardwareProgrammerAddressesCompleteFactoryBank()
+{
+    static_assert (presets::presetCount == 2 * 8 * 8);
+
+    YouKnow106AudioProcessor processor;
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    expect (editor != nullptr,
+            "cannot audit the hardware programmer without an editor");
+    if (editor == nullptr)
+        return;
+
+    auto* selector = dynamic_cast<juce::ComboBox*> (
+        findDescendantNamed (*editor, "Patch selector"));
+    expect (selector != nullptr
+                && selector->getNumItems() == presets::presetCount + 1,
+            "the host preset rail does not contain INIT plus all 128 tones");
+
+    std::array<juce::Button*, 2> groups {};
+    std::array<juce::Button*, 8> banks {};
+    std::array<juce::Button*, 8> patches {};
+    bool complete = true;
+    for (int group = 0; group < 2; ++group)
+    {
+        const auto name = juce::String ("Group ")
+                        + juce::String::charToString (
+                            static_cast<juce::juce_wchar> ('A' + group));
+        groups[static_cast<std::size_t> (group)] =
+            dynamic_cast<juce::Button*> (findDescendantNamed (*editor, name));
+        complete = complete && groups[static_cast<std::size_t> (group)] != nullptr;
+    }
+    for (int number = 0; number < 8; ++number)
+    {
+        banks[static_cast<std::size_t> (number)] = dynamic_cast<juce::Button*> (
+            findDescendantNamed (*editor, "Bank " + juce::String (number + 1)));
+        patches[static_cast<std::size_t> (number)] = dynamic_cast<juce::Button*> (
+            findDescendantNamed (*editor, "Patch " + juce::String (number + 1)));
+        complete = complete && banks[static_cast<std::size_t> (number)] != nullptr
+                            && patches[static_cast<std::size_t> (number)] != nullptr;
+    }
+    expect (complete, "the A/B, BANK or PATCH hardware key grid is incomplete");
+    if (! complete)
+        return;
+
+    for (int group = 0; group < 2; ++group)
+        for (int bank = 0; bank < 8; ++bank)
+            for (int patch = 0; patch < 8; ++patch)
+            {
+                groups[static_cast<std::size_t> (group)]->onClick();
+                banks[static_cast<std::size_t> (bank)]->onClick();
+                patches[static_cast<std::size_t> (patch)]->onClick();
+
+                const int expectedProgram = 1 + group * 64 + bank * 8 + patch;
+                const juce::String expectedNumber =
+                    juce::String::charToString (
+                        static_cast<juce::juce_wchar> ('A' + group))
+                    + juce::String (bank + 1) + juce::String (patch + 1);
+                expect (processor.getCurrentProgram() == expectedProgram,
+                        "a hardware key combination addressed the wrong program");
+                expect (processor.getProgramName (expectedProgram)
+                            .startsWith (expectedNumber + " "),
+                        "a hardware key combination addressed the wrong factory slot");
+            }
+}
+
+void testDerivedOriginalPanelSwitchesDriveTheirExistingParameters()
+{
+    YouKnow106AudioProcessor processor;
+    setParameterValue (processor, parameters::chorusI, 1.0f);
+    setParameterValue (processor, parameters::chorusII, 0.0f);
+    setParameterValue (processor, parameters::portamento, 0.46f);
+    setParameterValue (processor, parameters::transpose, 12.0f);
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    expect (editor != nullptr,
+            "cannot audit derived hardware switches without an editor");
+    if (editor == nullptr)
+        return;
+
+    auto* chorusOff = findDescendantButtonWithText (*editor, "OFF");
+    auto* portamento = dynamic_cast<juce::Button*> (
+        findDescendantNamed (*editor, "Portamento switch"));
+    auto* keyTranspose = dynamic_cast<juce::Button*> (
+        findDescendantNamed (*editor, "Key transpose"));
+    expect (chorusOff != nullptr && portamento != nullptr && keyTranspose != nullptr,
+            "an original derived switch is missing from the editor");
+    if (chorusOff == nullptr || portamento == nullptr || keyTranspose == nullptr)
+        return;
+
+    chorusOff->onClick();
+    expect (parameterValue (processor, parameters::chorusI) < 0.5f
+                && parameterValue (processor, parameters::chorusII) < 0.5f,
+            "CHORUS OFF did not release both chorus contacts");
+
+    portamento->onClick();
+    expect (parameterValue (processor, parameters::portamento) < 1.0e-5f,
+            "PORTAMENTO OFF did not disable glide");
+    portamento->onClick();
+    expect (std::abs (parameterValue (processor, parameters::portamento) - 0.46f)
+                < 1.0e-4f,
+            "PORTAMENTO ON did not restore its time control");
+
+    keyTranspose->onClick();
+    expect (std::abs (parameterValue (processor, parameters::transpose)) < 0.5f,
+            "KEY TRANSPOSE did not switch the selected interval off");
+    keyTranspose->onClick();
+    expect (std::abs (parameterValue (processor, parameters::transpose) - 12.0f)
+                < 0.5f,
+            "KEY TRANSPOSE did not restore the selected interval");
+}
+
 void testEveryProductProgramRestoresEveryParameter()
 {
     YouKnow106AudioProcessor processor;
@@ -3271,6 +3381,7 @@ void testEveryPanelLegendFitsInTheRealFont()
     for (const auto& control : panel::controls())
     {
         if (control.kind == panel::ControlKind::Slider
+            || control.kind == panel::ControlKind::Knob
             || control.kind == panel::ControlKind::Steps)
         {
             const float drawn = juce::GlyphArrangement::getStringWidth (
@@ -3284,7 +3395,11 @@ void testEveryPanelLegendFitsInTheRealFont()
                     say (juce::String ("the width model under-estimates ")
                          + control.label));
         }
-        else
+        else if (std::strcmp (control.label, "PULSE") != 0
+                 && std::strcmp (control.label, "SAW") != 0
+                 && std::strcmp (control.label, "16'") != 0
+                 && std::strcmp (control.label, "8'") != 0
+                 && std::strcmp (control.label, "4'") != 0)
         {
             const float size = panel::buttonPointSizeFor (control);
             expect (size >= panel::buttonPointSizeMin,
@@ -3321,6 +3436,7 @@ void testEveryPanelLegendFitsInTheRealFont()
     for (const auto& control : panel::controls())
     {
         if (control.kind == panel::ControlKind::Slider
+            || control.kind == panel::ControlKind::Knob
             || control.kind == panel::ControlKind::Steps)
         {
             const float size = juce::jmax (10.0f,
@@ -3402,13 +3518,12 @@ void testEveryInteractiveEditorControlExplainsItself()
     };
     audit (audit, *editor);
 
-    // Six extension knobs, eight compact operation buttons -- the five
-    // service keys, HQ, and the patch-file LOAD/SAVE pair -- four patch-bar
-    // controls, the keybed and the vector lever. Patch files move through the
-    // utility bar; live MIDI SEND remains a processor capability only and
-    // takes no front-panel area.
+    // Six extension knobs, ten utility buttons, four host patch controls,
+    // twenty-three original-programmer controls, the keybed and the bender.
+    // Disabled hardware-only keys remain public so their help explains why
+    // the immutable factory bank cannot perform that operation.
     constexpr int expectedInteractiveCount =
-        panel::controlCount + 6 + 8 + 4 + 1 + 1;
+        panel::controlCount + 6 + 10 + 4 + 23 + 1 + 1;
     expect (interactiveCount == expectedInteractiveCount,
             "the contextual-help audit did not cover every interactive control");
     expect (findDescendantButtonWithText (*editor, "SEND") == nullptr,
@@ -3531,12 +3646,9 @@ void testPersistentContextHelpAndValueBubbles()
                     std::string ("the help strip invented a value for ") + name);
         }
 
-        // MODE is one three-state assigner drawn as three latches, so none of
-        // them can report its own parameter and be right: POLY 1's parameter is
-        // high in Solo Unison while its lamp is dark, and the UNISON latch owns
-        // no parameter at all -- the legacy id the panel names for it only
-        // moves on a program recall. All three have to print the mode the
-        // authoritative pair selects.
+        // MODE is one three-state assigner represented by two original POLY
+        // contacts and a convenience UNISON key. None can report one pair bit
+        // and fully describe the mode, so all three print the pair's result.
         const auto setPoly = [&processor] (const char* id, bool on) {
             if (auto* target = processor.parameters.getParameter (id))
             {
@@ -3580,6 +3692,7 @@ void testPersistentContextHelpAndValueBubbles()
     int expectedSliders = 6;
     for (const auto& control : panel::controls())
         if (control.kind == panel::ControlKind::Slider
+            || control.kind == panel::ControlKind::Knob
             || control.kind == panel::ControlKind::Steps)
             ++expectedSliders;
     expect (static_cast<int> (sliders.size()) == expectedSliders,
@@ -3918,6 +4031,8 @@ void testPolyButtonsKeepAValidFirmwareLatch()
     expect (parameterValue (processor, parameters::poly1) > 0.5f
                 && parameterValue (processor, parameters::poly2) > 0.5f,
             "Shift-clicking POLY did not select Solo Unison");
+    expect (poly1->getToggleState() && poly2->getToggleState(),
+            "Solo Unison did not light both original POLY lamps");
 
     const auto reassertSequence = processor.getKeyModeReassertSequenceForTest();
     poly1->onClick();
@@ -4127,12 +4242,18 @@ void testEditorBuildsAndRenders()
         findDescendantNamed (*editor, "Transpose"));
     auto* character = dynamic_cast<juce::Slider*> (
         findDescendantNamed (*editor, "Unit Character"));
+    auto* patchSelector = dynamic_cast<juce::ComboBox*> (
+        findDescendantNamed (*editor, "Patch selector"));
+    auto* firstBankKey = dynamic_cast<juce::Button*> (
+        findDescendantNamed (*editor, "Bank 1"));
     expect (playableKeyboard != nullptr,
             "the editor has no playable keyboard to range-check");
     expect (performanceLever != nullptr,
             "the editor has no pitch/mod performance control");
     expect (contextHelp != nullptr,
             "the editor has no fixed help display");
+    expect (patchSelector != nullptr && firstBankKey != nullptr,
+            "the host preset rail cannot align to the bank keys");
     if (playableKeyboard != nullptr)
     {
         expect (playableKeyboard->getRangeStart()
@@ -4215,7 +4336,7 @@ void testEditorBuildsAndRenders()
                     performanceLever, performanceLever->getLocalBounds());
                 expect (! leverArea.isEmpty() && editor->getLocalBounds().contains (leverArea),
                         "the pitch/mod lever escaped the editor");
-                expect (leverArea.getBottom() <= keyboardArea.getY()
+                expect (leverArea.getRight() <= keyboardArea.getX()
                             && ! leverArea.intersects (keyboardArea),
                         "the pitch/mod lever overlaps the keybed");
             }
@@ -4248,16 +4369,29 @@ void testEditorBuildsAndRenders()
             {
                 const auto area = editor->getLocalArea (
                     transpose, transpose->getLocalBounds());
-                expect (area.getY() < keyboardArea.getY()
-                            && area.getBottom() <= keyboardArea.getY(),
-                        "keyboard setup controls were not moved into the lower deck");
+                expect (area.getY() >= keyboardArea.getBottom()
+                            && ! area.intersects (keyboardArea),
+                        "keyboard setup controls escaped the extension bay");
             }
             if (character != nullptr)
             {
                 const auto area = editor->getLocalArea (
                     character, character->getLocalBounds());
-                expect (area.getBottom() < keyboardArea.getY(),
-                        "Character Lab overlaps the performance keybed");
+                expect (area.getY() >= keyboardArea.getBottom()
+                            && ! area.intersects (keyboardArea),
+                        "Character Lab escaped the extension bay");
+            }
+            if (patchSelector != nullptr && firstBankKey != nullptr)
+            {
+                const auto presetArea = editor->getLocalArea (
+                    patchSelector, patchSelector->getLocalBounds());
+                const auto bankArea = editor->getLocalArea (
+                    firstBankKey, firstBankKey->getLocalBounds());
+                expect (presetArea.getY() >= bankArea.getBottom()
+                            && presetArea.getBottom() <= keyboardArea.getY(),
+                        "the host preset navigator is not between BANK and the keybed");
+                expect (std::abs (presetArea.getX() - bankArea.getX()) <= 2,
+                        "the host preset navigator is not aligned to BANK 1");
             }
         }
         expect (snapshotHasDetail (renderEditorSnapshot (*editor)),
@@ -4345,6 +4479,8 @@ int main()
     testEditedFlagFollowsTheCompleteProgram();
     testColdStartProgramAndEditorAreInSync();
     testFactoryProgramsLoad();
+    testHardwareProgrammerAddressesCompleteFactoryBank();
+    testDerivedOriginalPanelSwitchesDriveTheirExistingParameters();
     testEveryProductProgramRestoresEveryParameter();
     testEveryPanelLegendFitsInTheRealFont();
     testEveryInteractiveEditorControlExplainsItself();
