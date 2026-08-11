@@ -940,6 +940,7 @@ Tests/PluginProcessorTests.cpp  JUCE processor and editor contract tests
 Tools/RenderDemos.cpp       Renders the committed demonstration WAVs
 ThirdParty/                 Vendored JUCE licence text, staged into every package
 Docs/audio/                 Twenty-five rendered demonstrations and their manifest
+Docs/calibration/           Controlled force, head-motion and microphone capture contract
 Docs/best-in-class-plan.md  Competitive landscape, gap analysis and the work it drove
 Presets/                    Preset guidance and drum-building reference
 scripts/                    macOS build and packaging helpers

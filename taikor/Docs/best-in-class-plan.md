@@ -3859,9 +3859,10 @@ milliseconds. The correct conclusion is not to pick the cheaper wrong answer.
 ### Next work, in order
 
 1. Record controlled force/velocity driving-point mobility, repeated strikes
-   and two microphone distances on representative taiko. The current repository
-   has no real-taiko calibration set, so external single-mic recordings are
-   leads rather than acceptance references.
+   and two microphone distances on representative taiko, following the
+   [capture contract](calibration/README.md). The current repository has no
+   real-taiko calibration set, so external single-mic recordings are leads
+   rather than acceptance references.
 2. Give the bachi a measured finite footprint and fit a positive-real omitted-
    mode mobility jointly with deterministic modes carried to measured overlap.
    The fit must preserve contact duration/rebound across sample rates before its

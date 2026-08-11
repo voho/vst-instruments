@@ -106,7 +106,5 @@ the committed files either.
 
 A take that is renamed or removed from the renderer's table is deleted from this
 directory on the next full render, so a stale WAV cannot survive here after the
-demo that produced it has gone. The set was rebuilt around the 4×4 grid, so the
-committed WAVs here are the previous set until that render happens; the level
-table above was taken from a render to a temporary directory and is exact for
-the current model.
+demo that produced it has gone. The committed WAVs and level table above were
+regenerated together from the current model by the canonical Linux renderer.
