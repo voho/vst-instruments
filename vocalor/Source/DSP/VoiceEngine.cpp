@@ -2595,7 +2595,22 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
     voice.controlInitialised = true;
 }
 
+VoiceEngine::GlottalShapePosition VoiceEngine::glottalShapePosition(float tension) noexcept
+{
+    tension = clampUnit(tension);
+    const float shapePosition = tension * static_cast<float>(glottalShapeCount - 1);
+    const int lowerShape = std::min(static_cast<int>(shapePosition),
+                                    glottalShapeCount - 2);
+    return { lowerShape, shapePosition - static_cast<float>(lowerShape) };
+}
+
 float VoiceEngine::glottalPair(int level, float phase, float tension) const noexcept
+{
+    return glottalPair(level, phase, tension, glottalShapePosition(tension));
+}
+
+float VoiceEngine::glottalPair(int level, float phase, float tension,
+                               GlottalShapePosition shape) const noexcept
 {
     const auto& table = tables_->glottalTables[static_cast<std::size_t>(level)];
     const float position = phase * static_cast<float>(tableSize);
@@ -2604,12 +2619,7 @@ float VoiceEngine::glottalPair(int level, float phase, float tension) const noex
     const float fraction = position - static_cast<float>(truncated);
     const auto next = static_cast<std::size_t>((index + 1) & tableMask);
 
-    tension = clampUnit(tension);
-    const float shapePosition = tension * static_cast<float>(glottalShapeCount - 1);
-    const int lowerShape = std::min(static_cast<int>(shapePosition),
-                                    glottalShapeCount - 2);
-    const float shapeFraction = shapePosition - static_cast<float>(lowerShape);
-    const auto lowerOffset = static_cast<std::size_t>(lowerShape * tableSize);
+    const auto lowerOffset = static_cast<std::size_t>(shape.lowerShape * tableSize);
     const auto upperOffset = lowerOffset + static_cast<std::size_t>(tableSize);
     const auto current = static_cast<std::size_t>(index);
     const float lowerAtPhase = table[lowerOffset + current];
@@ -2617,10 +2627,11 @@ float VoiceEngine::glottalPair(int level, float phase, float tension) const noex
     const float lowerAtNext = table[lowerOffset + next];
     const float upperAtNext = table[upperOffset + next];
     const float atPhase = lowerAtPhase
-        + shapeFraction * (upperAtPhase - lowerAtPhase);
+        + shape.shapeFraction * (upperAtPhase - lowerAtPhase);
     const float atNextPhase = lowerAtNext
-        + shapeFraction * (upperAtNext - lowerAtNext);
+        + shape.shapeFraction * (upperAtNext - lowerAtNext);
 
+    tension = clampUnit(tension);
     const float gainPosition = tension * static_cast<float>(glottalGainTableSize - 1);
     const int gainIndex = std::min(static_cast<int>(gainPosition),
                                    glottalGainTableSize - 2);
@@ -2790,22 +2801,22 @@ float VoiceEngine::radiatedPowerTarget(const Voice& voice, float fundamental,
 
 float VoiceEngine::glottalFlow(float phase, float tension) const noexcept
 {
+    return glottalFlow(phase, glottalShapePosition(tension));
+}
+
+float VoiceEngine::glottalFlow(float phase, GlottalShapePosition shape) const noexcept
+{
     // No fractional interpolation. The envelope is smooth and it multiplies
     // noise, so a staircase 1/256 of a period wide is inaudible -- its largest
     // step, on the closing slope, is under 2 % of the peak -- and it saves two
     // loads on a table small enough to stay resident.
     const auto index = static_cast<std::size_t>(
         static_cast<int>(phase * static_cast<float>(flowTableSize)) & flowTableMask);
-    tension = clampUnit(tension);
-    const float shapePosition = tension * static_cast<float>(glottalShapeCount - 1);
-    const int lowerShape = std::min(static_cast<int>(shapePosition),
-                                    glottalShapeCount - 2);
-    const float shapeFraction = shapePosition - static_cast<float>(lowerShape);
     const auto lower = index * static_cast<std::size_t>(glottalShapeCount)
-        + static_cast<std::size_t>(lowerShape);
+        + static_cast<std::size_t>(shape.lowerShape);
     const auto upper = lower + 1;
     return tables_->glottalFlowTable[lower]
-        + shapeFraction
+        + shape.shapeFraction
             * (tables_->glottalFlowTable[upper] - tables_->glottalFlowTable[lower]);
 }
 
@@ -3239,7 +3250,12 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
 
         const float sourceTension = tensionAt_[static_cast<std::size_t>(i)]
             * (1.0f - tensionSag * onsetAir);
-        float glottal = glottalPair(level, phase, sourceTension);
+        // glottalPair() and glottalFlow() both interpolate the same nine
+        // analysed shapes from this same tension; resolving the shared
+        // position once here instead of once per call halves that part of
+        // the per-sample cost.
+        const auto shapePosition = glottalShapePosition(sourceTension);
+        float glottal = glottalPair(level, phase, sourceTension, shapePosition);
         glottal *= 1.0f + (alternateCycle ? irregularity : -irregularity);
         // Two first-order shelves, unity at DC and the note's broadband gain
         // above the corner:
@@ -3272,7 +3288,7 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
         // table is normalised to unit mean square so this moves the noise about
         // in time without changing how much of it there is.
         const float turbulence = noise
-            * (1.0f + airModulation * (glottalFlow(phase, sourceTension) - 1.0f));
+            * (1.0f + airModulation * (glottalFlow(phase, shapePosition) - 1.0f));
         const float highNoise = turbulence - aspirationPreEmphasis_ * lastNoise;
         lastNoise = turbulence;
 
