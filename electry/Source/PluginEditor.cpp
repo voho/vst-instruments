@@ -1045,6 +1045,13 @@ ElectryAudioProcessorEditor::~ElectryAudioProcessorEditor()
 void ElectryAudioProcessorEditor::attachSlider (juce::Slider& slider,
                                                 const char* parameterId)
 {
+    // Double-click resets a knob to its parameter's own default rather than
+    // to whatever JUCE's built-in fallback would pick, so it stays correct
+    // for every knob without maintaining a second table of defaults here.
+    if (auto* parameter = electryProcessor.parameters.getParameter (parameterId))
+        slider.setDoubleClickReturnValue (
+            true, parameter->convertFrom0to1 (parameter->getDefaultValue()));
+
     sliderAttachments.push_back (std::make_unique<SliderAttachment> (
         electryProcessor.parameters, parameterId, slider));
 }
