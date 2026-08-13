@@ -4736,7 +4736,7 @@ void testCombinedBbdSupportTransitionAndStateSafety()
     // threshold must route the same signal through it.
     const float belowExactRate = std::nextafter(
         Chorus::minimumExactInputSupportRate, 0.0f);
-    for (const auto [rate, shouldUseExact] : {
+    for (const auto& [rate, shouldUseExact] : {
              std::pair { belowExactRate, false },
              std::pair { Chorus::minimumExactInputSupportRate, true } })
     {
