@@ -1418,6 +1418,19 @@ void NeuramarAudioProcessorEditor::attachSlider (juce::Slider& slider,
 {
     sliderAttachments.push_back (
         std::make_unique<SliderAttachment> (neuramarProcessor.parameters, parameterId, slider));
+
+    // Double-click resets a knob to the parameter's own declared default, the
+    // same value a freshly-inserted instance opens with. Reading it from the
+    // parameter rather than hard-coding it keeps this in lockstep with the
+    // declared default should it ever change, and matches the value every
+    // other host control (e.g. a DAW's own reset gesture) already treats as
+    // "default" for this parameter.
+    if (const auto* parameter = neuramarProcessor.parameters.getParameter (parameterId))
+    {
+        slider.setDoubleClickReturnValue (
+            true, parameter->convertFrom0to1 (parameter->getDefaultValue()));
+        slider.setTooltip (slider.getTooltip() + " (double-click to reset)");
+    }
 }
 
 void NeuramarAudioProcessorEditor::attachButton (juce::Button& button,

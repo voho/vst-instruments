@@ -1166,7 +1166,7 @@ double exhaustiveResidualPeakDb(
         const double rr = refRight.samples[ri];
         const double cl = production.left[ci];
         const double cr = production.right[ci];
-        for (const auto [values, left, right] : {
+        for (const auto& [values, left, right] : {
                  std::tuple { &reference, rl, rr },
                  std::tuple { &candidate, cl, cr } })
         {
@@ -1233,7 +1233,7 @@ WindowStats windowStats(const quality::HostAlignedSignal& refLeft,
     double worstBand = 0.0;
     if (referenceL.size() >= 4096u)
     {
-        for (const auto pair : {
+        for (const auto& pair : {
                 std::pair { &referenceL, &candidateL },
                 std::pair { &referenceR, &candidateR } })
         {

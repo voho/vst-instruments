@@ -38,6 +38,22 @@ The project builds three products from one JUCE codebase:
 > The bundles are ad-hoc signed and not notarized; check the repository's Nightly
 > badge for the latest workflow result.
 
+## Contents
+
+- [Voices, MIDI notes, and controls](#voices-midi-notes-and-controls)
+- [Kit mixer and bus](#kit-mixer-and-bus)
+- [Sound engine](#sound-engine)
+- [Vintage interface](#vintage-interface)
+- [Research influences and modeling scope](#research-influences-and-modeling-scope)
+- [Requirements](#requirements)
+- [Build on macOS](#build-on-macos)
+- [Run the DSP tests without JUCE](#run-the-dsp-tests-without-juce)
+- [Install locally](#install-locally)
+- [Validate the plug-in](#validate-the-plug-in)
+- [Sign, package, and notarize](#sign-package-and-notarize)
+- [Project layout](#project-layout)
+- [Licensing](#licensing)
+
 ## Voices, MIDI notes, and controls
 
 The primary note map follows General MIDI percussion assignments. MIDI velocity

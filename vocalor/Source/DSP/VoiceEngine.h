@@ -349,6 +349,17 @@ private:
         float cosine { 1.0f };
     };
 
+    // Which pair of the nine analysed glottal shapes a tension value falls
+    // between, and how far. glottalPair() and glottalFlow() both interpolate
+    // over the same nine shapes from the same per-sample tension, so the
+    // render loop resolves this once and hands it to both instead of each
+    // function re-deriving it from tension independently.
+    struct GlottalShapePosition
+    {
+        int lowerShape { 0 };
+        float shapeFraction { 0.0f };
+    };
+
     struct SingerIdentity
     {
         float detuneCents { 0.0f };
@@ -616,11 +627,15 @@ private:
     HeldNoteState releaseHeldNote(int midiNote) noexcept;
     int countActiveVoices() const noexcept;
     void updateIntonationRoot() noexcept;
+    [[nodiscard]] static GlottalShapePosition glottalShapePosition(float tension) noexcept;
     float glottalPair(int level, float phase, float tension) const noexcept;
+    float glottalPair(int level, float phase, float tension,
+                      GlottalShapePosition shape) const noexcept;
     float radiatedPowerTarget(const Voice& voice, float fundamental,
                               float sourceTension,
                               bool legacyBypass) const noexcept;
     float glottalFlow(float phase, float tension) const noexcept;
+    float glottalFlow(float phase, GlottalShapePosition shape) const noexcept;
     float aspirationWindowGain(float tension, float depth) const noexcept;
     float sine(float phase) const noexcept;
     SineCosine sineCosineFromCycles(float cycles) const noexcept;

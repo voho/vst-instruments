@@ -110,7 +110,8 @@ the editor never touches the model on a paint call.
 
 The neighbouring root display shows the inferred note, tuning offset,
 confidence, and any manual semitone correction. The editor is resizable and all
-controls are drawn with native JUCE graphics.
+controls are drawn with native JUCE graphics. Double-clicking any knob resets
+it to its own declared default value.
 
 Neuramar exposes 18 host parameters: sixteen continuous front-panel controls,
 **Orbit**, and the persisted root correction.
