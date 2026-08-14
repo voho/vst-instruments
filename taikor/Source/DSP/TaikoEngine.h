@@ -640,6 +640,15 @@ private:
         double contactDamping { 0.0 };
         double residualImpedance { 1.0 };
         double referenceContactEnergy { 1.0 };
+        // (membraneGain * levelScale)^2 / residualImpedance for this voice's
+        // articulation, i.e. the per-sample coefficient advancePhysicalContacts
+        // needs to turn a solved contact force into an observed residual-energy
+        // step. articulation and residualImpedance are both fixed by trigger()
+        // for the voice's whole lifetime, so this is exact for as long as the
+        // contact is active and lets the per-sample solve read it directly
+        // instead of looking up the strike profile and repeating the multiply
+        // and divide on every sample of every simultaneous contact.
+        double contactEnergyAdmittance { 0.0 };
         double solvedContactEnergyStep { 0.0 };
         float solvedContactForce { 0.0f };
         // Amplitude of the stroke's first contact, so a later one can relight

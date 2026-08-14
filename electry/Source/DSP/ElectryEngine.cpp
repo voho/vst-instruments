@@ -1057,6 +1057,7 @@ void ElectryEngine::reset()
     smoothedOutputGain_ = smoothedParameters_.outputGain;
     smoothedBodyLevel_ = 24.5f * smoothedParameters_.bodyResonance;
     stereoWidth_ = smoothedParameters_.outputMode == OutputMode::Stereo ? 1.0f : 0.0f;
+    stereoSideScale_ = 0.24f * stereoWidth_;
     channelsLinked_ = stereoWidth_ == 0.0f;
     artifactsActive_ = smoothedParameters_.artifactAmount > 0.0f;
     artifactContactShape_ = smoothStep(smoothedParameters_.artifactAmount);
@@ -4022,7 +4023,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     }
     else
     {
-        const float side = 0.24f * stereoWidth_ * voice.stereoLateral;
+        const float side = stereoSideScale_ * voice.stereoLateral;
         const std::array<float, 2> channelWeights { 1.0f - side, 1.0f + side };
         for (int channel = 0; channel < 2; ++channel)
         {
@@ -4147,7 +4148,7 @@ void ElectryEngine::renderSympatheticString(Voice& voice, RenderSums& sums,
     }
     else
     {
-        const float side = 0.24f * stereoWidth_ * voice.stereoLateral;
+        const float side = stereoSideScale_ * voice.stereoLateral;
         sums.bridge[0] += 0.5f * emf * (1.0f - side);
         sums.bridge[1] += 0.5f * emf * (1.0f + side);
         sums.neck[0] += 0.28f * emf * (1.0f - side);
@@ -4514,6 +4515,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
         stereoWidth_ += pickupMixCoefficient_ * (stereoTarget - stereoWidth_);
         if (stereoTarget == 0.0f && stereoWidth_ < 1.0e-6f)
             stereoWidth_ = 0.0f;
+        stereoSideScale_ = 0.24f * stereoWidth_;
 
         // Mono is exact dual mono, so the second coil, DC blocker and
         // decimator are redundant. Opening the field copies channel zero's

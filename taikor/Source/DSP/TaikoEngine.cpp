@@ -1211,6 +1211,7 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.contactDamping = 0.0;
     voice.residualImpedance = 1.0;
     voice.referenceContactEnergy = 1.0;
+    voice.contactEnergyAdmittance = 0.0;
     voice.solvedContactEnergyStep = 0.0;
     voice.solvedContactForce = 0.0f;
     voice.appliedTensionShift = 1.0f;
@@ -4035,6 +4036,11 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
                           * profile.levelScale;
     const double referenceTailAdmittance = coupling * coupling
                                          / voice.residualImpedance;
+    // Same admittance advancePhysicalContacts multiplies the solved contact
+    // force by on every sample this contact stays active; cached here so that
+    // per-sample loop can read it rather than re-deriving it from the strike
+    // profile and residualImpedance on every one of its own iterations.
+    voice.contactEnergyAdmittance = referenceTailAdmittance;
 
     // Integral of sin(pi t/tau)^3 over the contact, through the same omitted-
     // mode admittance the dynamic solve uses. Dividing solved residual work by
@@ -4924,18 +4930,17 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
         voice.stickPrevious = voice.stickPosition;
         voice.stickPosition = next;
         voice.solvedContactForce = static_cast<float> (force[slot]);
-        const auto& profile = strikeProfile (voice.articulation);
-        const double coupling = static_cast<double> (profile.membraneGain)
-                              * profile.levelScale;
         // The stochastic field is currently an observed high-mode residual,
         // not a memoryless mechanical dashpot. A pure resistance captured soft
         // and edge strikes for several milliseconds because it omitted the
         // reactive storage that returns energy from real high modes. Use the
         // solved force history to drive the calibrated observation until that
         // omitted-mode impedance is represented by fitted dynamic states.
+        // contactEnergyAdmittance is (membraneGain * levelScale)^2 /
+        // residualImpedance, cached once by trigger() since neither operand
+        // changes for the life of the contact - see the field comment.
         voice.solvedContactEnergyStep = h * force[slot] * force[slot]
-                                      * coupling * coupling
-                                      / voice.residualImpedance;
+                                      * voice.contactEnergyAdmittance;
         if (force[slot] > 1.0e-6)
             voice.nonlinearContactHasForce = true;
 

@@ -3789,8 +3789,11 @@ void DrumEngine::trigger (Instrument instrument, float velocity,
     // one. The deviations are sized to be heard rather than merely measured:
     // roughly a sixth of a semitone of pitch at the default, which is where a
     // repeated hit stops reading as a loop of one recording.
-    const float humaniseDepth = 2.0f * clampUnit (
-        humanise_.load (std::memory_order_relaxed), 0.5f);
+    // humanise_ is stored through clampUnit() by setKitParameters(), so it is
+    // already finite and already in [0, 1] by the time trigger() reads it;
+    // clampUnit() is idempotent, so reapplying it here only reproduced the
+    // stored value at the cost of a redundant isfinite/clamp per note-on.
+    const float humaniseDepth = 2.0f * humanise_.load (std::memory_order_relaxed);
     HitVariation variation;
     variation.pitchCents = humaniseDepth * (5.6f * drift
         + 4.4f * signedUnitFromHash (seed ^ 0xc8013ea4u)
@@ -4590,11 +4593,14 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
     const float gainTarget = outputGain_.load (std::memory_order_relaxed);
     const float gainSmoothing = gainSmoothingCoefficient_;
     const float dcCoefficient = dcBlockerCoefficient_;
-    const float driveAmount = clampUnit (
-        busDrive_.load (std::memory_order_relaxed), 0.0f);
-    const float compressionAmount = clampUnit (
-        busCompression_.load (std::memory_order_relaxed), 0.0f);
-    const float bleedAmount = clampUnit (bleed_.load (std::memory_order_relaxed), 0.0f);
+    // setKitParameters() already ran these through clampUnit() before storing
+    // them, so re-clamping an already-finite, already-[0,1] value here would
+    // just reproduce it - the same idempotent-reclamp waste already trimmed
+    // from constantPowerLeft/Right, and consistent with how reset() reads
+    // these same three atomics with no re-clamp of its own.
+    const float driveAmount = busDrive_.load (std::memory_order_relaxed);
+    const float compressionAmount = busCompression_.load (std::memory_order_relaxed);
+    const float bleedAmount = bleed_.load (std::memory_order_relaxed);
     // Refreshed per block, then smoothed into each ringing voice below so
     // channel-strip automation is audible on a tail rather than only on the
     // next hit.

@@ -3932,6 +3932,18 @@ float YouKnow106Engine::cutoffAnalogCounts(
         + psuCutoffShift;
 }
 
+float YouKnow106Engine::rampCurrentScaleFor(
+    const VoiceCard& card, float calibration) noexcept
+{
+    // The ramp's charging resistor carries the same per-card tolerance class
+    // as every other analogue trim here. updatePulseComparator solves the
+    // comparator crossing against this cycle's ramp slope, and renderVoice's
+    // amplitude has to scale the rendered ramp by that identical slope, so
+    // both call through here rather than risk the comparator being solved
+    // against a ramp that was not the one actually drawn.
+    return 1.0f + card.rampCurrentError * 0.03f * calibration;
+}
+
 void YouKnow106Engine::updateVoiceAudio(Voice& voice,
                                         const EngineParameters& parameters) noexcept
 {
@@ -3997,7 +4009,7 @@ void YouKnow106Engine::updatePulseComparator(
     // different amplitude than the rendered ramp put the solved edges on a
     // waveform that did not exist.
     const float cardCurrent =
-        1.0f + card.rampCurrentError * 0.03f * parameters.calibration;
+        rampCurrentScaleFor(card, parameters.calibration);
     const float amplitudeScale = voice.dco.renderScale * cardCurrent;
     // The alignment window is 48% to 52% duty across cards: +/-0.24 V is
     // +/-2 points on the 12 V ramp. Pulse Off remains separate at -0.8 V and
@@ -4155,7 +4167,7 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // -2.93% to +3.07% of slope, which is the 3% used here. Being constant
     // per card it commutes with the track, so it stays a plain gain.
     const float amplitude = sawMixVolts
-        * (1.0f + card.rampCurrentError * 0.03f * parameters.calibration);
+        * rampCurrentScaleFor(card, parameters.calibration);
 
     // The rise is straight, and carries no curvature term. The compensation
     // voltage drives a resistor into an integrator's virtual ground, so the
