@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 
+#include <array>
 #include <cmath>
 #include <utility>
 
@@ -585,15 +586,28 @@ void VocalorScopeDisplay::paint (juce::Graphics& g)
         g.drawLine (content.getX(), y, content.getRight(), y, 0.6f);
     }
 
+    // The curve probes the same fixed formant bank at curvePoints frequencies;
+    // only the probe frequency changes from point to point, so the formant
+    // bank's own pole/gain terms are resolved once here rather than once per
+    // point (curvePoints times an exp, two trig calls and a sqrt, every
+    // repaint at the scope's 24 Hz refresh).
+    std::array<float, vocalor::kFormantCount> responseA1 {};
+    std::array<float, vocalor::kFormantCount> responseA2 {};
+    std::array<float, vocalor::kFormantCount> responseScale {};
+    vocalor::formantResponseCoefficients (
+        state.formantHz.data(), state.formantBandwidth.data(), state.formantGain.data(),
+        vocalor::kFormantCount, state.sampleRate,
+        responseA1.data(), responseA2.data(), responseScale.data());
+
     juce::Path curve;
     juce::Path fill;
     for (int i = 0; i < curvePoints; ++i)
     {
         const auto proportion = static_cast<float> (i) / static_cast<float> (curvePoints - 1);
         const auto hz = vocalor::logFrequencyForNormalised (proportion, minimumHz, maximumHz);
-        const auto decibels = vocalor::formantResponseDb (
-            hz, state.formantHz.data(), state.formantBandwidth.data(),
-            state.formantGain.data(), vocalor::kFormantCount, state.sampleRate);
+        const auto decibels = vocalor::formantResponseDbFromCoefficients (
+            hz, responseA1.data(), responseA2.data(), responseScale.data(),
+            vocalor::kFormantCount, state.sampleRate);
         const auto height = vocalor::decibelsToMeterPosition (decibels, floorDb, ceilingDb);
         const auto x = content.getX() + proportion * content.getWidth();
         const auto y = content.getBottom() - height * content.getHeight();

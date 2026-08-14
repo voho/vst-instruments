@@ -587,6 +587,13 @@ private:
         float configurationPitch { 0.0f };
         bool active { false };
         Articulation articulation { Articulation::Don };
+        // strikeProfile(articulation).levelScale, cached at trigger() time.
+        // articulation is fixed for the voice's whole lifetime (see
+        // physicalDrumIndex above), so this is exact for as long as the voice
+        // is active and lets renderVoice()'s per-sample nonlinear-contact path
+        // read it directly instead of looking the profile up by articulation
+        // on every rendered sample.
+        float articulationLevelScale { 1.0f };
         int octaveOffset { 0 };
         // physicalDrums_ index for octaveOffset, i.e. octaveOffset clamped to
         // the playable range and rebased at zero. octaveOffset is only ever

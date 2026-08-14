@@ -93,6 +93,13 @@ private:
     void paintGrid (juce::Graphics&, juce::Rectangle<float> plot) const;
 
     neuramar::ModelAnatomy anatomy;
+    // The loudest each bin ever gets across the whole learned trajectory,
+    // used as the spectrum view's faint outline. It depends only on
+    // `anatomy`, so it is rebuilt once in setAnatomy() rather than on every
+    // paint call - the anatomy itself is fixed between model publishes, but
+    // paintSpectrum() used to redo this 24-slice reduction at the 30 Hz
+    // timer's repaint rate regardless.
+    std::array<float, neuramar::ModelAnatomy::binCount> spectrumEnvelope {};
     std::uint64_t anatomyGeneration = 0;
     View view = View::Spectrum;
     float playhead = 0.0f;

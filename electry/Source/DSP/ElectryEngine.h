@@ -1267,6 +1267,13 @@ private:
     // internal clock and scaled so it stays the same fraction of a period -
     // that is, the same number of cents - at every host rate.
     float horizontalDetuneSamples_ { 0.11f };
+    // The 6 ms delay-smoothing time constant shared by configureVoicePitch()
+    // and configureSympatheticString(): fast enough to track a bend or a
+    // wheel-driven coupled-string retune transparently. Depends only on
+    // controlPeriod and the internal clock, both fixed by prepare(), so it is
+    // resolved once here instead of with std::exp at every control tick of
+    // every voice and every coupled-string wake.
+    float voiceDelaySmoothing_ { 0.5f };
 
     // Artifact shaping constants, evaluated once per control tick.
     float artifactContactShape_ { 0.0f };

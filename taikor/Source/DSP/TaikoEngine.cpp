@@ -1179,6 +1179,7 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.active = false;
     voice.configurationRevision = 0;
     voice.configurationPitch = 0.0f;
+    voice.articulationLevelScale = 1.0f;
     voice.modeCount = 0;
     voice.activeModeCount = 0;
     voice.contactCount = 0;
@@ -3914,6 +3915,7 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
 
     voice.startOrder = order;
     voice.articulation = articulation;
+    voice.articulationLevelScale = profile.levelScale;
     voice.octaveOffset = octave;
     voice.physicalDrumIndex = static_cast<std::uint8_t> (cacheIndex);
     voice.velocity = clampFloat (velocity, 0.0f, 1.0f);
@@ -5022,8 +5024,13 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
 
     if (nonlinearContact)
     {
+        // articulationLevelScale is strikeProfile(voice.articulation).levelScale,
+        // cached once by trigger() since articulation never changes for the
+        // life of the voice - see the field comment - so the per-sample
+        // nonlinear-contact path can read it directly instead of looking the
+        // profile up by articulation on every rendered sample.
         force = std::max (voice.solvedContactForce, 0.0f)
-              * strikeProfile (voice.articulation).levelScale;
+              * voice.articulationLevelScale;
         contactEnvelope = force
             / std::max (voice.contactAmplitude, 1.0e-9f);
 
