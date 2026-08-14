@@ -631,7 +631,6 @@ void ElectryFx::process(float* left, float* right, int numSamples) noexcept
         smooth(compressorMix_, target.compressor);
         smooth(delayMix_, target.delay);
         smooth(roomMix_, target.room);
-        updateDriveConstants();
 
         gainEngagement_ += engagementCoefficient_
                          * (engagementTarget - gainEngagement_);
@@ -665,8 +664,14 @@ void ElectryFx::process(float* left, float* right, int numSamples) noexcept
         // The oversampled gain block. With both controls at zero it is skipped
         // outright, so the chain costs nothing and adds no group delay; while
         // it engages and disengages it is crossfaded, so it cannot click.
+        // pedalDrive_/ampDriveFirst_/ampDriveSecond_/pedalMakeup_/ampMakeup_
+        // are read only inside pedalStage()/ampStage(), reached only from
+        // here, so recomputing them is skipped along with the block itself
+        // instead of running on every sample regardless of whether either
+        // gain control is open.
         if (gainEngagement_ > 0.0f)
         {
+            updateDriveConstants();
             for (int channel = 0; channel < 2; ++channel)
             {
                 const auto index = static_cast<std::size_t>(channel);

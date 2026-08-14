@@ -329,6 +329,10 @@ void NeuramarEngine::prepare(double sampleRate, int maxBlockSize)
     boneEdgeFadeHz_ = std::min(0.04f * rate, 1400.0f);
     controlPeriod_ = std::clamp(static_cast<int>(std::lround(sampleRate_ / 250.0)),
                                 16, 4096);
+    // 3 ms, floored at 16 samples. Depends on nothing but the sample rate, so
+    // it is resolved here once rather than on every voice steal.
+    fadeTailSamples_ = std::max(16,
+        static_cast<int>(std::lround(0.003 * sampleRate_)));
     // A 6 ms smoother: fast enough to feel immediate, slow enough that a host
     // sending one value per block cannot step the level between blocks.
     outputGainCoefficient_ = static_cast<float>(
@@ -1007,15 +1011,13 @@ void NeuramarEngine::beginFadeTail(std::size_t voiceIndex) noexcept
         ? fadeTailWindow(tail.position)
         : 0.0f;
 
-    const int fadeSamples = std::max(16, static_cast<int>(std::lround(
-        0.003 * sampleRate_)));
     // Once the running window has closed to nothing the old tail contributes
     // nothing to carry, so a fresh full-length fade is both safe and better:
     // the 50x attenuation on anything carried across it is what keeps repeated
     // late steals from accumulating.
     const int remaining = (tail.remaining > 0 && window > 0.02f)
         ? tail.remaining
-        : fadeSamples;
+        : fadeTailSamples_;
 
     tail.left = std::clamp(tail.left * window + voice.lastLeft,
                            -maximumFadeTailLevel, maximumFadeTailLevel);

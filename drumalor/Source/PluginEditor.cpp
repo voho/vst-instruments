@@ -970,6 +970,8 @@ DrumalorAudioProcessorEditor::DrumalorAudioProcessorEditor (DrumalorAudioProcess
         "BUS DRIVE", "Add shared output-bus saturation to the whole kit");
     busCompressionKnob.setLabelText (
         "BUS COMP", "Glue the kit with the shared output-bus compressor");
+    outputKnob.setLabelText (
+        "MASTER OUTPUT", "Trim the kit's final output level after the mix bus");
 
     humaniseAttachment = std::make_unique<SliderAttachment> (
         audioProcessor.parameters, drumalor::parameters::humanise,

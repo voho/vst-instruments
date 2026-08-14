@@ -359,6 +359,12 @@ private:
     float boneEdgeLimitHz_ { 20000.0f };
     float boneEdgeFadeHz_ { 1400.0f };
     int controlPeriod_ { 192 };
+    // Length of a fresh voice-steal fade tail, in samples: 3 ms, floored at 16
+    // samples so an absurdly low host rate cannot collapse it to nothing.
+    // Fixed by the sample rate alone, so prepare() resolves it once instead of
+    // beginFadeTail() re-deriving it (an std::lround plus a multiply) on every
+    // voice steal and every model swap.
+    int fadeTailSamples_ { 144 };
     // Output level is the one control applied straight to the summed signal
     // rather than through a control-rate target, so it carries its own
     // smoother. The sentinel means "not yet primed": the first block after

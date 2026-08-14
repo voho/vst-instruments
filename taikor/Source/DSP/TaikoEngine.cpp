@@ -2759,6 +2759,11 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
     const float theta = voice.strikeAngle;
     const float sigmaB = drum.batterDensity;
     const float sigmaR = drum.resonantDensity;
+    // Depend only on the drum, not on the mode entry or which axisymmetric
+    // branch is being resolved, so each is worth resolving once rather than
+    // redoing it for every entry x branch pair the loop below visits.
+    const float sqrtSigmaB = std::sqrt (sigmaB);
+    const float sqrtSigmaR = std::sqrt (sigmaR);
     const float area = piFloat * radius * radius;
 
     const float micRho = drum.micRadius / radius;
@@ -2886,11 +2891,10 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 // The batter head is the one being struck and the one the
                 // microphones are in front of, so the batter component of the
                 // eigenvector appears on both the drive and the observation.
-                const float sqrtSigmaB = std::sqrt (sigmaB);
                 const float batterShare = vectorB / sqrtSigmaB;
                 // Net volume flow: what the pair hears once it has backed far
                 // enough off the head to stop reading the membrane's shape.
-                const float volumeShare = batterShare + vectorR / std::sqrt (sigmaR);
+                const float volumeShare = batterShare + vectorR / sqrtSigmaR;
 
                 const float ka = omega * radius / soundSpeed;
                 const float efficiency = radiationEfficiency (0, ka);
