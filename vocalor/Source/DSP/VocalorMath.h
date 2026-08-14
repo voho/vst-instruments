@@ -178,6 +178,28 @@ void parallelFormantCoefficients (const float* formantHz,
                                        const float* formantGain, int count,
                                        float sampleRate) noexcept;
 
+/** Precomputes the per-formant pole/gain terms formantResponseDb() resolves
+    from @c formantHz, @c formantBandwidth, @c formantGain and @c sampleRate --
+    everything that does not depend on the probe frequency. A response curve
+    samples the same fixed formant bank at many frequencies (the editor's
+    vocal-tract display walks it once per pixel), and those formant terms do
+    not change between samples, so a caller that plots more than one point can
+    resolve them here once and evaluate formantResponseDbFromCoefficients() at
+    each frequency instead of paying formantResponseDb()'s trig/exp/sqrt work
+    again per point. outA1/outA2/outScale must each hold at least @c count
+    entries. */
+void formantResponseCoefficients (const float* formantHz, const float* formantBandwidth,
+                                  const float* formantGain, int count, float sampleRate,
+                                  float* outA1, float* outA2, float* outScale) noexcept;
+
+/** Magnitude in dB of the formant bank described by @c a1/@c a2/@c scale
+    from formantResponseCoefficients(), evaluated at @c frequencyHz. Bit-
+    identical to formantResponseDb() called with the same formant bank, for
+    the frequency-dependent half of the same arithmetic. */
+[[nodiscard]] float formantResponseDbFromCoefficients (float frequencyHz, const float* a1,
+                                                        const float* a2, const float* scale,
+                                                        int count, float sampleRate) noexcept;
+
 /** Maps a frequency onto 0..1 across a logarithmic axis. */
 [[nodiscard]] float normalisedLogFrequency (float hz, float minHz, float maxHz) noexcept;
 
