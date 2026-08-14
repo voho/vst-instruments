@@ -853,6 +853,8 @@ ElectryEngine::ElectryEngine() noexcept
         voice.stereoLateral = 2.0f * static_cast<float>(stringIndex)
                                   / static_cast<float>(stringCount - 1)
                               - 1.0f;
+        voice.lowStringWeight = 1.0f
+            - static_cast<float>(stringIndex) / static_cast<float>(stringCount - 1);
     }
 }
 
@@ -2651,16 +2653,14 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // Player effort and the guitar build change more than level: hard notes
     // are shorter/brighter at the contact, old strings lose the initial edge,
     // and the low Drop-E strings receive a little extra definition.
-    const float lowString = 1.0f
-        - static_cast<float>(voice.stringIndex) / static_cast<float>(stringCount - 1);
     pulseCutoff *= profile.brightness
                  * lerp(1.08f, 0.42f, parameters.stringAge)
                  * lerp(0.92f, 1.12f, parameters.construction)
-                 * (1.0f + 0.24f * lowString);
+                 * (1.0f + 0.24f * voice.lowStringWeight);
     noiseCutoff *= lerp(0.72f, 1.22f, profile.releaseRate)
                  * (plectrumContact
                         ? lerp(0.55f, 1.75f, parameters.pickHardness) : 1.0f)
-                 * (1.0f + 0.12f * lowString);
+                 * (1.0f + 0.12f * voice.lowStringWeight);
 
     // Most of a real pluck's sustained tone comes from the triangular string
     // displacement present when the pick lets go.  Its modal coefficients
@@ -3115,12 +3115,9 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     const bool incidentalContact = playStyle != PlayStyle::Hammer;
     if (incidentalContact && parameters.artifactAmount > 0.0f)
     {
-        const float lowString = 1.0f
-            - static_cast<float>(voice.stringIndex)
-              / static_cast<float>(stringCount - 1);
         const float contact = std::pow(parameters.artifactAmount, 0.75f)
                             * voice.velocityProfile.collision
-                            * (0.70f + 0.30f * lowString);
+                            * (0.70f + 0.30f * voice.lowStringWeight);
         voice.artifactCollisionLength = static_cast<int>(
             lerp(0.025f, 0.100f, voice.velocityProfile.collision)
             * static_cast<float>(sampleRate_));
@@ -3708,12 +3705,9 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         artifactExcess = std::abs(verticalSample) - clearance;
         if (artifactExcess > 0.0f)
         {
-            const float lowString = 1.0f
-                - static_cast<float>(voice.stringIndex)
-                  / static_cast<float>(stringCount - 1);
             const float contact = artifactContactShape_
                                 * voice.velocityProfile.collision
-                                * (0.70f + 0.30f * lowString);
+                                * (0.70f + 0.30f * voice.lowStringWeight);
             const float sign = verticalSample >= 0.0f ? 1.0f : -1.0f;
             const float limited = sign * (clearance
                 + artifactExcess / (1.0f + 6.0f * artifactExcess));

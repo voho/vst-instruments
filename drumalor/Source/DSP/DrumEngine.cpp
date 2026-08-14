@@ -467,6 +467,29 @@ float chokeSecondsForPressure (float pressure) noexcept
     const float slack = 1.0f - grip;
     return 0.006f + 0.46f * slack * slack;
 }
+
+// The RBJ cookbook's high-pass, band-pass and low-pass sections share
+// everything except their numerator: the same frequency/Q clamp, the same
+// omega, and the a1/a2 denominator that follows from cosine/alpha/inverseA0.
+// This is that shared core, so each configure*() below only has to state its
+// own b0/b1/b2 and its own a1/a2 line.
+struct TwoPoleBasis
+{
+    float cosine;
+    float alpha;
+    float inverseA0;
+};
+
+TwoPoleBasis twoPoleBasis (float frequency, float q, float sampleRate,
+                           float inverseSampleRate) noexcept
+{
+    frequency = std::clamp (frequency, 10.0f, 0.45f * sampleRate);
+    q = std::clamp (q, 0.15f, 20.0f);
+    const float omega = twoPi * frequency * inverseSampleRate;
+    const float cosine = std::cos (omega);
+    const float alpha = std::sin (omega) / (2.0f * q);
+    return { cosine, alpha, 1.0f / (1.0f + alpha) };
+}
 } // namespace
 
 const InstrumentMetadata& getInstrumentMetadata (Instrument instrument) noexcept
@@ -2125,49 +2148,37 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
 
 void DrumEngine::configureHighpass (Biquad& filter, float frequency, float q) const noexcept
 {
-    frequency = std::clamp (frequency, 10.0f, 0.45f * static_cast<float> (sampleRate_));
-    q = std::clamp (q, 0.15f, 20.0f);
-    const float omega = twoPi * frequency * inverseSampleRate_;
-    const float cosine = std::cos (omega);
-    const float alpha = std::sin (omega) / (2.0f * q);
-    const float inverseA0 = 1.0f / (1.0f + alpha);
-    filter.b0 = 0.5f * (1.0f + cosine) * inverseA0;
-    filter.b1 = -(1.0f + cosine) * inverseA0;
+    const auto basis = twoPoleBasis (frequency, q, static_cast<float> (sampleRate_),
+                                     inverseSampleRate_);
+    filter.b0 = 0.5f * (1.0f + basis.cosine) * basis.inverseA0;
+    filter.b1 = -(1.0f + basis.cosine) * basis.inverseA0;
     filter.b2 = filter.b0;
-    filter.a1 = -2.0f * cosine * inverseA0;
-    filter.a2 = (1.0f - alpha) * inverseA0;
+    filter.a1 = -2.0f * basis.cosine * basis.inverseA0;
+    filter.a2 = (1.0f - basis.alpha) * basis.inverseA0;
     filter.clear();
 }
 
 void DrumEngine::configureBandpass (Biquad& filter, float frequency, float q) const noexcept
 {
-    frequency = std::clamp (frequency, 10.0f, 0.45f * static_cast<float> (sampleRate_));
-    q = std::clamp (q, 0.15f, 20.0f);
-    const float omega = twoPi * frequency * inverseSampleRate_;
-    const float cosine = std::cos (omega);
-    const float alpha = std::sin (omega) / (2.0f * q);
-    const float inverseA0 = 1.0f / (1.0f + alpha);
-    filter.b0 = alpha * inverseA0;
+    const auto basis = twoPoleBasis (frequency, q, static_cast<float> (sampleRate_),
+                                     inverseSampleRate_);
+    filter.b0 = basis.alpha * basis.inverseA0;
     filter.b1 = 0.0f;
     filter.b2 = -filter.b0;
-    filter.a1 = -2.0f * cosine * inverseA0;
-    filter.a2 = (1.0f - alpha) * inverseA0;
+    filter.a1 = -2.0f * basis.cosine * basis.inverseA0;
+    filter.a2 = (1.0f - basis.alpha) * basis.inverseA0;
     filter.clear();
 }
 
 void DrumEngine::configureLowpass (Biquad& filter, float frequency, float q) const noexcept
 {
-    frequency = std::clamp (frequency, 10.0f, 0.45f * static_cast<float> (sampleRate_));
-    q = std::clamp (q, 0.15f, 20.0f);
-    const float omega = twoPi * frequency * inverseSampleRate_;
-    const float cosine = std::cos (omega);
-    const float alpha = std::sin (omega) / (2.0f * q);
-    const float inverseA0 = 1.0f / (1.0f + alpha);
-    filter.b0 = 0.5f * (1.0f - cosine) * inverseA0;
-    filter.b1 = (1.0f - cosine) * inverseA0;
+    const auto basis = twoPoleBasis (frequency, q, static_cast<float> (sampleRate_),
+                                     inverseSampleRate_);
+    filter.b0 = 0.5f * (1.0f - basis.cosine) * basis.inverseA0;
+    filter.b1 = (1.0f - basis.cosine) * basis.inverseA0;
     filter.b2 = filter.b0;
-    filter.a1 = -2.0f * cosine * inverseA0;
-    filter.a2 = (1.0f - alpha) * inverseA0;
+    filter.a1 = -2.0f * basis.cosine * basis.inverseA0;
+    filter.a2 = (1.0f - basis.alpha) * basis.inverseA0;
     filter.clear();
 }
 

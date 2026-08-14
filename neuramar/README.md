@@ -39,6 +39,23 @@ The project builds three products from one JUCE codebase:
 > Those bundles are ad-hoc signed and not notarized; check the repository's
 > Nightly badge for the latest workflow result.
 
+## Contents
+
+- [Teach a sound, then play its memory](#teach-a-sound-then-play-its-memory)
+- [Choosing a useful source](#choosing-a-useful-source)
+- [Interface and controls](#interface-and-controls)
+- [Neural synthesis engine](#neural-synthesis-engine)
+- [Scientific scope and limitations](#scientific-scope-and-limitations)
+- [State, privacy, and presets](#state-privacy-and-presets)
+- [Requirements and formats](#requirements-and-formats)
+- [Build and test on macOS](#build-and-test-on-macos)
+- [Run the neural-engine tests without JUCE](#run-the-neural-engine-tests-without-juce)
+- [Regenerate the demonstration audio](#regenerate-the-demonstration-audio)
+- [Install and validate locally](#install-and-validate-locally)
+- [Sign, package, and notarize](#sign-package-and-notarize)
+- [Project layout](#project-layout)
+- [Licensing](#licensing)
+
 ## Teach a sound, then play its memory
 
 1. Drag a `.wav`, `.wave`, `.aif`, `.aiff`, `.flac`, or `.ogg` file onto the
