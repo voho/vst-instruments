@@ -667,6 +667,11 @@ private:
     EngineParameters blockParameters_ {};
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };
+    // 0.46 * sampleRate_, the Nyquist guard the mip selection divides by a
+    // fundamental to get its permissible harmonic count. Sample-rate-only, so
+    // it is resolved once in prepare() instead of on every voice control
+    // update and every radiatedPowerTarget() call that shares the same guard.
+    float mipHarmonicGuardHz_ { 0.46f * 48000.0f };
     int maxBlockSize_ { 512 };
     bool prepared_ { false };
     std::uint64_t generation_ { 0 };

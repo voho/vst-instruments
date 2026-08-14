@@ -230,6 +230,7 @@ void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
     sampleRate_ = std::clamp(sampleRate, 8000.0, 192000.0);
     displaySampleRate_.store(static_cast<float>(sampleRate_), std::memory_order_relaxed);
     inverseSampleRate_ = static_cast<float>(1.0 / sampleRate_);
+    mipHarmonicGuardHz_ = 0.46f * static_cast<float>(sampleRate_);
     maxBlockSize_ = std::max(1, maxBlockSize);
 
     const auto delayFor = [this](float seconds)
@@ -2174,7 +2175,7 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
     voice.phaseIncrementStep = (voice.targetPhaseIncrement - voice.phaseIncrement)
         / static_cast<float>(controlPeriod);
 
-    const int permissible = std::max(1, static_cast<int>(0.46f * static_cast<float>(sampleRate_) / std::max(frequency, 1.0f)));
+    const int permissible = std::max(1, static_cast<int>(mipHarmonicGuardHz_ / std::max(frequency, 1.0f)));
     voice.tableLevel = 0;
     for (int level = 1; level < tableLevels; ++level)
         if (harmonicsPerLevel[static_cast<std::size_t>(level)] <= permissible)
@@ -2676,8 +2677,7 @@ float VoiceEngine::radiatedPowerTarget(const Voice& voice, float fundamental,
     // it here would let those excluded motions flip the analyzed harmonic set
     // and pump the 40 ms support follower near a mip boundary.
     const int permissible = std::max(
-        1, static_cast<int>(0.46f * static_cast<float>(sampleRate_)
-                            / boundedFundamental));
+        1, static_cast<int>(mipHarmonicGuardHz_ / boundedFundamental));
     int tableLevel = 0;
     for (int level = 1; level < tableLevels; ++level)
         if (harmonicsPerLevel[static_cast<std::size_t>(level)] <= permissible)
