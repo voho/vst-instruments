@@ -657,6 +657,12 @@ private:
         bool sustained { false };
         bool releasing { false };
         int stringIndex { 0 };
+        // The physical string's fixed left-right placement in the stereo
+        // field, in -1..1. Depends only on stringIndex and the (compile-time
+        // constant) string count, so it is solved once when the voice is
+        // bound to its string rather than every sample the stereo field is
+        // open, in renderVoice() and renderSympatheticString() alike.
+        float stereoLateral { 0.0f };
         int midiNote { -1 };
         int fret { 0 };
         PlayStyle playStyle { PlayStyle::Sustain };

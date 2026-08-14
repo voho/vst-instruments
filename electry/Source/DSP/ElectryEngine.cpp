@@ -847,7 +847,13 @@ ElectryEngine::ElectryEngine() noexcept
 {
     smoothedParameters_ = sanitise(targetParameters_);
     for (int stringIndex = 0; stringIndex < stringCount; ++stringIndex)
-        voices_[static_cast<std::size_t>(stringIndex)].stringIndex = stringIndex;
+    {
+        auto& voice = voices_[static_cast<std::size_t>(stringIndex)];
+        voice.stringIndex = stringIndex;
+        voice.stereoLateral = 2.0f * static_cast<float>(stringIndex)
+                                  / static_cast<float>(stringCount - 1)
+                              - 1.0f;
+    }
 }
 
 void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
@@ -4017,10 +4023,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     }
     else
     {
-        const float lateral = 2.0f * static_cast<float>(voice.stringIndex)
-                                / static_cast<float>(stringCount - 1)
-                            - 1.0f;
-        const float side = 0.24f * stereoWidth_ * lateral;
+        const float side = 0.24f * stereoWidth_ * voice.stereoLateral;
         const std::array<float, 2> channelWeights { 1.0f - side, 1.0f + side };
         for (int channel = 0; channel < 2; ++channel)
         {
@@ -4145,10 +4148,7 @@ void ElectryEngine::renderSympatheticString(Voice& voice, RenderSums& sums,
     }
     else
     {
-        const float lateral = 2.0f * static_cast<float>(voice.stringIndex)
-                                / static_cast<float>(stringCount - 1)
-                            - 1.0f;
-        const float side = 0.24f * stereoWidth_ * lateral;
+        const float side = 0.24f * stereoWidth_ * voice.stereoLateral;
         sums.bridge[0] += 0.5f * emf * (1.0f - side);
         sums.bridge[1] += 0.5f * emf * (1.0f + side);
         sums.neck[0] += 0.28f * emf * (1.0f - side);
