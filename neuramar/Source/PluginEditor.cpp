@@ -707,6 +707,17 @@ void ModelAnatomyDisplay::setAnatomy (const neuramar::ModelAnatomy& next,
     anatomyGeneration = generation;
     anatomy = next;
     playhead = 0.0f;
+
+    // Rebuilt once here instead of on every paintSpectrum() call: it depends
+    // only on `anatomy`, which just changed.
+    spectrumEnvelope.fill (0.0f);
+    for (std::size_t s = 0; s < neuramar::ModelAnatomy::sliceCount; ++s)
+        for (std::size_t bin = 0; bin < spectrumEnvelope.size(); ++bin)
+            spectrumEnvelope[bin] = std::max (spectrumEnvelope[bin],
+                std::max (anatomy.core[s][bin],
+                          std::max (anatomy.air[s][bin],
+                                    anatomy.bone[s][bin])));
+
     repaint();
 }
 
@@ -802,16 +813,10 @@ void ModelAnatomyDisplay::paintSpectrum (juce::Graphics& g,
 
     // The faint outline is the loudest each cell ever gets across the whole
     // learned trajectory, so the moving slice is read against the memory's
-    // total spectral reach rather than in isolation.
-    std::array<float, neuramar::ModelAnatomy::binCount> envelope {};
-    for (std::size_t s = 0; s < neuramar::ModelAnatomy::sliceCount; ++s)
-        for (std::size_t bin = 0; bin < envelope.size(); ++bin)
-            envelope[bin] = std::max (envelope[bin],
-                std::max (anatomy.core[s][bin],
-                          std::max (anatomy.air[s][bin],
-                                    anatomy.bone[s][bin])));
+    // total spectral reach rather than in isolation. Computed once per
+    // published memory in setAnatomy(), not on every paint call.
     g.setColour (colour (ink).withAlpha (0.14f));
-    g.strokePath (buildPath (envelope, false),
+    g.strokePath (buildPath (spectrumEnvelope, false),
                   juce::PathStrokeType (0.9f, juce::PathStrokeType::curved));
 
     const auto airPath = buildPath (anatomy.air[slice], true);
