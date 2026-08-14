@@ -944,7 +944,16 @@ void NeuramarEngine::noteOn(int midiNote, float velocity) noexcept
         const bool hasBodyPhase = sourceCoordinate > 0.0f
             && sourceCoordinate
                 <= static_cast<float>(NeuralModel::harmonicCount) + 0.999f;
-        const float bodyPhase = hasBodyPhase
+        // A virtual harmonic beyond the observed 64-partial bank has no
+        // pitch-following phase of its own, so pitchFollowingPhase above is
+        // already initialPhaseAt() evaluated at this exact sourceCoordinate.
+        // Calling it again here repeated the identical atan2 for every such
+        // harmonic that also falls inside the body range - which is most of
+        // them for a bass note, since a low phaseRatio keeps
+        // harmonicNumber * phaseRatio inside the 64-partial bank all the way
+        // out to harmonic 256. That doubled note-on's atan2 count on the
+        // audio thread for exactly the notes it costs the most for.
+        const float bodyPhase = hasBodyPhase && hasPitchFollowingPhase
             ? initialPhaseAt(*model, sourceCoordinate)
             : pitchFollowingPhase;
         selected->harmonicPhases[harmonic] = wrapUnit(
