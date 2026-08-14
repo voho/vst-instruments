@@ -221,8 +221,9 @@ void buildModelAnatomy(const NeuralModel& model,
         return;
 
     destination.peakAmplitude = peak;
-    // Layer meters share the Core reference so their relative balance stays
-    // readable instead of each layer being normalised to its own maximum.
+    // Layer meters share one peak, the loudest any layer reaches across the
+    // whole trajectory, so their relative balance stays readable instead of
+    // each layer being normalised to its own maximum.
     float layerPeak = 0.0f;
     for (std::size_t slice = 0; slice < ModelAnatomy::sliceCount; ++slice)
         layerPeak = std::max({ layerPeak, corePower[slice], airPower[slice],
