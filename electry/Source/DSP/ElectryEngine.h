@@ -1234,6 +1234,13 @@ private:
     float smoothedOutputGain_ { 0.5f };
     float smoothedBodyLevel_ { 0.35f };
     float stereoWidth_ { 0.0f };
+    // 0.24f * stereoWidth_, resolved once whenever stereoWidth_ changes (at
+    // most once per control tick) instead of on every internal sample of
+    // every voice. renderVoice() and renderSympatheticString() both only
+    // ever use stereoWidth_ through this product with the 0.24f stereo-field
+    // constant, so caching it here removes a multiply per voice per sample
+    // that stayed at the same value between control ticks anyway.
+    float stereoSideScale_ { 0.0f };
     float parameterSmoothingCoefficient_ { 0.01f };
     float contactNoiseBandCoefficient_ { 0.08f };
     bool artifactsActive_ { true };
