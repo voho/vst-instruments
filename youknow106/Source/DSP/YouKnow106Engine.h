@@ -1346,6 +1346,13 @@ private:
     [[nodiscard]] static float cutoffAnalogCounts(
         float cutoffCounts, const VoiceCard& card, float calibration,
         float powerSupplyDroop) noexcept;
+    // The ramp charging-current tolerance updatePulseComparator solves the
+    // comparator threshold against is the identical per-card scale
+    // renderVoice applies to the rendered ramp amplitude; shared here so the
+    // two cannot drift apart the way resonanceFeedbackFor/cutoffAnalogCounts
+    // above were split out to prevent.
+    [[nodiscard]] static float rampCurrentScaleFor(
+        const VoiceCard& card, float calibration) noexcept;
     [[nodiscard]] static float dcoCompensationRatio(const Voice& voice) noexcept;
     [[nodiscard]] float dcoLaunchScale(const Voice& voice) const noexcept;
     // The PWM comparator is physical and free-running even behind a shut VCA,
