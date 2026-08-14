@@ -233,6 +233,20 @@ storage, latency or per-sample work. Final qualification is recorded below.
 > retain their relative levels with one shared gain rather than per-file
 > normalisation.
 
+## Contents
+
+- [What makes it a circuit model rather than a lookalike](#what-makes-it-a-circuit-model-rather-than-a-lookalike)
+- [Fidelity ledger: stage by stage](#fidelity-ledger-stage-by-stage)
+- [Voices, analogue character and dispersion](#voices-analogue-character-and-dispersion)
+- [Interface](#interface)
+- [Original factory bank](#original-factory-bank)
+- [MIDI](#midi)
+- [Build on macOS](#build-on-macos)
+- [Build and test without JUCE](#build-and-test-without-juce)
+- [Sign, package and notarize](#sign-package-and-notarize)
+- [Layout](#layout)
+- [Licensing](#licensing)
+
 ## What makes it a circuit model rather than a lookalike
 
 - **The oscillator is a divider, not a phase accumulator.** Pitch is one

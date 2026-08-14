@@ -171,6 +171,23 @@ struct AirFitResult
     return predicate && predicate();
 }
 
+struct MidiPitchEstimate
+{
+    int note { 60 };
+    float cents { 0.0f };
+};
+
+// Converts a frequency in Hz to the nearest MIDI note and the signed cents
+// offset from it. Both the progress callback and the published model
+// metadata report the same root frequency this way, so the rounding and
+// the cents reference are computed in exactly one place.
+[[nodiscard]] MidiPitchEstimate midiPitchFromFrequency(float frequencyHz) noexcept
+{
+    const float midi = 69.0f + 12.0f * std::log2(frequencyHz / 440.0f);
+    const int note = std::clamp(static_cast<int>(std::lround(midi)), 0, 127);
+    return { note, 100.0f * (midi - static_cast<float>(note)) };
+}
+
 void report(const SampleLearner::ProgressCallback& callback,
             SampleLearner::Stage stage, float overall,
             const PitchEstimate& pitch, const char* message)
@@ -185,9 +202,9 @@ void report(const SampleLearner::ProgressCallback& callback,
     progress.pitchConfidence = pitch.confidence;
     if (pitch.frequencyHz > 0.0f)
     {
-        const float midi = 69.0f + 12.0f * std::log2(pitch.frequencyHz / 440.0f);
-        progress.rootMidiNote = std::clamp(static_cast<int>(std::lround(midi)), 0, 127);
-        progress.rootCents = 100.0f * (midi - static_cast<float>(progress.rootMidiNote));
+        const auto midiPitch = midiPitchFromFrequency(pitch.frequencyHz);
+        progress.rootMidiNote = midiPitch.note;
+        progress.rootCents = midiPitch.cents;
     }
     progress.message = message;
     callback(progress);
@@ -2197,9 +2214,9 @@ SampleLearner::LearnResult SampleLearner::learn(
     auto& metadata = model->metadata_;
     metadata.sourceSampleRate = sampleRate;
     metadata.rootFrequencyHz = pitch.frequencyHz;
-    const float midi = 69.0f + 12.0f * std::log2(pitch.frequencyHz / 440.0f);
-    metadata.rootMidiNote = std::clamp(static_cast<int>(std::lround(midi)), 0, 127);
-    metadata.rootCents = 100.0f * (midi - static_cast<float>(metadata.rootMidiNote));
+    const auto midiPitch = midiPitchFromFrequency(pitch.frequencyHz);
+    metadata.rootMidiNote = midiPitch.note;
+    metadata.rootCents = midiPitch.cents;
     metadata.pitchConfidence = pitch.confidence;
     metadata.durationSeconds = static_cast<float>(sample.size() - 1)
         / static_cast<float>(analysisSampleRate);

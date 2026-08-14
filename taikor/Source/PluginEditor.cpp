@@ -1160,6 +1160,18 @@ void TaikorAudioProcessorEditor::addKnob (TaikorKnob& knob,
     knob.slider.setName (knob.getName());
     attachments.push_back (std::make_unique<SliderAttachment> (
         audioProcessor.parameters, parameterId, knob.slider));
+
+    // Double-click resets a knob to its own parameter's declared default -
+    // the value a freshly-inserted instance opens with - rather than to
+    // whichever value JUCE's slider would otherwise fall back to. Reading it
+    // from the parameter keeps every knob in lockstep with its default should
+    // that ever change, instead of a second table of defaults kept here.
+    if (const auto* parameter = audioProcessor.parameters.getParameter (parameterId))
+    {
+        knob.slider.setDoubleClickReturnValue (
+            true, parameter->convertFrom0to1 (parameter->getDefaultValue()));
+        knob.slider.setTooltip (knob.slider.getTooltip() + " (double-click to reset)");
+    }
 }
 
 void TaikorAudioProcessorEditor::selectOctave (int octaveOffset)

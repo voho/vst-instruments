@@ -38,6 +38,23 @@ modern 28-inch baritone/8-string build.
 
 ![Electry electric guitar interface](Docs/screenshots/electry-standalone.png)
 
+## Contents
+
+- [Hear it](#hear-it)
+- [Keyswitches and playable range](#keyswitches-and-playable-range)
+- [Sound architecture](#sound-architecture)
+- [Amplifier chain](#amplifier-chain)
+- [Guitar construction axes](#guitar-construction-axes)
+- [Exact 31-parameter contract](#exact-31-parameter-contract)
+- [Build products](#build-products)
+- [Requirements](#requirements)
+- [Build on macOS](#build-on-macos)
+- [JUCE-free DSP build](#juce-free-dsp-build)
+- [Install and validate locally](#install-and-validate-locally)
+- [Sign, package and notarize](#sign-package-and-notarize)
+- [Project layout](#project-layout)
+- [Licensing](#licensing)
+
 ## Hear it
 
 Fourteen rendered examples — the full playable range, every pick-stroke and

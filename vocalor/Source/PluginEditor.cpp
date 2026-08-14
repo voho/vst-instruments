@@ -748,6 +748,27 @@ VocalorAudioProcessorEditor::VocalorAudioProcessorEditor (VocalorAudioProcessor&
         vowelPad.setMorph (static_cast<float> (morphKnob.slider.getValue()));
     };
 
+    // Double-click returns every continuous control to its host-parameter
+    // default (see createParameterLayout()), so a player can back out of an
+    // exploratory tweak without hunting for the value in a text box.
+    choirSizeSlider.setDoubleClickReturnValue (true, 8.0);
+    morphKnob.slider.setDoubleClickReturnValue (true, 0.0);
+    formantShiftKnob.slider.setDoubleClickReturnValue (true, 0.0);
+    breathKnob.slider.setDoubleClickReturnValue (true, 0.30);
+    resonanceKnob.slider.setDoubleClickReturnValue (true, 0.64);
+    tensionKnob.slider.setDoubleClickReturnValue (true, 0.36);
+    vibratoKnob.slider.setDoubleClickReturnValue (true, 0.0);
+    instabilityKnob.slider.setDoubleClickReturnValue (true, 0.38);
+    humanizeKnob.slider.setDoubleClickReturnValue (true, 0.52);
+    nasalKnob.slider.setDoubleClickReturnValue (true, 0.0);
+    dynamicsKnob.slider.setDoubleClickReturnValue (true, 1.0);
+    intonationKnob.slider.setDoubleClickReturnValue (true, 0.0);
+    glideKnob.slider.setDoubleClickReturnValue (true, 0.0);
+    spreadKnob.slider.setDoubleClickReturnValue (true, 0.62);
+    roomKnob.slider.setDoubleClickReturnValue (true, 0.24);
+    roomSizeKnob.slider.setDoubleClickReturnValue (true, 0.50);
+    outputKnob.slider.setDoubleClickReturnValue (true, -6.0);
+
     choirSizeAttachment = std::make_unique<SliderAttachment> (
         processor.parameters, vocalor::parameters::choirSize, choirSizeSlider);
     morphAttachment = std::make_unique<SliderAttachment> (
