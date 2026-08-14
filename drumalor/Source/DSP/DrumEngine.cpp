@@ -296,14 +296,20 @@ float polyBlep (float phase, float phaseIncrement) noexcept
     return 0.0f;
 }
 
-float constantPowerLeft (float pan) noexcept
+// Every call site clamps pan to [-1, 1] into a local of its own before
+// passing that same value in here, on every note-on, every sympathetic-bed
+// refresh, and every processed block's per-instrument mixer update.
+// Clamping it again on entry only reproduced a result the caller had just
+// computed. The two functions now trust the [-1, 1] contract their four call
+// sites already uphold instead of redoing it.
+float constantPowerLeft (float clampedPan) noexcept
 {
-    return std::sqrt (0.5f * (1.0f - std::clamp (pan, -1.0f, 1.0f)));
+    return std::sqrt (0.5f * (1.0f - clampedPan));
 }
 
-float constantPowerRight (float pan) noexcept
+float constantPowerRight (float clampedPan) noexcept
 {
-    return std::sqrt (0.5f * (1.0f + std::clamp (pan, -1.0f, 1.0f)));
+    return std::sqrt (0.5f * (1.0f + clampedPan));
 }
 
 float rationalShaper (float value, float positiveCurvature,
