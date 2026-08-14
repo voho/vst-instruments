@@ -80,7 +80,7 @@ struct EngineParameters
     float bendTimeSeconds { 0.28f };// finger-bend travel time
     float velocityAmount { 0.85f }; // MIDI velocity to pluck strength
     float outputGain { 0.5f };      // linear output level
-    float artifactAmount { 0.18f }; // sympathetic ring and incidental contact
+    float artifactAmount { 0.18f }; // hardware ring, saddle buzz and incidental contact
     OutputMode outputMode { OutputMode::Mono }; // authentic DI or hex/string field
     // Bridge-coupled sympathetic resonance of the strings that are not being
     // fingered. 0 bypasses the coupled waveguides exactly.
@@ -1226,7 +1226,12 @@ private:
     float previousBodyDisplacement_ { 0.0f };
     OnePole bodyEmfLowpass_ {};
     float bodyEmfLowpassCoefficient_ { 0.5f };
-    std::array<ModalResonator, stringCount> sympatheticModes_ {};
+    // Feed-forward hardware-ring proxy for the Artifacts control: each mode is
+    // tuned to a string's open pitch, but this bank only colours the pickup
+    // drive with an open-string/hardware buzz approximation. It is not the
+    // waveguide-coupled Sympathetic Ring feature (`sympatheticBus_` and
+    // friends below), which actually vibrates the modelled strings.
+    std::array<ModalResonator, stringCount> artifactRingModes_ {};
     std::array<float, bodyModeCount> bodyModeFrequencies_ {};
     std::array<float, bodyModeCount> bodyModeQs_ {};
     std::array<float, bodyModeCount> bodyModeLevels_ {};
