@@ -159,6 +159,16 @@ makeSourceFilterEnvelope(
 {
     return unitSine(wrapUnit(phase));
 }
+
+// Raised-cosine fade-tail window: 0 at the start of a steal's carry-over, 1
+// once it has run its full length. beginFadeTail() and the per-sample mix in
+// process() both shape the same tail with this curve; sharing it means the
+// two can never drift apart the way two independently maintained copies of
+// the same formula could.
+[[nodiscard]] float fadeTailWindow(float position) noexcept
+{
+    return 0.5f + 0.5f * sine(0.25f + 0.5f * std::min(position, 1.0f));
+}
 } // namespace
 
 void NeuramarEngine::Bandpass::set(float centreHz, float bandwidthOctaves,
@@ -998,7 +1008,7 @@ void NeuramarEngine::beginFadeTail(std::size_t voiceIndex) noexcept
     // first steal already budgeted: all the energy stacked into one slot still
     // dies within one fade of that first steal.
     const float window = tail.remaining > 0
-        ? 0.5f + 0.5f * sine(0.25f + 0.5f * std::min(tail.position, 1.0f))
+        ? fadeTailWindow(tail.position)
         : 0.0f;
 
     // Once the running window has closed to nothing the old tail contributes
@@ -1917,8 +1927,7 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
         {
             if (tail.remaining <= 0)
                 continue;
-            const float window = 0.5f + 0.5f * sine(
-                0.25f + 0.5f * std::min(tail.position, 1.0f));
+            const float window = fadeTailWindow(tail.position);
             outputLeft += tail.left * window;
             outputRight += tail.right * window;
             tail.position += tail.positionStep;

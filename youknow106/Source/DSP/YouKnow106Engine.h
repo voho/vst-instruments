@@ -1337,6 +1337,15 @@ private:
     // control voltages into filter and amplifier coefficients without making
     // their bandwidth depend on the HQ factor.
     void updateVoiceAudio(Voice& voice, const EngineParameters& parameters) noexcept;
+    // The two per-card tolerance transforms updateVoiceAudio applies to the
+    // settled control voltages are also what renderVoice must reapply to the
+    // interior nodes of an exact held-interval reconstruction, so both call
+    // through here rather than risk the two paths drifting apart.
+    [[nodiscard]] static float resonanceFeedbackFor(
+        float resonanceCv, const VoiceCard& card, float calibration) noexcept;
+    [[nodiscard]] static float cutoffAnalogCounts(
+        float cutoffCounts, const VoiceCard& card, float calibration,
+        float powerSupplyDroop) noexcept;
     [[nodiscard]] static float dcoCompensationRatio(const Voice& voice) noexcept;
     [[nodiscard]] float dcoLaunchScale(const Voice& voice) const noexcept;
     // The PWM comparator is physical and free-running even behind a shut VCA,
