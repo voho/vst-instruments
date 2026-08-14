@@ -4623,9 +4623,11 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
     // turned into derivative spikes. The result then joins pickup voltage;
     // displacement is never summed directly into the electrical path.
     const float bodyDisplacement = 0.080f * sums.body;
-    const float bodyEmfScale = static_cast<float>(sampleRate_) / (twoPi * 220.0f);
+    // Same 220 Hz differentiator-to-EMF scale as the per-string pickup path
+    // uses, so it reuses `emfScale_` (solved once in prepare()) instead of
+    // repeating the division here on every internal sample.
     const float bodyDriveVoltage =
-        (bodyDisplacement - previousBodyDisplacement_) * bodyEmfScale;
+        (bodyDisplacement - previousBodyDisplacement_) * emfScale_;
     previousBodyDisplacement_ = bodyDisplacement;
     float bodyVoltage = 0.0f;
     for (auto& mode : bodyModes_)
