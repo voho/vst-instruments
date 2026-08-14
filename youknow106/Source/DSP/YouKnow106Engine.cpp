@@ -1094,23 +1094,67 @@ float YouKnow106Engine::rampSegmentVoltage(float risePosition) noexcept
     return 2.0f * clamp01(risePosition) - 1.0f;
 }
 
-float YouKnow106Engine::pulseRisePhase(float duty, float resetFraction) noexcept
+namespace
+{
+// Both comparator edges share this reset/rise pair. Callers that need both
+// edges -- renderVoice's end-of-sample reconciliation calls both back to
+// back with the same arguments -- would otherwise clamp and re-derive the
+// same two floats twice per voice per internal sample for no reason.
+struct PulseRampGeometry
+{
+    float reset;
+    float rise;
+};
+
+PulseRampGeometry pulseRampGeometry(float resetFraction) noexcept
 {
     const float reset = std::clamp(resetFraction, 0.0f, 0.25f);
-    const float rise = std::max(1.0f - reset, 1.0e-4f);
-    return rise * (1.0f - std::clamp(duty, 0.0f, 1.0f));
+    return { reset, std::max(1.0f - reset, 1.0e-4f) };
+}
+} // namespace
+
+float YouKnow106Engine::pulseRisePhase(float duty, float resetFraction) noexcept
+{
+    const auto geometry = pulseRampGeometry(resetFraction);
+    return geometry.rise * (1.0f - std::clamp(duty, 0.0f, 1.0f));
 }
 
 float YouKnow106Engine::pulseFallPhase(float duty, float resetFraction) noexcept
 {
-    const float reset = std::clamp(resetFraction, 0.0f, 0.25f);
-    const float rise = std::max(1.0f - reset, 1.0e-4f);
+    const auto geometry = pulseRampGeometry(resetFraction);
     // The ramp runs 0..1 over the rise and falls linearly back over the reset,
     // both mapped to -1..+1. Solving the falling segment for the rise's
     // threshold gives the fraction of the reset spent still above it.
     const float threshold = 1.0f - std::clamp(duty, 0.0f, 1.0f);
-    return rise + reset * std::clamp(1.0f - threshold, 0.0f, 1.0f);
+    return geometry.rise
+         + geometry.reset * std::clamp(1.0f - threshold, 0.0f, 1.0f);
 }
+
+namespace
+{
+// renderVoice's end-of-sample comparator reconciliation always wants both
+// edges of the same (duty, resetFraction) pair together. This performs the
+// exact same arithmetic as one call to each of pulseRisePhase/pulseFallPhase
+// -- same operations, same intermediate types -- just without clamping duty
+// and deriving the shared ramp geometry twice to reach two numbers that were
+// always going to be read together.
+struct PulseEdgePhases
+{
+    float rise;
+    float fall;
+};
+
+PulseEdgePhases pulseEdgePhases(float duty, float resetFraction) noexcept
+{
+    const auto geometry = pulseRampGeometry(resetFraction);
+    const float clampedDuty = std::clamp(duty, 0.0f, 1.0f);
+    const float threshold = 1.0f - clampedDuty;
+    return {
+        geometry.rise * (1.0f - clampedDuty),
+        geometry.rise + geometry.reset * std::clamp(1.0f - threshold, 0.0f, 1.0f)
+    };
+}
+} // namespace
 
 float YouKnow106Engine::pwmDutyCycle(float controlVolts) noexcept
 {
@@ -4322,10 +4366,9 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // perfectly linear.  Reconcile the end point to the physical comparator's
     // memoryless truth; in the ordinary 5..95% range the solved events already
     // land here exactly, so this is only a numerical/pinned-state guard.
-    const double riseEdge =
-        static_cast<double>(pulseRisePhase(duty, static_cast<float>(reset)));
-    const double fallEdge =
-        static_cast<double>(pulseFallPhase(duty, static_cast<float>(reset)));
+    const auto edgePhases = pulseEdgePhases(duty, static_cast<float>(reset));
+    const double riseEdge = static_cast<double>(edgePhases.rise);
+    const double fallEdge = static_cast<double>(edgePhases.fall);
     const float comparatorAtEnd = duty >= 1.0f
         ? 1.0f
         : (duty <= 0.0f
