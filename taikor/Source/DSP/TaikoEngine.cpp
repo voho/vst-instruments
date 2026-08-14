@@ -4712,20 +4712,20 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
         constexpr double alpha = 1.5;
         constexpr double alphaPlusOne = alpha + 1.0;
         const auto positive = [] (double x) noexcept { return std::max (x, 0.0); };
-        const auto potential = [&] (double x) noexcept
-        {
-            const double z = positive (x);
-            return voice.contactStiffness / alphaPlusOne * z * z * std::sqrt (z);
-        };
-        const auto potentialSlope = [&] (double x) noexcept
-        {
-            const double z = positive (x);
-            return voice.contactStiffness * z * std::sqrt (z);
-        };
+
+        // z and sqrt(z) at the midpoint and at the half-step-ahead point each
+        // feed both the potential and its slope below; solving for sqrt(z)
+        // once per point and reusing it avoids recomputing an identical square
+        // root up to three times per call.
+        const double z0 = positive (midpoint);
+        const double sqrtZ0 = std::sqrt (z0);
+        const double phi0 = voice.contactStiffness / alphaPlusOne * z0 * z0 * sqrtZ0;
 
         const double nextMidpoint = midpoint + 0.5 * step;
-        const double phi0 = potential (midpoint);
-        const double phi1 = potential (nextMidpoint);
+        const double z1 = positive (nextMidpoint);
+        const double sqrtZ1 = std::sqrt (z1);
+        const double phi1 = voice.contactStiffness / alphaPlusOne * z1 * z1 * sqrtZ1;
+
         const double scale = 1.0 + std::abs (midpoint);
         double discreteGradient = 0.0;
         double gradientDerivative = 0.0;
@@ -4733,15 +4733,16 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
         {
             const double difference = phi1 - phi0;
             discreteGradient = 2.0 * difference / step;
-            gradientDerivative = (potentialSlope (nextMidpoint) * step
+            // potentialSlope (nextMidpoint), inlined to reuse z1 / sqrtZ1.
+            const double potentialSlopeNext = voice.contactStiffness * z1 * sqrtZ1;
+            gradientDerivative = (potentialSlopeNext * step
                                   - 2.0 * difference) / (step * step);
         }
         else
         {
-            const double z = positive (midpoint);
-            discreteGradient = potentialSlope (midpoint);
-            gradientDerivative = 0.25 * alpha * voice.contactStiffness
-                               * std::sqrt (z);
+            // potentialSlope (midpoint), inlined to reuse z0 / sqrtZ0.
+            discreteGradient = voice.contactStiffness * z0 * sqrtZ0;
+            gradientDerivative = 0.25 * alpha * voice.contactStiffness * sqrtZ0;
         }
 
         // Roundoff at a vanishing crossing can only make these infinitesimally

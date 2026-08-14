@@ -162,6 +162,16 @@ void buildModelAnatomy(const NeuralModel& model,
     std::array<float, ModelAnatomy::sliceCount> bonePower {};
     float peak = 0.0f;
 
+    // The stretched-partial ratio depends only on the model's own fitted
+    // inharmonicity, which is fixed above, not on the slice being drawn. It
+    // is built once here instead of being recomputed sliceCount times for
+    // every one of the harmonicCount partials in the loop below.
+    std::array<float, NeuralModel::harmonicCount> stretchedHarmonicRatios {};
+    for (std::size_t harmonic = 0; harmonic < NeuralModel::harmonicCount;
+         ++harmonic)
+        stretchedHarmonicRatios[harmonic] = stretchedHarmonicRatio(
+            static_cast<float>(harmonic + 1), destination.inharmonicity);
+
     for (std::size_t slice = 0; slice < ModelAnatomy::sliceCount; ++slice)
     {
         const float normalisedTime = static_cast<float>(slice)
@@ -180,8 +190,8 @@ void buildModelAnatomy(const NeuralModel& model,
         {
             const float amplitude = std::max(
                 finiteOr(frame.harmonicAmplitudes[harmonic], 0.0f), 0.0f);
-            const float frequency = fundamental * stretchedHarmonicRatio(
-                static_cast<float>(harmonic + 1), destination.inharmonicity);
+            const float frequency = fundamental
+                * stretchedHarmonicRatios[harmonic];
             depositPeak(destination.core[slice], frequency, amplitude, 1);
             coreSquares += static_cast<double>(amplitude) * amplitude;
             peak = std::max(peak, amplitude);

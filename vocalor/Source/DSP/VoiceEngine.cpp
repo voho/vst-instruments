@@ -2601,15 +2601,15 @@ VoiceEngine::GlottalShapePosition VoiceEngine::glottalShapePosition(float tensio
     const float shapePosition = tension * static_cast<float>(glottalShapeCount - 1);
     const int lowerShape = std::min(static_cast<int>(shapePosition),
                                     glottalShapeCount - 2);
-    return { lowerShape, shapePosition - static_cast<float>(lowerShape) };
+    return { lowerShape, shapePosition - static_cast<float>(lowerShape), tension };
 }
 
 float VoiceEngine::glottalPair(int level, float phase, float tension) const noexcept
 {
-    return glottalPair(level, phase, tension, glottalShapePosition(tension));
+    return glottalPair(level, phase, glottalShapePosition(tension));
 }
 
-float VoiceEngine::glottalPair(int level, float phase, float tension,
+float VoiceEngine::glottalPair(int level, float phase,
                                GlottalShapePosition shape) const noexcept
 {
     const auto& table = tables_->glottalTables[static_cast<std::size_t>(level)];
@@ -2631,8 +2631,10 @@ float VoiceEngine::glottalPair(int level, float phase, float tension,
     const float atNextPhase = lowerAtNext
         + shape.shapeFraction * (upperAtNext - lowerAtNext);
 
-    tension = clampUnit(tension);
-    const float gainPosition = tension * static_cast<float>(glottalGainTableSize - 1);
+    // Already clamped once by glottalShapePosition() to resolve lowerShape and
+    // shapeFraction above; reuse it instead of clamping the caller's tension a
+    // second time on every sample.
+    const float gainPosition = shape.clampedTension * static_cast<float>(glottalGainTableSize - 1);
     const int gainIndex = std::min(static_cast<int>(gainPosition),
                                    glottalGainTableSize - 2);
     const float gainFraction = gainPosition - static_cast<float>(gainIndex);
@@ -3255,7 +3257,7 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
         // position once here instead of once per call halves that part of
         // the per-sample cost.
         const auto shapePosition = glottalShapePosition(sourceTension);
-        float glottal = glottalPair(level, phase, sourceTension, shapePosition);
+        float glottal = glottalPair(level, phase, shapePosition);
         glottal *= 1.0f + (alternateCycle ? irregularity : -irregularity);
         // Two first-order shelves, unity at DC and the note's broadband gain
         // above the corner:

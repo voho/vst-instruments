@@ -4521,7 +4521,7 @@ void testSopranoUpperResonanceRise()
     {
         for (const float formantShift : { -12.0f, 12.0f })
         {
-            for (const auto [resonance, breath] : bandwidthCorners)
+            for (const auto& [resonance, breath] : bandwidthCorners)
             {
                 auto extremeParameters = choirParameters;
                 extremeParameters.vowel = vowel;
@@ -4545,7 +4545,7 @@ void testSopranoUpperResonanceRise()
         const auto point = vocalor::cardinalVowelPosition(cardinal);
         for (const float formantShift : { -12.0f, 12.0f })
         {
-            for (const auto [resonance, breath] : bandwidthCorners)
+            for (const auto& [resonance, breath] : bandwidthCorners)
             {
                 auto extremeParameters = choirParameters;
                 extremeParameters.vowel = vocalor::Vowel::Aah;
