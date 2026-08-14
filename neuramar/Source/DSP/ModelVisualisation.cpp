@@ -11,6 +11,29 @@ constexpr float logLowest = 4.321928094887362f;   // log2(20)
 constexpr float logHighest = 14.287712379549449f; // log2(20000)
 constexpr float logSpan = logHighest - logLowest;
 
+// The bin grid's octave position depends only on its index, which never
+// changes, not on the slice, band, or model being drawn. depositBand() used
+// to recompute it from scratch on every one of its binCount iterations, and
+// buildModelAnatomy() calls depositBand() sliceCount * airBandCount times per
+// published memory (24 * 16 = 384), so the same 96 values were being
+// rederived 384 times over. The formula is a compile-time-constant linear
+// interpolation (no transcendental calls involved), so it can be resolved
+// once as a constexpr table instead of once per depositBand() call - the
+// same "hoist what does not depend on the loop" pattern already applied to
+// stretchedHarmonicRatios below.
+[[nodiscard]] constexpr std::array<float, ModelAnatomy::binCount>
+makeBinOctaves() noexcept
+{
+    std::array<float, ModelAnatomy::binCount> octaves {};
+    for (std::size_t bin = 0; bin < ModelAnatomy::binCount; ++bin)
+        octaves[bin] = logLowest + logSpan * static_cast<float>(bin)
+            / static_cast<float>(ModelAnatomy::binCount - 1);
+    return octaves;
+}
+
+constexpr std::array<float, ModelAnatomy::binCount> binOctaves
+    = makeBinOctaves();
+
 [[nodiscard]] float finiteOr(float value, float fallback) noexcept
 {
     return std::isfinite(value) ? value : fallback;
@@ -67,9 +90,8 @@ void depositBand(std::array<float, ModelAnatomy::binCount>& bins,
     const float centreOctave = std::log2(centreHz);
     for (std::size_t bin = 0; bin < ModelAnatomy::binCount; ++bin)
     {
-        const float octave = logLowest + logSpan * static_cast<float>(bin)
-            / static_cast<float>(ModelAnatomy::binCount - 1);
-        const float distance = (octave - centreOctave) / (0.6f * width);
+        const float distance = (binOctaves[bin] - centreOctave)
+            / (0.6f * width);
         if (std::abs(distance) > 3.0f)
             continue;
         const float shape = std::exp(-0.5f * distance * distance);
