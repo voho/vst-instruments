@@ -663,6 +663,14 @@ private:
         // bound to its string rather than every sample the stereo field is
         // open, in renderVoice() and renderSympatheticString() alike.
         float stereoLateral { 0.0f };
+        // 1 for the lowest string down to 0 for the highest, i.e. how much
+        // extra definition/brightness a low Drop-E string earns over a high
+        // one. Depends only on stringIndex and the (compile-time constant)
+        // string count, so - like stereoLateral above - it is solved once
+        // here rather than re-derived from voice.stringIndex at every call
+        // site that needs it (attack voicing, artifact-contact setup, and
+        // the per-sample artifact-contact render path).
+        float lowStringWeight { 0.0f };
         int midiNote { -1 };
         int fret { 0 };
         PlayStyle playStyle { PlayStyle::Sustain };
