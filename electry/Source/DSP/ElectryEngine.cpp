@@ -906,6 +906,11 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     retireAttackCoefficient_ = rateAdjustedCoefficient(0.01f, internalRate);
     retireReleaseCoefficient_ = rateAdjustedCoefficient(0.0009f, internalRate);
     artifactBandCoefficient_ = rateAdjustedCoefficient(0.12f, internalRate);
+    // The palm-mute impact thud's fixed 85 Hz one-pole corner. This was
+    // previously recomputed with std::exp on every sample a palm-impact
+    // envelope was active, once per voice; it depends only on the internal
+    // clock, so it belongs here with its neighbours instead.
+    palmImpactThudCoefficient_ = 1.0f - std::exp(-twoPi * 85.0f * inverseSampleRate_);
     // A 30 ms lag on the CC1 resonance control, advanced at the control tick:
     // fast enough to ride the wheel, slow enough that a coarse 7-bit
     // controller cannot step the coupling gain audibly.
@@ -4047,8 +4052,8 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     sums.body += bridgeForce + 1.6f * noiseSample;
     if (voice.palmImpactVel > 0.0001f)
     {
-        const float thudCoeff = 1.0f - std::exp(-twoPi * 85.0f * inverseSampleRate_);
-        voice.palmImpactState += thudCoeff * (voice.palmImpactVel - voice.palmImpactState);
+        voice.palmImpactState += palmImpactThudCoefficient_
+                                * (voice.palmImpactVel - voice.palmImpactState);
         voice.palmImpactVel *= 0.992f;
         sums.body += 0.45f * voice.palmImpactState;
     }

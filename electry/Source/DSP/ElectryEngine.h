@@ -1239,6 +1239,10 @@ private:
     float retireAttackCoefficient_ { 0.01f };
     float retireReleaseCoefficient_ { 0.0009f };
     float artifactBandCoefficient_ { 0.12f };
+    // The palm-mute impact thud's 85 Hz one-pole corner, applied to
+    // voice.palmImpactState in renderVoice(). Fixed corner, rate-derived
+    // coefficient - belongs here for the same reason as its neighbours above.
+    float palmImpactThudCoefficient_ { 0.0f };
     float sympatheticEnergyCoefficient_ { 0.002f };
     float displayLevelAttack_ { 0.5f };
     float displayLevelRelease_ { 0.08f };
