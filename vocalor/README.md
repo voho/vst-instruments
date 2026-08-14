@@ -47,6 +47,23 @@ The project builds three products from one JUCE codebase:
 > The bundles are ad-hoc signed and not notarized; check the repository's Nightly
 > badge for the latest workflow result.
 
+## Contents
+
+- [Interface and controls](#interface-and-controls)
+- [Factory presets](#factory-presets)
+- [Performance expression](#performance-expression)
+- [Sound engine](#sound-engine)
+- [Performance](#performance)
+- [Requirements](#requirements)
+- [Build on macOS](#build-on-macos)
+- [Run the DSP tests without JUCE](#run-the-dsp-tests-without-juce)
+- [Regenerate the demonstration audio](#regenerate-the-demonstration-audio)
+- [Install locally](#install-locally)
+- [Validate the plug-in](#validate-the-plug-in)
+- [Sign, package, and notarize](#sign-package-and-notarize)
+- [Project layout](#project-layout)
+- [Licensing](#licensing)
+
 ## Interface and controls
 
 Vocalor exposes 24 automatable host parameters. Every parameter keeps its
