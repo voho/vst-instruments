@@ -2229,29 +2229,30 @@ void DrumEngine::configureResonator (Resonator& resonator, float frequency,
     resonator.clear();
 }
 
-void DrumEngine::retuneResonatorDecay (Resonator& resonator,
-                                       float decaySeconds) const noexcept
+void DrumEngine::retuneResonatorDecay (Resonator& resonator, float cosine,
+                                       float angle, float decaySeconds) const noexcept
 {
-    // a1 is 2 r cos(theta) and a2 is -r^2, so the pole the mode is currently
+    // a1 is 2 r cos(theta) and a2 is -r^2, so the pole a mode is currently
     // ringing on gives back both its radius and its angle exactly. Rebuilding
     // the coefficients at a new radius and the same angle changes how fast the
     // mode dies and nothing else - the frequency is preserved to the last bit,
     // and y1/y2 are left alone, which is what makes this a change of law on a
     // note that is still sounding rather than a new note.
-    const float previousRadius = std::sqrt (std::max (0.0f, -resonator.a2));
-    if (previousRadius <= 1.0e-6f)
-        return;
-    const float cosine = std::clamp (
-        resonator.a1 / (2.0f * previousRadius), -1.0f, 1.0f);
+    //
+    // cosine and angle are that recovered pole, not a new frequency: the sole
+    // caller (applyHatAperture) already has to recover them from this same
+    // resonator's a1/a2 to turn the angle into a frequency for its own loss
+    // law, so it hands them in here instead of this function re-deriving the
+    // identical radius/cosine/acos from the coefficients a second time.
     const float radius = coefficientForTime (std::max (0.005f, decaySeconds),
                                              static_cast<float> (sampleRate_));
     const float sine = std::sqrt (std::max (0.0f, 1.0f - cosine * cosine));
     resonator.a1 = 2.0f * radius * cosine;
     resonator.a2 = -radius * radius;
     resonator.nominalA1 = resonator.a1;
-    // omega is the pole angle, which is acos(cosine); the slope only needs the
-    // product r*omega*sin(omega), and sin(omega) is the sine above.
-    resonator.tensionSlope = -2.0f * radius * std::acos (cosine) * sine;
+    // The slope only needs the product r*omega*sin(omega); omega is the angle
+    // the caller already recovered.
+    resonator.tensionSlope = -2.0f * radius * angle * sine;
     resonator.poleDiameter = 2.0f * radius;
 }
 
@@ -2455,8 +2456,9 @@ void DrumEngine::applyHatAperture (Voice& voice, float aperture) noexcept
         const float radius = std::sqrt (std::max (0.0f, -resonator.a2));
         if (radius <= 1.0e-6f)
             continue;
-        const float angle = std::acos (
-            std::clamp (resonator.a1 / (2.0f * radius), -1.0f, 1.0f));
+        const float cosine = std::clamp (
+            resonator.a1 / (2.0f * radius), -1.0f, 1.0f);
+        const float angle = std::acos (cosine);
         const float frequency = angle * floatSampleRate / twoPi;
         const float relative = std::max (
             1.0f, frequency / std::max (1.0f, voice.baseFrequency));
@@ -2465,7 +2467,11 @@ void DrumEngine::applyHatAperture (Voice& voice, float aperture) noexcept
                        + loss.viscous * relative * relative);
         const float seconds = plateSeconds / lossFactor;
         longest = std::max (longest, seconds);
-        retuneResonatorDecay (resonator, seconds);
+        // cosine and angle are the pole this mode is already ringing on,
+        // recovered above to turn it into a frequency for the loss law; hand
+        // them to retuneResonatorDecay instead of letting it recover the same
+        // pole from a1/a2 a second time.
+        retuneResonatorDecay (resonator, cosine, angle, seconds);
     }
 
     // The bank stops being evaluated once its slowest mode has passed 2.6 of

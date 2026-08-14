@@ -718,12 +718,15 @@ private:
     [[nodiscard]] float hatDecaySecondsFor (float aperture,
                                             float decayVariation) const noexcept;
     void applyHatAperture (Voice& voice, float aperture) noexcept;
-    // Move a ringing mode's pole radius without touching its state. The pole
-    // angle is recovered from the coefficients the mode already has, so the
-    // frequency it is ringing at is preserved exactly and only how fast it
-    // dies changes. configureResonator cannot be used for this: it clears the
-    // resonator, which on a ringing plate is the note stopping.
-    void retuneResonatorDecay (Resonator& resonator, float decaySeconds) const noexcept;
+    // Move a ringing mode's pole radius without touching its state, given the
+    // angle it is already ringing at as cosine/angle (the caller recovers
+    // these from the resonator's own a1/a2 for its own purposes, so this does
+    // not re-derive them). The frequency is therefore preserved exactly and
+    // only how fast it dies changes. configureResonator cannot be used for
+    // this: it clears the resonator, which on a ringing plate is the note
+    // stopping.
+    void retuneResonatorDecay (Resonator& resonator, float cosine, float angle,
+                               float decaySeconds) const noexcept;
     void dampRingingMembrane (Instrument instrument, float velocity) noexcept;
     void beginChoke (Voice& voice, float seconds) noexcept;
     void beginFadeToSilence (Voice& voice, float multiplier) noexcept;
