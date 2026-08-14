@@ -169,6 +169,18 @@ float excitationScaleFor (float velocity) noexcept
     return 0.74f + 0.26f * std::sqrt (velocity);
 }
 
+// Hertz's contact-time law for an elastic impact: duration falls with impact
+// velocity raised to a negative power, so a harder strike is on the surface
+// for less time and its force spectrum reaches higher. Every struck voice
+// applies the same law at note-on with its own base duration and its own
+// exponent - shallower for a soft beater on a slack head, steeper for a hard
+// tip on a tight one - so this is the one place that shape is written down.
+// Velocity is floored so a note-on of zero cannot make the contact infinite.
+float hertzianContactSeconds (float baseSeconds, float velocity, float exponent) noexcept
+{
+    return baseSeconds * std::pow (std::max (0.08f, velocity), exponent);
+}
+
 // Where the drawn pitch sweep is fully used. A head is stiff because it is
 // stretched, so the amount the pitch bends follows the energy the strike put
 // into it (Avanzini and Marogna) rather than the panel knob alone - but a knob
@@ -3117,8 +3129,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // a soft one. Contact time sets how much of the head the strike can
             // reach, so everything about the attack follows from this number
             // rather than from a filter placed by ear.
-            voice.contactSeconds = (0.00190f - 0.00120f * voice.characterA)
-                * std::pow (std::max (0.08f, velocity), -0.2f);
+            voice.contactSeconds = hertzianContactSeconds (
+                0.00190f - 0.00120f * voice.characterA, velocity, -0.2f);
             voice.contactIncrement = std::min (
                 1.0f, inverseSampleRate_ / std::max (1.0e-5f, voice.contactSeconds));
             voice.contactPhase = 0.0f;
@@ -3216,8 +3228,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // for less time, and Hertz shortens it further as the hit gets
             // harder. A snare's contact is the shortest in the kit, which is
             // most of why it is the brightest thing in it.
-            voice.contactSeconds = (0.00085f - 0.00050f * voice.characterB)
-                * std::pow (std::max (0.08f, velocity), -0.35f)
+            voice.contactSeconds = hertzianContactSeconds (
+                0.00085f - 0.00050f * voice.characterB, velocity, -0.35f)
                 * (rimshot ? 0.38f : crossStick ? 0.60f : 1.0f);
             voice.contactIncrement = std::min (
                 1.0f, inverseSampleRate_ / std::max (1.0e-5f, voice.contactSeconds));
@@ -3400,8 +3412,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // chick and a quiet closed hat, and it is why the step's word for
             // this contact is "blunter": under this engine's own reach law a
             // blunt contact is a long one, not a short one.
-            voice.contactSeconds = (0.00042f - 0.00022f * voice.characterA)
-                * std::pow (std::max (0.08f, velocity), -0.35f)
+            voice.contactSeconds = hertzianContactSeconds (
+                0.00042f - 0.00022f * voice.characterA, velocity, -0.35f)
                 * (footChick ? 6.0f : 1.0f);
             // And there is no stick, so there is no stick noise: the broadband
             // burst renderHat lays in front of the plate is a wooden tip
@@ -3537,8 +3549,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // shortens more steeply with speed than a bass drum beater's - which
             // is exactly why a tom cracks under a hard hit where a kick only
             // gets louder.
-            voice.contactSeconds = (0.00120f - 0.00070f * voice.characterA)
-                * std::pow (std::max (0.08f, velocity), -0.35f);
+            voice.contactSeconds = hertzianContactSeconds (
+                0.00120f - 0.00070f * voice.characterA, velocity, -0.35f);
             voice.contactIncrement = std::min (
                 1.0f, inverseSampleRate_ / std::max (1.0e-5f, voice.contactSeconds));
             voice.contactPhase = 0.0f;
@@ -3594,8 +3606,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // Poisson rate for the whole note. That swell is the "cha" - the
             // only thing that separates a shaker from a burst of filtered hiss -
             // and a harder shake gets them there sooner.
-            voice.contactSeconds = (0.042f - 0.018f * voice.characterA)
-                * std::pow (std::max (0.08f, velocity), -0.30f);
+            voice.contactSeconds = hertzianContactSeconds (
+                0.042f - 0.018f * voice.characterA, velocity, -0.30f);
             voice.contactIncrement = std::min (
                 1.0f, inverseSampleRate_ / std::max (1.0e-5f, voice.contactSeconds));
             voice.contactPhase = 0.0f;
@@ -3668,8 +3680,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             configureBandpass (voice.filterC, 340.0f - 150.0f * hollow, 1.35f);
             // A hard wooden tip on a hard wooden bar: the shortest contact in
             // the instrument, and it shortens further as the strike gets harder.
-            voice.contactSeconds = (0.00026f - 0.00012f * voice.characterB)
-                * std::pow (std::max (0.08f, velocity), -0.2f);
+            voice.contactSeconds = hertzianContactSeconds (
+                0.00026f - 0.00012f * voice.characterB, velocity, -0.2f);
             voice.contactIncrement = std::min (
                 1.0f, inverseSampleRate_ / std::max (1.0e-5f, voice.contactSeconds));
             voice.contactPhase = 0.0f;
