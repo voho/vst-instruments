@@ -588,6 +588,14 @@ private:
         bool active { false };
         Articulation articulation { Articulation::Don };
         int octaveOffset { 0 };
+        // physicalDrums_ index for octaveOffset, i.e. octaveOffset clamped to
+        // the playable range and rebased at zero. octaveOffset is only ever
+        // assigned from an already-clamped octave (see trigger() and
+        // ensurePhysicalDrum()), so this is exact for the voice's whole
+        // lifetime and lets the per-sample render loop use it directly
+        // instead of re-deriving it - clamp, subtract, cast - on every
+        // sample of every active voice.
+        std::uint8_t physicalDrumIndex { 0 };
         std::uint64_t startOrder { 0 };
         std::uint64_t ageSamples { 0 };
         std::uint64_t maximumSamples { 0 };
