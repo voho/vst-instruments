@@ -372,7 +372,7 @@ public:
     [[nodiscard]] float measureContactSeconds (Articulation articulation,
                                                int octaveOffset,
                                                float velocity) const noexcept;
-    [[nodiscard]] static float measureContact (const EngineParameters& parameters,
+    [[nodiscard]] static float measureContact (const EngineParameters& raw,
                                                Articulation articulation,
                                                int octaveOffset,
                                                float velocity) noexcept;
@@ -1163,7 +1163,7 @@ private:
         const EngineParameters& applied, int octaveOffset) noexcept;
     // Resolving a drum depends only on the parameter block, the wheel and the
     // octave, so it is static and the instance method simply supplies its own.
-    [[nodiscard]] static DrumState resolveDrumFor (const EngineParameters& parameters,
+    [[nodiscard]] static DrumState resolveDrumFor (const EngineParameters& raw,
                                                    float pitchBendSemitones,
                                                    int octaveOffset) noexcept;
     // The head and the air behind it for one choice of the octave transform:
