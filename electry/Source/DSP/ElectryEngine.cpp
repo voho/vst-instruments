@@ -931,6 +931,11 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     displayLevelRelease_ = 1.0f - std::exp(-1.0f / (0.220f * controlTickRate));
 
     horizontalDetuneSamples_ = 0.11f * internalRate / 96000.0f;
+    // Shared by configureVoicePitch() and configureSympatheticString(), which
+    // used to each recompute this identical expression from the same two
+    // fixed inputs - the former on every control tick of every active voice.
+    voiceDelaySmoothing_ = 1.0f - std::exp(-static_cast<float>(controlPeriod)
+                                           / (0.006f * internalRate));
     emfScale_ = internalRate / (twoPi * 220.0f);
     emfLowpassCoefficient_ = std::exp(
         -twoPi * std::min(16000.0f, 0.40f * internalRate) * inverseSampleRate_);
@@ -2094,10 +2099,10 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         0.0f, 0.25f);
 
     // Delay smoothing time constant: fast enough to track bends transparently.
-    const float coefficient = 1.0f - std::exp(-static_cast<float>(controlPeriod)
-                                              / (0.006f * static_cast<float>(sampleRate_)));
-    voice.vertical.delaySmoothing = coefficient;
-    voice.horizontal.delaySmoothing = coefficient;
+    // Resolved once in prepare() as voiceDelaySmoothing_ rather than
+    // recomputed with std::exp on every control tick of every active voice.
+    voice.vertical.delaySmoothing = voiceDelaySmoothing_;
+    voice.horizontal.delaySmoothing = voiceDelaySmoothing_;
 }
 
 void ElectryEngine::refreshVoicingIfNeeded() noexcept
@@ -2272,8 +2277,9 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
         period - onePolePhaseDelay(loop.loopDampingCoefficient, omega),
         4.0f, static_cast<float>(delayLineSize - 8));
     loop.targetDelay = compensatedPeriod;
-    loop.delaySmoothing = 1.0f - std::exp(-static_cast<float>(controlPeriod)
-                                          / (0.006f * sampleRate));
+    // Same fixed time constant configureVoicePitch() uses, shared via
+    // voiceDelaySmoothing_ so the two call sites cannot drift apart.
+    loop.delaySmoothing = voiceDelaySmoothing_;
     // A string that is already ringing glides to its new tuning; a freshly
     // woken one starts there, so a build change never clicks the ring.
     if (! voice.sympatheticReady)
