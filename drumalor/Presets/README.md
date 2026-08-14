@@ -1,10 +1,10 @@
 # Drumalor presets
 
 The current plug-in stores its
-[13-voice, 95-parameter kit state](../README.md#voices-midi-notes-and-controls)
+[13-voice, 96-parameter kit state](../README.md#voices-midi-notes-and-controls)
 in the host session and exposes the version-1 defaults on first launch. That is
 seven controls per voice - Character A, Character B, Pitch, Decay, Level, Pan
-and Choke Group - plus the four kit controls: Humanise, Bus Drive, Bus
+and Choke Group - plus the five kit controls: Humanise, Bleed, Bus Drive, Bus
 Compression and Output. Factory preset files are intentionally not baked into
 the project yet: keeping them out avoids silently changing sound design while
 the synthesis parameters are still evolving.
