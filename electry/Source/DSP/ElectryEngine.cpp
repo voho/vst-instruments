@@ -1033,7 +1033,7 @@ void ElectryEngine::reset()
     };
     for (int stringIndex = 0; stringIndex < stringCount; ++stringIndex)
     {
-        auto& mode = sympatheticModes_[static_cast<std::size_t>(stringIndex)];
+        auto& mode = artifactRingModes_[static_cast<std::size_t>(stringIndex)];
         mode.reset();
         mode.configure(
             midiToHz(static_cast<float>(
@@ -4170,7 +4170,7 @@ void ElectryEngine::freezeSharedPath() noexcept
         blocker.reset();
     for (auto& mode : bodyModes_)
         mode.reset();
-    for (auto& mode : sympatheticModes_)
+    for (auto& mode : artifactRingModes_)
         mode.reset();
     for (auto& decimator : decimators_)
         decimator.reset();
@@ -4358,7 +4358,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
             s.artifactAmount = 0.0f;
             if (artifactsActive_)
             {
-                for (auto& mode : sympatheticModes_)
+                for (auto& mode : artifactRingModes_)
                     mode.reset();
                 for (auto& voice : voices_)
                 {
@@ -4599,7 +4599,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
             ? sums.bridge[0] : 0.5f * (sums.bridge[0] + sums.bridge[1]);
         const float drive = neckMid * neckMix_ + bridgeMid * bridgeMix_;
         float ring = 0.0f;
-        for (auto& mode : sympatheticModes_)
+        for (auto& mode : artifactRingModes_)
             ring += mode.process(drive);
         const float mix = 0.85f * smoothedParameters_.artifactAmount;
         const int channelCount = channelsLinked_ ? 1 : 2;
@@ -4686,7 +4686,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
             mode.reset();
         previousBodyDisplacement_ = 0.0f;
         bodyEmfLowpass_.reset();
-        for (auto& mode : sympatheticModes_)
+        for (auto& mode : artifactRingModes_)
             mode.reset();
         for (auto& decimator : decimators_)
             decimator.reset();
