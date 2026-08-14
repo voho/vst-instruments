@@ -2329,7 +2329,7 @@ struct DiagnosticAggregate
     std::string name;
     double worstRelative {};
     double worstPeak {};
-    std::string worstTake;
+    std::string worstTake {};
 };
 
 struct DiagnosticProfileMetric
