@@ -169,6 +169,30 @@ std::uint8_t portamentoAdcByte(float value) noexcept
         std::floor(clamp01(sanitised(value, 0.0f)) * 255.0f + 0.5f));
 }
 
+// The loaded lower-track resistance and the total pole resistance the output
+// coupling network presents at a given VOLUME shaft position. Both the
+// loaded corner frequency and the loaded passthrough gain below are read off
+// this same wiper network, so it is solved once here rather than carrying
+// two independently maintained copies of the identical track-loading algebra.
+struct OutputCouplingWiperNetwork
+{
+    float loadedLower;
+    float resistance;
+};
+
+OutputCouplingWiperNetwork outputCouplingWiperNetworkFor(
+    float volumePosition) noexcept
+{
+    const float position = clamp01(sanitised(volumePosition, 0.0f));
+    const float lowerTrack = position * outputCouplingPotOhms;
+    const float loadedLower = lowerTrack > 0.0f
+        ? lowerTrack * outputWiperInternalLoadOhms
+            / (lowerTrack + outputWiperInternalLoadOhms)
+        : 0.0f;
+    const float upperTrack = (1.0f - position) * outputCouplingPotOhms;
+    return { loadedLower, outputCouplingSeriesOhms + upperTrack + loadedLower };
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -1311,29 +1335,16 @@ float YouKnow106Engine::outputCouplingHighGain() noexcept
 
 float YouKnow106Engine::outputCouplingCornerHz(float volumePosition) noexcept
 {
-    const float position = clamp01(sanitised(volumePosition, 0.0f));
-    const float lowerTrack = position * outputCouplingPotOhms;
-    const float loadedLower = lowerTrack > 0.0f
-        ? lowerTrack * outputWiperInternalLoadOhms
-            / (lowerTrack + outputWiperInternalLoadOhms)
-        : 0.0f;
-    const float upperTrack = (1.0f - position) * outputCouplingPotOhms;
-    const float resistance = outputCouplingSeriesOhms
-                           + upperTrack + loadedLower;
-    return 1.0f / (twoPi * outputCouplingCapacitanceF * resistance);
+    return 1.0f / (twoPi * outputCouplingCapacitanceF
+                   * outputCouplingWiperNetworkFor(volumePosition).resistance);
 }
 
 float YouKnow106Engine::outputCouplingHighGain(float volumePosition) noexcept
 {
-    const float position = clamp01(sanitised(volumePosition, 0.0f));
-    const float lowerTrack = position * outputCouplingPotOhms;
-    if (!(lowerTrack > 0.0f))
+    const auto network = outputCouplingWiperNetworkFor(volumePosition);
+    if (!(network.loadedLower > 0.0f))
         return 0.0f;
-    const float loadedLower = lowerTrack * outputWiperInternalLoadOhms
-                            / (lowerTrack + outputWiperInternalLoadOhms);
-    const float upperTrack = (1.0f - position) * outputCouplingPotOhms;
-    return loadedLower / (outputCouplingSeriesOhms
-                          + upperTrack + loadedLower);
+    return network.loadedLower / network.resistance;
 }
 
 // ---------------------------------------------------------------------------
