@@ -920,6 +920,35 @@ YouKnow106Engine::converterEventPhases(ConverterTimingProfile profile) noexcept
     return phases;
 }
 
+namespace
+{
+// Several panel controls have a monotonic law, mapping 0..maxByte hardware
+// travel to a realised time or rate, with no closed-form inverse. This
+// brute-force nearest-byte search is shared by all of them: it matches in log
+// space, proportionally, which is what makes a control's inverse agree with
+// its own displayed value at every byte rather than only at the two ends of
+// its range. `law` and the loop bounds/divisor still vary per control, so the
+// search itself is the only part pulled out.
+template <typename Law>
+float nearestBytePositionByLogRatio(int minByte, int maxByte, float divisor,
+                                    float target, Law law) noexcept
+{
+    int bestByte = minByte;
+    float bestError = std::numeric_limits<float>::infinity();
+    for (int byte = minByte; byte <= maxByte; ++byte)
+    {
+        const float realised = law(static_cast<float>(byte) / divisor);
+        const float error = std::abs(std::log(realised / target));
+        if (error < bestError)
+        {
+            bestError = error;
+            bestByte = byte;
+        }
+    }
+    return static_cast<float>(bestByte) / divisor;
+}
+} // namespace
+
 float YouKnow106Engine::panelPositionForAttack(float seconds) noexcept
 {
     if (!(seconds > 0.0f) || !std::isfinite(seconds))
@@ -929,20 +958,8 @@ float YouKnow106Engine::panelPositionForAttack(float seconds) noexcept
     if (seconds >= envelopeAttackSeconds(1.0f))
         return 1.0f;
 
-    int bestByte = 0;
-    float bestError = std::numeric_limits<float>::infinity();
-    for (int byte = 0; byte <= 127; ++byte)
-    {
-        const float realised = envelopeAttackSeconds(
-            static_cast<float>(byte) / 127.0f);
-        const float error = std::abs(std::log(realised / seconds));
-        if (error < bestError)
-        {
-            bestError = error;
-            bestByte = byte;
-        }
-    }
-    return static_cast<float>(bestByte) / 127.0f;
+    return nearestBytePositionByLogRatio(0, 127, 127.0f, seconds,
+                                         envelopeAttackSeconds);
 }
 
 float YouKnow106Engine::panelPositionForDecay(float seconds) noexcept
@@ -954,20 +971,8 @@ float YouKnow106Engine::panelPositionForDecay(float seconds) noexcept
     if (seconds >= envelopeDecaySeconds(1.0f))
         return 1.0f;
 
-    int bestByte = 0;
-    float bestError = std::numeric_limits<float>::infinity();
-    for (int byte = 0; byte <= 127; ++byte)
-    {
-        const float realised = envelopeDecaySeconds(
-            static_cast<float>(byte) / 127.0f);
-        const float error = std::abs(std::log(realised / seconds));
-        if (error < bestError)
-        {
-            bestError = error;
-            bestByte = byte;
-        }
-    }
-    return static_cast<float>(bestByte) / 127.0f;
+    return nearestBytePositionByLogRatio(0, 127, 127.0f, seconds,
+                                         envelopeDecaySeconds);
 }
 
 float YouKnow106Engine::panelPositionForRelease(float seconds) noexcept
@@ -979,20 +984,8 @@ float YouKnow106Engine::panelPositionForRelease(float seconds) noexcept
     if (seconds >= envelopeReleaseSeconds(1.0f))
         return 1.0f;
 
-    int bestByte = 0;
-    float bestError = std::numeric_limits<float>::infinity();
-    for (int byte = 0; byte <= 127; ++byte)
-    {
-        const float realised = envelopeReleaseSeconds(
-            static_cast<float>(byte) / 127.0f);
-        const float error = std::abs(std::log(realised / seconds));
-        if (error < bestError)
-        {
-            bestError = error;
-            bestByte = byte;
-        }
-    }
-    return static_cast<float>(bestByte) / 127.0f;
+    return nearestBytePositionByLogRatio(0, 127, 127.0f, seconds,
+                                         envelopeReleaseSeconds);
 }
 
 float YouKnow106Engine::panelPositionForLfoRate(float hertz) noexcept
@@ -1004,19 +997,7 @@ float YouKnow106Engine::panelPositionForLfoRate(float hertz) noexcept
     if (hertz >= lfoRateHz(1.0f))
         return 1.0f;
 
-    int bestByte = 0;
-    float bestError = std::numeric_limits<float>::infinity();
-    for (int byte = 0; byte <= 127; ++byte)
-    {
-        const float realised = lfoRateHz(static_cast<float>(byte) / 127.0f);
-        const float error = std::abs(std::log(realised / hertz));
-        if (error < bestError)
-        {
-            bestError = error;
-            bestByte = byte;
-        }
-    }
-    return static_cast<float>(bestByte) / 127.0f;
+    return nearestBytePositionByLogRatio(0, 127, 127.0f, hertz, lfoRateHz);
 }
 
 float YouKnow106Engine::panelPositionForLfoDelay(float seconds) noexcept
@@ -1051,21 +1032,10 @@ float YouKnow106Engine::panelPositionForPortamento(float secondsPerOctave) noexc
         return 2.0f / 255.0f;
 
     // The realised law has repeated values: raw pairs address one coefficient.
-    // Return the first canonical
-    // ADC code producing the closest displayed seconds-per-octave value.
-    int bestRaw = 2;
-    float bestError = std::numeric_limits<float>::infinity();
-    for (int raw = 2; raw <= 255; ++raw)
-    {
-        const float realised = portamentoSeconds(static_cast<float>(raw) / 255.0f);
-        const float error = std::abs(std::log(realised / secondsPerOctave));
-        if (error < bestError)
-        {
-            bestError = error;
-            bestRaw = raw;
-        }
-    }
-    return static_cast<float>(bestRaw) / 255.0f;
+    // The shared search returns the first canonical ADC code producing the
+    // closest displayed seconds-per-octave value.
+    return nearestBytePositionByLogRatio(2, 255, 255.0f, secondsPerOctave,
+                                         portamentoSeconds);
 }
 
 float YouKnow106Engine::panelPositionForCutoff(float hertz) noexcept
