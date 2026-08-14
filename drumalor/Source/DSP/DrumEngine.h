@@ -743,6 +743,15 @@ private:
 
     [[nodiscard]] float advanceContact (Voice& voice) noexcept;
     void advanceModalTension (Voice& voice, float bankOutput) noexcept;
+    // Strike a voice's modal bank once at note-on and tick it forward every
+    // sample it is active - the shape shared by the kick's head, the snare's
+    // and tom's membrane, and the hat's plate. applyTension is false for banks
+    // with no tensionDepth of their own (the hat's plate is not a membrane),
+    // which skips the call rather than relying on advanceModalTension's own
+    // early-out, since that still costs a branch on every sample of every
+    // voice of that instrument.
+    [[nodiscard]] float renderModalBank (Voice& voice, float impulse,
+                                         bool applyTension) noexcept;
     [[nodiscard]] float renderVoice (Voice& voice) noexcept;
     [[nodiscard]] float renderKick (Voice& voice) noexcept;
     [[nodiscard]] float renderSnare (Voice& voice) noexcept;
