@@ -3922,15 +3922,9 @@ bool YouKnow106Engine::latchUpcomingPassiveHoldEvent(
     return true;
 }
 
-void YouKnow106Engine::updateVoiceAudio(Voice& voice,
-                                        const EngineParameters& parameters) noexcept
+float YouKnow106Engine::resonanceFeedbackFor(
+    float resonanceCv, const VoiceCard& card, float calibration) noexcept
 {
-#if defined(YOUKNOW106_WORK_AUDIT)
-    YOUKNOW106_COUNT_DOMAIN_WORK(voiceAudioUpdates, 1);
-#endif
-    const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
-    const float tolerance = parameters.calibration;
-
     // The regeneration control voltage is shared -- one converter output for
     // all six loops -- but each voice's loop amplifier has its own gain
     // spread.
@@ -3940,30 +3934,49 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     // revision briefly anchored 5% to a source describing the *untrimmed*
     // component class, which is a different question: a trimmed mechanism's
     // residual is not its parts' tolerance.
-    const float resonancePanel = clamp01(resonanceCv_
-        + card.resonanceError * 0.02f * tolerance);
-    voice.feedback =
-        VoicedResonanceCompatibilityProfile::loopGain(resonancePanel);
-    voice.inputCompensation =
-        VoicedResonanceCompatibilityProfile::inputCompensation(voice.feedback);
+    const float resonancePanel = clamp01(resonanceCv
+        + card.resonanceError * 0.02f * calibration);
+    return VoicedResonanceCompatibilityProfile::loopGain(resonancePanel);
+}
 
+float YouKnow106Engine::cutoffAnalogCounts(
+    float cutoffCounts, const VoiceCard& card, float calibration,
+    float powerSupplyDroop) noexcept
+{
     // The analogue side of the cutoff chain: the two per-voice trimmers --
     // one scales the control voltage, one offsets it -- imperfectly set, and
     // the slow thermal wander, all riding below the converter's own
     // resolution on the slewed digital value. The five-per-cent scale and
     // tenth-octave offset spans are voiced Unit Character policies, not
     // measured post-calibration residual distributions.
-    // A sagging rail pulls the cutoff reference down with it. `tolerance` is
-    // applied here and only here: the droop state itself is a pure load
+    // A sagging rail pulls the cutoff reference down with it. `calibration`
+    // is applied here and only here: the droop state itself is a pure load
     // measure, so this mechanism scales linearly with Unit Character like its
     // eighteen siblings rather than quadratically.
     const float psuCutoffShift =
-        -powerSupplyDroop_ * railToCutoffCountsPerVolt * tolerance;
-    const float analogCounts = voice.cutoffCounts
-        * (1.0f + card.cutoffScaleError * 0.05f * tolerance)
-        + card.cutoffOffsetError * 0.07f * vcfCountsPerOctave * tolerance
-        + card.driftValue * 40.0f * tolerance
+        -powerSupplyDroop * railToCutoffCountsPerVolt * calibration;
+    return cutoffCounts
+        * (1.0f + card.cutoffScaleError * 0.05f * calibration)
+        + card.cutoffOffsetError * 0.07f * vcfCountsPerOctave * calibration
+        + card.driftValue * 40.0f * calibration
         + psuCutoffShift;
+}
+
+void YouKnow106Engine::updateVoiceAudio(Voice& voice,
+                                        const EngineParameters& parameters) noexcept
+{
+#if defined(YOUKNOW106_WORK_AUDIT)
+    YOUKNOW106_COUNT_DOMAIN_WORK(voiceAudioUpdates, 1);
+#endif
+    const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
+    const float tolerance = parameters.calibration;
+
+    voice.feedback = resonanceFeedbackFor(resonanceCv_, card, tolerance);
+    voice.inputCompensation =
+        VoicedResonanceCompatibilityProfile::inputCompensation(voice.feedback);
+
+    const float analogCounts = cutoffAnalogCounts(
+        voice.cutoffCounts, card, tolerance, powerSupplyDroop_);
     // The chain from counts to the physical omega*dt interval costs an exp2
     // and two double pow calls per card, per internal sample -- and it is a
     // pure function of the two values compared here. A card whose hold has
@@ -4462,20 +4475,11 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         };
         const auto mapHeldControls = [&](double cutoffCounts,
                                          double resonanceCv) {
-            const float resonancePanel = clamp01(
-                static_cast<float>(resonanceCv)
-                + card.resonanceError * 0.02f * parameters.calibration);
-            const float mappedFeedback =
-                VoicedResonanceCompatibilityProfile::loopGain(
-                    resonancePanel);
-            const float mappedAnalogCounts = static_cast<float>(cutoffCounts)
-                * (1.0f + card.cutoffScaleError * 0.05f
-                    * parameters.calibration)
-                + card.cutoffOffsetError * 0.07f * vcfCountsPerOctave
-                    * parameters.calibration
-                + card.driftValue * 40.0f * parameters.calibration
-                - powerSupplyDroop_ * railToCutoffCountsPerVolt
-                    * parameters.calibration;
+            const float mappedFeedback = resonanceFeedbackFor(
+                static_cast<float>(resonanceCv), card, parameters.calibration);
+            const float mappedAnalogCounts = cutoffAnalogCounts(
+                static_cast<float>(cutoffCounts), card, parameters.calibration,
+                powerSupplyDroop_);
             const float cutoffHz = vcfEffectiveCutoffHz(
                 mappedAnalogCounts, mappedFeedback);
             const float limited = std::min(
