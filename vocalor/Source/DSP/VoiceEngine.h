@@ -353,11 +353,15 @@ private:
     // between, and how far. glottalPair() and glottalFlow() both interpolate
     // over the same nine shapes from the same per-sample tension, so the
     // render loop resolves this once and hands it to both instead of each
-    // function re-deriving it from tension independently.
+    // function re-deriving it from tension independently. clampedTension is
+    // the same clampUnit(tension) already resolved for that lookup, carried
+    // along so glottalPair()'s compatibility-gain table can reuse it instead
+    // of clamping the caller's raw tension a second time.
     struct GlottalShapePosition
     {
         int lowerShape { 0 };
         float shapeFraction { 0.0f };
+        float clampedTension { 0.0f };
     };
 
     struct SingerIdentity
@@ -629,8 +633,7 @@ private:
     void updateIntonationRoot() noexcept;
     [[nodiscard]] static GlottalShapePosition glottalShapePosition(float tension) noexcept;
     float glottalPair(int level, float phase, float tension) const noexcept;
-    float glottalPair(int level, float phase, float tension,
-                      GlottalShapePosition shape) const noexcept;
+    float glottalPair(int level, float phase, GlottalShapePosition shape) const noexcept;
     float radiatedPowerTarget(const Voice& voice, float fundamental,
                               float sourceTension,
                               bool legacyBypass) const noexcept;
