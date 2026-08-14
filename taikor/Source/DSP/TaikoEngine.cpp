@@ -5801,14 +5801,21 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
     // same mode differ a great deal on a sealed drum, because only the one that
     // changes the body's volume radiates - so reporting one branch's decay
     // beside the other branch's frequency described neither.
-    const auto branchTail = [&drum] (float branchLambda, float omega,
-                                     float vectorB, float vectorR)
+    //
+    // The two density square roots are a property of the drum, not of the
+    // branch, so they are resolved once here rather than inside the lambda -
+    // which the tail sweep below calls up to twice per axisymmetric mode entry.
+    const float sqrtBatterDensity = std::sqrt (drum.batterDensity);
+    const float sqrtResonantDensity = std::sqrt (drum.resonantDensity);
+    const auto branchTail = [&drum, sqrtBatterDensity, sqrtResonantDensity] (
+                                 float branchLambda, float omega,
+                                 float vectorB, float vectorR)
     {
         if (! (omega > 0.0f))
             return 0.0f;
 
-        const float volumeShare = vectorB / std::sqrt (drum.batterDensity)
-                                + vectorR / std::sqrt (drum.resonantDensity);
+        const float volumeShare = vectorB / sqrtBatterDensity
+                                + vectorR / sqrtResonantDensity;
         const float efficiency =
             radiationEfficiency (0, omega * drum.radius / soundSpeed);
         // The same net-volume weighting the sounded modes carry, so the
