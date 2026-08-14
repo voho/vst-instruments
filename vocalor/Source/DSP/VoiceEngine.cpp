@@ -896,7 +896,11 @@ float VoiceEngine::aspirationWindowGain(float tension, float depth) const noexce
     // linear interpolation between adjacent unit-mean-square physical shapes,
     // so its mean is linear and its mean square is a quadratic whose only
     // unknown is the precomputed overlap of that pair.
-    tension = clampUnit(tension);
+    //
+    // tension arrives pre-clamped to [0, 1]: the sole call site, in
+    // updateVoiceControl(), already runs windowTension through std::clamp
+    // before passing it in here, so re-clamping it a second time was pure
+    // wasted work on every voice's control update.
     const float shapePosition = tension * static_cast<float>(glottalShapeCount - 1);
     const int lowerShape = std::min(static_cast<int>(shapePosition),
                                     glottalShapeCount - 2);
