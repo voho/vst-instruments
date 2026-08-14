@@ -3926,9 +3926,8 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     const float humanise = applied_.humanise;
     voice.noiseState = hash32 (humanise > 0.0f
                                    ? seed
-                                   : static_cast<std::uint32_t> (
-                                         static_cast<std::uint32_t> (articulation) * 131u
-                                         + static_cast<std::uint32_t> (octave + 8) * 17u))
+                                   : static_cast<std::uint32_t> (articulation) * 131u
+                                         + static_cast<std::uint32_t> (octave + 8) * 17u)
                      | 1u;
 
     // Where the stick lands. The articulation sets the radius, the position
