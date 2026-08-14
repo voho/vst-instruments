@@ -3910,6 +3910,7 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     voice.startOrder = order;
     voice.articulation = articulation;
     voice.octaveOffset = octave;
+    voice.physicalDrumIndex = static_cast<std::uint8_t> (cacheIndex);
     voice.velocity = clampFloat (velocity, 0.0f, 1.0f);
 
     // No two strokes drag across the hide the same way, so the contact noise
@@ -5400,12 +5401,12 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
             }
             --voice.controlCountdown;
 
-            const auto drumIndex = static_cast<std::size_t> (
-                std::clamp (voice.octaveOffset, lowestOctaveOffset,
-                            highestOctaveOffset) - lowestOctaveOffset);
+            // physicalDrumIndex was resolved once, at trigger(), from the
+            // same already-clamped octave; re-clamping voice.octaveOffset
+            // here every sample was pure overhead.
             float voiceRight = 0.0f;
             const float voiceLeft = renderVoice (
-                voice, &physicalDrums_[drumIndex], voiceRight);
+                voice, &physicalDrums_[voice.physicalDrumIndex], voiceRight);
             mixLeft += voiceLeft;
             mixRight += voiceRight;
         }

@@ -3907,6 +3907,24 @@ void DrumEngine::advanceModalTension (Voice& voice, float bankOutput) noexcept
         voice.resonators[static_cast<std::size_t> (mode)].setTension (tension);
 }
 
+float DrumEngine::renderModalBank (Voice& voice, float impulse,
+                                   bool applyTension) noexcept
+{
+    float output = 0.0f;
+    if (voice.ageSamples < voice.modalActiveSamples)
+    {
+        if (voice.ageSamples == 0u)
+            for (int mode = 0; mode < voice.modeCount; ++mode)
+                voice.resonators[static_cast<std::size_t> (mode)].strike (
+                    impulse * voice.modeGains[static_cast<std::size_t> (mode)]);
+        for (int mode = 0; mode < voice.modeCount; ++mode)
+            output += voice.resonators[static_cast<std::size_t> (mode)].tick (0.0f);
+        if (applyTension)
+            advanceModalTension (voice, output);
+    }
+    return output;
+}
+
 float DrumEngine::renderKick (Voice& voice) noexcept
 {
     // Stable time-varying energy-state resonator. Unlike directly changing a
@@ -3993,24 +4011,11 @@ float DrumEngine::renderKick (Voice& voice) noexcept
     // sampled pulse instead would make the drum louder at low sample rates,
     // where a resonator's direct term is six times the size and the pulse is
     // nine samples rather than fifty.
-    float head = 0.0f;
-    if (voice.ageSamples < voice.modalActiveSamples)
-    {
-        if (voice.ageSamples == 0u)
-        {
-            // The stored charge is already the strike's energy - it was scaled
-            // by excitationScale when the voice was built - so scaling it again
-            // here would square it for the head while the body got it once, and
-            // quietly bury the head under the body on every soft hit.
-            const float impulse = voice.kickCharge;
-            for (int mode = 0; mode < voice.modeCount; ++mode)
-                voice.resonators[static_cast<std::size_t> (mode)].strike (
-                    impulse * voice.modeGains[static_cast<std::size_t> (mode)]);
-        }
-        for (int mode = 0; mode < voice.modeCount; ++mode)
-            head += voice.resonators[static_cast<std::size_t> (mode)].tick (0.0f);
-        advanceModalTension (voice, head);
-    }
+    // The stored charge is already the strike's energy - it was scaled by
+    // excitationScale when the voice was built - so scaling it again here
+    // would square it for the head while the body got it once, and quietly
+    // bury the head under the body on every soft hit.
+    const float head = renderModalBank (voice, voice.kickCharge, true);
 
     const float skin = voice.filterB.tick (
             voice.filterA.tick (nextBandLimitedNoise (voice)))
@@ -4033,20 +4038,8 @@ float DrumEngine::renderSnare (Voice& voice) noexcept
     // together is stiffened by that air into the snare's crack, and because it
     // is also the branch that radiates it is the first thing gone; the branch
     // where they oppose each other is what is left ringing under the wires.
-    float headModes = 0.0f;
-    if (voice.ageSamples < voice.modalActiveSamples)
-    {
-        if (voice.ageSamples == 0u)
-        {
-            const float impulse = voice.transientScale * voice.excitationScale;
-            for (int mode = 0; mode < voice.modeCount; ++mode)
-                voice.resonators[static_cast<std::size_t> (mode)].strike (
-                    impulse * voice.modeGains[static_cast<std::size_t> (mode)]);
-        }
-        for (int mode = 0; mode < voice.modeCount; ++mode)
-            headModes += voice.resonators[static_cast<std::size_t> (mode)].tick (0.0f);
-        advanceModalTension (voice, headModes);
-    }
+    const float headModes = renderModalBank (
+        voice, voice.transientScale * voice.excitationScale, true);
 
     // Snare wires are not a linear noise envelope: they only leave the resonant
     // head, and therefore rattle, while its displacement exceeds their resting
@@ -4120,24 +4113,13 @@ float DrumEngine::renderHat (Voice& voice) noexcept
 
     // The plates, struck once and then left. The circuit bank above is the
     // hat's hiss and its clank; this is the metal it comes out of.
-    float plate = 0.0f;
-    if (voice.ageSamples < voice.modalActiveSamples)
-    {
-        if (voice.ageSamples == 0u)
-        {
-            // No velocity weighting here: the plate is the low half of what a
-            // hat radiates, and scaling it against the hiss the way a filter
-            // corner is scaled would make a quiet hat brighter than a loud one.
-            // Where the strike strength belongs is the bank's tilt, above.
-            const float impulse = struckHeadScale * voice.transientScale
-                * voice.excitationScale;
-            for (int mode = 0; mode < voice.modeCount; ++mode)
-                voice.resonators[static_cast<std::size_t> (mode)].strike (
-                    impulse * voice.modeGains[static_cast<std::size_t> (mode)]);
-        }
-        for (int mode = 0; mode < voice.modeCount; ++mode)
-            plate += voice.resonators[static_cast<std::size_t> (mode)].tick (0.0f);
-    }
+    // No velocity weighting here: the plate is the low half of what a hat
+    // radiates, and scaling it against the hiss the way a filter corner is
+    // scaled would make a quiet hat brighter than a loud one. Where the
+    // strike strength belongs is the bank's tilt, above.
+    const float plate = renderModalBank (
+        voice, struckHeadScale * voice.transientScale * voice.excitationScale,
+        false);
 
     return (0.58f * high + attack) * voice.envelope
          + (0.18f + 0.20f * voice.characterB) * focused * voice.auxiliaryEnvelope
@@ -4214,20 +4196,8 @@ float DrumEngine::renderTom (Voice& voice) noexcept
     // moving and then leaves, so the bank is struck rather than driven - and
     // the low-level noise that used to keep feeding it is gone with it, because
     // a head that has been hit is not being hit again.
-    float membrane = 0.0f;
-    if (voice.ageSamples < voice.modalActiveSamples)
-    {
-        if (voice.ageSamples == 0u)
-        {
-            const float impulse = voice.transientScale * voice.excitationScale;
-            for (int mode = 0; mode < voice.modeCount; ++mode)
-                voice.resonators[static_cast<std::size_t> (mode)].strike (
-                    impulse * voice.modeGains[static_cast<std::size_t> (mode)]);
-        }
-        for (int mode = 0; mode < voice.modeCount; ++mode)
-            membrane += voice.resonators[static_cast<std::size_t> (mode)].tick (0.0f);
-        advanceModalTension (voice, membrane);
-    }
+    const float membrane = renderModalBank (
+        voice, voice.transientScale * voice.excitationScale, true);
 
     return 0.98f * ((0.90f * fundamental + (0.06f + 0.19f * voice.characterB) * shell)
                         * voice.envelope
