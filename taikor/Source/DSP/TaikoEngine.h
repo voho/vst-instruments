@@ -991,6 +991,17 @@ private:
     // one head.
     [[nodiscard]] static float materialDamping (const DrumState& drum, float omega,
                                                 float extraDamping) noexcept;
+    // A mode's field above the head is evanescent wherever its own spatial
+    // wavenumber (lambda / radius) outruns the sound it can radiate at
+    // (omega / c), and it falls off as exp(-sqrt(ks^2 - k^2) d): the whole
+    // close-microphone story, since that single exponential is what lets the
+    // pair separate right on the head and collapse towards mono a hand's
+    // width back. buildVoiceModes's two mode families and observeMode's
+    // matching readout each need this identically, so it is resolved once
+    // here rather than as four copies of the same three lines.
+    [[nodiscard]] static float nearFieldAttenuation (float lambda, float radius,
+                                                     float omega,
+                                                     float micDistanceMetres) noexcept;
     // Exact white-noise variance of the continuum's two-high-pass/seven-low-pass
     // cascade. Computed only while a voice is built; rendering needs the nine
     // one-pole state updates per channel and band, but no matrix work.
