@@ -699,7 +699,7 @@ private:
         // overtones above the ideal Bessel ratios rather than below them.
         float airLoadScale { 1.0f };
         float radius { 0.20f };       // m, the head itself
-        float strikeRadius { 0.22f }; // where the stick lands, as a fraction of a
+        float strikeRadius { 0.22f }; // where the stick lands, as a fraction of the head radius
         float headDensity { 0.35f };  // kg/m^2 of the film
         float shellDepth { 0.40f };   // m between the two heads
         float contactSeconds { 0.001f }; // how long the strike is on the head

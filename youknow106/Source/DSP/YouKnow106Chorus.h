@@ -18,8 +18,6 @@ enum class ChorusMode { Off, One, Two, OneTwo };
 // The mode the two buttons select. Neither button engaged is the only Off state.
 [[nodiscard]] constexpr ChorusMode chorusModeFor(bool one, bool two) noexcept
 {
-    if (one && two)
-        return ChorusMode::Two;
     if (two)
         return ChorusMode::Two;
     if (one)
