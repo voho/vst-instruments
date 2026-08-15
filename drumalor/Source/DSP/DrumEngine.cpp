@@ -66,11 +66,14 @@ constexpr std::array<float, instrumentCount> maximumDecay {{
 // engine raises each ratio to an air-loading exponent rather than pretending
 // the head is a massless ideal membrane.
 //
-// The series runs to twelve because a resonator bank has twelve slots and a
-// real head has far more than five modes. Stopping at 2.917 put every mode a
-// tom could ring inside its bottom two octaves - a 82 Hz floor tom had nothing
-// modelled above 240 Hz, which is why its measured spectrum fell off a cliff
-// where a real drum still has the stick in it.
+// The series runs to twelve mode families, which is already far more than the
+// five modes a real head needs. That is no longer the resonator bank's own
+// slot count - the bank has grown to eighteen slots so buildHeadBank can split
+// some m > 0 families into the physical pair each one actually is (see
+// resonatorCount in DrumEngine.h). Stopping the family list at 2.917 put every
+// mode a tom could ring inside its bottom two octaves - an 82 Hz floor tom had
+// nothing modelled above 240 Hz, which is why its measured spectrum fell off a
+// cliff where a real drum still has the stick in it.
 //
 //                (0,1)  (1,1)  (2,1)  (0,2)  (3,1)  (1,2)
 //                (4,1)  (2,2)  (0,3)  (5,1)  (3,2)  (6,1)
