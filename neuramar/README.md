@@ -839,6 +839,11 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   `NeuralModel::refreshWaveformPreview`'s per-point loop so it is resolved
   once per call instead of once per preview point, with the eight rendered
   demo WAVs confirmed byte-for-byte unchanged.
+- 2026-08-15: Extracted the loop-region clamp (duration, loop start, loop end,
+  loop length) that `NeuramarEngine::sampleLoopLevelTrajectory` and
+  `NeuramarEngine::updateVoiceControl` each rebuilt from a model's metadata
+  into one shared `computeLoopRegion` helper; pure dedup, with the eight
+  rendered demo WAVs confirmed byte-for-byte unchanged.
 
 ## Licensing
 
