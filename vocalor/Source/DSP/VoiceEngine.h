@@ -688,6 +688,14 @@ private:
     // it is resolved once in prepare() instead of on every voice control
     // update and every radiatedPowerTarget() call that shares the same guard.
     float mipHarmonicGuardHz_ { 0.46f * 48000.0f };
+    // 0.465 and 0.25 * sampleRate_, the Hz/BW clamp ceilings updateVoiceControl()
+    // applies to every formant of every active voice on every control update,
+    // and updateChunkState() applies to the chunk-rate tract whenever it moves.
+    // Both depend only on the prepared sample rate, so -- like the guard above
+    // -- they are resolved once here instead of being recomputed from
+    // sampleRate_ by every caller that needs them.
+    float formantHzCeilingHz_ { 0.465f * 48000.0f };
+    float formantBandwidthCeilingHz_ { 0.25f * 48000.0f };
     int maxBlockSize_ { 512 };
     bool prepared_ { false };
     std::uint64_t generation_ { 0 };
