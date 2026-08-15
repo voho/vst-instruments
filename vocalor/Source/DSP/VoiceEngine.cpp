@@ -2593,13 +2593,23 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
         }
     }
 
-    for (int formant = 0; formant < formantCount; ++formant)
+    // formantGain and tract[].b0 depend only on formantAmplitude and
+    // peakNormaliser -- set above, and only inside the tractMoved block -- and
+    // on smoothedNasal_, which updateChunkState() resolves once per 64-sample
+    // chunk and is therefore identical across the up-to-four control updates
+    // that chunk spans. Recomputing five formants' worth of gain and pole b0
+    // on every control update reran the same arithmetic on most of them.
+    if (tractMoved || voice.resolvedNasalMix != smoothedNasal_)
     {
-        const auto index = static_cast<std::size_t>(formant);
-        voice.formantGain[index] = voice.formantAmplitude[index]
-            * (1.0f - 0.55f * smoothedNasal_);
-        voice.tract[index].b0 = formantPolarity(formant)
-            * voice.formantGain[index] * voice.tract[index].peakNormaliser;
+        for (int formant = 0; formant < formantCount; ++formant)
+        {
+            const auto index = static_cast<std::size_t>(formant);
+            voice.formantGain[index] = voice.formantAmplitude[index]
+                * (1.0f - 0.55f * smoothedNasal_);
+            voice.tract[index].b0 = formantPolarity(formant)
+                * voice.formantGain[index] * voice.tract[index].peakNormaliser;
+        }
+        voice.resolvedNasalMix = smoothedNasal_;
     }
 
     if (!voice.controlInitialised)
