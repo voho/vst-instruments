@@ -823,6 +823,10 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-15: Fixed a stale count in `NeuramarEngine::noteOn`'s comment on the
+  cached harmonic/Air variation sines, which said 72 where the current
+  64-harmonic, 16-Air-band model produces 80; comment-only, with the eight
+  rendered demo WAVs confirmed byte-for-byte unchanged.
 - 2026-08-15: Removed a redundant per-partial phasor recomputation from the
   joint harmonic solve in `SampleLearner`, shortening the analysis pass with
   no change to the fitted model or the rendered audio.
