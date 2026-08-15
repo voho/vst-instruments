@@ -110,6 +110,37 @@ DcoRange rangeFromBits(std::uint8_t switches) noexcept
         return DcoRange::Four;
     return DcoRange::Eight;
 }
+
+// Switch byte one and two each decode into a handful of patch fields the same
+// way whether they arrive as part of a full eighteen-byte dump
+// (patchFromToneBytes) or as a single-parameter message (applyParameter), so
+// the decoding lives here once rather than twice.
+void decodeSwitchByteOne(Patch& patch, std::uint8_t switches) noexcept
+{
+    patch.range = rangeFromBits(switches);
+    patch.pulse = isBitSet(switches, bitPulse);
+    patch.saw = isBitSet(switches, bitSaw);
+    // Both chorus bits are active-low for "on", so a cleared bit 5 is the
+    // effect engaged. The format has no way to say I+II.
+    patch.chorus = isBitSet(switches, bitChorusOff)
+                       ? ChorusMode::Off
+                       : (isBitSet(switches, bitChorusModeOne) ? ChorusMode::One
+                                                                : ChorusMode::Two);
+}
+
+void decodeSwitchByteTwo(Patch& patch, std::uint8_t switches) noexcept
+{
+    patch.pwmSource = isBitSet(switches, bitPwmManual) ? PwmSource::Manual
+                                                        : PwmSource::Lfo;
+    patch.vcaMode = isBitSet(switches, bitVcaGate) ? VcaMode::Gate
+                                                    : VcaMode::Envelope;
+    patch.envPolarity = isBitSet(switches, bitEnvInverted) ? EnvPolarity::Inverted
+                                                            : EnvPolarity::Normal;
+    // The high-pass field counts down: 0 is the topmost position and 3 is the
+    // bass-boost detent, the reverse of the panel's own numbering.
+    patch.highPass =
+        static_cast<HighPassMode>(3 - ((switches >> bitHighPassLow) & 0x3));
+}
 } // namespace
 
 Patch patchFromToneBytes(const std::uint8_t* bytes) noexcept
@@ -122,28 +153,8 @@ Patch patchFromToneBytes(const std::uint8_t* bytes) noexcept
         if (auto* field = continuousField(patch, index))
             *field = travelFromByte(bytes[index]);
 
-    const std::uint8_t first = bytes[16] & 0x7fu;
-    patch.range = rangeFromBits(first);
-    patch.pulse = isBitSet(first, bitPulse);
-    patch.saw = isBitSet(first, bitSaw);
-    // Both chorus bits are active-low for "on", so a cleared bit 5 is the
-    // effect engaged. The format has no way to say I+II.
-    patch.chorus = isBitSet(first, bitChorusOff)
-                       ? ChorusMode::Off
-                       : (isBitSet(first, bitChorusModeOne) ? ChorusMode::One
-                                                            : ChorusMode::Two);
-
-    const std::uint8_t second = bytes[17] & 0x7fu;
-    patch.pwmSource = isBitSet(second, bitPwmManual) ? PwmSource::Manual
-                                                     : PwmSource::Lfo;
-    patch.vcaMode = isBitSet(second, bitVcaGate) ? VcaMode::Gate
-                                                 : VcaMode::Envelope;
-    patch.envPolarity = isBitSet(second, bitEnvInverted) ? EnvPolarity::Inverted
-                                                         : EnvPolarity::Normal;
-    // The high-pass field counts down: 0 is the topmost position and 3 is the
-    // bass-boost detent, the reverse of the panel's own numbering.
-    const int field = (second >> bitHighPassLow) & 0x3;
-    patch.highPass = static_cast<HighPassMode>(3 - field);
+    decodeSwitchByteOne(patch, bytes[16] & 0x7fu);
+    decodeSwitchByteTwo(patch, bytes[17] & 0x7fu);
 
     return patch;
 }
@@ -285,24 +296,11 @@ bool applyParameter(Patch& patch, int parameter, int value) noexcept
     // setting while applying a byte that has no chorus bits in it at all.
     if (parameter == static_cast<int>(ToneParameter::SwitchesOne))
     {
-        patch.range = rangeFromBits(clamped);
-        patch.pulse = isBitSet(clamped, bitPulse);
-        patch.saw = isBitSet(clamped, bitSaw);
-        patch.chorus = isBitSet(clamped, bitChorusOff)
-                           ? ChorusMode::Off
-                           : (isBitSet(clamped, bitChorusModeOne) ? ChorusMode::One
-                                                                  : ChorusMode::Two);
+        decodeSwitchByteOne(patch, clamped);
         return true;
     }
 
-    patch.pwmSource = isBitSet(clamped, bitPwmManual) ? PwmSource::Manual
-                                                      : PwmSource::Lfo;
-    patch.vcaMode = isBitSet(clamped, bitVcaGate) ? VcaMode::Gate
-                                                  : VcaMode::Envelope;
-    patch.envPolarity = isBitSet(clamped, bitEnvInverted) ? EnvPolarity::Inverted
-                                                          : EnvPolarity::Normal;
-    patch.highPass =
-        static_cast<HighPassMode>(3 - ((clamped >> bitHighPassLow) & 0x3));
+    decodeSwitchByteTwo(patch, clamped);
     return true;
 }
 

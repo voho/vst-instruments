@@ -1418,6 +1418,10 @@ Tools/           Deterministic demo and factory-audit audio renderers
 scripts/         macOS build and packaging helpers
 ```
 
+## Changelog
+
+- 2026-08-15: Deduplicated the switch-byte-one/switch-byte-two decode logic that `patchFromToneBytes` and `applyParameter` each implemented separately in `YouKnow106SysEx.cpp` into two shared `decodeSwitchByteOne`/`decodeSwitchByteTwo` helpers, with no change to SysEx behaviour.
+
 ## Licensing
 
 Original source under the [MIT License](LICENSE); see the
