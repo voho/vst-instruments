@@ -72,6 +72,32 @@ float triode(float x) noexcept
 // roughly the level it entered with.
 constexpr float pedalTrim = 1.25f;
 constexpr float ampTrim = 3.20f;
+
+// The RBJ cookbook quantities every Biquad design shares: the clamped corner
+// in radians per sample and its cosine and Q-scaled sine. Lowpass, highpass
+// and peaking differ only in how they turn this pair into b0..a2, so factoring
+// it out once removes three copies of the same clamp-omega-cosine-alpha
+// arithmetic without changing a single coefficient it produces.
+struct BiquadDesignBasis
+{
+    double cosine;
+    double alpha;
+};
+
+BiquadDesignBasis designBiquadBasis(float frequencyHz, float q,
+                                    float sampleRate,
+                                    double minimumFrequencyHz) noexcept
+{
+    const double rate = std::max(static_cast<double>(sampleRate), 1.0);
+    const double omega = 2.0 * pi
+        * std::clamp(static_cast<double>(frequencyHz), minimumFrequencyHz,
+                    0.45 * rate)
+        / rate;
+    const double cosine = std::cos(omega);
+    const double alpha = std::sin(omega)
+                       / (2.0 * std::max(static_cast<double>(q), 0.05));
+    return { cosine, alpha };
+}
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -81,53 +107,38 @@ constexpr float ampTrim = 3.20f;
 void ElectryFx::Biquad::setLowpass(float frequencyHz, float q,
                                    float sampleRate) noexcept
 {
-    const double rate = std::max(static_cast<double>(sampleRate), 1.0);
-    const double omega = 2.0 * pi
-        * std::clamp(static_cast<double>(frequencyHz), 10.0, 0.45 * rate) / rate;
-    const double cosine = std::cos(omega);
-    const double alpha = std::sin(omega)
-                       / (2.0 * std::max(static_cast<double>(q), 0.05));
-    const double a0 = 1.0 + alpha;
-    b0 = (1.0 - cosine) * 0.5 / a0;
-    b1 = (1.0 - cosine) / a0;
+    const auto basis = designBiquadBasis(frequencyHz, q, sampleRate, 10.0);
+    const double a0 = 1.0 + basis.alpha;
+    b0 = (1.0 - basis.cosine) * 0.5 / a0;
+    b1 = (1.0 - basis.cosine) / a0;
     b2 = b0;
-    a1 = -2.0 * cosine / a0;
-    a2 = (1.0 - alpha) / a0;
+    a1 = -2.0 * basis.cosine / a0;
+    a2 = (1.0 - basis.alpha) / a0;
 }
 
 void ElectryFx::Biquad::setHighpass(float frequencyHz, float q,
                                     float sampleRate) noexcept
 {
-    const double rate = std::max(static_cast<double>(sampleRate), 1.0);
-    const double omega = 2.0 * pi
-        * std::clamp(static_cast<double>(frequencyHz), 5.0, 0.45 * rate) / rate;
-    const double cosine = std::cos(omega);
-    const double alpha = std::sin(omega)
-                       / (2.0 * std::max(static_cast<double>(q), 0.05));
-    const double a0 = 1.0 + alpha;
-    b0 = (1.0 + cosine) * 0.5 / a0;
-    b1 = -(1.0 + cosine) / a0;
+    const auto basis = designBiquadBasis(frequencyHz, q, sampleRate, 5.0);
+    const double a0 = 1.0 + basis.alpha;
+    b0 = (1.0 + basis.cosine) * 0.5 / a0;
+    b1 = -(1.0 + basis.cosine) / a0;
     b2 = b0;
-    a1 = -2.0 * cosine / a0;
-    a2 = (1.0 - alpha) / a0;
+    a1 = -2.0 * basis.cosine / a0;
+    a2 = (1.0 - basis.alpha) / a0;
 }
 
 void ElectryFx::Biquad::setPeaking(float frequencyHz, float q, float gainDb,
                                    float sampleRate) noexcept
 {
-    const double rate = std::max(static_cast<double>(sampleRate), 1.0);
+    const auto basis = designBiquadBasis(frequencyHz, q, sampleRate, 10.0);
     const double amplitude = std::pow(10.0, static_cast<double>(gainDb) / 40.0);
-    const double omega = 2.0 * pi
-        * std::clamp(static_cast<double>(frequencyHz), 10.0, 0.45 * rate) / rate;
-    const double cosine = std::cos(omega);
-    const double alpha = std::sin(omega)
-                       / (2.0 * std::max(static_cast<double>(q), 0.05));
-    const double a0 = 1.0 + alpha / amplitude;
-    b0 = (1.0 + alpha * amplitude) / a0;
-    b1 = -2.0 * cosine / a0;
-    b2 = (1.0 - alpha * amplitude) / a0;
-    a1 = -2.0 * cosine / a0;
-    a2 = (1.0 - alpha / amplitude) / a0;
+    const double a0 = 1.0 + basis.alpha / amplitude;
+    b0 = (1.0 + basis.alpha * amplitude) / a0;
+    b1 = -2.0 * basis.cosine / a0;
+    b2 = (1.0 - basis.alpha * amplitude) / a0;
+    a1 = -2.0 * basis.cosine / a0;
+    a2 = (1.0 - basis.alpha / amplitude) / a0;
 }
 
 void ElectryFx::HalfbandStage::design(float kaiserBeta) noexcept
