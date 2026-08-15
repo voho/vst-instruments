@@ -2207,10 +2207,14 @@ void DrumEngine::configureResonator (Resonator& resonator, float frequency,
     decaySeconds = std::max (0.005f, decaySeconds);
     const float omega = twoPi * frequency * inverseSampleRate_;
     const float radius = coefficientForTime (decaySeconds, static_cast<float> (sampleRate_));
+    // sin(omega) feeds the tension slope, the input gain and the strike gain
+    // below; omega does not change between them, so it is one transcendental
+    // call rather than three of the identical one.
+    const float sineOmega = std::sin (omega);
     resonator.a1 = 2.0f * radius * std::cos (omega);
     resonator.a2 = -radius * radius;
     resonator.nominalA1 = resonator.a1;
-    resonator.tensionSlope = -2.0f * radius * omega * std::sin (omega);
+    resonator.tensionSlope = -2.0f * radius * omega * sineOmega;
     resonator.poleDiameter = 2.0f * radius;
 
     // A two-pole resonator's impulse residue is inputGain / sin (omega).
@@ -2221,11 +2225,11 @@ void DrumEngine::configureResonator (Resonator& resonator, float frequency,
     const float referenceRadius = coefficientForTime (decaySeconds, referenceSampleRate);
     const float referenceGain = 0.45f * std::sqrt (
         std::max (1.0e-8f, 1.0f - referenceRadius * referenceRadius));
-    resonator.inputGain = referenceGain * std::sin (omega)
+    resonator.inputGain = referenceGain * sineOmega
         / std::max (1.0e-4f, std::sin (referenceOmega));
     // A strike sets the mode moving instead of pushing a sample through it, so
     // its scale is the mode's own geometry and carries no sample rate with it.
-    resonator.strikeGain = std::sin (omega) / std::max (1.0e-4f, radius);
+    resonator.strikeGain = sineOmega / std::max (1.0e-4f, radius);
     resonator.clear();
 }
 
