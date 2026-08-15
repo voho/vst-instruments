@@ -351,8 +351,12 @@ float formantResponseDb (float frequencyHz, const float* formantHz,
     const float omega = twoPi * bounded / sampleRate;
     const float cosOmega = std::cos (omega);
     const float sinOmega = std::sin (omega);
-    const float cosTwo = std::cos (2.0f * omega);
-    const float sinTwo = std::sin (2.0f * omega);
+    // The double-angle identities, not two more calls into the trig library:
+    // parallelFormantCoefficients() above already gets its own cosTwo/sinTwo
+    // this same way from cosOmega/sinOmega, and the relationship between the
+    // two angles here (2*omega from omega) is identical.
+    const float cosTwo = 2.0f * cosOmega * cosOmega - 1.0f;
+    const float sinTwo = 2.0f * sinOmega * cosOmega;
 
     float sumReal = 0.0f;
     float sumImaginary = 0.0f;
@@ -426,8 +430,13 @@ float formantResponseDbFromCoefficients (float frequencyHz, const float* a1,
     const float omega = twoPi * bounded / sampleRate;
     const float cosOmega = std::cos (omega);
     const float sinOmega = std::sin (omega);
-    const float cosTwo = std::cos (2.0f * omega);
-    const float sinTwo = std::sin (2.0f * omega);
+    // Same double-angle identity as formantResponseDb() above: this is the
+    // per-probe half of the split those two functions share, called once per
+    // pixel by the editor's 192-point response curve at its 24 Hz repaint, so
+    // the two transcendental calls this removes are the ones that actually
+    // ran on every point of every redraw.
+    const float cosTwo = 2.0f * cosOmega * cosOmega - 1.0f;
+    const float sinTwo = 2.0f * sinOmega * cosOmega;
 
     float sumReal = 0.0f;
     float sumImaginary = 0.0f;
