@@ -2311,7 +2311,17 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
     // active voice; see formantHzCeilingHz_/formantBandwidthCeilingHz_.
     const float upperLimit = formantHzCeilingHz_;
     const float maximumBandwidth = formantBandwidthCeilingHz_;
+    // Formant tuning resolves against the intentional, non-vibrato pitch. A
+    // tract that followed each vibrato cycle would keep the fundamental on the
+    // peak and cancel the amplitude modulation the vibrato produces up there.
+    const float tuningFundamental = tractFundamental;
     float sopranoClusterRelease = 0.0f;
+    float sopranoUpperRiseSpan = 0.0f;
+    float sopranoR3Slope = sopranoR3RiseMean;
+    float sopranoR4Slope = sopranoR4RiseMean;
+    // The three soprano-register terms below are all female-only and were
+    // formerly three separate re-checks of the same profile on every control
+    // update of every active voice; one guard now covers all of them.
     if (p.profile == VoiceProfile::Female)
     {
         const float releaseOctaves = std::log2(
@@ -2319,10 +2329,7 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
         const float releaseRange = std::log2(
             sopranoClusterReleaseEndHz / sopranoClusterReleaseStartHz);
         sopranoClusterRelease = smoothStep(releaseOctaves / releaseRange);
-    }
-    float sopranoUpperRiseSpan = 0.0f;
-    if (p.profile == VoiceProfile::Female)
-    {
+
         float riseFundamental = tractFundamental;
         if (riseFundamental > sopranoUpperRiseSoftLimitHz)
         {
@@ -2338,15 +2345,7 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
         }
         sopranoUpperRiseSpan = std::max(
             riseFundamental - sopranoUpperRiseAnchorHz, 0.0f);
-    }
-    // Formant tuning resolves against the intentional, non-vibrato pitch. A
-    // tract that followed each vibrato cycle would keep the fundamental on the
-    // peak and cancel the amplitude modulation the vibrato produces up there.
-    const float tuningFundamental = tractFundamental;
-    float sopranoR3Slope = sopranoR3RiseMean;
-    float sopranoR4Slope = sopranoR4RiseMean;
-    if (p.profile == VoiceProfile::Female)
-    {
+
         // R3 and R4 are two modes of one moving tract, so their population
         // gesture shares one bounded anatomical draw. Independent +/-SD
         // extremes can bring the opposite-polarity poles almost on top of one
