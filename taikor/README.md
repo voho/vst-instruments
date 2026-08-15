@@ -78,8 +78,8 @@ Strike Position leaves the vocabulary at, and moving the stick changes which
 partial a drum is heard at because it changes which modes the stroke can reach
 at all. Towards the middle of the head every mode with a nodal diameter goes to
 nothing — *J<sub>m</sub>*(0) = 0 — and what is left is the radial family, which
-is higher. Measured from rendered audio, the chū-daiko is heard at 119.8 Hz at
-Strike Position 0.00 and at 171.9 Hz at −0.25 and −0.50, a tritone up, because
+is higher. Measured from rendered audio, the chū-daiko is heard at 119.5 Hz at
+Strike Position 0.00 and at 171.5 Hz at −0.25 and −0.50, a tritone up, because
 its (0,2) branch has taken over from its (1,1). The panel's pitch
 readout follows the stroke, so the number shown is the pitch of the stroke you
 are playing; the keyboard's tuning does not, so Strike Position stays a timbre
