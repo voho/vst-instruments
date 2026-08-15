@@ -601,6 +601,11 @@ private:
         std::array<float, formantCount> resolvedFormantHz {};
         std::array<float, formantCount> resolvedFormantBandwidth {};
         std::array<Resonator, formantCount> tract {};
+        // The nasal mix formantGain/tract[].b0 were last resolved against.
+        // Bit equality is enough to skip that recompute when neither the
+        // cascade amplitudes nor the nasal mix have actually changed since
+        // the previous control update; the sentinel forces the first one.
+        float resolvedNasalMix { -1.0f };
     };
 
     struct TableBank;
