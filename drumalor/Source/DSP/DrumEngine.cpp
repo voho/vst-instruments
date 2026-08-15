@@ -192,6 +192,14 @@ float hertzianContactSeconds (float baseSeconds, float velocity, float exponent)
 // and every accent keeps the sweep it has today.
 constexpr float sweepSaturationVelocity = 0.85f;
 
+// accentVoltage() and excitationScaleFor() of a fixed velocity are themselves
+// fixed, so their product is the same on every note-on. initialiseVoice()
+// used to re-evaluate both curves - two sqrt() calls - for every trigger of
+// every voice in the kit; resolving the constant once here instead saves
+// that work where the answer never changes.
+const float sweepSaturationAmplitude = accentVoltage (sweepSaturationVelocity)
+    * excitationScaleFor (sweepSaturationVelocity);
+
 // Ascending series for J_m. Every argument this engine asks for is a Bessel
 // zero times a fraction of the head's radius, so nothing above about four ever
 // reaches it and a dozen terms are accurate past float precision. Note-on only:
@@ -3081,11 +3089,9 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
     // upward over the first two milliseconds and leave eleven cents of residual
     // bend on the Kick against one and a half. The shape of the sweep is the
     // pitch envelope's, unchanged; only its depth is the strike's.
-    const float saturationAmplitude = accentVoltage (sweepSaturationVelocity)
-        * excitationScaleFor (sweepSaturationVelocity);
     const float strikeAmplitude = voice.velocity * voice.excitationScale;
     voice.strikeDepth = std::min (1.0f, (strikeAmplitude * strikeAmplitude)
-        / (saturationAmplitude * saturationAmplitude));
+        / (sweepSaturationAmplitude * sweepSaturationAmplitude));
     // A softly struck head, cymbal or shaker radiates a darker spectrum than a
     // hard strike, because less energy reaches the high, heavily damped modes.
     // The curve is unity at full velocity, so the loud end of the existing
