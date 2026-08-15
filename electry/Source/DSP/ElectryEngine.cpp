@@ -2065,6 +2065,20 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     if (pitchMoved || voice.compensationDirty)
     {
         voice.lastCompensatedSemitones = semitones;
+        // The dispersion fit above always assigns the same lowCoefficient/
+        // highCoefficient pair to both polarisations in one stroke, so their
+        // allpass phase-delay contribution is identical for vertical and
+        // horizontal. loopPhaseDelay() used to call allpassPhaseDelay() (two
+        // atan2 evaluations apiece) for both coefficients on each of the two
+        // loops; solving each one once here instead halves that cost per
+        // recompensation. Kept as two separate terms, summed in the same
+        // order as before, rather than one pre-added total, so the result is
+        // bit-identical to the previous per-loop expression.
+        const float dispersionLowPhaseDelay =
+            allpassPhaseDelay(voice.vertical.dispersionLowCoefficient, omega);
+        const float dispersionHighPhaseDelay =
+            allpassPhaseDelay(voice.vertical.dispersionHighCoefficient, omega);
+
         // Compensate every loop filter's phase delay at the fundamental so
         // the sounding pitch matches the target frequency.
         const auto loopPhaseDelay = [&] (const PolarisationLoop& loop)
@@ -2079,10 +2093,8 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
             const float dipDelay = omega > 1.0e-9f ? -dipPhase / omega : 0.0f;
             return onePolePhaseDelay(loop.loopDampingCoefficient, omega)
                  + dipDelay
-                 + 4.0f * allpassPhaseDelay(
-                       loop.dispersionLowCoefficient, omega)
-                 + 4.0f * allpassPhaseDelay(
-                       loop.dispersionHighCoefficient, omega);
+                 + 4.0f * dispersionLowPhaseDelay
+                 + 4.0f * dispersionHighPhaseDelay;
         };
 
         voice.compensatedPeriodVertical = period - loopPhaseDelay(voice.vertical);
