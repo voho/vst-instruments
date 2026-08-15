@@ -1187,6 +1187,13 @@ private:
         float feedback { 0.0f };
         float inputCompensation { 1.0f };
         float vca { 0.0f };
+        // VoiceVcaControlLaw::gain(vcaControl) alone, before updateVoiceAudio
+        // folds in the per-card gain error to produce `vca` above. The main
+        // scan loop's post-render silence check compares against this same
+        // softplus law on the same vcaControl a moment later; caching it here
+        // spares that check the log1p/exp pair updateVoiceAudio already paid
+        // for every active voice, every internal sample.
+        float vcaGain { 0.0f };
         float pulseDuty { 0.5f };
         // rampCurrentScaleFor(card, calibration), solved once by
         // updatePulseComparator and reused by renderVoice: both run
