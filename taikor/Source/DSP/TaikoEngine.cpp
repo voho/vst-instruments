@@ -5301,11 +5301,21 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
 
     ++voice.ageSamples;
 
-    const float magnitude = std::max (std::abs (left), std::abs (right));
-    if (magnitude > voice.peakLevel)
-        voice.peakLevel = magnitude;
-    else
-        voice.peakLevel *= 0.99995f;
+    // peakLevel only feeds findVoiceSlot()'s quietest-voice comparison, which
+    // scans voices_ alone. The physical-drum pass in process() renders each
+    // physicalDrums_ entry with `physical` (this function's second argument)
+    // null, since a physical bank has no separate physical bank of its own to
+    // feed - so that is a reliable signal that voice is one of those shared
+    // banks rather than a stealable transient voice, and tracking its peak
+    // was pure overhead for as long as the bank kept ringing.
+    if (physical != nullptr)
+    {
+        const float magnitude = std::max (std::abs (left), std::abs (right));
+        if (magnitude > voice.peakLevel)
+            voice.peakLevel = magnitude;
+        else
+            voice.peakLevel *= 0.99995f;
+    }
 
     rightOut = right;
     return left;

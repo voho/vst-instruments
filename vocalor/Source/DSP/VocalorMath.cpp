@@ -351,6 +351,12 @@ float formantResponseDb (float frequencyHz, const float* formantHz,
     const float omega = twoPi * bounded / sampleRate;
     const float cosOmega = std::cos (omega);
     const float sinOmega = std::sin (omega);
+    // Evaluated directly rather than via the double-angle identity: for low,
+    // narrow formants at high sample rates, omega is tiny, cosOmega rounds to
+    // very close to 1.0f, and 2*cosOmega*cosOmega - 1 subtracts two nearly
+    // equal float32 values, losing enough precision to shift the plotted
+    // response by more than half a dB with a discontinuous per-frequency
+    // error. Direct evaluation avoids that cancellation.
     const float cosTwo = std::cos (2.0f * omega);
     const float sinTwo = std::sin (2.0f * omega);
 
@@ -426,6 +432,11 @@ float formantResponseDbFromCoefficients (float frequencyHz, const float* a1,
     const float omega = twoPi * bounded / sampleRate;
     const float cosOmega = std::cos (omega);
     const float sinOmega = std::sin (omega);
+    // Evaluated directly, not via the double-angle identity -- see the
+    // matching comment in formantResponseDb(), which this must stay
+    // bit-identical to: for low, narrow formants at high sample rates the
+    // identity's 2*cosOmega*cosOmega - 1 subtracts two nearly equal float32
+    // values and loses enough precision to visibly distort the plotted curve.
     const float cosTwo = std::cos (2.0f * omega);
     const float sinTwo = std::sin (2.0f * omega);
 

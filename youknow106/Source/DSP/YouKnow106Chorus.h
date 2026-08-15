@@ -536,6 +536,12 @@ private:
     Line lineB_ {};
     float sampleRate_ { 48000.0f };
     float inverseSampleRate_ { 1.0f / 48000.0f };
+    // 1 - exp(-inverseSampleRate_ / wetMuteTimeConstantSeconds): the per-sample
+    // wet-mute glide coefficient. It depends only on the sample rate, so
+    // prepare() solves it once instead of process() calling std::exp on every
+    // internal sample. The default matches the 48 kHz default above and is
+    // overwritten by the first prepare() call in normal use.
+    float wetMuteGlide_ { 0.004157998f };
     // Double precision keeps the sub-hertz free-running phase smooth at the
     // engine's highest internal rates and over long sessions.
     double lfoPhase_ { 0.0 };

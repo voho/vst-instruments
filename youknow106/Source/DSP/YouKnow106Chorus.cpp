@@ -1040,6 +1040,7 @@ void Chorus::prepare(double sampleRate, bool preserveState) noexcept
 {
     sampleRate_ = static_cast<float>(std::clamp(sampleRate, 8000.0, 768000.0));
     inverseSampleRate_ = 1.0f / sampleRate_;
+    wetMuteGlide_ = 1.0f - std::exp(-inverseSampleRate_ / wetMuteTimeConstantSeconds);
     support_ = supportChainFor(sampleRate_);
     if (preserveState)
     {
@@ -1113,9 +1114,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         runningMode_ = chorusTwoEngaged(mode) ? ChorusMode::Two
                                               : ChorusMode::One;
     }
-    const float muteGlide = 1.0f - std::exp(
-        -inverseSampleRate_ / wetMuteTimeConstantSeconds);
-    wetGain_ += (target.wetGain - wetGain_) * muteGlide;
+    wetGain_ += (target.wetGain - wetGain_) * wetMuteGlide_;
     // TR11/TR12 add no modelled distortion or switching artefact of their own.
     // Conducting, a 2SK30A's few hundred ohms sit against IC6's 39 kOhm wet
     // input, so it drops about 1% of the signal and sees some 30 mV across
