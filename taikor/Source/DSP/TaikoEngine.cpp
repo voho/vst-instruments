@@ -1092,13 +1092,7 @@ void TaikoEngine::prepare (double sampleRate, int maxBlockSize) noexcept
 
 void TaikoEngine::reset() noexcept
 {
-    for (auto& voice : voices_)
-        silenceVoice (voice);
-    for (auto& physical : physicalDrums_)
-    {
-        silenceVoice (physical);
-        physical.physicalBank = true;
-    }
+    silenceAllVoices();
 
     handDamping_ = handDampingTarget_;
     pitchBend_ = pitchBendTarget_;
@@ -1171,13 +1165,7 @@ void TaikoEngine::setPitchBend (float normalisedBipolar) noexcept
 
 void TaikoEngine::allSoundsOff() noexcept
 {
-    for (auto& voice : voices_)
-        silenceVoice (voice);
-    for (auto& physical : physicalDrums_)
-    {
-        silenceVoice (physical);
-        physical.physicalBank = true;
-    }
+    silenceAllVoices();
     updateActiveVoiceCount();
 
     // Cutting every voice is already a discontinuity, so there is nothing left
@@ -1308,6 +1296,17 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
         mode.appliedPalmDecay = 0.0f;
         mode.localMuteDampingRate = 0.0f;
         mode.handDampingRate = 0.0f;
+    }
+}
+
+void TaikoEngine::silenceAllVoices() noexcept
+{
+    for (auto& voice : voices_)
+        silenceVoice (voice);
+    for (auto& physical : physicalDrums_)
+    {
+        silenceVoice (physical);
+        physical.physicalBank = true;
     }
 }
 

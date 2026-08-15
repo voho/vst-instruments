@@ -1287,6 +1287,10 @@ private:
                                      float& rightOut) noexcept;
     [[nodiscard]] int findVoiceSlot() noexcept;
     void silenceVoice (Voice& voice) noexcept;
+    // Silences every transient voice and every canonical physical bank, the
+    // step reset() and allSoundsOff() both start with - a full engine reset
+    // and a performance panic differ only in what they do afterwards.
+    void silenceAllVoices() noexcept;
     void updateActiveVoiceCount() noexcept;
     void refreshDrumIfNeeded() noexcept;
     // Changes continuous pole loss while preserving instantaneous displacement
