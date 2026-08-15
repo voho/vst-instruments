@@ -231,6 +231,8 @@ void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
     displaySampleRate_.store(static_cast<float>(sampleRate_), std::memory_order_relaxed);
     inverseSampleRate_ = static_cast<float>(1.0 / sampleRate_);
     mipHarmonicGuardHz_ = 0.46f * static_cast<float>(sampleRate_);
+    formantHzCeilingHz_ = 0.465f * static_cast<float>(sampleRate_);
+    formantBandwidthCeilingHz_ = 0.25f * static_cast<float>(sampleRate_);
     maxBlockSize_ = std::max(1, maxBlockSize);
 
     const auto delayFor = [this](float seconds)
@@ -1646,7 +1648,9 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
         tractInputs_[formantCount] = shift;
         tractInputs_[formantCount + 1] = bandwidthScale;
         tractInputs_[formantCount + 2] = epilarynx;
-        const float maximumBandwidth = 0.25f * static_cast<float>(sampleRate_);
+        // Resolved once for the prepared sample rate in prepare(); see
+        // formantBandwidthCeilingHz_.
+        const float maximumBandwidth = formantBandwidthCeilingHz_;
         const float widthScale = bandwidthScale * std::sqrt(shift);
         for (int formant = 0; formant < formantCount; ++formant)
         {
@@ -2302,8 +2306,11 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
         * std::exp2(tractCents * (1.0f / 1200.0f));
     const float highAmount = std::max(
         0.0f, 12.0f * std::log2(std::max(tractFundamental, 1.0f) / 440.0f));
-    const float upperLimit = 0.465f * static_cast<float>(sampleRate_);
-    const float maximumBandwidth = 0.25f * static_cast<float>(sampleRate_);
+    // Both resolved once for the prepared sample rate in prepare(), instead of
+    // being recomputed from sampleRate_ on every control update of every
+    // active voice; see formantHzCeilingHz_/formantBandwidthCeilingHz_.
+    const float upperLimit = formantHzCeilingHz_;
+    const float maximumBandwidth = formantBandwidthCeilingHz_;
     float sopranoClusterRelease = 0.0f;
     if (p.profile == VoiceProfile::Female)
     {
