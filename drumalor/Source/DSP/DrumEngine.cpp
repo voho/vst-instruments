@@ -2888,12 +2888,21 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
     // are left once the table has been emitted. Gain here is the same product
     // the normalisation below uses, so "loudest" means loudest as heard and not
     // loudest as struck.
-    const auto gainOf = [&] (int slot)
-    {
-        const auto index = static_cast<std::size_t> (slot);
-        return std::pow (std::max (1.0f, ratios[index]), tilt)
-            * std::abs (excitation[index]);
-    };
+    //
+    // Every candidate's gain depends only on its own emitted ratio and
+    // excitation, and neither changes until the slot is actually chosen and
+    // split - at which point it stops being a candidate at all. The search
+    // below used to call pow()-based gainOf() on every still-eligible slot on
+    // every one of the (up to four) rounds it takes to find each pair, so an
+    // untouched candidate had its gain re-derived from the same inputs once
+    // per remaining round. Resolving it here instead, once per candidate, saves
+    // those repeats with no change to which slot the search picks.
+    float candidateGain[resonatorCount] {};
+    for (int slot = 0; slot < count; ++slot)
+        if (orders[slot] > 0)
+            candidateGain[static_cast<std::size_t> (slot)] = std::pow (
+                std::max (1.0f, ratios[static_cast<std::size_t> (slot)]), tilt)
+                * std::abs (excitation[static_cast<std::size_t> (slot)]);
 
     const float renderable = 0.44f * static_cast<float> (sampleRate_);
     while (count < resonatorCount)
@@ -2913,7 +2922,7 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
                 * (1.0f + 0.5f * split);
             if (fundamental * upper >= renderable)
                 continue;
-            const float gain = gainOf (slot);
+            const float gain = candidateGain[static_cast<std::size_t> (slot)];
             if (gain > bestGain)
             {
                 bestGain = gain;
