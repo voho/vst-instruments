@@ -343,9 +343,9 @@ What each head actually drives is a rigidly terminated column of length *L/2* �
 the volume-changing motion is symmetric about the midplane, so that plane
 behaves like a wall — and its stiffness is *x cot x* times the lumped value,
 with *x = ωL/2c*. That is the same number at low frequency and less than it as
-the body gets deep against the wavelength: 0.87 on the ō-daiko, 0.78 on the
-chū-daiko, 0.61 on the okedo — the longest body in the family relative to its
-head — and 0.74 on the shime, falling to 0.33 there at full Body Depth. It has
+the body gets deep against the wavelength: 0.82 on the ō-daiko, 0.77 on the
+chū-daiko, 0.49 on the okedo — the longest body in the family relative to its
+head — and 0.65 on the shime, falling to 0.05 there at full Body Depth. It has
 to be solved for rather than computed, because the stiffness depends on the
 frequency it sets, so the drum resolve bisects on it once per drum and the audio
 never sees the iteration. The model reports it for the same reason: it is an
