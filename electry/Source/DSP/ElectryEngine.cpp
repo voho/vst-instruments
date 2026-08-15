@@ -4002,51 +4002,53 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     float neckSignal = 0.0f;
     float bridgeSignal = 0.0f;
 
-    if (neckPathActive_)
+    // Neck and bridge run the identical tap/aperture/coil/flux/EMF chain over
+    // their own delay tap, aperture window and coil pair; only the artifact
+    // and contact-noise blend weights differ between the two anchors. One
+    // shared lambda replaces the two copies of that chain.
+    const auto readPickup = [&] (const DelayTap& delayTap,
+                                 FractionalMovingAverage& aperture,
+                                 CoilPairSum& coilPair,
+                                 float drive, float driveInverse,
+                                 OnePole& emfLowpass, float& previousFlux,
+                                 float artifactWeight, float noiseWeight)
     {
-        const auto& delayTap = voice.pickupTapNeck;
         float tap = 0.85f * (verticalTotal
                              - pickupCombDepth * vertical.readTap(delayTap))
                   + 0.35f * (horizontalTotal
                              - pickupCombDepth * horizontal.readTap(delayTap))
-                  + 0.55f * artifactPickup;
-        tap = voice.apertureNeck.process(voice.coilPairNeck.process(tap));
+                  + artifactWeight * artifactPickup;
+        tap = aperture.process(coilPair.process(tap));
         const float flux = voice.fluxScale
-            * magneticTransfer(tap, magneticDriveNeck_, magneticDriveNeckInverse_);
+            * magneticTransfer(tap, drive, driveInverse);
         // Faraday's law: a magnetic pickup outputs induced voltage,
         // proportional to d(Phi)/dt, rather than displacement itself.
         // Normalising the finite difference at 220 Hz preserves practical
         // level while retaining the physically important frequency weighting.
         // The oversampled lowpass bounds the differentiator before the
         // loaded-coil circuit.
-        neckSignal = voice.emfLowpassNeck.process(
-            (flux - voice.previousFluxNeck) * emfScale_, emfLowpassCoefficient_);
-        voice.previousFluxNeck = flux;
+        float signal = emfLowpass.process(
+            (flux - previousFlux) * emfScale_, emfLowpassCoefficient_);
+        previousFlux = flux;
         // Local contact motion reaches the pickup as a short velocity-like
         // transient. It still passes through the shared loaded-coil circuit,
         // but does not masquerade as a persistent pitched wave on the string.
-        neckSignal = (neckSignal + 0.09f * noiseSample)
-                   * voice.articulationMakeup;
-    }
+        signal = (signal + noiseWeight * noiseSample) * voice.articulationMakeup;
+        return signal;
+    };
+
+    if (neckPathActive_)
+        neckSignal = readPickup(voice.pickupTapNeck, voice.apertureNeck,
+                                 voice.coilPairNeck, magneticDriveNeck_,
+                                 magneticDriveNeckInverse_, voice.emfLowpassNeck,
+                                 voice.previousFluxNeck, 0.55f, 0.09f);
 
     if (bridgePathActive_)
-    {
-        const auto& delayTap = voice.pickupTapBridge;
-        float tap = 0.85f * (verticalTotal
-                             - pickupCombDepth * vertical.readTap(delayTap))
-                  + 0.35f * (horizontalTotal
-                             - pickupCombDepth * horizontal.readTap(delayTap))
-                  + artifactPickup;
-        tap = voice.apertureBridge.process(voice.coilPairBridge.process(tap));
-        const float flux = voice.fluxScale
-            * magneticTransfer(tap, magneticDriveBridge_,
-                               magneticDriveBridgeInverse_);
-        bridgeSignal = voice.emfLowpassBridge.process(
-            (flux - voice.previousFluxBridge) * emfScale_, emfLowpassCoefficient_);
-        voice.previousFluxBridge = flux;
-        bridgeSignal = (bridgeSignal + 0.15f * noiseSample)
-                     * voice.articulationMakeup;
-    }
+        bridgeSignal = readPickup(voice.pickupTapBridge, voice.apertureBridge,
+                                   voice.coilPairBridge, magneticDriveBridge_,
+                                   magneticDriveBridgeInverse_,
+                                   voice.emfLowpassBridge, voice.previousFluxBridge,
+                                   1.0f, 0.15f);
 
     vertical.writeIndex = (vertical.writeIndex + 1) & (delayLineSize - 1);
     horizontal.writeIndex = (horizontal.writeIndex + 1) & (delayLineSize - 1);
