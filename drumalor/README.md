@@ -1473,3 +1473,4 @@ third-party presets are included.
 ## Changelog
 
 - 2026-08-15: Deduplicated the xorshift32 noise generator that `nextNoise()` and the sympathetic-bed rattle in `renderSympatheticBeds()` each implemented separately into one shared `advanceXorshiftNoise()` helper, with no change to engine output.
+- 2026-08-15: `buildHeadBank()`'s per-mode radiation-efficiency term, already computed once inside `lossPerSecond()`, is now shared with its `pow()`-based "heard" weight instead of being re-derived from the same inputs a second time, saving one transcendental call per emitted head mode with no change to engine output.
