@@ -4821,6 +4821,14 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
     const double tolerance = 2.0e-12 * scale;
     bool converged = false;
 
+    // Declared once outside the Newton loop rather than per iteration: every
+    // entry a later row/column can read - row, column both < contactCount -
+    // is unconditionally overwritten by the assignment below before anything
+    // reads it back, on every iteration including the first, so re-zeroing
+    // all 16x16 doubles up to fourteen times per sample bought nothing but a
+    // repeated memset while a contact was live.
+    std::array<std::array<double, maxVoices>, maxVoices> jacobian {};
+
     for (int iteration = 0; iteration < 14; ++iteration)
     {
         std::array<double, maxVoices> equations {};
@@ -4831,7 +4839,6 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
             break;
         }
 
-        std::array<std::array<double, maxVoices>, maxVoices> jacobian {};
         std::array<double, maxVoices> increment {};
         for (int row = 0; row < contactCount; ++row)
         {
