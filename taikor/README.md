@@ -946,14 +946,6 @@ Presets/                    Preset guidance and drum-building reference
 scripts/                    macOS build and packaging helpers
 ```
 
-## Changelog
-
-- 2026-08-15: Extracted the (0,1) pair's diagonal/off-diagonal cavity-coupling
-  terms - previously written out identically in both `volumeBranchOmega`'s
-  bisection trial and `solveAxisymmetricPair`'s converged solve - into one
-  shared `axisymmetricDiagonals` helper, with no change to any resolved drum
-  or rendered audio.
-
 ## Licensing
 
 Taikor's original source is released under the [MIT License](LICENSE). It builds
@@ -969,5 +961,10 @@ this repository's own code.
 ## Changelog
 
 - 2026-08-15: Stopped the nonlinear stick-contact solver from re-zeroing its 16x16 Jacobian on every Newton iteration, since each entry it can read is already overwritten before use, which is a bit-exact no-op confirmed by matching demo-audio checksums.
+- 2026-08-15: Extracted the (0,1) pair's diagonal/off-diagonal cavity-coupling
+  terms - previously written out identically in both `volumeBranchOmega`'s
+  bisection trial and `solveAxisymmetricPair`'s converged solve - into one
+  shared `axisymmetricDiagonals` helper, with no change to any resolved drum
+  or rendered audio.
 - 2026-08-15: Deduplicated the two near-identical per-band continuum-energy injection loops in `renderVoice` (scheduled-contact arrival and the running nonlinear-solve step) into one shared `injectContinuumEnergy` helper, with no change to engine output verified by bit-identical demo renders before and after.
 - 2026-08-15: Extracted the near-field microphone attenuation term - written out identically four times across `buildVoiceModes`'s two membrane-mode families and `observeMode`'s matching readout - into one shared `nearFieldAttenuation` helper, with no change to any resolved drum or rendered audio.
