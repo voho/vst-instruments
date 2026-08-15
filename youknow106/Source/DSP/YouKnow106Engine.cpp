@@ -2496,10 +2496,6 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
     }
     // The cutoff chain's memo is keyed on counts and loop gain, both of which
     // survive a quality change untouched, while the coefficient it produces
-    // is measured in internal samples and does not. Retire it here so the
-    // rebuild below cannot be handed back the old grid's answer.
-    // The cutoff chain's memo is keyed on counts and loop gain, both of which
-    // survive a quality change untouched, while the coefficient it produces
     // is measured in internal samples and does not. Retire it here so a card
     // whose holds have settled exactly cannot be handed back the old grid's
     // answer.
