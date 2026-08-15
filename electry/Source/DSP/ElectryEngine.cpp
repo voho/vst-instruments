@@ -1971,11 +1971,23 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
                           / (1.0f + inharmonicity));
             return period * (1.0f - 1.0f / stretch);
         };
-        const auto pairDeficit = [&] (float coefficient, float partial)
+        // allpassPhaseDelay(coefficient, omega) - the term at the sounding
+        // fundamental itself, as opposed to the reference partial - depends on
+        // the candidate coefficient alone, not on which of the two reference
+        // partials it is being scored against. pairDeficit() used to take that
+        // base term as a fresh call every time, so each grid point below
+        // recomputed it twice for candidateLow (once scoring lowPartial, once
+        // scoring highPartial) and twice for candidateHigh, four calls that
+        // could only ever produce two distinct values. pairDeficitFromBase()
+        // takes the base term already solved instead, so the caller can share
+        // it: candidateLow's base is resolved once per lowIndex, outside the
+        // highIndex loop it does not depend on, and candidateHigh's base is
+        // resolved once per grid point instead of twice.
+        const auto pairDeficitFromBase = [&] (float base, float coefficient,
+                                              float partial)
         {
             const float omegaRef = std::min(omega * partial, pi * 0.95f);
-            return 2.0f * (allpassPhaseDelay(coefficient, omega)
-                           - allpassPhaseDelay(coefficient, omegaRef));
+            return 2.0f * (base - allpassPhaseDelay(coefficient, omegaRef));
         };
         if (inharmonicity > 1.0e-8f)
         {
@@ -2000,16 +2012,18 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
                 {
                     const float candidateLow = lowMinimum
                         + lowStep * static_cast<float>(lowIndex);
+                    const float lowBase = allpassPhaseDelay(candidateLow, omega);
                     for (int highIndex = 0; highIndex <= divisions; ++highIndex)
                     {
                         const float candidateHigh = highMinimum
                             + highStep * static_cast<float>(highIndex);
+                        const float highBase = allpassPhaseDelay(candidateHigh, omega);
                         const float actualLow =
-                            2.0f * pairDeficit(candidateLow, lowPartial)
-                            + 2.0f * pairDeficit(candidateHigh, lowPartial);
+                            2.0f * pairDeficitFromBase(lowBase, candidateLow, lowPartial)
+                            + 2.0f * pairDeficitFromBase(highBase, candidateHigh, lowPartial);
                         const float actualHigh =
-                            2.0f * pairDeficit(candidateLow, highPartial)
-                            + 2.0f * pairDeficit(candidateHigh, highPartial);
+                            2.0f * pairDeficitFromBase(lowBase, candidateLow, highPartial)
+                            + 2.0f * pairDeficitFromBase(highBase, candidateHigh, highPartial);
                         const float lowError = (actualLow - wantedLow) / lowScale;
                         const float highError = (actualHigh - wantedHigh) / highScale;
                         const float error = lowError * lowError
