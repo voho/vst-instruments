@@ -259,6 +259,7 @@ NeuramarEngine::NeuramarEngine() noexcept
     for (std::size_t harmonic = 0; harmonic < NeuralModel::harmonicCount; ++harmonic)
         inverseHarmonicRolloff_[harmonic] = 1.0f
             / std::pow(static_cast<float>(harmonic + 1), 1.15f);
+    logRetirementLevel_ = std::log(retirementLevel);
     refreshHarmonicStretch(0.0f);
 }
 
@@ -680,7 +681,7 @@ void NeuramarEngine::buildReleaseShape(
     // ratio between two slots stays a property of the source rather than of
     // the key.
     const float slowestTau = releaseSeconds
-        / std::max(voice.clockRateScale, 1.0e-4f) / -std::log(retirementLevel);
+        / std::max(voice.clockRateScale, 1.0e-4f) / -logRetirementLevel_;
     const float frameSeconds = static_cast<float>(controlPeriod_)
         / static_cast<float>(sampleRate_);
     const float fundamental = std::max(renderedFundamentalHz, 1.0f);
@@ -1111,7 +1112,7 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
     // the next block, which is at most 4 ms on a parameter whose smallest
     // setting is 5 ms.
     voice.releaseMultiplier = std::exp(
-        std::log(retirementLevel) * inverseSampleRate_ * voice.clockRateScale
+        logRetirementLevel_ * inverseSampleRate_ * voice.clockRateScale
         / std::max(parameters.releaseSeconds, 0.005f));
 
     const float duration = std::max(model.metadata_.durationSeconds, 0.001f);
