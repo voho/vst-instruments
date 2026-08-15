@@ -1232,8 +1232,15 @@ private:
     // waveguide-coupled Sympathetic Ring feature (`sympatheticBus_` and
     // friends below), which actually vibrates the modelled strings.
     std::array<ModalResonator, stringCount> artifactRingModes_ {};
-    std::array<float, bodyModeCount> bodyModeFrequencies_ {};
-    std::array<float, bodyModeCount> bodyModeQs_ {};
+    // Each mode's own clamped omega, omega-squared and loss rate, solved once
+    // here in configureBody() rather than by bodyConductanceAt() on every
+    // call: that call runs per partial inside configureVoiceDamping() (up to
+    // six times per voice), which itself runs on every note-on and on every
+    // control tick a damping-relevant control moves, while these three values
+    // only change when configureBody() itself re-runs.
+    std::array<float, bodyModeCount> bodyModeOmega_ {};
+    std::array<float, bodyModeCount> bodyModeOmegaSquared_ {};
+    std::array<float, bodyModeCount> bodyModeDamping_ {};
     std::array<float, bodyModeCount> bodyModeLevels_ {};
     float outputDcCoefficient_ { 0.9993f };
     float smoothedOutputGain_ { 0.5f };
