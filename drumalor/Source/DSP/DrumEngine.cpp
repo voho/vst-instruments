@@ -2370,10 +2370,12 @@ void DrumEngine::applyAftertouch (float pressure) noexcept
 {
     if (! std::isfinite (pressure) || pressure <= 0.0f)
         return;
-    for (auto* pool : { &voices_, &retiringVoices_ })
-        for (auto& voice : *pool)
-            if (voice.active && isCymbal (voice.instrument))
-                beginChoke (voice, chokeSecondsForPressure (pressure));
+    const float seconds = chokeSecondsForPressure (pressure);
+    forEachVoice ([this, seconds] (Voice& voice)
+    {
+        if (voice.active && isCymbal (voice.instrument))
+            beginChoke (voice, seconds);
+    });
 }
 
 bool DrumEngine::applyAftertouch (int midiNote, float pressure) noexcept
@@ -2395,11 +2397,12 @@ bool DrumEngine::applyAftertouch (int midiNote, float pressure) noexcept
     // crash two names (49 and 57) and the ride two (51 and 59), and a player
     // who struck the crash on 57 and grabbed it on 49 has grabbed the cymbal
     // that is ringing.
-    for (auto* pool : { &voices_, &retiringVoices_ })
-        for (auto& voice : *pool)
-            if (voice.active && voice.instrument == mapping->instrument
-                && voice.articulation == mapping->articulation)
-                beginChoke (voice, seconds);
+    forEachVoice ([this, &mapping, seconds] (Voice& voice)
+    {
+        if (voice.active && voice.instrument == mapping->instrument
+            && voice.articulation == mapping->articulation)
+            beginChoke (voice, seconds);
+    });
     return true;
 }
 
@@ -2534,31 +2537,30 @@ void DrumEngine::setHiHatPedal (float position) noexcept
     // which is what a foot splash is. Both directions therefore re-derive the
     // ringing voice's decay at the new aperture; only the closing direction
     // adds the friction on top, and only the opening direction takes it away.
-    for (auto* pool : { &voices_, &retiringVoices_ })
-        for (auto& voice : *pool)
+    forEachVoice ([this, aperture] (Voice& voice)
+    {
+        if (! voice.active || ! isHiHat (voice.instrument)
+            || std::abs (aperture - voice.hatAperture) < 0.02f)
+            return;
+        const bool closing = aperture < voice.hatAperture;
+        applyHatAperture (voice, aperture);
+        if (closing)
         {
-            if (! voice.active || ! isHiHat (voice.instrument)
-                || std::abs (aperture - voice.hatAperture) < 0.02f)
-                continue;
-            const bool closing = aperture < voice.hatAperture;
-            applyHatAperture (voice, aperture);
-            if (closing)
-            {
-                const float frictionSeconds = 0.004f + 0.36f * aperture;
-                beginChoke (voice, frictionSeconds);
-                voice.pedalFrictionMultiplier = std::clamp (
-                    coefficientForTime (std::max (0.0005f, frictionSeconds),
-                                        static_cast<float> (sampleRate_)),
-                    0.0f, 1.0f);
-            }
-            else if (voice.choking
-                     && voice.chokeMultiplier == voice.pedalFrictionMultiplier)
-            {
-                voice.choking = false;
-                voice.chokeMultiplier = 1.0f;
-                voice.pedalFrictionMultiplier = 0.0f;
-            }
+            const float frictionSeconds = 0.004f + 0.36f * aperture;
+            beginChoke (voice, frictionSeconds);
+            voice.pedalFrictionMultiplier = std::clamp (
+                coefficientForTime (std::max (0.0005f, frictionSeconds),
+                                    static_cast<float> (sampleRate_)),
+                0.0f, 1.0f);
         }
+        else if (voice.choking
+                 && voice.chokeMultiplier == voice.pedalFrictionMultiplier)
+        {
+            voice.choking = false;
+            voice.chokeMultiplier = 1.0f;
+            voice.pedalFrictionMultiplier = 0.0f;
+        }
+    });
 
     // A foot coming down hard enough to shut the pair makes its own sound, and
     // it is the only stroke on a kit that is played without a stick. Its
