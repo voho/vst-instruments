@@ -351,12 +351,14 @@ float formantResponseDb (float frequencyHz, const float* formantHz,
     const float omega = twoPi * bounded / sampleRate;
     const float cosOmega = std::cos (omega);
     const float sinOmega = std::sin (omega);
-    // The double-angle identity (already used for the same pair in
-    // parallelFormantCoefficients() below) turns the second cos/sin call into
-    // a multiply and a subtract; a probe-frequency response curve calls this
-    // once per plotted point, so it is worth avoiding here too.
-    const float cosTwo = 2.0f * cosOmega * cosOmega - 1.0f;
-    const float sinTwo = 2.0f * sinOmega * cosOmega;
+    // Evaluated directly rather than via the double-angle identity: for low,
+    // narrow formants at high sample rates, omega is tiny, cosOmega rounds to
+    // very close to 1.0f, and 2*cosOmega*cosOmega - 1 subtracts two nearly
+    // equal float32 values, losing enough precision to shift the plotted
+    // response by more than half a dB with a discontinuous per-frequency
+    // error. Direct evaluation avoids that cancellation.
+    const float cosTwo = std::cos (2.0f * omega);
+    const float sinTwo = std::sin (2.0f * omega);
 
     float sumReal = 0.0f;
     float sumImaginary = 0.0f;
@@ -430,13 +432,13 @@ float formantResponseDbFromCoefficients (float frequencyHz, const float* a1,
     const float omega = twoPi * bounded / sampleRate;
     const float cosOmega = std::cos (omega);
     const float sinOmega = std::sin (omega);
-    // Same double-angle identity as formantResponseDb(), which this must stay
-    // bit-identical to: derived from the already-computed cosOmega/sinOmega
-    // instead of two more transcendental calls. This is the function the
-    // editor's response curve actually calls once per plotted point (192
-    // points per repaint at its 24 Hz timer), so the saving lands here.
-    const float cosTwo = 2.0f * cosOmega * cosOmega - 1.0f;
-    const float sinTwo = 2.0f * sinOmega * cosOmega;
+    // Evaluated directly, not via the double-angle identity -- see the
+    // matching comment in formantResponseDb(), which this must stay
+    // bit-identical to: for low, narrow formants at high sample rates the
+    // identity's 2*cosOmega*cosOmega - 1 subtracts two nearly equal float32
+    // values and loses enough precision to visibly distort the plotted curve.
+    const float cosTwo = std::cos (2.0f * omega);
+    const float sinTwo = std::sin (2.0f * omega);
 
     float sumReal = 0.0f;
     float sumImaginary = 0.0f;
