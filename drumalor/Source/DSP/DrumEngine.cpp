@@ -3551,9 +3551,10 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // No modal bank is set up here, because neither cymbal renders one
             // any more. initialiseVoice() has already cleared the voice, so
             // modeCount and modalActiveSamples are zero and every generic
-            // modal guard downstream is false. Configuring twelve resonators
-            // whose state nothing reads would be a note-on cost - transcendental
-            // work on the audio thread - paid by every hit of a dense ride.
+            // modal guard downstream is false. Configuring the resonator
+            // bank's eighteen slots whose state nothing reads would be a
+            // note-on cost - transcendental work on the audio thread - paid
+            // by every hit of a dense ride.
             break;
         }
 
