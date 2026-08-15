@@ -747,6 +747,11 @@ private:
         ExcitationPhase excitationPhase { ExcitationPhase::Idle };
         int excitationRemaining { 0 };
         int excitationLength { 0 };
+        // static_cast<float>(std::max(1, excitationLength)), solved once per
+        // attack in startExcitation() rather than every rendered sample of
+        // the Release phase, which reads it once per sample to turn
+        // excitationRemaining into a 0..1 progress fraction.
+        float excitationLengthDenominator { 1.0f };
         float excitationAmplitude { 0.0f };
         float excitationCombDelay { 0.0f };
         float excitationPolarity { 1.0f };
