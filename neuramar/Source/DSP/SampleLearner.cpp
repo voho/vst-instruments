@@ -394,12 +394,24 @@ void fft(std::vector<Complex>& values)
     std::array<float, spectrumSize> windows {};
     float windowSum = 0.0f;
     float windowSquareSum = 0.0f;
+    // The long-aperture case - every one of a learn() pass's 128 timeline
+    // frames, since only the onset region ever asks for a shorter one - has
+    // windowSize == spectrumSize, which is exactly the window
+    // spectrumHannWindow() already caches for makeSpectrumFrame(). Reading it
+    // here instead of re-deriving the same 4096 std::cos() values through
+    // hannWindow() removes that repetition the same way spectrumHannWindow()
+    // itself removed it from makeSpectrumFrame(); the shorter transient
+    // apertures still build their own window, since a per-size cache is not
+    // worth the complexity for the handful of onset frames that use it.
+    const bool useCachedWindow = windowSize == spectrumSize;
+    const auto& cachedWindow = spectrumHannWindow();
     for (std::size_t index = 0; index < windowSize; ++index)
     {
         const auto source = start + static_cast<std::ptrdiff_t>(index);
         if (source < 0 || source >= static_cast<std::ptrdiff_t>(sample.size()))
             continue;
-        windows[index] = hannWindow(index, windowSize);
+        windows[index] = useCachedWindow
+            ? cachedWindow[index] : hannWindow(index, windowSize);
         residual[index] = sample[static_cast<std::size_t>(source)];
         windowSum += windows[index];
         windowSquareSum += windows[index] * windows[index];
