@@ -721,9 +721,9 @@ void ModelAnatomyDisplay::setAnatomy (const neuramar::ModelAnatomy& next,
     repaint();
 }
 
-void ModelAnatomyDisplay::advance (int activeVoiceCount, float stretch)
+void ModelAnatomyDisplay::advance (int activeVoiceCount, float stretchAmount)
 {
-    stretchAmount = stretch;
+    this->stretchAmount = stretchAmount;
     // At the 30 Hz timer one sweep of the learned trajectory takes the
     // memory's duration plus a moment, bounded to 1-8 s, so slow memories
     // stay readable without fast ones turning into a strobe.
