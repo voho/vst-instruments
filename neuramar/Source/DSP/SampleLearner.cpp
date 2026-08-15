@@ -454,8 +454,15 @@ void fft(std::vector<Complex>& values)
             const double angle = partialAngles[harmonic];
             const Complex rotation(static_cast<float>(std::cos(angle)),
                                    static_cast<float>(std::sin(angle)));
-            Complex oscillator = std::polar(
+            // The write-back pass below needs the oscillator reset to the
+            // same starting phase the projection pass consumed, and both used
+            // to rebuild it with an identical std::polar() call - a repeated
+            // sin/cos evaluation of the exact same angle. Computing it once
+            // and reusing the stored phasor for both passes returns the same
+            // value, since neither angle nor start changes between them.
+            const Complex initialOscillator = std::polar(
                 1.0f, static_cast<float>(angle * static_cast<double>(start)));
+            Complex oscillator = initialOscillator;
             const double previousCosine = cosineCoefficients[harmonic];
             const double previousSine = sineCoefficients[harmonic];
             double cosineCosine = 0.0;
@@ -509,8 +516,7 @@ void fft(std::vector<Complex>& values)
             sineCoefficients[harmonic] = sineCoefficient;
             const double deltaCosine = cosineCoefficient - previousCosine;
             const double deltaSine = sineCoefficient - previousSine;
-            oscillator = std::polar(
-                1.0f, static_cast<float>(angle * static_cast<double>(start)));
+            oscillator = initialOscillator;
             for (std::size_t index = 0; index < windowSize; ++index)
             {
                 if (windows[index] > 0.0f)
