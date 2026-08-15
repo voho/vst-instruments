@@ -807,9 +807,10 @@ const DrumEngine::CymbalRoms& DrumEngine::cymbalRoms() noexcept
         // features worth more than this once its envelope is gone.
         const float omega = twoPi * std::min (spec.washCentre, 0.45f * spec.clockRate)
             / spec.clockRate;
-        const float alpha = std::sin (omega)
+        const float sinOmega = std::sin (omega);
+        const float alpha = sinOmega
             * std::sinh (0.5f * std::log (2.0f) * spec.washWidth * omega
-                         / std::max (1.0e-6f, std::sin (omega)));
+                         / std::max (1.0e-6f, sinOmega));
         const float inverseA0 = 1.0f / (1.0f + alpha);
         const float b0 = alpha * inverseA0;
         const float b2 = -b0;
