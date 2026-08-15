@@ -711,17 +711,17 @@ private:
     // of a full-level ramp.
     static constexpr float stageAttenuation = 560.0f / (68000.0f + 560.0f);
     static constexpr float otaHeadroomVolts = 2.0f * thermalVoltage / stageAttenuation;
+    // Half-span of the integrating capacitors' tolerance. The four 240 pF
+    // parts are discrete, so nothing trims them into agreement; a few percent
+    // is the ordinary class. Voiced under OQ-10, like the other card
+    // dispersions -- no measured population fixes it.
+    static constexpr float vcfStageCapacitorTolerance = 0.02f;
     // Early-effect transconductance modulation inside the cascade. With
     // V_A ~ 100 V and a few hundred millivolts of collector swing at the
     // differential pair, the fractional change in g is a few parts per
     // thousand -- the 0.005 the modelling notes state. A revision used 0.08
     // here, sixteen times that, which is a signal-dependent cutoff shift large
     // enough to hear as odd-harmonic grit on every resonant sweep.
-    // Half-span of the integrating capacitors' tolerance. The four 240 pF
-    // parts are discrete, so nothing trims them into agreement; a few percent
-    // is the ordinary class. Voiced under OQ-10, like the other card
-    // dispersions -- no measured population fixes it.
-    static constexpr float vcfStageCapacitorTolerance = 0.02f;
     static constexpr float otaEarlyVoltage = 100.0f;
     static constexpr float otaEarlyEffectCoefficient = 0.005f;
     // Temperature coefficient of the transconductor's cutoff control path, from
