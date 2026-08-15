@@ -968,3 +968,9 @@ this repository's own code.
   or rendered audio.
 - 2026-08-15: Deduplicated the two near-identical per-band continuum-energy injection loops in `renderVoice` (scheduled-contact arrival and the running nonlinear-solve step) into one shared `injectContinuumEnergy` helper, with no change to engine output verified by bit-identical demo renders before and after.
 - 2026-08-15: Extracted the near-field microphone attenuation term - written out identically four times across `buildVoiceModes`'s two membrane-mode families and `observeMode`'s matching readout - into one shared `nearFieldAttenuation` helper, with no change to any resolved drum or rendered audio.
+- 2026-08-15: Extracted the air-loaded batter/resonant angular frequency of a
+  general membrane mode - rebuilt identically in `observeMode`'s per-mode
+  readout, `buildVoiceModes`'s per-entry solve and `measure()`'s tail-length
+  sweep - into one shared `membraneModeOmegas` helper, with no change to any
+  resolved drum or rendered audio, verified by matching DSP test results and
+  bit-identical demo renders before and after.

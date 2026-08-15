@@ -882,6 +882,25 @@ TaikoEngine::fundamentalPairOmegas (const DrumState& drum) noexcept
     return result;
 }
 
+TaikoEngine::MembraneModeOmegas TaikoEngine::membraneModeOmegas (
+    const DrumState& drum, float radius, float lambda, float order) noexcept
+{
+    const float idealBatter = drum.waveSpeed * lambda / (2.0f * piFloat * radius)
+                            * stiffnessStretch (lambda, drum.stiffnessBatter);
+    const float idealResonant =
+        drum.resonantWaveSpeed * lambda / (2.0f * piFloat * radius)
+        * stiffnessStretch (lambda, drum.stiffnessResonant);
+
+    const float loadShape = (2.4048f / lambda) / (1.0f + 0.6f * order);
+    const float loadBatter =
+        1.0f / std::sqrt (1.0f + 0.85f * loadShape * airDensity * radius / drum.batterDensity);
+    const float loadResonant =
+        1.0f / std::sqrt (1.0f + 0.85f * loadShape * airDensity * radius / drum.resonantDensity);
+
+    return { 2.0f * piFloat * idealBatter * loadBatter,
+             2.0f * piFloat * idealResonant * loadResonant };
+}
+
 void TaikoEngine::axisymmetricDiagonals (const DrumState& drum,
                                          const FundamentalPair& fundamentals,
                                          float cavityStiffness, float& diagonalB,
@@ -1691,21 +1710,10 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
     const float micDistance = drum.micDistanceMetres;
     const float propagatingSpread = 1.0f / (1.0f + micDistance / 0.12f);
 
-    const float idealBatter = drum.waveSpeed * lambda / (2.0f * piFloat * radius)
-                            * stiffnessStretch (lambda, drum.stiffnessBatter);
-    const float idealResonant =
-        drum.resonantWaveSpeed * lambda / (2.0f * piFloat * radius)
-        * stiffnessStretch (lambda, drum.stiffnessResonant);
-
-    const float loadShape =
-        (2.4048f / lambda) / (1.0f + 0.6f * static_cast<float> (order));
-    const float loadBatter =
-        1.0f / std::sqrt (1.0f + 0.85f * loadShape * airDensity * radius / sigmaB);
-    const float loadResonant =
-        1.0f / std::sqrt (1.0f + 0.85f * loadShape * airDensity * radius / sigmaR);
-
-    const float omegaBatter = 2.0f * piFloat * idealBatter * loadBatter;
-    const float omegaResonant = 2.0f * piFloat * idealResonant * loadResonant;
+    const auto omegas = membraneModeOmegas (drum, radius, lambda,
+                                            static_cast<float> (order));
+    const float omegaBatter = omegas.batter;
+    const float omegaResonant = omegas.resonant;
 
     const auto besselAtZero =
         static_cast<float> (besselJ (order + 1, entry.besselZero));
@@ -2843,25 +2851,16 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         // the thicker the head is. Taken relative to the (0,1) mode, so the
         // pitch the drum is tuned to does not move and only the spread above it
         // does.
-        const float idealBatter = drum.waveSpeed * lambda / (2.0f * piFloat * radius)
-                                * stiffnessStretch (lambda, drum.stiffnessBatter);
-        const float idealResonant =
-            drum.resonantWaveSpeed * lambda / (2.0f * piFloat * radius)
-            * stiffnessStretch (lambda, drum.stiffnessResonant);
-
-        // Air hanging off the head as added mass. Modes with a high radial or
-        // circumferential order shift less air per unit of displacement, so
-        // they are loaded far less than the fundamental. A light synthetic
-        // head is loaded much more than a heavy hide, which is exactly why it
-        // sounds lower than its tension alone predicts.
-        const float loadShape = (2.4048f / lambda) / (1.0f + 0.6f * static_cast<float> (order));
-        const float loadBatter =
-            1.0f / std::sqrt (1.0f + 0.85f * loadShape * airDensity * radius / sigmaB);
-        const float loadResonant =
-            1.0f / std::sqrt (1.0f + 0.85f * loadShape * airDensity * radius / sigmaR);
-
-        const float omegaBatter = 2.0f * piFloat * idealBatter * loadBatter;
-        const float omegaResonant = 2.0f * piFloat * idealResonant * loadResonant;
+        // Air hanging off the head as added mass falls out of the same
+        // helper: modes with a high radial or circumferential order shift
+        // less air per unit of displacement, so they are loaded far less than
+        // the fundamental, and a light synthetic head is loaded much more
+        // than a heavy hide - exactly why it sounds lower than its tension
+        // alone predicts.
+        const auto omegas = membraneModeOmegas (drum, radius, lambda,
+                                                static_cast<float> (order));
+        const float omegaBatter = omegas.batter;
+        const float omegaResonant = omegas.resonant;
 
         const auto besselAtZero = static_cast<float> (besselJ (order + 1, entry.besselZero));
         const float besselSquared = std::max (besselAtZero * besselAtZero, 1.0e-9f);
@@ -5911,15 +5910,8 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
             // so there is no eigenproblem here and no pair of branches - just
             // the batter head's own mode, air-loaded and damped.
             const auto order = static_cast<float> (radial.circumferentialOrder);
-            const float ideal =
-                drum.waveSpeed * radialLambda / (2.0f * piFloat * drum.radius)
-                * stiffnessStretch (radialLambda, drum.stiffnessBatter);
-            const float shape =
-                (2.4048f / radialLambda) / (1.0f + 0.6f * order);
-            const float load = 1.0f / std::sqrt (
-                1.0f + 0.85f * shape * airDensity * drum.radius / drum.batterDensity);
-
-            const float omega = 2.0f * piFloat * ideal * load;
+            const float omega =
+                membraneModeOmegas (drum, drum.radius, radialLambda, order).batter;
             const float frequency = omega / (2.0f * piFloat);
             if (! (frequency > 0.0f) || frequency >= 20000.0f)
                 continue;
@@ -5939,24 +5931,14 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
             continue;
         }
 
-        const float radialBatter =
-            drum.waveSpeed * radialLambda / (2.0f * piFloat * drum.radius)
-            * stiffnessStretch (radialLambda, drum.stiffnessBatter);
-        const float radialResonant =
-            drum.resonantWaveSpeed * radialLambda / (2.0f * piFloat * drum.radius)
-            * stiffnessStretch (radialLambda, drum.stiffnessResonant);
-
         // The air load falls off with the mode's own order exactly as it does
         // where the modes are built: a mode with nodal rings shifts far less
-        // air per unit of displacement than the fundamental does.
-        const float radialShape = 2.4048f / radialLambda;
-        const float radialLoadB = 1.0f / std::sqrt (
-            1.0f + 0.85f * radialShape * airDensity * drum.radius / drum.batterDensity);
-        const float radialLoadR = 1.0f / std::sqrt (
-            1.0f + 0.85f * radialShape * airDensity * drum.radius / drum.resonantDensity);
-
-        const float radialOmegaB = 2.0f * piFloat * radialBatter * radialLoadB;
-        const float radialOmegaR = 2.0f * piFloat * radialResonant * radialLoadR;
+        // air per unit of displacement than the fundamental does. Order 0
+        // here, same as every other axisymmetric mode.
+        const auto radialOmegas =
+            membraneModeOmegas (drum, drum.radius, radialLambda, 0.0f);
+        const float radialOmegaB = radialOmegas.batter;
+        const float radialOmegaR = radialOmegas.resonant;
 
         const float radialCavity =
             drum.cavityStiffness * 4.0f / (radialLambda * radialLambda);
