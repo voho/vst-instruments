@@ -34,21 +34,33 @@ float fretWireFractionWithSpan(int fret, int lastFret, float span) noexcept
 }
 } // namespace
 
-float fretWireFraction(int fret, int lastFret) noexcept
+float fretSpan(int lastFret) noexcept
 {
-    if (lastFret <= 0)
-        return 0.0f;
-    return fretWireFractionWithSpan(fret, lastFret, fretOffset(lastFret));
+    return lastFret > 0 ? fretOffset(lastFret) : 0.0f;
 }
 
-float fretCentreFraction(int fret, int lastFret) noexcept
+float fretWireFraction(int fret, int lastFret, float span) noexcept
+{
+    return fretWireFractionWithSpan(fret, lastFret, span);
+}
+
+float fretCentreFraction(int fret, int lastFret, float span) noexcept
 {
     if (fret <= 0 || lastFret <= 0)
         return 0.0f;
     const int clamped = std::clamp(fret, 1, std::max(1, lastFret));
-    const float span = fretOffset(lastFret);
     return 0.5f * (fretWireFractionWithSpan(clamped - 1, lastFret, span)
                    + fretWireFractionWithSpan(clamped, lastFret, span));
+}
+
+float fretWireFraction(int fret, int lastFret) noexcept
+{
+    return fretWireFraction(fret, lastFret, fretSpan(lastFret));
+}
+
+float fretCentreFraction(int fret, int lastFret) noexcept
+{
+    return fretCentreFraction(fret, lastFret, fretSpan(lastFret));
 }
 
 float stringRowFraction(int stringIndex, int stringCount, float inset) noexcept
