@@ -606,6 +606,11 @@ private:
         // cascade amplitudes nor the nasal mix have actually changed since
         // the previous control update; the sentinel forces the first one.
         float resolvedNasalMix { -1.0f };
+        // The formant-shift ratio the nasal branch's own a1/a2/b0 were last
+        // resolved against: the murmur and notch frequencies retune with
+        // shift exactly as the oral formants do. Shared sentinel logic with
+        // resolvedNasalMix above.
+        float resolvedNasalShift { -1.0f };
     };
 
     struct TableBank;
