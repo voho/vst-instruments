@@ -16,6 +16,8 @@ namespace youknow106
 enum class ChorusMode { Off, One, Two, OneTwo };
 
 // The mode the two buttons select. Neither button engaged is the only Off state.
+// Both engaged is the legacy `OneTwo` input canonicalising to II, same as II
+// alone -- so a single `two` check already covers both cases below.
 [[nodiscard]] constexpr ChorusMode chorusModeFor(bool one, bool two) noexcept
 {
     if (two)
