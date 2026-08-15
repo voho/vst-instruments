@@ -844,6 +844,13 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   `NeuramarEngine::updateVoiceControl` each rebuilt from a model's metadata
   into one shared `computeLoopRegion` helper; pure dedup, with the eight
   rendered demo WAVs confirmed byte-for-byte unchanged.
+- 2026-08-15: `SampleLearner::analyseHarmonicResidual`'s full-aperture case -
+  used by every one of a `learn()` pass's 128 timeline frames - now reads its
+  Hann window from the same cached table `makeSpectrumFrame` already uses
+  instead of re-deriving the identical 4096 `std::cos()` values through
+  `hannWindow()` on every call; the shorter onset-region apertures are
+  unaffected. Pure dedup, with the eight rendered demo WAVs confirmed
+  byte-for-byte unchanged.
 
 ## Licensing
 
