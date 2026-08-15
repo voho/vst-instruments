@@ -857,10 +857,6 @@ scripts/             macOS build and packaging helpers
 ThirdParty/          JUCE licence notice
 ```
 
-## Changelog
-
-- 2026-08-15: The fretboard editor's paint() recomputed the neck's fret-span (a `std::exp2` call) on every wire, inlay, and sounding-string position it drew each animation frame; `ElectryVisuals` now exposes a `fretSpan()` helper and span-aware overloads of `fretWireFraction()`/`fretCentreFraction()` so `paint()` solves it once per frame instead, with identical drawn output.
-
 ## Licensing
 
 Electry's original source is under the [MIT License](LICENSE); see the
@@ -875,3 +871,4 @@ with no affiliation or endorsement implied.
 ## Changelog
 
 - 2026-08-15: Removed redundant `allpassPhaseDelay` calls from the dispersion grid search in `configureVoicePitch`, sharing each candidate coefficient's fundamental-frequency phase-delay term across the two reference-partial comparisons instead of recomputing it, with bit-identical rendered output.
+- 2026-08-15: The fretboard editor's paint() recomputed the neck's fret-span (a `std::exp2` call) on every wire, inlay, and sounding-string position it drew each animation frame; `ElectryVisuals` now exposes a `fretSpan()` helper and span-aware overloads of `fretWireFraction()`/`fretCentreFraction()` so `paint()` solves it once per frame instead, with identical drawn output.
