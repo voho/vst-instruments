@@ -4143,7 +4143,7 @@ float DrumEngine::renderHat (Voice& voice) noexcept
          + (0.075f + 0.085f * voice.characterA) * plate;
 }
 
-float DrumEngine::renderRide (Voice& voice) noexcept
+float DrumEngine::renderCymbalVoice (Voice& voice, float outputGain) noexcept
 {
     const auto& channel = voice.cymbal;
     // The six Schmitt-trigger oscillators, summed at the virtual earth the two
@@ -4163,23 +4163,20 @@ float DrumEngine::renderRide (Voice& voice) noexcept
     // stage picks it up. Nothing else: neither machine has a modal plate, and
     // the one that used to sit here is what kept a pitched ring on top of two
     // circuits that do not produce one.
-    return 1.14f * (channel.lowGain * bands.low
+    return outputGain * (channel.lowGain * bands.low
                     + channel.midGain * bands.mid
                     + channel.highGain * bands.high
                     + pcm);
 }
 
+float DrumEngine::renderRide (Voice& voice) noexcept
+{
+    return renderCymbalVoice (voice, 1.14f);
+}
+
 float DrumEngine::renderCrash (Voice& voice) noexcept
 {
-    const auto& channel = voice.cymbal;
-    const float oscillatorBank = metallicSourceFor (voice.instrument);
-    const auto bands = renderCymbalBands (voice, oscillatorBank);
-    const float pcm = nextCymbalPcm (voice);
-
-    return 1.02f * (channel.lowGain * bands.low
-                    + channel.midGain * bands.mid
-                    + channel.highGain * bands.high
-                    + pcm);
+    return renderCymbalVoice (voice, 1.02f);
 }
 
 float DrumEngine::renderTom (Voice& voice) noexcept

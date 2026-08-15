@@ -762,6 +762,11 @@ private:
     [[nodiscard]] float renderHat (Voice& voice) noexcept;
     [[nodiscard]] float renderRide (Voice& voice) noexcept;
     [[nodiscard]] float renderCrash (Voice& voice) noexcept;
+    // Ride and Crash run the identical two-machine signal path - the analogue
+    // oscillator bank through its band-passes and the digital ROM channel,
+    // summed at one buffer amplifier - and differ only in that amplifier's own
+    // gain, which is voiced per machine rather than shared.
+    [[nodiscard]] float renderCymbalVoice (Voice& voice, float outputGain) noexcept;
     [[nodiscard]] float renderTom (Voice& voice) noexcept;
     [[nodiscard]] float renderShaker (Voice& voice) noexcept;
     [[nodiscard]] float renderPerc1 (Voice& voice) noexcept;

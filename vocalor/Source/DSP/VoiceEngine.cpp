@@ -3464,7 +3464,10 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
             std::fill(left, left + numSamples, 0.0f);
         if (right != nullptr && right != left)
             std::fill(right, right + numSamples, 0.0f);
-        activeVoiceCount_.store(0, std::memory_order_relaxed);
+        // publishDisplayState() stores the voice count itself; storing it again
+        // here would be the same atomic write twice on every idle block, which
+        // is the one case this engine is benchmarked and tuned to render for
+        // nearly nothing.
         publishDisplayState(0, 0.0f, 0.0f, numSamples);
         return;
     }
@@ -3572,7 +3575,9 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
     }
 
     const int count = countActiveVoices();
-    activeVoiceCount_.store(count, std::memory_order_relaxed);
+    // publishDisplayState() stores the count itself below; it used to be stored
+    // here as well, which cost every block a second, redundant atomic write of
+    // the same value.
     publishDisplayState(count, blockPeakLeft, blockPeakRight, numSamples);
 }
 
