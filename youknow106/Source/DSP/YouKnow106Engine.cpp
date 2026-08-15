@@ -1580,14 +1580,20 @@ void YouKnow106Engine::addStep(BandlimitedTrack& track, float height,
         return;
     const auto& table = correctionTables().stepResponse;
     const float offset = std::clamp(samplesAgo, 0.0f, 1.0f);
+    // `track.base + j` only ever wraps the ring once as j runs 0..correctionRing-1,
+    // since track.base already sits in [0, correctionRing). Walking `slot` forward
+    // with the same increment-or-reset the ring's own writer uses (see
+    // BandlimitedTrack::advance) reaches the identical index every iteration
+    // without a modulo by the non-power-of-two ring size on each of them.
+    int slot = track.base;
     for (int j = 0; j < correctionRing; ++j)
     {
         const float response = interpolatedCorrectionSample(table, j, offset);
         const float queryTime = static_cast<float>(j - correctionHalfWidth)
                               + offset;
         const float residual = response - (queryTime >= 0.0f ? 1.0f : 0.0f);
-        const int slot = (track.base + j) % correctionRing;
         track.ring[static_cast<std::size_t>(slot)] += height * residual;
+        slot = slot + 1 < correctionRing ? slot + 1 : 0;
     }
 }
 
@@ -1598,11 +1604,14 @@ void YouKnow106Engine::addSlope(BandlimitedTrack& track, float slopeStep,
         return;
     const auto& table = correctionTables().slopeResidual;
     const float offset = std::clamp(samplesAgo, 0.0f, 1.0f);
+    // See addStep's identical walk above for why this avoids a per-iteration
+    // modulo.
+    int slot = track.base;
     for (int j = 0; j < correctionRing; ++j)
     {
         const float residual = interpolatedCorrectionSample(table, j, offset);
-        const int slot = (track.base + j) % correctionRing;
         track.ring[static_cast<std::size_t>(slot)] += slopeStep * residual;
+        slot = slot + 1 < correctionRing ? slot + 1 : 0;
     }
 }
 
