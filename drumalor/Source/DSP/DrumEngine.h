@@ -730,7 +730,7 @@ private:
     void dampRingingMembrane (Instrument instrument, float velocity) noexcept;
     void beginChoke (Voice& voice, float seconds) noexcept;
     void beginFadeToSilence (Voice& voice, float multiplier) noexcept;
-    void retireVoice (const Voice& voice) noexcept;
+    void retireVoice (const Voice& source) noexcept;
     void silenceVoice (Voice& voice) noexcept;
     void addBankReference (Instrument instrument) noexcept;
     void releaseBankReference (Instrument instrument) noexcept;
