@@ -2382,6 +2382,11 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
     const bool needsUpperSeparation = p.profile == VoiceProfile::Female
         && sopranoUpperRiseSpan > 0.0f;
     std::array<float, formantCount> separatedTargetBandwidth;
+    // Raw (unclamped) target Hz for formants 2-4, as the main loop below would
+    // itself resolve them. Only meaningful when needsUpperSeparation: the main
+    // loop reads it back instead of re-running the identical releasedHz/scale/
+    // highTune/slope arithmetic a second time for those formants.
+    std::array<float, formantCount> upperTargetHz {};
     if (needsUpperSeparation)
     {
         std::array<float, formantCount> boundedTargetHz;
@@ -2403,6 +2408,7 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
                 targetHz += chunkFormantShiftRatio_ * slope
                     * sopranoUpperRiseSpan;
             }
+            upperTargetHz[index] = targetHz;
             boundedTargetHz[index] = std::clamp(targetHz, 25.0f, upperLimit);
             separatedTargetBandwidth[index] = std::clamp(
                 chunkBandwidth_[index]
@@ -2420,26 +2426,41 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
     for (int formant = 0; formant < formantCount; ++formant)
     {
         const auto index = static_cast<std::size_t>(formant);
-        const float scale = anatomy + p.humanize * singer.formantScale[index];
-        const float highTune = 1.0f + highAmount * (formant == 0 ? 0.0032f : (formant == 1 ? 0.00125f : 0.0003f));
-        // The chunk endpoint is already the broad, quarter-strength soprano
-        // reinforcement below E-flat5. From there to B-flat5 interpolate both
-        // the centres and the pole widths back to the ordinary vowel tract.
-        // Male voices keep the full lower-voice cluster at every pitch.
-        float releasedHz = chunkFormantHz_[index]
-            + sopranoClusterRelease
-                * (chunkUnclusteredFormantHz_[index] - chunkFormantHz_[index]);
-        if (driftAmount > 0.0f)
-            releasedHz += vowelDriftHz(index);
-        float targetHz = releasedHz * scale * highTune;
-        if (p.profile == VoiceProfile::Female && (formant == 2 || formant == 3))
+        // Formants 2-4 of a soprano note already ran this exact
+        // releasedHz/scale/highTune/slope arithmetic in the pre-pass above,
+        // to project the Hz the separation guard narrows bandwidths against;
+        // read that resolved value back instead of paying for it twice on
+        // every control update of every sounding high female voice.
+        const bool usesUpperTarget = needsUpperSeparation && formant >= 2;
+        float scale = 0.0f;
+        float targetHz;
+        if (usesUpperTarget)
         {
-            const float slope = formant == 2 ? sopranoR3Slope : sopranoR4Slope;
-            // Formant Shift is a synthetic tract-length transform. Scale the
-            // measured displacement with that tract as well; adding the same
-            // absolute 300--700 Hz after a one-octave-down transform can make
-            // the numbered upper resonances cross.
-            targetHz += chunkFormantShiftRatio_ * slope * sopranoUpperRiseSpan;
+            targetHz = upperTargetHz[index];
+        }
+        else
+        {
+            scale = anatomy + p.humanize * singer.formantScale[index];
+            const float highTune = 1.0f + highAmount * (formant == 0 ? 0.0032f : (formant == 1 ? 0.00125f : 0.0003f));
+            // The chunk endpoint is already the broad, quarter-strength soprano
+            // reinforcement below E-flat5. From there to B-flat5 interpolate both
+            // the centres and the pole widths back to the ordinary vowel tract.
+            // Male voices keep the full lower-voice cluster at every pitch.
+            float releasedHz = chunkFormantHz_[index]
+                + sopranoClusterRelease
+                    * (chunkUnclusteredFormantHz_[index] - chunkFormantHz_[index]);
+            if (driftAmount > 0.0f)
+                releasedHz += vowelDriftHz(index);
+            targetHz = releasedHz * scale * highTune;
+            if (p.profile == VoiceProfile::Female && (formant == 2 || formant == 3))
+            {
+                const float slope = formant == 2 ? sopranoR3Slope : sopranoR4Slope;
+                // Formant Shift is a synthetic tract-length transform. Scale the
+                // measured displacement with that tract as well; adding the same
+                // absolute 300--700 Hz after a one-octave-down transform can make
+                // the numbered upper resonances cross.
+                targetHz += chunkFormantShiftRatio_ * slope * sopranoUpperRiseSpan;
+            }
         }
         float targetF1Lift = 0.0f;
         if (formant == 0)
@@ -2485,11 +2506,16 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
                     * (targetF1Lift - voice.formantTuningLift);
         }
 
-        float targetBandwidth = chunkBandwidth_[index]
-            + sopranoClusterRelease
-                * (chunkUnclusteredBandwidth_[index] - chunkBandwidth_[index]);
-        if (needsUpperSeparation && formant >= 2)
+        // Same redundant-work shape as the Hz target above: for these same
+        // formants the plain chunkBandwidth_ blend would be computed only to
+        // be immediately replaced by the separation guard's result.
+        float targetBandwidth;
+        if (usesUpperTarget)
             targetBandwidth = separatedTargetBandwidth[index];
+        else
+            targetBandwidth = chunkBandwidth_[index]
+                + sopranoClusterRelease
+                    * (chunkUnclusteredBandwidth_[index] - chunkBandwidth_[index]);
         const float currentBandwidth = voice.formantBandwidth[index];
         if (currentBandwidth <= 1.0f)
             voice.formantBandwidth[index] = targetBandwidth;
