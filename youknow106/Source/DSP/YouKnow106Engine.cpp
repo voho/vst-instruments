@@ -4797,6 +4797,12 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     const double scanPhasePerInternalSample = controlScanHz / oversampledRate_;
     const float outputBoundaryGain =
         outputReferenceGain(compatibilityOutputReferenceRmsVolts);
+    // TA75558S IC6 output slew limit, SR = 1.7 V/us (653846 engine units per
+    // second at 2.6 V per unit). Depends only on the internal rate, which is
+    // fixed for the whole call, so it belongs beside the other per-call slew
+    // constants above rather than being re-divided every internal sample.
+    const float outputSlewMaxStep =
+        static_cast<float>(653846.15 / oversampledRate_);
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
@@ -5242,21 +5248,22 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             wetLeft = outputSummerClip(wetLeft);
             wetRight = outputSummerClip(wetRight);
 
-            // TA75558S IC6 output slew limit, SR = 1.7 V/us (653846 engine
-            // units per second at 2.6 V per unit). A part property, so --
-            // exactly like the rails above -- it is not scaled by Unit
-            // Character: a previous revision divided it by calibration,
-            // granting the pristine reference a 10x faster op-amp and a
-            // full-character unit one slower than the part's own datasheet.
+            // TA75558S IC6 output slew limit (outputSlewMaxStep above). A part
+            // property, so -- exactly like the rails above -- it is not
+            // scaled by Unit Character: a previous revision divided it by
+            // calibration, granting the pristine reference a 10x faster
+            // op-amp and a full-character unit one slower than the part's own
+            // datasheet.
             if (parameters.enableOpAmpSlewLimiting)
             {
-                const float maxStep = static_cast<float>(653846.15 / oversampledRate_);
                 const float deltaL = wetLeft - outputSlewStateLeft_;
-                outputSlewStateLeft_ += std::clamp(deltaL, -maxStep, maxStep);
+                outputSlewStateLeft_ += std::clamp(
+                    deltaL, -outputSlewMaxStep, outputSlewMaxStep);
                 wetLeft = outputSlewStateLeft_;
 
                 const float deltaR = wetRight - outputSlewStateRight_;
-                outputSlewStateRight_ += std::clamp(deltaR, -maxStep, maxStep);
+                outputSlewStateRight_ += std::clamp(
+                    deltaR, -outputSlewMaxStep, outputSlewMaxStep);
                 wetRight = outputSlewStateRight_;
             }
             else
