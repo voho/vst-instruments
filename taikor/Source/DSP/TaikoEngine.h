@@ -1248,6 +1248,15 @@ private:
     void applyTensionShift (Voice& voice, float shift) noexcept;
     void updateVoiceControl (Voice& voice) noexcept;
     void advancePhysicalContacts (Voice& physical) noexcept;
+    // Adds a strike's per-band continuum injections into the physical bank's
+    // unresolved envelopes as energy rather than amplitude - hypot, not a sum -
+    // because distinct unresolved modes do not add coherently. `share` is the
+    // fraction of the reference contact this particular injection represents;
+    // renderVoice calls this both when a scheduled contact begins and, for the
+    // nonlinear solve, once per sample of the running contact, so the two
+    // sites shared this loop rather than each keeping its own copy of it.
+    static void injectContinuumEnergy (const Voice& voice, Voice& physical,
+                                       float share) noexcept;
     [[nodiscard]] float renderVoice (Voice& voice, Voice* physical,
                                      float& rightOut) noexcept;
     [[nodiscard]] int findVoiceSlot() noexcept;

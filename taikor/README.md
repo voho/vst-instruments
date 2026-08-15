@@ -969,3 +969,4 @@ this repository's own code.
 ## Changelog
 
 - 2026-08-15: Stopped the nonlinear stick-contact solver from re-zeroing its 16x16 Jacobian on every Newton iteration, since each entry it can read is already overwritten before use, which is a bit-exact no-op confirmed by matching demo-audio checksums.
+- 2026-08-15: Deduplicated the two near-identical per-band continuum-energy injection loops in `renderVoice` (scheduled-contact arrival and the running nonlinear-solve step) into one shared `injectContinuumEnergy` helper, with no change to engine output verified by bit-identical demo renders before and after.
