@@ -414,6 +414,20 @@ void NeuralModel::refreshWaveformPreview(float blend) noexcept
     if (blend <= 0.0f)
         return;
 
+    // inharmonicity_ is fixed for the whole call, so the stretched ratio of
+    // each visible harmonic does not depend on which of the 256 preview
+    // points is being generated. Resolving it once here instead of inside
+    // the per-point loop below cuts 8192 stretchedHarmonicRatio() calls
+    // (256 points * 32 harmonics) down to 32 per refreshWaveformPreview(),
+    // the same "hoist what the loop does not change" fix already applied to
+    // the per-partial ratio tables in SampleLearner.cpp and
+    // ModelVisualisation.cpp.
+    constexpr std::size_t visibleHarmonicCount = 32;
+    std::array<float, visibleHarmonicCount> visibleHarmonicRatios {};
+    for (std::size_t harmonic = 0; harmonic < visibleHarmonicCount; ++harmonic)
+        visibleHarmonicRatios[harmonic] = stretchedHarmonicRatio(
+            static_cast<float>(harmonic + 1), inharmonicity_);
+
     std::array<float, previewSize> generated {};
     float generatedPeak = 0.0f;
     for (std::size_t point = 0; point < generated.size(); ++point)
@@ -428,14 +442,11 @@ void NeuralModel::refreshWaveformPreview(float blend) noexcept
         const float carrier = 7.0f * time
             + 0.11f * std::sin(twoPi * time);
         float value = 0.0f;
-        constexpr std::size_t visibleHarmonicCount = 32;
         for (std::size_t harmonic = 0;
              harmonic < visibleHarmonicCount; ++harmonic)
         {
-            const float harmonicNumber = stretchedHarmonicRatio(
-                static_cast<float>(harmonic + 1), inharmonicity_);
             value += frame.harmonicAmplitudes[harmonic] * std::sin(
-                twoPi * (carrier * harmonicNumber
+                twoPi * (carrier * visibleHarmonicRatios[harmonic]
                          + initialHarmonicPhases_[harmonic]));
         }
         for (std::size_t mode = 0; mode < boneModeCount; ++mode)

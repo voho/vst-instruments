@@ -831,6 +831,10 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   the up-to-three-sweep short-aperture case no longer rebuilds the same
   `std::cos()`/`std::sin()` pair on every sweep, with no change to the fitted
   model or the rendered audio.
+- 2026-08-15: Hoisted the visible-harmonic stretch-ratio table out of
+  `NeuralModel::refreshWaveformPreview`'s per-point loop so it is resolved
+  once per call instead of once per preview point, with the eight rendered
+  demo WAVs confirmed byte-for-byte unchanged.
 
 ## Licensing
 
