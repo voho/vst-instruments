@@ -2788,6 +2788,11 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
                                        * modalProjectionGain;
     voice.excitationLength = std::max(
         8, static_cast<int>(pulseMs * 0.001f * sampleRate));
+    // Solved once here instead of on every rendered sample of the Release
+    // phase below, which divides by this same clamped length once per
+    // sample to form its progress fraction.
+    voice.excitationLengthDenominator =
+        static_cast<float>(std::max(1, voice.excitationLength));
     const int contactSamples = legato
         ? 0
         : std::max(4, static_cast<int>(lerp(3.0f, 0.55f, parameters.pickHardness)
@@ -3844,7 +3849,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     else if (voice.excitationPhase == ExcitationPhase::Release)
     {
         const float progress = 1.0f - static_cast<float>(voice.excitationRemaining)
-            / static_cast<float>(std::max(1, voice.excitationLength));
+            / voice.excitationLengthDenominator;
         // Load, then slip. Both halves are smoothsteps, so the product is
         // continuous with a continuous derivative and its area over the window
         // is exactly one half whatever the slip point is - the same area the
