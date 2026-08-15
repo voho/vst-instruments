@@ -4084,8 +4084,13 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     }
 #endif
 
-    voice.vca = VoiceVcaControlLaw::gain(
-                    static_cast<float>(voice.vcaControl))
+    // The retire check below the main scan loop asks this same law about
+    // this same vcaControl a moment later, to see whether the card has
+    // actually gone silent; cache the raw gain so it reads this value
+    // instead of paying for another log1p/exp pair.
+    voice.vcaGain = VoiceVcaControlLaw::gain(
+        static_cast<float>(voice.vcaControl));
+    voice.vca = voice.vcaGain
               * (1.0f + card.vcaGainError * 0.03f * tolerance);
 
     // The IR3109 stage offsets used to be rewritten here, every audio sample,
@@ -5168,9 +5173,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 // quality change indefinitely.
                 if (voice.envelope.stage == EnvelopeStage::Idle
                     && !voice.keyDown && !voice.sustained
-                    && VoiceVcaControlLaw::gain(
-                           static_cast<float>(voice.vcaControl))
-                           <= VoiceVcaControlLaw::silenceGain)
+                    && voice.vcaGain <= VoiceVcaControlLaw::silenceGain)
                     silenceVoice(voice);
                 else
                     sounding = true;
