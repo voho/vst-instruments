@@ -31,6 +31,19 @@ inline constexpr int upperOctaveInlayFret = 21;
 // wires. Fret 0 (an open string) reports the nut.
 [[nodiscard]] float fretCentreFraction(int fret, int lastFret) noexcept;
 
+// The std::exp2-based neck span the two functions above solve internally from
+// `lastFret` alone. A caller that asks for many wire or centre positions
+// against the same neck - the editor's paint() does, for every fret wire,
+// inlay and sounding string on every animation frame - solves it once here
+// and passes it to the span-aware overloads below, instead of paying for the
+// same std::exp2 call again on every one of those calls.
+[[nodiscard]] float fretSpan(int lastFret) noexcept;
+
+// Identical to the two-argument overloads above, but the neck span is
+// supplied by the caller (from fretSpan()) rather than recomputed here.
+[[nodiscard]] float fretWireFraction(int fret, int lastFret, float span) noexcept;
+[[nodiscard]] float fretCentreFraction(int fret, int lastFret, float span) noexcept;
+
 // Vertical placement of a string, from string 0 (lowest, drawn at the top) to
 // the highest string. `inset` keeps the outer strings off the binding.
 [[nodiscard]] float stringRowFraction(int stringIndex, int stringCount,

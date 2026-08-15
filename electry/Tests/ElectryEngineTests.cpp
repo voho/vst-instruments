@@ -5690,6 +5690,26 @@ void testVisualStateAndGeometry()
                       < visuals::fretWireFraction(5, lastFret),
            "a fingered note is not between its enclosing fret wires");
 
+    // The span-aware overloads exist so a caller solving many wire/centre
+    // positions against the same neck - the editor's paint() does - can share
+    // one fretSpan() call instead of paying for it again on every fret; they
+    // must therefore agree exactly with the two-argument forms that solve
+    // their own span internally.
+    const float span = visuals::fretSpan(lastFret);
+    for (int fret = -2; fret <= lastFret + 2; ++fret)
+    {
+        expect(visuals::fretWireFraction(fret, lastFret, span)
+                   == visuals::fretWireFraction(fret, lastFret),
+               "the span-aware fretWireFraction disagrees with the two-argument "
+               "form at fret " + std::to_string(fret));
+        expect(visuals::fretCentreFraction(fret, lastFret, span)
+                   == visuals::fretCentreFraction(fret, lastFret),
+               "the span-aware fretCentreFraction disagrees with the two-argument "
+               "form at fret " + std::to_string(fret));
+    }
+    expect(visuals::fretSpan(0) == 0.0f && visuals::fretSpan(-3) == 0.0f,
+           "fretSpan did not report zero for a degenerate neck");
+
     for (int s = 1; s < ElectryEngine::stringCount; ++s)
     {
         expect(visuals::stringRowFraction(s, ElectryEngine::stringCount, 0.085f)
