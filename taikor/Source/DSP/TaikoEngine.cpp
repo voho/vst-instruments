@@ -5420,11 +5420,19 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
             --physical.controlCountdown;
         }
 
+        // Only an active voice's contact fields can be nonzero here: trigger()
+        // zeroes both the moment a voice is armed (see scheduleContacts) and
+        // silenceVoice() zeroes both the moment one is retired, so an inactive
+        // slot already reads zero without this loop ever touching it again.
+        // Resetting all sixteen slots unconditionally, every sample, wrote
+        // sixteen voices' worth of dead zeros on every silent sample of a
+        // track that is silent most of the time.
         for (auto& voice : voices_)
-        {
-            voice.solvedContactForce = 0.0f;
-            voice.solvedContactEnergyStep = 0.0;
-        }
+            if (voice.active)
+            {
+                voice.solvedContactForce = 0.0f;
+                voice.solvedContactEnergyStep = 0.0;
+            }
         for (auto& physical : physicalDrums_)
             if (physical.active)
                 advancePhysicalContacts (physical);

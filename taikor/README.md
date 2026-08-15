@@ -974,3 +974,4 @@ this repository's own code.
   sweep - into one shared `membraneModeOmegas` helper, with no change to any
   resolved drum or rendered audio, verified by matching DSP test results and
   bit-identical demo renders before and after.
+- 2026-08-15: Stopped `process()`'s per-sample loop from re-zeroing every one of the sixteen voice slots' solved-contact fields regardless of activity, since `trigger()` and `silenceVoice()` already zero them the moment a voice is armed or retired, so an inactive slot was always reading zero anyway; now only active voices are touched, which is a no-op on rendered audio confirmed by bit-identical demo checksums before and after.
