@@ -1038,6 +1038,17 @@ private:
     void updateFrettingHand(int fret, bool newChord) noexcept;
     [[nodiscard]] float currentSoundingSemitoneOffset(const Voice& voice) const noexcept;
     void updateVoiceControl(Voice& voice) noexcept;
+    // Splits a neck/bridge-summed contribution across the stereo field the
+    // same way renderVoice() and renderSympatheticString() each did with
+    // their own copy of the channelsLinked_ branch: everything into channel 0
+    // when the field is linked, or panned by the voice's own lateral position
+    // otherwise. `neckSignal`/`bridgeSignal` may be the same value (as they
+    // are for the sympathetic ring's single EMF), so the weights alone tell
+    // the two destinations apart.
+    void accumulateStereoContribution(RenderSums& sums, float stereoLateral,
+                                      float neckWeight, float neckSignal,
+                                      float bridgeWeight,
+                                      float bridgeSignal) const noexcept;
     void renderVoice(Voice& voice, RenderSums& sums) noexcept;
     void renderSympatheticString(Voice& voice, RenderSums& sums,
                                  float drive) noexcept;
