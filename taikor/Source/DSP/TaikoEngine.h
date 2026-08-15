@@ -1056,14 +1056,16 @@ private:
     };
     [[nodiscard]] static MembraneModeOmegas membraneModeOmegas (
         const DrumState& drum, float radius, float lambda, float order) noexcept;
-    // The (0,1) pair's symmetrised two-by-two - diagonalB, diagonalR and
+    // An axisymmetric mode's symmetrised two-by-two - diagonalB, diagonalR and
     // offDiagonal in the w = sqrt(sigma) q coordinates solveAxisymmetricBranch
-    // expects - for a given trial cavity stiffness against that mode's own
-    // fundamentals (see fundamentalPairOmegas). volumeBranchOmega's bisection
-    // and solveAxisymmetricPair's converged solve both build this same matrix,
-    // one on a trial stiffness and the other on the drum's own, so it is
-    // resolved once here rather than as two copies of the same four lines that
-    // could drift apart.
+    // expects - for a given cavity stiffness against that mode's own
+    // omegaBatter/omegaResonant/lambda (see fundamentalPairOmegas for the
+    // (0,1) mode's own, and membraneModeOmegas for any other entry's). Every
+    // axisymmetric solve builds this same matrix from the same four terms -
+    // volumeBranchOmega's bisection trial, solveAxisymmetricPair's converged
+    // (0,1) solve, observeMode's and buildVoiceModes's per-entry order-0
+    // branch, and measure()'s tail-length sweep - so it is resolved once here
+    // rather than as five copies of the same lines that could drift apart.
     static void axisymmetricDiagonals (const DrumState& drum,
                                        const FundamentalPair& fundamentals,
                                        float cavityStiffness, float& diagonalB,

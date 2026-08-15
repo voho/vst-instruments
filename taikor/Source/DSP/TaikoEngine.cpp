@@ -1729,10 +1729,11 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
     if (order == 0)
     {
         const float geometricMass = area * besselSquared;   // per unit density
-        const float cavity = drum.cavityStiffness * 4.0f / (lambda * lambda);
-        const float diagonalB = omegaBatter * omegaBatter + cavity / sigmaB;
-        const float diagonalR = omegaResonant * omegaResonant + cavity / sigmaR;
-        const float offDiagonal = cavity / std::sqrt (sigmaB * sigmaR);
+        float diagonalB = 0.0f;
+        float diagonalR = 0.0f;
+        float offDiagonal = 0.0f;
+        axisymmetricDiagonals (drum, FundamentalPair { lambda, omegaBatter, omegaResonant },
+                               drum.cavityStiffness, diagonalB, diagonalR, offDiagonal);
 
         float eigenvalue = 0.0f;
         float vectorB = 0.0f;
@@ -2887,13 +2888,14 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
             // 4/lambda^2 weighting, which is why the fundamental is lifted so
             // much further than the modes above it.
             const float geometricMass = area * besselSquared;   // per unit density
-            const float cavity = drum.cavityStiffness * 4.0f / (lambda * lambda);
 
             // Symmetrised by w = sqrt(sigma) q, so the two-by-two is symmetric
             // and its eigenvectors are orthonormal.
-            const float diagonalB = omegaBatter * omegaBatter + cavity / sigmaB;
-            const float diagonalR = omegaResonant * omegaResonant + cavity / sigmaR;
-            const float offDiagonal = cavity / std::sqrt (sigmaB * sigmaR);
+            float diagonalB = 0.0f;
+            float diagonalR = 0.0f;
+            float offDiagonal = 0.0f;
+            axisymmetricDiagonals (drum, FundamentalPair { lambda, omegaBatter, omegaResonant },
+                                   drum.cavityStiffness, diagonalB, diagonalR, offDiagonal);
 
             for (int branch = 0; branch < 2; ++branch)
             {
@@ -5960,14 +5962,11 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
         const float radialOmegaB = radialOmegas.batter;
         const float radialOmegaR = radialOmegas.resonant;
 
-        const float radialCavity =
-            drum.cavityStiffness * 4.0f / (radialLambda * radialLambda);
-        const float radialDiagB =
-            radialOmegaB * radialOmegaB + radialCavity / drum.batterDensity;
-        const float radialDiagR =
-            radialOmegaR * radialOmegaR + radialCavity / drum.resonantDensity;
-        const float radialOff =
-            radialCavity / std::sqrt (drum.batterDensity * drum.resonantDensity);
+        float radialDiagB = 0.0f;
+        float radialDiagR = 0.0f;
+        float radialOff = 0.0f;
+        axisymmetricDiagonals (drum, FundamentalPair { radialLambda, radialOmegaB, radialOmegaR },
+                               drum.cavityStiffness, radialDiagB, radialDiagR, radialOff);
 
         for (int branch = 0; branch < 2; ++branch)
         {
