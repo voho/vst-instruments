@@ -7216,6 +7216,25 @@ void testNoLabelIsTruncated()
            "the width model thinks a ten-character legend fits a narrow button");
 }
 
+// The width model's two defensive branches -- a null legend and a button too
+// narrow to leave any drawing room -- are exercised nowhere else. Both matter
+// for the same reason the truncation guard above does: a caller that trusts
+// this model to size real estate needs its edge cases to behave, not just its
+// everyday panel legends.
+void testPanelTextWidthEdgeCases()
+{
+    expect(panel::textWidth(nullptr, panel::labelPointSize, true) == 0.0f,
+           "a null legend should measure as zero width, not read past the pointer");
+    expect(panel::textWidth("", panel::labelPointSize, true) == 0.0f,
+           "an empty legend should measure as zero width");
+
+    // Six panel units of padding leave no room to draw in a three-unit-wide
+    // button; the size picker has to fold rather than return a size that would
+    // ask for negative available space.
+    expect(panel::buttonPointSizeFor("SAW", 3.0f, 40.0f) == 0.0f,
+           "a button narrower than its own padding should report zero point size");
+}
+
 void testPanelLayout()
 {
     expect(panel::layoutIsConsistent(),
@@ -7609,6 +7628,7 @@ int main()
     testFactoryPresetCorpusStaysNumericallySafe();
     testPairedSwitchModes();
     testNoLabelIsTruncated();
+    testPanelTextWidthEdgeCases();
     testPanelLayout();
     testPanelHelpMatchesTheModulationRouting();
     testQualityChangeRefreshesTheFilterCoefficient();
