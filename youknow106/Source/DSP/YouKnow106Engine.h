@@ -1231,6 +1231,14 @@ private:
     // Fraction of the ramp's full excursion consumed by the finite-slope reset
     // at a given period, clamped so a very high note cannot invert the ramp.
     static float resetFraction(double periodSeconds) noexcept;
+    // The wrap-reset fraction and the post-reset rise-time fraction for a DCO
+    // period expressed in internal samples: { resetFraction(period *
+    // inverseOversampledRate_), max(1 - reset, 1e-4) }. renderVoice's
+    // per-sample ramp advance, rebuildRateDependentVoiceState's rate-change
+    // retiming, and restartDcoBandlimited's old/new ramp geometry each derive
+    // this identical pair from a period; shared here so they cannot drift
+    // apart.
+    [[nodiscard]] std::array<double, 2> dcoResetAndRise(double periodSamples) const noexcept;
 
     void buildHalfbandKernel() noexcept;
     [[nodiscard]] static const CorrectionTables& correctionTables() noexcept;

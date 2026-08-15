@@ -1423,6 +1423,14 @@ float YouKnow106Engine::resetFraction(double periodSeconds) noexcept
     return static_cast<float>(std::clamp(fraction, 1.0e-6, 0.25));
 }
 
+std::array<double, 2> YouKnow106Engine::dcoResetAndRise(double periodSamples) const noexcept
+{
+    const double reset = static_cast<double>(
+        resetFraction(periodSamples * inverseOversampledRate_));
+    const double rise = std::max(1.0 - reset, 1.0e-4);
+    return { reset, rise };
+}
+
 // ---------------------------------------------------------------------------
 // Bandlimiting
 // ---------------------------------------------------------------------------
@@ -1708,10 +1716,8 @@ void YouKnow106Engine::restartDcoBandlimited(
 
     const auto rampGeometry = [this](double periodSamples) {
         const double safePeriod = std::max(periodSamples, 1.0e-9);
-        const double reset = static_cast<double>(
-            resetFraction(safePeriod * inverseOversampledRate_));
-        const double rise = std::max(1.0 - reset, 1.0e-4);
-        return std::array { safePeriod, reset, rise };
+        const auto resetAndRise = dcoResetAndRise(safePeriod);
+        return std::array { safePeriod, resetAndRise[0], resetAndRise[1] };
     };
     const auto oldGeometry = rampGeometry(previousPeriodSamples);
     const auto newGeometry = rampGeometry(dco.periodSamples);
@@ -2604,9 +2610,9 @@ void YouKnow106Engine::rebuildRateDependentVoiceState() noexcept
         // Residual kernels are measured in internal samples. The safety fade
         // has reached zero, so discard their old-rate tails and prime the new
         // timeline at the oscillator's continuing physical phase.
-        const double reset = static_cast<double>(
-            resetFraction(voice.dco.periodSamples * inverseOversampledRate_));
-        const double rise = std::max(1.0 - reset, 1.0e-4);
+        const auto resetAndRise = dcoResetAndRise(voice.dco.periodSamples);
+        const double reset = resetAndRise[0];
+        const double rise = resetAndRise[1];
         const double phase = voice.dco.phase;
         const float saw = phase < rise
             ? 2.0f * clamp01(static_cast<float>(phase / rise)) - 1.0f
@@ -4165,9 +4171,9 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // Docs/circuit-modelling-research.md.
     const double increment = dco.periodSamples > 1.0e-9
                            ? 1.0 / dco.periodSamples : 0.0;
-    const double reset = static_cast<double>(
-        resetFraction(dco.periodSamples * inverseOversampledRate_));
-    const double rise = std::max(1.0 - reset, 1.0e-4);
+    const auto resetAndRise = dcoResetAndRise(dco.periodSamples);
+    const double reset = resetAndRise[0];
+    const double rise = resetAndRise[1];
 
     const double previousPhase = dco.phase;
     const double unwrapped = dco.phase + increment;

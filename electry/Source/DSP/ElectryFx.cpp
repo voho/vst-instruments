@@ -495,8 +495,11 @@ float ElectryFx::ampStage(GainChannel& channel, float input) noexcept
     // cabinet.
     channel.bias += biasCoefficient_ * (std::abs(sample) - channel.bias);
     const float bias = -0.22f - 1.10f * channel.bias;
+    // Both stages below subtract the transfer at the same operating point, so
+    // it is solved once here rather than once per stage.
+    const float biasTriode = triode(bias);
 
-    float stage = triode(sample * ampDriveFirst_ + bias) - triode(bias);
+    float stage = triode(sample * ampDriveFirst_ + bias) - biasTriode;
     // Miller capacitance between the stages: each one is progressively darker,
     // which is why a cascaded amplifier saturates smoothly instead of
     // accumulating fizz.
@@ -521,7 +524,7 @@ float ElectryFx::ampStage(GainChannel& channel, float input) noexcept
     // 350 V to 250 V a real supply measures.
     const float droop = 1.0f - 0.28f * channel.sag / (0.30f + channel.sag);
     stage = droop * (triode(stage * ampDriveSecond_ / droop + bias)
-                     - triode(bias));
+                     - biasTriode);
     const float rectified = stage < 0.0f ? -stage : stage;
     channel.sag += (rectified > channel.sag ? sagAttack_ : sagRelease_)
                  * (rectified - channel.sag);
