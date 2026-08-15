@@ -896,10 +896,7 @@ const DrumEngine::CymbalRoms& DrumEngine::cymbalRoms() noexcept
 
 void DrumEngine::reset() noexcept
 {
-    for (auto& voice : voices_)
-        voice = Voice {};
-    for (auto& voice : retiringVoices_)
-        voice = Voice {};
+    forEachVoice ([] (Voice& voice) { voice = Voice {}; });
     triggerCounters_.fill (0);
     componentDrift_.fill (0.0f);
     engineSamples_ = 0;
@@ -2634,10 +2631,7 @@ void DrumEngine::dampRingingMembrane (Instrument instrument, float velocity) noe
         voice.modalEnergy *= retained * retained;
         voice.recentPeak *= retained;
     };
-    for (auto& voice : voices_)
-        damp (voice);
-    for (auto& voice : retiringVoices_)
-        damp (voice);
+    forEachVoice (damp);
 }
 
 void DrumEngine::chokeGroup (int group) noexcept
@@ -2646,22 +2640,20 @@ void DrumEngine::chokeGroup (int group) noexcept
         return;
     // Every voice remembers the group it was born into, so retuning the
     // parameter never strands a ringing tail that can no longer be cut.
-    for (auto& voice : voices_)
+    forEachVoice ([this, group] (Voice& voice)
+    {
         if (voice.active && voice.chokeGroup == group)
             beginChoke (voice, 0.003f);
-    for (auto& voice : retiringVoices_)
-        if (voice.active && voice.chokeGroup == group)
-            beginChoke (voice, 0.003f);
+    });
 }
 
 void DrumEngine::allSoundsOff() noexcept
 {
-    for (auto& voice : voices_)
+    forEachVoice ([this] (Voice& voice)
+    {
         if (voice.active)
             beginChoke (voice, 0.004f);
-    for (auto& voice : retiringVoices_)
-        if (voice.active)
-            beginChoke (voice, 0.004f);
+    });
 }
 
 void DrumEngine::updateActiveVoiceCount() noexcept
@@ -2690,10 +2682,7 @@ void DrumEngine::updateActiveVoiceCount() noexcept
             newestPitch = voice.oscillatorFrequency;
         }
     };
-    for (const auto& voice : voices_)
-        observe (voice);
-    for (const auto& voice : retiringVoices_)
-        observe (voice);
+    forEachVoice (observe);
     for (std::size_t index = 0; index < instrumentCount; ++index)
         instrumentLevels_[index].store (levels[index], std::memory_order_relaxed);
     activeVoiceCount_.store (count, std::memory_order_relaxed);
@@ -4632,10 +4621,7 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         if (voice.active)
             chunkVoices[static_cast<std::size_t> (chunkVoiceCount++)] = &voice;
     };
-    for (auto& voice : voices_)
-        observeVoice (voice);
-    for (auto& voice : retiringVoices_)
-        observeVoice (voice);
+    forEachVoice (observeVoice);
 
     const float gainTarget = outputGain_.load (std::memory_order_relaxed);
     const float gainSmoothing = gainSmoothingCoefficient_;

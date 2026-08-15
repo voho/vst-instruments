@@ -732,6 +732,32 @@ private:
     void beginFadeToSilence (Voice& voice, float multiplier) noexcept;
     void retireVoice (const Voice& source) noexcept;
     void silenceVoice (Voice& voice) noexcept;
+    // A voice is sounding in one of two pools - the live one and the retiring
+    // one voice-stealing keeps around for a click-free fade - and reset(),
+    // dampRingingMembrane(), chokeGroup(), allSoundsOff(),
+    // updateActiveVoiceCount() and process() each used to walk both with their
+    // own identical pair of range-for loops around whatever they actually
+    // wanted to do per voice. One helper walking both pools in the same order
+    // - voices_ then retiringVoices_ - and calling the functor on every voice
+    // it finds replaces every one of those pairs with no change to which
+    // voice is visited or when.
+    template <typename Fn>
+    void forEachVoice (Fn&& fn) noexcept
+    {
+        for (auto& voice : voices_)
+            fn (voice);
+        for (auto& voice : retiringVoices_)
+            fn (voice);
+    }
+
+    template <typename Fn>
+    void forEachVoice (Fn&& fn) const noexcept
+    {
+        for (const auto& voice : voices_)
+            fn (voice);
+        for (const auto& voice : retiringVoices_)
+            fn (voice);
+    }
     void addBankReference (Instrument instrument) noexcept;
     void releaseBankReference (Instrument instrument) noexcept;
     void updateActiveVoiceCount() noexcept;
