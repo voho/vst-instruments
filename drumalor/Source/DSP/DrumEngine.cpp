@@ -2713,13 +2713,22 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
     //
     // A model that damps every mode alike gets this exactly backwards, and it is
     // what makes a synthesised drum sound like one tone with an envelope.
-    const auto lossPerSecond = [&head, &loss] (float frequency, int multipole)
+    // efficiencyOut, when given, receives the radiation-efficiency term this
+    // computes anyway. emit() below needs that same term for its "heard"
+    // weight, and pow() is the expensive part of it - taking it here instead
+    // of re-deriving omega/ka/exponent/power a second time from the same
+    // (frequency, multipole) pair saves a transcendental call per mode for no
+    // change to either result.
+    const auto lossPerSecond = [&head, &loss] (
+        float frequency, int multipole, float* efficiencyOut = nullptr)
     {
         const float omega = twoPi * std::max (1.0f, frequency);
         const float ka = omega * head.radius / soundSpeed;
         const float exponent = 2.0f + 2.0f * static_cast<float> (multipole);
         const float power = std::pow (std::max (1.0e-4f, ka), exponent);
         const float efficiency = power / (1.0f + power);
+        if (efficiencyOut != nullptr)
+            *efficiencyOut = efficiency;
         return loss.fixed + loss.hysteretic * omega
              + loss.viscous * omega * omega + loss.radiation * efficiency;
     };
@@ -2793,13 +2802,10 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
             // stack it in phase on whatever else landed there.
             if (frequency >= 0.44f * static_cast<float> (sampleRate_))
                 return;
+            float efficiency = 0.0f;
             const float modeLoss = std::max (1.0e-3f,
-                                             lossPerSecond (frequency, multipole));
-            const float omega = twoPi * std::max (1.0f, frequency);
-            const float ka = omega * head.radius / soundSpeed;
-            const float exponent = 2.0f + 2.0f * static_cast<float> (multipole);
-            const float power = std::pow (std::max (1.0e-4f, ka), exponent);
-            const float heard = 0.34f + 0.66f * std::sqrt (power / (1.0f + power));
+                                             lossPerSecond (frequency, multipole, &efficiency));
+            const float heard = 0.34f + 0.66f * std::sqrt (efficiency);
 
             ratios[count] = ratio;
             decays[count] = decaySeconds * referenceLoss / modeLoss;
