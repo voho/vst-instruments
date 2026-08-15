@@ -92,7 +92,7 @@ public:
         engine deliberately ignores notes and renders silence. */
     void prepare(double sampleRate, int maxBlockSize);
     void reset();
-    void setParameters(const EngineParameters& parameters);
+    void setParameters(const EngineParameters& p);
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
     void allNotesOff();
@@ -605,26 +605,26 @@ private:
 
     struct TableBank;
     EngineParameters snapshotParameters() const noexcept;
-    [[nodiscard]] float effectiveDynamics(const EngineParameters& parameters) const noexcept;
+    [[nodiscard]] float effectiveDynamics(const EngineParameters& p) const noexcept;
     [[nodiscard]] static const TableBank& sharedTableBank();
     void buildSingerIdentities();
-    void initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, int singer,
+    void initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, int singerIndex,
                          float velocity, float groupGain, int singerTotal,
-                         float glideFromCents, const EngineParameters& parameters);
-    void updateChunkState(const EngineParameters& parameters, bool advanceSmoothers);
-    void updateVoiceControl(Voice& voice, const EngineParameters& parameters,
+                         float glideFromCents, const EngineParameters& p);
+    void updateChunkState(const EngineParameters& p, bool advanceSmoothers);
+    void updateVoiceControl(Voice& voice, const EngineParameters& p,
                             bool advanceDriftClock);
     void drawVibratoCycle(Voice& voice) noexcept;
-    void updateVowelDrift(Voice& voice, const EngineParameters& parameters,
+    void updateVowelDrift(Voice& voice, const EngineParameters& p,
                           float driftAmount, bool advanceState) noexcept;
-    void renderVoice(Voice& voice, const EngineParameters& parameters, int count);
+    void renderVoice(Voice& voice, const EngineParameters& p, int count);
     void silenceVoice(Voice& voice) noexcept;
     void beginRelease(Voice& voice) noexcept;
-    int voicesForMode(const EngineParameters& parameters) const noexcept;
-    int chordMidiForSinger(int rootMidi, int singer, const EngineParameters& parameters) const noexcept;
+    int voicesForMode(const EngineParameters& p) const noexcept;
+    int chordMidiForSinger(int root, int singer, const EngineParameters& p) const noexcept;
     int findFreeVoice() const noexcept;
     void makeRoomFor(int required);
-    bool retuneForLegato(int midiNote, const EngineParameters& parameters);
+    bool retuneForLegato(int midiNote, const EngineParameters& p);
     void pushHeldNote(int midiNote) noexcept;
     // Outcome of a note-off against the held stack.
     enum class HeldNoteState { NotHeld, StillHeld, Released };
@@ -650,7 +650,7 @@ private:
     void clearRoom() noexcept;
     /** Resolve the twelve positions into delays and gains. Runs at the chunk
         rate and only when Spread, Size or the mode have actually moved. */
-    void updatePlacement(const EngineParameters& parameters) noexcept;
+    void updatePlacement(const EngineParameters& p) noexcept;
     /** Run the section's positions over @c count samples: sum each identity's
         voices into its own delay line, then read the direct path and the four
         first-order images at both receivers. */

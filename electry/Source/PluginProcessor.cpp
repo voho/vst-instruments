@@ -596,12 +596,14 @@ void ElectryAudioProcessor::publishStringVisualState() noexcept
     }
 }
 
-void ElectryAudioProcessor::triggerArticulation (int index)
+void ElectryAudioProcessor::triggerArticulation (int articulationIndex)
 {
-    if (index < 0 || index >= electry::ElectryEngine::keyswitchCount)
+    if (articulationIndex < 0
+        || articulationIndex >= electry::ElectryEngine::keyswitchCount)
         return;
-    enqueueUiMidiEvent (electry::ElectryEngine::firstKeyswitchNote + index,
-                        1.0f, true);
+    enqueueUiMidiEvent (
+        electry::ElectryEngine::firstKeyswitchNote + articulationIndex,
+        1.0f, true);
 }
 
 void ElectryAudioProcessor::handleNoteOn (juce::MidiKeyboardState*, int,
