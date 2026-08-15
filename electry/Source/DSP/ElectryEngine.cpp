@@ -198,6 +198,21 @@ float rateAdjustedCoefficient(float coefficientAt48k, float sampleRate) noexcept
     coefficientAt48k = clampf(coefficientAt48k, 0.0f, 1.0f);
     return 1.0f - std::pow(1.0f - coefficientAt48k, 48000.0f / sampleRate);
 }
+
+// A pickup's distance from the bridge becomes a comb-filter tap delay: the
+// fraction of the string it sits under, converted to samples via the
+// string's own period. Shared by configureVoicePickups' neck and bridge taps
+// and configureSympatheticString's bridge tap, which all did this same
+// distance/length -> fraction -> samples conversion independently, so the
+// three could disagree about the 0.01..0.95 fraction clamp or the delay
+// floor without it being obvious from any one call site.
+float pickupTapDelaySamples(float distanceMetres, float stringLengthMetres,
+                            float periodSamples, float maximumDelay) noexcept
+{
+    const float fraction = clampf(distanceMetres / stringLengthMetres,
+                                  0.01f, 0.95f);
+    return clampf(fraction * periodSamples, 2.0f, maximumDelay);
+}
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -2173,12 +2188,11 @@ void ElectryEngine::configureVoicePickups(Voice& voice) noexcept
                                     parameters.pickupType);
 
     const float period = static_cast<float>(sampleRate_) / voice.baseFrequency;
-    const float bridgeFraction = clampf(bridgeDistance / soundingLength, 0.01f, 0.95f);
-    const float neckFraction = clampf(neckDistance / soundingLength, 0.01f, 0.95f);
-    voice.pickupTapBridge.setDelay(clampf(bridgeFraction * period, 2.0f,
-                                          static_cast<float>(delayLineSize - 8)));
-    voice.pickupTapNeck.setDelay(clampf(neckFraction * period, 2.0f,
-                                        static_cast<float>(delayLineSize - 8)));
+    const float maximumTapDelay = static_cast<float>(delayLineSize - 8);
+    voice.pickupTapBridge.setDelay(pickupTapDelaySamples(
+        bridgeDistance, soundingLength, period, maximumTapDelay));
+    voice.pickupTapNeck.setDelay(pickupTapDelaySamples(
+        neckDistance, soundingLength, period, maximumTapDelay));
 
     // Magnetic aperture: a true finite rectangular spatial window. Its
     // temporal length is Fs*w/c, where c is transverse wave speed. This has
@@ -2288,11 +2302,9 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
     const float bridgeDistance = lerp(lesPaulBridgePickupMetres,
                                       telecasterBridgePickupMetres,
                                       parameters.pickupType);
-    const float bridgeFraction = clampf(bridgeDistance / scaleLengthMetres(),
-                                        0.01f, 0.95f);
-    voice.sympatheticPickupTap.setDelay(
-        clampf(bridgeFraction * period, 2.0f,
-               static_cast<float>(delayLineSize - 8)));
+    voice.sympatheticPickupTap.setDelay(pickupTapDelaySamples(
+        bridgeDistance, scaleLengthMetres(), period,
+        static_cast<float>(delayLineSize - 8)));
 }
 
 // Whether the plectrum meets the string on this attack. A hammer-on or tap is
