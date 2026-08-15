@@ -891,8 +891,9 @@ void NeuramarEngine::noteOn(int midiNote, float velocity) noexcept
     selected->velocityGain = selected->velocity
         * (0.72f + 0.28f * std::sqrt(selected->velocity));
     // These sinusoidal variation shapes depend only on the voice identity, so
-    // one evaluation at note-on replaces the same 72 sines every control frame
-    // in the reference-target and Air paths.
+    // one evaluation at note-on replaces the same 80 sines (64 harmonics plus
+    // 16 Air bands) every control frame in the reference-target and Air
+    // paths.
     for (std::size_t harmonic = 0; harmonic < NeuralModel::harmonicCount; ++harmonic)
         selected->harmonicVariationSin[harmonic] = std::sin(
             2.173f * static_cast<float>(harmonic + 1)
