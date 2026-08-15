@@ -83,6 +83,18 @@ makeSourceFilterEnvelope(
     std::array<float, NeuralModel::harmonicCount> envelope {};
     constexpr auto lastIndex = static_cast<std::ptrdiff_t>(
         NeuralModel::harmonicCount) - 1;
+    // Every interior harmonic is another harmonic's neighbour up to four more
+    // times (once for each of the +/-1 and +/-2 taps of an adjacent kernel),
+    // so std::max(amplitudes[k], 0.0f) used to be reapplied to the same k up
+    // to five times across the sweep below. std::max introduces no rounding
+    // of its own, so caching it once here and reading the cache in the inner
+    // loop reproduces exactly the value each access already computed. This
+    // runs every control frame of every voice with Body Lock and Imprint
+    // both above zero, which is the shipping default, so the reapplication
+    // was routine rather than an edge case.
+    std::array<float, NeuralModel::harmonicCount> clampedAmplitudes {};
+    for (std::size_t harmonic = 0; harmonic < amplitudes.size(); ++harmonic)
+        clampedAmplitudes[harmonic] = std::max(amplitudes[harmonic], 0.0f);
     for (std::size_t harmonic = 0; harmonic < amplitudes.size(); ++harmonic)
     {
         double power = 0.0;
@@ -97,8 +109,8 @@ makeSourceFilterEnvelope(
             neighbour = std::clamp<std::ptrdiff_t>(neighbour, 0, lastIndex);
 
             const float weight = weights[static_cast<std::size_t>(offset + 2)];
-            const float amplitude = std::max(
-                amplitudes[static_cast<std::size_t>(neighbour)], 0.0f);
+            const float amplitude
+                = clampedAmplitudes[static_cast<std::size_t>(neighbour)];
             power += static_cast<double>(weight) * amplitude * amplitude;
         }
         envelope[harmonic] = static_cast<float>(std::sqrt(std::max(power, 0.0)));
