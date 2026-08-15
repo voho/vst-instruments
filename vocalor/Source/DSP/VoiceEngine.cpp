@@ -220,7 +220,7 @@ VoiceEngine::VoiceEngine() noexcept
     // host has called prepare().
     blockParameters_ = snapshotParameters();
     updateChunkState(blockParameters_, false);
-    publishDisplayState(0, 0.0f, 0.0f, 1);
+    publishDisplayState(0.0f, 0.0f, 1);
 }
 
 void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
@@ -411,7 +411,9 @@ void VoiceEngine::reset()
     singersInUse_ = ~0u;
 
     updateChunkState(blockParameters_, false);
-    publishDisplayState(0, 0.0f, 0.0f, 1);
+    // allSoundOff() above has already silenced every voice, so this resolves
+    // to zero regardless of how stale activeTotal_/activeVoices_ are here.
+    publishDisplayState(0.0f, 0.0f, 1);
 }
 
 void VoiceEngine::setParameters(const EngineParameters& p)
@@ -3479,11 +3481,11 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
             std::fill(left, left + numSamples, 0.0f);
         if (right != nullptr && right != left)
             std::fill(right, right + numSamples, 0.0f);
-        // publishDisplayState() stores the voice count itself; storing it again
-        // here would be the same atomic write twice on every idle block, which
-        // is the one case this engine is benchmarked and tuned to render for
-        // nearly nothing.
-        publishDisplayState(0, 0.0f, 0.0f, numSamples);
+        // activeTotal_ is already 0 on this path, so publishDisplayState()
+        // resolves that same zero voice count itself rather than being told it
+        // twice, which is the one case this engine is benchmarked and tuned to
+        // render for nearly nothing.
+        publishDisplayState(0.0f, 0.0f, numSamples);
         return;
     }
 
@@ -3589,14 +3591,13 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
         rendered += count;
     }
 
-    const int count = countActiveVoices();
-    // publishDisplayState() stores the count itself below; it used to be stored
-    // here as well, which cost every block a second, redundant atomic write of
-    // the same value.
-    publishDisplayState(count, blockPeakLeft, blockPeakRight, numSamples);
+    // publishDisplayState() resolves the voice count itself, from the same
+    // activeVoices_ list this block already built, instead of paying for a
+    // second full scan of every voice slot here.
+    publishDisplayState(blockPeakLeft, blockPeakRight, numSamples);
 }
 
-void VoiceEngine::publishDisplayState(int voiceCount, float blockPeakLeft,
+void VoiceEngine::publishDisplayState(float blockPeakLeft,
                                       float blockPeakRight, int numSamples) noexcept
 {
     const float interval = static_cast<float>(std::max(1, numSamples)) * inverseSampleRate_;
@@ -3607,16 +3608,23 @@ void VoiceEngine::publishDisplayState(int voiceCount, float blockPeakLeft,
     displayLevelRight_.store(meterRight_, std::memory_order_relaxed);
 
     // Prefer the tract of a sounding voice so the curve breathes with the
-    // vibrato and the ensemble drift instead of showing a static target.
+    // vibrato and the ensemble drift instead of showing a static target, and
+    // count what is still active for the status display. activeVoices_ /
+    // activeTotal_ already hold exactly the voices active at the start of this
+    // block -- process() builds that list once and nothing can have started
+    // since -- so walking it costs at most that many checks instead of always
+    // scanning every one of the maxVoices slots; the .active test below still
+    // excludes any that finished releasing during this same block.
     const Voice* reference = nullptr;
-    for (const auto& voice : voices_)
+    int voiceCount = 0;
+    for (int i = 0; i < activeTotal_; ++i)
     {
+        const Voice& voice = *activeVoices_[static_cast<std::size_t>(i)];
         if (!voice.active)
             continue;
+        ++voiceCount;
         if (reference == nullptr || (reference->releasing && !voice.releasing))
             reference = &voice;
-        if (!voice.releasing)
-            break;
     }
 
     for (int formant = 0; formant < formantCount; ++formant)
