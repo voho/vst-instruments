@@ -603,6 +603,17 @@ float TaikoEngine::materialDamping (const DrumState& drum, float omega,
     return (hysteretic + viscous) * (1.0f + 2.4f * extraDamping);
 }
 
+float TaikoEngine::nearFieldAttenuation (float lambda, float radius, float omega,
+                                         float micDistanceMetres) noexcept
+{
+    const float spatialWavenumber = lambda / radius;
+    const float airWavenumber = omega / soundSpeed;
+    const float evanescentRate = std::sqrt (std::max (
+        spatialWavenumber * spatialWavenumber - airWavenumber * airWavenumber,
+        0.0f));
+    return std::exp (-evanescentRate * micDistanceMetres);
+}
+
 float TaikoEngine::continuumBandVariance (float lowCoefficient,
                                           float highCoefficient) noexcept
 {
@@ -1741,13 +1752,7 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
               + mountingLoss (drum, frequency);
 
         const float drive = shapeStrike * batterShare / (geometricMass * omega);
-        const float spatialWavenumber = lambda / radius;
-        const float airWavenumber = omega / soundSpeed;
-        const float nearField = std::exp (
-            -std::sqrt (std::max (spatialWavenumber * spatialWavenumber
-                                      - airWavenumber * airWavenumber,
-                                  0.0f))
-            * micDistance);
+        const float nearField = nearFieldAttenuation (lambda, radius, omega, micDistance);
         const float observed =
             nearField * shapeMic * batterShare
             + efficiency * (2.0f * besselAtZero / lambda) * volumeShare
@@ -1777,13 +1782,7 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
               + mountingLoss (drum, frequency);
 
         const float drive = shapeStrike / (geometricMass * omega);
-        const float spatialWavenumber = lambda / radius;
-        const float airWavenumber = omega / soundSpeed;
-        const float nearField = std::exp (
-            -std::sqrt (std::max (spatialWavenumber * spatialWavenumber
-                                      - airWavenumber * airWavenumber,
-                                  0.0f))
-            * micDistance);
+        const float nearField = nearFieldAttenuation (lambda, radius, omega, micDistance);
         const float proximity =
             1.0f + drum.micProximity
                        / (1.0f + (frequency / 190.0f) * (frequency / 190.0f));
@@ -2959,13 +2958,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 // the head the pair reads the membrane's shape and separates,
                 // and a hand's width back it reads only what the drum radiates
                 // and collapses towards mono.
-                const float spatialWavenumber = lambda / radius;
-                const float airWavenumber = omega / soundSpeed;
-                const float evanescentRate = std::sqrt (std::max (
-                    spatialWavenumber * spatialWavenumber
-                        - airWavenumber * airWavenumber,
-                    0.0f));
-                const float nearField = std::exp (-evanescentRate * micDistance);
+                const float nearField = nearFieldAttenuation (lambda, radius, omega,
+                                                              micDistance);
 
                 const float observed =
                     nearField * shapeMic * batterShare
@@ -3072,13 +3066,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 // on the head is finer. That is why backing the microphones
                 // off narrows the image and softens the slap at the same time:
                 // it is one mechanism, not two.
-                const float spatialWavenumber = lambda / radius;
-                const float airWavenumber = omega / soundSpeed;
-                const float evanescentRate = std::sqrt (std::max (
-                    spatialWavenumber * spatialWavenumber
-                        - airWavenumber * airWavenumber,
-                    0.0f));
-                const float nearField = std::exp (-evanescentRate * micDistance);
+                const float nearField = nearFieldAttenuation (lambda, radius, omega,
+                                                              micDistance);
 
                 const float proximity =
                     1.0f + drum.micProximity / (1.0f + (frequency / 190.0f)
