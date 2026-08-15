@@ -3697,20 +3697,29 @@ void VoiceEngine::publishDisplayState(float blockPeakLeft,
         displayFormantGain_[index].store(gain, std::memory_order_relaxed);
     }
 
-    const int vowelIndex = blockParameters_.vowel == Vowel::Ooh
-        ? 1 : (blockParameters_.vowel == Vowel::Uuh ? 2 : 0);
-    const VowelPoint anchor = presetVowelPosition(vowelIndex);
-    const float morph = clampUnit(blockParameters_.vowelMorph);
-    const float baseX = anchor.x
-        + morph * (clampUnit(blockParameters_.vowelX) - anchor.x);
-    const float baseY = anchor.y
-        + morph * (clampUnit(blockParameters_.vowelY) - anchor.y);
-    displayVowelX_.store(
-        reference != nullptr ? reference->effectiveVowelX : baseX,
-        std::memory_order_relaxed);
-    displayVowelY_.store(
-        reference != nullptr ? reference->effectiveVowelY : baseY,
-        std::memory_order_relaxed);
+    // The idle fallback position is only ever read when nothing is sounding:
+    // whenever a reference voice exists, displayVowelX_/Y_ publish its own
+    // effective point instead. Resolving the preset anchor and the pad blend
+    // is therefore wasted on every block a note is held, which is most of
+    // them; skip it entirely unless the fallback is actually going to be used.
+    if (reference != nullptr)
+    {
+        displayVowelX_.store(reference->effectiveVowelX, std::memory_order_relaxed);
+        displayVowelY_.store(reference->effectiveVowelY, std::memory_order_relaxed);
+    }
+    else
+    {
+        const int vowelIndex = blockParameters_.vowel == Vowel::Ooh
+            ? 1 : (blockParameters_.vowel == Vowel::Uuh ? 2 : 0);
+        const VowelPoint anchor = presetVowelPosition(vowelIndex);
+        const float morph = clampUnit(blockParameters_.vowelMorph);
+        const float baseX = anchor.x
+            + morph * (clampUnit(blockParameters_.vowelX) - anchor.x);
+        const float baseY = anchor.y
+            + morph * (clampUnit(blockParameters_.vowelY) - anchor.y);
+        displayVowelX_.store(baseX, std::memory_order_relaxed);
+        displayVowelY_.store(baseY, std::memory_order_relaxed);
+    }
     displayDynamics_.store(smoothedDynamics_, std::memory_order_relaxed);
     activeVoiceCount_.store(voiceCount, std::memory_order_relaxed);
 }
