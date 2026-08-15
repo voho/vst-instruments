@@ -751,10 +751,15 @@ void ElectryEngine::handLossResponse(float depth, const HandLossShape& shape,
 
     // Evaluated at z = e^{j omega}, in double for the same cancellation reason
     // the section itself runs in double: the solve divides this magnitude out of
-    // its targets, so an error here becomes an error in the fitted decay.
+    // its targets, so an error here becomes an error in the fitted decay. The
+    // second harmonic is the double angle of the first rather than a second
+    // pair of std::cos/std::sin calls - configureVoicePitch() reaches this once
+    // per control tick per polarisation for every voice whose pitch is still
+    // moving (an active bend or vibrato), so this runs continuously rather
+    // than only at note-on.
     const double dw = omega;
     const double dcw = std::cos(dw), dsw = std::sin(dw);
-    const double c2 = std::cos(2.0 * dw), s2 = std::sin(2.0 * dw);
+    const double c2 = 2.0 * dcw * dcw - 1.0, s2 = 2.0 * dsw * dcw;
     const double nr = b0 + b1 * dcw + b2 * c2;
     const double ni = -(b1 * dsw + b2 * s2);
     const double dr = 1.0 + a1 * dcw + a2 * c2;

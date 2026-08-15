@@ -2679,8 +2679,14 @@ float VoiceEngine::radiatedPowerTarget(const Voice& voice, float fundamental,
     // A fully nasal tract uses a different murmur pole and series notch which
     // this oral estimate intentionally excludes. Make both that case and the
     // test-only depth-zero A/B a real bypass before doing the H8 tract scan.
+    // radiatedPowerDepth_ is test-settable to arbitrary values (see
+    // setRadiatedPowerDepth() in VoiceEngineTests.cpp) so it still needs
+    // clamping here, but smoothedNasal_ is a block-rate smoother that only
+    // ever lands on clampUnit(p.nasal) or blends toward it by a coefficient
+    // in (0, 1), so it never leaves [0, 1] and re-clamping it on every
+    // voice's control update was wasted work.
     const float oralAmount = clampUnit(radiatedPowerDepth_)
-        * (1.0f - clampUnit(smoothedNasal_));
+        * (1.0f - smoothedNasal_);
     if (!(oralAmount > 0.0f))
         return 1.0f;
 

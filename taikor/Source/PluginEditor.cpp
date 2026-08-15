@@ -153,10 +153,12 @@ void TaikorLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w
                                    * (rotaryEndAngle - rotaryStartAngle);
         const auto outer = radius + 0.5f;
         const auto inner = outer - juce::jmax (2.0f, radius * 0.10f);
-        g.drawLine (centreX + std::sin (tickAngle) * inner,
-                    centreY - std::cos (tickAngle) * inner,
-                    centreX + std::sin (tickAngle) * outer,
-                    centreY - std::cos (tickAngle) * outer, 0.8f);
+        const auto tickSin = std::sin (tickAngle);
+        const auto tickCos = std::cos (tickAngle);
+        g.drawLine (centreX + tickSin * inner,
+                    centreY - tickCos * inner,
+                    centreX + tickSin * outer,
+                    centreY - tickCos * outer, 0.8f);
     }
 
     const auto knobRadius = radius - thickness * 1.75f;
