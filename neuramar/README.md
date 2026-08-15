@@ -867,6 +867,12 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   so the cached value is bit-identical to what each access already
   computed - with the eight rendered demo WAVs confirmed byte-for-byte
   unchanged.
+- 2026-08-15: `ModelVisualisation.cpp`'s `buildModelAnatomy` now resolves each
+  Air band's centre octave and clamped bandwidth once per published memory
+  instead of `depositBand` rederiving the same `std::log2` and width clamp on
+  every one of the 24 trajectory slices sharing that band (16 bands x 24
+  slices = 384 calls collapsing to 16 distinct values); pure dedup, with the
+  eight rendered demo WAVs confirmed byte-for-byte unchanged.
 
 ## Licensing
 

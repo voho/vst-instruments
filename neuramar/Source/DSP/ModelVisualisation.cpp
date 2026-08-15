@@ -77,17 +77,24 @@ void depositPeak(std::array<float, ModelAnatomy::binCount>& bins,
     }
 }
 
-void depositBand(std::array<float, ModelAnatomy::binCount>& bins,
-                 float centreHz, float bandwidthOctaves,
-                 float amplitude) noexcept
+// A band's centre octave and clamped width depend only on the model's fitted
+// Air geometry, which is fixed for the whole trajectory, not on the slice
+// being drawn or its amplitude. buildModelAnatomy() calls this once per band
+// per slice (sliceCount * airBandCount = 24 * 16 = 384 times per published
+// memory), and the same centreHz/bandwidthOctaves pair recurs across all 24
+// slices of a given band, so resolving std::log2(centreHz) and the width
+// clamp here on every call rederived the same 16 values 24 times over. The
+// caller now hoists both into an AirBandGeometry, resolved once per band, and
+// passes the already-validated octave and width through - the same "hoist
+// what does not depend on the loop" pattern already applied to binOctaves and
+// stretchedHarmonicRatios above.
+void depositBandAtOctave(std::array<float, ModelAnatomy::binCount>& bins,
+                         float centreOctave, float width,
+                         float amplitude) noexcept
 {
-    if (!(amplitude > 0.0f) || !std::isfinite(amplitude)
-        || !(centreHz > 0.0f) || !std::isfinite(centreHz))
+    if (!(amplitude > 0.0f) || !std::isfinite(amplitude))
         return;
 
-    const float width = std::clamp(finiteOr(bandwidthOctaves, 1.0f),
-                                   0.10f, 4.0f);
-    const float centreOctave = std::log2(centreHz);
     for (std::size_t bin = 0; bin < ModelAnatomy::binCount; ++bin)
     {
         const float distance = (binOctaves[bin] - centreOctave)
@@ -97,6 +104,22 @@ void depositBand(std::array<float, ModelAnatomy::binCount>& bins,
         const float shape = std::exp(-0.5f * distance * distance);
         bins[bin] = std::max(bins[bin], amplitude * shape);
     }
+}
+
+struct AirBandGeometry
+{
+    bool valid { false };
+    float centreOctave { 0.0f };
+    float width { 1.0f };
+};
+
+[[nodiscard]] AirBandGeometry makeAirBandGeometry(
+    float centreHz, float bandwidthOctaves) noexcept
+{
+    if (!(centreHz > 0.0f) || !std::isfinite(centreHz))
+        return {};
+    return { true, std::log2(centreHz),
+             std::clamp(finiteOr(bandwidthOctaves, 1.0f), 0.10f, 4.0f) };
 }
 } // namespace
 
@@ -194,6 +217,13 @@ void buildModelAnatomy(const NeuralModel& model,
         stretchedHarmonicRatios[harmonic] = stretchedHarmonicRatio(
             static_cast<float>(harmonic + 1), destination.inharmonicity);
 
+    // Likewise, each Air band's centre octave and clamped width depend only
+    // on the model's fitted geometry, fixed above and not on the slice below.
+    std::array<AirBandGeometry, NeuralModel::airBandCount> airBandGeometry {};
+    for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
+        airBandGeometry[band] = makeAirBandGeometry(
+            airCentres[band], airWidths[band]);
+
     for (std::size_t slice = 0; slice < ModelAnatomy::sliceCount; ++slice)
     {
         const float normalisedTime = static_cast<float>(slice)
@@ -224,8 +254,11 @@ void buildModelAnatomy(const NeuralModel& model,
         {
             const float amplitude = std::max(
                 finiteOr(frame.airAmplitudes[band], 0.0f), 0.0f);
-            depositBand(destination.air[slice], airCentres[band],
-                        airWidths[band], amplitude);
+            const auto& geometry = airBandGeometry[band];
+            if (geometry.valid)
+                depositBandAtOctave(destination.air[slice],
+                                    geometry.centreOctave, geometry.width,
+                                    amplitude);
             airSquares += static_cast<double>(amplitude) * amplitude;
             peak = std::max(peak, amplitude);
         }
