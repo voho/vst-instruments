@@ -3684,12 +3684,12 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
     }
 }
 
-void ElectryEngine::accumulateStereoContribution(RenderSums& sums,
-                                                  float stereoLateral,
-                                                  float neckWeight,
-                                                  float neckSignal,
-                                                  float bridgeWeight,
-                                                  float bridgeSignal)
+inline void ElectryEngine::accumulateStereoContribution(RenderSums& sums,
+                                                          float stereoLateral,
+                                                          float neckWeight,
+                                                          float neckSignal,
+                                                          float bridgeWeight,
+                                                          float bridgeSignal)
     const noexcept
 {
     if (channelsLinked_)
