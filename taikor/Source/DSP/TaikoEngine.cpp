@@ -4821,6 +4821,24 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
     const double tolerance = 2.0e-12 * scale;
     bool converged = false;
 
+    // Declared once outside the Newton loop rather than per iteration: every
+    // entry a later row/column can read - row, column both < contactCount -
+    // is unconditionally overwritten by the assignment below before anything
+    // reads it back, on every iteration including the first, so re-zeroing
+    // all 16x16 doubles up to fourteen times per sample bought nothing but a
+    // repeated memset while a contact was live.
+    //
+    // The `{}` stays, though: pivoting below swaps whole rows -
+    // std::swap(jacobian[best], jacobian[pivot]) - and a row is the full
+    // sixteen-wide std::array, not just its first contactCount entries. Left
+    // default-initialized, the columns at and past contactCount would still
+    // get moved around by that swap even though the solver never reads them
+    // back, and swapping an indeterminate double is undefined behaviour by
+    // the standard however harmless it looks on real hardware. One
+    // zero-init before the loop is a fixed, one-off cost; leaving it out
+    // buys nothing but that risk.
+    std::array<std::array<double, maxVoices>, maxVoices> jacobian {};
+
     for (int iteration = 0; iteration < 14; ++iteration)
     {
         std::array<double, maxVoices> equations {};
@@ -4831,7 +4849,6 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
             break;
         }
 
-        std::array<std::array<double, maxVoices>, maxVoices> jacobian {};
         std::array<double, maxVoices> increment {};
         for (int row = 0; row < contactCount; ++row)
         {
