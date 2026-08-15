@@ -1041,6 +1041,21 @@ private:
     };
     [[nodiscard]] static FundamentalPair fundamentalPairOmegas (
         const DrumState& drum) noexcept;
+    // The air-loaded batter/resonant angular frequencies of a general
+    // membrane mode: its own stiffness stretch relative to the (0,1) mode and
+    // its own order-dependent air-load shape factor - unlike
+    // fundamentalPairOmegas, which fixes both to unity because it only ever
+    // describes the (0,1) mode itself. observeMode's per-mode readout,
+    // buildVoiceModes's per-entry solve and measure()'s tail-length sweep
+    // each rebuilt this identically; resolved once here so a mode's
+    // frequency cannot drift between what plays and what is reported.
+    struct MembraneModeOmegas
+    {
+        float batter { 0.0f };
+        float resonant { 0.0f };
+    };
+    [[nodiscard]] static MembraneModeOmegas membraneModeOmegas (
+        const DrumState& drum, float radius, float lambda, float order) noexcept;
     // The (0,1) pair's symmetrised two-by-two - diagonalB, diagonalR and
     // offDiagonal in the w = sqrt(sigma) q coordinates solveAxisymmetricBranch
     // expects - for a given trial cavity stiffness against that mode's own
