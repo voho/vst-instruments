@@ -1208,6 +1208,13 @@ private:
     static double midiToHz(double midiNote) noexcept;
     static std::uint32_t hash32(std::uint32_t value) noexcept;
     static float hashBipolar(std::uint32_t value) noexcept;
+    // The oversampled lookup addStep and addSlope both walk: same ring index,
+    // same subsample offset, same clamp/lerp arithmetic, only the table
+    // differs. Solved once here so the two callers stop repeating the
+    // identical interpolation for every ring sample of every event.
+    [[nodiscard]] static float interpolatedCorrectionSample(
+        const std::array<float, correctionTableLength>& table,
+        int ringIndex, float offset) noexcept;
     // `height` is a value discontinuity (the comparator and divider edges);
     // `slopeStep` is a per-sample slope discontinuity, which is what the
     // integrator's finite-slope reset is at each of its two corners.

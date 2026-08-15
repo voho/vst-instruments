@@ -1530,6 +1530,26 @@ YouKnow106Engine::correctionTables() noexcept
     return tables;
 }
 
+// The linear-interpolated read of an oversampled correction table at ring
+// sample `ringIndex`, `offset` subsamples into it. addStep and addSlope both
+// walk their own table this same way, sample for sample -- factored out so
+// neither repeats the identical clamp/lerp arithmetic for every one of
+// correctionRing samples of every event.
+float YouKnow106Engine::interpolatedCorrectionSample(
+    const std::array<float, correctionTableLength>& table,
+    int ringIndex, float offset) noexcept
+{
+    const float position = (static_cast<float>(ringIndex) + offset)
+                         * static_cast<float>(correctionOversample);
+    const int lower = std::clamp(static_cast<int>(position), 0,
+                                 correctionTableLength - 2);
+    const float fraction = std::clamp(
+        position - static_cast<float>(lower), 0.0f, 1.0f);
+    return table[static_cast<std::size_t>(lower)]
+         + (table[static_cast<std::size_t>(lower + 1)]
+            - table[static_cast<std::size_t>(lower)]) * fraction;
+}
+
 // `samplesAgo` is how far back inside the sample just rendered the event sits,
 // in [0, 1). Output sample `j` of the correction ring is `j - halfWidth`
 // samples away from the sample just rendered, so the residual is read at
@@ -1548,16 +1568,7 @@ void YouKnow106Engine::addStep(BandlimitedTrack& track, float height,
     const float offset = std::clamp(samplesAgo, 0.0f, 1.0f);
     for (int j = 0; j < correctionRing; ++j)
     {
-        const float position = (static_cast<float>(j) + offset)
-                             * static_cast<float>(correctionOversample);
-        const int lower = std::clamp(static_cast<int>(position), 0,
-                                     correctionTableLength - 2);
-        const float fraction = std::clamp(
-            position - static_cast<float>(lower), 0.0f, 1.0f);
-        const float response =
-            table[static_cast<std::size_t>(lower)]
-            + (table[static_cast<std::size_t>(lower + 1)]
-               - table[static_cast<std::size_t>(lower)]) * fraction;
+        const float response = interpolatedCorrectionSample(table, j, offset);
         const float queryTime = static_cast<float>(j - correctionHalfWidth)
                               + offset;
         const float residual = response - (queryTime >= 0.0f ? 1.0f : 0.0f);
@@ -1575,16 +1586,7 @@ void YouKnow106Engine::addSlope(BandlimitedTrack& track, float slopeStep,
     const float offset = std::clamp(samplesAgo, 0.0f, 1.0f);
     for (int j = 0; j < correctionRing; ++j)
     {
-        const float position = (static_cast<float>(j) + offset)
-                             * static_cast<float>(correctionOversample);
-        const int lower = std::clamp(static_cast<int>(position), 0,
-                                     correctionTableLength - 2);
-        const float fraction = std::clamp(
-            position - static_cast<float>(lower), 0.0f, 1.0f);
-        const float residual =
-            table[static_cast<std::size_t>(lower)]
-            + (table[static_cast<std::size_t>(lower + 1)]
-               - table[static_cast<std::size_t>(lower)]) * fraction;
+        const float residual = interpolatedCorrectionSample(table, j, offset);
         const int slot = (track.base + j) % correctionRing;
         track.ring[static_cast<std::size_t>(slot)] += slopeStep * residual;
     }
