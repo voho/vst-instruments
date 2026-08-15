@@ -960,7 +960,7 @@ suite's own 20× guardrail passes throughout and proves nothing on its own, whic
 is why the numbers are here.
 
 Placement is the expensive one and was expected to be: twelve positions times
-one direct path and four images at two receivers is sixty fractional-delay reads
+one direct path and four images at two receivers is 120 fractional-delay reads
 per sample against the four the shared network did, on top of twelve writes. It
 is bounded by making each read an integer load and a one-multiply allpass rather
 than an interpolation, by giving the lines to the twelve singer identities
