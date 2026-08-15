@@ -2600,13 +2600,18 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
         }
     }
 
-    // formantGain and tract[].b0 depend only on formantAmplitude and
-    // peakNormaliser -- set above, and only inside the tractMoved block -- and
-    // on smoothedNasal_, which updateChunkState() resolves once per 64-sample
-    // chunk and is therefore identical across the up-to-four control updates
-    // that chunk spans. Recomputing five formants' worth of gain and pole b0
-    // on every control update reran the same arithmetic on most of them.
-    if (tractMoved || voice.resolvedNasalMix != smoothedNasal_)
+    // formantGain, tract[].b0 and the nasal branch's own a1/a2/b0 depend only
+    // on formantAmplitude and peakNormaliser -- set above, and only inside the
+    // tractMoved block -- on smoothedNasal_, and on chunkFormantShiftRatio_
+    // (the nasal murmur/notch frequencies retune with formant shift exactly
+    // as the oral formants do). updateChunkState() resolves the mix and the
+    // shift ratio once per 64-sample chunk, so all three are identical across
+    // the up-to-four control updates that chunk spans. Recomputing five
+    // formants' worth of gain and pole b0, plus the nasal branch's own
+    // coefficients, on every control update reran the same arithmetic on most
+    // of them.
+    if (tractMoved || voice.resolvedNasalMix != smoothedNasal_
+        || voice.resolvedNasalShift != chunkFormantShiftRatio_)
     {
         for (int formant = 0; formant < formantCount; ++formant)
         {
@@ -2616,7 +2621,14 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
             voice.tract[index].b0 = formantPolarity(formant)
                 * voice.formantGain[index] * voice.tract[index].peakNormaliser;
         }
+        // The nasal tract does not vary with the vowel or with the singer; its
+        // branch coefficients are resolved once per chunk in updateChunkState()
+        // and only copied and scaled by this voice's own F1 amplitude here.
+        voice.nasal.a1 = chunkNasalA1_;
+        voice.nasal.a2 = chunkNasalA2_;
+        voice.nasal.b0 = voice.formantAmplitude[0] * chunkNasalB0Scale_;
         voice.resolvedNasalMix = smoothedNasal_;
+        voice.resolvedNasalShift = chunkFormantShiftRatio_;
     }
 
     if (!voice.controlInitialised)
@@ -2646,12 +2658,6 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
             (voice.radiatedPowerTarget - voice.radiatedPowerGain)
             / static_cast<float>(controlPeriod);
     }
-
-    // The nasal tract does not vary with the vowel or with the singer, so the
-    // branch coefficients are resolved once per chunk and only copied here.
-    voice.nasal.a1 = chunkNasalA1_;
-    voice.nasal.a2 = chunkNasalA2_;
-    voice.nasal.b0 = voice.formantAmplitude[0] * chunkNasalB0Scale_;
 
     // A voice no longer carries a pan. Where it is heard from belongs to the
     // singer, not to the note, and it is resolved once per chunk in
