@@ -447,21 +447,29 @@ void fft(std::vector<Complex>& values)
     const int refinementSweeps = windowPeriods < 8.0 ? 3 : 1;
     std::array<double, NeuralModel::harmonicCount> cosineCoefficients {};
     std::array<double, NeuralModel::harmonicCount> sineCoefficients {};
+    // Neither a partial's per-sample rotation nor its window-start phasor
+    // depends on the sweep index - both are fixed by partialAngles[harmonic]
+    // and start alone - so the refinement loop below used to rebuild the same
+    // rotation and initial phasor from scratch on every one of its (up to
+    // three) sweeps. Resolving them once per harmonic here and reusing the
+    // stored values across every sweep removes that repeated std::cos()/
+    // std::sin() pair without changing which values are computed.
+    std::array<Complex, NeuralModel::harmonicCount> partialRotations {};
+    std::array<Complex, NeuralModel::harmonicCount> partialInitialOscillators {};
+    for (std::size_t harmonic = 0; harmonic < partialCount; ++harmonic)
+    {
+        const double angle = partialAngles[harmonic];
+        partialRotations[harmonic] = Complex(static_cast<float>(std::cos(angle)),
+                                             static_cast<float>(std::sin(angle)));
+        partialInitialOscillators[harmonic] = std::polar(
+            1.0f, static_cast<float>(angle * static_cast<double>(start)));
+    }
     for (int sweep = 0; sweep < refinementSweeps; ++sweep)
     {
         for (std::size_t harmonic = 0; harmonic < partialCount; ++harmonic)
         {
-            const double angle = partialAngles[harmonic];
-            const Complex rotation(static_cast<float>(std::cos(angle)),
-                                   static_cast<float>(std::sin(angle)));
-            // The write-back pass below needs the oscillator reset to the
-            // same starting phase the projection pass consumed, and both used
-            // to rebuild it with an identical std::polar() call - a repeated
-            // sin/cos evaluation of the exact same angle. Computing it once
-            // and reusing the stored phasor for both passes returns the same
-            // value, since neither angle nor start changes between them.
-            const Complex initialOscillator = std::polar(
-                1.0f, static_cast<float>(angle * static_cast<double>(start)));
+            const Complex& rotation = partialRotations[harmonic];
+            const Complex& initialOscillator = partialInitialOscillators[harmonic];
             Complex oscillator = initialOscillator;
             const double previousCosine = cosineCoefficients[harmonic];
             const double previousSine = sineCoefficients[harmonic];

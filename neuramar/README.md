@@ -826,6 +826,11 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 - 2026-08-15: Removed a redundant per-partial phasor recomputation from the
   joint harmonic solve in `SampleLearner`, shortening the analysis pass with
   no change to the fitted model or the rendered audio.
+- 2026-08-15: Hoisted the joint harmonic solve's per-partial rotation and
+  window-start phasor out of its refinement-sweep loop in `SampleLearner`, so
+  the up-to-three-sweep short-aperture case no longer rebuilds the same
+  `std::cos()`/`std::sin()` pair on every sweep, with no change to the fitted
+  model or the rendered audio.
 
 ## Licensing
 
