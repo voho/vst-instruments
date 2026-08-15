@@ -1124,7 +1124,7 @@ private:
     // solve as the renderer. A felt bachi can ride a low mode for milliseconds,
     // which no prescribed pulse duration can predict truthfully.
     [[nodiscard]] static SoundingMode dynamicSoundingMode (
-        const EngineParameters& parameters, int octaveOffset,
+        const EngineParameters& rawParameters, int octaveOffset,
         float pitchBendSemitones, double sampleRateHz) noexcept;
 
     // The highest frequency the render will instantiate a resonator at. This
