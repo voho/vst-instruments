@@ -1027,14 +1027,19 @@ float DrumEngine::signedUnitFromHash (std::uint32_t value) noexcept
     return static_cast<float> (hashed & 0x00ffffffu) / 8388607.5f - 1.0f;
 }
 
-float DrumEngine::nextNoise (Voice& voice) noexcept
+float DrumEngine::advanceXorshiftNoise (std::uint32_t& state) noexcept
 {
-    std::uint32_t x = voice.noiseState;
+    std::uint32_t x = state;
     x ^= x << 13u;
     x ^= x >> 17u;
     x ^= x << 5u;
-    voice.noiseState = x == 0u ? 1u : x;
-    return static_cast<float> (voice.noiseState & 0x00ffffffu) / 8388607.5f - 1.0f;
+    state = x == 0u ? 1u : x;
+    return static_cast<float> (state & 0x00ffffffu) / 8388607.5f - 1.0f;
+}
+
+float DrumEngine::nextNoise (Voice& voice) noexcept
+{
+    return advanceXorshiftNoise (voice.noiseState);
 }
 
 // Every noise layer in the kit - snare wires, clap bursts, stick and shaker
@@ -4474,13 +4479,7 @@ void DrumEngine::renderSympatheticBeds (float excitation, float amount,
             // that they damp it instead. It is why a kick makes a snare buzz at
             // all, and why the buzz appears suddenly as the kick gets louder
             // rather than fading up in proportion to it.
-            std::uint32_t state = bed.noiseState;
-            state ^= state << 13u;
-            state ^= state >> 17u;
-            state ^= state << 5u;
-            bed.noiseState = state == 0u ? 1u : state;
-            const float noise = static_cast<float> (bed.noiseState & 0x00ffffffu)
-                / 8388607.5f - 1.0f;
+            const float noise = advanceXorshiftNoise (bed.noiseState);
             // A struck snare drives its own wires far clear of the head, so
             // the first-order law renderSnare() uses spends its life in that
             // law's saturating region. Sympathetic excitation does not: it

@@ -810,6 +810,11 @@ private:
     // per-engine state.
     [[nodiscard]] static const CymbalRoms& cymbalRoms() noexcept;
     void sineAndCosineLookup (float phase, float& sine, float& cosine) const noexcept;
+    // The xorshift32 core nextNoise() runs on a voice's own noiseState. The
+    // sympathetic beds carry the identical generator on their own state field
+    // rather than a voice's, so this takes the state by reference instead of
+    // taking a Voice, and both callers share the one implementation.
+    [[nodiscard]] static float advanceXorshiftNoise (std::uint32_t& state) noexcept;
     [[nodiscard]] static float nextNoise (Voice& voice) noexcept;
     [[nodiscard]] float nextBandLimitedNoise (Voice& voice) const noexcept;
     [[nodiscard]] static std::uint32_t hash32 (std::uint32_t value) noexcept;
