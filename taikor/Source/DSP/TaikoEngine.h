@@ -1014,11 +1014,29 @@ private:
     // column relative to its own low-frequency limit, with x = omega l / c.
     // See resolveDrumFor for why it is floored at the quarter-wave.
     [[nodiscard]] static float columnStiffnessFactor (float x) noexcept;
+    // The (0,1) mode's own wavenumber and its air-loaded batter/resonant
+    // angular frequencies, with no stiffness stretch and a unity air-load
+    // shape factor - both are normalised to be exactly one at this mode. This
+    // depends only on the drum, never on a trial cavity stiffness, so
+    // volumeBranchOmega's bisection search (which calls it through the same
+    // drum twenty-five times over) resolves it once outside the loop rather
+    // than on every trial; solveAxisymmetricPair uses it the same way against
+    // the drum's own converged cavity.
+    struct FundamentalPair
+    {
+        float lambda { 0.0f };
+        float omegaBatter { 0.0f };
+        float omegaResonant { 0.0f };
+    };
+    [[nodiscard]] static FundamentalPair fundamentalPairOmegas (
+        const DrumState& drum) noexcept;
     // The angular frequency of the volume-changing branch of the (0,1) pair for
-    // a given cavity stiffness. The cavity correction is solved against this
+    // a given cavity stiffness, given that mode's own fundamentals (see
+    // fundamentalPairOmegas). The cavity correction is solved against this
     // branch because it is the only one the enclosed air stiffens.
-    [[nodiscard]] static float volumeBranchOmega (const DrumState& drum,
-                                                  float cavityStiffness) noexcept;
+    [[nodiscard]] static float volumeBranchOmega (
+        const DrumState& drum, const FundamentalPair& fundamentals,
+        float cavityStiffness) noexcept;
     [[nodiscard]] static std::uint32_t hash32 (std::uint32_t value) noexcept;
     [[nodiscard]] static float signedUnitFromHash (std::uint32_t value) noexcept;
     [[nodiscard]] static float nextNoise (std::uint32_t& state) noexcept;

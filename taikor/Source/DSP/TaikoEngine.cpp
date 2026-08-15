@@ -848,29 +848,39 @@ float TaikoEngine::columnStiffnessFactor (float x) noexcept
     return x * std::cos (x) / std::sin (x);
 }
 
-float TaikoEngine::volumeBranchOmega (const DrumState& drum,
-                                       float cavityStiffness) noexcept
+TaikoEngine::FundamentalPair
+TaikoEngine::fundamentalPairOmegas (const DrumState& drum) noexcept
 {
     // The (0,1) pair, built exactly as measure() and buildVoiceModes build it:
     // no stiffness stretch, because the stretch is normalised at this mode, and
     // the air load's shape factor is one here for the same reason.
-    const auto lambda = static_cast<float> (membraneModes()[0].besselZero);
+    FundamentalPair result;
+    result.lambda = static_cast<float> (membraneModes()[0].besselZero);
 
     const float idealBatter =
-        drum.waveSpeed * lambda / (2.0f * piFloat * drum.radius);
+        drum.waveSpeed * result.lambda / (2.0f * piFloat * drum.radius);
     const float idealResonant =
-        drum.resonantWaveSpeed * lambda / (2.0f * piFloat * drum.radius);
+        drum.resonantWaveSpeed * result.lambda / (2.0f * piFloat * drum.radius);
     const float loadBatter = 1.0f / std::sqrt (
         1.0f + 0.85f * airDensity * drum.radius / drum.batterDensity);
     const float loadResonant = 1.0f / std::sqrt (
         1.0f + 0.85f * airDensity * drum.radius / drum.resonantDensity);
 
-    const float omegaBatter = 2.0f * piFloat * idealBatter * loadBatter;
-    const float omegaResonant = 2.0f * piFloat * idealResonant * loadResonant;
+    result.omegaBatter = 2.0f * piFloat * idealBatter * loadBatter;
+    result.omegaResonant = 2.0f * piFloat * idealResonant * loadResonant;
+    return result;
+}
 
-    const float cavity = cavityStiffness * 4.0f / (lambda * lambda);
-    const float diagonalB = omegaBatter * omegaBatter + cavity / drum.batterDensity;
-    const float diagonalR = omegaResonant * omegaResonant + cavity / drum.resonantDensity;
+float TaikoEngine::volumeBranchOmega (const DrumState& drum,
+                                       const FundamentalPair& fundamentals,
+                                       float cavityStiffness) noexcept
+{
+    const float cavity = cavityStiffness * 4.0f
+                       / (fundamentals.lambda * fundamentals.lambda);
+    const float diagonalB = fundamentals.omegaBatter * fundamentals.omegaBatter
+                           + cavity / drum.batterDensity;
+    const float diagonalR = fundamentals.omegaResonant * fundamentals.omegaResonant
+                           + cavity / drum.resonantDensity;
     const float offDiagonal =
         cavity / std::sqrt (drum.batterDensity * drum.resonantDensity);
 
@@ -894,23 +904,14 @@ TaikoEngine::solveAxisymmetricPair (const DrumState& drum) noexcept
     // and this is the (0,1) mode, so it is unity by construction - which is the
     // whole point of normalising it there. The air load's shape factor is one
     // here for the same reason.
-    const auto lambda = static_cast<float> (membraneModes()[0].besselZero);
+    const auto fundamentals = fundamentalPairOmegas (drum);
 
-    const float idealBatter =
-        drum.waveSpeed * lambda / (2.0f * piFloat * drum.radius);
-    const float idealResonant =
-        drum.resonantWaveSpeed * lambda / (2.0f * piFloat * drum.radius);
-    const float loadBatter = 1.0f / std::sqrt (
-        1.0f + 0.85f * airDensity * drum.radius / drum.batterDensity);
-    const float loadResonant = 1.0f / std::sqrt (
-        1.0f + 0.85f * airDensity * drum.radius / drum.resonantDensity);
-
-    const float omegaBatter = 2.0f * piFloat * idealBatter * loadBatter;
-    const float omegaResonant = 2.0f * piFloat * idealResonant * loadResonant;
-
-    const float cavity = drum.cavityStiffness * 4.0f / (lambda * lambda);
-    const float diagonalB = omegaBatter * omegaBatter + cavity / drum.batterDensity;
-    const float diagonalR = omegaResonant * omegaResonant + cavity / drum.resonantDensity;
+    const float cavity = drum.cavityStiffness * 4.0f
+                       / (fundamentals.lambda * fundamentals.lambda);
+    const float diagonalB = fundamentals.omegaBatter * fundamentals.omegaBatter
+                           + cavity / drum.batterDensity;
+    const float diagonalR = fundamentals.omegaResonant * fundamentals.omegaResonant
+                           + cavity / drum.resonantDensity;
     const float offDiagonal =
         cavity / std::sqrt (drum.batterDensity * drum.resonantDensity);
 
@@ -1456,9 +1457,16 @@ void TaikoEngine::resolveDrumGeometry (const EngineParameters& applied,
                              * soundSpeed / drum.depth;
 
     {
-        const auto asked = [&drum, lumpedCavity] (float factor)
+        // fundamentalPairOmegas depends only on the drum, never on the trial
+        // cavity stiffness `asked` is bisecting over, so it is resolved once
+        // here rather than recomputed on every one of the twenty-five calls
+        // (the initial bracket check plus twenty-four halvings) the search
+        // below makes.
+        const auto fundamentals = fundamentalPairOmegas (drum);
+        const auto asked = [&drum, &fundamentals, lumpedCavity] (float factor)
         {
-            const float omega = volumeBranchOmega (drum, lumpedCavity * factor);
+            const float omega =
+                volumeBranchOmega (drum, fundamentals, lumpedCavity * factor);
             return columnStiffnessFactor (omega * drum.depth / (2.0f * soundSpeed));
         };
 
