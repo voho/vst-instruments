@@ -334,19 +334,30 @@ public:
         [[nodiscard]] static float frequencyTrim(float feedback) noexcept;
     };
 
+    // Generalized algebraic soft clip: exactly linear as the normalised
+    // magnitude approaches zero and bending only as it approaches 1. The
+    // output summer and the VCF saturation below both fit this same shape
+    // independently (as does the BBD write in `Chorus::bbdTransfer`), so the
+    // denominator itself is shared here rather than reimplemented at each
+    // site. Evaluated in double so an extreme finite float still approaches
+    // the bound instead of overflowing an intermediate power and folding
+    // back to zero.
+    [[nodiscard]] static double algebraicSoftClipDenominator(
+        double normalisedMagnitude, double exponent) noexcept;
+
     // Where the transconductor's own control current stops following the
     // anti-log converter. An AS3109 teardown reports the internal control
     // current saturating at 700 uA, which is a pole near 64 kHz on this
     // circuit's C = 240 pF / R = 68 kOhm test condition -- the physical origin
     // of the upper knee, and consistent with Roland's published 50 kHz top.
     //
-    // The shape is the generalized algebraic clip the output summer and the
-    // BBD write already use: numerically linear through the whole musical
-    // range and bending only as the current approaches its limit. The exponent
-    // is the one free parameter, fitted to a measured code-to-frequency curve
-    // for a real voice card; a single pole (the exponent at one) cannot
-    // describe that knee, and the revision that used one left the model up to
-    // 143 cents flat around a 16 kHz cutoff.
+    // The shape is the generalized algebraic clip above, shared with the
+    // output summer and the BBD write: numerically linear through the whole
+    // musical range and bending only as the current approaches its limit.
+    // The exponent is the one free parameter, fitted to a measured
+    // code-to-frequency curve for a real voice card; a single pole (the
+    // exponent at one) cannot describe that knee, and the revision that used
+    // one left the model up to 143 cents flat around a 16 kHz cutoff.
     //
     // Like the output summer's rails this is a property of the part, so it
     // applies at every Unit Character setting. Gating it left the "calibrated
@@ -439,14 +450,14 @@ public:
     // property of the part, not a tolerance, so it applies at every Unit
     // Character setting including zero.
     //
-    // The shape is the generalized algebraic clip already used for the BBD
-    // write, rather than a tanh. A tanh has no linear region at all: its
-    // distortion rises as (V/asymptote)^2 from the first millivolt, which put
-    // roughly 0.3% third harmonic on every sample at an ordinary 2.6 V node
-    // swing. A TA75558S on +/-15 V rails delivering a few volts is specified
-    // far below that. A high exponent keeps the stage numerically linear
-    // through the levels it actually runs at and bends it only as it
-    // approaches the rail, which is what the device does.
+    // The shape is the generalized algebraic clip above, already used for the
+    // VCF saturation and the BBD write, rather than a tanh. A tanh has no
+    // linear region at all: its distortion rises as (V/asymptote)^2 from the
+    // first millivolt, which put roughly 0.3% third harmonic on every sample
+    // at an ordinary 2.6 V node swing. A TA75558S on +/-15 V rails delivering
+    // a few volts is specified far below that. A high exponent keeps the
+    // stage numerically linear through the levels it actually runs at and
+    // bends it only as it approaches the rail, which is what the device does.
     static constexpr float outputSummerRailVolts = 13.5f;
     static constexpr float outputSummerClipExponent = 8.0f;
     [[nodiscard]] static float outputSummerClip(float value) noexcept;

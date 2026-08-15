@@ -167,7 +167,7 @@ void parallelFormantAmplitudes (const float* formantHz, const float* formantBand
 void parallelFormantCoefficients (const float* formantHz,
                                   const float* formantBandwidth,
                                   int count, float sampleRate, float floorGain,
-                                  float* outGain, float* outA1, float* outA2,
+                                  float* outGain, float* outPoleA1, float* outPoleA2,
                                   float* outPeakNormaliser) noexcept;
 
 /** Magnitude of the summed two-pole formant bank at @c frequencyHz, in dB.
