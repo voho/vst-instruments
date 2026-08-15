@@ -4826,18 +4826,15 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
     // is unconditionally overwritten by the assignment below before anything
     // reads it back, on every iteration including the first, so re-zeroing
     // all 16x16 doubles up to fourteen times per sample bought nothing but a
-    // repeated memset while a contact was live.
-    //
-    // The `{}` stays, though: pivoting below swaps whole rows -
-    // std::swap(jacobian[best], jacobian[pivot]) - and a row is the full
-    // sixteen-wide std::array, not just its first contactCount entries. Left
-    // default-initialized, the columns at and past contactCount would still
-    // get moved around by that swap even though the solver never reads them
-    // back, and swapping an indeterminate double is undefined behaviour by
-    // the standard however harmless it looks on real hardware. One
-    // zero-init before the loop is a fixed, one-off cost; leaving it out
-    // buys nothing but that risk.
-    std::array<std::array<double, maxVoices>, maxVoices> jacobian {};
+    // repeated memset while a contact was live. It doesn't need the initial
+    // memset either: pivoting below used to swap whole sixteen-wide rows
+    // (columns past contactCount included), which would have moved
+    // indeterminate doubles around if this weren't zeroed first, so the
+    // pivot swap is bounded to [0, contactCount) instead - see the note
+    // there. With that bound in place nothing outside contactCount x
+    // contactCount is ever read, written, or moved, so the array never
+    // needs initializing at all, at any scope.
+    std::array<std::array<double, maxVoices>, maxVoices> jacobian;
 
     for (int iteration = 0; iteration < 14; ++iteration)
     {
@@ -4880,8 +4877,16 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
             }
             if (best != pivot)
             {
-                std::swap (jacobian[static_cast<std::size_t> (best)],
-                           jacobian[static_cast<std::size_t> (pivot)]);
+                // Bounded to the live [0, contactCount) sub-range rather
+                // than the whole sixteen-wide row: nothing at or past
+                // contactCount is ever read afterwards, so there is nothing
+                // to preserve by swapping it, and it lets the Jacobian above
+                // skip initializing that tail entirely.
+                for (int column = 0; column < contactCount; ++column)
+                    std::swap (jacobian[static_cast<std::size_t> (best)]
+                                       [static_cast<std::size_t> (column)],
+                               jacobian[static_cast<std::size_t> (pivot)]
+                                       [static_cast<std::size_t> (column)]);
                 std::swap (increment[static_cast<std::size_t> (best)],
                            increment[static_cast<std::size_t> (pivot)]);
             }
