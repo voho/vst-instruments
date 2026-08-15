@@ -5317,11 +5317,21 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
         // followed by an unrelated gain. The 41.3 kOhm selector ladder and
         // 101 kOhm headphone input load each wiper at every shaft position;
         // moving Volume changes both the settled gain and the resistance seen
-        // by the still-continuous capacitor state.
+        // by the still-continuous capacitor state. outputCouplingCornerHz(float)
+        // and outputCouplingHighGain(float) each solve that identical wiper
+        // network independently -- fine for the two callers that only want one
+        // of the two values, but this call site always wants both, so it is
+        // solved once here and both results are read off the one network.
+        const auto outputCouplingNetwork =
+            outputCouplingWiperNetworkFor(glidedVolume_);
+        const float outputCouplingCorner = 1.0f
+            / (twoPi * outputCouplingCapacitanceF
+               * outputCouplingNetwork.resistance);
         outputCouplingG_ = std::tan(
-            pi * outputCouplingCornerHz(glidedVolume_) * inverseSampleRate_);
-        const float outputCouplingGain =
-            outputCouplingHighGain(glidedVolume_);
+            pi * outputCouplingCorner * inverseSampleRate_);
+        const float outputCouplingGain = outputCouplingNetwork.loadedLower > 0.0f
+            ? outputCouplingNetwork.loadedLower / outputCouplingNetwork.resistance
+            : 0.0f;
         outputLeft = outputCouplingLeft_.process(
             outputLeft, outputCouplingG_, 0.0f, outputCouplingGain);
         outputRight = outputCouplingRight_.process(
