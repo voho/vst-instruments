@@ -157,6 +157,11 @@ struct AirFitDesign
     std::array<int, airFitCellCount> evidence {};
     float lowerFrequencyHz { airLowerFrequencyHz };
     float upperFrequencyHz { airUpperFrequencyHz };
+    // log(upperFrequencyHz / lowerFrequencyHz), resolved once by
+    // makeAirFitDesign(). airCellForFrequency() is called once per FFT bin -
+    // hundreds to thousands of times per design - and this ratio is fixed for
+    // the design's whole lifetime, so recomputing it per call was pure waste.
+    float logFrequencyRangeSpan { 1.0f };
 };
 
 struct AirFitResult
@@ -1581,7 +1586,7 @@ void makePreview(const std::vector<float>& sample,
                                               const AirFitDesign& design) noexcept
 {
     const float position = std::log(frequencyHz / design.lowerFrequencyHz)
-        / std::log(design.upperFrequencyHz / design.lowerFrequencyHz);
+        / design.logFrequencyRangeSpan;
     return std::min<std::size_t>(airFitCellCount - 1,
         static_cast<std::size_t>(std::max(0.0f,
             std::floor(position * static_cast<float>(airFitCellCount)))));
@@ -1597,6 +1602,8 @@ void makePreview(const std::vector<float>& sample,
     AirFitDesign design;
     design.upperFrequencyHz = std::min(
         airUpperFrequencyHz, 0.42f * static_cast<float>(sampleRate));
+    design.logFrequencyRangeSpan = std::log(
+        design.upperFrequencyHz / design.lowerFrequencyHz);
     std::array<airfilter::Coefficients, NeuralModel::airBandCount> coefficients {};
     for (std::size_t band = 0; band < coefficients.size(); ++band)
         coefficients[band] = airfilter::makeCoefficients(
