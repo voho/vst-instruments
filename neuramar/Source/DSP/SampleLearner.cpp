@@ -1890,15 +1890,7 @@ void chooseLoop(const std::vector<TargetFrame>& targets,
 [[nodiscard]] std::array<float, NeuralModel::inputSize> networkInputs(
     float time, float durationSeconds)
 {
-    time = std::clamp(time, 0.0f, 1.0f);
-    const float centred = 2.0f * time - 1.0f;
-    const float timeSeconds = time * std::max(durationSeconds, 0.0f);
-    return { centred, centred * centred,
-             std::sin(twoPi * time), std::cos(twoPi * time),
-             std::sin(2.0f * twoPi * time), std::cos(2.0f * twoPi * time),
-             std::sin(4.0f * twoPi * time), std::cos(4.0f * twoPi * time),
-             std::exp(-8.0f * timeSeconds),
-             std::exp(-40.0f * timeSeconds) };
+    return networkInputsAt(std::clamp(time, 0.0f, 1.0f), durationSeconds);
 }
 
 using NetworkInputs = std::array<float, NeuralModel::inputSize>;
