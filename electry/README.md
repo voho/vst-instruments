@@ -867,3 +867,7 @@ distributing binaries. No samples, impulse responses, or third-party preset
 libraries are included; "Les Paul" and "Telecaster" name the reference
 styles of the modeling axes and are trademarks of their respective owners,
 with no affiliation or endorsement implied.
+
+## Changelog
+
+- 2026-08-15: Removed redundant `allpassPhaseDelay` calls from the dispersion grid search in `configureVoicePitch`, sharing each candidate coefficient's fundamental-frequency phase-delay term across the two reference-partial comparisons instead of recomputing it, with bit-identical rendered output.
