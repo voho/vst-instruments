@@ -1188,6 +1188,12 @@ private:
         float inputCompensation { 1.0f };
         float vca { 0.0f };
         float pulseDuty { 0.5f };
+        // rampCurrentScaleFor(card, calibration), solved once by
+        // updatePulseComparator and reused by renderVoice: both run
+        // back-to-back on the same voice against the same card and the same
+        // calibration, so the second call was recomputing an unchanged
+        // result rather than reading it.
+        float rampCurrentScale { 1.0f };
         // PWM is a moving comparator threshold, not a pulse oscillator whose
         // edge position is frozen for one sample.  Retaining the previous
         // threshold lets renderVoice solve crossings caused by both the ramp

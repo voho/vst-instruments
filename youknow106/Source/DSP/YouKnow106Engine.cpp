@@ -4035,9 +4035,10 @@ float YouKnow106Engine::rampCurrentScaleFor(
     // The ramp's charging resistor carries the same per-card tolerance class
     // as every other analogue trim here. updatePulseComparator solves the
     // comparator crossing against this cycle's ramp slope, and renderVoice's
-    // amplitude has to scale the rendered ramp by that identical slope, so
-    // both call through here rather than risk the comparator being solved
-    // against a ramp that was not the one actually drawn.
+    // amplitude has to scale the rendered ramp by that identical slope; the
+    // former resolves it here and caches it on the voice (Voice::
+    // rampCurrentScale) so the latter reads the exact value the comparator
+    // was solved against instead of re-deriving it.
     return 1.0f + card.rampCurrentError * 0.03f * calibration;
 }
 
@@ -4107,6 +4108,7 @@ void YouKnow106Engine::updatePulseComparator(
     // waveform that did not exist.
     const float cardCurrent =
         rampCurrentScaleFor(card, parameters.calibration);
+    voice.rampCurrentScale = cardCurrent;
     const float amplitudeScale = voice.dco.renderScale * cardCurrent;
     // The alignment window is 48% to 52% duty across cards: +/-0.24 V is
     // +/-2 points on the 12 V ramp. Pulse Off remains separate at -0.8 V and
@@ -4263,8 +4265,10 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // and the 1 nF timing capacitors carry code G, 2%. Worst case that is
     // -2.93% to +3.07% of slope, which is the 3% used here. Being constant
     // per card it commutes with the track, so it stays a plain gain.
-    const float amplitude = sawMixVolts
-        * rampCurrentScaleFor(card, parameters.calibration);
+    // updatePulseComparator solves the comparator against this identical
+    // per-card scale a moment earlier in the same internal sample, so it is
+    // read from the voice rather than resolved a second time here.
+    const float amplitude = sawMixVolts * voice.rampCurrentScale;
 
     // The rise is straight, and carries no curvature term. The compensation
     // voltage drives a resistor into an integrator's virtual ground, so the
