@@ -3684,6 +3684,27 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
     }
 }
 
+inline void ElectryEngine::accumulateStereoContribution(RenderSums& sums,
+                                                          float stereoLateral,
+                                                          float neckWeight,
+                                                          float neckSignal,
+                                                          float bridgeWeight,
+                                                          float bridgeSignal)
+    const noexcept
+{
+    if (channelsLinked_)
+    {
+        sums.neck[0] += neckWeight * neckSignal;
+        sums.bridge[0] += bridgeWeight * bridgeSignal;
+        return;
+    }
+    const float side = stereoSideScale_ * stereoLateral;
+    sums.neck[0] += neckWeight * neckSignal * (1.0f - side);
+    sums.neck[1] += neckWeight * neckSignal * (1.0f + side);
+    sums.bridge[0] += bridgeWeight * bridgeSignal * (1.0f - side);
+    sums.bridge[1] += bridgeWeight * bridgeSignal * (1.0f + side);
+}
+
 void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
 {
     auto& vertical = voice.vertical;
@@ -4083,24 +4104,8 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     // Stereo spreads strings by their real lateral order, without delay,
     // chorus, modulation, or random phase. The shared body remains centred.
     // In Mono the two channels are bit-identical, so only one is accumulated.
-    if (channelsLinked_)
-    {
-        sums.neck[0] += 0.5f * neckSignal;
-        sums.bridge[0] += 0.5f * bridgeSignal;
-    }
-    else
-    {
-        const float side = stereoSideScale_ * voice.stereoLateral;
-        const std::array<float, 2> channelWeights { 1.0f - side, 1.0f + side };
-        for (int channel = 0; channel < 2; ++channel)
-        {
-            const float weight = channelWeights[static_cast<std::size_t>(channel)];
-            sums.neck[static_cast<std::size_t>(channel)]
-                += 0.5f * neckSignal * weight;
-            sums.bridge[static_cast<std::size_t>(channel)]
-                += 0.5f * bridgeSignal * weight;
-        }
-    }
+    accumulateStereoContribution(sums, voice.stereoLateral, 0.5f, neckSignal,
+                                 0.5f, bridgeSignal);
 
     // The bridge passes string vibration and playing noise into the body, and
     // the same bridge force drives the sympathetic coupling bus. Every voice
@@ -4208,19 +4213,8 @@ void ElectryEngine::renderSympatheticString(Voice& voice, RenderSums& sums,
         emfLowpassCoefficient_);
     voice.sympatheticPreviousFlux = flux;
 
-    if (channelsLinked_)
-    {
-        sums.bridge[0] += 0.5f * emf;
-        sums.neck[0] += 0.28f * emf;
-    }
-    else
-    {
-        const float side = stereoSideScale_ * voice.stereoLateral;
-        sums.bridge[0] += 0.5f * emf * (1.0f - side);
-        sums.bridge[1] += 0.5f * emf * (1.0f + side);
-        sums.neck[0] += 0.28f * emf * (1.0f - side);
-        sums.neck[1] += 0.28f * emf * (1.0f + side);
-    }
+    accumulateStereoContribution(sums, voice.stereoLateral, 0.28f, emf, 0.5f,
+                                 emf);
     sums.body += 0.35f * total;
 
     voice.sympatheticEnergy += sympatheticEnergyCoefficient_
