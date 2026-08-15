@@ -126,6 +126,33 @@ makeSourceFilterEnvelope(
     return phase;
 }
 
+// The clamped loop region a model's metadata describes. duration is floored
+// at 1 ms so nothing downstream divides by zero, and the loop span is clamped
+// inside it with the same floor. sampleLoopLevelTrajectory() and
+// updateVoiceControl() both need this exact clamp, so it is resolved by one
+// shared function instead of two independently maintained copies of the same
+// four lines.
+struct LoopRegion
+{
+    float duration;
+    float loopStart;
+    float loopEnd;
+    float length;
+};
+
+[[nodiscard]] LoopRegion computeLoopRegion(
+    const NeuralModel::Metadata& metadata) noexcept
+{
+    LoopRegion region;
+    region.duration = std::max(metadata.durationSeconds, 0.001f);
+    region.loopStart = std::clamp(metadata.loopStartSeconds,
+                                  0.0f, region.duration);
+    region.loopEnd = std::clamp(metadata.loopEndSeconds,
+                                region.loopStart + 0.001f, region.duration);
+    region.length = std::max(region.loopEnd - region.loopStart, 0.001f);
+    return region;
+}
+
 // sin(2 pi unitPhase) for a phase already reduced to [0, 1).
 //
 // The quarter-period fold is exact in floating point: every subtraction below
@@ -394,12 +421,8 @@ void NeuramarEngine::setModel(const NeuralModel* immutableModel) noexcept
 // weights Air and Bone by their controls.
 void NeuramarEngine::sampleLoopLevelTrajectory(const NeuralModel& model) noexcept
 {
-    const float duration = std::max(model.metadata_.durationSeconds, 0.001f);
-    const float loopStart = std::clamp(model.metadata_.loopStartSeconds,
-                                       0.0f, duration);
-    const float loopEnd = std::clamp(model.metadata_.loopEndSeconds,
-                                     loopStart + 0.001f, duration);
-    loopFitLengthSeconds_ = std::max(loopEnd - loopStart, 0.001f);
+    const LoopRegion region = computeLoopRegion(model.metadata_);
+    loopFitLengthSeconds_ = region.length;
     // setModel() runs on the audio thread, so the sampling is budgeted rather
     // than generous. The trajectory being fitted is a smooth decoder output,
     // not sampled data, so 32 points land within 0.03% of a 256-point fit on
@@ -414,7 +437,7 @@ void NeuramarEngine::sampleLoopLevelTrajectory(const NeuralModel& model) noexcep
         const float offsetSeconds = loopFitLengthSeconds_
             * (static_cast<float>(point) / static_cast<float>(loopFitPoints - 1));
         SynthesisFrame frame;
-        model.evaluate((loopStart + offsetSeconds) / duration, frame);
+        model.evaluate((region.loopStart + offsetSeconds) / region.duration, frame);
         double core = 0.0;
         double air = 0.0;
         double bone = 0.0;
@@ -1116,7 +1139,7 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
         logRetirementLevel_ * inverseSampleRate_ * voice.clockRateScale
         / std::max(parameters.releaseSeconds, 0.005f));
 
-    const float duration = std::max(model.metadata_.durationSeconds, 0.001f);
+    const LoopRegion region = computeLoopRegion(model.metadata_);
     // Except for the first sounding sample, predict one control interval
     // ahead. The per-sample ramp then arrives at that target at the time it
     // describes instead of reproducing every learned gesture 4 ms late.
@@ -1125,13 +1148,8 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
             : static_cast<double>(parameters.evolutionRate
                 * voice.clockRateScale
                 * static_cast<float>(controlPeriod_ - 1)) / sampleRate_);
-    const float loopStart = std::clamp(model.metadata_.loopStartSeconds,
-                                       0.0f, duration);
-    const float loopEnd = std::clamp(model.metadata_.loopEndSeconds,
-                                     loopStart + 0.001f, duration);
-    const float loopLength = std::max(loopEnd - loopStart, 0.001f);
     const double oneShotTime = std::min(evaluationModelTime,
-                                        static_cast<double>(duration));
+                                        static_cast<double>(region.duration));
     // Orbit reads the loop region forward only. The triangle fold this
     // replaced played every second leg backwards, which turns a decaying
     // trajectory into a rising one - a negative-damping segment, the one thing
@@ -1156,15 +1174,15 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
     constexpr double goldenAdvance = 0.6180339887498949;
     double orbitTime = evaluationModelTime;
     double loopOffsetSeconds = 0.0;
-    if (orbitTime > loopStart)
+    if (orbitTime > region.loopStart)
     {
-        const double length = static_cast<double>(loopLength);
-        const double elapsed = orbitTime - loopStart;
+        const double length = static_cast<double>(region.length);
+        const double elapsed = orbitTime - region.loopStart;
         const double passOffset = std::fmod(
             std::floor(elapsed / length) * goldenAdvance, 1.0) * length;
         loopOffsetSeconds = std::fmod(
             std::fmod(elapsed, length) + passOffset, length);
-        orbitTime = loopStart + loopOffsetSeconds;
+        orbitTime = region.loopStart + loopOffsetSeconds;
     }
     // Mutation used to add a per-voice start-time offset here. It bought its
     // variation by deleting transient: the clamp below is one-sided over the
@@ -1175,7 +1193,7 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
     // instead; nothing per-voice displaces the read position.
     const float effectiveTime = static_cast<float>(std::clamp(
         oneShotTime + parameters.orbit * (orbitTime - oneShotTime),
-        0.0, static_cast<double>(duration)));
+        0.0, static_cast<double>(region.duration)));
     // Divide out the loop region's own level trend, in proportion to how much
     // of the read position Orbit is actually supplying. The region falls
     // 2.7 dB across its length on the decay fixture, so without this every
@@ -1189,7 +1207,7 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
         * static_cast<float>(loopOffsetSeconds));
 
     SynthesisFrame frame;
-    const float normalisedTime = effectiveTime / duration;
+    const float normalisedTime = effectiveTime / region.duration;
     if (parameters.noise > 0.0f)
     {
         const std::uint64_t predictedSample = voice.renderedSampleCount
