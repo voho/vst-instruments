@@ -661,7 +661,13 @@ private:
         first-order images at both receivers. */
     void renderPlacement(int count) noexcept;
     void clearPlacement() noexcept;
-    void publishDisplayState(int voiceCount, float blockPeakLeft, float blockPeakRight,
+    // Counts and finds the reference voice from activeVoices_/activeTotal_
+    // rather than rescanning every one of the maxVoices slots: that list
+    // already holds exactly the voices active at the start of this block, and
+    // none can have started since (see the comment on activeVoices_'s build
+    // in process()), so it is a strict upper bound on what a fresh scan of
+    // voices_ would find.
+    void publishDisplayState(float blockPeakLeft, float blockPeakRight,
                              int numSamples) noexcept;
     static float midiToHz(int midiNote) noexcept;
     /** The section's nominal release time constant, in seconds. Each voice

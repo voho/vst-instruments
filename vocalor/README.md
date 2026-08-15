@@ -63,6 +63,7 @@ The project builds three products from one JUCE codebase:
 - [Sign, package, and notarize](#sign-package-and-notarize)
 - [Project layout](#project-layout)
 - [Licensing](#licensing)
+- [Changelog](#changelog)
 
 ## Interface and controls
 
@@ -1322,3 +1323,7 @@ case before shipping; see `THIRD_PARTY_NOTICES.md` and JUCE's official licence.
 No neural model weights, voice datasets, samples, or third-party presets are
 included. If those are added later, document their provenance and redistribution
 rights before committing or packaging them.
+
+## Changelog
+
+- 2026-08-15: Made the audio-thread status/meter update after each block scan only the voices already known to be active instead of every voice slot, and removed the extra full voice-count rescan that duplicated part of that same work.
