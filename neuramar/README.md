@@ -851,6 +851,12 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   `hannWindow()` on every call; the shorter onset-region apertures are
   unaffected. Pure dedup, with the eight rendered demo WAVs confirmed
   byte-for-byte unchanged.
+- 2026-08-15: Extracted the compact network's ten fixed input features (the
+  centred-time pair, three sine/cosine harmonics, and two decay windows) into
+  one shared `networkInputsAt` helper in `NeuralModel.h`, now called by both
+  `NeuralModel::evaluateBaseRaw` and `SampleLearner`'s `networkInputs`
+  instead of each keeping its own copy of the same ten expressions; pure
+  dedup, with the eight rendered demo WAVs confirmed byte-for-byte unchanged.
 
 ## Licensing
 

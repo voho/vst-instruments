@@ -1068,20 +1068,8 @@ void NeuralModel::evaluateBaseRaw(
 {
     const float time = std::clamp(
         std::isfinite(normalisedTime) ? normalisedTime : 0.0f, 0.0f, 1.0f);
-    const float centred = 2.0f * time - 1.0f;
-    const float timeSeconds = time * std::max(metadata_.durationSeconds, 0.0f);
-    const std::array<float, inputSize> inputs {
-        centred,
-        centred * centred,
-        std::sin(twoPi * time),
-        std::cos(twoPi * time),
-        std::sin(2.0f * twoPi * time),
-        std::cos(2.0f * twoPi * time),
-        std::sin(4.0f * twoPi * time),
-        std::cos(4.0f * twoPi * time),
-        std::exp(-8.0f * timeSeconds),
-        std::exp(-40.0f * timeSeconds)
-    };
+    const std::array<float, inputSize> inputs = networkInputsAt(
+        time, metadata_.durationSeconds);
 
     std::array<float, hiddenSize> hidden {};
     for (std::size_t unit = 0; unit < hiddenSize; ++unit)
