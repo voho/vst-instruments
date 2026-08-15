@@ -4998,6 +4998,19 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
     }
 }
 
+void TaikoEngine::injectContinuumEnergy (const Voice& voice, Voice& physical,
+                                         float share) noexcept
+{
+    for (std::size_t index = 0; index < voice.continuumInjection.size(); ++index)
+    {
+        if (! (physical.continuum[index].centre > 0.0f))
+            continue;
+        const float injection = voice.continuumInjection[index] * share;
+        auto& destination = physical.continuum[index].envelope;
+        destination = std::hypot (destination, injection);
+    }
+}
+
 float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
                                 float& rightOut) noexcept
 {
@@ -5029,16 +5042,9 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
             if (voice.contactReference > 0.0f && physical != nullptr)
             {
                 const float share = contact.amplitude / voice.contactReference;
-                for (std::size_t index = 0; index < voice.continuum.size(); ++index)
-                {
-                    if (! (physical->continuum[index].centre > 0.0f))
-                        continue;
-                    const float injection = voice.continuumInjection[index] * share;
-                    auto& destination = physical->continuum[index].envelope;
-                    // Distinct unresolved modes add as energy, not as coherent
-                    // amplitude and not by replacing the older tail.
-                    destination = std::hypot (destination, injection);
-                }
+                // Distinct unresolved modes add as energy, not as coherent
+                // amplitude and not by replacing the older tail.
+                injectContinuumEnergy (voice, *physical, share);
             }
         }
     }
@@ -5070,14 +5076,7 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
         {
             const float share = static_cast<float> (std::sqrt (
                 voice.solvedContactEnergyStep / voice.referenceContactEnergy));
-            for (std::size_t index = 0; index < voice.continuumInjection.size(); ++index)
-            {
-                if (! (physical->continuum[index].centre > 0.0f))
-                    continue;
-                auto& destination = physical->continuum[index].envelope;
-                destination = std::hypot (destination,
-                                          voice.continuumInjection[index] * share);
-            }
+            injectContinuumEnergy (voice, *physical, share);
             voice.continuumInjected = true;
         }
     }
