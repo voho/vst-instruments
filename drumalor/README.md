@@ -1474,3 +1474,4 @@ third-party presets are included.
 
 - 2026-08-15: Deduplicated the xorshift32 noise generator that `nextNoise()` and the sympathetic-bed rattle in `renderSympatheticBeds()` each implemented separately into one shared `advanceXorshiftNoise()` helper, with no change to engine output.
 - 2026-08-15: `buildHeadBank()`'s per-mode radiation-efficiency term, already computed once inside `lossPerSecond()`, is now shared with its `pow()`-based "heard" weight instead of being re-derived from the same inputs a second time, saving one transcendental call per emitted head mode with no change to engine output.
+- 2026-08-15: Hoisted the duplicate `std::pow(voice.pitchRatio, 0.42f)` call out of `initialiseVoice()`'s Clap case, where the direct-impact and diffuse-tail bandpass filters each recomputed the identical pitch-tracking term, with no change to engine output verified by byte-identical rendered demo audio.

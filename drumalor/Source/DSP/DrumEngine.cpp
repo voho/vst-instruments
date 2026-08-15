@@ -3363,9 +3363,15 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             voice.transientEnvelope = 0.0f;
             voice.transientMultiplier = coefficientForTime (0.0030f + 0.0025f * voice.characterA,
                                                              static_cast<float> (sampleRate_));
+            // Both bandpasses track Pitch by the same fractional power - the
+            // direct-impact band and the diffuse tail band are two filters on
+            // one strike, not two independently tuned voices - so it is one
+            // std::pow call shared between them rather than the identical one
+            // computed twice for the same voice.pitchRatio.
+            const float pitchStretch = std::pow (voice.pitchRatio, 0.42f);
             configureBandpass (voice.filterA,
                                (850.0f + 2750.0f * voice.characterB)
-                                   * std::pow (voice.pitchRatio, 0.42f) * voice.velocityTimbre,
+                                   * pitchStretch * voice.velocityTimbre,
                                0.68f + 0.42f * voice.characterB);
             configureHighpass (voice.filterB, 430.0f + 1450.0f * voice.characterB, 0.72f);
             // The tail of a clap is the room answering, not the hands again.
@@ -3375,7 +3381,7 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // than the strike itself held down by a fader.
             configureBandpass (voice.filterC,
                                (620.0f + 1500.0f * voice.characterB)
-                                   * std::pow (voice.pitchRatio, 0.42f)
+                                   * pitchStretch
                                    * voice.velocityTimbre,
                                0.45f);
             break;
