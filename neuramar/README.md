@@ -821,6 +821,12 @@ Presets/                 Preset and learned-model provenance guidance
 scripts/                 macOS build, signing, packaging, and notarization helpers
 ```
 
+## Changelog
+
+- 2026-08-15: Removed a redundant per-partial phasor recomputation from the
+  joint harmonic solve in `SampleLearner`, shortening the analysis pass with
+  no change to the fitted model or the rendered audio.
+
 ## Licensing
 
 Neuramar's original source is offered under the MIT License. JUCE is a separate
