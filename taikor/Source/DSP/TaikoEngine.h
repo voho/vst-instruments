@@ -1030,6 +1030,19 @@ private:
     };
     [[nodiscard]] static FundamentalPair fundamentalPairOmegas (
         const DrumState& drum) noexcept;
+    // The (0,1) pair's symmetrised two-by-two - diagonalB, diagonalR and
+    // offDiagonal in the w = sqrt(sigma) q coordinates solveAxisymmetricBranch
+    // expects - for a given trial cavity stiffness against that mode's own
+    // fundamentals (see fundamentalPairOmegas). volumeBranchOmega's bisection
+    // and solveAxisymmetricPair's converged solve both build this same matrix,
+    // one on a trial stiffness and the other on the drum's own, so it is
+    // resolved once here rather than as two copies of the same four lines that
+    // could drift apart.
+    static void axisymmetricDiagonals (const DrumState& drum,
+                                       const FundamentalPair& fundamentals,
+                                       float cavityStiffness, float& diagonalB,
+                                       float& diagonalR,
+                                       float& offDiagonal) noexcept;
     // The angular frequency of the volume-changing branch of the (0,1) pair for
     // a given cavity stiffness, given that mode's own fundamentals (see
     // fundamentalPairOmegas). The cavity correction is solved against this

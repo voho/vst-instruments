@@ -871,18 +871,30 @@ TaikoEngine::fundamentalPairOmegas (const DrumState& drum) noexcept
     return result;
 }
 
+void TaikoEngine::axisymmetricDiagonals (const DrumState& drum,
+                                         const FundamentalPair& fundamentals,
+                                         float cavityStiffness, float& diagonalB,
+                                         float& diagonalR,
+                                         float& offDiagonal) noexcept
+{
+    const float cavity = cavityStiffness * 4.0f
+                       / (fundamentals.lambda * fundamentals.lambda);
+    diagonalB = fundamentals.omegaBatter * fundamentals.omegaBatter
+              + cavity / drum.batterDensity;
+    diagonalR = fundamentals.omegaResonant * fundamentals.omegaResonant
+              + cavity / drum.resonantDensity;
+    offDiagonal = cavity / std::sqrt (drum.batterDensity * drum.resonantDensity);
+}
+
 float TaikoEngine::volumeBranchOmega (const DrumState& drum,
                                        const FundamentalPair& fundamentals,
                                        float cavityStiffness) noexcept
 {
-    const float cavity = cavityStiffness * 4.0f
-                       / (fundamentals.lambda * fundamentals.lambda);
-    const float diagonalB = fundamentals.omegaBatter * fundamentals.omegaBatter
-                           + cavity / drum.batterDensity;
-    const float diagonalR = fundamentals.omegaResonant * fundamentals.omegaResonant
-                           + cavity / drum.resonantDensity;
-    const float offDiagonal =
-        cavity / std::sqrt (drum.batterDensity * drum.resonantDensity);
+    float diagonalB = 0.0f;
+    float diagonalR = 0.0f;
+    float offDiagonal = 0.0f;
+    axisymmetricDiagonals (drum, fundamentals, cavityStiffness, diagonalB,
+                           diagonalR, offDiagonal);
 
     float eigenvalue = 0.0f;
     float vectorB = 0.0f;
@@ -906,14 +918,11 @@ TaikoEngine::solveAxisymmetricPair (const DrumState& drum) noexcept
     // here for the same reason.
     const auto fundamentals = fundamentalPairOmegas (drum);
 
-    const float cavity = drum.cavityStiffness * 4.0f
-                       / (fundamentals.lambda * fundamentals.lambda);
-    const float diagonalB = fundamentals.omegaBatter * fundamentals.omegaBatter
-                           + cavity / drum.batterDensity;
-    const float diagonalR = fundamentals.omegaResonant * fundamentals.omegaResonant
-                           + cavity / drum.resonantDensity;
-    const float offDiagonal =
-        cavity / std::sqrt (drum.batterDensity * drum.resonantDensity);
+    float diagonalB = 0.0f;
+    float diagonalR = 0.0f;
+    float offDiagonal = 0.0f;
+    axisymmetricDiagonals (drum, fundamentals, drum.cavityStiffness, diagonalB,
+                           diagonalR, offDiagonal);
 
     AxisymmetricPair pair;
     float upperEigen = 0.0f;
