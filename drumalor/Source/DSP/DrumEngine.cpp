@@ -3363,9 +3363,14 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             voice.transientEnvelope = 0.0f;
             voice.transientMultiplier = coefficientForTime (0.0030f + 0.0025f * voice.characterA,
                                                              static_cast<float> (sampleRate_));
+            // Both bandpass corners below share the same pow(pitchRatio, 0.42) -
+            // pow() is the expensive part of the tilt - so it is resolved once
+            // rather than once per filter. The multiplication order at each call
+            // site is kept as it was so this carries no rounding change.
+            const float pitchTilt42 = std::pow (voice.pitchRatio, 0.42f);
             configureBandpass (voice.filterA,
                                (850.0f + 2750.0f * voice.characterB)
-                                   * std::pow (voice.pitchRatio, 0.42f) * voice.velocityTimbre,
+                                   * pitchTilt42 * voice.velocityTimbre,
                                0.68f + 0.42f * voice.characterB);
             configureHighpass (voice.filterB, 430.0f + 1450.0f * voice.characterB, 0.72f);
             // The tail of a clap is the room answering, not the hands again.
@@ -3375,7 +3380,7 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // than the strike itself held down by a fader.
             configureBandpass (voice.filterC,
                                (620.0f + 1500.0f * voice.characterB)
-                                   * std::pow (voice.pitchRatio, 0.42f)
+                                   * pitchTilt42
                                    * voice.velocityTimbre,
                                0.45f);
             break;
