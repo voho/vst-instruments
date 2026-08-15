@@ -1303,8 +1303,12 @@ private:
     static std::array<float, 5> palmPatchRadii (float centreRadius,
                                                 float patchRadius) noexcept;
     // Configures one resonator from a physical frequency and decay rate.
+    // `poleRadiusOut`, when given, receives the same pole radius already
+    // solved internally, so a caller that needs it (as mode.poleRadius does)
+    // does not have to recover it afterwards with sqrt(resonator.a2).
     void configureResonator (Resonator& resonator, float frequencyHz,
-                             float decayRate, float gain) const noexcept;
+                             float decayRate, float gain,
+                             double* poleRadiusOut = nullptr) const noexcept;
 
     // Sanitised parameters, as published by setParameters(). Like the other
     // engines in this repository the setter is called from the audio thread

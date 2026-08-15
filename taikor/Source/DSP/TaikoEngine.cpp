@@ -2623,7 +2623,8 @@ float TaikoEngine::measureContact (const EngineParameters& raw,
 // ---------------------------------------------------------------------------
 
 void TaikoEngine::configureResonator (Resonator& resonator, float frequencyHz,
-                                      float decayRate, float gain) const noexcept
+                                      float decayRate, float gain,
+                                      double* poleRadiusOut) const noexcept
 {
     const auto rate = static_cast<float> (sampleRate_);
     const float nyquist = 0.5f * rate;
@@ -2633,6 +2634,8 @@ void TaikoEngine::configureResonator (Resonator& resonator, float frequencyHz,
         resonator.a1 = 0.0;
         resonator.a2 = 0.0;
         resonator.b0 = 0.0;
+        if (poleRadiusOut != nullptr)
+            *poleRadiusOut = 0.0;
         return;
     }
 
@@ -2649,6 +2652,12 @@ void TaikoEngine::configureResonator (Resonator& resonator, float frequencyHz,
     // response is exactly the sampled r^n sin(omega n), so the drive gain the
     // caller computes carries its physical meaning through unchanged.
     resonator.b0 = static_cast<double> (gain) * std::sin (omega);
+    // IEEE 754 multiplication and sqrt are both correctly rounded, so
+    // sqrt(radius * radius) recovers this same nonnegative radius bit-exactly
+    // rather than merely mathematically - handing it back here is exactly
+    // what a caller's separate std::sqrt (resonator.a2) would have read back.
+    if (poleRadiusOut != nullptr)
+        *poleRadiusOut = radius;
 }
 
 void TaikoEngine::setPalmDecay (Mode& mode, float amplitudeDecay) noexcept
@@ -2995,8 +3004,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 // head, so they are the part of the image that stays centred.
                 mode.micLeft = observed * proximity;
                 mode.micRight = observed * proximity;
-                configureResonator (mode.resonator, frequency, decay, 1.0f);
-                mode.poleRadius = std::sqrt (mode.resonator.a2);
+                configureResonator (mode.resonator, frequency, decay, 1.0f,
+                                   &mode.poleRadius);
                 ++count;
 
                 peakMagnitude = std::max (peakMagnitude,
@@ -3104,8 +3113,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.drive = drive * profile.membraneGain * modelScale;
                 mode.micLeft = observedL;
                 mode.micRight = observedR;
-                configureResonator (mode.resonator, frequency, decay, 1.0f);
-                mode.poleRadius = std::sqrt (mode.resonator.a2);
+                configureResonator (mode.resonator, frequency, decay, 1.0f,
+                                   &mode.poleRadius);
                 ++count;
 
                 peakMagnitude = std::max (
@@ -3188,8 +3197,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         mode.drive = level * modelScale;
         mode.micLeft = shellL;
         mode.micRight = shellR;
-        configureResonator (mode.resonator, frequency, decay, 1.0f);
-        mode.poleRadius = std::sqrt (mode.resonator.a2);
+        configureResonator (mode.resonator, frequency, decay, 1.0f,
+                            &mode.poleRadius);
         ++count;
 
         peakMagnitude = std::max (peakMagnitude,
@@ -5755,7 +5764,11 @@ TaikoEngine::SoundingMode TaikoEngine::dynamicSoundingMode (
         // into this modal state. Reading its quadrature is both more exact than
         // reconstructing a continuous force transfer (especially near Nyquist)
         // and avoids one complex accumulator per mode per contact sample.
-        const double radius = std::sqrt (mode.resonator.a2);
+        // mode.poleRadius already holds this same value - setPalmDecay and
+        // configureResonator both write it directly from the radius they
+        // solved rather than leaving it to be recovered here - so re-deriving
+        // it with sqrt(a2) on every candidate mode was pure duplicated work.
+        const double radius = mode.poleRadius;
         const double sine = mode.resonator.b0;
         if (! (radius > 0.0) || std::abs (sine) < 1.0e-14)
             continue;
