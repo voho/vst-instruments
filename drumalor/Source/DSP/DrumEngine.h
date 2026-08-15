@@ -180,8 +180,8 @@ public:
     void prepare (double sampleRate, int maxBlockSize) noexcept;
     void reset() noexcept;
     void setInstrumentParameters (Instrument instrument,
-                                  const InstrumentParameters& parameters) noexcept;
-    void setKitParameters (const KitParameters& parameters) noexcept;
+                                  const InstrumentParameters& values) noexcept;
+    void setKitParameters (const KitParameters& values) noexcept;
     void setOutputGain (float linearGain) noexcept;
     // Continuous hi-hat pedal position: 0 is fully open, 1 is tightly closed.
     // Until this is called the two hats behave exactly as they always did, on
@@ -679,7 +679,7 @@ private:
     [[nodiscard]] float decaySecondsFor (Instrument instrument, float normalizedDecay) const noexcept;
     [[nodiscard]] int findVoiceSlot() const noexcept;
     void initialiseVoice (Voice& voice, Instrument instrument, float velocity,
-                          const InstrumentParameters& parameters, std::uint32_t seed,
+                          const InstrumentParameters& values, std::uint32_t seed,
                           const HitVariation& variation,
                           Articulation articulation) noexcept;
     void initialiseModalVoice (Voice& voice, const float* ratios, int modeCount,
@@ -730,7 +730,7 @@ private:
     void dampRingingMembrane (Instrument instrument, float velocity) noexcept;
     void beginChoke (Voice& voice, float seconds) noexcept;
     void beginFadeToSilence (Voice& voice, float multiplier) noexcept;
-    void retireVoice (const Voice& voice) noexcept;
+    void retireVoice (const Voice& source) noexcept;
     void silenceVoice (Voice& voice) noexcept;
     void addBankReference (Instrument instrument) noexcept;
     void releaseBankReference (Instrument instrument) noexcept;
