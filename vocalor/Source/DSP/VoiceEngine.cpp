@@ -2777,7 +2777,21 @@ float VoiceEngine::radiatedPowerTarget(const Voice& voice, float fundamental,
     const float tiltCoefficient = std::clamp(voice.tiltCoefficient, 1.0e-6f, 1.0f);
     const float tiltMemory = 1.0f - tiltCoefficient;
 
-    const auto tractPowerAt = [this, &voice](float frequency) noexcept
+    // b0 is the pole's own signed peak gain -- polarity, cascade amplitude and
+    // peak normaliser -- none of which depends on the probe frequency. The
+    // scan below calls tractPowerAt() once per harmonic and once per harmonic
+    // per offset (up to 8 + 8*8 = 72 times), and every one of those calls
+    // used to re-derive the same five values from scratch. Resolved once here
+    // instead.
+    std::array<float, formantCount> formantB0 {};
+    for (int formant = 0; formant < formantCount; ++formant)
+    {
+        const auto index = static_cast<std::size_t>(formant);
+        formantB0[index] = formantPolarity(formant)
+            * voice.formantAmplitude[index] * voice.tract[index].peakNormaliser;
+    }
+
+    const auto tractPowerAt = [this, &voice, &formantB0](float frequency) noexcept
     {
         const float bounded = std::clamp(
             frequency, 1.0f, 0.499f * static_cast<float>(sampleRate_));
@@ -2797,9 +2811,7 @@ float VoiceEngine::radiatedPowerTarget(const Voice& voice, float fundamental,
             const float denominator = real * real + imaginary * imaginary;
             if (!(denominator > 0.0f))
                 continue;
-            const float b0 = formantPolarity(formant)
-                * voice.formantAmplitude[index] * pole.peakNormaliser;
-            const float scale = b0 / denominator;
+            const float scale = formantB0[index] / denominator;
             sumReal += static_cast<double>(scale) * real;
             sumImaginary -= static_cast<double>(scale) * imaginary;
         }
