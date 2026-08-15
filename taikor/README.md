@@ -56,7 +56,7 @@ does not.
 | Note | Drum | Head | Body | Hide | Shell | Sounds at | Fundamental |
 | --- | --- | ---: | ---: | ---: | --- | ---: | ---: |
 | C3 | **Ō-daiko** | 150 cm | 1.28 m, 0.85× wide | 1.05 mm cowhide | carved zelkova | 59.7 Hz | 32.7 Hz |
-| C4 | **Chū-daiko** | 78 cm | 0.94 m, 1.20× wide | 0.85 mm cowhide | carved zelkova | 119.3 Hz | 68.0 Hz |
+| C4 | **Chū-daiko** | 78 cm | 0.94 m, 1.20× wide | 0.85 mm cowhide | carved zelkova | 119.5 Hz | 68.0 Hz |
 | C5 | **Okedo-daiko** | 40 cm | 0.50 m, 1.25× wide | 0.55 mm hide | stave-built, light | 238.6 Hz | 238.6 Hz |
 | C6 | **Shime-daiko** | 30 cm | 0.21 m, 0.70× wide | 0.41 mm hide | carved, thick-walled | 477.3 Hz | 477.3 Hz |
 
