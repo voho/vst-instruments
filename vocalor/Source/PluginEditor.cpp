@@ -718,7 +718,9 @@ VocalorAudioProcessorEditor::VocalorAudioProcessorEditor (VocalorAudioProcessor&
     choirSizeSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 35, 20);
     choirSizeSlider.setName ("Ensemble size");
     choirSizeSlider.setTitle ("Ensemble size");
-    choirSizeSlider.setDescription ("Number of independently humanised singers");
+    choirSizeSlider.setDescription (
+        "Number of independently humanised singers in Choir mode, where 13 to 16 render the same 12 as the "
+        "top of the range; Chord mode always uses six singers regardless of this control");
     addAndMakeVisible (choirSizeSlider);
 
     addAndMakeVisible (vowelPad);

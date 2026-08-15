@@ -1327,3 +1327,4 @@ rights before committing or packaging them.
 ## Changelog
 
 - 2026-08-15: Made the audio-thread status/meter update after each block scan only the voices already known to be active instead of every voice slot, and removed the extra full voice-count rescan that duplicated part of that same work.
+- 2026-08-15: Documented in the ensemble-size slider's accessibility description that 13-16 render the same 12 singers as the top of the range, matching what the README already explains.
