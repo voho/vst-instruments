@@ -946,6 +946,14 @@ Presets/                    Preset guidance and drum-building reference
 scripts/                    macOS build and packaging helpers
 ```
 
+## Changelog
+
+- 2026-08-15: Extracted the (0,1) pair's diagonal/off-diagonal cavity-coupling
+  terms - previously written out identically in both `volumeBranchOmega`'s
+  bisection trial and `solveAxisymmetricPair`'s converged solve - into one
+  shared `axisymmetricDiagonals` helper, with no change to any resolved drum
+  or rendered audio.
+
 ## Licensing
 
 Taikor's original source is released under the [MIT License](LICENSE). It builds
