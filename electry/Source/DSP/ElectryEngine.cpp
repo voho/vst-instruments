@@ -3567,15 +3567,22 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
     // static model and the fitted decay still holds. Away from one the decay
     // departs from the fit deliberately: that departure is the behaviour.
     {
+        // settleFactor depends only on voice.ageSamples and the sample rate,
+        // not on which polarisation is being modulated, so it is solved once
+        // here instead of being recomputed by modulate() for both the
+        // vertical and horizontal loop every control tick.
+        const bool eitherDipActive = voice.vertical.handLossSolvedDepth > 0.0f
+                                   || voice.horizontal.handLossSolvedDepth > 0.0f;
+        const float settleFactor = eitherDipActive
+            ? 0.35f + 0.65f * smoothStep(clampf(
+                  static_cast<float>(voice.ageSamples)
+                      / (0.040f * static_cast<float>(sampleRate_)),
+                  0.0f, 1.0f))
+            : 0.0f;
         const auto modulate = [&] (PolarisationLoop& loop)
         {
             if (loop.handLossSolvedDepth <= 0.0f)
                 return;
-            const float settle = clampf(
-                static_cast<float>(voice.ageSamples)
-                    / (0.040f * static_cast<float>(sampleRate_)),
-                0.0f, 1.0f);
-            const float settleFactor = 0.35f + 0.65f * smoothStep(settle);
             const float reference = std::max(loop.handEnvelopePeak, 1.0e-7f);
             const float relaxFactor = 0.40f + 0.60f
                 * clampf(loop.handEnvelope / reference, 0.0f, 1.0f);
