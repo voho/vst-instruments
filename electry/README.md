@@ -871,3 +871,4 @@ with no affiliation or endorsement implied.
 ## Changelog
 
 - 2026-08-15: Removed redundant `allpassPhaseDelay` calls from the dispersion grid search in `configureVoicePitch`, sharing each candidate coefficient's fundamental-frequency phase-delay term across the two reference-partial comparisons instead of recomputing it, with bit-identical rendered output.
+- 2026-08-15: Factored the clamp-omega-cosine-alpha arithmetic shared by `Biquad::setLowpass`, `setHighpass` and `setPeaking` in `ElectryFx.cpp` into one `designBiquadBasis` helper instead of three copies of the same RBJ cookbook math, with no change to engine output.
