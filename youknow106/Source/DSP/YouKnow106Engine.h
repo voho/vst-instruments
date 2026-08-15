@@ -976,8 +976,11 @@ private:
         // A rate change retains physical charge and the most recent input
         // endpoint. Older uniformly-spaced samples belong to the old grid and
         // are collapsed under the engine's existing zero-gain transition.
-        void retime(float previousOmegaStep,
-                    float nextOmegaStep) noexcept;
+        // Named previousStep/nextStep, not previousOmegaStep/nextOmegaStep,
+        // because the .cpp definition reads and reassigns the member
+        // previousOmegaStep in its body -- a same-named parameter would
+        // shadow it there and silently change which value gets scaled.
+        void retime(float previousStep, float nextStep) noexcept;
         float process(float input, float omegaStep, float feedback,
                       float headroom = otaHeadroomVolts,
                       bool enableEarlyEffect = true,

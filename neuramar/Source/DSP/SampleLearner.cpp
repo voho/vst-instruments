@@ -256,6 +256,26 @@ void fft(std::vector<Complex>& values)
         / static_cast<float>(windowSize - 1));
 }
 
+// makeSpectrumFrame() always windows a full spectrumSize aperture, so its
+// Hann coefficients depend only on that fixed length, never on which frame,
+// probe, or sample is being analysed. A learn() pass calls it well over a
+// hundred times - 128 timeline frames plus a handful of root and stretch
+// probes - and every call used to re-evaluate the same 4096 std::cos()
+// values from scratch. Building the table once, the same way
+// ModelVisualisation.cpp's binOctaves table hoists its own per-index
+// constant out of a per-call loop, removes that repetition; the values are
+// unchanged, since both routes evaluate the identical hannWindow() formula.
+[[nodiscard]] const std::array<float, spectrumSize>& spectrumHannWindow() noexcept
+{
+    static const std::array<float, spectrumSize> table = [] {
+        std::array<float, spectrumSize> window {};
+        for (std::size_t index = 0; index < spectrumSize; ++index)
+            window[index] = hannWindow(index, spectrumSize);
+        return window;
+    }();
+    return table;
+}
+
 [[nodiscard]] std::size_t transientAnalysisWindowSize(
     float fundamentalHz, double sampleRate, double periods = 4.0) noexcept
 {
@@ -333,7 +353,7 @@ void fft(std::vector<Complex>& values)
         const auto source = start + static_cast<std::ptrdiff_t>(index);
         if (source < 0 || source >= static_cast<std::ptrdiff_t>(sample.size()))
             continue;
-        const float window = hannWindow(index, spectrumSize);
+        const float window = spectrumHannWindow()[index];
         frame.bins[index] = Complex(sample[static_cast<std::size_t>(source)] * window,
                                     0.0f);
         windowSum += window;

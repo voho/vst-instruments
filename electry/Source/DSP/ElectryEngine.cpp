@@ -4331,14 +4331,19 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
             }
             sympatheticHandGain_ += parameterSmoothingCoefficient_
                 * (sympatheticHandGainTarget_ - sympatheticHandGain_);
-            sympatheticInjection_ = sympatheticGain_
-                * std::max(0.0f, 1.0f - handMute);
+            // How much of the coupling survives the mute, shared by the three
+            // laws below instead of being reclamped from handMute three times:
+            // the bridge-bus injection and the played strings' coupling both
+            // scale linearly with it, and the feedback path raises it to the
+            // fourth power.
+            const float handOpen = std::max(0.0f, 1.0f - handMute);
+            sympatheticInjection_ = sympatheticGain_ * handOpen;
             // The same hand lies across the strings that are being played, and
             // it lies on them at the saddle, which is exactly where the shared
             // bridge delivers this coupling. So the played strings' share of
             // the bus is starved by the same factor the idle strings' share is.
             bridgeCouplingNominal_ = bridgeCouplingGain * effectiveSympathetic
-                * std::max(0.0f, 1.0f - handMute);
+                * handOpen;
             // A far steeper law than the bridge-bus injection above: feedback
             // is a regenerating loop, so any residue above the loop's
             // regeneration threshold climbs back to a full howl no matter how
@@ -4348,7 +4353,6 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
             // takes the default mute's residue 55 dB down, safely below the
             // threshold, while a light touch (small handMute) still lets a
             // deliberate howl through.
-            const float handOpen = std::max(0.0f, 1.0f - handMute);
             const float handOpenSquared = handOpen * handOpen;
             feedbackHandScale_ = handOpenSquared * handOpenSquared;
         }

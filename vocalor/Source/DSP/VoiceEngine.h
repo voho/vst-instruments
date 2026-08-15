@@ -797,6 +797,14 @@ private:
     float shimmerScale_ { 1.0f };
     float jitterScale_ { 1.0f };
     float roomEnvelopeDecay_ { 0.0f };
+    // Nasal branch pole/zero radii. Each is exp(-pi * bandwidthHz /
+    // sampleRate) for a fixed bandwidth, so -- like the coefficients above --
+    // it depends only on the prepared sample rate and is resolved once here
+    // instead of once per chunk in updateChunkState() while the branch is
+    // active.
+    float nasalMurmurRadius_ { 0.0f };
+    float nasalZeroRadius_ { 0.0f };
+    float nasalNotchPoleRadius_ { 0.0f };
 
     // Chunk-rate tract state shared by every voice.
     std::array<float, formantCount> chunkFormantHz_ {};
