@@ -5176,6 +5176,26 @@ void testUiPresentationMath()
     expect (onePoleCoefficient (0.0f, 30.0f) == 1.0f,
             "a zero time constant is not an instant coefficient");
 
+    // Both coefficient helpers sanitize their inputs the same way the meter
+    // curve and mix() above are checked to: a NaN falls back to a sane default
+    // rather than propagating, and an out-of-range value is clamped rather than
+    // taken literally, so a host that (mis)automates a meter-only parameter
+    // cannot park a ballistics coefficient on NaN or infinity.
+    expect (onePoleCoefficient (std::numeric_limits<float>::quiet_NaN(), 30.0f) == 1.0f,
+            "onePoleCoefficient did not sanitize a NaN time constant");
+    expect (onePoleCoefficient (-5.0f, 30.0f) == 1.0f,
+            "onePoleCoefficient did not clamp a negative time constant");
+    expect (onePoleCoefficient (0.30f, std::numeric_limits<float>::quiet_NaN())
+                == onePoleCoefficient (0.30f, 30.0f),
+            "onePoleCoefficient did not fall back on a NaN update rate");
+    expect (decayMultiplier (std::numeric_limits<float>::quiet_NaN(), 1.0f, 30.0f)
+                == decayMultiplier (-60.0f, 1.0f, 30.0f),
+            "decayMultiplier did not fall back on a NaN decibel target");
+    expect (decayMultiplier (12.0f, 1.0f, 30.0f) == 1.0f,
+            "decayMultiplier did not clamp a positive decibel target to no decay");
+    expect (decayMultiplier (-12.0f, std::numeric_limits<float>::quiet_NaN(), 30.0f) == 0.0f,
+            "decayMultiplier did not sanitize a NaN duration");
+
     ballistics.update (0.8f, 1.0f, release, fall, 3.0f);
     expect (std::abs (ballistics.level - 0.8f) < 1.0e-6f,
             "meter attack was not instant");
@@ -5230,6 +5250,12 @@ void testUiPresentationMath()
     expect (smoothStep (0.5f, 0.5f, 0.6f) == 1.0f
                 && smoothStep (0.5f, 0.5f, 0.4f) == 0.0f,
             "smoothStep did not handle a zero-width edge");
+    expect (smoothStep (std::numeric_limits<float>::quiet_NaN(), 1.0f, 0.5f)
+                == smoothStep (0.0f, 1.0f, 0.5f),
+            "smoothStep did not sanitize a NaN edge");
+    expect (smoothStep (0.0f, 1.0f, std::numeric_limits<float>::quiet_NaN())
+                == smoothStep (0.0f, 1.0f, 0.0f),
+            "smoothStep did not sanitize a NaN value");
 }
 
 void testIdleMetallicCostAndDenormalSafety()

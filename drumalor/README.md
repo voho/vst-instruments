@@ -1453,3 +1453,7 @@ JUCE's official licence.
 
 No drum samples, impulse responses, neural model weights, factory ROMs, or
 third-party presets are included.
+
+## Changelog
+
+- 2026-08-15: Added regression coverage for the sanitize paths of `UiMath`'s `onePoleCoefficient`, `decayMultiplier` and `smoothStep` (NaN and out-of-range seconds, decibels, update rate and edge inputs), which were exercised by callers but not previously asserted directly; verified with `ctest --test-dir drumalor/build-dsp` (all tests pass) and a demo re-render showing `git status drumalor/Docs/audio` clean (test-only change, no engine code touched).
