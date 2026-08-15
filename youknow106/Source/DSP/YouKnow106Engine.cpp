@@ -547,6 +547,13 @@ float YouKnow106Engine::vcfConverterCarryCounts(float counts) noexcept
     return carry;
 }
 
+double YouKnow106Engine::algebraicSoftClipDenominator(
+    double normalisedMagnitude, double exponent) noexcept
+{
+    return std::pow(1.0 + std::pow(normalisedMagnitude, exponent),
+                     1.0 / exponent);
+}
+
 float YouKnow106Engine::vcfEffectiveCutoffHz(float counts,
                                              float feedback) noexcept
 {
@@ -561,7 +568,7 @@ float YouKnow106Engine::vcfEffectiveCutoffHz(float counts,
                             / static_cast<double>(vcfControlSaturationHz);
     const double exponent = static_cast<double>(vcfControlSaturationExponent);
     const double saturated = static_cast<double>(rawHz)
-        / std::pow(1.0 + std::pow(normalised, exponent), 1.0 / exponent);
+        / algebraicSoftClipDenominator(normalised, exponent);
     return std::min(vcfSafetyCapHz, static_cast<float>(saturated));
 }
 
@@ -889,8 +896,7 @@ float YouKnow106Engine::outputSummerClip(float value) noexcept
     const double normalised = std::abs(static_cast<double>(value))
                             / static_cast<double>(railUnits);
     const double exponent = static_cast<double>(outputSummerClipExponent);
-    const double denominator =
-        std::pow(1.0 + std::pow(normalised, exponent), 1.0 / exponent);
+    const double denominator = algebraicSoftClipDenominator(normalised, exponent);
     return static_cast<float>(static_cast<double>(value) / denominator);
 }
 
