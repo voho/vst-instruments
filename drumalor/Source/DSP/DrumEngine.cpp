@@ -2970,8 +2970,17 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
     for (int mode = 0; mode < count; ++mode)
     {
         const auto slot = static_cast<std::size_t> (mode);
-        const float gain = std::pow (std::max (1.0f, ratios[slot]), tilt)
-            * std::abs (excitation[slot]);
+        // A slot still at orders[slot] > 0 here was an eligible split candidate
+        // the search above never picked, so its ratio and excitation are
+        // exactly what they were when candidateGain[] was resolved: reusing
+        // that cached value is the same pow() call the search already paid
+        // for, not a new one. A slot at order <= 0 is either the axisymmetric
+        // family (never a candidate) or a pair the split rewrote, so it is
+        // resolved fresh.
+        const float gain = orders[slot] > 0
+            ? candidateGain[slot]
+            : std::pow (std::max (1.0f, ratios[slot]), tilt)
+                  * std::abs (excitation[slot]);
         voice.modeGains[slot] = gain;
         gainSum += gain;
         configureResonator (voice.resonators[slot], fundamental * ratios[slot],
