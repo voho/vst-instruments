@@ -1880,9 +1880,21 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
                 float boneSample = 0.0f;
                 if (voice.boneSounding)
                 {
+                    // A mode the analysis could not vouch for renders at
+                    // exactly zero for as long as this model stays loaded:
+                    // updateVoiceControl() forces its target to zero through
+                    // the same reliability test, so voice.amplitudes[output]
+                    // never leaves zero and this term never contributes.
+                    // voice.boneSounding only proves *some* mode is audible,
+                    // not this one, so without the per-mode test every
+                    // permanently silent mode still paid for a unitSine call
+                    // and a phase/frequency advance on every sample of every
+                    // voice for as long as any other mode was sounding.
                     for (std::size_t mode = 0;
                          mode < NeuralModel::boneModeCount; ++mode)
                     {
+                        if (!(model->boneModeReliabilities_[mode] > 0.0f))
+                            continue;
                         const std::size_t output = boneOutputOffset + mode;
                         boneSample += voice.amplitudes[output]
                             * unitSine(voice.bonePhases[mode]);
