@@ -284,6 +284,15 @@ void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
     shimmerScale_ = noiseSmootherScale(
         shimmerCoefficient_, 1.0f - std::exp(-twoPi * 46.0f / referenceSampleRate));
     aspirationPreEmphasis_ = std::exp(-twoPi * 1150.0f * inverseSampleRate_);
+    // The nasal branch's three pole/zero radii. Each is exp(-pi * bandwidthHz
+    // * inverseSampleRate_) for a bandwidth fixed in Hz, so -- like every
+    // other coefficient in this block -- it only depends on the prepared
+    // sample rate. updateChunkState() used to resolve all three again on
+    // every chunk boundary that the nasal branch was active for; they are
+    // resolved once here instead.
+    nasalMurmurRadius_ = std::exp(-pi * 150.0f * inverseSampleRate_);
+    nasalZeroRadius_ = std::exp(-pi * 60.0f * inverseSampleRate_);
+    nasalNotchPoleRadius_ = std::exp(-pi * 700.0f * inverseSampleRate_);
     // White noise carries constant power per sample, so its density in the
     // audio band would otherwise fall by 3 dB per doubling of the sample rate.
     aspirationScale_ = std::sqrt(static_cast<float>(sampleRate_) / referenceSampleRate);
@@ -1707,7 +1716,7 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
         // Nasal formants are heavily damped, which is most of why a hum reads
         // as closed rather than as a low vowel.
         const float murmurHz = std::clamp(280.0f * shift, 40.0f, nyquistGuard);
-        const float murmurRadius = std::exp(-pi * 150.0f * inverseSampleRate_);
+        const float murmurRadius = nasalMurmurRadius_;
         const auto murmurTrig = sineCosineFromCycles(murmurHz * inverseSampleRate_);
         chunkNasalA1_ = 2.0f * murmurRadius * murmurTrig.cosine;
         chunkNasalA2_ = -murmurRadius * murmurRadius;
@@ -1724,8 +1733,8 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
         // instead, so what the branch removes is only the band it names.
         const float notchHz = std::clamp(950.0f * shift, 60.0f, nyquistGuard);
         const auto notchTrig = sineCosineFromCycles(notchHz * inverseSampleRate_);
-        const float zeroRadius = std::exp(-pi * 60.0f * inverseSampleRate_);
-        const float poleRadius = std::exp(-pi * 700.0f * inverseSampleRate_);
+        const float zeroRadius = nasalZeroRadius_;
+        const float poleRadius = nasalNotchPoleRadius_;
         const float zeroA1 = 2.0f * zeroRadius * notchTrig.cosine;
         const float zeroA2 = -zeroRadius * zeroRadius;
         chunkNotchA1_ = 2.0f * poleRadius * notchTrig.cosine;
