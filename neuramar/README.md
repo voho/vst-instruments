@@ -857,6 +857,16 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   `NeuralModel::evaluateBaseRaw` and `SampleLearner`'s `networkInputs`
   instead of each keeping its own copy of the same ten expressions; pure
   dedup, with the eight rendered demo WAVs confirmed byte-for-byte unchanged.
+- 2026-08-15: `NeuramarEngine.cpp`'s `makeSourceFilterEnvelope` now clamps
+  each of the 64 harmonic amplitudes to zero once up front instead of
+  reapplying `std::max(amplitude, 0.0f)` to the same harmonic up to five
+  times per call (once as its own kernel centre and up to four more times as
+  a neighbouring harmonic's +/-1 or +/-2 tap); this runs every control frame
+  of every voice whenever Body Lock and Imprint are both above zero, which is
+  the shipping default. Pure dedup - `std::max` adds no rounding of its own,
+  so the cached value is bit-identical to what each access already
+  computed - with the eight rendered demo WAVs confirmed byte-for-byte
+  unchanged.
 
 ## Licensing
 
