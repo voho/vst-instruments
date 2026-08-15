@@ -334,19 +334,30 @@ public:
         [[nodiscard]] static float frequencyTrim(float feedback) noexcept;
     };
 
+    // Generalized algebraic soft clip: exactly linear as the normalised
+    // magnitude approaches zero and bending only as it approaches 1. The
+    // output summer and the VCF saturation below both fit this same shape
+    // independently (as does the BBD write in `Chorus::bbdTransfer`), so the
+    // denominator itself is shared here rather than reimplemented at each
+    // site. Evaluated in double so an extreme finite float still approaches
+    // the bound instead of overflowing an intermediate power and folding
+    // back to zero.
+    [[nodiscard]] static double algebraicSoftClipDenominator(
+        double normalisedMagnitude, double exponent) noexcept;
+
     // Where the transconductor's own control current stops following the
     // anti-log converter. An AS3109 teardown reports the internal control
     // current saturating at 700 uA, which is a pole near 64 kHz on this
     // circuit's C = 240 pF / R = 68 kOhm test condition -- the physical origin
     // of the upper knee, and consistent with Roland's published 50 kHz top.
     //
-    // The shape is the generalized algebraic clip the output summer and the
-    // BBD write already use: numerically linear through the whole musical
-    // range and bending only as the current approaches its limit. The exponent
-    // is the one free parameter, fitted to a measured code-to-frequency curve
-    // for a real voice card; a single pole (the exponent at one) cannot
-    // describe that knee, and the revision that used one left the model up to
-    // 143 cents flat around a 16 kHz cutoff.
+    // The shape is the generalized algebraic clip above, shared with the
+    // output summer and the BBD write: numerically linear through the whole
+    // musical range and bending only as the current approaches its limit.
+    // The exponent is the one free parameter, fitted to a measured
+    // code-to-frequency curve for a real voice card; a single pole (the
+    // exponent at one) cannot describe that knee, and the revision that used
+    // one left the model up to 143 cents flat around a 16 kHz cutoff.
     //
     // Like the output summer's rails this is a property of the part, so it
     // applies at every Unit Character setting. Gating it left the "calibrated
@@ -439,14 +450,14 @@ public:
     // property of the part, not a tolerance, so it applies at every Unit
     // Character setting including zero.
     //
-    // The shape is the generalized algebraic clip already used for the BBD
-    // write, rather than a tanh. A tanh has no linear region at all: its
-    // distortion rises as (V/asymptote)^2 from the first millivolt, which put
-    // roughly 0.3% third harmonic on every sample at an ordinary 2.6 V node
-    // swing. A TA75558S on +/-15 V rails delivering a few volts is specified
-    // far below that. A high exponent keeps the stage numerically linear
-    // through the levels it actually runs at and bends it only as it
-    // approaches the rail, which is what the device does.
+    // The shape is the generalized algebraic clip above, already used for the
+    // VCF saturation and the BBD write, rather than a tanh. A tanh has no
+    // linear region at all: its distortion rises as (V/asymptote)^2 from the
+    // first millivolt, which put roughly 0.3% third harmonic on every sample
+    // at an ordinary 2.6 V node swing. A TA75558S on +/-15 V rails delivering
+    // a few volts is specified far below that. A high exponent keeps the
+    // stage numerically linear through the levels it actually runs at and
+    // bends it only as it approaches the rail, which is what the device does.
     static constexpr float outputSummerRailVolts = 13.5f;
     static constexpr float outputSummerClipExponent = 8.0f;
     [[nodiscard]] static float outputSummerClip(float value) noexcept;
@@ -700,17 +711,17 @@ private:
     // of a full-level ramp.
     static constexpr float stageAttenuation = 560.0f / (68000.0f + 560.0f);
     static constexpr float otaHeadroomVolts = 2.0f * thermalVoltage / stageAttenuation;
+    // Half-span of the integrating capacitors' tolerance. The four 240 pF
+    // parts are discrete, so nothing trims them into agreement; a few percent
+    // is the ordinary class. Voiced under OQ-10, like the other card
+    // dispersions -- no measured population fixes it.
+    static constexpr float vcfStageCapacitorTolerance = 0.02f;
     // Early-effect transconductance modulation inside the cascade. With
     // V_A ~ 100 V and a few hundred millivolts of collector swing at the
     // differential pair, the fractional change in g is a few parts per
     // thousand -- the 0.005 the modelling notes state. A revision used 0.08
     // here, sixteen times that, which is a signal-dependent cutoff shift large
     // enough to hear as odd-harmonic grit on every resonant sweep.
-    // Half-span of the integrating capacitors' tolerance. The four 240 pF
-    // parts are discrete, so nothing trims them into agreement; a few percent
-    // is the ordinary class. Voiced under OQ-10, like the other card
-    // dispersions -- no measured population fixes it.
-    static constexpr float vcfStageCapacitorTolerance = 0.02f;
     static constexpr float otaEarlyVoltage = 100.0f;
     static constexpr float otaEarlyEffectCoefficient = 0.005f;
     // Temperature coefficient of the transconductor's cutoff control path, from
@@ -965,8 +976,11 @@ private:
         // A rate change retains physical charge and the most recent input
         // endpoint. Older uniformly-spaced samples belong to the old grid and
         // are collapsed under the engine's existing zero-gain transition.
-        void retime(float previousOmegaStep,
-                    float nextOmegaStep) noexcept;
+        // Named previousStep/nextStep, not previousOmegaStep/nextOmegaStep,
+        // because the .cpp definition reads and reassigns the member
+        // previousOmegaStep in its body -- a same-named parameter would
+        // shadow it there and silently change which value gets scaled.
+        void retime(float previousStep, float nextStep) noexcept;
         float process(float input, float omegaStep, float feedback,
                       float headroom = otaHeadroomVolts,
                       bool enableEarlyEffect = true,
@@ -1173,7 +1187,20 @@ private:
         float feedback { 0.0f };
         float inputCompensation { 1.0f };
         float vca { 0.0f };
+        // VoiceVcaControlLaw::gain(vcaControl) alone, before updateVoiceAudio
+        // folds in the per-card gain error to produce `vca` above. The main
+        // scan loop's post-render silence check compares against this same
+        // softplus law on the same vcaControl a moment later; caching it here
+        // spares that check the log1p/exp pair updateVoiceAudio already paid
+        // for every active voice, every internal sample.
+        float vcaGain { 0.0f };
         float pulseDuty { 0.5f };
+        // rampCurrentScaleFor(card, calibration), solved once by
+        // updatePulseComparator and reused by renderVoice: both run
+        // back-to-back on the same voice against the same card and the same
+        // calibration, so the second call was recomputing an unchanged
+        // result rather than reading it.
+        float rampCurrentScale { 1.0f };
         // PWM is a moving comparator threshold, not a pulse oscillator whose
         // edge position is frozen for one sample.  Retaining the previous
         // threshold lets renderVoice solve crossings caused by both the ramp
@@ -1208,6 +1235,13 @@ private:
     static double midiToHz(double midiNote) noexcept;
     static std::uint32_t hash32(std::uint32_t value) noexcept;
     static float hashBipolar(std::uint32_t value) noexcept;
+    // The oversampled lookup addStep and addSlope both walk: same ring index,
+    // same subsample offset, same clamp/lerp arithmetic, only the table
+    // differs. Solved once here so the two callers stop repeating the
+    // identical interpolation for every ring sample of every event.
+    [[nodiscard]] static float interpolatedCorrectionSample(
+        const std::array<float, correctionTableLength>& table,
+        int ringIndex, float offset) noexcept;
     // `height` is a value discontinuity (the comparator and divider edges);
     // `slopeStep` is a per-sample slope discontinuity, which is what the
     // integrator's finite-slope reset is at each of its two corners.
@@ -1224,6 +1258,14 @@ private:
     // Fraction of the ramp's full excursion consumed by the finite-slope reset
     // at a given period, clamped so a very high note cannot invert the ramp.
     static float resetFraction(double periodSeconds) noexcept;
+    // The wrap-reset fraction and the post-reset rise-time fraction for a DCO
+    // period expressed in internal samples: { resetFraction(period *
+    // inverseOversampledRate_), max(1 - reset, 1e-4) }. renderVoice's
+    // per-sample ramp advance, rebuildRateDependentVoiceState's rate-change
+    // retiming, and restartDcoBandlimited's old/new ramp geometry each derive
+    // this identical pair from a period; shared here so they cannot drift
+    // apart.
+    [[nodiscard]] std::array<double, 2> dcoResetAndRise(double periodSamples) const noexcept;
 
     void buildHalfbandKernel() noexcept;
     [[nodiscard]] static const CorrectionTables& correctionTables() noexcept;
@@ -1264,6 +1306,10 @@ private:
     // Glide rate for the eight-bit performance-control code, in 1/256-
     // semitone units per converter scan.
     [[nodiscard]] static float glideStepPerScan(float portamento) noexcept;
+    // Memoized wrapper around glideStepPerScan(): PORTAMENTO is the one shared
+    // performance control, so every sounding voice's Pitch write resolves the
+    // same table lookup from it. See the note beside glideLawPortamento_.
+    [[nodiscard]] float resolveGlideStepPerScan(float portamento) noexcept;
     // Lift the key on one slot: sustain it if the pedal is down, release it
     // otherwise. Every path that lets go of a note goes through here.
     void releaseVoiceKey(Voice& voice) noexcept;
@@ -1337,6 +1383,22 @@ private:
     // control voltages into filter and amplifier coefficients without making
     // their bandwidth depend on the HQ factor.
     void updateVoiceAudio(Voice& voice, const EngineParameters& parameters) noexcept;
+    // The two per-card tolerance transforms updateVoiceAudio applies to the
+    // settled control voltages are also what renderVoice must reapply to the
+    // interior nodes of an exact held-interval reconstruction, so both call
+    // through here rather than risk the two paths drifting apart.
+    [[nodiscard]] static float resonanceFeedbackFor(
+        float resonanceCv, const VoiceCard& card, float calibration) noexcept;
+    [[nodiscard]] static float cutoffAnalogCounts(
+        float cutoffCounts, const VoiceCard& card, float calibration,
+        float powerSupplyDroop) noexcept;
+    // The ramp charging-current tolerance updatePulseComparator solves the
+    // comparator threshold against is the identical per-card scale
+    // renderVoice applies to the rendered ramp amplitude; shared here so the
+    // two cannot drift apart the way resonanceFeedbackFor/cutoffAnalogCounts
+    // above were split out to prevent.
+    [[nodiscard]] static float rampCurrentScaleFor(
+        const VoiceCard& card, float calibration) noexcept;
     [[nodiscard]] static float dcoCompensationRatio(const Voice& voice) noexcept;
     [[nodiscard]] float dcoLaunchScale(const Voice& voice) const noexcept;
     // The PWM comparator is physical and free-running even behind a shut VCA,
@@ -1590,6 +1652,31 @@ private:
     // changed.
     float voiceEnergyFollower_ { 0.0f };
 
+    // The envelope generator is the one shared digital processor: ATTACK,
+    // DECAY and RELEASE resolve to the same increment/multiplier for every
+    // voice (see the note in updateVoiceEnvelopeAndPitch), so recomputing
+    // them from the panel position on every voice's Pitch write recomputed
+    // the same three answers as many times as there are sounding cards. The
+    // panel position is compared for exact equality, so this memo cannot
+    // return anything the piecewise law would not have recomputed; sentinels
+    // outside the control's 0..1 travel force the first solve.
+    float envelopeLawAttack_ { -1.0f };
+    float envelopeLawDecay_ { -1.0f };
+    float envelopeLawRelease_ { -1.0f };
+    std::uint16_t envelopeLawAttackIncrement_ { 0 };
+    std::uint16_t envelopeLawDecayMultiplier_ { 0 };
+    std::uint16_t envelopeLawReleaseMultiplier_ { 0 };
+
+    // The glide law is the same shared-processor story: glideStepPerScan()
+    // resolves PORTAMENTO's panel position through one eight-bit ADC lookup
+    // that is identical for every voice, but both initialiseVoice() and
+    // updateVoiceEnvelopeAndPitch() called it fresh on every voice's note-on
+    // and Pitch write. resolveGlideStepPerScan() memoizes it the same way the
+    // envelopeLaw* cache above memoizes ATTACK/DECAY/RELEASE: comparison is
+    // exact equality against the same parameters.portamento source, so the
+    // memo can never return anything the unconditional call would not have.
+    float glideLawPortamento_ { -1.0f };
+    float glideLawStepPerScan_ { 0.0f };
 };
 
 } // namespace youknow106

@@ -157,6 +157,11 @@ struct AirFitDesign
     std::array<int, airFitCellCount> evidence {};
     float lowerFrequencyHz { airLowerFrequencyHz };
     float upperFrequencyHz { airUpperFrequencyHz };
+    // log(upperFrequencyHz / lowerFrequencyHz), resolved once by
+    // makeAirFitDesign(). airCellForFrequency() is called once per FFT bin -
+    // hundreds to thousands of times per design - and this ratio is fixed for
+    // the design's whole lifetime, so recomputing it per call was pure waste.
+    float logFrequencyRangeSpan { 1.0f };
 };
 
 struct AirFitResult
@@ -169,6 +174,23 @@ struct AirFitResult
     const SampleLearner::CancelPredicate& predicate)
 {
     return predicate && predicate();
+}
+
+struct MidiPitchEstimate
+{
+    int note { 60 };
+    float cents { 0.0f };
+};
+
+// Converts a frequency in Hz to the nearest MIDI note and the signed cents
+// offset from it. Both the progress callback and the published model
+// metadata report the same root frequency this way, so the rounding and
+// the cents reference are computed in exactly one place.
+[[nodiscard]] MidiPitchEstimate midiPitchFromFrequency(float frequencyHz) noexcept
+{
+    const float midi = 69.0f + 12.0f * std::log2(frequencyHz / 440.0f);
+    const int note = std::clamp(static_cast<int>(std::lround(midi)), 0, 127);
+    return { note, 100.0f * (midi - static_cast<float>(note)) };
 }
 
 void report(const SampleLearner::ProgressCallback& callback,
@@ -185,9 +207,9 @@ void report(const SampleLearner::ProgressCallback& callback,
     progress.pitchConfidence = pitch.confidence;
     if (pitch.frequencyHz > 0.0f)
     {
-        const float midi = 69.0f + 12.0f * std::log2(pitch.frequencyHz / 440.0f);
-        progress.rootMidiNote = std::clamp(static_cast<int>(std::lround(midi)), 0, 127);
-        progress.rootCents = 100.0f * (midi - static_cast<float>(progress.rootMidiNote));
+        const auto midiPitch = midiPitchFromFrequency(pitch.frequencyHz);
+        progress.rootMidiNote = midiPitch.note;
+        progress.rootCents = midiPitch.cents;
     }
     progress.message = message;
     callback(progress);
@@ -237,6 +259,26 @@ void fft(std::vector<Complex>& values)
     return 0.5f - 0.5f * std::cos(
         twoPi * static_cast<float>(index)
         / static_cast<float>(windowSize - 1));
+}
+
+// makeSpectrumFrame() always windows a full spectrumSize aperture, so its
+// Hann coefficients depend only on that fixed length, never on which frame,
+// probe, or sample is being analysed. A learn() pass calls it well over a
+// hundred times - 128 timeline frames plus a handful of root and stretch
+// probes - and every call used to re-evaluate the same 4096 std::cos()
+// values from scratch. Building the table once, the same way
+// ModelVisualisation.cpp's binOctaves table hoists its own per-index
+// constant out of a per-call loop, removes that repetition; the values are
+// unchanged, since both routes evaluate the identical hannWindow() formula.
+[[nodiscard]] const std::array<float, spectrumSize>& spectrumHannWindow() noexcept
+{
+    static const std::array<float, spectrumSize> table = [] {
+        std::array<float, spectrumSize> window {};
+        for (std::size_t index = 0; index < spectrumSize; ++index)
+            window[index] = hannWindow(index, spectrumSize);
+        return window;
+    }();
+    return table;
 }
 
 [[nodiscard]] std::size_t transientAnalysisWindowSize(
@@ -316,7 +358,7 @@ void fft(std::vector<Complex>& values)
         const auto source = start + static_cast<std::ptrdiff_t>(index);
         if (source < 0 || source >= static_cast<std::ptrdiff_t>(sample.size()))
             continue;
-        const float window = hannWindow(index, spectrumSize);
+        const float window = spectrumHannWindow()[index];
         frame.bins[index] = Complex(sample[static_cast<std::size_t>(source)] * window,
                                     0.0f);
         windowSum += window;
@@ -352,12 +394,24 @@ void fft(std::vector<Complex>& values)
     std::array<float, spectrumSize> windows {};
     float windowSum = 0.0f;
     float windowSquareSum = 0.0f;
+    // The long-aperture case - every one of a learn() pass's 128 timeline
+    // frames, since only the onset region ever asks for a shorter one - has
+    // windowSize == spectrumSize, which is exactly the window
+    // spectrumHannWindow() already caches for makeSpectrumFrame(). Reading it
+    // here instead of re-deriving the same 4096 std::cos() values through
+    // hannWindow() removes that repetition the same way spectrumHannWindow()
+    // itself removed it from makeSpectrumFrame(); the shorter transient
+    // apertures still build their own window, since a per-size cache is not
+    // worth the complexity for the handful of onset frames that use it.
+    const bool useCachedWindow = windowSize == spectrumSize;
+    const auto& cachedWindow = spectrumHannWindow();
     for (std::size_t index = 0; index < windowSize; ++index)
     {
         const auto source = start + static_cast<std::ptrdiff_t>(index);
         if (source < 0 || source >= static_cast<std::ptrdiff_t>(sample.size()))
             continue;
-        windows[index] = hannWindow(index, windowSize);
+        windows[index] = useCachedWindow
+            ? cachedWindow[index] : hannWindow(index, windowSize);
         residual[index] = sample[static_cast<std::size_t>(source)];
         windowSum += windows[index];
         windowSquareSum += windows[index] * windows[index];
@@ -410,15 +464,30 @@ void fft(std::vector<Complex>& values)
     const int refinementSweeps = windowPeriods < 8.0 ? 3 : 1;
     std::array<double, NeuralModel::harmonicCount> cosineCoefficients {};
     std::array<double, NeuralModel::harmonicCount> sineCoefficients {};
+    // Neither a partial's per-sample rotation nor its window-start phasor
+    // depends on the sweep index - both are fixed by partialAngles[harmonic]
+    // and start alone - so the refinement loop below used to rebuild the same
+    // rotation and initial phasor from scratch on every one of its (up to
+    // three) sweeps. Resolving them once per harmonic here and reusing the
+    // stored values across every sweep removes that repeated std::cos()/
+    // std::sin() pair without changing which values are computed.
+    std::array<Complex, NeuralModel::harmonicCount> partialRotations {};
+    std::array<Complex, NeuralModel::harmonicCount> partialInitialOscillators {};
+    for (std::size_t harmonic = 0; harmonic < partialCount; ++harmonic)
+    {
+        const double angle = partialAngles[harmonic];
+        partialRotations[harmonic] = Complex(static_cast<float>(std::cos(angle)),
+                                             static_cast<float>(std::sin(angle)));
+        partialInitialOscillators[harmonic] = std::polar(
+            1.0f, static_cast<float>(angle * static_cast<double>(start)));
+    }
     for (int sweep = 0; sweep < refinementSweeps; ++sweep)
     {
         for (std::size_t harmonic = 0; harmonic < partialCount; ++harmonic)
         {
-            const double angle = partialAngles[harmonic];
-            const Complex rotation(static_cast<float>(std::cos(angle)),
-                                   static_cast<float>(std::sin(angle)));
-            Complex oscillator = std::polar(
-                1.0f, static_cast<float>(angle * static_cast<double>(start)));
+            const Complex& rotation = partialRotations[harmonic];
+            const Complex& initialOscillator = partialInitialOscillators[harmonic];
+            Complex oscillator = initialOscillator;
             const double previousCosine = cosineCoefficients[harmonic];
             const double previousSine = sineCoefficients[harmonic];
             double cosineCosine = 0.0;
@@ -472,8 +541,7 @@ void fft(std::vector<Complex>& values)
             sineCoefficients[harmonic] = sineCoefficient;
             const double deltaCosine = cosineCoefficient - previousCosine;
             const double deltaSine = sineCoefficient - previousSine;
-            oscillator = std::polar(
-                1.0f, static_cast<float>(angle * static_cast<double>(start)));
+            oscillator = initialOscillator;
             for (std::size_t index = 0; index < windowSize; ++index)
             {
                 if (windows[index] > 0.0f)
@@ -1334,6 +1402,20 @@ void makePreview(const std::vector<float>& sample,
             std::min(0.45f * static_cast<float>(sampleRate),
                      24.0f * rootFrequencyHz) / binWidth)));
 
+    // The stretched-partial series below depends only on inharmonicity, which
+    // this function receives as a single fixed value, never on the bin or
+    // frame being scanned. Building it once here replaces a from-scratch
+    // rebuild on every one of the up to three earlyFrameIndices * (lastBin -
+    // firstBin) candidate bins with one table lookup per harmonic tried.
+    std::array<float, NeuralModel::harmonicCount> stretchedPartialRatios {};
+    if (inharmonicity > 0.0f)
+    {
+        for (std::size_t harmonic = 0;
+             harmonic < NeuralModel::harmonicCount; ++harmonic)
+            stretchedPartialRatios[harmonic] = stretchedHarmonicRatio(
+                static_cast<float>(harmonic + 1), inharmonicity);
+    }
+
     constexpr std::array<std::size_t, 3> earlyFrameIndices { 2, 8, 18 };
     for (const auto requestedFrame : earlyFrameIndices)
     {
@@ -1361,8 +1443,7 @@ void makePreview(const std::vector<float>& sample,
                 for (std::size_t harmonic = 0;
                      harmonic < NeuralModel::harmonicCount; ++harmonic)
                 {
-                    const float partialRatio = stretchedHarmonicRatio(
-                        static_cast<float>(harmonic + 1), inharmonicity);
+                    const float partialRatio = stretchedPartialRatios[harmonic];
                     partialDistance = std::min(partialDistance,
                                                std::abs(ratio - partialRatio));
                     if (partialRatio > ratio)
@@ -1544,7 +1625,7 @@ void makePreview(const std::vector<float>& sample,
                                               const AirFitDesign& design) noexcept
 {
     const float position = std::log(frequencyHz / design.lowerFrequencyHz)
-        / std::log(design.upperFrequencyHz / design.lowerFrequencyHz);
+        / design.logFrequencyRangeSpan;
     return std::min<std::size_t>(airFitCellCount - 1,
         static_cast<std::size_t>(std::max(0.0f,
             std::floor(position * static_cast<float>(airFitCellCount)))));
@@ -1560,6 +1641,8 @@ void makePreview(const std::vector<float>& sample,
     AirFitDesign design;
     design.upperFrequencyHz = std::min(
         airUpperFrequencyHz, 0.42f * static_cast<float>(sampleRate));
+    design.logFrequencyRangeSpan = std::log(
+        design.upperFrequencyHz / design.lowerFrequencyHz);
     std::array<airfilter::Coefficients, NeuralModel::airBandCount> coefficients {};
     for (std::size_t band = 0; band < coefficients.size(); ++band)
         coefficients[band] = airfilter::makeCoefficients(
@@ -1807,15 +1890,7 @@ void chooseLoop(const std::vector<TargetFrame>& targets,
 [[nodiscard]] std::array<float, NeuralModel::inputSize> networkInputs(
     float time, float durationSeconds)
 {
-    time = std::clamp(time, 0.0f, 1.0f);
-    const float centred = 2.0f * time - 1.0f;
-    const float timeSeconds = time * std::max(durationSeconds, 0.0f);
-    return { centred, centred * centred,
-             std::sin(twoPi * time), std::cos(twoPi * time),
-             std::sin(2.0f * twoPi * time), std::cos(2.0f * twoPi * time),
-             std::sin(4.0f * twoPi * time), std::cos(4.0f * twoPi * time),
-             std::exp(-8.0f * timeSeconds),
-             std::exp(-40.0f * timeSeconds) };
+    return networkInputsAt(std::clamp(time, 0.0f, 1.0f), durationSeconds);
 }
 
 using NetworkInputs = std::array<float, NeuralModel::inputSize>;
@@ -2197,9 +2272,9 @@ SampleLearner::LearnResult SampleLearner::learn(
     auto& metadata = model->metadata_;
     metadata.sourceSampleRate = sampleRate;
     metadata.rootFrequencyHz = pitch.frequencyHz;
-    const float midi = 69.0f + 12.0f * std::log2(pitch.frequencyHz / 440.0f);
-    metadata.rootMidiNote = std::clamp(static_cast<int>(std::lround(midi)), 0, 127);
-    metadata.rootCents = 100.0f * (midi - static_cast<float>(metadata.rootMidiNote));
+    const auto midiPitch = midiPitchFromFrequency(pitch.frequencyHz);
+    metadata.rootMidiNote = midiPitch.note;
+    metadata.rootCents = midiPitch.cents;
     metadata.pitchConfidence = pitch.confidence;
     metadata.durationSeconds = static_cast<float>(sample.size() - 1)
         / static_cast<float>(analysisSampleRate);

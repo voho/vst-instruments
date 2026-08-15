@@ -603,6 +603,17 @@ float TaikoEngine::materialDamping (const DrumState& drum, float omega,
     return (hysteretic + viscous) * (1.0f + 2.4f * extraDamping);
 }
 
+float TaikoEngine::nearFieldAttenuation (float lambda, float radius, float omega,
+                                         float micDistanceMetres) noexcept
+{
+    const float spatialWavenumber = lambda / radius;
+    const float airWavenumber = omega / soundSpeed;
+    const float evanescentRate = std::sqrt (std::max (
+        spatialWavenumber * spatialWavenumber - airWavenumber * airWavenumber,
+        0.0f));
+    return std::exp (-evanescentRate * micDistanceMetres);
+}
+
 float TaikoEngine::continuumBandVariance (float lowCoefficient,
                                           float highCoefficient) noexcept
 {
@@ -848,31 +859,72 @@ float TaikoEngine::columnStiffnessFactor (float x) noexcept
     return x * std::cos (x) / std::sin (x);
 }
 
-float TaikoEngine::volumeBranchOmega (const DrumState& drum,
-                                       float cavityStiffness) noexcept
+TaikoEngine::FundamentalPair
+TaikoEngine::fundamentalPairOmegas (const DrumState& drum) noexcept
 {
     // The (0,1) pair, built exactly as measure() and buildVoiceModes build it:
     // no stiffness stretch, because the stretch is normalised at this mode, and
     // the air load's shape factor is one here for the same reason.
-    const auto lambda = static_cast<float> (membraneModes()[0].besselZero);
+    FundamentalPair result;
+    result.lambda = static_cast<float> (membraneModes()[0].besselZero);
 
     const float idealBatter =
-        drum.waveSpeed * lambda / (2.0f * piFloat * drum.radius);
+        drum.waveSpeed * result.lambda / (2.0f * piFloat * drum.radius);
     const float idealResonant =
-        drum.resonantWaveSpeed * lambda / (2.0f * piFloat * drum.radius);
+        drum.resonantWaveSpeed * result.lambda / (2.0f * piFloat * drum.radius);
     const float loadBatter = 1.0f / std::sqrt (
         1.0f + 0.85f * airDensity * drum.radius / drum.batterDensity);
     const float loadResonant = 1.0f / std::sqrt (
         1.0f + 0.85f * airDensity * drum.radius / drum.resonantDensity);
 
-    const float omegaBatter = 2.0f * piFloat * idealBatter * loadBatter;
-    const float omegaResonant = 2.0f * piFloat * idealResonant * loadResonant;
+    result.omegaBatter = 2.0f * piFloat * idealBatter * loadBatter;
+    result.omegaResonant = 2.0f * piFloat * idealResonant * loadResonant;
+    return result;
+}
 
-    const float cavity = cavityStiffness * 4.0f / (lambda * lambda);
-    const float diagonalB = omegaBatter * omegaBatter + cavity / drum.batterDensity;
-    const float diagonalR = omegaResonant * omegaResonant + cavity / drum.resonantDensity;
-    const float offDiagonal =
-        cavity / std::sqrt (drum.batterDensity * drum.resonantDensity);
+TaikoEngine::MembraneModeOmegas TaikoEngine::membraneModeOmegas (
+    const DrumState& drum, float radius, float lambda, float order) noexcept
+{
+    const float idealBatter = drum.waveSpeed * lambda / (2.0f * piFloat * radius)
+                            * stiffnessStretch (lambda, drum.stiffnessBatter);
+    const float idealResonant =
+        drum.resonantWaveSpeed * lambda / (2.0f * piFloat * radius)
+        * stiffnessStretch (lambda, drum.stiffnessResonant);
+
+    const float loadShape = (2.4048f / lambda) / (1.0f + 0.6f * order);
+    const float loadBatter =
+        1.0f / std::sqrt (1.0f + 0.85f * loadShape * airDensity * radius / drum.batterDensity);
+    const float loadResonant =
+        1.0f / std::sqrt (1.0f + 0.85f * loadShape * airDensity * radius / drum.resonantDensity);
+
+    return { 2.0f * piFloat * idealBatter * loadBatter,
+             2.0f * piFloat * idealResonant * loadResonant };
+}
+
+void TaikoEngine::axisymmetricDiagonals (const DrumState& drum,
+                                         const FundamentalPair& fundamentals,
+                                         float cavityStiffness, float& diagonalB,
+                                         float& diagonalR,
+                                         float& offDiagonal) noexcept
+{
+    const float cavity = cavityStiffness * 4.0f
+                       / (fundamentals.lambda * fundamentals.lambda);
+    diagonalB = fundamentals.omegaBatter * fundamentals.omegaBatter
+              + cavity / drum.batterDensity;
+    diagonalR = fundamentals.omegaResonant * fundamentals.omegaResonant
+              + cavity / drum.resonantDensity;
+    offDiagonal = cavity / std::sqrt (drum.batterDensity * drum.resonantDensity);
+}
+
+float TaikoEngine::volumeBranchOmega (const DrumState& drum,
+                                       const FundamentalPair& fundamentals,
+                                       float cavityStiffness) noexcept
+{
+    float diagonalB = 0.0f;
+    float diagonalR = 0.0f;
+    float offDiagonal = 0.0f;
+    axisymmetricDiagonals (drum, fundamentals, cavityStiffness, diagonalB,
+                           diagonalR, offDiagonal);
 
     float eigenvalue = 0.0f;
     float vectorB = 0.0f;
@@ -894,25 +946,13 @@ TaikoEngine::solveAxisymmetricPair (const DrumState& drum) noexcept
     // and this is the (0,1) mode, so it is unity by construction - which is the
     // whole point of normalising it there. The air load's shape factor is one
     // here for the same reason.
-    const auto lambda = static_cast<float> (membraneModes()[0].besselZero);
+    const auto fundamentals = fundamentalPairOmegas (drum);
 
-    const float idealBatter =
-        drum.waveSpeed * lambda / (2.0f * piFloat * drum.radius);
-    const float idealResonant =
-        drum.resonantWaveSpeed * lambda / (2.0f * piFloat * drum.radius);
-    const float loadBatter = 1.0f / std::sqrt (
-        1.0f + 0.85f * airDensity * drum.radius / drum.batterDensity);
-    const float loadResonant = 1.0f / std::sqrt (
-        1.0f + 0.85f * airDensity * drum.radius / drum.resonantDensity);
-
-    const float omegaBatter = 2.0f * piFloat * idealBatter * loadBatter;
-    const float omegaResonant = 2.0f * piFloat * idealResonant * loadResonant;
-
-    const float cavity = drum.cavityStiffness * 4.0f / (lambda * lambda);
-    const float diagonalB = omegaBatter * omegaBatter + cavity / drum.batterDensity;
-    const float diagonalR = omegaResonant * omegaResonant + cavity / drum.resonantDensity;
-    const float offDiagonal =
-        cavity / std::sqrt (drum.batterDensity * drum.resonantDensity);
+    float diagonalB = 0.0f;
+    float diagonalR = 0.0f;
+    float offDiagonal = 0.0f;
+    axisymmetricDiagonals (drum, fundamentals, drum.cavityStiffness, diagonalB,
+                           diagonalR, offDiagonal);
 
     AxisymmetricPair pair;
     float upperEigen = 0.0f;
@@ -1052,13 +1092,7 @@ void TaikoEngine::prepare (double sampleRate, int maxBlockSize) noexcept
 
 void TaikoEngine::reset() noexcept
 {
-    for (auto& voice : voices_)
-        silenceVoice (voice);
-    for (auto& physical : physicalDrums_)
-    {
-        silenceVoice (physical);
-        physical.physicalBank = true;
-    }
+    silenceAllVoices();
 
     handDamping_ = handDampingTarget_;
     pitchBend_ = pitchBendTarget_;
@@ -1131,13 +1165,7 @@ void TaikoEngine::setPitchBend (float normalisedBipolar) noexcept
 
 void TaikoEngine::allSoundsOff() noexcept
 {
-    for (auto& voice : voices_)
-        silenceVoice (voice);
-    for (auto& physical : physicalDrums_)
-    {
-        silenceVoice (physical);
-        physical.physicalBank = true;
-    }
+    silenceAllVoices();
     updateActiveVoiceCount();
 
     // Cutting every voice is already a discontinuity, so there is nothing left
@@ -1179,6 +1207,7 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.active = false;
     voice.configurationRevision = 0;
     voice.configurationPitch = 0.0f;
+    voice.articulationLevelScale = 1.0f;
     voice.modeCount = 0;
     voice.activeModeCount = 0;
     voice.contactCount = 0;
@@ -1211,6 +1240,7 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.contactDamping = 0.0;
     voice.residualImpedance = 1.0;
     voice.referenceContactEnergy = 1.0;
+    voice.contactEnergyAdmittance = 0.0;
     voice.solvedContactEnergyStep = 0.0;
     voice.solvedContactForce = 0.0f;
     voice.appliedTensionShift = 1.0f;
@@ -1266,6 +1296,17 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
         mode.appliedPalmDecay = 0.0f;
         mode.localMuteDampingRate = 0.0f;
         mode.handDampingRate = 0.0f;
+    }
+}
+
+void TaikoEngine::silenceAllVoices() noexcept
+{
+    for (auto& voice : voices_)
+        silenceVoice (voice);
+    for (auto& physical : physicalDrums_)
+    {
+        silenceVoice (physical);
+        physical.physicalBank = true;
     }
 }
 
@@ -1454,9 +1495,16 @@ void TaikoEngine::resolveDrumGeometry (const EngineParameters& applied,
                              * soundSpeed / drum.depth;
 
     {
-        const auto asked = [&drum, lumpedCavity] (float factor)
+        // fundamentalPairOmegas depends only on the drum, never on the trial
+        // cavity stiffness `asked` is bisecting over, so it is resolved once
+        // here rather than recomputed on every one of the twenty-five calls
+        // (the initial bracket check plus twenty-four halvings) the search
+        // below makes.
+        const auto fundamentals = fundamentalPairOmegas (drum);
+        const auto asked = [&drum, &fundamentals, lumpedCavity] (float factor)
         {
-            const float omega = volumeBranchOmega (drum, lumpedCavity * factor);
+            const float omega =
+                volumeBranchOmega (drum, fundamentals, lumpedCavity * factor);
             return columnStiffnessFactor (omega * drum.depth / (2.0f * soundSpeed));
         };
 
@@ -1661,21 +1709,10 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
     const float micDistance = drum.micDistanceMetres;
     const float propagatingSpread = 1.0f / (1.0f + micDistance / 0.12f);
 
-    const float idealBatter = drum.waveSpeed * lambda / (2.0f * piFloat * radius)
-                            * stiffnessStretch (lambda, drum.stiffnessBatter);
-    const float idealResonant =
-        drum.resonantWaveSpeed * lambda / (2.0f * piFloat * radius)
-        * stiffnessStretch (lambda, drum.stiffnessResonant);
-
-    const float loadShape =
-        (2.4048f / lambda) / (1.0f + 0.6f * static_cast<float> (order));
-    const float loadBatter =
-        1.0f / std::sqrt (1.0f + 0.85f * loadShape * airDensity * radius / sigmaB);
-    const float loadResonant =
-        1.0f / std::sqrt (1.0f + 0.85f * loadShape * airDensity * radius / sigmaR);
-
-    const float omegaBatter = 2.0f * piFloat * idealBatter * loadBatter;
-    const float omegaResonant = 2.0f * piFloat * idealResonant * loadResonant;
+    const auto omegas = membraneModeOmegas (drum, radius, lambda,
+                                            static_cast<float> (order));
+    const float omegaBatter = omegas.batter;
+    const float omegaResonant = omegas.resonant;
 
     const auto besselAtZero =
         static_cast<float> (besselJ (order + 1, entry.besselZero));
@@ -1707,9 +1744,9 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
 
         omega = std::sqrt (eigenvalue);
         const float frequency = omega / (2.0f * piFloat);
-        const float batterShare = vectorB / std::sqrt (sigmaB);
-        const float volumeShare = vectorB / std::sqrt (sigmaB)
-                                + vectorR / std::sqrt (sigmaR);
+        const float sqrtSigmaB = std::sqrt (sigmaB);
+        const float batterShare = vectorB / sqrtSigmaB;
+        const float volumeShare = batterShare + vectorR / std::sqrt (sigmaR);
         const float efficiency =
             radiationEfficiency (0, omega * radius / soundSpeed);
         const float netVolume = 2.0f / lambda;
@@ -1722,13 +1759,7 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
               + mountingLoss (drum, frequency);
 
         const float drive = shapeStrike * batterShare / (geometricMass * omega);
-        const float spatialWavenumber = lambda / radius;
-        const float airWavenumber = omega / soundSpeed;
-        const float nearField = std::exp (
-            -std::sqrt (std::max (spatialWavenumber * spatialWavenumber
-                                      - airWavenumber * airWavenumber,
-                                  0.0f))
-            * micDistance);
+        const float nearField = nearFieldAttenuation (lambda, radius, omega, micDistance);
         const float observed =
             nearField * shapeMic * batterShare
             + efficiency * (2.0f * besselAtZero / lambda) * volumeShare
@@ -1758,13 +1789,7 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
               + mountingLoss (drum, frequency);
 
         const float drive = shapeStrike / (geometricMass * omega);
-        const float spatialWavenumber = lambda / radius;
-        const float airWavenumber = omega / soundSpeed;
-        const float nearField = std::exp (
-            -std::sqrt (std::max (spatialWavenumber * spatialWavenumber
-                                      - airWavenumber * airWavenumber,
-                                  0.0f))
-            * micDistance);
+        const float nearField = nearFieldAttenuation (lambda, radius, omega, micDistance);
         const float proximity =
             1.0f + drum.micProximity
                        / (1.0f + (frequency / 190.0f) * (frequency / 190.0f));
@@ -2598,7 +2623,8 @@ float TaikoEngine::measureContact (const EngineParameters& raw,
 // ---------------------------------------------------------------------------
 
 void TaikoEngine::configureResonator (Resonator& resonator, float frequencyHz,
-                                      float decayRate, float gain) const noexcept
+                                      float decayRate, float gain,
+                                      double* poleRadiusOut) const noexcept
 {
     const auto rate = static_cast<float> (sampleRate_);
     const float nyquist = 0.5f * rate;
@@ -2608,6 +2634,8 @@ void TaikoEngine::configureResonator (Resonator& resonator, float frequencyHz,
         resonator.a1 = 0.0;
         resonator.a2 = 0.0;
         resonator.b0 = 0.0;
+        if (poleRadiusOut != nullptr)
+            *poleRadiusOut = 0.0;
         return;
     }
 
@@ -2624,6 +2652,12 @@ void TaikoEngine::configureResonator (Resonator& resonator, float frequencyHz,
     // response is exactly the sampled r^n sin(omega n), so the drive gain the
     // caller computes carries its physical meaning through unchanged.
     resonator.b0 = static_cast<double> (gain) * std::sin (omega);
+    // IEEE 754 multiplication and sqrt are both correctly rounded, so
+    // sqrt(radius * radius) recovers this same nonnegative radius bit-exactly
+    // rather than merely mathematically - handing it back here is exactly
+    // what a caller's separate std::sqrt (resonator.a2) would have read back.
+    if (poleRadiusOut != nullptr)
+        *poleRadiusOut = radius;
 }
 
 void TaikoEngine::setPalmDecay (Mode& mode, float amplitudeDecay) noexcept
@@ -2759,6 +2793,11 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
     const float theta = voice.strikeAngle;
     const float sigmaB = drum.batterDensity;
     const float sigmaR = drum.resonantDensity;
+    // Depend only on the drum, not on the mode entry or which axisymmetric
+    // branch is being resolved, so each is worth resolving once rather than
+    // redoing it for every entry x branch pair the loop below visits.
+    const float sqrtSigmaB = std::sqrt (sigmaB);
+    const float sqrtSigmaR = std::sqrt (sigmaR);
     const float area = piFloat * radius * radius;
 
     const float micRho = drum.micRadius / radius;
@@ -2820,25 +2859,16 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         // the thicker the head is. Taken relative to the (0,1) mode, so the
         // pitch the drum is tuned to does not move and only the spread above it
         // does.
-        const float idealBatter = drum.waveSpeed * lambda / (2.0f * piFloat * radius)
-                                * stiffnessStretch (lambda, drum.stiffnessBatter);
-        const float idealResonant =
-            drum.resonantWaveSpeed * lambda / (2.0f * piFloat * radius)
-            * stiffnessStretch (lambda, drum.stiffnessResonant);
-
-        // Air hanging off the head as added mass. Modes with a high radial or
-        // circumferential order shift less air per unit of displacement, so
-        // they are loaded far less than the fundamental. A light synthetic
-        // head is loaded much more than a heavy hide, which is exactly why it
-        // sounds lower than its tension alone predicts.
-        const float loadShape = (2.4048f / lambda) / (1.0f + 0.6f * static_cast<float> (order));
-        const float loadBatter =
-            1.0f / std::sqrt (1.0f + 0.85f * loadShape * airDensity * radius / sigmaB);
-        const float loadResonant =
-            1.0f / std::sqrt (1.0f + 0.85f * loadShape * airDensity * radius / sigmaR);
-
-        const float omegaBatter = 2.0f * piFloat * idealBatter * loadBatter;
-        const float omegaResonant = 2.0f * piFloat * idealResonant * loadResonant;
+        // Air hanging off the head as added mass falls out of the same
+        // helper: modes with a high radial or circumferential order shift
+        // less air per unit of displacement, so they are loaded far less than
+        // the fundamental, and a light synthetic head is loaded much more
+        // than a heavy hide - exactly why it sounds lower than its tension
+        // alone predicts.
+        const auto omegas = membraneModeOmegas (drum, radius, lambda,
+                                                static_cast<float> (order));
+        const float omegaBatter = omegas.batter;
+        const float omegaResonant = omegas.resonant;
 
         const auto besselAtZero = static_cast<float> (besselJ (order + 1, entry.besselZero));
         const float besselSquared = std::max (besselAtZero * besselAtZero, 1.0e-9f);
@@ -2886,11 +2916,10 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 // The batter head is the one being struck and the one the
                 // microphones are in front of, so the batter component of the
                 // eigenvector appears on both the drive and the observation.
-                const float batterShare = vectorB / std::sqrt (sigmaB);
+                const float batterShare = vectorB / sqrtSigmaB;
                 // Net volume flow: what the pair hears once it has backed far
                 // enough off the head to stop reading the membrane's shape.
-                const float volumeShare = vectorB / std::sqrt (sigmaB)
-                                        + vectorR / std::sqrt (sigmaR);
+                const float volumeShare = batterShare + vectorR / sqrtSigmaR;
 
                 const float ka = omega * radius / soundSpeed;
                 const float efficiency = radiationEfficiency (0, ka);
@@ -2936,13 +2965,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 // the head the pair reads the membrane's shape and separates,
                 // and a hand's width back it reads only what the drum radiates
                 // and collapses towards mono.
-                const float spatialWavenumber = lambda / radius;
-                const float airWavenumber = omega / soundSpeed;
-                const float evanescentRate = std::sqrt (std::max (
-                    spatialWavenumber * spatialWavenumber
-                        - airWavenumber * airWavenumber,
-                    0.0f));
-                const float nearField = std::exp (-evanescentRate * micDistance);
+                const float nearField = nearFieldAttenuation (lambda, radius, omega,
+                                                              micDistance);
 
                 const float observed =
                     nearField * shapeMic * batterShare
@@ -2980,8 +3004,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 // head, so they are the part of the image that stays centred.
                 mode.micLeft = observed * proximity;
                 mode.micRight = observed * proximity;
-                configureResonator (mode.resonator, frequency, decay, 1.0f);
-                mode.poleRadius = std::sqrt (mode.resonator.a2);
+                configureResonator (mode.resonator, frequency, decay, 1.0f,
+                                   &mode.poleRadius);
                 ++count;
 
                 peakMagnitude = std::max (peakMagnitude,
@@ -3049,13 +3073,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 // on the head is finer. That is why backing the microphones
                 // off narrows the image and softens the slap at the same time:
                 // it is one mechanism, not two.
-                const float spatialWavenumber = lambda / radius;
-                const float airWavenumber = omega / soundSpeed;
-                const float evanescentRate = std::sqrt (std::max (
-                    spatialWavenumber * spatialWavenumber
-                        - airWavenumber * airWavenumber,
-                    0.0f));
-                const float nearField = std::exp (-evanescentRate * micDistance);
+                const float nearField = nearFieldAttenuation (lambda, radius, omega,
+                                                              micDistance);
 
                 const float proximity =
                     1.0f + drum.micProximity / (1.0f + (frequency / 190.0f)
@@ -3094,8 +3113,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.drive = drive * profile.membraneGain * modelScale;
                 mode.micLeft = observedL;
                 mode.micRight = observedR;
-                configureResonator (mode.resonator, frequency, decay, 1.0f);
-                mode.poleRadius = std::sqrt (mode.resonator.a2);
+                configureResonator (mode.resonator, frequency, decay, 1.0f,
+                                   &mode.poleRadius);
                 ++count;
 
                 peakMagnitude = std::max (
@@ -3178,8 +3197,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         mode.drive = level * modelScale;
         mode.micLeft = shellL;
         mode.micRight = shellR;
-        configureResonator (mode.resonator, frequency, decay, 1.0f);
-        mode.poleRadius = std::sqrt (mode.resonator.a2);
+        configureResonator (mode.resonator, frequency, decay, 1.0f,
+                            &mode.poleRadius);
         ++count;
 
         peakMagnitude = std::max (peakMagnitude,
@@ -3909,7 +3928,9 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
 
     voice.startOrder = order;
     voice.articulation = articulation;
+    voice.articulationLevelScale = profile.levelScale;
     voice.octaveOffset = octave;
+    voice.physicalDrumIndex = static_cast<std::uint8_t> (cacheIndex);
     voice.velocity = clampFloat (velocity, 0.0f, 1.0f);
 
     // No two strokes drag across the hide the same way, so the contact noise
@@ -3918,9 +3939,8 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     const float humanise = applied_.humanise;
     voice.noiseState = hash32 (humanise > 0.0f
                                    ? seed
-                                   : static_cast<std::uint32_t> (
-                                         static_cast<std::uint32_t> (articulation) * 131u
-                                         + static_cast<std::uint32_t> (octave + 8) * 17u))
+                                   : static_cast<std::uint32_t> (articulation) * 131u
+                                         + static_cast<std::uint32_t> (octave + 8) * 17u)
                      | 1u;
 
     // Where the stick lands. The articulation sets the radius, the position
@@ -4030,6 +4050,11 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
                           * profile.levelScale;
     const double referenceTailAdmittance = coupling * coupling
                                          / voice.residualImpedance;
+    // Same admittance advancePhysicalContacts multiplies the solved contact
+    // force by on every sample this contact stays active; cached here so that
+    // per-sample loop can read it rather than re-deriving it from the strike
+    // profile and residualImpedance on every one of its own iterations.
+    voice.contactEnergyAdmittance = referenceTailAdmittance;
 
     // Integral of sin(pi t/tau)^3 over the contact, through the same omitted-
     // mode admittance the dynamic solve uses. Dividing solved residual work by
@@ -4712,20 +4737,20 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
         constexpr double alpha = 1.5;
         constexpr double alphaPlusOne = alpha + 1.0;
         const auto positive = [] (double x) noexcept { return std::max (x, 0.0); };
-        const auto potential = [&] (double x) noexcept
-        {
-            const double z = positive (x);
-            return voice.contactStiffness / alphaPlusOne * z * z * std::sqrt (z);
-        };
-        const auto potentialSlope = [&] (double x) noexcept
-        {
-            const double z = positive (x);
-            return voice.contactStiffness * z * std::sqrt (z);
-        };
+
+        // z and sqrt(z) at the midpoint and at the half-step-ahead point each
+        // feed both the potential and its slope below; solving for sqrt(z)
+        // once per point and reusing it avoids recomputing an identical square
+        // root up to three times per call.
+        const double z0 = positive (midpoint);
+        const double sqrtZ0 = std::sqrt (z0);
+        const double phi0 = voice.contactStiffness / alphaPlusOne * z0 * z0 * sqrtZ0;
 
         const double nextMidpoint = midpoint + 0.5 * step;
-        const double phi0 = potential (midpoint);
-        const double phi1 = potential (nextMidpoint);
+        const double z1 = positive (nextMidpoint);
+        const double sqrtZ1 = std::sqrt (z1);
+        const double phi1 = voice.contactStiffness / alphaPlusOne * z1 * z1 * sqrtZ1;
+
         const double scale = 1.0 + std::abs (midpoint);
         double discreteGradient = 0.0;
         double gradientDerivative = 0.0;
@@ -4733,15 +4758,16 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
         {
             const double difference = phi1 - phi0;
             discreteGradient = 2.0 * difference / step;
-            gradientDerivative = (potentialSlope (nextMidpoint) * step
+            // potentialSlope (nextMidpoint), inlined to reuse z1 / sqrtZ1.
+            const double potentialSlopeNext = voice.contactStiffness * z1 * sqrtZ1;
+            gradientDerivative = (potentialSlopeNext * step
                                   - 2.0 * difference) / (step * step);
         }
         else
         {
-            const double z = positive (midpoint);
-            discreteGradient = potentialSlope (midpoint);
-            gradientDerivative = 0.25 * alpha * voice.contactStiffness
-                               * std::sqrt (z);
+            // potentialSlope (midpoint), inlined to reuse z0 / sqrtZ0.
+            discreteGradient = voice.contactStiffness * z0 * sqrtZ0;
+            gradientDerivative = 0.25 * alpha * voice.contactStiffness * sqrtZ0;
         }
 
         // Roundoff at a vanishing crossing can only make these infinitesimally
@@ -4800,6 +4826,21 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
     const double tolerance = 2.0e-12 * scale;
     bool converged = false;
 
+    // Declared once outside the Newton loop rather than per iteration: every
+    // entry a later row/column can read - row, column both < contactCount -
+    // is unconditionally overwritten by the assignment below before anything
+    // reads it back, on every iteration including the first, so re-zeroing
+    // all 16x16 doubles up to fourteen times per sample bought nothing but a
+    // repeated memset while a contact was live. It doesn't need the initial
+    // memset either: pivoting below used to swap whole sixteen-wide rows
+    // (columns past contactCount included), which would have moved
+    // indeterminate doubles around if this weren't zeroed first, so the
+    // pivot swap is bounded to [0, contactCount) instead - see the note
+    // there. With that bound in place nothing outside contactCount x
+    // contactCount is ever read, written, or moved, so the array never
+    // needs initializing at all, at any scope.
+    std::array<std::array<double, maxVoices>, maxVoices> jacobian;
+
     for (int iteration = 0; iteration < 14; ++iteration)
     {
         std::array<double, maxVoices> equations {};
@@ -4810,7 +4851,6 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
             break;
         }
 
-        std::array<std::array<double, maxVoices>, maxVoices> jacobian {};
         std::array<double, maxVoices> increment {};
         for (int row = 0; row < contactCount; ++row)
         {
@@ -4842,8 +4882,16 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
             }
             if (best != pivot)
             {
-                std::swap (jacobian[static_cast<std::size_t> (best)],
-                           jacobian[static_cast<std::size_t> (pivot)]);
+                // Bounded to the live [0, contactCount) sub-range rather
+                // than the whole sixteen-wide row: nothing at or past
+                // contactCount is ever read afterwards, so there is nothing
+                // to preserve by swapping it, and it lets the Jacobian above
+                // skip initializing that tail entirely.
+                for (int column = 0; column < contactCount; ++column)
+                    std::swap (jacobian[static_cast<std::size_t> (best)]
+                                       [static_cast<std::size_t> (column)],
+                               jacobian[static_cast<std::size_t> (pivot)]
+                                       [static_cast<std::size_t> (column)]);
                 std::swap (increment[static_cast<std::size_t> (best)],
                            increment[static_cast<std::size_t> (pivot)]);
             }
@@ -4918,18 +4966,17 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
         voice.stickPrevious = voice.stickPosition;
         voice.stickPosition = next;
         voice.solvedContactForce = static_cast<float> (force[slot]);
-        const auto& profile = strikeProfile (voice.articulation);
-        const double coupling = static_cast<double> (profile.membraneGain)
-                              * profile.levelScale;
         // The stochastic field is currently an observed high-mode residual,
         // not a memoryless mechanical dashpot. A pure resistance captured soft
         // and edge strikes for several milliseconds because it omitted the
         // reactive storage that returns energy from real high modes. Use the
         // solved force history to drive the calibrated observation until that
         // omitted-mode impedance is represented by fitted dynamic states.
+        // contactEnergyAdmittance is (membraneGain * levelScale)^2 /
+        // residualImpedance, cached once by trigger() since neither operand
+        // changes for the life of the contact - see the field comment.
         voice.solvedContactEnergyStep = h * force[slot] * force[slot]
-                                      * coupling * coupling
-                                      / voice.residualImpedance;
+                                      * voice.contactEnergyAdmittance;
         if (force[slot] > 1.0e-6)
             voice.nonlinearContactHasForce = true;
 
@@ -4958,6 +5005,19 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
                                      * generalisedForce;
         physical.modalInput[id] += static_cast<float> (
             storedIncrement / mode.resonator.b0);
+    }
+}
+
+void TaikoEngine::injectContinuumEnergy (const Voice& voice, Voice& physical,
+                                         float share) noexcept
+{
+    for (std::size_t index = 0; index < voice.continuumInjection.size(); ++index)
+    {
+        if (! (physical.continuum[index].centre > 0.0f))
+            continue;
+        const float injection = voice.continuumInjection[index] * share;
+        auto& destination = physical.continuum[index].envelope;
+        destination = std::hypot (destination, injection);
     }
 }
 
@@ -4992,16 +5052,9 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
             if (voice.contactReference > 0.0f && physical != nullptr)
             {
                 const float share = contact.amplitude / voice.contactReference;
-                for (std::size_t index = 0; index < voice.continuum.size(); ++index)
-                {
-                    if (! (physical->continuum[index].centre > 0.0f))
-                        continue;
-                    const float injection = voice.continuumInjection[index] * share;
-                    auto& destination = physical->continuum[index].envelope;
-                    // Distinct unresolved modes add as energy, not as coherent
-                    // amplitude and not by replacing the older tail.
-                    destination = std::hypot (destination, injection);
-                }
+                // Distinct unresolved modes add as energy, not as coherent
+                // amplitude and not by replacing the older tail.
+                injectContinuumEnergy (voice, *physical, share);
             }
         }
     }
@@ -5011,8 +5064,13 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
 
     if (nonlinearContact)
     {
+        // articulationLevelScale is strikeProfile(voice.articulation).levelScale,
+        // cached once by trigger() since articulation never changes for the
+        // life of the voice - see the field comment - so the per-sample
+        // nonlinear-contact path can read it directly instead of looking the
+        // profile up by articulation on every rendered sample.
         force = std::max (voice.solvedContactForce, 0.0f)
-              * strikeProfile (voice.articulation).levelScale;
+              * voice.articulationLevelScale;
         contactEnvelope = force
             / std::max (voice.contactAmplitude, 1.0e-9f);
 
@@ -5028,14 +5086,7 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
         {
             const float share = static_cast<float> (std::sqrt (
                 voice.solvedContactEnergyStep / voice.referenceContactEnergy));
-            for (std::size_t index = 0; index < voice.continuumInjection.size(); ++index)
-            {
-                if (! (physical->continuum[index].centre > 0.0f))
-                    continue;
-                auto& destination = physical->continuum[index].envelope;
-                destination = std::hypot (destination,
-                                          voice.continuumInjection[index] * share);
-            }
+            injectContinuumEnergy (voice, *physical, share);
             voice.continuumInjected = true;
         }
     }
@@ -5284,11 +5335,21 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
 
     ++voice.ageSamples;
 
-    const float magnitude = std::max (std::abs (left), std::abs (right));
-    if (magnitude > voice.peakLevel)
-        voice.peakLevel = magnitude;
-    else
-        voice.peakLevel *= 0.99995f;
+    // peakLevel only feeds findVoiceSlot()'s quietest-voice comparison, which
+    // scans voices_ alone. The physical-drum pass in process() renders each
+    // physicalDrums_ entry with `physical` (this function's second argument)
+    // null, since a physical bank has no separate physical bank of its own to
+    // feed - so that is a reliable signal that voice is one of those shared
+    // banks rather than a stealable transient voice, and tracking its peak
+    // was pure overhead for as long as the bank kept ringing.
+    if (physical != nullptr)
+    {
+        const float magnitude = std::max (std::abs (left), std::abs (right));
+        if (magnitude > voice.peakLevel)
+            voice.peakLevel = magnitude;
+        else
+            voice.peakLevel *= 0.99995f;
+    }
 
     rightOut = right;
     return left;
@@ -5367,11 +5428,19 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
             --physical.controlCountdown;
         }
 
+        // Only an active voice's contact fields can be nonzero here: trigger()
+        // zeroes both the moment a voice is armed (see scheduleContacts) and
+        // silenceVoice() zeroes both the moment one is retired, so an inactive
+        // slot already reads zero without this loop ever touching it again.
+        // Resetting all sixteen slots unconditionally, every sample, wrote
+        // sixteen voices' worth of dead zeros on every silent sample of a
+        // track that is silent most of the time.
         for (auto& voice : voices_)
-        {
-            voice.solvedContactForce = 0.0f;
-            voice.solvedContactEnergyStep = 0.0;
-        }
+            if (voice.active)
+            {
+                voice.solvedContactForce = 0.0f;
+                voice.solvedContactEnergyStep = 0.0;
+            }
         for (auto& physical : physicalDrums_)
             if (physical.active)
                 advancePhysicalContacts (physical);
@@ -5399,12 +5468,12 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
             }
             --voice.controlCountdown;
 
-            const auto drumIndex = static_cast<std::size_t> (
-                std::clamp (voice.octaveOffset, lowestOctaveOffset,
-                            highestOctaveOffset) - lowestOctaveOffset);
+            // physicalDrumIndex was resolved once, at trigger(), from the
+            // same already-clamped octave; re-clamping voice.octaveOffset
+            // here every sample was pure overhead.
             float voiceRight = 0.0f;
             const float voiceLeft = renderVoice (
-                voice, &physicalDrums_[drumIndex], voiceRight);
+                voice, &physicalDrums_[voice.physicalDrumIndex], voiceRight);
             mixLeft += voiceLeft;
             mixRight += voiceRight;
         }
@@ -5695,7 +5764,11 @@ TaikoEngine::SoundingMode TaikoEngine::dynamicSoundingMode (
         // into this modal state. Reading its quadrature is both more exact than
         // reconstructing a continuous force transfer (especially near Nyquist)
         // and avoids one complex accumulator per mode per contact sample.
-        const double radius = std::sqrt (mode.resonator.a2);
+        // mode.poleRadius already holds this same value - setPalmDecay and
+        // configureResonator both write it directly from the radius they
+        // solved rather than leaving it to be recovered here - so re-deriving
+        // it with sqrt(a2) on every candidate mode was pure duplicated work.
+        const double radius = mode.poleRadius;
         const double sine = mode.resonator.b0;
         if (! (radius > 0.0) || std::abs (sine) < 1.0e-14)
             continue;
@@ -5800,14 +5873,21 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
     // same mode differ a great deal on a sealed drum, because only the one that
     // changes the body's volume radiates - so reporting one branch's decay
     // beside the other branch's frequency described neither.
-    const auto branchTail = [&drum] (float branchLambda, float omega,
-                                     float vectorB, float vectorR)
+    //
+    // The two density square roots are a property of the drum, not of the
+    // branch, so they are resolved once here rather than inside the lambda -
+    // which the tail sweep below calls up to twice per axisymmetric mode entry.
+    const float sqrtBatterDensity = std::sqrt (drum.batterDensity);
+    const float sqrtResonantDensity = std::sqrt (drum.resonantDensity);
+    const auto branchTail = [&drum, sqrtBatterDensity, sqrtResonantDensity] (
+                                 float branchLambda, float omega,
+                                 float vectorB, float vectorR)
     {
         if (! (omega > 0.0f))
             return 0.0f;
 
-        const float volumeShare = vectorB / std::sqrt (drum.batterDensity)
-                                + vectorR / std::sqrt (drum.resonantDensity);
+        const float volumeShare = vectorB / sqrtBatterDensity
+                                + vectorR / sqrtResonantDensity;
         const float efficiency =
             radiationEfficiency (0, omega * drum.radius / soundSpeed);
         // The same net-volume weighting the sounded modes carry, so the
@@ -5850,15 +5930,8 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
             // so there is no eigenproblem here and no pair of branches - just
             // the batter head's own mode, air-loaded and damped.
             const auto order = static_cast<float> (radial.circumferentialOrder);
-            const float ideal =
-                drum.waveSpeed * radialLambda / (2.0f * piFloat * drum.radius)
-                * stiffnessStretch (radialLambda, drum.stiffnessBatter);
-            const float shape =
-                (2.4048f / radialLambda) / (1.0f + 0.6f * order);
-            const float load = 1.0f / std::sqrt (
-                1.0f + 0.85f * shape * airDensity * drum.radius / drum.batterDensity);
-
-            const float omega = 2.0f * piFloat * ideal * load;
+            const float omega =
+                membraneModeOmegas (drum, drum.radius, radialLambda, order).batter;
             const float frequency = omega / (2.0f * piFloat);
             if (! (frequency > 0.0f) || frequency >= 20000.0f)
                 continue;
@@ -5878,24 +5951,14 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
             continue;
         }
 
-        const float radialBatter =
-            drum.waveSpeed * radialLambda / (2.0f * piFloat * drum.radius)
-            * stiffnessStretch (radialLambda, drum.stiffnessBatter);
-        const float radialResonant =
-            drum.resonantWaveSpeed * radialLambda / (2.0f * piFloat * drum.radius)
-            * stiffnessStretch (radialLambda, drum.stiffnessResonant);
-
         // The air load falls off with the mode's own order exactly as it does
         // where the modes are built: a mode with nodal rings shifts far less
-        // air per unit of displacement than the fundamental does.
-        const float radialShape = 2.4048f / radialLambda;
-        const float radialLoadB = 1.0f / std::sqrt (
-            1.0f + 0.85f * radialShape * airDensity * drum.radius / drum.batterDensity);
-        const float radialLoadR = 1.0f / std::sqrt (
-            1.0f + 0.85f * radialShape * airDensity * drum.radius / drum.resonantDensity);
-
-        const float radialOmegaB = 2.0f * piFloat * radialBatter * radialLoadB;
-        const float radialOmegaR = 2.0f * piFloat * radialResonant * radialLoadR;
+        // air per unit of displacement than the fundamental does. Order 0
+        // here, same as every other axisymmetric mode.
+        const auto radialOmegas =
+            membraneModeOmegas (drum, drum.radius, radialLambda, 0.0f);
+        const float radialOmegaB = radialOmegas.batter;
+        const float radialOmegaR = radialOmegas.resonant;
 
         const float radialCavity =
             drum.cavityStiffness * 4.0f / (radialLambda * radialLambda);

@@ -38,6 +38,23 @@ modern 28-inch baritone/8-string build.
 
 ![Electry electric guitar interface](Docs/screenshots/electry-standalone.png)
 
+## Contents
+
+- [Hear it](#hear-it)
+- [Keyswitches and playable range](#keyswitches-and-playable-range)
+- [Sound architecture](#sound-architecture)
+- [Amplifier chain](#amplifier-chain)
+- [Guitar construction axes](#guitar-construction-axes)
+- [Exact 31-parameter contract](#exact-31-parameter-contract)
+- [Build products](#build-products)
+- [Requirements](#requirements)
+- [Build on macOS](#build-on-macos)
+- [JUCE-free DSP build](#juce-free-dsp-build)
+- [Install and validate locally](#install-and-validate-locally)
+- [Sign, package and notarize](#sign-package-and-notarize)
+- [Project layout](#project-layout)
+- [Licensing](#licensing)
+
 ## Hear it
 
 Fourteen rendered examples — the full playable range, every pick-stroke and
@@ -850,3 +867,13 @@ distributing binaries. No samples, impulse responses, or third-party preset
 libraries are included; "Les Paul" and "Telecaster" name the reference
 styles of the modeling axes and are trademarks of their respective owners,
 with no affiliation or endorsement implied.
+
+## Changelog
+
+- 2026-08-15: Removed redundant `allpassPhaseDelay` calls from the dispersion grid search in `configureVoicePitch`, sharing each candidate coefficient's fundamental-frequency phase-delay term across the two reference-partial comparisons instead of recomputing it, with bit-identical rendered output.
+- 2026-08-15: The fretboard editor's paint() recomputed the neck's fret-span (a `std::exp2` call) on every wire, inlay, and sounding-string position it drew each animation frame; `ElectryVisuals` now exposes a `fretSpan()` helper and span-aware overloads of `fretWireFraction()`/`fretCentreFraction()` so `paint()` solves it once per frame instead, with identical drawn output.
+- 2026-08-15: Factored the clamp-omega-cosine-alpha arithmetic shared by `Biquad::setLowpass`, `setHighpass` and `setPeaking` in `ElectryFx.cpp` into one `designBiquadBasis` helper instead of three copies of the same RBJ cookbook math, with no change to engine output.
+- 2026-08-15: Hoisted the palm-mute settle factor out of `updateVoiceControl`'s per-loop hand-loss modulation so it is solved once per control tick per voice instead of twice (once for the vertical polarisation, once for the horizontal), with bit-identical rendered output.
+- 2026-08-15: Factored the neck and bridge pickups' tap/aperture/coil/flux/EMF chain in `renderVoice` into one shared `readPickup` lambda instead of two near-identical copies differing only in their delay tap, aperture, coil pair and artifact/noise blend weights; verified with the CTest suite and a byte-identical `ElectryRenderDemos` render before and after.
+- 2026-08-15: `bodyConductanceAt` recomputed each body mode's clamped omega, omega-squared and loss rate from scratch on every call, even though those three values depend only on the mode's fixed frequency and Q, not on the sounding partial being scored; `configureBody` now solves them once per mode into `bodyModeOmega_`/`bodyModeOmegaSquared_`/`bodyModeDamping_` and `bodyConductanceAt` (reached up to six times per `configureVoiceDamping` call, itself run on every note-on) reads them directly, with a byte-identical `ElectryRenderDemos` render and a passing CTest suite before and after.
+- 2026-08-15: `configureVoicePitch`'s analytic phase compensation (`loopPhaseDelay`) called `allpassPhaseDelay` once for each dispersion coefficient on both the vertical and horizontal loop, even though the dispersion grid search always assigns the same low/high coefficient pair to both polarisations at once; the two `allpassPhaseDelay` calls (an atan2 pair each) are now solved once per recompensation and reused for both loops' phase-delay sums, kept as separate terms summed in their original order to stay bit-identical; verified with the CTest suite and a byte-identical `ElectryRenderDemos` render before and after.

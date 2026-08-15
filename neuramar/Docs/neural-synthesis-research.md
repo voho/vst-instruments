@@ -229,7 +229,7 @@ that the analyser has identified physical eigenmodes.
    Score persistent inharmonic peaks there, suppress active modal regions in
    the transient residual, and collect the remaining window-corrected power in
    log-frequency cells. Fit non-negative Air powers to the exact analytic
-   response of the shared eight-band runtime filterbank, then learn all
+   response of the shared sixteen-band runtime filterbank, then learn all
    trajectories over normalized note age.
 5. **Fit a temporal neural field and bounded detail correction** — deterministic
    Adam optimization trains a compact Fourier-feature multilayer perceptron on

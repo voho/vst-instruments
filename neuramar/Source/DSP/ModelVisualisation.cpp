@@ -11,6 +11,29 @@ constexpr float logLowest = 4.321928094887362f;   // log2(20)
 constexpr float logHighest = 14.287712379549449f; // log2(20000)
 constexpr float logSpan = logHighest - logLowest;
 
+// The bin grid's octave position depends only on its index, which never
+// changes, not on the slice, band, or model being drawn. depositBand() used
+// to recompute it from scratch on every one of its binCount iterations, and
+// buildModelAnatomy() calls depositBand() sliceCount * airBandCount times per
+// published memory (24 * 16 = 384), so the same 96 values were being
+// rederived 384 times over. The formula is a compile-time-constant linear
+// interpolation (no transcendental calls involved), so it can be resolved
+// once as a constexpr table instead of once per depositBand() call - the
+// same "hoist what does not depend on the loop" pattern already applied to
+// stretchedHarmonicRatios below.
+[[nodiscard]] constexpr std::array<float, ModelAnatomy::binCount>
+makeBinOctaves() noexcept
+{
+    std::array<float, ModelAnatomy::binCount> octaves {};
+    for (std::size_t bin = 0; bin < ModelAnatomy::binCount; ++bin)
+        octaves[bin] = logLowest + logSpan * static_cast<float>(bin)
+            / static_cast<float>(ModelAnatomy::binCount - 1);
+    return octaves;
+}
+
+constexpr std::array<float, ModelAnatomy::binCount> binOctaves
+    = makeBinOctaves();
+
 [[nodiscard]] float finiteOr(float value, float fallback) noexcept
 {
     return std::isfinite(value) ? value : fallback;
@@ -67,9 +90,8 @@ void depositBand(std::array<float, ModelAnatomy::binCount>& bins,
     const float centreOctave = std::log2(centreHz);
     for (std::size_t bin = 0; bin < ModelAnatomy::binCount; ++bin)
     {
-        const float octave = logLowest + logSpan * static_cast<float>(bin)
-            / static_cast<float>(ModelAnatomy::binCount - 1);
-        const float distance = (octave - centreOctave) / (0.6f * width);
+        const float distance = (binOctaves[bin] - centreOctave)
+            / (0.6f * width);
         if (std::abs(distance) > 3.0f)
             continue;
         const float shape = std::exp(-0.5f * distance * distance);
@@ -162,6 +184,16 @@ void buildModelAnatomy(const NeuralModel& model,
     std::array<float, ModelAnatomy::sliceCount> bonePower {};
     float peak = 0.0f;
 
+    // The stretched-partial ratio depends only on the model's own fitted
+    // inharmonicity, which is fixed above, not on the slice being drawn. It
+    // is built once here instead of being recomputed sliceCount times for
+    // every one of the harmonicCount partials in the loop below.
+    std::array<float, NeuralModel::harmonicCount> stretchedHarmonicRatios {};
+    for (std::size_t harmonic = 0; harmonic < NeuralModel::harmonicCount;
+         ++harmonic)
+        stretchedHarmonicRatios[harmonic] = stretchedHarmonicRatio(
+            static_cast<float>(harmonic + 1), destination.inharmonicity);
+
     for (std::size_t slice = 0; slice < ModelAnatomy::sliceCount; ++slice)
     {
         const float normalisedTime = static_cast<float>(slice)
@@ -180,8 +212,8 @@ void buildModelAnatomy(const NeuralModel& model,
         {
             const float amplitude = std::max(
                 finiteOr(frame.harmonicAmplitudes[harmonic], 0.0f), 0.0f);
-            const float frequency = fundamental * stretchedHarmonicRatio(
-                static_cast<float>(harmonic + 1), destination.inharmonicity);
+            const float frequency = fundamental
+                * stretchedHarmonicRatios[harmonic];
             depositPeak(destination.core[slice], frequency, amplitude, 1);
             coreSquares += static_cast<double>(amplitude) * amplitude;
             peak = std::max(peak, amplitude);
@@ -221,8 +253,9 @@ void buildModelAnatomy(const NeuralModel& model,
         return;
 
     destination.peakAmplitude = peak;
-    // Layer meters share the Core reference so their relative balance stays
-    // readable instead of each layer being normalised to its own maximum.
+    // Layer meters share one peak, the loudest any layer reaches across the
+    // whole trajectory, so their relative balance stays readable instead of
+    // each layer being normalised to its own maximum.
     float layerPeak = 0.0f;
     for (std::size_t slice = 0; slice < ModelAnatomy::sliceCount; ++slice)
         layerPeak = std::max({ layerPeak, corePower[slice], airPower[slice],

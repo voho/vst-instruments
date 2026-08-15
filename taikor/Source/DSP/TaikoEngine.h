@@ -372,7 +372,7 @@ public:
     [[nodiscard]] float measureContactSeconds (Articulation articulation,
                                                int octaveOffset,
                                                float velocity) const noexcept;
-    [[nodiscard]] static float measureContact (const EngineParameters& parameters,
+    [[nodiscard]] static float measureContact (const EngineParameters& raw,
                                                Articulation articulation,
                                                int octaveOffset,
                                                float velocity) noexcept;
@@ -587,7 +587,22 @@ private:
         float configurationPitch { 0.0f };
         bool active { false };
         Articulation articulation { Articulation::Don };
+        // strikeProfile(articulation).levelScale, cached at trigger() time.
+        // articulation is fixed for the voice's whole lifetime (see
+        // physicalDrumIndex above), so this is exact for as long as the voice
+        // is active and lets renderVoice()'s per-sample nonlinear-contact path
+        // read it directly instead of looking the profile up by articulation
+        // on every rendered sample.
+        float articulationLevelScale { 1.0f };
         int octaveOffset { 0 };
+        // physicalDrums_ index for octaveOffset, i.e. octaveOffset clamped to
+        // the playable range and rebased at zero. octaveOffset is only ever
+        // assigned from an already-clamped octave (see trigger() and
+        // ensurePhysicalDrum()), so this is exact for the voice's whole
+        // lifetime and lets the per-sample render loop use it directly
+        // instead of re-deriving it - clamp, subtract, cast - on every
+        // sample of every active voice.
+        std::uint8_t physicalDrumIndex { 0 };
         std::uint64_t startOrder { 0 };
         std::uint64_t ageSamples { 0 };
         std::uint64_t maximumSamples { 0 };
@@ -632,6 +647,15 @@ private:
         double contactDamping { 0.0 };
         double residualImpedance { 1.0 };
         double referenceContactEnergy { 1.0 };
+        // (membraneGain * levelScale)^2 / residualImpedance for this voice's
+        // articulation, i.e. the per-sample coefficient advancePhysicalContacts
+        // needs to turn a solved contact force into an observed residual-energy
+        // step. articulation and residualImpedance are both fixed by trigger()
+        // for the voice's whole lifetime, so this is exact for as long as the
+        // contact is active and lets the per-sample solve read it directly
+        // instead of looking up the strike profile and repeating the multiply
+        // and divide on every sample of every simultaneous contact.
+        double contactEnergyAdmittance { 0.0 };
         double solvedContactEnergyStep { 0.0 };
         float solvedContactForce { 0.0f };
         // Amplitude of the stroke's first contact, so a later one can relight
@@ -967,6 +991,17 @@ private:
     // one head.
     [[nodiscard]] static float materialDamping (const DrumState& drum, float omega,
                                                 float extraDamping) noexcept;
+    // A mode's field above the head is evanescent wherever its own spatial
+    // wavenumber (lambda / radius) outruns the sound it can radiate at
+    // (omega / c), and it falls off as exp(-sqrt(ks^2 - k^2) d): the whole
+    // close-microphone story, since that single exponential is what lets the
+    // pair separate right on the head and collapse towards mono a hand's
+    // width back. buildVoiceModes's two mode families and observeMode's
+    // matching readout each need this identically, so it is resolved once
+    // here rather than as four copies of the same three lines.
+    [[nodiscard]] static float nearFieldAttenuation (float lambda, float radius,
+                                                     float omega,
+                                                     float micDistanceMetres) noexcept;
     // Exact white-noise variance of the continuum's two-high-pass/seven-low-pass
     // cascade. Computed only while a voice is built; rendering needs the nine
     // one-pole state updates per channel and band, but no matrix work.
@@ -990,11 +1025,57 @@ private:
     // column relative to its own low-frequency limit, with x = omega l / c.
     // See resolveDrumFor for why it is floored at the quarter-wave.
     [[nodiscard]] static float columnStiffnessFactor (float x) noexcept;
+    // The (0,1) mode's own wavenumber and its air-loaded batter/resonant
+    // angular frequencies, with no stiffness stretch and a unity air-load
+    // shape factor - both are normalised to be exactly one at this mode. This
+    // depends only on the drum, never on a trial cavity stiffness, so
+    // volumeBranchOmega's bisection search (which calls it through the same
+    // drum twenty-five times over) resolves it once outside the loop rather
+    // than on every trial; solveAxisymmetricPair uses it the same way against
+    // the drum's own converged cavity.
+    struct FundamentalPair
+    {
+        float lambda { 0.0f };
+        float omegaBatter { 0.0f };
+        float omegaResonant { 0.0f };
+    };
+    [[nodiscard]] static FundamentalPair fundamentalPairOmegas (
+        const DrumState& drum) noexcept;
+    // The air-loaded batter/resonant angular frequencies of a general
+    // membrane mode: its own stiffness stretch relative to the (0,1) mode and
+    // its own order-dependent air-load shape factor - unlike
+    // fundamentalPairOmegas, which fixes both to unity because it only ever
+    // describes the (0,1) mode itself. observeMode's per-mode readout,
+    // buildVoiceModes's per-entry solve and measure()'s tail-length sweep
+    // each rebuilt this identically; resolved once here so a mode's
+    // frequency cannot drift between what plays and what is reported.
+    struct MembraneModeOmegas
+    {
+        float batter { 0.0f };
+        float resonant { 0.0f };
+    };
+    [[nodiscard]] static MembraneModeOmegas membraneModeOmegas (
+        const DrumState& drum, float radius, float lambda, float order) noexcept;
+    // The (0,1) pair's symmetrised two-by-two - diagonalB, diagonalR and
+    // offDiagonal in the w = sqrt(sigma) q coordinates solveAxisymmetricBranch
+    // expects - for a given trial cavity stiffness against that mode's own
+    // fundamentals (see fundamentalPairOmegas). volumeBranchOmega's bisection
+    // and solveAxisymmetricPair's converged solve both build this same matrix,
+    // one on a trial stiffness and the other on the drum's own, so it is
+    // resolved once here rather than as two copies of the same four lines that
+    // could drift apart.
+    static void axisymmetricDiagonals (const DrumState& drum,
+                                       const FundamentalPair& fundamentals,
+                                       float cavityStiffness, float& diagonalB,
+                                       float& diagonalR,
+                                       float& offDiagonal) noexcept;
     // The angular frequency of the volume-changing branch of the (0,1) pair for
-    // a given cavity stiffness. The cavity correction is solved against this
+    // a given cavity stiffness, given that mode's own fundamentals (see
+    // fundamentalPairOmegas). The cavity correction is solved against this
     // branch because it is the only one the enclosed air stiffens.
-    [[nodiscard]] static float volumeBranchOmega (const DrumState& drum,
-                                                  float cavityStiffness) noexcept;
+    [[nodiscard]] static float volumeBranchOmega (
+        const DrumState& drum, const FundamentalPair& fundamentals,
+        float cavityStiffness) noexcept;
     [[nodiscard]] static std::uint32_t hash32 (std::uint32_t value) noexcept;
     [[nodiscard]] static float signedUnitFromHash (std::uint32_t value) noexcept;
     [[nodiscard]] static float nextNoise (std::uint32_t& state) noexcept;
@@ -1100,7 +1181,7 @@ private:
     // solve as the renderer. A felt bachi can ride a low mode for milliseconds,
     // which no prescribed pulse duration can predict truthfully.
     [[nodiscard]] static SoundingMode dynamicSoundingMode (
-        const EngineParameters& parameters, int octaveOffset,
+        const EngineParameters& rawParameters, int octaveOffset,
         float pitchBendSemitones, double sampleRateHz) noexcept;
 
     // The highest frequency the render will instantiate a resonator at. This
@@ -1139,7 +1220,7 @@ private:
         const EngineParameters& applied, int octaveOffset) noexcept;
     // Resolving a drum depends only on the parameter block, the wheel and the
     // octave, so it is static and the instance method simply supplies its own.
-    [[nodiscard]] static DrumState resolveDrumFor (const EngineParameters& parameters,
+    [[nodiscard]] static DrumState resolveDrumFor (const EngineParameters& raw,
                                                    float pitchBendSemitones,
                                                    int octaveOffset) noexcept;
     // The head and the air behind it for one choice of the octave transform:
@@ -1193,10 +1274,23 @@ private:
     void applyTensionShift (Voice& voice, float shift) noexcept;
     void updateVoiceControl (Voice& voice) noexcept;
     void advancePhysicalContacts (Voice& physical) noexcept;
+    // Adds a strike's per-band continuum injections into the physical bank's
+    // unresolved envelopes as energy rather than amplitude - hypot, not a sum -
+    // because distinct unresolved modes do not add coherently. `share` is the
+    // fraction of the reference contact this particular injection represents;
+    // renderVoice calls this both when a scheduled contact begins and, for the
+    // nonlinear solve, once per sample of the running contact, so the two
+    // sites shared this loop rather than each keeping its own copy of it.
+    static void injectContinuumEnergy (const Voice& voice, Voice& physical,
+                                       float share) noexcept;
     [[nodiscard]] float renderVoice (Voice& voice, Voice* physical,
                                      float& rightOut) noexcept;
     [[nodiscard]] int findVoiceSlot() noexcept;
     void silenceVoice (Voice& voice) noexcept;
+    // Silences every transient voice and every canonical physical bank, the
+    // step reset() and allSoundsOff() both start with - a full engine reset
+    // and a performance panic differ only in what they do afterwards.
+    void silenceAllVoices() noexcept;
     void updateActiveVoiceCount() noexcept;
     void refreshDrumIfNeeded() noexcept;
     // Changes continuous pole loss while preserving instantaneous displacement
@@ -1209,8 +1303,12 @@ private:
     static std::array<float, 5> palmPatchRadii (float centreRadius,
                                                 float patchRadius) noexcept;
     // Configures one resonator from a physical frequency and decay rate.
+    // `poleRadiusOut`, when given, receives the same pole radius already
+    // solved internally, so a caller that needs it (as mode.poleRadius does)
+    // does not have to recover it afterwards with sqrt(resonator.a2).
     void configureResonator (Resonator& resonator, float frequencyHz,
-                             float decayRate, float gain) const noexcept;
+                             float decayRate, float gain,
+                             double* poleRadiusOut = nullptr) const noexcept;
 
     // Sanitised parameters, as published by setParameters(). Like the other
     // engines in this repository the setter is called from the audio thread

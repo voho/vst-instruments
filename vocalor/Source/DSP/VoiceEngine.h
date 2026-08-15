@@ -92,7 +92,7 @@ public:
         engine deliberately ignores notes and renders silence. */
     void prepare(double sampleRate, int maxBlockSize);
     void reset();
-    void setParameters(const EngineParameters& parameters);
+    void setParameters(const EngineParameters& p);
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
     void allNotesOff();
@@ -349,6 +349,21 @@ private:
         float cosine { 1.0f };
     };
 
+    // Which pair of the nine analysed glottal shapes a tension value falls
+    // between, and how far. glottalPair() and glottalFlow() both interpolate
+    // over the same nine shapes from the same per-sample tension, so the
+    // render loop resolves this once and hands it to both instead of each
+    // function re-deriving it from tension independently. clampedTension is
+    // the same clampUnit(tension) already resolved for that lookup, carried
+    // along so glottalPair()'s compatibility-gain table can reuse it instead
+    // of clamping the caller's raw tension a second time.
+    struct GlottalShapePosition
+    {
+        int lowerShape { 0 };
+        float shapeFraction { 0.0f };
+        float clampedTension { 0.0f };
+    };
+
     struct SingerIdentity
     {
         float detuneCents { 0.0f };
@@ -586,41 +601,59 @@ private:
         std::array<float, formantCount> resolvedFormantHz {};
         std::array<float, formantCount> resolvedFormantBandwidth {};
         std::array<Resonator, formantCount> tract {};
+        // The nasal mix formantGain/tract[].b0 were last resolved against.
+        // Bit equality is enough to skip that recompute when neither the
+        // cascade amplitudes nor the nasal mix have actually changed since
+        // the previous control update; the sentinel forces the first one.
+        float resolvedNasalMix { -1.0f };
+        // The formant-shift ratio the nasal branch's own a1/a2/b0 were last
+        // resolved against: the murmur and notch frequencies retune with
+        // shift exactly as the oral formants do. Shared sentinel logic with
+        // resolvedNasalMix above.
+        float resolvedNasalShift { -1.0f };
     };
 
     struct TableBank;
     EngineParameters snapshotParameters() const noexcept;
-    [[nodiscard]] float effectiveDynamics(const EngineParameters& parameters) const noexcept;
+    [[nodiscard]] float effectiveDynamics(const EngineParameters& p) const noexcept;
     [[nodiscard]] static const TableBank& sharedTableBank();
     void buildSingerIdentities();
-    void initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, int singer,
+    void initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, int singerIndex,
                          float velocity, float groupGain, int singerTotal,
-                         float glideFromCents, const EngineParameters& parameters);
-    void updateChunkState(const EngineParameters& parameters, bool advanceSmoothers);
-    void updateVoiceControl(Voice& voice, const EngineParameters& parameters,
+                         float glideFromCents, const EngineParameters& p);
+    void updateChunkState(const EngineParameters& p, bool advanceSmoothers);
+    void updateVoiceControl(Voice& voice, const EngineParameters& p,
                             bool advanceDriftClock);
     void drawVibratoCycle(Voice& voice) noexcept;
-    void updateVowelDrift(Voice& voice, const EngineParameters& parameters,
-                          float driftAmount, bool advanceState) noexcept;
-    void renderVoice(Voice& voice, const EngineParameters& parameters, int count);
+    // vowelMorph/vowelX/vowelY are clampUnit(p.vowelMorph/vowelX/vowelY),
+    // already resolved by the only caller (updateVoiceControl(), which needs
+    // them anyway to detect whether the vowel target moved) so this does not
+    // clamp the same three fields from p a second time.
+    void updateVowelDrift(Voice& voice, const EngineParameters& p,
+                          float driftAmount, bool advanceState,
+                          float vowelMorph, float vowelX, float vowelY) noexcept;
+    void renderVoice(Voice& voice, const EngineParameters& p, int count);
     void silenceVoice(Voice& voice) noexcept;
     void beginRelease(Voice& voice) noexcept;
-    int voicesForMode(const EngineParameters& parameters) const noexcept;
-    int chordMidiForSinger(int rootMidi, int singer, const EngineParameters& parameters) const noexcept;
+    int voicesForMode(const EngineParameters& p) const noexcept;
+    int chordMidiForSinger(int root, int singer, const EngineParameters& p) const noexcept;
     int findFreeVoice() const noexcept;
     void makeRoomFor(int required);
-    bool retuneForLegato(int midiNote, const EngineParameters& parameters);
+    bool retuneForLegato(int midiNote, const EngineParameters& p);
     void pushHeldNote(int midiNote) noexcept;
     // Outcome of a note-off against the held stack.
     enum class HeldNoteState { NotHeld, StillHeld, Released };
     HeldNoteState releaseHeldNote(int midiNote) noexcept;
     int countActiveVoices() const noexcept;
     void updateIntonationRoot() noexcept;
+    [[nodiscard]] static GlottalShapePosition glottalShapePosition(float tension) noexcept;
     float glottalPair(int level, float phase, float tension) const noexcept;
+    float glottalPair(int level, float phase, GlottalShapePosition shape) const noexcept;
     float radiatedPowerTarget(const Voice& voice, float fundamental,
                               float sourceTension,
                               bool legacyBypass) const noexcept;
     float glottalFlow(float phase, float tension) const noexcept;
+    float glottalFlow(float phase, GlottalShapePosition shape) const noexcept;
     float aspirationWindowGain(float tension, float depth) const noexcept;
     float sine(float phase) const noexcept;
     SineCosine sineCosineFromCycles(float cycles) const noexcept;
@@ -632,13 +665,19 @@ private:
     void clearRoom() noexcept;
     /** Resolve the twelve positions into delays and gains. Runs at the chunk
         rate and only when Spread, Size or the mode have actually moved. */
-    void updatePlacement(const EngineParameters& parameters) noexcept;
+    void updatePlacement(const EngineParameters& p) noexcept;
     /** Run the section's positions over @c count samples: sum each identity's
         voices into its own delay line, then read the direct path and the four
         first-order images at both receivers. */
     void renderPlacement(int count) noexcept;
     void clearPlacement() noexcept;
-    void publishDisplayState(int voiceCount, float blockPeakLeft, float blockPeakRight,
+    // Counts and finds the reference voice from activeVoices_/activeTotal_
+    // rather than rescanning every one of the maxVoices slots: that list
+    // already holds exactly the voices active at the start of this block, and
+    // none can have started since (see the comment on activeVoices_'s build
+    // in process()), so it is a strict upper bound on what a fresh scan of
+    // voices_ would find.
+    void publishDisplayState(float blockPeakLeft, float blockPeakRight,
                              int numSamples) noexcept;
     static float midiToHz(int midiNote) noexcept;
     /** The section's nominal release time constant, in seconds. Each voice
@@ -649,6 +688,19 @@ private:
     EngineParameters blockParameters_ {};
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };
+    // 0.46 * sampleRate_, the Nyquist guard the mip selection divides by a
+    // fundamental to get its permissible harmonic count. Sample-rate-only, so
+    // it is resolved once in prepare() instead of on every voice control
+    // update and every radiatedPowerTarget() call that shares the same guard.
+    float mipHarmonicGuardHz_ { 0.46f * 48000.0f };
+    // 0.465 and 0.25 * sampleRate_, the Hz/BW clamp ceilings updateVoiceControl()
+    // applies to every formant of every active voice on every control update,
+    // and updateChunkState() applies to the chunk-rate tract whenever it moves.
+    // Both depend only on the prepared sample rate, so -- like the guard above
+    // -- they are resolved once here instead of being recomputed from
+    // sampleRate_ by every caller that needs them.
+    float formantHzCeilingHz_ { 0.465f * 48000.0f };
+    float formantBandwidthCeilingHz_ { 0.25f * 48000.0f };
     int maxBlockSize_ { 512 };
     bool prepared_ { false };
     std::uint64_t generation_ { 0 };
@@ -774,6 +826,14 @@ private:
     float shimmerScale_ { 1.0f };
     float jitterScale_ { 1.0f };
     float roomEnvelopeDecay_ { 0.0f };
+    // Nasal branch pole/zero radii. Each is exp(-pi * bandwidthHz /
+    // sampleRate) for a fixed bandwidth, so -- like the coefficients above --
+    // it depends only on the prepared sample rate and is resolved once here
+    // instead of once per chunk in updateChunkState() while the branch is
+    // active.
+    float nasalMurmurRadius_ { 0.0f };
+    float nasalZeroRadius_ { 0.0f };
+    float nasalNotchPoleRadius_ { 0.0f };
 
     // Chunk-rate tract state shared by every voice.
     std::array<float, formantCount> chunkFormantHz_ {};

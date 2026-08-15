@@ -233,6 +233,20 @@ storage, latency or per-sample work. Final qualification is recorded below.
 > retain their relative levels with one shared gain rather than per-file
 > normalisation.
 
+## Contents
+
+- [What makes it a circuit model rather than a lookalike](#what-makes-it-a-circuit-model-rather-than-a-lookalike)
+- [Fidelity ledger: stage by stage](#fidelity-ledger-stage-by-stage)
+- [Voices, analogue character and dispersion](#voices-analogue-character-and-dispersion)
+- [Interface](#interface)
+- [Original factory bank](#original-factory-bank)
+- [MIDI](#midi)
+- [Build on macOS](#build-on-macos)
+- [Build and test without JUCE](#build-and-test-without-juce)
+- [Sign, package and notarize](#sign-package-and-notarize)
+- [Layout](#layout)
+- [Licensing](#licensing)
+
 ## What makes it a circuit model rather than a lookalike
 
 - **The oscillator is a divider, not a phase accumulator.** Pitch is one
@@ -1410,3 +1424,14 @@ Original source under the [MIT License](LICENSE); see the
 [third-party notices](THIRD_PARTY_NOTICES.md). YouKnow106 builds against JUCE,
 which is separately licensed — review the JUCE 8 terms before distributing a
 binary.
+
+## Changelog
+
+- 2026-08-15: Cached the shared envelope generator's attack/decay/release law so it is only resolved when a voice's panel position actually changes rather than recomputed from scratch on every voice's pitch write, with no change to engine output.
+- 2026-08-15: Deduplicated the switch-byte-one/switch-byte-two decode logic that `patchFromToneBytes` and `applyParameter` each implemented separately in `YouKnow106SysEx.cpp` into two shared `decodeSwitchByteOne`/`decodeSwitchByteTwo` helpers, with no change to SysEx behaviour.
+- 2026-08-15: Memoized the shared PORTAMENTO glide-rate lookup that every sounding voice's note-on and pitch write in `YouKnow106Engine` resolved independently from the same panel position, verified bit-identical against the rendered demo corpus and the full 15-contract test suite.
+- 2026-08-15: Cached `rampCurrentScaleFor`'s per-card ramp-current tolerance scale on the voice (`Voice::rampCurrentScale`) so `renderVoice` reads the value `updatePulseComparator` already solved a moment earlier in the same internal sample instead of resolving it a second time, verified bit-identical against the rendered demo corpus and the full 15-contract test suite.
+- 2026-08-15: Cached `VoiceVcaControlLaw::gain(vcaControl)`'s softplus result on the voice (`Voice::vcaGain`) so the main scan loop's post-render silence check reads the value `updateVoiceAudio` already solved for that same voice a moment earlier, instead of paying for a second `log1p`/`exp` pair every active voice, every internal sample; verified bit-identical against the rendered demo corpus and the full 15-contract test suite.
+- 2026-08-15: Hoisted the output summing amplifier's slew-limit step (`653846.15 / oversampledRate_`) out of the per-internal-sample block into the same once-per-`process()`-call scope as the other precomputed hold slew constants, since it depends only on the internal rate, which is fixed for the whole call; verified bit-identical against the rendered demo corpus and the full 15-contract test suite.
+- 2026-08-15: Replaced the per-iteration `(track.base + j) % correctionRing` index computed on every one of the 48 samples `addStep`/`addSlope` write into a `BandlimitedTrack`'s correction ring with an incremental wraparound walk, matching the increment-or-reset style the track's own writer (`BandlimitedTrack::advance`) already uses; verified bit-identical against the rendered demo corpus and the full 15-contract test suite.
+- 2026-08-15: Stopped `YouKnow106Engine::process`'s per-host-sample output-coupling update from solving the shared VOLUME wiper network twice -- once inside `outputCouplingCornerHz(glidedVolume_)` and again inside `outputCouplingHighGain(glidedVolume_)` -- by resolving `outputCouplingWiperNetworkFor` once and reading both the corner and the high-band gain off that single result, verified bit-identical against the rendered demo corpus and the full 15-contract test suite.

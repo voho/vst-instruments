@@ -39,6 +39,23 @@ The project builds three products from one JUCE codebase:
 > Those bundles are ad-hoc signed and not notarized; check the repository's
 > Nightly badge for the latest workflow result.
 
+## Contents
+
+- [Teach a sound, then play its memory](#teach-a-sound-then-play-its-memory)
+- [Choosing a useful source](#choosing-a-useful-source)
+- [Interface and controls](#interface-and-controls)
+- [Neural synthesis engine](#neural-synthesis-engine)
+- [Scientific scope and limitations](#scientific-scope-and-limitations)
+- [State, privacy, and presets](#state-privacy-and-presets)
+- [Requirements and formats](#requirements-and-formats)
+- [Build and test on macOS](#build-and-test-on-macos)
+- [Run the neural-engine tests without JUCE](#run-the-neural-engine-tests-without-juce)
+- [Regenerate the demonstration audio](#regenerate-the-demonstration-audio)
+- [Install and validate locally](#install-and-validate-locally)
+- [Sign, package, and notarize](#sign-package-and-notarize)
+- [Project layout](#project-layout)
+- [Licensing](#licensing)
+
 ## Teach a sound, then play its memory
 
 1. Drag a `.wav`, `.wave`, `.aif`, `.aiff`, `.flac`, or `.ogg` file onto the
@@ -110,7 +127,8 @@ the editor never touches the model on a paint call.
 
 The neighbouring root display shows the inferred note, tuning offset,
 confidence, and any manual semitone correction. The editor is resizable and all
-controls are drawn with native JUCE graphics.
+controls are drawn with native JUCE graphics. Double-clicking any knob resets
+it to its own declared default value.
 
 Neuramar exposes 18 host parameters: sixteen continuous front-panel controls,
 **Orbit**, and the persisted root correction.
@@ -802,6 +820,53 @@ Tests/                   Engine and JUCE processor regression tests
 Presets/                 Preset and learned-model provenance guidance
 scripts/                 macOS build, signing, packaging, and notarization helpers
 ```
+
+## Changelog
+
+- 2026-08-15: Fixed a stale count in `NeuramarEngine::noteOn`'s comment on the
+  cached harmonic/Air variation sines, which said 72 where the current
+  64-harmonic, 16-Air-band model produces 80; comment-only, with the eight
+  rendered demo WAVs confirmed byte-for-byte unchanged.
+- 2026-08-15: Removed a redundant per-partial phasor recomputation from the
+  joint harmonic solve in `SampleLearner`, shortening the analysis pass with
+  no change to the fitted model or the rendered audio.
+- 2026-08-15: Hoisted the joint harmonic solve's per-partial rotation and
+  window-start phasor out of its refinement-sweep loop in `SampleLearner`, so
+  the up-to-three-sweep short-aperture case no longer rebuilds the same
+  `std::cos()`/`std::sin()` pair on every sweep, with no change to the fitted
+  model or the rendered audio.
+- 2026-08-15: Hoisted the visible-harmonic stretch-ratio table out of
+  `NeuralModel::refreshWaveformPreview`'s per-point loop so it is resolved
+  once per call instead of once per preview point, with the eight rendered
+  demo WAVs confirmed byte-for-byte unchanged.
+- 2026-08-15: Extracted the loop-region clamp (duration, loop start, loop end,
+  loop length) that `NeuramarEngine::sampleLoopLevelTrajectory` and
+  `NeuramarEngine::updateVoiceControl` each rebuilt from a model's metadata
+  into one shared `computeLoopRegion` helper; pure dedup, with the eight
+  rendered demo WAVs confirmed byte-for-byte unchanged.
+- 2026-08-15: `SampleLearner::analyseHarmonicResidual`'s full-aperture case -
+  used by every one of a `learn()` pass's 128 timeline frames - now reads its
+  Hann window from the same cached table `makeSpectrumFrame` already uses
+  instead of re-deriving the identical 4096 `std::cos()` values through
+  `hannWindow()` on every call; the shorter onset-region apertures are
+  unaffected. Pure dedup, with the eight rendered demo WAVs confirmed
+  byte-for-byte unchanged.
+- 2026-08-15: Extracted the compact network's ten fixed input features (the
+  centred-time pair, three sine/cosine harmonics, and two decay windows) into
+  one shared `networkInputsAt` helper in `NeuralModel.h`, now called by both
+  `NeuralModel::evaluateBaseRaw` and `SampleLearner`'s `networkInputs`
+  instead of each keeping its own copy of the same ten expressions; pure
+  dedup, with the eight rendered demo WAVs confirmed byte-for-byte unchanged.
+- 2026-08-15: `NeuramarEngine.cpp`'s `makeSourceFilterEnvelope` now clamps
+  each of the 64 harmonic amplitudes to zero once up front instead of
+  reapplying `std::max(amplitude, 0.0f)` to the same harmonic up to five
+  times per call (once as its own kernel centre and up to four more times as
+  a neighbouring harmonic's +/-1 or +/-2 tap); this runs every control frame
+  of every voice whenever Body Lock and Imprint are both above zero, which is
+  the shipping default. Pure dedup - `std::max` adds no rounding of its own,
+  so the cached value is bit-identical to what each access already
+  computed - with the eight rendered demo WAVs confirmed byte-for-byte
+  unchanged.
 
 ## Licensing
 

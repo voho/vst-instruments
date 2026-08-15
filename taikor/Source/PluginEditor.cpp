@@ -153,10 +153,12 @@ void TaikorLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w
                                    * (rotaryEndAngle - rotaryStartAngle);
         const auto outer = radius + 0.5f;
         const auto inner = outer - juce::jmax (2.0f, radius * 0.10f);
-        g.drawLine (centreX + std::sin (tickAngle) * inner,
-                    centreY - std::cos (tickAngle) * inner,
-                    centreX + std::sin (tickAngle) * outer,
-                    centreY - std::cos (tickAngle) * outer, 0.8f);
+        const auto tickSin = std::sin (tickAngle);
+        const auto tickCos = std::cos (tickAngle);
+        g.drawLine (centreX + tickSin * inner,
+                    centreY - tickCos * inner,
+                    centreX + tickSin * outer,
+                    centreY - tickCos * outer, 0.8f);
     }
 
     const auto knobRadius = radius - thickness * 1.75f;
@@ -1160,6 +1162,18 @@ void TaikorAudioProcessorEditor::addKnob (TaikorKnob& knob,
     knob.slider.setName (knob.getName());
     attachments.push_back (std::make_unique<SliderAttachment> (
         audioProcessor.parameters, parameterId, knob.slider));
+
+    // Double-click resets a knob to its own parameter's declared default -
+    // the value a freshly-inserted instance opens with - rather than to
+    // whichever value JUCE's slider would otherwise fall back to. Reading it
+    // from the parameter keeps every knob in lockstep with its default should
+    // that ever change, instead of a second table of defaults kept here.
+    if (const auto* parameter = audioProcessor.parameters.getParameter (parameterId))
+    {
+        knob.slider.setDoubleClickReturnValue (
+            true, parameter->convertFrom0to1 (parameter->getDefaultValue()));
+        knob.slider.setTooltip (knob.slider.getTooltip() + " (double-click to reset)");
+    }
 }
 
 void TaikorAudioProcessorEditor::selectOctave (int octaveOffset)

@@ -19,26 +19,48 @@ float fretOffset(int fret) noexcept
 {
     return 1.0f - std::exp2(-static_cast<float>(fret) / 12.0f);
 }
+
+// Shared by fretWireFraction and fretCentreFraction: `span` is the same
+// fretOffset(lastFret) value for every wire on a given neck, so callers that
+// need more than one wire (fretCentreFraction asks for the pair either side
+// of a fretted note) solve it once and pass it in rather than repeating the
+// std::exp2 call per wire.
+float fretWireFractionWithSpan(int fret, int lastFret, float span) noexcept
+{
+    if (span <= 0.0f)
+        return 0.0f;
+    const int clamped = std::clamp(fret, 0, lastFret);
+    return clampf(fretOffset(clamped) / span, 0.0f, 1.0f);
+}
 } // namespace
+
+float fretSpan(int lastFret) noexcept
+{
+    return lastFret > 0 ? fretOffset(lastFret) : 0.0f;
+}
+
+float fretWireFraction(int fret, int lastFret, float span) noexcept
+{
+    return fretWireFractionWithSpan(fret, lastFret, span);
+}
+
+float fretCentreFraction(int fret, int lastFret, float span) noexcept
+{
+    if (fret <= 0 || lastFret <= 0)
+        return 0.0f;
+    const int clamped = std::clamp(fret, 1, std::max(1, lastFret));
+    return 0.5f * (fretWireFractionWithSpan(clamped - 1, lastFret, span)
+                   + fretWireFractionWithSpan(clamped, lastFret, span));
+}
 
 float fretWireFraction(int fret, int lastFret) noexcept
 {
-    if (lastFret <= 0)
-        return 0.0f;
-    const int clamped = std::clamp(fret, 0, lastFret);
-    const float span = fretOffset(lastFret);
-    if (span <= 0.0f)
-        return 0.0f;
-    return clampf(fretOffset(clamped) / span, 0.0f, 1.0f);
+    return fretWireFraction(fret, lastFret, fretSpan(lastFret));
 }
 
 float fretCentreFraction(int fret, int lastFret) noexcept
 {
-    if (fret <= 0)
-        return 0.0f;
-    const int clamped = std::clamp(fret, 1, std::max(1, lastFret));
-    return 0.5f * (fretWireFraction(clamped - 1, lastFret)
-                   + fretWireFraction(clamped, lastFret));
+    return fretCentreFraction(fret, lastFret, fretSpan(lastFret));
 }
 
 float stringRowFraction(int stringIndex, int stringCount, float inset) noexcept

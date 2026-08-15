@@ -66,11 +66,14 @@ constexpr std::array<float, instrumentCount> maximumDecay {{
 // engine raises each ratio to an air-loading exponent rather than pretending
 // the head is a massless ideal membrane.
 //
-// The series runs to twelve because a resonator bank has twelve slots and a
-// real head has far more than five modes. Stopping at 2.917 put every mode a
-// tom could ring inside its bottom two octaves - a 82 Hz floor tom had nothing
-// modelled above 240 Hz, which is why its measured spectrum fell off a cliff
-// where a real drum still has the stick in it.
+// The series runs to twelve mode families, which is already far more than the
+// five modes a real head needs. That is no longer the resonator bank's own
+// slot count - the bank has grown to eighteen slots so buildHeadBank can split
+// some m > 0 families into the physical pair each one actually is (see
+// resonatorCount in DrumEngine.h). Stopping the family list at 2.917 put every
+// mode a tom could ring inside its bottom two octaves - an 82 Hz floor tom had
+// nothing modelled above 240 Hz, which is why its measured spectrum fell off a
+// cliff where a real drum still has the stick in it.
 //
 //                (0,1)  (1,1)  (2,1)  (0,2)  (3,1)  (1,2)
 //                (4,1)  (2,2)  (0,3)  (5,1)  (3,2)  (6,1)
@@ -169,6 +172,18 @@ float excitationScaleFor (float velocity) noexcept
     return 0.74f + 0.26f * std::sqrt (velocity);
 }
 
+// Hertz's contact-time law for an elastic impact: duration falls with impact
+// velocity raised to a negative power, so a harder strike is on the surface
+// for less time and its force spectrum reaches higher. Every struck voice
+// applies the same law at note-on with its own base duration and its own
+// exponent - shallower for a soft beater on a slack head, steeper for a hard
+// tip on a tight one - so this is the one place that shape is written down.
+// Velocity is floored so a note-on of zero cannot make the contact infinite.
+float hertzianContactSeconds (float baseSeconds, float velocity, float exponent) noexcept
+{
+    return baseSeconds * std::pow (std::max (0.08f, velocity), exponent);
+}
+
 // Where the drawn pitch sweep is fully used. A head is stiff because it is
 // stretched, so the amount the pitch bends follows the energy the strike put
 // into it (Avanzini and Marogna) rather than the panel knob alone - but a knob
@@ -176,6 +191,14 @@ float excitationScaleFor (float velocity) noexcept
 // nobody could set, so the depth saturates a little below the top of the range
 // and every accent keeps the sweep it has today.
 constexpr float sweepSaturationVelocity = 0.85f;
+
+// accentVoltage() and excitationScaleFor() of a fixed velocity are themselves
+// fixed, so their product is the same on every note-on. initialiseVoice()
+// used to re-evaluate both curves - two sqrt() calls - for every trigger of
+// every voice in the kit; resolving the constant once here instead saves
+// that work where the answer never changes.
+const float sweepSaturationAmplitude = accentVoltage (sweepSaturationVelocity)
+    * excitationScaleFor (sweepSaturationVelocity);
 
 // Ascending series for J_m. Every argument this engine asks for is a Bessel
 // zero times a fraction of the head's radius, so nothing above about four ever
@@ -284,14 +307,20 @@ float polyBlep (float phase, float phaseIncrement) noexcept
     return 0.0f;
 }
 
-float constantPowerLeft (float pan) noexcept
+// Every call site clamps pan to [-1, 1] into a local of its own before
+// passing that same value in here, on every note-on, every sympathetic-bed
+// refresh, and every processed block's per-instrument mixer update.
+// Clamping it again on entry only reproduced a result the caller had just
+// computed. The two functions now trust the [-1, 1] contract their four call
+// sites already uphold instead of redoing it.
+float constantPowerLeft (float clampedPan) noexcept
 {
-    return std::sqrt (0.5f * (1.0f - std::clamp (pan, -1.0f, 1.0f)));
+    return std::sqrt (0.5f * (1.0f - clampedPan));
 }
 
-float constantPowerRight (float pan) noexcept
+float constantPowerRight (float clampedPan) noexcept
 {
-    return std::sqrt (0.5f * (1.0f + std::clamp (pan, -1.0f, 1.0f)));
+    return std::sqrt (0.5f * (1.0f + clampedPan));
 }
 
 float rationalShaper (float value, float positiveCurvature,
@@ -448,6 +477,29 @@ float chokeSecondsForPressure (float pressure) noexcept
     const float grip = std::clamp (pressure, 0.0f, 1.0f);
     const float slack = 1.0f - grip;
     return 0.006f + 0.46f * slack * slack;
+}
+
+// The RBJ cookbook's high-pass, band-pass and low-pass sections share
+// everything except their numerator: the same frequency/Q clamp, the same
+// omega, and the a1/a2 denominator that follows from cosine/alpha/inverseA0.
+// This is that shared core, so each configure*() below only has to state its
+// own b0/b1/b2 and its own a1/a2 line.
+struct TwoPoleBasis
+{
+    float cosine;
+    float alpha;
+    float inverseA0;
+};
+
+TwoPoleBasis twoPoleBasis (float frequency, float q, float sampleRate,
+                           float inverseSampleRate) noexcept
+{
+    frequency = std::clamp (frequency, 10.0f, 0.45f * sampleRate);
+    q = std::clamp (q, 0.15f, 20.0f);
+    const float omega = twoPi * frequency * inverseSampleRate;
+    const float cosine = std::cos (omega);
+    const float alpha = std::sin (omega) / (2.0f * q);
+    return { cosine, alpha, 1.0f / (1.0f + alpha) };
 }
 } // namespace
 
@@ -763,9 +815,10 @@ const DrumEngine::CymbalRoms& DrumEngine::cymbalRoms() noexcept
         // features worth more than this once its envelope is gone.
         const float omega = twoPi * std::min (spec.washCentre, 0.45f * spec.clockRate)
             / spec.clockRate;
-        const float alpha = std::sin (omega)
+        const float sinOmega = std::sin (omega);
+        const float alpha = sinOmega
             * std::sinh (0.5f * std::log (2.0f) * spec.washWidth * omega
-                         / std::max (1.0e-6f, std::sin (omega)));
+                         / std::max (1.0e-6f, sinOmega));
         const float inverseA0 = 1.0f / (1.0f + alpha);
         const float b0 = alpha * inverseA0;
         const float b2 = -b0;
@@ -843,10 +896,7 @@ const DrumEngine::CymbalRoms& DrumEngine::cymbalRoms() noexcept
 
 void DrumEngine::reset() noexcept
 {
-    for (auto& voice : voices_)
-        voice = Voice {};
-    for (auto& voice : retiringVoices_)
-        voice = Voice {};
+    forEachVoice ([] (Voice& voice) { voice = Voice {}; });
     triggerCounters_.fill (0);
     componentDrift_.fill (0.0f);
     engineSamples_ = 0;
@@ -983,14 +1033,19 @@ float DrumEngine::signedUnitFromHash (std::uint32_t value) noexcept
     return static_cast<float> (hashed & 0x00ffffffu) / 8388607.5f - 1.0f;
 }
 
-float DrumEngine::nextNoise (Voice& voice) noexcept
+float DrumEngine::advanceXorshiftNoise (std::uint32_t& state) noexcept
 {
-    std::uint32_t x = voice.noiseState;
+    std::uint32_t x = state;
     x ^= x << 13u;
     x ^= x >> 17u;
     x ^= x << 5u;
-    voice.noiseState = x == 0u ? 1u : x;
-    return static_cast<float> (voice.noiseState & 0x00ffffffu) / 8388607.5f - 1.0f;
+    state = x == 0u ? 1u : x;
+    return static_cast<float> (state & 0x00ffffffu) / 8388607.5f - 1.0f;
+}
+
+float DrumEngine::nextNoise (Voice& voice) noexcept
+{
+    return advanceXorshiftNoise (voice.noiseState);
 }
 
 // Every noise layer in the kit - snare wires, clap bursts, stick and shaker
@@ -2107,49 +2162,37 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
 
 void DrumEngine::configureHighpass (Biquad& filter, float frequency, float q) const noexcept
 {
-    frequency = std::clamp (frequency, 10.0f, 0.45f * static_cast<float> (sampleRate_));
-    q = std::clamp (q, 0.15f, 20.0f);
-    const float omega = twoPi * frequency * inverseSampleRate_;
-    const float cosine = std::cos (omega);
-    const float alpha = std::sin (omega) / (2.0f * q);
-    const float inverseA0 = 1.0f / (1.0f + alpha);
-    filter.b0 = 0.5f * (1.0f + cosine) * inverseA0;
-    filter.b1 = -(1.0f + cosine) * inverseA0;
+    const auto basis = twoPoleBasis (frequency, q, static_cast<float> (sampleRate_),
+                                     inverseSampleRate_);
+    filter.b0 = 0.5f * (1.0f + basis.cosine) * basis.inverseA0;
+    filter.b1 = -(1.0f + basis.cosine) * basis.inverseA0;
     filter.b2 = filter.b0;
-    filter.a1 = -2.0f * cosine * inverseA0;
-    filter.a2 = (1.0f - alpha) * inverseA0;
+    filter.a1 = -2.0f * basis.cosine * basis.inverseA0;
+    filter.a2 = (1.0f - basis.alpha) * basis.inverseA0;
     filter.clear();
 }
 
 void DrumEngine::configureBandpass (Biquad& filter, float frequency, float q) const noexcept
 {
-    frequency = std::clamp (frequency, 10.0f, 0.45f * static_cast<float> (sampleRate_));
-    q = std::clamp (q, 0.15f, 20.0f);
-    const float omega = twoPi * frequency * inverseSampleRate_;
-    const float cosine = std::cos (omega);
-    const float alpha = std::sin (omega) / (2.0f * q);
-    const float inverseA0 = 1.0f / (1.0f + alpha);
-    filter.b0 = alpha * inverseA0;
+    const auto basis = twoPoleBasis (frequency, q, static_cast<float> (sampleRate_),
+                                     inverseSampleRate_);
+    filter.b0 = basis.alpha * basis.inverseA0;
     filter.b1 = 0.0f;
     filter.b2 = -filter.b0;
-    filter.a1 = -2.0f * cosine * inverseA0;
-    filter.a2 = (1.0f - alpha) * inverseA0;
+    filter.a1 = -2.0f * basis.cosine * basis.inverseA0;
+    filter.a2 = (1.0f - basis.alpha) * basis.inverseA0;
     filter.clear();
 }
 
 void DrumEngine::configureLowpass (Biquad& filter, float frequency, float q) const noexcept
 {
-    frequency = std::clamp (frequency, 10.0f, 0.45f * static_cast<float> (sampleRate_));
-    q = std::clamp (q, 0.15f, 20.0f);
-    const float omega = twoPi * frequency * inverseSampleRate_;
-    const float cosine = std::cos (omega);
-    const float alpha = std::sin (omega) / (2.0f * q);
-    const float inverseA0 = 1.0f / (1.0f + alpha);
-    filter.b0 = 0.5f * (1.0f - cosine) * inverseA0;
-    filter.b1 = (1.0f - cosine) * inverseA0;
+    const auto basis = twoPoleBasis (frequency, q, static_cast<float> (sampleRate_),
+                                     inverseSampleRate_);
+    filter.b0 = 0.5f * (1.0f - basis.cosine) * basis.inverseA0;
+    filter.b1 = (1.0f - basis.cosine) * basis.inverseA0;
     filter.b2 = filter.b0;
-    filter.a1 = -2.0f * cosine * inverseA0;
-    filter.a2 = (1.0f - alpha) * inverseA0;
+    filter.a1 = -2.0f * basis.cosine * basis.inverseA0;
+    filter.a2 = (1.0f - basis.alpha) * basis.inverseA0;
     filter.clear();
 }
 
@@ -2178,10 +2221,14 @@ void DrumEngine::configureResonator (Resonator& resonator, float frequency,
     decaySeconds = std::max (0.005f, decaySeconds);
     const float omega = twoPi * frequency * inverseSampleRate_;
     const float radius = coefficientForTime (decaySeconds, static_cast<float> (sampleRate_));
+    // sin(omega) feeds the tension slope, the input gain and the strike gain
+    // below; omega does not change between them, so it is one transcendental
+    // call rather than three of the identical one.
+    const float sineOmega = std::sin (omega);
     resonator.a1 = 2.0f * radius * std::cos (omega);
     resonator.a2 = -radius * radius;
     resonator.nominalA1 = resonator.a1;
-    resonator.tensionSlope = -2.0f * radius * omega * std::sin (omega);
+    resonator.tensionSlope = -2.0f * radius * omega * sineOmega;
     resonator.poleDiameter = 2.0f * radius;
 
     // A two-pole resonator's impulse residue is inputGain / sin (omega).
@@ -2192,37 +2239,38 @@ void DrumEngine::configureResonator (Resonator& resonator, float frequency,
     const float referenceRadius = coefficientForTime (decaySeconds, referenceSampleRate);
     const float referenceGain = 0.45f * std::sqrt (
         std::max (1.0e-8f, 1.0f - referenceRadius * referenceRadius));
-    resonator.inputGain = referenceGain * std::sin (omega)
+    resonator.inputGain = referenceGain * sineOmega
         / std::max (1.0e-4f, std::sin (referenceOmega));
     // A strike sets the mode moving instead of pushing a sample through it, so
     // its scale is the mode's own geometry and carries no sample rate with it.
-    resonator.strikeGain = std::sin (omega) / std::max (1.0e-4f, radius);
+    resonator.strikeGain = sineOmega / std::max (1.0e-4f, radius);
     resonator.clear();
 }
 
-void DrumEngine::retuneResonatorDecay (Resonator& resonator,
-                                       float decaySeconds) const noexcept
+void DrumEngine::retuneResonatorDecay (Resonator& resonator, float cosine,
+                                       float angle, float decaySeconds) const noexcept
 {
-    // a1 is 2 r cos(theta) and a2 is -r^2, so the pole the mode is currently
+    // a1 is 2 r cos(theta) and a2 is -r^2, so the pole a mode is currently
     // ringing on gives back both its radius and its angle exactly. Rebuilding
     // the coefficients at a new radius and the same angle changes how fast the
     // mode dies and nothing else - the frequency is preserved to the last bit,
     // and y1/y2 are left alone, which is what makes this a change of law on a
     // note that is still sounding rather than a new note.
-    const float previousRadius = std::sqrt (std::max (0.0f, -resonator.a2));
-    if (previousRadius <= 1.0e-6f)
-        return;
-    const float cosine = std::clamp (
-        resonator.a1 / (2.0f * previousRadius), -1.0f, 1.0f);
+    //
+    // cosine and angle are that recovered pole, not a new frequency: the sole
+    // caller (applyHatAperture) already has to recover them from this same
+    // resonator's a1/a2 to turn the angle into a frequency for its own loss
+    // law, so it hands them in here instead of this function re-deriving the
+    // identical radius/cosine/acos from the coefficients a second time.
     const float radius = coefficientForTime (std::max (0.005f, decaySeconds),
                                              static_cast<float> (sampleRate_));
     const float sine = std::sqrt (std::max (0.0f, 1.0f - cosine * cosine));
     resonator.a1 = 2.0f * radius * cosine;
     resonator.a2 = -radius * radius;
     resonator.nominalA1 = resonator.a1;
-    // omega is the pole angle, which is acos(cosine); the slope only needs the
-    // product r*omega*sin(omega), and sin(omega) is the sine above.
-    resonator.tensionSlope = -2.0f * radius * std::acos (cosine) * sine;
+    // The slope only needs the product r*omega*sin(omega); omega is the angle
+    // the caller already recovered.
+    resonator.tensionSlope = -2.0f * radius * angle * sine;
     resonator.poleDiameter = 2.0f * radius;
 }
 
@@ -2322,10 +2370,12 @@ void DrumEngine::applyAftertouch (float pressure) noexcept
 {
     if (! std::isfinite (pressure) || pressure <= 0.0f)
         return;
-    for (auto* pool : { &voices_, &retiringVoices_ })
-        for (auto& voice : *pool)
-            if (voice.active && isCymbal (voice.instrument))
-                beginChoke (voice, chokeSecondsForPressure (pressure));
+    const float seconds = chokeSecondsForPressure (pressure);
+    forEachVoice ([this, seconds] (Voice& voice)
+    {
+        if (voice.active && isCymbal (voice.instrument))
+            beginChoke (voice, seconds);
+    });
 }
 
 bool DrumEngine::applyAftertouch (int midiNote, float pressure) noexcept
@@ -2347,11 +2397,12 @@ bool DrumEngine::applyAftertouch (int midiNote, float pressure) noexcept
     // crash two names (49 and 57) and the ride two (51 and 59), and a player
     // who struck the crash on 57 and grabbed it on 49 has grabbed the cymbal
     // that is ringing.
-    for (auto* pool : { &voices_, &retiringVoices_ })
-        for (auto& voice : *pool)
-            if (voice.active && voice.instrument == mapping->instrument
-                && voice.articulation == mapping->articulation)
-                beginChoke (voice, seconds);
+    forEachVoice ([this, &mapping, seconds] (Voice& voice)
+    {
+        if (voice.active && voice.instrument == mapping->instrument
+            && voice.articulation == mapping->articulation)
+            beginChoke (voice, seconds);
+    });
     return true;
 }
 
@@ -2426,8 +2477,9 @@ void DrumEngine::applyHatAperture (Voice& voice, float aperture) noexcept
         const float radius = std::sqrt (std::max (0.0f, -resonator.a2));
         if (radius <= 1.0e-6f)
             continue;
-        const float angle = std::acos (
-            std::clamp (resonator.a1 / (2.0f * radius), -1.0f, 1.0f));
+        const float cosine = std::clamp (
+            resonator.a1 / (2.0f * radius), -1.0f, 1.0f);
+        const float angle = std::acos (cosine);
         const float frequency = angle * floatSampleRate / twoPi;
         const float relative = std::max (
             1.0f, frequency / std::max (1.0f, voice.baseFrequency));
@@ -2436,7 +2488,11 @@ void DrumEngine::applyHatAperture (Voice& voice, float aperture) noexcept
                        + loss.viscous * relative * relative);
         const float seconds = plateSeconds / lossFactor;
         longest = std::max (longest, seconds);
-        retuneResonatorDecay (resonator, seconds);
+        // cosine and angle are the pole this mode is already ringing on,
+        // recovered above to turn it into a frequency for the loss law; hand
+        // them to retuneResonatorDecay instead of letting it recover the same
+        // pole from a1/a2 a second time.
+        retuneResonatorDecay (resonator, cosine, angle, seconds);
     }
 
     // The bank stops being evaluated once its slowest mode has passed 2.6 of
@@ -2481,31 +2537,30 @@ void DrumEngine::setHiHatPedal (float position) noexcept
     // which is what a foot splash is. Both directions therefore re-derive the
     // ringing voice's decay at the new aperture; only the closing direction
     // adds the friction on top, and only the opening direction takes it away.
-    for (auto* pool : { &voices_, &retiringVoices_ })
-        for (auto& voice : *pool)
+    forEachVoice ([this, aperture] (Voice& voice)
+    {
+        if (! voice.active || ! isHiHat (voice.instrument)
+            || std::abs (aperture - voice.hatAperture) < 0.02f)
+            return;
+        const bool closing = aperture < voice.hatAperture;
+        applyHatAperture (voice, aperture);
+        if (closing)
         {
-            if (! voice.active || ! isHiHat (voice.instrument)
-                || std::abs (aperture - voice.hatAperture) < 0.02f)
-                continue;
-            const bool closing = aperture < voice.hatAperture;
-            applyHatAperture (voice, aperture);
-            if (closing)
-            {
-                const float frictionSeconds = 0.004f + 0.36f * aperture;
-                beginChoke (voice, frictionSeconds);
-                voice.pedalFrictionMultiplier = std::clamp (
-                    coefficientForTime (std::max (0.0005f, frictionSeconds),
-                                        static_cast<float> (sampleRate_)),
-                    0.0f, 1.0f);
-            }
-            else if (voice.choking
-                     && voice.chokeMultiplier == voice.pedalFrictionMultiplier)
-            {
-                voice.choking = false;
-                voice.chokeMultiplier = 1.0f;
-                voice.pedalFrictionMultiplier = 0.0f;
-            }
+            const float frictionSeconds = 0.004f + 0.36f * aperture;
+            beginChoke (voice, frictionSeconds);
+            voice.pedalFrictionMultiplier = std::clamp (
+                coefficientForTime (std::max (0.0005f, frictionSeconds),
+                                    static_cast<float> (sampleRate_)),
+                0.0f, 1.0f);
         }
+        else if (voice.choking
+                 && voice.chokeMultiplier == voice.pedalFrictionMultiplier)
+        {
+            voice.choking = false;
+            voice.chokeMultiplier = 1.0f;
+            voice.pedalFrictionMultiplier = 0.0f;
+        }
+    });
 
     // A foot coming down hard enough to shut the pair makes its own sound, and
     // it is the only stroke on a kit that is played without a stick. Its
@@ -2578,10 +2633,7 @@ void DrumEngine::dampRingingMembrane (Instrument instrument, float velocity) noe
         voice.modalEnergy *= retained * retained;
         voice.recentPeak *= retained;
     };
-    for (auto& voice : voices_)
-        damp (voice);
-    for (auto& voice : retiringVoices_)
-        damp (voice);
+    forEachVoice (damp);
 }
 
 void DrumEngine::chokeGroup (int group) noexcept
@@ -2590,22 +2642,20 @@ void DrumEngine::chokeGroup (int group) noexcept
         return;
     // Every voice remembers the group it was born into, so retuning the
     // parameter never strands a ringing tail that can no longer be cut.
-    for (auto& voice : voices_)
+    forEachVoice ([this, group] (Voice& voice)
+    {
         if (voice.active && voice.chokeGroup == group)
             beginChoke (voice, 0.003f);
-    for (auto& voice : retiringVoices_)
-        if (voice.active && voice.chokeGroup == group)
-            beginChoke (voice, 0.003f);
+    });
 }
 
 void DrumEngine::allSoundsOff() noexcept
 {
-    for (auto& voice : voices_)
+    forEachVoice ([this] (Voice& voice)
+    {
         if (voice.active)
             beginChoke (voice, 0.004f);
-    for (auto& voice : retiringVoices_)
-        if (voice.active)
-            beginChoke (voice, 0.004f);
+    });
 }
 
 void DrumEngine::updateActiveVoiceCount() noexcept
@@ -2634,10 +2684,7 @@ void DrumEngine::updateActiveVoiceCount() noexcept
             newestPitch = voice.oscillatorFrequency;
         }
     };
-    for (const auto& voice : voices_)
-        observe (voice);
-    for (const auto& voice : retiringVoices_)
-        observe (voice);
+    forEachVoice (observe);
     for (std::size_t index = 0; index < instrumentCount; ++index)
         instrumentLevels_[index].store (levels[index], std::memory_order_relaxed);
     activeVoiceCount_.store (count, std::memory_order_relaxed);
@@ -2666,13 +2713,22 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
     //
     // A model that damps every mode alike gets this exactly backwards, and it is
     // what makes a synthesised drum sound like one tone with an envelope.
-    const auto lossPerSecond = [&head, &loss] (float frequency, int multipole)
+    // efficiencyOut, when given, receives the radiation-efficiency term this
+    // computes anyway. emit() below needs that same term for its "heard"
+    // weight, and pow() is the expensive part of it - taking it here instead
+    // of re-deriving omega/ka/exponent/power a second time from the same
+    // (frequency, multipole) pair saves a transcendental call per mode for no
+    // change to either result.
+    const auto lossPerSecond = [&head, &loss] (
+        float frequency, int multipole, float* efficiencyOut = nullptr)
     {
         const float omega = twoPi * std::max (1.0f, frequency);
         const float ka = omega * head.radius / soundSpeed;
         const float exponent = 2.0f + 2.0f * static_cast<float> (multipole);
         const float power = std::pow (std::max (1.0e-4f, ka), exponent);
         const float efficiency = power / (1.0f + power);
+        if (efficiencyOut != nullptr)
+            *efficiencyOut = efficiency;
         return loss.fixed + loss.hysteretic * omega
              + loss.viscous * omega * omega + loss.radiation * efficiency;
     };
@@ -2746,13 +2802,10 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
             // stack it in phase on whatever else landed there.
             if (frequency >= 0.44f * static_cast<float> (sampleRate_))
                 return;
+            float efficiency = 0.0f;
             const float modeLoss = std::max (1.0e-3f,
-                                             lossPerSecond (frequency, multipole));
-            const float omega = twoPi * std::max (1.0f, frequency);
-            const float ka = omega * head.radius / soundSpeed;
-            const float exponent = 2.0f + 2.0f * static_cast<float> (multipole);
-            const float power = std::pow (std::max (1.0e-4f, ka), exponent);
-            const float heard = 0.34f + 0.66f * std::sqrt (power / (1.0f + power));
+                                             lossPerSecond (frequency, multipole, &efficiency));
+            const float heard = 0.34f + 0.66f * std::sqrt (efficiency);
 
             ratios[count] = ratio;
             decays[count] = decaySeconds * referenceLoss / modeLoss;
@@ -2826,12 +2879,21 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
     // are left once the table has been emitted. Gain here is the same product
     // the normalisation below uses, so "loudest" means loudest as heard and not
     // loudest as struck.
-    const auto gainOf = [&] (int slot)
-    {
-        const auto index = static_cast<std::size_t> (slot);
-        return std::pow (std::max (1.0f, ratios[index]), tilt)
-            * std::abs (excitation[index]);
-    };
+    //
+    // Every candidate's gain depends only on its own emitted ratio and
+    // excitation, and neither changes until the slot is actually chosen and
+    // split - at which point it stops being a candidate at all. The search
+    // below used to call pow()-based gainOf() on every still-eligible slot on
+    // every one of the (up to four) rounds it takes to find each pair, so an
+    // untouched candidate had its gain re-derived from the same inputs once
+    // per remaining round. Resolving it here instead, once per candidate, saves
+    // those repeats with no change to which slot the search picks.
+    float candidateGain[resonatorCount] {};
+    for (int slot = 0; slot < count; ++slot)
+        if (orders[slot] > 0)
+            candidateGain[static_cast<std::size_t> (slot)] = std::pow (
+                std::max (1.0f, ratios[static_cast<std::size_t> (slot)]), tilt)
+                * std::abs (excitation[static_cast<std::size_t> (slot)]);
 
     const float renderable = 0.44f * static_cast<float> (sampleRate_);
     while (count < resonatorCount)
@@ -2851,7 +2913,7 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
                 * (1.0f + 0.5f * split);
             if (fundamental * upper >= renderable)
                 continue;
-            const float gain = gainOf (slot);
+            const float gain = candidateGain[static_cast<std::size_t> (slot)];
             if (gain > bestGain)
             {
                 bestGain = gain;
@@ -2899,8 +2961,17 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
     for (int mode = 0; mode < count; ++mode)
     {
         const auto slot = static_cast<std::size_t> (mode);
-        const float gain = std::pow (std::max (1.0f, ratios[slot]), tilt)
-            * std::abs (excitation[slot]);
+        // A slot still at orders[slot] > 0 here was an eligible split candidate
+        // the search above never picked, so its ratio and excitation are
+        // exactly what they were when candidateGain[] was resolved: reusing
+        // that cached value is the same pow() call the search already paid
+        // for, not a new one. A slot at order <= 0 is either the axisymmetric
+        // family (never a candidate) or a pair the split rewrote, so it is
+        // resolved fresh.
+        const float gain = orders[slot] > 0
+            ? candidateGain[slot]
+            : std::pow (std::max (1.0f, ratios[slot]), tilt)
+                  * std::abs (excitation[slot]);
         voice.modeGains[slot] = gain;
         gainSum += gain;
         configureResonator (voice.resonators[slot], fundamental * ratios[slot],
@@ -3027,11 +3098,9 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
     // upward over the first two milliseconds and leave eleven cents of residual
     // bend on the Kick against one and a half. The shape of the sweep is the
     // pitch envelope's, unchanged; only its depth is the strike's.
-    const float saturationAmplitude = accentVoltage (sweepSaturationVelocity)
-        * excitationScaleFor (sweepSaturationVelocity);
     const float strikeAmplitude = voice.velocity * voice.excitationScale;
     voice.strikeDepth = std::min (1.0f, (strikeAmplitude * strikeAmplitude)
-        / (saturationAmplitude * saturationAmplitude));
+        / (sweepSaturationAmplitude * sweepSaturationAmplitude));
     // A softly struck head, cymbal or shaker radiates a darker spectrum than a
     // hard strike, because less energy reaches the high, heavily damped modes.
     // The curve is unity at full velocity, so the loud end of the existing
@@ -3117,8 +3186,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // a soft one. Contact time sets how much of the head the strike can
             // reach, so everything about the attack follows from this number
             // rather than from a filter placed by ear.
-            voice.contactSeconds = (0.00190f - 0.00120f * voice.characterA)
-                * std::pow (std::max (0.08f, velocity), -0.2f);
+            voice.contactSeconds = hertzianContactSeconds (
+                0.00190f - 0.00120f * voice.characterA, velocity, -0.2f);
             voice.contactIncrement = std::min (
                 1.0f, inverseSampleRate_ / std::max (1.0e-5f, voice.contactSeconds));
             voice.contactPhase = 0.0f;
@@ -3216,8 +3285,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // for less time, and Hertz shortens it further as the hit gets
             // harder. A snare's contact is the shortest in the kit, which is
             // most of why it is the brightest thing in it.
-            voice.contactSeconds = (0.00085f - 0.00050f * voice.characterB)
-                * std::pow (std::max (0.08f, velocity), -0.35f)
+            voice.contactSeconds = hertzianContactSeconds (
+                0.00085f - 0.00050f * voice.characterB, velocity, -0.35f)
                 * (rimshot ? 0.38f : crossStick ? 0.60f : 1.0f);
             voice.contactIncrement = std::min (
                 1.0f, inverseSampleRate_ / std::max (1.0e-5f, voice.contactSeconds));
@@ -3309,9 +3378,15 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             voice.transientEnvelope = 0.0f;
             voice.transientMultiplier = coefficientForTime (0.0030f + 0.0025f * voice.characterA,
                                                              static_cast<float> (sampleRate_));
+            // Both bandpasses track Pitch by the same fractional power - the
+            // direct-impact band and the diffuse tail band are two filters on
+            // one strike, not two independently tuned voices - so it is one
+            // std::pow call shared between them rather than the identical one
+            // computed twice for the same voice.pitchRatio.
+            const float pitchStretch = std::pow (voice.pitchRatio, 0.42f);
             configureBandpass (voice.filterA,
                                (850.0f + 2750.0f * voice.characterB)
-                                   * std::pow (voice.pitchRatio, 0.42f) * voice.velocityTimbre,
+                                   * pitchStretch * voice.velocityTimbre,
                                0.68f + 0.42f * voice.characterB);
             configureHighpass (voice.filterB, 430.0f + 1450.0f * voice.characterB, 0.72f);
             // The tail of a clap is the room answering, not the hands again.
@@ -3321,7 +3396,7 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // than the strike itself held down by a fader.
             configureBandpass (voice.filterC,
                                (620.0f + 1500.0f * voice.characterB)
-                                   * std::pow (voice.pitchRatio, 0.42f)
+                                   * pitchStretch
                                    * voice.velocityTimbre,
                                0.45f);
             break;
@@ -3400,8 +3475,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // chick and a quiet closed hat, and it is why the step's word for
             // this contact is "blunter": under this engine's own reach law a
             // blunt contact is a long one, not a short one.
-            voice.contactSeconds = (0.00042f - 0.00022f * voice.characterA)
-                * std::pow (std::max (0.08f, velocity), -0.35f)
+            voice.contactSeconds = hertzianContactSeconds (
+                0.00042f - 0.00022f * voice.characterA, velocity, -0.35f)
                 * (footChick ? 6.0f : 1.0f);
             // And there is no stick, so there is no stick noise: the broadband
             // burst renderHat lays in front of the plate is a wooden tip
@@ -3509,9 +3584,10 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // No modal bank is set up here, because neither cymbal renders one
             // any more. initialiseVoice() has already cleared the voice, so
             // modeCount and modalActiveSamples are zero and every generic
-            // modal guard downstream is false. Configuring twelve resonators
-            // whose state nothing reads would be a note-on cost - transcendental
-            // work on the audio thread - paid by every hit of a dense ride.
+            // modal guard downstream is false. Configuring the resonator
+            // bank's eighteen slots whose state nothing reads would be a
+            // note-on cost - transcendental work on the audio thread - paid
+            // by every hit of a dense ride.
             break;
         }
 
@@ -3537,8 +3613,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // shortens more steeply with speed than a bass drum beater's - which
             // is exactly why a tom cracks under a hard hit where a kick only
             // gets louder.
-            voice.contactSeconds = (0.00120f - 0.00070f * voice.characterA)
-                * std::pow (std::max (0.08f, velocity), -0.35f);
+            voice.contactSeconds = hertzianContactSeconds (
+                0.00120f - 0.00070f * voice.characterA, velocity, -0.35f);
             voice.contactIncrement = std::min (
                 1.0f, inverseSampleRate_ / std::max (1.0e-5f, voice.contactSeconds));
             voice.contactPhase = 0.0f;
@@ -3594,8 +3670,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // Poisson rate for the whole note. That swell is the "cha" - the
             // only thing that separates a shaker from a burst of filtered hiss -
             // and a harder shake gets them there sooner.
-            voice.contactSeconds = (0.042f - 0.018f * voice.characterA)
-                * std::pow (std::max (0.08f, velocity), -0.30f);
+            voice.contactSeconds = hertzianContactSeconds (
+                0.042f - 0.018f * voice.characterA, velocity, -0.30f);
             voice.contactIncrement = std::min (
                 1.0f, inverseSampleRate_ / std::max (1.0e-5f, voice.contactSeconds));
             voice.contactPhase = 0.0f;
@@ -3668,8 +3744,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             configureBandpass (voice.filterC, 340.0f - 150.0f * hollow, 1.35f);
             // A hard wooden tip on a hard wooden bar: the shortest contact in
             // the instrument, and it shortens further as the strike gets harder.
-            voice.contactSeconds = (0.00026f - 0.00012f * voice.characterB)
-                * std::pow (std::max (0.08f, velocity), -0.2f);
+            voice.contactSeconds = hertzianContactSeconds (
+                0.00026f - 0.00012f * voice.characterB, velocity, -0.2f);
             voice.contactIncrement = std::min (
                 1.0f, inverseSampleRate_ / std::max (1.0e-5f, voice.contactSeconds));
             voice.contactPhase = 0.0f;
@@ -3760,8 +3836,11 @@ void DrumEngine::trigger (Instrument instrument, float velocity,
     // one. The deviations are sized to be heard rather than merely measured:
     // roughly a sixth of a semitone of pitch at the default, which is where a
     // repeated hit stops reading as a loop of one recording.
-    const float humaniseDepth = 2.0f * clampUnit (
-        humanise_.load (std::memory_order_relaxed), 0.5f);
+    // humanise_ is stored through clampUnit() by setKitParameters(), so it is
+    // already finite and already in [0, 1] by the time trigger() reads it;
+    // clampUnit() is idempotent, so reapplying it here only reproduced the
+    // stored value at the cost of a redundant isfinite/clamp per note-on.
+    const float humaniseDepth = 2.0f * humanise_.load (std::memory_order_relaxed);
     HitVariation variation;
     variation.pitchCents = humaniseDepth * (5.6f * drift
         + 4.4f * signedUnitFromHash (seed ^ 0xc8013ea4u)
@@ -3878,6 +3957,24 @@ void DrumEngine::advanceModalTension (Voice& voice, float bankOutput) noexcept
         voice.resonators[static_cast<std::size_t> (mode)].setTension (tension);
 }
 
+float DrumEngine::renderModalBank (Voice& voice, float impulse,
+                                   bool applyTension) noexcept
+{
+    float output = 0.0f;
+    if (voice.ageSamples < voice.modalActiveSamples)
+    {
+        if (voice.ageSamples == 0u)
+            for (int mode = 0; mode < voice.modeCount; ++mode)
+                voice.resonators[static_cast<std::size_t> (mode)].strike (
+                    impulse * voice.modeGains[static_cast<std::size_t> (mode)]);
+        for (int mode = 0; mode < voice.modeCount; ++mode)
+            output += voice.resonators[static_cast<std::size_t> (mode)].tick (0.0f);
+        if (applyTension)
+            advanceModalTension (voice, output);
+    }
+    return output;
+}
+
 float DrumEngine::renderKick (Voice& voice) noexcept
 {
     // Stable time-varying energy-state resonator. Unlike directly changing a
@@ -3964,24 +4061,11 @@ float DrumEngine::renderKick (Voice& voice) noexcept
     // sampled pulse instead would make the drum louder at low sample rates,
     // where a resonator's direct term is six times the size and the pulse is
     // nine samples rather than fifty.
-    float head = 0.0f;
-    if (voice.ageSamples < voice.modalActiveSamples)
-    {
-        if (voice.ageSamples == 0u)
-        {
-            // The stored charge is already the strike's energy - it was scaled
-            // by excitationScale when the voice was built - so scaling it again
-            // here would square it for the head while the body got it once, and
-            // quietly bury the head under the body on every soft hit.
-            const float impulse = voice.kickCharge;
-            for (int mode = 0; mode < voice.modeCount; ++mode)
-                voice.resonators[static_cast<std::size_t> (mode)].strike (
-                    impulse * voice.modeGains[static_cast<std::size_t> (mode)]);
-        }
-        for (int mode = 0; mode < voice.modeCount; ++mode)
-            head += voice.resonators[static_cast<std::size_t> (mode)].tick (0.0f);
-        advanceModalTension (voice, head);
-    }
+    // The stored charge is already the strike's energy - it was scaled by
+    // excitationScale when the voice was built - so scaling it again here
+    // would square it for the head while the body got it once, and quietly
+    // bury the head under the body on every soft hit.
+    const float head = renderModalBank (voice, voice.kickCharge, true);
 
     const float skin = voice.filterB.tick (
             voice.filterA.tick (nextBandLimitedNoise (voice)))
@@ -4004,20 +4088,8 @@ float DrumEngine::renderSnare (Voice& voice) noexcept
     // together is stiffened by that air into the snare's crack, and because it
     // is also the branch that radiates it is the first thing gone; the branch
     // where they oppose each other is what is left ringing under the wires.
-    float headModes = 0.0f;
-    if (voice.ageSamples < voice.modalActiveSamples)
-    {
-        if (voice.ageSamples == 0u)
-        {
-            const float impulse = voice.transientScale * voice.excitationScale;
-            for (int mode = 0; mode < voice.modeCount; ++mode)
-                voice.resonators[static_cast<std::size_t> (mode)].strike (
-                    impulse * voice.modeGains[static_cast<std::size_t> (mode)]);
-        }
-        for (int mode = 0; mode < voice.modeCount; ++mode)
-            headModes += voice.resonators[static_cast<std::size_t> (mode)].tick (0.0f);
-        advanceModalTension (voice, headModes);
-    }
+    const float headModes = renderModalBank (
+        voice, voice.transientScale * voice.excitationScale, true);
 
     // Snare wires are not a linear noise envelope: they only leave the resonant
     // head, and therefore rattle, while its displacement exceeds their resting
@@ -4091,31 +4163,20 @@ float DrumEngine::renderHat (Voice& voice) noexcept
 
     // The plates, struck once and then left. The circuit bank above is the
     // hat's hiss and its clank; this is the metal it comes out of.
-    float plate = 0.0f;
-    if (voice.ageSamples < voice.modalActiveSamples)
-    {
-        if (voice.ageSamples == 0u)
-        {
-            // No velocity weighting here: the plate is the low half of what a
-            // hat radiates, and scaling it against the hiss the way a filter
-            // corner is scaled would make a quiet hat brighter than a loud one.
-            // Where the strike strength belongs is the bank's tilt, above.
-            const float impulse = struckHeadScale * voice.transientScale
-                * voice.excitationScale;
-            for (int mode = 0; mode < voice.modeCount; ++mode)
-                voice.resonators[static_cast<std::size_t> (mode)].strike (
-                    impulse * voice.modeGains[static_cast<std::size_t> (mode)]);
-        }
-        for (int mode = 0; mode < voice.modeCount; ++mode)
-            plate += voice.resonators[static_cast<std::size_t> (mode)].tick (0.0f);
-    }
+    // No velocity weighting here: the plate is the low half of what a hat
+    // radiates, and scaling it against the hiss the way a filter corner is
+    // scaled would make a quiet hat brighter than a loud one. Where the
+    // strike strength belongs is the bank's tilt, above.
+    const float plate = renderModalBank (
+        voice, struckHeadScale * voice.transientScale * voice.excitationScale,
+        false);
 
     return (0.58f * high + attack) * voice.envelope
          + (0.18f + 0.20f * voice.characterB) * focused * voice.auxiliaryEnvelope
          + (0.075f + 0.085f * voice.characterA) * plate;
 }
 
-float DrumEngine::renderRide (Voice& voice) noexcept
+float DrumEngine::renderCymbalVoice (Voice& voice, float outputGain) noexcept
 {
     const auto& channel = voice.cymbal;
     // The six Schmitt-trigger oscillators, summed at the virtual earth the two
@@ -4135,23 +4196,20 @@ float DrumEngine::renderRide (Voice& voice) noexcept
     // stage picks it up. Nothing else: neither machine has a modal plate, and
     // the one that used to sit here is what kept a pitched ring on top of two
     // circuits that do not produce one.
-    return 1.14f * (channel.lowGain * bands.low
+    return outputGain * (channel.lowGain * bands.low
                     + channel.midGain * bands.mid
                     + channel.highGain * bands.high
                     + pcm);
 }
 
+float DrumEngine::renderRide (Voice& voice) noexcept
+{
+    return renderCymbalVoice (voice, 1.14f);
+}
+
 float DrumEngine::renderCrash (Voice& voice) noexcept
 {
-    const auto& channel = voice.cymbal;
-    const float oscillatorBank = metallicSourceFor (voice.instrument);
-    const auto bands = renderCymbalBands (voice, oscillatorBank);
-    const float pcm = nextCymbalPcm (voice);
-
-    return 1.02f * (channel.lowGain * bands.low
-                    + channel.midGain * bands.mid
-                    + channel.highGain * bands.high
-                    + pcm);
+    return renderCymbalVoice (voice, 1.02f);
 }
 
 float DrumEngine::renderTom (Voice& voice) noexcept
@@ -4185,20 +4243,8 @@ float DrumEngine::renderTom (Voice& voice) noexcept
     // moving and then leaves, so the bank is struck rather than driven - and
     // the low-level noise that used to keep feeding it is gone with it, because
     // a head that has been hit is not being hit again.
-    float membrane = 0.0f;
-    if (voice.ageSamples < voice.modalActiveSamples)
-    {
-        if (voice.ageSamples == 0u)
-        {
-            const float impulse = voice.transientScale * voice.excitationScale;
-            for (int mode = 0; mode < voice.modeCount; ++mode)
-                voice.resonators[static_cast<std::size_t> (mode)].strike (
-                    impulse * voice.modeGains[static_cast<std::size_t> (mode)]);
-        }
-        for (int mode = 0; mode < voice.modeCount; ++mode)
-            membrane += voice.resonators[static_cast<std::size_t> (mode)].tick (0.0f);
-        advanceModalTension (voice, membrane);
-    }
+    const float membrane = renderModalBank (
+        voice, voice.transientScale * voice.excitationScale, true);
 
     return 0.98f * ((0.90f * fundamental + (0.06f + 0.19f * voice.characterB) * shell)
                         * voice.envelope
@@ -4461,13 +4507,7 @@ void DrumEngine::renderSympatheticBeds (float excitation, float amount,
             // that they damp it instead. It is why a kick makes a snare buzz at
             // all, and why the buzz appears suddenly as the kick gets louder
             // rather than fading up in proportion to it.
-            std::uint32_t state = bed.noiseState;
-            state ^= state << 13u;
-            state ^= state >> 17u;
-            state ^= state << 5u;
-            bed.noiseState = state == 0u ? 1u : state;
-            const float noise = static_cast<float> (bed.noiseState & 0x00ffffffu)
-                / 8388607.5f - 1.0f;
+            const float noise = advanceXorshiftNoise (bed.noiseState);
             // A struck snare drives its own wires far clear of the head, so
             // the first-order law renderSnare() uses spends its life in that
             // law's saturating region. Sympathetic excitation does not: it
@@ -4583,19 +4623,19 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         if (voice.active)
             chunkVoices[static_cast<std::size_t> (chunkVoiceCount++)] = &voice;
     };
-    for (auto& voice : voices_)
-        observeVoice (voice);
-    for (auto& voice : retiringVoices_)
-        observeVoice (voice);
+    forEachVoice (observeVoice);
 
     const float gainTarget = outputGain_.load (std::memory_order_relaxed);
     const float gainSmoothing = gainSmoothingCoefficient_;
     const float dcCoefficient = dcBlockerCoefficient_;
-    const float driveAmount = clampUnit (
-        busDrive_.load (std::memory_order_relaxed), 0.0f);
-    const float compressionAmount = clampUnit (
-        busCompression_.load (std::memory_order_relaxed), 0.0f);
-    const float bleedAmount = clampUnit (bleed_.load (std::memory_order_relaxed), 0.0f);
+    // setKitParameters() already ran these through clampUnit() before storing
+    // them, so re-clamping an already-finite, already-[0,1] value here would
+    // just reproduce it - the same idempotent-reclamp waste already trimmed
+    // from constantPowerLeft/Right, and consistent with how reset() reads
+    // these same three atomics with no re-clamp of its own.
+    const float driveAmount = busDrive_.load (std::memory_order_relaxed);
+    const float compressionAmount = busCompression_.load (std::memory_order_relaxed);
+    const float bleedAmount = bleed_.load (std::memory_order_relaxed);
     // Refreshed per block, then smoothed into each ringing voice below so
     // channel-strip automation is audible on a tail rather than only on the
     // next hit.

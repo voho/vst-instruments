@@ -47,6 +47,24 @@ The project builds three products from one JUCE codebase:
 > The bundles are ad-hoc signed and not notarized; check the repository's Nightly
 > badge for the latest workflow result.
 
+## Contents
+
+- [Interface and controls](#interface-and-controls)
+- [Factory presets](#factory-presets)
+- [Performance expression](#performance-expression)
+- [Sound engine](#sound-engine)
+- [Performance](#performance)
+- [Requirements](#requirements)
+- [Build on macOS](#build-on-macos)
+- [Run the DSP tests without JUCE](#run-the-dsp-tests-without-juce)
+- [Regenerate the demonstration audio](#regenerate-the-demonstration-audio)
+- [Install locally](#install-locally)
+- [Validate the plug-in](#validate-the-plug-in)
+- [Sign, package, and notarize](#sign-package-and-notarize)
+- [Project layout](#project-layout)
+- [Licensing](#licensing)
+- [Changelog](#changelog)
+
 ## Interface and controls
 
 Vocalor exposes 24 automatable host parameters. Every parameter keeps its
@@ -943,7 +961,7 @@ suite's own 20× guardrail passes throughout and proves nothing on its own, whic
 is why the numbers are here.
 
 Placement is the expensive one and was expected to be: twelve positions times
-one direct path and four images at two receivers is sixty fractional-delay reads
+one direct path and four images at two receivers is 120 fractional-delay reads
 per sample against the four the shared network did, on top of twelve writes. It
 is bounded by making each read an integer load and a one-multiply allpass rather
 than an interpolation, by giving the lines to the twelve singer identities
@@ -1305,3 +1323,14 @@ case before shipping; see `THIRD_PARTY_NOTICES.md` and JUCE's official licence.
 No neural model weights, voice datasets, samples, or third-party presets are
 included. If those are added later, document their provenance and redistribution
 rights before committing or packaging them.
+
+## Changelog
+
+- 2026-08-15: Made the audio-thread status/meter update after each block scan only the voices already known to be active instead of every voice slot, and removed the extra full voice-count rescan that duplicated part of that same work.
+- 2026-08-15: Documented in the ensemble-size slider's accessibility description that 13-16 render the same 12 singers as the top of the range, matching what the README already explains.
+- 2026-08-15: Stopped a high female voice's per-control-update formant resolution from re-running the upper formants' Hz projection and bandwidth blend a second time once the soprano-register separation guard had already resolved them, with no change to engine output confirmed by a byte-for-byte identical re-render of the demo audio.
+- 2026-08-15: Stopped updateVoiceControl() from rebuilding every sounding voice's formantGain and tract[].b0 on every 16-sample control update when neither the cascade amplitudes nor the chunk-constant nasal mix they depend on had actually changed since the previous one, with no change to engine output confirmed by a byte-for-byte identical re-render of the demo audio.
+- 2026-08-15: Resolved the formant Hz/bandwidth clamp ceilings (0.465x and 0.25x the sample rate) once in prepare() instead of recomputing them from sampleRate_ on every control update of every sounding voice and every time the chunk-rate tract moved, mirroring the existing mipHarmonicGuardHz_ pattern; verified bit-exact by re-rendering the demo audio and matching all ten WAVs against the committed files by sha256 checksum.
+- 2026-08-15: Stopped updateVoiceControl() from rebuilding the nasal branch's own a1/a2/b0 coefficients on every 16-sample control update of every sounding voice, gating them on the same tract-moved/nasal-mix condition the formantGain/tract[].b0 fix already used plus the formant-shift ratio the nasal murmur and notch frequencies retune with, so a held nasalised note stops repeating three redundant assignments per control period; verified bit-exact by re-rendering the demo audio and matching all ten WAVs against the committed files by sha256 checksum.
+- 2026-08-15: Stopped publishDisplayState() from resolving the idle-fallback vowel pad position (presetVowelPosition() plus the morph blend of vowelX/vowelY) on every process() block, since that result is only ever published when no voice is sounding and is otherwise immediately discarded in favour of the reference voice's own effectiveVowelX/Y; no change to engine output, confirmed by re-running the DSP test suite and a byte-for-byte identical re-render of the demo audio.
+- 2026-08-15: Merged updateVoiceControl()'s three separate `p.profile == VoiceProfile::Female` checks (the soprano cluster-release, upper-formant-rise-span and R3/R4 register-slope terms) into one guard instead of re-testing the same profile on every control update of every active voice; no change to engine output, confirmed by re-running the DSP test suite and a byte-for-byte identical re-render of the demo audio.

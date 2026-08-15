@@ -687,10 +687,14 @@ void ElectryFretboardDisplay::paint (juce::Graphics& graphics)
 
     const auto neckX = neck.getX();
     const auto neckWidth = neck.getWidth();
-    const auto fretX = [neckX, neckWidth] (int fret)
+    // Solved once per paint() and shared by every wire, inlay and sounding
+    // string below instead of letting fretWireFraction()/fretCentreFraction()
+    // each recompute it from lastDrawnFret with their own std::exp2 call.
+    const auto neckSpan = electry::visuals::fretSpan (lastDrawnFret);
+    const auto fretX = [neckX, neckWidth, neckSpan] (int fret)
     {
         return neckX + neckWidth
-             * electry::visuals::fretWireFraction (fret, lastDrawnFret);
+             * electry::visuals::fretWireFraction (fret, lastDrawnFret, neckSpan);
     };
 
     // Position inlays sit behind the strings.
@@ -753,7 +757,8 @@ void ElectryFretboardDisplay::paint (juce::Graphics& graphics)
                                .withAlpha (0.55f + 0.45f * heat);
 
         const auto stoppedFraction = row.state.sounding && row.state.fret > 0
-            ? electry::visuals::fretWireFraction (row.state.fret, lastDrawnFret)
+            ? electry::visuals::fretWireFraction (row.state.fret, lastDrawnFret,
+                                                  neckSpan)
             : 0.0f;
         const auto swing = std::sin (row.phase) * heat
                          * juce::jmin (5.0f, neck.getHeight() * 0.055f);
@@ -790,7 +795,8 @@ void ElectryFretboardDisplay::paint (juce::Graphics& graphics)
             const auto markerX = row.state.fret > 0
                 ? neck.getX() + neckWidth
                       * electry::visuals::fretCentreFraction (row.state.fret,
-                                                              lastDrawnFret)
+                                                              lastDrawnFret,
+                                                              neckSpan)
                 : neck.getX() + 1.5f;
             const auto radius = juce::jmin (6.5f, neck.getHeight() * 0.085f);
             graphics.setColour (juce::Colours::black.withAlpha (0.55f));
@@ -1045,6 +1051,13 @@ ElectryAudioProcessorEditor::~ElectryAudioProcessorEditor()
 void ElectryAudioProcessorEditor::attachSlider (juce::Slider& slider,
                                                 const char* parameterId)
 {
+    // Double-click resets a knob to its parameter's own default rather than
+    // to whatever JUCE's built-in fallback would pick, so it stays correct
+    // for every knob without maintaining a second table of defaults here.
+    if (auto* parameter = electryProcessor.parameters.getParameter (parameterId))
+        slider.setDoubleClickReturnValue (
+            true, parameter->convertFrom0to1 (parameter->getDefaultValue()));
+
     sliderAttachments.push_back (std::make_unique<SliderAttachment> (
         electryProcessor.parameters, parameterId, slider));
 }

@@ -351,6 +351,12 @@ float formantResponseDb (float frequencyHz, const float* formantHz,
     const float omega = twoPi * bounded / sampleRate;
     const float cosOmega = std::cos (omega);
     const float sinOmega = std::sin (omega);
+    // Evaluated directly rather than via the double-angle identity: for low,
+    // narrow formants at high sample rates, omega is tiny, cosOmega rounds to
+    // very close to 1.0f, and 2*cosOmega*cosOmega - 1 subtracts two nearly
+    // equal float32 values, losing enough precision to shift the plotted
+    // response by more than half a dB with a discontinuous per-frequency
+    // error. Direct evaluation avoids that cancellation.
     const float cosTwo = std::cos (2.0f * omega);
     const float sinTwo = std::sin (2.0f * omega);
 
@@ -376,6 +382,78 @@ float formantResponseDb (float frequencyHz, const float* formantHz,
         const float scale = formantPolarity (i) * formantGain[i] * b0 / denominator;
         sumReal += scale * real;
         sumImaginary -= scale * imaginary;
+    }
+
+    const float magnitude = std::sqrt (sumReal * sumReal + sumImaginary * sumImaginary);
+    return 20.0f * std::log10 (std::max (magnitude, 1.0e-6f));
+}
+
+void formantResponseCoefficients (const float* formantHz, const float* formantBandwidth,
+                                  const float* formantGain, int count, float sampleRate,
+                                  float* outA1, float* outA2, float* outScale) noexcept
+{
+    if (formantHz == nullptr || formantBandwidth == nullptr || formantGain == nullptr
+        || outA1 == nullptr || outA2 == nullptr || outScale == nullptr
+        || count <= 0 || ! (sampleRate > 0.0f))
+        return;
+
+    // Exactly the per-formant terms formantResponseDb() resolves inside its
+    // probe-frequency loop -- centre/bandwidth clamp, pole radius and angle,
+    // the a1/a2 coefficients, and the polarity-signed peak gain -- none of
+    // which depends on the frequency being probed. Same operations, same
+    // order, just resolved once per formant instead of once per formant per
+    // probe.
+    for (int i = 0; i < count; ++i)
+    {
+        const float centre = std::clamp (formantHz[i], 25.0f, 0.465f * sampleRate);
+        const float bandwidth = std::clamp (formantBandwidth[i], 20.0f, 0.25f * sampleRate);
+        const float radius = std::exp (-pi * bandwidth / sampleRate);
+        const float poleAngle = twoPi * centre / sampleRate;
+        const float a1 = 2.0f * radius * std::cos (poleAngle);
+        const float a2 = -radius * radius;
+        const float b0 = formantResonatorGain (radius, std::sin (poleAngle));
+
+        outA1[i] = a1;
+        outA2[i] = a2;
+        outScale[i] = formantPolarity (i) * formantGain[i] * b0;
+    }
+}
+
+float formantResponseDbFromCoefficients (float frequencyHz, const float* a1,
+                                         const float* a2, const float* scale,
+                                         int count, float sampleRate) noexcept
+{
+    if (a1 == nullptr || a2 == nullptr || scale == nullptr || count <= 0
+        || ! (sampleRate > 0.0f))
+        return -120.0f;
+
+    const float nyquist = 0.5f * sampleRate;
+    const float bounded = std::clamp (frequencyHz, 1.0f, 0.999f * nyquist);
+    const float omega = twoPi * bounded / sampleRate;
+    const float cosOmega = std::cos (omega);
+    const float sinOmega = std::sin (omega);
+    // Evaluated directly, not via the double-angle identity -- see the
+    // matching comment in formantResponseDb(), which this must stay
+    // bit-identical to: for low, narrow formants at high sample rates the
+    // identity's 2*cosOmega*cosOmega - 1 subtracts two nearly equal float32
+    // values and loses enough precision to visibly distort the plotted curve.
+    const float cosTwo = std::cos (2.0f * omega);
+    const float sinTwo = std::sin (2.0f * omega);
+
+    float sumReal = 0.0f;
+    float sumImaginary = 0.0f;
+
+    for (int i = 0; i < count; ++i)
+    {
+        const float real = 1.0f - a1[i] * cosOmega - a2[i] * cosTwo;
+        const float imaginary = a1[i] * sinOmega + a2[i] * sinTwo;
+        const float denominator = real * real + imaginary * imaginary;
+        if (! (denominator > 0.0f))
+            continue;
+
+        const float s = scale[i] / denominator;
+        sumReal += s * real;
+        sumImaginary -= s * imaginary;
     }
 
     const float magnitude = std::sqrt (sumReal * sumReal + sumImaginary * sumImaginary);

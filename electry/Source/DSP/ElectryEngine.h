@@ -80,7 +80,7 @@ struct EngineParameters
     float bendTimeSeconds { 0.28f };// finger-bend travel time
     float velocityAmount { 0.85f }; // MIDI velocity to pluck strength
     float outputGain { 0.5f };      // linear output level
-    float artifactAmount { 0.18f }; // sympathetic ring and incidental contact
+    float artifactAmount { 0.18f }; // hardware ring, saddle buzz and incidental contact
     OutputMode outputMode { OutputMode::Mono }; // authentic DI or hex/string field
     // Bridge-coupled sympathetic resonance of the strings that are not being
     // fingered. 0 bypasses the coupled waveguides exactly.
@@ -657,6 +657,20 @@ private:
         bool sustained { false };
         bool releasing { false };
         int stringIndex { 0 };
+        // The physical string's fixed left-right placement in the stereo
+        // field, in -1..1. Depends only on stringIndex and the (compile-time
+        // constant) string count, so it is solved once when the voice is
+        // bound to its string rather than every sample the stereo field is
+        // open, in renderVoice() and renderSympatheticString() alike.
+        float stereoLateral { 0.0f };
+        // 1 for the lowest string down to 0 for the highest, i.e. how much
+        // extra definition/brightness a low Drop-E string earns over a high
+        // one. Depends only on stringIndex and the (compile-time constant)
+        // string count, so - like stereoLateral above - it is solved once
+        // here rather than re-derived from voice.stringIndex at every call
+        // site that needs it (attack voicing, artifact-contact setup, and
+        // the per-sample artifact-contact render path).
+        float lowStringWeight { 0.0f };
         int midiNote { -1 };
         int fret { 0 };
         PlayStyle playStyle { PlayStyle::Sustain };
@@ -1212,14 +1226,33 @@ private:
     float previousBodyDisplacement_ { 0.0f };
     OnePole bodyEmfLowpass_ {};
     float bodyEmfLowpassCoefficient_ { 0.5f };
-    std::array<ModalResonator, stringCount> sympatheticModes_ {};
-    std::array<float, bodyModeCount> bodyModeFrequencies_ {};
-    std::array<float, bodyModeCount> bodyModeQs_ {};
+    // Feed-forward hardware-ring proxy for the Artifacts control: each mode is
+    // tuned to a string's open pitch, but this bank only colours the pickup
+    // drive with an open-string/hardware buzz approximation. It is not the
+    // waveguide-coupled Sympathetic Ring feature (`sympatheticBus_` and
+    // friends below), which actually vibrates the modelled strings.
+    std::array<ModalResonator, stringCount> artifactRingModes_ {};
+    // Each mode's own clamped omega, omega-squared and loss rate, solved once
+    // here in configureBody() rather than by bodyConductanceAt() on every
+    // call: that call runs per partial inside configureVoiceDamping() (up to
+    // six times per voice), which itself runs on every note-on and on every
+    // control tick a damping-relevant control moves, while these three values
+    // only change when configureBody() itself re-runs.
+    std::array<float, bodyModeCount> bodyModeOmega_ {};
+    std::array<float, bodyModeCount> bodyModeOmegaSquared_ {};
+    std::array<float, bodyModeCount> bodyModeDamping_ {};
     std::array<float, bodyModeCount> bodyModeLevels_ {};
     float outputDcCoefficient_ { 0.9993f };
     float smoothedOutputGain_ { 0.5f };
     float smoothedBodyLevel_ { 0.35f };
     float stereoWidth_ { 0.0f };
+    // 0.24f * stereoWidth_, resolved once whenever stereoWidth_ changes (at
+    // most once per control tick) instead of on every internal sample of
+    // every voice. renderVoice() and renderSympatheticString() both only
+    // ever use stereoWidth_ through this product with the 0.24f stereo-field
+    // constant, so caching it here removes a multiply per voice per sample
+    // that stayed at the same value between control ticks anyway.
+    float stereoSideScale_ { 0.0f };
     float parameterSmoothingCoefficient_ { 0.01f };
     float contactNoiseBandCoefficient_ { 0.08f };
     bool artifactsActive_ { true };
@@ -1233,6 +1266,10 @@ private:
     float retireAttackCoefficient_ { 0.01f };
     float retireReleaseCoefficient_ { 0.0009f };
     float artifactBandCoefficient_ { 0.12f };
+    // The palm-mute impact thud's 85 Hz one-pole corner, applied to
+    // voice.palmImpactState in renderVoice(). Fixed corner, rate-derived
+    // coefficient - belongs here for the same reason as its neighbours above.
+    float palmImpactThudCoefficient_ { 0.0f };
     float sympatheticEnergyCoefficient_ { 0.002f };
     float displayLevelAttack_ { 0.5f };
     float displayLevelRelease_ { 0.08f };
@@ -1242,6 +1279,13 @@ private:
     // internal clock and scaled so it stays the same fraction of a period -
     // that is, the same number of cents - at every host rate.
     float horizontalDetuneSamples_ { 0.11f };
+    // The 6 ms delay-smoothing time constant shared by configureVoicePitch()
+    // and configureSympatheticString(): fast enough to track a bend or a
+    // wheel-driven coupled-string retune transparently. Depends only on
+    // controlPeriod and the internal clock, both fixed by prepare(), so it is
+    // resolved once here instead of with std::exp at every control tick of
+    // every voice and every coupled-string wake.
+    float voiceDelaySmoothing_ { 0.5f };
 
     // Artifact shaping constants, evaluated once per control tick.
     float artifactContactShape_ { 0.0f };

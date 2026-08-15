@@ -72,6 +72,32 @@ float triode(float x) noexcept
 // roughly the level it entered with.
 constexpr float pedalTrim = 1.25f;
 constexpr float ampTrim = 3.20f;
+
+// The RBJ cookbook quantities every Biquad design shares: the clamped corner
+// in radians per sample and its cosine and Q-scaled sine. Lowpass, highpass
+// and peaking differ only in how they turn this pair into b0..a2, so factoring
+// it out once removes three copies of the same clamp-omega-cosine-alpha
+// arithmetic without changing a single coefficient it produces.
+struct BiquadDesignBasis
+{
+    double cosine;
+    double alpha;
+};
+
+BiquadDesignBasis designBiquadBasis(float frequencyHz, float q,
+                                    float sampleRate,
+                                    double minimumFrequencyHz) noexcept
+{
+    const double rate = std::max(static_cast<double>(sampleRate), 1.0);
+    const double omega = 2.0 * pi
+        * std::clamp(static_cast<double>(frequencyHz), minimumFrequencyHz,
+                    0.45 * rate)
+        / rate;
+    const double cosine = std::cos(omega);
+    const double alpha = std::sin(omega)
+                       / (2.0 * std::max(static_cast<double>(q), 0.05));
+    return { cosine, alpha };
+}
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -81,53 +107,38 @@ constexpr float ampTrim = 3.20f;
 void ElectryFx::Biquad::setLowpass(float frequencyHz, float q,
                                    float sampleRate) noexcept
 {
-    const double rate = std::max(static_cast<double>(sampleRate), 1.0);
-    const double omega = 2.0 * pi
-        * std::clamp(static_cast<double>(frequencyHz), 10.0, 0.45 * rate) / rate;
-    const double cosine = std::cos(omega);
-    const double alpha = std::sin(omega)
-                       / (2.0 * std::max(static_cast<double>(q), 0.05));
-    const double a0 = 1.0 + alpha;
-    b0 = (1.0 - cosine) * 0.5 / a0;
-    b1 = (1.0 - cosine) / a0;
+    const auto basis = designBiquadBasis(frequencyHz, q, sampleRate, 10.0);
+    const double a0 = 1.0 + basis.alpha;
+    b0 = (1.0 - basis.cosine) * 0.5 / a0;
+    b1 = (1.0 - basis.cosine) / a0;
     b2 = b0;
-    a1 = -2.0 * cosine / a0;
-    a2 = (1.0 - alpha) / a0;
+    a1 = -2.0 * basis.cosine / a0;
+    a2 = (1.0 - basis.alpha) / a0;
 }
 
 void ElectryFx::Biquad::setHighpass(float frequencyHz, float q,
                                     float sampleRate) noexcept
 {
-    const double rate = std::max(static_cast<double>(sampleRate), 1.0);
-    const double omega = 2.0 * pi
-        * std::clamp(static_cast<double>(frequencyHz), 5.0, 0.45 * rate) / rate;
-    const double cosine = std::cos(omega);
-    const double alpha = std::sin(omega)
-                       / (2.0 * std::max(static_cast<double>(q), 0.05));
-    const double a0 = 1.0 + alpha;
-    b0 = (1.0 + cosine) * 0.5 / a0;
-    b1 = -(1.0 + cosine) / a0;
+    const auto basis = designBiquadBasis(frequencyHz, q, sampleRate, 5.0);
+    const double a0 = 1.0 + basis.alpha;
+    b0 = (1.0 + basis.cosine) * 0.5 / a0;
+    b1 = -(1.0 + basis.cosine) / a0;
     b2 = b0;
-    a1 = -2.0 * cosine / a0;
-    a2 = (1.0 - alpha) / a0;
+    a1 = -2.0 * basis.cosine / a0;
+    a2 = (1.0 - basis.alpha) / a0;
 }
 
 void ElectryFx::Biquad::setPeaking(float frequencyHz, float q, float gainDb,
                                    float sampleRate) noexcept
 {
-    const double rate = std::max(static_cast<double>(sampleRate), 1.0);
+    const auto basis = designBiquadBasis(frequencyHz, q, sampleRate, 10.0);
     const double amplitude = std::pow(10.0, static_cast<double>(gainDb) / 40.0);
-    const double omega = 2.0 * pi
-        * std::clamp(static_cast<double>(frequencyHz), 10.0, 0.45 * rate) / rate;
-    const double cosine = std::cos(omega);
-    const double alpha = std::sin(omega)
-                       / (2.0 * std::max(static_cast<double>(q), 0.05));
-    const double a0 = 1.0 + alpha / amplitude;
-    b0 = (1.0 + alpha * amplitude) / a0;
-    b1 = -2.0 * cosine / a0;
-    b2 = (1.0 - alpha * amplitude) / a0;
-    a1 = -2.0 * cosine / a0;
-    a2 = (1.0 - alpha / amplitude) / a0;
+    const double a0 = 1.0 + basis.alpha / amplitude;
+    b0 = (1.0 + basis.alpha * amplitude) / a0;
+    b1 = -2.0 * basis.cosine / a0;
+    b2 = (1.0 - basis.alpha * amplitude) / a0;
+    a1 = -2.0 * basis.cosine / a0;
+    a2 = (1.0 - basis.alpha / amplitude) / a0;
 }
 
 void ElectryFx::HalfbandStage::design(float kaiserBeta) noexcept
@@ -495,8 +506,11 @@ float ElectryFx::ampStage(GainChannel& channel, float input) noexcept
     // cabinet.
     channel.bias += biasCoefficient_ * (std::abs(sample) - channel.bias);
     const float bias = -0.22f - 1.10f * channel.bias;
+    // Both stages below subtract the transfer at the same operating point, so
+    // it is solved once here rather than once per stage.
+    const float biasTriode = triode(bias);
 
-    float stage = triode(sample * ampDriveFirst_ + bias) - triode(bias);
+    float stage = triode(sample * ampDriveFirst_ + bias) - biasTriode;
     // Miller capacitance between the stages: each one is progressively darker,
     // which is why a cascaded amplifier saturates smoothly instead of
     // accumulating fizz.
@@ -521,7 +535,7 @@ float ElectryFx::ampStage(GainChannel& channel, float input) noexcept
     // 350 V to 250 V a real supply measures.
     const float droop = 1.0f - 0.28f * channel.sag / (0.30f + channel.sag);
     stage = droop * (triode(stage * ampDriveSecond_ / droop + bias)
-                     - triode(bias));
+                     - biasTriode);
     const float rectified = stage < 0.0f ? -stage : stage;
     channel.sag += (rectified > channel.sag ? sagAttack_ : sagRelease_)
                  * (rectified - channel.sag);
@@ -631,7 +645,6 @@ void ElectryFx::process(float* left, float* right, int numSamples) noexcept
         smooth(compressorMix_, target.compressor);
         smooth(delayMix_, target.delay);
         smooth(roomMix_, target.room);
-        updateDriveConstants();
 
         gainEngagement_ += engagementCoefficient_
                          * (engagementTarget - gainEngagement_);
@@ -665,8 +678,14 @@ void ElectryFx::process(float* left, float* right, int numSamples) noexcept
         // The oversampled gain block. With both controls at zero it is skipped
         // outright, so the chain costs nothing and adds no group delay; while
         // it engages and disengages it is crossfaded, so it cannot click.
+        // pedalDrive_/ampDriveFirst_/ampDriveSecond_/pedalMakeup_/ampMakeup_
+        // are read only inside pedalStage()/ampStage(), reached only from
+        // here, so recomputing them is skipped along with the block itself
+        // instead of running on every sample regardless of whether either
+        // gain control is open.
         if (gainEngagement_ > 0.0f)
         {
+            updateDriveConstants();
             for (int channel = 0; channel < 2; ++channel)
             {
                 const auto index = static_cast<std::size_t>(channel);

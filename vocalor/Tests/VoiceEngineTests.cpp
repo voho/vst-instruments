@@ -1287,6 +1287,33 @@ void testDisplayMathHelpers()
     expect (vocalor::formantResponseDb (700.0f, nullptr, nullptr, nullptr, 0, 0.0f) <= -119.0f,
             "the formant response did not fall back safely on missing data");
 
+    // formantResponseCoefficients()/formantResponseDbFromCoefficients() split
+    // the same formant-bank/probe-frequency arithmetic in two so a caller that
+    // plots many points (the editor's response curve) can resolve the fixed
+    // formant-bank terms once instead of on every probe. The split must stay
+    // bit-identical to the one-shot formantResponseDb() it was factored from.
+    std::array<float, vocalor::kFormantCount> responseA1 {};
+    std::array<float, vocalor::kFormantCount> responseA2 {};
+    std::array<float, vocalor::kFormantCount> responseScale {};
+    vocalor::formantResponseCoefficients (hz.data(), bandwidth.data(), gain.data(),
+                                          vocalor::kFormantCount, 48000.0f,
+                                          responseA1.data(), responseA2.data(),
+                                          responseScale.data());
+    for (const float probe : { 250.0f, 700.0f, 3400.0f, 9000.0f })
+    {
+        const auto direct = vocalor::formantResponseDb (probe, hz.data(), bandwidth.data(),
+                                                         gain.data(), vocalor::kFormantCount,
+                                                         48000.0f);
+        const auto fromCoefficients = vocalor::formantResponseDbFromCoefficients (
+            probe, responseA1.data(), responseA2.data(), responseScale.data(),
+            vocalor::kFormantCount, 48000.0f);
+        expect (direct == fromCoefficients,
+                "the precomputed-coefficient formant response drifted from the direct one");
+    }
+    expect (vocalor::formantResponseDbFromCoefficients (700.0f, nullptr, nullptr, nullptr, 0, 0.0f)
+                <= -119.0f,
+            "the precomputed-coefficient formant response did not fall back safely on missing data");
+
     // Logarithmic frequency axis round trip.
     for (const float probe : { 100.0f, 440.0f, 3000.0f, 9000.0f })
     {
@@ -4521,7 +4548,7 @@ void testSopranoUpperResonanceRise()
     {
         for (const float formantShift : { -12.0f, 12.0f })
         {
-            for (const auto [resonance, breath] : bandwidthCorners)
+            for (const auto& [resonance, breath] : bandwidthCorners)
             {
                 auto extremeParameters = choirParameters;
                 extremeParameters.vowel = vowel;
@@ -4545,7 +4572,7 @@ void testSopranoUpperResonanceRise()
         const auto point = vocalor::cardinalVowelPosition(cardinal);
         for (const float formantShift : { -12.0f, 12.0f })
         {
-            for (const auto [resonance, breath] : bandwidthCorners)
+            for (const auto& [resonance, breath] : bandwidthCorners)
             {
                 auto extremeParameters = choirParameters;
                 extremeParameters.vowel = vocalor::Vowel::Aah;

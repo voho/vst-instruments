@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 
+#include <array>
 #include <cmath>
 #include <utility>
 
@@ -585,15 +586,28 @@ void VocalorScopeDisplay::paint (juce::Graphics& g)
         g.drawLine (content.getX(), y, content.getRight(), y, 0.6f);
     }
 
+    // The curve probes the same fixed formant bank at curvePoints frequencies;
+    // only the probe frequency changes from point to point, so the formant
+    // bank's own pole/gain terms are resolved once here rather than once per
+    // point (curvePoints times an exp, two trig calls and a sqrt, every
+    // repaint at the scope's 24 Hz refresh).
+    std::array<float, vocalor::kFormantCount> responseA1 {};
+    std::array<float, vocalor::kFormantCount> responseA2 {};
+    std::array<float, vocalor::kFormantCount> responseScale {};
+    vocalor::formantResponseCoefficients (
+        state.formantHz.data(), state.formantBandwidth.data(), state.formantGain.data(),
+        vocalor::kFormantCount, state.sampleRate,
+        responseA1.data(), responseA2.data(), responseScale.data());
+
     juce::Path curve;
     juce::Path fill;
     for (int i = 0; i < curvePoints; ++i)
     {
         const auto proportion = static_cast<float> (i) / static_cast<float> (curvePoints - 1);
         const auto hz = vocalor::logFrequencyForNormalised (proportion, minimumHz, maximumHz);
-        const auto decibels = vocalor::formantResponseDb (
-            hz, state.formantHz.data(), state.formantBandwidth.data(),
-            state.formantGain.data(), vocalor::kFormantCount, state.sampleRate);
+        const auto decibels = vocalor::formantResponseDbFromCoefficients (
+            hz, responseA1.data(), responseA2.data(), responseScale.data(),
+            vocalor::kFormantCount, state.sampleRate);
         const auto height = vocalor::decibelsToMeterPosition (decibels, floorDb, ceilingDb);
         const auto x = content.getX() + proportion * content.getWidth();
         const auto y = content.getBottom() - height * content.getHeight();
@@ -704,7 +718,9 @@ VocalorAudioProcessorEditor::VocalorAudioProcessorEditor (VocalorAudioProcessor&
     choirSizeSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 35, 20);
     choirSizeSlider.setName ("Ensemble size");
     choirSizeSlider.setTitle ("Ensemble size");
-    choirSizeSlider.setDescription ("Number of independently humanised singers");
+    choirSizeSlider.setDescription (
+        "Number of independently humanised singers in Choir mode, where 13 to 16 render the same 12 as the "
+        "top of the range; Chord mode always uses six singers regardless of this control");
     addAndMakeVisible (choirSizeSlider);
 
     addAndMakeVisible (vowelPad);
@@ -747,6 +763,27 @@ VocalorAudioProcessorEditor::VocalorAudioProcessorEditor (VocalorAudioProcessor&
     {
         vowelPad.setMorph (static_cast<float> (morphKnob.slider.getValue()));
     };
+
+    // Double-click returns every continuous control to its host-parameter
+    // default (see createParameterLayout()), so a player can back out of an
+    // exploratory tweak without hunting for the value in a text box.
+    choirSizeSlider.setDoubleClickReturnValue (true, 8.0);
+    morphKnob.slider.setDoubleClickReturnValue (true, 0.0);
+    formantShiftKnob.slider.setDoubleClickReturnValue (true, 0.0);
+    breathKnob.slider.setDoubleClickReturnValue (true, 0.30);
+    resonanceKnob.slider.setDoubleClickReturnValue (true, 0.64);
+    tensionKnob.slider.setDoubleClickReturnValue (true, 0.36);
+    vibratoKnob.slider.setDoubleClickReturnValue (true, 0.0);
+    instabilityKnob.slider.setDoubleClickReturnValue (true, 0.38);
+    humanizeKnob.slider.setDoubleClickReturnValue (true, 0.52);
+    nasalKnob.slider.setDoubleClickReturnValue (true, 0.0);
+    dynamicsKnob.slider.setDoubleClickReturnValue (true, 1.0);
+    intonationKnob.slider.setDoubleClickReturnValue (true, 0.0);
+    glideKnob.slider.setDoubleClickReturnValue (true, 0.0);
+    spreadKnob.slider.setDoubleClickReturnValue (true, 0.62);
+    roomKnob.slider.setDoubleClickReturnValue (true, 0.24);
+    roomSizeKnob.slider.setDoubleClickReturnValue (true, 0.50);
+    outputKnob.slider.setDoubleClickReturnValue (true, -6.0);
 
     choirSizeAttachment = std::make_unique<SliderAttachment> (
         processor.parameters, vocalor::parameters::choirSize, choirSizeSlider);

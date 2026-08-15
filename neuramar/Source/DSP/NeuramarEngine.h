@@ -308,6 +308,13 @@ private:
     // coefficient actually changes, never per voice and never per sample.
     std::array<float, renderedHarmonicCount> harmonicStretchRatio_ {};
     float cachedInharmonicity_ { -1.0f };
+    // ln(retirementLevel), resolved once by the constructor. retirementLevel
+    // is a compile-time constant, so this removes a repeated std::log() call
+    // from the two places that turn the Dissolve time into the key-tracked
+    // release law: buildReleaseShape() (once per voice per release-shape
+    // rebuild) and updateVoiceControl() (every control frame of every
+    // active voice, the hotter of the two).
+    float logRetirementLevel_ { 0.0f };
     // Mean log-amplitude slope of the published model across its own loop
     // region, in nepers per second of model time, fitted once per model by
     // setModel(). Orbit divides it out so that a wrap from loopEnd back to
@@ -359,6 +366,12 @@ private:
     float boneEdgeLimitHz_ { 20000.0f };
     float boneEdgeFadeHz_ { 1400.0f };
     int controlPeriod_ { 192 };
+    // Length of a fresh voice-steal fade tail, in samples: 3 ms, floored at 16
+    // samples so an absurdly low host rate cannot collapse it to nothing.
+    // Fixed by the sample rate alone, so prepare() resolves it once instead of
+    // beginFadeTail() re-deriving it (an std::lround plus a multiply) on every
+    // voice steal and every model swap.
+    int fadeTailSamples_ { 144 };
     // Output level is the one control applied straight to the summed signal
     // rather than through a control-rate target, so it carries its own
     // smoother. The sentinel means "not yet primed": the first block after

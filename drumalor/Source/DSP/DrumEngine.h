@@ -180,8 +180,8 @@ public:
     void prepare (double sampleRate, int maxBlockSize) noexcept;
     void reset() noexcept;
     void setInstrumentParameters (Instrument instrument,
-                                  const InstrumentParameters& parameters) noexcept;
-    void setKitParameters (const KitParameters& parameters) noexcept;
+                                  const InstrumentParameters& values) noexcept;
+    void setKitParameters (const KitParameters& values) noexcept;
     void setOutputGain (float linearGain) noexcept;
     // Continuous hi-hat pedal position: 0 is fully open, 1 is tightly closed.
     // Until this is called the two hats behave exactly as they always did, on
@@ -679,7 +679,7 @@ private:
     [[nodiscard]] float decaySecondsFor (Instrument instrument, float normalizedDecay) const noexcept;
     [[nodiscard]] int findVoiceSlot() const noexcept;
     void initialiseVoice (Voice& voice, Instrument instrument, float velocity,
-                          const InstrumentParameters& parameters, std::uint32_t seed,
+                          const InstrumentParameters& values, std::uint32_t seed,
                           const HitVariation& variation,
                           Articulation articulation) noexcept;
     void initialiseModalVoice (Voice& voice, const float* ratios, int modeCount,
@@ -699,7 +699,7 @@ private:
         // overtones above the ideal Bessel ratios rather than below them.
         float airLoadScale { 1.0f };
         float radius { 0.20f };       // m, the head itself
-        float strikeRadius { 0.22f }; // where the stick lands, as a fraction of a
+        float strikeRadius { 0.22f }; // where the stick lands, as a fraction of the head radius
         float headDensity { 0.35f };  // kg/m^2 of the film
         float shellDepth { 0.40f };   // m between the two heads
         float contactSeconds { 0.001f }; // how long the strike is on the head
@@ -718,17 +718,46 @@ private:
     [[nodiscard]] float hatDecaySecondsFor (float aperture,
                                             float decayVariation) const noexcept;
     void applyHatAperture (Voice& voice, float aperture) noexcept;
-    // Move a ringing mode's pole radius without touching its state. The pole
-    // angle is recovered from the coefficients the mode already has, so the
-    // frequency it is ringing at is preserved exactly and only how fast it
-    // dies changes. configureResonator cannot be used for this: it clears the
-    // resonator, which on a ringing plate is the note stopping.
-    void retuneResonatorDecay (Resonator& resonator, float decaySeconds) const noexcept;
+    // Move a ringing mode's pole radius without touching its state, given the
+    // angle it is already ringing at as cosine/angle (the caller recovers
+    // these from the resonator's own a1/a2 for its own purposes, so this does
+    // not re-derive them). The frequency is therefore preserved exactly and
+    // only how fast it dies changes. configureResonator cannot be used for
+    // this: it clears the resonator, which on a ringing plate is the note
+    // stopping.
+    void retuneResonatorDecay (Resonator& resonator, float cosine, float angle,
+                               float decaySeconds) const noexcept;
     void dampRingingMembrane (Instrument instrument, float velocity) noexcept;
     void beginChoke (Voice& voice, float seconds) noexcept;
     void beginFadeToSilence (Voice& voice, float multiplier) noexcept;
-    void retireVoice (const Voice& voice) noexcept;
+    void retireVoice (const Voice& source) noexcept;
     void silenceVoice (Voice& voice) noexcept;
+    // A voice is sounding in one of two pools - the live one and the retiring
+    // one voice-stealing keeps around for a click-free fade - and reset(),
+    // dampRingingMembrane(), chokeGroup(), allSoundsOff(),
+    // updateActiveVoiceCount() and process() each used to walk both with their
+    // own identical pair of range-for loops around whatever they actually
+    // wanted to do per voice. One helper walking both pools in the same order
+    // - voices_ then retiringVoices_ - and calling the functor on every voice
+    // it finds replaces every one of those pairs with no change to which
+    // voice is visited or when.
+    template <typename Fn>
+    void forEachVoice (Fn&& fn) noexcept
+    {
+        for (auto& voice : voices_)
+            fn (voice);
+        for (auto& voice : retiringVoices_)
+            fn (voice);
+    }
+
+    template <typename Fn>
+    void forEachVoice (Fn&& fn) const noexcept
+    {
+        for (const auto& voice : voices_)
+            fn (voice);
+        for (const auto& voice : retiringVoices_)
+            fn (voice);
+    }
     void addBankReference (Instrument instrument) noexcept;
     void releaseBankReference (Instrument instrument) noexcept;
     void updateActiveVoiceCount() noexcept;
@@ -743,6 +772,15 @@ private:
 
     [[nodiscard]] float advanceContact (Voice& voice) noexcept;
     void advanceModalTension (Voice& voice, float bankOutput) noexcept;
+    // Strike a voice's modal bank once at note-on and tick it forward every
+    // sample it is active - the shape shared by the kick's head, the snare's
+    // and tom's membrane, and the hat's plate. applyTension is false for banks
+    // with no tensionDepth of their own (the hat's plate is not a membrane),
+    // which skips the call rather than relying on advanceModalTension's own
+    // early-out, since that still costs a branch on every sample of every
+    // voice of that instrument.
+    [[nodiscard]] float renderModalBank (Voice& voice, float impulse,
+                                         bool applyTension) noexcept;
     [[nodiscard]] float renderVoice (Voice& voice) noexcept;
     [[nodiscard]] float renderKick (Voice& voice) noexcept;
     [[nodiscard]] float renderSnare (Voice& voice) noexcept;
@@ -750,6 +788,11 @@ private:
     [[nodiscard]] float renderHat (Voice& voice) noexcept;
     [[nodiscard]] float renderRide (Voice& voice) noexcept;
     [[nodiscard]] float renderCrash (Voice& voice) noexcept;
+    // Ride and Crash run the identical two-machine signal path - the analogue
+    // oscillator bank through its band-passes and the digital ROM channel,
+    // summed at one buffer amplifier - and differ only in that amplifier's own
+    // gain, which is voiced per machine rather than shared.
+    [[nodiscard]] float renderCymbalVoice (Voice& voice, float outputGain) noexcept;
     [[nodiscard]] float renderTom (Voice& voice) noexcept;
     [[nodiscard]] float renderShaker (Voice& voice) noexcept;
     [[nodiscard]] float renderPerc1 (Voice& voice) noexcept;
@@ -793,6 +836,11 @@ private:
     // per-engine state.
     [[nodiscard]] static const CymbalRoms& cymbalRoms() noexcept;
     void sineAndCosineLookup (float phase, float& sine, float& cosine) const noexcept;
+    // The xorshift32 core nextNoise() runs on a voice's own noiseState. The
+    // sympathetic beds carry the identical generator on their own state field
+    // rather than a voice's, so this takes the state by reference instead of
+    // taking a Voice, and both callers share the one implementation.
+    [[nodiscard]] static float advanceXorshiftNoise (std::uint32_t& state) noexcept;
     [[nodiscard]] static float nextNoise (Voice& voice) noexcept;
     [[nodiscard]] float nextBandLimitedNoise (Voice& voice) const noexcept;
     [[nodiscard]] static std::uint32_t hash32 (std::uint32_t value) noexcept;

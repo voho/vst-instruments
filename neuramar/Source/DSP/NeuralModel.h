@@ -212,4 +212,26 @@ private:
     friend struct NeuralModelTrainingAccess;
 };
 
+// The compact network's ten fixed input features at a normalised time
+// already clamped to [0, 1]: a centred position and its square, three
+// harmonics of a normalised-time sine/cosine pair, and two asymmetric decay
+// windows in seconds. NeuralModel::evaluateBaseRaw() and the trainer's
+// forward pass in SampleLearner.cpp both need this exact ten-way mapping, so
+// it is resolved once here instead of two independently maintained copies of
+// the same expressions.
+[[nodiscard]] inline std::array<float, NeuralModel::inputSize>
+    networkInputsAt(float clampedNormalisedTime, float durationSeconds) noexcept
+{
+    constexpr float twoPi = 6.28318530717958647692f;
+    const float time = clampedNormalisedTime;
+    const float centred = 2.0f * time - 1.0f;
+    const float timeSeconds = time * std::max(durationSeconds, 0.0f);
+    return { centred, centred * centred,
+             std::sin(twoPi * time), std::cos(twoPi * time),
+             std::sin(2.0f * twoPi * time), std::cos(2.0f * twoPi * time),
+             std::sin(4.0f * twoPi * time), std::cos(4.0f * twoPi * time),
+             std::exp(-8.0f * timeSeconds),
+             std::exp(-40.0f * timeSeconds) };
+}
+
 } // namespace neuramar

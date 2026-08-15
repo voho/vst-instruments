@@ -7,10 +7,10 @@ their defaults; see the
 [complete parameter contract](../README.md#exact-31-parameter-contract).
 Remember that the performance comes from the two latched keyswitch banks (or
 the PICK STROKE and PLAY STYLE strips), not from a parameter: C0..D0 latch
-the picking style - down, up, alternate - and D#0..F#0 latch the play style -
-sustain, palm mute, hammer-on, natural harmonic - and any combination of the
-two works. Material controls span the named solid-body endpoints; Scale spans
-25.5" to 28" for the Drop-E instrument.
+the picking style - down, up, alternate - and D#0..A0 latch the play style -
+sustain, palm mute, hammer-on, natural harmonic, pinch harmonic, slide, dead
+note - and any combination of the two works. Material controls span the named
+solid-body endpoints; Scale spans 25.5" to 28" for the Drop-E instrument.
 
 With the five FX controls at their 0% defaults the output is exactly dry. Mono
 is the summed DI; Stereo is the physical low-to-high divided-pickup string field
