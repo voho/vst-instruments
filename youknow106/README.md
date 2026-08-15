@@ -1424,3 +1424,7 @@ Original source under the [MIT License](LICENSE); see the
 [third-party notices](THIRD_PARTY_NOTICES.md). YouKnow106 builds against JUCE,
 which is separately licensed — review the JUCE 8 terms before distributing a
 binary.
+
+## Changelog
+
+- 2026-08-15: Cached the shared envelope generator's attack/decay/release law so it is only resolved when a voice's panel position actually changes rather than recomputed from scratch on every voice's pitch write, with no change to engine output.

@@ -3567,10 +3567,30 @@ void YouKnow106Engine::updateVoiceEnvelopeAndPitch(
     // shared processor, so six voices' envelopes are digitally identical and
     // only the analogue chain after them disperses.
     // Recurrence, widths and coefficient laws are resolved for the supplied,
-    // hash-matched B-2 image.
-    voice.attackIncrement = envelopeAttackIncrement(parameters.attack);
-    voice.decayMultiplier = envelopeDecayReleaseMultiplier(parameters.decay);
-    voice.releaseMultiplier = envelopeDecayReleaseMultiplier(parameters.release);
+    // hash-matched B-2 image. All three are the same shared-processor answer
+    // for every voice, so each is resolved only when its panel position has
+    // actually moved since the last voice asked -- see the note on the
+    // envelopeLaw* members.
+    if (parameters.attack != envelopeLawAttack_)
+    {
+        envelopeLawAttack_ = parameters.attack;
+        envelopeLawAttackIncrement_ = envelopeAttackIncrement(parameters.attack);
+    }
+    if (parameters.decay != envelopeLawDecay_)
+    {
+        envelopeLawDecay_ = parameters.decay;
+        envelopeLawDecayMultiplier_ =
+            envelopeDecayReleaseMultiplier(parameters.decay);
+    }
+    if (parameters.release != envelopeLawRelease_)
+    {
+        envelopeLawRelease_ = parameters.release;
+        envelopeLawReleaseMultiplier_ =
+            envelopeDecayReleaseMultiplier(parameters.release);
+    }
+    voice.attackIncrement = envelopeLawAttackIncrement_;
+    voice.decayMultiplier = envelopeLawDecayMultiplier_;
+    voice.releaseMultiplier = envelopeLawReleaseMultiplier_;
 
     voice.envelope.tick(voice.attackIncrement, voice.decayMultiplier,
                         storedControlAlignedWord(parameters.sustain),
