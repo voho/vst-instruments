@@ -2900,6 +2900,16 @@ float YouKnow106Engine::glideStepPerScan(float portamento) noexcept
     return static_cast<float>(stepUnits) / 256.0f;
 }
 
+float YouKnow106Engine::resolveGlideStepPerScan(float portamento) noexcept
+{
+    if (portamento != glideLawPortamento_)
+    {
+        glideLawPortamento_ = portamento;
+        glideLawStepPerScan_ = glideStepPerScan(portamento);
+    }
+    return glideLawStepPerScan_;
+}
+
 int YouKnow106Engine::voiceLimit() const noexcept
 {
     return std::clamp(activeParameters_.polyphony, 1, maxVoices);
@@ -3159,7 +3169,7 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
     const float target = static_cast<float>(voiceMidi);
     voice.targetMidi = target;
 
-    voice.glideSemitonesPerScan = glideStepPerScan(parameters.portamento);
+    voice.glideSemitonesPerScan = resolveGlideStepPerScan(parameters.portamento);
     if (voice.glideSemitonesPerScan > 0.0f)
     {
         // The glide integrator is per voice and survives retirement, so a
@@ -3623,8 +3633,10 @@ void YouKnow106Engine::updateVoiceEnvelopeAndPitch(
     // went down. The glide rate is a resistance in the pitch integrator's path,
     // and turning that control while a note is sliding changes the slide --
     // including turning it off, which lands the note on its pitch at the next
-    // scan rather than leaving it crawling.
-    voice.glideSemitonesPerScan = glideStepPerScan(parameters.portamento);
+    // scan rather than leaving it crawling. Every sounding voice reads the same
+    // shared PORTAMENTO position here, so this goes through the memoized
+    // resolver rather than recomputing the table lookup once per voice.
+    voice.glideSemitonesPerScan = resolveGlideStepPerScan(parameters.portamento);
 
     if (voice.glideSemitonesPerScan > 0.0f)
     {
