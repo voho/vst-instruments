@@ -1293,6 +1293,10 @@ private:
     // Glide rate for the eight-bit performance-control code, in 1/256-
     // semitone units per converter scan.
     [[nodiscard]] static float glideStepPerScan(float portamento) noexcept;
+    // Memoized wrapper around glideStepPerScan(): PORTAMENTO is the one shared
+    // performance control, so every sounding voice's Pitch write resolves the
+    // same table lookup from it. See the note beside glideLawPortamento_.
+    [[nodiscard]] float resolveGlideStepPerScan(float portamento) noexcept;
     // Lift the key on one slot: sustain it if the pedal is down, release it
     // otherwise. Every path that lets go of a note goes through here.
     void releaseVoiceKey(Voice& voice) noexcept;
@@ -1650,6 +1654,16 @@ private:
     std::uint16_t envelopeLawDecayMultiplier_ { 0 };
     std::uint16_t envelopeLawReleaseMultiplier_ { 0 };
 
+    // The glide law is the same shared-processor story: glideStepPerScan()
+    // resolves PORTAMENTO's panel position through one eight-bit ADC lookup
+    // that is identical for every voice, but both initialiseVoice() and
+    // updateVoiceEnvelopeAndPitch() called it fresh on every voice's note-on
+    // and Pitch write. resolveGlideStepPerScan() memoizes it the same way the
+    // envelopeLaw* cache above memoizes ATTACK/DECAY/RELEASE: comparison is
+    // exact equality against the same parameters.portamento source, so the
+    // memo can never return anything the unconditional call would not have.
+    float glideLawPortamento_ { -1.0f };
+    float glideLawStepPerScan_ { 0.0f };
 };
 
 } // namespace youknow106

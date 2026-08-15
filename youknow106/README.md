@@ -1428,3 +1428,4 @@ binary.
 ## Changelog
 
 - 2026-08-15: Cached the shared envelope generator's attack/decay/release law so it is only resolved when a voice's panel position actually changes rather than recomputed from scratch on every voice's pitch write, with no change to engine output.
+- 2026-08-15: Memoized the shared PORTAMENTO glide-rate lookup that every sounding voice's note-on and pitch write in `YouKnow106Engine` resolved independently from the same panel position, verified bit-identical against the rendered demo corpus and the full 15-contract test suite.
