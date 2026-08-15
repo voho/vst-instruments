@@ -1893,15 +1893,21 @@ void VoiceEngine::drawVibratoCycle(Voice& voice) noexcept
 void VoiceEngine::updateVowelDrift(Voice& voice,
                                    const EngineParameters& p,
                                    float driftAmount,
-                                   bool advanceState) noexcept
+                                   bool advanceState,
+                                   float vowelMorph,
+                                   float vowelX,
+                                   float vowelY) noexcept
 {
     const int vowelIndex = p.vowel == Vowel::Ooh
         ? 1 : (p.vowel == Vowel::Uuh ? 2 : 0);
     const int profileIndex = p.profile == VoiceProfile::Male ? 1 : 0;
     const VowelPoint anchor = presetVowelPosition(vowelIndex);
-    const float baseMorph = clampUnit(p.vowelMorph);
-    const float padX = clampUnit(p.vowelX);
-    const float padY = clampUnit(p.vowelY);
+    // Already clampUnit(p.vowelMorph/vowelX/vowelY) -- see the declaration
+    // comment in VoiceEngine.h for why these arrive resolved instead of being
+    // reclamped from p here.
+    const float baseMorph = vowelMorph;
+    const float padX = vowelX;
+    const float padY = vowelY;
     const float baseX = anchor.x + baseMorph * (padX - anchor.x);
     const float baseY = anchor.y + baseMorph * (padY - anchor.y);
     const bool male = profileIndex != 0;
@@ -2035,7 +2041,7 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
     if (!voice.controlInitialised || vowelInputsChanged || vowelEnableChanged
         || advanceVowelDrift)
         updateVowelDrift(
-            voice, p, driftAmount, advanceVowelDrift);
+            voice, p, driftAmount, advanceVowelDrift, vowelMorph, vowelX, vowelY);
 
     // The random range is a depth control: at zero both scales resolve to
     // exactly one; at full they expose the complete bounded per-cycle draw.

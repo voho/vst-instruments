@@ -615,8 +615,13 @@ private:
     void updateVoiceControl(Voice& voice, const EngineParameters& p,
                             bool advanceDriftClock);
     void drawVibratoCycle(Voice& voice) noexcept;
+    // vowelMorph/vowelX/vowelY are clampUnit(p.vowelMorph/vowelX/vowelY),
+    // already resolved by the only caller (updateVoiceControl(), which needs
+    // them anyway to detect whether the vowel target moved) so this does not
+    // clamp the same three fields from p a second time.
     void updateVowelDrift(Voice& voice, const EngineParameters& p,
-                          float driftAmount, bool advanceState) noexcept;
+                          float driftAmount, bool advanceState,
+                          float vowelMorph, float vowelX, float vowelY) noexcept;
     void renderVoice(Voice& voice, const EngineParameters& p, int count);
     void silenceVoice(Voice& voice) noexcept;
     void beginRelease(Voice& voice) noexcept;

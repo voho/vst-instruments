@@ -1371,6 +1371,20 @@ void makePreview(const std::vector<float>& sample,
             std::min(0.45f * static_cast<float>(sampleRate),
                      24.0f * rootFrequencyHz) / binWidth)));
 
+    // The stretched-partial series below depends only on inharmonicity, which
+    // this function receives as a single fixed value, never on the bin or
+    // frame being scanned. Building it once here replaces a from-scratch
+    // rebuild on every one of the up to three earlyFrameIndices * (lastBin -
+    // firstBin) candidate bins with one table lookup per harmonic tried.
+    std::array<float, NeuralModel::harmonicCount> stretchedPartialRatios {};
+    if (inharmonicity > 0.0f)
+    {
+        for (std::size_t harmonic = 0;
+             harmonic < NeuralModel::harmonicCount; ++harmonic)
+            stretchedPartialRatios[harmonic] = stretchedHarmonicRatio(
+                static_cast<float>(harmonic + 1), inharmonicity);
+    }
+
     constexpr std::array<std::size_t, 3> earlyFrameIndices { 2, 8, 18 };
     for (const auto requestedFrame : earlyFrameIndices)
     {
@@ -1398,8 +1412,7 @@ void makePreview(const std::vector<float>& sample,
                 for (std::size_t harmonic = 0;
                      harmonic < NeuralModel::harmonicCount; ++harmonic)
                 {
-                    const float partialRatio = stretchedHarmonicRatio(
-                        static_cast<float>(harmonic + 1), inharmonicity);
+                    const float partialRatio = stretchedPartialRatios[harmonic];
                     partialDistance = std::min(partialDistance,
                                                std::abs(ratio - partialRatio));
                     if (partialRatio > ratio)
