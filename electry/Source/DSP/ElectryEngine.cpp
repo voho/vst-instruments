@@ -3453,11 +3453,16 @@ void ElectryEngine::configureBody() noexcept
                                     parameters.bodyWood);
         const float level = clampf(modeLevels[index] * woodTilt * sizeLevel,
                                    0.08f, 1.20f);
-        bodyModeFrequencies_[index] = frequency;
-        bodyModeQs_[index] = q;
         bodyModeLevels_[index] = level;
         bodyModes_[index].configure(frequency, q, level,
                                     sampleRate);
+
+        // bodyConductanceAt()'s per-mode geometry, at the same clamped
+        // frequency and Q the conductance envelope itself clamps to.
+        const float omegaMode = twoPi * std::max(frequency, 30.0f);
+        bodyModeOmega_[index] = omegaMode;
+        bodyModeOmegaSquared_[index] = omegaMode * omegaMode;
+        bodyModeDamping_[index] = omegaMode / std::max(q, 2.0f);
     }
 }
 
@@ -3467,19 +3472,23 @@ float ElectryEngine::bodyConductanceAt(float frequencyHz) const noexcept
     // bridge accepts more string energy; far from every mode it approaches
     // zero. This response is evaluated only while configuring a note, not in
     // the sample loop, and is used exclusively to add loss.
+    //
+    // Each mode's own omega, omega-squared and loss rate are solved once in
+    // configureBody() into bodyModeOmega_/bodyModeOmegaSquared_/
+    // bodyModeDamping_ rather than here: this call is reached up to six times
+    // per configureVoiceDamping() (once per partial), and only `frequencyHz`
+    // - the sounding partial, not the mode geometry - actually changes
+    // between those six calls.
+    const float omega = twoPi * std::max(frequencyHz, 0.0f);
+    const float omegaSquared = omega * omega;
     float response = 0.0f;
     float normaliser = 0.0f;
     for (int mode = 0; mode < bodyModeCount; ++mode)
     {
         const auto index = static_cast<std::size_t>(mode);
-        const float centre = std::max(bodyModeFrequencies_[index], 30.0f);
-        const float q = std::max(bodyModeQs_[index], 2.0f);
         const float level = std::max(bodyModeLevels_[index], 0.0f);
-        const float omega = twoPi * std::max(frequencyHz, 0.0f);
-        const float omegaMode = twoPi * centre;
-        const float damping = omegaMode / q;
-        const float dissipative = damping * omega;
-        const float reactive = omegaMode * omegaMode - omega * omega;
+        const float dissipative = bodyModeDamping_[index] * omega;
+        const float reactive = bodyModeOmegaSquared_[index] - omegaSquared;
         // Real (conductive) part of a normalised modal mobility. It is
         // positive, bounded by one, and peaks exactly at the body mode;
         // unlike modal magnitude it does not over-damp distant notes.
