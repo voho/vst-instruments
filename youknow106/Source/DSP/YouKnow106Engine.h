@@ -1635,6 +1635,21 @@ private:
     // changed.
     float voiceEnergyFollower_ { 0.0f };
 
+    // The envelope generator is the one shared digital processor: ATTACK,
+    // DECAY and RELEASE resolve to the same increment/multiplier for every
+    // voice (see the note in updateVoiceEnvelopeAndPitch), so recomputing
+    // them from the panel position on every voice's Pitch write recomputed
+    // the same three answers as many times as there are sounding cards. The
+    // panel position is compared for exact equality, so this memo cannot
+    // return anything the piecewise law would not have recomputed; sentinels
+    // outside the control's 0..1 travel force the first solve.
+    float envelopeLawAttack_ { -1.0f };
+    float envelopeLawDecay_ { -1.0f };
+    float envelopeLawRelease_ { -1.0f };
+    std::uint16_t envelopeLawAttackIncrement_ { 0 };
+    std::uint16_t envelopeLawDecayMultiplier_ { 0 };
+    std::uint16_t envelopeLawReleaseMultiplier_ { 0 };
+
 };
 
 } // namespace youknow106
