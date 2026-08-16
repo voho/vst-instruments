@@ -367,6 +367,43 @@ void testShapePreservingSpectralInterpolation()
            "log-spectral envelope over arithmetic interpolation");
 }
 
+// ShapePreservingEnvelope::prepare() sanitizes each incoming harmonic with
+// `std::isfinite(input) ? std::max(input, 0.0f) : 0.0f`, but its one caller -
+// NeuramarEngine.cpp's per-voice body envelope - always hands it
+// makeSourceFilterEnvelope()'s output, which is itself already finite and
+// non-negative by construction (it is a std::sqrt of a sum of squares), so
+// prepare()'s own guard was reachable but never directly exercised. Every
+// prepare() call above this one in the suite also only ever supplies
+// well-formed harmonics for the same reason. This calls prepare() directly
+// with a NaN and a negative harmonic among otherwise well-formed values and
+// asserts both sanitize to exactly zero at their knot, matching a harmonic
+// that was genuinely silent, while their well-formed neighbours are
+// unaffected.
+void testSpectralEnvelopeHostileInputs()
+{
+    using HostileEnvelope = neuramar::spectral::ShapePreservingEnvelope<8>;
+    constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+    constexpr float infinity = std::numeric_limits<float>::infinity();
+    const std::array<float, 8> hostile {
+        0.6f, nan, 0.4f, -0.3f, 0.2f, infinity, 0.1f, 0.05f
+    };
+    HostileEnvelope envelope;
+    envelope.prepare(hostile);
+
+    expect(envelope.sample(2.0f) == 0.0f,
+           "prepare() did not sanitise a NaN harmonic to silence");
+    expect(envelope.sample(4.0f) == 0.0f,
+           "prepare() did not clamp a negative harmonic to silence");
+    expect(envelope.sample(6.0f) == 0.0f,
+           "prepare() did not sanitise an infinite harmonic to silence");
+    expect(envelope.sample(1.0f) == 0.6f && envelope.sample(3.0f) == 0.4f
+               && envelope.sample(5.0f) == 0.2f
+               && envelope.sample(7.0f) == 0.1f
+               && envelope.sample(8.0f) == 0.05f,
+           "prepare() altered a well-formed harmonic while sanitising its "
+           "hostile neighbours");
+}
+
 [[nodiscard]] std::vector<float> makeLearningSample(double sampleRate,
                                                      double frequencyHz,
                                                      double durationSeconds)
@@ -6441,6 +6478,7 @@ void testAwakenIsAFadeDuration(const neuramar::NeuralModel& model)
 int main()
 {
     testShapePreservingSpectralInterpolation();
+    testSpectralEnvelopeHostileInputs();
     testHostileInputSanitizing();
     testAirFilterCoefficientHostileInputs();
     testCoreSpurFloor();
