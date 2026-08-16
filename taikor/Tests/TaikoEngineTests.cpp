@@ -45,6 +45,23 @@ struct TaikoEngineTestAccess
         return TaikoEngine::parametersForOctave (applied, octaveOffset);
     }
 
+    // Exposes the reduced bachi/head collision mass on its own, so its
+    // fallback to the bachi's own mass alone - taken when the membrane's
+    // inverse mass at the strike point comes out zero or non-finite - can be
+    // asserted directly rather than only inferred from rendered audio.
+    // DrumState and StrikeProfile are private nested types, so the default
+    // drum and a profile varying only membraneGain are built here rather than
+    // passed in from the test.
+    static float contactCollisionMass (float membraneGain, float strikeRadius,
+                                       float strikerMass) noexcept
+    {
+        const TaikoEngine::DrumState drum;
+        TaikoEngine::StrikeProfile profile;
+        profile.membraneGain = membraneGain;
+        return TaikoEngine::contactCollisionMass (drum, profile, strikeRadius,
+                                                   strikerMass);
+    }
+
     static TuningPathMeasurement tuningPathMeasurement (
         const EngineParameters& rawParameters, int octave) noexcept
     {
@@ -6869,6 +6886,49 @@ void testParametersForOctaveIsIdentityAtBothOfItsOwnEndpoints()
             "a non-zero octave at full Octave Body must actually transform at least one field");
 }
 
+// contactCollisionMass() reduces the bachi's mass against the membrane's own
+// inverse mass at the strike point, but falls back to the bachi's mass alone
+// when that inverse mass comes out zero or non-finite. Every real call site
+// passes a profile from the fixed strikeProfile() table, whose membraneGain
+// is always positive, against a drum resolved by resolveDrumFor(), whose
+// batterDensity is always a positive, finite geometric interpolation - so
+// neither half of that guard is ever taken from Source. Nothing in the test
+// suite exercised it directly before this.
+void testContactCollisionMassFallsBackWhenTheMembraneContributesNothing()
+{
+    using taikor::TaikoEngineTestAccess;
+    const float strikeRadius = 0.3f;
+    const float strikerMass = 0.5f;
+    const double expectedFallback =
+        1.0 / (1.0 / std::max (static_cast<double> (strikerMass), 1.0e-6));
+
+    // A profile with no membrane coupling at all drives every mode's term to
+    // exactly zero, so the accumulated inverse head mass is 0.0 - the
+    // "!(inverseHeadMass > 0.0)" half of the guard.
+    const float zeroCoupling = TaikoEngineTestAccess::contactCollisionMass (
+        0.0f, strikeRadius, strikerMass);
+    expect (zeroCoupling == static_cast<float> (expectedFallback),
+            "zero membrane coupling must fall back to the bachi's own mass alone");
+
+    // An infinite membrane gain drives the accumulated inverse head mass to a
+    // non-finite value (some combination of +infinity and NaN, depending on
+    // which mode shapes are zero at this radius) - the "!isfinite(...)" half
+    // of the same guard, which the zero-coupling case above cannot reach.
+    const float nonFiniteCoupling = TaikoEngineTestAccess::contactCollisionMass (
+        std::numeric_limits<float>::infinity(), strikeRadius, strikerMass);
+    expect (nonFiniteCoupling == static_cast<float> (expectedFallback),
+            "a non-finite accumulated inverse head mass must fall back to the bachi's own mass alone");
+
+    // Sanity check that the fallback is not simply always taken: an ordinary,
+    // fully-coupled profile at the same radius must resolve to a strictly
+    // smaller collision mass, since a genuine membrane contribution can only
+    // reduce the reduced mass below the bachi's own.
+    const float coupled = TaikoEngineTestAccess::contactCollisionMass (
+        1.0f, strikeRadius, strikerMass);
+    expect (coupled < strikerMass,
+            "a genuinely coupled membrane must reduce the collision mass below the bachi's own");
+}
+
 void testInvalidInputSafety()
 {
     taikor::TaikoEngine engine;
@@ -7943,6 +8003,7 @@ int main()
     testPerformanceControls();
     testSanitiseClampsEveryField();
     testParametersForOctaveIsIdentityAtBothOfItsOwnEndpoints();
+    testContactCollisionMassFallsBackWhenTheMembraneContributesNothing();
     testInvalidInputSafety();
     testUiPresentationMath();
     testControlEndpointsAndGestures();
