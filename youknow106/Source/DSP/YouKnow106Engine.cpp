@@ -1416,9 +1416,22 @@ std::uint32_t YouKnow106Engine::hash32(std::uint32_t value) noexcept
     return value;
 }
 
+std::uint32_t YouKnow106Engine::xorshift32(std::uint32_t state) noexcept
+{
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return state;
+}
+
+float YouKnow106Engine::bipolarFromState(std::uint32_t state) noexcept
+{
+    return static_cast<float>(state & 0xffffffu) * (2.0f / 16777215.0f) - 1.0f;
+}
+
 float YouKnow106Engine::hashBipolar(std::uint32_t value) noexcept
 {
-    return static_cast<float>(hash32(value) & 0xffffffu) * (2.0f / 16777215.0f) - 1.0f;
+    return bipolarFromState(hash32(value));
 }
 
 float YouKnow106Engine::resetFraction(double periodSeconds) noexcept
@@ -3552,9 +3565,7 @@ void YouKnow106Engine::updateVoiceCardDrift(VoiceCard& card) noexcept
     // A slow, bounded wander of the analogue control chain. It is deliberately
     // small: the oscillators share one reference, so this instrument does not
     // drift the way six free-running oscillators would.
-    card.driftState ^= card.driftState << 13;
-    card.driftState ^= card.driftState >> 17;
-    card.driftState ^= card.driftState << 5;
+    card.driftState = xorshift32(card.driftState);
     const float excitation =
         static_cast<float>(card.driftState & 0xffffu) * (2.0f / 65535.0f) - 1.0f;
     card.driftValue = card.driftValue * 0.9992f + excitation * 0.004f;
@@ -4509,12 +4520,9 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     mixed += noiseSample * noiseMixVolts * noiseCv_
            * (1.0f + card.noiseLevelError * 0.03f * parameters.calibration);
 
-    voice.noiseState ^= voice.noiseState << 13;
-    voice.noiseState ^= voice.noiseState >> 17;
-    voice.noiseState ^= voice.noiseState << 5;
+    voice.noiseState = xorshift32(voice.noiseState);
     const float microscopicNoise =
-        (static_cast<float>(voice.noiseState & 0xffffffu)
-             * (2.0f / 16777215.0f) - 1.0f) * filterNoiseVolts;
+        bipolarFromState(voice.noiseState) * filterNoiseVolts;
 
     // --- Filter, amplifier -------------------------------------------------
     // C56/C50 stand between the summed WAVE node and pin 1 VCF IN, so the
@@ -5064,12 +5072,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // its established rate normalisation.
             if (noiseState_ == 0u)
                 noiseState_ = 0x6d2b79f5u;
-            noiseState_ ^= noiseState_ << 13;
-            noiseState_ ^= noiseState_ >> 17;
-            noiseState_ ^= noiseState_ << 5;
+            noiseState_ = xorshift32(noiseState_);
             const float rawNoise =
-                (static_cast<float>(noiseState_ & 0xffffffu)
-                     * (2.0f / 16777215.0f) - 1.0f) * noiseRateScale_;
+                bipolarFromState(noiseState_) * noiseRateScale_;
             const float noiseSample = noiseSourceLowPass_.process(
                 noiseSourceHighPass_.process(
                     rawNoise, noiseSourceHighPassG_, 0.0f, 1.0f),
