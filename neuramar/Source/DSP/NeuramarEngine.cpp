@@ -764,70 +764,21 @@ void NeuramarEngine::buildReleaseShape(
 
 void NeuramarEngine::setParameters(const EngineParameters& parameters) noexcept
 {
-    parameters_.imprint.store(clampParameter(parameters.imprint, 0.0f, 1.0f, 1.0f),
-                              std::memory_order_relaxed);
-    parameters_.bodyLock.store(clampParameter(parameters.bodyLock, 0.0f, 1.0f, 0.65f),
-                               std::memory_order_relaxed);
-    parameters_.air.store(clampParameter(parameters.air, 0.0f, 1.0f, 0.35f),
-                          std::memory_order_relaxed);
-    parameters_.bone.store(clampParameter(parameters.bone, 0.0f, 1.0f, 0.30f),
-                           std::memory_order_relaxed);
-    parameters_.brightness.store(clampParameter(parameters.brightness, 0.0f, 1.0f, 0.50f),
-                                 std::memory_order_relaxed);
-    parameters_.evolutionRate.store(clampParameter(parameters.evolutionRate, 0.125f, 4.0f, 1.0f),
-                                    std::memory_order_relaxed);
-    parameters_.orbit.store(clampParameter(parameters.orbit, 0.0f, 1.0f, 0.15f),
-                            std::memory_order_relaxed);
-    parameters_.mutation.store(clampParameter(parameters.mutation, 0.0f, 1.0f, 0.10f),
-                               std::memory_order_relaxed);
-    parameters_.noise.store(clampParameter(parameters.noise, 0.0f, 1.0f, 0.0f),
-                            std::memory_order_relaxed);
-    parameters_.attackSeconds.store(clampParameter(parameters.attackSeconds, 0.0f, 10.0f, 0.0f),
-                                    std::memory_order_relaxed);
-    parameters_.releaseSeconds.store(clampParameter(parameters.releaseSeconds, 0.005f, 20.0f, 0.35f),
-                                     std::memory_order_relaxed);
-    parameters_.spread.store(clampParameter(parameters.spread, 0.0f, 1.0f, 0.35f),
-                             std::memory_order_relaxed);
-    parameters_.rootOffsetSemitones.store(
-        clampParameter(parameters.rootOffsetSemitones, -12.0f, 12.0f, 0.0f),
-        std::memory_order_relaxed);
-    parameters_.outputGain.store(clampParameter(parameters.outputGain, 0.0f, 2.0f, 0.72f),
-                                 std::memory_order_relaxed);
-    parameters_.stretch.store(clampParameter(parameters.stretch, 0.0f, 2.0f, 1.0f),
-                              std::memory_order_relaxed);
-    parameters_.formantShiftSemitones.store(
-        clampParameter(parameters.formantShiftSemitones, -24.0f, 24.0f, 0.0f),
-        std::memory_order_relaxed);
-    parameters_.touch.store(clampParameter(parameters.touch, 0.0f, 1.0f, 0.0f),
-                            std::memory_order_relaxed);
-    parameters_.registerTilt.store(
-        clampParameter(parameters.registerTilt, -1.0f, 1.0f, 0.0f),
-        std::memory_order_relaxed);
+    for (const auto& field : parameterFields)
+    {
+        (parameters_.*field.atomicMember).store(
+            clampParameter(parameters.*field.engineMember, field.minimum,
+                          field.maximum, field.fallback),
+            std::memory_order_relaxed);
+    }
 }
 
 EngineParameters NeuramarEngine::loadParameters() const noexcept
 {
     EngineParameters result;
-    result.imprint = parameters_.imprint.load(std::memory_order_relaxed);
-    result.bodyLock = parameters_.bodyLock.load(std::memory_order_relaxed);
-    result.air = parameters_.air.load(std::memory_order_relaxed);
-    result.bone = parameters_.bone.load(std::memory_order_relaxed);
-    result.brightness = parameters_.brightness.load(std::memory_order_relaxed);
-    result.evolutionRate = parameters_.evolutionRate.load(std::memory_order_relaxed);
-    result.orbit = parameters_.orbit.load(std::memory_order_relaxed);
-    result.mutation = parameters_.mutation.load(std::memory_order_relaxed);
-    result.noise = parameters_.noise.load(std::memory_order_relaxed);
-    result.attackSeconds = parameters_.attackSeconds.load(std::memory_order_relaxed);
-    result.releaseSeconds = parameters_.releaseSeconds.load(std::memory_order_relaxed);
-    result.spread = parameters_.spread.load(std::memory_order_relaxed);
-    result.rootOffsetSemitones = parameters_.rootOffsetSemitones.load(std::memory_order_relaxed);
-    result.outputGain = parameters_.outputGain.load(std::memory_order_relaxed);
-    result.stretch = parameters_.stretch.load(std::memory_order_relaxed);
-    result.formantShiftSemitones = parameters_.formantShiftSemitones.load(
-        std::memory_order_relaxed);
-    result.touch = parameters_.touch.load(std::memory_order_relaxed);
-    result.registerTilt = parameters_.registerTilt.load(
-        std::memory_order_relaxed);
+    for (const auto& field : parameterFields)
+        result.*field.engineMember
+            = (parameters_.*field.atomicMember).load(std::memory_order_relaxed);
     return result;
 }
 

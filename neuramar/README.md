@@ -823,6 +823,7 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-16: `NeuramarEngine`'s `setParameters`/`loadParameters` now walk one shared, data-driven table of the eighteen parameter fields instead of repeating each field's name across two near-identical eighteen-statement bodies.
 - 2026-08-16: `SampleLearner.cpp`'s `chooseLoop` inner candidate-pair loop -
   which compares every admissible loop-start/loop-end pair across all 93
   output channels while picking the Orbit region - recomputed `firstSlope`
