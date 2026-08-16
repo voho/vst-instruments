@@ -823,6 +823,25 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-16: Added direct coverage for `ModelVisualisation.cpp`'s
+  `binIndexOf`, `depositPeak`, and `makeAirBandGeometry` - the anatomy
+  display's own frequency-to-bin and Air-band-geometry placement helpers - and
+  their hostile-input guards: a non-positive, non-finite, or
+  out-of-[20 Hz, 20 kHz] frequency collapsing `binIndexOf` to "no bin", a
+  non-positive or non-finite amplitude leaving `depositPeak` and
+  `depositBandAtOctave` a no-op, and a non-positive or non-finite Air centre
+  frequency leaving `makeAirBandGeometry` invalid while a non-finite
+  bandwidth falls back to its documented one-octave default before clamping.
+  `buildModelAnatomy`, their only production caller, always hands them a
+  frequency already resolved from a `deserialize()`-validated model and an
+  amplitude already sanitised by `finiteOr()`/`std::max()` earlier in the
+  same pass, so none of these guards had ever been driven directly. Added
+  small test-only accessors (`binIndexOfForTests`, `depositPeakForTests`,
+  `makeAirBandGeometryForTests`, `depositBandAtOctaveForTests`) alongside the
+  existing pattern for reaching a translation-unit-private helper from the
+  suite. Test-only; no engine or header behavior change, verified with the
+  JUCE-free DSP suite (3/3 tests passed) and `git status neuramar/Docs/audio`
+  confirmed clean.
 - 2026-08-16: Added direct coverage for `SampleLearner.cpp`'s
   `conditionSample` entry guards - a non-finite or out-of-[8 kHz, 768 kHz]
   sample rate, an input under 256 samples, and an input with fewer than 256
