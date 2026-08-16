@@ -6257,6 +6257,56 @@ void testVisualStateSanitizesNonFiniteInput()
            "packStringVisual did not clamp an out-of-range high fret");
 }
 
+// stringRowFraction and stringThickness each clamp their string index to the
+// modelled set, and stringRowFraction separately clamps its inset and
+// special-cases a degenerate one-or-fewer-string count; none of those guards
+// were exercised by testVisualStateAndGeometry above, which only ever fed
+// them ordinary in-range indices and a fixed, in-range inset. The
+// span-aware fretWireFraction/fretCentreFraction overloads also fall back to
+// zero for a non-positive span, a defensive branch fretSpan() itself never
+// produces for the engine's fixed, positive fret count but that a caller
+// could still reach directly.
+void testVisualGeometryClampsOutOfRangeInput()
+{
+    namespace visuals = electry::visuals;
+    constexpr int lastFret = ElectryEngine::fretCount;
+    constexpr int stringCount = ElectryEngine::stringCount;
+
+    expect(visuals::stringRowFraction(-5, stringCount, 0.085f)
+               == visuals::stringRowFraction(0, stringCount, 0.085f),
+           "stringRowFraction did not clamp a negative string index");
+    expect(visuals::stringRowFraction(999, stringCount, 0.085f)
+               == visuals::stringRowFraction(stringCount - 1, stringCount, 0.085f),
+           "stringRowFraction did not clamp an out-of-range high string index");
+    expect(visuals::stringRowFraction(0, 1, 0.085f) == 0.5f,
+           "stringRowFraction did not centre a single-string layout");
+    expect(visuals::stringRowFraction(0, 0, 0.085f) == 0.5f,
+           "stringRowFraction did not centre a degenerate zero-string layout");
+    expect(visuals::stringRowFraction(0, stringCount, 0.9f)
+               == visuals::stringRowFraction(0, stringCount, 0.45f),
+           "stringRowFraction did not clamp an inset above its 0.45 ceiling");
+    expect(visuals::stringRowFraction(0, stringCount, -0.3f)
+               == visuals::stringRowFraction(0, stringCount, 0.0f),
+           "stringRowFraction did not clamp a negative inset");
+
+    expect(visuals::stringThickness(-3, 0.9f, 2.6f)
+               == visuals::stringThickness(0, 0.9f, 2.6f),
+           "stringThickness did not clamp a negative string index");
+    expect(visuals::stringThickness(999, 0.9f, 2.6f)
+               == visuals::stringThickness(stringCount - 1, 0.9f, 2.6f),
+           "stringThickness did not clamp an out-of-range high string index");
+
+    expect(visuals::fretWireFraction(5, lastFret, 0.0f) == 0.0f,
+           "the span-aware fretWireFraction did not fall back to zero for a "
+           "zero span");
+    expect(visuals::fretWireFraction(5, lastFret, -1.0f) == 0.0f,
+           "the span-aware fretWireFraction did not fall back to zero for a "
+           "negative span");
+    expect(visuals::fretCentreFraction(5, lastFret, 0.0f) == 0.0f,
+           "the span-aware fretCentreFraction did not fall back to zero for a "
+           "zero span");
+}
+
 // ---------------------------------------------------------------------------
 // Version 1.1: the paths the efficiency work depends on
 // ---------------------------------------------------------------------------
@@ -7592,6 +7642,7 @@ int main()
     testLowRegisterFundamentalWeight();
     testVisualStateAndGeometry();
     testVisualStateSanitizesNonFiniteInput();
+    testVisualGeometryClampsOutOfRangeInput();
     testPickupCullingAndChannelLinking();
     testIdleFreezeAndDenormalSafety();
     testDecayIsSampleRateInvariant();

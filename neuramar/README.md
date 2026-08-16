@@ -823,6 +823,12 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-16: Added direct coverage for `airfilter::unitNoisePowerResponse`'s
+  sanitize guard - a zero, negative, non-finite, or at-or-above-Nyquist
+  frequency, and a non-positive sample rate, each collapsing to silence -
+  which its only callers, `predictedAirCentroid()` in the test suite and
+  `SampleLearner`'s Air fit, never exercise directly because they only ever
+  sweep finite, sub-Nyquist analysis frequencies.
 - 2026-08-16: Added direct coverage for `ShapePreservingEnvelope::prepare`'s
   per-harmonic hostile-input guard - a NaN, infinite, or negative harmonic
   each sanitising to silence - which its one caller, the per-voice body
