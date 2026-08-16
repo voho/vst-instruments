@@ -149,6 +149,35 @@ struct ElectryEngineTestAccess
         return engine.palmMutePressure_;
     }
 
+    // The acoustic-return ring pushAcousticReturn() writes and the render
+    // loop drains, read straight off the engine so the guard - a null left
+    // pointer or a non-positive sample count leaves the ring untouched, a
+    // null right pointer duplicates left rather than being read through, a
+    // non-finite averaged sample folds to zero before it is stored, and a
+    // single push longer than the ring drops its oldest samples rather than
+    // overflowing - can be checked directly rather than only through
+    // whatever it happens to do to a later rendered voice.
+    static int feedbackAvailable(const ElectryEngine& engine) noexcept
+    {
+        return engine.feedbackAvailable_;
+    }
+
+    // The sample `offset` places after the ring's current read pointer, i.e.
+    // the order pushAcousticReturn's own writes will be handed to the render
+    // loop.
+    static float feedbackRingSample(const ElectryEngine& engine,
+                                    int offset) noexcept
+    {
+        const int index = (engine.feedbackReadIndex_ + offset)
+                         & (ElectryEngine::feedbackRingSize - 1);
+        return engine.feedbackRing_[static_cast<std::size_t>(index)];
+    }
+
+    static constexpr int feedbackRingCapacity() noexcept
+    {
+        return ElectryEngine::feedbackRingSize;
+    }
+
     static bool channelsLinked(const ElectryEngine& engine) noexcept
     {
         return engine.channelsLinked_;
@@ -5007,6 +5036,192 @@ void testParameterSanitisationFallsBackToDefaults()
            "a valid outputMode was altered by the guard");
 }
 
+// pushAcousticReturn()'s own guard - a null left pointer or a non-positive
+// sample count is a no-op, a null right pointer duplicates left rather than
+// being read through, a non-finite averaged sample folds to zero before it
+// is stored, and a single push longer than the ring drops its oldest samples
+// rather than overflowing - was only ever driven through
+// testParameterSanitisation(), which checked that the eventual rendered
+// audio stayed finite but never looked at the ring itself, so a guard that
+// silently stored a NaN, averaged through a stale right pointer, or wrapped
+// a negative count into a huge write would still have passed. This drives
+// the guard directly against the ring it actually fills.
+void testPushAcousticReturnSanitisation()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+
+    // A null right channel duplicates left rather than being read through:
+    // the stored value is exactly the left sample, not half of a read
+    // through whatever the null happened to alias to. Seeding the ring with
+    // this push also gives the invalid-push probes below a populated ring to
+    // run against.
+    std::array<float, 8> ordinary {
+        1.0f, -0.5f, 0.25f, 0.0f, 0.75f, -1.0f, 0.125f, -0.25f
+    };
+    engine.pushAcousticReturn(ordinary.data(), nullptr,
+                              static_cast<int>(ordinary.size()));
+    expect(TestAccess::feedbackAvailable(engine)
+               == static_cast<int>(ordinary.size()),
+           "a mono push did not fill the ring one sample per input sample");
+    for (int i = 0; i < static_cast<int>(ordinary.size()); ++i)
+        expect(std::abs(TestAccess::feedbackRingSample(engine, i)
+                        - ordinary[static_cast<std::size_t>(i)]) < 1.0e-6f,
+               "a mono acoustic-return push was not stored as the left "
+               "channel verbatim");
+
+    // A null left pointer and a non-positive count are both a no-op against
+    // a *populated* ring: neither its availability nor its stored samples
+    // move. Testing this against an already-empty ring would only prove
+    // availability stays at zero, which a guard that discarded the ring
+    // before checking its arguments would also satisfy.
+    const int seededAvailable = TestAccess::feedbackAvailable(engine);
+    std::vector<float> seededSamples(static_cast<std::size_t>(seededAvailable));
+    for (int i = 0; i < seededAvailable; ++i)
+        seededSamples[static_cast<std::size_t>(i)]
+            = TestAccess::feedbackRingSample(engine, i);
+    const auto expectRingUnchanged = [&] (const char* what)
+    {
+        expect(TestAccess::feedbackAvailable(engine) == seededAvailable,
+               std::string(what) + " changed a populated acoustic-return "
+                   "ring's availability");
+        for (int i = 0; i < seededAvailable; ++i)
+            expect(TestAccess::feedbackRingSample(engine, i)
+                       == seededSamples[static_cast<std::size_t>(i)],
+                   std::string(what) + " altered a populated acoustic-return "
+                       "ring's stored samples");
+    };
+
+    // A valid right buffer here pins the guard to left == nullptr
+    // specifically: a guard accidentally narrowed to
+    // "left == nullptr && right == nullptr" would fall through and
+    // dereference the null left pointer in the averaging loop instead of
+    // leaving the ring untouched.
+    std::array<float, 4> ignoredByNullLeft { 0.3f, -0.3f, 0.6f, -0.6f };
+    engine.pushAcousticReturn(nullptr, ignoredByNullLeft.data(),
+                              static_cast<int>(ignoredByNullLeft.size()));
+    expectRingUnchanged("a null left pointer with a valid right buffer");
+
+    std::array<float, 4> ignoredByNegativeCount { 9.0f, 9.0f, 9.0f, 9.0f };
+    engine.pushAcousticReturn(ignoredByNegativeCount.data(), nullptr, -3);
+    expectRingUnchanged("a negative sample count");
+
+    // Zero is checked separately from negative: a guard narrowed from
+    // numSamples <= 0 to numSamples < 0 would let a zero count fall through
+    // to the stale-ring-clearing block and discard this populated ring
+    // before the (no-op) write loop runs.
+    std::array<float, 4> ignoredByZeroCount { 9.0f, 9.0f, 9.0f, 9.0f };
+    engine.pushAcousticReturn(ignoredByZeroCount.data(), nullptr, 0);
+    expectRingUnchanged("a zero sample count");
+
+    // A non-finite averaged sample folds to zero rather than propagating,
+    // whichever channel it came from.
+    std::array<float, 4> poisonLeft {
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(), 1.0f,
+        std::numeric_limits<float>::quiet_NaN()
+    };
+    std::array<float, 4> poisonRight {
+        0.0f, 0.0f, std::numeric_limits<float>::infinity(), 0.0f
+    };
+    engine.pushAcousticReturn(poisonLeft.data(), poisonRight.data(),
+                              static_cast<int>(poisonLeft.size()));
+    expect(TestAccess::feedbackAvailable(engine)
+               == static_cast<int>(poisonLeft.size()),
+           "a hostile acoustic-return push did not fill the ring");
+    for (int i = 0; i < static_cast<int>(poisonLeft.size()); ++i)
+        expect(TestAccess::feedbackRingSample(engine, i) == 0.0f,
+               "a non-finite averaged acoustic-return sample was stored "
+               "rather than folded to zero");
+
+    // The fold-to-zero rule must hold for a mono push too: every hostile
+    // push above supplies a non-null right buffer, so a handler that took a
+    // separate path for null-right and stored left verbatim (skipping the
+    // finite check) would pass all of them while still injecting NaN or
+    // infinity into the ring here.
+    std::array<float, 4> poisonMono {
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(), 1.0f,
+        -std::numeric_limits<float>::infinity()
+    };
+    engine.pushAcousticReturn(poisonMono.data(), nullptr,
+                              static_cast<int>(poisonMono.size()));
+    expect(TestAccess::feedbackAvailable(engine)
+               == static_cast<int>(poisonMono.size()),
+           "a hostile mono acoustic-return push did not fill the ring");
+    for (int i = 0; i < static_cast<int>(poisonMono.size()); ++i)
+        expect(TestAccess::feedbackRingSample(engine, i)
+                   == (i == 2 ? 1.0f : 0.0f),
+               "a non-finite mono acoustic-return sample was stored rather "
+               "than folded to zero");
+
+    // An ordinary stereo push is the average of both channels, not just one
+    // of them.
+    std::array<float, 3> left { 1.0f, -1.0f, 0.5f };
+    std::array<float, 3> right { -0.2f, 0.6f, -0.5f };
+    engine.pushAcousticReturn(left.data(), right.data(),
+                              static_cast<int>(left.size()));
+    for (int i = 0; i < static_cast<int>(left.size()); ++i)
+    {
+        const float expected = 0.5f * (left[static_cast<std::size_t>(i)]
+                                       + right[static_cast<std::size_t>(i)]);
+        expect(std::abs(TestAccess::feedbackRingSample(engine, i) - expected)
+                   < 1.0e-6f,
+               "a stereo acoustic-return push was not the average of both "
+               "channels");
+    }
+
+    // A single push longer than the ring must cap availability at the
+    // ring's capacity and drop its oldest samples rather than overflow the
+    // write index past what the read side can ever see: the ring must end
+    // up holding exactly the last `capacity` samples pushed, in order.
+    const int capacity = TestAccess::feedbackRingCapacity();
+    std::vector<float> ramp(static_cast<std::size_t>(capacity) + 50);
+    for (std::size_t i = 0; i < ramp.size(); ++i)
+        ramp[i] = static_cast<float>(i);
+    engine.pushAcousticReturn(ramp.data(), ramp.data(),
+                              static_cast<int>(ramp.size()));
+    expect(TestAccess::feedbackAvailable(engine) == capacity,
+           "a push longer than the ring did not cap availability at its "
+           "capacity");
+    // Every retained offset is checked, not just the first and last: a
+    // wraparound bug that duplicates, drops or reorders one interior sample
+    // would leave both endpoints correct while still corrupting the ring.
+    int firstMismatchOffset = -1;
+    for (int offset = 0; offset < capacity; ++offset)
+    {
+        if (TestAccess::feedbackRingSample(engine, offset)
+                != ramp[static_cast<std::size_t>(offset) + 50])
+        {
+            firstMismatchOffset = offset;
+            break;
+        }
+    }
+    expect(firstMismatchOffset == -1,
+           "a push longer than the ring dropped, duplicated or reordered an "
+           "interior sample at offset "
+               + std::to_string(firstMismatchOffset));
+
+    // And held together on a genuinely fretted, sounding string, the guard
+    // must still leave finite, bounded audio behind it end to end.
+    engine.setResonance(1.0f);
+    engine.setAcousticReturnLevel(1.0f);
+    engine.noteOn(47, 0.9f); // A2 + 2 frets, not an open string
+    StereoBuffer buffer(static_cast<int>(0.2 * sampleRate));
+    renderInto(engine, buffer);
+    expect(allFinite(buffer),
+           "a saturated acoustic-return ring produced non-finite audio");
+    // allFinite() alone only rejects NaN/infinity, so a regression that
+    // removed or weakened the downstream amplitude limiting could still
+    // leak the ramp's own values (as large as capacity + 49) through as
+    // an arbitrarily large but finite signal. An ordinary sustained note
+    // here peaks around 0.13; 1.0 leaves ample headroom while still
+    // catching that failure mode.
+    expect(peakAbs(buffer.left) < 1.0f && peakAbs(buffer.right) < 1.0f,
+           "a saturated acoustic-return ring produced unbounded audio");
+}
+
 // ---------------------------------------------------------------------------
 // Version 1.1: bridge-coupled sympathetic strings
 // ---------------------------------------------------------------------------
@@ -8012,6 +8227,7 @@ int main()
     testFingeredStringsShareTheBridge();
     testParameterSanitisation();
     testParameterSanitisationFallsBackToDefaults();
+    testPushAcousticReturnSanitisation();
     testCpuGuardrail();
 
     // Test attack tension modulation and palm-mute bridge impact physics
