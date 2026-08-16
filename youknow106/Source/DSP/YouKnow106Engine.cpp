@@ -31,13 +31,28 @@ constexpr float twoPi = 6.28318530717958647692f;
 constexpr float filterInputAttenuation = 0.40f;
 constexpr float voltsToSample = 1.0f / YouKnow106Engine::internalVoltsPerUnit;
 
-// Voiced source-coordinate values constrained by the service anchors: saw and
-// pulse are adjusted near 12 Vpp, while shared noise is adjusted to 4.0 Vpp at
-// TP8. Intervening loading is still open, and the sub value has no equivalent
-// end-to-end anchor, so these must not be presented as measured mixer voltages.
+// Voiced source-coordinate values. Saw and pulse are constrained by the service
+// anchor near 12 Vpp; intervening loading is still open, and the sub value has
+// no equivalent end-to-end anchor, so none of these may be presented as
+// measured mixer voltages.
 constexpr float sawMixVolts = 6.0f;
 constexpr float pulseMixVolts = 6.0f;
 constexpr float subMixVolts = 5.0f;
+// The noise coordinate is a by-ear voicing call, NOT the TP8 anchor carried
+// over, and the two must not be confused because their numbers coincide. The
+// service procedure adjusts VR32 for 4 Vpp at TP8, which is the CH1 voice VCA
+// *output*; this constant scales the source *before* the shaping below, and
+// that shaping then discards 11.38 dB of it. So a +/-2 V coordinate here does
+// not deliver 4 Vpp there -- referred to the model's own calibrated 4.8 Vpp
+// self-oscillation, it lands the noise about 22.7 dB down where the paired TP8
+// figures put it 8.5-12.5 dB down, the exact reading depending on what crest
+// convention a scope trace of random noise is read with.
+//
+// The value is 2.0 because 6.0 was tried and rejected by ear as making high
+// NOISE settings sound broken. Whether that symptom was level or was summing
+// distortion further down the mixer is unresolved, and the mixer's own budget
+// (filterInputAttenuation below) has no circuit basis either, so raising this
+// alone is not obviously the fix. Both belong to OQ-15/OQ-16, which stay open.
 constexpr float noiseMixVolts = 2.0f;
 
 // The noise generator's support circuit, module board p. 13: Tr21 (2SC945,
@@ -46,9 +61,12 @@ constexpr float noiseMixVolts = 2.0f;
 // resistor -- a 33.9 Hz high-pass -- and whose output is loaded by C41 100 pF
 // against R79 330 kOhm -- a 4.82 kHz pole -- before the buffered NOISE rail.
 // The audible source is therefore band-shaped by its own circuit, not flat.
-// The generator's bounded +/-2 V pre-filter amplitude remains the voiced
-// stand-in for the TP8 adjustment; the shaping passes its passband at unity,
-// so the established in-band density is unchanged (OQ-16).
+// The shaping passes its passband at unity, so it does not change in-band
+// density -- but it does change total power: the 4.82 kHz pole keeps only
+// 6982.4 Hz of noise-equivalent bandwidth out of the 96 kHz the source is
+// white across at the 192 kHz internal rate, which is 7.3% of its power, or
+// -11.38 dB of RMS. That loss is why the pre-filter coordinate above cannot be
+// read as the TP8 figure (OQ-16).
 constexpr float noiseCouplingCapacitanceF = 1.0e-6f;      // C42
 constexpr float noiseCouplingLoadOhms = 4700.0f;          // R81, IC14 input
 constexpr float noiseOtaLoadCapacitanceF = 100.0e-12f;    // C41
