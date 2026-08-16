@@ -5827,6 +5827,71 @@ void testVisualStateAndGeometry()
                "a reset engine still reported a sounding string");
 }
 
+// The editor reads these helpers directly off the lock-free audio-to-editor
+// transfer, so a non-finite or out-of-range value has to be recovered here
+// rather than upstream: `testVisualStateAndGeometry` above exercises every
+// helper's ordinary range and only `meterBallistics`' non-finite `current`
+// guard, leaving `levelHeat`'s own guard, `meterBallistics`' non-finite
+// `target` guard, and `packStringVisual`'s non-finite level and out-of-range
+// note/fret/playStyle clamps unexercised by any existing test.
+void testVisualStateSanitizesNonFiniteInput()
+{
+    namespace visuals = electry::visuals;
+    constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+    constexpr float inf = std::numeric_limits<float>::infinity();
+
+    expect(visuals::levelHeat(nan) == 0.0f,
+           "levelHeat did not recover from a non-finite level");
+    expect(visuals::levelHeat(inf) == 0.0f,
+           "levelHeat did not recover from a positive-infinite level");
+    expect(visuals::levelHeat(-inf) == 0.0f,
+           "levelHeat did not recover from a negative-infinite level");
+
+    // A non-finite target has to sanitize to zero, exactly like a non-finite
+    // current does above: with current already at rest, a NaN target must
+    // leave the meter at rest rather than latching NaN into the display.
+    expect(visuals::meterBallistics(0.0f, nan, 0.5f, 0.5f) == 0.0f,
+           "meterBallistics did not recover from a non-finite target");
+    // With current above the sanitized zero target, the non-finite target
+    // takes the release branch and the reading has to fall rather than hold
+    // or grow, so a poisoned target cannot freeze the display at a stale
+    // level.
+    const float releasing = visuals::meterBallistics(1.0f, inf, 0.4f, 0.4f);
+    expect(releasing < 1.0f && releasing >= 0.0f,
+           "meterBallistics did not release toward zero for a non-finite target");
+
+    // packStringVisual's own guards: a non-finite level packs to silent
+    // rather than propagating NaN through the lock-free word, and a
+    // wildly out-of-range note, fret or play style clamps to the nearest
+    // valid value instead of wrapping into an unrelated field via the
+    // packed word's bit layout.
+    electry::StringVisualState poisoned;
+    poisoned.midiNote = 4000;
+    poisoned.fret = -900;
+    poisoned.level = nan;
+    poisoned.playStyle = static_cast<PlayStyle>(999);
+    const auto packed = visuals::packStringVisual(poisoned);
+    const auto round = visuals::unpackStringVisual(packed);
+    expect(round.midiNote == 127,
+           "packStringVisual did not clamp an out-of-range high note");
+    expect(round.fret == -1,
+           "packStringVisual did not clamp an out-of-range low fret");
+    expect(round.level == 0.0f,
+           "packStringVisual did not sanitize a non-finite level");
+    expect(round.playStyle == PlayStyle::Dead,
+           "packStringVisual did not clamp an out-of-range play style");
+
+    electry::StringVisualState poisonedLow;
+    poisonedLow.midiNote = -900;
+    poisonedLow.fret = 900;
+    const auto roundLow = visuals::unpackStringVisual(
+        visuals::packStringVisual(poisonedLow));
+    expect(roundLow.midiNote == -1,
+           "packStringVisual did not clamp an out-of-range low note");
+    expect(roundLow.fret == ElectryEngine::fretCount,
+           "packStringVisual did not clamp an out-of-range high fret");
+}
+
 // ---------------------------------------------------------------------------
 // Version 1.1: the paths the efficiency work depends on
 // ---------------------------------------------------------------------------
@@ -7159,6 +7224,7 @@ int main()
     testHandDipNeverExpands();
     testLowRegisterFundamentalWeight();
     testVisualStateAndGeometry();
+    testVisualStateSanitizesNonFiniteInput();
     testPickupCullingAndChannelLinking();
     testIdleFreezeAndDenormalSafety();
     testDecayIsSampleRateInvariant();
