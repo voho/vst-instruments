@@ -810,6 +810,21 @@ void testMetadataAndMidiMapping()
                 std::string (item.displayName) + " primary MIDI note maps incorrectly");
     }
 
+    // getInstrumentMetadata() clamps its own index rather than trusting a
+    // caller that reached it with something other than one of the enum's own
+    // values - every call above only ever passed a valid Instrument, so this
+    // is the first assertion on that fallback. An out-of-range value falls
+    // back to slot zero (Kick) instead of indexing past the table.
+    const auto& kickMetadata = drumalor::getInstrumentMetadata (drumalor::Instrument::Kick);
+    const auto& fromPastEnd = drumalor::getInstrumentMetadata (
+        static_cast<drumalor::Instrument> (drumalor::instrumentCount));
+    expect (fromPastEnd.slug == kickMetadata.slug,
+            "getInstrumentMetadata did not fall back on an index one past the table");
+    const auto& fromFarOutOfRange = drumalor::getInstrumentMetadata (
+        static_cast<drumalor::Instrument> (255));
+    expect (fromFarOutOfRange.slug == kickMetadata.slug,
+            "getInstrumentMetadata did not fall back on a far out-of-range index");
+
     for (int midiNote = 0; midiNote <= 127; ++midiNote)
     {
         const auto expected = std::find_if (
