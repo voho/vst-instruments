@@ -1107,6 +1107,20 @@ void VoiceEngine::updateIntonationRoot() noexcept
     intonationRoot_ = lowest;
 }
 
+int VoiceEngine::mipTableLevelForFrequency(float frequencyHz) const noexcept
+{
+    // Highest level whose per-cycle harmonic count still keeps every
+    // harmonic under mipHarmonicGuardHz_ for this fundamental; level 0 (one
+    // harmonic) is always safe, so the search only ever raises it.
+    const int permissible = std::max(
+        1, static_cast<int>(mipHarmonicGuardHz_ / std::max(frequencyHz, 1.0f)));
+    int level = 0;
+    for (int candidate = 1; candidate < tableLevels; ++candidate)
+        if (harmonicsPerLevel[static_cast<std::size_t>(candidate)] <= permissible)
+            level = candidate;
+    return level;
+}
+
 void VoiceEngine::makeRoomFor(int required)
 {
     int free = 0;
@@ -2204,11 +2218,7 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
     voice.phaseIncrementStep = (voice.targetPhaseIncrement - voice.phaseIncrement)
         / static_cast<float>(controlPeriod);
 
-    const int permissible = std::max(1, static_cast<int>(mipHarmonicGuardHz_ / std::max(frequency, 1.0f)));
-    voice.tableLevel = 0;
-    for (int level = 1; level < tableLevels; ++level)
-        if (harmonicsPerLevel[static_cast<std::size_t>(level)] <= permissible)
-            voice.tableLevel = level;
+    voice.tableLevel = mipTableLevelForFrequency(frequency);
 
     // Vocal effort changes the source spectral slope far more than it changes
     // level: a soft note is dull as well as quiet.
@@ -2755,12 +2765,7 @@ float VoiceEngine::radiatedPowerTarget(const Voice& voice, float fundamental,
     // The oscillator's running mip follows vibrato, jitter and scoop; borrowing
     // it here would let those excluded motions flip the analyzed harmonic set
     // and pump the 40 ms support follower near a mip boundary.
-    const int permissible = std::max(
-        1, static_cast<int>(mipHarmonicGuardHz_ / boundedFundamental));
-    int tableLevel = 0;
-    for (int level = 1; level < tableLevels; ++level)
-        if (harmonicsPerLevel[static_cast<std::size_t>(level)] <= permissible)
-            tableLevel = level;
+    const int tableLevel = mipTableLevelForFrequency(boundedFundamental);
     const int representableHarmonics = std::min(
         static_cast<int>(0.45f * static_cast<float>(sampleRate_)
                          / boundedFundamental),
