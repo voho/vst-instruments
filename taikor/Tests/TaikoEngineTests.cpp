@@ -7010,6 +7010,10 @@ void testUiPresentationMath()
             "the first cell must sit at the row origin");
     expect (cellOffset (layout, 6, 11) + layout.cellSize <= 600,
             "the last cell must fit inside the row");
+    // Every call site in the editor loops an index up from zero, so the
+    // `index <= 0` guard's negative side is never actually reached there.
+    expect (cellOffset (layout, 6, -1) == layout.origin,
+            "a negative index must fall back to the row origin, not extrapolate past it");
     expect (rowLayout (0, 12, 6, 12).cellSize == 1,
             "a degenerate row must not divide by zero");
     expect (rowLayout (600, 0, 6, 0).cellSize == 1,
@@ -7029,6 +7033,12 @@ void testUiPresentationMath()
     const auto clampedPoint = headPointFor (5.0f, 0.0f);
     expect (std::abs (clampedPoint.x - 1.0f) < 1.0e-6f,
             "a head point must be clamped to the head");
+    // Every call site passes a radius already clamped to [0, 1] (or a
+    // literal within that range), so the low side of headPointFor's own
+    // clamp is never reached from Source/ at all.
+    const auto negativeRadius = headPointFor (-1.0f, 0.0f);
+    expect (std::abs (negativeRadius.x) < 1.0e-6f && std::abs (negativeRadius.y) < 1.0e-6f,
+            "a negative radius must clamp to the centre, not mirror across it");
 
     expect (std::abs (semitonesBetween (880.0f, 440.0f) - 12.0f) < 1.0e-4f,
             "an octave must measure twelve semitones");
