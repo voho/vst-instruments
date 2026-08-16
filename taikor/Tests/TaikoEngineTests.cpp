@@ -6945,6 +6945,14 @@ void testUiPresentationMath()
             "an octave must measure twelve semitones");
     expect (semitonesBetween (0.0f, 440.0f) == 0.0f,
             "an invalid frequency must not produce a logarithm of zero");
+    expect (semitonesBetween (-100.0f, 440.0f) == 0.0f,
+            "a negative frequency must not produce a logarithm of a negative number");
+    expect (semitonesBetween (440.0f, 0.0f) == 0.0f,
+            "an invalid reference must not divide by zero");
+    expect (semitonesBetween (440.0f, -1.0f) == 0.0f,
+            "a negative reference must not produce a logarithm of a negative ratio");
+    expect (semitonesBetween (std::numeric_limits<float>::quiet_NaN(), 440.0f) == 0.0f,
+            "a NaN frequency must fall back to the same guard, not propagate the NaN");
 
     expect (std::abs (mix (0.0f, 10.0f, 0.25f) - 2.5f) < 1.0e-6f, "mix is wrong");
     expect (mix (0.0f, 10.0f, -3.0f) == 0.0f && mix (0.0f, 10.0f, 4.0f) == 10.0f,
