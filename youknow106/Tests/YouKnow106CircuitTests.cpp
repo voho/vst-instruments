@@ -1242,6 +1242,32 @@ void testNoteTimerLaw()
            "note timer is not deterministic");
 }
 
+void testNoteTimerDividerDefensiveGuard()
+{
+    // dcoDivider's only production call site (updateVoiceEnvelopeAndPitch)
+    // feeds it midiToHz() of a finite, panel-derived MIDI note, so its
+    // "!(frequencyHz > 0.0) || !std::isfinite(frequencyHz)" early return had
+    // never fired outside testNoteTimerLaw's own strictly-positive fixtures
+    // above. Pin the documented saturate-downward contract directly: every
+    // one of these inputs must resolve to the same widest divider the 16'
+    // range floors at rather than to zero, a negative count or a NaN divider
+    // propagating into the note timer.
+    constexpr auto maximumDivider = std::uint32_t { 65535u };
+    expect(YouKnow106Engine::dcoDivider(0.0) == maximumDivider,
+           "a zero frequency did not saturate to the widest divider");
+    expect(YouKnow106Engine::dcoDivider(-440.0) == maximumDivider,
+           "a negative frequency did not saturate to the widest divider");
+    expect(YouKnow106Engine::dcoDivider(
+               std::numeric_limits<double>::quiet_NaN()) == maximumDivider,
+           "a NaN frequency did not saturate to the widest divider");
+    expect(YouKnow106Engine::dcoDivider(
+               std::numeric_limits<double>::infinity()) == maximumDivider,
+           "a +infinity frequency did not saturate to the widest divider");
+    expect(YouKnow106Engine::dcoDivider(
+               -std::numeric_limits<double>::infinity()) == maximumDivider,
+           "a -infinity frequency did not saturate to the widest divider");
+}
+
 void testCutoffControlLaw()
 {
     // The instrument's own service anchor: converter code 6272 must self-
@@ -5465,6 +5491,7 @@ int main()
     testCascadeSurvivesAdversarialControl();
     testCascadeTracksHotContinuousReference();
     testNoteTimerLaw();
+    testNoteTimerDividerDefensiveGuard();
     testCutoffControlLaw();
     testStoredControlDigitalVectors();
     testResonanceLeavesTheCornerAloneBelowOscillation();
