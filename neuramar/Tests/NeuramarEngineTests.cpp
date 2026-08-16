@@ -1096,10 +1096,11 @@ void testAirFilterNoisePowerResponseHostileInputs()
            "a frequency above Nyquist was not sanitised to silence");
 
     // Just below Nyquist, at the fitted centre, and at an arbitrary in-band
-    // frequency all stay finite and non-negative rather than tripping the
-    // same guard.
-    expect(unitNoisePowerResponse(coefficients, 23999.0f, 48000.0f) >= 0.0f,
-           "a frequency just below Nyquist produced a negative response");
+    // frequency all stay finite and strictly positive rather than tripping
+    // the same guard (which would instead collapse them to silence).
+    const auto justBelowNyquist = unitNoisePowerResponse(coefficients, 23999.0f, 48000.0f);
+    expect(std::isfinite(justBelowNyquist) && justBelowNyquist > 0.0f,
+           "a frequency just below Nyquist tripped the Nyquist guard");
     expect(unitNoisePowerResponse(coefficients, 1000.0f, 48000.0f) > 0.0f,
            "the fitted centre frequency produced no response at all");
 }
