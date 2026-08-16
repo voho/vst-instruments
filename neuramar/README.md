@@ -823,6 +823,14 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-16: Added direct coverage for `airfilter::makeCoefficients`'s
+  three-way hostile-input guard - a non-finite sample rate, centre frequency,
+  or bandwidth each falling back to its documented default (48 kHz, 1 kHz,
+  one octave) before clamping - which every other call site, in the tests and
+  in `NeuramarEngine.cpp`'s `Bandpass::set`, only ever exercised with
+  already-finite, in-range arguments. Test-only; no engine or header change,
+  verified with the JUCE-free DSP suite (3/3 tests passed) and the eight
+  rendered demo WAVs confirmed byte-for-byte unchanged.
 - 2026-08-16: `process()`'s per-sample Bone loop no longer scans all twelve
   candidate modes and branches past the ones the analysis could not vouch
   for; `setModel()` now resolves the reliable modes into an ascending index
