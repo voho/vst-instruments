@@ -5248,9 +5248,11 @@ void testUiPresentationMath()
 
     MeterBallistics holdNaN;
     holdNaN.update (0.5f, 1.0f, release, fall, std::numeric_limits<float>::quiet_NaN());
+    expect (holdNaN.holdCountdown == 0.0f,
+            "MeterBallistics::update did not fall back a NaN hold-updates duration to its default (0)");
     holdNaN.update (0.0f, 1.0f, release, fall, 3.0f);
     expect (holdNaN.peak < 0.5f,
-            "MeterBallistics::update did not fall back a NaN hold-updates duration to zero (no hold)");
+            "peak did not fall immediately once its hold duration sanitized to zero");
 
     // Pad-grid geometry: equal cells, exact gaps, and short rows centred under
     // the long row they share a grid with.
