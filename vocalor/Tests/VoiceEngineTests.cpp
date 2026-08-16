@@ -1490,6 +1490,18 @@ void testDisplayMathHelpers()
     expect (vocalor::tunedFirstFormant (
                 300.0f, std::numeric_limits<float>::quiet_NaN(), 1400.0f) == 300.0f,
             "a non-finite fundamental was not sanitized to the vowel's own F1");
+    // A third fallback guards the ceiling itself: production only ever passes
+    // chunkMaxF1_ times a finite formant-shift scale, so no engine-level test
+    // reaches a non-finite ceiling either, but the function still promises to
+    // fall back to the vowel's own F1 as the ceiling (rather than propagate a
+    // NaN/Inf into the tracked formant), which collapses the whole tracking
+    // range to baseHz regardless of how high the fundamental has climbed.
+    expect (vocalor::tunedFirstFormant (
+                300.0f, 5000.0f, std::numeric_limits<float>::quiet_NaN()) == 300.0f,
+            "a non-finite ceiling was not sanitized to the vowel's own F1");
+    expect (vocalor::tunedFirstFormant (
+                300.0f, 5000.0f, std::numeric_limits<float>::infinity()) == 300.0f,
+            "an infinite ceiling was not sanitized to the vowel's own F1");
 
     // formantResponseCoefficients() shares formantResponseDb()'s guard clause;
     // an invalid formant bank must leave the caller's buffers untouched rather
