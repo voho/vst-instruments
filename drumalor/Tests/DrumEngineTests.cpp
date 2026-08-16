@@ -5282,6 +5282,8 @@ void testUiPresentationMath()
             "mix did not sanitize a NaN start value to zero");
     expect (mix (0.0f, std::numeric_limits<float>::quiet_NaN(), 0.5f) == 0.0f,
             "mix did not sanitize a NaN end value to zero");
+    expect (mix (5.0f, 10.0f, std::numeric_limits<float>::quiet_NaN()) == 5.0f,
+            "mix did not sanitize a NaN amount to its zero default");
     expect (smoothStep (0.0f, 1.0f, 0.0f) == 0.0f
                 && smoothStep (0.0f, 1.0f, 1.0f) == 1.0f
                 && std::abs (smoothStep (0.0f, 1.0f, 0.5f) - 0.5f) < 1.0e-6f,
@@ -5292,6 +5294,9 @@ void testUiPresentationMath()
     expect (smoothStep (std::numeric_limits<float>::quiet_NaN(), 1.0f, 0.5f)
                 == smoothStep (0.0f, 1.0f, 0.5f),
             "smoothStep did not sanitize a NaN edge");
+    expect (smoothStep (0.0f, std::numeric_limits<float>::quiet_NaN(), 0.5f)
+                == smoothStep (0.0f, 1.0f, 0.5f),
+            "smoothStep did not sanitize a NaN second edge to its default (1.0)");
     expect (smoothStep (0.0f, 1.0f, std::numeric_limits<float>::quiet_NaN())
                 == smoothStep (0.0f, 1.0f, 0.0f),
             "smoothStep did not sanitize a NaN value");
