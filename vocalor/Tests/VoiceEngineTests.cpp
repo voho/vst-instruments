@@ -128,6 +128,12 @@ struct VoiceEngineTestAccess
 
     static int heldNoteCount(const VoiceEngine& engine) noexcept { return engine.heldCount_; }
 
+    static int chordMidiForSinger(const VoiceEngine& engine, int root, int singer,
+                                  const EngineParameters& p) noexcept
+    {
+        return engine.chordMidiForSinger(root, singer, p);
+    }
+
     /** Sounding frequency of every held voice, in Hz. An ensemble puts twelve
         of them on one note, and how far apart they sit is what separates a
         section from one thick voice. */
@@ -8643,6 +8649,86 @@ void testJustIntonation()
     }
 }
 
+/** chordMidiForSinger() picks one of three voicing shapes so a one-finger
+    chord always lands in a singable register regardless of which key
+    triggered it: an upward two-octave stack for a bass root (< 48), a
+    downward one for a treble root (> 72), and the symmetric shape used in
+    between. Every chord-mode render in the rest of the suite plays root 60,
+    which only ever reaches the middle shape; the other two have never been
+    exercised. */
+void testChordVoicingRegisterShapes()
+{
+    const vocalor::VoiceEngine engine;
+
+    const auto parametersFor = [] (vocalor::VoiceProfile profile, vocalor::ChordQuality quality)
+    {
+        vocalor::EngineParameters p;
+        p.profile = profile;
+        p.chordQuality = quality;
+        return p;
+    };
+
+    const auto expectShape = [&engine] (int root, const vocalor::EngineParameters& p,
+                                        const std::array<int, 6>& expected, const char* message)
+    {
+        for (int singer = 0; singer < 6; ++singer)
+            expect (vocalor::VoiceEngineTestAccess::chordMidiForSinger (engine, root, singer, p)
+                        == expected[static_cast<std::size_t> (singer)],
+                    message);
+    };
+
+    // Low root (< 48): {0, 7, 12, 12+third, 19, 24}. Root 40 keeps every degree
+    // inside the male register (35-79) so the raw shape survives unwrapped.
+    expectShape (40, parametersFor (vocalor::VoiceProfile::Male, vocalor::ChordQuality::Major),
+                { 40, 47, 52, 56, 59, 64 },
+                "a low major chord root did not use the upward two-octave voicing shape");
+    expectShape (40, parametersFor (vocalor::VoiceProfile::Male, vocalor::ChordQuality::Minor),
+                { 40, 47, 52, 55, 59, 64 },
+                "a low minor chord root did not use the upward voicing shape's minor third");
+
+    // High root (> 72): {-24, -12, third-12, -5, 0, third}. Root 75 keeps every
+    // degree inside the female register (47-91) so the raw shape is unwrapped.
+    expectShape (75, parametersFor (vocalor::VoiceProfile::Female, vocalor::ChordQuality::Major),
+                { 51, 63, 67, 70, 75, 79 },
+                "a high chord root did not use the downward voicing shape");
+
+    // Middle root (48-72): {-12, 0, third, 7, 12, 12+third} -- the shape every
+    // other chord-mode test reaches indirectly through root 60; asserted here
+    // directly so all three shapes have their own explicit case.
+    expectShape (60, parametersFor (vocalor::VoiceProfile::Male, vocalor::ChordQuality::Major),
+                { 48, 60, 64, 67, 72, 76 },
+                "the middle chord root did not use the symmetric voicing shape");
+
+    // Whatever octave the interval table lands a voice in, the while-loop
+    // register clamp must keep it inside the profile's singable range.
+    for (const int root : { 0, 20, 47, 48, 72, 73, 100, 127 })
+    {
+        for (const auto profile : { vocalor::VoiceProfile::Female, vocalor::VoiceProfile::Male })
+        {
+            const auto p = parametersFor (profile, vocalor::ChordQuality::Major);
+            const int low = profile == vocalor::VoiceProfile::Male ? 35 : 47;
+            const int high = profile == vocalor::VoiceProfile::Male ? 79 : 91;
+            for (int singer = 0; singer < 6; ++singer)
+            {
+                const auto note = vocalor::VoiceEngineTestAccess::chordMidiForSinger (
+                    engine, root, singer, p);
+                expect (note >= low && note <= high,
+                        "a chord voice left its profile's singable register");
+            }
+        }
+    }
+
+    // The six chord voices are read through a clamped singer index, not an
+    // unclamped array access.
+    const auto p = parametersFor (vocalor::VoiceProfile::Male, vocalor::ChordQuality::Major);
+    expect (vocalor::VoiceEngineTestAccess::chordMidiForSinger (engine, 60, -1, p)
+                == vocalor::VoiceEngineTestAccess::chordMidiForSinger (engine, 60, 0, p),
+            "a negative singer index was not clamped to the first chord voice");
+    expect (vocalor::VoiceEngineTestAccess::chordMidiForSinger (engine, 60, 99, p)
+                == vocalor::VoiceEngineTestAccess::chordMidiForSinger (engine, 60, 5, p),
+            "an out-of-range singer index was not clamped to the last chord voice");
+}
+
 /** A singer does not keep a speech tract when the fundamental climbs past its
     lowest resonance; she opens the jaw and takes F1 up with the pitch.
 
@@ -8997,6 +9083,7 @@ int main()
     testPerformanceExpression();
     testFormantTuningAtHighPitch();
     testJustIntonation();
+    testChordVoicingRegisterShapes();
     testEnsembleDispersion();
     testStraightTonePitchDrift();
     testDriftClockIgnoresLegatoEvents();
