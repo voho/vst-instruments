@@ -3562,12 +3562,7 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
     for (int index = 0; index < physical.modeCount; ++index)
     {
         auto& mode = physical.modes[static_cast<std::size_t> (index)];
-        float batterFraction = 1.0f;
-        if (mode.circumferentialOrder == 0)
-            batterFraction = clampFloat (
-                drum.batterDensity * mode.batterParticipation
-                    * mode.batterParticipation,
-                0.0f, 1.0f);
+        const float batterFraction = batterFractionFor (drum, mode);
         mode.handDampingRate = mode.membrane
             ? handRates[static_cast<std::size_t> (mode.modeEntry)] * batterFraction
             : 0.0f;
@@ -3671,6 +3666,15 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
     physical.retireStep = rebuilding ? savedRetireStep : 0.0f;
 }
 
+float TaikoEngine::batterFractionFor (const DrumState& drum, const Mode& mode) noexcept
+{
+    if (mode.circumferentialOrder != 0)
+        return 1.0f;
+    return clampFloat (
+        drum.batterDensity * mode.batterParticipation * mode.batterParticipation,
+        0.0f, 1.0f);
+}
+
 void TaikoEngine::palmDampingRates (
     const DrumState& drum, float strikeRadius,
     std::array<float, modeEntryCount>& modeRates,
@@ -3755,12 +3759,7 @@ void TaikoEngine::dampPhysicalDrum (Voice& physical,
             auto& mode = physical.modes[static_cast<std::size_t> (index)];
             if (mode.membrane)
             {
-                float batterFraction = 1.0f;
-                if (mode.circumferentialOrder == 0)
-                    batterFraction = clampFloat (
-                        drum.batterDensity * mode.batterParticipation
-                            * mode.batterParticipation,
-                        0.0f, 1.0f);
+                const float batterFraction = batterFractionFor (drum, mode);
                 mode.localMuteDampingRate = std::max (
                     mode.localMuteDampingRate,
                     dampingRates[static_cast<std::size_t> (mode.modeEntry)]
