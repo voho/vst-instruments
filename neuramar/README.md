@@ -823,6 +823,17 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-16: `SampleLearner.cpp`'s `chooseLoop` inner candidate-pair loop -
+  which compares every admissible loop-start/loop-end pair across all 93
+  output channels while picking the Orbit region - recomputed `firstSlope`
+  (`targets[first + 1][output] - targets[first][output]`) from scratch on
+  every one of its `second` iterations even though it depends only on
+  `first` and `output`. Hoisted it into a small per-`first` table built once
+  before the `second` loop, alongside the also-`second`-invariant
+  `targets[first]` lookup. Pure dedup - same subtractions in the same
+  order, so the result is bit-identical - verified with the JUCE-free DSP
+  suite (3/3 tests passed) and a fresh `NeuramarRenderDemos` run confirming
+  `git status neuramar/Docs/audio` clean across all eight WAVs.
 - 2026-08-16: `updateVoiceControl`'s per-harmonic reference-target loop -
   walked once per rendered harmonic on every control frame of every voice -
   recomputed `parameters.mutation * 0.045f` for `referenceVariation` instead
