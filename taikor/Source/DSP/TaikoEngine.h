@@ -1340,6 +1340,12 @@ private:
     // step reset() and allSoundsOff() both start with - a full engine reset
     // and a performance panic differ only in what they do afterwards.
     void silenceAllVoices() noexcept;
+    // Zeroes the DC blocker's and the drive stage's shared state. reset() and
+    // allSoundsOff() both clear this right after silenceAllVoices(), and
+    // process()'s own idle freeze clears it once the shared path has rung
+    // out on its own - all three for the same reason: with nothing left
+    // sounding, there is nothing for this state to stay continuous with.
+    void resetOutputStagePath() noexcept;
     void updateActiveVoiceCount() noexcept;
     void refreshDrumIfNeeded() noexcept;
     // Changes continuous pole loss while preserving instantaneous displacement

@@ -1136,9 +1136,7 @@ void TaikoEngine::reset() noexcept
     smoothedOutputGain_ = applied_.outputGain;
     smoothedDrive_ = applied_.drive;
     smoothedWidth_ = applied_.stereoWidth;
-    dcInputLeft_ = dcInputRight_ = 0.0f;
-    dcOutputLeft_ = dcOutputRight_ = 0.0f;
-    driveAdaaLeft_ = driveAdaaRight_ = 0.0f;
+    resetOutputStagePath();
     meterLeft_ = meterRight_ = 0.0f;
     visualLevel_ = 0.0f;
     noteSequence_ = 0;
@@ -1208,9 +1206,7 @@ void TaikoEngine::allSoundsOff() noexcept
     // what makes a panic actually silent instead of merely inaudible: the DC
     // blocker's own corner would otherwise take a further quarter of a second
     // to ring out.
-    dcInputLeft_ = dcInputRight_ = 0.0f;
-    dcOutputLeft_ = dcOutputRight_ = 0.0f;
-    driveAdaaLeft_ = driveAdaaRight_ = 0.0f;
+    resetOutputStagePath();
     silentSamples_ = idleFreezeSamples;
     idleFrozen_ = true;
 
@@ -1342,6 +1338,13 @@ void TaikoEngine::silenceAllVoices() noexcept
         silenceVoice (physical);
         physical.physicalBank = true;
     }
+}
+
+void TaikoEngine::resetOutputStagePath() noexcept
+{
+    dcInputLeft_ = dcInputRight_ = 0.0f;
+    dcOutputLeft_ = dcOutputRight_ = 0.0f;
+    driveAdaaLeft_ = driveAdaaRight_ = 0.0f;
 }
 
 void TaikoEngine::updateActiveVoiceCount() noexcept
@@ -5584,9 +5587,7 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
         {
             if (++silentSamples_ >= idleFreezeSamples)
             {
-                dcInputLeft_ = dcInputRight_ = 0.0f;
-                dcOutputLeft_ = dcOutputRight_ = 0.0f;
-                driveAdaaLeft_ = driveAdaaRight_ = 0.0f;
+                resetOutputStagePath();
                 idleFrozen_ = true;
             }
         }
