@@ -5212,6 +5212,14 @@ void testPushAcousticReturnSanitisation()
     renderInto(engine, buffer);
     expect(allFinite(buffer),
            "a saturated acoustic-return ring produced non-finite audio");
+    // allFinite() alone only rejects NaN/infinity, so a regression that
+    // removed or weakened the downstream amplitude limiting could still
+    // leak the ramp's own values (as large as capacity + 49) through as
+    // an arbitrarily large but finite signal. An ordinary sustained note
+    // here peaks around 0.13; 1.0 leaves ample headroom while still
+    // catching that failure mode.
+    expect(peakAbs(buffer.left) < 1.0f && peakAbs(buffer.right) < 1.0f,
+           "a saturated acoustic-return ring produced unbounded audio");
 }
 
 // ---------------------------------------------------------------------------
