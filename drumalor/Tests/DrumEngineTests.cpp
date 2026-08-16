@@ -1112,6 +1112,103 @@ void testSetInstrumentParametersSanitizesInvalidPitchLevelAndPan()
             "setInstrumentParameters() did not clamp an excessive pan to its -1 floor");
 }
 
+// setKitParameters()'s own humanise/bleed/busDrive/busCompression guards -
+// each independently `clampUnit (value, fallback)`, i.e. `std::isfinite
+// (value) ? std::clamp (value, 0.0f, 1.0f) : fallback` - are only ever driven
+// by the broad invalid-values stress test below, which checks that the
+// resulting render stays finite but never pins the fallback to the kit's own
+// documented default (0.5 for humanise, 0.0 for the other three) or the
+// clamp to its [0, 1] range; that stress test also never touches bleed at
+// all. Exercised the same way setInstrumentParameters()'s pitch/level/pan
+// guards are exercised above: a NaN, infinite or out-of-range field must
+// render bit-identically to the equivalent, already-sanitized explicit call.
+void testSetKitParametersSanitizesInvalidHumaniseBleedBusDriveAndBusCompression()
+{
+    constexpr auto instrument = drumalor::Instrument::Kick;
+    constexpr int samples = 4096;
+    const drumalor::KitParameters defaults {};
+
+    const auto renderWith = [&] (const drumalor::KitParameters& kit)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.setKitParameters (kit);
+        engine.trigger (instrument, 0.9f);
+        return renderInterleaved (engine, samples, defaultBlockSize);
+    };
+
+    const auto withHumanise = [&] (float humanise)
+    {
+        auto kit = defaults;
+        kit.humanise = humanise;
+        return kit;
+    };
+    expect (renderWith (withHumanise (std::numeric_limits<float>::quiet_NaN()))
+                == renderWith (withHumanise (defaults.humanise)),
+            "setKitParameters() did not fall back a NaN humanise to its 0.5 default");
+    expect (renderWith (withHumanise (std::numeric_limits<float>::infinity()))
+                == renderWith (withHumanise (defaults.humanise)),
+            "setKitParameters() did not fall back a +infinity humanise to its 0.5 default");
+    expect (renderWith (withHumanise (-std::numeric_limits<float>::infinity()))
+                == renderWith (withHumanise (defaults.humanise)),
+            "setKitParameters() did not fall back a -infinity humanise to its 0.5 default");
+    expect (renderWith (withHumanise (4.0f)) == renderWith (withHumanise (1.0f)),
+            "setKitParameters() did not clamp an excessive humanise to its 1.0 ceiling");
+    expect (renderWith (withHumanise (-4.0f)) == renderWith (withHumanise (0.0f)),
+            "setKitParameters() did not clamp an excessive humanise to its 0.0 floor");
+
+    const auto withBleed = [&] (float bleed)
+    {
+        auto kit = defaults;
+        kit.bleed = bleed;
+        return kit;
+    };
+    expect (renderWith (withBleed (std::numeric_limits<float>::quiet_NaN()))
+                == renderWith (withBleed (defaults.bleed)),
+            "setKitParameters() did not fall back a NaN bleed to its 0.0 default");
+    expect (renderWith (withBleed (std::numeric_limits<float>::infinity()))
+                == renderWith (withBleed (defaults.bleed)),
+            "setKitParameters() did not fall back a +infinity bleed to its 0.0 default");
+    expect (renderWith (withBleed (2.0f)) == renderWith (withBleed (1.0f)),
+            "setKitParameters() did not clamp an excessive bleed to its 1.0 ceiling");
+    expect (renderWith (withBleed (-2.0f)) == renderWith (withBleed (0.0f)),
+            "setKitParameters() did not clamp an excessive bleed to its 0.0 floor");
+
+    const auto withBusDrive = [&] (float busDrive)
+    {
+        auto kit = defaults;
+        kit.busDrive = busDrive;
+        return kit;
+    };
+    expect (renderWith (withBusDrive (std::numeric_limits<float>::quiet_NaN()))
+                == renderWith (withBusDrive (defaults.busDrive)),
+            "setKitParameters() did not fall back a NaN busDrive to its 0.0 default");
+    expect (renderWith (withBusDrive (-std::numeric_limits<float>::infinity()))
+                == renderWith (withBusDrive (defaults.busDrive)),
+            "setKitParameters() did not fall back a -infinity busDrive to its 0.0 default");
+    expect (renderWith (withBusDrive (2.0f)) == renderWith (withBusDrive (1.0f)),
+            "setKitParameters() did not clamp an excessive busDrive to its 1.0 ceiling");
+    expect (renderWith (withBusDrive (-2.0f)) == renderWith (withBusDrive (0.0f)),
+            "setKitParameters() did not clamp an excessive busDrive to its 0.0 floor");
+
+    const auto withBusCompression = [&] (float busCompression)
+    {
+        auto kit = defaults;
+        kit.busCompression = busCompression;
+        return kit;
+    };
+    expect (renderWith (withBusCompression (std::numeric_limits<float>::quiet_NaN()))
+                == renderWith (withBusCompression (defaults.busCompression)),
+            "setKitParameters() did not fall back a NaN busCompression to its 0.0 default");
+    expect (renderWith (withBusCompression (std::numeric_limits<float>::infinity()))
+                == renderWith (withBusCompression (defaults.busCompression)),
+            "setKitParameters() did not fall back a +infinity busCompression to its 0.0 default");
+    expect (renderWith (withBusCompression (2.0f)) == renderWith (withBusCompression (1.0f)),
+            "setKitParameters() did not clamp an excessive busCompression to its 1.0 ceiling");
+    expect (renderWith (withBusCompression (-2.0f)) == renderWith (withBusCompression (0.0f)),
+            "setKitParameters() did not clamp an excessive busCompression to its 0.0 floor");
+}
+
 // trigger()'s own guard - `! validInstrument (instrument) || ! std::isfinite
 // (velocity) || velocity <= 0.0f` - is exercised many thousands of times
 // elsewhere in this suite, but every one of those calls already carries a
@@ -6049,6 +6146,7 @@ int main()
     testPrepareSanitizesInvalidSampleRate();
     testSetOutputGainSanitizesInvalidGain();
     testSetInstrumentParametersSanitizesInvalidPitchLevelAndPan();
+    testSetKitParametersSanitizesInvalidHumaniseBleedBusDriveAndBusCompression();
     testTriggerSanitizesInvalidInstrumentAndVelocity();
     testModalSampleRateConsistency();
     testNoiseDensityAcrossSampleRates();
