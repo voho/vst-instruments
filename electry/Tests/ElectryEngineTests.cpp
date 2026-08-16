@@ -119,6 +119,15 @@ struct ElectryEngineTestAccess
         return engine.vibratoTarget_;
     }
 
+    // The bipolar bend target setPitchBend() writes, read straight off the
+    // engine so its own sanitisation guard - fold non-finite input to zero,
+    // clamp to [-1, 1], then double to the +/-2 semitone bend range - can be
+    // checked directly rather than only through a rendered voice's pitch.
+    static float pitchBendTarget(const ElectryEngine& engine) noexcept
+    {
+        return engine.pitchBendTarget_;
+    }
+
     static bool channelsLinked(const ElectryEngine& engine) noexcept
     {
         return engine.channelsLinked_;
@@ -3186,6 +3195,65 @@ void testSetVibratoSanitisation()
     renderInto(engine, buffer);
     expect(allFinite(buffer),
            "a hostile channel pressure produced non-finite audio");
+}
+
+// setPitchBend()'s own guard - `2.0f * clampf(std::isfinite(bend) ? bend :
+// 0.0f, -1.0f, 1.0f)` - is exercised elsewhere in the suite only with
+// ordinary in-range bends (testDropELowNoteAtMaximumRate uses -1.0f, several
+// glide/wheel tests use 0.0f or 1.0f) or, in testParameterSanitisation, with a
+// NaN whose only assertion is that the resulting audio stays finite. Nothing
+// checks the guard's own two distinct behaviours - a non-finite bend folds to
+// zero rather than latching NaN into the bend target, and a finite
+// out-of-[-1,1] bend clamps to the nearer boundary before being doubled to
+// the +/-2 semitone range - the way testSetVibratoSanitisation already does
+// for the channel-pressure guard right above.
+void testSetPitchBendSanitisation()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    engine.setParameters(EngineParameters {});
+
+    // NaN and either infinity fail std::isfinite and fall back to 0.0f before
+    // the clamp, doubling to a 0.0f target - the same "no boundary to clamp
+    // to" fallback the sample-rate, EngineParameters and vibrato guards use.
+    engine.setPitchBend(std::nanf(""));
+    expect(TestAccess::pitchBendTarget(engine) == 0.0f,
+           "a NaN bend did not fall back to zero");
+    engine.setPitchBend(std::numeric_limits<float>::infinity());
+    expect(TestAccess::pitchBendTarget(engine) == 0.0f,
+           "a positive-infinite bend did not fall back to zero");
+    engine.setPitchBend(-std::numeric_limits<float>::infinity());
+    expect(TestAccess::pitchBendTarget(engine) == 0.0f,
+           "a negative-infinite bend did not fall back to zero");
+
+    // A finite value outside [-1, 1] clamps to the nearer boundary, then
+    // doubles to the +/-2 semitone bend range, rather than being rejected or
+    // latched unclamped.
+    engine.setPitchBend(-4.0f);
+    expect(TestAccess::pitchBendTarget(engine) == -2.0f,
+           "a bend below -1.0 did not clamp to -2 semitones");
+    engine.setPitchBend(9.0f);
+    expect(TestAccess::pitchBendTarget(engine) == 2.0f,
+           "a bend above 1.0 did not clamp to +2 semitones");
+
+    // An ordinary in-range bend still passes through the doubling unaltered,
+    // confirming the guard is a genuine clamp rather than a filter that also
+    // stops valid input.
+    engine.setPitchBend(0.25f);
+    expect(TestAccess::pitchBendTarget(engine) == 0.5f,
+           "an in-range bend was altered by the guard");
+
+    // And a hostile bend held on a genuinely fretted, sounding string must
+    // still render finite, bounded audio end to end rather than only
+    // sanitising the stored target.
+    engine.reset();
+    engine.noteOn(47, 0.9f); // A2 + 2 frets, not an open string
+    engine.setPitchBend(std::nanf(""));
+    StereoBuffer bendBuffer(static_cast<int>(0.2 * sampleRate));
+    renderInto(engine, bendBuffer);
+    expect(allFinite(bendBuffer),
+           "a hostile pitch bend produced non-finite audio");
 }
 
 // The natural harmonic is a finger resting on a node, not a transposition.
@@ -7789,6 +7857,7 @@ int main()
     testVoiceStealingPriority();
     testNoteOnVelocitySanitisation();
     testSetVibratoSanitisation();
+    testSetPitchBendSanitisation();
     testFrettingHandPosition();
     testTouchHarmonics();
     testPinchHarmonic();
