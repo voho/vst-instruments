@@ -180,6 +180,14 @@ private:
     static constexpr std::size_t maximumResidualKeyframes = 128;
     static constexpr float maximumResidualScale = 64.0f;
 
+    // normalisedTime must already be finite and within [0, 1]; every call
+    // site clamps it before calling in (evaluate() clamps its own argument
+    // just above the call, the randomised-variation calibration loop and
+    // SampleLearner's residual passes feed frame fractions and
+    // already-clamped residualTimes_ entries) so this hot path - one call per
+    // control frame per voice, plus every calibration and residual-fitting
+    // frame - does not re-check a precondition its only callers already
+    // guarantee.
     void evaluateBaseRaw(
         float normalisedTime,
         std::array<float, outputSize>& destination) const noexcept;
