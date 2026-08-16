@@ -60,6 +60,14 @@ struct ElectryFxTestAccess
         return fx.sampleRate_;
     }
 
+    // The five mix targets exactly as setParameters() sanitised them, before
+    // the per-sample smoothing that would otherwise blend the guard's output
+    // with whatever mix was in effect before the call.
+    static FxParameters targetParameters(const ElectryFx& fx) noexcept
+    {
+        return fx.targetParameters_;
+    }
+
     // Harmonic distortion the output transformer's core adds to a steady sine,
     // measured at the stage itself. Measuring it at the chain's output instead
     // would measure the cabinet: a second-order high-pass at the box frequency
@@ -1041,6 +1049,60 @@ void testPrepareSanitisesSampleRate()
            "a sanitised prepare() sample rate produced non-finite audio");
 }
 
+// setParameters() runs each of the five mix controls through sanitiseMix(): a
+// non-finite value falls back to 0.0, then the result is clamped to 0..1.
+// testHostileInput only ever checked that the guard kept the chain finite,
+// never the sanitised value itself, so a clamp landing on the wrong boundary
+// (or a fallback that missed one of the five fields) would still pass it.
+void testSetParametersSanitisation()
+{
+    const auto sanitised = [] (const FxParameters& parameters)
+    {
+        ElectryFx fx;
+        fx.prepare(sampleRate);
+        fx.setParameters(parameters);
+        return FxAccess::targetParameters(fx);
+    };
+
+    FxParameters allNaN;
+    allNaN.distortion = std::nanf("");
+    allNaN.amp = std::numeric_limits<float>::infinity();
+    allNaN.compressor = -std::numeric_limits<float>::infinity();
+    allNaN.delay = std::nanf("");
+    allNaN.room = std::nanf("");
+    const auto fallenBack = sanitised(allNaN);
+    expect(fallenBack.distortion == 0.0f, "a NaN distortion mix did not fall back to 0.0");
+    expect(fallenBack.amp == 0.0f, "a positive-infinite amp mix did not fall back to 0.0");
+    expect(fallenBack.compressor == 0.0f, "a negative-infinite compressor mix did not fall back to 0.0");
+    expect(fallenBack.delay == 0.0f, "a NaN delay mix did not fall back to 0.0");
+    expect(fallenBack.room == 0.0f, "a NaN room mix did not fall back to 0.0");
+
+    FxParameters outOfRange;
+    outOfRange.distortion = -0.5f;
+    outOfRange.amp = 4.0f;
+    outOfRange.compressor = -2.0f;
+    outOfRange.delay = 1.0001f;
+    outOfRange.room = 100.0f;
+    const auto clamped = sanitised(outOfRange);
+    expect(clamped.distortion == 0.0f, "a negative distortion mix was not clamped to 0.0");
+    expect(clamped.amp == 1.0f, "an above-range amp mix was not clamped to 1.0");
+    expect(clamped.compressor == 0.0f, "a negative compressor mix was not clamped to 0.0");
+    expect(clamped.delay == 1.0f, "an above-range delay mix was not clamped to 1.0");
+    expect(clamped.room == 1.0f, "an above-range room mix was not clamped to 1.0");
+
+    FxParameters ordinary;
+    ordinary.distortion = 0.25f;
+    ordinary.amp = 0.5f;
+    ordinary.compressor = 0.75f;
+    ordinary.delay = 0.1f;
+    ordinary.room = 0.9f;
+    const auto passedThrough = sanitised(ordinary);
+    expect(passedThrough.distortion == 0.25f && passedThrough.amp == 0.5f
+               && passedThrough.compressor == 0.75f && passedThrough.delay == 0.1f
+               && passedThrough.room == 0.9f,
+           "ordinary in-range mixes were altered by sanitisation");
+}
+
 } // namespace
 
 int main()
@@ -1056,6 +1118,7 @@ int main()
     testDeterminismAndRateMatrix();
     testHostileInput();
     testPrepareSanitisesSampleRate();
+    testSetParametersSanitisation();
 
     if (failures != 0)
     {

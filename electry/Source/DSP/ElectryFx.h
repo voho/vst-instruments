@@ -58,8 +58,9 @@ public:
     [[nodiscard]] float gainStageLatencySamples() const noexcept;
 
 private:
-    // The JUCE-free regression suite measures the halfband kernel's response
-    // through this narrow seam. It is not part of the plug-in API.
+    // The JUCE-free regression suite measures the halfband kernel's response,
+    // and reads the sanitised parameter targets, through this narrow seam. It
+    // is not part of the plug-in API.
     friend struct ElectryFxTestAccess;
 
     static constexpr int maximumOversamplingStages = 2;
