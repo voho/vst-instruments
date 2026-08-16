@@ -975,6 +975,16 @@ struct TaikoEngineTestAccess
         return TaikoEngine::radiationEfficiency (order, ka);
     }
 
+    // Exposes the enclosed-air column's reactive stiffness factor on its
+    // own, so its low-frequency-limit fallback for a non-positive x (taken
+    // whenever the axisymmetric branch it is evaluated at has collapsed to
+    // omega <= 0) and its quarter-wave floor can be asserted directly rather
+    // than only inferred from a resolved drum's reported cavityStiffnessFactor.
+    static float columnStiffnessFactor (float x) noexcept
+    {
+        return TaikoEngine::columnStiffnessFactor (x);
+    }
+
     static std::uint64_t strokeCount (const TaikoEngine& engine) noexcept
     {
         return engine.noteSequence_;
@@ -6995,6 +7005,53 @@ void testContactCollisionMassFallsBackWhenTheMembraneContributesNothing()
             "a genuinely coupled membrane must reduce the collision mass below the bachi's own");
 }
 
+void testColumnStiffnessFactorGuardsItsOwnDomain()
+{
+    using taikor::TaikoEngineTestAccess;
+    constexpr float piFloat = 3.14159265358979f;
+    constexpr float quarterWave = 0.5f * piFloat;
+    const auto nan = std::numeric_limits<float>::quiet_NaN();
+
+    // resolveDrumGeometry's sole call site reaches x == 0 exactly whenever
+    // volumeBranchOmega's eigenvalue has collapsed to non-positive and it
+    // returns 0.0 rather than a frequency - the "!(x > 0.0f)" guard's
+    // low-frequency-limit fallback, previously exercised only indirectly
+    // through a resolved drum's cavityStiffnessFactor.
+    expect (TaikoEngineTestAccess::columnStiffnessFactor (0.0f) == 1.0f,
+            "a zero column length/frequency product must report the "
+            "uncorrected low-frequency limit");
+    expect (TaikoEngineTestAccess::columnStiffnessFactor (-1.0f) == 1.0f,
+            "a negative x must fall back the same way as zero");
+    expect (TaikoEngineTestAccess::columnStiffnessFactor (nan) == 1.0f,
+            "a NaN x must fall back the same way as zero");
+
+    // At and beyond the quarter-wave the column is past the one branch on
+    // which a lumped stiffness has a meaning, so the factor is floored to
+    // exactly zero (the decoupled pair the readout describes at Air
+    // Coupling zero) rather than following x cot x negative.
+    expect (TaikoEngineTestAccess::columnStiffnessFactor (quarterWave) == 0.0f,
+            "the quarter-wave itself must report exactly zero");
+    expect (TaikoEngineTestAccess::columnStiffnessFactor (quarterWave + 0.5f) == 0.0f,
+            "past the quarter-wave the factor must stay floored at zero rather "
+            "than following x cot x negative");
+
+    // The truncation is documented as continuous: x cot x itself reaches
+    // zero at the quarter-wave, so the ordinary formula just below it must
+    // already sit close to the floor rather than jump onto it.
+    const float justBelow =
+        TaikoEngineTestAccess::columnStiffnessFactor (quarterWave - 0.01f);
+    expect (justBelow > 0.0f && justBelow < 0.02f,
+            "the factor must fall continuously to zero approaching the "
+            "quarter-wave, not step onto its floor");
+
+    // And an ordinary mid-range x must match the closed form directly,
+    // pinning the formula itself rather than only its two domain guards.
+    const float mid = TaikoEngineTestAccess::columnStiffnessFactor (1.0f);
+    const float expectedMid = 1.0f * std::cos (1.0f) / std::sin (1.0f);
+    expect (std::abs (mid - expectedMid) < 1.0e-6f,
+            "an ordinary x must resolve to x*cot(x)");
+}
+
 void testInvalidInputSafety()
 {
     taikor::TaikoEngine engine;
@@ -8071,6 +8128,7 @@ int main()
     testSanitiseClampsEveryField();
     testParametersForOctaveIsIdentityAtBothOfItsOwnEndpoints();
     testContactCollisionMassFallsBackWhenTheMembraneContributesNothing();
+    testColumnStiffnessFactorGuardsItsOwnDomain();
     testInvalidInputSafety();
     testUiPresentationMath();
     testControlEndpointsAndGestures();
