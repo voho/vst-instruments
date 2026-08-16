@@ -829,6 +829,13 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   list once per model, and the audio loop walks that list directly. Verified
   behavior-preserving with the DSP test suite and a bit-identical demo
   re-render (`git status neuramar/Docs/audio` clean across all eight WAVs).
+- 2026-08-16: Added direct unit coverage for `followMeter`'s non-finite-target
+  branch (its non-finite-current sibling was already covered), the one
+  defensive branch of `ModelVisualisation`'s helpers that direct coverage
+  added elsewhere on this date didn't already reach; verified with
+  `ctest --test-dir neuramar/build-dsp` (3/3 passing) and confirmed the eight
+  rendered demo WAVs stayed byte-for-byte unchanged, as expected for a
+  test-only change.
 - 2026-08-16: Added direct coverage for `stretchedHarmonicRatio`'s and
   `anatomyDisplayHeight`'s hostile-input guards - a zero, negative, NaN, or
   infinite inharmonicity coefficient, a non-finite harmonic number, and a

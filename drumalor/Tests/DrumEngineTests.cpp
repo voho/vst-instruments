@@ -5166,6 +5166,34 @@ void testUiPresentationMath()
     expect (meterPositionForLinear (std::numeric_limits<float>::quiet_NaN(), -48.0f) == 0.0f
                 && meterPositionForLinear (-1.0f, 0.0f) == 0.0f,
             "meter curve did not sanitize invalid input");
+    expect (meterPositionForLinear (0.5f, std::numeric_limits<float>::quiet_NaN())
+                == meterPositionForLinear (0.5f, -60.0f),
+            "meterPositionForLinear did not fall back on a NaN floor to its default (-60 dB)");
+    expect (linearForMeterPosition (std::numeric_limits<float>::quiet_NaN(), -48.0f)
+                == linearForMeterPosition (0.0f, -48.0f),
+            "linearForMeterPosition did not sanitize a NaN position to its zero default");
+    expect (linearForMeterPosition (0.5f, std::numeric_limits<float>::quiet_NaN())
+                == linearForMeterPosition (0.5f, -60.0f),
+            "linearForMeterPosition did not fall back on a NaN floor to its default (-60 dB)");
+
+    // linearForMeterPosition sanitizes the same way meterPositionForLinear does
+    // above, independently for each of its two arguments, and was exercised
+    // only through the round trip's in-range inputs until now: a NaN position
+    // falls back to 0 (the meter floor) and a NaN or non-negative floor falls
+    // back to its own default before being clamped below -1 dB, matching what
+    // an explicit in-range call already produces rather than propagating.
+    expect (linearForMeterPosition (std::numeric_limits<float>::quiet_NaN(), -48.0f)
+                == linearForMeterPosition (0.0f, -48.0f),
+            "linearForMeterPosition did not sanitize a NaN position to the meter floor");
+    expect (linearForMeterPosition (2.0f, -48.0f) == linearForMeterPosition (1.0f, -48.0f)
+                && linearForMeterPosition (-2.0f, -48.0f)
+                       == linearForMeterPosition (0.0f, -48.0f),
+            "linearForMeterPosition did not clamp an out-of-range position");
+    expect (linearForMeterPosition (0.5f, std::numeric_limits<float>::quiet_NaN())
+                == linearForMeterPosition (0.5f, -60.0f),
+            "linearForMeterPosition did not fall back a NaN floor to its default (-60 dB)");
+    expect (linearForMeterPosition (0.5f, 0.0f) == linearForMeterPosition (0.5f, -1.0f),
+            "linearForMeterPosition did not clamp a non-negative floor below -1 dB");
 
     // Ballistics: instant attack, gradual release, hold then fall on the peak.
     MeterBallistics ballistics;
@@ -5195,6 +5223,9 @@ void testUiPresentationMath()
             "decayMultiplier did not clamp a positive decibel target to no decay");
     expect (decayMultiplier (-12.0f, std::numeric_limits<float>::quiet_NaN(), 30.0f) == 0.0f,
             "decayMultiplier did not sanitize a NaN duration");
+    expect (decayMultiplier (-12.0f, 1.0f, std::numeric_limits<float>::quiet_NaN())
+                == decayMultiplier (-12.0f, 1.0f, 30.0f),
+            "decayMultiplier did not fall back on a NaN update rate");
 
     ballistics.update (0.8f, 1.0f, release, fall, 3.0f);
     expect (std::abs (ballistics.level - 0.8f) < 1.0e-6f,
