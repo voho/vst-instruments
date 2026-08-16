@@ -3649,6 +3649,38 @@ void testModelVisualisation(const neuramar::NeuralModel& model)
                       0.5f, 0.5f) == 0.4f
                && neuramar::followMeter(0.5f, 4.0f, 1.0f, 1.0f) == 1.0f,
            "the meter follower did not honour its attack, release, and bounds");
+    // followMeter's non-finite-target sanitizer is a separate branch from the
+    // non-finite-current one exercised just above, and buildModelAnatomy never
+    // feeds it a non-finite target either, so it was otherwise unasserted.
+    expect(neuramar::followMeter(
+               0.5f, std::numeric_limits<float>::quiet_NaN(), 0.5f, 0.5f)
+                   == 0.25f,
+           "the meter follower did not sanitise a non-finite target");
+
+    // anatomyDisplayHeight is only ever called from buildModelAnatomy below
+    // with an amplitude and a peak that are already positive and finite, so
+    // its defensive branches - a non-positive or non-finite amplitude or
+    // peak, the ceiling at or above the peak, and the floor at the bottom of
+    // its declared display range - are otherwise never exercised by this
+    // suite.
+    expect(neuramar::anatomyDisplayHeight(0.0f, 1.0f) == 0.0f
+               && neuramar::anatomyDisplayHeight(-1.0f, 1.0f) == 0.0f
+               && neuramar::anatomyDisplayHeight(1.0f, 0.0f) == 0.0f
+               && neuramar::anatomyDisplayHeight(1.0f, -1.0f) == 0.0f
+               && neuramar::anatomyDisplayHeight(
+                      std::numeric_limits<float>::quiet_NaN(), 1.0f) == 0.0f
+               && neuramar::anatomyDisplayHeight(
+                      1.0f, std::numeric_limits<float>::quiet_NaN()) == 0.0f,
+           "the display height mapping did not reject non-positive or "
+           "non-finite inputs");
+    expect(neuramar::anatomyDisplayHeight(1.0f, 1.0f) == 1.0f
+               && neuramar::anatomyDisplayHeight(4.0f, 1.0f) == 1.0f,
+           "the display height mapping did not clamp at or above its peak");
+    expect(neuramar::anatomyDisplayHeight(
+               1.0f, std::pow(10.0f, ModelAnatomy::displayFloorDb / 20.0f))
+                   < 1.0e-3f,
+           "the display height mapping did not floor at the bottom of its "
+           "declared range");
 
     ModelAnatomy anatomy;
     neuramar::clearModelAnatomy(anatomy);

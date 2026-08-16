@@ -823,6 +823,14 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-16: Added direct unit coverage for `anatomyDisplayHeight`'s
+  non-positive/non-finite-input, at-or-above-peak, and below-floor branches
+  and for `followMeter`'s non-finite-target branch, none of which were
+  previously exercised (the only existing caller, `buildModelAnatomy`, always
+  supplies positive, finite amplitudes, peaks, and targets); verified with
+  `ctest --test-dir neuramar/build-dsp` (3/3 passing) and confirmed the eight
+  rendered demo WAVs stayed byte-for-byte unchanged, as expected for a
+  test-only change.
 - 2026-08-16: `NeuralModel::evaluateBaseRaw` no longer re-clamps and
   re-validates its `normalisedTime` argument with `std::isfinite`/`std::clamp`
   on every call; all four call sites - `evaluate()`'s hot per-control-frame
