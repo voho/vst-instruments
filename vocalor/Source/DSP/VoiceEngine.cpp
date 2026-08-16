@@ -3523,10 +3523,19 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
     // Once every voice has ended and the room tail has audibly rung out, the
     // block renders exact digital silence. Advance the state that remains
     // observable at the next note without paying the full per-sample cost.
-    bool placementHolding = false;
-    for (const auto hold : placementHold_)
-        placementHolding = placementHolding || hold > 0;
-    if (activeTotal_ == 0 && roomEnvelope_ < 1.0e-9f && !placementHolding)
+    // placementHold_ only has to be scanned to decide that, so fold the scan
+    // into the condition itself (with an early exit on the first singer still
+    // holding) instead of always walking every singer up front: the common
+    // case, at least one voice sounding, now short-circuits before the loop
+    // ever runs.
+    const auto anyPlacementHolding = [this]() noexcept
+    {
+        for (const auto hold : placementHold_)
+            if (hold > 0)
+                return true;
+        return false;
+    };
+    if (activeTotal_ == 0 && roomEnvelope_ < 1.0e-9f && !anyPlacementHolding())
     {
         samplePosition_ += static_cast<std::uint64_t>(numSamples);
 
