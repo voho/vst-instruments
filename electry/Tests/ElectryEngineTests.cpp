@@ -5052,23 +5052,14 @@ void testPushAcousticReturnSanitisation()
     ElectryEngine engine;
     engine.prepare(sampleRate, 512);
 
-    // A null left pointer and a non-positive count are both a no-op: the
-    // ring stays empty rather than reading through a null or wrapping a
-    // negative length into an enormous write.
-    engine.pushAcousticReturn(nullptr, nullptr, 128);
-    expect(TestAccess::feedbackAvailable(engine) == 0,
-           "a null buffer filled the acoustic-return ring");
-
+    // A null right channel duplicates left rather than being read through:
+    // the stored value is exactly the left sample, not half of a read
+    // through whatever the null happened to alias to. Seeding the ring with
+    // this push also gives the invalid-push probes below a populated ring to
+    // run against.
     std::array<float, 8> ordinary {
         1.0f, -0.5f, 0.25f, 0.0f, 0.75f, -1.0f, 0.125f, -0.25f
     };
-    engine.pushAcousticReturn(ordinary.data(), nullptr, -3);
-    expect(TestAccess::feedbackAvailable(engine) == 0,
-           "a non-positive sample count filled the acoustic-return ring");
-
-    // A null right channel duplicates left rather than being read through:
-    // the stored value is exactly the left sample, not half of a read
-    // through whatever the null happened to alias to.
     engine.pushAcousticReturn(ordinary.data(), nullptr,
                               static_cast<int>(ordinary.size()));
     expect(TestAccess::feedbackAvailable(engine)
@@ -5079,6 +5070,35 @@ void testPushAcousticReturnSanitisation()
                         - ordinary[static_cast<std::size_t>(i)]) < 1.0e-6f,
                "a mono acoustic-return push was not stored as the left "
                "channel verbatim");
+
+    // A null left pointer and a non-positive count are both a no-op against
+    // a *populated* ring: neither its availability nor its stored samples
+    // move. Testing this against an already-empty ring would only prove
+    // availability stays at zero, which a guard that discarded the ring
+    // before checking its arguments would also satisfy.
+    const int seededAvailable = TestAccess::feedbackAvailable(engine);
+    std::vector<float> seededSamples(static_cast<std::size_t>(seededAvailable));
+    for (int i = 0; i < seededAvailable; ++i)
+        seededSamples[static_cast<std::size_t>(i)]
+            = TestAccess::feedbackRingSample(engine, i);
+    const auto expectRingUnchanged = [&] (const char* what)
+    {
+        expect(TestAccess::feedbackAvailable(engine) == seededAvailable,
+               std::string(what) + " changed a populated acoustic-return "
+                   "ring's availability");
+        for (int i = 0; i < seededAvailable; ++i)
+            expect(TestAccess::feedbackRingSample(engine, i)
+                       == seededSamples[static_cast<std::size_t>(i)],
+                   std::string(what) + " altered a populated acoustic-return "
+                       "ring's stored samples");
+    };
+
+    engine.pushAcousticReturn(nullptr, nullptr, 128);
+    expectRingUnchanged("a null buffer");
+
+    std::array<float, 4> ignoredByNegativeCount { 9.0f, 9.0f, 9.0f, 9.0f };
+    engine.pushAcousticReturn(ignoredByNegativeCount.data(), nullptr, -3);
+    expectRingUnchanged("a non-positive sample count");
 
     // A non-finite averaged sample folds to zero rather than propagating,
     // whichever channel it came from.
@@ -5129,11 +5149,23 @@ void testPushAcousticReturnSanitisation()
     expect(TestAccess::feedbackAvailable(engine) == capacity,
            "a push longer than the ring did not cap availability at its "
            "capacity");
-    expect(TestAccess::feedbackRingSample(engine, 0) == ramp[50],
-           "a push longer than the ring did not drop its oldest samples");
-    expect(TestAccess::feedbackRingSample(engine, capacity - 1)
-               == ramp.back(),
-           "a push longer than the ring lost its newest sample");
+    // Every retained offset is checked, not just the first and last: a
+    // wraparound bug that duplicates, drops or reorders one interior sample
+    // would leave both endpoints correct while still corrupting the ring.
+    int firstMismatchOffset = -1;
+    for (int offset = 0; offset < capacity; ++offset)
+    {
+        if (TestAccess::feedbackRingSample(engine, offset)
+                != ramp[static_cast<std::size_t>(offset) + 50])
+        {
+            firstMismatchOffset = offset;
+            break;
+        }
+    }
+    expect(firstMismatchOffset == -1,
+           "a push longer than the ring dropped, duplicated or reordered an "
+           "interior sample at offset "
+               + std::to_string(firstMismatchOffset));
 
     // And held together on a genuinely fretted, sounding string, the guard
     // must still leave finite, bounded audio behind it end to end.
