@@ -823,6 +823,17 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-16: Added direct coverage for `SampleLearner.cpp`'s
+  `conditionSample` entry guards - a non-finite or out-of-[8 kHz, 768 kHz]
+  sample rate, an input under 256 samples, and an input with fewer than 256
+  *finite* samples, each rejecting `learn()` outright with its own error
+  message - which every other call in the suite reaches with an already
+  in-range rate and a wholly finite, multi-second fixture, so none of the
+  three had ever been driven directly; `testInputValidationAndCancellation`'s
+  existing silent-input case exercises a later stage (root-finding on an
+  all-zero signal), not this one. Test-only; no engine or header change,
+  verified with the JUCE-free DSP suite (3/3 tests passed) and `git status
+  neuramar/Docs/audio` confirmed clean.
 - 2026-08-16: Added direct coverage for `NeuramarEngine.cpp`'s
   `computeLoopRegion` clamps - a non-positive duration flooring to one
   millisecond, a negative loop start clamping to zero, and a loop end at or

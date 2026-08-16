@@ -4151,6 +4151,52 @@ void testResamplerHostileInputs()
            "an already-sane resample request was rejected by the hostile-input guard");
 }
 
+// conditionSample()'s own three entry guards - a non-finite or
+// out-of-[8 kHz, 768 kHz] sample rate, fewer than 256 input samples, and
+// fewer than 256 *finite* samples within whatever is read - are learn()'s
+// first line of defence, but every other call in this suite hands it an
+// already-sane rate and a wholly finite, multi-second fixture, so none of the
+// three has ever been driven directly. testInputValidationAndCancellation's
+// silent-input case is a later stage (root-finding on an all-zero signal),
+// not this one.
+void testConditionSampleHostileInputs()
+{
+    constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+    const std::vector<float> longEnoughSilence(4096, 0.0f);
+
+    for (const double hostileRate : { nan, 4000.0, 900000.0 })
+    {
+        const auto result = neuramar::SampleLearner::learn(
+            longEnoughSilence, hostileRate);
+        expect(!result && result.model == nullptr
+                   && result.error == "Sample rate must be between 8 kHz and 768 kHz",
+               "an out-of-range or non-finite sample rate was not rejected by "
+               "conditionSample's own guard");
+    }
+
+    const std::vector<float> tooShort(200, 0.25f);
+    const auto shortResult = neuramar::SampleLearner::learn(tooShort, 48000.0);
+    expect(!shortResult && shortResult.model == nullptr
+               && shortResult.error == "The sample is too short to learn",
+           "an input under 256 samples was not rejected by conditionSample's "
+           "own length guard");
+
+    // 2000 samples clears the length guard above, but only 100 of them are
+    // finite, which is under the separate 256-finite-sample floor the length
+    // check alone does not enforce.
+    std::vector<float> mostlyNonFinite(2000,
+        std::numeric_limits<float>::quiet_NaN());
+    for (std::size_t index = 0; index < 100; ++index)
+        mostlyNonFinite[index] = 0.1f;
+    const auto nonFiniteResult = neuramar::SampleLearner::learn(
+        mostlyNonFinite, 48000.0);
+    expect(!nonFiniteResult && nonFiniteResult.model == nullptr
+               && nonFiniteResult.error
+                   == "The sample does not contain enough finite audio",
+           "an input with fewer than 256 finite samples was not rejected by "
+           "conditionSample's own finite-content guard");
+}
+
 void testHighRegisterRenderThroughput(const neuramar::NeuralModel& model)
 {
     neuramar::NeuramarEngine engine;
@@ -6779,6 +6825,7 @@ int main()
     testFormantShift();
     testResamplerAccuracyAndCost();
     testResamplerHostileInputs();
+    testConditionSampleHostileInputs();
     if (fixture.first.model)
     {
         testLearnedPitchContour(*fixture.first.model);
