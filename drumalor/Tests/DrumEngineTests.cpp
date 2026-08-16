@@ -1077,6 +1077,60 @@ void testSetInstrumentParametersSanitizesInvalidPitchLevelAndPan()
             "setInstrumentParameters() did not clamp an excessive pan to its -1 floor");
 }
 
+// trigger()'s own guard - `! validInstrument (instrument) || ! std::isfinite
+// (velocity) || velocity <= 0.0f` - is exercised many thousands of times
+// elsewhere in this suite, but every one of those calls already carries a
+// valid instrument and a positive, finite velocity, so the guard's early
+// return has never itself been driven. A NaN, infinite, zero, negative or
+// out-of-range-instrument trigger must leave the engine exactly as an
+// engine that was never triggered at all: no voice allocated, and the
+// following block bit-identical to silence.
+void testTriggerSanitizesInvalidInstrumentAndVelocity()
+{
+    constexpr auto instrument = drumalor::Instrument::Kick;
+    constexpr int samples = 4096;
+
+    const auto renderAfter = [] (auto&& act)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+        act (engine);
+        expect (engine.getActiveVoiceCount() == 0,
+                "trigger() allocated a voice for an input its own guard should reject");
+        return renderInterleaved (engine, samples, defaultBlockSize);
+    };
+
+    const auto silent = renderAfter ([] (drumalor::DrumEngine&) {});
+
+    expect (renderAfter ([] (drumalor::DrumEngine& engine)
+                { engine.trigger (instrument, std::numeric_limits<float>::quiet_NaN()); })
+                == silent,
+            "trigger() did not reject a NaN velocity");
+    expect (renderAfter ([] (drumalor::DrumEngine& engine)
+                { engine.trigger (instrument, std::numeric_limits<float>::infinity()); })
+                == silent,
+            "trigger() did not reject a +infinity velocity");
+    expect (renderAfter ([] (drumalor::DrumEngine& engine)
+                { engine.trigger (instrument, -std::numeric_limits<float>::infinity()); })
+                == silent,
+            "trigger() did not reject a -infinity velocity");
+    expect (renderAfter ([] (drumalor::DrumEngine& engine)
+                { engine.trigger (instrument, 0.0f); })
+                == silent,
+            "trigger() did not reject a zero velocity");
+    expect (renderAfter ([] (drumalor::DrumEngine& engine)
+                { engine.trigger (instrument, -0.5f); })
+                == silent,
+            "trigger() did not reject a negative velocity");
+    expect (renderAfter ([] (drumalor::DrumEngine& engine)
+                {
+                    engine.trigger (
+                        static_cast<drumalor::Instrument> (drumalor::instrumentCount), 0.9f);
+                })
+                == silent,
+            "trigger() did not reject an out-of-range instrument");
+}
+
 void testModalSampleRateConsistency()
 {
     constexpr std::array sampleRates { 44100.0, 48000.0, 96000.0, 192000.0 };
@@ -5821,6 +5875,7 @@ int main()
     testPrepareSanitizesInvalidSampleRate();
     testSetOutputGainSanitizesInvalidGain();
     testSetInstrumentParametersSanitizesInvalidPitchLevelAndPan();
+    testTriggerSanitizesInvalidInstrumentAndVelocity();
     testModalSampleRateConsistency();
     testNoiseDensityAcrossSampleRates();
     testTailsTerminate();
