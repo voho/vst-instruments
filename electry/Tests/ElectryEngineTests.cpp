@@ -4391,9 +4391,36 @@ void testParameterSanitisationFallsBackToDefaults()
            "vibratoDepth above 1 did not clamp to 1");
 
     // Fields with their own valid interval clamp to their own bounds rather
-    // than [0,1].
+    // than [0,1]. bendTimeSeconds, strumSpreadSeconds and outputGain each
+    // have an independent sanitizer branch instead of sharing the [0,1]
+    // lambda, so - like outputGain below - each needs its own non-finite
+    // fallback and both finite-boundary cases to actually protect its whole
+    // branch, not just whichever half the shared "hostile" fixture happens
+    // to hit.
     expect(clean.bendTimeSeconds == 0.04f,
            "negative bendTimeSeconds did not clamp to the 0.04 s floor");
+
+    EngineParameters bendTimeNonFinite;
+    bendTimeNonFinite.bendTimeSeconds = std::numeric_limits<float>::quiet_NaN();
+    expect(TestAccess::sanitise(bendTimeNonFinite).bendTimeSeconds
+               == defaults.bendTimeSeconds,
+           "NaN bendTimeSeconds did not fall back to its default");
+    EngineParameters bendTimeAboveRange;
+    bendTimeAboveRange.bendTimeSeconds = 5.0f;
+    expect(TestAccess::sanitise(bendTimeAboveRange).bendTimeSeconds == 2.0f,
+           "bendTimeSeconds above 2 s did not clamp to its 2 s ceiling");
+
+    // strumSpreadSeconds' own [0, 0.040] branch: the "hostile" fixture above
+    // only supplies +inf, proving the fallback-to-default arm but not either
+    // finite boundary.
+    EngineParameters spreadBelowRange;
+    spreadBelowRange.strumSpreadSeconds = -0.01f;
+    expect(TestAccess::sanitise(spreadBelowRange).strumSpreadSeconds == 0.0f,
+           "negative strumSpreadSeconds did not clamp to its 0 floor");
+    EngineParameters spreadAboveRange;
+    spreadAboveRange.strumSpreadSeconds = 0.2f;
+    expect(TestAccess::sanitise(spreadAboveRange).strumSpreadSeconds == 0.040f,
+           "strumSpreadSeconds above 0.040 did not clamp to its ceiling");
 
     // outputGain has its own [0, 2] branch rather than the shared [0, 1]
     // lambda, so it needs its own finite-out-of-range boundary cases: the
@@ -4408,33 +4435,108 @@ void testParameterSanitisationFallsBackToDefaults()
            "outputGain above 2 did not clamp to its 2 ceiling");
 
     // An invalid enumerator falls back to the default enumerator rather than
-    // surviving as an out-of-range integer.
+    // surviving as an out-of-range integer. The "hostile" fixture above only
+    // supplies enumerators above the valid range (999), so each enum also
+    // gets a below-range (negative) case here to protect its other bound.
     expect(clean.pickupSelector == defaults.pickupSelector,
            "out-of-range pickupSelector did not fall back to its default");
     expect(clean.outputMode == defaults.outputMode,
            "out-of-range outputMode did not fall back to its default");
 
+    EngineParameters negativeSelector;
+    negativeSelector.pickupSelector = static_cast<PickupSelector>(-1);
+    expect(TestAccess::sanitise(negativeSelector).pickupSelector
+               == defaults.pickupSelector,
+           "negative pickupSelector did not fall back to its default");
+    EngineParameters negativeOutputMode;
+    negativeOutputMode.outputMode = static_cast<electry::OutputMode>(-1);
+    expect(TestAccess::sanitise(negativeOutputMode).outputMode
+               == defaults.outputMode,
+           "negative outputMode did not fall back to its default");
+
     // A parameter set already inside every field's valid range is a guard's
-    // no-op, not a smoothing stage - it must come back unchanged.
+    // no-op, not a smoothing stage - it must come back unchanged. Every field
+    // gets its own distinct in-range value so the guard cannot pass this
+    // case by unconditionally resetting an untested field to its default.
     EngineParameters valid = defaults;
+    valid.bodyWood = 0.62f;
     valid.bodySize = 0.73f;
+    valid.bodyShape = 0.15f;
+    valid.construction = 0.44f;
+    valid.scaleLength = 0.55f;
+    valid.pickupType = 0.66f;
+    valid.toneKnob = 0.22f;
+    valid.bodyResonance = 0.81f;
+    valid.stringGauge = 0.33f;
+    valid.stringAge = 0.77f;
     valid.pickPosition = 0.11f;
+    valid.pickHardness = 0.88f;
+    valid.pickNoise = 0.29f;
+    valid.fingerNoise = 0.64f;
+    valid.releaseNoise = 0.19f;
+    valid.muteDamping = 0.41f;
     valid.bendTimeSeconds = 0.9f;
+    valid.velocityAmount = 0.37f;
     valid.outputGain = 1.4f;
+    valid.artifactAmount = 0.53f;
+    valid.sympatheticAmount = 0.68f;
+    valid.palmMute = 0.24f;
     valid.strumSpreadSeconds = 0.02f;
+    valid.resonanceDepth = 0.71f;
+    valid.vibratoDepth = 0.09f;
     valid.pickupSelector = PickupSelector::Neck;
     valid.outputMode = electry::OutputMode::Stereo;
     const EngineParameters passedThrough = TestAccess::sanitise(valid);
+    expect(passedThrough.bodyWood == valid.bodyWood,
+           "in-range bodyWood was altered by the guard");
     expect(passedThrough.bodySize == valid.bodySize,
            "in-range bodySize was altered by the guard");
+    expect(passedThrough.bodyShape == valid.bodyShape,
+           "in-range bodyShape was altered by the guard");
+    expect(passedThrough.construction == valid.construction,
+           "in-range construction was altered by the guard");
+    expect(passedThrough.scaleLength == valid.scaleLength,
+           "in-range scaleLength was altered by the guard");
+    expect(passedThrough.pickupType == valid.pickupType,
+           "in-range pickupType was altered by the guard");
+    expect(passedThrough.toneKnob == valid.toneKnob,
+           "in-range toneKnob was altered by the guard");
+    expect(passedThrough.bodyResonance == valid.bodyResonance,
+           "in-range bodyResonance was altered by the guard");
+    expect(passedThrough.stringGauge == valid.stringGauge,
+           "in-range stringGauge was altered by the guard");
+    expect(passedThrough.stringAge == valid.stringAge,
+           "in-range stringAge was altered by the guard");
     expect(passedThrough.pickPosition == valid.pickPosition,
            "in-range pickPosition was altered by the guard");
+    expect(passedThrough.pickHardness == valid.pickHardness,
+           "in-range pickHardness was altered by the guard");
+    expect(passedThrough.pickNoise == valid.pickNoise,
+           "in-range pickNoise was altered by the guard");
+    expect(passedThrough.fingerNoise == valid.fingerNoise,
+           "in-range fingerNoise was altered by the guard");
+    expect(passedThrough.releaseNoise == valid.releaseNoise,
+           "in-range releaseNoise was altered by the guard");
+    expect(passedThrough.muteDamping == valid.muteDamping,
+           "in-range muteDamping was altered by the guard");
     expect(passedThrough.bendTimeSeconds == valid.bendTimeSeconds,
            "in-range bendTimeSeconds was altered by the guard");
+    expect(passedThrough.velocityAmount == valid.velocityAmount,
+           "in-range velocityAmount was altered by the guard");
     expect(passedThrough.outputGain == valid.outputGain,
            "in-range outputGain was altered by the guard");
+    expect(passedThrough.artifactAmount == valid.artifactAmount,
+           "in-range artifactAmount was altered by the guard");
+    expect(passedThrough.sympatheticAmount == valid.sympatheticAmount,
+           "in-range sympatheticAmount was altered by the guard");
+    expect(passedThrough.palmMute == valid.palmMute,
+           "in-range palmMute was altered by the guard");
     expect(passedThrough.strumSpreadSeconds == valid.strumSpreadSeconds,
            "in-range strumSpreadSeconds was altered by the guard");
+    expect(passedThrough.resonanceDepth == valid.resonanceDepth,
+           "in-range resonanceDepth was altered by the guard");
+    expect(passedThrough.vibratoDepth == valid.vibratoDepth,
+           "in-range vibratoDepth was altered by the guard");
     expect(passedThrough.pickupSelector == valid.pickupSelector,
            "a valid pickupSelector was altered by the guard");
     expect(passedThrough.outputMode == valid.outputMode,
