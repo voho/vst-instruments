@@ -36,6 +36,15 @@ struct TaikoEngineTestAccess
         return TaikoEngine::sanitise (rawParameters);
     }
 
+    // Exposes the octave-family transform on its own, so its two documented
+    // identity cases - Octave Body 0, and octave 0 at any Octave Body - can be
+    // asserted directly rather than only inferred from rendered audio.
+    static EngineParameters parametersForOctave (const EngineParameters& applied,
+                                                 int octaveOffset) noexcept
+    {
+        return TaikoEngine::parametersForOctave (applied, octaveOffset);
+    }
+
     static TuningPathMeasurement tuningPathMeasurement (
         const EngineParameters& rawParameters, int octave) noexcept
     {
@@ -6797,6 +6806,69 @@ void testSanitiseClampsEveryField()
             "a NaN octaveBody must fold to the Drums endpoint, the low side of the clamp");
 }
 
+// parametersForOctave's own comment names two identity cases: Octave Body at
+// 0 (guarded by "if (! (body > 0.0f)) return applied;") and octave 0 at any
+// Octave Body, because getDrumDescription(0) is both the reference and the
+// drum it is compared against, so every delta the transform would add is
+// exactly zero. Every other test reaches both paths only indirectly, by
+// rendering a full drum through resolveDrumFor, and never asserts either
+// identity directly - nor that away from both endpoints the transform
+// actually moves something, which is what makes the two identities
+// meaningful rather than a coincidence of an always-identity function.
+void testParametersForOctaveIsIdentityAtBothOfItsOwnEndpoints()
+{
+    using taikor::TaikoEngineTestAccess;
+    taikor::EngineParameters applied;
+    applied.headDiameter = 1.1f;
+    applied.bodyDepth = 0.35f;
+    applied.tension = 0.42f;
+    applied.headMaterial = 0.6f;
+    applied.shellMaterial = 0.15f;
+
+    const auto fieldsMatch = [] (const taikor::EngineParameters& a,
+                                  const taikor::EngineParameters& b)
+    {
+        return a.headDiameter == b.headDiameter && a.bodyDepth == b.bodyDepth
+            && a.tension == b.tension && a.headMaterial == b.headMaterial
+            && a.shellMaterial == b.shellMaterial;
+    };
+
+    // At Octave Body 0, the family collapses onto the reference drum and the
+    // parameter block must come back untouched, whatever octave is asked for.
+    taikor::EngineParameters atBodyZero = applied;
+    atBodyZero.octaveBody = 0.0f;
+    expect (fieldsMatch (TaikoEngineTestAccess::parametersForOctave (atBodyZero, 2), atBodyZero),
+            "Octave Body 0 must return the parameter block untouched at a non-zero octave");
+
+    // A negative or NaN Octave Body clamps to that same zero before the guard
+    // is taken, so both must be an identity too, not just a literal 0.0f.
+    taikor::EngineParameters negativeBody = applied;
+    negativeBody.octaveBody = -3.0f;
+    expect (fieldsMatch (TaikoEngineTestAccess::parametersForOctave (negativeBody, -2), negativeBody),
+            "a negative Octave Body must clamp to zero before the guard, staying an identity");
+
+    taikor::EngineParameters nanBody = applied;
+    nanBody.octaveBody = std::numeric_limits<float>::quiet_NaN();
+    expect (fieldsMatch (TaikoEngineTestAccess::parametersForOctave (nanBody, 3), nanBody),
+            "a NaN Octave Body must fold to zero before the guard, staying an identity");
+
+    // At octave 0, the reference drum is also the drum itself, so the
+    // identity must hold at full Octave Body too, not just at zero.
+    taikor::EngineParameters atOctaveZero = applied;
+    atOctaveZero.octaveBody = 1.0f;
+    expect (fieldsMatch (TaikoEngineTestAccess::parametersForOctave (atOctaveZero, 0), atOctaveZero),
+            "octave 0 must return the parameter block untouched at a non-zero Octave Body too");
+
+    // Away from both endpoints the transform must actually move at least one
+    // of the five fields it owns, so the two identities above are not simply
+    // true of every input.
+    taikor::EngineParameters awayFromEndpoints = applied;
+    awayFromEndpoints.octaveBody = 1.0f;
+    expect (! fieldsMatch (
+                TaikoEngineTestAccess::parametersForOctave (awayFromEndpoints, 2), awayFromEndpoints),
+            "a non-zero octave at full Octave Body must actually transform at least one field");
+}
+
 void testInvalidInputSafety()
 {
     taikor::TaikoEngine engine;
@@ -7860,6 +7932,7 @@ int main()
     testDeterminismAndBlockPartitioning();
     testPerformanceControls();
     testSanitiseClampsEveryField();
+    testParametersForOctaveIsIdentityAtBothOfItsOwnEndpoints();
     testInvalidInputSafety();
     testUiPresentationMath();
     testControlEndpointsAndGestures();
