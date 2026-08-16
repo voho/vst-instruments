@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -2957,6 +2958,67 @@ void testVoiceStealingPriority()
            "stealing a releasing voice changed the active voice count");
     expect(TestAccess::stringForNote(engine, 62) == 5,
            "steal preferred an older held string over a releasing one");
+}
+
+// noteOn()'s velocity guard - `clampf(std::isfinite(velocity) ? velocity :
+// 0.0f, 0.0f, 1.0f)` - was only ever fed ordinary in-range velocities
+// elsewhere in the suite; nothing asserted that a non-finite or negative
+// velocity is folded down to silence, or that a velocity above 1.0 clamps
+// to 1.0 rather than being rejected or left unclamped.
+void testNoteOnVelocitySanitisation()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    engine.setParameters(EngineParameters {});
+
+    // NaN and infinities fail std::isfinite and fall back to 0.0f; a
+    // negative velocity clamps to 0.0f. Either way the following
+    // `velocity <= 0.0f` gate in noteOn() then starts no voice at all.
+    const auto expectNoVoiceStarted = [&] (float velocity, const char* label)
+    {
+        engine.reset();
+        engine.noteOn(45, velocity);
+        expect(engine.getActiveVoiceCount() == 0,
+               std::string("noteOn started a voice for a ") + label
+                   + " velocity");
+    };
+    expectNoVoiceStarted(std::nanf(""), "NaN");
+    expectNoVoiceStarted(std::numeric_limits<float>::infinity(),
+                          "positive-infinite");
+    expectNoVoiceStarted(-std::numeric_limits<float>::infinity(),
+                          "negative-infinite");
+    expectNoVoiceStarted(-0.4f, "negative");
+
+    // A finite velocity above 1.0 clamps to exactly 1.0 rather than being
+    // rejected or driving the excitation harder than a full-velocity note
+    // would: every downstream use (makeVelocityProfile and its callers)
+    // only ever sees the value noteOn() itself already clamped, so the two
+    // renders must be bit-identical.
+    ElectryEngine reference;
+    reference.prepare(sampleRate, 512);
+    reference.setParameters(EngineParameters {});
+    const auto inRange = renderNote(reference, sampleRate, 45, 1.0f,
+                                     PlayStyle::Sustain, 0.5);
+
+    ElectryEngine overshoot;
+    overshoot.prepare(sampleRate, 512);
+    overshoot.setParameters(EngineParameters {});
+    const auto outOfRange = renderNote(overshoot, sampleRate, 45, 5.0f,
+                                        PlayStyle::Sustain, 0.5);
+
+    bool identical = true;
+    for (std::size_t i = 0; i < inRange.left.size(); ++i)
+        if (inRange.left[i] != outOfRange.left[i]
+            || inRange.right[i] != outOfRange.right[i])
+        {
+            identical = false;
+            break;
+        }
+    expect(identical,
+           "a velocity above 1.0 was not clamped to the same render as 1.0");
+    expect(peakAbs(inRange.left) > 1.0e-4f,
+           "velocity clamp fixture rendered silence");
 }
 
 // The natural harmonic is a finger resting on a node, not a transposition.
@@ -7506,6 +7568,7 @@ int main()
     testNoiseComponentsAndSilence();
     testStringAllocationAndPolyphony();
     testVoiceStealingPriority();
+    testNoteOnVelocitySanitisation();
     testFrettingHandPosition();
     testTouchHarmonics();
     testPinchHarmonic();
