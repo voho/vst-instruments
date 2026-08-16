@@ -887,6 +887,55 @@ struct ModelFieldMetrics
     return metrics;
 }
 
+// stretchedHarmonicRatio() and anatomyDisplayHeight() are both public, pure,
+// noexcept sanitize-and-map functions with a documented hostile-input guard
+// that nothing elsewhere in the suite exercises directly: every other test
+// reaches them only through a learned model whose inharmonicity and rendered
+// amplitudes are already well-formed, so a regression in either guard clause
+// would pass unnoticed until a malformed model or a display glitch surfaced
+// it. Covering them here mirrors the direct guard-clause coverage the other
+// pure sanitize helpers already have (anatomyPositionOf, anatomySliceAt, and
+// followMeter, tested just below in testModelVisualisation).
+void testHostileInputSanitizing()
+{
+    constexpr float harmonicNumber = 7.0f;
+    expect(neuramar::stretchedHarmonicRatio(harmonicNumber, 0.0f)
+               == harmonicNumber,
+           "a zero inharmonicity coefficient stretched the partial series");
+    expect(neuramar::stretchedHarmonicRatio(harmonicNumber, -0.001f)
+               == harmonicNumber,
+           "a negative inharmonicity coefficient was not rejected");
+    expect(neuramar::stretchedHarmonicRatio(harmonicNumber,
+               std::numeric_limits<float>::quiet_NaN()) == harmonicNumber,
+           "a NaN inharmonicity coefficient was not rejected");
+    expect(neuramar::stretchedHarmonicRatio(harmonicNumber,
+               std::numeric_limits<float>::infinity()) == harmonicNumber,
+           "an infinite inharmonicity coefficient was not rejected");
+    expect(std::isnan(neuramar::stretchedHarmonicRatio(
+               std::numeric_limits<float>::quiet_NaN(), 0.005f)),
+           "a non-finite harmonic number was not passed through unchanged");
+    expect(neuramar::stretchedHarmonicRatio(harmonicNumber, 0.01f)
+               > harmonicNumber,
+           "a positive inharmonicity coefficient failed to stretch the series");
+
+    expect(neuramar::anatomyDisplayHeight(
+               std::numeric_limits<float>::quiet_NaN(), 1.0f) == 0.0f,
+           "a NaN amplitude was not sanitised to silence");
+    expect(neuramar::anatomyDisplayHeight(
+               1.0f, std::numeric_limits<float>::quiet_NaN()) == 0.0f,
+           "a NaN peak amplitude was not sanitised to silence");
+    expect(neuramar::anatomyDisplayHeight(0.0f, 1.0f) == 0.0f,
+           "a zero amplitude did not map to silence");
+    expect(neuramar::anatomyDisplayHeight(-1.0f, 1.0f) == 0.0f,
+           "a negative amplitude was not clamped to silence");
+    expect(neuramar::anatomyDisplayHeight(1.0f, 0.0f) == 0.0f,
+           "a zero peak amplitude was not sanitised to silence");
+    expect(neuramar::anatomyDisplayHeight(1.0f, 1.0f) == 1.0f,
+           "an amplitude at the peak did not map to full display height");
+    expect(neuramar::anatomyDisplayHeight(1.0f, 1.0e6f) == 0.0f,
+           "an amplitude below the display floor was not clamped to zero");
+}
+
 void testRandomNeuralSeed()
 {
     constexpr std::uint64_t seed = 0x6e657572616d6172ull;
@@ -3649,6 +3698,17 @@ void testModelVisualisation(const neuramar::NeuralModel& model)
                       0.5f, 0.5f) == 0.4f
                && neuramar::followMeter(0.5f, 4.0f, 1.0f, 1.0f) == 1.0f,
            "the meter follower did not honour its attack, release, and bounds");
+    // followMeter's non-finite-target sanitizer is a separate branch from the
+    // non-finite-current one exercised just above, and buildModelAnatomy never
+    // feeds it a non-finite target either, so it was otherwise unasserted.
+    expect(neuramar::followMeter(
+               0.5f, std::numeric_limits<float>::quiet_NaN(), 0.5f, 0.5f)
+                   == 0.25f,
+           "the meter follower did not sanitise a non-finite target");
+
+    // anatomyDisplayHeight's own defensive branches (non-positive/non-finite
+    // amplitude or peak, the at-or-above-peak ceiling, and the display floor)
+    // are covered directly by testHostileInputSanitizing() above.
 
     ModelAnatomy anatomy;
     neuramar::clearModelAnatomy(anatomy);
@@ -6294,6 +6354,7 @@ void testAwakenIsAFadeDuration(const neuramar::NeuralModel& model)
 int main()
 {
     testShapePreservingSpectralInterpolation();
+    testHostileInputSanitizing();
     testCoreSpurFloor();
     testRenderIsSampleRateInvariant();
     testBodyLayersAreSampleRateInvariant();

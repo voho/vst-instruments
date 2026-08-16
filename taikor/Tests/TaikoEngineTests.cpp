@@ -27,6 +27,15 @@ struct TaikoEngineTestAccess
         float tuningHz { 0.0f };
     };
 
+    // Exposes the boundary every host-supplied parameter block passes
+    // through, so its per-field clamping and NaN handling can be asserted
+    // directly rather than only inferred from whether the audio it eventually
+    // produces stays finite.
+    static EngineParameters sanitise (const EngineParameters& rawParameters) noexcept
+    {
+        return TaikoEngine::sanitise (rawParameters);
+    }
+
     static TuningPathMeasurement tuningPathMeasurement (
         const EngineParameters& rawParameters, int octave) noexcept
     {
@@ -6661,6 +6670,116 @@ void testPerformanceControls()
     expect (ratio > 0.4 && ratio < 0.6, "output gain must scale the result linearly");
 }
 
+// testInvalidInputSafety below sends every field of EngineParameters out of
+// range at once and checks only that the resulting audio stays finite and
+// bounded - a true end-to-end guarantee, but one that cannot tell a field
+// clamped to the wrong bound from one clamped to the right one, since a
+// mis-clamped control can easily still render finite, in-range audio. This
+// asserts what TaikoEngine::sanitise() itself returns for each field, one at
+// a time, against the exact bounds documented on EngineParameters.
+void testSanitiseClampsEveryField()
+{
+    using taikor::TaikoEngineTestAccess;
+    const auto nan = std::numeric_limits<float>::quiet_NaN();
+    const auto infinity = std::numeric_limits<float>::infinity();
+
+    // Every field with a symmetric [low, high] clamp, checked from both a
+    // huge excursion and NaN. clampFloat folds NaN to `low`, so that is the
+    // value a NaN control must sanitise to as well.
+    struct Field
+    {
+        std::string_view name;
+        float taikor::EngineParameters::* member;
+        float low;
+        float high;
+    };
+    const Field fields[] = {
+        { "headDiameter", &taikor::EngineParameters::headDiameter, 0.15f, 1.80f },
+        { "bodyDepth", &taikor::EngineParameters::bodyDepth, 0.0f, 1.0f },
+        { "tension", &taikor::EngineParameters::tension, 0.0f, 1.0f },
+        { "headMaterial", &taikor::EngineParameters::headMaterial, 0.0f, 1.0f },
+        { "shellMaterial", &taikor::EngineParameters::shellMaterial, 0.0f, 1.0f },
+        { "resonantTension", &taikor::EngineParameters::resonantTension, 0.0f, 1.0f },
+        { "cavityCoupling", &taikor::EngineParameters::cavityCoupling, 0.0f, 1.0f },
+        { "headDamping", &taikor::EngineParameters::headDamping, 0.0f, 1.0f },
+        { "shellResonance", &taikor::EngineParameters::shellResonance, 0.0f, 1.0f },
+        { "pitch", &taikor::EngineParameters::pitch, -24.0f, 24.0f },
+        { "bachiHardness", &taikor::EngineParameters::bachiHardness, 0.0f, 1.0f },
+        { "strikePosition", &taikor::EngineParameters::strikePosition, -1.0f, 1.0f },
+        { "velocityDepth", &taikor::EngineParameters::velocityDepth, 0.0f, 1.0f },
+        { "tensionModulation", &taikor::EngineParameters::tensionModulation, 0.0f, 1.0f },
+        { "strikeNoise", &taikor::EngineParameters::strikeNoise, 0.0f, 1.0f },
+        { "humanise", &taikor::EngineParameters::humanise, 0.0f, 1.0f },
+        { "micDistance", &taikor::EngineParameters::micDistance, 0.0f, 1.0f },
+        { "micSpread", &taikor::EngineParameters::micSpread, 0.0f, 1.0f },
+        { "stereoWidth", &taikor::EngineParameters::stereoWidth, 0.0f, 1.0f },
+        { "drive", &taikor::EngineParameters::drive, 0.0f, 1.0f },
+        { "outputGain", &taikor::EngineParameters::outputGain, 0.0f, 2.0f },
+    };
+
+    for (const auto& field : fields)
+    {
+        taikor::EngineParameters high;
+        high.*field.member = field.high + 1.0e9f;
+        expect (TaikoEngineTestAccess::sanitise (high).*field.member == field.high,
+                std::string (field.name) + " must clamp a huge value to its upper bound");
+
+        taikor::EngineParameters low;
+        low.*field.member = field.low - 1.0e9f;
+        expect (TaikoEngineTestAccess::sanitise (low).*field.member == field.low,
+                std::string (field.name) + " must clamp a huge negative value to its lower bound");
+
+        taikor::EngineParameters positiveInfinity;
+        positiveInfinity.*field.member = infinity;
+        expect (TaikoEngineTestAccess::sanitise (positiveInfinity).*field.member == field.high,
+                std::string (field.name) + " must clamp +infinity to its upper bound");
+
+        taikor::EngineParameters negativeInfinity;
+        negativeInfinity.*field.member = -infinity;
+        expect (TaikoEngineTestAccess::sanitise (negativeInfinity).*field.member == field.low,
+                std::string (field.name) + " must clamp -infinity to its lower bound");
+
+        taikor::EngineParameters nanParameters;
+        nanParameters.*field.member = nan;
+        expect (TaikoEngineTestAccess::sanitise (nanParameters).*field.member == field.low,
+                std::string (field.name)
+                    + " must fold NaN to its lower bound, the same as clampFloat's own NaN rule");
+    }
+
+    // octaveBody collapses the old continuous morph to its two physical
+    // endpoints at a 0.5 threshold, rather than clamping to a continuous
+    // range like every other field above - so it is checked on its own terms.
+    taikor::EngineParameters belowThreshold;
+    belowThreshold.octaveBody = 0.4999f;
+    expect (TaikoEngineTestAccess::sanitise (belowThreshold).octaveBody == 0.0f,
+            "octaveBody just under one half must settle at the Drums endpoint");
+
+    taikor::EngineParameters atThreshold;
+    atThreshold.octaveBody = 0.5f;
+    expect (TaikoEngineTestAccess::sanitise (atThreshold).octaveBody == 1.0f,
+            "octaveBody at exactly one half must settle at the Body endpoint, not the Drums one");
+
+    taikor::EngineParameters aboveThreshold;
+    aboveThreshold.octaveBody = 0.5001f;
+    expect (TaikoEngineTestAccess::sanitise (aboveThreshold).octaveBody == 1.0f,
+            "octaveBody just over one half must settle at the Body endpoint");
+
+    taikor::EngineParameters octaveBodyOutOfRange;
+    octaveBodyOutOfRange.octaveBody = 40.0f;
+    expect (TaikoEngineTestAccess::sanitise (octaveBodyOutOfRange).octaveBody == 1.0f,
+            "an out-of-range octaveBody must clamp before the threshold is taken");
+
+    taikor::EngineParameters octaveBodyNegative;
+    octaveBodyNegative.octaveBody = -5.0f;
+    expect (TaikoEngineTestAccess::sanitise (octaveBodyNegative).octaveBody == 0.0f,
+            "a negative octaveBody must clamp to zero before the threshold is taken");
+
+    taikor::EngineParameters octaveBodyNan;
+    octaveBodyNan.octaveBody = nan;
+    expect (TaikoEngineTestAccess::sanitise (octaveBodyNan).octaveBody == 0.0f,
+            "a NaN octaveBody must fold to the Drums endpoint, the low side of the clamp");
+}
+
 void testInvalidInputSafety()
 {
     taikor::TaikoEngine engine;
@@ -6732,6 +6851,10 @@ void testUiPresentationMath()
             "a zero time constant must be an immediate jump");
     expect (onePoleCoefficient (1.0f, 0.0f) == 1.0f,
             "a zero update rate must not divide by zero");
+    expect (onePoleCoefficient (-1.0f, 30.0f) == 1.0f,
+            "a negative time constant must fall back to an immediate jump");
+    expect (onePoleCoefficient (1.0f, -30.0f) == 1.0f,
+            "a negative update rate must not divide by zero");
     const auto coefficient = onePoleCoefficient (0.1f, 30.0f);
     expect (coefficient > 0.0f && coefficient < 1.0f,
             "a smoothing coefficient must stay inside the unit interval");
@@ -6740,6 +6863,8 @@ void testUiPresentationMath()
             "a decay multiplier must be less than one");
     expect (decayMultiplier (-12.0f, 0.0f, 30.0f) == 0.0f,
             "a zero decay time must be handled");
+    expect (decayMultiplier (-12.0f, 1.0f, -30.0f) == 0.0f,
+            "a negative update rate must be handled the same as a zero one");
 
     expect (std::abs (meterPositionForLinear (1.0f, -48.0f) - 1.0f) < 1.0e-5f,
             "full scale must sit at the top of the meter");
@@ -6751,6 +6876,12 @@ void testUiPresentationMath()
         expect (std::abs (meterPositionForLinear (linear, -48.0f) - position) < 1.0e-4f,
                 "the meter scale must round-trip");
     }
+    // A non-negative floor is nonsensical (there would be no dynamic range
+    // to map onto), and both directions guard against it identically.
+    expect (meterPositionForLinear (0.5f, 0.0f) == 0.0f,
+            "a non-negative floor must not be used for the meter position");
+    expect (linearForMeterPosition (0.5f, 0.0f) == 0.0f,
+            "a non-negative floor must not be used for the meter's inverse");
 
     MeterBallistics ballistics;
     ballistics.reset();
@@ -6758,6 +6889,26 @@ void testUiPresentationMath()
         ballistics.update (0.8f, 0.5f, 0.05f, 0.9f, 10.0f);
     expect (ballistics.level > 0.7f, "the meter must reach a sustained level");
     expect (ballistics.peak >= ballistics.level, "the peak marker must lead the level");
+
+    // update()'s attack/release/peak-fall coefficients are all run through
+    // the shared clamp(), which (unlike a per-argument sanitize) folds a NaN
+    // input to the clamp's own low bound rather than to some other default -
+    // exercised by every call above but never asserted on its own.
+    const auto nan = std::numeric_limits<float>::quiet_NaN();
+    MeterBallistics frozenAttack;
+    frozenAttack.update (0.6f, nan, 1.0f, 0.9f, 0.0f);
+    expect (frozenAttack.level == 0.0f,
+            "a NaN attack coefficient must clamp to zero (no movement), not one");
+    MeterBallistics stuckRelease;
+    stuckRelease.update (0.6f, 1.0f, 1.0f, 0.9f, 0.0f);
+    stuckRelease.update (0.0f, 1.0f, nan, 0.9f, 0.0f);
+    expect (stuckRelease.level == 0.6f,
+            "a NaN release coefficient must clamp to zero (no fallback), not one");
+    MeterBallistics frozenPeak;
+    frozenPeak.update (0.6f, 1.0f, 1.0f, 0.9f, 0.0f);
+    frozenPeak.update (0.0f, 1.0f, 1.0f, nan, 0.0f);
+    expect (frozenPeak.peak == frozenPeak.level,
+            "a NaN peak-fall multiplier must clamp to zero, collapsing the peak to the level");
 
     const auto beforeRelease = ballistics.level;
     for (int index = 0; index < 30; ++index)
@@ -6796,6 +6947,10 @@ void testUiPresentationMath()
             "an invalid frequency must not produce a logarithm of zero");
 
     expect (std::abs (mix (0.0f, 10.0f, 0.25f) - 2.5f) < 1.0e-6f, "mix is wrong");
+    expect (mix (0.0f, 10.0f, -3.0f) == 0.0f && mix (0.0f, 10.0f, 4.0f) == 10.0f,
+            "mix must clamp its amount to the unit interval");
+    expect (mix (0.0f, 10.0f, std::numeric_limits<float>::quiet_NaN()) == 0.0f,
+            "a NaN mix amount must clamp to zero, staying at the start value");
     expect (smoothStep (0.0f, 1.0f, -1.0f) == 0.0f, "smoothStep must clamp low");
     expect (smoothStep (0.0f, 1.0f, 2.0f) == 1.0f, "smoothStep must clamp high");
     expect (smoothStep (1.0f, 1.0f, 2.0f) == 1.0f, "smoothStep must handle a zero span");
@@ -7677,6 +7832,7 @@ int main()
     testSimultaneousStrokesDoNotShareOneVoice();
     testDeterminismAndBlockPartitioning();
     testPerformanceControls();
+    testSanitiseClampsEveryField();
     testInvalidInputSafety();
     testUiPresentationMath();
     testControlEndpointsAndGestures();
