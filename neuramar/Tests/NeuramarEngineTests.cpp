@@ -6258,6 +6258,95 @@ void testLoopRegionHostileMetadata()
            "an already well-formed loop region was altered");
 }
 
+// NeuramarEngine::setParameters() runs every one of its eighteen scalar
+// fields through the same clampParameter() helper - a non-finite value falls
+// back to that field's documented default and a finite out-of-range value
+// clamps to its nearest bound - but every other call anywhere in this suite
+// (and every automated preset, MIDI-learn binding, or host automation lane
+// this engine actually reads) hands setParameters() an EngineParameters that
+// is already finite and in range, most often the struct's own default
+// member initializers or a copy of them with one field nudged inside its
+// documented span. A regression in clampParameter() itself, or in any one
+// field's minimum/maximum/fallback triple copied into setParameters(), would
+// therefore pass unnoticed until a host or automation lane fed a field a NaN,
+// an infinity, or a value past its documented bound directly. setParameters()
+// and loadParameters() are both public, so this drives every field with a
+// NaN, both infinities, and one finite value on each side of its bound
+// without needing a private test-only accessor.
+void testParameterSanitizationHostileInputs()
+{
+    using neuramar::EngineParameters;
+    using neuramar::NeuramarEngine;
+
+    struct Field
+    {
+        const char* name;
+        float EngineParameters::* member;
+        float minimum;
+        float maximum;
+        float fallback;
+    };
+
+    // One row per EngineParameters field, with the same minimum, maximum, and
+    // fallback setParameters() documents for it.
+    const Field fields[] = {
+        { "imprint", &EngineParameters::imprint, 0.0f, 1.0f, 1.0f },
+        { "bodyLock", &EngineParameters::bodyLock, 0.0f, 1.0f, 0.65f },
+        { "air", &EngineParameters::air, 0.0f, 1.0f, 0.35f },
+        { "bone", &EngineParameters::bone, 0.0f, 1.0f, 0.30f },
+        { "brightness", &EngineParameters::brightness, 0.0f, 1.0f, 0.50f },
+        { "evolutionRate", &EngineParameters::evolutionRate,
+          0.125f, 4.0f, 1.0f },
+        { "orbit", &EngineParameters::orbit, 0.0f, 1.0f, 0.15f },
+        { "mutation", &EngineParameters::mutation, 0.0f, 1.0f, 0.10f },
+        { "noise", &EngineParameters::noise, 0.0f, 1.0f, 0.0f },
+        { "attackSeconds", &EngineParameters::attackSeconds,
+          0.0f, 10.0f, 0.0f },
+        { "releaseSeconds", &EngineParameters::releaseSeconds,
+          0.005f, 20.0f, 0.35f },
+        { "spread", &EngineParameters::spread, 0.0f, 1.0f, 0.35f },
+        { "rootOffsetSemitones", &EngineParameters::rootOffsetSemitones,
+          -12.0f, 12.0f, 0.0f },
+        { "outputGain", &EngineParameters::outputGain, 0.0f, 2.0f, 0.72f },
+        { "stretch", &EngineParameters::stretch, 0.0f, 2.0f, 1.0f },
+        { "formantShiftSemitones",
+          &EngineParameters::formantShiftSemitones, -24.0f, 24.0f, 0.0f },
+        { "touch", &EngineParameters::touch, 0.0f, 1.0f, 0.0f },
+        { "registerTilt", &EngineParameters::registerTilt,
+          -1.0f, 1.0f, 0.0f },
+    };
+
+    constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+    constexpr float infinity = std::numeric_limits<float>::infinity();
+
+    for (const auto& field : fields)
+    {
+        NeuramarEngine engine;
+        EngineParameters parameters;
+
+        for (const float hostile : { nan, -infinity, infinity })
+        {
+            parameters.*field.member = hostile;
+            engine.setParameters(parameters);
+            expect(engine.loadParametersForTests().*field.member == field.fallback,
+                   std::string(field.name) + " did not fall back to its "
+                       "documented default for a non-finite value");
+        }
+
+        parameters.*field.member = field.minimum - 1000.0f;
+        engine.setParameters(parameters);
+        expect(engine.loadParametersForTests().*field.member == field.minimum,
+               std::string(field.name)
+                   + " was not clamped to its documented floor");
+
+        parameters.*field.member = field.maximum + 1000.0f;
+        engine.setParameters(parameters);
+        expect(engine.loadParametersForTests().*field.member == field.maximum,
+               std::string(field.name)
+                   + " was not clamped to its documented ceiling");
+    }
+}
+
 // Nothing may live below the played fundamental: the partial series starts
 // there, the anti-alias taper deletes everything that would fold back, and the
 // oscillator's sine approximation is the only other candidate for a spurious
@@ -6795,6 +6884,7 @@ int main()
     testRenderIsSampleRateInvariant();
     testPrepareSanitisesSampleRate();
     testLoopRegionHostileMetadata();
+    testParameterSanitizationHostileInputs();
     testBodyLayersAreSampleRateInvariant();
     testBoneCeilingIsAnchoredToTheAudibleBand();
     testKeyboardLevelFlatness();

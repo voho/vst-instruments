@@ -108,6 +108,17 @@ public:
     [[nodiscard]] static std::array<float, 4> computeLoopRegionForTests(
         const NeuralModel::Metadata& metadata) noexcept;
 
+    // Reads back whatever setParameters() actually stored, so the regression
+    // suite can confirm its per-field clampParameter() sanitisation - a
+    // non-finite value falls back to that field's documented default, a
+    // finite out-of-range value clamps to its nearest bound - without a
+    // private accessor. Not part of the plug-in's runtime surface; the audio
+    // thread reads the same fields through the private loadParameters().
+    [[nodiscard]] EngineParameters loadParametersForTests() const noexcept
+    {
+        return loadParameters();
+    }
+
 private:
     // The neural controller remains a compact 64-partial model. A larger,
     // engine-only bank lets Body Lock resample that observed spectrum onto the
