@@ -1356,6 +1356,25 @@ void testDisplayMathHelpers()
                 && vocalor::glideTimeSeconds (1.0f) > 0.4f
                 && vocalor::glideTimeSeconds (0.5f) < vocalor::glideTimeSeconds (1.0f),
             "the glide time mapping is not monotonic over a useful range");
+
+    // tunedFirstFormant() is only exercised indirectly, through the engine's
+    // high-pitch formant tracking in testFormantTuningAtHighPitch(); assert
+    // its own behaviour directly, including the two defensive fallbacks that
+    // no engine-level test happens to reach.
+    expect (vocalor::tunedFirstFormant (850.0f, 200.0f, 1400.0f) == 850.0f,
+            "a fundamental well below F1 moved the tracked formant");
+    const auto trackedMidway = vocalor::tunedFirstFormant (300.0f, 315.0f, 1400.0f);
+    expect (trackedMidway > 300.0f && trackedMidway < 315.0f,
+            "the tracking strategy did not engage smoothly between its start and its target");
+    expect (vocalor::tunedFirstFormant (300.0f, 5000.0f, 1400.0f) == 1400.0f,
+            "the tracked formant did not stop at its ceiling");
+    expect (vocalor::tunedFirstFormant (0.0f, 400.0f, 1400.0f) == 0.0f,
+            "an invalid base formant was not returned unchanged");
+    expect (vocalor::tunedFirstFormant (300.0f, -50.0f, 1400.0f) == 300.0f,
+            "a non-positive fundamental was not returned as the vowel's own F1");
+    expect (vocalor::tunedFirstFormant (
+                300.0f, std::numeric_limits<float>::quiet_NaN(), 1400.0f) == 300.0f,
+            "a non-finite fundamental was not sanitized to the vowel's own F1");
 }
 
 void testVowelMorphAndFormantShift()
