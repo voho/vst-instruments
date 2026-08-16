@@ -1010,6 +1010,15 @@ private:
     // expression.
     [[nodiscard]] static float proximityLift (float micProximity,
                                               float frequency) noexcept;
+    // How much of a mode's propagating (far-field) share survives to the
+    // microphones once it has spread from the head - a one-pole roll-off in
+    // mic distance alone, since only the far field is common to both
+    // capsules; the near field carries the shape and is handled by
+    // nearFieldAttenuation instead. observeMode and buildVoiceModes each
+    // rebuilt this identically, so it is resolved once here rather than as
+    // two copies of the same expression.
+    [[nodiscard]] static float propagatingSpreadFor (
+        float micDistanceMetres) noexcept;
     // Exact white-noise variance of the continuum's two-high-pass/seven-low-pass
     // cascade. Computed only while a voice is built; rendering needs the nine
     // one-pole state updates per channel and band, but no matrix work.
