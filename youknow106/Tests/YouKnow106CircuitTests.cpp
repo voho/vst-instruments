@@ -2438,6 +2438,16 @@ void testConverterQueueAndOutputReference()
     expect(YouKnow106Engine::outputReferenceGain(
                std::numeric_limits<float>::quiet_NaN()) == 1.0f,
            "a NaN output reference did not fall back to unity gain");
+
+    // Zero, -1 and NaN above all fail the `> 0.0f` positivity half of the
+    // guard and short-circuit before the `!std::isfinite` half is ever
+    // evaluated, so none of them actually exercises that second branch.
+    // Positive infinity is the one input that passes positivity and reaches
+    // isfinite specifically, isolating that half of the guard.
+    expect(YouKnow106Engine::outputReferenceGain(
+               std::numeric_limits<float>::infinity()) == 1.0f,
+           "a positive-infinity output reference did not fall back to unity "
+           "gain");
 }
 
 void testPanelLawsInvert()
