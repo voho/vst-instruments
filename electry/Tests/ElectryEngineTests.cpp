@@ -4395,6 +4395,18 @@ void testParameterSanitisationFallsBackToDefaults()
     expect(clean.bendTimeSeconds == 0.04f,
            "negative bendTimeSeconds did not clamp to the 0.04 s floor");
 
+    // outputGain has its own [0, 2] branch rather than the shared [0, 1]
+    // lambda, so it needs its own finite-out-of-range boundary cases: the
+    // NaN case above only proves the fallback-to-default path, not this one.
+    EngineParameters gainBelowRange;
+    gainBelowRange.outputGain = -1.0f;
+    expect(TestAccess::sanitise(gainBelowRange).outputGain == 0.0f,
+           "negative outputGain did not clamp to its 0 floor");
+    EngineParameters gainAboveRange;
+    gainAboveRange.outputGain = 3.0f;
+    expect(TestAccess::sanitise(gainAboveRange).outputGain == 2.0f,
+           "outputGain above 2 did not clamp to its 2 ceiling");
+
     // An invalid enumerator falls back to the default enumerator rather than
     // surviving as an out-of-range integer.
     expect(clean.pickupSelector == defaults.pickupSelector,
