@@ -359,6 +359,14 @@ struct ElectryEngineTestAccess
         return ElectryEngine::bendSensitivity(stringIndex);
     }
 
+    // The parameter guard setParameters() runs before anything else sees a
+    // host's automation, so the fallback and clamp behaviour can be asserted
+    // on directly rather than only inferred from the audio it protects.
+    static EngineParameters sanitise(const EngineParameters& parameters) noexcept
+    {
+        return ElectryEngine::sanitise(parameters);
+    }
+
     // The pitch a bridge-coupled string is running at - its open note, bent by
     // the wheel through its own compliance - computed the way
     // configureSympatheticString computes it, so the decay checks can invert
@@ -4287,6 +4295,140 @@ void testParameterSanitisation()
            "a hostile acoustic return produced non-finite audio");
 }
 
+// testParameterSanitisation() above only ever asserts on the audio that comes
+// out the far end of a hostile parameter set, which the guard itself could
+// pass through a subtly wrong path and still leave finite and quiet. This
+// calls the guard directly and checks its two distinct behaviours: a
+// non-finite field falls back to the shipping default, while a finite but
+// out-of-range field clamps to the nearer boundary of its own valid interval
+// instead. A future change that swapped one behaviour for the other, or
+// dropped a field from the guard entirely, would not necessarily move any
+// rendered sample enough to fail the audio-level test above.
+void testParameterSanitisationFallsBackToDefaults()
+{
+    const EngineParameters defaults;
+
+    EngineParameters hostile;
+    hostile.bodyWood = std::numeric_limits<float>::quiet_NaN();
+    hostile.bodySize = -12.0f;
+    hostile.bodyShape = 400.0f;
+    hostile.construction = std::numeric_limits<float>::infinity();
+    hostile.scaleLength = -std::numeric_limits<float>::infinity();
+    hostile.pickupType = 55.0f;
+    hostile.toneKnob = std::numeric_limits<float>::quiet_NaN();
+    hostile.bodyResonance = 1.0e9f;
+    hostile.stringGauge = -1.0e9f;
+    hostile.stringAge = std::numeric_limits<float>::quiet_NaN();
+    hostile.pickPosition = 2.0f;
+    hostile.pickHardness = -2.0f;
+    hostile.pickNoise = std::numeric_limits<float>::infinity();
+    hostile.fingerNoise = -0.5f;
+    hostile.releaseNoise = 77.0f;
+    hostile.muteDamping = std::numeric_limits<float>::quiet_NaN();
+    hostile.bendTimeSeconds = -3.0f;
+    hostile.velocityAmount = 9.0f;
+    hostile.outputGain = std::numeric_limits<float>::quiet_NaN();
+    hostile.artifactAmount = std::numeric_limits<float>::infinity();
+    hostile.sympatheticAmount = std::numeric_limits<float>::quiet_NaN();
+    hostile.palmMute = -7.0f;
+    hostile.strumSpreadSeconds = std::numeric_limits<float>::infinity();
+    hostile.resonanceDepth = std::numeric_limits<float>::quiet_NaN();
+    hostile.vibratoDepth = 12.0f;
+    hostile.pickupSelector = static_cast<PickupSelector>(999);
+    hostile.outputMode = static_cast<electry::OutputMode>(999);
+
+    const EngineParameters clean = TestAccess::sanitise(hostile);
+
+    // Non-finite input has no boundary to clamp to, so it falls back to the
+    // shipping default exactly.
+    expect(clean.bodyWood == defaults.bodyWood,
+           "NaN bodyWood did not fall back to its default");
+    expect(clean.construction == defaults.construction,
+           "+inf construction did not fall back to its default");
+    expect(clean.scaleLength == defaults.scaleLength,
+           "-inf scaleLength did not fall back to its default");
+    expect(clean.toneKnob == defaults.toneKnob,
+           "NaN toneKnob did not fall back to its default");
+    expect(clean.stringAge == defaults.stringAge,
+           "NaN stringAge did not fall back to its default");
+    expect(clean.pickNoise == defaults.pickNoise,
+           "+inf pickNoise did not fall back to its default");
+    expect(clean.muteDamping == defaults.muteDamping,
+           "NaN muteDamping did not fall back to its default");
+    expect(clean.outputGain == defaults.outputGain,
+           "NaN outputGain did not fall back to its default");
+    expect(clean.artifactAmount == defaults.artifactAmount,
+           "+inf artifactAmount did not fall back to its default");
+    expect(clean.sympatheticAmount == defaults.sympatheticAmount,
+           "NaN sympatheticAmount did not fall back to its default");
+    expect(clean.strumSpreadSeconds == defaults.strumSpreadSeconds,
+           "+inf strumSpreadSeconds did not fall back to its default");
+    expect(clean.resonanceDepth == defaults.resonanceDepth,
+           "NaN resonanceDepth did not fall back to its default");
+
+    // Finite but out-of-[0,1] input clamps to the nearer boundary rather than
+    // falling back to the default - the same lambda handles every 0..1 field
+    // and this is what tells its two branches apart.
+    expect(clean.bodySize == 0.0f, "negative bodySize did not clamp to 0");
+    expect(clean.bodyShape == 1.0f, "bodyShape above 1 did not clamp to 1");
+    expect(clean.pickupType == 1.0f, "pickupType above 1 did not clamp to 1");
+    expect(clean.bodyResonance == 1.0f,
+           "huge bodyResonance did not clamp to 1");
+    expect(clean.stringGauge == 0.0f,
+           "hugely negative stringGauge did not clamp to 0");
+    expect(clean.pickPosition == 1.0f,
+           "pickPosition above 1 did not clamp to 1");
+    expect(clean.pickHardness == 0.0f,
+           "negative pickHardness did not clamp to 0");
+    expect(clean.fingerNoise == 0.0f,
+           "negative fingerNoise did not clamp to 0");
+    expect(clean.releaseNoise == 1.0f,
+           "releaseNoise above 1 did not clamp to 1");
+    expect(clean.velocityAmount == 1.0f,
+           "velocityAmount above 1 did not clamp to 1");
+    expect(clean.palmMute == 0.0f, "negative palmMute did not clamp to 0");
+    expect(clean.vibratoDepth == 1.0f,
+           "vibratoDepth above 1 did not clamp to 1");
+
+    // Fields with their own valid interval clamp to their own bounds rather
+    // than [0,1].
+    expect(clean.bendTimeSeconds == 0.04f,
+           "negative bendTimeSeconds did not clamp to the 0.04 s floor");
+
+    // An invalid enumerator falls back to the default enumerator rather than
+    // surviving as an out-of-range integer.
+    expect(clean.pickupSelector == defaults.pickupSelector,
+           "out-of-range pickupSelector did not fall back to its default");
+    expect(clean.outputMode == defaults.outputMode,
+           "out-of-range outputMode did not fall back to its default");
+
+    // A parameter set already inside every field's valid range is a guard's
+    // no-op, not a smoothing stage - it must come back unchanged.
+    EngineParameters valid = defaults;
+    valid.bodySize = 0.73f;
+    valid.pickPosition = 0.11f;
+    valid.bendTimeSeconds = 0.9f;
+    valid.outputGain = 1.4f;
+    valid.strumSpreadSeconds = 0.02f;
+    valid.pickupSelector = PickupSelector::Neck;
+    valid.outputMode = electry::OutputMode::Stereo;
+    const EngineParameters passedThrough = TestAccess::sanitise(valid);
+    expect(passedThrough.bodySize == valid.bodySize,
+           "in-range bodySize was altered by the guard");
+    expect(passedThrough.pickPosition == valid.pickPosition,
+           "in-range pickPosition was altered by the guard");
+    expect(passedThrough.bendTimeSeconds == valid.bendTimeSeconds,
+           "in-range bendTimeSeconds was altered by the guard");
+    expect(passedThrough.outputGain == valid.outputGain,
+           "in-range outputGain was altered by the guard");
+    expect(passedThrough.strumSpreadSeconds == valid.strumSpreadSeconds,
+           "in-range strumSpreadSeconds was altered by the guard");
+    expect(passedThrough.pickupSelector == valid.pickupSelector,
+           "a valid pickupSelector was altered by the guard");
+    expect(passedThrough.outputMode == valid.outputMode,
+           "a valid outputMode was altered by the guard");
+}
+
 // ---------------------------------------------------------------------------
 // Version 1.1: bridge-coupled sympathetic strings
 // ---------------------------------------------------------------------------
@@ -7167,6 +7309,7 @@ int main()
     testCoupledStringKeepsItsFundamentalDecayTarget();
     testFingeredStringsShareTheBridge();
     testParameterSanitisation();
+    testParameterSanitisationFallsBackToDefaults();
     testCpuGuardrail();
 
     // Test attack tension modulation and palm-mute bridge impact physics
