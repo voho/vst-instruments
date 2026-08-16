@@ -619,6 +619,14 @@ float TaikoEngine::proximityLift (float micProximity, float frequency) noexcept
     return 1.0f + micProximity / (1.0f + (frequency / 190.0f) * (frequency / 190.0f));
 }
 
+// Everything that propagates out of the drum arrives at both microphones
+// alike, and spreads on the way; only the near field carries the shape of
+// the head, and that is what separates the pair.
+float TaikoEngine::propagatingSpreadFor (float micDistanceMetres) noexcept
+{
+    return 1.0f / (1.0f + micDistanceMetres / 0.12f);
+}
+
 float TaikoEngine::continuumBandVariance (float lowCoefficient,
                                           float highCoefficient) noexcept
 {
@@ -1733,7 +1741,7 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
     const float rho = clampFloat (strikeRadius, 0.0f, 0.995f);
     const float micRho = drum.micRadius / radius;
     const float micDistance = drum.micDistanceMetres;
-    const float propagatingSpread = 1.0f / (1.0f + micDistance / 0.12f);
+    const float propagatingSpread = propagatingSpreadFor (micDistance);
 
     const auto omegas = membraneModeOmegas (drum, radius, lambda,
                                             static_cast<float> (order));
@@ -2843,7 +2851,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
     // Everything that propagates out of the drum arrives at both microphones
     // alike, and spreads on the way; only the near field carries the shape of
     // the head, and that is what separates the pair.
-    const float propagatingSpread = 1.0f / (1.0f + micDistance / 0.12f);
+    const float propagatingSpread = propagatingSpreadFor (micDistance);
 
     const float edgeLoss = drum.edgeLoss * (1.0f + 3.0f * extraDamping);
     // The hide's own loss, kept as the two coefficients materialDamping sums
