@@ -829,6 +829,14 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   which its only callers, `predictedAirCentroid()` in the test suite and
   `SampleLearner`'s Air fit, never exercise directly because they only ever
   sweep finite, sub-Nyquist analysis frequencies.
+- 2026-08-16: Added direct coverage for `NeuralModel::createRandomizedVariation`'s
+  internal `boundedStrength` guard - a NaN, infinite, or negative strength
+  collapsing to an exact clone, the same as a literal 0.0, and a strength
+  above 1 clamping to the identical result as exactly 1.0 - which every
+  other caller in the suite only ever exercised with an already in-range
+  literal. Test-only; no engine or header change, verified with the
+  JUCE-free DSP suite (3/3 tests passed) and `git status neuramar/Docs/audio`
+  confirmed clean.
 - 2026-08-16: Added direct coverage for `ShapePreservingEnvelope::prepare`'s
   per-harmonic hostile-input guard - a NaN, infinite, or negative harmonic
   each sanitising to silence - which its one caller, the per-voice body

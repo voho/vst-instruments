@@ -1350,6 +1350,42 @@ void testRandomizedVariations(const neuramar::NeuralModel& learned)
            "100% neural variation was not materially broader than 10%");
 }
 
+// createRandomizedVariation()'s strength argument is sanitised by an internal
+// boundedStrength() helper (NaN or infinite collapses to 0, and the result is
+// then clamped to [0, 1]) before anything else in the function reads it, but
+// nothing else in the suite ever calls in with anything but an already
+// in-range literal, so a regression there - say, a clamp that let a NaN
+// strength slip through to the calibration pass below - would pass unnoticed
+// until an automated or scripted caller handed the editor's "%" control a
+// stray value. Zero and negative strengths take the same early return as a
+// literal 0.0f, so the produced model has to be an exact clone; a strength
+// above 1 has to render bit-identically to the same seed at exactly 1.0f.
+void testRandomizedVariationHostileStrength(const neuramar::NeuralModel& learned)
+{
+    constexpr std::uint64_t seed = 0x686f7374696c6521ull;
+    const auto originalBytes = learned.serialize();
+    constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+    constexpr float infinity = std::numeric_limits<float>::infinity();
+
+    for (const float strength : { nan, -infinity, infinity, -1.0f, -0.01f })
+    {
+        const auto variation = learned.createRandomizedVariation(seed, strength);
+        expect(variation != nullptr,
+               "a hostile randomization strength produced no variation at all");
+        if (variation != nullptr)
+            expect(variation->serialize() == originalBytes,
+                   "a non-finite or negative randomization strength altered "
+                   "the learned memory instead of being sanitised to zero");
+    }
+
+    const auto atCeiling = learned.createRandomizedVariation(seed, 1.0f);
+    const auto pastCeiling = learned.createRandomizedVariation(seed, 4.0f);
+    expect(atCeiling && pastCeiling
+               && atCeiling->serialize() == pastCeiling->serialize(),
+           "a randomization strength above 1 was not clamped to the same "
+           "result as exactly 1.0");
+}
+
 void testModelSpaceNoise(const neuramar::NeuralModel& model)
 {
     for (const float time : { 0.0f, 0.07f, 0.31f, 0.63f, 1.0f })
@@ -6565,6 +6601,7 @@ int main()
         testLegacyModelStretchCompatibility(*fixture.first.model);
         testModelVisualisation(*fixture.first.model);
         testRandomizedVariations(*fixture.first.model);
+        testRandomizedVariationHostileStrength(*fixture.first.model);
         testModelSpaceNoise(*fixture.first.model);
         testRenderAndTransposition(*fixture.first.model);
         testRootCorrectionRelabelsSourceKey(*fixture.first.model);
