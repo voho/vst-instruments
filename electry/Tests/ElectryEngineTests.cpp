@@ -5135,6 +5135,27 @@ void testPushAcousticReturnSanitisation()
                "a non-finite averaged acoustic-return sample was stored "
                "rather than folded to zero");
 
+    // The fold-to-zero rule must hold for a mono push too: every hostile
+    // push above supplies a non-null right buffer, so a handler that took a
+    // separate path for null-right and stored left verbatim (skipping the
+    // finite check) would pass all of them while still injecting NaN or
+    // infinity into the ring here.
+    std::array<float, 4> poisonMono {
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(), 1.0f,
+        -std::numeric_limits<float>::infinity()
+    };
+    engine.pushAcousticReturn(poisonMono.data(), nullptr,
+                              static_cast<int>(poisonMono.size()));
+    expect(TestAccess::feedbackAvailable(engine)
+               == static_cast<int>(poisonMono.size()),
+           "a hostile mono acoustic-return push did not fill the ring");
+    for (int i = 0; i < static_cast<int>(poisonMono.size()); ++i)
+        expect(TestAccess::feedbackRingSample(engine, i)
+                   == (i == 2 ? 1.0f : 0.0f),
+               "a non-finite mono acoustic-return sample was stored rather "
+               "than folded to zero");
+
     // An ordinary stereo push is the average of both channels, not just one
     // of them.
     std::array<float, 3> left { 1.0f, -1.0f, 0.5f };
