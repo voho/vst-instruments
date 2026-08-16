@@ -8506,6 +8506,21 @@ void testJustIntonation()
                 && vocalor::justIntonationOffsetCents (-12) == 0.0f,
             "the octave is not left alone by the intonation table");
 
+    // The doc comment promises "only its pitch class matters" for any integer,
+    // positive or negative, but -12 above is a degenerate probe: -12 % 12 is
+    // already 0 in C++, so it never touches the "+ 12" correction the pitch
+    // class wrap applies to a genuinely negative, non-octave dividend. The
+    // engine itself never supplies one either -- voice.midiNote - intonationRoot_
+    // is kept >= 0 by construction -- so that correction is otherwise dead
+    // code. Each ratio's semitone count shifted down a full octave lands on
+    // the same pitch class and must resolve to the very same cents already
+    // verified above.
+    for (const auto& entry : ratios)
+        expect (std::abs (vocalor::justIntonationOffsetCents (entry.first - 12)
+                          - centsForRatio (entry.second, entry.first)) < 0.01,
+                "the negative-dividend wrap for " + std::to_string (entry.first - 12)
+                    + " semitones does not match its positive pitch class's ratio");
+
     const auto intervalCents = [] (float lower, float upper)
     {
         return 1200.0 * std::log2 (static_cast<double> (upper)

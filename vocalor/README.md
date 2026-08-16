@@ -1326,6 +1326,7 @@ rights before committing or packaging them.
 
 ## Changelog
 
+- 2026-08-16: Added direct regression coverage for `justIntonationOffsetCents()`'s negative-dividend pitch-class wrap, which the existing octave check (`-12`) never exercised because `-12 % 12` is already 0 in C++, and which the engine itself never reaches either since its own root-relative interval is kept non-negative by construction; test-only change, verified with `ctest --test-dir vocalor/build-dsp` (both tests pass) and confirming `git status vocalor/Docs/audio` stays clean.
 - 2026-08-16: Added direct regression coverage for `vibratoExtentCents()` (the Vibrato knob's power-law extent curve and the Choir/Chord section soft-limiter), which was previously exercised only indirectly through the engine's chunk-rate depth and the peak-to-peak measurements documented above and had neither its own curve, its clamping of an out-of-range knob, nor the soft-limiter's knee and asymptote asserted directly; test-only change, verified with `ctest --test-dir vocalor/build-dsp` (both tests pass) and confirming `git status vocalor/Docs/audio` stays clean.
 - 2026-08-15: Made the audio-thread status/meter update after each block scan only the voices already known to be active instead of every voice slot, and removed the extra full voice-count rescan that duplicated part of that same work.
 - 2026-08-15: Documented in the ensemble-size slider's accessibility description that 13-16 render the same 12 singers as the top of the range, matching what the README already explains.
