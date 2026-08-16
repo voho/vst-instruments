@@ -68,10 +68,11 @@ struct YouKnow106TestAccess
     static Wiring q1Wiring(YouKnow106Engine& engine, double hostRate)
     {
         engine.sampleRate_ = std::clamp(
-            hostRate, 8000.0, YouKnow106Engine::maximumSupportedSampleRate);
+            hostRate, YouKnow106Engine::minimumSupportedSampleRate,
+            YouKnow106Engine::maximumSupportedSampleRate);
         engine.inverseSampleRate_ = static_cast<float>(1.0 / engine.sampleRate_);
-        engine.oversamplingRequested_ = false;
-        engine.oversamplingEnabled_ = false;
+        engine.oversamplingRequested_ = 1;
+        engine.oversamplingApplied_ = 1;
         engine.updateProcessingRate();
         return { engine.oversampledRate_, engine.oversampling_,
                  engine.noiseSourceLowPassG_ };

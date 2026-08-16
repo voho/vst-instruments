@@ -45,7 +45,10 @@ struct Preset
         float calibration { 1.0f };
         float chorusNoise { 1.0f };
         int polyphony { 6 };
-        bool hq { true };
+        // Deliberately no quality/oversampling entry. The internal rate is a
+        // property of the machine the plug-in is running on, not of the sound,
+        // so recalling a preset must not overrule a player who chose a cheaper
+        // setting to fit a session's CPU budget.
     };
 
     Controls controls {};

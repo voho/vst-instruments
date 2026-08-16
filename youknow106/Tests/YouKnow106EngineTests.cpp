@@ -19,6 +19,7 @@
 #include <memory>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace youknow106
@@ -4986,6 +4987,166 @@ void testQualityChangeWaitsForTheOutputPathToEmpty()
            "the quality change never applied after the output path emptied");
 }
 
+void testQualityLadderResolvesEveryRungAtEveryRate()
+{
+    // A request is a ceiling, never a floor. The applied factor is the smaller
+    // of what was asked for and what the host rate still needs to reach the
+    // bandlimiting target, so the same selection resolves differently as the
+    // host rate climbs -- and no selection can ever push the internal grid
+    // higher than the deepest rung would at that rate.
+    struct Case
+    {
+        double rate;
+        int requested;
+        int expected;
+    };
+    constexpr std::array<Case, 12> cases {{
+        { 44100.0, 4, 4 }, { 44100.0, 2, 2 }, { 44100.0, 1, 1 },
+        { 48000.0, 4, 4 }, { 48000.0, 2, 2 }, { 48000.0, 1, 1 },
+        { 96000.0, 4, 2 }, { 96000.0, 2, 2 }, { 96000.0, 1, 1 },
+        { 192000.0, 4, 1 }, { 192000.0, 2, 1 }, { 192000.0, 1, 1 }
+    }};
+
+    for (const auto& item : cases)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(item.rate, blockSize, item.requested);
+        const auto where = std::to_string(static_cast<int>(item.rate)) + " Hz "
+                         + std::to_string(item.requested) + "x";
+        expect(engine.getOversamplingFactor() == item.expected,
+               "the ladder resolved the wrong factor at " + where);
+        expect(engine.getRequestedOversamplingFactor() == item.requested,
+               "the ladder forgot what was requested at " + where);
+        // Whatever rung is running, the host is told the same latency.
+        expect(engine.getProcessingLatencySamples() == 41,
+               "the reported latency moved at " + where);
+    }
+
+    // Only the three rungs exist. Anything else is snapped to the nearest one
+    // at or below it, and a nonsense request falls to the cheapest rather than
+    // to an internal grid nothing downstream is designed for.
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, 4);
+    const std::array<std::pair<int, int>, 7> snapped {{
+        { 3, 2 }, { 5, 4 }, { 8, 4 }, { 0, 1 }, { -1, 1 },
+        { std::numeric_limits<int>::max(), 4 },
+        { std::numeric_limits<int>::min(), 1 }
+    }};
+    for (const auto& [asked, wanted] : snapped)
+    {
+        engine.setOversamplingFactor(asked);
+        expect(engine.getRequestedOversamplingFactor() == wanted,
+               "a request of " + std::to_string(asked)
+                   + " did not snap to " + std::to_string(wanted));
+    }
+}
+
+void testQualityChangeThatCannotBeHeardIsNotPaidFor()
+{
+    // On a host already fast enough, two rungs resolve to the same internal
+    // grid: at 96 kHz both 4x and 2x run at 2x. Moving between them must be
+    // free -- no safety fade, no output-path rebuild, no wait for the delay
+    // lines to run dry -- because there is nothing on the grid to change.
+    constexpr double sampleRate = 96000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, 4);
+    auto parameters = plainPatch();
+    parameters.chorus = ChorusMode::Two;
+    engine.setParameters(parameters);
+    expect(engine.getOversamplingFactor() == 2,
+           "the 96 kHz fixture is not running the shared two-times grid");
+
+    engine.noteOn(60, 1.0f);
+    const auto before = render(engine, blockSize);
+
+    // Held notes and full delay lines would defer a real rate change; this one
+    // is adopted on the spot and reported as applied.
+    expect(engine.setOversamplingFactor(2),
+           "a rung change that cannot alter the internal grid was deferred");
+    expect(engine.getOversamplingFactor() == 2,
+           "an inaudible rung change moved the internal grid");
+    expect(engine.getRequestedOversamplingFactor() == 2,
+           "an inaudible rung change was not adopted");
+
+    // No fade was started, so the very next block continues at full level
+    // rather than ducking through a five-millisecond safety ramp.
+    const auto after = render(engine, blockSize);
+    double beforeEnergy = 0.0;
+    double afterEnergy = 0.0;
+    for (std::size_t index = 0; index < before.left.size(); ++index)
+        beforeEnergy += static_cast<double>(before.left[index]) * before.left[index];
+    for (std::size_t index = 0; index < after.left.size(); ++index)
+        afterEnergy += static_cast<double>(after.left[index]) * after.left[index];
+    expect(afterEnergy > beforeEnergy * 0.25,
+           "an inaudible rung change still spent a safety fade on the output");
+}
+
+void testQualityLadderKeepsTheSameOutputLevel()
+{
+    // Stepping down the ladder to save CPU must not also step the instrument's
+    // level, or a player trading quality for headroom would find the mix moved
+    // underneath them.
+    const auto levelAt = [](int requestedFactor) {
+        YouKnow106Engine engine;
+        engine.prepare(48000.0, blockSize, requestedFactor);
+        auto parameters = plainPatch();
+        parameters.cutoff = 0.7f;
+        engine.setParameters(parameters);
+        engine.noteOn(57, 1.0f);
+        const auto rendered = render(engine, 48000);
+        double energy = 0.0;
+        const auto from = rendered.left.size() / 2;
+        for (std::size_t index = from; index < rendered.left.size(); ++index)
+            energy += static_cast<double>(rendered.left[index]) * rendered.left[index];
+        return 10.0 * std::log10(energy / static_cast<double>(
+                                     rendered.left.size() - from) + 1.0e-30);
+    };
+
+    const double deepest = levelAt(4);
+    expectNear(levelAt(2), deepest, 1.5,
+               "the middle rung of the quality ladder moved the output level");
+    expectNear(levelAt(1), deepest, 1.5,
+               "the cheapest rung of the quality ladder moved the output level");
+}
+
+void testPrepareSurvivesAnUnusableHostSampleRate()
+{
+    // Hosts do report nonsense: a rate of zero before the device is open, a
+    // negative one from a mis-parsed setting, a NaN from an uninitialised
+    // double. Every internal coefficient divides by this figure, so a bad one
+    // must never reach the grid.
+    const std::array<double, 7> hostile {
+        0.0, -48000.0, std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::infinity(),
+        -std::numeric_limits<double>::infinity(), 1.0,
+        1.0e12
+    };
+
+    for (const double rate : hostile)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(rate, blockSize, 4);
+        const double running = engine.getSampleRate();
+        expect(std::isfinite(running) && running >= 8000.0
+                   && running <= YouKnow106Engine::maximumSupportedSampleRate,
+               "an unusable host rate reached the internal grid");
+        expect(engine.getOversamplingFactor() >= 1
+                   && engine.getOversamplingFactor() <= 4,
+               "an unusable host rate produced an impossible quality factor");
+
+        engine.setParameters(plainPatch());
+        engine.noteOn(60, 1.0f);
+        const auto rendered = render(engine, 4096);
+        for (std::size_t index = 0; index < rendered.left.size(); ++index)
+            if (!std::isfinite(rendered.left[index])
+                || !std::isfinite(rendered.right[index]))
+            {
+                expect(false, "an unusable host rate produced non-finite audio");
+                break;
+            }
+    }
+}
+
 void testQualityChangeFadesRateDependentOutputPath()
 {
     // A chorus with its analogue noise enabled is never literally silent.
@@ -7589,6 +7750,10 @@ int main()
     testScanTimingSurvivesAProcessingRateChange();
     testUnisonStackGlidesFromOneOrigin();
     testQualityChangeWaitsForTheOutputPathToEmpty();
+    testQualityLadderResolvesEveryRungAtEveryRate();
+    testQualityChangeThatCannotBeHeardIsNotPaidFor();
+    testQualityLadderKeepsTheSameOutputLevel();
+    testPrepareSurvivesAnUnusableHostSampleRate();
     testQualityChangeFadesRateDependentOutputPath();
     testQualityChangePreservesOutputCouplingTail();
     testQualityChangePreservesFreeRunningClocks();

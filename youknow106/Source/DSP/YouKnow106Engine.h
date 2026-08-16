@@ -169,9 +169,37 @@ class YouKnow106Engine
 public:
     YouKnow106Engine() noexcept;
 
+    // The quality ladder. The requested factor is what the player asks for; the
+    // applied factor is that request capped so the internal rate never has to
+    // run further above the bandlimiting target than it needs to (see
+    // updateProcessingRate), which is why a 192 kHz host already runs at 1x
+    // with the highest setting selected.
+    static constexpr int minimumOversampleFactor = 1;
+    static constexpr int maximumOversampleFactor = 4;
+    // The host rates prepare() will run at. Anything outside this is clamped
+    // into it rather than reaching the internal grid; see prepare().
+    static constexpr double minimumSupportedSampleRate = 8000.0;
+    static constexpr double maximumSupportedSampleRate = 768000.0;
+    // The three rungs the panel offers, in increasing cost.
+    static constexpr std::array<int, 3> oversampleFactors {
+        minimumOversampleFactor, 2, maximumOversampleFactor };
+    // Nearest supported rung at or below `factor`; hostile input falls to 1x,
+    // which is the cheapest and can never overrun the internal grid.
+    [[nodiscard]] static constexpr int sanitiseOversampleFactor(int factor) noexcept
+    {
+        if (factor >= 4)
+            return 4;
+        return factor >= 2 ? 2 : 1;
+    }
+
     void prepare(double sampleRate, int maxBlockSize,
                  bool oversamplingEnabled = true);
+    void prepare(double sampleRate, int maxBlockSize, int requestedFactor);
     bool setOversamplingEnabled(bool enabled) noexcept;
+    // Requests a rung of the quality ladder. Like the boolean form, the change
+    // is deferred until the instrument is idle, and the return value says
+    // whether it has been applied yet.
+    bool setOversamplingFactor(int factor) noexcept;
     void reset();
     void setParameters(const EngineParameters& parameters);
     void noteOn(int midiNote, float velocity);
@@ -192,10 +220,18 @@ public:
     void process(float* left, float* right, int numSamples);
 
     [[nodiscard]] int getActiveVoiceCount() const noexcept { return activeVoiceCount_; }
+    // The rate the engine actually runs its output grid at, which is the host's
+    // once it has passed the guards in prepare(). A host that reports nothing
+    // usable is not the rate the panel should be displaying.
+    [[nodiscard]] double getSampleRate() const noexcept { return sampleRate_; }
     [[nodiscard]] int getOversamplingFactor() const noexcept { return oversampling_; }
-    [[nodiscard]] bool isOversamplingEnabled() const noexcept
+    [[nodiscard]] int getRequestedOversamplingFactor() const noexcept
     {
         return oversamplingRequested_;
+    }
+    [[nodiscard]] bool isOversamplingEnabled() const noexcept
+    {
+        return oversamplingRequested_ > 1;
     }
     [[nodiscard]] int getProcessingLatencySamples() const noexcept;
     // Panel display support. Plain relaxed reads of engine state; the plug-in
@@ -658,9 +694,7 @@ private:
     // double-precision solves. It is not part of the plug-in API.
     friend struct YouKnow106TestAccess;
 
-    static constexpr int maximumOversampleFactor = 4;
     static constexpr double minimumHqProcessingRate = 176400.0;
-    static constexpr double maximumSupportedSampleRate = 768000.0;
     static constexpr int halfbandTaps = 95;
     static constexpr int halfbandRingSize = 128;
     static constexpr int latencyPadRingSize = 64;
@@ -1423,6 +1457,10 @@ private:
                       float noiseSample) noexcept;
     void advanceLfo(const EngineParameters& parameters) noexcept;
     void updateVoiceCardDrift(VoiceCard& card) noexcept;
+    // The factor the engine would actually run for a requested rung at the
+    // current host rate: the request, sanitised, capped by the deepest rung
+    // that rate still needs to reach the bandlimiting target.
+    [[nodiscard]] int effectiveOversampleFactor(int requestedFactor) const noexcept;
     void updateProcessingRate(bool preserveFreeRunningState = false) noexcept;
     void rebuildRateDependentVoiceState() noexcept;
     bool applyPendingOversamplingIfIdle() noexcept;
@@ -1470,8 +1508,10 @@ private:
     float inverseOversampledRate_ { 1.0f / 192000.0f };
     float noiseRateScale_ { 1.0f };
     int oversampling_ { 4 };
-    bool oversamplingEnabled_ { true };
-    bool oversamplingRequested_ { true };
+    // Applied and requested rungs of the quality ladder, as factors. They differ
+    // only while a deferred change waits for the instrument to fall idle.
+    int oversamplingApplied_ { maximumOversampleFactor };
+    int oversamplingRequested_ { maximumOversampleFactor };
     // How long the voices have been silent, and how long the output path needs
     // to run dry once they are: the delay lines' longest setting plus the
     // decimation and filter stages' group delay.

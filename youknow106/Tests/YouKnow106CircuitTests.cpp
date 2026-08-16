@@ -517,7 +517,7 @@ struct YouKnow106TestAccess
         engine.updateSharedHighPass(engine.activeParameters_);
         result.afterModeChange = engine.voiceBusCoupling_.state;
 
-        engine.oversamplingEnabled_ = false;
+        engine.oversamplingApplied_ = 1;
         engine.updateProcessingRate(true);
         engine.updateSharedHighPass(parameters);
         result.afterRateChange = engine.voiceBusCoupling_.state;
@@ -566,8 +566,8 @@ struct YouKnow106TestAccess
     static void forceNoiseSourceProcessingQuality(
         YouKnow106Engine& engine, bool enabled) noexcept
     {
-        engine.oversamplingRequested_ = enabled;
-        engine.oversamplingEnabled_ = enabled;
+        engine.oversamplingRequested_ = enabled ? 4 : 1;
+        engine.oversamplingApplied_ = engine.oversamplingRequested_;
         engine.updateProcessingRate(true);
         engine.clearRateDependentOutputPath(true);
     }
