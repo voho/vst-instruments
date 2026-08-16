@@ -29,8 +29,9 @@ struct Preset
     // the tone inside them still round-trips through the JUNO's 18-byte patch
     // format.  These are the controls which the hardware's tone memory does
     // not carry.  Keeping them beside the tone, rather than teaching SysEx
-    // about plug-in-only data, lets the preset bar restore every visible
-    // control without changing what an imported hardware patch means.
+    // about plug-in-only data, lets the preset bar restore the player's whole
+    // setup without changing what an imported hardware patch means.  "Whole
+    // setup" stops short of one visible control: see the note below the fields.
     struct Controls
     {
         float volume { 0.80f };

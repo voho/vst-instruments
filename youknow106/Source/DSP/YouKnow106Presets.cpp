@@ -338,9 +338,13 @@ static_assert(factoryCorpusFnv1a() == 0xa78dab9d5bafb386ull);
 //     at the uniform 0.80 default, up to +8.99 dBFS on A48, which is a digital
 //     overflow at the plug-in's own output boundary rather than the modelled
 //     output summer's soft rail.
-//   * No factory preset may sit more than 3 dB above the corpus median gated
-//     loudness (-21.48 dBFS as measured across the whole bank by
-//     Tools/AuditFactoryPresets on the shared audit score).
+//   * No factory preset may exceed -18 dBFS gated loudness. That ceiling was
+//     derived once, as three decibels above the -21.48 dBFS corpus median
+//     measured before any trim was applied, and then frozen as an absolute
+//     figure. It is deliberately not re-expressed against the median: pulling
+//     the loud end down moves the median too (it now reads -22.00 dBFS), so a
+//     relative rule would chase itself and could never be satisfied.
+//     Tools/AuditFactoryPresets enforces both ceilings as absolutes.
 //
 // Only attenuation is applied: no entry exceeds the 0.80 panel default, so a
 // preset is never made louder than the instrument's own nominal setting. The
