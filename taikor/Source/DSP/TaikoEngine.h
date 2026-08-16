@@ -1002,6 +1002,14 @@ private:
     [[nodiscard]] static float nearFieldAttenuation (float lambda, float radius,
                                                      float omega,
                                                      float micDistanceMetres) noexcept;
+    // Proximity lift: a close microphone reads pressure that has not yet
+    // spread, and low modes gain most from it - a shelf in drum.micProximity
+    // that rolls off above 190 Hz. observeMode's two branches and
+    // buildVoiceModes's two mode families each rebuilt this identically, so
+    // it is resolved once here rather than as four copies of the same
+    // expression.
+    [[nodiscard]] static float proximityLift (float micProximity,
+                                              float frequency) noexcept;
     // Exact white-noise variance of the continuum's two-high-pass/seven-low-pass
     // cascade. Computed only while a voice is built; rendering needs the nine
     // one-pole state updates per channel and band, but no matrix work.

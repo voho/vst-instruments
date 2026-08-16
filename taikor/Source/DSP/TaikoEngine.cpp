@@ -614,6 +614,11 @@ float TaikoEngine::nearFieldAttenuation (float lambda, float radius, float omega
     return std::exp (-evanescentRate * micDistanceMetres);
 }
 
+float TaikoEngine::proximityLift (float micProximity, float frequency) noexcept
+{
+    return 1.0f + micProximity / (1.0f + (frequency / 190.0f) * (frequency / 190.0f));
+}
+
 float TaikoEngine::continuumBandVariance (float lowCoefficient,
                                           float highCoefficient) noexcept
 {
@@ -1765,9 +1770,7 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
             nearField * shapeMic * batterShare
             + efficiency * (2.0f * besselAtZero / lambda) * volumeShare
                   * propagatingSpread;
-        const float proximity =
-            1.0f + drum.micProximity
-                       / (1.0f + (frequency / 190.0f) * (frequency / 190.0f));
+        const float proximity = proximityLift (drum.micProximity, frequency);
         amplitude = std::abs (drive * observed * proximity);
     }
     else
@@ -1791,9 +1794,7 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
 
         const float drive = shapeStrike / (geometricMass * omega);
         const float nearField = nearFieldAttenuation (lambda, radius, omega, micDistance);
-        const float proximity =
-            1.0f + drum.micProximity
-                       / (1.0f + (frequency / 190.0f) * (frequency / 190.0f));
+        const float proximity = proximityLift (drum.micProximity, frequency);
         // Both capsules, and then the width trim the output stage puts on them.
         //
         // Only the near field carries the shape of the head, so only it differs
@@ -2989,9 +2990,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                           * propagatingSpread;
                 // Proximity lift: a close microphone reads pressure that has
                 // not yet spread, and low modes gain most from it.
-                const float proximity =
-                    1.0f + drum.micProximity / (1.0f + (frequency / 190.0f)
-                                                        * (frequency / 190.0f));
+                const float proximity = proximityLift (drum.micProximity, frequency);
 
                 auto& mode = voice.modes[static_cast<std::size_t> (count)];
                 mode.omega = omega;
@@ -3091,9 +3090,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 const float nearField = nearFieldAttenuation (lambda, radius, omega,
                                                               micDistance);
 
-                const float proximity =
-                    1.0f + drum.micProximity / (1.0f + (frequency / 190.0f)
-                                                        * (frequency / 190.0f));
+                const float proximity = proximityLift (drum.micProximity, frequency);
                 // The small part that does escape arrives at both microphones
                 // alike, which is what keeps the pair from going anti-phase
                 // once the near field has decayed away.
