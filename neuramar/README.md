@@ -937,6 +937,19 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   every one of the 24 trajectory slices sharing that band (16 bands x 24
   slices = 384 calls collapsing to 16 distinct values); pure dedup, with the
   eight rendered demo WAVs confirmed byte-for-byte unchanged.
+- 2026-08-16: Added direct coverage for `resampleForTests`'s (the
+  polyphase resampler `SampleLearner` exposes for the test suite) own
+  hostile-input guard - an empty source, or a non-finite, zero, or negative
+  rate on either side, collapsing to an empty result - which neither
+  production call site ever reaches directly: `learn()`'s resample-to-
+  analysis-rate call only runs after `conditionSample()` has already
+  rejected a non-finite or out-of-[8 kHz, 768 kHz] sample rate and
+  guaranteed at least 256 conditioned samples, and `downsampleForPitch`'s
+  destination rate is a `std::min` against that same already-sanitised
+  rate. Test-only; no engine or header change, verified with the JUCE-free
+  DSP suite (3/3 tests passed; a pre-existing throughput-floor performance
+  check in the same suite is CPU-load-sensitive and was confirmed to flake
+  identically on an unmodified checkout).
 
 ## Licensing
 
