@@ -994,6 +994,89 @@ void testSetOutputGainSanitizesInvalidGain()
             "setOutputGain() did not clamp a negative gain to its 0.0 floor");
 }
 
+// setInstrumentParameters()'s own pitch/level/pan guards - each its own
+// `std::isfinite (values.field) ? values.field : defaults.field` followed by
+// a clamp to the documented range - are only ever driven by the broad
+// invalid-values stress test below, which checks that the resulting render
+// stays finite but never pins the fallback to the instrument's own default
+// or the clamp to its documented ceiling/floor. snapshotParameters(), the
+// only way to read the sanitized value back directly, is private, so
+// exercise these the same way prepare()'s sample-rate guard and
+// setOutputGain()'s gain guard are exercised above: a NaN or out-of-range
+// field must render bit-identically to the equivalent, already-sanitized
+// explicit call.
+void testSetInstrumentParametersSanitizesInvalidPitchLevelAndPan()
+{
+    constexpr auto instrument = drumalor::Instrument::Kick;
+    constexpr int samples = 4096;
+    const auto defaults = drumalor::getInstrumentMetadata (instrument).defaultParameters;
+
+    const auto renderWith = [&] (const drumalor::InstrumentParameters& parameters)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.setInstrumentParameters (instrument, parameters);
+        engine.trigger (instrument, 0.9f);
+        return renderInterleaved (engine, samples, defaultBlockSize);
+    };
+
+    const auto withPitch = [&] (float pitch)
+    {
+        auto parameters = defaults;
+        parameters.pitch = pitch;
+        return parameters;
+    };
+    expect (renderWith (withPitch (std::numeric_limits<float>::quiet_NaN()))
+                == renderWith (withPitch (defaults.pitch)),
+            "setInstrumentParameters() did not fall back a NaN pitch to the instrument default");
+    expect (renderWith (withPitch (std::numeric_limits<float>::infinity()))
+                == renderWith (withPitch (defaults.pitch)),
+            "setInstrumentParameters() did not fall back a +infinity pitch to the instrument default");
+    expect (renderWith (withPitch (-std::numeric_limits<float>::infinity()))
+                == renderWith (withPitch (defaults.pitch)),
+            "setInstrumentParameters() did not fall back a -infinity pitch to the instrument default");
+    expect (renderWith (withPitch (100.0f)) == renderWith (withPitch (24.0f)),
+            "setInstrumentParameters() did not clamp an excessive pitch to its +24 semitone ceiling");
+    expect (renderWith (withPitch (-100.0f)) == renderWith (withPitch (-24.0f)),
+            "setInstrumentParameters() did not clamp an excessive pitch to its -24 semitone floor");
+
+    const auto withLevel = [&] (float level)
+    {
+        auto parameters = defaults;
+        parameters.level = level;
+        return parameters;
+    };
+    expect (renderWith (withLevel (std::numeric_limits<float>::quiet_NaN()))
+                == renderWith (withLevel (defaults.level)),
+            "setInstrumentParameters() did not fall back a NaN level to the instrument default");
+    expect (renderWith (withLevel (std::numeric_limits<float>::infinity()))
+                == renderWith (withLevel (defaults.level)),
+            "setInstrumentParameters() did not fall back a +infinity level to the instrument default");
+    expect (renderWith (withLevel (100.0f))
+                == renderWith (withLevel (drumalor::maximumVoiceLevelDecibels)),
+            "setInstrumentParameters() did not clamp an excessive level to its documented ceiling");
+    expect (renderWith (withLevel (-100.0f))
+                == renderWith (withLevel (drumalor::minimumVoiceLevelDecibels)),
+            "setInstrumentParameters() did not clamp an excessive level to its documented floor");
+
+    const auto withPan = [&] (float pan)
+    {
+        auto parameters = defaults;
+        parameters.pan = pan;
+        return parameters;
+    };
+    expect (renderWith (withPan (std::numeric_limits<float>::quiet_NaN()))
+                == renderWith (withPan (defaults.pan)),
+            "setInstrumentParameters() did not fall back a NaN pan to the instrument default");
+    expect (renderWith (withPan (-std::numeric_limits<float>::infinity()))
+                == renderWith (withPan (defaults.pan)),
+            "setInstrumentParameters() did not fall back a -infinity pan to the instrument default");
+    expect (renderWith (withPan (4.0f)) == renderWith (withPan (1.0f)),
+            "setInstrumentParameters() did not clamp an excessive pan to its +1 ceiling");
+    expect (renderWith (withPan (-4.0f)) == renderWith (withPan (-1.0f)),
+            "setInstrumentParameters() did not clamp an excessive pan to its -1 floor");
+}
+
 void testModalSampleRateConsistency()
 {
     constexpr std::array sampleRates { 44100.0, 48000.0, 96000.0, 192000.0 };
@@ -5737,6 +5820,7 @@ int main()
     testEveryInstrumentAndSampleRate();
     testPrepareSanitizesInvalidSampleRate();
     testSetOutputGainSanitizesInvalidGain();
+    testSetInstrumentParametersSanitizesInvalidPitchLevelAndPan();
     testModalSampleRateConsistency();
     testNoiseDensityAcrossSampleRates();
     testTailsTerminate();
