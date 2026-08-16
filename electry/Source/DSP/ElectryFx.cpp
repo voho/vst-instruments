@@ -1,4 +1,5 @@
 #include "DSP/ElectryFx.h"
+#include "DSP/DspMath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,24 +11,14 @@ namespace
 constexpr float twoPi = 6.283185307179586f;
 constexpr double pi = 3.14159265358979323846;
 
-float clampf(float value, float low, float high) noexcept
-{
-    return value < low ? low : (value > high ? high : value);
-}
+// clampf/lerp/smoothStep live in DspMath.h now, shared with ElectryEngine and
+// ElectryVisuals.
 
 float sanitiseMix(float value) noexcept
 {
     if (! std::isfinite(value))
         return 0.0f;
     return clampf(value, 0.0f, 1.0f);
-}
-
-float lerp(float a, float b, float t) noexcept { return a + (b - a) * t; }
-
-float smoothStep(float value) noexcept
-{
-    value = clampf(value, 0.0f, 1.0f);
-    return value * value * (3.0f - 2.0f * value);
 }
 
 // Zeroth-order modified Bessel function, used only by the halfband window

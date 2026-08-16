@@ -1,5 +1,7 @@
 #pragma once
 
+#include "DspMath.h"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -969,12 +971,9 @@ private:
         std::memcpy(&unit, &bits, sizeof(unit));
         return 2.0f * (unit - 1.5f);
     }
-    static float smoothStep(float value) noexcept
-    {
-        value = value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
-        return value * value * (3.0f - 2.0f * value);
-    }
-    static float lerp(float a, float b, float t) noexcept { return a + (b - a) * t; }
+    // clampf/lerp/smoothStep live in DspMath.h now, shared with ElectryFx and
+    // ElectryVisuals; unqualified calls in this class's member functions still
+    // resolve to them via the enclosing electry namespace.
     static float onePolePhaseDelay(float coefficient, float omega) noexcept;
     // Magnitude of the loop's one-pole loss filter, and the coefficient whose
     // magnitude ratio between the fundamental and the high reference matches a

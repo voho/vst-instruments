@@ -186,10 +186,8 @@ constexpr float strumCrossingSigma = 0.005f;
 constexpr float steelDensity = 7850.0f;      // kg/m^3
 constexpr float steelYoungModulus = 2.0e11f; // Pa
 
-constexpr float clampf(float value, float low, float high) noexcept
-{
-    return value < low ? low : (value > high ? high : value);
-}
+// clampf lives in DspMath.h, included via ElectryEngine.h; every call site in
+// this file already resolved to it unqualified through that header.
 
 bool finitef(float value) noexcept { return std::isfinite(value); }
 
