@@ -127,6 +127,101 @@ float renderSeconds (ElectryAudioProcessor& processor, juce::AudioBuffer<float>&
     return peak;
 }
 
+// Renders and keeps the left channel's raw samples, for the one check below
+// that needs to measure a frequency rather than just a peak level.
+std::vector<float> renderCapture (ElectryAudioProcessor& processor,
+                                  juce::AudioBuffer<float>& audio, double seconds)
+{
+    juce::MidiBuffer emptyMidi;
+    std::vector<float> captured;
+    int remaining = static_cast<int> (seconds * sampleRate);
+    captured.reserve (static_cast<std::size_t> (std::max (0, remaining)));
+    while (remaining > 0)
+    {
+        const int samples = std::min (blockSize, remaining);
+        renderBlock (processor, audio, emptyMidi, samples);
+        const auto* channel = audio.getReadPointer (0);
+        captured.insert (captured.end(), channel, channel + samples);
+        remaining -= samples;
+    }
+    return captured;
+}
+
+// Hann-windowed DFT magnitude at an arbitrary frequency, evaluated with a
+// phasor recurrence so the scan stays fast. Mirrors the DSP library's own
+// dftMagnitude() in Tests/ElectryEngineTests.cpp; duplicated rather than
+// shared because this test binary links the plug-in target, not ElectryDSP.
+double dftMagnitude (const std::vector<float>& data, int start, int length,
+                     double localSampleRate, double frequency)
+{
+    const int first = std::max (0, start);
+    const int last = std::min<int> (first + length, static_cast<int> (data.size()));
+    const int n = last - first;
+    if (n < 16)
+        return 0.0;
+
+    const double omega = 2.0 * juce::MathConstants<double>::pi * frequency
+                        / localSampleRate;
+    const double stepReal = std::cos (omega);
+    const double stepImag = -std::sin (omega);
+    double phasorReal = 1.0;
+    double phasorImag = 0.0;
+    double sumReal = 0.0;
+    double sumImag = 0.0;
+    const double windowStep = juce::MathConstants<double>::pi
+                             / static_cast<double> (n - 1);
+
+    for (int i = 0; i < n; ++i)
+    {
+        const double window = std::sin (windowStep * i);
+        const double sample = window * window
+            * static_cast<double> (data[static_cast<std::size_t> (first + i)]);
+        sumReal += sample * phasorReal;
+        sumImag += sample * phasorImag;
+        const double nextReal = phasorReal * stepReal - phasorImag * stepImag;
+        phasorImag = phasorReal * stepImag + phasorImag * stepReal;
+        phasorReal = nextReal;
+    }
+    return std::sqrt (sumReal * sumReal + sumImag * sumImag);
+}
+
+// Locates the strongest spectral component near an expected fundamental by a
+// coarse-to-fine scan, scoring a short harmonic series rather than assuming
+// fundamental dominance: a magnetic pickup's output is an induced EMF, so its
+// fundamental can be weaker than its first few partials.
+double measureFundamentalHz (const std::vector<float>& data, int start, int length,
+                             double localSampleRate, double expectedHz)
+{
+    const auto scan = [&] (double centre, double spanCents, double stepCents)
+    {
+        double bestFrequency = centre;
+        double bestMagnitude = -1.0;
+        for (double cents = -spanCents; cents <= spanCents; cents += stepCents)
+        {
+            const double frequency = centre * std::pow (2.0, cents / 1200.0);
+            double magnitude = 0.0;
+            for (int partial = 1; partial <= 5; ++partial)
+            {
+                const double partialFrequency = frequency * partial;
+                if (partialFrequency >= 0.45 * localSampleRate)
+                    break;
+                magnitude += dftMagnitude (data, start, length, localSampleRate,
+                                          partialFrequency)
+                           / std::sqrt (static_cast<double> (partial));
+            }
+            if (magnitude > bestMagnitude)
+            {
+                bestMagnitude = magnitude;
+                bestFrequency = frequency;
+            }
+        }
+        return bestFrequency;
+    };
+
+    const double coarse = scan (expectedHz, 120.0, 6.0);
+    return scan (coarse, 6.0, 0.5);
+}
+
 void testParameterLayoutAndDefaults()
 {
     ElectryAudioProcessor processor;
@@ -451,6 +546,77 @@ void testMidiControllersAndVoiceLifecycle()
             "All Notes Off did not release the held string");
 
     processor.releaseResources();
+}
+
+// dispatchMidiData() reconstructs the pitch wheel's 14-bit position from its
+// two 7-bit MIDI data bytes and then divides the excursion below centre by
+// 8192 but above centre by 8191, matching the MIDI spec's asymmetric bend
+// range - byte-level parsing that lives only in the shell and is untouched by
+// any other test: ElectryEngineTests drives ElectryEngine::setPitchBend()
+// directly with already-decoded floats, and this file's own controller test
+// only exercises 7-bit CCs. A wrong byte order, a swapped divisor, a dropped
+// clamp or a sign flip here would still pass every existing test while
+// bending every host's pitch wheel by the wrong amount or the wrong
+// direction, so this measures the actual rendered pitch a raw pitch-wheel
+// message produces on the open, full-range low string (bend sensitivity 1.0).
+void testPitchWheelMidiDispatch()
+{
+    constexpr double openLowStringHz = 41.2034; // E1, MIDI note 28
+
+    // measureFundamentalHz() only scans +/-120 cents around its seed, so each
+    // case seeds it with the nominal bend the wheel position is documented to
+    // produce (bend sensitivity is exactly 1.0 on this, the most compliant,
+    // string) rather than the open note - a real +/-2-semitone bend would
+    // otherwise fall entirely outside a window centred on the unbent pitch.
+    const auto nominalHz = [openLowStringHz] (int wheelPosition14) -> double
+    {
+        const double excursion = wheelPosition14 < 8192
+            ? static_cast<double> (wheelPosition14 - 8192) / 8192.0
+            : static_cast<double> (wheelPosition14 - 8192) / 8191.0;
+        return openLowStringHz * std::pow (2.0, 2.0 * excursion / 12.0);
+    };
+
+    const auto measuredHz = [] (int wheelPosition14, double expectedHz) -> double
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::pitchWheel (1, wheelPosition14), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, electry::ElectryEngine::lowestPlayableNote, (juce::uint8) 100), 0);
+        renderBlock (processor, audio, midi);
+
+        // Let the pick transient decay and the bend glide (bend time
+        // defaults to 280 ms) fully settle before measuring, then capture a
+        // separate steady window to analyse.
+        renderSeconds (processor, audio, 0.5);
+        const auto settled = renderCapture (processor, audio, 0.4);
+        processor.releaseResources();
+        return measureFundamentalHz (settled, 0, static_cast<int> (settled.size()),
+                                     sampleRate, expectedHz);
+    };
+
+    const auto centre = measuredHz (8192, nominalHz (8192));
+    const auto bentUp = measuredHz (16383, nominalHz (16383));
+    const auto bentDown = measuredHz (0, nominalHz (0));
+
+    const auto centsAtCentre = 1200.0 * std::log2 (centre / openLowStringHz);
+    const auto centsUp = 1200.0 * std::log2 (bentUp / centre);
+    const auto centsDown = 1200.0 * std::log2 (bentDown / centre);
+
+    expect (std::abs (centsAtCentre) < 10.0,
+            "a centred pitch wheel (0x2000) left the open low string detuned "
+            "by " + std::to_string (centsAtCentre) + " cents");
+    expect (centsUp > 170.0 && centsUp < 230.0,
+            "a full-up pitch wheel (0x3fff) did not bend the open low string "
+            "up by the documented two semitones (measured "
+                + std::to_string (centsUp) + " cents)");
+    expect (centsDown < -170.0 && centsDown > -230.0,
+            "a full-down pitch wheel (0x0000) did not bend the open low "
+            "string down by the documented two semitones (measured "
+                + std::to_string (centsDown) + " cents)");
 }
 
 // The CC1 resonance and the acoustic-return wiring live in the shell: the
@@ -981,6 +1147,7 @@ int main()
     testSampleAccurateNoteAndSound();
     testKeyswitchContract();
     testMidiControllersAndVoiceLifecycle();
+    testPitchWheelMidiDispatch();
     testResonanceWheelFeedback();
     testUiArticulationTriggerAndPanic();
     testOutputGainImpact();
