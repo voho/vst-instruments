@@ -1235,6 +1235,17 @@ private:
     static double midiToHz(double midiNote) noexcept;
     static std::uint32_t hash32(std::uint32_t value) noexcept;
     static float hashBipolar(std::uint32_t value) noexcept;
+    // The xorshift32 step shared by the shared noise generator, each card's
+    // microscopic filter excitation and the per-card analogue drift wander:
+    // three call sites advanced this identical 13/17/5 shift-xor sequence on
+    // their own state word by hand before this was pulled out.
+    [[nodiscard]] static std::uint32_t xorshift32(std::uint32_t state) noexcept;
+    // A generator state's top 24 bits read as a signed unit value, -1..+1.
+    // hashBipolar and both 24-bit noise call sites below all performed this
+    // identical bit extraction inline; the drift wander keeps its own 16-bit
+    // read local to updateVoiceCardDrift, which is the only place that
+    // resolution is used.
+    [[nodiscard]] static float bipolarFromState(std::uint32_t state) noexcept;
     // The oversampled lookup addStep and addSlope both walk: same ring index,
     // same subsample offset, same clamp/lerp arithmetic, only the table
     // differs. Solved once here so the two callers stop repeating the
