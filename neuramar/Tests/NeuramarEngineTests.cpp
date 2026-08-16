@@ -4093,6 +4093,64 @@ void testResamplerAccuracyAndCost()
            "kernel evaluation (" + std::to_string(speedup) + "x)");
 }
 
+// resampleForTests' hostile-input guard - an empty source, or a non-finite,
+// zero, or negative rate on either side, collapsing to an empty result -
+// which neither of its two production callers ever reaches directly:
+// learn()'s resample-to-analysis-rate call only runs after conditionSample()
+// has already rejected a non-finite or out-of-[8 kHz, 768 kHz] sample rate
+// and guaranteed at least 256 conditioned samples, and downsampleForPitch's
+// destination rate is a std::min against that same already-sanitised rate.
+void testResamplerHostileInputs()
+{
+    constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+    constexpr double infinity = std::numeric_limits<double>::infinity();
+    const std::vector<float> tone { 0.1f, 0.2f, 0.3f, 0.4f, 0.5f };
+
+    expect(neuramar::SampleLearner::resampleForTests({}, 48000.0, 12000.0)
+               .empty(),
+           "an empty source was not sanitised to an empty result");
+    expect(neuramar::SampleLearner::resampleForTests(tone, 0.0, 12000.0)
+               .empty(),
+           "a zero source rate was not sanitised to an empty result");
+    expect(neuramar::SampleLearner::resampleForTests(tone, -48000.0, 12000.0)
+               .empty(),
+           "a negative source rate was not sanitised to an empty result");
+    expect(neuramar::SampleLearner::resampleForTests(tone, nan, 12000.0)
+               .empty(),
+           "a NaN source rate was not sanitised to an empty result");
+    expect(neuramar::SampleLearner::resampleForTests(tone, infinity, 12000.0)
+               .empty(),
+           "an infinite source rate was not sanitised to an empty result");
+    expect(neuramar::SampleLearner::resampleForTests(tone, 48000.0, 0.0)
+               .empty(),
+           "a zero destination rate was not sanitised to an empty result");
+    expect(neuramar::SampleLearner::resampleForTests(tone, 48000.0, -12000.0)
+               .empty(),
+           "a negative destination rate was not sanitised to an empty result");
+    expect(neuramar::SampleLearner::resampleForTests(tone, 48000.0, nan)
+               .empty(),
+           "a NaN destination rate was not sanitised to an empty result");
+    expect(neuramar::SampleLearner::resampleForTests(tone, 48000.0, infinity)
+               .empty(),
+           "an infinite destination rate was not sanitised to an empty result");
+
+    // An identical source and destination rate is the short-circuit that
+    // returns the source unchanged, not a hostile input, and stays a
+    // deliberate contrast against the guard above.
+    const auto unchanged
+        = neuramar::SampleLearner::resampleForTests(tone, 48000.0, 48000.0);
+    expect(unchanged == tone,
+           "an identical source and destination rate did not pass the "
+           "source through unchanged");
+
+    // An ordinary, already-sane call stays a real resample rather than
+    // tripping the same guard.
+    const auto resampled
+        = neuramar::SampleLearner::resampleForTests(tone, 48000.0, 12000.0);
+    expect(!resampled.empty(),
+           "an already-sane resample request was rejected by the hostile-input guard");
+}
+
 void testHighRegisterRenderThroughput(const neuramar::NeuralModel& model)
 {
     neuramar::NeuramarEngine engine;
@@ -6661,6 +6719,7 @@ int main()
     testRepeatedNotesVaryInStrength();
     testFormantShift();
     testResamplerAccuracyAndCost();
+    testResamplerHostileInputs();
     if (fixture.first.model)
     {
         testLearnedPitchContour(*fixture.first.model);
