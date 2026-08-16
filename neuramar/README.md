@@ -829,24 +829,37 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   - and its own three early-exit guards: a non-positive root frequency, a
   non-positive analysis bin width, and a root frequency too close to the bin
   width to leave any partial gap to measure, plus the derived-coordinate
-  range check that follows them (an inverted index rounding below the first
-  partial or past the 64-partial bank, each case exercised on both an ideal
-  harmonic series and a stiff-string one with positive inharmonicity). A
-  NaN root or bin width takes the same early-exit guards as a non-positive
-  one; a +infinity root or bin width does not; since `value > 0.0f` is true
-  for +infinity, both instead fall through to a later check - an infinite
-  root reaches the derived-index range check (dividing down to a coordinate
-  of exactly zero), and an infinite bin width reaches the partial-gap check
-  (satisfying `root < 3 * binWidth` for any finite root) - so both are
-  covered as their own cases showing the function still rejects them, just
-  through a different branch than NaN does. Its two callers,
-  `makeAirFitDesign` and `fitAirFilterbank`, only ever pass an
+  range check that follows them, on both an ideal harmonic series and a
+  stiff-string one with positive inharmonicity. The below-first-partial case
+  is built so the guard, not the later distance check, is what has to reject
+  it: a 1 Hz frequency against a 100 Hz root inverts to a zero coordinate,
+  which reconstructs a 0 Hz partial that 1 Hz sits well inside the 1.25-bin-
+  width acceptance window of, so deleting only the `rounded >= 1.0f` guard
+  would otherwise still pass the assertion. The past-the-bank case is built
+  from the forward stiff-string formula at harmonic 70 so the quadratic
+  inversion has to recover an index past 64 for the check to have anything
+  to reject. The in-window stiff-string case uses harmonic 7, whose *raw*
+  ratio (about 7.655) rounds to a different partial (8) than the quadratic
+  inversion correctly recovers (7), so a regression that compared against
+  the raw ratio instead of inverting it lands about 288 Hz from the target
+  partial - well outside the window - and fails the assertion; an earlier
+  revision of this test used harmonic 5, whose raw ratio happens to round to
+  the same index with or without inversion and could not have caught that
+  regression. A NaN root or bin width takes the same early-exit guards as a
+  non-positive one; a +infinity root or bin width does not - since
+  `value > 0.0f` is true for +infinity, both instead fall through to a later
+  check, an infinite root reaching the derived-index range check (dividing
+  down to a coordinate of exactly zero) and an infinite bin width reaching
+  the partial-gap check (satisfying `root < 3 * binWidth` for any finite
+  root) - so both are covered as their own cases showing the function still
+  rejects them, just through a different branch than NaN does. Its two
+  callers, `makeAirFitDesign` and `fitAirFilterbank`, only ever pass an
   already-validated root (35-2000 Hz from the pitch detector) and a
   positive, much-smaller analysis-window-derived bin width, so none of these
   branches had been driven directly; the final distance-threshold branch is
-  exercised on both sides, with a frequency exactly on a subtracted harmonic
-  accepted and the same frequency shifted well past the 1.25-bin-width
-  window rejected. Added a small test-only accessor,
+  also exercised on both sides directly, with a frequency exactly on a
+  subtracted harmonic accepted and the same frequency shifted well past the
+  1.25-bin-width window rejected. Added a small test-only accessor,
   `SampleLearner::belongsToSubtractedHarmonicForTests`, alongside the
   existing `resampleForTests` pattern for reaching a translation-unit-private
   helper from the suite. Test-only; no engine or header change, verified

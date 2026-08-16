@@ -4342,16 +4342,22 @@ void testAirFitSubtractedHarmonicGuards()
            "an infinite analysis bin width was not rejected");
 
     // Ideal harmonic series (inharmonicity 0): the derived coordinate is the
-    // plain ratio, so a frequency at 0.3x or 70x the root rounds outside the
-    // valid [1, 64] partial range and must be rejected before the distance
-    // check ever runs.
-    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
-               0.3f * 440.0f, 5.0f, 440.0f, 0.0f),
-           "a coordinate rounding below the first partial was not rejected "
-           "(inharmonicity 0)");
+    // plain ratio, so a frequency at 70x the root rounds past the 64-partial
+    // bank and must be rejected before the distance check ever runs.
     expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
                70.0f * 440.0f, 5.0f, 440.0f, 0.0f),
            "a coordinate rounding past the 64-partial bank was not rejected "
+           "(inharmonicity 0)");
+
+    // Below the first partial, deliberately close enough to zero that
+    // deleting only the `rounded >= 1.0f` guard would still pass: rounding
+    // 0.01 down to a coordinate of 0 reconstructs a 0 Hz partial, and this
+    // frequency sits within 1.25 bin widths of that 0 Hz - so without the
+    // guard the distance check below would wrongly accept it. Root and bin
+    // width are scaled down together so `root >= 3 * binWidth` still holds.
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1.0f, 2.0f, 100.0f, 0.0f),
+           "a coordinate rounding below the first partial was not rejected "
            "(inharmonicity 0)");
 
     // A frequency sitting exactly on the third harmonic of an ideal series is
@@ -4370,11 +4376,15 @@ void testAirFitSubtractedHarmonicGuards()
     constexpr float root = 220.0f;
     constexpr float inharmonicity = 0.004f;
 
-    // Below the first partial: a small ratio is dominated by its linear term
-    // in the inversion the same way it is in the plain ratio above, so it
-    // rounds to the same zero coordinate and is rejected the same way.
+    // Below the first partial, using the same tight construction as the
+    // ideal-series case above: a 1 Hz frequency against a 100 Hz root
+    // inverts to a coordinate of 0 whether or not inharmonicity is applied
+    // (the quadratic collapses to the same near-zero answer at this scale),
+    // and 1 Hz sits within 1.25 bin widths of the 0 Hz that coordinate would
+    // reconstruct, so the `rounded >= 1.0f` guard - not the distance check -
+    // is what has to reject it.
     expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
-               0.3f * root, 5.0f, root, inharmonicity),
+               1.0f, 2.0f, 100.0f, inharmonicity),
            "a stiff-string coordinate rounding below the first partial was "
            "not rejected");
 
@@ -4388,13 +4398,19 @@ void testAirFitSubtractedHarmonicGuards()
            "a stiff-string coordinate rounding past the 64-partial bank was "
            "not rejected");
 
-    // Inside the window: a frequency generated from the forward
-    // stretched-partial formula must invert back to the same partial index
-    // and land inside the acceptance window.
-    const float stretchedFifth = root
-        * neuramar::stretchedHarmonicRatio(5.0f, inharmonicity);
+    // Inside the window, at harmonic 7: chosen because its *raw* ratio
+    // (stretchedSeventh / root, about 7.655) rounds to 8, a different
+    // partial than the quadratic inversion correctly recovers (7). A
+    // regression that used the raw ratio as the coordinate instead of
+    // inverting it would therefore compare this frequency against the
+    // eighth partial - about 288 Hz away, well outside the 6.25 Hz window -
+    // and this case would fail; the fifth harmonic used in an earlier
+    // revision of this test rounds to the same index with or without
+    // inversion and could not catch that regression.
+    const float stretchedSeventh = root
+        * neuramar::stretchedHarmonicRatio(7.0f, inharmonicity);
     expect(SampleLearner::belongsToSubtractedHarmonicForTests(
-               stretchedFifth, 5.0f, root, inharmonicity),
+               stretchedSeventh, 5.0f, root, inharmonicity),
            "a stiff-string partial did not invert back to its own harmonic "
            "index");
 }
