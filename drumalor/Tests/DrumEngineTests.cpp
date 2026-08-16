@@ -4762,6 +4762,22 @@ void testMidiSurfaceContract()
         const float low = drumalor::velocityFromMidi (64, 0);
         const float high = drumalor::velocityFromMidi (64, 127);
         expect (low < high, "CC 88 moved the velocity the wrong way");
+
+        // velocityFromMidi() clamps both bytes itself rather than trusting a
+        // caller that skipped MIDI's own 0-127 range - a malformed note-on
+        // byte or a CC 88 prefix reaching it by some path other than
+        // HighResolutionVelocityPrefix, which already clamps what it stores.
+        // Every prior call above only ever passed in-range bytes, so this is
+        // the first assertion on velocityFromMidi's own sanitize paths.
+        expect (drumalor::velocityFromMidi (-1) == 0.0f,
+                "velocityFromMidi did not clamp a negative velocity byte to zero");
+        expect (drumalor::velocityFromMidi (200) == 1.0f,
+                "velocityFromMidi did not clamp an out-of-range velocity byte to 127");
+        expect (drumalor::velocityFromMidi (64, -1) == drumalor::velocityFromMidi (64, 0),
+                "velocityFromMidi did not clamp a negative high-resolution LSB to zero");
+        expect (drumalor::velocityFromMidi (64, 200) == drumalor::velocityFromMidi (64, 127),
+                "velocityFromMidi did not clamp an out-of-range high-resolution LSB to 127");
+
         const double quiet = peakInRange (renderNote (49, low, 0.50), 0,
                                           static_cast<std::size_t> (0.50 * sampleRate));
         const double loud = peakInRange (renderNote (49, high, 0.50), 0,
