@@ -520,13 +520,18 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
     }
     else if (kind == 0xe0u && numBytes >= 3)
     {
-        const auto value14 = static_cast<int> (data[1] & 0x7fu)
-                           | (static_cast<int> (data[2] & 0x7fu) << 7);
-        const auto bend = value14 < 8192
-            ? static_cast<float> (value14 - 8192) / 8192.0f
-            : static_cast<float> (value14 - 8192) / 8191.0f;
-        engine.setPitchBend (juce::jlimit (-1.0f, 1.0f, bend));
+        engine.setPitchBend (decodePitchBend14 (data[1], data[2]));
     }
+}
+
+float ElectryAudioProcessor::decodePitchBend14 (juce::uint8 data1, juce::uint8 data2) noexcept
+{
+    const auto value14 = static_cast<int> (data1 & 0x7fu)
+                       | (static_cast<int> (data2 & 0x7fu) << 7);
+    const auto bend = value14 < 8192
+        ? static_cast<float> (value14 - 8192) / 8192.0f
+        : static_cast<float> (value14 - 8192) / 8191.0f;
+    return juce::jlimit (-1.0f, 1.0f, bend);
 }
 
 void ElectryAudioProcessor::updateEngineParameters() noexcept

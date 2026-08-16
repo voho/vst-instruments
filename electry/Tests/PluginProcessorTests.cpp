@@ -548,6 +548,62 @@ void testMidiControllersAndVoiceLifecycle()
     processor.releaseResources();
 }
 
+// ElectryAudioProcessor::decodePitchBend14()'s 14-bit reconstruction is exact
+// integer/float arithmetic, so it is asserted on precisely here rather than
+// only inferred from rendered audio: the low-order MIDI data byte alone
+// contributes at most a few cents to a full two-semitone bend (127 of the
+// 8191/8192-count range), which testPitchWheelMidiDispatch()'s audio
+// measurement below cannot reliably resolve. An implementation that dropped
+// the low-order byte entirely - value14 = data2 << 7 - would still pass a
+// full-down/centre/full-up rendered-audio check, since data1 happens to be 0
+// or 127 at exactly those three positions either way; fixing data2 and
+// sweeping data1 catches that directly.
+void testPitchWheelByteReconstruction()
+{
+    using Processor = ElectryAudioProcessor;
+
+    // The three positions testPitchWheelMidiDispatch() renders, checked here
+    // to their exact decoded value instead of only through audio.
+    expect (Processor::decodePitchBend14 (0, 0) == -1.0f,
+            "full-down pitch wheel (0x0000) did not decode to exactly -1.0");
+    expect (Processor::decodePitchBend14 (0, 64) == 0.0f,
+            "centred pitch wheel (0x2000) did not decode to exactly 0.0");
+    expect (Processor::decodePitchBend14 (127, 127) == 1.0f,
+            "full-up pitch wheel (0x3fff) did not decode to exactly 1.0");
+
+    // Fix the high-order byte at its centre-position value (64) and sweep
+    // the low-order one across its full range. A decode that used only
+    // data2 would return exactly 0.0 for all three, since they all share
+    // data2 = 64.
+    const float atLowByte0 = Processor::decodePitchBend14 (0, 64);
+    const float atLowByte64 = Processor::decodePitchBend14 (64, 64);
+    const float atLowByte127 = Processor::decodePitchBend14 (127, 64);
+    expect (std::abs (atLowByte64 - 64.0f / 8191.0f) < 1.0e-6f,
+            "data1=64, data2=64 (value14=8256) did not decode to its exact "
+            "fractional bend");
+    expect (std::abs (atLowByte127 - 127.0f / 8191.0f) < 1.0e-6f,
+            "data1=127, data2=64 (value14=8319) did not decode to its exact "
+            "fractional bend");
+    expect (atLowByte0 != atLowByte64 && atLowByte64 != atLowByte127,
+            "varying only the low-order MIDI data byte at or above centre "
+            "left the decoded bend unchanged, meaning it was not read");
+
+    // The same sweep just below centre, so both the value14 < 8192 and
+    // value14 >= 8192 branches of the asymmetric divisor are exercised with
+    // a fixed high-order byte.
+    const float belowLow0 = Processor::decodePitchBend14 (0, 63);
+    const float belowLow127 = Processor::decodePitchBend14 (127, 63);
+    expect (std::abs (belowLow0 - (-128.0f / 8192.0f)) < 1.0e-6f,
+            "data1=0, data2=63 (value14=8064) did not decode to its exact "
+            "fractional bend");
+    expect (std::abs (belowLow127 - (-1.0f / 8192.0f)) < 1.0e-6f,
+            "data1=127, data2=63 (value14=8191) did not decode to its exact "
+            "fractional bend");
+    expect (belowLow0 != belowLow127,
+            "varying only the low-order MIDI data byte below centre left "
+            "the decoded bend unchanged, meaning it was not read");
+}
+
 // dispatchMidiData() reconstructs the pitch wheel's 14-bit position from its
 // two 7-bit MIDI data bytes and then divides the excursion below centre by
 // 8192 but above centre by 8191, matching the MIDI spec's asymmetric bend
@@ -558,7 +614,9 @@ void testMidiControllersAndVoiceLifecycle()
 // clamp or a sign flip here would still pass every existing test while
 // bending every host's pitch wheel by the wrong amount or the wrong
 // direction, so this measures the actual rendered pitch a raw pitch-wheel
-// message produces on the open, full-range low string (bend sensitivity 1.0).
+// message produces on the open, full-range low string (bend sensitivity 1.0),
+// as an end-to-end check alongside testPitchWheelByteReconstruction()'s exact
+// one.
 void testPitchWheelMidiDispatch()
 {
     constexpr double openLowStringHz = 41.2034; // E1, MIDI note 28
@@ -1147,6 +1205,7 @@ int main()
     testSampleAccurateNoteAndSound();
     testKeyswitchContract();
     testMidiControllersAndVoiceLifecycle();
+    testPitchWheelByteReconstruction();
     testPitchWheelMidiDispatch();
     testResonanceWheelFeedback();
     testUiArticulationTriggerAndPanic();
