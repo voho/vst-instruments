@@ -359,6 +359,14 @@ struct ElectryEngineTestAccess
         return ElectryEngine::bendSensitivity(stringIndex);
     }
 
+    // The parameter guard setParameters() runs before anything else sees a
+    // host's automation, so the fallback and clamp behaviour can be asserted
+    // on directly rather than only inferred from the audio it protects.
+    static EngineParameters sanitise(const EngineParameters& parameters) noexcept
+    {
+        return ElectryEngine::sanitise(parameters);
+    }
+
     // The pitch a bridge-coupled string is running at - its open note, bent by
     // the wheel through its own compliance - computed the way
     // configureSympatheticString computes it, so the decay checks can invert
@@ -2904,6 +2912,53 @@ void testStringAllocationAndPolyphony()
            "restruck note moved to another string");
 }
 
+// chooseString()'s steal branch (all eight strings already sounding) was
+// only ever exercised for the voice count staying at eight; the tie-break
+// policy itself - a releasing voice always outranks a held one, and among
+// voices of equal status the one that has been sounding the longest goes
+// first - had no direct coverage.
+void testVoiceStealingPriority()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    engine.setParameters(EngineParameters {});
+
+    // Drop-E open notes for strings 0..7, struck in that order so string 2
+    // (E2, fret 22) is the oldest of the strings that can reach MIDI note 62
+    // within the 22-fret range (frets 34/27/22/17/12/7/3/-2 respectively -
+    // only strings 2 through 6 qualify).
+    constexpr std::array<int, ElectryEngine::stringCount> openNotes {
+        28, 35, 40, 45, 50, 55, 59, 64
+    };
+
+    // With every string held and none releasing, the steal must fall to the
+    // oldest of the reachable strings.
+    engine.reset();
+    for (const int note : openNotes)
+        engine.noteOn(note, 0.8f);
+    engine.noteOn(62, 0.8f);
+    expect(engine.getActiveVoiceCount() == ElectryEngine::stringCount,
+           "stealing a held voice changed the active voice count");
+    expect(TestAccess::stringForNote(engine, 62) == 2,
+           "steal did not choose the oldest of the reachable held strings");
+    expect(TestAccess::stringForNote(engine, 40) == -1,
+           "the stolen string still reports its original note as active");
+
+    // Releasing a younger reachable string (5, not the oldest) must steal
+    // that one instead: a releasing voice outranks every held voice
+    // regardless of how long either has been sounding.
+    engine.reset();
+    for (const int note : openNotes)
+        engine.noteOn(note, 0.8f);
+    engine.noteOff(55); // string 5: keyDown false, releasing, still active
+    engine.noteOn(62, 0.8f);
+    expect(engine.getActiveVoiceCount() == ElectryEngine::stringCount,
+           "stealing a releasing voice changed the active voice count");
+    expect(TestAccess::stringForNote(engine, 62) == 5,
+           "steal preferred an older held string over a releasing one");
+}
+
 // The natural harmonic is a finger resting on a node, not a transposition.
 // The distinction is measurable in three places: which partials survive, that
 // the loop still runs at the fretted pitch (so the surviving partial decays at
@@ -4285,6 +4340,254 @@ void testParameterSanitisation()
     renderInto(engine, poisoned);
     expect(allFinite(poisoned),
            "a hostile acoustic return produced non-finite audio");
+}
+
+// testParameterSanitisation() above only ever asserts on the audio that comes
+// out the far end of a hostile parameter set, which the guard itself could
+// pass through a subtly wrong path and still leave finite and quiet. This
+// calls the guard directly and checks its two distinct behaviours: a
+// non-finite field falls back to the shipping default, while a finite but
+// out-of-range field clamps to the nearer boundary of its own valid interval
+// instead. A future change that swapped one behaviour for the other, or
+// dropped a field from the guard entirely, would not necessarily move any
+// rendered sample enough to fail the audio-level test above.
+void testParameterSanitisationFallsBackToDefaults()
+{
+    const EngineParameters defaults;
+
+    EngineParameters hostile;
+    hostile.bodyWood = std::numeric_limits<float>::quiet_NaN();
+    hostile.bodySize = -12.0f;
+    hostile.bodyShape = 400.0f;
+    hostile.construction = std::numeric_limits<float>::infinity();
+    hostile.scaleLength = -std::numeric_limits<float>::infinity();
+    hostile.pickupType = 55.0f;
+    hostile.toneKnob = std::numeric_limits<float>::quiet_NaN();
+    hostile.bodyResonance = 1.0e9f;
+    hostile.stringGauge = -1.0e9f;
+    hostile.stringAge = std::numeric_limits<float>::quiet_NaN();
+    hostile.pickPosition = 2.0f;
+    hostile.pickHardness = -2.0f;
+    hostile.pickNoise = std::numeric_limits<float>::infinity();
+    hostile.fingerNoise = -0.5f;
+    hostile.releaseNoise = 77.0f;
+    hostile.muteDamping = std::numeric_limits<float>::quiet_NaN();
+    hostile.bendTimeSeconds = -3.0f;
+    hostile.velocityAmount = 9.0f;
+    hostile.outputGain = std::numeric_limits<float>::quiet_NaN();
+    hostile.artifactAmount = std::numeric_limits<float>::infinity();
+    hostile.sympatheticAmount = std::numeric_limits<float>::quiet_NaN();
+    hostile.palmMute = -7.0f;
+    hostile.strumSpreadSeconds = std::numeric_limits<float>::infinity();
+    hostile.resonanceDepth = std::numeric_limits<float>::quiet_NaN();
+    hostile.vibratoDepth = 12.0f;
+    hostile.pickupSelector = static_cast<PickupSelector>(999);
+    hostile.outputMode = static_cast<electry::OutputMode>(999);
+
+    const EngineParameters clean = TestAccess::sanitise(hostile);
+
+    // Non-finite input has no boundary to clamp to, so it falls back to the
+    // shipping default exactly.
+    expect(clean.bodyWood == defaults.bodyWood,
+           "NaN bodyWood did not fall back to its default");
+    expect(clean.construction == defaults.construction,
+           "+inf construction did not fall back to its default");
+    expect(clean.scaleLength == defaults.scaleLength,
+           "-inf scaleLength did not fall back to its default");
+    expect(clean.toneKnob == defaults.toneKnob,
+           "NaN toneKnob did not fall back to its default");
+    expect(clean.stringAge == defaults.stringAge,
+           "NaN stringAge did not fall back to its default");
+    expect(clean.pickNoise == defaults.pickNoise,
+           "+inf pickNoise did not fall back to its default");
+    expect(clean.muteDamping == defaults.muteDamping,
+           "NaN muteDamping did not fall back to its default");
+    expect(clean.outputGain == defaults.outputGain,
+           "NaN outputGain did not fall back to its default");
+    expect(clean.artifactAmount == defaults.artifactAmount,
+           "+inf artifactAmount did not fall back to its default");
+    expect(clean.sympatheticAmount == defaults.sympatheticAmount,
+           "NaN sympatheticAmount did not fall back to its default");
+    expect(clean.strumSpreadSeconds == defaults.strumSpreadSeconds,
+           "+inf strumSpreadSeconds did not fall back to its default");
+    expect(clean.resonanceDepth == defaults.resonanceDepth,
+           "NaN resonanceDepth did not fall back to its default");
+
+    // Finite but out-of-[0,1] input clamps to the nearer boundary rather than
+    // falling back to the default - the same lambda handles every 0..1 field
+    // and this is what tells its two branches apart.
+    expect(clean.bodySize == 0.0f, "negative bodySize did not clamp to 0");
+    expect(clean.bodyShape == 1.0f, "bodyShape above 1 did not clamp to 1");
+    expect(clean.pickupType == 1.0f, "pickupType above 1 did not clamp to 1");
+    expect(clean.bodyResonance == 1.0f,
+           "huge bodyResonance did not clamp to 1");
+    expect(clean.stringGauge == 0.0f,
+           "hugely negative stringGauge did not clamp to 0");
+    expect(clean.pickPosition == 1.0f,
+           "pickPosition above 1 did not clamp to 1");
+    expect(clean.pickHardness == 0.0f,
+           "negative pickHardness did not clamp to 0");
+    expect(clean.fingerNoise == 0.0f,
+           "negative fingerNoise did not clamp to 0");
+    expect(clean.releaseNoise == 1.0f,
+           "releaseNoise above 1 did not clamp to 1");
+    expect(clean.velocityAmount == 1.0f,
+           "velocityAmount above 1 did not clamp to 1");
+    expect(clean.palmMute == 0.0f, "negative palmMute did not clamp to 0");
+    expect(clean.vibratoDepth == 1.0f,
+           "vibratoDepth above 1 did not clamp to 1");
+
+    // Fields with their own valid interval clamp to their own bounds rather
+    // than [0,1]. bendTimeSeconds, strumSpreadSeconds and outputGain each
+    // have an independent sanitizer branch instead of sharing the [0,1]
+    // lambda, so - like outputGain below - each needs its own non-finite
+    // fallback and both finite-boundary cases to actually protect its whole
+    // branch, not just whichever half the shared "hostile" fixture happens
+    // to hit.
+    expect(clean.bendTimeSeconds == 0.04f,
+           "negative bendTimeSeconds did not clamp to the 0.04 s floor");
+
+    EngineParameters bendTimeNonFinite;
+    bendTimeNonFinite.bendTimeSeconds = std::numeric_limits<float>::quiet_NaN();
+    expect(TestAccess::sanitise(bendTimeNonFinite).bendTimeSeconds
+               == defaults.bendTimeSeconds,
+           "NaN bendTimeSeconds did not fall back to its default");
+    EngineParameters bendTimeAboveRange;
+    bendTimeAboveRange.bendTimeSeconds = 5.0f;
+    expect(TestAccess::sanitise(bendTimeAboveRange).bendTimeSeconds == 2.0f,
+           "bendTimeSeconds above 2 s did not clamp to its 2 s ceiling");
+
+    // strumSpreadSeconds' own [0, 0.040] branch: the "hostile" fixture above
+    // only supplies +inf, proving the fallback-to-default arm but not either
+    // finite boundary.
+    EngineParameters spreadBelowRange;
+    spreadBelowRange.strumSpreadSeconds = -0.01f;
+    expect(TestAccess::sanitise(spreadBelowRange).strumSpreadSeconds == 0.0f,
+           "negative strumSpreadSeconds did not clamp to its 0 floor");
+    EngineParameters spreadAboveRange;
+    spreadAboveRange.strumSpreadSeconds = 0.2f;
+    expect(TestAccess::sanitise(spreadAboveRange).strumSpreadSeconds == 0.040f,
+           "strumSpreadSeconds above 0.040 did not clamp to its ceiling");
+
+    // outputGain has its own [0, 2] branch rather than the shared [0, 1]
+    // lambda, so it needs its own finite-out-of-range boundary cases: the
+    // NaN case above only proves the fallback-to-default path, not this one.
+    EngineParameters gainBelowRange;
+    gainBelowRange.outputGain = -1.0f;
+    expect(TestAccess::sanitise(gainBelowRange).outputGain == 0.0f,
+           "negative outputGain did not clamp to its 0 floor");
+    EngineParameters gainAboveRange;
+    gainAboveRange.outputGain = 3.0f;
+    expect(TestAccess::sanitise(gainAboveRange).outputGain == 2.0f,
+           "outputGain above 2 did not clamp to its 2 ceiling");
+
+    // An invalid enumerator falls back to the default enumerator rather than
+    // surviving as an out-of-range integer. The "hostile" fixture above only
+    // supplies enumerators above the valid range (999), so each enum also
+    // gets a below-range (negative) case here to protect its other bound.
+    expect(clean.pickupSelector == defaults.pickupSelector,
+           "out-of-range pickupSelector did not fall back to its default");
+    expect(clean.outputMode == defaults.outputMode,
+           "out-of-range outputMode did not fall back to its default");
+
+    EngineParameters negativeSelector;
+    negativeSelector.pickupSelector = static_cast<PickupSelector>(-1);
+    expect(TestAccess::sanitise(negativeSelector).pickupSelector
+               == defaults.pickupSelector,
+           "negative pickupSelector did not fall back to its default");
+    EngineParameters negativeOutputMode;
+    negativeOutputMode.outputMode = static_cast<electry::OutputMode>(-1);
+    expect(TestAccess::sanitise(negativeOutputMode).outputMode
+               == defaults.outputMode,
+           "negative outputMode did not fall back to its default");
+
+    // A parameter set already inside every field's valid range is a guard's
+    // no-op, not a smoothing stage - it must come back unchanged. Every field
+    // gets its own distinct in-range value so the guard cannot pass this
+    // case by unconditionally resetting an untested field to its default.
+    EngineParameters valid = defaults;
+    valid.bodyWood = 0.62f;
+    valid.bodySize = 0.73f;
+    valid.bodyShape = 0.15f;
+    valid.construction = 0.44f;
+    valid.scaleLength = 0.55f;
+    valid.pickupType = 0.66f;
+    valid.toneKnob = 0.22f;
+    valid.bodyResonance = 0.81f;
+    valid.stringGauge = 0.33f;
+    valid.stringAge = 0.77f;
+    valid.pickPosition = 0.11f;
+    valid.pickHardness = 0.88f;
+    valid.pickNoise = 0.29f;
+    valid.fingerNoise = 0.64f;
+    valid.releaseNoise = 0.19f;
+    valid.muteDamping = 0.41f;
+    valid.bendTimeSeconds = 0.9f;
+    valid.velocityAmount = 0.37f;
+    valid.outputGain = 1.4f;
+    valid.artifactAmount = 0.53f;
+    valid.sympatheticAmount = 0.68f;
+    valid.palmMute = 0.24f;
+    valid.strumSpreadSeconds = 0.02f;
+    valid.resonanceDepth = 0.71f;
+    valid.vibratoDepth = 0.09f;
+    valid.pickupSelector = PickupSelector::Neck;
+    valid.outputMode = electry::OutputMode::Stereo;
+    const EngineParameters passedThrough = TestAccess::sanitise(valid);
+    expect(passedThrough.bodyWood == valid.bodyWood,
+           "in-range bodyWood was altered by the guard");
+    expect(passedThrough.bodySize == valid.bodySize,
+           "in-range bodySize was altered by the guard");
+    expect(passedThrough.bodyShape == valid.bodyShape,
+           "in-range bodyShape was altered by the guard");
+    expect(passedThrough.construction == valid.construction,
+           "in-range construction was altered by the guard");
+    expect(passedThrough.scaleLength == valid.scaleLength,
+           "in-range scaleLength was altered by the guard");
+    expect(passedThrough.pickupType == valid.pickupType,
+           "in-range pickupType was altered by the guard");
+    expect(passedThrough.toneKnob == valid.toneKnob,
+           "in-range toneKnob was altered by the guard");
+    expect(passedThrough.bodyResonance == valid.bodyResonance,
+           "in-range bodyResonance was altered by the guard");
+    expect(passedThrough.stringGauge == valid.stringGauge,
+           "in-range stringGauge was altered by the guard");
+    expect(passedThrough.stringAge == valid.stringAge,
+           "in-range stringAge was altered by the guard");
+    expect(passedThrough.pickPosition == valid.pickPosition,
+           "in-range pickPosition was altered by the guard");
+    expect(passedThrough.pickHardness == valid.pickHardness,
+           "in-range pickHardness was altered by the guard");
+    expect(passedThrough.pickNoise == valid.pickNoise,
+           "in-range pickNoise was altered by the guard");
+    expect(passedThrough.fingerNoise == valid.fingerNoise,
+           "in-range fingerNoise was altered by the guard");
+    expect(passedThrough.releaseNoise == valid.releaseNoise,
+           "in-range releaseNoise was altered by the guard");
+    expect(passedThrough.muteDamping == valid.muteDamping,
+           "in-range muteDamping was altered by the guard");
+    expect(passedThrough.bendTimeSeconds == valid.bendTimeSeconds,
+           "in-range bendTimeSeconds was altered by the guard");
+    expect(passedThrough.velocityAmount == valid.velocityAmount,
+           "in-range velocityAmount was altered by the guard");
+    expect(passedThrough.outputGain == valid.outputGain,
+           "in-range outputGain was altered by the guard");
+    expect(passedThrough.artifactAmount == valid.artifactAmount,
+           "in-range artifactAmount was altered by the guard");
+    expect(passedThrough.sympatheticAmount == valid.sympatheticAmount,
+           "in-range sympatheticAmount was altered by the guard");
+    expect(passedThrough.palmMute == valid.palmMute,
+           "in-range palmMute was altered by the guard");
+    expect(passedThrough.strumSpreadSeconds == valid.strumSpreadSeconds,
+           "in-range strumSpreadSeconds was altered by the guard");
+    expect(passedThrough.resonanceDepth == valid.resonanceDepth,
+           "in-range resonanceDepth was altered by the guard");
+    expect(passedThrough.vibratoDepth == valid.vibratoDepth,
+           "in-range vibratoDepth was altered by the guard");
+    expect(passedThrough.pickupSelector == valid.pickupSelector,
+           "a valid pickupSelector was altered by the guard");
+    expect(passedThrough.outputMode == valid.outputMode,
+           "a valid outputMode was altered by the guard");
 }
 
 // ---------------------------------------------------------------------------
@@ -5827,6 +6130,71 @@ void testVisualStateAndGeometry()
                "a reset engine still reported a sounding string");
 }
 
+// The editor reads these helpers directly off the lock-free audio-to-editor
+// transfer, so a non-finite or out-of-range value has to be recovered here
+// rather than upstream: `testVisualStateAndGeometry` above exercises every
+// helper's ordinary range and only `meterBallistics`' non-finite `current`
+// guard, leaving `levelHeat`'s own guard, `meterBallistics`' non-finite
+// `target` guard, and `packStringVisual`'s non-finite level and out-of-range
+// note/fret/playStyle clamps unexercised by any existing test.
+void testVisualStateSanitizesNonFiniteInput()
+{
+    namespace visuals = electry::visuals;
+    constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+    constexpr float inf = std::numeric_limits<float>::infinity();
+
+    expect(visuals::levelHeat(nan) == 0.0f,
+           "levelHeat did not recover from a non-finite level");
+    expect(visuals::levelHeat(inf) == 0.0f,
+           "levelHeat did not recover from a positive-infinite level");
+    expect(visuals::levelHeat(-inf) == 0.0f,
+           "levelHeat did not recover from a negative-infinite level");
+
+    // A non-finite target has to sanitize to zero, exactly like a non-finite
+    // current does above: with current already at rest, a NaN target must
+    // leave the meter at rest rather than latching NaN into the display.
+    expect(visuals::meterBallistics(0.0f, nan, 0.5f, 0.5f) == 0.0f,
+           "meterBallistics did not recover from a non-finite target");
+    // With current above the sanitized zero target, the non-finite target
+    // takes the release branch and the reading has to fall rather than hold
+    // or grow, so a poisoned target cannot freeze the display at a stale
+    // level.
+    const float releasing = visuals::meterBallistics(1.0f, inf, 0.4f, 0.4f);
+    expect(releasing < 1.0f && releasing >= 0.0f,
+           "meterBallistics did not release toward zero for a non-finite target");
+
+    // packStringVisual's own guards: a non-finite level packs to silent
+    // rather than propagating NaN through the lock-free word, and a
+    // wildly out-of-range note, fret or play style clamps to the nearest
+    // valid value instead of wrapping into an unrelated field via the
+    // packed word's bit layout.
+    electry::StringVisualState poisoned;
+    poisoned.midiNote = 4000;
+    poisoned.fret = -900;
+    poisoned.level = nan;
+    poisoned.playStyle = static_cast<PlayStyle>(999);
+    const auto packed = visuals::packStringVisual(poisoned);
+    const auto round = visuals::unpackStringVisual(packed);
+    expect(round.midiNote == 127,
+           "packStringVisual did not clamp an out-of-range high note");
+    expect(round.fret == -1,
+           "packStringVisual did not clamp an out-of-range low fret");
+    expect(round.level == 0.0f,
+           "packStringVisual did not sanitize a non-finite level");
+    expect(round.playStyle == PlayStyle::Dead,
+           "packStringVisual did not clamp an out-of-range play style");
+
+    electry::StringVisualState poisonedLow;
+    poisonedLow.midiNote = -900;
+    poisonedLow.fret = 900;
+    const auto roundLow = visuals::unpackStringVisual(
+        visuals::packStringVisual(poisonedLow));
+    expect(roundLow.midiNote == -1,
+           "packStringVisual did not clamp an out-of-range low note");
+    expect(roundLow.fret == ElectryEngine::fretCount,
+           "packStringVisual did not clamp an out-of-range high fret");
+}
+
 // ---------------------------------------------------------------------------
 // Version 1.1: the paths the efficiency work depends on
 // ---------------------------------------------------------------------------
@@ -7137,6 +7505,7 @@ int main()
     testMaterialAndControlAudibility();
     testNoiseComponentsAndSilence();
     testStringAllocationAndPolyphony();
+    testVoiceStealingPriority();
     testFrettingHandPosition();
     testTouchHarmonics();
     testPinchHarmonic();
@@ -7159,6 +7528,7 @@ int main()
     testHandDipNeverExpands();
     testLowRegisterFundamentalWeight();
     testVisualStateAndGeometry();
+    testVisualStateSanitizesNonFiniteInput();
     testPickupCullingAndChannelLinking();
     testIdleFreezeAndDenormalSafety();
     testDecayIsSampleRateInvariant();
@@ -7167,6 +7537,7 @@ int main()
     testCoupledStringKeepsItsFundamentalDecayTarget();
     testFingeredStringsShareTheBridge();
     testParameterSanitisation();
+    testParameterSanitisationFallsBackToDefaults();
     testCpuGuardrail();
 
     // Test attack tension modulation and palm-mute bridge impact physics

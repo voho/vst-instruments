@@ -1297,6 +1297,13 @@ private:
     // voice.palmImpactState in renderVoice(). Fixed corner, rate-derived
     // coefficient - belongs here for the same reason as its neighbours above.
     float palmImpactThudCoefficient_ { 0.0f };
+    // The hand-loss dip's 40 ms settle window, in samples: used as
+    // updateVoiceControl()'s `ageSamples / handLossSettleWindowSamples_`
+    // divisor for every active voice with an engaged hand-loss dip, every
+    // control tick. It depends only on the internal clock, so - like its
+    // neighbours above - it is solved once here instead of being recomputed
+    // (a float multiply and a cast) on every one of those calls.
+    float handLossSettleWindowSamples_ { 1920.0f };
     float sympatheticEnergyCoefficient_ { 0.002f };
     float displayLevelAttack_ { 0.5f };
     float displayLevelRelease_ { 0.08f };

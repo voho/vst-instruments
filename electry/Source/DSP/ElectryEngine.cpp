@@ -933,6 +933,10 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     // envelope was active, once per voice; it depends only on the internal
     // clock, so it belongs here with its neighbours instead.
     palmImpactThudCoefficient_ = 1.0f - std::exp(-twoPi * 85.0f * inverseSampleRate_);
+    // The hand-loss dip's 40 ms settle window, in samples. Read directly by
+    // updateVoiceControl() instead of recomputing this same product on every
+    // control tick of every voice with an engaged dip.
+    handLossSettleWindowSamples_ = 0.040f * internalRate;
     // A 30 ms lag on the CC1 resonance control, advanced at the control tick:
     // fast enough to ride the wheel, slow enough that a coarse 7-bit
     // controller cannot step the coupling gain audibly.
@@ -3606,7 +3610,7 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
         const float settleFactor = eitherDipActive
             ? 0.35f + 0.65f * smoothStep(clampf(
                   static_cast<float>(voice.ageSamples)
-                      / (0.040f * static_cast<float>(sampleRate_)),
+                      / handLossSettleWindowSamples_,
                   0.0f, 1.0f))
             : 0.0f;
         const auto modulate = [&] (PolarisationLoop& loop)
