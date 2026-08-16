@@ -334,16 +334,14 @@ public:
         [[nodiscard]] static float frequencyTrim(float feedback) noexcept;
     };
 
-    // Generalized algebraic soft clip: exactly linear as the normalised
-    // magnitude approaches zero and bending only as it approaches 1. The
-    // output summer and the VCF saturation below both fit this same shape
-    // independently (as does the BBD write in `Chorus::bbdTransfer`), so the
-    // denominator itself is shared here rather than reimplemented at each
-    // site. Evaluated in double so an extreme finite float still approaches
-    // the bound instead of overflowing an intermediate power and folding
-    // back to zero.
-    [[nodiscard]] static double algebraicSoftClipDenominator(
-        double normalisedMagnitude, double exponent) noexcept;
+    // The generalized algebraic soft clip the output summer and the VCF
+    // saturation below both fit -- along with the BBD write in
+    // `Chorus::bbdTransfer` -- is `algebraicSoftClipDenominator` in
+    // YouKnow106Chorus.h. It used to be reimplemented independently at each of
+    // the three sites (this class's own copy covered only the first two); it
+    // now lives in the one header both DSP files already include, so all
+    // three go through the same formula instead of two matching it by
+    // construction.
 
     // Where the transconductor's own control current stops following the
     // anti-log converter. An AS3109 teardown reports the internal control

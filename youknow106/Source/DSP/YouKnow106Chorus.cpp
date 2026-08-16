@@ -569,9 +569,8 @@ float Chorus::bbdTransfer(float input) noexcept
     // power and folding back to zero.
     const double normalised = std::abs(static_cast<double>(input))
                             / static_cast<double>(bbdSaturationLevel);
-    const double denominator = std::pow(
-        1.0 + std::pow(normalised, static_cast<double>(bbdSaturationExponent)),
-        1.0 / static_cast<double>(bbdSaturationExponent));
+    const double denominator = algebraicSoftClipDenominator(
+        normalised, static_cast<double>(bbdSaturationExponent));
     return static_cast<float>(static_cast<double>(input) / denominator);
 }
 
