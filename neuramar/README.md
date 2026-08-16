@@ -823,6 +823,20 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-16: Added direct coverage for `NeuramarEngine.cpp`'s
+  `computeLoopRegion` clamps - a non-positive duration flooring to one
+  millisecond, a negative loop start clamping to zero, and a loop end at or
+  before its start or beyond the duration each clamping into the valid
+  range - which its two callers, `sampleLoopLevelTrajectory` and
+  `updateVoiceControl`, never exercise directly because
+  `NeuralModel::deserialize` already rejects any model whose loop metadata
+  violates those bounds, and `createRandomizedVariation`/`generateModel`
+  only ever hand it an unchanged copy of an already-valid model's metadata
+  or fixed, in-range literals. Added a small test-only accessor,
+  `NeuramarEngine::computeLoopRegionForTests`, to reach it directly.
+  Test-only; no engine behavior change, verified with the JUCE-free DSP
+  suite (3/3 tests passed) and `git status neuramar/Docs/audio` confirmed
+  clean.
 - 2026-08-16: Added direct coverage for `NeuramarEngine::prepare`'s
   sample-rate guard - a non-finite rate, or a finite one outside
   [8 kHz, 768 kHz], falls back to the 48 kHz default outright rather than

@@ -6154,6 +6154,64 @@ void testPrepareSanitisesSampleRate()
            "a negative sample rate did not fall back to the 48 kHz default");
 }
 
+// NeuramarEngine.cpp's computeLoopRegion() floors a degenerate duration and
+// clamps the loop start/end inside it, but NeuralModel::deserialize() already
+// rejects any model whose duration is non-positive, whose loop start is
+// negative, or whose loop end sits at or before its start or beyond the
+// duration - and createRandomizedVariation() and generateModel() only ever
+// hand it an unchanged copy of an already-valid model's metadata or fixed,
+// in-range literals - so every one of computeLoopRegion()'s own clamps is
+// reachable but never directly exercised by its two callers,
+// sampleLoopLevelTrajectory() and updateVoiceControl(). This drives it
+// directly with metadata no validated model can produce.
+void testLoopRegionHostileMetadata()
+{
+    using neuramar::NeuralModel;
+    using neuramar::NeuramarEngine;
+
+    NeuralModel::Metadata metadata;
+    metadata.durationSeconds = 0.0f;
+    metadata.loopStartSeconds = 0.0f;
+    metadata.loopEndSeconds = 0.0f;
+    auto region = NeuramarEngine::computeLoopRegionForTests(metadata);
+    expect(region[0] == 0.001f,
+           "a zero duration was not floored to one millisecond");
+
+    metadata.durationSeconds = -5.0f;
+    region = NeuramarEngine::computeLoopRegionForTests(metadata);
+    expect(region[0] == 0.001f,
+           "a negative duration was not floored to one millisecond");
+
+    metadata.durationSeconds = 3.0f;
+    metadata.loopStartSeconds = -2.0f;
+    metadata.loopEndSeconds = 1.5f;
+    region = NeuramarEngine::computeLoopRegionForTests(metadata);
+    expect(region[1] == 0.0f,
+           "a negative loop start was not clamped to zero");
+
+    metadata.loopStartSeconds = 1.0f;
+    metadata.loopEndSeconds = 0.5f;
+    region = NeuramarEngine::computeLoopRegionForTests(metadata);
+    expect(std::abs(region[2] - 1.001f) < 1.0e-6f
+               && std::abs(region[3] - 0.001f) < 1.0e-6f,
+           "a loop end at or before its start was not floored to one "
+               "millisecond past it");
+
+    metadata.loopStartSeconds = 0.5f;
+    metadata.loopEndSeconds = 10.0f;
+    region = NeuramarEngine::computeLoopRegionForTests(metadata);
+    expect(region[2] == 3.0f,
+           "a loop end beyond the duration was not clamped to it");
+
+    metadata.durationSeconds = 5.0f;
+    metadata.loopStartSeconds = 1.0f;
+    metadata.loopEndSeconds = 4.0f;
+    region = NeuramarEngine::computeLoopRegionForTests(metadata);
+    expect(region[0] == 5.0f && region[1] == 1.0f && region[2] == 4.0f
+               && region[3] == 3.0f,
+           "an already well-formed loop region was altered");
+}
+
 // Nothing may live below the played fundamental: the partial series starts
 // there, the anti-alias taper deletes everything that would fold back, and the
 // oscillator's sine approximation is the only other candidate for a spurious
@@ -6690,6 +6748,7 @@ int main()
     testCoreSpurFloor();
     testRenderIsSampleRateInvariant();
     testPrepareSanitisesSampleRate();
+    testLoopRegionHostileMetadata();
     testBodyLayersAreSampleRateInvariant();
     testBoneCeilingIsAnchoredToTheAudibleBand();
     testKeyboardLevelFlatness();
