@@ -1266,6 +1266,53 @@ void testVowelSpaceModel()
     vocalor::formantsForPresetVowel (true, 1, preset.data());
     expect (std::abs (preset[0] - 300.0f) < 0.01f && std::abs (preset[1] - 700.0f) < 0.01f,
             "the male OOH preset formants changed");
+
+    // Out-of-range indices are a clamp, not an out-of-bounds read: an index
+    // before the table returns its first entry and one past it returns the last.
+    const auto firstCardinal = vocalor::cardinalVowelPosition (0);
+    const auto beforeFirstCardinal = vocalor::cardinalVowelPosition (-1);
+    expect (beforeFirstCardinal.x == firstCardinal.x && beforeFirstCardinal.y == firstCardinal.y,
+            "a negative cardinal vowel index was not clamped to the first vowel");
+    const auto lastCardinal = vocalor::cardinalVowelPosition (vocalor::kCardinalVowelCount - 1);
+    const auto pastLastCardinal = vocalor::cardinalVowelPosition (vocalor::kCardinalVowelCount);
+    expect (pastLastCardinal.x == lastCardinal.x && pastLastCardinal.y == lastCardinal.y,
+            "an out-of-range cardinal vowel index was not clamped to the last vowel");
+    expect (std::string (vocalor::cardinalVowelName (-1))
+                == std::string (vocalor::cardinalVowelName (0)),
+            "a negative cardinal vowel index was not clamped for its display name");
+    expect (std::string (vocalor::cardinalVowelName (99))
+                == std::string (vocalor::cardinalVowelName (vocalor::kCardinalVowelCount - 1)),
+            "an out-of-range cardinal vowel index was not clamped for its display name");
+
+    // presetVowelPosition() clamps to the three shipped presets (AAH/OOH/UUH).
+    const auto aah = vocalor::presetVowelPosition (0);
+    const auto beforeAah = vocalor::presetVowelPosition (-1);
+    expect (beforeAah.x == aah.x && beforeAah.y == aah.y,
+            "a negative preset vowel index was not clamped to AAH");
+    const auto uuh = vocalor::presetVowelPosition (2);
+    const auto pastUuh = vocalor::presetVowelPosition (5);
+    expect (pastUuh.x == uuh.x && pastUuh.y == uuh.y,
+            "an out-of-range preset vowel index was not clamped to UUH");
+
+    // formantsForPresetVowel() clamps the very same way, but its null-output
+    // guard above returns before that logic runs, so it needs its own case with
+    // a real buffer to actually exercise the clamp.
+    std::array<float, vocalor::kFormantCount> aahFormants {};
+    std::array<float, vocalor::kFormantCount> uuhFormants {};
+    std::array<float, vocalor::kFormantCount> clampedFormants {};
+    vocalor::formantsForPresetVowel (false, 0, aahFormants.data());
+    vocalor::formantsForPresetVowel (false, -1, clampedFormants.data());
+    expect (aahFormants == clampedFormants,
+            "a negative preset vowel index was not clamped to AAH's formants");
+    vocalor::formantsForPresetVowel (false, 2, uuhFormants.data());
+    vocalor::formantsForPresetVowel (false, 99, clampedFormants.data());
+    expect (uuhFormants == clampedFormants,
+            "an out-of-range preset vowel index was not clamped to UUH's formants");
+
+    // Both formant resolvers must no-op on a null output buffer rather than
+    // crash; reaching the following line is the assertion.
+    vocalor::formantsForVowelPoint (false, 0.5f, 0.5f, nullptr);
+    vocalor::formantsForPresetVowel (false, 0, nullptr);
 }
 
 void testDisplayMathHelpers()
@@ -1377,10 +1424,83 @@ void testDisplayMathHelpers()
             "a zero formant shift was not neutral");
     expect (std::abs (vocalor::formantShiftRatio (12.0f) - 2.0f) < 1.0e-4f,
             "a twelve-semitone formant shift was not an octave");
+    expect (vocalor::formantShiftRatio (std::numeric_limits<float>::quiet_NaN()) == 1.0f,
+            "a non-finite formant shift did not fall back to unity");
+    expect (vocalor::formantShiftRatio (std::numeric_limits<float>::infinity()) == 1.0f,
+            "an infinite formant shift did not fall back to unity");
     expect (vocalor::glideTimeSeconds (0.0f) == 0.0f
                 && vocalor::glideTimeSeconds (1.0f) > 0.4f
                 && vocalor::glideTimeSeconds (0.5f) < vocalor::glideTimeSeconds (1.0f),
             "the glide time mapping is not monotonic over a useful range");
+
+    // tunedFirstFormant() is only exercised indirectly, through the engine's
+    // high-pitch formant tracking in testFormantTuningAtHighPitch(); assert
+    // its own behaviour directly, including the two defensive fallbacks that
+    // no engine-level test happens to reach.
+    expect (vocalor::tunedFirstFormant (850.0f, 200.0f, 1400.0f) == 850.0f,
+            "a fundamental well below F1 moved the tracked formant");
+    const auto trackedMidway = vocalor::tunedFirstFormant (300.0f, 315.0f, 1400.0f);
+    expect (trackedMidway > 300.0f && trackedMidway < 315.0f,
+            "the tracking strategy did not engage smoothly between its start and its target");
+    expect (vocalor::tunedFirstFormant (300.0f, 5000.0f, 1400.0f) == 1400.0f,
+            "the tracked formant did not stop at its ceiling");
+    expect (vocalor::tunedFirstFormant (0.0f, 400.0f, 1400.0f) == 0.0f,
+            "an invalid base formant was not returned unchanged");
+    expect (vocalor::tunedFirstFormant (300.0f, -50.0f, 1400.0f) == 300.0f,
+            "a non-positive fundamental was not returned as the vowel's own F1");
+    expect (vocalor::tunedFirstFormant (
+                300.0f, std::numeric_limits<float>::quiet_NaN(), 1400.0f) == 300.0f,
+            "a non-finite fundamental was not sanitized to the vowel's own F1");
+
+    // formantResponseCoefficients() shares formantResponseDb()'s guard clause;
+    // an invalid formant bank must leave the caller's buffers untouched rather
+    // than writing through a null pointer or an out-of-range count.
+    std::array<float, vocalor::kFormantCount> guardA1 { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+    std::array<float, vocalor::kFormantCount> guardA2 = guardA1;
+    std::array<float, vocalor::kFormantCount> guardScale = guardA1;
+    vocalor::formantResponseCoefficients (hz.data(), bandwidth.data(), gain.data(), 0,
+                                          48000.0f, guardA1.data(), guardA2.data(),
+                                          guardScale.data());
+    expect (guardA1[0] == -1.0f,
+            "formantResponseCoefficients wrote its output with a non-positive formant count");
+    vocalor::formantResponseCoefficients (hz.data(), bandwidth.data(), gain.data(),
+                                          vocalor::kFormantCount, 0.0f, guardA1.data(),
+                                          guardA2.data(), guardScale.data());
+    expect (guardA1[0] == -1.0f,
+            "formantResponseCoefficients wrote its output with a non-positive sample rate");
+    vocalor::formantResponseCoefficients (nullptr, bandwidth.data(), gain.data(),
+                                          vocalor::kFormantCount, 48000.0f, guardA1.data(),
+                                          guardA2.data(), guardScale.data());
+    expect (guardA1[0] == -1.0f,
+            "formantResponseCoefficients wrote its output with a null formant-Hz pointer");
+    // Every one of the guard's other null-pointer terms has to be checked in
+    // isolation too, or a regression dropping any single one of them from the
+    // condition would still pass with the formant-Hz check above alone.
+    vocalor::formantResponseCoefficients (hz.data(), nullptr, gain.data(),
+                                          vocalor::kFormantCount, 48000.0f, guardA1.data(),
+                                          guardA2.data(), guardScale.data());
+    expect (guardA1[0] == -1.0f,
+            "formantResponseCoefficients wrote its output with a null formant-bandwidth pointer");
+    vocalor::formantResponseCoefficients (hz.data(), bandwidth.data(), nullptr,
+                                          vocalor::kFormantCount, 48000.0f, guardA1.data(),
+                                          guardA2.data(), guardScale.data());
+    expect (guardA1[0] == -1.0f,
+            "formantResponseCoefficients wrote its output with a null formant-gain pointer");
+    vocalor::formantResponseCoefficients (hz.data(), bandwidth.data(), gain.data(),
+                                          vocalor::kFormantCount, 48000.0f, nullptr,
+                                          guardA2.data(), guardScale.data());
+    expect (guardA2[0] == -1.0f,
+            "formantResponseCoefficients wrote its output with a null outA1 pointer");
+    vocalor::formantResponseCoefficients (hz.data(), bandwidth.data(), gain.data(),
+                                          vocalor::kFormantCount, 48000.0f, guardA1.data(),
+                                          nullptr, guardScale.data());
+    expect (guardA1[0] == -1.0f,
+            "formantResponseCoefficients wrote its output with a null outA2 pointer");
+    vocalor::formantResponseCoefficients (hz.data(), bandwidth.data(), gain.data(),
+                                          vocalor::kFormantCount, 48000.0f, guardA1.data(),
+                                          guardA2.data(), nullptr);
+    expect (guardA1[0] == -1.0f,
+            "formantResponseCoefficients wrote its output with a null outScale pointer");
 }
 
 void testVowelMorphAndFormantShift()
@@ -2912,6 +3032,36 @@ void testParallelFormantBank()
                 "a cascade-derived formant amplitude was not positive");
     }
     expect (finite, "the cascade-derived formant amplitudes were not finite");
+
+    // parallelFormantAmplitudes() shares parallelFormantCoefficients()'s guard
+    // clause; an invalid formant bank must leave the caller's buffer untouched
+    // instead of writing through a null pointer or resolving against a
+    // non-positive count or sample rate.
+    std::array<float, vocalor::kFormantCount> guardGain { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+    vocalor::parallelFormantAmplitudes (nullptr, bandwidth.data(), vocalor::kFormantCount,
+                                        48000.0f, 0.010f, guardGain.data());
+    expect (guardGain[0] == -1.0f,
+            "parallelFormantAmplitudes wrote its output with a null formant-Hz pointer");
+    vocalor::parallelFormantAmplitudes (openHz.data(), bandwidth.data(), 0, 48000.0f, 0.010f,
+                                        guardGain.data());
+    expect (guardGain[0] == -1.0f,
+            "parallelFormantAmplitudes wrote its output with a non-positive formant count");
+    vocalor::parallelFormantAmplitudes (openHz.data(), bandwidth.data(), vocalor::kFormantCount,
+                                        0.0f, 0.010f, guardGain.data());
+    expect (guardGain[0] == -1.0f,
+            "parallelFormantAmplitudes wrote its output with a non-positive sample rate");
+    // The formant-Hz null check above never reaches the outGain/bandwidth
+    // guard terms; isolate them too so a regression dropping either from the
+    // condition would still be caught.
+    vocalor::parallelFormantAmplitudes (openHz.data(), nullptr, vocalor::kFormantCount,
+                                        48000.0f, 0.010f, guardGain.data());
+    expect (guardGain[0] == -1.0f,
+            "parallelFormantAmplitudes wrote its output with a null bandwidth pointer");
+    // outGain is the only output; a null one has nothing to check but must not
+    // crash, so reaching the following line is the assertion.
+    vocalor::parallelFormantAmplitudes (openHz.data(), bandwidth.data(), vocalor::kFormantCount,
+                                        48000.0f, 0.010f, nullptr);
+
     // /a/ concentrates its energy in F1 and F2; /i/ carries F2 and F3 nearly as
     // strongly as F1. If the amplitudes did not track the vowel this would not
     // hold, and a front vowel would not sound front.

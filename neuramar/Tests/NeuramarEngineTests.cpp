@@ -367,6 +367,43 @@ void testShapePreservingSpectralInterpolation()
            "log-spectral envelope over arithmetic interpolation");
 }
 
+// ShapePreservingEnvelope::prepare() sanitizes each incoming harmonic with
+// `std::isfinite(input) ? std::max(input, 0.0f) : 0.0f`, but its one caller -
+// NeuramarEngine.cpp's per-voice body envelope - always hands it
+// makeSourceFilterEnvelope()'s output, which is itself already finite and
+// non-negative by construction (it is a std::sqrt of a sum of squares), so
+// prepare()'s own guard was reachable but never directly exercised. Every
+// prepare() call above this one in the suite also only ever supplies
+// well-formed harmonics for the same reason. This calls prepare() directly
+// with a NaN and a negative harmonic among otherwise well-formed values and
+// asserts both sanitize to exactly zero at their knot, matching a harmonic
+// that was genuinely silent, while their well-formed neighbours are
+// unaffected.
+void testSpectralEnvelopeHostileInputs()
+{
+    using HostileEnvelope = neuramar::spectral::ShapePreservingEnvelope<8>;
+    constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+    constexpr float infinity = std::numeric_limits<float>::infinity();
+    const std::array<float, 8> hostile {
+        0.6f, nan, 0.4f, -0.3f, 0.2f, infinity, 0.1f, 0.05f
+    };
+    HostileEnvelope envelope;
+    envelope.prepare(hostile);
+
+    expect(envelope.sample(2.0f) == 0.0f,
+           "prepare() did not sanitise a NaN harmonic to silence");
+    expect(envelope.sample(4.0f) == 0.0f,
+           "prepare() did not clamp a negative harmonic to silence");
+    expect(envelope.sample(6.0f) == 0.0f,
+           "prepare() did not sanitise an infinite harmonic to silence");
+    expect(envelope.sample(1.0f) == 0.6f && envelope.sample(3.0f) == 0.4f
+               && envelope.sample(5.0f) == 0.2f
+               && envelope.sample(7.0f) == 0.1f
+               && envelope.sample(8.0f) == 0.05f,
+           "prepare() altered a well-formed harmonic while sanitising its "
+           "hostile neighbours");
+}
+
 [[nodiscard]] std::vector<float> makeLearningSample(double sampleRate,
                                                      double frequencyHz,
                                                      double durationSeconds)
@@ -934,6 +971,93 @@ void testHostileInputSanitizing()
            "an amplitude at the peak did not map to full display height");
     expect(neuramar::anatomyDisplayHeight(1.0f, 1.0e6f) == 0.0f,
            "an amplitude below the display floor was not clamped to zero");
+}
+
+// airfilter::makeCoefficients() is a public, pure, noexcept helper with a
+// documented three-way sanitize guard (safeRate, frequency, and width each
+// fall back to a fixed default before clamping whenever their argument is
+// non-finite) that nothing elsewhere in the suite exercises directly: every
+// other call site - both here and in NeuramarEngine.cpp's Bandpass::set() -
+// hands it a sample rate, centre frequency, and bandwidth that are already
+// finite and in range, so a regression in any one of the three isfinite
+// checks would pass unnoticed until a malformed model or host sample rate
+// surfaced it. Each hostile input is checked against the coefficients the
+// documented fallback value produces, so this also pins the fallback values
+// themselves (48 kHz, 1 kHz, one octave) against silent drift.
+void testAirFilterCoefficientHostileInputs()
+{
+    using neuramar::airfilter::Coefficients;
+    using neuramar::airfilter::makeCoefficients;
+
+    const auto expectSameCoefficients = [](const Coefficients& actual,
+                                           const Coefficients& expected,
+                                           const std::string& label)
+    {
+        expect(actual.b0 == expected.b0 && actual.b2 == expected.b2
+                   && actual.a1 == expected.a1 && actual.a2 == expected.a2
+                   && actual.outputScale == expected.outputScale,
+               label + " did not fall back to the documented default");
+    };
+    const auto expectFinite = [](const Coefficients& actual,
+                                 const std::string& label)
+    {
+        expect(std::isfinite(actual.b0) && std::isfinite(actual.b2)
+                   && std::isfinite(actual.a1) && std::isfinite(actual.a2)
+                   && std::isfinite(actual.outputScale),
+               label + " produced a non-finite coefficient");
+    };
+
+    constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+    constexpr float infinity = std::numeric_limits<float>::infinity();
+    // 1 kHz, one octave, 48 kHz is the fallback triple every guard below
+    // resolves to, so it is computed once and reused as the expectation.
+    const Coefficients defaults = makeCoefficients(1000.0f, 1.0f, 48000.0f);
+
+    // A non-finite sample rate falls back to 48 kHz rather than propagating
+    // NaN/Inf into std::clamp and every downstream trig call.
+    expectSameCoefficients(makeCoefficients(1000.0f, 1.0f, nan),
+                           defaults, "a NaN sample rate");
+    expectSameCoefficients(makeCoefficients(1000.0f, 1.0f, infinity),
+                           defaults, "an infinite sample rate");
+    // A finite but out-of-range sample rate is clamped, not defaulted.
+    expectSameCoefficients(makeCoefficients(1000.0f, 1.0f, 100.0f),
+                           makeCoefficients(1000.0f, 1.0f, 8000.0f),
+                           "a sample rate below the floor");
+    expectSameCoefficients(makeCoefficients(1000.0f, 1.0f, 2.0e6f),
+                           makeCoefficients(1000.0f, 1.0f, 768000.0f),
+                           "a sample rate above the ceiling");
+
+    // A non-finite centre frequency falls back to 1 kHz.
+    expectSameCoefficients(makeCoefficients(nan, 1.0f, 48000.0f),
+                           defaults, "a NaN centre frequency");
+    expectSameCoefficients(makeCoefficients(infinity, 1.0f, 48000.0f),
+                           defaults, "an infinite centre frequency");
+    expectSameCoefficients(makeCoefficients(5.0f, 1.0f, 48000.0f),
+                           makeCoefficients(20.0f, 1.0f, 48000.0f),
+                           "a centre frequency below the floor");
+    expectSameCoefficients(makeCoefficients(50000.0f, 1.0f, 48000.0f),
+                           makeCoefficients(0.45f * 48000.0f, 1.0f, 48000.0f),
+                           "a centre frequency above the Nyquist-derived ceiling");
+
+    // A non-finite bandwidth falls back to one octave.
+    expectSameCoefficients(makeCoefficients(1000.0f, nan, 48000.0f),
+                           defaults, "a NaN bandwidth");
+    expectSameCoefficients(makeCoefficients(1000.0f, infinity, 48000.0f),
+                           defaults, "an infinite bandwidth");
+    expectSameCoefficients(makeCoefficients(1000.0f, 0.01f, 48000.0f),
+                           makeCoefficients(1000.0f, 0.10f, 48000.0f),
+                           "a bandwidth below the floor");
+    expectSameCoefficients(makeCoefficients(1000.0f, 10.0f, 48000.0f),
+                           makeCoefficients(1000.0f, 4.0f, 48000.0f),
+                           "a bandwidth above the ceiling");
+
+    // All three guards firing at once still resolves to finite, in-range
+    // coefficients rather than compounding into NaN.
+    expectFinite(makeCoefficients(nan, nan, nan),
+                "every argument being non-finite at once");
+    expectSameCoefficients(makeCoefficients(nan, nan, nan),
+                           defaults,
+                           "every argument being non-finite at once");
 }
 
 void testRandomNeuralSeed()
@@ -3698,6 +3822,17 @@ void testModelVisualisation(const neuramar::NeuralModel& model)
                       0.5f, 0.5f) == 0.4f
                && neuramar::followMeter(0.5f, 4.0f, 1.0f, 1.0f) == 1.0f,
            "the meter follower did not honour its attack, release, and bounds");
+    // followMeter's non-finite-target sanitizer is a separate branch from the
+    // non-finite-current one exercised just above, and buildModelAnatomy never
+    // feeds it a non-finite target either, so it was otherwise unasserted.
+    expect(neuramar::followMeter(
+               0.5f, std::numeric_limits<float>::quiet_NaN(), 0.5f, 0.5f)
+                   == 0.25f,
+           "the meter follower did not sanitise a non-finite target");
+
+    // anatomyDisplayHeight's own defensive branches (non-positive/non-finite
+    // amplitude or peak, the at-or-above-peak ceiling, and the display floor)
+    // are covered directly by testHostileInputSanitizing() above.
 
     ModelAnatomy anatomy;
     neuramar::clearModelAnatomy(anatomy);
@@ -6343,7 +6478,9 @@ void testAwakenIsAFadeDuration(const neuramar::NeuralModel& model)
 int main()
 {
     testShapePreservingSpectralInterpolation();
+    testSpectralEnvelopeHostileInputs();
     testHostileInputSanitizing();
+    testAirFilterCoefficientHostileInputs();
     testCoreSpurFloor();
     testRenderIsSampleRateInvariant();
     testBodyLayersAreSampleRateInvariant();

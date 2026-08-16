@@ -163,6 +163,17 @@ float storedControlFraction(float value) noexcept
     return static_cast<float>(storedControlByte(value)) / 127.0f;
 }
 
+// The 0-1 fraction a converter destination's stored panel value maps to at
+// the physical DAC, shared by updateSharedScan, performConverterWrite and
+// passiveHoldWriteTarget alike (RESONANCE, common VCA, SUB, NOISE and PWM
+// depth all read this same conversion) rather than each of the three
+// carrying its own identical copy of the lambda.
+float converterDacFraction(float value) noexcept
+{
+    return static_cast<float>(YouKnow106Engine::storedControlDacCode(value))
+        / 4064.0f;
+}
+
 std::uint8_t portamentoAdcByte(float value) noexcept
 {
     return static_cast<std::uint8_t>(
@@ -3769,13 +3780,10 @@ float YouKnow106Engine::velocityGain(const EngineParameters& parameters,
 void YouKnow106Engine::updateSharedScan(const EngineParameters& parameters,
                                         float lfoGated) noexcept
 {
-    const auto converterFraction = [](float value) {
-        return static_cast<float>(storedControlDacCode(value)) / 4064.0f;
-    };
-    resonanceCvTarget_ = converterFraction(parameters.resonance);
-    sharedVcaTarget_ = converterFraction(parameters.vcaLevel);
-    subCvTarget_ = converterFraction(parameters.subLevel);
-    noiseCvTarget_ = converterFraction(parameters.noiseLevel);
+    resonanceCvTarget_ = converterDacFraction(parameters.resonance);
+    sharedVcaTarget_ = converterDacFraction(parameters.vcaLevel);
+    subCvTarget_ = converterDacFraction(parameters.subLevel);
+    noiseCvTarget_ = converterDacFraction(parameters.noiseLevel);
 
     if (!parameters.pulseEnabled)
     {
@@ -3786,7 +3794,7 @@ void YouKnow106Engine::updateSharedScan(const EngineParameters& parameters,
         return;
     }
 
-    float pwmAmount = converterFraction(parameters.pwmDepth);
+    float pwmAmount = converterDacFraction(parameters.pwmDepth);
     if (parameters.pwmSource == PwmSource::Lfo)
         pwmAmount *= 0.5f * (1.0f + lfoGated);
     pwmVoltsTarget_ = pwmControlVolts(clamp01(pwmAmount));
@@ -3799,9 +3807,6 @@ void YouKnow106Engine::performConverterWrite(
 #if defined(YOUKNOW106_WORK_AUDIT)
     YOUKNOW106_COUNT_DOMAIN_WORK(converterWrites, 1);
 #endif
-    const auto converterFraction = [](float value) {
-        return static_cast<float>(storedControlDacCode(value)) / 4064.0f;
-    };
     const auto validPhysicalVoice = [&write] {
         return write.voice >= 0 && write.voice < hardwareVoices;
     };
@@ -3818,17 +3823,17 @@ void YouKnow106Engine::performConverterWrite(
         case ConverterDestination::Resonance:
             resonanceCvTarget_ = passiveHoldTargetOverride != nullptr
                 ? *passiveHoldTargetOverride
-                : converterFraction(parameters.resonance);
+                : converterDacFraction(parameters.resonance);
             break;
         case ConverterDestination::CommonVca:
             sharedVcaTarget_ = passiveHoldTargetOverride != nullptr
                 ? *passiveHoldTargetOverride
-                : converterFraction(parameters.vcaLevel);
+                : converterDacFraction(parameters.vcaLevel);
             break;
         case ConverterDestination::Sub:
             subCvTarget_ = passiveHoldTargetOverride != nullptr
                 ? *passiveHoldTargetOverride
-                : converterFraction(parameters.subLevel);
+                : converterDacFraction(parameters.subLevel);
             break;
         case ConverterDestination::Pitch:
             if (validPhysicalVoice())
@@ -3859,7 +3864,7 @@ void YouKnow106Engine::performConverterWrite(
                 break;
             }
             {
-                float amount = converterFraction(parameters.pwmDepth);
+                float amount = converterDacFraction(parameters.pwmDepth);
                 if (parameters.pwmSource == PwmSource::Lfo)
                     amount *= 0.5f * (1.0f + lfoGated);
                 pwmVoltsTarget_ = pwmControlVolts(clamp01(amount));
@@ -3887,7 +3892,7 @@ void YouKnow106Engine::performConverterWrite(
             }
             break;
         case ConverterDestination::Noise:
-            noiseCvTarget_ = converterFraction(parameters.noiseLevel);
+            noiseCvTarget_ = converterDacFraction(parameters.noiseLevel);
             break;
     }
 }
@@ -3916,22 +3921,19 @@ float YouKnow106Engine::passiveHoldWriteTarget(
     const ConverterWrite& write, const EngineParameters& parameters,
     float lfoGated) const noexcept
 {
-    const auto converterFraction = [](float value) {
-        return static_cast<float>(storedControlDacCode(value)) / 4064.0f;
-    };
     switch (write.destination)
     {
         case ConverterDestination::Resonance:
-            return converterFraction(parameters.resonance);
+            return converterDacFraction(parameters.resonance);
         case ConverterDestination::CommonVca:
-            return converterFraction(parameters.vcaLevel);
+            return converterDacFraction(parameters.vcaLevel);
         case ConverterDestination::Sub:
-            return converterFraction(parameters.subLevel);
+            return converterDacFraction(parameters.subLevel);
         case ConverterDestination::Pwm:
             if (!parameters.pulseEnabled)
                 return -0.8f;
             {
-                float amount = converterFraction(parameters.pwmDepth);
+                float amount = converterDacFraction(parameters.pwmDepth);
                 if (parameters.pwmSource == PwmSource::Lfo)
                     amount *= 0.5f * (1.0f + lfoGated);
                 return pwmControlVolts(clamp01(amount));
@@ -4320,6 +4322,16 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // corner joins two segments of one cycle, and the wrap joins the old
     // cycle's fall to the new cycle's rise -- the one place the ratio is
     // allowed to change, because both waveforms sit on the shared rail there.
+    // Every wrap inside this sample lands on the same voice.dcoCv,
+    // voice.dcoCvTarget and voice.dco.periodSamples -- nothing this loop
+    // touches feeds back into them -- so dcoLaunchScale resolves to the same
+    // value at every wrap crossed here. An ordinary sample crosses at most
+    // one, but a note fast enough to outrun the sample clock can cross dozens
+    // in a row; solved lazily on the first wrap and cached, it is neither
+    // paid for on the (overwhelmingly common) no-wrap sample nor re-derived
+    // on every wrap after the first.
+    bool launchScaleResolved = false;
+    float launchScale = 0.0f;
     float cycleScale = dco.renderScale;
     for (double base = 0.0; base <= lastCycle; base += 1.0)
     {
@@ -4331,7 +4343,11 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
 #if defined(YOUKNOW106_WORK_AUDIT)
             YOUKNOW106_COUNT_DOMAIN_WORK(dcoCycleWraps, 1);
 #endif
-            const float launchScale = dcoLaunchScale(voice);
+            if (!launchScaleResolved)
+            {
+                launchScale = dcoLaunchScale(voice);
+                launchScaleResolved = true;
+            }
             addSlope(dco.saw,
                      (slopeAtStart * launchScale
                       - fallSlope * cycleScale) * incrementF,

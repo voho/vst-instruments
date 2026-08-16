@@ -348,6 +348,18 @@ private:
     // a source whose partials all decayed at the same rate fits zero and keeps
     // the frequency-independent release every earlier build had.
     float dampingExponent_ { 0.0f };
+    // Indices of the Bone modes the analysis could vouch for, in ascending
+    // order, resolved once per model by setModel() rather than re-tested on
+    // every sample of every sounding voice. A mode's reliability is a
+    // property of the published model alone (model->boneModeReliabilities_ is
+    // fixed for as long as it stays loaded), so process()'s per-sample Bone
+    // loop can walk this list directly instead of scanning all
+    // NeuralModel::boneModeCount candidates and branching past every
+    // unreliable one - a struck body rarely vouches for more than a handful
+    // of the twelve. Walking the modes in the same ascending order the full
+    // scan always used keeps the accumulated Bone sample bit-identical.
+    std::array<std::uint8_t, NeuralModel::boneModeCount> reliableBoneModes_ {};
+    std::size_t reliableBoneModeCount_ { 0 };
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };
     // Core anti-alias fade constants for coreNyquistGain(), precomputed so the

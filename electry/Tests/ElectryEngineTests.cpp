@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -2910,6 +2911,114 @@ void testStringAllocationAndPolyphony()
            "restruck note did not reuse its string");
     expect(TestAccess::stringForNote(engine, 45) == firstString,
            "restruck note moved to another string");
+}
+
+// chooseString()'s steal branch (all eight strings already sounding) was
+// only ever exercised for the voice count staying at eight; the tie-break
+// policy itself - a releasing voice always outranks a held one, and among
+// voices of equal status the one that has been sounding the longest goes
+// first - had no direct coverage.
+void testVoiceStealingPriority()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    engine.setParameters(EngineParameters {});
+
+    // Drop-E open notes for strings 0..7, struck in that order so string 2
+    // (E2, fret 22) is the oldest of the strings that can reach MIDI note 62
+    // within the 22-fret range (frets 34/27/22/17/12/7/3/-2 respectively -
+    // only strings 2 through 6 qualify).
+    constexpr std::array<int, ElectryEngine::stringCount> openNotes {
+        28, 35, 40, 45, 50, 55, 59, 64
+    };
+
+    // With every string held and none releasing, the steal must fall to the
+    // oldest of the reachable strings.
+    engine.reset();
+    for (const int note : openNotes)
+        engine.noteOn(note, 0.8f);
+    engine.noteOn(62, 0.8f);
+    expect(engine.getActiveVoiceCount() == ElectryEngine::stringCount,
+           "stealing a held voice changed the active voice count");
+    expect(TestAccess::stringForNote(engine, 62) == 2,
+           "steal did not choose the oldest of the reachable held strings");
+    expect(TestAccess::stringForNote(engine, 40) == -1,
+           "the stolen string still reports its original note as active");
+
+    // Releasing a younger reachable string (5, not the oldest) must steal
+    // that one instead: a releasing voice outranks every held voice
+    // regardless of how long either has been sounding.
+    engine.reset();
+    for (const int note : openNotes)
+        engine.noteOn(note, 0.8f);
+    engine.noteOff(55); // string 5: keyDown false, releasing, still active
+    engine.noteOn(62, 0.8f);
+    expect(engine.getActiveVoiceCount() == ElectryEngine::stringCount,
+           "stealing a releasing voice changed the active voice count");
+    expect(TestAccess::stringForNote(engine, 62) == 5,
+           "steal preferred an older held string over a releasing one");
+}
+
+// noteOn()'s velocity guard - `clampf(std::isfinite(velocity) ? velocity :
+// 0.0f, 0.0f, 1.0f)` - was only ever fed ordinary in-range velocities
+// elsewhere in the suite; nothing asserted that a non-finite or negative
+// velocity is folded down to silence, or that a velocity above 1.0 clamps
+// to 1.0 rather than being rejected or left unclamped.
+void testNoteOnVelocitySanitisation()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    engine.setParameters(EngineParameters {});
+
+    // NaN and infinities fail std::isfinite and fall back to 0.0f; a
+    // negative velocity clamps to 0.0f. Either way the following
+    // `velocity <= 0.0f` gate in noteOn() then starts no voice at all.
+    const auto expectNoVoiceStarted = [&] (float velocity, const char* label)
+    {
+        engine.reset();
+        engine.noteOn(45, velocity);
+        expect(engine.getActiveVoiceCount() == 0,
+               std::string("noteOn started a voice for a ") + label
+                   + " velocity");
+    };
+    expectNoVoiceStarted(std::nanf(""), "NaN");
+    expectNoVoiceStarted(std::numeric_limits<float>::infinity(),
+                          "positive-infinite");
+    expectNoVoiceStarted(-std::numeric_limits<float>::infinity(),
+                          "negative-infinite");
+    expectNoVoiceStarted(-0.4f, "negative");
+
+    // A finite velocity above 1.0 clamps to exactly 1.0 rather than being
+    // rejected or driving the excitation harder than a full-velocity note
+    // would: every downstream use (makeVelocityProfile and its callers)
+    // only ever sees the value noteOn() itself already clamped, so the two
+    // renders must be bit-identical.
+    ElectryEngine reference;
+    reference.prepare(sampleRate, 512);
+    reference.setParameters(EngineParameters {});
+    const auto inRange = renderNote(reference, sampleRate, 45, 1.0f,
+                                     PlayStyle::Sustain, 0.5);
+
+    ElectryEngine overshoot;
+    overshoot.prepare(sampleRate, 512);
+    overshoot.setParameters(EngineParameters {});
+    const auto outOfRange = renderNote(overshoot, sampleRate, 45, 5.0f,
+                                        PlayStyle::Sustain, 0.5);
+
+    bool identical = true;
+    for (std::size_t i = 0; i < inRange.left.size(); ++i)
+        if (inRange.left[i] != outOfRange.left[i]
+            || inRange.right[i] != outOfRange.right[i])
+        {
+            identical = false;
+            break;
+        }
+    expect(identical,
+           "a velocity above 1.0 was not clamped to the same render as 1.0");
+    expect(peakAbs(inRange.left) > 1.0e-4f,
+           "velocity clamp fixture rendered silence");
 }
 
 // The natural harmonic is a finger resting on a node, not a transposition.
@@ -6083,6 +6192,71 @@ void testVisualStateAndGeometry()
                "a reset engine still reported a sounding string");
 }
 
+// The editor reads these helpers directly off the lock-free audio-to-editor
+// transfer, so a non-finite or out-of-range value has to be recovered here
+// rather than upstream: `testVisualStateAndGeometry` above exercises every
+// helper's ordinary range and only `meterBallistics`' non-finite `current`
+// guard, leaving `levelHeat`'s own guard, `meterBallistics`' non-finite
+// `target` guard, and `packStringVisual`'s non-finite level and out-of-range
+// note/fret/playStyle clamps unexercised by any existing test.
+void testVisualStateSanitizesNonFiniteInput()
+{
+    namespace visuals = electry::visuals;
+    constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+    constexpr float inf = std::numeric_limits<float>::infinity();
+
+    expect(visuals::levelHeat(nan) == 0.0f,
+           "levelHeat did not recover from a non-finite level");
+    expect(visuals::levelHeat(inf) == 0.0f,
+           "levelHeat did not recover from a positive-infinite level");
+    expect(visuals::levelHeat(-inf) == 0.0f,
+           "levelHeat did not recover from a negative-infinite level");
+
+    // A non-finite target has to sanitize to zero, exactly like a non-finite
+    // current does above: with current already at rest, a NaN target must
+    // leave the meter at rest rather than latching NaN into the display.
+    expect(visuals::meterBallistics(0.0f, nan, 0.5f, 0.5f) == 0.0f,
+           "meterBallistics did not recover from a non-finite target");
+    // With current above the sanitized zero target, the non-finite target
+    // takes the release branch and the reading has to fall rather than hold
+    // or grow, so a poisoned target cannot freeze the display at a stale
+    // level.
+    const float releasing = visuals::meterBallistics(1.0f, inf, 0.4f, 0.4f);
+    expect(releasing < 1.0f && releasing >= 0.0f,
+           "meterBallistics did not release toward zero for a non-finite target");
+
+    // packStringVisual's own guards: a non-finite level packs to silent
+    // rather than propagating NaN through the lock-free word, and a
+    // wildly out-of-range note, fret or play style clamps to the nearest
+    // valid value instead of wrapping into an unrelated field via the
+    // packed word's bit layout.
+    electry::StringVisualState poisoned;
+    poisoned.midiNote = 4000;
+    poisoned.fret = -900;
+    poisoned.level = nan;
+    poisoned.playStyle = static_cast<PlayStyle>(999);
+    const auto packed = visuals::packStringVisual(poisoned);
+    const auto round = visuals::unpackStringVisual(packed);
+    expect(round.midiNote == 127,
+           "packStringVisual did not clamp an out-of-range high note");
+    expect(round.fret == -1,
+           "packStringVisual did not clamp an out-of-range low fret");
+    expect(round.level == 0.0f,
+           "packStringVisual did not sanitize a non-finite level");
+    expect(round.playStyle == PlayStyle::Dead,
+           "packStringVisual did not clamp an out-of-range play style");
+
+    electry::StringVisualState poisonedLow;
+    poisonedLow.midiNote = -900;
+    poisonedLow.fret = 900;
+    const auto roundLow = visuals::unpackStringVisual(
+        visuals::packStringVisual(poisonedLow));
+    expect(roundLow.midiNote == -1,
+           "packStringVisual did not clamp an out-of-range low note");
+    expect(roundLow.fret == ElectryEngine::fretCount,
+           "packStringVisual did not clamp an out-of-range high fret");
+}
+
 // ---------------------------------------------------------------------------
 // Version 1.1: the paths the efficiency work depends on
 // ---------------------------------------------------------------------------
@@ -7393,6 +7567,8 @@ int main()
     testMaterialAndControlAudibility();
     testNoiseComponentsAndSilence();
     testStringAllocationAndPolyphony();
+    testVoiceStealingPriority();
+    testNoteOnVelocitySanitisation();
     testFrettingHandPosition();
     testTouchHarmonics();
     testPinchHarmonic();
@@ -7415,6 +7591,7 @@ int main()
     testHandDipNeverExpands();
     testLowRegisterFundamentalWeight();
     testVisualStateAndGeometry();
+    testVisualStateSanitizesNonFiniteInput();
     testPickupCullingAndChannelLinking();
     testIdleFreezeAndDenormalSafety();
     testDecayIsSampleRateInvariant();
