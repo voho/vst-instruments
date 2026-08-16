@@ -5093,12 +5093,27 @@ void testPushAcousticReturnSanitisation()
                        "ring's stored samples");
     };
 
-    engine.pushAcousticReturn(nullptr, nullptr, 128);
-    expectRingUnchanged("a null buffer");
+    // A valid right buffer here pins the guard to left == nullptr
+    // specifically: a guard accidentally narrowed to
+    // "left == nullptr && right == nullptr" would fall through and
+    // dereference the null left pointer in the averaging loop instead of
+    // leaving the ring untouched.
+    std::array<float, 4> ignoredByNullLeft { 0.3f, -0.3f, 0.6f, -0.6f };
+    engine.pushAcousticReturn(nullptr, ignoredByNullLeft.data(),
+                              static_cast<int>(ignoredByNullLeft.size()));
+    expectRingUnchanged("a null left pointer with a valid right buffer");
 
     std::array<float, 4> ignoredByNegativeCount { 9.0f, 9.0f, 9.0f, 9.0f };
     engine.pushAcousticReturn(ignoredByNegativeCount.data(), nullptr, -3);
-    expectRingUnchanged("a non-positive sample count");
+    expectRingUnchanged("a negative sample count");
+
+    // Zero is checked separately from negative: a guard narrowed from
+    // numSamples <= 0 to numSamples < 0 would let a zero count fall through
+    // to the stale-ring-clearing block and discard this populated ring
+    // before the (no-op) write loop runs.
+    std::array<float, 4> ignoredByZeroCount { 9.0f, 9.0f, 9.0f, 9.0f };
+    engine.pushAcousticReturn(ignoredByZeroCount.data(), nullptr, 0);
+    expectRingUnchanged("a zero sample count");
 
     // A non-finite averaged sample folds to zero rather than propagating,
     // whichever channel it came from.
