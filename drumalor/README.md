@@ -1453,3 +1453,9 @@ JUCE's official licence.
 
 No drum samples, impulse responses, neural model weights, factory ROMs, or
 third-party presets are included.
+
+## Changelog
+
+- 2026-08-16: Added direct regression coverage for `mix()` and `smoothStep()`'s
+  non-finite-input sanitizing, matching the guard already proved for
+  `meterPositionForLinear` and `MeterBallistics::update`.

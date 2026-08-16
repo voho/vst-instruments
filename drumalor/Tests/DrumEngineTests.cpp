@@ -5223,6 +5223,14 @@ void testUiPresentationMath()
     expect (mix (0.0f, 10.0f, 0.25f) == 2.5f, "mix did not interpolate");
     expect (mix (0.0f, 10.0f, -3.0f) == 0.0f && mix (0.0f, 10.0f, 4.0f) == 10.0f,
             "mix did not clamp its amount");
+    // The reduction meter feeds mix() a fresh target every update, so a host
+    // that ever hands the editor a non-finite bus gain must not latch a NaN
+    // into the ramp forever - the same guard meterPositionForLinear and
+    // MeterBallistics::update are proved to have above.
+    const auto nan = std::numeric_limits<float>::quiet_NaN();
+    expect (mix (nan, 10.0f, 0.5f) == 5.0f, "mix did not sanitize a non-finite start");
+    expect (mix (0.0f, nan, 0.5f) == 0.0f, "mix did not sanitize a non-finite end");
+    expect (mix (0.0f, 10.0f, nan) == 0.0f, "mix did not sanitize a non-finite amount");
     expect (smoothStep (0.0f, 1.0f, 0.0f) == 0.0f
                 && smoothStep (0.0f, 1.0f, 1.0f) == 1.0f
                 && std::abs (smoothStep (0.0f, 1.0f, 0.5f) - 0.5f) < 1.0e-6f,
@@ -5230,6 +5238,10 @@ void testUiPresentationMath()
     expect (smoothStep (0.5f, 0.5f, 0.6f) == 1.0f
                 && smoothStep (0.5f, 0.5f, 0.4f) == 0.0f,
             "smoothStep did not handle a zero-width edge");
+    expect (std::abs (smoothStep (nan, 1.0f, 0.5f) - 0.5f) < 1.0e-6f
+                && std::abs (smoothStep (0.0f, nan, 0.5f) - 0.5f) < 1.0e-6f
+                && smoothStep (0.0f, 1.0f, nan) == 0.0f,
+            "smoothStep did not sanitize non-finite input");
 }
 
 void testIdleMetallicCostAndDenormalSafety()
