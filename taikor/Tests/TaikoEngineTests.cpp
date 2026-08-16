@@ -6962,6 +6962,8 @@ void testUiPresentationMath()
     expect (smoothStep (0.0f, 1.0f, -1.0f) == 0.0f, "smoothStep must clamp low");
     expect (smoothStep (0.0f, 1.0f, 2.0f) == 1.0f, "smoothStep must clamp high");
     expect (smoothStep (1.0f, 1.0f, 2.0f) == 1.0f, "smoothStep must handle a zero span");
+    expect (smoothStep (1.0f, 1.0f, 0.5f) == 0.0f,
+            "a zero span must also fall to zero below its collapsed edge, not just clamp above it");
     expect (clamp (std::numeric_limits<float>::quiet_NaN(), 0.0f, 1.0f) == 0.0f,
             "clamp must reject NaN");
 }
