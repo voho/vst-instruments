@@ -2923,6 +2923,48 @@ private:
     double gain_ = 1.0;
 };
 
+void testChorusRateProportionalNoiseGainMatchesTheDerivedRatio()
+{
+    // `Chorus::rateProportionalNoiseGain` is the causal alternative to the
+    // empirical 3.95 dB mode-II calibration: process() substitutes it whole
+    // rather than multiplying the two, and its header comment states its
+    // exact contract -- it "predicts exactly 20*log10(modeRateRatio())". No
+    // test called this public static function directly before now; the only
+    // existing coverage (testChorusNoiseProfilesReproduceTheMeasuredModeDelta
+    // in the engine suite) measures the resulting audio energy through a full
+    // engine render across a whole modulation cycle, which is close enough to
+    // catch a badly broken hypothesis but cannot distinguish "close to the
+    // formula" from "exactly the formula" the way a direct call can.
+    const auto one = Chorus::settingsFor(ChorusMode::One);
+    const auto two = Chorus::settingsFor(ChorusMode::Two);
+
+    // Mode I is the reference leg: process() documents that both noise
+    // profiles "reference mode I and therefore preserve its established floor
+    // exactly", so its own rate must map to exactly unity gain, not merely
+    // something close to it.
+    expectNear(Chorus::rateProportionalNoiseGain(one.rateHz), 1.0, 1.0e-9,
+               "mode I's own rate did not stay the hypothesis's unity "
+               "reference");
+    expectNear(Chorus::rateProportionalNoiseGain(two.rateHz),
+               Chorus::modeRateRatio(), 1.0e-6,
+               "mode II's rate-proportional gain no longer carries the "
+               "schematic's own mode-rate ratio");
+
+    // The function is a public static entry point that process() always
+    // calls with a positive, finite rate -- but nothing stops another caller
+    // from passing it something else, and the implementation's own guard
+    // exists precisely to fall back to unity rather than dividing by, or
+    // returning, something non-finite. None of these three inputs reach the
+    // guard through process(), so it had no direct coverage of its own.
+    expect(Chorus::rateProportionalNoiseGain(0.0f) == 1.0f,
+           "a zero rate did not fall back to unity gain");
+    expect(Chorus::rateProportionalNoiseGain(-1.0f) == 1.0f,
+           "a negative rate did not fall back to unity gain");
+    expect(Chorus::rateProportionalNoiseGain(
+               std::numeric_limits<float>::quiet_NaN()) == 1.0f,
+           "a NaN rate did not fall back to unity gain");
+}
+
 void testChorusLineNoiseMatchesTheMn3009NoiseRow()
 {
     // The MN3009's noise row is 0.2 mVrms max, A-weighted, from the same
@@ -5210,6 +5252,7 @@ int main()
     testComparatorEdgesSitOnOneThreshold();
     testChorusIsAtItsSettingFromTheFirstSample();
     testJuno60FallbackBucketBrigadeTiming();
+    testChorusRateProportionalNoiseGainMatchesTheDerivedRatio();
     testChorusLineNoiseMatchesTheMn3009NoiseRow();
     testChorusNoiseComponents();
     testChorusBypassStateAndWetMuteTiming();
