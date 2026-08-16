@@ -8529,6 +8529,25 @@ void testJustIntonation()
                 && vocalor::justIntonationOffsetCents (-12) == 0.0f,
             "the octave is not left alone by the intonation table");
 
+    // A releasing bass voice reaches justIntonationOffsetCents() with a
+    // genuinely negative, non-octave argument: noteOff() begins releasing the
+    // departing root's voices and then calls updateIntonationRoot(), which
+    // excludes releasing voices from its search, so a held chord's reference
+    // can jump to a higher note while the old root's voice is still fading
+    // out on `voice.midiNote - intonationRoot_` (VoiceEngine.cpp). Every case
+    // above is either non-negative or an exact multiple of 12, so the
+    // pitch-class wrap `((semitonesAboveRoot % 12) + 12) % 12` was never
+    // itself exercised with a negative, non-octave input. C++'s `%` keeps the
+    // sign of its left operand, so a naive `semitonesAboveRoot % 12` would
+    // return -1 for -13 rather than wrapping onto the 11 pitch class the
+    // table expects.
+    expect (vocalor::justIntonationOffsetCents (-1) == vocalor::justIntonationOffsetCents (11)
+                && vocalor::justIntonationOffsetCents (-5) == vocalor::justIntonationOffsetCents (7)
+                && vocalor::justIntonationOffsetCents (-7) == vocalor::justIntonationOffsetCents (5)
+                && vocalor::justIntonationOffsetCents (-13) == vocalor::justIntonationOffsetCents (11)
+                && vocalor::justIntonationOffsetCents (-24) == vocalor::justIntonationOffsetCents (0),
+            "a negative semitone offset did not wrap onto the same pitch class as its positive equivalent");
+
     const auto intervalCents = [] (float lower, float upper)
     {
         return 1200.0 * std::log2 (static_cast<double> (upper)
