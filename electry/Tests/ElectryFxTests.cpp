@@ -1013,13 +1013,13 @@ void testPrepareSanitisesSampleRate()
         return FxAccess::sampleRate(fx);
     };
 
-    expect(sanitisedRate(std::nan("")) == sanitisedRate(48000.0),
+    expect(sanitisedRate(std::nan("")) == 48000.0,
            "a NaN sample rate did not fall back to the 48 kHz default");
-    expect(sanitisedRate(1.0e9) == sanitisedRate(maximumSupportedSampleRate),
+    expect(sanitisedRate(1.0e9) == maximumSupportedSampleRate,
            "a sample rate above the ceiling was not clamped to it");
-    expect(sanitisedRate(1.0) == sanitisedRate(minimumSupportedSampleRate),
+    expect(sanitisedRate(1.0) == minimumSupportedSampleRate,
            "a sample rate below the floor was not clamped to it");
-    expect(sanitisedRate(-48000.0) == sanitisedRate(minimumSupportedSampleRate),
+    expect(sanitisedRate(-48000.0) == minimumSupportedSampleRate,
            "a negative sample rate was not clamped to the floor");
 
     // The sanitised scalar is what every other rate-derived constant in
