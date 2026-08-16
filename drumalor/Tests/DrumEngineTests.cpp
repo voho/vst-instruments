@@ -1343,6 +1343,77 @@ void testDeterminismAndBlockPartitioning()
             "staggered organic hit sequence changed with process block partitioning");
 }
 
+// process() early-returns for a non-positive sample count before it does
+// anything else - including advancing engineSamples_, the free-running
+// metallic phase, and the sympathetic beds - but every other block-
+// partitioning contract in this suite only ever calls it with a positive
+// count, so the guard itself had never been exercised. It is not only a
+// no-op: engineSamples_ is a uint64_t and the line just past the guard adds
+// numSamples to it after an unsigned cast, so a negative count reaching that
+// line would wrap the engine's own elapsed-time clock instead of leaving it
+// alone, corrupting every later decision that clock feeds (metallic bank
+// freeze/wake, sympathetic-bed timing, tail retirement deadlines).
+void testProcessIgnoresNonPositiveSampleCounts()
+{
+    constexpr int samples = 24000;
+    drumalor::DrumEngine reference;
+    drumalor::DrumEngine probed;
+    reference.prepare (48000.0, 512);
+    probed.prepare (48000.0, 512);
+    for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
+    {
+        const auto instrument = static_cast<drumalor::Instrument> (index);
+        reference.trigger (instrument, 0.4f + 0.03f * static_cast<float> (index));
+        probed.trigger (instrument, 0.4f + 0.03f * static_cast<float> (index));
+    }
+
+    // A zero block and two negative ones, dropped into the probed engine
+    // before it renders anything. The buffers are pre-poisoned so a write
+    // through them - which the guard must prevent - is also caught.
+    std::array<float, 8> scratchLeft;
+    std::array<float, 8> scratchRight;
+    scratchLeft.fill (-1.0f);
+    scratchRight.fill (-1.0f);
+    probed.process (scratchLeft.data(), scratchRight.data(), 0);
+    probed.process (scratchLeft.data(), scratchRight.data(), -1);
+    probed.process (scratchLeft.data(), scratchRight.data(), -4096);
+    expect (scratchLeft[0] == -1.0f && scratchRight[0] == -1.0f,
+            "a non-positive sample count wrote into the caller's buffer");
+
+    const auto referenceAudio = renderInterleaved (reference, samples, 383);
+    const auto probedAudio = renderInterleaved (probed, samples, 383);
+    expect (referenceAudio == probedAudio,
+            "a non-positive sample count changed subsequently rendered audio");
+
+    // The same probe again, but interspersed through an otherwise identical
+    // staggered sequence, so the guard is proven against the timing state
+    // the metallic banks and sympathetic beds carry between calls rather
+    // than only against a freshly prepared engine.
+    drumalor::DrumEngine staggeredReference;
+    drumalor::DrumEngine staggeredProbed;
+    staggeredReference.prepare (48000.0, 512);
+    staggeredProbed.prepare (48000.0, 512);
+    constexpr int spacingSamples = 997;
+    std::vector<float> referenceSequence;
+    std::vector<float> probedSequence;
+    for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
+    {
+        const auto instrument = static_cast<drumalor::Instrument> (index);
+        staggeredReference.trigger (instrument, 0.6f);
+        staggeredProbed.trigger (instrument, 0.6f);
+        auto referenceSegment = renderInterleaved (staggeredReference, spacingSamples, 383);
+        staggeredProbed.process (scratchLeft.data(), scratchRight.data(), 0);
+        staggeredProbed.process (scratchLeft.data(), scratchRight.data(), -3);
+        auto probedSegment = renderInterleaved (staggeredProbed, spacingSamples, 383);
+        referenceSequence.insert (referenceSequence.end(),
+                                  referenceSegment.begin(), referenceSegment.end());
+        probedSequence.insert (probedSequence.end(),
+                               probedSegment.begin(), probedSegment.end());
+    }
+    expect (referenceSequence == probedSequence,
+            "a non-positive sample count between staggered hits changed the render");
+}
+
 void testFreeRunningMetallicOscillators()
 {
     constexpr int renderedSamples = 2048;
@@ -5881,6 +5952,7 @@ int main()
     testTailsTerminate();
     testHatChokeAndPanic();
     testDeterminismAndBlockPartitioning();
+    testProcessIgnoresNonPositiveSampleCounts();
     testFreeRunningMetallicOscillators();
     testPersistentMetallicParameterUpdates();
     testOrganicAnalogVariation();
