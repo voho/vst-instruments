@@ -1071,6 +1071,14 @@ private:
     };
     [[nodiscard]] static MembraneModeOmegas membraneModeOmegas (
         const DrumState& drum, float radius, float lambda, float order) noexcept;
+    // Starts a fresh Mode at a solved omega/frequency/decay: the four fields
+    // that every kind of mode - axisymmetric, circumferential and shell - sets
+    // identically the moment it is built, before going on to its own drive,
+    // observation and physical-index fields. buildVoiceModes's three separate
+    // loops each wrote these four lines out by hand, so it is done once here
+    // rather than as three copies that could drift apart.
+    static void beginMode (Mode& mode, float omega, float frequency,
+                           float decay) noexcept;
     // An axisymmetric mode's symmetrised two-by-two - diagonalB, diagonalR and
     // offDiagonal in the w = sqrt(sigma) q coordinates solveAxisymmetricBranch
     // expects - for a given cavity stiffness against that mode's own
