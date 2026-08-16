@@ -381,6 +381,71 @@ void testParameterMessages()
                    + std::to_string(index));
 }
 
+// Every entry point that takes a raw pointer or an output buffer is called
+// from a plug-in whose host has already handed it whatever bytes arrived on
+// the wire, so "nothing there" and "not enough room" are ordinary inputs, not
+// programmer errors. None of these had direct coverage: the framing tests
+// above exercise malformed *content*, never a null pointer or a buffer one
+// byte short of what the format needs.
+void testDefensiveNullAndCapacityGuards()
+{
+    // A null tone-byte pointer decodes to the same patch a default-constructed
+    // one would; the guard must not read through it first.
+    const auto fromNull = patchFromToneBytes(nullptr);
+    expect(bytesOf(fromNull) == bytesOf(Patch {}),
+           "a null tone-byte pointer did not decode to the default patch");
+
+    // A null output pointer must not be written through.
+    toneBytesFromPatch(Patch {}, nullptr);
+
+    Patch patch {};
+    patch.chorus = ChorusMode::One;
+
+    std::array<std::uint8_t, patchMessageBytes> patchBuffer {};
+    patchBuffer.fill(0xaa);
+    expect(writePatchMessage(patch, 1, nullptr, patchBuffer.size()) == 0,
+           "a null patch-message output pointer was accepted");
+    expect(writePatchMessage(patch, 1, patchBuffer.data(),
+                             patchBuffer.size() - 1) == 0,
+           "a patch-message buffer one byte short of the format was accepted");
+    expect(patchBuffer[0] == 0xaa,
+           "a refused patch-message write touched the caller's buffer");
+
+    std::array<std::uint8_t, parameterMessageBytes> parameterBuffer {};
+    parameterBuffer.fill(0xaa);
+    expect(writeParameterMessage(0, 0, 1, nullptr, parameterBuffer.size()) == 0,
+           "a null parameter-message output pointer was accepted");
+    expect(writeParameterMessage(0, 0, 1, parameterBuffer.data(),
+                                 parameterBuffer.size() - 1) == 0,
+           "a parameter-message buffer one byte short of the format was "
+           "accepted");
+    expect(parameterBuffer[0] == 0xaa,
+           "a refused parameter-message write touched the caller's buffer");
+
+    // A null input pointer must be refused the same way a malformed body is,
+    // and must leave the caller's outputs untouched.
+    Patch untouchedPatch {};
+    untouchedPatch.cutoff = 0.25f;
+    int untouchedChannel = -1;
+    expect(!readPatchMessage(nullptr, patchBuffer.size(), untouchedPatch,
+                             untouchedChannel),
+           "a null patch-message pointer was accepted");
+    expectNear(untouchedPatch.cutoff, 0.25, 1.0e-9,
+               "a refused null patch-message read modified the patch");
+    expect(untouchedChannel == -1,
+           "a refused null patch-message read modified the channel");
+
+    int untouchedParameter = -1, untouchedValue = -1;
+    untouchedChannel = -1;
+    expect(!readParameterMessage(nullptr, parameterBuffer.size(),
+                                 untouchedParameter, untouchedValue,
+                                 untouchedChannel),
+           "a null parameter-message pointer was accepted");
+    expect(untouchedParameter == -1 && untouchedValue == -1
+               && untouchedChannel == -1,
+           "a refused null parameter-message read modified its outputs");
+}
+
 // A single switch byte must move only the fields that byte encodes. Decoding it
 // by round-tripping the whole patch would quantise all sixteen continuous
 // controls to seven bits as a side effect, and would drop an unstorable I+II
@@ -563,6 +628,7 @@ int main()
     testTheUnstorableChorusSettingIsReportedRatherThanHidden();
     testPatchMessageFraming();
     testParameterMessages();
+    testDefensiveNullAndCapacityGuards();
     testASwitchByteLeavesEverythingElseAlone();
     testFactoryBankIsWellFormed();
 
