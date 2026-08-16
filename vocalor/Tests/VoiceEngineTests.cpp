@@ -8687,6 +8687,30 @@ void testPerformanceExpression()
     }
     expect (monotonic, "the dynamic level is not monotonic in its control");
 
+    // dynamicResponse() clamps its input the same way every other 0..1 knob in
+    // this file does, but that clamp itself was only ever exercised at 0 and 1;
+    // a value outside the knob's own travel, and a non-finite one, have to
+    // resolve to the same endpoints rather than extrapolating the curve or
+    // propagating a NaN into the source.
+    const auto belowRange = vocalor::dynamicResponse (-5.0f);
+    expect (belowRange.voicedGain == empty.voicedGain && belowRange.airGain == empty.airGain
+                && belowRange.effortScale == empty.effortScale
+                && belowRange.sourceTensionScale == empty.sourceTensionScale
+                && belowRange.vibratoScale == empty.vibratoScale,
+            "a dynamics value below the knob's own range was not clamped to the empty response");
+    const auto aboveRange = vocalor::dynamicResponse (2.0f);
+    expect (aboveRange.voicedGain == full.voicedGain && aboveRange.airGain == full.airGain
+                && aboveRange.effortScale == full.effortScale
+                && aboveRange.sourceTensionScale == full.sourceTensionScale
+                && aboveRange.vibratoScale == full.vibratoScale,
+            "a dynamics value above the knob's own range was not clamped to the full response");
+    const auto nonFinite = vocalor::dynamicResponse (std::numeric_limits<float>::quiet_NaN());
+    expect (nonFinite.voicedGain == empty.voicedGain && nonFinite.airGain == empty.airGain
+                && nonFinite.effortScale == empty.effortScale
+                && nonFinite.sourceTensionScale == empty.sourceTensionScale
+                && nonFinite.vibratoScale == empty.vibratoScale,
+            "a non-finite dynamics value was not treated as the empty response");
+
     // A soft note has to be duller, not merely quieter.
     const auto spectrumAt = [] (float dynamics)
     {
