@@ -563,6 +563,39 @@ struct YouKnow106TestAccess
             engine.noiseSourceLowPassG_, 1.0f, 0.0f);
     }
 
+    // HighPass::process's own non-finite-state guard: every one of the
+    // engine's HighPass instances (voiceBusCoupling_, highPass_,
+    // commonVcaInputCoupling_, both output-coupling filters, each voice's
+    // moduleCoupling/vcaInputCoupling, and noiseSourceHighPass_) starts at
+    // state 0.0 and is only ever updated by the filter's own finite
+    // arithmetic, so the guard has never actually fired outside a test.
+    // Build a standalone filter with a poisoned state and call process()
+    // directly rather than relying on an upstream sanitiser that does not
+    // know this guard exists.
+    static double highPassStateAfterProcess(
+        double state, float input, float g, float shelfGain,
+        float highGain) noexcept
+    {
+        YouKnow106Engine::HighPass filter;
+        filter.state = state;
+        filter.process(input, g, shelfGain, highGain);
+        return filter.state;
+    }
+
+    // One poisoned call followed by one ordinary call on the *same* filter
+    // object, so the second call's output depends on whether the guard
+    // actually healed the state left behind by the first rather than on a
+    // freshly reconstructed filter that was never poisoned to begin with.
+    static float highPassOutputAfterPoisonedCallHeals(
+        double poisonedState, float input, float g, float shelfGain,
+        float highGain) noexcept
+    {
+        YouKnow106Engine::HighPass filter;
+        filter.state = poisonedState;
+        filter.process(input, g, shelfGain, highGain);
+        return filter.process(input, g, shelfGain, highGain);
+    }
+
     static void forceNoiseSourceProcessingQuality(
         YouKnow106Engine& engine, bool enabled) noexcept
     {
@@ -4229,6 +4262,42 @@ void testHighPassReachesTheSummedSignal()
            "the high-pass cuts a high note as hard as a low one");
 }
 
+void testHighPassStateGuardSelfHeals()
+{
+    // Nothing that feeds any of the engine's HighPass instances today can
+    // hand one a non-finite state, since each starts at 0.0 and is only ever
+    // updated by the filter's own finite arithmetic, so this branch has
+    // never fired outside a test. Poison the state directly and confirm it
+    // lands on the documented fallback of 0.0.
+    const float g = 0.5f;
+    expect(YouKnow106TestAccess::highPassStateAfterProcess(
+               std::numeric_limits<double>::quiet_NaN(), 1.0f, g, 0.0f, 1.0f)
+               == 0.0,
+           "HighPass::process did not reset a NaN state to 0.0");
+    expect(YouKnow106TestAccess::highPassStateAfterProcess(
+               std::numeric_limits<double>::infinity(), 1.0f, g, 0.0f, 1.0f)
+               == 0.0,
+           "HighPass::process did not reset a positive-infinite state to 0.0");
+    expect(YouKnow106TestAccess::highPassStateAfterProcess(
+               -std::numeric_limits<double>::infinity(), 1.0f, g, 0.0f, 1.0f)
+               == 0.0,
+           "HighPass::process did not reset a negative-infinite state to 0.0");
+
+    // The healed state has to let the filter recover, not just stop the
+    // member itself from being NaN forever: the *next* call on the same
+    // object, after the poisoned one, must return a normal, finite output
+    // rather than continuing to propagate the poison through `low`/`high`
+    // indefinitely. (The poisoning call's own output is deliberately left
+    // unspecified here -- a future change that also sanitizes it would be
+    // strictly safer, not a regression.)
+    const float recovered =
+        YouKnow106TestAccess::highPassOutputAfterPoisonedCallHeals(
+            std::numeric_limits<double>::quiet_NaN(), 1.0f, g, 0.0f, 1.0f);
+    expect(std::isfinite(recovered),
+           "HighPass::process did not recover a finite output on the call "
+           "after its state healed");
+}
+
 void testNoiseSourceShapingFollowsItsCircuit()
 {
     // Module board p. 13: the shared noise source is band-shaped by its own
@@ -5275,6 +5344,7 @@ int main()
     testCombinedBbdSupportTransitionAndStateSafety();
     testSupportFilterCornersLandWhereAsked();
     testHighPassReachesTheSummedSignal();
+    testHighPassStateGuardSelfHeals();
     testNoiseSourceShapingFollowsItsCircuit();
     testNoiseSourceLowRateSafetyAndStateSemantics();
     testCorrectionResidualsVanishAtTheEdges();
