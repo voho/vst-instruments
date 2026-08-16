@@ -823,6 +823,16 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-16: `updateVoiceControl`'s per-harmonic reference-target loop -
+  walked once per rendered harmonic on every control frame of every voice -
+  recomputed `parameters.mutation * 0.045f` for `referenceVariation` instead
+  of reusing `variationDepth`, the identical expression already hoisted
+  above the loop for the sibling `learned`-target variation term a few lines
+  earlier. Reused `variationDepth` there instead. Pure dedup - same operands
+  in the same order, so the result is bit-identical - verified with the
+  JUCE-free DSP suite (3/3 tests passed) and a fresh `NeuramarRenderDemos`
+  run confirming `git status neuramar/Docs/audio` clean across all eight
+  WAVs.
 - 2026-08-16: Added direct coverage for `ModelVisualisation.cpp`'s
   `binIndexOf`, `depositPeak`, and `makeAirBandGeometry` - the anatomy
   display's own frequency-to-bin and Air-band-geometry placement helpers - and
