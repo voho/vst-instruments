@@ -184,6 +184,12 @@ public:
     // upward-biased, because a finger can raise a string's tension and cannot
     // lower it below the fret. Zero pressure is an exact no-op.
     void setVibrato(float normalised) noexcept;
+    // MIDI CC64. While held, a key-up leaves that string marked `sustained`
+    // instead of releasing it immediately (see `noteOff()`); a string already
+    // sounding when the pedal comes down is untouched either way, since it
+    // only changes what a *later* key-up does. Releasing the pedal releases
+    // every string that is `sustained` and still not held down, and drops the
+    // flag from every voice so a subsequent key-up releases normally again.
     void setSustainPedal(bool down) noexcept;
     // The acoustic return path: what the loudspeaker is playing back at the
     // guitar, typically the previous block of the amplified output. The
