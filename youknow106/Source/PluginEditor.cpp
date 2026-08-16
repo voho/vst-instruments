@@ -1617,7 +1617,9 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
 
     resetButton.setTooltip (
         "Loads the complete INIT program, restoring every tone, performance "
-        "and plug-in-extension control to its default.");
+        "and plug-in-extension control to its default. QUALITY is a setting "
+        "for this machine rather than part of a patch and stays where you "
+        "left it.");
     resetButton.onClick = [this] { selectProgram (0); };
     addAndMakeVisible (resetButton);
 
@@ -1671,7 +1673,9 @@ void YouKnow106AudioProcessorEditor::buildPresetBar()
     presetBox.setTitle ("Patch selector");
     presetBox.setTooltip (
         "Selects INIT or one of the 128 original factory tones. Patch-bar and "
-        "host recall restore the tone plus its complete performance and plug-in setup.");
+        "host recall restore the tone plus its complete performance and plug-in "
+        "setup, except QUALITY, which is a setting for this machine rather than "
+        "part of a patch.");
     presetBox.setColour (juce::ComboBox::backgroundColourId,
                          fromPalette (panel::colour::slot));
     presetBox.setColour (juce::ComboBox::textColourId, fromPalette (panel::colour::text));
@@ -1705,7 +1709,8 @@ void YouKnow106AudioProcessorEditor::buildPresetBar()
     presetReloadButton.getProperties().set (compactStyleProperty, true);
     presetReloadButton.setTooltip (
         "Reloads the selected program exactly and discards all tone, "
-        "performance and plug-in-control edits.");
+        "performance and plug-in-control edits, apart from QUALITY, which "
+        "is a setting for this machine rather than part of a patch.");
     presetReloadButton.onClick = [this]
     {
         selectProgram (audioProcessor.getCurrentProgram());
@@ -2582,8 +2587,13 @@ void YouKnow106AudioProcessorEditor::resized()
                           / static_cast<float> (panel::keyboardWhiteKeyCount));
 
     // Modern host and model controls occupy a visually separate add-on bay.
+    // The QUALITY caption is not one of the six knob labels but sits in the
+    // same card beside them, so it takes the same scaled face here rather than
+    // keeping the fixed size it was built with and drifting out of step with
+    // its neighbours at every window size but one.
     for (auto& label : utilityLabels)
         label.setFont (clearPanelFont (juce::jmax (9.5f, 11.5f * scale)));
+    qualityLabel.setFont (clearPanelFont (juce::jmax (9.5f, 11.5f * scale)));
     constexpr float labelTop = panel::extensionDeckTop + 32.0f;
     constexpr float knobTop = panel::extensionDeckTop + 49.0f;
     constexpr float labelHeight = 13.0f;
