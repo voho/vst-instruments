@@ -4088,6 +4088,29 @@ void testFactoryPresets()
                     + " dB against the " + std::to_string (entry.db)
                     + " dB it shipped at: the preset bank was not re-trimmed");
     }
+
+    // factoryPreset()/factoryPresetName() are documented to clamp an
+    // out-of-range index rather than read past the table, but every call site
+    // above (and in PluginProcessor's setCurrentProgram(), which applies its
+    // own jlimit() first) only ever asks for an index already inside
+    // 0..count-1, so the clamp itself had never been exercised. A host is
+    // free to pass setCurrentProgram() any int32, and getCurrentProgram()
+    // implementations elsewhere in this codebase read the table directly, so
+    // the defensive clamp is load-bearing rather than decorative.
+    const auto& first = vocalor::factoryPreset (0);
+    const auto& last = vocalor::factoryPreset (count - 1);
+    expect (std::string (vocalor::factoryPreset (-1).name) == first.name,
+            "factoryPreset(-1) did not clamp to the first preset");
+    expect (std::string (vocalor::factoryPreset (-1000000).name) == first.name,
+            "factoryPreset() did not clamp a large negative index to the first preset");
+    expect (std::string (vocalor::factoryPreset (count).name) == last.name,
+            "factoryPreset(count) did not clamp to the last preset");
+    expect (std::string (vocalor::factoryPreset (1000000).name) == last.name,
+            "factoryPreset() did not clamp a large positive index to the last preset");
+    expect (std::string (vocalor::factoryPresetName (-1)) == first.name,
+            "factoryPresetName(-1) did not clamp to the first preset's name");
+    expect (std::string (vocalor::factoryPresetName (count)) == last.name,
+            "factoryPresetName(count) did not clamp to the last preset's name");
 }
 
 /** The singer's formant is a cluster, not a boost.

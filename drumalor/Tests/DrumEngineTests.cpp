@@ -4755,6 +4755,50 @@ void testMidiSurfaceContract()
                 "aftertouch on a snare note was treated as a cymbal choke");
         expect (engine.applyAftertouch (49, 0.0f),
                 "aftertouch on a crash note was refused");
+
+        // Both overloads sanitize their own pressure before touching a voice -
+        // chokedCrash above only ever calls applyAftertouch(pressure) when
+        // pressure > 0.0f, so the channel form's own guard has not been
+        // exercised by anything, and the zero-pressure check just above only
+        // asserts the note form's return value, not that the cymbal it was
+        // pointed at was actually left alone. A pressure that fails either
+        // guard must leave a ringing cymbal untouched rather than reaching
+        // chokeSecondsForPressure with something it cannot use.
+        const auto guardedLevel = [&] (float pressure, bool polyphonic)
+        {
+            drumalor::DrumEngine guarded;
+            guarded.prepare (sampleRate, defaultBlockSize);
+            drumalor::KitParameters kit;
+            kit.humanise = 0.0f;
+            guarded.setKitParameters (kit);
+            expect (guarded.triggerMidi (49, 0.90f), "note 49 did not trigger");
+            renderInterleaved (guarded, static_cast<int> (0.100 * sampleRate),
+                               defaultBlockSize);
+            if (polyphonic)
+                expect (guarded.applyAftertouch (49, pressure),
+                        "polyphonic aftertouch on a crash note was refused");
+            else
+                guarded.applyAftertouch (pressure);
+            renderInterleaved (guarded, static_cast<int> (0.030 * sampleRate),
+                               defaultBlockSize);
+            const auto interleaved = renderInterleaved (
+                guarded, static_cast<int> (0.060 * sampleRate), defaultBlockSize);
+            return metricsForInterleaved (interleaved).rms();
+        };
+        const float notFinite = std::numeric_limits<float>::quiet_NaN();
+        for (const bool polyphonic : { false, true })
+        {
+            for (const float pressure : { -1.0f, 0.0f, notFinite })
+            {
+                const double level = decibels (
+                    guardedLevel (pressure, polyphonic), ringing);
+                expect (level >= -0.5,
+                        std::string (polyphonic ? "polyphonic" : "channel")
+                            + " aftertouch choked a cymbal instead of rejecting "
+                              "an invalid pressure (" + std::to_string (level)
+                            + " dB under the ring)");
+            }
+        }
     }
 
     // ------------------------------------------ CC 88, high-resolution velocity --

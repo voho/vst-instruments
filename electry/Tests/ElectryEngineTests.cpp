@@ -240,6 +240,16 @@ struct ElectryEngineTestAccess
         return engine.sampleRate_;
     }
 
+    static double minimumSupportedSampleRate() noexcept
+    {
+        return ElectryEngine::minimumSupportedSampleRate;
+    }
+
+    static double maximumSupportedSampleRate() noexcept
+    {
+        return ElectryEngine::maximumSupportedSampleRate;
+    }
+
     static float dispersionDeficit(const ElectryEngine& engine,
                                     int stringIndex, float partial) noexcept
     {
@@ -1038,6 +1048,55 @@ void testInternalOversamplingPolicy()
         expect(std::abs(centsBetween(measured, expected)) < 10.0,
                "oversampling introduced gross pitch drift at "
                    + std::to_string(sampleRate) + " Hz");
+    }
+}
+
+// prepare() clamps a hostile host sample rate to [minimumSupportedSampleRate,
+// maximumSupportedSampleRate] (falling back to 48 kHz first if it is not even
+// finite) before any delay line is sized from it - see the comment on those
+// two constants in ElectryEngine.h. Every other test only ever calls
+// prepare() with a sane host rate, so that guard was previously exercised
+// only by inspection.
+void testPrepareClampsHostileSampleRate()
+{
+    const double minimumRate = TestAccess::minimumSupportedSampleRate();
+    const double maximumRate = TestAccess::maximumSupportedSampleRate();
+
+    struct HostileCase { double requested; double expectedClamped; const char* name; };
+    const std::array<HostileCase, 5> cases {{
+        { std::numeric_limits<double>::quiet_NaN(), 48000.0, "NaN" },
+        { -1.0e9, minimumRate, "large negative" },
+        { 0.0, minimumRate, "zero" },
+        { 1.0, minimumRate, "below the floor" },
+        { 1.0e9, maximumRate, "far above the ceiling" },
+    }};
+
+    for (const auto& hostileCase : cases)
+    {
+        ElectryEngine engine;
+        engine.prepare(hostileCase.requested, 512);
+
+        expect(TestAccess::hostSampleRate(engine) == hostileCase.expectedClamped,
+               std::string("prepare() did not clamp a ") + hostileCase.name
+                   + " sample rate to the documented bound");
+        expect(TestAccess::internalSampleRate(engine)
+                   == TestAccess::hostSampleRate(engine)
+                          * static_cast<double>(
+                                TestAccess::oversamplingFactor(engine)),
+               std::string("internal clock did not track the clamped rate for ")
+                   + hostileCase.name);
+
+        EngineParameters parameters;
+        engine.setParameters(parameters);
+        engine.noteOn(45, 0.8f);
+        StereoBuffer buffer(256);
+        renderInto(engine, buffer);
+        expect(allFinite(buffer),
+               std::string("a ") + hostileCase.name
+                   + " sample rate produced non-finite audio after clamping");
+        expect(peakAbs(buffer.left) < 16.0f,
+               std::string("a ") + hostileCase.name
+                   + " sample rate bypassed the output guardrail");
     }
 }
 
@@ -7634,6 +7693,7 @@ int main()
 {
     testModalResonatorPeakGain();
     testInternalOversamplingPolicy();
+    testPrepareClampsHostileSampleRate();
     testRenderMatrixFiniteAndBounded();
     testPitchAccuracy();
     testDropELowNoteAtMaximumRate();
