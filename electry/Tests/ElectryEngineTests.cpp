@@ -111,6 +111,14 @@ struct ElectryEngineTestAccess
         return engine.vibratoAmount_;
     }
 
+    // The channel-pressure target setVibrato() writes, read straight off the
+    // engine so its own sanitisation guard can be checked directly rather
+    // than only through whatever it happens to do to a rendered voice.
+    static float vibratoTarget(const ElectryEngine& engine) noexcept
+    {
+        return engine.vibratoTarget_;
+    }
+
     static bool channelsLinked(const ElectryEngine& engine) noexcept
     {
         return engine.channelsLinked_;
@@ -3122,6 +3130,62 @@ void testNoteOnVelocitySanitisation()
            "a velocity above 1.0 was not clamped to the same render as 1.0");
     expect(peakAbs(inRange.left) > 1.0e-4f,
            "velocity clamp fixture rendered silence");
+}
+
+// setVibrato()'s own guard - `clampf(std::isfinite(normalised) ? normalised :
+// 0.0f, 0.0f, 1.0f)` - is the channel-pressure counterpart to setPitchBend,
+// setResonance, setAcousticReturnLevel and setPalmMutePressure, all four of
+// which testParameterSanitisation() above already drives with NaN. setVibrato
+// itself is only ever called with ordinary in-range pressures (0.0f, 1.0f, or
+// a drawn 0..1 value) everywhere else in the suite, so nothing asserted that a
+// non-finite or out-of-[0,1] channel-pressure value is folded down rather than
+// latched into the fretting-hand vibrato target and, from there, into every
+// stopped string's pitch.
+void testSetVibratoSanitisation()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    engine.setParameters(EngineParameters {});
+
+    // NaN and either infinity fail std::isfinite and fall back to 0.0f exactly
+    // - the same "no boundary to clamp to" fallback the sample-rate and
+    // EngineParameters guards use.
+    engine.setVibrato(std::nanf(""));
+    expect(TestAccess::vibratoTarget(engine) == 0.0f,
+           "a NaN channel pressure did not fall back to zero");
+    engine.setVibrato(std::numeric_limits<float>::infinity());
+    expect(TestAccess::vibratoTarget(engine) == 0.0f,
+           "a positive-infinite channel pressure did not fall back to zero");
+    engine.setVibrato(-std::numeric_limits<float>::infinity());
+    expect(TestAccess::vibratoTarget(engine) == 0.0f,
+           "a negative-infinite channel pressure did not fall back to zero");
+
+    // A finite value outside [0, 1] clamps to the nearer boundary rather than
+    // being rejected or left unclamped.
+    engine.setVibrato(-3.0f);
+    expect(TestAccess::vibratoTarget(engine) == 0.0f,
+           "a negative channel pressure did not clamp to zero");
+    engine.setVibrato(7.5f);
+    expect(TestAccess::vibratoTarget(engine) == 1.0f,
+           "a channel pressure above 1.0 did not clamp to one");
+
+    // An ordinary value still passes straight through, confirming the guard
+    // is a genuine clamp rather than a filter that also stops valid input.
+    engine.setVibrato(0.4f);
+    expect(TestAccess::vibratoTarget(engine) == 0.4f,
+           "an in-range channel pressure was altered by the guard");
+
+    // And a hostile pressure held on a genuinely fingered, sounding string
+    // must still render finite, bounded audio end to end rather than only
+    // sanitising the stored target.
+    engine.reset();
+    engine.noteOn(47, 0.9f); // A2 + 2 frets, not an open string, so vibrato applies
+    engine.setVibrato(std::nanf(""));
+    StereoBuffer buffer(static_cast<int>(0.2 * sampleRate));
+    renderInto(engine, buffer);
+    expect(allFinite(buffer),
+           "a hostile channel pressure produced non-finite audio");
 }
 
 // The natural harmonic is a finger resting on a node, not a transposition.
@@ -7724,6 +7788,7 @@ int main()
     testStringAllocationAndPolyphony();
     testVoiceStealingPriority();
     testNoteOnVelocitySanitisation();
+    testSetVibratoSanitisation();
     testFrettingHandPosition();
     testTouchHarmonics();
     testPinchHarmonic();
