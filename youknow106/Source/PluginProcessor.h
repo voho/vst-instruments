@@ -7,6 +7,7 @@
 #include "DSP/YouKnow106SysEx.h"
 #include "DSP/YouKnow106Panel.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -168,6 +169,34 @@ public:
     int getOversamplingFactorForDisplay() const noexcept
     {
         return displayOversamplingFactor.load (std::memory_order_relaxed);
+    }
+    // The quality ladder as the panel offers it: index 0..2 selects 1x, 2x or
+    // 4x. The engine may run a *lower* factor than the selected one when the
+    // host rate is already high enough, which is what the display factor above
+    // reports; this is the request.
+    // Both directions are derived from the engine's own ladder rather than
+    // restating it, so a rung added there appears on the panel by itself.
+    static constexpr int qualityChoiceCount = static_cast<int> (
+        youknow106::YouKnow106Engine::oversampleFactors.size());
+    static constexpr int oversamplingFactorForChoice (int choice) noexcept
+    {
+        return youknow106::YouKnow106Engine::oversampleFactors[
+            static_cast<std::size_t> (
+                std::clamp (choice, 0, qualityChoiceCount - 1))];
+    }
+    // The rung that runs `factor`, or the deepest one at or below it.
+    static constexpr int choiceForOversamplingFactor (int factor) noexcept
+    {
+        const auto& factors = youknow106::YouKnow106Engine::oversampleFactors;
+        int choice = 0;
+        for (int index = 1; index < qualityChoiceCount; ++index)
+            if (factors[static_cast<std::size_t> (index)] <= factor)
+                choice = index;
+        return choice;
+    }
+    int getQualityChoice() const noexcept
+    {
+        return choiceOf (youknow106::parameters::quality, qualityChoiceCount - 1);
     }
     bool isEngineReady() const noexcept
     {

@@ -971,6 +971,18 @@ void YouKnow106Display::paint (juce::Graphics& g)
     g.drawText (juce::String (juce::roundToInt (scopeGain)) + "x",
                 screen.reduced (4.0f, 2.0f).toNearestInt(),
                 juce::Justification::topRight, false);
+
+    // What the QUALITY selector actually got. The selector states a request;
+    // the engine runs the smaller of that and what the host rate still needs,
+    // so a 96 kHz session showing 4x on the panel is really running 2x. This
+    // is the only place that difference is visible, which is why the applied
+    // factor and the internal rate it produces are reported together.
+    if (ready && sampleRate > 0.0)
+        g.drawText (juce::String (oversampling) + "x "
+                        + juce::String (sampleRate * oversampling / 1000.0, 1)
+                        + "k",
+                    screen.reduced (4.0f, 2.0f).toNearestInt(),
+                    juce::Justification::topLeft, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -1504,7 +1516,6 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
         button.setName (button.getButtonText());
         button.setTitle (button.getButtonText());
     };
-    nameButton (hqButton);
     nameButton (panicButton);
     nameButton (randomize1Button);
     nameButton (randomize10Button);
@@ -1518,14 +1529,46 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     syxSaveButton.setName ("Save patch file");
     syxSaveButton.setTitle ("Save patch file");
 
-    hqButton.setClickingTogglesState (true);
-    hqButton.getProperties().set (secondaryStyleProperty, true);
-    hqButton.setTooltip (
-        "Runs the oscillators, nonlinear filter, amplifiers and chorus at a "
-        "higher internal rate to reduce aliasing. A change waits until the "
-        "instrument is idle; this has no hardware counterpart.");
-    addAndMakeVisible (hqButton);
-    attachButton (hqButton, hq);
+    // The internal-rate ladder. The tooltip names the cost as well as the
+    // benefit, because this is the one control a player reaches for when a
+    // session runs out of CPU rather than when it needs a different sound.
+    const juce::String qualityTooltip =
+        "Sets how far above the host's sample rate the oscillators, nonlinear "
+        "filter, amplifiers and chorus run. 4x aliases least and costs the "
+        "most; 1x is the cheapest. A change waits until the instrument is "
+        "idle, and at high host rates a lower factor is used automatically. "
+        "This has no hardware counterpart and is not part of a patch.";
+    for (int choice = 0; choice < YouKnow106AudioProcessor::qualityChoiceCount;
+         ++choice)
+        qualityBox.addItem (
+            juce::String (
+                YouKnow106AudioProcessor::oversamplingFactorForChoice (choice))
+                + "x",
+            choice + 1);
+    qualityBox.setName ("Quality");
+    qualityBox.setTitle ("Quality");
+    qualityBox.setTooltip (qualityTooltip);
+    qualityBox.setColour (juce::ComboBox::backgroundColourId,
+                          fromPalette (panel::colour::slot));
+    qualityBox.setColour (juce::ComboBox::textColourId,
+                          fromPalette (panel::colour::text));
+    qualityBox.setColour (juce::ComboBox::outlineColourId,
+                          fromPalette (panel::colour::controlShadow));
+    qualityBox.setColour (juce::ComboBox::arrowColourId,
+                          fromPalette (panel::colour::cyan));
+    addAndMakeVisible (qualityBox);
+    comboBoxAttachments.push_back (std::make_unique<ComboBoxAttachment> (
+        audioProcessor.parameters, quality, qualityBox));
+
+    qualityLabel.setText ("QUALITY", juce::dontSendNotification);
+    qualityLabel.setFont (panelFont (11.0f));
+    qualityLabel.setColour (juce::Label::textColourId,
+                            fromPalette (panel::colour::textDim).withAlpha (0.90f));
+    qualityLabel.setJustificationType (juce::Justification::centred);
+    qualityLabel.setName ("Quality label");
+    qualityLabel.setTooltip (qualityTooltip);
+    qualityLabel.setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (qualityLabel);
 
     unisonButton.setClickingTogglesState (false);
     unisonButton.getProperties().set (secondaryStyleProperty, true);
@@ -2365,7 +2408,7 @@ const char* YouKnow106AudioProcessorEditor::parameterIdFor (
         { &calibrationSlider, calibration },
         { &chorusNoiseSlider, chorusNoise },
         { &polyphonySlider,   polyphony },
-        { &hqButton,          hq },
+        { &qualityBox,        quality },
         { &unisonButton,      legacyKeyMode },
         { &portamentoToggleButton, portamento },
         { &keyTransposeButton, transpose }
@@ -2564,9 +2607,12 @@ void YouKnow106AudioProcessorEditor::resized()
         scaled (characterLeft + characterCell
                     + (characterCell - knobSize) * 0.5f,
                 knobTop, knobSize, knobSize).toNearestInt());
-    hqButton.setBounds (
+    qualityLabel.setBounds (
+        scaled (characterLeft + 2.0f * characterCell + 4.0f, labelTop,
+                characterCell - 8.0f, labelHeight).toNearestInt());
+    qualityBox.setBounds (
         scaled (characterLeft + 2.0f * characterCell + 17.0f,
-                knobTop + 8.0f, characterCell - 34.0f, 38.0f).toNearestInt());
+                knobTop + 16.0f, characterCell - 34.0f, 22.0f).toNearestInt());
     unisonButton.setBounds (
         scaled (characterLeft + 3.0f * characterCell + 14.0f,
                 knobTop + 8.0f, characterCell - 28.0f, 38.0f).toNearestInt());

@@ -365,6 +365,18 @@ void YouKnow106AudioProcessor::migrateSplitModeParameters (juce::ValueTree& stat
     if (storedParameterValue (state, chorusI, 0.0f) > 0.5f
         && storedParameterValue (state, chorusII, 0.0f) > 0.5f)
         setStoredParameterValue (state, chorusI, 0.0f);
+
+    // The two-state HQ switch became the three-rung quality ladder. Its stored
+    // value is a boolean, so it names the two endpoints and nothing in between:
+    // on is the deepest rung, off the cheapest. A state that already carries the
+    // ladder is authoritative and the obsolete entry is ignored.
+    if (containsParameterState (state, legacyHq)
+        && ! containsParameterState (state, quality))
+        setStoredParameterValue (
+            state, quality,
+            static_cast<float> (storedParameterValue (state, legacyHq, 1.0f) > 0.5f
+                                    ? qualityChoiceCount - 1
+                                    : 0));
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout
@@ -497,20 +509,13 @@ YouKnow106AudioProcessor::createParameterLayout()
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { chorusII, 2 }, "Chorus II", false));
 
-    layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { hq, 1 }, "HQ", true,
-        juce::AudioParameterBoolAttributes()
-            .withAutomatable (false)
-            .withStringFromValueFunction (
-                [] (bool enabled, int) { return enabled ? "On" : "Off"; })
-            .withValueFromStringFunction (
-                [] (const juce::String& text)
-                {
-                    return text.containsIgnoreCase ("on")
-                        || text.containsIgnoreCase ("hq")
-                        || text.containsIgnoreCase ("2")
-                        || text.containsIgnoreCase ("4");
-                })));
+    // The quality ladder, cheapest first, so a larger index is always more
+    // internal work. The highest rung is the default: a new instance sounds its
+    // best, and a player who needs the CPU back steps down deliberately.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { quality, 1 }, "Quality",
+        juce::StringArray { "1x", "2x", "4x" }, qualityChoiceCount - 1,
+        juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
     return layout;
 }
@@ -529,7 +534,7 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
         highPass, cutoff, resonance, envPolarity, vcfEnv, vcfLfo, keyFollow,
         vcaMode, vcaLevel, attack, decay, sustain, release, legacyChorus,
         transpose, masterTune, velocity, calibration, chorusNoise, polyphony,
-        poly1, poly2, chorusI, chorusII, hq
+        poly1, poly2, chorusI, chorusII, quality
     });
 
     // The pointer table has to be able to hold every id. Growing the list above
@@ -588,13 +593,16 @@ void YouKnow106AudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
 {
     engineReady.store (false, std::memory_order_release);
     engine.prepare (sampleRate, samplesPerBlock,
-                    valueOf (youknow106::parameters::hq) > 0.5f);
+                    oversamplingFactorForChoice (getQualityChoice()));
     (void) updateEngineParameters();
     uiLeverMailbox.store (emptyUiLeverMailbox, std::memory_order_release);
     discardUiMidiEvents();
     keyboardState.reset();
 
-    displaySampleRate.store (sampleRate, std::memory_order_relaxed);
+    // The engine's own figure, not the host's: prepare() clamps a rate outside
+    // the supported range and substitutes one for a non-finite report, and the
+    // panel must describe what is running rather than what was asked for.
+    displaySampleRate.store (engine.getSampleRate(), std::memory_order_relaxed);
     displayOversamplingFactor.store (engine.getOversamplingFactor(),
                                      std::memory_order_relaxed);
     setLatencySamples (engine.getProcessingLatencySamples());
@@ -815,7 +823,8 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // the host having to be told anything. Calling setLatencySamples from the
     // audio callback would be a notification into host code that is free to
     // lock or allocate.
-    engine.setOversamplingEnabled (valueOf (youknow106::parameters::hq) > 0.5f);
+    engine.setOversamplingFactor (
+        oversamplingFactorForChoice (getQualityChoice()));
     displayOversamplingFactor.store (engine.getOversamplingFactor(),
                                      std::memory_order_relaxed);
 
@@ -1515,8 +1524,9 @@ bool YouKnow106AudioProcessor::currentProgramIsEdited() const
         || differs (valueOf (velocity), expected.velocity)
         || differs (valueOf (calibration), expected.calibration)
         || differs (valueOf (chorusNoise), expected.chorusNoise)
-        || juce::roundToInt (valueOf (polyphony)) != expected.polyphony
-        || (valueOf (hq) > 0.5f) != expected.hq;
+        // Quality is deliberately absent: it is not part of a preset, so it
+        // cannot mark one as edited.
+        || juce::roundToInt (valueOf (polyphony)) != expected.polyphony;
 }
 
 const juce::String YouKnow106AudioProcessor::getProgramName (int index)
@@ -1622,7 +1632,7 @@ void YouKnow106AudioProcessor::applyProgramValues (
     set (calibration, controls.calibration);
     set (chorusNoise, controls.chorusNoise);
     set (polyphony, static_cast<float> (controls.polyphony));
-    set (hq, controls.hq ? 1.0f : 0.0f);
+    // Quality is deliberately not recalled: see Preset::Controls.
 
     applyPatchValues (patch);
 }

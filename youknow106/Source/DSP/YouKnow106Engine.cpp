@@ -2449,18 +2449,33 @@ void YouKnow106Engine::refreshVoiceCardStageTrims() noexcept
     }
 }
 
-void YouKnow106Engine::prepare(double sampleRate, int /*maxBlockSize*/,
+void YouKnow106Engine::prepare(double sampleRate, int maxBlockSize,
                                bool oversamplingEnabled)
+{
+    prepare(sampleRate, maxBlockSize,
+            oversamplingEnabled ? maximumOversampleFactor
+                                : minimumOversampleFactor);
+}
+
+void YouKnow106Engine::prepare(double sampleRate, int /*maxBlockSize*/,
+                               int requestedFactor)
 {
     // The frequency correction's limit-cycle table is solved on first use.
     // Touch it here, where blocking is allowed, so the first audio callback
     // never pays for it.
     (void) VoicedResonanceCompatibilityProfile::frequencyTrim(0.0f);
 
-    sampleRate_ = std::clamp(sampleRate, 8000.0, maximumSupportedSampleRate);
+    // A host that has not negotiated a rate yet, or one reporting a nonsense
+    // one, must not be able to put a zero, a negative or a NaN on the internal
+    // grid: every coefficient below divides by it. NaN fails both clamp
+    // comparisons, so it is caught explicitly rather than passed through.
+    sampleRate_ = std::isfinite(sampleRate)
+                    ? std::clamp(sampleRate, minimumSupportedSampleRate,
+                                 maximumSupportedSampleRate)
+                    : 48000.0;
     inverseSampleRate_ = static_cast<float>(1.0 / sampleRate_);
-    oversamplingRequested_ = oversamplingEnabled;
-    oversamplingEnabled_ = oversamplingEnabled;
+    oversamplingRequested_ = sanitiseOversampleFactor(requestedFactor);
+    oversamplingApplied_ = oversamplingRequested_;
     updateProcessingRate();
     prepared_ = true;
     reset();
@@ -2469,12 +2484,7 @@ void YouKnow106Engine::prepare(double sampleRate, int /*maxBlockSize*/,
 void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexcept
 {
     const double previousProcessingRate = oversampledRate_;
-    if (!oversamplingEnabled_ || sampleRate_ >= minimumHqProcessingRate)
-        oversampling_ = 1;
-    else if (sampleRate_ >= minimumHqProcessingRate / 2.0)
-        oversampling_ = 2;
-    else
-        oversampling_ = maximumOversampleFactor;
+    oversampling_ = effectiveOversampleFactor(oversamplingApplied_);
 
     oversampledRate_ = sampleRate_ * oversampling_;
     inverseOversampledRate_ = static_cast<float>(1.0 / oversampledRate_);
@@ -2544,18 +2554,48 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
     chorus_.prepare(oversampledRate_, preserveFreeRunningState);
 }
 
+int YouKnow106Engine::effectiveOversampleFactor(int requestedFactor) const noexcept
+{
+    // The deepest rung worth running at this host rate: the bandlimiting target
+    // is minimumHqProcessingRate, and going past it buys nothing but CPU. The
+    // player's request is then capped by that, so selecting 4x on a 192 kHz
+    // host quietly runs at 1x rather than at 768 kHz.
+    int ceilingFactor;
+    if (sampleRate_ >= minimumHqProcessingRate)
+        ceilingFactor = 1;
+    else if (sampleRate_ >= minimumHqProcessingRate / 2.0)
+        ceilingFactor = 2;
+    else
+        ceilingFactor = maximumOversampleFactor;
+
+    return std::min(sanitiseOversampleFactor(requestedFactor), ceilingFactor);
+}
+
 bool YouKnow106Engine::setOversamplingEnabled(bool enabled) noexcept
 {
-    oversamplingRequested_ = enabled;
+    return setOversamplingFactor(enabled ? maximumOversampleFactor
+                                         : minimumOversampleFactor);
+}
+
+bool YouKnow106Engine::setOversamplingFactor(int factor) noexcept
+{
+    oversamplingRequested_ = sanitiseOversampleFactor(factor);
     return applyPendingOversamplingIfIdle();
 }
 
 bool YouKnow106Engine::applyPendingOversamplingIfIdle() noexcept
 {
-    if (oversamplingRequested_ == oversamplingEnabled_)
+    // Nothing here is about the rung that was asked for; it is about the grid
+    // the engine would actually run. Two different rungs resolve to the same
+    // internal rate whenever the host is already fast enough -- 4x and 2x both
+    // run at 2x on a 96 kHz host -- and rebuilding the whole output path to
+    // arrive back at the rate it is already on would spend a safety fade on a
+    // change nobody can hear. Adopt the request and leave the grid alone.
+    if (effectiveOversampleFactor(oversamplingRequested_) == oversampling_)
     {
-        // A request can be withdrawn while the old path is fading. Bring it
-        // back without touching any rate-dependent state.
+        oversamplingApplied_ = oversamplingRequested_;
+        // A request can also be withdrawn while the old path is fading. Bring
+        // it back without touching any rate-dependent state.
         if (rateTransition_ == RateTransition::FadingOut)
             rateTransition_ = RateTransition::FadingIn;
         return true;
@@ -2587,7 +2627,7 @@ bool YouKnow106Engine::applyPendingOversamplingIfIdle() noexcept
     if (rateTransitionGain_ > 0.0f)
         return false;
 
-    oversamplingEnabled_ = oversamplingRequested_;
+    oversamplingApplied_ = oversamplingRequested_;
     updateProcessingRate(true);
     rebuildRateDependentVoiceState();
     clearRateDependentOutputPath(true);
@@ -4772,7 +4812,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     // lets every per-call rate-derived coefficient below be recomputed for the
     // correct side of the boundary.
     if (rateTransition_ == RateTransition::FadingOut
-        && oversamplingRequested_ != oversamplingEnabled_
+        && oversamplingRequested_ != oversamplingApplied_
         && rateTransitionGain_ > 0.0f)
     {
         const int samplesUntilZero = std::max(

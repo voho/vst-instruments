@@ -84,7 +84,7 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::calibration, 1.0f,   1.0e-5f },
     { parameters::chorusNoise, 1.0f,   1.0e-5f },
     { parameters::polyphony,   6.0f,   1.0e-5f },
-    { parameters::hq,          1.0f,   1.0e-5f },
+    { parameters::quality,     2.0f,   1.0e-5f },
 });
 
 float parameterValue (const YouKnow106AudioProcessor& processor, const char* id)
@@ -288,17 +288,13 @@ bool hasDescendantButtonWithTextPrefix (juce::Component& parent,
     return false;
 }
 
-juce::ComboBox* findDescendantComboBox (juce::Component& parent)
+// The panel carries more than one selector -- the patch bar's and the quality
+// ladder's -- so this asks for the one it means by name rather than taking
+// whichever the child order happens to reach first.
+juce::ComboBox* findDescendantComboBox (juce::Component& parent,
+                                        const juce::String& name = "Patch selector")
 {
-    for (int index = 0; index < parent.getNumChildComponents(); ++index)
-    {
-        auto* child = parent.getChildComponent (index);
-        if (auto* combo = dynamic_cast<juce::ComboBox*> (child))
-            return combo;
-        if (auto* match = findDescendantComboBox (*child))
-            return match;
-    }
-    return nullptr;
+    return dynamic_cast<juce::ComboBox*> (findDescendantNamed (parent, name));
 }
 
 struct HostChangeRecorder final : juce::AudioProcessorListener
@@ -482,37 +478,86 @@ void testProcessingProducesSound()
     processor.releaseResources();
 }
 
+void testInitProgramHasHeadroomUnderASixKeyChord()
+{
+    // The 128 factory programs are level-checked by
+    // Tools/AuditFactoryPresets, which fails if any of them peaks above
+    // -1 dBFS. INIT is not in that bank but is the first sound anybody hears,
+    // so it gets the same treatment here, under the same six-key stress the
+    // audit score uses.
+    YouKnow106AudioProcessor processor;
+    processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+    processor.prepareToPlay (sampleRate, blockSize);
+    processor.setCurrentProgram (0);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer chord;
+    for (const int note : { 48, 55, 60, 64, 67, 72 })
+        chord.addEvent (juce::MidiMessage::noteOn (1, note, 1.0f), 0);
+    buffer.clear();
+    processor.processBlock (buffer, chord);
+
+    float peak = 0.0f;
+    juce::MidiBuffer empty;
+    for (int block = 0; block < 800; ++block)
+    {
+        buffer.clear();
+        processor.processBlock (buffer, empty);
+        expect (bufferIsFinite (buffer), "INIT emitted a non-finite sample");
+        peak = std::max (peak, bufferPeak (buffer));
+    }
+    expect (processor.getActiveVoiceCount() == 6,
+            "the six-key INIT chord did not assign six voices");
+    // -1 dBFS, the same ceiling the factory bank is held to.
+    expect (peak <= 0.891251f,
+            "INIT peaks at " + std::to_string (20.0 * std::log10 (peak))
+                + " dBFS under a six-key chord, above the -1 dBFS ceiling the "
+                  "factory bank is held to");
+    expect (peak > 0.01f, "the six-key INIT chord produced near-silence");
+
+    processor.releaseResources();
+}
+
 void testReportedDspLatencyIsForwardedForEveryNumericalPath()
 {
     struct Configuration
     {
         double rate;
-        bool hq;
+        int requestedFactor;
         int expectedFactor;
     };
-    constexpr std::array<Configuration, 4> configurations {{
-        { 48000.0, true, 4 },
-        { 96000.0, true, 2 },
-        { 192000.0, true, 1 },
-        { 48000.0, false, 1 }
+    // Every rung of the ladder against every rate class it behaves differently
+    // at. A request is a ceiling, never a floor: the applied factor is the
+    // smaller of what was asked for and what the host rate still needs, which
+    // is why the 192 kHz row runs at 1x whatever is selected. The reported
+    // latency is the deepest path's for all of them, so no selection makes the
+    // host renegotiate its compensation.
+    constexpr std::array<Configuration, 12> configurations {{
+        { 44100.0, 4, 4 },  { 44100.0, 2, 2 },  { 44100.0, 1, 1 },
+        { 48000.0, 4, 4 },  { 48000.0, 2, 2 },  { 48000.0, 1, 1 },
+        { 96000.0, 4, 2 },  { 96000.0, 2, 2 },  { 96000.0, 1, 1 },
+        { 192000.0, 4, 1 }, { 192000.0, 2, 1 }, { 192000.0, 1, 1 }
     }};
 
     for (const auto& configuration : configurations)
     {
+        const auto where =
+            std::to_string (static_cast<int> (configuration.rate)) + " Hz, "
+            + std::to_string (configuration.requestedFactor) + "x requested";
         YouKnow106AudioProcessor processor;
-        setParameterValue (processor, parameters::hq,
-                           configuration.hq ? 1.0f : 0.0f);
+        setParameterValue (
+            processor, parameters::quality,
+            static_cast<float> (
+                YouKnow106AudioProcessor::choiceForOversamplingFactor (
+                    configuration.requestedFactor)));
         processor.setPlayConfigDetails (0, 2, configuration.rate, blockSize);
         processor.prepareToPlay (configuration.rate, blockSize);
         expect (processor.getOversamplingFactorForDisplay()
                     == configuration.expectedFactor,
-                "the processor selected the wrong numerical path at "
-                    + std::to_string (static_cast<int> (configuration.rate))
-                    + " Hz, HQ " + (configuration.hq ? "on" : "off"));
+                "the processor selected the wrong numerical path at " + where);
         expect (processor.getLatencySamples() == 41,
                 "the processor did not forward the fixed 41-sample DSP latency at "
-                    + std::to_string (static_cast<int> (configuration.rate))
-                    + " Hz, HQ " + (configuration.hq ? "on" : "off"));
+                    + where);
         processor.releaseResources();
     }
 }
@@ -594,7 +639,8 @@ void testDeferredQualitySwitchIsNotAutomatable()
     // The engine holds a quality change until the output path is quiet, so an
     // automation point would not take effect where it was written.
     YouKnow106AudioProcessor processor;
-    const auto* parameter = processor.parameters.getParameter (parameters::hq);
+    const auto* parameter =
+        processor.parameters.getParameter (parameters::quality);
     expect (parameter != nullptr, "the quality switch is missing");
     if (parameter != nullptr)
         expect (! parameter->isAutomatable(),
@@ -1155,6 +1201,46 @@ void testLegacySplitModeMigration()
                     "legacy chorus restored the wrong Chorus II lamp");
         }
 
+    // Sessions written before the quality ladder carry the two-state `hq`
+    // boolean. It names the ladder's two endpoints and nothing between them, so
+    // on restores as the deepest rung and off as the cheapest -- and a state
+    // that already carries the ladder keeps it whatever the obsolete entry says.
+    const auto restoreWithLegacyHq = [&] (float legacyValue, bool keepLadder,
+                                          int ladderChoice)
+    {
+        auto legacy = source.parameters.copyState();
+        if (keepLadder)
+            setStored (legacy, parameters::quality,
+                       static_cast<float> (ladderChoice));
+        else
+            removeStored (legacy, parameters::quality);
+        juce::ValueTree obsolete { "PARAM" };
+        obsolete.setProperty ("id", "hq", nullptr);
+        obsolete.setProperty ("value", legacyValue, nullptr);
+        legacy.appendChild (obsolete, nullptr);
+
+        juce::MemoryBlock bytes;
+        if (const auto xml = legacy.createXml())
+            juce::AudioProcessor::copyXmlToBinary (*xml, bytes);
+        else
+        {
+            expect (false, "could not serialise a legacy HQ state");
+            return -1;
+        }
+        YouKnow106AudioProcessor restored;
+        restored.setStateInformation (bytes.getData(),
+                                      static_cast<int> (bytes.getSize()));
+        return juce::roundToInt (parameterValue (restored, parameters::quality));
+    };
+    expect (restoreWithLegacyHq (1.0f, false, 0)
+                == YouKnow106AudioProcessor::qualityChoiceCount - 1,
+            "a session saved with HQ on did not restore the deepest rung");
+    expect (restoreWithLegacyHq (0.0f, false, 0) == 0,
+            "a session saved with HQ off did not restore the cheapest rung");
+    expect (restoreWithLegacyHq (0.0f, true, 1) == 1,
+            "an obsolete HQ entry overruled a state that already carries the "
+            "quality ladder");
+
     // A short-lived pair-based state could store neither POLY lamp even though
     // the firmware cannot. Saving and restoring it must expose the same Poly 1
     // fallback the audio engine uses.
@@ -1285,7 +1371,7 @@ void testEveryStoredPatchFieldRecallsWithoutMovingPerformanceControls()
         { parameters::calibration,  0.17f },
         { parameters::chorusNoise,  0.27f },
         { parameters::polyphony,    4.0f },
-        { parameters::hq,           0.0f },
+        { parameters::quality,      0.0f },
     });
     for (const auto& [id, value] : performanceValues)
         setParameterValue (processor, id, value);
@@ -1362,7 +1448,7 @@ void testRandomizerPreservesQualityAndLevel()
     YouKnow106AudioProcessor processor;
     const float volume = parameterValue (processor, parameters::volume);
     const float voices = parameterValue (processor, parameters::polyphony);
-    const float quality = parameterValue (processor, parameters::hq);
+    const float quality = parameterValue (processor, parameters::quality);
 
     processor.randomizeParameters (1.0f);
 
@@ -1370,7 +1456,7 @@ void testRandomizerPreservesQualityAndLevel()
             "the randomiser moved the output level");
     expect (std::abs (parameterValue (processor, parameters::polyphony) - voices) < 1.0e-4f,
             "the randomiser moved the voice count");
-    expect (std::abs (parameterValue (processor, parameters::hq) - quality) < 1.0e-4f,
+    expect (std::abs (parameterValue (processor, parameters::quality) - quality) < 1.0e-4f,
             "the randomiser moved a quality setting");
 }
 
@@ -3079,7 +3165,8 @@ void testEditedFlagFollowsTheCompleteProgram()
     for (const auto& expected : expectedParameters)
     {
         if (std::strcmp (expected.id, parameters::legacyKeyMode) == 0
-            || std::strcmp (expected.id, parameters::legacyChorus) == 0)
+            || std::strcmp (expected.id, parameters::legacyChorus) == 0
+            || std::strcmp (expected.id, parameters::quality) == 0)
             continue;
 
         processor.setCurrentProgram (0);
@@ -3307,6 +3394,14 @@ void testDerivedOriginalPanelSwitchesDriveTheirExistingParameters()
             "KEY TRANSPOSE did not restore the selected interval");
 }
 
+// Everything in the parameter contract except the quality ladder, which is a
+// property of the machine rather than of the sound and is therefore neither
+// stored in a program nor restored by one.
+bool isProgramParameter (const char* id)
+{
+    return std::strcmp (id, parameters::quality) != 0;
+}
+
 void testEveryProductProgramRestoresEveryParameter()
 {
     YouKnow106AudioProcessor processor;
@@ -3332,6 +3427,8 @@ void testEveryProductProgramRestoresEveryParameter()
             const float poison = parameter->getValue() < 0.5f ? 0.87f : 0.13f;
             parameter->setValueNotifyingHost (poison);
         }
+        const float poisonedQuality =
+            parameterValue (processor, parameters::quality);
 
         expect (processor.currentProgramIsEdited(),
                 std::string ("program ") + std::to_string (program)
@@ -3341,6 +3438,16 @@ void testEveryProductProgramRestoresEveryParameter()
         for (std::size_t index = 0; index < expectedParameters.size(); ++index)
         {
             const auto& expected = expectedParameters[index];
+            if (! isProgramParameter (expected.id))
+            {
+                // The opposite contract: a recall must leave the poisoned
+                // quality selection exactly where the player put it.
+                expect (std::abs (parameterValue (processor, expected.id)
+                                 - poisonedQuality) <= expected.tolerance,
+                        std::string ("program ") + std::to_string (program)
+                            + " overruled the player's quality selection");
+                continue;
+            }
             expect (std::abs (parameterValue (processor, expected.id)
                              - recalledValues[index]) <= expected.tolerance,
                     std::string ("program ") + std::to_string (program)
@@ -3467,6 +3574,68 @@ void testEveryPanelLegendFitsInTheRealFont()
     }
 }
 
+void testQualitySelectorDrivesTheEngine()
+{
+    // The panel's own selector, driven the way a player drives it, all the way
+    // through to the factor the engine settles on. A control that reads back
+    // correctly but never reaches the audio thread is the failure this catches.
+    YouKnow106AudioProcessor processor;
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    expect (editor != nullptr, "cannot drive the quality selector without an editor");
+    if (editor == nullptr)
+        return;
+
+    auto* box = findDescendantComboBox (*editor, "Quality");
+    expect (box != nullptr, "the editor is missing the QUALITY selector");
+    if (box == nullptr)
+        return;
+    expect (box->getNumItems() == YouKnow106AudioProcessor::qualityChoiceCount,
+            "the QUALITY selector does not offer every rung of the ladder");
+
+    processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+    processor.prepareToPlay (sampleRate, blockSize);
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+
+    for (int choice = YouKnow106AudioProcessor::qualityChoiceCount; --choice >= 0;)
+    {
+        const int factor =
+            YouKnow106AudioProcessor::oversamplingFactorForChoice (choice);
+        const auto where = std::to_string (factor) + "x";
+        box->setSelectedItemIndex (choice, juce::sendNotificationSync);
+        expect (juce::roundToInt (parameterValue (processor, parameters::quality))
+                    == choice,
+                "selecting " + where + " did not move the quality parameter");
+
+        // The engine defers a rate change until the output path is quiet; with
+        // nothing sounding, a few blocks are enough for it to go through.
+        for (int block = 0; block < 400; ++block)
+        {
+            buffer.clear();
+            processor.processBlock (buffer, midi);
+        }
+        expect (processor.getOversamplingFactorForDisplay() == factor,
+                "the engine never reached " + where
+                    + " after the panel selected it");
+        expect (bufferIsFinite (buffer),
+                "the engine emitted a non-finite sample at " + where);
+    }
+
+    // And back up again, so the ladder is exercised in both directions rather
+    // than only downwards from its default.
+    box->setSelectedItemIndex (YouKnow106AudioProcessor::qualityChoiceCount - 1,
+                               juce::sendNotificationSync);
+    for (int block = 0; block < 400; ++block)
+    {
+        buffer.clear();
+        processor.processBlock (buffer, midi);
+    }
+    expect (processor.getOversamplingFactorForDisplay() == 4,
+            "the engine never climbed back to the deepest rung");
+
+    processor.releaseResources();
+}
+
 void testEveryInteractiveEditorControlExplainsItself()
 {
     YouKnow106AudioProcessor processor;
@@ -3518,7 +3687,8 @@ void testEveryInteractiveEditorControlExplainsItself()
     };
     audit (audit, *editor);
 
-    // Six extension knobs, ten utility buttons, four host patch controls,
+    // Six extension knobs, nine utility buttons plus the QUALITY selector,
+    // four host patch controls,
     // twenty-three original-programmer controls, the keybed and the bender.
     // Disabled hardware-only keys remain public so their help explains why
     // the immutable factory bank cannot perform that operation.
@@ -3551,7 +3721,7 @@ void testPersistentContextHelpAndValueBubbles()
     expect (! containsTooltipWindow (*editor),
             "descriptive help still creates a floating TooltipWindow");
 
-    for (const auto* name : { "FREQ", "HQ", "Patch selector",
+    for (const auto* name : { "FREQ", "Quality", "Patch selector",
                               "Playable keyboard", "Status display",
                               "Pitch and modulation lever" })
     {
@@ -3606,7 +3776,7 @@ void testPersistentContextHelpAndValueBubbles()
             { "RES", parameters::resonance },
             { "A", parameters::attack },
             { "Unit Character", parameters::calibration },
-            { "HQ", parameters::hq }
+            { "Quality", parameters::quality }
         };
         for (const auto& entry : valued)
         {
@@ -3928,6 +4098,8 @@ void testEditorRandomizeStrengthsAndReset()
     processor.setCurrentProgram (3);
     for (auto* parameter : processor.getParameters())
         parameter->setValueNotifyingHost (parameter->getValue() < 0.5f ? 0.87f : 0.13f);
+    const float poisonedQuality =
+        parameterValue (processor, parameters::quality);
 
     auto* reset = findDescendantButtonWithText (*editor, "RESET");
     expect (reset != nullptr, "the editor is missing RESET");
@@ -3940,10 +4112,23 @@ void testEditorRandomizeStrengthsAndReset()
             "RESET did not select the complete INIT program");
     expect (! processor.currentProgramIsEdited(),
             "RESET left INIT marked as edited");
+    const auto* qualityParameter =
+        processor.parameters.getParameter (parameters::quality);
     for (int index = 0; index < parameterCount; ++index)
-        expect (std::abs (processor.getParameters()[index]->getValue()
+    {
+        const auto* parameter = processor.getParameters()[index];
+        // RESET returns the panel to INIT, which is a patch operation. The
+        // quality ladder is not in a patch, so it stays where the player left
+        // it here for the same reason a program recall leaves it alone.
+        if (parameter == qualityParameter)
+            continue;
+        expect (std::abs (parameter->getValue()
                          - initValues[static_cast<std::size_t> (index)]) < 1.0e-6f,
                 "RESET did not restore every INIT control");
+    }
+    expect (std::abs (parameterValue (processor, parameters::quality)
+                     - poisonedQuality) < 1.0e-6f,
+            "RESET overruled the player's quality selection");
 
     if (auto* preset = findDescendantComboBox (*editor))
         expect (preset->getSelectedId() == 1,
@@ -4186,7 +4371,7 @@ void checkSynthesisSectionsDominateUtilities (
     // into this comparison would measure a different design decision.
     constexpr auto characterLab = std::to_array<const char*> ({
         "Unit Character", "Unit Character label",
-        "Chorus noise", "Chorus noise label", "HQ"
+        "Chorus noise", "Chorus noise label", "Quality", "Quality label"
     });
     constexpr auto operations = std::to_array<const char*> ({
         "PANIC", "RND1%", "RND10%", "RND50%", "RESET"
@@ -4437,6 +4622,7 @@ int main()
     testParameterContract();
     testParameterTextRoundTrips();
     testProcessingProducesSound();
+    testInitProgramHasHeadroomUnderASixKeyChord();
     testReportedDspLatencyIsForwardedForEveryNumericalPath();
     testShortNoteInsideOneBlockIsHeard();
     testUiKeyboardPressAndReleaseIsHeard();
@@ -4483,6 +4669,7 @@ int main()
     testDerivedOriginalPanelSwitchesDriveTheirExistingParameters();
     testEveryProductProgramRestoresEveryParameter();
     testEveryPanelLegendFitsInTheRealFont();
+    testQualitySelectorDrivesTheEngine();
     testEveryInteractiveEditorControlExplainsItself();
     testPersistentContextHelpAndValueBubbles();
     testEditorReloadButtonDiscardsPatchEdits();

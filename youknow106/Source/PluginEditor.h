@@ -190,6 +190,7 @@ public:
 private:
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
+    using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
 
     void timerCallback() override;
     void buildPanelControls();
@@ -248,7 +249,10 @@ private:
     YouKnow106Display display;
 
     juce::TextButton panicButton { "PANIC" };
-    juce::TextButton hqButton { "HQ" };
+    // The quality ladder. A three-rung setting needs a selector, not a lamp:
+    // the button this replaced could only say on or off.
+    juce::ComboBox qualityBox;
+    juce::Label qualityLabel;
     juce::TextButton randomize1Button { "RND1%" };
     juce::TextButton randomize10Button { "RND10%" };
     juce::TextButton randomize50Button { "RND50%" };
@@ -305,6 +309,7 @@ private:
 
     std::vector<std::unique_ptr<SliderAttachment>> sliderAttachments;
     std::vector<std::unique_ptr<ButtonAttachment>> buttonAttachments;
+    std::vector<std::unique_ptr<ComboBoxAttachment>> comboBoxAttachments;
     std::vector<std::unique_ptr<juce::ParameterAttachment>> parameterAttachments;
 
     float scale = 1.0f;
