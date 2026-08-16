@@ -7201,6 +7201,19 @@ void testUiPresentationMath()
             "a degenerate row must not divide by zero");
     expect (rowLayout (600, 0, 6, 0).cellSize == 1,
             "a row with no columns must not divide by zero");
+    // A positive extent that still cannot fit its columns takes the same
+    // floor as the two all-degenerate cases above, but through the
+    // `available > columns` comparison rather than a zero or negative
+    // `available`: nine pixels shared across twelve columns divides down to
+    // zero without it. No call site in the editor reaches this - the
+    // editor's own minimum width is more than an order of magnitude wider
+    // than any row's column count needs - so only the two degenerate cases
+    // just above had ever been asserted directly.
+    const auto crampedRow = rowLayout (20, 12, 1, 12);
+    expect (crampedRow.cellSize == 1,
+            "a row too narrow for its columns must floor to a one-pixel cell, not zero");
+    expect (crampedRow.origin == 0,
+            "a cramped row's overflowing centring math must clamp to zero, not go negative");
 
     // A short row stays centred under a longer one.
     const auto shortRow = rowLayout (600, 12, 6, 5);
