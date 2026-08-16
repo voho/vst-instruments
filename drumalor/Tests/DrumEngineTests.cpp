@@ -958,6 +958,42 @@ void testPrepareSanitizesInvalidSampleRate()
             "prepare() did not clamp a negative sample rate to its 8 kHz floor");
 }
 
+// setOutputGain()'s own guard - `std::isfinite (linearGain) ? std::clamp (...)
+// : 0.82f` - is only ever driven by the broad invalid-values stress test below,
+// which checks that the resulting render stays finite and non-zero but never
+// pins the fallback to its documented 0.82 value. Exercise it directly the same
+// way prepare()'s sample-rate guard is exercised above: a NaN gain must render
+// bit-identically to the equivalent, already-sanitized explicit call.
+void testSetOutputGainSanitizesInvalidGain()
+{
+    constexpr auto instrument = drumalor::Instrument::Kick;
+    constexpr int samples = 4096;
+    const auto parameters = drumalor::getInstrumentMetadata (instrument).defaultParameters;
+
+    const auto renderWithGain = [&] (float outputGain)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.setOutputGain (outputGain);
+        engine.setInstrumentParameters (instrument, parameters);
+        engine.trigger (instrument, 0.9f);
+        return renderInterleaved (engine, samples, defaultBlockSize);
+    };
+
+    const auto reference = renderWithGain (0.82f);
+    expect (renderWithGain (std::numeric_limits<float>::quiet_NaN()) == reference,
+            "setOutputGain() did not fall back to 0.82 for a NaN gain");
+    expect (renderWithGain (std::numeric_limits<float>::infinity()) == reference,
+            "setOutputGain() did not fall back to 0.82 for a +infinity gain");
+    expect (renderWithGain (-std::numeric_limits<float>::infinity()) == reference,
+            "setOutputGain() did not fall back to 0.82 for a -infinity gain");
+
+    expect (renderWithGain (4.0f) == renderWithGain (2.0f),
+            "setOutputGain() did not clamp an excessive gain to its 2.0 ceiling");
+    expect (renderWithGain (-1.0f) == renderWithGain (0.0f),
+            "setOutputGain() did not clamp a negative gain to its 0.0 floor");
+}
+
 void testModalSampleRateConsistency()
 {
     constexpr std::array sampleRates { 44100.0, 48000.0, 96000.0, 192000.0 };
@@ -5700,6 +5736,7 @@ int main()
     testMetadataAndMidiMapping();
     testEveryInstrumentAndSampleRate();
     testPrepareSanitizesInvalidSampleRate();
+    testSetOutputGainSanitizesInvalidGain();
     testModalSampleRateConsistency();
     testNoiseDensityAcrossSampleRates();
     testTailsTerminate();
