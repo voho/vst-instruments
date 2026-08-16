@@ -3950,6 +3950,8 @@ void testModelVisualisation(const neuramar::NeuralModel& model)
     neuramar::depositPeakForTests(peakBins, 1000.0f,
                                   std::numeric_limits<float>::quiet_NaN(), 1);
     neuramar::depositPeakForTests(
+        peakBins, 1000.0f, std::numeric_limits<float>::infinity(), 1);
+    neuramar::depositPeakForTests(
         peakBins, std::numeric_limits<float>::quiet_NaN(), 0.5f, 1);
     expect(allZero(peakBins),
            "depositPeak deposited despite a non-positive/non-finite "
@@ -3962,9 +3964,17 @@ void testModelVisualisation(const neuramar::NeuralModel& model)
         0.0f, 1.0f);
     const auto nonFiniteCentre = neuramar::makeAirBandGeometryForTests(
         std::numeric_limits<float>::quiet_NaN(), 1.0f);
-    expect(missingCentre[0] == 0.0f && nonFiniteCentre[0] == 0.0f,
+    const auto infiniteCentre = neuramar::makeAirBandGeometryForTests(
+        std::numeric_limits<float>::infinity(), 1.0f);
+    expect(missingCentre[0] == 0.0f && nonFiniteCentre[0] == 0.0f
+               && infiniteCentre[0] == 0.0f,
            "makeAirBandGeometry accepted a non-positive or non-finite "
            "centre frequency");
+    const auto resolvedCentre = neuramar::makeAirBandGeometryForTests(
+        1024.0f, 1.0f);
+    expect(resolvedCentre[0] == 1.0f && resolvedCentre[1] == 10.0f,
+           "makeAirBandGeometry did not resolve 1024 Hz to octave 10 via "
+           "std::log2");
     const auto sanitisedWidth = neuramar::makeAirBandGeometryForTests(
         1000.0f, std::numeric_limits<float>::quiet_NaN());
     expect(sanitisedWidth[0] == 1.0f && sanitisedWidth[2] == 1.0f,
@@ -3973,7 +3983,13 @@ void testModelVisualisation(const neuramar::NeuralModel& model)
     const auto clampedWidth = neuramar::makeAirBandGeometryForTests(
         1000.0f, 100.0f);
     expect(clampedWidth[0] == 1.0f && clampedWidth[2] == 4.0f,
-           "makeAirBandGeometry did not clamp an oversized bandwidth");
+           "makeAirBandGeometry did not clamp an oversized bandwidth to its "
+           "4.0-octave ceiling");
+    const auto floorWidth = neuramar::makeAirBandGeometryForTests(
+        1000.0f, 0.01f);
+    expect(floorWidth[0] == 1.0f && floorWidth[2] == 0.10f,
+           "makeAirBandGeometry did not clamp an undersized bandwidth to "
+           "its 0.10-octave floor");
 
     std::array<float, ModelAnatomy::binCount> bandBins {};
     const float someOctave = std::log2(1000.0f);
@@ -3981,6 +3997,9 @@ void testModelVisualisation(const neuramar::NeuralModel& model)
     neuramar::depositBandAtOctaveForTests(
         bandBins, someOctave, 1.0f,
         std::numeric_limits<float>::quiet_NaN());
+    neuramar::depositBandAtOctaveForTests(
+        bandBins, someOctave, 1.0f,
+        std::numeric_limits<float>::infinity());
     expect(allZero(bandBins),
            "depositBandAtOctave deposited despite a non-positive/non-finite "
            "amplitude");
