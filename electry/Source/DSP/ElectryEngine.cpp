@@ -2984,6 +2984,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     voice.noiseBandState = 0.0f;
     voice.noiseAmplitude = 0.75f * noiseLevel;
     voice.noiseLength = std::max(8, static_cast<int>(noiseMs * 0.001f * sampleRate));
+    voice.noiseLengthDenominator = static_cast<float>(std::max(1, voice.noiseLength));
     voice.noiseRemaining = voice.noiseLength;
     voice.releaseNoiseDone = false;
     updateStyleWeights(voice, legato);
@@ -3181,6 +3182,8 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
         voice.artifactCollisionLength = static_cast<int>(
             lerp(0.025f, 0.100f, voice.velocityProfile.collision)
             * static_cast<float>(sampleRate_));
+        voice.artifactCollisionLengthDenominator =
+            static_cast<float>(std::max(1, voice.artifactCollisionLength));
         voice.artifactCollisionRemaining = voice.artifactCollisionLength;
         voice.artifactClearance = lerp(0.52f, 0.24f, contact);
     }
@@ -3355,6 +3358,7 @@ void ElectryEngine::beginVoiceRelease(Voice& voice) noexcept
                 + 0.45f * smoothedParameters_.stringGauge);
         voice.noiseLength = std::max(
             8, static_cast<int>(releaseSeconds * sampleRate));
+        voice.noiseLengthDenominator = static_cast<float>(std::max(1, voice.noiseLength));
         voice.noiseRemaining = voice.noiseLength;
         voice.noiseBandCoefficient = std::exp(-twoPi * (spec.wound ? 1500.0f : 2600.0f)
                                               * inverseSampleRate_);
@@ -3796,7 +3800,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         --voice.artifactCollisionRemaining;
         const float progress = 1.0f
             - static_cast<float>(voice.artifactCollisionRemaining)
-              / static_cast<float>(std::max(1, voice.artifactCollisionLength));
+              / voice.artifactCollisionLengthDenominator;
         const float clearance = voice.artifactClearance
                               * (1.0f + 3.5f * progress);
         artifactExcess = std::abs(verticalSample) - clearance;
@@ -3836,7 +3840,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     {
         voice.noiseRemaining--;
         const float window = static_cast<float>(voice.noiseRemaining)
-                           / static_cast<float>(std::max(1, voice.noiseLength));
+                           / voice.noiseLengthDenominator;
         const float raw = bipolarNoise(voice.noiseState);
         const float lowpassed = voice.noiseShaper.process(raw, voice.noiseBandCoefficient);
         // Band-shaped scrape: low-passed noise minus its own slower average.
