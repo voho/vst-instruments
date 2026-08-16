@@ -377,14 +377,28 @@ float rationalShaperPrimitive (float value, float positiveCurvature,
         magnitude * magnitude * (0.5 - product * (1.0 / 3.0 - 0.25 * product)));
 }
 
+// Both ADAA forms below open with the identical pair of steps: clamp the new
+// sample to the shaper's finite domain, falling a non-finite one back to
+// zero, then clamp the carried-over previous sample the same way, falling a
+// non-finite one back to the (already-sanitized) new sample rather than to
+// zero - a stage that has just recovered from a NaN should not see a
+// synthetic discontinuity against silence. Both results are flushed for
+// denormals before use. It was duplicated verbatim in each function; this is
+// that one sequence, shared, with no change to either function's output.
+void sanitizeAdaaPair (float& input, float& previous) noexcept
+{
+    input = flushDenormal (
+        std::clamp (std::isfinite (input) ? input : 0.0f, -64.0f, 64.0f));
+    previous = flushDenormal (
+        std::clamp (std::isfinite (previous) ? previous : input, -64.0f, 64.0f));
+}
+
 float antialiasedRationalShaper (float input, float& previousInput,
                                  float positiveCurvature,
                                  float negativeCurvature) noexcept
 {
-    input = flushDenormal (
-        std::clamp (std::isfinite (input) ? input : 0.0f, -64.0f, 64.0f));
-    const float previous = flushDenormal (std::clamp (
-        std::isfinite (previousInput) ? previousInput : input, -64.0f, 64.0f));
+    float previous = previousInput;
+    sanitizeAdaaPair (input, previous);
     const float difference = input - previous;
     const float threshold = 1.0e-4f * (1.0f + std::abs (input) + std::abs (previous));
     float output = 0.0f;
@@ -424,10 +438,8 @@ float antialiasedRationalShaperCached (float input, float& previousInput,
                                        float positiveCurvature,
                                        float negativeCurvature) noexcept
 {
-    input = flushDenormal (
-        std::clamp (std::isfinite (input) ? input : 0.0f, -64.0f, 64.0f));
-    const float previous = flushDenormal (std::clamp (
-        std::isfinite (previousInput) ? previousInput : input, -64.0f, 64.0f));
+    float previous = previousInput;
+    sanitizeAdaaPair (input, previous);
     const float primitive = rationalShaperPrimitive (
         input, positiveCurvature, negativeCurvature);
     const float difference = input - previous;
