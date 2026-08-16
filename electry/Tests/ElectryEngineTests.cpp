@@ -1153,6 +1153,50 @@ void testDropELowNoteAtMaximumRate()
            "384 kHz Drop-E wheel-down pitch is inaccurate");
 }
 
+// prepare()'s sample-rate guard - a non-finite rate falls back to 48 kHz,
+// and any finite rate is then clamped to [minimumSupportedSampleRate,
+// maximumSupportedSampleRate], 8 kHz and 384 kHz respectively - was only
+// ever driven with rates already inside that range (44.1/48/96/192/384 kHz
+// across the suite). Confirms the guard actually lands on the same internal
+// clock as an explicit prepare() at the fallback/clamped rate, by comparing
+// the resulting delay-line target for the same open note, and that the
+// engine keeps rendering finite audio.
+void testPrepareSanitisesSampleRate()
+{
+    const auto openStringDelayTarget = [] (double sampleRate)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 256);
+        EngineParameters parameters;
+        engine.setParameters(parameters);
+        engine.noteOn(40, 0.8f);
+
+        StereoBuffer buffer(2048);
+        renderInto(engine, buffer);
+        expect(allFinite(buffer),
+               "a sanitised prepare() sample rate produced non-finite audio");
+
+        const int stringIndex = TestAccess::stringForNote(engine, 40);
+        return TestAccess::snapshot(engine, stringIndex).verticalDelayTarget;
+    };
+
+    constexpr double minimumSupportedSampleRate = 8000.0;
+    constexpr double maximumSupportedSampleRate = 384000.0;
+
+    expect(openStringDelayTarget(std::nan(""))
+               == openStringDelayTarget(48000.0),
+           "a NaN sample rate did not fall back to the 48 kHz default");
+    expect(openStringDelayTarget(1.0e9)
+               == openStringDelayTarget(maximumSupportedSampleRate),
+           "a sample rate above the ceiling was not clamped to it");
+    expect(openStringDelayTarget(1.0)
+               == openStringDelayTarget(minimumSupportedSampleRate),
+           "a sample rate below the floor was not clamped to it");
+    expect(openStringDelayTarget(-48000.0)
+               == openStringDelayTarget(minimumSupportedSampleRate),
+           "a negative sample rate was not clamped to the floor");
+}
+
 void testDeterminism()
 {
     constexpr double sampleRate = 48000.0;
@@ -7543,6 +7587,7 @@ int main()
     testRenderMatrixFiniteAndBounded();
     testPitchAccuracy();
     testDropELowNoteAtMaximumRate();
+    testPrepareSanitisesSampleRate();
     testDeterminism();
     testKeyswitchesSelectStylesSilently();
     testAlternateStrokeSequence();
