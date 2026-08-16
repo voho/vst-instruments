@@ -570,13 +570,6 @@ float YouKnow106Engine::vcfConverterCarryCounts(float counts) noexcept
     return carry;
 }
 
-double YouKnow106Engine::algebraicSoftClipDenominator(
-    double normalisedMagnitude, double exponent) noexcept
-{
-    return std::pow(1.0 + std::pow(normalisedMagnitude, exponent),
-                     1.0 / exponent);
-}
-
 float YouKnow106Engine::vcfEffectiveCutoffHz(float counts,
                                              float feedback) noexcept
 {

@@ -1,10 +1,27 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 
 namespace youknow106
 {
+
+// Generalized algebraic soft clip: exactly linear as the normalised magnitude
+// approaches zero and bending only as it approaches 1. Three independent
+// sites fit this same shape -- the BBD write below, and the engine's output
+// summer and VCF saturation -- so the denominator lives here once rather than
+// at each site; the engine has no header of its own that this one could sit
+// in without the engine depending on this file twice over, and this file
+// already builds standalone, so the shared primitive sits here instead.
+// Evaluated in double so an extreme finite float still approaches the bound
+// instead of overflowing an intermediate power and folding back to zero.
+[[nodiscard]] inline double algebraicSoftClipDenominator(
+    double normalisedMagnitude, double exponent) noexcept
+{
+    return std::pow(1.0 + std::pow(normalisedMagnitude, exponent),
+                     1.0 / exponent);
+}
 
 // Panel state of the two latching chorus buttons.
 //
