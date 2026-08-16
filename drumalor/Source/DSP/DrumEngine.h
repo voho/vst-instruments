@@ -764,6 +764,12 @@ private:
     void applyBusStage (float& left, float& right, float driveAmount,
                         float compressionAmount) noexcept;
     void configureSympatheticBeds() noexcept;
+    // Rebuilds one bed's resonators and drive filter(s) from its instrument's
+    // current pitch/decay. configureResonator() ends by clearing the
+    // resonator's y1/y2, so this is also the unit of "what may stop ringing":
+    // only the bed actually being retuned should lose whatever it was
+    // sounding, not its three siblings.
+    void configureSympatheticBed (std::size_t index) noexcept;
     void updateSympatheticBeds() noexcept;
     void clearSympatheticBeds() noexcept;
     void renderSympatheticBeds (float excitation, float amount,
