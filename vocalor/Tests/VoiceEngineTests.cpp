@@ -3382,6 +3382,45 @@ void testPreparationIsExplicit()
            "an explicitly prepared engine did not accept its first note");
 }
 
+/** noteOn()'s non-positive-velocity guard (see
+    testNoteOnWithNonPositiveVelocityActsAsNoteOff()) routes straight to
+    noteOff() as its very first statement, before the ordinary noteOn() body
+    ever reaches the prepared_ check the previous test covers. noteOff()
+    itself has no such guard -- it only ever touches the fixed-size
+    voices_/heldNotes_/sustainedNotes_ state, none of which prepare() is
+    responsible for building -- but nothing in the suite had called noteOn()
+    with a non-positive velocity on an engine that had never been prepared at
+    all, so that ordering was only ever exercised on an already-prepared
+    engine (idly, in testNoteOnWithNonPositiveVelocityActsAsNoteOff()) or with
+    a normal velocity on an unprepared one (just above). Confirm the combination
+    is a safe no-op and that a subsequent prepare() still accepts notes
+    normally, i.e. the bypassed guard left nothing behind for prepare()/reset()
+    to clean up. */
+void testNoteOnWithNonPositiveVelocityIsSafeBeforePrepare()
+{
+    vocalor::VoiceEngine engine;
+    std::array<float, 64> left {};
+    std::array<float, 64> right {};
+    left.fill(1.0f);
+    right.fill(-1.0f);
+    engine.noteOn(60, 0.0f);
+    engine.process(left.data(), right.data(), static_cast<int>(left.size()));
+    expect(engine.getActiveVoiceCount() == 0
+               && std::all_of(left.begin(), left.end(), [](float value)
+                              { return value == 0.0f; })
+               && std::all_of(right.begin(), right.end(), [](float value)
+                              { return value == 0.0f; }),
+           "a non-positive-velocity noteOn() misbehaved on a never-prepared engine");
+
+    engine.prepare(48000.0, blockSize);
+    engine.reset();
+    engine.noteOn(60, 0.8f);
+    engine.process(left.data(), right.data(), static_cast<int>(left.size()));
+    expect(engine.getActiveVoiceCount() == 1,
+           "preparing an engine after a pre-prepare noteOff-routed noteOn() "
+           "did not leave it able to accept its first note");
+}
+
 /** Tension is a physical change of the LF source, not a crossfade between two
     unrelated recordings of a pulse. The lax and pressed endpoint tables have
     different closure phases; mixing only those endpoints used to cancel H2 by
@@ -9169,6 +9208,7 @@ void testPerformanceExpression()
 int main()
 {
     testPreparationIsExplicit();
+    testNoteOnWithNonPositiveVelocityIsSafeBeforePrepare();
     testRenderMatrix();
     testReleaseCompletes();
     testNoteOnWithNonPositiveVelocityActsAsNoteOff();
