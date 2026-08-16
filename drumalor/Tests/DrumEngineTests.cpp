@@ -34,6 +34,27 @@ struct DrumEngineTestAccess
     {
         return engine.nonPositiveProcessCallCount_;
     }
+
+    // Bit-for-bit comparison of one sympathetic bed's resonator ring state
+    // between two engines, so a test can tell whether retuning one bed left
+    // an unrelated one's ring completely undisturbed rather than merely
+    // "quiet enough not to notice".
+    [[nodiscard]] static bool sympatheticBedStateEquals (
+        const DrumEngine& a, const DrumEngine& b, std::size_t bedIndex) noexcept
+    {
+        const auto& bedA = a.sympatheticBeds_[bedIndex];
+        const auto& bedB = b.sympatheticBeds_[bedIndex];
+        if (bedA.modeCount != bedB.modeCount)
+            return false;
+        for (int mode = 0; mode < bedA.modeCount; ++mode)
+        {
+            const auto& resonatorA = bedA.resonators[static_cast<std::size_t> (mode)];
+            const auto& resonatorB = bedB.resonators[static_cast<std::size_t> (mode)];
+            if (resonatorA.y1 != resonatorB.y1 || resonatorA.y2 != resonatorB.y2)
+                return false;
+        }
+        return true;
+    }
 };
 } // namespace drumalor
 
@@ -5519,6 +5540,63 @@ void testSympatheticKitBleed()
     expect (silence.peak == 0.0, "Kit Bleed rang an idle kit");
 }
 
+// The four sympathetic beds - Snare, Low Tom, Mid Tom, High Tom - are
+// independent heads, and updateSympatheticBeds() only reconfigures a bed
+// whose own pitch or decay actually moved. It used to reconfigure all four as
+// soon as any one of them changed, and configureResonator() ends by clearing
+// the resonator it just retuned - so turning, say, the Snare's Decay knob
+// silently reset the three toms' beds as a side effect, cutting off whatever
+// they were still ringing with even though nothing about them changed.
+void testSympatheticBedRetuningIsPerBed()
+{
+    constexpr double sampleRate = 48000.0;
+
+    const auto build = [&] (bool retuneSnare)
+    {
+        auto engine = std::make_unique<drumalor::DrumEngine>();
+        drumalor::KitParameters kit;
+        kit.bleed = 1.0f;
+        engine->setKitParameters (kit);
+        engine->prepare (sampleRate, defaultBlockSize);
+        engine->trigger (drumalor::Instrument::Snare, 1.0f);
+        // Long enough for the kit's own bleed to drive every bed - including
+        // the toms', which have nothing to do with the Snare itself - into a
+        // real, nonzero ring.
+        renderMetrics (*engine, static_cast<int> (0.15 * sampleRate));
+
+        if (retuneSnare)
+        {
+            // Decay only. A struck voice's own decay is baked in at note-on
+            // (see initialiseVoice), so this cannot change what the
+            // already-ringing Snare voice sounds like - the only thing left
+            // for it to touch is the sympathetic-bed system.
+            auto snareParameters = drumalor::getInstrumentMetadata (
+                drumalor::Instrument::Snare).defaultParameters;
+            snareParameters.decay = std::clamp (snareParameters.decay + 0.3f, 0.0f, 1.0f);
+            engine->setInstrumentParameters (drumalor::Instrument::Snare, snareParameters);
+        }
+
+        // One more block so updateSympatheticBeds() observes the change (or
+        // its absence) and reconfigures whatever it decides needs it.
+        renderMetrics (*engine, defaultBlockSize);
+        return engine;
+    };
+
+    const auto unchanged = build (false);
+    const auto retuned = build (true);
+
+    using TestAccess = drumalor::DrumEngineTestAccess;
+    // Bed 0 is the Snare's own - retuning it is expected to move that bed.
+    // Beds 1-3 are the Low/Mid/High Toms (see configureSympatheticBed) and
+    // must come out bit-identical either way: the Snare's own decay changing
+    // is not an event any of them should ever see.
+    for (std::size_t bedIndex = 1; bedIndex < 4; ++bedIndex)
+        expect (TestAccess::sympatheticBedStateEquals (*unchanged, *retuned, bedIndex),
+                "retuning only the Snare's decay disturbed an unrelated tom's "
+                "sympathetic bed ring (bed index "
+                    + std::to_string (bedIndex) + ")");
+}
+
 void testUiPresentationMath()
 {
     using namespace drumalor::ui;
@@ -6005,6 +6083,7 @@ int main()
     testHiHatPedal();
     testMidiSurfaceContract();
     testSympatheticKitBleed();
+    testSympatheticBedRetuningIsPerBed();
     testUiPresentationMath();
     testIdleMetallicCostAndDenormalSafety();
     testInvalidValuesAndStressPerformance();

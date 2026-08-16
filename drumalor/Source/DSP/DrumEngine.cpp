@@ -4399,6 +4399,12 @@ float DrumEngine::renderVoice (Voice& voice) noexcept
 
 void DrumEngine::configureSympatheticBeds() noexcept
 {
+    for (std::size_t index = 0; index < sympatheticBeds_.size(); ++index)
+        configureSympatheticBed (index);
+}
+
+void DrumEngine::configureSympatheticBed (std::size_t index) noexcept
+{
     // The four things on a kit that answer when something else is struck: the
     // snare's resonant head with its wires lying on it, and the three toms.
     // A kick is the only drum that mostly does not - its heads are heavy, its
@@ -4420,56 +4426,54 @@ void DrumEngine::configureSympatheticBeds() noexcept
         185.0f, 82.0f, 123.0f, 174.0f
     };
 
-    for (std::size_t index = 0; index < sympatheticBeds_.size(); ++index)
+    auto& bed = sympatheticBeds_[index];
+    bed.instrument = instruments[index];
+    bed.hasWires = bed.instrument == Instrument::Snare;
+    bed.noiseState = hash32 (static_cast<std::uint32_t> (index + 1u) * 0x9e3779b9u);
+
+    const auto values = snapshotParameters (bed.instrument);
+    bed.lastPitch = values.pitch;
+    bed.lastDecay = values.decay;
+    const float pan = std::clamp (values.pan, -1.0f, 1.0f);
+    bed.panLeft = constantPowerLeft (pan);
+    bed.panRight = constantPowerRight (pan);
+
+    const float root = roots[index] * std::exp2 (values.pitch / 12.0f);
+    // An undriven head rings for a fraction of a struck one: nothing is
+    // putting energy into it except what the rest of the kit leaks, and on
+    // the snare the wires damp it further.
+    const float seconds = decaySecondsFor (bed.instrument, values.decay)
+        * (bed.hasWires ? 0.30f : 0.45f);
+    const auto& ratios = bed.hasWires ? snareModes : tomModes;
+    bed.modeCount = 0;
+    for (int mode = 0; mode < sympatheticModeCount; ++mode)
     {
-        auto& bed = sympatheticBeds_[index];
-        bed.instrument = instruments[index];
-        bed.hasWires = bed.instrument == Instrument::Snare;
-        bed.noiseState = hash32 (static_cast<std::uint32_t> (index + 1u) * 0x9e3779b9u);
-
-        const auto values = snapshotParameters (bed.instrument);
-        bed.lastPitch = values.pitch;
-        bed.lastDecay = values.decay;
-        const float pan = std::clamp (values.pan, -1.0f, 1.0f);
-        bed.panLeft = constantPowerLeft (pan);
-        bed.panRight = constantPowerRight (pan);
-
-        const float root = roots[index] * std::exp2 (values.pitch / 12.0f);
-        // An undriven head rings for a fraction of a struck one: nothing is
-        // putting energy into it except what the rest of the kit leaks, and on
-        // the snare the wires damp it further.
-        const float seconds = decaySecondsFor (bed.instrument, values.decay)
-            * (bed.hasWires ? 0.30f : 0.45f);
-        const auto& ratios = bed.hasWires ? snareModes : tomModes;
-        bed.modeCount = 0;
-        for (int mode = 0; mode < sympatheticModeCount; ++mode)
-        {
-            const float frequency = root * ratios[static_cast<std::size_t> (mode)];
-            if (frequency >= 0.44f * static_cast<float> (sampleRate_))
-                continue;
-            auto& resonator = bed.resonators[static_cast<std::size_t> (bed.modeCount)];
-            configureResonator (resonator, frequency, seconds);
-            // configureResonator normalises a mode for being struck once. A head
-            // that is driven continuously by a whole kit has to be normalised for
-            // its resonant peak instead, which is inputGain/(1 - r) - a factor of
-            // several hundred at these decay times, and the difference between a
-            // sympathetic bed and a howl.
-            resonator.inputGain *= 1.0f - std::sqrt (std::max (0.0f, -resonator.a2));
-            ++bed.modeCount;
-        }
-
-        // What of the kit actually reaches a head that nobody is hitting: the
-        // low-mid the shells and the floor carry, not the stick noise.
-        configureBandpass (bed.drive, bed.hasWires ? 150.0f : root, 0.45f);
-        if (bed.hasWires)
-            configureBandpass (bed.wires, 4200.0f, 0.55f);
+        const float frequency = root * ratios[static_cast<std::size_t> (mode)];
+        if (frequency >= 0.44f * static_cast<float> (sampleRate_))
+            continue;
+        auto& resonator = bed.resonators[static_cast<std::size_t> (bed.modeCount)];
+        configureResonator (resonator, frequency, seconds);
+        // configureResonator normalises a mode for being struck once. A head
+        // that is driven continuously by a whole kit has to be normalised for
+        // its resonant peak instead, which is inputGain/(1 - r) - a factor of
+        // several hundred at these decay times, and the difference between a
+        // sympathetic bed and a howl.
+        resonator.inputGain *= 1.0f - std::sqrt (std::max (0.0f, -resonator.a2));
+        ++bed.modeCount;
     }
+
+    // What of the kit actually reaches a head that nobody is hitting: the
+    // low-mid the shells and the floor carry, not the stick noise.
+    configureBandpass (bed.drive, bed.hasWires ? 150.0f : root, 0.45f);
+    if (bed.hasWires)
+        configureBandpass (bed.wires, 4200.0f, 0.55f);
 }
 
 void DrumEngine::updateSympatheticBeds() noexcept
 {
-    for (auto& bed : sympatheticBeds_)
+    for (std::size_t index = 0; index < sympatheticBeds_.size(); ++index)
     {
+        auto& bed = sympatheticBeds_[index];
         const auto values = snapshotParameters (bed.instrument);
         const float pan = std::clamp (values.pan, -1.0f, 1.0f);
         bed.panLeft = constantPowerLeft (pan);
@@ -4477,9 +4481,14 @@ void DrumEngine::updateSympatheticBeds() noexcept
         if (values.pitch == bed.lastPitch && values.decay == bed.lastDecay)
             continue;
         // Retuning a head clears what it was ringing with, which is what
-        // slackening a lug does anyway.
-        configureSympatheticBeds();
-        return;
+        // slackening a lug does anyway - but only for the head actually being
+        // retuned. This used to call configureSympatheticBeds() and rebuild
+        // every one of the four beds as soon as any one of them changed, which
+        // ran configureResonator() - and its trailing resonator.clear() - on
+        // the other three as well, silencing whatever they were ringing with
+        // for no reason: turning the Snare's own Decay knob could cut off a
+        // Tom's still-ringing sympathetic bed that the knob never touched.
+        configureSympatheticBed (index);
     }
 }
 
