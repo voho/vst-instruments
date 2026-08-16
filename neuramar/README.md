@@ -823,6 +823,12 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-16: `process()`'s per-sample Bone loop no longer scans all twelve
+  candidate modes and branches past the ones the analysis could not vouch
+  for; `setModel()` now resolves the reliable modes into an ascending index
+  list once per model, and the audio loop walks that list directly. Verified
+  behavior-preserving with the DSP test suite and a bit-identical demo
+  re-render (`git status neuramar/Docs/audio` clean across all eight WAVs).
 - 2026-08-16: Added direct unit coverage for `followMeter`'s non-finite-target
   branch (its non-finite-current sibling was already covered), the one
   defensive branch of `ModelVisualisation`'s helpers that direct coverage
