@@ -74,6 +74,16 @@ public:
                                             float analysisBinWidth,
                                             float rootFrequencyHz,
                                             float inharmonicity);
+
+    // belongsToSubtractedHarmonic's own entry guard, exposed on its own so the
+    // regression suite can assert it directly: the parent function's later
+    // checks independently reject every hostile root or bin width this guard
+    // rejects, so no input to the parent function can demonstrate this guard
+    // mattering through its return value alone. It is not part of the
+    // plug-in's runtime surface.
+    [[nodiscard]] static bool
+        hasUsableRootAndBinWidthForTests(float rootFrequencyHz,
+                                         float analysisBinWidth);
 };
 
 } // namespace neuramar

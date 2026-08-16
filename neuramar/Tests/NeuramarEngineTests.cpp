@@ -4304,6 +4304,47 @@ void testAirFitSubtractedHarmonicGuards()
 {
     using neuramar::SampleLearner;
 
+    // hasUsableRootAndBinWidth() is belongsToSubtractedHarmonic()'s own entry
+    // guard, factored out and tested directly here because the parent
+    // function's *return value* cannot show this guard mattering: its later
+    // partial-gap check independently rejects every non-positive root
+    // whenever the bin width is positive, its derived-coordinate range check
+    // independently rejects a NaN root (NaN propagates to a NaN rounded
+    // index, failing `rounded >= 1.0f`), and its final distance comparison
+    // independently rejects every non-positive or NaN bin width (a
+    // non-negative diff can never be less than a non-positive or NaN
+    // threshold). An exhaustive sweep over invalid root and bin-width
+    // combinations confirmed none of them changes
+    // belongsToSubtractedHarmonic's return value with this guard deleted, so
+    // testing the guard's own boolean expression is the only way to give it
+    // real regression coverage.
+    constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+    constexpr float infinity = std::numeric_limits<float>::infinity();
+    expect(!SampleLearner::hasUsableRootAndBinWidthForTests(0.0f, 5.0f),
+           "a non-positive root frequency was accepted");
+    expect(!SampleLearner::hasUsableRootAndBinWidthForTests(-220.0f, 5.0f),
+           "a negative root frequency was accepted");
+    expect(!SampleLearner::hasUsableRootAndBinWidthForTests(nan, 5.0f),
+           "a NaN root frequency was accepted");
+    expect(!SampleLearner::hasUsableRootAndBinWidthForTests(440.0f, 0.0f),
+           "a non-positive analysis bin width was accepted");
+    expect(!SampleLearner::hasUsableRootAndBinWidthForTests(440.0f, nan),
+           "a NaN analysis bin width was accepted");
+    // +infinity satisfies `value > 0.0f`, so this guard - unlike the ones
+    // above - accepts it; the parent function still safely rejects an
+    // infinite root or bin width, but (as shown below) through one of its
+    // later checks rather than through this one.
+    expect(SampleLearner::hasUsableRootAndBinWidthForTests(infinity, 5.0f),
+           "an infinite root frequency was rejected by this guard");
+    expect(SampleLearner::hasUsableRootAndBinWidthForTests(440.0f, infinity),
+           "an infinite analysis bin width was rejected by this guard");
+    expect(SampleLearner::hasUsableRootAndBinWidthForTests(440.0f, 5.0f),
+           "an ordinary root and bin width were rejected");
+
+    // The full function's own hostile-input behaviour is exercised here too:
+    // whichever combination of the guard above, the partial-gap check, the
+    // derived-coordinate range check, and the final distance comparison is
+    // responsible, every one of these inputs must still come back rejected.
     expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
                1320.0f, 5.0f, 0.0f, 0.0f),
            "a non-positive root frequency was not rejected");
@@ -4311,35 +4352,29 @@ void testAirFitSubtractedHarmonicGuards()
                1320.0f, 5.0f, -220.0f, 0.0f),
            "a negative root frequency was not rejected");
     expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
-               1320.0f, 5.0f, std::numeric_limits<float>::quiet_NaN(), 0.0f),
+               1320.0f, 5.0f, nan, 0.0f),
            "a NaN root frequency was not rejected");
     expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
                1320.0f, 0.0f, 440.0f, 0.0f),
            "a non-positive analysis bin width was not rejected");
     expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
-               1320.0f, std::numeric_limits<float>::quiet_NaN(), 440.0f, 0.0f),
+               1320.0f, nan, 440.0f, 0.0f),
            "a NaN analysis bin width was not rejected");
-    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
-               100.0f, 40.0f, 100.0f, 0.0f),
-           "a root within 3 bin widths of itself left a partial gap to "
-           "measure that does not exist");
-
-    // A +infinity root or bin width both satisfy `value > 0.0f`, so neither
-    // takes the `!(root > 0.0f) || !(binWidth > 0.0f)` early exit the way NaN
-    // does above - the function still has to reject them through whichever
-    // check they fall into instead. An infinite root divides frequencyHz down
-    // to a derived coordinate of exactly zero, which the [1, 64] range check
-    // below rejects; an infinite bin width makes `root < 3 * binWidth` true
-    // for any finite root, so the partial-gap guard rejects it first. Both
-    // paths are exercised here so a regression that widened either
-    // `value > 0.0f` comparison to admit infinity could not pass unnoticed.
-    constexpr float infinity = std::numeric_limits<float>::infinity();
     expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
                1320.0f, 5.0f, infinity, 0.0f),
            "an infinite root frequency was not rejected");
     expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
                1320.0f, infinity, 440.0f, 0.0f),
            "an infinite analysis bin width was not rejected");
+
+    // Unlike the guard above, the partial-gap check genuinely is what stands
+    // between this exact input and a false accept: with it removed, ratio 1
+    // rounds to the first partial and the reconstructed 100 Hz matches
+    // frequencyHz exactly, well inside a 50 Hz (1.25 * 40) window.
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               100.0f, 40.0f, 100.0f, 0.0f),
+           "a root within 3 bin widths of itself left a partial gap to "
+           "measure that does not exist");
 
     // Ideal harmonic series (inharmonicity 0): the derived coordinate is the
     // plain ratio, so a frequency at 70x the root rounds past the 64-partial

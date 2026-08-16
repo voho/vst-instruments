@@ -1579,6 +1579,27 @@ void makePreview(const std::vector<float>& sample,
     return false;
 }
 
+// belongsToSubtractedHarmonic()'s own entry guard, factored out so it can be
+// unit-tested directly rather than only through the full function's return
+// value. That distinction matters here: the partial-gap check right after it
+// (rootFrequencyHz < 3 * analysisBinWidth) independently rejects every
+// non-positive rootFrequencyHz whenever analysisBinWidth is positive, the
+// derived-coordinate range check further down independently rejects a NaN
+// rootFrequencyHz (it propagates to a NaN rounded index, which fails
+// `rounded >= 1.0f`), and the final distance comparison independently
+// rejects every non-positive or NaN analysisBinWidth (1.25 * a non-positive
+// or NaN bin width can never be a diff a non-negative std::abs() is less
+// than). An exhaustive sweep over invalid root and bin-width values confirms
+// none of them changes belongsToSubtractedHarmonic's return value with this
+// guard removed - so no input can demonstrate this guard mattering through
+// the parent function's black-box behaviour alone, even though it is the
+// documented, correct first line of defence.
+[[nodiscard]] bool hasUsableRootAndBinWidth(float rootFrequencyHz,
+                                            float analysisBinWidth) noexcept
+{
+    return rootFrequencyHz > 0.0f && analysisBinWidth > 0.0f;
+}
+
 // The sinusoidal subtraction leaves a narrowband residue at each fitted
 // partial - one only 0.5 % off its assumed frequency keeps several dB of its
 // energy there. Counting that residue as noise inflates the Air layer and makes
@@ -1592,7 +1613,7 @@ void makePreview(const std::vector<float>& sample,
                                                float rootFrequencyHz,
                                                float inharmonicity) noexcept
 {
-    if (!(rootFrequencyHz > 0.0f) || !(analysisBinWidth > 0.0f))
+    if (!hasUsableRootAndBinWidth(rootFrequencyHz, analysisBinWidth))
         return false;
     // Once the partials are closer together than the analysis can resolve there
     // is no gap left to measure, and excluding would discard the band rather
@@ -2186,6 +2207,12 @@ bool SampleLearner::belongsToSubtractedHarmonicForTests(
 {
     return belongsToSubtractedHarmonic(frequencyHz, analysisBinWidth,
                                        rootFrequencyHz, inharmonicity);
+}
+
+bool SampleLearner::hasUsableRootAndBinWidthForTests(
+    float rootFrequencyHz, float analysisBinWidth)
+{
+    return hasUsableRootAndBinWidth(rootFrequencyHz, analysisBinWidth);
 }
 
 SampleLearner::LearnResult SampleLearner::learn(
