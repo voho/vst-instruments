@@ -128,6 +128,27 @@ struct ElectryEngineTestAccess
         return engine.pitchBendTarget_;
     }
 
+    // The bridge-pickup resonance target setResonance() writes, the
+    // acoustic-return level target setAcousticReturnLevel() writes, and the
+    // palm-mute pressure setPalmMutePressure() writes, read straight off the
+    // engine so each guard - fold non-finite input to zero, then clamp to
+    // [0, 1] - can be checked directly rather than only through whatever it
+    // happens to do to a rendered voice.
+    static float resonanceTarget(const ElectryEngine& engine) noexcept
+    {
+        return engine.resonanceTarget_;
+    }
+
+    static float returnLevelTarget(const ElectryEngine& engine) noexcept
+    {
+        return engine.returnLevelTarget_;
+    }
+
+    static float palmMutePressure(const ElectryEngine& engine) noexcept
+    {
+        return engine.palmMutePressure_;
+    }
+
     static bool channelsLinked(const ElectryEngine& engine) noexcept
     {
         return engine.channelsLinked_;
@@ -3254,6 +3275,105 @@ void testSetPitchBendSanitisation()
     renderInto(engine, bendBuffer);
     expect(allFinite(bendBuffer),
            "a hostile pitch bend produced non-finite audio");
+}
+
+// setResonance(), setAcousticReturnLevel() and setPalmMutePressure() share the
+// exact same guard shape as setVibrato() above - `std::isfinite(value) ?
+// clampf(value, 0.0f, 1.0f) : 0.0f` - and, like setVibrato() before it was
+// covered directly, are only ever driven elsewhere in the suite with ordinary
+// in-range levels, or in testParameterSanitisation() with a NaN whose only
+// assertion is that the resulting audio stays finite. Nothing asserted that a
+// non-finite level folds to zero rather than latching NaN into the resonance
+// target, the acoustic-return target or the palm-mute pressure, or that an
+// out-of-range level clamps to the nearer boundary rather than passing
+// through unclamped. All three guards are checked together here since they
+// are, byte for byte, the same guard three times over.
+void testSetResonanceReturnLevelAndPalmMutePressureSanitisation()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    engine.setParameters(EngineParameters {});
+
+    // NaN and either infinity fail std::isfinite and fall back to 0.0f exactly
+    // - the same "no boundary to clamp to" fallback the other performance
+    // guards use.
+    engine.setResonance(std::nanf(""));
+    expect(TestAccess::resonanceTarget(engine) == 0.0f,
+           "a NaN resonance level did not fall back to zero");
+    engine.setResonance(std::numeric_limits<float>::infinity());
+    expect(TestAccess::resonanceTarget(engine) == 0.0f,
+           "a positive-infinite resonance level did not fall back to zero");
+    engine.setResonance(-std::numeric_limits<float>::infinity());
+    expect(TestAccess::resonanceTarget(engine) == 0.0f,
+           "a negative-infinite resonance level did not fall back to zero");
+
+    engine.setAcousticReturnLevel(std::nanf(""));
+    expect(TestAccess::returnLevelTarget(engine) == 0.0f,
+           "a NaN acoustic-return level did not fall back to zero");
+    engine.setAcousticReturnLevel(std::numeric_limits<float>::infinity());
+    expect(TestAccess::returnLevelTarget(engine) == 0.0f,
+           "a positive-infinite acoustic-return level did not fall back to "
+           "zero");
+
+    engine.setPalmMutePressure(std::nanf(""));
+    expect(TestAccess::palmMutePressure(engine) == 0.0f,
+           "a NaN palm-mute pressure did not fall back to zero");
+    engine.setPalmMutePressure(-std::numeric_limits<float>::infinity());
+    expect(TestAccess::palmMutePressure(engine) == 0.0f,
+           "a negative-infinite palm-mute pressure did not fall back to "
+           "zero");
+
+    // A finite value outside [0, 1] clamps to the nearer boundary rather than
+    // being rejected or left unclamped.
+    engine.setResonance(-3.0f);
+    expect(TestAccess::resonanceTarget(engine) == 0.0f,
+           "a negative resonance level did not clamp to zero");
+    engine.setResonance(8.5f);
+    expect(TestAccess::resonanceTarget(engine) == 1.0f,
+           "a resonance level above 1.0 did not clamp to one");
+
+    engine.setAcousticReturnLevel(-2.0f);
+    expect(TestAccess::returnLevelTarget(engine) == 0.0f,
+           "a negative acoustic-return level did not clamp to zero");
+    engine.setAcousticReturnLevel(6.0f);
+    expect(TestAccess::returnLevelTarget(engine) == 1.0f,
+           "an acoustic-return level above 1.0 did not clamp to one");
+
+    engine.setPalmMutePressure(-1.5f);
+    expect(TestAccess::palmMutePressure(engine) == 0.0f,
+           "a negative palm-mute pressure did not clamp to zero");
+    engine.setPalmMutePressure(4.0f);
+    expect(TestAccess::palmMutePressure(engine) == 1.0f,
+           "a palm-mute pressure above 1.0 did not clamp to one");
+
+    // An ordinary value still passes straight through, confirming each guard
+    // is a genuine clamp rather than a filter that also stops valid input.
+    engine.setResonance(0.35f);
+    expect(TestAccess::resonanceTarget(engine) == 0.35f,
+           "an in-range resonance level was altered by the guard");
+    engine.setAcousticReturnLevel(0.65f);
+    expect(TestAccess::returnLevelTarget(engine) == 0.65f,
+           "an in-range acoustic-return level was altered by the guard");
+    engine.setPalmMutePressure(0.5f);
+    expect(TestAccess::palmMutePressure(engine) == 0.5f,
+           "an in-range palm-mute pressure was altered by the guard");
+
+    // And hostile levels held together on a genuinely fretted, sounding
+    // string must still render finite, bounded audio end to end rather than
+    // only sanitising the three stored targets.
+    engine.reset();
+    engine.setResonance(1.0f);
+    engine.setAcousticReturnLevel(1.0f);
+    engine.noteOn(47, 0.9f); // A2 + 2 frets, not an open string
+    engine.setResonance(std::nanf(""));
+    engine.setAcousticReturnLevel(std::nanf(""));
+    engine.setPalmMutePressure(std::nanf(""));
+    StereoBuffer levelBuffer(static_cast<int>(0.2 * sampleRate));
+    renderInto(engine, levelBuffer);
+    expect(allFinite(levelBuffer),
+           "hostile resonance/return/palm-mute levels produced non-finite "
+           "audio");
 }
 
 // The natural harmonic is a finger resting on a node, not a transposition.
@@ -7858,6 +7978,7 @@ int main()
     testNoteOnVelocitySanitisation();
     testSetVibratoSanitisation();
     testSetPitchBendSanitisation();
+    testSetResonanceReturnLevelAndPalmMutePressureSanitisation();
     testFrettingHandPosition();
     testTouchHarmonics();
     testPinchHarmonic();
