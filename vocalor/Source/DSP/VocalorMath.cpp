@@ -346,46 +346,24 @@ float formantResponseDb (float frequencyHz, const float* formantHz,
         || count <= 0 || ! (sampleRate > 0.0f))
         return -120.0f;
 
-    const float nyquist = 0.5f * sampleRate;
-    const float bounded = std::clamp (frequencyHz, 1.0f, 0.999f * nyquist);
-    const float omega = twoPi * bounded / sampleRate;
-    const float cosOmega = std::cos (omega);
-    const float sinOmega = std::sin (omega);
-    // Evaluated directly rather than via the double-angle identity: for low,
-    // narrow formants at high sample rates, omega is tiny, cosOmega rounds to
-    // very close to 1.0f, and 2*cosOmega*cosOmega - 1 subtracts two nearly
-    // equal float32 values, losing enough precision to shift the plotted
-    // response by more than half a dB with a discontinuous per-frequency
-    // error. Direct evaluation avoids that cancellation.
-    const float cosTwo = std::cos (2.0f * omega);
-    const float sinTwo = std::sin (2.0f * omega);
-
-    float sumReal = 0.0f;
-    float sumImaginary = 0.0f;
-
-    for (int i = 0; i < count; ++i)
-    {
-        const float centre = std::clamp (formantHz[i], 25.0f, 0.465f * sampleRate);
-        const float bandwidth = std::clamp (formantBandwidth[i], 20.0f, 0.25f * sampleRate);
-        const float radius = std::exp (-pi * bandwidth / sampleRate);
-        const float poleAngle = twoPi * centre / sampleRate;
-        const float a1 = 2.0f * radius * std::cos (poleAngle);
-        const float a2 = -radius * radius;
-        const float b0 = formantResonatorGain (radius, std::sin (poleAngle));
-
-        const float real = 1.0f - a1 * cosOmega - a2 * cosTwo;
-        const float imaginary = a1 * sinOmega + a2 * sinTwo;
-        const float denominator = real * real + imaginary * imaginary;
-        if (! (denominator > 0.0f))
-            continue;
-
-        const float scale = formantPolarity (i) * formantGain[i] * b0 / denominator;
-        sumReal += scale * real;
-        sumImaginary -= scale * imaginary;
-    }
-
-    const float magnitude = std::sqrt (sumReal * sumReal + sumImaginary * sumImaginary);
-    return 20.0f * std::log10 (std::max (magnitude, 1.0e-6f));
+    // A one-shot probe is the same arithmetic formantResponseCoefficients()
+    // and formantResponseDbFromCoefficients() split apart for a caller that
+    // plots many points, just resolved for a single frequency instead of
+    // being cached across several. Routing through them here -- rather than
+    // keeping a second copy of the same pole/gain derivation -- is what
+    // actually guarantees the bit-identity formantResponseDbFromCoefficients()
+    // promises, instead of leaving it to the two copies staying in sync by
+    // hand. Every formant bank in this engine is exactly kFormantCount wide
+    // (the same bound parallelFormantCoefficients() already applies), so the
+    // coefficients fit on the stack with no allocation.
+    count = std::min (count, kFormantCount);
+    std::array<float, kFormantCount> a1 {};
+    std::array<float, kFormantCount> a2 {};
+    std::array<float, kFormantCount> scale {};
+    formantResponseCoefficients (formantHz, formantBandwidth, formantGain, count, sampleRate,
+                                 a1.data(), a2.data(), scale.data());
+    return formantResponseDbFromCoefficients (frequencyHz, a1.data(), a2.data(), scale.data(),
+                                              count, sampleRate);
 }
 
 void formantResponseCoefficients (const float* formantHz, const float* formantBandwidth,

@@ -193,9 +193,10 @@ void formantResponseCoefficients (const float* formantHz, const float* formantBa
                                   float* outA1, float* outA2, float* outScale) noexcept;
 
 /** Magnitude in dB of the formant bank described by @c a1/@c a2/@c scale
-    from formantResponseCoefficients(), evaluated at @c frequencyHz. Bit-
-    identical to formantResponseDb() called with the same formant bank, for
-    the frequency-dependent half of the same arithmetic. */
+    from formantResponseCoefficients(), evaluated at @c frequencyHz. This is
+    the frequency-dependent half of the arithmetic formantResponseDb() itself
+    is built from, so the two stay bit-identical by construction rather than
+    by two separate implementations happening to agree. */
 [[nodiscard]] float formantResponseDbFromCoefficients (float frequencyHz, const float* a1,
                                                         const float* a2, const float* scale,
                                                         int count, float sampleRate) noexcept;
