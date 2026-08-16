@@ -823,6 +823,12 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-16: Added direct coverage for `stretchedHarmonicRatio`'s and
+  `anatomyDisplayHeight`'s hostile-input guards - a zero, negative, NaN, or
+  infinite inharmonicity coefficient, a non-finite harmonic number, and a
+  NaN, zero, negative, or floor-crossing amplitude or peak - which every
+  other test only exercised indirectly through an already well-formed
+  learned model. Test-only; no engine or header change.
 - 2026-08-16: `NeuralModel::evaluateBaseRaw` no longer re-clamps and
   re-validates its `normalisedTime` argument with `std::isfinite`/`std::clamp`
   on every call; all four call sites - `evaluate()`'s hot per-control-frame
