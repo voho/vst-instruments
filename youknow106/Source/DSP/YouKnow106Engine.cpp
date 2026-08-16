@@ -4311,6 +4311,16 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // corner joins two segments of one cycle, and the wrap joins the old
     // cycle's fall to the new cycle's rise -- the one place the ratio is
     // allowed to change, because both waveforms sit on the shared rail there.
+    // Every wrap inside this sample lands on the same voice.dcoCv,
+    // voice.dcoCvTarget and voice.dco.periodSamples -- nothing this loop
+    // touches feeds back into them -- so dcoLaunchScale resolves to the same
+    // value at every wrap crossed here. An ordinary sample crosses at most
+    // one, but a note fast enough to outrun the sample clock can cross dozens
+    // in a row; solved lazily on the first wrap and cached, it is neither
+    // paid for on the (overwhelmingly common) no-wrap sample nor re-derived
+    // on every wrap after the first.
+    bool launchScaleResolved = false;
+    float launchScale = 0.0f;
     float cycleScale = dco.renderScale;
     for (double base = 0.0; base <= lastCycle; base += 1.0)
     {
@@ -4322,7 +4332,11 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
 #if defined(YOUKNOW106_WORK_AUDIT)
             YOUKNOW106_COUNT_DOMAIN_WORK(dcoCycleWraps, 1);
 #endif
-            const float launchScale = dcoLaunchScale(voice);
+            if (!launchScaleResolved)
+            {
+                launchScale = dcoLaunchScale(voice);
+                launchScaleResolved = true;
+            }
             addSlope(dco.saw,
                      (slopeAtStart * launchScale
                       - fallSlope * cycleScale) * incrementF,
