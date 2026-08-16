@@ -6030,6 +6030,72 @@ void testRoughPerformance(const neuramar::NeuralModel& model)
     return best;
 }
 
+// NeuramarEngine::prepare()'s sample-rate guard - a non-finite rate, or a
+// finite one outside [8 kHz, 768 kHz], falls back to the 48 kHz default
+// outright rather than clamping to whichever bound was crossed - is
+// exercised everywhere else in this suite with a rate already inside that
+// range (44.1/48/88.2/96/192 kHz), so the guard itself has never been driven
+// directly. renderCoreAtRate() cannot be reused here because it sizes its own
+// buffers from the requested rate, which is exactly the value under test;
+// this renders a fixed sample count instead and analyses it at the rate the
+// guard is documented to land on.
+void testPrepareSanitisesSampleRate()
+{
+    const auto model = neuramar::NeuralModel::createRandom(
+        0x9e3779b97f4a7c15ull, 0.6f);
+    expect(model != nullptr, "sample-rate guard fixture could not be created");
+    if (!model)
+        return;
+
+    const auto renderRootAt = [&model](double requestedRate,
+                                        double effectiveRate)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(requestedRate, 128);
+        engine.setModel(model.get());
+        auto parameters = cleanCoreParameters();
+        parameters.bodyLock = 0.0f;
+        parameters.outputGain = 1.0f;
+        engine.setParameters(parameters);
+        engine.noteOn(model->rootMidiNote(), 0.8f);
+
+        constexpr int sampleCount = 8192;
+        std::vector<float> left(sampleCount, 0.0f);
+        std::vector<float> right(sampleCount, 0.0f);
+        for (int offset = 0; offset < sampleCount; offset += 128)
+            engine.process(left.data() + offset, right.data() + offset, 128);
+
+        bool finite = true;
+        for (const float sample : left)
+            finite = finite && std::isfinite(sample) && std::abs(sample) <= 8.0f;
+        expect(finite,
+               "a sanitised prepare() sample rate produced non-finite audio");
+
+        const auto first = static_cast<std::size_t>(sampleCount / 4);
+        return peakedAmplitude(left, first, sampleCount - first,
+                                model->rootFrequencyHz(), effectiveRate);
+    };
+
+    const double reference = renderRootAt(48000.0, 48000.0);
+    expect(reference > 1.0e-3,
+           "the sanitisation fixture produced no measurable root partial");
+
+    constexpr double quietNan = std::numeric_limits<double>::quiet_NaN();
+    constexpr double infinity = std::numeric_limits<double>::infinity();
+    expect(renderRootAt(quietNan, 48000.0) > 0.5 * reference,
+           "a NaN sample rate did not fall back to the 48 kHz default");
+    expect(renderRootAt(infinity, 48000.0) > 0.5 * reference,
+           "an infinite sample rate did not fall back to the 48 kHz default");
+    expect(renderRootAt(1.0e12, 48000.0) > 0.5 * reference,
+           "a sample rate above the ceiling did not fall back to the "
+               "48 kHz default");
+    expect(renderRootAt(1.0, 48000.0) > 0.5 * reference,
+           "a sample rate below the floor did not fall back to the "
+               "48 kHz default");
+    expect(renderRootAt(-48000.0, 48000.0) > 0.5 * reference,
+           "a negative sample rate did not fall back to the 48 kHz default");
+}
+
 // Nothing may live below the played fundamental: the partial series starts
 // there, the anti-alias taper deletes everything that would fold back, and the
 // oscillator's sine approximation is the only other candidate for a spurious
@@ -6565,6 +6631,7 @@ int main()
     testAirFilterNoisePowerResponseHostileInputs();
     testCoreSpurFloor();
     testRenderIsSampleRateInvariant();
+    testPrepareSanitisesSampleRate();
     testBodyLayersAreSampleRateInvariant();
     testBoneCeilingIsAnchoredToTheAudibleBand();
     testKeyboardLevelFlatness();

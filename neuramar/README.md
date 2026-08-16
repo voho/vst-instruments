@@ -823,6 +823,14 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-16: Added direct coverage for `NeuramarEngine::prepare`'s
+  sample-rate guard - a non-finite rate, or a finite one outside
+  [8 kHz, 768 kHz], falls back to the 48 kHz default outright rather than
+  clamping to whichever bound was crossed - which every other test in the
+  suite only ever exercised with a rate already inside that range (44.1, 48,
+  88.2, 96, and 192 kHz). Test-only; no engine or header change, verified
+  with the JUCE-free DSP suite (3/3 tests passed) and `git status
+  neuramar/Docs/audio` confirmed clean.
 - 2026-08-16: Added direct coverage for `airfilter::unitNoisePowerResponse`'s
   sanitize guard - a zero, negative, non-finite, or at-or-above-Nyquist
   frequency, and a non-positive sample rate, each collapsing to silence -
