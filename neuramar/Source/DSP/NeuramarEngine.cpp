@@ -1478,8 +1478,7 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
                 * inverseHarmonicRolloff_[harmonic];
             const float referenceTiltValue = voice.referenceTiltTable[harmonic];
             const float referenceVariation = 1.0f
-                + parameters.mutation * 0.045f
-                    * voice.harmonicVariationSin[harmonic];
+                + variationDepth * voice.harmonicVariationSin[harmonic];
             referenceTargets[harmonic] = std::clamp(
                 (referenceNeutral + characteristic
                     * (pitchFollowing - referenceNeutral))
