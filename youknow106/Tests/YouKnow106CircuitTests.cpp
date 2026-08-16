@@ -3389,6 +3389,54 @@ void testChorusNoiseComponents()
            "the deterministic hum/clock-spur oscillator is not reproducible");
 }
 
+void testChorusToneStepFallbackGuard()
+{
+    // Both production call sites hand `deterministicToneStep` sampleRate_
+    // (fixed positive by `prepare()`) and a finite frequency -- a configured
+    // hum frequency or a clock rate times a harmonic multiplier, never
+    // user-facing values that could carry a NaN or an infinity. So the
+    // fixture above, and every full-engine render, only ever exercises this
+    // function's ordinary path; the non-finite/non-positive-rate fallback
+    // guard has never fired outside a test. Poison each argument in turn and
+    // confirm the guard reports silence and leaves the caller's phase alone,
+    // then confirm one clean call afterwards still advances normally instead
+    // of continuing to propagate the poison.
+    constexpr float sampleRate = 48000.0f;
+    double phase = 0.25;
+
+    expect(YouKnow106TestAccess::chorusToneStep(
+               phase, std::numeric_limits<float>::quiet_NaN(), sampleRate)
+               == 0.0f,
+           "deterministicToneStep did not fall back to silence for a NaN frequency");
+    expect(phase == 0.25,
+           "deterministicToneStep advanced phase despite a NaN frequency");
+
+    expect(YouKnow106TestAccess::chorusToneStep(
+               phase, std::numeric_limits<float>::infinity(), sampleRate)
+               == 0.0f,
+           "deterministicToneStep did not fall back to silence for an infinite frequency");
+    expect(phase == 0.25,
+           "deterministicToneStep advanced phase despite an infinite frequency");
+
+    expect(YouKnow106TestAccess::chorusToneStep(
+               phase, 997.0f, std::numeric_limits<float>::quiet_NaN())
+               == 0.0f,
+           "deterministicToneStep did not fall back to silence for a NaN sample rate");
+    expect(YouKnow106TestAccess::chorusToneStep(phase, 997.0f, 0.0f) == 0.0f,
+           "deterministicToneStep did not fall back to silence for a zero sample rate");
+    expect(YouKnow106TestAccess::chorusToneStep(phase, 997.0f, -sampleRate)
+               == 0.0f,
+           "deterministicToneStep did not fall back to silence for a negative sample rate");
+    expect(phase == 0.25,
+           "deterministicToneStep advanced phase despite a non-positive sample rate");
+
+    const float recovered =
+        YouKnow106TestAccess::chorusToneStep(phase, 997.0f, sampleRate);
+    expect(std::isfinite(recovered) && phase != 0.25,
+           "deterministicToneStep did not recover ordinary operation after "
+           "repeated fallback calls");
+}
+
 void testChorusBypassStateAndWetMuteTiming()
 {
     constexpr float sampleRate = 48000.0f;
@@ -5334,6 +5382,7 @@ int main()
     testChorusRateProportionalNoiseGainMatchesTheDerivedRatio();
     testChorusLineNoiseMatchesTheMn3009NoiseRow();
     testChorusNoiseComponents();
+    testChorusToneStepFallbackGuard();
     testChorusBypassStateAndWetMuteTiming();
     testChorusRateChangePreservesPhysicalState();
     testBucketBrigadeDatasheetAnchors();
