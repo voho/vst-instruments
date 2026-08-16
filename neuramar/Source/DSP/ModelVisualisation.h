@@ -72,4 +72,23 @@ void clearModelAnatomy(ModelAnatomy& destination) noexcept;
 [[nodiscard]] float anatomyDisplayHeight(float amplitude,
                                          float peakAmplitude) noexcept;
 
+// Test-only access to buildModelAnatomy's private placement helpers. Every
+// real call site hands them a frequency already resolved from a validated
+// model (deserialize() rejects a non-finite root, Air centre, or bandwidth)
+// and an amplitude already passed through finiteOr()/std::max() earlier in
+// the same pass, so a NaN, non-positive, or out-of-[20 Hz, 20 kHz] value
+// reaching binIndexOf, depositPeak, or makeAirBandGeometry directly was
+// previously only exercised by construction, never asserted. Not part of
+// the plug-in's runtime surface.
+[[nodiscard]] std::ptrdiff_t binIndexOfForTests(float frequencyHz) noexcept;
+void depositPeakForTests(std::array<float, ModelAnatomy::binCount>& bins,
+                         float frequencyHz, float amplitude,
+                         int spread) noexcept;
+// Returns { valid ? 1.0f : 0.0f, centreOctave, width }.
+[[nodiscard]] std::array<float, 3> makeAirBandGeometryForTests(
+    float centreHz, float bandwidthOctaves) noexcept;
+void depositBandAtOctaveForTests(
+    std::array<float, ModelAnatomy::binCount>& bins, float centreOctave,
+    float width, float amplitude) noexcept;
+
 } // namespace neuramar

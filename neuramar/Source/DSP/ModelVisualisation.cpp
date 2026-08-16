@@ -315,4 +315,31 @@ void buildModelAnatomy(const NeuralModel& model,
     destination.valid = true;
 }
 
+std::ptrdiff_t binIndexOfForTests(float frequencyHz) noexcept
+{
+    return binIndexOf(frequencyHz);
+}
+
+void depositPeakForTests(std::array<float, ModelAnatomy::binCount>& bins,
+                         float frequencyHz, float amplitude,
+                         int spread) noexcept
+{
+    depositPeak(bins, frequencyHz, amplitude, spread);
+}
+
+std::array<float, 3> makeAirBandGeometryForTests(
+    float centreHz, float bandwidthOctaves) noexcept
+{
+    const auto geometry = makeAirBandGeometry(centreHz, bandwidthOctaves);
+    return { geometry.valid ? 1.0f : 0.0f, geometry.centreOctave,
+             geometry.width };
+}
+
+void depositBandAtOctaveForTests(
+    std::array<float, ModelAnatomy::binCount>& bins, float centreOctave,
+    float width, float amplitude) noexcept
+{
+    depositBandAtOctave(bins, centreOctave, width, amplitude);
+}
+
 } // namespace neuramar
