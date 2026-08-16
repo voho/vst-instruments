@@ -646,6 +646,12 @@ private:
     HeldNoteState releaseHeldNote(int midiNote) noexcept;
     int countActiveVoices() const noexcept;
     void updateIntonationRoot() noexcept;
+    // Highest band-limited table level whose harmonic count still keeps every
+    // harmonic below mipHarmonicGuardHz_ for this fundamental. Shared by the
+    // running oscillator's per-voice mip selection in updateVoiceControl()
+    // and radiatedPowerTarget()'s own analysis-rate mip selection, which used
+    // to each re-run the same permissible-harmonic-count search independently.
+    [[nodiscard]] int mipTableLevelForFrequency(float frequencyHz) const noexcept;
     [[nodiscard]] static GlottalShapePosition glottalShapePosition(float tension) noexcept;
     float glottalPair(int level, float phase, float tension) const noexcept;
     float glottalPair(int level, float phase, GlottalShapePosition shape) const noexcept;
