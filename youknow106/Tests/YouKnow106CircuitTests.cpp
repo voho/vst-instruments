@@ -563,12 +563,15 @@ struct YouKnow106TestAccess
             engine.noiseSourceLowPassG_, 1.0f, 0.0f);
     }
 
-    // HighPass::process's own non-finite-state guard: every caller today
-    // (voiceBusCoupling_, noiseSourceHighPass_) only ever hands it a state
-    // that started at 0.0 and was updated by its own finite arithmetic, so
-    // the guard has never actually fired outside a test. Build a standalone
-    // filter with a poisoned state and call process() directly rather than
-    // relying on an upstream sanitiser that does not know this guard exists.
+    // HighPass::process's own non-finite-state guard: every one of the
+    // engine's HighPass instances (voiceBusCoupling_, highPass_,
+    // commonVcaInputCoupling_, both output-coupling filters, each voice's
+    // moduleCoupling/vcaInputCoupling, and noiseSourceHighPass_) starts at
+    // state 0.0 and is only ever updated by the filter's own finite
+    // arithmetic, so the guard has never actually fired outside a test.
+    // Build a standalone filter with a poisoned state and call process()
+    // directly rather than relying on an upstream sanitiser that does not
+    // know this guard exists.
     static double highPassStateAfterProcess(
         double state, float input, float g, float shelfGain,
         float highGain) noexcept
@@ -577,15 +580,6 @@ struct YouKnow106TestAccess
         filter.state = state;
         filter.process(input, g, shelfGain, highGain);
         return filter.state;
-    }
-
-    static float highPassProcess(
-        double state, float input, float g, float shelfGain,
-        float highGain) noexcept
-    {
-        YouKnow106Engine::HighPass filter;
-        filter.state = state;
-        return filter.process(input, g, shelfGain, highGain);
     }
 
     // One poisoned call followed by one ordinary call on the *same* filter
@@ -4270,10 +4264,11 @@ void testHighPassReachesTheSummedSignal()
 
 void testHighPassStateGuardSelfHeals()
 {
-    // Nothing that feeds a HighPass today (voiceBusCoupling_,
-    // noiseSourceHighPass_) can hand it a non-finite state, so this branch
-    // has never fired outside a test. Poison the state directly and confirm
-    // it lands on the documented fallback of 0.0.
+    // Nothing that feeds any of the engine's HighPass instances today can
+    // hand one a non-finite state, since each starts at 0.0 and is only ever
+    // updated by the filter's own finite arithmetic, so this branch has
+    // never fired outside a test. Poison the state directly and confirm it
+    // lands on the documented fallback of 0.0.
     const float g = 0.5f;
     expect(YouKnow106TestAccess::highPassStateAfterProcess(
                std::numeric_limits<double>::quiet_NaN(), 1.0f, g, 0.0f, 1.0f)
@@ -4292,12 +4287,9 @@ void testHighPassStateGuardSelfHeals()
     // member itself from being NaN forever: the *next* call on the same
     // object, after the poisoned one, must return a normal, finite output
     // rather than continuing to propagate the poison through `low`/`high`
-    // indefinitely.
-    const float poisonedCallOutput = YouKnow106TestAccess::highPassProcess(
-        std::numeric_limits<double>::quiet_NaN(), 1.0f, g, 0.0f, 1.0f);
-    expect(!std::isfinite(poisonedCallOutput),
-           "the call that poisons the state is not itself expected to "
-           "return a finite output");
+    // indefinitely. (The poisoning call's own output is deliberately left
+    // unspecified here -- a future change that also sanitizes it would be
+    // strictly safer, not a regression.)
     const float recovered =
         YouKnow106TestAccess::highPassOutputAfterPoisonedCallHeals(
             std::numeric_limits<double>::quiet_NaN(), 1.0f, g, 0.0f, 1.0f);
