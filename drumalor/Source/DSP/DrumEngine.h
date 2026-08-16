@@ -229,7 +229,14 @@ public:
 private:
     static constexpr int maxVoices = 64;
     static constexpr int retiringVoiceCount = maxVoices;
-    static constexpr int oscillatorCount = 8;
+    // The per-voice tonal core oscillator() draws on: renderSnare reads slots 0
+    // and 1 for its body's fundamental and shell, and renderTom reads the same
+    // two for its head fundamental and shell. No other render path or index is
+    // ever read, so two is a real count rather than headroom - a larger one
+    // only bought initialiseVoice() unread phase/asymmetry draws on every
+    // trigger of every voice, including the ones that never call oscillator()
+    // at all.
+    static constexpr int oscillatorCount = 2;
     // Twelve was the size of the mode table. Eighteen is the size of the table
     // with every m > 0 mode allowed to be the pair it physically is: an ideal
     // circular head's m > 0 modes are doubly degenerate, and buildHeadBank now
