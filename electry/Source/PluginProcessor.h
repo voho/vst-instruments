@@ -124,6 +124,14 @@ public:
         return engineReady.load (std::memory_order_acquire);
     }
 
+    // The pitch wheel's raw MIDI reconstruction: two 7-bit data bytes packed
+    // into a 14-bit position, then normalised to +/-1 with the MIDI spec's
+    // asymmetric range (the excursion below centre is scaled by 8192, the
+    // excursion above it by 8191). Exposed statically, rather than kept
+    // buried in dispatchMidiData(), so this byte-level arithmetic can be
+    // asserted on exactly instead of only inferred from rendered audio.
+    static float decodePitchBend14 (juce::uint8 data1, juce::uint8 data2) noexcept;
+
     juce::AudioProcessorValueTreeState parameters;
     juce::MidiKeyboardState keyboardState;
 
