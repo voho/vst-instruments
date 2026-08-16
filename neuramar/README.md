@@ -826,12 +826,20 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 - 2026-08-16: Added direct coverage for `SampleLearner.cpp`'s
   `belongsToSubtractedHarmonic` - the Air-fit exclusion test that keeps a
   subtracted partial's narrowband residue out of the noise-floor measurement
-  - and its own three early-exit guards: a non-positive or non-finite root
-  frequency, a non-positive or non-finite analysis bin width, and a root
-  frequency too close to the bin width to leave any partial gap to measure,
-  plus the derived-coordinate range check that follows them (an inverted
-  index rounding below the first partial or past the 64-partial bank on both
-  an ideal harmonic series and a stiff-string one). Its two callers,
+  - and its own three early-exit guards: a non-positive root frequency, a
+  non-positive analysis bin width, and a root frequency too close to the bin
+  width to leave any partial gap to measure, plus the derived-coordinate
+  range check that follows them (an inverted index rounding below the first
+  partial or past the 64-partial bank, each case exercised on both an ideal
+  harmonic series and a stiff-string one with positive inharmonicity). A
+  NaN root or bin width takes the same early-exit guards as a non-positive
+  one; a +infinity root or bin width does not; since `value > 0.0f` is true
+  for +infinity, both instead fall through to a later check - an infinite
+  root reaches the derived-index range check (dividing down to a coordinate
+  of exactly zero), and an infinite bin width reaches the partial-gap check
+  (satisfying `root < 3 * binWidth` for any finite root) - so both are
+  covered as their own cases showing the function still rejects them, just
+  through a different branch than NaN does. Its two callers,
   `makeAirFitDesign` and `fitAirFilterbank`, only ever pass an
   already-validated root (35-2000 Hz from the pitch detector) and a
   positive, much-smaller analysis-window-derived bin width, so none of these

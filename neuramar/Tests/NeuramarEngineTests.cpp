@@ -4312,17 +4312,34 @@ void testAirFitSubtractedHarmonicGuards()
            "a negative root frequency was not rejected");
     expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
                1320.0f, 5.0f, std::numeric_limits<float>::quiet_NaN(), 0.0f),
-           "a non-finite root frequency was not rejected");
+           "a NaN root frequency was not rejected");
     expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
                1320.0f, 0.0f, 440.0f, 0.0f),
            "a non-positive analysis bin width was not rejected");
     expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
                1320.0f, std::numeric_limits<float>::quiet_NaN(), 440.0f, 0.0f),
-           "a non-finite analysis bin width was not rejected");
+           "a NaN analysis bin width was not rejected");
     expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
                100.0f, 40.0f, 100.0f, 0.0f),
            "a root within 3 bin widths of itself left a partial gap to "
            "measure that does not exist");
+
+    // A +infinity root or bin width both satisfy `value > 0.0f`, so neither
+    // takes the `!(root > 0.0f) || !(binWidth > 0.0f)` early exit the way NaN
+    // does above - the function still has to reject them through whichever
+    // check they fall into instead. An infinite root divides frequencyHz down
+    // to a derived coordinate of exactly zero, which the [1, 64] range check
+    // below rejects; an infinite bin width makes `root < 3 * binWidth` true
+    // for any finite root, so the partial-gap guard rejects it first. Both
+    // paths are exercised here so a regression that widened either
+    // `value > 0.0f` comparison to admit infinity could not pass unnoticed.
+    constexpr float infinity = std::numeric_limits<float>::infinity();
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1320.0f, 5.0f, infinity, 0.0f),
+           "an infinite root frequency was not rejected");
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1320.0f, infinity, 440.0f, 0.0f),
+           "an infinite analysis bin width was not rejected");
 
     // Ideal harmonic series (inharmonicity 0): the derived coordinate is the
     // plain ratio, so a frequency at 0.3x or 70x the root rounds outside the
@@ -4330,10 +4347,12 @@ void testAirFitSubtractedHarmonicGuards()
     // check ever runs.
     expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
                0.3f * 440.0f, 5.0f, 440.0f, 0.0f),
-           "a coordinate rounding below the first partial was not rejected");
+           "a coordinate rounding below the first partial was not rejected "
+           "(inharmonicity 0)");
     expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
                70.0f * 440.0f, 5.0f, 440.0f, 0.0f),
-           "a coordinate rounding past the 64-partial bank was not rejected");
+           "a coordinate rounding past the 64-partial bank was not rejected "
+           "(inharmonicity 0)");
 
     // A frequency sitting exactly on the third harmonic of an ideal series is
     // inside the acceptance window; the same frequency shifted well past
@@ -4346,11 +4365,32 @@ void testAirFitSubtractedHarmonicGuards()
                3.0f * 440.0f + 10.0f, 5.0f, 440.0f, 0.0f),
            "a frequency well outside the acceptance window was accepted");
 
-    // The same check on a stiff-string series (inharmonicity > 0): a
-    // frequency generated from the forward stretched-partial formula must
-    // invert back to the same partial index and land inside the window.
+    // The same three checks on a stiff-string series (inharmonicity > 0),
+    // where the quadratic inversion replaces the plain ratio used above.
     constexpr float root = 220.0f;
     constexpr float inharmonicity = 0.004f;
+
+    // Below the first partial: a small ratio is dominated by its linear term
+    // in the inversion the same way it is in the plain ratio above, so it
+    // rounds to the same zero coordinate and is rejected the same way.
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               0.3f * root, 5.0f, root, inharmonicity),
+           "a stiff-string coordinate rounding below the first partial was "
+           "not rejected");
+
+    // Past the 64-partial bank: built from the forward stiff-string formula
+    // at harmonic 70 so the quadratic inversion has to recover an index past
+    // 64 for the range check to have anything to reject.
+    const float stretchedSeventieth = root
+        * neuramar::stretchedHarmonicRatio(70.0f, inharmonicity);
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               stretchedSeventieth, 5.0f, root, inharmonicity),
+           "a stiff-string coordinate rounding past the 64-partial bank was "
+           "not rejected");
+
+    // Inside the window: a frequency generated from the forward
+    // stretched-partial formula must invert back to the same partial index
+    // and land inside the acceptance window.
     const float stretchedFifth = root
         * neuramar::stretchedHarmonicRatio(5.0f, inharmonicity);
     expect(SampleLearner::belongsToSubtractedHarmonicForTests(
