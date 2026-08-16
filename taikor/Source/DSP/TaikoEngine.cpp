@@ -1280,7 +1280,6 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     // which costs resonators and invites voice stealing.
     voice.retirementOffset = 0;
     voice.noiseBandState = 0.0f;
-    voice.contactReference = 0.0f;
     voice.tackScale = 0.0f;
     voice.tackRimGain = 0.0f;
     voice.tackEnvelope = 0.0f;
@@ -4103,7 +4102,6 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     // continuum, while a hard one lights all of it. This is the same v^(-1/5)
     // contact law that shortens the pulse and brightens the resolved modes,
     // finally reaching the region where most of the brightness actually lives.
-    voice.contactReference = excitationScale;
 
     const float corner = 1.0f / std::max (contactSeconds, 1.0e-5f);
     for (std::size_t index = 0; index < voice.continuum.size(); ++index)
@@ -5041,39 +5039,24 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
 {
     const bool nonlinearContact = voice.nonlinearContactActive
                                || voice.nonlinearContactHasForce;
-    // Start the next scheduled contact if it is due.
-    if (! nonlinearContact && voice.contactRemaining == 0u
-        && voice.nextContact < voice.contactCount)
-    {
-        const auto& contact =
-            voice.contacts[static_cast<std::size_t> (voice.nextContact)];
-        if (voice.ageSamples >= contact.startSample)
-        {
-            voice.contactRemaining = contact.lengthSamples;
-            voice.contactLength = contact.lengthSamples;
-            voice.contactAmplitude = contact.amplitude;
-            voice.contactNoiseAmplitude = contact.noiseAmplitude;
-            ++voice.nextContact;
 
-            // Every impact lights the head's continuum, not just the first. A
-            // flam is two strikes and a press roll is seven, and the later ones
-            // are real blows on the head - leaving them out gave the grace note
-            // the whole stroke's brightness and the main hit thirty-two
-            // milliseconds later nothing but the residue.
-            //
-            // In proportion to how hard this particular contact lands, and
-            // taken as the louder of what is already ringing and what the new
-            // blow brings, so a bounce cannot cut the tail of the one before.
-            if (voice.contactReference > 0.0f && physical != nullptr)
-            {
-                const float share = contact.amplitude / voice.contactReference;
-                // Distinct unresolved modes add as energy, not as coherent
-                // amplitude and not by replacing the older tail.
-                injectContinuumEnergy (voice, *physical, share);
-            }
-        }
-    }
-
+    // Force and the 0..1 contact envelope everything below reads from: the
+    // head's excitation, the broadband noise gate and the tack line.
+    //
+    // This used to also carry a scheduled, non-reciprocal fallback: a plain
+    // sin^1.5 Hertz arch taken whenever nonlinearContact was false and a
+    // contact from voice.contacts[] had come due. It never ran. Every
+    // playable StrikeProfile (Don, Ka, Tsu, Don Rim) has membraneGain > 0, so
+    // trigger() always sets nonlinearContactActive true before this function
+    // first sees the voice - and trigger() also sets nextContact equal to
+    // contactCount in that same call, so the "a scheduled contact has come
+    // due" condition the fallback needed was already false too. It was dead
+    // scaffolding from before the reciprocal IMP-2 solve replaced it.
+    // voice.contacts[]/contactCount stay very much alive below, sizing a
+    // voice's retirement schedule for a flam or a press roll; contactAmplitude
+    // and contactNoiseAmplitude stay alive as well, now set once by trigger()
+    // rather than re-read from a contact event, and read by the nonlinear
+    // branch immediately below.
     float force = 0.0f;
     float contactEnvelope = 0.0f;
 
@@ -5104,18 +5087,6 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
             injectContinuumEnergy (voice, *physical, share);
             voice.continuumInjected = true;
         }
-    }
-    else if (voice.contactRemaining > 0u)
-    {
-        const float position =
-            1.0f - static_cast<float> (voice.contactRemaining)
-                       / static_cast<float> (voice.contactLength);
-        // Hertz contact force: a sin^1.5 arch rather than a symmetric bump,
-        // because a rounded tip loads the surface faster than it leaves it.
-        const float arch = std::sin (piFloat * position);
-        contactEnvelope = arch > 0.0f ? arch * std::sqrt (arch) : 0.0f;
-        force = voice.contactAmplitude * contactEnvelope;
-        --voice.contactRemaining;
     }
 
     // Broadband contact noise. Most of it goes into the head, because that is

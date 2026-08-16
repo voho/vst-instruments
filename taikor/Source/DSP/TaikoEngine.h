@@ -625,12 +625,20 @@ private:
         // time-integration gain, so it can both sense p^T q and apply p F.
         std::array<float, resonatorCount> contactProjection {};
 
+        // The stroke's contact schedule (single hit, flam or press roll), used
+        // to size a voice's retirement deadline in trigger() so a later bounce
+        // is not retired out from under it. The excitation itself no longer
+        // reads this schedule sample-by-sample - see the note at the top of
+        // renderVoice - so nextContact is always left equal to contactCount
+        // once trigger() has run.
         std::array<ContactEvent, maxContactEvents> contacts {};
         int contactCount { 0 };
         int nextContact { 0 };
-        // Running contact, if one is in progress.
+        // Always 0 once trigger() has run - see the note at the top of
+        // renderVoice. Its only remaining reader is the retirement guard in
+        // process(), which requires it to be 0 before a voice can be retired;
+        // that conjunct is therefore always already satisfied.
         std::uint32_t contactRemaining { 0u };
-        std::uint32_t contactLength { 0u };
         float contactAmplitude { 0.0f };
         float contactNoiseAmplitude { 0.0f };
         // Dynamic bachi state for the reciprocal Hunt-Crossley contact. The
@@ -658,9 +666,6 @@ private:
         double contactEnergyAdmittance { 0.0 };
         double solvedContactEnergyStep { 0.0 };
         float solvedContactForce { 0.0f };
-        // Amplitude of the stroke's first contact, so a later one can relight
-        // the continuum in proportion to it.
-        float contactReference { 0.0f };
         float noiseBandState { 0.0f };
         float noiseBandCoefficient { 0.5f };
 
