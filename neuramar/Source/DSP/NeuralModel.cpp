@@ -212,17 +212,9 @@ public:
         bytes.reserve(reserveBytes);
     }
 
-    void writeU32(std::uint32_t value)
-    {
-        for (int shift = 0; shift < 32; shift += 8)
-            bytes.push_back(static_cast<std::uint8_t>((value >> shift) & 0xffu));
-    }
-
-    void writeU16(std::uint16_t value)
-    {
-        for (int shift = 0; shift < 16; shift += 8)
-            bytes.push_back(static_cast<std::uint8_t>((value >> shift) & 0xffu));
-    }
+    void writeU32(std::uint32_t value) { writeUInt(value); }
+    void writeU16(std::uint16_t value) { writeUInt(value); }
+    void writeU64(std::uint64_t value) { writeUInt(value); }
 
     void writeI16(std::int16_t value)
     {
@@ -232,12 +224,6 @@ public:
     void writeI32(std::int32_t value)
     {
         writeU32(std::bit_cast<std::uint32_t>(value));
-    }
-
-    void writeU64(std::uint64_t value)
-    {
-        for (int shift = 0; shift < 64; shift += 8)
-            bytes.push_back(static_cast<std::uint8_t>((value >> shift) & 0xffu));
     }
 
     void writeFloat(float value)
@@ -251,6 +237,19 @@ public:
     }
 
     std::vector<std::uint8_t> bytes;
+
+private:
+    // writeU16/writeU32/writeU64 differed only in how many little-endian bytes
+    // they emitted, each keeping its own copy of the identical shift-and-mask
+    // loop. The width is the only thing that varies, so it is the template
+    // parameter; sizeof(UInt) recovers the byte count the three call sites
+    // used to hard-code as 2, 4, and 8.
+    template <typename UInt>
+    void writeUInt(UInt value)
+    {
+        for (unsigned shift = 0; shift < sizeof(UInt) * 8; shift += 8)
+            bytes.push_back(static_cast<std::uint8_t>((value >> shift) & 0xffu));
+    }
 };
 
 class BinaryReader
@@ -260,24 +259,12 @@ public:
 
     [[nodiscard]] bool readU32(std::uint32_t& destination) noexcept
     {
-        if (remaining() < 4)
-            return false;
-
-        destination = 0;
-        for (int shift = 0; shift < 32; shift += 8)
-            destination |= static_cast<std::uint32_t>(bytes[position++]) << shift;
-        return true;
+        return readUInt(destination);
     }
 
     [[nodiscard]] bool readU16(std::uint16_t& destination) noexcept
     {
-        if (remaining() < 2)
-            return false;
-
-        destination = 0;
-        for (int shift = 0; shift < 16; shift += 8)
-            destination |= static_cast<std::uint16_t>(bytes[position++]) << shift;
-        return true;
+        return readUInt(destination);
     }
 
     [[nodiscard]] bool readI16(std::int16_t& destination) noexcept
@@ -300,13 +287,7 @@ public:
 
     [[nodiscard]] bool readU64(std::uint64_t& destination) noexcept
     {
-        if (remaining() < 8)
-            return false;
-
-        destination = 0;
-        for (int shift = 0; shift < 64; shift += 8)
-            destination |= static_cast<std::uint64_t>(bytes[position++]) << shift;
-        return true;
+        return readUInt(destination);
     }
 
     [[nodiscard]] bool readFloat(float& destination) noexcept
@@ -333,6 +314,22 @@ public:
     }
 
 private:
+    // The mirror image of BinaryWriter::writeUInt(): readU16/readU32/readU64
+    // differed only in their byte width, each keeping its own copy of the
+    // identical bounds check and shift-and-accumulate loop.
+    template <typename UInt>
+    [[nodiscard]] bool readUInt(UInt& destination) noexcept
+    {
+        constexpr std::size_t byteCount = sizeof(UInt);
+        if (remaining() < byteCount)
+            return false;
+
+        destination = 0;
+        for (unsigned shift = 0; shift < byteCount * 8; shift += 8)
+            destination |= static_cast<UInt>(bytes[position++]) << shift;
+        return true;
+    }
+
     std::span<const std::uint8_t> bytes;
     std::size_t position { 0 };
 };

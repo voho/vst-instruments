@@ -1013,6 +1013,20 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   behaviour change for any value already inside its documented range,
   verified with the JUCE-free DSP suite (3/3 tests passed) and `git status
   neuramar/Docs/audio` confirmed clean.
+- 2026-08-16: `NeuralModel.cpp`'s model-serialization `BinaryWriter` and
+  `BinaryReader` each kept three near-identical little-endian shift loops -
+  `writeU16`/`writeU32`/`writeU64` and their `readU16`/`readU32`/`readU64`
+  counterparts - differing only in the hard-coded bit width (16, 32, 64).
+  Collapsed each trio behind one private `writeUInt<UInt>`/`readUInt<UInt>`
+  template keyed on `sizeof(UInt)`, so the six call sites now share one
+  copy of the shift-and-mask (write) and bounds-check-then-accumulate (read)
+  logic instead of each carrying its own. `writeI16`/`writeI32`/`writeFloat`/
+  `writeDouble` and their `read*` counterparts, already thin wrappers over
+  these, are unchanged. Pure dedup - byte order and bit widths are unchanged,
+  so every serialized model is byte-for-byte identical - verified with the
+  JUCE-free DSP suite (3/3 tests passed, including the state/model
+  serialization round trips) and `git status neuramar/Docs/audio` confirmed
+  clean after a fresh `NeuramarRenderDemos` run.
 
 ## Licensing
 
