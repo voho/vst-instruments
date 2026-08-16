@@ -4017,6 +4017,32 @@ void testBbdOutputPolyBlepReferenceAndBounds()
            "BBD polyBLEP history survived a numerical grid change");
 }
 
+// bbdPolyBlepResidual's own comment documents that distances are always
+// non-negative in this model, and both production call sites only ever pass
+// a tracked non-negative event age or a distance built up from a
+// [0, 1)-range clock phase, so the negative/NaN early-return this pure
+// helper carries for defensiveness never actually fires outside a test.
+void testBbdPolyBlepResidualDefensiveGuard()
+{
+    expectNear(YouKnow106TestAccess::bbdPolyBlepResidual(-0.5), 0.0, 1.0e-15,
+               "BBD polyBLEP residual did not fall back to zero for a negative distance");
+    expectNear(YouKnow106TestAccess::bbdPolyBlepResidual(
+                   -std::numeric_limits<double>::infinity()),
+               0.0, 1.0e-15,
+               "BBD polyBLEP residual did not fall back to zero for negative infinity");
+    expectNear(YouKnow106TestAccess::bbdPolyBlepResidual(
+                   std::numeric_limits<double>::quiet_NaN()),
+               0.0, 1.0e-15,
+               "BBD polyBLEP residual did not fall back to zero for NaN");
+
+    // Confirms the fallback is the negativity/NaN check, not an accidental
+    // wide-bound clamp: a call just past the documented support still lands
+    // back on the same zero the in-support boundary already does.
+    expectNear(YouKnow106TestAccess::bbdPolyBlepResidual(2.0 + 1.0e-9), 0.0,
+               1.0e-15,
+               "BBD polyBLEP residual did not stay zero just past two samples");
+}
+
 void testBbdOutputPolyBlepSeparatesPhysicalAndNumericalAliases()
 {
     constexpr float sampleRate = 44100.0f;
@@ -5389,6 +5415,7 @@ int main()
     testBbdTransferDefensiveGuards();
     testBbdInputCubicInterpolation();
     testBbdOutputPolyBlepReferenceAndBounds();
+    testBbdPolyBlepResidualDefensiveGuard();
     testBbdOutputPolyBlepSeparatesPhysicalAndNumericalAliases();
     testCombinedBbdSupportTransitionAndStateSafety();
     testSupportFilterCornersLandWhereAsked();
