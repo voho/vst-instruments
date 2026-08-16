@@ -823,6 +823,28 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-16: Added direct coverage for `SampleLearner.cpp`'s
+  `belongsToSubtractedHarmonic` - the Air-fit exclusion test that keeps a
+  subtracted partial's narrowband residue out of the noise-floor measurement
+  - and its own three early-exit guards: a non-positive or non-finite root
+  frequency, a non-positive or non-finite analysis bin width, and a root
+  frequency too close to the bin width to leave any partial gap to measure,
+  plus the derived-coordinate range check that follows them (an inverted
+  index rounding below the first partial or past the 64-partial bank on both
+  an ideal harmonic series and a stiff-string one). Its two callers,
+  `makeAirFitDesign` and `fitAirFilterbank`, only ever pass an
+  already-validated root (35-2000 Hz from the pitch detector) and a
+  positive, much-smaller analysis-window-derived bin width, so none of these
+  branches had been driven directly; the final distance-threshold branch is
+  exercised on both sides, with a frequency exactly on a subtracted harmonic
+  accepted and the same frequency shifted well past the 1.25-bin-width
+  window rejected. Added a small test-only accessor,
+  `SampleLearner::belongsToSubtractedHarmonicForTests`, alongside the
+  existing `resampleForTests` pattern for reaching a translation-unit-private
+  helper from the suite. Test-only; no engine or header change, verified
+  with the JUCE-free DSP suite (3/3 tests passed) and a fresh
+  `NeuramarRenderDemos` run confirming `git status neuramar/Docs/audio`
+  clean across all eight WAVs.
 - 2026-08-16: `updateVoiceControl`'s per-harmonic reference-target loop -
   walked once per rendered harmonic on every control frame of every voice -
   recomputed `parameters.mutation * 0.045f` for `referenceVariation` instead

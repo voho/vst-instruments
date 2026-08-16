@@ -2180,6 +2180,14 @@ std::vector<float> SampleLearner::resampleForTests(
     return resampleWindowedSinc(input, sourceRate, destinationRate);
 }
 
+bool SampleLearner::belongsToSubtractedHarmonicForTests(
+    float frequencyHz, float analysisBinWidth, float rootFrequencyHz,
+    float inharmonicity)
+{
+    return belongsToSubtractedHarmonic(frequencyHz, analysisBinWidth,
+                                       rootFrequencyHz, inharmonicity);
+}
+
 SampleLearner::LearnResult SampleLearner::learn(
     const std::vector<float>& monoSample,
     double sampleRate,

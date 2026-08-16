@@ -4289,6 +4289,76 @@ void testConditionSampleHostileInputs()
            "conditionSample's own finite-content guard");
 }
 
+// belongsToSubtractedHarmonic() keeps a subtracted partial's narrowband
+// residue out of the Air noise-floor measurement. Its only callers,
+// makeAirFitDesign() and fitAirFilterbank(), always pass a root frequency
+// already validated by the pitch detector (35-2000 Hz) and an
+// analysis-window-derived bin width that is always positive and much smaller
+// than that root, so its own three early-exit guards - a non-positive or
+// non-finite root, a non-positive or non-finite bin width, and a root too
+// close to the bin width to leave any partial gap to measure - were never
+// driven directly, nor was the derived-index range check that follows them
+// (an inverted coordinate rounding below the first partial or past the
+// 64-partial bank). Test-only; no engine or header change.
+void testAirFitSubtractedHarmonicGuards()
+{
+    using neuramar::SampleLearner;
+
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1320.0f, 5.0f, 0.0f, 0.0f),
+           "a non-positive root frequency was not rejected");
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1320.0f, 5.0f, -220.0f, 0.0f),
+           "a negative root frequency was not rejected");
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1320.0f, 5.0f, std::numeric_limits<float>::quiet_NaN(), 0.0f),
+           "a non-finite root frequency was not rejected");
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1320.0f, 0.0f, 440.0f, 0.0f),
+           "a non-positive analysis bin width was not rejected");
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1320.0f, std::numeric_limits<float>::quiet_NaN(), 440.0f, 0.0f),
+           "a non-finite analysis bin width was not rejected");
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               100.0f, 40.0f, 100.0f, 0.0f),
+           "a root within 3 bin widths of itself left a partial gap to "
+           "measure that does not exist");
+
+    // Ideal harmonic series (inharmonicity 0): the derived coordinate is the
+    // plain ratio, so a frequency at 0.3x or 70x the root rounds outside the
+    // valid [1, 64] partial range and must be rejected before the distance
+    // check ever runs.
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               0.3f * 440.0f, 5.0f, 440.0f, 0.0f),
+           "a coordinate rounding below the first partial was not rejected");
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               70.0f * 440.0f, 5.0f, 440.0f, 0.0f),
+           "a coordinate rounding past the 64-partial bank was not rejected");
+
+    // A frequency sitting exactly on the third harmonic of an ideal series is
+    // inside the acceptance window; the same frequency shifted well past
+    // 1.25 bin widths is not, exercising both sides of the final distance
+    // threshold.
+    expect(SampleLearner::belongsToSubtractedHarmonicForTests(
+               3.0f * 440.0f, 5.0f, 440.0f, 0.0f),
+           "a frequency exactly on a subtracted harmonic was rejected");
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               3.0f * 440.0f + 10.0f, 5.0f, 440.0f, 0.0f),
+           "a frequency well outside the acceptance window was accepted");
+
+    // The same check on a stiff-string series (inharmonicity > 0): a
+    // frequency generated from the forward stretched-partial formula must
+    // invert back to the same partial index and land inside the window.
+    constexpr float root = 220.0f;
+    constexpr float inharmonicity = 0.004f;
+    const float stretchedFifth = root
+        * neuramar::stretchedHarmonicRatio(5.0f, inharmonicity);
+    expect(SampleLearner::belongsToSubtractedHarmonicForTests(
+               stretchedFifth, 5.0f, root, inharmonicity),
+           "a stiff-string partial did not invert back to its own harmonic "
+           "index");
+}
+
 void testHighRegisterRenderThroughput(const neuramar::NeuralModel& model)
 {
     neuramar::NeuramarEngine engine;
@@ -7008,6 +7078,7 @@ int main()
     testResamplerAccuracyAndCost();
     testResamplerHostileInputs();
     testConditionSampleHostileInputs();
+    testAirFitSubtractedHarmonicGuards();
     if (fixture.first.model)
     {
         testLearnedPitchContour(*fixture.first.model);
