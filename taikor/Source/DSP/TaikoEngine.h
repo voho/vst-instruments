@@ -1314,6 +1314,23 @@ private:
     // Radial coordinates of the symmetric centre-plus-cardinals palm rule.
     static std::array<float, 5> palmPatchRadii (float centreRadius,
                                                 float patchRadius) noexcept;
+    // The exact impulse-invariant pole pair for a two-pole resonator at a
+    // given frequency and amplitude-decay rate, solved in double for the
+    // reason documented on Resonator. configureResonator builds a mode's
+    // coefficients from scratch with this; applyTensionShift retunes one
+    // that is already ringing, to a new frequency and a re-evaluated decay,
+    // with the identical solve - both used to type the same lines out by
+    // hand, and applyTensionShift's copy carried a comment promising it
+    // matched configureResonator's rather than sharing it.
+    struct PolePair
+    {
+        double a1 { 0.0 };
+        double a2 { 0.0 };
+        double sinOmega { 0.0 };
+        double radius { 0.0 };
+    };
+    [[nodiscard]] static PolePair polePairFor (float frequencyHz, float decayRate,
+                                               double sampleRateHz) noexcept;
     // Configures one resonator from a physical frequency and decay rate.
     // `poleRadiusOut`, when given, receives the same pole radius already
     // solved internally, so a caller that needs it (as mode.poleRadius does)
