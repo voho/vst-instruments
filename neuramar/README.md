@@ -823,6 +823,13 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-16: Added direct coverage for `ShapePreservingEnvelope::prepare`'s
+  per-harmonic hostile-input guard - a NaN, infinite, or negative harmonic
+  each sanitising to silence - which its one caller, the per-voice body
+  envelope in `NeuramarEngine.cpp`, never exercises directly because it only
+  ever hands `prepare()` an already finite, non-negative
+  `makeSourceFilterEnvelope()` output. Test-only; no engine or header change,
+  verified with the JUCE-free DSP suite (3/3 tests passed).
 - 2026-08-16: Added direct coverage for `airfilter::makeCoefficients`'s
   three-way hostile-input guard - a non-finite sample rate, centre frequency,
   or bandwidth each falling back to its documented default (48 kHz, 1 kHz,
