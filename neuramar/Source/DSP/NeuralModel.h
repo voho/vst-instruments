@@ -242,4 +242,29 @@ private:
              std::exp(-40.0f * timeSeconds) };
 }
 
+// Log-spaced Air band centres and their shared per-band bandwidth across
+// [lowerHz, upperHz]. Bands below `firstBand` are left untouched, which lets
+// a partial layout - such as the version-5 legacy migration, which only adds
+// bands past a pre-version-5 model's original count - fill in just the bands
+// it owns. NeuralModel::generateModel(), that same migration in
+// NeuralModel::deserialize(), and SampleLearner::learn()'s Air geometry all
+// need this exact geometric spacing, so it is resolved once here instead of
+// three independently maintained copies of the same std::pow/log2 pair.
+template <std::size_t Count>
+inline void layoutAirBands(float lowerHz, float upperHz,
+    std::array<float, Count>& centresHz,
+    std::array<float, Count>& widthOctaves,
+    std::size_t firstBand = 0) noexcept
+{
+    const float edgeRatio = std::pow(
+        upperHz / lowerHz, 1.0f / static_cast<float>(Count));
+    const float width = std::log2(edgeRatio);
+    for (std::size_t band = firstBand; band < Count; ++band)
+    {
+        centresHz[band] = lowerHz * std::pow(
+            edgeRatio, static_cast<float>(band) + 0.5f);
+        widthOctaves[band] = width;
+    }
+}
+
 } // namespace neuramar

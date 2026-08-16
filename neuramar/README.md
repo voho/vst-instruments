@@ -975,6 +975,7 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   DSP suite (3/3 tests passed; a pre-existing throughput-floor performance
   check in the same suite is CPU-load-sensitive and was confirmed to flake
   identically on an unmodified checkout).
+- 2026-08-16: Extracted the log-spaced Air band centre/width layout that `NeuralModel::generateModel`, its version-5 legacy migration in `deserialize`, and `SampleLearner::learn` each rebuilt into one shared `layoutAirBands` helper; pure dedup, verified with the JUCE-free DSP suite (3/3 tests passed) and `git status neuramar/Docs/audio` confirmed clean.
 
 ## Licensing
 

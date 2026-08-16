@@ -2392,16 +2392,8 @@ SampleLearner::LearnResult SampleLearner::learn(
     const float upperAir = std::min(
         airUpperFrequencyHz,
         0.42f * static_cast<float>(analysisSampleRate));
-    const float airEdgeRatio = std::pow(
-        upperAir / lowerAir,
-        1.0f / static_cast<float>(NeuralModel::airBandCount));
-    const float airWidthOctaves = std::log2(airEdgeRatio);
-    for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
-    {
-        model->airCentreFrequenciesHz_[band] = lowerAir * std::pow(
-            airEdgeRatio, static_cast<float>(band) + 0.5f);
-        model->airBandwidthOctaves_[band] = airWidthOctaves;
-    }
+    layoutAirBands(lowerAir, upperAir, model->airCentreFrequenciesHz_,
+                   model->airBandwidthOctaves_);
     constexpr std::array<std::size_t, 4> airAnalysisWindowSizes {
         512, 1024, 2048, spectrumSize
     };

@@ -513,15 +513,10 @@ NeuralModel::createRandom(std::uint64_t seed, float strength)
 
     constexpr float lowerAirHz = 80.0f;
     constexpr float upperAirHz = 16000.0f;
-    const float airEdgeRatio = std::pow(
-        upperAirHz / lowerAirHz, 1.0f / static_cast<float>(airBandCount));
-    const float airWidthOctaves = std::log2(airEdgeRatio);
+    layoutAirBands(lowerAirHz, upperAirHz, model->airCentreFrequenciesHz_,
+                   model->airBandwidthOctaves_);
     for (std::size_t band = 0; band < airBandCount; ++band)
     {
-        model->airCentreFrequenciesHz_[band] = lowerAirHz * std::pow(
-            airEdgeRatio, static_cast<float>(band) + 0.5f);
-        model->airBandwidthOctaves_[band] = airWidthOctaves;
-
         // The generated Air tilt is expressed as a fraction of the band count
         // so widening the filterbank moves the same spectral shape onto the
         // denser grid instead of squeezing it into the bottom half.
@@ -1349,15 +1344,8 @@ NeuralModel::deserialize(std::span<const std::uint8_t> bytes,
             // decoded as silence: an amplitude output of exp(-16) with no
             // network contribution, and a Bone reliability of zero, which is
             // what the renderer tests to decide a mode is inactive.
-            const float airEdgeRatio = std::pow(
-                16000.0f / 80.0f, 1.0f / static_cast<float>(airBandCount));
-            for (std::size_t band = legacyAirBandCount;
-                 band < airBandCount; ++band)
-            {
-                model->airCentreFrequenciesHz_[band] = 80.0f * std::pow(
-                    airEdgeRatio, static_cast<float>(band) + 0.5f);
-                model->airBandwidthOctaves_[band] = std::log2(airEdgeRatio);
-            }
+            layoutAirBands(80.0f, 16000.0f, model->airCentreFrequenciesHz_,
+                           model->airBandwidthOctaves_, legacyAirBandCount);
             for (std::size_t mode = legacyBoneModeCount;
                  mode < boneModeCount; ++mode)
             {
