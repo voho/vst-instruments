@@ -96,6 +96,16 @@ float smoothStep(float value) noexcept
     return value * value * (3.0f - 2.0f * value);
 }
 
+/** Maps the Vowel enum to the 0/1/2 (AAH/OOH/UUH) index the preset tables and
+    the drift/display bookkeeping are indexed by. Five call sites resolved
+    this same three-way comparison independently; one mapping now backs all
+    of them. Named vowelIndexOf() rather than vowelIndex() because several of
+    those call sites already have a local variable named vowelIndex. */
+int vowelIndexOf(Vowel vowel) noexcept
+{
+    return vowel == Vowel::Ooh ? 1 : (vowel == Vowel::Uuh ? 2 : 0);
+}
+
 void separateUpperFormantBandwidths(
     const std::array<float, kFormantCount>& formantHz,
     std::array<float, kFormantCount>& formantBandwidth) noexcept
@@ -422,7 +432,7 @@ void VoiceEngine::setParameters(const EngineParameters& p)
 {
     const int profile = p.profile == VoiceProfile::Male ? 1 : 0;
     const int mode = p.mode == PerformanceMode::Choir ? 1 : (p.mode == PerformanceMode::Chord ? 2 : 0);
-    const int vowel = p.vowel == Vowel::Ooh ? 1 : (p.vowel == Vowel::Uuh ? 2 : 0);
+    const int vowel = vowelIndexOf(p.vowel);
     const int quality = p.chordQuality == ChordQuality::Minor ? 1 : 0;
     // The engine holds twelve distinct singer identities, so an ensemble larger
     // than that could only be built from duplicates of the ones it already has.
@@ -1537,7 +1547,7 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     constexpr float amplitudeFloor = 0.010f;
 
     const bool male = p.profile == VoiceProfile::Male;
-    const int vowelIndex = p.vowel == Vowel::Ooh ? 1 : (p.vowel == Vowel::Uuh ? 2 : 0);
+    const int vowelIndex = vowelIndexOf(p.vowel);
 
     // Resonance and formant shift end up in the pole radius, which cannot be
     // smoothed downstream, so a jump on either would step the tract once per
@@ -1904,8 +1914,7 @@ void VoiceEngine::updateVowelDrift(Voice& voice,
                                    float vowelX,
                                    float vowelY) noexcept
 {
-    const int vowelIndex = p.vowel == Vowel::Ooh
-        ? 1 : (p.vowel == Vowel::Uuh ? 2 : 0);
+    const int vowelIndex = vowelIndexOf(p.vowel);
     const int profileIndex = p.profile == VoiceProfile::Male ? 1 : 0;
     const VowelPoint anchor = presetVowelPosition(vowelIndex);
     // Already clampUnit(p.vowelMorph/vowelX/vowelY) -- see the declaration
@@ -2019,8 +2028,7 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p,
         vibratoFade = smoothStep((ageSeconds - fadeStart) / fadeDuration);
     }
 
-    const int vowelIndex = p.vowel == Vowel::Ooh
-        ? 1 : (p.vowel == Vowel::Uuh ? 2 : 0);
+    const int vowelIndex = vowelIndexOf(p.vowel);
     const int profileIndex = p.profile == VoiceProfile::Male ? 1 : 0;
     const float vowelMorph = clampUnit(p.vowelMorph);
     const float vowelX = clampUnit(p.vowelX);
@@ -3720,8 +3728,7 @@ void VoiceEngine::publishDisplayState(float blockPeakLeft,
     }
     else
     {
-        const int vowelIndex = blockParameters_.vowel == Vowel::Ooh
-            ? 1 : (blockParameters_.vowel == Vowel::Uuh ? 2 : 0);
+        const int vowelIndex = vowelIndexOf(blockParameters_.vowel);
         const VowelPoint anchor = presetVowelPosition(vowelIndex);
         const float morph = clampUnit(blockParameters_.vowelMorph);
         const float baseX = anchor.x
