@@ -724,6 +724,170 @@ void testResonanceWheelFeedback()
     processor.releaseResources();
 }
 
+// Channel pressure (status nibble 0xd0, one data byte) and polyphonic
+// aftertouch (status nibble 0xa0, note number then pressure) both dispatch to
+// ElectryEngine::setVibrato() through raw MIDI byte reads in
+// dispatchMidiData() - data[1] for channel pressure, but data[2] for
+// polyphonic aftertouch, since its data[1] is the note number instead - a
+// path with no coverage anywhere else: ElectryEngineTests drives
+// setVibrato() directly with already-decoded floats, and this file's own
+// testMidiControllersAndVoiceLifecycle() and testPerformanceControls() only
+// ever send 7-bit CCs (status 0xb0). A status-nibble typo, a swapped data
+// index, a dropped clamp or a missing "/ 127.0f" here would leave every
+// host's pressure/aftertouch vibrato silently inert (or scaled wrong) while
+// still passing every existing test. This measures the actual rendered pitch
+// on a fretted (not open) string: the vibrato is documented to push a
+// fingered string sharp and never flat (see ElectryEngine.h's setVibrato()
+// and README.md's "Fretting-hand vibrato"), so once its 258 ms onset ramp has
+// settled, a window spanning several of its ~5-6 Hz swing cycles reads
+// measurably sharper than the same window with no pressure applied, even
+// though the finger dwells at the fretted pitch between excursions.
+void testChannelPressureAndAftertouchVibratoDispatch()
+{
+    // A2 open (45) + 2 frets, the same fixture ElectryEngineTests' own
+    // testFrettingHandVibrato() uses: fretted, so the hand has a string to
+    // rock. An open string is deliberately left alone by design and would
+    // make this a no-op either way.
+    constexpr int frettedNote = 47;
+    const double frettedHz = 440.0 * std::pow (2.0, (frettedNote - 69) / 12.0);
+
+    enum class Pressure
+    {
+        None,
+        ChannelPressure,
+        // Half-value, not full-value: both dispatch branches clamp their
+        // decoded float into setVibrato(), so a full-value 127 alone cannot
+        // tell a genuine "/ 127.0f" scale apart from a missing one - either
+        // way the clamp lands on the same 1.0f. A half-value message only
+        // reproduces the full-value bias if the byte was actually divided
+        // down first.
+        HalfChannelPressure,
+        // Channel 9, not channel 1: dispatchMidiData masks the status byte
+        // with "& 0xf0u" before comparing it, so the channel nibble should
+        // never matter. Sending channel 1 only would let a regression that
+        // compared the whole status byte (0xd0 exactly) instead of the
+        // masked nibble pass unnoticed on every channel but the one tested.
+        ChannelPressureOtherChannel,
+        PolyAftertouch,
+        // Same half-value reasoning as HalfChannelPressure, applied to the
+        // independent data[2] scale in the aftertouch branch: a full-value
+        // 127 alone cannot tell "data[2] / 127.0f" apart from a missing
+        // divisor, since both clamp to the same 1.0f.
+        HalfPolyAftertouch,
+    };
+    const auto measuredHz = [&] (Pressure kind) -> double
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, frettedNote, (juce::uint8) 100), 0);
+        if (kind == Pressure::ChannelPressure)
+            midi.addEvent (juce::MidiMessage::channelPressureChange (1, 127), 0);
+        else if (kind == Pressure::HalfChannelPressure)
+            midi.addEvent (juce::MidiMessage::channelPressureChange (1, 64), 0);
+        else if (kind == Pressure::ChannelPressureOtherChannel)
+            midi.addEvent (juce::MidiMessage::channelPressureChange (9, 127), 0);
+        else if (kind == Pressure::PolyAftertouch)
+            // The note byte deliberately does not name the fretted note:
+            // dispatchMidiData never reads it (Electry has one fretting hand
+            // for the whole engine, not one per key), so a swapped-index
+            // regression that read this byte as the pressure instead of
+            // data[2] would decode to 3 / 127 - far too small to sharpen the
+            // note - rather than accidentally producing a passing result the
+            // way reusing frettedNote (47) here would.
+            midi.addEvent (
+                juce::MidiMessage::aftertouchChange (1, 3, 127), 0);
+        else if (kind == Pressure::HalfPolyAftertouch)
+            midi.addEvent (
+                juce::MidiMessage::aftertouchChange (1, 3, 64), 0);
+        renderBlock (processor, audio, midi);
+
+        // Let the attack settle and the vibrato's onset ramp (258 ms, see
+        // ElectryEngine.h's vibratoOnsetSeconds) reach its steady swing
+        // before measuring, then capture several full cycles so the window's
+        // own frequency estimate reflects the vibrato's genuine time-average
+        // rather than one arbitrary phase of it.
+        renderSeconds (processor, audio, 0.5);
+        const auto settled = renderCapture (processor, audio, 0.6);
+        processor.releaseResources();
+        return measureFundamentalHz (settled, 0, static_cast<int> (settled.size()),
+                                     sampleRate, frettedHz);
+    };
+
+    const auto still = measuredHz (Pressure::None);
+    const auto pressed = measuredHz (Pressure::ChannelPressure);
+    const auto halfPressed = measuredHz (Pressure::HalfChannelPressure);
+    const auto pressedOtherChannel =
+        measuredHz (Pressure::ChannelPressureOtherChannel);
+    const auto touched = measuredHz (Pressure::PolyAftertouch);
+    const auto halfTouched = measuredHz (Pressure::HalfPolyAftertouch);
+
+    const auto centsStill = 1200.0 * std::log2 (still / frettedHz);
+    const auto centsPressed = 1200.0 * std::log2 (pressed / frettedHz);
+    const auto centsHalfPressed = 1200.0 * std::log2 (halfPressed / frettedHz);
+    const auto centsPressedOtherChannel =
+        1200.0 * std::log2 (pressedOtherChannel / frettedHz);
+    const auto centsTouched = 1200.0 * std::log2 (touched / frettedHz);
+    const auto centsHalfTouched = 1200.0 * std::log2 (halfTouched / frettedHz);
+
+    expect (std::abs (centsStill) < 10.0,
+            "an unpressed fretted note drifted " + std::to_string (centsStill)
+                + " cents off its fretted pitch");
+    // Differential rather than an absolute cents target, for the same reason
+    // ElectryEngineTests' own testFrettingHandVibrato() compares two engines
+    // instead of asserting one fixed value: the vibrato's average bias over a
+    // multi-cycle window (rock^2 time-averages to a fraction of the nominal
+    // 40-cent excursion, not the excursion itself) is a function of the
+    // depth/rate constants rather than a documented number, so the robust
+    // assertion is that applying either message sharpens the note well beyond
+    // the unpressed measurement's own noise floor. An upper bound catches a
+    // runaway/nonsense measurement without pinning the exact bias.
+    expect (centsPressed - centsStill > 5.0 && centsPressed < 100.0,
+            "full-value channel pressure (status 0xd0) did not sharpen the "
+            "fretted note by the vibrato's documented upward bias (measured "
+                + std::to_string (centsPressed) + " cents against "
+                + std::to_string (centsStill) + " unpressed)");
+    // Half-value pressure must still clear the noise floor - it is a real
+    // press, not a no-op - but land measurably below the full-value bias, the
+    // signature of an actual "/ 127.0f" scale rather than a clamp that
+    // saturates at 1.0f for any nonzero byte.
+    expect (centsHalfPressed - centsStill > 2.0
+                && centsHalfPressed < centsPressed - 2.0,
+            "half-value channel pressure did not land strictly between "
+            "unpressed and full-value pressure (measured "
+                + std::to_string (centsHalfPressed) + " cents against "
+                + std::to_string (centsStill) + " unpressed and "
+                + std::to_string (centsPressed) + " full-value)");
+    // Same message on channel 9 rather than channel 1: dispatchMidiData is
+    // documented to mask the channel nibble out of the status byte before
+    // comparing it, so this should sharpen the note exactly as the channel-1
+    // case does.
+    expect (centsPressedOtherChannel - centsStill > 5.0
+                && centsPressedOtherChannel < 100.0,
+            "full-value channel pressure on channel 9 did not sharpen the "
+            "fretted note the same way channel 1 does (measured "
+                + std::to_string (centsPressedOtherChannel)
+                + " cents against " + std::to_string (centsStill)
+                + " unpressed)");
+    expect (centsTouched - centsStill > 5.0 && centsTouched < 100.0,
+            "full-value polyphonic aftertouch (status 0xa0) did not sharpen "
+            "the fretted note by the vibrato's documented upward bias "
+            "(measured " + std::to_string (centsTouched) + " cents against "
+                + std::to_string (centsStill) + " unpressed)");
+    // Same half-value-versus-full-value reasoning as the channel-pressure
+    // case, applied to the aftertouch branch's own independent data[2] scale.
+    expect (centsHalfTouched - centsStill > 2.0
+                && centsHalfTouched < centsTouched - 2.0,
+            "half-value polyphonic aftertouch did not land strictly between "
+            "unpressed and full-value aftertouch (measured "
+                + std::to_string (centsHalfTouched) + " cents against "
+                + std::to_string (centsStill) + " unpressed and "
+                + std::to_string (centsTouched) + " full-value)");
+}
+
 void testUiArticulationTriggerAndPanic()
 {
     ElectryAudioProcessor processor;
@@ -1208,6 +1372,7 @@ int main()
     testPitchWheelByteReconstruction();
     testPitchWheelMidiDispatch();
     testResonanceWheelFeedback();
+    testChannelPressureAndAftertouchVibratoDispatch();
     testUiArticulationTriggerAndPanic();
     testOutputGainImpact();
     testPerformanceControls();
