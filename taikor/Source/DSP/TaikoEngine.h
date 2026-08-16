@@ -1002,6 +1002,14 @@ private:
     [[nodiscard]] static float nearFieldAttenuation (float lambda, float radius,
                                                      float omega,
                                                      float micDistanceMetres) noexcept;
+    // Proximity lift: a close microphone reads pressure that has not yet
+    // spread, and low modes gain most from it - a shelf in drum.micProximity
+    // that rolls off above 190 Hz. observeMode's two branches and
+    // buildVoiceModes's two mode families each rebuilt this identically, so
+    // it is resolved once here rather than as four copies of the same
+    // expression.
+    [[nodiscard]] static float proximityLift (float micProximity,
+                                              float frequency) noexcept;
     // Exact white-noise variance of the continuum's two-high-pass/seven-low-pass
     // cascade. Computed only while a voice is built; rendering needs the nine
     // one-pole state updates per channel and band, but no matrix work.
@@ -1314,6 +1322,23 @@ private:
     // Radial coordinates of the symmetric centre-plus-cardinals palm rule.
     static std::array<float, 5> palmPatchRadii (float centreRadius,
                                                 float patchRadius) noexcept;
+    // The exact impulse-invariant pole pair for a two-pole resonator at a
+    // given frequency and amplitude-decay rate, solved in double for the
+    // reason documented on Resonator. configureResonator builds a mode's
+    // coefficients from scratch with this; applyTensionShift retunes one
+    // that is already ringing, to a new frequency and a re-evaluated decay,
+    // with the identical solve - both used to type the same lines out by
+    // hand, and applyTensionShift's copy carried a comment promising it
+    // matched configureResonator's rather than sharing it.
+    struct PolePair
+    {
+        double a1 { 0.0 };
+        double a2 { 0.0 };
+        double sinOmega { 0.0 };
+        double radius { 0.0 };
+    };
+    [[nodiscard]] static PolePair polePairFor (float frequencyHz, float decayRate,
+                                               double sampleRateHz) noexcept;
     // Configures one resonator from a physical frequency and decay rate.
     // `poleRadiusOut`, when given, receives the same pole radius already
     // solved internally, so a caller that needs it (as mode.poleRadius does)

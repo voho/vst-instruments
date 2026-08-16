@@ -3545,6 +3545,42 @@ void testBucketBrigadeDatasheetAnchors()
            "raw held node left the cross-reading guard band at 40 kHz / 12 kHz");
 }
 
+void testBbdTransferDefensiveGuards()
+{
+    // `Chorus::Line::process` already sanitises its own input before it ever
+    // reaches `bbdTransfer` (anything non-finite or beyond the 64-unit
+    // corrupt-sample bound becomes 0 at the line's own gate), so the
+    // combined-support fixtures that drive non-finite input through the full
+    // line never actually exercise `bbdTransfer`'s own guard. Call it
+    // directly so that guard has coverage of its own rather than relying on
+    // an upstream sanitiser it does not know exists.
+    expect(YouKnow106TestAccess::bbdTransfer(
+               std::numeric_limits<float>::quiet_NaN()) == 0.0f,
+           "bbdTransfer did not zero a NaN input");
+    expect(YouKnow106TestAccess::bbdTransfer(
+               std::numeric_limits<float>::infinity()) == 0.0f,
+           "bbdTransfer did not zero a positive-infinite input");
+    expect(YouKnow106TestAccess::bbdTransfer(
+               -std::numeric_limits<float>::infinity()) == 0.0f,
+           "bbdTransfer did not zero a negative-infinite input");
+
+    // The double-precision power evaluation exists precisely so an extreme
+    // but finite float approaches the saturation rail instead of overflowing
+    // an intermediate `std::pow` and folding back to zero (see the comment
+    // on `bbdTransfer`). Confirm both signs actually land there rather than
+    // only checking finiteness, which a silent fold-to-zero would also pass.
+    const float positiveRail = YouKnow106TestAccess::bbdTransfer(
+        std::numeric_limits<float>::max());
+    const float negativeRail = YouKnow106TestAccess::bbdTransfer(
+        -std::numeric_limits<float>::max());
+    expect(std::isfinite(positiveRail) && positiveRail > 1.0f
+               && positiveRail < 1.2f,
+           "bbdTransfer did not approach its saturation rail for an extreme "
+           "positive finite input");
+    expectNear(negativeRail, -positiveRail, 1.0e-6f,
+               "bbdTransfer's saturation rail is not sign-symmetric");
+}
+
 void testBbdInputCubicInterpolation()
 {
     const auto interpolate = [](float current, float previous,
@@ -5151,6 +5187,7 @@ int main()
     testChorusBypassStateAndWetMuteTiming();
     testChorusRateChangePreservesPhysicalState();
     testBucketBrigadeDatasheetAnchors();
+    testBbdTransferDefensiveGuards();
     testBbdInputCubicInterpolation();
     testBbdOutputPolyBlepReferenceAndBounds();
     testBbdOutputPolyBlepSeparatesPhysicalAndNumericalAliases();

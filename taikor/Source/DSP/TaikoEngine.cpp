@@ -614,6 +614,11 @@ float TaikoEngine::nearFieldAttenuation (float lambda, float radius, float omega
     return std::exp (-evanescentRate * micDistanceMetres);
 }
 
+float TaikoEngine::proximityLift (float micProximity, float frequency) noexcept
+{
+    return 1.0f + micProximity / (1.0f + (frequency / 190.0f) * (frequency / 190.0f));
+}
+
 float TaikoEngine::continuumBandVariance (float lowCoefficient,
                                           float highCoefficient) noexcept
 {
@@ -1765,9 +1770,7 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
             nearField * shapeMic * batterShare
             + efficiency * (2.0f * besselAtZero / lambda) * volumeShare
                   * propagatingSpread;
-        const float proximity =
-            1.0f + drum.micProximity
-                       / (1.0f + (frequency / 190.0f) * (frequency / 190.0f));
+        const float proximity = proximityLift (drum.micProximity, frequency);
         amplitude = std::abs (drive * observed * proximity);
     }
     else
@@ -1791,9 +1794,7 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
 
         const float drive = shapeStrike / (geometricMass * omega);
         const float nearField = nearFieldAttenuation (lambda, radius, omega, micDistance);
-        const float proximity =
-            1.0f + drum.micProximity
-                       / (1.0f + (frequency / 190.0f) * (frequency / 190.0f));
+        const float proximity = proximityLift (drum.micProximity, frequency);
         // Both capsules, and then the width trim the output stage puts on them.
         //
         // Only the near field carries the shape of the head, so only it differs
@@ -2623,6 +2624,29 @@ float TaikoEngine::measureContact (const EngineParameters& raw,
 // Building the modal bank for one stroke
 // ---------------------------------------------------------------------------
 
+TaikoEngine::PolePair TaikoEngine::polePairFor (float frequencyHz, float decayRate,
+                                                double sampleRateHz) noexcept
+{
+    // Solved in double for the same reason the resonator runs in double: at
+    // fifty hertz against a high sample rate, cos(omega) differs from one by
+    // less than a float mantissa can hold, and rounding the coefficient is
+    // itself enough to mistune the drum audibly.
+    const auto omega = 2.0 * static_cast<double> (piFloat)
+                     * static_cast<double> (frequencyHz) / sampleRateHz;
+    const auto radius = std::exp (-static_cast<double> (decayRate) / sampleRateHz);
+
+    PolePair pair;
+    pair.a1 = -2.0 * radius * std::cos (omega);
+    pair.a2 = radius * radius;
+    pair.sinOmega = std::sin (omega);
+    // IEEE 754 multiplication and sqrt are both correctly rounded, so
+    // sqrt(radius * radius) recovers this same nonnegative radius bit-exactly
+    // rather than merely mathematically - handing it back here is exactly
+    // what a caller's separate std::sqrt (pair.a2) would have read back.
+    pair.radius = radius;
+    return pair;
+}
+
 void TaikoEngine::configureResonator (Resonator& resonator, float frequencyHz,
                                       float decayRate, float gain,
                                       double* poleRadiusOut) const noexcept
@@ -2640,25 +2664,15 @@ void TaikoEngine::configureResonator (Resonator& resonator, float frequencyHz,
         return;
     }
 
-    // Solved in double for the same reason the resonator runs in double: at
-    // fifty hertz against a high sample rate, cos(omega) differs from one by
-    // less than a float mantissa can hold, and rounding the coefficient is
-    // itself enough to mistune the drum audibly.
-    const auto omega = 2.0 * static_cast<double> (piFloat)
-                     * static_cast<double> (frequencyHz) / sampleRate_;
-    const auto radius = std::exp (-static_cast<double> (decayRate) / sampleRate_);
-    resonator.a1 = -2.0 * radius * std::cos (omega);
-    resonator.a2 = radius * radius;
+    const auto pole = polePairFor (frequencyHz, decayRate, sampleRate_);
+    resonator.a1 = pole.a1;
+    resonator.a2 = pole.a2;
     // Impulse-invariant scaling: with this numerator the resonator's impulse
     // response is exactly the sampled r^n sin(omega n), so the drive gain the
     // caller computes carries its physical meaning through unchanged.
-    resonator.b0 = static_cast<double> (gain) * std::sin (omega);
-    // IEEE 754 multiplication and sqrt are both correctly rounded, so
-    // sqrt(radius * radius) recovers this same nonnegative radius bit-exactly
-    // rather than merely mathematically - handing it back here is exactly
-    // what a caller's separate std::sqrt (resonator.a2) would have read back.
+    resonator.b0 = static_cast<double> (gain) * pole.sinOmega;
     if (poleRadiusOut != nullptr)
-        *poleRadiusOut = radius;
+        *poleRadiusOut = pole.radius;
 }
 
 void TaikoEngine::setPalmDecay (Mode& mode, float amplitudeDecay) noexcept
@@ -2976,9 +2990,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                           * propagatingSpread;
                 // Proximity lift: a close microphone reads pressure that has
                 // not yet spread, and low modes gain most from it.
-                const float proximity =
-                    1.0f + drum.micProximity / (1.0f + (frequency / 190.0f)
-                                                        * (frequency / 190.0f));
+                const float proximity = proximityLift (drum.micProximity, frequency);
 
                 auto& mode = voice.modes[static_cast<std::size_t> (count)];
                 mode.omega = omega;
@@ -3078,9 +3090,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 const float nearField = nearFieldAttenuation (lambda, radius, omega,
                                                               micDistance);
 
-                const float proximity =
-                    1.0f + drum.micProximity / (1.0f + (frequency / 190.0f)
-                                                        * (frequency / 190.0f));
+                const float proximity = proximityLift (drum.micProximity, frequency);
                 // The small part that does escape arrives at both microphones
                 // alike, which is what keeps the pair from going anti-phase
                 // once the near field has decayed away.
@@ -4332,23 +4342,19 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
         // rang past where it should have stopped.
         mode.decayRate = membraneDecayAt (voice, mode, 2.0f * piFloat * frequency);
 
-        // In double, exactly as configureResonator does it. This path runs on
-        // every stroke that has any Tension Mod at all - which is the default -
-        // and again on every wheel move and Pitch automation step, so rounding
-        // the coefficients here would put the mistuning straight back after the
-        // careful build.
-        const auto omega = 2.0 * static_cast<double> (piFloat)
-                         * static_cast<double> (frequency) / sampleRate_;
-        const auto poleRadius = std::exp (-static_cast<double> (
-                                              mode.decayRate
-                                              + mode.appliedPalmDecay)
-                                          / sampleRate_);
-        mode.resonator.a1 = -2.0 * poleRadius * std::cos (omega);
-        mode.resonator.a2 = poleRadius * poleRadius;
-        mode.resonator.b0 = std::sin (omega);
+        // Exactly configureResonator's solve, via the pole pair it shares
+        // with this path. This runs on every stroke that has any Tension Mod
+        // at all - which is the default - and again on every wheel move and
+        // Pitch automation step, so rounding the coefficients here would put
+        // the mistuning straight back after the careful build.
+        const auto pole = polePairFor (frequency, mode.decayRate + mode.appliedPalmDecay,
+                                       sampleRate_);
+        mode.resonator.a1 = pole.a1;
+        mode.resonator.a2 = pole.a2;
+        mode.resonator.b0 = pole.sinOmega;
         mode.liveOmega = 2.0 * static_cast<double> (piFloat)
                        * static_cast<double> (frequency);
-        mode.poleRadius = poleRadius;
+        mode.poleRadius = pole.radius;
 
         // The state is deliberately left where it is. Rewriting a1 and a2 under
         // a running (y1, y2) does move the next output by da1*y[n-1] +
