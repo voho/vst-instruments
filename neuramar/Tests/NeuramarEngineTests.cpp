@@ -1060,6 +1060,51 @@ void testAirFilterCoefficientHostileInputs()
                            "every argument being non-finite at once");
 }
 
+// airfilter::unitNoisePowerResponse() is a public, pure, noexcept helper with
+// a documented sanitize guard (frequencyHz must be positive and finite,
+// sampleRate must be positive, and frequencyHz must be below Nyquist; each
+// failure returns silence rather than propagating a non-finite or
+// division-derived value) that nothing elsewhere in the suite exercises
+// directly: every other call site - predictedAirCentroid() here and
+// SampleLearner.cpp's Air fit - sweeps only finite, sub-Nyquist analysis
+// frequencies, so a regression in any one guard would pass unnoticed until a
+// malformed sweep or a host running at an unusual rate surfaced it.
+void testAirFilterNoisePowerResponseHostileInputs()
+{
+    using neuramar::airfilter::makeCoefficients;
+    using neuramar::airfilter::unitNoisePowerResponse;
+
+    constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+    constexpr float infinity = std::numeric_limits<float>::infinity();
+    const auto coefficients = makeCoefficients(1000.0f, 1.0f, 48000.0f);
+
+    expect(unitNoisePowerResponse(coefficients, 0.0f, 48000.0f) == 0.0f,
+           "a zero frequency was not sanitised to silence");
+    expect(unitNoisePowerResponse(coefficients, -100.0f, 48000.0f) == 0.0f,
+           "a negative frequency was not sanitised to silence");
+    expect(unitNoisePowerResponse(coefficients, nan, 48000.0f) == 0.0f,
+           "a NaN frequency was not sanitised to silence");
+    expect(unitNoisePowerResponse(coefficients, infinity, 48000.0f) == 0.0f,
+           "an infinite frequency was not sanitised to silence");
+    expect(unitNoisePowerResponse(coefficients, 1000.0f, 0.0f) == 0.0f,
+           "a zero sample rate was not sanitised to silence");
+    expect(unitNoisePowerResponse(coefficients, 1000.0f, -48000.0f) == 0.0f,
+           "a negative sample rate was not sanitised to silence");
+    expect(unitNoisePowerResponse(coefficients, 24000.0f, 48000.0f) == 0.0f,
+           "a frequency at Nyquist was not sanitised to silence");
+    expect(unitNoisePowerResponse(coefficients, 30000.0f, 48000.0f) == 0.0f,
+           "a frequency above Nyquist was not sanitised to silence");
+
+    // Just below Nyquist, at the fitted centre, and at an arbitrary in-band
+    // frequency all stay finite and strictly positive rather than tripping
+    // the same guard (which would instead collapse them to silence).
+    const auto justBelowNyquist = unitNoisePowerResponse(coefficients, 23999.0f, 48000.0f);
+    expect(std::isfinite(justBelowNyquist) && justBelowNyquist > 0.0f,
+           "a frequency just below Nyquist tripped the Nyquist guard");
+    expect(unitNoisePowerResponse(coefficients, 1000.0f, 48000.0f) > 0.0f,
+           "the fitted centre frequency produced no response at all");
+}
+
 void testRandomNeuralSeed()
 {
     constexpr std::uint64_t seed = 0x6e657572616d6172ull;
@@ -6517,6 +6562,7 @@ int main()
     testSpectralEnvelopeHostileInputs();
     testHostileInputSanitizing();
     testAirFilterCoefficientHostileInputs();
+    testAirFilterNoisePowerResponseHostileInputs();
     testCoreSpurFloor();
     testRenderIsSampleRateInvariant();
     testBodyLayersAreSampleRateInvariant();
