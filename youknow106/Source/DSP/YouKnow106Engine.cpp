@@ -180,6 +180,18 @@ std::uint8_t portamentoAdcByte(float value) noexcept
         std::floor(clamp01(sanitised(value, 0.0f)) * 255.0f + 0.5f));
 }
 
+// The single-pole RC corner frequency a capacitor in series with a resistance
+// to ground gives, shared by every coupling/loading law below that reduces to
+// exactly that network: voice-bus, module, VCA-input and common-VCA-input
+// coupling, both noise support poles, and both output-coupling laws each
+// carried their own copy of the identical 1/(2*pi*R*C) before this helper.
+// highPassCornerHz's four-leg switched network stays its own derivation --
+// it selects between four distinct branches, not one fixed R and C.
+float rcCornerHz(float capacitanceF, float resistanceOhms) noexcept
+{
+    return 1.0f / (twoPi * capacitanceF * resistanceOhms);
+}
+
 // The loaded lower-track resistance and the total pole resistance the output
 // coupling network presents at a given VOLUME shaft position. Both the
 // loaded corner frequency and the loaded passthrough gain below are read off
@@ -1327,14 +1339,14 @@ float YouKnow106Engine::highPassHighGain(HighPassMode mode) noexcept
 
 float YouKnow106Engine::outputCouplingCornerHz() noexcept
 {
-    return 1.0f / (twoPi * outputCouplingCapacitanceF
-                   * (outputCouplingSeriesOhms + outputCouplingPotOhms));
+    return rcCornerHz(outputCouplingCapacitanceF,
+                       outputCouplingSeriesOhms + outputCouplingPotOhms);
 }
 
 float YouKnow106Engine::voiceBusCouplingCornerHz() noexcept
 {
-    return 1.0f / (twoPi * voiceBusCouplingCapacitanceF
-                   * voiceBusCouplingResistanceOhms);
+    return rcCornerHz(voiceBusCouplingCapacitanceF,
+                       voiceBusCouplingResistanceOhms);
 }
 
 float YouKnow106Engine::voiceBusCouplingCornerHz(HighPassMode mode) noexcept
@@ -1356,36 +1368,34 @@ float YouKnow106Engine::voiceBusCouplingCornerHz(HighPassMode mode) noexcept
     const float parallelOhms =
         voiceBusCouplingResistanceOhms * selectedInputOhms
         / (voiceBusCouplingResistanceOhms + selectedInputOhms);
-    return 1.0f / (twoPi * voiceBusCouplingCapacitanceF * parallelOhms);
+    return rcCornerHz(voiceBusCouplingCapacitanceF, parallelOhms);
 }
 
 float YouKnow106Engine::commonVcaInputCouplingCornerHz() noexcept
 {
-    return 1.0f / (twoPi * commonVcaInputCapacitanceF
-                   * commonVcaInputResistanceOhms);
+    return rcCornerHz(commonVcaInputCapacitanceF,
+                       commonVcaInputResistanceOhms);
 }
 
 float YouKnow106Engine::moduleCouplingCornerHz() noexcept
 {
-    return 1.0f / (twoPi * moduleCouplingCapacitanceF
-                   * moduleCouplingResistanceOhms);
+    return rcCornerHz(moduleCouplingCapacitanceF, moduleCouplingResistanceOhms);
 }
 
 float YouKnow106Engine::vcaInputCouplingCornerHz() noexcept
 {
-    return 1.0f / (twoPi * vcaInputCouplingCapacitanceF
-                   * vcaInputCouplingResistanceOhms);
+    return rcCornerHz(vcaInputCouplingCapacitanceF,
+                       vcaInputCouplingResistanceOhms);
 }
 
 float YouKnow106Engine::noiseSourceHighPassHz() noexcept
 {
-    return 1.0f / (twoPi * noiseCouplingCapacitanceF * noiseCouplingLoadOhms);
+    return rcCornerHz(noiseCouplingCapacitanceF, noiseCouplingLoadOhms);
 }
 
 float YouKnow106Engine::noiseSourceLowPassHz() noexcept
 {
-    return 1.0f / (twoPi * noiseOtaLoadCapacitanceF
-                   * noiseOtaLoadResistanceOhms);
+    return rcCornerHz(noiseOtaLoadCapacitanceF, noiseOtaLoadResistanceOhms);
 }
 
 float YouKnow106Engine::outputCouplingHighGain() noexcept
@@ -1396,8 +1406,9 @@ float YouKnow106Engine::outputCouplingHighGain() noexcept
 
 float YouKnow106Engine::outputCouplingCornerHz(float volumePosition) noexcept
 {
-    return 1.0f / (twoPi * outputCouplingCapacitanceF
-                   * outputCouplingWiperNetworkFor(volumePosition).resistance);
+    return rcCornerHz(
+        outputCouplingCapacitanceF,
+        outputCouplingWiperNetworkFor(volumePosition).resistance);
 }
 
 float YouKnow106Engine::outputCouplingHighGain(float volumePosition) noexcept
