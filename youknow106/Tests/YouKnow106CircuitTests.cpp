@@ -2602,6 +2602,39 @@ void testPanelLawsInvert()
                "a rate above the range does not clamp to the top");
 }
 
+void testPanelLawInversesRejectNonPositiveInput()
+{
+    // Each of these inverse laws is the host's way back from a typed
+    // automation-lane string (secondsFromText/hertzFromText in
+    // PluginProcessor.cpp) to a panel position, and that parse is entirely
+    // capable of handing one a non-positive or non-finite value: an empty
+    // or unit-only string parses to zero, a leading '-' parses negative, and
+    // the round-trip tests above only ever probe positive, in-range values
+    // (panelPositionForPortamento's zero case above is the one exception,
+    // and even it was never paired with a negative, NaN or infinite input),
+    // so this fallback-to-bottom branch had no direct coverage of its own.
+    const auto expectFloorsToZero = [](auto law, const std::string& name) {
+        expectNear(law(0.0f), 0.0, 1.0e-9,
+                   name + " did not fall back to the panel bottom for a zero input");
+        expectNear(law(-1.0f), 0.0, 1.0e-9,
+                   name + " did not fall back to the panel bottom for a negative input");
+        expectNear(law(std::numeric_limits<float>::quiet_NaN()), 0.0, 1.0e-9,
+                   name + " did not fall back to the panel bottom for a NaN input");
+        expectNear(law(std::numeric_limits<float>::infinity()), 0.0, 1.0e-9,
+                   name + " did not fall back to the panel bottom for a +infinity input");
+        expectNear(law(-std::numeric_limits<float>::infinity()), 0.0, 1.0e-9,
+                   name + " did not fall back to the panel bottom for a -infinity input");
+    };
+
+    expectFloorsToZero(YouKnow106Engine::panelPositionForAttack, "attack");
+    expectFloorsToZero(YouKnow106Engine::panelPositionForDecay, "decay");
+    expectFloorsToZero(YouKnow106Engine::panelPositionForRelease, "release");
+    expectFloorsToZero(YouKnow106Engine::panelPositionForLfoRate, "modulation rate");
+    expectFloorsToZero(YouKnow106Engine::panelPositionForLfoDelay, "modulation delay");
+    expectFloorsToZero(YouKnow106Engine::panelPositionForCutoff, "cutoff");
+    expectFloorsToZero(YouKnow106Engine::panelPositionForPortamento, "portamento");
+}
+
 void testComparatorEdgesSitOnOneThreshold()
 {
     // The comparator is one threshold on the ramp, so its two edges per cycle
@@ -5443,6 +5476,7 @@ int main()
     testModulationAndGlideLaws();
     testConverterQueueAndOutputReference();
     testPanelLawsInvert();
+    testPanelLawInversesRejectNonPositiveInput();
     testComparatorEdgesSitOnOneThreshold();
     testChorusIsAtItsSettingFromTheFirstSample();
     testJuno60FallbackBucketBrigadeTiming();
