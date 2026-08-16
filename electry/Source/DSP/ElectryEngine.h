@@ -790,6 +790,11 @@ private:
         float noiseBandCoefficient { 0.5f };
         int noiseRemaining { 0 };
         int noiseLength { 0 };
+        // static_cast<float>(std::max(1, noiseLength)), solved once wherever
+        // noiseLength is (re)armed rather than every rendered sample of the
+        // pick/release noise burst, which divides by this same clamped length
+        // once per sample to form its progress window.
+        float noiseLengthDenominator { 1.0f };
         float excitationPulseCoefficient { 0.5f };
         OnePole excitationShaper {};
         OnePole excitationModalShaper1 {};
@@ -813,6 +818,11 @@ private:
         float artifactNoiseBandState { 0.0f };
         int artifactCollisionRemaining { 0 };
         int artifactCollisionLength { 0 };
+        // static_cast<float>(std::max(1, artifactCollisionLength)), solved
+        // once in startVoice() rather than every rendered sample of the
+        // incidental fret-contact window, which divides by this same clamped
+        // length once per sample to form its progress fraction.
+        float artifactCollisionLengthDenominator { 1.0f };
         float artifactClearance { 1.0f };
         ModalResonator saddleRattle {};
 
