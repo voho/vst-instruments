@@ -1410,3 +1410,9 @@ Original source under the [MIT License](LICENSE); see the
 [third-party notices](THIRD_PARTY_NOTICES.md). YouKnow106 builds against JUCE,
 which is separately licensed — review the JUCE 8 terms before distributing a
 binary.
+
+## Changelog
+
+- 2026-08-16: Chorus wet-gain glide now builds its exponential coefficient once
+  per `prepare()` instead of calling `std::exp` on every internal sample in
+  `process()`, verified bit-identical against the rendered demo corpus.

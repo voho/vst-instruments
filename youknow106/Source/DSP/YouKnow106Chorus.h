@@ -540,6 +540,11 @@ private:
     // engine's highest internal rates and over long sessions.
     double lfoPhase_ { 0.0 };
     SupportChain support_ {};
+    // The exponential coefficient for gliding wetGain_ toward its target,
+    // rebuilt in prepare() whenever the sample rate changes. It depends only
+    // on inverseSampleRate_ and the fixed wetMuteTimeConstantSeconds above,
+    // so process() reads it instead of calling std::exp() every sample.
+    float wetMuteGlide_ { 0.0f };
     float wetGain_ { 0.0f };
     float rateHz_ { 0.0f };
     float centreDelay_ { 0.0032f };
