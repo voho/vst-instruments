@@ -1265,6 +1265,16 @@ private:
     // exchange belongs to advancePhysicalContacts().
     void dampPhysicalDrum (Voice& physical, const StrikeProfile& profile,
                            float strikeRadius, const DrumState& drum) noexcept;
+    // How much of an axisymmetric mode's palm-damping rate actually reaches
+    // the batter head: the hide-density-weighted square of the mode's own
+    // batter participation, clamped to the unit interval. A mode with a
+    // circumferential order already carries its own coupling through
+    // drive/contactShape and is left at unity here. ensurePhysicalDrum's CC1
+    // palm-rate cache and dampPhysicalDrum's per-Tsu local mute damping both
+    // built this identical clamp by hand; resolved once here so the two
+    // damping paths cannot drift apart.
+    [[nodiscard]] static float batterFractionFor (const DrumState& drum,
+                                                  const Mode& mode) noexcept;
     static void palmDampingRates (
         const DrumState& drum, float strikeRadius,
         std::array<float, modeEntryCount>& modeRates,
