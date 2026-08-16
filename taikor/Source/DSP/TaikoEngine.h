@@ -1033,6 +1033,13 @@ private:
     // column relative to its own low-frequency limit, with x = omega l / c.
     // See resolveDrumFor for why it is floored at the quarter-wave.
     [[nodiscard]] static float columnStiffnessFactor (float x) noexcept;
+    // One-pole low-pass coefficient for a continuum band edge, cutoff
+    // clamped to 0.9x Nyquist: 1 - exp(-2*pi*min(cutoffHz, 0.9*nyquist)/rate).
+    // buildVoiceModes's initial continuum band setup and applyTensionShift's
+    // retune rebuilt this identically for both the low and high edge of
+    // every band; shared here so the two cannot drift apart.
+    [[nodiscard]] static float continuumEdgeCoefficient (
+        float cutoffHz, float nyquist, float rate) noexcept;
     // The (0,1) mode's own wavenumber and its air-loaded batter/resonant
     // angular frequencies, with no stiffness stretch and a unity air-load
     // shape factor - both are normalised to be exactly one at this mode. This
