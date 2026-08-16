@@ -41,6 +41,7 @@ set(ELECTRY_DSP_SOURCES
     Source/DSP/ElectryFx.cpp
     Source/DSP/ElectryVisuals.cpp)
 set(ELECTRY_DSP_HEADERS
+    Source/DSP/DspMath.h
     Source/DSP/ElectryEngine.h
     Source/DSP/ElectryFx.h
     Source/DSP/ElectryVisuals.h)

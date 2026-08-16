@@ -1,4 +1,5 @@
 #include "ElectryVisuals.h"
+#include "DspMath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -9,10 +10,9 @@ namespace
 {
 constexpr float pi = 3.14159265358979323846f;
 
-constexpr float clampf(float value, float low, float high) noexcept
-{
-    return value < low ? low : (value > high ? high : value);
-}
+// clampf lives in DspMath.h now, shared with ElectryEngine and ElectryFx;
+// unqualified calls below resolve to it through the enclosing electry
+// namespace.
 
 // Distance from the nut to fret n as a fraction of the scale length.
 float fretOffset(int fret) noexcept
