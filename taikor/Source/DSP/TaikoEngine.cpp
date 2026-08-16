@@ -864,6 +864,18 @@ float TaikoEngine::columnStiffnessFactor (float x) noexcept
     return x * std::cos (x) / std::sin (x);
 }
 
+float TaikoEngine::continuumEdgeCoefficient (float cutoffHz, float nyquist,
+                                             float rate) noexcept
+{
+    // One-pole low-pass coefficient for a continuum band edge, cutoff
+    // clamped to 0.9x Nyquist so a band that has climbed past the usable
+    // spectrum still gets a stable filter rather than a runaway one.
+    // buildVoiceModes's initial band setup and applyTensionShift's retune
+    // rebuilt this identically for both the low and high edge of every
+    // band; shared here so the two cannot drift apart.
+    return 1.0f - std::exp (-2.0f * piFloat * std::min (cutoffHz, nyquist * 0.9f) / rate);
+}
+
 TaikoEngine::FundamentalPair
 TaikoEngine::fundamentalPairOmegas (const DrumState& drum) noexcept
 {
@@ -3293,10 +3305,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
             // could otherwise masquerade as all the octaves above it.
             const float low = centre / continuumBandwidth;
             const float high = centre * continuumBandwidth;
-            entry.lowCoefficient =
-                1.0f - std::exp (-2.0f * piFloat * std::min (low, nyquist * 0.9f) / rate);
-            entry.highCoefficient =
-                1.0f - std::exp (-2.0f * piFloat * std::min (high, nyquist * 0.9f) / rate);
+            entry.lowCoefficient = continuumEdgeCoefficient (low, nyquist, rate);
+            entry.highCoefficient = continuumEdgeCoefficient (high, nyquist, rate);
             entry.centre = centre;
             entry.lowStateLeft = 0.0f;
             entry.lowStateLeft2 = 0.0f;
@@ -4389,10 +4399,10 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
             continue;
 
         const float centre = band.centre * shift;
-        const float low = std::min (centre / continuumBandwidth, nyquist * 0.9f);
-        const float high = std::min (centre * continuumBandwidth, nyquist * 0.9f);
-        band.lowCoefficient = 1.0f - std::exp (-2.0f * piFloat * low / rate);
-        band.highCoefficient = 1.0f - std::exp (-2.0f * piFloat * high / rate);
+        band.lowCoefficient =
+            continuumEdgeCoefficient (centre / continuumBandwidth, nyquist, rate);
+        band.highCoefficient =
+            continuumEdgeCoefficient (centre * continuumBandwidth, nyquist, rate);
 
         // And its decay with it, for the same reason the modes' does: the loss
         // that empties this region is the head's own, and that is a function of

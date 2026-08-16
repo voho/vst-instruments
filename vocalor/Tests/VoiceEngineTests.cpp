@@ -1433,6 +1433,39 @@ void testDisplayMathHelpers()
                 && vocalor::glideTimeSeconds (0.5f) < vocalor::glideTimeSeconds (1.0f),
             "the glide time mapping is not monotonic over a useful range");
 
+    // vibratoExtentCents() is only exercised indirectly, through the engine's
+    // chunk-rate vibrato depth and the peak-to-peak measurements documented in
+    // the README; assert its own knob curve and its section soft-limiter
+    // directly, including the two compatibility anchors the curve's exponent
+    // was fixed against.
+    expect (vocalor::vibratoExtentCents (0.0f, 0.0f) == 0.0f,
+            "a zero knob produced a nonzero vibrato extent");
+    expect (vocalor::vibratoExtentCents (-1.0f, 0.0f) == 0.0f,
+            "a negative knob was not clamped to a zero extent before the curve was applied");
+    expect (std::abs (vocalor::vibratoExtentCents (1.0f, 0.0f) - vocalor::kVibratoReachCents) < 1.0e-3f,
+            "the top of the knob did not reach its own +/-1-semitone definition without a section limit");
+    expect (std::abs (vocalor::vibratoExtentCents (1.5f, 0.0f) - vocalor::kVibratoReachCents) < 1.0e-3f,
+            "a knob value above unity was not clamped before the extent curve was applied");
+    expect (std::abs (vocalor::vibratoExtentCents (0.38f, 0.0f) - 18.4f) < 0.05f,
+            "the 38% historical anchor drifted off its documented extent");
+    expect (std::abs (vocalor::vibratoExtentCents (0.42f, 0.0f) - 21.9f) < 0.05f,
+            "the 42% compatibility anchor the curve's exponent was fixed against drifted off 21.9 cents");
+    expect (std::abs (vocalor::vibratoExtentCents (0.46f, 0.0f) - 25.7f) < 0.05f,
+            "the 46% historical anchor drifted off its documented extent");
+    expect (std::abs (vocalor::vibratoExtentCents (1.0f, -5.0f) - vocalor::kVibratoReachCents) < 1.0e-3f,
+            "a negative section limit was incorrectly treated as an active limit");
+    const auto belowKnee = vocalor::vibratoExtentCents (0.30f, vocalor::kSectionVibratoCents);
+    expect (std::abs (belowKnee - vocalor::vibratoExtentCents (0.30f, 0.0f)) < 1.0e-4f,
+            "a section limit changed an extent that had not yet reached its own knee");
+    const auto midKnob = vocalor::vibratoExtentCents (0.5f, vocalor::kSectionVibratoCents);
+    const auto fullKnob = vocalor::vibratoExtentCents (1.0f, vocalor::kSectionVibratoCents);
+    expect (fullKnob < vocalor::kSectionVibratoCents,
+            "the section limiter let the knob reach or exceed its own limit");
+    expect (midKnob > belowKnee && midKnob < fullKnob,
+            "the section-limited extent was not monotonic in the knob");
+    expect (std::abs (fullKnob - 36.0f) < 0.05f,
+            "the full-knob, section-limited extent drifted off its expected asymptotic value");
+
     // tunedFirstFormant() is only exercised indirectly, through the engine's
     // high-pitch formant tracking in testFormantTuningAtHighPitch(); assert
     // its own behaviour directly, including the two defensive fallbacks that

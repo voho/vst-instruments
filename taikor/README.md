@@ -960,6 +960,7 @@ this repository's own code.
 
 ## Changelog
 
+- 2026-08-16: Extracted the continuum band edge's one-pole low-pass coefficient - written out identically for both the low and high edge in `buildVoiceModes`'s initial band setup and again in `applyTensionShift`'s retune - into one shared `continuumEdgeCoefficient` helper, with no change to any resolved drum or rendered audio, verified by bit-identical demo renders before and after.
 - 2026-08-15: Stopped the nonlinear stick-contact solver from re-zeroing its 16x16 Jacobian on every Newton iteration, since each entry it can read is already overwritten before use, which is a bit-exact no-op confirmed by matching demo-audio checksums.
 - 2026-08-15: Extracted the (0,1) pair's diagonal/off-diagonal cavity-coupling
   terms - previously written out identically in both `volumeBranchOmega`'s
