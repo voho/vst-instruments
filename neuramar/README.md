@@ -823,6 +823,14 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-16: `NeuralModel::evaluateBaseRaw` no longer re-clamps and
+  re-validates its `normalisedTime` argument with `std::isfinite`/`std::clamp`
+  on every call; all four call sites - `evaluate()`'s hot per-control-frame
+  path, the randomised-variation calibration loop, and `SampleLearner`'s two
+  residual-fitting passes - already pass a value that is finite and clamped
+  to `[0, 1]` before calling in, so the repeated check was pure overhead on
+  the decoder's per-frame input mapping. Pure dedup, with the eight rendered
+  demo WAVs confirmed byte-for-byte unchanged.
 - 2026-08-15: Fixed a stale count in `NeuramarEngine::noteOn`'s comment on the
   cached harmonic/Air variation sines, which said 72 where the current
   64-harmonic, 16-Air-band model produces 80; comment-only, with the eight

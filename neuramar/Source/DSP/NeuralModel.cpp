@@ -1066,10 +1066,12 @@ void NeuralModel::evaluateBaseRaw(
     float normalisedTime,
     std::array<float, outputSize>& destination) const noexcept
 {
-    const float time = std::clamp(
-        std::isfinite(normalisedTime) ? normalisedTime : 0.0f, 0.0f, 1.0f);
+    // normalisedTime arrives already clamped to [0, 1] and finite (see the
+    // precondition note on the declaration), so the isfinite check and clamp
+    // this used to repeat here reproduced work every one of its callers had
+    // already done.
     const std::array<float, inputSize> inputs = networkInputsAt(
-        time, metadata_.durationSeconds);
+        normalisedTime, metadata_.durationSeconds);
 
     std::array<float, hiddenSize> hidden {};
     for (std::size_t unit = 0; unit < hiddenSize; ++unit)
