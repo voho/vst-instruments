@@ -918,6 +918,16 @@ TaikoEngine::MembraneModeOmegas TaikoEngine::membraneModeOmegas (
              2.0f * piFloat * idealResonant * loadResonant };
 }
 
+void TaikoEngine::beginMode (Mode& mode, float omega, float frequency,
+                             float decay) noexcept
+{
+    mode.omega = omega;
+    mode.liveOmega = 2.0 * static_cast<double> (piFloat)
+                   * static_cast<double> (frequency);
+    mode.decayRate = decay;
+    mode.appliedPalmDecay = 0.0f;
+}
+
 void TaikoEngine::axisymmetricDiagonals (const DrumState& drum,
                                          const FundamentalPair& fundamentals,
                                          float cavityStiffness, float& diagonalB,
@@ -3005,11 +3015,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 const float proximity = proximityLift (drum.micProximity, frequency);
 
                 auto& mode = voice.modes[static_cast<std::size_t> (count)];
-                mode.omega = omega;
-                mode.liveOmega = 2.0 * static_cast<double> (piFloat)
-                               * static_cast<double> (frequency);
-                mode.decayRate = decay;
-                mode.appliedPalmDecay = 0.0f;
+                beginMode (mode, omega, frequency, decay);
                 mode.decayFixed = decayFixed;
                 mode.lossOmega = lossOmega;
                 mode.lossOmegaSquared = lossOmegaSquared;
@@ -3114,11 +3120,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                     nearField * shapeMic * micAngularR * proximity + propagating;
 
                 auto& mode = voice.modes[static_cast<std::size_t> (count)];
-                mode.omega = omega;
-                mode.liveOmega = 2.0 * static_cast<double> (piFloat)
-                               * static_cast<double> (frequency);
-                mode.decayRate = decay;
-                mode.appliedPalmDecay = 0.0f;
+                beginMode (mode, omega, frequency, decay);
                 mode.decayFixed = decayFixed;
                 mode.lossOmega = lossOmega;
                 mode.lossOmegaSquared = lossOmegaSquared;
@@ -3204,11 +3206,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                           / (1.0f + 0.35f * static_cast<float> (index));
 
         auto& mode = voice.modes[static_cast<std::size_t> (count)];
-        mode.omega = omega;
-        mode.liveOmega = 2.0 * static_cast<double> (piFloat)
-                       * static_cast<double> (frequency);
-        mode.decayRate = decay;
-        mode.appliedPalmDecay = 0.0f;
+        beginMode (mode, omega, frequency, decay);
         mode.membrane = false;
         mode.physicalIndex = static_cast<std::uint8_t> (
             membraneResonatorCount + index);
