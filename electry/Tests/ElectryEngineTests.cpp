@@ -1340,16 +1340,26 @@ void testProcessRejectsInvalidBuffers()
     engine.noteOn(pickKeyswitch(PickStyle::Down), 1.0f);
     engine.noteOn(40, 0.9f);
 
-    std::vector<float> left(64, 0.0f);
-    std::vector<float> right(64, 0.0f);
+    // Nonzero sentinels, distinct per channel, so a regression that clears
+    // the surviving channel instead of leaving it untouched is caught -
+    // zero-initialised buffers would hide exactly that bug.
+    std::vector<float> left(64, 0.31f);
+    std::vector<float> right(64, -0.47f);
+    const std::vector<float> leftSentinel = left;
+    const std::vector<float> rightSentinel = right;
 
-    // A null pointer, on either side, must be a no-op rather than a crash.
+    // A null pointer, on either side, must be a no-op rather than a crash -
+    // including leaving the other, valid channel's buffer untouched.
     engine.process(nullptr, right.data(), static_cast<int>(right.size()));
     engine.process(left.data(), nullptr, static_cast<int>(left.size()));
+    expect(left == leftSentinel && right == rightSentinel,
+           "a null-pointer process() call wrote into the other, valid channel");
 
     // A non-positive sample count must also be a no-op.
     engine.process(left.data(), right.data(), 0);
     engine.process(left.data(), right.data(), -4);
+    expect(left == leftSentinel && right == rightSentinel,
+           "a non-positive sample count still wrote into the buffers");
 
     expect(engine.getActiveVoiceCount() == 1,
            "an invalid process() call disturbed the sounding voice");
