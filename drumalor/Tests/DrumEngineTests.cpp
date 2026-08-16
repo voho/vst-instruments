@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -22,6 +23,19 @@
 #else
 #define DRUMALOR_CAN_TOGGLE_FLUSH_TO_ZERO 0
 #endif
+
+namespace drumalor
+{
+// Narrow inspection seam for the JUCE-free regression suite.
+struct DrumEngineTestAccess
+{
+    [[nodiscard]] static std::uint64_t nonPositiveProcessCallCount (
+        const DrumEngine& engine) noexcept
+    {
+        return engine.nonPositiveProcessCallCount_;
+    }
+};
+} // namespace drumalor
 
 namespace
 {
@@ -1374,11 +1388,22 @@ void testProcessIgnoresNonPositiveSampleCounts()
     std::array<float, 8> scratchRight;
     scratchLeft.fill (-1.0f);
     scratchRight.fill (-1.0f);
+    using TestAccess = drumalor::DrumEngineTestAccess;
+    const auto guardHitsBefore = TestAccess::nonPositiveProcessCallCount (probed);
     probed.process (scratchLeft.data(), scratchRight.data(), 0);
     probed.process (scratchLeft.data(), scratchRight.data(), -1);
     probed.process (scratchLeft.data(), scratchRight.data(), -4096);
     expect (scratchLeft[0] == -1.0f && scratchRight[0] == -1.0f,
             "a non-positive sample count wrote into the caller's buffer");
+    // The bit-identical-render check below cannot, by itself, tell a correct
+    // "numSamples <= 0" guard from a broken "numSamples < 0" one: a zero
+    // block that slips past the guard still adds zero to the clock and
+    // renders a zero-iteration, no-op sample loop. Pin the guard directly,
+    // including the zero case specifically, via its own call counter.
+    expect (TestAccess::nonPositiveProcessCallCount (probed) - guardHitsBefore
+                == 3,
+            "process()'s own numSamples <= 0 guard did not fire once per "
+            "non-positive call, including the zero-sample one");
 
     const auto referenceAudio = renderInterleaved (reference, samples, 383);
     const auto probedAudio = renderInterleaved (probed, samples, 383);

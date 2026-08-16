@@ -4614,7 +4614,10 @@ void DrumEngine::applyBusStage (float& left, float& right, float driveAmount,
 void DrumEngine::process (float* left, float* right, int numSamples) noexcept
 {
     if (numSamples <= 0)
+    {
+        ++nonPositiveProcessCallCount_;
         return;
+    }
     if (! prepared_)
         prepare (sampleRate_, std::max (maxBlockSize_, numSamples));
 

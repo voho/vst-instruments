@@ -872,6 +872,13 @@ private:
     // Engine time, in samples since the last reset. Advanced by whole blocks,
     // so it does not depend on how the host divides them.
     std::uint64_t engineSamples_ { 0 };
+    // How many times process()'s own numSamples <= 0 guard has returned
+    // early. Exists so tests can pin that guard directly, since a
+    // non-positive block is otherwise observationally identical to simply
+    // not calling process() at all.
+    std::uint64_t nonPositiveProcessCallCount_ { 0 };
+
+    friend struct DrumEngineTestAccess;
     std::array<Voice, maxVoices> voices_ {};
     std::array<Voice, retiringVoiceCount> retiringVoices_ {};
     std::array<SympatheticBed, sympatheticBedCount> sympatheticBeds_ {};
