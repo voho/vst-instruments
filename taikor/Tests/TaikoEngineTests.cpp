@@ -191,6 +191,35 @@ struct TaikoEngineTestAccess
         return result;
     }
 
+    // Exposes applyCollisionRetention's own defensive fallback: taken when
+    // the pole coordinates it would otherwise recover velocity from have
+    // collapsed - a non-positive poleRadius, an essentially-zero
+    // resonator.b0, or a non-positive liveOmega - and a plain backward
+    // difference between q[n] and q[n-1] is used instead. configureResonator
+    // and applyTensionShift keep every ringing mode's poleRadius, b0 and
+    // liveOmega strictly positive, so nothing built by trigger() or
+    // applyTensionShift ever takes this branch; it exists only for a Mode
+    // whose pole has collapsed outright.
+    static CollisionState applyDegenerateCollision (double displacement, double previous,
+                                                     float retention, double poleRadius,
+                                                     double sine, double liveOmega) noexcept
+    {
+        TaikoEngine::Mode mode;
+        mode.poleRadius = poleRadius;
+        mode.liveOmega = liveOmega;
+        mode.resonator.b0 = sine;
+        mode.resonator.y1 = displacement;
+        mode.resonator.y2 = previous;
+
+        CollisionState result;
+        result.displacementBefore = mode.resonator.y1;
+        result.velocityBefore = mode.resonator.y1 - mode.resonator.y2;
+        TaikoEngine::applyCollisionRetention (mode, retention);
+        result.displacementAfter = mode.resonator.y1;
+        result.velocityAfter = result.displacementAfter - mode.resonator.y2;
+        return result;
+    }
+
     static double shiftedPoleCacheError() noexcept
     {
         TaikoEngine engine;
@@ -5355,6 +5384,43 @@ void testCollisionChangesVelocityNotDisplacement()
             "a collision created velocity at a modal turning point");
 }
 
+// applyCollisionRetention() normally recovers a mode's instantaneous velocity
+// from its live pole coordinates so retention can scale only that, leaving
+// displacement continuous. When the pole coordinates themselves have
+// collapsed, none of poleRadius, resonator.b0 or liveOmega is usable for that
+// recovery, and the function instead falls back to a plain backward
+// difference: velocity = q[n] - q[n-1], and the retained q[n-1] is q[n] minus
+// retention times that. No ordinary mode ever reaches this - configureResonator
+// and applyTensionShift both keep those three coordinates strictly positive -
+// so it was previously exercised nowhere in the suite.
+void testCollisionRetentionFallsBackOnACollapsedPole()
+{
+    using taikor::TaikoEngineTestAccess;
+
+    const auto checkFallback = [] (double poleRadius, double sine, double liveOmega,
+                                   const std::string& why)
+    {
+        for (const float retention : { 0.75f, 0.0f, -0.35f })
+        {
+            const auto state = TaikoEngineTestAccess::applyDegenerateCollision (
+                0.31, -0.08, retention, poleRadius, sine, liveOmega);
+            expect (state.displacementAfter == state.displacementBefore,
+                    "a collapsed pole (" + why + ") must leave displacement untouched");
+            expect (std::abs (state.velocityAfter
+                              - static_cast<double> (retention) * state.velocityBefore)
+                        < 1.0e-12,
+                    "a collapsed pole (" + why
+                        + ") must scale the backward-difference velocity by retention");
+        }
+    };
+
+    // Each case leaves the other two coordinates healthy so only the named
+    // one is responsible for taking the fallback.
+    checkFallback (0.0, 1.0, 500.0, "non-positive pole radius");
+    checkFallback (0.98, 0.0, 500.0, "near-zero sine coefficient");
+    checkFallback (0.98, 1.0, 0.0, "non-positive live omega");
+}
+
 // Tsu is played with the free hand resting on the hide. That hand belongs to
 // the physical drum, not only to the new MIDI voice: it must choke the Don that
 // was already ringing, while a Tsu on another drum leaves it alone.
@@ -7984,6 +8050,7 @@ int main()
     testTheDrumSoundsLikeADrumAndNotLikeATone();
     testShellResonanceHasNoStepInIt();
     testCollisionChangesVelocityNotDisplacement();
+    testCollisionRetentionFallsBackOnACollapsedPole();
     testMutedStrokeChokesTheRingingHead();
     testHandControllerIsAPhysicalPalm();
     testAStrokeLandsOnAHeadThatIsAlreadyMoving();
