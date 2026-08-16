@@ -1123,9 +1123,10 @@ int VoiceEngine::mipTableLevelForFrequency(float frequencyHz) const noexcept
 
 void VoiceEngine::makeRoomFor(int required)
 {
-    int free = 0;
-    for (const auto& voice : voices_)
-        free += voice.active ? 0 : 1;
+    // Free slots are just the complement of countActiveVoices()'s own scan of
+    // voices_, so this reuses it instead of walking the array a second time
+    // to compute the same fact the other way round.
+    int free = maxVoices - countActiveVoices();
 
     while (free < required)
     {
