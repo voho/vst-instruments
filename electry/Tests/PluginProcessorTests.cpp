@@ -769,6 +769,11 @@ void testChannelPressureAndAftertouchVibratoDispatch()
         // masked nibble pass unnoticed on every channel but the one tested.
         ChannelPressureOtherChannel,
         PolyAftertouch,
+        // Same half-value reasoning as HalfChannelPressure, applied to the
+        // independent data[2] scale in the aftertouch branch: a full-value
+        // 127 alone cannot tell "data[2] / 127.0f" apart from a missing
+        // divisor, since both clamp to the same 1.0f.
+        HalfPolyAftertouch,
     };
     const auto measuredHz = [&] (Pressure kind) -> double
     {
@@ -795,6 +800,9 @@ void testChannelPressureAndAftertouchVibratoDispatch()
             // way reusing frettedNote (47) here would.
             midi.addEvent (
                 juce::MidiMessage::aftertouchChange (1, 3, 127), 0);
+        else if (kind == Pressure::HalfPolyAftertouch)
+            midi.addEvent (
+                juce::MidiMessage::aftertouchChange (1, 3, 64), 0);
         renderBlock (processor, audio, midi);
 
         // Let the attack settle and the vibrato's onset ramp (258 ms, see
@@ -815,6 +823,7 @@ void testChannelPressureAndAftertouchVibratoDispatch()
     const auto pressedOtherChannel =
         measuredHz (Pressure::ChannelPressureOtherChannel);
     const auto touched = measuredHz (Pressure::PolyAftertouch);
+    const auto halfTouched = measuredHz (Pressure::HalfPolyAftertouch);
 
     const auto centsStill = 1200.0 * std::log2 (still / frettedHz);
     const auto centsPressed = 1200.0 * std::log2 (pressed / frettedHz);
@@ -822,6 +831,7 @@ void testChannelPressureAndAftertouchVibratoDispatch()
     const auto centsPressedOtherChannel =
         1200.0 * std::log2 (pressedOtherChannel / frettedHz);
     const auto centsTouched = 1200.0 * std::log2 (touched / frettedHz);
+    const auto centsHalfTouched = 1200.0 * std::log2 (halfTouched / frettedHz);
 
     expect (std::abs (centsStill) < 10.0,
             "an unpressed fretted note drifted " + std::to_string (centsStill)
@@ -867,6 +877,15 @@ void testChannelPressureAndAftertouchVibratoDispatch()
             "the fretted note by the vibrato's documented upward bias "
             "(measured " + std::to_string (centsTouched) + " cents against "
                 + std::to_string (centsStill) + " unpressed)");
+    // Same half-value-versus-full-value reasoning as the channel-pressure
+    // case, applied to the aftertouch branch's own independent data[2] scale.
+    expect (centsHalfTouched - centsStill > 2.0
+                && centsHalfTouched < centsTouched - 2.0,
+            "half-value polyphonic aftertouch did not land strictly between "
+            "unpressed and full-value aftertouch (measured "
+                + std::to_string (centsHalfTouched) + " cents against "
+                + std::to_string (centsStill) + " unpressed and "
+                + std::to_string (centsTouched) + " full-value)");
 }
 
 void testUiArticulationTriggerAndPanic()
