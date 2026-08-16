@@ -1127,6 +1127,71 @@ void testReleaseCompletes()
             "voice remained active 3.8 seconds after note-off");
 }
 
+void testNoteOnWithNonPositiveVelocityActsAsNoteOff()
+{
+    // noteOn() documents that a non-positive or non-finite velocity is
+    // routed straight to noteOff() instead of starting a voice.
+    // PluginProcessor::dispatchMidiData() already turns a raw MIDI note-on
+    // with a velocity byte of 0 into an explicit noteOff() before the engine
+    // ever sees it, so that guard is invisible from the plugin's own MIDI
+    // path -- but enqueueUiMidiEvent()/dispatchUiMidiEvents(), which is what
+    // the editor's on-screen keyboard and the standalone's own MIDI input go
+    // through, forward whatever velocity the UI produced straight into
+    // engine.noteOn() with no such pre-filtering. Nothing in the suite has
+    // ever called noteOn() with a velocity of exactly 0 or a negative one.
+    constexpr auto sampleRate = 48000.0;
+    const auto holdSamples = static_cast<int> (sampleRate * 0.2);
+    // Long enough for the release tail to run to completion, matching the
+    // window testReleaseCompletes() uses for the same purpose.
+    const auto tailSamples = static_cast<int> (sampleRate * 4.0);
+
+    const auto capture = [&] (bool useNoteOff, float releaseVelocity)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (makeParameters (0, 0, 0, 0));
+        engine.noteOn (60, 0.8f);
+        auto audio = renderInterleaved (engine, holdSamples, blockSize);
+        if (useNoteOff)
+            engine.noteOff (60);
+        else
+            engine.noteOn (60, releaseVelocity);
+        const auto tail = renderInterleaved (engine, tailSamples, blockSize);
+        audio.insert (audio.end(), tail.begin(), tail.end());
+        return std::make_pair (audio, engine.getActiveVoiceCount());
+    };
+
+    const auto reference = capture (true, 0.0f);
+    expect (reference.second == 0,
+            "reference release via noteOff() did not complete inside the tail");
+
+    for (const float velocity : { 0.0f, -0.4f, -1.0f })
+    {
+        const auto candidate = capture (false, velocity);
+        expect (candidate.first == reference.first,
+                "noteOn(60, " + std::to_string (velocity)
+                    + ") did not render bit-identically to noteOff(60)");
+        expect (candidate.second == 0,
+                "noteOn() with a non-positive velocity left a voice active after its release tail");
+    }
+
+    // The same guard has to be a safe no-op when nothing is sounding at that
+    // pitch, exactly as calling noteOff() on an unheld note already is
+    // elsewhere in the suite: it must not assert, allocate a voice, or
+    // otherwise misbehave.
+    vocalor::VoiceEngine idle;
+    idle.prepare (sampleRate, blockSize);
+    idle.reset();
+    idle.setParameters (makeParameters (0, 0, 0, 0));
+    idle.noteOn (60, 0.0f);
+    const auto idleRender = render (idle, blockSize);
+    expect (idleRender.finite && idleRender.peak == 0.0,
+            "noteOn() with velocity 0 on a silent engine produced audio");
+    expect (idle.getActiveVoiceCount() == 0,
+            "noteOn() with velocity 0 on an unheld pitch started a voice");
+}
+
 void testAllSoundOffIsImmediate()
 {
     constexpr auto sampleRate = 48000.0;
@@ -9073,6 +9138,7 @@ int main()
     testPreparationIsExplicit();
     testRenderMatrix();
     testReleaseCompletes();
+    testNoteOnWithNonPositiveVelocityActsAsNoteOff();
     testAllSoundOffIsImmediate();
     testIdleStateAdvancementAndAutomation();
     testVowelSpaceModel();
