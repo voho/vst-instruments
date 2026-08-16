@@ -96,6 +96,18 @@ public:
         return loopLevelSlopePerSecond_;
     }
 
+    // The clamped loop-region derivation sampleLoopLevelTrajectory() and
+    // updateVoiceControl() both share, exposed so the regression suite can
+    // drive it with metadata no validated model can produce (deserialize()
+    // rejects a non-positive duration, a loop start below zero, and a loop
+    // end at or before its start or beyond the duration, and every other
+    // producer only ever supplies literals or an unchanged copy of an
+    // already-valid model's metadata). Returns
+    // { duration, loopStart, loopEnd, length }. Not part of the plug-in's
+    // runtime surface.
+    [[nodiscard]] static std::array<float, 4> computeLoopRegionForTests(
+        const NeuralModel::Metadata& metadata) noexcept;
+
 private:
     // The neural controller remains a compact 64-partial model. A larger,
     // engine-only bank lets Body Lock resample that observed spectrum onto the

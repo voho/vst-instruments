@@ -165,6 +165,19 @@ struct LoopRegion
     return region;
 }
 
+} // namespace
+
+std::array<float, 4> NeuramarEngine::computeLoopRegionForTests(
+    const NeuralModel::Metadata& metadata) noexcept
+{
+    const LoopRegion region = computeLoopRegion(metadata);
+    return { region.duration, region.loopStart, region.loopEnd,
+             region.length };
+}
+
+namespace
+{
+
 // sin(2 pi unitPhase) for a phase already reduced to [0, 1).
 //
 // The quarter-period fold is exact in floating point: every subtraction below
