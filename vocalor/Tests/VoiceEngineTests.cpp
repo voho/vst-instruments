@@ -9067,6 +9067,39 @@ void testPerformanceExpression()
                 "the note the pedal released never finished its release");
     }
 
+    // resetControllers() is documented to leave the sustain pedal alone,
+    // because Reset All Controllers does not report the physical position of
+    // a switch. Nothing exercised that: the only other resetControllers()
+    // test below never holds a note under the pedal first. A held note has
+    // to survive resetControllers() and still be released by the ordinary
+    // setSustainPedal(false) afterwards.
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (steadyParameters());
+        engine.noteOn (60, 0.80f);
+        render (engine, blockSize);
+        engine.setSustainPedal (true);
+        engine.noteOff (60);
+        render (engine, static_cast<int> (sampleRate * 0.3));
+        expect (vocalor::VoiceEngineTestAccess::soundingMidiNote (engine) == 60,
+                "the sustain pedal did not hold a note through its note-off");
+
+        engine.resetControllers();
+        render (engine, static_cast<int> (sampleRate * 0.3));
+        expect (vocalor::VoiceEngineTestAccess::soundingMidiNote (engine) == 60,
+                "resetControllers() released a note the sustain pedal was holding");
+
+        engine.setSustainPedal (false);
+        render (engine, static_cast<int> (sampleRate * 0.05));
+        expect (vocalor::VoiceEngineTestAccess::soundingMidiNote (engine) == -1,
+                "the sustain pedal no longer released its held note after a controller reset");
+        const auto tail = render (engine, static_cast<int> (sampleRate * 3.0));
+        expect (tail.finite && engine.getActiveVoiceCount() == 0,
+                "the note released after a controller reset never finished its release");
+    }
+
     // Expression is a level trim and nothing else: half expression has to be
     // the same render at half the amplitude, sample for sample.
     {
