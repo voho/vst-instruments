@@ -2912,6 +2912,53 @@ void testStringAllocationAndPolyphony()
            "restruck note moved to another string");
 }
 
+// chooseString()'s steal branch (all eight strings already sounding) was
+// only ever exercised for the voice count staying at eight; the tie-break
+// policy itself - a releasing voice always outranks a held one, and among
+// voices of equal status the one that has been sounding the longest goes
+// first - had no direct coverage.
+void testVoiceStealingPriority()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    engine.setParameters(EngineParameters {});
+
+    // Drop-E open notes for strings 0..7, struck in that order so string 2
+    // (E2, fret 22) is the oldest of the strings that can reach MIDI note 62
+    // within the 22-fret range (frets 34/27/22/17/12/7/3/-2 respectively -
+    // only strings 2 through 6 qualify).
+    constexpr std::array<int, ElectryEngine::stringCount> openNotes {
+        28, 35, 40, 45, 50, 55, 59, 64
+    };
+
+    // With every string held and none releasing, the steal must fall to the
+    // oldest of the reachable strings.
+    engine.reset();
+    for (const int note : openNotes)
+        engine.noteOn(note, 0.8f);
+    engine.noteOn(62, 0.8f);
+    expect(engine.getActiveVoiceCount() == ElectryEngine::stringCount,
+           "stealing a held voice changed the active voice count");
+    expect(TestAccess::stringForNote(engine, 62) == 2,
+           "steal did not choose the oldest of the reachable held strings");
+    expect(TestAccess::stringForNote(engine, 40) == -1,
+           "the stolen string still reports its original note as active");
+
+    // Releasing a younger reachable string (5, not the oldest) must steal
+    // that one instead: a releasing voice outranks every held voice
+    // regardless of how long either has been sounding.
+    engine.reset();
+    for (const int note : openNotes)
+        engine.noteOn(note, 0.8f);
+    engine.noteOff(55); // string 5: keyDown false, releasing, still active
+    engine.noteOn(62, 0.8f);
+    expect(engine.getActiveVoiceCount() == ElectryEngine::stringCount,
+           "stealing a releasing voice changed the active voice count");
+    expect(TestAccess::stringForNote(engine, 62) == 5,
+           "steal preferred an older held string over a releasing one");
+}
+
 // The natural harmonic is a finger resting on a node, not a transposition.
 // The distinction is measurable in three places: which partials survive, that
 // the loop still runs at the fretted pitch (so the surviving partial decays at
@@ -7458,6 +7505,7 @@ int main()
     testMaterialAndControlAudibility();
     testNoiseComponentsAndSilence();
     testStringAllocationAndPolyphony();
+    testVoiceStealingPriority();
     testFrettingHandPosition();
     testTouchHarmonics();
     testPinchHarmonic();

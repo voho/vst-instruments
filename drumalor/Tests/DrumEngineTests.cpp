@@ -4762,6 +4762,22 @@ void testMidiSurfaceContract()
         const float low = drumalor::velocityFromMidi (64, 0);
         const float high = drumalor::velocityFromMidi (64, 127);
         expect (low < high, "CC 88 moved the velocity the wrong way");
+
+        // velocityFromMidi() clamps both bytes itself rather than trusting a
+        // caller that skipped MIDI's own 0-127 range - a malformed note-on
+        // byte or a CC 88 prefix reaching it by some path other than
+        // HighResolutionVelocityPrefix, which already clamps what it stores.
+        // Every prior call above only ever passed in-range bytes, so this is
+        // the first assertion on velocityFromMidi's own sanitize paths.
+        expect (drumalor::velocityFromMidi (-1) == 0.0f,
+                "velocityFromMidi did not clamp a negative velocity byte to zero");
+        expect (drumalor::velocityFromMidi (200) == 1.0f,
+                "velocityFromMidi did not clamp an out-of-range velocity byte to 127");
+        expect (drumalor::velocityFromMidi (64, -1) == drumalor::velocityFromMidi (64, 0),
+                "velocityFromMidi did not clamp a negative high-resolution LSB to zero");
+        expect (drumalor::velocityFromMidi (64, 200) == drumalor::velocityFromMidi (64, 127),
+                "velocityFromMidi did not clamp an out-of-range high-resolution LSB to 127");
+
         const double quiet = peakInRange (renderNote (49, low, 0.50), 0,
                                           static_cast<std::size_t> (0.50 * sampleRate));
         const double loud = peakInRange (renderNote (49, high, 0.50), 0,
@@ -5166,6 +5182,15 @@ void testUiPresentationMath()
     expect (meterPositionForLinear (std::numeric_limits<float>::quiet_NaN(), -48.0f) == 0.0f
                 && meterPositionForLinear (-1.0f, 0.0f) == 0.0f,
             "meter curve did not sanitize invalid input");
+    expect (meterPositionForLinear (0.5f, std::numeric_limits<float>::quiet_NaN())
+                == meterPositionForLinear (0.5f, -60.0f),
+            "meterPositionForLinear did not fall back on a NaN floor to its default (-60 dB)");
+    expect (linearForMeterPosition (std::numeric_limits<float>::quiet_NaN(), -48.0f)
+                == linearForMeterPosition (0.0f, -48.0f),
+            "linearForMeterPosition did not sanitize a NaN position to its zero default");
+    expect (linearForMeterPosition (0.5f, std::numeric_limits<float>::quiet_NaN())
+                == linearForMeterPosition (0.5f, -60.0f),
+            "linearForMeterPosition did not fall back on a NaN floor to its default (-60 dB)");
 
     // linearForMeterPosition sanitizes the same way meterPositionForLinear does
     // above, independently for each of its two arguments, and was exercised
@@ -5214,6 +5239,9 @@ void testUiPresentationMath()
             "decayMultiplier did not clamp a positive decibel target to no decay");
     expect (decayMultiplier (-12.0f, std::numeric_limits<float>::quiet_NaN(), 30.0f) == 0.0f,
             "decayMultiplier did not sanitize a NaN duration");
+    expect (decayMultiplier (-12.0f, 1.0f, std::numeric_limits<float>::quiet_NaN())
+                == decayMultiplier (-12.0f, 1.0f, 30.0f),
+            "decayMultiplier did not fall back on a NaN update rate");
 
     ballistics.update (0.8f, 1.0f, release, fall, 3.0f);
     expect (std::abs (ballistics.level - 0.8f) < 1.0e-6f,

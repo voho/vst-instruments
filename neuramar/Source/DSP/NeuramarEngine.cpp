@@ -400,6 +400,7 @@ void NeuramarEngine::setModel(const NeuralModel* immutableModel) noexcept
     {
         allSoundOff();
         dampingExponent_ = 0.0f;
+        reliableBoneModeCount_ = 0;
         model_.store(nullptr, std::memory_order_release);
         return;
     }
@@ -418,6 +419,11 @@ void NeuramarEngine::setModel(const NeuralModel* immutableModel) noexcept
         initialPhaseCos_[harmonic] = std::cos(angle);
         initialPhaseSin_[harmonic] = std::sin(angle);
     }
+    reliableBoneModeCount_ = 0;
+    for (std::size_t mode = 0; mode < NeuralModel::boneModeCount; ++mode)
+        if (immutableModel->boneModeReliabilities_[mode] > 0.0f)
+            reliableBoneModes_[reliableBoneModeCount_++]
+                = static_cast<std::uint8_t>(mode);
     sampleLoopLevelTrajectory(*immutableModel);
     // Fit at the gains the parameters are actually sitting at, so the very
     // first block after a model swap is already correct.
@@ -1918,15 +1924,19 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
                     // the same reliability test, so voice.amplitudes[output]
                     // never leaves zero and this term never contributes.
                     // voice.boneSounding only proves *some* mode is audible,
-                    // not this one, so without the per-mode test every
-                    // permanently silent mode still paid for a unitSine call
-                    // and a phase/frequency advance on every sample of every
-                    // voice for as long as any other mode was sounding.
-                    for (std::size_t mode = 0;
-                         mode < NeuralModel::boneModeCount; ++mode)
+                    // not this one, so without skipping the unreliable modes
+                    // every permanently silent one would still pay for a
+                    // unitSine call and a phase/frequency advance on every
+                    // sample of every voice for as long as any other mode was
+                    // sounding. reliableBoneModes_ is exactly the ascending
+                    // list setModel() already resolved this reliability test
+                    // against, so the loop below walks it directly instead of
+                    // re-testing all NeuralModel::boneModeCount candidates
+                    // here on every sample.
+                    for (std::size_t slot = 0;
+                         slot < reliableBoneModeCount_; ++slot)
                     {
-                        if (!(model->boneModeReliabilities_[mode] > 0.0f))
-                            continue;
+                        const std::size_t mode = reliableBoneModes_[slot];
                         const std::size_t output = boneOutputOffset + mode;
                         boneSample += voice.amplitudes[output]
                             * unitSine(voice.bonePhases[mode]);

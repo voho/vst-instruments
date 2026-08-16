@@ -27,6 +27,15 @@ struct TaikoEngineTestAccess
         float tuningHz { 0.0f };
     };
 
+    // Exposes the boundary every host-supplied parameter block passes
+    // through, so its per-field clamping and NaN handling can be asserted
+    // directly rather than only inferred from whether the audio it eventually
+    // produces stays finite.
+    static EngineParameters sanitise (const EngineParameters& rawParameters) noexcept
+    {
+        return TaikoEngine::sanitise (rawParameters);
+    }
+
     static TuningPathMeasurement tuningPathMeasurement (
         const EngineParameters& rawParameters, int octave) noexcept
     {
@@ -6661,6 +6670,116 @@ void testPerformanceControls()
     expect (ratio > 0.4 && ratio < 0.6, "output gain must scale the result linearly");
 }
 
+// testInvalidInputSafety below sends every field of EngineParameters out of
+// range at once and checks only that the resulting audio stays finite and
+// bounded - a true end-to-end guarantee, but one that cannot tell a field
+// clamped to the wrong bound from one clamped to the right one, since a
+// mis-clamped control can easily still render finite, in-range audio. This
+// asserts what TaikoEngine::sanitise() itself returns for each field, one at
+// a time, against the exact bounds documented on EngineParameters.
+void testSanitiseClampsEveryField()
+{
+    using taikor::TaikoEngineTestAccess;
+    const auto nan = std::numeric_limits<float>::quiet_NaN();
+    const auto infinity = std::numeric_limits<float>::infinity();
+
+    // Every field with a symmetric [low, high] clamp, checked from both a
+    // huge excursion and NaN. clampFloat folds NaN to `low`, so that is the
+    // value a NaN control must sanitise to as well.
+    struct Field
+    {
+        std::string_view name;
+        float taikor::EngineParameters::* member;
+        float low;
+        float high;
+    };
+    const Field fields[] = {
+        { "headDiameter", &taikor::EngineParameters::headDiameter, 0.15f, 1.80f },
+        { "bodyDepth", &taikor::EngineParameters::bodyDepth, 0.0f, 1.0f },
+        { "tension", &taikor::EngineParameters::tension, 0.0f, 1.0f },
+        { "headMaterial", &taikor::EngineParameters::headMaterial, 0.0f, 1.0f },
+        { "shellMaterial", &taikor::EngineParameters::shellMaterial, 0.0f, 1.0f },
+        { "resonantTension", &taikor::EngineParameters::resonantTension, 0.0f, 1.0f },
+        { "cavityCoupling", &taikor::EngineParameters::cavityCoupling, 0.0f, 1.0f },
+        { "headDamping", &taikor::EngineParameters::headDamping, 0.0f, 1.0f },
+        { "shellResonance", &taikor::EngineParameters::shellResonance, 0.0f, 1.0f },
+        { "pitch", &taikor::EngineParameters::pitch, -24.0f, 24.0f },
+        { "bachiHardness", &taikor::EngineParameters::bachiHardness, 0.0f, 1.0f },
+        { "strikePosition", &taikor::EngineParameters::strikePosition, -1.0f, 1.0f },
+        { "velocityDepth", &taikor::EngineParameters::velocityDepth, 0.0f, 1.0f },
+        { "tensionModulation", &taikor::EngineParameters::tensionModulation, 0.0f, 1.0f },
+        { "strikeNoise", &taikor::EngineParameters::strikeNoise, 0.0f, 1.0f },
+        { "humanise", &taikor::EngineParameters::humanise, 0.0f, 1.0f },
+        { "micDistance", &taikor::EngineParameters::micDistance, 0.0f, 1.0f },
+        { "micSpread", &taikor::EngineParameters::micSpread, 0.0f, 1.0f },
+        { "stereoWidth", &taikor::EngineParameters::stereoWidth, 0.0f, 1.0f },
+        { "drive", &taikor::EngineParameters::drive, 0.0f, 1.0f },
+        { "outputGain", &taikor::EngineParameters::outputGain, 0.0f, 2.0f },
+    };
+
+    for (const auto& field : fields)
+    {
+        taikor::EngineParameters high;
+        high.*field.member = field.high + 1.0e9f;
+        expect (TaikoEngineTestAccess::sanitise (high).*field.member == field.high,
+                std::string (field.name) + " must clamp a huge value to its upper bound");
+
+        taikor::EngineParameters low;
+        low.*field.member = field.low - 1.0e9f;
+        expect (TaikoEngineTestAccess::sanitise (low).*field.member == field.low,
+                std::string (field.name) + " must clamp a huge negative value to its lower bound");
+
+        taikor::EngineParameters positiveInfinity;
+        positiveInfinity.*field.member = infinity;
+        expect (TaikoEngineTestAccess::sanitise (positiveInfinity).*field.member == field.high,
+                std::string (field.name) + " must clamp +infinity to its upper bound");
+
+        taikor::EngineParameters negativeInfinity;
+        negativeInfinity.*field.member = -infinity;
+        expect (TaikoEngineTestAccess::sanitise (negativeInfinity).*field.member == field.low,
+                std::string (field.name) + " must clamp -infinity to its lower bound");
+
+        taikor::EngineParameters nanParameters;
+        nanParameters.*field.member = nan;
+        expect (TaikoEngineTestAccess::sanitise (nanParameters).*field.member == field.low,
+                std::string (field.name)
+                    + " must fold NaN to its lower bound, the same as clampFloat's own NaN rule");
+    }
+
+    // octaveBody collapses the old continuous morph to its two physical
+    // endpoints at a 0.5 threshold, rather than clamping to a continuous
+    // range like every other field above - so it is checked on its own terms.
+    taikor::EngineParameters belowThreshold;
+    belowThreshold.octaveBody = 0.4999f;
+    expect (TaikoEngineTestAccess::sanitise (belowThreshold).octaveBody == 0.0f,
+            "octaveBody just under one half must settle at the Drums endpoint");
+
+    taikor::EngineParameters atThreshold;
+    atThreshold.octaveBody = 0.5f;
+    expect (TaikoEngineTestAccess::sanitise (atThreshold).octaveBody == 1.0f,
+            "octaveBody at exactly one half must settle at the Body endpoint, not the Drums one");
+
+    taikor::EngineParameters aboveThreshold;
+    aboveThreshold.octaveBody = 0.5001f;
+    expect (TaikoEngineTestAccess::sanitise (aboveThreshold).octaveBody == 1.0f,
+            "octaveBody just over one half must settle at the Body endpoint");
+
+    taikor::EngineParameters octaveBodyOutOfRange;
+    octaveBodyOutOfRange.octaveBody = 40.0f;
+    expect (TaikoEngineTestAccess::sanitise (octaveBodyOutOfRange).octaveBody == 1.0f,
+            "an out-of-range octaveBody must clamp before the threshold is taken");
+
+    taikor::EngineParameters octaveBodyNegative;
+    octaveBodyNegative.octaveBody = -5.0f;
+    expect (TaikoEngineTestAccess::sanitise (octaveBodyNegative).octaveBody == 0.0f,
+            "a negative octaveBody must clamp to zero before the threshold is taken");
+
+    taikor::EngineParameters octaveBodyNan;
+    octaveBodyNan.octaveBody = nan;
+    expect (TaikoEngineTestAccess::sanitise (octaveBodyNan).octaveBody == 0.0f,
+            "a NaN octaveBody must fold to the Drums endpoint, the low side of the clamp");
+}
+
 void testInvalidInputSafety()
 {
     taikor::TaikoEngine engine;
@@ -7713,6 +7832,7 @@ int main()
     testSimultaneousStrokesDoNotShareOneVoice();
     testDeterminismAndBlockPartitioning();
     testPerformanceControls();
+    testSanitiseClampsEveryField();
     testInvalidInputSafety();
     testUiPresentationMath();
     testControlEndpointsAndGestures();

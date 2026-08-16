@@ -3785,6 +3785,17 @@ void testModelVisualisation(const neuramar::NeuralModel& model)
                       0.5f, 0.5f) == 0.4f
                && neuramar::followMeter(0.5f, 4.0f, 1.0f, 1.0f) == 1.0f,
            "the meter follower did not honour its attack, release, and bounds");
+    // followMeter's non-finite-target sanitizer is a separate branch from the
+    // non-finite-current one exercised just above, and buildModelAnatomy never
+    // feeds it a non-finite target either, so it was otherwise unasserted.
+    expect(neuramar::followMeter(
+               0.5f, std::numeric_limits<float>::quiet_NaN(), 0.5f, 0.5f)
+                   == 0.25f,
+           "the meter follower did not sanitise a non-finite target");
+
+    // anatomyDisplayHeight's own defensive branches (non-positive/non-finite
+    // amplitude or peak, the at-or-above-peak ceiling, and the display floor)
+    // are covered directly by testHostileInputSanitizing() above.
 
     ModelAnatomy anatomy;
     neuramar::clearModelAnatomy(anatomy);
