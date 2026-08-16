@@ -444,6 +444,24 @@ void testDefensiveNullAndCapacityGuards()
     expect(untouchedParameter == -1 && untouchedValue == -1
                && untouchedChannel == -1,
            "a refused null parameter-message read modified its outputs");
+
+    // A non-null buffer one byte short of the format must be refused the same
+    // way, matching readPatchMessage's truncated-message coverage above.
+    const auto truncatedSourceWritten = writeParameterMessage(
+        static_cast<int>(ToneParameter::VcfFreq), 100, 3, parameterBuffer.data(),
+        parameterBuffer.size());
+    expect(truncatedSourceWritten == static_cast<std::size_t>(parameterMessageBytes),
+           "could not write the parameter message the truncation case reads from");
+    untouchedParameter = -1;
+    untouchedValue = -1;
+    untouchedChannel = -1;
+    expect(!readParameterMessage(parameterBuffer.data(),
+                                 parameterBuffer.size() - 1, untouchedParameter,
+                                 untouchedValue, untouchedChannel),
+           "a parameter-message buffer one byte short of the format was accepted");
+    expect(untouchedParameter == -1 && untouchedValue == -1
+               && untouchedChannel == -1,
+           "a refused truncated parameter-message read modified its outputs");
 }
 
 // A single switch byte must move only the fields that byte encodes. Decoding it
