@@ -2088,6 +2088,46 @@ void testPulseWidthAndHighPassLaws()
            "a hard output reset does not clear the C14 state");
 }
 
+void testPwmDutyCycleDefensiveGuard()
+{
+    // pwmDutyCycle's only production call site (updatePulseComparator) builds
+    // both arguments from panel calibration, per-card trims and the DCO's own
+    // render scale, none of which can go non-finite, so its "sanitised(...,
+    // fallback)" branches for controlVolts and rampAmplitudeScale had never
+    // fired outside a test. Pin the documented fallback contract directly.
+    const double nominal = YouKnow106Engine::pwmDutyCycle(6.0f);
+    expectNear(YouKnow106Engine::pwmDutyCycle(
+                   std::numeric_limits<float>::quiet_NaN()),
+               nominal, 1.0e-9,
+               "NaN control volts did not fall back to the nominal 6 V ramp threshold");
+    expectNear(YouKnow106Engine::pwmDutyCycle(
+                   std::numeric_limits<float>::infinity()),
+               nominal, 1.0e-9,
+               "+infinity control volts did not fall back to the nominal 6 V ramp threshold");
+    // Negative infinity is not finite, so it must not take the separate
+    // "Pulse Off pins the comparator high" early-return either -- that branch
+    // is explicitly guarded by std::isfinite -- it has to fall through to the
+    // same sanitised fallback as the other non-finite cases.
+    expectNear(YouKnow106Engine::pwmDutyCycle(
+                   -std::numeric_limits<float>::infinity()),
+               nominal, 1.0e-9,
+               "-infinity control volts incorrectly pinned the comparator high");
+
+    const double unscaled = YouKnow106Engine::pwmDutyCycle(3.0f, 1.0f);
+    expectNear(YouKnow106Engine::pwmDutyCycle(
+                   3.0f, std::numeric_limits<float>::quiet_NaN()),
+               unscaled, 1.0e-9,
+               "NaN ramp amplitude scale did not fall back to unity");
+    expectNear(YouKnow106Engine::pwmDutyCycle(
+                   3.0f, std::numeric_limits<float>::infinity()),
+               unscaled, 1.0e-9,
+               "+infinity ramp amplitude scale did not fall back to unity");
+    expectNear(YouKnow106Engine::pwmDutyCycle(
+                   3.0f, -std::numeric_limits<float>::infinity()),
+               unscaled, 1.0e-9,
+               "-infinity ramp amplitude scale did not fall back to unity");
+}
+
 void testSharedHighPassAgainstNominalNetwork()
 {
     // Solve the nominal p. 15 network twice: first as a dense nodal system,
@@ -5398,6 +5438,7 @@ int main()
     testVoicedResonanceCompatibilityProfile();
     testEnvelopeAndAmplifierLaws();
     testPulseWidthAndHighPassLaws();
+    testPwmDutyCycleDefensiveGuard();
     testSharedHighPassAgainstNominalNetwork();
     testModulationAndGlideLaws();
     testConverterQueueAndOutputReference();
