@@ -1323,17 +1323,39 @@ void testDisplayMathHelpers()
                 "the logarithmic frequency mapping did not round trip");
     }
 
+    // Both axis helpers guard a degenerate or inverted range rather than
+    // dividing by zero or taking the log of a non-positive number.
+    expect (vocalor::normalisedLogFrequency (440.0f, 0.0f, 11000.0f) == 0.0f,
+            "the log-frequency axis did not fall back safely on a non-positive minimum");
+    expect (vocalor::normalisedLogFrequency (440.0f, 11000.0f, 80.0f) == 0.0f,
+            "the log-frequency axis did not fall back safely on an inverted range");
+    expect (vocalor::logFrequencyForNormalised (0.5f, 0.0f, 11000.0f) == 0.0f,
+            "the inverse log-frequency axis did not fall back to the minimum on a non-positive one");
+    expect (vocalor::logFrequencyForNormalised (0.5f, 11000.0f, 80.0f) == 11000.0f,
+            "the inverse log-frequency axis did not fall back to the minimum on an inverted range");
+
     expect (std::abs (vocalor::linearToDecibels (1.0f, -60.0f)) < 0.001f,
             "unity was not reported as 0 dB");
     expect (vocalor::linearToDecibels (0.0f, -60.0f) == -60.0f,
             "silence was not clamped to the meter floor");
+    expect (vocalor::linearToDecibels (std::numeric_limits<float>::quiet_NaN(), -60.0f) == -60.0f,
+            "a non-finite linear level was not clamped to the meter floor");
     expect (std::abs (vocalor::decibelsToMeterPosition (-30.0f, -60.0f, 0.0f) - 0.5f) < 0.001f,
             "the meter position mapping is not linear in decibels");
+    expect (vocalor::decibelsToMeterPosition (std::numeric_limits<float>::quiet_NaN(), -60.0f, 0.0f)
+                == 0.0f,
+            "the meter position mapping did not fall back safely on a non-finite reading");
+    expect (vocalor::decibelsToMeterPosition (-30.0f, 0.0f, -60.0f) == 0.0f,
+            "the meter position mapping did not fall back safely on an inverted floor/ceiling");
 
     // Ballistics: instant attack, gradual release.
     const auto attack = vocalor::smoothingCoefficient (0.001f, 0.02f);
     const auto release = vocalor::smoothingCoefficient (0.28f, 0.02f);
     expect (release > 0.0f && release < 0.2f, "the meter release coefficient is out of range");
+    expect (vocalor::smoothingCoefficient (0.0f, 0.02f) == 1.0f,
+            "a non-positive time constant did not fall back to an instant coefficient");
+    expect (vocalor::smoothingCoefficient (0.28f, 0.0f) == 1.0f,
+            "a non-positive update interval did not fall back to an instant coefficient");
     float level = 0.0f;
     level = vocalor::meterFollow (level, 1.0f, 1.0f, release);
     expect (std::abs (level - 1.0f) < 1.0e-6f, "the meter did not track a rising peak instantly");
@@ -1343,6 +1365,9 @@ void testDisplayMathHelpers()
     expect (vocalor::meterFollow (std::numeric_limits<float>::quiet_NaN(), 0.5f, 1.0f, 0.1f)
                 == 0.5f,
             "the meter did not recover from a non-finite state");
+    expect (vocalor::meterFollow (0.0f, std::numeric_limits<float>::quiet_NaN(), 1.0f, 0.1f)
+                == 0.0f,
+            "the meter did not recover from a non-finite target");
 
     expect (std::abs (vocalor::roomSizeScale (0.5f) - 1.0f) < 1.0e-6f,
             "the default room size did not reproduce the historical geometry");
