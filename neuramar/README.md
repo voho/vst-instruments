@@ -976,6 +976,24 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   check in the same suite is CPU-load-sensitive and was confirmed to flake
   identically on an unmodified checkout).
 - 2026-08-16: Extracted the log-spaced Air band centre/width layout that `NeuralModel::generateModel`, its version-5 legacy migration in `deserialize`, and `SampleLearner::learn` each rebuilt into one shared `layoutAirBands` helper; pure dedup, verified with the JUCE-free DSP suite (3/3 tests passed) and `git status neuramar/Docs/audio` confirmed clean.
+- 2026-08-16: Added direct coverage for `NeuramarEngine::setParameters`'s
+  per-field sanitisation - every one of its eighteen scalar fields runs
+  through the same `clampParameter` helper, where a non-finite value falls
+  back to that field's documented default and a finite out-of-range value
+  clamps to its nearest bound - which nothing else in the suite ever
+  exercised directly: every existing call anywhere in the tests hands
+  `setParameters` an already finite, in-range `EngineParameters`, most often
+  the struct's own default member initializers or a copy nudged to stay
+  inside each field's documented span, so a regression in `clampParameter`
+  itself, or in any one field's minimum/maximum/fallback triple, would have
+  passed unnoticed until a host or automation lane fed a field a NaN, an
+  infinity, or an out-of-bounds value directly. `setParameters` and its
+  private `loadParameters` counterpart are both exercised through a small
+  `loadParametersForTests` accessor on `NeuramarEngine`, the same pattern
+  already used for `computeLoopRegionForTests`. Test-only; no engine
+  behaviour change for any value already inside its documented range,
+  verified with the JUCE-free DSP suite (3/3 tests passed) and `git status
+  neuramar/Docs/audio` confirmed clean.
 
 ## Licensing
 
