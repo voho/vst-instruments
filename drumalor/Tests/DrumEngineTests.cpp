@@ -4788,7 +4788,7 @@ void testMidiSurfaceContract()
         const float notFinite = std::numeric_limits<float>::quiet_NaN();
         for (const bool polyphonic : { false, true })
         {
-            for (const float pressure : { -1.0f, notFinite })
+            for (const float pressure : { -1.0f, 0.0f, notFinite })
             {
                 const double level = decibels (
                     guardedLevel (pressure, polyphonic), ringing);
