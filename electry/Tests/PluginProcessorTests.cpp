@@ -751,7 +751,25 @@ void testChannelPressureAndAftertouchVibratoDispatch()
     constexpr int frettedNote = 47;
     const double frettedHz = 440.0 * std::pow (2.0, (frettedNote - 69) / 12.0);
 
-    enum class Pressure { None, ChannelPressure, PolyAftertouch };
+    enum class Pressure
+    {
+        None,
+        ChannelPressure,
+        // Half-value, not full-value: both dispatch branches clamp their
+        // decoded float into setVibrato(), so a full-value 127 alone cannot
+        // tell a genuine "/ 127.0f" scale apart from a missing one - either
+        // way the clamp lands on the same 1.0f. A half-value message only
+        // reproduces the full-value bias if the byte was actually divided
+        // down first.
+        HalfChannelPressure,
+        // Channel 9, not channel 1: dispatchMidiData masks the status byte
+        // with "& 0xf0u" before comparing it, so the channel nibble should
+        // never matter. Sending channel 1 only would let a regression that
+        // compared the whole status byte (0xd0 exactly) instead of the
+        // masked nibble pass unnoticed on every channel but the one tested.
+        ChannelPressureOtherChannel,
+        PolyAftertouch,
+    };
     const auto measuredHz = [&] (Pressure kind) -> double
     {
         ElectryAudioProcessor processor;
@@ -763,9 +781,20 @@ void testChannelPressureAndAftertouchVibratoDispatch()
             1, frettedNote, (juce::uint8) 100), 0);
         if (kind == Pressure::ChannelPressure)
             midi.addEvent (juce::MidiMessage::channelPressureChange (1, 127), 0);
+        else if (kind == Pressure::HalfChannelPressure)
+            midi.addEvent (juce::MidiMessage::channelPressureChange (1, 64), 0);
+        else if (kind == Pressure::ChannelPressureOtherChannel)
+            midi.addEvent (juce::MidiMessage::channelPressureChange (9, 127), 0);
         else if (kind == Pressure::PolyAftertouch)
+            // The note byte deliberately does not name the fretted note:
+            // dispatchMidiData never reads it (Electry has one fretting hand
+            // for the whole engine, not one per key), so a swapped-index
+            // regression that read this byte as the pressure instead of
+            // data[2] would decode to 3 / 127 - far too small to sharpen the
+            // note - rather than accidentally producing a passing result the
+            // way reusing frettedNote (47) here would.
             midi.addEvent (
-                juce::MidiMessage::aftertouchChange (1, frettedNote, 127), 0);
+                juce::MidiMessage::aftertouchChange (1, 3, 127), 0);
         renderBlock (processor, audio, midi);
 
         // Let the attack settle and the vibrato's onset ramp (258 ms, see
@@ -782,10 +811,16 @@ void testChannelPressureAndAftertouchVibratoDispatch()
 
     const auto still = measuredHz (Pressure::None);
     const auto pressed = measuredHz (Pressure::ChannelPressure);
+    const auto halfPressed = measuredHz (Pressure::HalfChannelPressure);
+    const auto pressedOtherChannel =
+        measuredHz (Pressure::ChannelPressureOtherChannel);
     const auto touched = measuredHz (Pressure::PolyAftertouch);
 
     const auto centsStill = 1200.0 * std::log2 (still / frettedHz);
     const auto centsPressed = 1200.0 * std::log2 (pressed / frettedHz);
+    const auto centsHalfPressed = 1200.0 * std::log2 (halfPressed / frettedHz);
+    const auto centsPressedOtherChannel =
+        1200.0 * std::log2 (pressedOtherChannel / frettedHz);
     const auto centsTouched = 1200.0 * std::log2 (touched / frettedHz);
 
     expect (std::abs (centsStill) < 10.0,
@@ -805,6 +840,28 @@ void testChannelPressureAndAftertouchVibratoDispatch()
             "fretted note by the vibrato's documented upward bias (measured "
                 + std::to_string (centsPressed) + " cents against "
                 + std::to_string (centsStill) + " unpressed)");
+    // Half-value pressure must still clear the noise floor - it is a real
+    // press, not a no-op - but land measurably below the full-value bias, the
+    // signature of an actual "/ 127.0f" scale rather than a clamp that
+    // saturates at 1.0f for any nonzero byte.
+    expect (centsHalfPressed - centsStill > 2.0
+                && centsHalfPressed < centsPressed - 2.0,
+            "half-value channel pressure did not land strictly between "
+            "unpressed and full-value pressure (measured "
+                + std::to_string (centsHalfPressed) + " cents against "
+                + std::to_string (centsStill) + " unpressed and "
+                + std::to_string (centsPressed) + " full-value)");
+    // Same message on channel 9 rather than channel 1: dispatchMidiData is
+    // documented to mask the channel nibble out of the status byte before
+    // comparing it, so this should sharpen the note exactly as the channel-1
+    // case does.
+    expect (centsPressedOtherChannel - centsStill > 5.0
+                && centsPressedOtherChannel < 100.0,
+            "full-value channel pressure on channel 9 did not sharpen the "
+            "fretted note the same way channel 1 does (measured "
+                + std::to_string (centsPressedOtherChannel)
+                + " cents against " + std::to_string (centsStill)
+                + " unpressed)");
     expect (centsTouched - centsStill > 5.0 && centsTouched < 100.0,
             "full-value polyphonic aftertouch (status 0xa0) did not sharpen "
             "the fretted note by the vibrato's documented upward bias "
