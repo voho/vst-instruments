@@ -1698,6 +1698,23 @@ void testArticulationMetadataAndMidiMapping()
     expect (slugs.size() == taikor::articulationCount,
             "articulation slugs are not unique");
 
+    // getArticulationMetadata() clamps its own table index rather than
+    // trusting a caller that reached it with something other than one of the
+    // enum's own values - every call above only ever passed a valid
+    // Articulation, so this is the first assertion on that fallback. An
+    // out-of-range value falls back to slot zero (Don) instead of indexing
+    // past the table.
+    const auto& donMetadata =
+        taikor::getArticulationMetadata (taikor::Articulation::Don);
+    const auto& fromPastEnd = taikor::getArticulationMetadata (
+        static_cast<taikor::Articulation> (taikor::articulationCount));
+    expect (fromPastEnd.slug == donMetadata.slug,
+            "getArticulationMetadata did not fall back on an index one past the table");
+    const auto& fromFarOutOfRange =
+        taikor::getArticulationMetadata (static_cast<taikor::Articulation> (255));
+    expect (fromFarOutOfRange.slug == donMetadata.slug,
+            "getArticulationMetadata did not fall back on a far out-of-range index");
+
     // The vocabulary sits inside one octave: each pitch class up to the last
     // stroke is a different stroke, the octave chooses the drum rather than the
     // stroke, and the pitch classes past the last stroke carry nothing. The
