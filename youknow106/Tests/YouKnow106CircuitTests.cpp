@@ -2424,6 +2424,20 @@ void testConverterQueueAndOutputReference()
     expectNear(YouKnow106Engine::outputReferenceGain(2.0f),
                0.5 * YouKnow106Engine::outputReferenceGain(1.0f), 1.0e-7,
                "doubling Vref does not halve only the final-boundary gain");
+
+    // Vref is a plain function argument, not a clamped panel control, so
+    // nothing upstream stops a caller from passing a non-positive or
+    // non-finite reference. The guard exists precisely to fall back to unity
+    // gain there instead of dividing by zero or a negative figure; the only
+    // call site in process() always passes the positive compile-time
+    // compatibility constant, so this fallback had no direct coverage.
+    expect(YouKnow106Engine::outputReferenceGain(0.0f) == 1.0f,
+           "a zero output reference did not fall back to unity gain");
+    expect(YouKnow106Engine::outputReferenceGain(-1.0f) == 1.0f,
+           "a negative output reference did not fall back to unity gain");
+    expect(YouKnow106Engine::outputReferenceGain(
+               std::numeric_limits<float>::quiet_NaN()) == 1.0f,
+           "a NaN output reference did not fall back to unity gain");
 }
 
 void testPanelLawsInvert()
@@ -5052,6 +5066,20 @@ void testOutputSummerIsLinearBelowItsRails()
     expect(std::isfinite(YouKnow106Engine::outputSummerClip(
                std::numeric_limits<float>::max())),
            "the output summer did not survive an extreme finite input");
+
+    // Every value process() feeds in is already sanitised upstream, so the
+    // function's own non-finite guard (returning silence rather than
+    // propagating NaN or an infinity through std::pow) never fires there.
+    // Call it directly with the inputs the guard exists for.
+    expect(YouKnow106Engine::outputSummerClip(
+               std::numeric_limits<float>::quiet_NaN()) == 0.0f,
+           "the output summer did not silence a NaN input");
+    expect(YouKnow106Engine::outputSummerClip(
+               std::numeric_limits<float>::infinity()) == 0.0f,
+           "the output summer did not silence a positive-infinity input");
+    expect(YouKnow106Engine::outputSummerClip(
+               -std::numeric_limits<float>::infinity()) == 0.0f,
+           "the output summer did not silence a negative-infinity input");
 
     // Odd symmetry: the summer has no offset to add.
     expectNear(YouKnow106Engine::outputSummerClip(3.0f),
