@@ -922,6 +922,42 @@ void testEveryInstrumentAndSampleRate()
     }
 }
 
+// prepare()'s own sample-rate guard - `if (! std::isfinite (sampleRate))
+// sampleRate = 48000.0;` ahead of the clamp to [8000, 192000] - has never been
+// driven by anything: every sampleRate sweep in this suite, including the one
+// just above, only ever calls prepare() with an already-valid rate. Exercise
+// it directly by comparing a voice struck after an out-of-range prepare() call
+// against the same voice struck after the equivalent, already-sanitized one;
+// bit-identical output is what "prepare() sanitized it to that rate" means.
+void testPrepareSanitizesInvalidSampleRate()
+{
+    constexpr auto instrument = drumalor::Instrument::Kick;
+    constexpr int samples = 4096;
+    const auto parameters = drumalor::getInstrumentMetadata (instrument).defaultParameters;
+
+    const auto renderAt = [&] (double preparedRate)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (preparedRate, defaultBlockSize);
+        engine.setInstrumentParameters (instrument, parameters);
+        engine.trigger (instrument, 0.9f);
+        return renderInterleaved (engine, samples, defaultBlockSize);
+    };
+
+    const auto reference = renderAt (48000.0);
+    expect (renderAt (std::numeric_limits<double>::quiet_NaN()) == reference,
+            "prepare() did not fall back to 48 kHz for a NaN sample rate");
+    expect (renderAt (std::numeric_limits<double>::infinity()) == reference,
+            "prepare() did not fall back to 48 kHz for a +infinity sample rate");
+    expect (renderAt (-std::numeric_limits<double>::infinity()) == reference,
+            "prepare() did not fall back to 48 kHz for a -infinity sample rate");
+
+    expect (renderAt (500000.0) == renderAt (192000.0),
+            "prepare() did not clamp an excessive sample rate to its 192 kHz ceiling");
+    expect (renderAt (-100.0) == renderAt (8000.0),
+            "prepare() did not clamp a negative sample rate to its 8 kHz floor");
+}
+
 void testModalSampleRateConsistency()
 {
     constexpr std::array sampleRates { 44100.0, 48000.0, 96000.0, 192000.0 };
@@ -5663,6 +5699,7 @@ int main()
 {
     testMetadataAndMidiMapping();
     testEveryInstrumentAndSampleRate();
+    testPrepareSanitizesInvalidSampleRate();
     testModalSampleRateConsistency();
     testNoiseDensityAcrossSampleRates();
     testTailsTerminate();
