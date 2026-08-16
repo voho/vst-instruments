@@ -56,6 +56,38 @@ float clampUnit (float value) noexcept
     return std::clamp (value, 0.0f, 1.0f);
 }
 
+// The two-pole formant resonator both parallelFormantCoefficients() and
+// formantResponseCoefficients() build: centre and bandwidth clamped to the
+// same Nyquist-relative ceilings, the pole radius from the bandwidth, and the
+// pole angle's cosine/sine from the centre. Both callers used to re-derive
+// this from formantHz[i]/formantBandwidth[i]/sampleRate independently, which
+// meant the 25 Hz/20 Hz floors and the 0.465x/0.25x ceilings existed in two
+// places that could silently drift apart; now there is exactly one.
+struct FormantPole
+{
+    float a1 { 0.0f };
+    float a2 { 0.0f };
+    float radius { 0.0f };
+    float cosOmega { 0.0f };
+    float sinOmega { 0.0f };
+};
+
+FormantPole resolveFormantPole (float hz, float bandwidth, float sampleRate) noexcept
+{
+    const float centre = std::clamp (hz, 25.0f, 0.465f * sampleRate);
+    const float clampedBandwidth = std::clamp (bandwidth, 20.0f, 0.25f * sampleRate);
+    const float radius = std::exp (-pi * clampedBandwidth / sampleRate);
+    const float omega = twoPi * centre / sampleRate;
+
+    FormantPole pole;
+    pole.radius = radius;
+    pole.cosOmega = std::cos (omega);
+    pole.sinOmega = std::sin (omega);
+    pole.a1 = 2.0f * radius * pole.cosOmega;
+    pole.a2 = -radius * radius;
+    return pole;
+}
+
 float smoothStep (float value) noexcept
 {
     value = clampUnit (value);
@@ -269,20 +301,17 @@ void parallelFormantCoefficients (const float* formantHz,
     for (int i = 0; i < count; ++i)
     {
         const auto index = static_cast<std::size_t> (i);
-        const float centre = std::clamp (formantHz[i], 25.0f, 0.465f * sampleRate);
-        const float bandwidth = std::clamp (formantBandwidth[i], 20.0f, 0.25f * sampleRate);
-        const float radius = std::exp (-pi * bandwidth / sampleRate);
-        const float omega = twoPi * centre / sampleRate;
-        cosOmega[index] = std::cos (omega);
-        sinOmega[index] = std::sin (omega);
-        a1[index] = 2.0f * radius * cosOmega[index];
-        a2[index] = -radius * radius;
+        const FormantPole pole = resolveFormantPole (formantHz[i], formantBandwidth[i], sampleRate);
+        cosOmega[index] = pole.cosOmega;
+        sinOmega[index] = pole.sinOmega;
+        a1[index] = pole.a1;
+        a2[index] = pole.a2;
         // Klatt's resonator normalisation: unity gain at DC, so the cascade
         // product is the tract shape alone rather than an arbitrary scaling.
         numerator[index] = 1.0f - a1[index] - a2[index];
         // On its own pole the general expression below is a difference of two
         // near-equal numbers; the closed form is not.
-        peakDenominator[index] = formantResonatorGain (radius, sinOmega[index]);
+        peakDenominator[index] = formantResonatorGain (pole.radius, pole.sinOmega);
         if (outPoleA1 != nullptr)
             outPoleA1[i] = a1[index];
         if (outPoleA2 != nullptr)
@@ -383,16 +412,11 @@ void formantResponseCoefficients (const float* formantHz, const float* formantBa
     // probe.
     for (int i = 0; i < count; ++i)
     {
-        const float centre = std::clamp (formantHz[i], 25.0f, 0.465f * sampleRate);
-        const float bandwidth = std::clamp (formantBandwidth[i], 20.0f, 0.25f * sampleRate);
-        const float radius = std::exp (-pi * bandwidth / sampleRate);
-        const float poleAngle = twoPi * centre / sampleRate;
-        const float a1 = 2.0f * radius * std::cos (poleAngle);
-        const float a2 = -radius * radius;
-        const float b0 = formantResonatorGain (radius, std::sin (poleAngle));
+        const FormantPole pole = resolveFormantPole (formantHz[i], formantBandwidth[i], sampleRate);
+        const float b0 = formantResonatorGain (pole.radius, pole.sinOmega);
 
-        outA1[i] = a1;
-        outA2[i] = a2;
+        outA1[i] = pole.a1;
+        outA2[i] = pole.a2;
         outScale[i] = formantPolarity (i) * formantGain[i] * b0;
     }
 }
