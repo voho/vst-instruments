@@ -5321,6 +5321,16 @@ void testUiPresentationMath()
     expect (degenerate.cellSize >= 1 && degenerate.origin >= 0,
             "pad grid did not sanitize a degenerate request");
 
+    // cellOffset() clamps its own gap and index rather than trusting a caller
+    // that reached it with something other than what rowLayout() itself hands
+    // back - every call above only ever passed a non-negative gap and index,
+    // so this is the first assertion on that fallback. A negative gap or
+    // index sanitizes to zero instead of pulling the offset backwards.
+    expect (cellOffset (fullRow, -7, 2) == cellOffset (fullRow, 0, 2),
+            "cellOffset did not sanitize a negative gap to zero");
+    expect (cellOffset (fullRow, 7, -3) == cellOffset (fullRow, 7, 0),
+            "cellOffset did not sanitize a negative index to zero");
+
     // Colour/curve helpers used by the meter ramp.
     expect (mix (0.0f, 10.0f, 0.25f) == 2.5f, "mix did not interpolate");
     expect (mix (0.0f, 10.0f, -3.0f) == 0.0f && mix (0.0f, 10.0f, 4.0f) == 10.0f,
