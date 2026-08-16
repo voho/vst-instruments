@@ -52,6 +52,14 @@ struct ElectryFxTestAccess
         return sum;
     }
 
+    // The rate prepare() actually settled on, after its own NaN-falls-back,
+    // clamp-to-range sanitisation. Reading it directly is what lets a test
+    // confirm the guard itself rather than only a rate-derived side effect.
+    static double sampleRate(const ElectryFx& fx) noexcept
+    {
+        return fx.sampleRate_;
+    }
+
     // Harmonic distortion the output transformer's core adds to a steady sine,
     // measured at the stage itself. Measuring it at the chain's output instead
     // would measure the cabinet: a second-order high-pass at the box frequency
@@ -988,6 +996,51 @@ void testHostileInput()
            "an unprepared chain modified the buffer");
 }
 
+// `prepare()`'s sample-rate guard - a non-finite rate falls back to 48 kHz,
+// then any finite rate is clamped to its supported 8 kHz-384 kHz range - was
+// only ever driven with rates already inside that range: testDeterminismAndRateMatrix
+// sweeps 22.05 kHz to 384 kHz, but nothing fed it NaN, a negative rate, or a
+// rate past either edge of the supported span.
+void testPrepareSanitisesSampleRate()
+{
+    constexpr double minimumSupportedSampleRate = 8000.0;
+    constexpr double maximumSupportedSampleRate = 384000.0;
+
+    const auto sanitisedRate = [] (double requested)
+    {
+        ElectryFx fx;
+        fx.prepare(requested);
+        return FxAccess::sampleRate(fx);
+    };
+
+    expect(sanitisedRate(std::nan("")) == sanitisedRate(48000.0),
+           "a NaN sample rate did not fall back to the 48 kHz default");
+    expect(sanitisedRate(1.0e9) == sanitisedRate(maximumSupportedSampleRate),
+           "a sample rate above the ceiling was not clamped to it");
+    expect(sanitisedRate(1.0) == sanitisedRate(minimumSupportedSampleRate),
+           "a sample rate below the floor was not clamped to it");
+    expect(sanitisedRate(-48000.0) == sanitisedRate(minimumSupportedSampleRate),
+           "a negative sample rate was not clamped to the floor");
+
+    // The sanitised scalar is what every other rate-derived constant in
+    // prepare() is built from, so also confirm a hostile request still leaves
+    // the chain itself able to process a block rather than only checking the
+    // stored value in isolation.
+    ElectryFx fx;
+    fx.prepare(std::nan(""));
+    FxParameters parameters;
+    parameters.distortion = 0.6f;
+    parameters.amp = 0.5f;
+    parameters.delay = 0.4f;
+    parameters.room = 0.3f;
+    fx.setParameters(parameters);
+    auto probe = sineBlock(2048, 213, 0.4);
+    auto probeRight = probe;
+    fx.process(probe.data(), probeRight.data(), static_cast<int>(probe.size()));
+    expect(allFinite(probe) && allFinite(probeRight),
+           "a sanitised prepare() sample rate produced non-finite audio");
+}
+
 } // namespace
 
 int main()
@@ -1002,6 +1055,7 @@ int main()
     testEngagementIsClickFree();
     testDeterminismAndRateMatrix();
     testHostileInput();
+    testPrepareSanitisesSampleRate();
 
     if (failures != 0)
     {
