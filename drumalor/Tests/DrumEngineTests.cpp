@@ -5219,6 +5219,39 @@ void testUiPresentationMath()
     expect (ballistics.level == 0.0f && ballistics.peak == 0.0f,
             "meter ballistics did not reset");
 
+    // update()'s four ballistics coefficients each sanitize a NaN input to
+    // their own documented default, independently of the target argument
+    // already checked above: a host that automates a meter's ballistics
+    // rather than its signal must not be able to park any one of them on NaN.
+    MeterBallistics attackNaN;
+    attackNaN.update (0.5f, std::numeric_limits<float>::quiet_NaN(), release, fall, 3.0f);
+    expect (attackNaN.level == 0.5f,
+            "MeterBallistics::update did not fall back a NaN attack coefficient to instant (1.0)");
+
+    MeterBallistics releaseNaN;
+    releaseNaN.update (0.5f, 1.0f, release, fall, 3.0f);
+    releaseNaN.update (0.0f, 1.0f, std::numeric_limits<float>::quiet_NaN(), fall, 3.0f);
+    MeterBallistics releaseDefault;
+    releaseDefault.update (0.5f, 1.0f, release, fall, 3.0f);
+    releaseDefault.update (0.0f, 1.0f, 0.2f, fall, 3.0f);
+    expect (releaseNaN.level == releaseDefault.level,
+            "MeterBallistics::update did not fall back a NaN release coefficient to its default (0.2)");
+
+    MeterBallistics peakFallNaN;
+    peakFallNaN.update (0.5f, 1.0f, release, fall, 0.0f);
+    peakFallNaN.update (0.0f, 1.0f, release, std::numeric_limits<float>::quiet_NaN(), 0.0f);
+    MeterBallistics peakFallDefault;
+    peakFallDefault.update (0.5f, 1.0f, release, fall, 0.0f);
+    peakFallDefault.update (0.0f, 1.0f, release, 0.9f, 0.0f);
+    expect (peakFallNaN.peak == peakFallDefault.peak,
+            "MeterBallistics::update did not fall back a NaN peak-fall multiplier to its default (0.9)");
+
+    MeterBallistics holdNaN;
+    holdNaN.update (0.5f, 1.0f, release, fall, std::numeric_limits<float>::quiet_NaN());
+    holdNaN.update (0.0f, 1.0f, release, fall, 3.0f);
+    expect (holdNaN.peak < 0.5f,
+            "MeterBallistics::update did not fall back a NaN hold-updates duration to zero (no hold)");
+
     // Pad-grid geometry: equal cells, exact gaps, and short rows centred under
     // the long row they share a grid with.
     const auto fullRow = rowLayout (960, 7, 7, 7);
@@ -5243,6 +5276,10 @@ void testUiPresentationMath()
     expect (mix (0.0f, 10.0f, 0.25f) == 2.5f, "mix did not interpolate");
     expect (mix (0.0f, 10.0f, -3.0f) == 0.0f && mix (0.0f, 10.0f, 4.0f) == 10.0f,
             "mix did not clamp its amount");
+    expect (mix (std::numeric_limits<float>::quiet_NaN(), 10.0f, 0.5f) == 5.0f,
+            "mix did not sanitize a NaN start value to zero");
+    expect (mix (0.0f, std::numeric_limits<float>::quiet_NaN(), 0.5f) == 0.0f,
+            "mix did not sanitize a NaN end value to zero");
     expect (smoothStep (0.0f, 1.0f, 0.0f) == 0.0f
                 && smoothStep (0.0f, 1.0f, 1.0f) == 1.0f
                 && std::abs (smoothStep (0.0f, 1.0f, 0.5f) - 0.5f) < 1.0e-6f,
