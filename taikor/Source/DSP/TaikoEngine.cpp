@@ -552,15 +552,15 @@ const TaikoEngine::StrikeProfile& TaikoEngine::strikeProfile (
     // the head and the other is on the head and the hoop at once.
     static const std::array<StrikeProfile, articulationCount> table {{
         // radius, hardness, membrane, shell, noise, level, mute, palm,
-        //   contacts, rim, shellFreq, shellDecay
-        { 0.15f, 1.00f, 1.00f, 0.18f, 1.00f, 1.00f, 0.00f, false,
-          1, 0.00f, 1.0f, 1.0f },  // Don
-        { 0.91f, 1.28f, 0.74f, 0.42f, 1.35f, 0.82f, 0.12f, false,
-          1, 0.30f, 1.0f, 1.0f },  // Ka
-        { 0.20f, 0.98f, 0.88f, 0.12f, 0.95f, 0.72f, 0.95f, true,
-          1, 0.00f, 1.0f, 1.0f },  // Tsu
+        //   contacts, rim, strikesHoop, shellFreq, shellDecay
+        { 0.15f, 1.00f, 1.00f, 0.00f, 1.00f, 1.00f, 0.00f, false,
+          1, 0.00f, false, 1.0f, 1.0f },  // Don
+        { 0.91f, 1.28f, 0.74f, 0.00f, 1.35f, 0.82f, 0.12f, false,
+          1, 0.30f, false, 1.0f, 1.0f },  // Ka
+        { 0.20f, 0.98f, 0.88f, 0.00f, 0.95f, 0.72f, 0.95f, true,
+          1, 0.00f, false, 1.0f, 1.0f },  // Tsu
         { 0.97f, 1.32f, 0.90f, 0.82f, 1.70f, 0.94f, 0.00f, false,
-          1, 0.95f, 1.0f, 0.78f }, // Don Rim
+          1, 0.95f, true, 1.0f, 0.78f }, // Don Rim
     }};
 
     const auto index = static_cast<std::size_t> (articulation);
@@ -3817,16 +3817,17 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         }
     }
 
-    // The wooden bank: the drum's own shell. It is struck directly by a rim
-    // shot, which catches the hoop and the body with the head, and picked up
-    // faintly the rest of the time, because a head cannot move without the body
-    // it is stretched over moving too. The Shell Resonance control scales how
-    // much of the body colours an ordinary head stroke, but it never silences
-    // the body completely: hitting wood makes a sound whatever the player has
-    // decided about sympathetic ring.
+    // The wooden bank: the drum's own shell. A Don Rim catches the hoop and the
+    // body as well as the head, so it has a direct shell force. Don, Ka and Tsu
+    // hit only the membrane. Its boundary loss already accounts for work sent
+    // into the mounting; copying the solved normal force into ring modes as
+    // well was a one-way, non-reciprocal source that made the light Okedo body
+    // overwhelm its head. A future audible head-to-shell path needs a measured
+    // mechanical projection rather than that duplicate force.
     const float bodyLevel = 0.30f + 0.70f * drum.shellLevel;
-    const float shellGain = profile.shellGain * bodyLevel
-                          + profile.rimGain * 0.35f;
+    const float shellGain = profile.strikesHoop
+        ? profile.shellGain * bodyLevel + profile.rimGain * 0.35f
+        : 0.0f;
     // The head's own volume displacement gives the membrane modes their
     // radiating area for free; the wooden bank has to be told what it is.
     const float radiatingArea = drum.radius * drum.radius;

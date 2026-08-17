@@ -929,7 +929,7 @@ private:
         float radius { 0.0f };        // 0 centre .. 1 rim
         float hardnessScale { 1.0f }; // multiplies the contact stiffness
         float membraneGain { 1.0f };
-        float shellGain { 0.2f };
+        float shellGain { 0.2f };     // direct hoop/body projection
         float noiseGain { 1.0f };
         float levelScale { 1.0f };
         // Extra head damping the free hand applies for a muted stroke.
@@ -940,10 +940,14 @@ private:
         bool palmContact { false };
         // Contact schedule: single, flam, or press roll.
         int contactCount { 1 };
-        // Rim contribution: a shot that catches the hoop as well as the head.
+        // Near-rim strength for the unresolved edge and tack line. Ka carries
+        // some without directly hitting wood; strikesHoop distinguishes that.
         float rimGain { 0.0f };
-        // Shell mode retune, used by the strokes that catch the hoop to shorten
-        // the body's ring.
+        // True only when the bachi itself reaches the hoop/body. Head motion
+        // still feels the shell through the resolved edge loss; it must not
+        // feed an unmodelled one-way copy of its contact force into ring modes.
+        bool strikesHoop { false };
+        // Shell-mode retune for that direct hoop path.
         float shellFrequencyScale { 1.0f };
         float shellDecayScale { 1.0f };
     };

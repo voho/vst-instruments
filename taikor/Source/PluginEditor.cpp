@@ -1095,7 +1095,7 @@ TaikorAudioProcessorEditor::TaikorAudioProcessorEditor (TaikorAudioProcessor& pr
     addKnob (headDampingKnob, ids::headDamping,
              "Extra loss in the head on top of the material's own.");
     addKnob (shellResonanceKnob, ids::shellResonance,
-             "How much of the wooden body colours an ordinary head stroke.");
+             "How much the wooden body rings when Don Rim catches the hoop.");
     addKnob (pitchKnob, ids::pitch,
              "Musical transposition, applied as head tension because that is what "
              "tuning a drum is.");

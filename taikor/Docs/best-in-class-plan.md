@@ -2557,9 +2557,14 @@ stroke that catches the hoop. `shellDecayScale` is still used (Don Rim, 0.78).
 `shellFrequencyScale` is now unity on all four strokes; it was already unity on
 all eight and is left in place as a column of the profile.
 
-**The byō tack line is untouched.** Only Don Rim (`rimGain` 0.95) and Ka (0.30)
-reach the hoop, and only Don Rim beats the preload at ordinary velocities, which
-is the mechanism that separates that pair.
+*Superseded on 2026-08-17:* the later Okedo audit below found that this copied
+the solved head force into an uncoupled shell observer. The release bank is now
+driven only by Don Rim's explicit hoop contact.
+
+**The byō tack line is untouched.** Don Rim (`rimGain` 0.95) and the near-rim
+Ka (0.30) reach the tack line, but only Don Rim directly catches the hoop and
+beats the preload at ordinary velocities, which is the mechanism that separates
+that pair.
 
 **One mechanism is now dormant rather than deleted: the multi-contact
 schedule.** `scheduleContacts` still builds a train of bouncing contacts when a
@@ -2599,12 +2604,11 @@ count (16,200 → 10,800), Octave Body's tension clause, and the strongest-parti
 ladder.
 
 Two clauses changed the quantity they measure, and the reason is the same in
-both: with the bachi-on-the-shell stroke retired, no surviving stroke lets the
-wooden body dominate the finished audio, so an audio measurement of the shell
-would be a measurement of the head. "Shell Resonance has no step in it" now
-reads the wooden bank's own drive; "the glide must not retune the wooden shell"
-now reads the wooden modes' resonator coefficients and asserts exact equality,
-which is a stronger statement than the audio proxy it replaces.
+both: with the bachi-on-the-shell stroke retired, no articulation isolated the
+wooden bank from the head and hoop transient. "Shell Resonance has no step in
+it" therefore reads the wooden bank's own drive; "the glide must not retune the
+wooden shell" reads the wooden modes' resonator coefficients and asserts exact
+equality, which is stronger than the old audio proxy.
 
 One clause was loosened with a measured reason rather than re-taken. The
 do-no-harm clause that the reported fundamental is where the rendered peak is
@@ -4737,18 +4741,35 @@ joint shell/head mobility, rim diffraction/scattering and capsule pressure must
 be fitted together before the six doublets replace the current bounded body
 observer.
 
-There is a second shell boundary in the hit itself. The released shell bank has
-zero contact projection and is therefore absent from IMP-2 sensing and
-compliance, yet the solved head force drives it one-way afterwards. This is not
-a small path on Ka and Don Rim: isolated resolved renders put the shell within
-roughly 0–1.2 dB of the complete hit while the membrane can sit 8–40 dB lower.
-Reciprocity cannot be restored by moving the existing product around. The
-controls and comments define `shellGain`, Shell Resonance and `shellCalibration`
-as body-colour/observation factors, so the released transfer admits infinitely
-many mechanical-projection × microphone-residue factorizations. Capture must
-identify the shell driving-point projection separately; putting an acoustic
-`levelScale` into that projection would repeat the membrane contact category
-error rather than fix it.
+## Okedo direct-shell correction — 2026-08-17
+
+The hit-side shell boundary had a simpler safe half. The shell bank has zero
+contact projection and is absent from IMP-2 sensing and compliance, but every
+head strike used to feed it a one-way copy of the solved normal force. On the
+light Okedo this fixed six-pole ladder overwhelmed the membrane by **26.8 dB on
+Ka** and **39.3 dB on Don Rim** over 5–30 ms; its 191 Hz pole was within 0.7 dB
+of the entire shell bank. That was the cheap, invariant body tone heard on the
+family's third drum, not stochastic continuum noise.
+
+Taikor now makes the articulation topology explicit with `strikesHoop`. Don,
+Ka and Tsu hit only the membrane, so their shell projection is exactly zero;
+the shell material still changes the head's resolved boundary/edge loss. Don
+Rim catches the hoop and retains the existing shell formula, decay and Shell
+Resonance curve byte-for-byte. No radiation scalar, EQ or replacement gain was
+added. In the fixed-seed 48 kHz stereo-RMS audit, factory Okedo Ka changes by
+**−17.6 / −22.0 / −18.8 dB** over 0–5 / 5–30 / 30–120 ms and Tsu by
+**−4.0 / −10.3 / −20.5 dB**; Don Rim is bit-identical.
+
+The deletion agrees with the closest published head-struck, rope-laced
+double-head experiment, [Ono et al. (2009)](https://doi.org/10.1250/ast.30.410):
+its isolated shell resonance did not appear among the complete drum's peaks,
+while the approximately 200 Hz component was assigned to the membrane. It does
+not calibrate a replacement head-to-shell transfer.
+That remaining path still requires joint head/shell mobility and pressure
+capture; adding an acoustic `levelScale`, infinite-cylinder efficiency or a
+fixed common floor would merely choose one of infinitely many mechanical
+projection × observer factorizations. The release keeps the measured boundary
+loss and the unambiguous direct hoop strike, and deletes the unsupported source.
 
 ## Performer identity for multi-instance ensembles — 2026-08-16
 

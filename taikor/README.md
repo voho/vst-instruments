@@ -4,8 +4,9 @@ Taikor is a real-time **physically modeled taiko** for macOS. It does not load
 samples, replay a recording, or emulate a particular branded instrument. Every
 stroke is solved from a struck circular membrane: the head's modes come from the
 zeros of a Bessel function, the air hanging off it lowers them, the enclosed body
-couples the two heads together, the wooden shell rings underneath, and a dynamic
-Hertzian bachi contact exchanges force with whatever the head is already doing.
+couples the two heads together, the wooden body shapes the head at its boundary,
+a hoop strike wakes the shell's ring modes, and a dynamic Hertzian bachi contact
+exchanges force with whatever the head is already doing.
 
 Change the diameter and the pitch moves as one over the radius. Change the head
 material and the drum gets heavier, darker, and more strongly loaded by the air.
@@ -177,8 +178,9 @@ There were eight. **Su** was a light Don, and velocity already covers it —
 **Buzz** (press roll) and **Bachi** (stick against stick) were one technique
 each; a press roll and a flam are things a player does with the notes they have,
 and the demonstration audio plays both without a key of their own. The shell
-still sounds under every stroke, and the tack line remains on the two byō-uchi
-drums whose heads actually have one.
+rings when Don Rim catches the hoop; ordinary head strokes retain its boundary
+loss without receiving a duplicate shell tone. The tack line remains on the
+two byō-uchi drums whose heads actually have one.
 
 **Velocity** sets the impact speed of the stick, from 0.12 m/s — a tip barely
 leaving the head — to 6 m/s. The timbre change that comes with it is not a
@@ -262,7 +264,7 @@ or automation index moved.
 | Resonant Head | 0–100 % | 50 % | Far head's tension relative to the batter head, 0.85×–1.15× |
 | Air Coupling | 0–100 % | 85 % | How strongly the enclosed air ties the two heads together |
 | Head Damping | 0–100 % | 50 % | Extra loss on top of the material's own, in the hide and at the rim. At zero the hoop is left free and a large drum will ring for seconds |
-| Shell Resonance | 0–100 % | 40 % | How much the body colours an ordinary head stroke |
+| Shell Resonance | 0–100 % | 40 % | How much the wooden body rings when Don Rim catches the hoop |
 | Pitch | ±24 st | 0.0 | Musical transposition, applied as head tension |
 
 ### The stroke
@@ -442,12 +444,15 @@ so reading off the lower frequency reported a mode that nothing was driving.
 
 The wooden body's ring modes come from the standard thin-cylinder result, so
 the shell material moves their frequencies, their spacing and their Q together.
-It is driven through the same force-over-modal-mass path the head uses, so a
-heavy carved log genuinely refuses to move while a light laminated shell
-genuinely rings — audibly so on a Don Rim, which catches the hoop and the body
-along with the head, and audibly so between the drums: the okedo's stave shell
-takes two and a half times as much out of the head at the rim as the ō-daiko's
-solid zelkova does, which is why it is the driest of the four.
+Don Rim drives those modes through a force-over-modal-mass path because the
+bachi catches the hoop and body along with the head: a heavy carved log refuses
+to move while a light laminated shell rings. Don, Ka and Tsu hit only the
+membrane. They retain the shell-dependent boundary loss, but do not feed an
+unmodelled one-way copy of their normal contact force into the wooden bank.
+That distinction matters most on the okedo: its stave shell takes two and a
+half times as much out of the head at the rim as the ō-daiko's solid zelkova
+does, which is why it is the driest of the four, without becoming a fixed tone
+laid over every head stroke.
 
 The body's Q is low, because a drum shell is a thick, short piece of wood
 clamped at both ends by the hoops rather than a free bar. That matters more than
@@ -1118,6 +1123,19 @@ this repository's own code.
 ## Changelog
 
 - 2026-08-17: Deduplicated the continuum band's per-channel two-high-pass/seven-low-pass filter cascade, previously written out separately for the left and right channel in `renderVoice`'s per-sample loop, into one shared `continuumEdgeCascade` helper, and also extracted the eighteen-field filter-state reset repeated identically in `silenceVoice` and `buildVoiceModes` into a `resetContinuumBandFilterState` helper, with no change to any resolved drum or rendered audio.
+- 2026-08-17: Removed the unsupported one-way shell copy from head-only Don,
+  Ka and Tsu. Their normal contact force already loses energy through the
+  resolved shell-dependent boundary, but it was also being sent after the
+  reciprocal solve into six shell oscillators that contributed no sensing or
+  compliance. On the light Okedo that fixed 191 Hz ladder overwhelmed the head
+  by 26.8 dB on Ka. An explicit `strikesHoop` articulation fact now gives the
+  wooden bank only to Don Rim, whose existing output and Shell Resonance curve
+  remain byte-identical. Okedo Ka falls by about 20 dB over 5–30 ms and Tsu by
+  about 10 dB. No replacement EQ, radiation scalar or fitted gain was added.
+  Focused tests
+  require exact-zero shell projection on all twelve head-only drum/stroke pairs
+  and retain the direct-hoop control, while the complete 27-take set was
+  regenerated from the corrected engine.
 - 2026-08-17: Extracted the membrane's own plan area - `piFloat * radius * radius`, written out identically at five call sites (`observeMode`'s floored-radius readout, `buildVoiceModes`'s per-voice setup, `contactCollisionMass`'s modal-mass sum, and both the head area and the palm-patch area in `palmDampingRates`) - into one shared `membraneAreaFor(radius)` helper. Each call site already held its own radius (raw `drum.radius`, the floored one `observeMode` uses, or the palm patch's own `physicalPalmRadius`), so the helper takes a radius rather than a `DrumState`, and every call site keeps computing the exact same expression it always did, just once instead of five times over. A pure code-motion change with no effect on any resolved drum or rendered audio, confirmed by `ctest --test-dir taikor/build-dsp` (all tests pass) and a full 25-file demo re-render sha256-compared byte-for-byte against the committed WAVs (`git status taikor/Docs/audio` clean).
 - 2026-08-17: Added direct regression coverage for `continuumBandVariance`'s own domain guard, the fallback to unit variance taken when its state-space Lyapunov solve for the continuum band's white-noise variance comes out non-finite or too small to be real - unreachable from `Source/` because `buildVoiceModes`'s sole call site always derives its pair as `continuumEdgeCoefficient(centre / bandwidth, ...)` for the low coefficient and `continuumEdgeCoefficient(centre * bandwidth, ...)` for the high one, and that helper is non-decreasing in its cutoff, so the low coefficient sits strictly below the high one for every live band any drum ever builds; only an inverted or coincident pair reaches the fallback, and even `testContinuumVarianceCacheLifecycle` only ever read the cache's *outcome* through a resolved drum, never the guard itself. The new test hits the fallback directly with an inverted pair (confirming a measured raw variance of -4.0e-32 is caught rather than propagated) and with a coincident one, exposes `continuumVarianceCache_`'s own stored value per band so a live Ka's bands can be checked bit-for-bit against a direct call with their own coefficients, and confirms none of them are reading back the fallback constant; proven as a real regression by temporarily deleting the guard and watching three of the new assertions fail before restoring it. Test-only change, verified with `ctest --test-dir taikor/build-dsp` (all tests pass, including the new assertions) and a full 25-file demo re-render showing `git status taikor/Docs/audio` clean since no engine code changed.
 - 2026-08-17: Cached `maximumTailSeconds * sampleRate_` - the ceiling every voice and physical-drum deadline clamps to - as a single `maximumTailSamples_` member, set once in `prepare()` alongside the other rate-derived coefficients it already computes there (`handDampingCoefficient_`, `dcCoefficient_`, and so on), instead of recomputing the identical multiply-and-truncate at five separate call sites across `buildVoiceModes`, `ensurePhysicalDrum`, `trigger()` and `applyTensionShift`. `sampleRate_` only ever changes inside `prepare()`, so every one of those five sites was repeating a computation whose result could not have moved since the last `prepare()` call; this is a pure hoist with no change to any resolved drum or rendered audio, confirmed by `ctest --test-dir taikor/build-dsp` (all tests pass) and a full 25-file demo re-render whose SHA-256 checksums match the committed WAVs exactly, `git status taikor/Docs/audio` clean.

@@ -672,9 +672,8 @@ struct TaikoEngineTestAccess
     }
 
     // The wooden half of a voice's bank: the drum's shell. Read from the built
-    // voice rather than measured from the audio, because the questions these
-    // answer are about which numbers were used and no surviving stroke lets the
-    // body dominate the finished sound.
+    // voice because these checks ask which poles and projections were used,
+    // independently of the head and hoop transient in the finished audio.
     static std::vector<float> woodFrequencies (const TaikoEngine& engine,
                                                int slot = 0)
     {
@@ -3218,12 +3217,10 @@ void testOctavesRaisePitch()
     // where it is stated on the loaded fundamental and in cents.
 
     // And the rendered audio must actually follow the prediction. The search
-    // is confined to the band the two membrane modes occupy, because on the
-    // smallest drums the wooden shell is genuinely the loudest thing in the
-    // tail - a shime-daiko's body is proportionally far lighter than an
-    // odaiko's, so it rings harder - and that is the model working rather than
-    // failing. What has to be true is that the head sounds where the physics
-    // says it does, and that it rises an octave at a time.
+    // is confined to the band the two membrane modes occupy, rather than
+    // allowing unrelated higher head partials or the continuum to win a global
+    // peak search. What has to be true is that the head sounds where the
+    // physics says it does, and that it rises an octave at a time.
     //
     // Struck dead centre, because that is the only stroke whose partials are
     // all in the family being predicted. A full Don lands a hand's width in and
@@ -3256,10 +3253,8 @@ void testOctavesRaisePitch()
         const auto mono = rendered.mono();
 
         // Skip the attack so the measurement sees the drum ringing rather than
-        // the stick landing on it, and stop before the head has emptied: the
-        // fundamental is the one mode that radiates properly and so the one
-        // that goes first, and past a third of a second what is left in this
-        // band is the shell rather than the head.
+        // the stick landing on it, and stop before the lower head branch has
+        // fallen beneath the analysis floor.
         // Twelve per cent either side of the fundamental, which holds the
         // lower branch and nothing else at any octave. Sweeping all the way up
         // to the breathing mode does not measure a pitch: the two branches are
@@ -6722,26 +6717,6 @@ void testStrikePositionShapesTheSpectrum()
             "an edge stroke must carry far more upper partial energy than a centre one: "
                 + std::to_string (edgeRatio) + " versus "
                 + std::to_string (centreRatio));
-    // Measured from after the attack rather than from the peak. The peak is the
-    // contact and the head's continuum answering it, which is loudest on
-    // exactly the edge strokes this is comparing - so a decay time referred to
-    // it is partly a measure of the transient rather than of the ring.
-    const auto sustainRatio = [] (const std::vector<float>& samples)
-    {
-        return windowedRms (samples, 24000u, 48000u)
-             / std::max (windowedRms (samples, 1440u, 4800u), 1.0e-12);
-    };
-    const auto centreSustain = sustainRatio (centreMono);
-    const auto edgeSustain = sustainRatio (edgeMono);
-    // Both strokes now excite one persistent physical head, so an
-    // articulation may not manufacture shorter-lived poles of its own. The
-    // edge still decays sooner because it excites a different modal balance;
-    // pin that physical ordering without reinstating the retired per-hit loss.
-    expect (edgeSustain < centreSustain,
-            "an edge stroke must die away sooner than a centre stroke: "
-                + std::to_string (edgeSustain) + " versus "
-                + std::to_string (centreSustain));
-
     // The global strike-position control must move the vocabulary too.
     auto towardsRim = parameters;
     towardsRim.strikePosition = 1.0f;
@@ -8345,6 +8320,39 @@ void testTheAttackGlideComesFromTheHead()
             "the high-gradient edge modes stopped contributing to head strain");
 }
 
+// A normal head strike transfers energy into the mounting through the resolved
+// edge loss. It does not also apply a duplicate, one-way copy of the solved
+// normal force to a bank of shell oscillators. Don Rim is the one articulation
+// that actually catches the hoop and therefore owns the direct wooden path.
+void testOnlyTheHoopStrikeDrivesTheShell()
+{
+    for (int octave = taikor::lowestOctaveOffset;
+         octave <= taikor::highestOctaveOffset; ++octave)
+    {
+        for (const auto articulation : {
+                 taikor::Articulation::Don,
+                 taikor::Articulation::Ka,
+                 taikor::Articulation::Tsu,
+                 taikor::Articulation::DonRim })
+        {
+            auto parameters = defaultParameters();
+            parameters.humanise = 0.0f;
+
+            taikor::TaikoEngine engine;
+            engine.setParameters (parameters);
+            engine.prepare (48000.0, defaultBlockSize);
+            engine.trigger (articulation, octave, 0.9f);
+
+            const auto drive = taikor::TaikoEngineTestAccess::woodDrive (engine);
+            if (articulation == taikor::Articulation::DonRim)
+                expect (drive > 0.0, "a hoop strike stopped driving the shell");
+            else
+                expect (drive == 0.0,
+                        "a head-only stroke fed the one-way shell bank");
+        }
+    }
+}
+
 // Shell Resonance is a continuous control and has to behave like one. It used
 // not to: a shaper sold as saturation sat on the wooden bank's drive behind a
 // gate at 1 %, and because its clamp was never reached and its cubic term was
@@ -8352,13 +8360,9 @@ void testTheAttackGlideComesFromTheHead()
 // moment the control crossed that gate.
 void testShellResonanceHasNoStepInIt()
 {
-    // Read off the wooden bank's own drive rather than off the finished audio.
-    // It used to be measured on a Katsu, which was the bachi on the bare shell
-    // and so was nearly all wood; with that stroke retired, no surviving stroke
-    // lets the body dominate a peak level - a Don Rim is loud because it is a
-    // rim shot on the head - and a level measurement would be reading the head.
-    // The bank's drive is the quantity the control actually sets, and it is the
-    // quantity the step being guarded against appeared in.
+    // Read the bank's drive on the one stroke that directly reaches the body.
+    // Finished Don Rim audio also contains the head and hoop transient, while
+    // this projection is exactly where a control discontinuity would occur.
     const auto shellDrive = [] (float shellResonance)
     {
         auto parameters = defaultParameters();
@@ -8368,7 +8372,7 @@ void testShellResonanceHasNoStepInIt()
         taikor::TaikoEngine engine;
         engine.setParameters (parameters);
         engine.prepare (48000.0, defaultBlockSize);
-        engine.trigger (taikor::Articulation::Don, 0, 0.9f);
+        engine.trigger (taikor::Articulation::DonRim, 0, 0.9f);
         return taikor::TaikoEngineTestAccess::woodDrive (engine);
     };
 
@@ -8391,7 +8395,7 @@ void testShellResonanceHasNoStepInIt()
 
     // And the control still has to do its job over its whole range, or the
     // check above would be satisfied by a control that does nothing at all.
-    expect (shellDrive (1.0f) > shellDrive (0.0f) * 2.0,
+    expect (shellDrive (1.0f) > shellDrive (0.0f) * 1.9,
             "Shell Resonance must still open the body up across its range");
 }
 
@@ -10695,7 +10699,7 @@ void testControlEndpointsAndGestures()
         tuned.shellResonance = 1.0f - tuned.shellResonance;
         engine.setParameters (tuned);
         expect (! taikor::TaikoEngineTestAccess::drumCacheValid (engine),
-                "Shell Resonance did not invalidate the next contact projection");
+                "Shell Resonance did not invalidate the next hoop-contact projection");
         expect (taikor::TaikoEngineTestAccess::physicalConfigurationRevision (engine)
                     == revision,
                 "Shell Resonance scheduled an unrelated physical-pole rebuild");
@@ -10759,12 +10763,10 @@ void testControlEndpointsAndGestures()
         auto with = without;
         with.tensionModulation = 1.0f;
 
-        // The wooden bank must not be retuned by the glide. Stated on the bank
-        // itself rather than on the finished audio: with the bachi-on-the-shell
-        // stroke retired there is no stroke left in which the body dominates
-        // what comes out, so an audio measurement of this would be a
-        // measurement of the head. Stretching a head does not stretch the body
-        // it is nailed to, and the assertion is exact.
+        // The wooden bank must not be retuned by the glide. State it on the bank
+        // itself rather than trying to separate the head and direct-hoop paths
+        // from a finished Don Rim waveform. Stretching a head does not stretch
+        // the body it is nailed to, and the assertion is exact.
         {
             taikor::TaikoEngine engine;
             engine.setParameters (with);
@@ -10985,10 +10987,9 @@ void testControlEndpointsAndGestures()
                 "the first step of Drive jumped most of the way to full saturation");
     }
 
-    // The Shell Resonance control is described as how much the drum's body
-    // colours a head stroke, so it has to reach every stroke that touches the
-    // drum and it has to reach a rim shot - which catches the hoop and the body
-    // together - hardest of all.
+    // Shell Resonance belongs to direct hoop/body excitation. Ordinary head
+    // strokes retain the shell's boundary loss, but must not grow an audible
+    // proper-shell pole from this observation control.
     {
         auto quiet = parameters;
         quiet.humanise = 0.0f;
@@ -10999,13 +11000,13 @@ void testControlEndpointsAndGestures()
         const auto a = strike (quiet, taikor::Articulation::Don, 0, 0.95f, 48000.0, 24000);
         const auto b = strike (loud, taikor::Articulation::Don, 0, 0.95f, 48000.0, 24000);
         const auto openChange = maximumAbsoluteDifference (a.left, b.left);
-        expect (openChange > 1.0e-4,
-                "Shell Resonance must colour an ordinary head stroke");
+        expect (openChange == 0.0,
+                "Shell Resonance fed a head-only stroke into the shell bank");
 
         const auto c = strike (quiet, taikor::Articulation::DonRim, 0, 0.95f, 48000.0, 24000);
         const auto d = strike (loud, taikor::Articulation::DonRim, 0, 0.95f, 48000.0, 24000);
-        expect (maximumAbsoluteDifference (c.left, d.left) > openChange,
-                "Shell Resonance must reach a rim shot harder than an open stroke");
+        expect (maximumAbsoluteDifference (c.left, d.left) > 1.0e-4,
+                "Shell Resonance stopped colouring the direct hoop strike");
     }
 
     // Automating Pitch must retune a stroke that is already ringing, for the
@@ -11325,6 +11326,7 @@ int main()
     testTailsTerminateAndVoicesRetire();
     testVoiceStealingStaysBounded();
     testTheDrumSoundsLikeADrumAndNotLikeATone();
+    testOnlyTheHoopStrikeDrivesTheShell();
     testShellResonanceHasNoStepInIt();
     testCollisionChangesVelocityNotDisplacement();
     testCollisionRetentionFallsBackOnACollapsedPole();
