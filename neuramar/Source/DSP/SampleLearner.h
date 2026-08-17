@@ -64,6 +64,26 @@ public:
     [[nodiscard]] static std::vector<float>
         resampleForTests(const std::vector<float>& input,
                          double sourceRate, double destinationRate);
+
+    // The Air-fit exclusion test that keeps a subtracted partial's leakage out
+    // of the noise-floor measurement, exposed so the regression suite can
+    // drive its own hostile-input guard directly. It is not part of the
+    // plug-in's runtime surface.
+    [[nodiscard]] static bool
+        belongsToSubtractedHarmonicForTests(float frequencyHz,
+                                            float analysisBinWidth,
+                                            float rootFrequencyHz,
+                                            float inharmonicity);
+
+    // belongsToSubtractedHarmonic's own entry guard, exposed on its own so the
+    // regression suite can assert it directly: the parent function's later
+    // checks independently reject every hostile root or bin width this guard
+    // rejects, so no input to the parent function can demonstrate this guard
+    // mattering through its return value alone. It is not part of the
+    // plug-in's runtime surface.
+    [[nodiscard]] static bool
+        hasUsableRootAndBinWidthForTests(float rootFrequencyHz,
+                                         float analysisBinWidth);
 };
 
 } // namespace neuramar

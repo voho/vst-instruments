@@ -835,6 +835,56 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   order, so the result is bit-identical - verified with the JUCE-free DSP
   suite (3/3 tests passed) and a fresh `NeuramarRenderDemos` run confirming
   `git status neuramar/Docs/audio` clean across all eight WAVs.
+- 2026-08-16: Added direct coverage for `SampleLearner.cpp`'s
+  `belongsToSubtractedHarmonic` - the Air-fit exclusion test that keeps a
+  subtracted partial's narrowband residue out of the noise-floor measurement
+  - including its entry guard (a non-positive root frequency or analysis bin
+  width), its partial-gap check (a root too close to the bin width to leave
+  any gap to measure), its derived-coordinate range check (an inverted index
+  rounding below the first partial or past the 64-partial bank, on both an
+  ideal harmonic series and a stiff-string one), and its final distance
+  threshold, none of which had been driven directly: the function's two
+  callers, `makeAirFitDesign` and `fitAirFilterbank`, only ever pass an
+  already-validated root (35-2000 Hz from the pitch detector) and a
+  positive, much-smaller analysis-window-derived bin width. Each case is
+  built so the specific check under test - not some other, unrelated check -
+  is what has to reject it: the below-first-partial cases use a 1 Hz
+  frequency against a 100 Hz root, close enough to the 0 Hz the zero
+  coordinate would reconstruct that only the `rounded >= 1.0f` guard stands
+  between it and a false accept; the past-the-bank cases are built from the
+  forward stiff-string formula at harmonic 70 so the quadratic inversion has
+  to recover an index past 64 for anything to reject; and the in-window
+  stiff-string case uses harmonic 7, whose *raw* ratio (about 7.655) rounds
+  to a different partial (8) than the quadratic inversion correctly
+  recovers (7), so comparing against the raw ratio instead of inverting it
+  would land about 288 Hz from the target - well outside the window - and
+  fail the assertion.
+
+  The entry guard turned out not to be directly testable through the parent
+  function's return value at all: an exhaustive sweep over invalid root and
+  bin-width combinations showed the partial-gap check independently rejects
+  every non-positive root whenever the bin width is positive, the range
+  check independently rejects a NaN root (it propagates to a NaN rounded
+  index), and the final distance comparison independently rejects every
+  non-positive or NaN bin width (a non-negative diff can never be less than
+  a non-positive or NaN threshold) - so no input could make
+  `belongsToSubtractedHarmonic`'s behaviour depend on this guard. Factored
+  the guard's condition out into its own `hasUsableRootAndBinWidth`
+  predicate so it can be asserted directly instead, including the case a
+  black-box test of the parent function could not have reached either way:
+  `value > 0.0f` is true for +infinity, so an infinite root or bin width
+  passes this guard even though the parent function still safely rejects it
+  through a later check. Verified the new guard test actually depends on the
+  guard by temporarily hard-coding `hasUsableRootAndBinWidth` to always
+  return `true`, confirming exactly its five intended assertions failed and
+  no others, then restoring it. Added small test-only accessors,
+  `SampleLearner::belongsToSubtractedHarmonicForTests` and
+  `SampleLearner::hasUsableRootAndBinWidthForTests`, alongside the existing
+  `resampleForTests` pattern for reaching translation-unit-private helpers
+  from the suite. Test-only aside from the guard extraction, which is a
+  behaviour-preserving refactor; verified with the JUCE-free DSP suite
+  (3/3 tests passed) and a fresh `NeuramarRenderDemos` run confirming
+  `git status neuramar/Docs/audio` clean across all eight WAVs.
 - 2026-08-16: `updateVoiceControl`'s per-harmonic reference-target loop -
   walked once per rendered harmonic on every control frame of every voice -
   recomputed `parameters.mutation * 0.045f` for `referenceVariation` instead

@@ -4289,6 +4289,167 @@ void testConditionSampleHostileInputs()
            "conditionSample's own finite-content guard");
 }
 
+// belongsToSubtractedHarmonic() keeps a subtracted partial's narrowband
+// residue out of the Air noise-floor measurement. Its only callers,
+// makeAirFitDesign() and fitAirFilterbank(), always pass a root frequency
+// already validated by the pitch detector (35-2000 Hz) and an
+// analysis-window-derived bin width that is always positive and much smaller
+// than that root, so its own three early-exit guards - a non-positive or
+// non-finite root, a non-positive or non-finite bin width, and a root too
+// close to the bin width to leave any partial gap to measure - were never
+// driven directly, nor was the derived-index range check that follows them
+// (an inverted coordinate rounding below the first partial or past the
+// 64-partial bank). Test-only; no engine or header change.
+void testAirFitSubtractedHarmonicGuards()
+{
+    using neuramar::SampleLearner;
+
+    // hasUsableRootAndBinWidth() is belongsToSubtractedHarmonic()'s own entry
+    // guard, factored out and tested directly here because the parent
+    // function's *return value* cannot show this guard mattering: its later
+    // partial-gap check independently rejects every non-positive root
+    // whenever the bin width is positive, its derived-coordinate range check
+    // independently rejects a NaN root (NaN propagates to a NaN rounded
+    // index, failing `rounded >= 1.0f`), and its final distance comparison
+    // independently rejects every non-positive or NaN bin width (a
+    // non-negative diff can never be less than a non-positive or NaN
+    // threshold). An exhaustive sweep over invalid root and bin-width
+    // combinations confirmed none of them changes
+    // belongsToSubtractedHarmonic's return value with this guard deleted, so
+    // testing the guard's own boolean expression is the only way to give it
+    // real regression coverage.
+    constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+    constexpr float infinity = std::numeric_limits<float>::infinity();
+    expect(!SampleLearner::hasUsableRootAndBinWidthForTests(0.0f, 5.0f),
+           "a non-positive root frequency was accepted");
+    expect(!SampleLearner::hasUsableRootAndBinWidthForTests(-220.0f, 5.0f),
+           "a negative root frequency was accepted");
+    expect(!SampleLearner::hasUsableRootAndBinWidthForTests(nan, 5.0f),
+           "a NaN root frequency was accepted");
+    expect(!SampleLearner::hasUsableRootAndBinWidthForTests(440.0f, 0.0f),
+           "a non-positive analysis bin width was accepted");
+    expect(!SampleLearner::hasUsableRootAndBinWidthForTests(440.0f, nan),
+           "a NaN analysis bin width was accepted");
+    // +infinity satisfies `value > 0.0f`, so this guard - unlike the ones
+    // above - accepts it; the parent function still safely rejects an
+    // infinite root or bin width, but (as shown below) through one of its
+    // later checks rather than through this one.
+    expect(SampleLearner::hasUsableRootAndBinWidthForTests(infinity, 5.0f),
+           "an infinite root frequency was rejected by this guard");
+    expect(SampleLearner::hasUsableRootAndBinWidthForTests(440.0f, infinity),
+           "an infinite analysis bin width was rejected by this guard");
+    expect(SampleLearner::hasUsableRootAndBinWidthForTests(440.0f, 5.0f),
+           "an ordinary root and bin width were rejected");
+
+    // The full function's own hostile-input behaviour is exercised here too:
+    // whichever combination of the guard above, the partial-gap check, the
+    // derived-coordinate range check, and the final distance comparison is
+    // responsible, every one of these inputs must still come back rejected.
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1320.0f, 5.0f, 0.0f, 0.0f),
+           "a non-positive root frequency was not rejected");
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1320.0f, 5.0f, -220.0f, 0.0f),
+           "a negative root frequency was not rejected");
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1320.0f, 5.0f, nan, 0.0f),
+           "a NaN root frequency was not rejected");
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1320.0f, 0.0f, 440.0f, 0.0f),
+           "a non-positive analysis bin width was not rejected");
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1320.0f, nan, 440.0f, 0.0f),
+           "a NaN analysis bin width was not rejected");
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1320.0f, 5.0f, infinity, 0.0f),
+           "an infinite root frequency was not rejected");
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1320.0f, infinity, 440.0f, 0.0f),
+           "an infinite analysis bin width was not rejected");
+
+    // Unlike the guard above, the partial-gap check genuinely is what stands
+    // between this exact input and a false accept: with it removed, ratio 1
+    // rounds to the first partial and the reconstructed 100 Hz matches
+    // frequencyHz exactly, well inside a 50 Hz (1.25 * 40) window.
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               100.0f, 40.0f, 100.0f, 0.0f),
+           "a root within 3 bin widths of itself left a partial gap to "
+           "measure that does not exist");
+
+    // Ideal harmonic series (inharmonicity 0): the derived coordinate is the
+    // plain ratio, so a frequency at 70x the root rounds past the 64-partial
+    // bank and must be rejected before the distance check ever runs.
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               70.0f * 440.0f, 5.0f, 440.0f, 0.0f),
+           "a coordinate rounding past the 64-partial bank was not rejected "
+           "(inharmonicity 0)");
+
+    // Below the first partial, deliberately close enough to zero that
+    // deleting only the `rounded >= 1.0f` guard would still pass: rounding
+    // 0.01 down to a coordinate of 0 reconstructs a 0 Hz partial, and this
+    // frequency sits within 1.25 bin widths of that 0 Hz - so without the
+    // guard the distance check below would wrongly accept it. Root and bin
+    // width are scaled down together so `root >= 3 * binWidth` still holds.
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1.0f, 2.0f, 100.0f, 0.0f),
+           "a coordinate rounding below the first partial was not rejected "
+           "(inharmonicity 0)");
+
+    // A frequency sitting exactly on the third harmonic of an ideal series is
+    // inside the acceptance window; the same frequency shifted well past
+    // 1.25 bin widths is not, exercising both sides of the final distance
+    // threshold.
+    expect(SampleLearner::belongsToSubtractedHarmonicForTests(
+               3.0f * 440.0f, 5.0f, 440.0f, 0.0f),
+           "a frequency exactly on a subtracted harmonic was rejected");
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               3.0f * 440.0f + 10.0f, 5.0f, 440.0f, 0.0f),
+           "a frequency well outside the acceptance window was accepted");
+
+    // The same three checks on a stiff-string series (inharmonicity > 0),
+    // where the quadratic inversion replaces the plain ratio used above.
+    constexpr float root = 220.0f;
+    constexpr float inharmonicity = 0.004f;
+
+    // Below the first partial, using the same tight construction as the
+    // ideal-series case above: a 1 Hz frequency against a 100 Hz root
+    // inverts to a coordinate of 0 whether or not inharmonicity is applied
+    // (the quadratic collapses to the same near-zero answer at this scale),
+    // and 1 Hz sits within 1.25 bin widths of the 0 Hz that coordinate would
+    // reconstruct, so the `rounded >= 1.0f` guard - not the distance check -
+    // is what has to reject it.
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               1.0f, 2.0f, 100.0f, inharmonicity),
+           "a stiff-string coordinate rounding below the first partial was "
+           "not rejected");
+
+    // Past the 64-partial bank: built from the forward stiff-string formula
+    // at harmonic 70 so the quadratic inversion has to recover an index past
+    // 64 for the range check to have anything to reject.
+    const float stretchedSeventieth = root
+        * neuramar::stretchedHarmonicRatio(70.0f, inharmonicity);
+    expect(!SampleLearner::belongsToSubtractedHarmonicForTests(
+               stretchedSeventieth, 5.0f, root, inharmonicity),
+           "a stiff-string coordinate rounding past the 64-partial bank was "
+           "not rejected");
+
+    // Inside the window, at harmonic 7: chosen because its *raw* ratio
+    // (stretchedSeventh / root, about 7.655) rounds to 8, a different
+    // partial than the quadratic inversion correctly recovers (7). A
+    // regression that used the raw ratio as the coordinate instead of
+    // inverting it would therefore compare this frequency against the
+    // eighth partial - about 288 Hz away, well outside the 6.25 Hz window -
+    // and this case would fail; the fifth harmonic used in an earlier
+    // revision of this test rounds to the same index with or without
+    // inversion and could not catch that regression.
+    const float stretchedSeventh = root
+        * neuramar::stretchedHarmonicRatio(7.0f, inharmonicity);
+    expect(SampleLearner::belongsToSubtractedHarmonicForTests(
+               stretchedSeventh, 5.0f, root, inharmonicity),
+           "a stiff-string partial did not invert back to its own harmonic "
+           "index");
+}
+
 void testHighRegisterRenderThroughput(const neuramar::NeuralModel& model)
 {
     neuramar::NeuramarEngine engine;
@@ -7008,6 +7169,7 @@ int main()
     testResamplerAccuracyAndCost();
     testResamplerHostileInputs();
     testConditionSampleHostileInputs();
+    testAirFitSubtractedHarmonicGuards();
     if (fixture.first.model)
     {
         testLearnedPitchContour(*fixture.first.model);
