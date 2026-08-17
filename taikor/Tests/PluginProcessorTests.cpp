@@ -71,6 +71,12 @@ bool bufferIsFinite (const juce::AudioBuffer<float>& buffer)
     return true;
 }
 
+float angularDistance (float first, float second)
+{
+    const auto difference = first - second;
+    return std::abs (std::atan2 (std::sin (difference), std::cos (difference)));
+}
+
 // Renders one block containing a single note-on at the start.
 float renderNote (TaikorAudioProcessor& processor, int midiNote, float velocity,
                   int blocks = 1)
@@ -187,6 +193,7 @@ double dominantLowPartial (TaikorAudioProcessor& processor, int midiNote,
 void testParameterLayoutAndDefaults()
 {
     TaikorAudioProcessor processor;
+    namespace pids = taikor::parameters;
 
     const auto& hostParameters = processor.getParameters();
     expect (hostParameters.size() == taikor::parameters::parameterCount,
@@ -217,6 +224,24 @@ void testParameterLayoutAndDefaults()
     expect (ids.size() == static_cast<std::size_t> (taikor::parameters::parameterCount),
             "parameter IDs are not unique");
 
+    const std::array<const char*, 25> expectedParameterIds {{
+        pids::headDiameter, pids::bodyDepth, pids::tension, pids::headMaterial,
+        pids::shellMaterial, pids::resonantTension, pids::cavityCoupling,
+        pids::headDamping, pids::shellResonance, pids::pitch,
+        pids::bachiHardness, pids::strikePosition, pids::velocityDepth,
+        pids::tensionModulation, pids::strikeNoise, pids::humanise,
+        pids::octaveBody, pids::micDistance, pids::micSpread,
+        pids::stereoWidth, pids::drive, pids::output, pids::strikeAzimuth,
+        pids::performer, pids::velocityCurve,
+    }};
+    for (std::size_t index = 0; index < expectedParameterIds.size(); ++index)
+    {
+        const auto* ranged = dynamic_cast<const juce::RangedAudioParameter*> (
+            hostParameters[static_cast<int> (index)]);
+        expect (ranged != nullptr && ranged->paramID == expectedParameterIds[index],
+                "host parameter order changed at slot " + std::to_string (index));
+    }
+
     // The former continuous Octave Body morph is now a two-position product
     // choice. Its established ID and normalised endpoints remain so old
     // projects restore; automation values snap to the nearest named layout.
@@ -239,8 +264,49 @@ void testParameterLayoutAndDefaults()
                 "a high Drum Layout automation value did not snap to 4 Drums");
     }
 
-    namespace pids = taikor::parameters;
-    const std::array<std::pair<const char*, float>, 22> expectedDefaults {{
+    if (auto* performer = processor.parameters.getParameter (pids::performer))
+    {
+        expect (performer->getName (64) == "Performer"
+                    && dynamic_cast<juce::AudioParameterChoice*> (performer) != nullptr
+                    && performer->isDiscrete() && performer->getNumSteps() == 4
+                    && ! performer->isAutomatable(),
+                "Performer is not a four-position choice");
+        expect (performer->convertFrom0to1 (0.0f) == 0.0f
+                    && performer->convertFrom0to1 (1.0f) == 3.0f,
+                "Performer does not cover the P1-P4 index range");
+        expect (performer->getText (0.0f, 64) == "P1"
+                    && performer->getText (1.0f, 64) == "P4",
+                "Performer does not name its endpoints P1 and P4");
+    }
+
+    if (auto* curve = processor.parameters.getParameter (pids::velocityCurve);
+        curve != nullptr
+            && dynamic_cast<juce::AudioParameterFloat*> (curve) != nullptr)
+    {
+        const auto& range = curve->getNormalisableRange();
+        expect (curve->getName (64) == "Velocity Curve"
+                    && std::abs (range.start + 1.0f) < 1.0e-7f
+                    && std::abs (range.end - 1.0f) < 1.0e-7f
+                    && std::abs (range.interval - 0.01f) < 1.0e-7f
+                    && std::abs (curve->getDefaultValue() - 0.5f) < 1.0e-7f,
+                "Velocity Curve is not a default-linear bipolar control");
+        expect (curve->getText (0.0f, 64) == "Soft 100"
+                    && curve->getText (0.5f, 64) == "Linear"
+                    && curve->getText (1.0f, 64) == "Hard 100",
+                "Velocity Curve does not name its soft, linear and hard anchors");
+        expect (std::abs (curve->convertFrom0to1 (
+                             curve->getValueForText ("Soft 37")) + 0.37f) < 1.0e-4f
+                    && std::abs (curve->convertFrom0to1 (
+                                     curve->getValueForText ("Hard 42")) - 0.42f)
+                           < 1.0e-4f,
+                "Velocity Curve text does not round-trip its bipolar values");
+    }
+    else
+    {
+        expect (false, "Velocity Curve is not a continuous float parameter");
+    }
+
+    const std::array<std::pair<const char*, float>, 25> expectedDefaults {{
         { pids::headDiameter, 150.0f },  { pids::bodyDepth, 0.5f },
         { pids::tension, 0.62f },        { pids::headMaterial, 0.75f },
         { pids::shellMaterial, 0.8f },   { pids::resonantTension, 0.5f },
@@ -252,11 +318,27 @@ void testParameterLayoutAndDefaults()
         { pids::octaveBody, 1.0f },      { pids::micDistance, 16.0f },
         { pids::micSpread, 0.55f },      { pids::stereoWidth, 0.5f },
         { pids::drive, 0.0f },           { pids::output, -22.5f },
+        { pids::strikeAzimuth, 0.0f },   { pids::performer, 0.0f },
+        { pids::velocityCurve, 0.0f },
     }};
 
     for (const auto& [id, expected] : expectedDefaults)
         expect (std::abs (parameterValue (processor, id) - expected) < 1.0e-4f,
                 std::string ("unexpected default for ") + id);
+
+    // Output headroom is calibrated inside the model, not by changing this
+    // established host curve. Recorded normalised automation must therefore
+    // retain the exact -24..+6 dB mapping as well as the factory value.
+    const auto* output = processor.parameters.getParameter (pids::output);
+    expect (output != nullptr, "missing Output parameter");
+    if (output != nullptr)
+    {
+        expect (output->convertTo0to1 (-24.0f) == 0.0f
+                    && output->convertTo0to1 (6.0f) == 1.0f,
+                "Output's host automation endpoints changed");
+        expect (std::abs (output->convertTo0to1 (-22.5f) - 0.05f) < 1.0e-7f,
+                "Output's factory automation position changed");
+    }
 
     // The engine block the processor hands the DSP must reflect the parameters,
     // including the two that are presented in centimetres.
@@ -269,6 +351,18 @@ void testParameterLayoutAndDefaults()
     expect (std::abs (engineParameters.outputGain
                       - juce::Decibels::decibelsToGain (-22.5f)) < 1.0e-4f,
             "output must reach the engine as a linear gain");
+    setParameterValue (processor, pids::strikeAzimuth, 90.0f);
+    expect (std::abs (processor.snapshotEngineParameters().strikeAzimuth
+                      - juce::MathConstants<float>::halfPi) < 1.0e-5f,
+            "strike azimuth must reach the engine in radians");
+    setParameterValue (processor, pids::strikeAzimuth, 0.0f);
+    setParameterValue (processor, pids::performer, 2.0f);
+    expect (processor.snapshotEngineParameters().performer == 2,
+            "Performer choice must reach the engine as its discrete index");
+    setParameterValue (processor, pids::velocityCurve, -0.63f);
+    expect (std::abs (processor.snapshotEngineParameters().velocityCurve + 0.63f)
+                < 1.0e-4f,
+            "Velocity Curve must reach the engine unchanged");
 
     // The default drum must be the o-daiko the documentation describes. This
     // is the plug-in layer's half of the same statement the DSP suite makes:
@@ -280,6 +374,142 @@ void testParameterLayoutAndDefaults()
             "the default drum is not in the o-daiko range");
     expect (measurements.breathingModeHz > measurements.loadedFundamentalHz,
             "the cavity must lift the breathing mode above the fundamental");
+}
+
+void testStrikeControllers()
+{
+    TaikorAudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+    setParameterValue (processor, taikor::parameters::humanise, 0.0f);
+    setParameterValue (processor, taikor::parameters::strikeAzimuth, 45.0f);
+
+    const auto strikeAfter = [&processor] (int azimuthCc, int positionCc,
+                                           bool reset = false)
+    {
+        processor.requestPanic();
+        juce::AudioBuffer<float> buffer { 2, blockSize };
+        juce::MidiBuffer midi;
+        constexpr int eventSample = 37;
+        if (azimuthCc >= 0)
+            midi.addEvent (juce::MidiMessage::controllerEvent (1, 16, azimuthCc),
+                           eventSample);
+        if (positionCc >= 0)
+            midi.addEvent (juce::MidiMessage::controllerEvent (1, 17, positionCc),
+                           eventSample);
+        if (reset)
+            midi.addEvent (juce::MidiMessage::controllerEvent (1, 121, 0), eventSample);
+        midi.addEvent (juce::MidiMessage::noteOn (
+                           1, taikor::midiNoteFor (taikor::Articulation::Don, 0), 1.0f),
+                       eventSample);
+        processor.processBlock (buffer, midi);
+
+        taikor::DrumVisualState visual;
+        processor.getVisualState (visual);
+        return visual;
+    };
+
+    const auto mappedLow = strikeAfter (32, 0);
+    const auto expectedLowAngle = -0.5f * juce::MathConstants<float>::pi;
+    expect (angularDistance (mappedLow.strikeAngle, expectedLowAngle) < 1.0e-5f,
+            "CC16 did not map its value to the absolute strike azimuth");
+    expect (mappedLow.strikeRadius < 1.0e-5f,
+            "CC17 zero did not map Strike Position to its centre endpoint");
+    auto measuredOverride = processor.snapshotEngineParameters();
+    measuredOverride.strikeAzimuth = expectedLowAngle;
+    measuredOverride.strikePosition = -1.0f;
+    const auto expectedOverridePitch = taikor::TaikoEngine::measure (
+        measuredOverride, 0, 0.0f, sampleRate).soundingHz;
+    expect (std::abs (processor.measureDrum (0).soundingHz - expectedOverridePitch)
+                < 1.0e-5f,
+            "the numerical readout ignored the live strike controllers");
+
+    const auto mappedHigh = strikeAfter (96, 127);
+    const auto expectedHighAngle =
+        (32.0f / 63.0f) * juce::MathConstants<float>::pi;
+    expect (angularDistance (mappedHigh.strikeAngle, expectedHighAngle) < 1.0e-5f,
+            "CC16 mapping is not linear across the head");
+    expect (std::abs (mappedHigh.strikeRadius - 0.47f) < 1.0e-5f,
+            "CC17 maximum did not map Strike Position to its rim endpoint");
+
+    const auto mappedCentre = strikeAfter (64, 64);
+    expect (angularDistance (mappedCentre.strikeAngle, 0.0f) < 1.0e-7f,
+            "CC16's standard centre value did not map to zero azimuth");
+    expect (std::abs (mappedCentre.strikeRadius - 0.15f) < 1.0e-7f,
+            "CC17's standard centre value did not preserve written position");
+
+    // Event order, not merely sample number, defines a two-stick performance.
+    // A note inserted before same-sample coordinate CCs uses the point already
+    // being held; those CCs then belong to the following note.
+    {
+        juce::AudioBuffer<float> clearBuffer { 2, blockSize };
+        juce::MidiBuffer clearMidi;
+        clearMidi.addEvent (juce::MidiMessage::controllerEvent (1, 121, 0), 0);
+        processor.processBlock (clearBuffer, clearMidi);
+
+        juce::AudioBuffer<float> buffer { 2, blockSize };
+        juce::MidiBuffer midi;
+        constexpr int eventSample = 37;
+        midi.addEvent (juce::MidiMessage::noteOn (
+                           1, taikor::midiNoteFor (taikor::Articulation::Don, 0), 1.0f),
+                       eventSample);
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, 16, 32), eventSample);
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, 17, 0), eventSample);
+        processor.processBlock (buffer, midi);
+
+        taikor::DrumVisualState first;
+        processor.getVisualState (first);
+        expect (angularDistance (first.strikeAngle,
+                                 juce::MathConstants<float>::pi * 0.25f) < 1.0e-5f
+                    && std::abs (first.strikeRadius - 0.15f) < 1.0e-5f,
+                "same-sample CCs inserted after a note moved that earlier note");
+
+        juce::AudioBuffer<float> nextBuffer { 2, blockSize };
+        juce::MidiBuffer nextMidi;
+        nextMidi.addEvent (juce::MidiMessage::noteOn (
+                               1, taikor::midiNoteFor (taikor::Articulation::Don, 0),
+                               1.0f),
+                           0);
+        processor.processBlock (nextBuffer, nextMidi);
+        taikor::DrumVisualState next;
+        processor.getVisualState (next);
+        expect (angularDistance (next.strikeAngle,
+                                 -juce::MathConstants<float>::halfPi) < 1.0e-5f
+                    && next.strikeRadius < 1.0e-5f,
+                "same-sample CCs did not become the following note's coordinates");
+    }
+
+    // CC121 and the following note share a timestamp. In insertion order the
+    // reset must clear both live overrides before that note is struck, taking
+    // it back to the host controls (45 degrees and the written Don radius).
+    const auto reset = strikeAfter (-1, -1, true);
+    expect (angularDistance (reset.strikeAngle,
+                             juce::MathConstants<float>::pi * 0.25f) < 1.0e-5f,
+            "CC121 did not clear the live azimuth override before the note");
+    expect (std::abs (reset.strikeRadius - 0.15f) < 1.0e-5f,
+            "CC121 did not clear the live position override before the note");
+
+    // Loading a preset is a gesture boundary. A live CC must not continue to
+    // shadow the restored host coordinates after the state requests its panic.
+    juce::MemoryBlock hostState;
+    processor.getStateInformation (hostState);
+    juce::ignoreUnused (strikeAfter (32, 0));
+    processor.setStateInformation (hostState.getData(),
+                                   static_cast<int> (hostState.getSize()));
+    juce::AudioBuffer<float> restoredBuffer { 2, blockSize };
+    juce::MidiBuffer restoredMidi;
+    restoredMidi.addEvent (juce::MidiMessage::noteOn (
+                               1, taikor::midiNoteFor (
+                                      taikor::Articulation::Don, 0), 1.0f),
+                           0);
+    processor.processBlock (restoredBuffer, restoredMidi);
+    taikor::DrumVisualState restored;
+    processor.getVisualState (restored);
+    expect (angularDistance (restored.strikeAngle,
+                             juce::MathConstants<float>::pi * 0.25f) < 1.0e-5f
+                && std::abs (restored.strikeRadius - 0.15f) < 1.0e-5f,
+            "state restore left stale live strike controllers over the host point");
+
+    processor.releaseResources();
 }
 
 void testBusLayoutAndTail()
@@ -680,6 +910,9 @@ void testStateRoundTrip()
     setParameterValue (processor, pids::headDiameter, 88.5f);
     setParameterValue (processor, pids::micSpread, 0.13f);
     setParameterValue (processor, pids::output, -3.5f);
+    setParameterValue (processor, pids::strikeAzimuth, -73.5f);
+    setParameterValue (processor, pids::performer, 3.0f);
+    setParameterValue (processor, pids::velocityCurve, 0.64f);
 
     juce::MemoryBlock state;
     processor.getStateInformation (state);
@@ -695,11 +928,22 @@ void testStateRoundTrip()
             "mic spread did not survive a state round trip");
     expect (std::abs (parameterValue (restored, pids::output) - (-3.5f)) < 1.0e-2f,
             "output did not survive a state round trip");
+    expect (std::abs (parameterValue (restored, pids::strikeAzimuth) - (-73.5f))
+                < 1.0e-2f,
+            "strike azimuth did not survive a state round trip");
+    expect (parameterValue (restored, pids::performer) == 3.0f,
+            "Performer did not survive a state round trip");
+    expect (std::abs (parameterValue (restored, pids::velocityCurve) - 0.64f)
+                < 1.0e-3f,
+            "Velocity Curve did not survive a state round trip");
 
     // A stored tree that predates a control must restore that control to its
     // default rather than to whatever the instance happened to be holding.
     TaikorAudioProcessor partial;
     setParameterValue (partial, pids::humanise, 0.99f);
+    setParameterValue (partial, pids::strikeAzimuth, 135.0f);
+    setParameterValue (partial, pids::performer, 3.0f);
+    setParameterValue (partial, pids::velocityCurve, -1.0f);
 
     juce::ValueTree trimmed { partial.parameters.state.getType() };
     juce::ValueTree keep { "PARAM" };
@@ -717,6 +961,14 @@ void testStateRoundTrip()
             "a stored parameter must be restored");
     expect (std::abs (parameterValue (partial, pids::humanise) - 0.4f) < 1.0e-3f,
             "a parameter missing from the stored tree must return to its default");
+    expect (std::abs (parameterValue (partial, pids::strikeAzimuth)) < 1.0e-4f,
+            "a legacy state missing Strike Azimuth must restore it to zero");
+    expect (parameterValue (partial, pids::performer) == 0.0f,
+            "a legacy state missing Performer must restore it to P1");
+    const auto restoredCurve = parameterValue (partial, pids::velocityCurve);
+    expect (std::abs (restoredCurve) < 1.0e-4f,
+            "a legacy state missing Velocity Curve must restore it to Linear: "
+                + std::to_string (restoredCurve));
 
     // Octave Body was continuous in older sessions. The retained parameter ID
     // must let those raw values restore into the nearest Drum Layout endpoint.
@@ -778,7 +1030,8 @@ void testUiQueueAndLifecycle()
     // Overrunning the queue must drop events rather than block or corrupt.
     for (int index = 0; index < 4096; ++index)
         processor.triggerFromUi (
-            static_cast<taikor::Articulation> (index % taikor::articulationCount),
+            static_cast<taikor::Articulation> (
+                index % static_cast<int> (taikor::articulationCount)),
             (index % 6) - 2, 0.7f);
 
     for (int block = 0; block < 8; ++block)
@@ -838,6 +1091,58 @@ void testEditorRendering()
     expect (editor->getWidth() == editorDesignWidth
                 && editor->getHeight() == editorDesignHeight,
             "the editor did not open at its design size");
+
+    juce::Component* azimuthKnob = nullptr;
+    for (int index = 0; index < editor->getNumChildComponents(); ++index)
+        if (auto* child = editor->getChildComponent (index);
+            child != nullptr && child->getName() == "AZIMUTH")
+            azimuthKnob = child;
+    expect (azimuthKnob != nullptr && azimuthKnob->isVisible()
+                && ! azimuthKnob->getBounds().isEmpty(),
+            "the Strike Azimuth parameter has no laid-out editor knob");
+
+    TaikorKnob* performerKnob = nullptr;
+    for (int index = 0; index < editor->getNumChildComponents(); ++index)
+        if (auto* child = editor->getChildComponent (index);
+            child != nullptr && child->getName() == "PERFORMER")
+            performerKnob = dynamic_cast<TaikorKnob*> (child);
+    expect (performerKnob != nullptr && performerKnob->isVisible()
+                && ! performerKnob->getBounds().isEmpty(),
+            "the Performer parameter has no laid-out editor knob");
+    if (performerKnob != nullptr)
+    {
+        expect (performerKnob->slider.getValue() == 0.0
+                    && performerKnob->slider.getTextFromValue (0.0) == "P1",
+                "the Performer editor control does not open on P1");
+        performerKnob->slider.setValue (3.0, juce::sendNotificationSync);
+        expect (parameterValue (processor, taikor::parameters::performer) == 3.0f
+                    && performerKnob->slider.getTextFromValue (3.0) == "P4",
+                "the Performer editor control is not attached through P4");
+    }
+
+    TaikorKnob* velocityCurveKnob = nullptr;
+    for (int index = 0; index < editor->getNumChildComponents(); ++index)
+        if (auto* child = editor->getChildComponent (index);
+            child != nullptr && child->getName() == "CURVE")
+            velocityCurveKnob = dynamic_cast<TaikorKnob*> (child);
+    expect (velocityCurveKnob != nullptr && velocityCurveKnob->isVisible()
+                && ! velocityCurveKnob->getBounds().isEmpty(),
+            "the Velocity Curve parameter has no laid-out editor knob");
+    if (velocityCurveKnob != nullptr)
+    {
+        const auto curveValue = velocityCurveKnob->slider.getValue();
+        const auto curveText = velocityCurveKnob->slider.getTextFromValue (curveValue);
+        expect (std::abs (curveValue) < 1.0e-7 && curveText == "Linear",
+                "the Velocity Curve editor control does not open on Linear: "
+                    + std::to_string (curveValue) + " / " + curveText.toStdString());
+        velocityCurveKnob->slider.setValue (-1.0, juce::sendNotificationSync);
+        expect (std::abs (parameterValue (
+                             processor, taikor::parameters::velocityCurve) + 1.0f)
+                           < 1.0e-7f
+                    && velocityCurveKnob->slider.getTextFromValue (-1.0)
+                           == "Soft 100",
+                "the Velocity Curve editor control is not attached through Soft 100");
+    }
 
     if (auto* constrainer = editor->getConstrainer())
     {
@@ -976,6 +1281,7 @@ int main()
     testBusLayoutAndTail();
     testNoteMappingAndRendering();
     testOctavesRaisePitchThroughThePlugin();
+    testStrikeControllers();
     testControllersAndPitchBend();
     testParametersReachTheEngine();
     testStateRoundTrip();

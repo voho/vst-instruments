@@ -142,6 +142,28 @@ public:
     [[nodiscard]] const std::vector<float>& left() const noexcept { return left_; }
     [[nodiscard]] const std::vector<float>& right() const noexcept { return right_; }
 
+    // Append four already-rendered, equally long performances at unity total
+    // gain. This is the same routing a user gets from four layered instances.
+    void appendAverage (const std::array<const Take*, 4>& performances)
+    {
+        const auto frames = performances.front()->left_.size();
+        left_.reserve (left_.size() + frames);
+        right_.reserve (right_.size() + frames);
+
+        for (std::size_t frame = 0; frame < frames; ++frame)
+        {
+            float left = 0.0f;
+            float right = 0.0f;
+            for (const auto* performance : performances)
+            {
+                left += performance->left_[frame];
+                right += performance->right_[frame];
+            }
+            left_.push_back (0.25f * left);
+            right_.push_back (0.25f * right);
+        }
+    }
+
     [[nodiscard]] bool finite() const noexcept
     {
         for (std::size_t index = 0; index < left_.size(); ++index)
@@ -587,9 +609,75 @@ Take renderMicSpreadSweep()
                                  Articulation::Ka, 0, 0.60, 1.4);
 }
 
-const std::array<Demo, 25>& demos()
+// Authored polar placement with no random travel: left, dead centre and right,
+// followed by the same off-centre Don walking once around the head.
+Take renderPolarStrikes()
 {
-    static const std::array<Demo, 25> table {{
+    auto parameters = defaultVoicing();
+    parameters.humanise = 0.0f;
+    parameters.outputGain = 0.04f;
+    Take take (parameters);
+    take.rest (0.10);
+
+    constexpr float pi = 3.14159265358979323846f;
+    for (const auto [position, azimuth] :
+         { std::pair { 0.0f, pi }, std::pair { -1.0f, 0.0f },
+           std::pair { 0.0f, 0.0f } })
+    {
+        parameters.strikePosition = position;
+        parameters.strikeAzimuth = azimuth;
+        take.setParameters (parameters);
+        take.hit (Articulation::Don, 0, 0.90f, 0.78);
+    }
+
+    parameters.strikePosition = 1.0f;
+    for (const float azimuth :
+         { 0.0f, 0.25f * pi, 0.5f * pi, 0.75f * pi,
+           pi, -0.75f * pi, -0.5f * pi, -0.25f * pi })
+    {
+        parameters.strikeAzimuth = azimuth;
+        take.setParameters (parameters);
+        take.hit (Articulation::Don, 0, 0.82f, 0.55);
+    }
+
+    take.rest (1.8);
+    return take;
+}
+
+Take renderPerformerPhrase (int performer)
+{
+    auto parameters = defaultVoicing();
+    parameters.humanise = 0.7f;
+    parameters.performer = performer;
+    Take take (parameters);
+    take.rest (0.08);
+    take.hit (Articulation::Don, 0, 0.90f, 0.34);
+    take.hit (Articulation::Ka, 0, 0.58f, 0.18);
+    take.hit (Articulation::Tsu, 0, 0.52f, 0.18);
+    take.hit (Articulation::Don, 0, 0.82f, 0.34);
+    take.hit (Articulation::DonRim, 0, 0.78f, 1.45);
+    return take;
+}
+
+// The first phrase is four phase-locked P1 copies. The second changes only
+// their Performer choices to P1-P4; both layers retain unity total gain.
+Take renderPerformerEnsemble()
+{
+    auto p1 = renderPerformerPhrase (0);
+    auto p2 = renderPerformerPhrase (1);
+    auto p3 = renderPerformerPhrase (2);
+    auto p4 = renderPerformerPhrase (3);
+
+    Take take (defaultVoicing());
+    take.appendAverage ({ &p1, &p1, &p1, &p1 });
+    take.rest (0.55);
+    take.appendAverage ({ &p1, &p2, &p3, &p4 });
+    return take;
+}
+
+const std::array<Demo, 27>& demos()
+{
+    static const std::array<Demo, 27> table {{
         { "01-stroke-vocabulary.wav",
           "All four strokes on the o-daiko, in keyboard order",
           renderVocabulary },
@@ -641,6 +729,12 @@ const std::array<Demo, 25>& demos()
         { "25-ensemble-piece.wav",
           "A longer piece moving between all four drums of the grid",
           renderEnsemblePiece },
+        { "26-polar-strikes.wav",
+          "Fixed left, centre and right strikes, then one circuit around the head",
+          renderPolarStrikes },
+        { "27-performer-ensemble.wav",
+          "Phase-locked P1 copies, then the same phrase layered as P1-P4",
+          renderPerformerEnsemble },
     }};
     return table;
 }

@@ -10,7 +10,7 @@ if the step were reverted.
 
 | Product | What it is | Price | Scale |
 | --- | --- | ---: | --- |
-| Sonica **TAIKO THUNDER: The Ultimate Collection** | Kontakt Player, 20 percussion instruments played by Japanese taiko performers | $695 | Seven microphone channels at 24-bit/96 kHz, 19 sampled hit positions per hand, dozens of articulations, 1,400+ MIDI grooves |
+| Sonica **TAIKO THUNDER: The Ultimate Collection** | Kontakt Player, 20 percussion instruments played by Japanese taiko performers | $695 | Solo or two- to four-person ensemble function; seven microphone channels at 24-bit/96 kHz; 19 sampled positions total across one diameter—nine left, centre, nine right—with independently controlled hands; dozens of articulations; 1,400+ MIDI grooves |
 | In Session Audio **Taiko Creator** | Kontakt, 24 drums plus gongs, cymbals, sticks and vocalisations | $139 | 9,881 samples; every head hit is 7 round robins × 7 velocity layers; several mic perspectives; suite-based MIDI content |
 | 8Dio **Epic Taiko Ensemble** / **Solo Taiko** | Kontakt, ensemble and solo taiko | $148 / $198 | 2,900 and 4,200 samples; up to 8 velocity layers at 10 round robins; two microphone positions; articulation browser and step sequencer |
 | Impact Soundworks **Kageyama Taikos** | Kontakt, 9 solo instruments played by Isaku Kageyama | $99 | Two mono spot positions plus a stereo overhead, 24-bit/48 kHz |
@@ -19,14 +19,16 @@ if the step were reverted.
 Sources:
 
 - [TAIKO THUNDER: The Ultimate Collection — Sonica Instruments](https://sonica.jp/instruments/en/product/taiko-thunder-the-ultimate-collection/)
-  and its [KVR listing](https://www.kvraudio.com/product/taiko-thunder-the-ultimate-collection-by-sonica-instruments)
+  and its [KVR listing](https://www.kvraudio.com/product/taiko-thunder-the-ultimate-collection-by-sonica-instruments);
+  Sonica's development blogs define [nine left + centre + nine right](https://sonica.jp/instruments/en/taikothunder_dev_blog2/)
+  and the [independent hand controls](https://sonica.jp/instruments/en/taikothunder_dev_blog3/)
 - [Taiko Creator — In Session Audio](https://insessionaudio.com/products/taiko-creator/) and the
   [Sound On Sound review](https://www.soundonsound.com/reviews/insession-audio-taiko-creator)
 - [Epic Taiko Ensemble — 8Dio](https://8dio.com/products/epic-taiko-ensemble-vst) and
   [Solo Taiko — 8Dio](https://8dio.com/products/the-new-solo-taiko-drum-vst-au-aax-kontakt-instruments-samples)
 - [Kageyama Taikos — Impact Soundworks](https://impactsoundworks.com/product/kageyama-taikos-kp/)
-- [Supreme Drums Taiko — Sound Magic](https://www.kvraudio.com/product/supreme-drums-taiko-by-sound-magic),
-  developer notes on the hybrid approach on [KVR](https://www.kvraudio.com/forum/viewtopic.php?p=9203245)
+- [Supreme Drums Taiko — Sound Magic](https://neovst.com/product/supreme-drums-taiko__trashed/?lang=ja),
+  plus developer notes on the hybrid approach on [KVR](https://www.kvraudio.com/forum/viewtopic.php?p=9203245)
 - Player opinion on what separates them:
   [VI-Control: what are the best sample libraries for taiko percussion](https://vi-control.net/community/threads/what-are-the-best-sample-libraries-for-taiko-style-percussion.75225/),
   [VI-Control: which taiko library to buy](https://vi-control.net/community/threads/poll-which-taiko-low-percussion-deep-drum-library-to-buy.147283/),
@@ -65,9 +67,12 @@ there were essentially no scientific publications on taiko acoustics at all.
 
 Measured from the shipping engine at its factory settings, 48 kHz.
 
-**What it already wins on.** Strike position is continuous rather than nineteen
-sampled points. Velocity is continuous rather than seven layers, and the timbre
-follows it through the Hertz contact law rather than through crossfades.
+**What it already wins on.** Each articulation's strike point is continuous in
+radius and azimuth rather than selected from nineteen sampled points on one
+diameter. Velocity is continuous rather than seven layers, and the timbre
+follows it through the Hertz contact law rather than through crossfades. An
+identity-default curve now calibrates light and heavy controllers before that
+physical map without revoicing the drum.
 Round robins do not exist because nothing is replayed. The stereo image comes
 from evanescent near-field decay across two points of the same membrane. Head
 size, tension, material, shell material, body depth and head coupling are
@@ -137,10 +142,12 @@ that, and the one modelled competitor does not describe its model at all.
    17.0 dB for a Buzz. A real taiko covers a great deal more than that between a
    ghost tap and a full-arm ō-daiko stroke.
 
-6. **There is no ensemble.** Kumi-daiko is an ensemble form and every library
-   above sells ensemble content; Taikor plays exactly one drum struck by exactly
-   one player. Sixteen voices of the same drum are sixteen coherent copies, not
-   an ensemble.
+6. **One instance is one performer.** Kumi-daiko is an ensemble form and every
+   library above sells ensemble content. The initial engine gave separate
+   instances the same deterministic Humanise sequence, so layering the same MIDI
+   made coherent copies rather than distinct players. The appended Performer
+   P1–P4 identity now closes that phase-locking gap for multi-instance ensembles;
+   it does not claim a staged ensemble inside one instance.
 
 7. **There is one microphone perspective.** A close pair from 3 to 40 cm.
    Taiko Thunder ships seven channels. This one is not addressed below and the
@@ -231,8 +238,8 @@ each lands with a test in `Tests/` that fails without it.
   own ring rather than broadband noise, its own noise source so it cannot shift
   the hide's, and a few milliseconds of chatter while the head settles back.
   Closes gap 4b.
-  *Verified by*: the preload must rise with Head Tension and with Head
-  Diameter; a light rim shot must not reach it and a full one must clear it
+  *Verified by*: the preload must rise with Head Tension and remain unchanged
+  with diameter at fixed tension; a light rim shot must not reach it and a full one must clear it
   threefold; Stick Noise 0 must silence it; only the strokes that reach the hoop
   may have it at all; and in the rendered audio a rim shot's high band must open
   up with velocity at least 2 dB faster than a centre stroke's, once each is
@@ -245,7 +252,8 @@ each lands with a test in `Tests/` that fails without it.
   speed from 0.45 m/s to 0.12 m/s and drop the squaring, so velocity is even in
   decibels across its range instead of piling the bottom half onto the floor.
   The top of the range is left exactly where it is, so the loudest stroke the
-  instrument can make does not move and the factory Output stays correct.
+  instrument can make does not move; factory headroom is independently guarded
+  by the hostile-order calibration recorded below.
   Closes gap 5.
   *Verified by*: the peak level span from velocity 0.02 to 1.00 at full Velocity
   Depth must exceed 30 dB for every stroke (it is 34 to 42; it was 22 to 29);
@@ -253,21 +261,30 @@ each lands with a test in `Tests/` that fails without it.
   decibels (they are within 1.2; they were within 2.2); and the loudest single
   stroke at the factory output must still stay clear of the safety limiter.
 
-- [ ] **7. Play the drum as an ensemble.** *Dropped after investigation — see
-  below.*
+- [x] **7. Give layered instances stable performer identities.** Append a
+  persisted, non-automatable four-position Performer choice after every
+  established host slot. P1's salt is zero and retains the established
+  random-sequence arithmetic; P2–P4 salt only the position, speed, contact time
+  and stochastic variation already enabled by Humanise. At Humanise zero all four
+  remain bit-identical. No choice changes tuning, diameter, level or any physical
+  drum coefficient.
+  *Verified by*: each identity must repeat bit-exactly, all six identity pairs
+  must differ in both the complete hit and an isolated resolved-mode hit, and a
+  unity-sum P1–P4 layer must not be only a gain-scaled P1 waveform. Humanise-zero
+  renders must remain identical across identities; state, legacy-default,
+  editor and hostile-headroom tests cover the appended host parameter.
 
 ## What was investigated and not done
 
-**The ensemble (gap 6).** The physically honest form is several drums of
-slightly different size and tension, standing at their own distances and angles
-from the close pair, struck with human timing spread — not a chorus. That is a
-new automatable parameter, and a new parameter means editing
-`PluginProcessor.*`, `PluginEditor.*` and `Tests/PluginProcessorTests.cpp`,
-none of which can be compiled in this environment. It also needs the voice pool
-raised well above sixteen to keep a roll playable with four players, which
-changes the engine's memory footprint by a factor it is not obviously worth. The
-work is real and the gap is real; it wants a session that can build the JUCE
-target, so it is left undone rather than shipped unverified.
+**An ensemble inside one instance (gap 6, narrowed).** The first pass correctly
+rejected a hidden chorus made by detuning, resizing or re-levelling one drum, and
+also rejected raising the voice pool for a speculative internal four-player
+stage. That larger feature remains undone. The later Performer step solves the
+concrete failure users hit when doing the honest compositional thing in a DAW:
+layer two to four instances, route the same part to them and select distinct
+P1–P4 identities. Timing and authored drum differences remain the arranger's;
+Taikor supplies repeatable non-coherent contact gestures without inventing a
+second drum or room.
 
 **A room or distance perspective (gap 7).** Every competitor sells microphone
 perspectives, and the honest way to add one here would be a room, which this
@@ -345,20 +362,20 @@ work, and it is written up with the rest of what is not planned.
 
 ### What changed in the field
 
-**This is a search-only refresh, and every competitive claim in it is
-second-hand.** When this section was first written no research was possible at
+**This began as a search-only refresh, and every competitive claim in the
+original pass was second-hand.** One later exception is now explicit: Sonica's
+own development blogs were opened to verify the 19-position topology and its
+independent hand controls. Everything else in this historical subsection keeps
+the original search-only evidence boundary. When this section was first written no research was possible at
 all: the session's web-search budget was exhausted and every outbound fetch was
 refused. Budget has since refreshed and this subsection was rewritten from about
-two dozen distinct searches. Direct page fetches are *still* refused —
-`WebFetch` returns `EGRESS_BLOCKED` for every publisher and vendor domain, which
-is an organisation policy denial and was not routed around. So **not one primary
-source was opened.** Everything below is what search-result summaries quote from
-pages that were never read. Nothing is written as though a page had been read,
-no price, version, date or quotation appears unless a search result stated it,
-and — following the rule this document already applies to its literature — no
-URLs are given for the new material either, because a URL that has not been
-fetched is not a citation. The list of what remains unverified, at the end of
-this subsection, is the honest bottom line of the whole exercise.
+two dozen distinct searches. Direct page fetches were refused at that time:
+`WebFetch` returned `EGRESS_BLOCKED` for every publisher and vendor domain. In
+that pass **not one primary source was opened**; the two Sonica pages cited above
+are a later, narrow verification. Everything else below is what search-result
+summaries quoted from pages that were never read. No price, version, date or
+quotation appears unless a search result stated it. The list of what remains
+unverified, at the end of this subsection, is the honest bottom line.
 
 **The product table survives contact with search.** Results continue to report
 Taiko Thunder at a $695 regular price with seven microphone channels and
@@ -512,13 +529,13 @@ was not opened. Piana et al.'s finding that the field has essentially no
 literature still stands, so the stand-mode gap above is unlikely to close from
 outside.
 
-**What is still unverified, and why.** This list is the part of this subsection
-that matters most, because the constraint that produced it has not gone away:
-searching is not reading, and no page was read.
+**What is still unverified, and why.** Searching is not reading. Apart from the
+two Sonica development pages explicitly cited above, the constraint that
+produced this subsection still applies.
 
-- **Every figure above.** Search summaries paraphrase, can be stale, and can be
-  quoting a reseller or a cached page rather than the vendor. None of the
-  numbers in the product table was re-read at its source.
+- **Every figure above except Sonica's 19-position topology.** Search summaries
+  paraphrase, can be stale, and can quote a reseller or cached page rather than
+  the vendor. The other numbers in the product table were not re-read at source.
 - **Today's price of any product in the table.** Taiko Thunder's $695 and
   Kageyama's $99 were repeated by several independent results and are the safest
   of them; the 8Dio pair's $148 and $198 were not corroborated at all this pass;
@@ -531,16 +548,17 @@ searching is not reading, and no page was read.
   listing that was not corroborated anywhere else; only 1.5 has real coverage.
 - **Whether 8Dio still sells the Kontakt editions**, given one retailer marks
   Epic Taiko Ensemble discontinued and the vendor page still offers it.
-- **What any of these products actually measures.** No dynamic range, no
-  round-robin behaviour under repetition, no hit-position count has been
-  measured by anyone, here or elsewhere. "19 sampled hit positions", "7 × 7",
-  "65,536 velocity steps" and "127 dynamic layers" are all vendor claims relayed
-  at second hand, and the Soundpaint criticism above is the only public evidence
-  that one of those claims does not deliver what it sounds like.
-- **Non-English sources.** Only English-language search was done. Sonica's own
-  development blog, Japanese retail listings and Japanese forum opinion were not
-  searched and would be the obvious next place to look.
-- **All the acoustics references listed above**, which remain unopened.
+- **What any of these products actually measures.** No dynamic range or
+  round-robin behaviour under repetition has been independently measured here.
+  Sonica's own opened pages verify its vendor topology of 19 positions total;
+  "7 × 7", "65,536 velocity steps" and "127 dynamic layers" remain claims
+  relayed at second hand, and the Soundpaint criticism above is the only public
+  evidence that one of those claims does not deliver what it sounds like.
+- **Non-English sources.** Only English-language material was reviewed. Japanese
+  retail listings and Japanese forum opinion remain the obvious next place to
+  look; Sonica's English development blogs are the one vendor-primary addition.
+- **All the acoustics references listed above**, which remain unopened in this
+  competitive refresh.
 
 **Effect on the steps: none.** No step was added, reordered or struck as a
 result of this research, and the five that survived review are left exactly as
@@ -552,13 +570,14 @@ perspective) have not moved at all since the first pass. The two capabilities
 that this research does confirm are table stakes — several microphone
 perspectives, and an ensemble that is a spread of drums rather than a chorus —
 are both already recorded under "What was investigated and not done" from the
-first pass, with reasons that this research does not weaken: the ensemble needs
-a build environment for the plugin target that this work does not have, and a
-room perspective needs impulse responses this repository cannot obtain. The new
-evidence strengthens those entries rather than reopening them, and the Unity
-control and the "mixing solo recordings is not an effective trick" line are
-recorded above so that a future pass with a working build has the shape of what
-to aim at. One finding actively supports the premise the steps serve: the
+first pass. At that time the ensemble needed a build environment for the plugin
+target that the pass did not have, and a room perspective needed impulse
+responses this repository could not obtain. The later Performer tranche closes
+the multi-instance phase-locking failure without reopening the rejected hidden
+detune/chorus design; a captured room remains unavailable. The Unity control
+and the "mixing solo recordings is not an effective trick" line remain recorded
+above as the boundary on any larger internal ensemble. One finding actively
+supports the premise the steps serve: the
 field's answer to expressive resolution is interpolation between recorded
 layers, and the loudest published complaint about it is that listeners hear the
 interpolation as volume rather than as timbre — which is the exact thing a
@@ -1273,6 +1292,8 @@ leaving three. All five rejects are recorded with the rest below.
   discriminator, and it is the plainest statement of how far into the audio this
   step reaches. Every clause written as a guard still passes on the reverted
   engine.
+  **Superseded by “Per-mode finite-column cavity resolve — 2026-08-16” below.**
+  The following records the pre-change measurement and decision.
   **What the single factor does not cover, measured.** `drum.cavityStiffness` is
   solved on the (0,1) volume branch and is then what every axisymmetric mode
   reads, so the modes above the pair are given a column stiffness evaluated at a
@@ -2091,16 +2112,17 @@ candidate number for that height is drawn rather than derived, which is exactly
 what this document exists to refuse. It becomes available the day the stand
 does.
 
-**Two-handed structure in Humanise.** `triggerVoice` reseeds per stroke and
+**Two-handed structure in Humanise.** *Superseded by “Explicit polar strike
+placement — 2026-08-16” below.* `triggerVoice` reseeds per stroke and
 draws position, angle, speed and contact time independently, so a roll varies
 randomly where a player's two hands vary periodically — in level, in timing and,
 because the stereo image comes from the mode shape at each microphone, in
 left–right position. It is genuinely differentiating, since round robins are
-random too and no sampler can produce the periodic structure either. It is not
-here because the engine cannot know the sticking: a MIDI stream does not say
+random too and no sampler can produce the periodic structure either. It was not
+inferred because the engine cannot know the sticking: a MIDI stream does not say
 which hand played a note, and assuming strict alternation would make a
-one-handed passage rock left and right when it should not. It needs a control or
-a heuristic, and both are guesses.
+one-handed passage rock left and right when it should not. The later tranche
+adds explicit coordinates and still refuses that heuristic.
 
 **Temperature and humidity drift.** Ando's AST 33(4) (2012) measurements of a
 nagado head's tension against temperature, humidity and age are cited at the top
@@ -2648,9 +2670,10 @@ depended on how it was hit.
 ### The cause
 
 On a large drum the (0,1) lower branch is not what is heard. It moves the two
-heads against each other, so it displaces no net air, radiates almost nothing,
-and reaches the microphones only through the near field — and it sits down where
-the mounting term is steepest. On the shipping ō-daiko its decay was 12.5 s⁻¹, of
+heads against each other, so it has no monopole moment and reaches the current
+front observer only through the near field — and it sits down where the mounting
+term is steepest. The later finite-separation correction restores its dipole
+radiation without changing that observer. On the shipping ō-daiko its decay was 12.5 s⁻¹, of
 which 11.6 came from the stand and the hoops: a T60 of 0.55 s. The (1,1) mode a
 fifth and a half above it decayed at 3.8 s⁻¹, a T60 of 1.84 s, and over the
 window a listener takes a pitch from it won by five to seven decibels — at every
@@ -2804,11 +2827,12 @@ the drum's bottom two octaves have just moved. The windowed clause beside it —
   about 36 mm, which is what forty-eight of them round a 1.8-*shaku* hoop is — so
   the preload is now `tension × 0.036 m` and is the same force on every drum of
   the family. Nothing else about the tack line scales with the drum.
-- **The factory output level came down 2.5 dB**, from −20.0 to −22.5 dBFS. A rim
+- **The factory Output default came down 2.5 dB**, from −20.0 to −22.5 dBFS. A rim
   shot catches the hoop and the body as well as the head, and the body of a
   five-*shaku* drum is a great deal more of the stroke; the loudest of the sixteen
-  keys now peaks at −0.80 dBFS, still clear of the safety limiter, which is what
-  that level is set by.
+  keys in that single-seed audit peaked at −0.80 dBFS. The later million-order
+  audit in **Bounded tack spectrum** found a rarer crest and supersedes this
+  headroom evidence without changing the public Output parameter.
 
 ### What is still open
 
@@ -3867,8 +3891,9 @@ milliseconds. The correct conclusion is not to pick the cheaper wrong answer.
    mode mobility jointly with deterministic modes carried to measured overlap.
    The fit must preserve contact duration/rebound across sample rates before its
    energy may drive the stochastic observer.
-3. Fit complex near/far radiation for the continuum; its current one-number
-   distance gain can make a far Ka relatively brighter.
+3. Fit complex near/far radiation for the continuum. The coherent-patch law
+   below now prevents the old far-field brightening, but it remains a scalar
+   magnitude approximation with no measured phase, directivity or capsule.
 4. Promote higher cavity modes and the rear head to reciprocal runtime states,
    then split the temporary `Voice` storage and add energy-based mode sleep.
 
@@ -3894,3 +3919,973 @@ and out-of-range values at every octave, the exact 0.5 boundary, cache-revision
 behaviour, the 1 Drum tension ladder and the 4 Drums family diameters. The demo
 asset keeps its stable `20-octave-body.wav` filename, but already renders only
 the two endpoint layouts with Humanise disabled.
+
+## Per-mode finite-column cavity resolve — 2026-08-16
+
+The four axisymmetric membrane pairs no longer reuse the `(0,1)` cavity factor.
+Each pair now solves its own fixed point of `x cot x` against its own
+volume-changing branch. The renderer, analytic observation and tail readout all
+consume the matching cached stiffness. Entry zero deliberately keeps its old
+arithmetic and remains the public readout and octave anchor.
+
+On the factory ō-daiko the factors are **0.822614 / 0.609730 / 0 / 0**. The
+upper branches are **61.3723 / 89.1345 / 144.442 / 202.078 Hz**; reusing entry
+zero would put the last three at **89.7667 / 144.844 / 202.225 Hz**. The change
+is therefore **−12.2 / −4.8 / −1.3 cents**, with no movement of the tuned pair,
+its 32.6503 Hz lower branch or its 61.3723 Hz breathing branch.
+
+The implementation does not pay those three extra solves inside every step of
+the octave transform. A trial resolves only the cavity entries its latched
+tuning mode can observe, then completes entries one to three once on the exact
+winning endpoint. A future higher-axisymmetric tuning identity is explicitly
+guarded and keeps the full trial solve. In paired 10,000-trigger Release runs at
+48 kHz/64 samples, the factory median moved from about **274 to 290 µs** and a
+shallow 1.8 m slack-head stress from about **274 to 303 µs**. The naïve inner-
+loop implementation measured about 515 µs on that stress. No sample-loop work
+was added.
+
+The focused regression checks all four fixed points, the deferred octave path,
+analytic/rendered frequency agreement, the unchanged `(0,1)` path and the
+downward movement from the old shared solve. The complete JUCE-free Release
+suite passes **2/2 in about 53 s**. A fresh 25-take render completed with a
+worst peak of **−3.5 dBFS**;
+the committed review WAVs were not rewritten in this worktree, so comparisons
+use same-machine fresh renders. The canonical Linux nightly refreshes those
+tracked assets after a change lands on `main`.
+
+### Boundary and next gate
+
+This is the last honest improvement available from the scalar positive-
+stiffness cavity approximation. At and above the half-column quarter-wave,
+zero is a continuous truncation, not the mass-like acoustic impedance or its
+poles; higher radial head modes also excite spatial cavity fields rather than a
+uniform one-dimensional pressure. The next cavity step is an explicit passive
+rear-head/cavity state validated against controlled pressure and head-velocity
+captures, following [Suzuki and Hwang
+(2008)](https://www.jstage.jst.go.jp/article/ast/29/3/29_3_215/_pdf/-char/ja).
+
+The broader audit found microphone observation, not another voicing constant,
+to be the largest remaining perceptual gap. Resolved modes still reach each
+capsule through real scalar gains with no propagation phase or complete modal
+radiation pattern. The continuum's flat distance law is corrected in the next
+section; exact coherent radiation remains release-gated on the repository's
+owned force/head-motion/near/far capture contract. Without those measurements a
+compatibility gain cannot distinguish batter radiation, rear-head radiation,
+finite shell, capsule and room effects.
+
+## Wavelength-dependent continuum perspective — 2026-08-16
+
+The unresolved head no longer borrows one resolved mode's microphone gain for
+all five of its octaves. `buildVoiceModes` first measures the same modal-
+receptance anchor at the factory capsule distance, **15.95 cm**, then gives each
+continuum band a coherent patch radius
+
+```text
+R(f) = c_head / (2 f)
+```
+
+and relative pressure gain
+
+```text
+G(f,d) = sqrt((R(f)^2 + d_ref^2) / (R(f)^2 + d^2)).
+```
+
+This is exactly one at the factory position, so the calibrated preset and every
+articulation's continuum balance retain their former level there. Moving the
+pair changes perspective rather than applying another voicing scalar. Long
+membrane wavelengths retain near-field reach; short, locally coherent patches
+approach the bounded `1/d` pressure law. On the factory ō-daiko, moving from 3
+to 40 cm now drops the five band targets by approximately **9.06 / 14.18 /
+18.55 / 21.12 / 22.11 dB**, instead of giving them one flat attenuation. The
+upper limit is the physical point-source ratio, **22.50 dB**.
+
+The direct regression reads every band's calibrated `targetRms`, checks the
+closed equation above, requires the attenuation to rise strictly with centre
+frequency and requires more than 8 dB of additional near-to-far loss from the
+lowest to the highest octave. The isolated middle-band audio guard moves from
+the former 8–15 dB interval to 17–20 dB. Sample-rate, cache-lifecycle and
+per-octave ownership tests remain in place. Structural automation preserves the
+continuum's filter memory and physical decay but rescales every already-ringing
+envelope by its new-to-old distance gain, so moving a live pair affects the tail
+already in the air. A contact that was triggered before the move converts each
+later continuum injection from its saved perspective to the live gain; a focused
+regression matches all five envelopes against a strike triggered directly at the
+new distance. The complete DSP suite passes in about 56 s, and all 25
+demonstrations render; the worst peak remains **−3.5 dBFS**.
+
+### Phase-aware resolved observer: implemented, not released
+
+The released scalar observer now respects the exact azimuthal covariance it can
+represent: a non-axisymmetric circular mode's `cos(m theta)` or `sin(m theta)`
+factor multiplies both the local and propagating terms. The former placement
+added the propagating term afterwards, giving every multipole a false
+omnidirectional floor and nonzero output on a nodal azimuth. All 32 released
+multipole resonators and the matching analytic readout are now checked at a
+node and a lobe. The statistical continuum keeps its former reference
+arithmetic exactly; it is not one coherent multipole.
+
+All 25 demonstrations render after the correction. Against the immediately
+preceding validated render, the largest whole-file RMS move is **0.05 dB** and
+the worst output peak remains **-3.5 dBFS**: the change removes a directionally
+impossible residue without using a hidden level re-voice to make it pass.
+
+The minimum coherent observation architecture is also exercised behind an
+explicit false release gate. For non-axisymmetric resolved modes it evaluates
+the baffled Rayleigh integral over the moving disk, stores a complex residue per
+capsule and reconstructs the damped oscillator's exact quadrature from its two
+states. The released path remains a real scalar radial approximation when the
+gate is off. Axisymmetric observation is deliberately untouched: its present scalar
+contains batter- and rear-head participation, and replacing that with a front
+baffled disk would silently discard the only rear contribution before the rear
+head and cavity become explicit states.
+
+The integration rule uses a 24-point Gauss–Legendre rule after a squared-
+distance mapping for `ka <= 16`; above that it uses one adaptive high-order rule
+in propagation distance. A 256-point reference, the on-axis piston solution,
+non-axisymmetric on-axis nulls, the `ka = 16` transition and a synthetic complex
+delay exercise the numerical and phase conventions. The former eight-point
+prototype was rejected after a shipping shime mode measured about 20.6 dB and
+177 degrees wrong.
+
+A phase-factored `H(ka)` table made runtime interpolation cheap but did not make
+activation real-time safe. Building it measured about **1.72 ms** on the factory
+drum and roughly **210 ms** at hostile supported geometry, and structural
+changes can request that work from the audio thread. A built complex transfer
+also goes stale while live controls can move an already-ringing bank by as much
+as roughly ±52 semitones. The cache therefore does not remove the required
+tuning/readout migration, rear-head separation or owned near/far calibration,
+and the release gate remains false.
+
+Activation is intentionally blocked by three facts, not by missing plumbing:
+
+1. changing the observation changes which partial the current octave solve is
+   heard at, so it needs an explicit tuning migration rather than a hidden side
+   effect;
+2. Pitch automation can move a ringing bank by two octaves while a built
+   radiation residue is frequency-dependent;
+3. no owned near/far pressure plus head-motion capture yet separates absolute
+   batter radiation from the rear head, shell, capsule and room.
+
+The next release gate is therefore the controlled capture contract, followed by
+a fitted positive global pressure calibration, live-frequency residue update,
+readout migration and trigger-cost sweep. Until then this architecture changes
+no production samples.
+
+## Local-palm and shell prototype audit — 2026-08-16
+
+An orientation-resolved diagonal palm prototype was rejected rather than
+released. It reused the existing centre-plus-cardinals rule as angular
+quadrature and assigned separate losses to the cosine and sine members. That
+rule was designed only for the phase-averaged radial projection: four angular
+directions alias `cos²(m theta)` badly at the resolved orders. On an ō-daiko
+`m=8` pair it predicted a **216:1** loss contrast where dense disk integration
+gave **1.14:1**; on a shime `m=3` pair it predicted roughly **14,000:1** where
+the reference was essentially unity. At a centred circular palm it could even
+leave one even-order orientation undamped, which is impossible.
+
+Keeping only separate diagonal losses would also omit
+`integral(phi_cos phi_s)`: at a general palm angle the correct 2-by-2 damping
+block rotates with the patch and has an off-diagonal term. The shortcut instead
+changes its eigenvalues when the coordinate basis rotates. Its large audible
+tail and stereo changes therefore could not be claimed as realism gains. The
+released phase-averaged diagonal palm remains in place.
+
+The mathematically defensible local-palm form remains the positive-semidefinite
+operator
+
+```text
+D = c_A A_p sum_s w_s p_s p_s^T,
+```
+
+A 4-by-19 disk rule verified that operator, but the exact runtime was rejected
+on callback cost: it added about **19.5% of one core at 48 kHz/64 samples** and
+**39.3–41.2% at 96 kHz/32 samples**. With contact active, p99.9 reached
+**462.6 microseconds**, beyond the 96 kHz/32 callback's **333.3 microseconds**
+budget. Compression still required ranks about **21–27** for `1e-4` action
+accuracy, while the Woodbury path remained roughly **9.6% / 19.2%** incremental
+at 48/96 kHz. The released phase-averaged diagonal palm therefore remains in
+place. A coupled local palm is performance- and capture-gated, including an
+independently authored free-hand position for Tsu.
+
+A simultaneous shell prototype duplicated each of the six ring modes into a
+pure cosine/sine radiation doublet. It too was rejected: removing the legacy
+common pickup inverted several wide-pair Ka/rim cases, raised the worst rim
+peak to within 0.03 dB of full scale and broke the required near-to-far image
+narrowing. A calibrated shell migration remains worthwhile, but it needs owned
+body/pressure captures and an explicit mono/side revoice.
+
+## Physical-coordinate automation remap — 2026-08-16
+
+Structural controls can rotate an axisymmetric pair's normal-mode basis even
+when no new strike occurs. Copying state by the old lower/upper branch label was
+therefore not state continuity: on the factory drum, moving Air Coupling from
+zero to 0.85 rotates the first pair by about **43.27 degrees** and the second by
+about **19.17 degrees**.
+
+Each axisymmetric resonator now retains both physical participation coefficients,
+`v_B / sqrt(sigma_B)` and `v_R / sqrt(sigma_R)`. Before a rebuild, the two branch
+states are summed into batter/rear displacement, velocity and pending force
+increment. The resulting physical coordinates are inverse-projected into the
+new eigenbasis. This also handles head-density changes; a hostile one-branch
+Nyquist case uses the corresponding mass-orthogonal projection instead of
+copying an unrelated branch. A live Tsu rate is preserved as a pair total and
+redistributed by the new batter-energy fractions.
+
+A bachi can straddle a structural-control update, so state remapping alone is
+not enough. Every still-active contact receives freshly built sensing and force
+projections from the same new basis, keeping that interaction reciprocal. The
+focused regression crosses both cavity coupling and a simultaneous head-
+material/rear-tension change, seeds independent displacement, velocity and
+pending increments in all four pairs, and holds every physical invariant below
+`2e-5`; refreshed sensing and force projections agree below `2e-6`. A separate
+8 kHz hostile case begins with only a rear-head branch in band, brings its batter
+partner back during the held Tsu, and requires the cached physical patch loss to
+be restored on both rebuilt branches.
+
+Only the five demonstrations that automate structural controls changed in the
+final render; the other 20 remain byte-identical to the preceding validated
+build. All 25 stay below full scale, with a worst peak of **−3.5 dBFS**. This is
+a lifecycle/state-continuity correction, not a new acoustic calibration.
+
+## Strike Position without dead travel — 2026-08-16
+
+This supersedes the historical gap notes above which say Strike Position still
+has dead travel. The released mapping added one fixed `0.32 p` offset to every
+articulation and clamped the result. Because the written radii range from 0.15
+to 0.97, that made **18.8–47.7%** of the control produce a bit-identical contact
+point. The demonstration even placed two Don examples inside the same flat.
+
+The control now retains every established centre, default and rim endpoint but
+uses all of the travel between them. For written radius `rho0` and bipolar
+position `p`, its two available excursions are
+
+```text
+d- = min(0.32, rho0)
+d+ = min(0.32, 0.985 - rho0)
+rho(p) = rho0 + p * (p < 0 ? d- : d+).
+```
+
+| Stroke | `p = -1` | `p = 0` | `p = +1` |
+| --- | ---: | ---: | ---: |
+| Don | 0.000 | 0.150 | 0.470 |
+| Ka | 0.590 | 0.910 | 0.985 |
+| Tsu | 0.000 | 0.200 | 0.520 |
+| Don Rim | 0.650 | 0.970 | 0.985 |
+
+One shared helper feeds trigger geometry, the pitch readout and the contact-time
+measurement. Humanise still adds its physical scatter afterwards. The half of
+each articulation which already had the full 0.32 radius available keeps the
+old multiply/add sequence exactly. The whole shorter half is deliberately
+rescaled, including values which previously moved before reaching the clamp;
+existing nonzero automation on that side therefore lands at a different radius.
+Zero and both endpoints remain bit-compatible, so the migration removes the
+flat without expanding any articulation's established physical range.
+
+The focused regression sweeps 201 controller values for every stroke and
+requires strictly increasing radius, pins all twelve endpoint/default values,
+and proves the already-active half-ranges remain bit-identical. Four audio pairs
+which were formerly sample-identical—one for each stroke—must now differ. This
+is a performance-realism repair, not a timbre calibration: no drum, contact or
+microphone coefficient changed. The complete Release suite passes **2/2 in
+57.5 s**. A fresh 25-take render keeps the previous worst peak of **−3.5 dBFS**;
+24 files are byte-identical to the preceding validated build and only
+`13-strike-position.wav` changes.
+
+## Explicit polar strike placement — 2026-08-16
+
+Strike radius was already a physical input, and the engine already carried a
+real strike azimuth through cosine/sine membrane drive, reciprocal contact and
+the airborne two-capsule path. What was missing was authored control. Strike
+Azimuth is now a ±180° host parameter appended after all 22 established slots,
+so every earlier ID and automation index is unchanged and a legacy state gets
+the 0° default.
+
+CC16 supplies an absolute azimuth and CC17 supplies the existing bipolar radial
+coordinate. Their standard 7-bit centre, 64, maps exactly to zero / As written;
+events are applied sample-accurately before or after a same-sample note according
+to MIDI insertion order. CC121, panic and state restore clear both live
+overrides back to the host controls. The exact numerical pitch readout consumes
+the same live coordinates. The lightweight trigger estimate ranks both members
+of an intentionally detuned cosine/sine pair independently at nonzero angles;
+a 2-octave × 4-position × 73-angle audit now stays within **2.55 cents** of the
+exact dry-contact result, where collapsing the pair formerly missed by as much
+as **628 cents**.
+
+No automatic hand alternation was added. MIDI notes carry no hand identity, and
+inferred alternation would rotate a genuine one-hand roll. A sequencer instead
+sends the coordinates before the note they belong to. This adds no fitted
+acoustic constant and no sample-loop work. At the 0° host default with no live
+override, the former angle-jitter expression stays exact: the existing 25
+demonstrations are byte-identical to the preceding spatial baseline. The new
+26th renderer take holds Humanise at zero, plays fixed left/centre/right points
+and walks one Don around eight azimuths; its raw peak is **−16.7 dBFS**.
+
+The contract is pinned at all layers: DSP tests cover deterministic authored
+points, audible rotation, exact-zero compatibility, split-branch pitch ranking,
+override priority and reset; processor tests pin the 23 slots present in this
+tranche (expanded to 24 by Performer below), legacy state restore, CC16/17
+endpoint/centre mapping, same-sample order, live readout and state-reset
+lifecycle; the renderer keeps takes 1–25 byte-identical while adding only take
+26. Sonica's verified 19-position diameter and independent-hand
+controls are therefore table stakes Taikor now exceeds continuously rather than
+an unimplemented performance gap.
+
+## Contact-spectrum and direct-attack cleanup — 2026-08-16
+
+The hit contained two independent routes that could turn physical contact into
+an artificial noise layer.
+
+First, the resolved bank and the statistical head did not use the same contact
+spectrum. The resolved modes are driven by the solved force, and the analytic
+readout already carries a smooth fit to the Fourier magnitude of the
+`sin(pi t/tau)^1.5` Hertz pulse. The five continuum octaves instead used
+`1 / (1 + (f tau)^2)`, which falls too slowly once a band is above the contact
+corner. At the default hardness and velocity it left the top octave between
+**3.2 and 17.3 dB too hot** across the four drums and four articulations. The
+continuum now calls the shared `contactSpectrum(2 pi f tau)` helper. No level,
+tilt or brightness constant was added.
+
+That helper is an accurate point-frequency fit through `omega tau` about six
+and deliberately stays monotone through the exact pulse transform's later
+nulls. For a statistical octave this is a smooth population envelope, not a
+claim of exact single-frequency Hertz magnitude above the fitted range; owned
+force/head-motion captures remain the gate for replacing it with a calibrated
+band average.
+
+The correction retains the established serial two-pole high-pass and seven-pole
+low-pass partition, with exact nine-state white-noise variance normalisation and
+a **42 dB/octave** upper skirt. A counterfactual build confirmed that adding an
+eighth pole was unnecessary and moved each response peak farther from its named
+centre, so it was removed rather than retained as speculative filtering. The
+hard-bachi ownership regression still requires every octave to beat all lower
+band leakage in its own passband; soft/long-contact suppression is owned by a
+separate closed-form spectrum test rather than hidden by weakening that gate.
+
+Second, the direct-air path differentiated `force + roughness`. Differentiation
+rises at 6 dB/octave while its single contact-patch pole falls at 6 dB/octave,
+so the stochastic stick/hide term became a flat shelf to Nyquist. At the factory
+Stick Noise setting that shelf alone sat only **1.64 / 2.05 / 0.60 dB** below
+the complete Don / Ka / Tsu hit above 8 kHz. The direct path now differentiates
+only the solved normal force; roughness still excites the resonant object and
+the tack remains its own thresholded source. Isolated old/new probes reduce the
+same three attacks above 8 kHz by **7.71 / 3.78 / 8.25 dB** without lowering the
+body or the Stick Noise control globally.
+
+`testContinuumUsesTheHertzContactSpectrum` compares soft and hard contacts after
+factoring out their force and requires every band to follow the shared pulse
+transform. `testContactRoughnessDoesNotBecomeAnAirborneNoiseShelf` requires the
+isolated direct pressure waveform to be bit-identical from Stick Noise 0 to 1,
+while the isolated struck object must still change. The complete JUCE-free
+Release suite passes **2/2 in 56.78 s**. A fresh 26-take render completes with a
+worst pre-normalisation peak of **−3.1 dBFS**; the canonical Linux nightly, not
+this macOS worktree, owns the tracked WAV refresh.
+
+### Remaining identity boundary
+
+This removes wrong noise routing; it does not claim that five filtered-noise
+octaves are the final head. On the factory ō-daiko the 40 resolved coordinates
+end near **226 Hz** and the first continuum band is centred near **283 Hz**,
+while the current loss/spacing estimate does not reach sustained modal overlap
+until roughly **412–437 Hz** and about **128 coordinates**. That prematurely
+stochastic interval is the deeper remaining source of generic attack identity.
+
+A fixed Bessel extension through `lambda <= 23` can cover it, but doing so makes
+those modes part of the reciprocal contact rather than decorative output: it
+changes driving-point mobility, contact duration and rebound, and the existing
+118-mode prototype roughly doubled dense CPU. Release therefore still requires
+the force/velocity mobility capture and 48/96 kHz callback gates in the
+[calibration contract](calibration/README.md). Observation-only tones would hide
+the noise without fixing the collision and are not an acceptable substitute.
+
+A fresh 128-coordinate implementation made that gate concrete and was reverted.
+With the existing point contact, full hits collapsed to about **0.32–0.34 ms**
+across 44.1–384 kHz, Don and Ka lost their required dynamic span, one adjacent
+velocity step fell by **5.01 dB**, and hard-hit glide, live tension modulation,
+palm and tack regressions all failed. Those are coupled-contact failures, not
+new baselines to bless. The next attempt must introduce a measured finite bachi
+footprint or passive residual mobility alongside the extra poles and must keep
+contact duration, rebound and velocity monotonicity inside capture uncertainty.
+It also missed the realtime gate: sixteen simultaneous contacts at 96 kHz with
+32-sample buffers exceeded the 333 us deadline in **10 of 500** callbacks
+(p99 **384 us**, maximum **2.06 ms**) on the review M1 Max. The corresponding
+48 kHz/64-sample stress stayed within its 1.333 ms budget (p99 **578 us**), so
+the failure is specifically at a supported low-latency configuration rather
+than a vague request for future optimisation.
+
+## Construction-aware tack attack — 2026-08-16
+
+One remaining metallic attack was not a filter-calibration problem at all. The
+drum catalogue already says the ō-daiko and chū-daiko are *byō-uchi*, with
+their cowhide nailed on, while the Okedo and Shime are rope- or cord-laced.
+The tack source nevertheless looked only at the stroke profile, so a rim hit on
+all four family members excited the same synthetic iron-nail chatter.
+
+That false source dominated the part of the hit most likely to read as cheap
+noise. Across 64 deterministic full rim strikes, it supplied **98.9 %** of the
+Okedo and **91.6 %** of the Shime energy above 10 kHz in the first 5 ms.
+Removing only that source lowers the same band by **23.07 / 10.83 dB** and the
+region above 5 kHz by **10.11 / 2.58 dB**, while complete-stroke RMS moves by
+only **0.004 / 0.050 dB**. The correction therefore removes nonexistent metal
+without thinning either drum's membrane or shell.
+
+`DrumDescription` now records whether a head is tacked. In **4 Drums**, the
+selected family's construction owns the source: ō-daiko and chū-daiko retain
+it, Okedo and Shime zero its scale, rim coupling and preload. In **1 Drum**, all
+four pads are one tacked ō-daiko retuned, so all four retain the same source.
+This is one table lookup at trigger time and adds no sample-loop work; an absent
+source skips the existing tack branch altogether.
+
+The focused contract independently pins the physical catalogue as
+`{ tacked, tacked, laced, laced }`, exercises both layout endpoints across all
+four pads, and keeps the existing articulation, Stick Noise, preload threshold
+and audible-detail checks. It also corrects an older premise: with fixed tack
+spacing, one tack carries `tension * spacing`, so diameter alone does not raise
+its preload. A fresh 26-take render changes only the four demonstrations which
+actually contain Family-layout Okedo/Shime edge strokes (`03`, `05`, `08` and
+`09`) and retains **−3.1 dBFS** worst-case pre-normalisation headroom.
+
+The tack filter's own shape was deliberately not folded into this construction
+patch. Its isolated level fell **1.76 dB** from 48 to 96 kHz and **7.06 dB** by
+384 kHz, and a variance scalar alone would merely have made the same broad
+shelf equally loud at every host rate. That separate defect is superseded by
+**Bounded tack spectrum** below, which changes the topology before normalising
+it.
+
+### Remaining low-velocity contact boundary
+
+The articulation audit found a separate mechanical problem which must not be
+hidden by another output curve. At factory controls, Tsu loses about
+**3.8–4.2 dB** of energy when velocity rises from 0.35 to 0.50 across
+44.1/48/96 kHz. The narrow branch crossings are now pinned more precisely:
+positive-force contact drops from **10.833 to 1.146 ms** for Tsu at velocity
+0.40 → 0.45, **5.708 to 1.146 ms** for Ka at 0.60 → 0.65, and **3.792 to
+1.688 ms** for Don Rim at 0.45 → 0.50. The basic solver is rate-converged, so
+this is the current point-mobility/contact model following the moving head, not
+a sample-rate instability.
+
+The existing articulation `levelScale` also participates in reciprocal contact
+projection. Moving it naively into impact speed is not the fix: the measured
+counterfactual worsened the minimum adjacent Tsu energy step from about
+**−4.17 dB** to **−6.41 dB** at 48 kHz. Clipping contact at the analytic
+Hertz duration would conceal the branch change and break the passive solve.
+Release work here remains gated on measured driving-point mobility and bachi
+tip/contact data. A finer 48/96 kHz scan brackets the current model's Tsu,
+Don Rim and Ka transitions near **0.79 / 1.00 / 1.51 m/s** respectively, while
+peak force stays smooth. The revised [capture protocol](calibration/README.md)
+therefore measures those three articulations from 0.25 to 2.00 m/s in at most
+0.15 m/s steps, then retains 3.5 and 4.5 m/s; its old approximately 2 m/s low
+point stepped over the entire failure region. Those model thresholds are not
+targets—a smooth real-drum result is a valid falsification.
+
+The capture-independent audit matrix is all four articulations × velocities
+`{0.20, 0.35, 0.40, 0.45, 0.50, 0.60, 0.65, 0.70, 1.00}` ×
+44.1/48/96 kHz. Until owned measurements provide uncertainty, it may assert only
+finite/passive contact, release/rebound and cross-rate convergence—duration
+within 6 %, impulse within 1 %, peak force within 4 % and normalised observer
+energy within 1 %. It must report the non-monotone branches rather than bless
+them as new targets. Monotone rendered energy becomes a release acceptance only
+after the fitted mobility/contact model agrees with the captures.
+
+That matrix is now executable. Its worst cross-rate spreads are **3.262 %** in
+duration, **0.068 %** in impulse, **1.068 %** in peak force and effectively zero
+in normalised residual exposure, so the branch is not a host-rate artefact. Its
+assertion-free diagnostics retain both sides of the defect: Tsu 0.40 → 0.45
+shortens positive-force contact by **89.42 %** at 48 kHz and loses **5.884 dB**
+of 0–30 ms stereo energy at 96 kHz. The test deliberately reports those values
+without accepting them as physical targets.
+
+A free-flight prototype identifies the state-machine edge exactly. Just above
+each threshold the first force run crosses zero, production permanently retires
+the bachi, and the freely extrapolated stick would meet the returning head again
+roughly 0.06–0.23 ms later. Preserving the ballistic stick and recomputing the
+Hunt–Crossley onset damping for each force run removes the cliffs: over
+velocities 0.01–1.00 the worst adjacent duration ratio falls from **8.88× / 4.87×
+/ 2.18×** for Tsu / Ka / Rim to at most **1.111×**, and the worst 80 ms
+energy loss falls from **7.34 dB** to **0.175 dB**. This is a real topology
+result, not a new scalar; multiple contacts during one membrane rebound are
+also predicted and observed in [Agüero et al.'s membrane-impact
+study](https://arxiv.org/abs/2208.11089).
+
+That prototype is not released on its own. Its Don 0.50 hit grows a second
+**15.29 ms** force run carrying 91.5 % of the impulse, and complete demonstration
+RMS moves by as much as **5.47 dB**. The resolved bank supplies global head
+displacement but not the local high-wavenumber reactive mobility which ejects a
+real bachi. A point membrane has no parameter-free high-frequency completion;
+the missing contact footprint depends on tip geometry which the present Hertz
+stiffness does not identify separately. A duration cap would only hide that
+boundary. The eventual release path is therefore the verified free-flight and
+recontact topology together with the measured finite footprint and positive-real
+residual mobility, passing this same matrix.
+
+### Added-mass consistency boundary
+
+The membrane-frequency law is algebraically an added surface mass,
+
+```text
+sigma_eff = sigma + 0.85 rho_air a
+                    (2.4048 / lambda) / (1 + 0.6 m),
+omega_loaded = omega_dry sqrt(sigma / sigma_eff).
+```
+
+The released model uses that law to lower each pole but still uses the dry hide
+`sigma` in several mechanical consumers: modal force and contact compliance,
+the cavity matrix and its two-head coordinate normalisation, radiation and palm
+loss, the collision-mass prior and one hostile state-remap fallback. Interpreted
+literally as added mass, that is inconsistent; it makes the loaded pole behave
+as though its stiffness had fallen while its mobility stayed light.
+
+A complete isolated migration propagated `sigma_eff` through all of those
+consumers and through matching observation/tail paths. It remained finite and
+passive, retained the existing host-rate contact tolerances, and every live
+membrane pole followed a seven-semitone test shift by the exact requested
+factor. The result was nevertheless a deliberate revoice rather than a safe
+denominator repair:
+
+- the factory breathing branches moved **61.372 -> 51.925 Hz** and
+  **94.506 -> 87.442 Hz** on the two large drums (the small-drum changes were
+  about 1.4--1.6 %), while the tuned/sounding pitches stayed fixed;
+- a full reference Don moved from **0.521 to 0.563 ms**, gained **18.2 %** in
+  impulse and **9.5 %** in peak force, but lost **3.46 dB** over its first
+  30 ms;
+- the Tsu branch discontinuity was not removed; it moved from 0.40 -> 0.45 to
+  0.45 -> 0.50 and the adjacent audio loss became **6.38 dB**;
+- an open centred drum's strongest partial moved from the roughly 32 Hz lower
+  branch to the next radial mode near 85 Hz, so spectral-winner readout and live
+  Pitch tests need a semantic migration even though their individual poles are
+  correct; and
+- every demonstration changed, with raw RMS shifts spanning roughly
+  **-5.73 to +2.05 dB**. The unresolved continuum anchor also fell to about
+  0.575 of its released amplitude because it is referenced to the resolved
+  receptance.
+
+The coefficient `0.85` and its mode-shape falloff are an existing compact
+approximation, not an owned mobility fit. Extending their authority from pitch
+to the whole collision and output calibration without capture would therefore
+turn one internally consistent approximation into a much larger unverified
+product decision. The migration remains the correct architecture, but release
+requires measured force/head mobility and pressure or an explicit versioned
+revoicing review. It is not the capture-independent fix for the cheap-hit
+contact cliff.
+
+### Split-mode orientation boundary
+
+Each non-axisymmetric membrane row already has two slightly different poles,
+but all rows currently use the same global cosine/sine axes. A zero-azimuth,
+Humanise-off hit therefore drives exactly one member of every split pair and no
+pair beats. A prototype assigned each row one fixed hashed principal-axis phase
+and used it consistently for contact, both capsule residues and analytic
+readout. It removed all silent partners; at factory Humanise 0.4 the fraction
+of pair observations with less than one tenth in the weaker branch fell from
+**39.4 % to 12.1 %**. Across a 16-hit matrix its largest peak, attack and body
+changes were only **0.55 / 0.91 / 0.73 dB**, with no contact, stability or
+headroom failure.
+
+That is not enough to call the hash physics. A globally aligned basis is
+plausible for a hide dominated by one grain direction or directional tension,
+while independent mode phases describe a different random irregularity. Once
+the pair is split, its orientation relative to the strike and capsules is
+audible and is no longer a harmless basis choice. The hash moved the sounding
+anchor by about five cents and changed every Humanise-off hit; seven existing
+tuning/readout/node clauses consequently required migration. It is a reasonable
+statistical head-realisation policy, but it is not identifiable from the
+present scalar controls.
+
+The prototype is therefore not released. Supplement Experiment A's minimum
+mobility matrix with a fixed-radius ring of at least 17, preferably 32, LDV
+azimuths: resolving an unknown field through the released `m=8` family needs
+that angular coverage rather than two points and an assumed cosine. The scan
+must recover each resolved pair's principal axes, establish whether one global
+material axis explains them, and validate held-out azimuths before those phases
+become factory data. If a future product deliberately exposes generated head instances
+instead, the seed and its phase prior become a versioned public voicing
+contract, not a hidden helper constant.
+
+### Solved-force continuum boundary
+
+The five unresolved head bands are still shaded at trigger time by the Fourier
+transform of the analytic Hertz pulse, while the resolved membrane and direct
+pressure paths receive the force which the nonlinear contact actually solves.
+That distinction is small on an ordinary short hit but large on the known
+low-velocity contact branch. At the five factory band centres the solved-force
+spectrum differs from the trigger-time spectrum by roughly **7--19 dB** for
+long Ka and Tsu contacts. A private oracle, allowed to know the completed force
+history in advance, reduced Tsu 0.40 by **3.45 dB** over 5--30 ms and by about
+**10 dB** in both 250--1000 Hz and 1--4 kHz; full-velocity hits moved by at most
+about 0.2 dB broadband. This isolates a remaining source of the cheap soft-hit
+bed rather than another global noise-level problem.
+
+No scalar or duration-only correction is released. The physical excitation of
+an unresolved band depends on the complex Fourier integral of the complete
+force history: a later part of the pulse can cancel an earlier part. The
+current continuum stores only a non-negative RMS envelope and merges overlapping
+hits with `hypot`, so energy emitted early cannot be removed when a contact
+later proves long. Rescaling at release would step the level, delaying the
+whole continuum would move the attack, and attenuating the shared drum envelope
+would corrupt earlier strikes.
+
+The eventual correction therefore needs a separate signed/complex residual
+excitation for each active contact, or the measured positive-real deterministic
+mobility which replaces this statistical hand-off. Its acceptance test must
+recover the normalised transform of each solved force at every band, close on a
+reference Hertz pulse, and prove that an overlapping second strike does not
+rewrite the first strike's contribution. Until that representation exists, do
+not hide the mismatch with a brightness trim.
+
+A smooth causal scalar ceiling does not repair that representation. In a
+private prefix-preserving prototype it cut an ordinary chū Don by about
+**3 dB**, worsened the known Tsu adjacent-energy cliff from **-5.884 to
+-7.146 dB**, and still compressed very different rapid shime contacts to nearly
+the same residual level. The failure is structural: a short contact and a
+longer one share the same prefix, but only the completed complex history says
+how much later force cancels the early spectrum. A causal scalar cannot both
+leave the first case transparent and retroactively rescale the shared prefix of
+the second.
+
+Nor is a finite patch or local Foster bank identifiable from the released
+controls. Hunt--Crossley stiffness fixes `E*sqrt(R_tip)`, not tip curvature;
+plausible tips moved the residual mobility by several decibels and tens of
+degrees. A five-branch positive-real prototype remained local/diagonal, lacked
+the cross-contact mobility needed by simultaneous strikes, added roughly
+two-thirds to the hostile callback cost, and materially worsened soft-contact
+duration at plausible footprint scale. The capture inventory therefore stores
+raw traction maps, bachi mass and tip profilometry; the analyzer must derive the
+traction-weighted complex mobility and fit one reciprocal positive-real spatial
+residual from those data.
+
+### Live continuum variance under retuning
+
+One narrower error did not need a new mobility model. Every continuum octave
+is normalised by the exact stationary variance of its two-high-pass,
+seven-low-pass filter when the drum is built, but live Pitch and Tension Mod
+subsequently moved the filter coefficients while leaving the stored RMS
+envelope unchanged. An upward octave therefore gained roughly **2.5--2.9 dB**
+from filter bandwidth alone. A structural rebuild had the same coordinate
+mismatch, and a later flam could inject a base-filter amplitude into a filter
+which had already moved.
+
+The released state now stores the exact build variance and the current live
+variance. On a pole move it multiplies the envelope by
+`sqrt(V_old / V_new)` and every left/right filter state by the reciprocal.
+Their product, and therefore the current output sample, is continuous while the
+new recurrence settles into its own covariance. New contacts are converted by
+`sqrt(V_strike / V_live)` before the shared drum envelope adds them in
+quadrature; a structural rebuild uses the same coordinate change while keeping
+its separate microphone-distance remap.
+
+The control path uses a small prepared `log2(V)` table rather than solving a
+nine-state covariance every 32 samples. A dense sweep including both Nyquist
+clamp seams stays below **0.05 dB** power error. Regression probes seed live
+filter memory, retune it, inject a later contact and rebuild the physical drum,
+then independently compare current products and stationary power. Lookup,
+live-power and later-injection errors stay below **0.05 dB**, structural rebuild
+power below **1e-5 dB**, and output-product discontinuity below **2e-7**. The
+complete DSP/tool suite remains green.
+
+This closes automation arithmetic, not the main cheap-hit boundary above.
+Factory attack stretch reaches only **1.00296 / 1.00826 / 1.00481** for Don /
+Ka / Tsu, so the correction is just **-0.009 / -0.016 / -0.013 dB** there.
+Stepped pitch automation is material: the isolated continuum moved by about
+**+4.82 / -2.73 dB** at plus/minus two octaves before correction. Do not cite
+this small ordinary-hit delta as a replacement for the signed residual drive,
+finite traction footprint or measured reciprocal high-mode mobility.
+
+### Zero-azimuth split-pole consistency
+
+One smaller inconsistency was independent of those capture boundaries and is
+fixed. The renderer always builds a slightly detuned cosine/sine pair, but the
+zero-azimuth analytic path ranked the unsplit parent frequency while rejecting
+the silent sine member. It now still rejects that member and ranks the cosine
+pole at the exact detuning the renderer uses. A focused test reads the built
+pole and the analytic observation independently; reverting the one source line
+fails it.
+
+The correction closes both Drum Layouts on **59.747 / 119.495 / 238.990 /
+477.979 Hz**. In 1 Drum the three upper rows moved by about 2.54 cents; in
+4 Drums the two small instruments moved by the same amount while the large two
+were already on the correct identity. Tensions move by at most 0.305 %, small
+drum radii by at most 0.130 %, and the worst peak in a 16-hit sweep gains
+0.009 dB of headroom. Earlier dated sections which record 59.660 Hz or the
+13.4879 first tension-ladder ratio are historical compatibility snapshots;
+the renderer-consistent values supersede those pins.
+
+## Humanise in head coordinates — 2026-08-16
+
+The former angular jitter used `pi * Humanise` regardless of strike radius.
+That made the same nominal uncertainty physically tiny near the middle and
+enormous at the edge. At the factory 40 % setting, the maximum tangential travel
+was **0.188 / 1.144 / 0.251 / 1.219 head radii** for Don / Ka / Tsu / Don Rim,
+while radial travel was at most **0.022 radius**. On the factory ō-daiko an edge
+hit could therefore jump roughly 90 cm between nominally repeated strokes.
+
+Humanise now draws independently bounded radial and tangential components in
+head coordinates and converts the latter to an angle using the final strike
+radius. Each component is at most `0.055 * Humanise`; the combined vector can
+therefore reach `sqrt(2)` times that bound. The radius is guarded near the
+centre, where azimuth is physically undefined. In a 256-hit factory sweep the
+mean Cartesian travel becomes **0.016 radius for all four articulations**; the
+95th percentile is about **0.026**, and the systematic
+21–22 % inward bias of the old angular arc falls below **0.0013 radius**. Ka no
+longer jumps across the close pair: its direct-path delay remains
+**+19.43..+20.20 samples** instead of spanning **−18.4..+23.5**, and its ILD
+stays on the authored side at **−2.70..−2.54 dB** instead of crossing
+**−2.66..+2.52 dB**.
+
+This is not an output randomiser. The one reciprocal modal projection built at
+the resulting point still senses and spreads the same contact force. Humanise
+zero is bit-identical, and no work enters the sample loop. The regression covers
+all four written radii plus full-Humanise Don/Tsu at Centre 100, requiring both
+finite audio and tangential travel no greater than **0.055 head radius**. Pitch
+and family-octave tests disable Humanise explicitly, as the rest of the readout
+suite already does, so an acceptance test for one authored drum is not coupled
+to a particular random performance gesture.
+
+Two fresh 26-take renders were byte-identical. Against the construction-aware
+tack build, all **14 Humanise-off/deterministic takes remain byte-identical** and
+exactly the **12 performance takes which use Humanise** change. Worst raw peak is
+**−2.7 dBFS**, still clear of the limiter. The JUCE-free DSP suite passes 2/2
+and the processor/state contracts pass with the same parameter layout.
+
+## Bounded tack spectrum — 2026-08-16
+
+Construction gating removed iron from the laced drums, but the two byō-uchi
+drums still rendered each real tack as white noise through only one high-pass
+and one low-pass. The source called 9 kHz its upper edge while placing about
+**55 %** of its stationary power above that edge at 48 kHz. Its centroid then
+moved from about **10.5 / 11.0 / 15.8 kHz** at 44.1 / 48 / 96 kHz. That was a
+host-dependent hiss shelf, not bounded metal-on-wood chatter.
+
+The tack now uses the same serial two-high-pass/seven-low-pass topology already
+validated for one continuum octave, at the tack's existing 2.6 and 9 kHz
+corners. No pitch, duration or listening-fit level was added. The exact
+nine-state covariance is solved once in `prepare()`, and its gain is anchored
+to the released filter's **energy inside 2.6–9 kHz at 48 kHz**. Energy which the
+old filter leaked above its own named band is removed rather than pushed down
+into the new one. An initial total-energy anchor did push it down, drove a
+worst-case Rim hit into the limiter, and was rejected.
+
+The eight-seed, 20 ms isolated-tack regression reads:
+
+| Host rate | Tack RMS | power above 9 kHz / power from 2.6–9 kHz |
+| ---: | ---: | ---: |
+| 44.1 kHz | −38.453 dBFS | 0.0923 |
+| 48 kHz | −38.573 dBFS | 0.0608 |
+| 96 kHz | −38.184 dBFS | 0.0295 |
+
+The level spread is **0.389 dB** and the new regression caps it at 0.75 dB;
+every upper/band ratio must remain below 0.15, where the former filter was above
+one around the reference rate. On a full 48 kHz o-daiko rim stroke the first
+5 ms lose **13.64 dB above 9 kHz** while the declared tack band gains 1.22 dB;
+over 10 ms the band moves only 0.25 dB. The tack remains audible at **6.614 %**
+of the complete stroke RMS (−23.59 dB), and its threshold, construction, seed,
+four-millisecond envelope and airborne routing are unchanged.
+
+The generalized covariance helper is the only new setup machinery; rendering
+is two short fixed-size loops while a tack envelope is alive. An exact
+counterfactual puts the old one-high-pass/one-low-pass filter's worst rare crest
+at 1.28012 before the limiter and this filter's at 1.28449: **+0.030 dB**. With
+the tack disabled the same released model still reaches 1.11672. The filter did
+not create the headroom defect and trimming it cannot solve it without erasing
+the audible source.
+
+The actual root was a factory reference calibrated from one favourable
+Humanise/noise sequence. An offline sweep of 1,048,576 generated orders found
+the hostile order 421768. Taikor now applies one fixed **−4 dB** reference
+calibration after Drive and before the safety clamp. It changes no contact,
+mode, continuum balance or saturation; the public **−24…+6 dB** Output range,
+**−22.5 dB** default, saved values and normalised host-automation mapping remain
+unchanged. The cheap regression sweeps orders 1–1024 and pins order 421768
+explicitly over the 50 ms attack. The contiguous sweep peaks at **0.81046**
+(order 351); the hostile sentinel peaks at **0.86448**, 0.82 dB below the 0.95
+gate. This is strong sampled protection, not a mathematical bound over every
+possible order. The complete JUCE-free suite passes **2/2 in 56.9 s**,
+processor/state contracts pass, and a fresh 26-take render is
+byte-identical to the pre-calibration set because its per-take normalisation
+cancels this one global scalar.
+
+## Shell orientation boundary — 2026-08-16
+
+The shell bank's remaining frozen image is real but not safely repairable by
+adding only the missing sine partner. A prototype represented each `n=2..7`
+ring as the canonical pair
+
+```text
+d = [cos(n theta_strike), sin(n theta_strike)]
+h = C_n [cos(n theta_mic), sin(n theta_mic)].
+```
+
+This restores rotational covariance, nodes, polarity and angle-invariant
+injected energy. Anchoring each `C_n` to the released pair's mean stereo power
+also needs no listening fit. It is nevertheless not a complete shell observer:
+the full Rim sweep reached **0.985** peak and about **+11 dB side/mid**, and 20
+existing headroom, mono and distance-image clauses failed. A gain trim cannot
+repair the missing field.
+
+Nor can a cheap Green-function wrapper. Any rotationally symmetric linear
+observer of an ideal circular `n` doublet retains the same cosine/sine nodes,
+so its side/mid ratio is unbounded at some strike azimuth. In Taikor's geometry
+the capsules also sit inside the head radius; the exterior cylindrical wall is
+not directly visible from them. Whole-wall `1/R` integration therefore sends
+sound through the head/body, while the real path is rim diffraction and
+scattering. Phase-free and coherent wall prototypes both retained roughly
+**+11 to +12 dB** worst-case side/mid at 44.1/48/96 kHz.
+
+The prototype was reverted. Adding a positive common floor would be an
+invariant scalar glued to a non-axisymmetric representation, not a circular
+shell mode; a nonlinear magnitude path would break the linear reciprocal
+model. Release-grade shell orientation therefore remains capture-backed work:
+joint shell/head mobility, rim diffraction/scattering and capsule pressure must
+be fitted together before the six doublets replace the current bounded body
+observer.
+
+There is a second shell boundary in the hit itself. The released shell bank has
+zero contact projection and is therefore absent from IMP-2 sensing and
+compliance, yet the solved head force drives it one-way afterwards. This is not
+a small path on Ka and Don Rim: isolated resolved renders put the shell within
+roughly 0–1.2 dB of the complete hit while the membrane can sit 8–40 dB lower.
+Reciprocity cannot be restored by moving the existing product around. The
+controls and comments define `shellGain`, Shell Resonance and `shellCalibration`
+as body-colour/observation factors, so the released transfer admits infinitely
+many mechanical-projection × microphone-residue factorizations. Capture must
+identify the shell driving-point projection separately; putting an acoustic
+`levelScale` into that projection would repeat the membrane contact category
+error rather than fix it.
+
+## Performer identity for multi-instance ensembles — 2026-08-16
+
+Four Taikor instances receiving the same MIDI formerly began from the same
+stroke count and therefore made the same Humanise choices. Summing them made a
+louder phase-locked performance, not four people. The new Performer choice is
+appended after Strike Azimuth as P1–P4. Its identity salt reaches the existing
+Humanise-owned contact point, impact speed, contact time, press-roll schedule
+and stochastic head/contact sources. Because position, speed and duration feed
+the reciprocal solve, the identity changes the performed resonant hit rather
+than merely swapping a cheap noise texture.
+
+The scope is intentionally exact. P1 contributes a zero salt and therefore
+retains the established random-sequence arithmetic path. Humanise zero disables
+the salt, so P1–P4 all render the same authored machine-perfect stroke. No
+identity detunes or resizes a drum, changes an articulation calibration, adds a
+fixed onset offset, alters Output, or hides an ensemble gain law. To arrange a
+group, layer two to four instances on the same MIDI part, assign distinct
+identities and place or time those instances explicitly in the host. Performer
+is persisted but non-automatable and should be chosen before playback; changing
+it in the UI affects new hits while an existing physical tail stays continuous
+until retirement, panic or reset.
+
+That workflow addresses a market expectation rather than a speculative extra.
+Sonica's official [TAIKO THUNDER](https://sonica.jp/instruments/en/product/taiko-thunder-the-ultimate-collection/)
+page sells a solo or two- to four-person ensemble function; In Session Audio's
+[Taiko Creator](https://insessionaudio.com/products/taiko-creator/) creates
+multiple solo and ensemble groups; and the hybrid-modelled
+[Supreme Drums Taiko](https://neovst.com/product/supreme-drums-taiko__trashed/?lang=ja)
+also covers solo and ensemble drums. Taikor's differentiator is that these
+identities perturb a live contact solve instead of selecting another captured
+round robin, while leaving the physical instrument definition visible and
+unchanged.
+
+The DSP regression renders all four identities twice and requires exact repeat
+determinism, separation for all six identity pairs in both the complete waveform
+and the resolved resonant object with continuum/contact noise/tack/direct
+pressure removed, and a unity-sum P1–P4 layer whose waveform is not merely
+gain-scaled P1. It separately requires Humanise-zero equality and runs the
+maximum-Humanise rim headroom window plus the known hostile-order sentinel for
+every identity.
+
+The processor contract pins the appended 24th slot, its four discrete labels,
+P1 default, state round trip, P1 injection into legacy states and a laid-out
+editor control.
+
+## Finite-separation two-head radiation — 2026-08-16
+
+The released axisymmetric loss had one remaining zero-depth assumption. It
+formed the two head shares as `(b + r)^2`, so an opposing pair whose monopole
+moments cancel lost almost no energy to the air even when its heads were more
+than a wavelength apart. That made the small drums carry a second, conspicuously
+long tonal body which was not present in the hit onset.
+
+Within the existing net-volume monopole approximation, the exact
+finite-separation power is
+
+```text
+P = b^2 + r^2 + 2 b r sinc(omega L / c).
+```
+
+It is the standard mutual-radiation term for two coherent sources, tends to the
+old expression as `L -> 0`, and is passive because `|2br| <= b^2+r^2` and
+`|sinc(x)| <= 1`. Taikor now uses that power consistently in the analytic
+observer's decay, the built resonator bank, live tension/pitch retuning and the
+reported tail. The released front-pressure observation itself is unchanged:
+this correction says how fast the pair loses mechanical energy, not how the
+rear source diffracts around the shell into the front capsules.
+
+The factory shime lower `(0,1)` branch moves from **0.18462 to 1.29699** in
+normalised radiated power and from **1.685 to 0.851 seconds T60**. Its complete
+Don changes by only **0.001 dB in the first 80 ms**, then by **-4.30 dB from
+80–500 ms** and **-20.28 dB from 0.5–1.5 s**. The okedo lower branch moves from
+1.456 to 0.934 seconds T60; the ō-daiko and chū-daiko changes are small. This
+is deliberately a body/tail correction rather than another attack EQ.
+
+`testFiniteHeadSeparationRadiatesADipole` owns the zero-depth limit, closed-form
+`sinc(kd)` power, non-negative bound, shime opposing branch, agreement between
+analytic and built decay, live retune phase, and exact preservation of the
+single-head/non-axisymmetric arithmetic. The complete DSP/tool suite passes
+three registered tests. Rear-head pressure, phase and a complete radiation
+matrix remain capture-backed work under the controlled calibration contract.
+
+## Hertz residual exposure and controller calibration — 2026-08-16
+
+The residual audit found one exact reference error before it found a level to
+tune. Taikor's analytic force arch is `sin(πt/τ)^1.5`, whose impulse integral is
+
+```text
+sqrt(pi) Gamma(5/4) / Gamma(7/4) = 1.7480383695280799.
+```
+
+The former **2.3963** is the integral of `sqrt(sin(x))`. Correcting it restores
+the collision impulse represented by the reference peak. In the uncapped
+continuum path the matching powers cancel, so this is a normalization repair
+rather than an independent brightness fit.
+
+The real product defect was one long low-mode contact reusing the stochastic
+tail calibration hundreds of times. Each contact now receives the exact direct
+rigid-target Hunt–Crossley squared-force integral as its maximum legacy
+`integral(F^2/Z dt)` exposure. This is explicitly **not mechanical energy or a
+passivity bound**: the current residual impedance is per unit length. The limit
+only bounds the share sent to `injectContinuumEnergy`; the coupled force still
+drives the resolved head, contact roughness, direct pressure and tack line
+unchanged. At 48 kHz the factory chū Don requests about **0.953** of the limit
+and remains uncapped, while the hostile shime Don requests about **446×** and
+spends one bounded exposure.
+
+The cap-disabled A/B covered all four drums and articulations plus flams,
+alternating rolls and 18 ms retriggers. The large shime correction removes the
+noise-dominated onset, but all four shime **80–500 ms tails are unchanged**.
+Main-flam, alternating-roll and rapid-retrigger onset contrasts remain about
+35, 16 and 14 dB respectively. That is enough to ship the bound; it is not an
+absolute calibration of the shime or of roll transfer. Those remain gated on
+the controlled driving-point mobility, force and microphone-pressure captures,
+and the cap must not be loosened to make unsupported stochastic level hide that
+missing evidence.
+
+The same tranche closes a smaller market-facing playability gap without adding
+another sound effect. **Velocity Curve** is appended after Performer as the 25th
+host parameter, preserving every established ID and automation index.
+
+This is established pad-instrument calibration rather than feature invention:
+Sonica's official [TAIKO THUNDER manual](https://sonica.jp/instruments/images/TAIKO-THUNDER-THE-ULTIMATE-COLLECTION-UserManual-En.pdf)
+provides separate pad response settings and four velocity-curve types. Taikor
+keeps the first tranche narrower—one continuous identity-default curve—because
+Min, Max, Fixed and play-mode copies are not needed to solve the mapping gap.
+
+It applies
+
+```text
+v_curve = pow(v, exp2(c)),  -1 <= c <= 1
+```
+
+before Velocity Depth. Soft 100 (`c = -1`) is `sqrt(v)`, Linear is `v`, and
+Hard 100 (`c = +1`) is `v^2`; zero and full velocity remain fixed. Linear uses
+an explicit identity branch, is the default, and is injected into legacy states,
+so the established response and default audio do not move. This calibrates the
+player's pads and technique to the model's impact-speed range. It does not claim
+that a response curve is an acoustic property of a taiko.

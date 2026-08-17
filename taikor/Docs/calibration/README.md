@@ -2,8 +2,9 @@
 
 This is the measurement contract for the next physical-model tranche. It is a
 recording protocol, not a curve-fitting recipe: Taikor does not yet have an
-owned real-taiko reference set, and writing a parser or residual model before
-the first capture would only turn assumptions into code.
+owned real-taiko reference set, and writing a sample parser or residual model
+before the first capture would only turn assumptions into code. The inventory
+preflight below checks acquisition facts and minimum coverage only.
 
 Two experiments are required and must remain separate:
 
@@ -22,6 +23,7 @@ Record from one synchronized clock without processing:
 | Channel | Quantity | Calibration |
 | --- | --- | --- |
 | Force | modal-hammer or instrumented-bachi normal force | newtons |
+| Contact traction | spatial pressure/traction map in the head coordinate frame | spatial scale, force/pressure gain, polarity and latency |
 | Head | normal velocity at each observation coordinate, preferably by LDV | metres/second |
 | Bachi | axial position or velocity before impact through rebound | metres or metres/second |
 | Near | front-head sound pressure at known coordinates | pascals |
@@ -57,6 +59,89 @@ and a room impulse response, but do not fit room modes into the drum's poles.
 Do not normalise, gate, denoise, compress, equalise, align channels separately,
 or discard the native acquisition files.
 
+## Acquisition inventory preflight
+
+`TaikorValidateCalibrationCapture` is a dependency-free guard for the capture
+inventory. It does not open audio, interpret samples, estimate transfers or fit
+a model. Build it and start a strict TSV with its canonical header:
+
+```sh
+cmake -S . -B build-dsp -DTAIKOR_BUILD_PLUGIN=OFF -DTAIKOR_BUILD_TOOLS=ON
+cmake --build build-dsp --target TaikorValidateCalibrationCapture
+build-dsp/TaikorValidateCalibrationCapture --print-header > captures.tsv
+build-dsp/TaikorValidateCalibrationCapture --check captures.tsv
+```
+
+The first line must contain all 48 printed columns exactly once; extra columns
+are allowed. Use one row per take and measured cell. Experiment A therefore
+repeats a physical `take_id` for its simultaneously observed coordinates,
+while experiment B uses one unique `take_id` per physical strike. Use `-` for
+experiment-specific fields which do not apply. Paths are archive references or
+channel selectors, not files the preflight opens.
+
+The common columns identify `session_id`, stable `drum_id`,
+`fixture_state_id`, canonical `drum_family` (`nagado`, `chudaiko`, `odaiko`,
+`okedo` or `shime`), experiment `A` or `B`, and the take. Change
+`fixture_state_id` whenever either head, tension, shell mounting or stand state
+changes; keep it identical across separately recorded A/B sessions only when
+those physical states are unchanged. `accepted` and `unprocessed` are `0` or
+`1`; every rejected take needs a `rejection_reason`. `sample_rate_hz`,
+`native_bit_depth`, `pretrigger_seconds`, `duration_seconds` and `clock_id`
+record native acquisition facts. One session/drum/fixture-state group must
+retain one clock, rate and native depth. Every row must be at least 96 kHz/24
+bit, have 0.25 s of pre-trigger, be unprocessed, and last at least 4 s (12 s
+for canonical `odaiko`).
+
+Every row requires raw and calibration references for force, spatial contact
+traction, head velocity, near pressure and far pressure, plus `trigger_path`
+(`embedded` is valid). `contact_traction_path` stores the raw pressure/traction
+map in the head coordinate frame; its calibration records spatial scale,
+force/pressure gain, polarity, latency and force-axis registration. Experiment
+B also requires the tracked bachi path and calibration, a stable `bachi_id`,
+positive bare mass, nonnegative moving sensor mass, and raw/calibrated tip
+profilometry. Reworked tips get a new ID. A path of `-` or an empty path does
+not pass. This proves the inventory declares the evidence needed to separate
+tip curvature from contact stiffness; checking the referenced files and sample
+data is deliberately left to the post-capture analyzer.
+
+For experiment A, fill the input and observation coordinate IDs, normalized
+radii and azimuths plus `force_level_id`. The preflight searches for a complete
+core with a centre coordinate at radius no greater than 0.05 and two edge
+coordinates at radius at least 0.70 with distinct azimuths, on both sides of
+the mobility matrix. It requires two force-level IDs and 10 distinct accepted
+takes in every cell of that 3 input × 3 observation × 2 level core. Additional
+partial scan points do not invalidate a complete core.
+
+For experiment B, use canonical `articulation` values `don`, `ka`, `tsu-held`
+and `don-rim`, canonical bachi values `hard` and `soft`, the table's nominal
+normalized radius, and the measured incoming relative speed—not a target speed
+or player label. The preflight hard-codes the table below, assigns each accepted
+take to its unique nearest permitted speed bin, and requires 10 distinct takes
+in every condition. Only accepted rows matching a canonical articulation,
+bachi, radius and measured-speed window count. Extra accepted holdouts are
+ignored for minimum coverage and do not invalidate it; rejected target misses
+or double contacts remain inventoried with a reason and never count. It also
+checks the low-speed first/last medians and the maximum adjacent median gap.
+Every `tsu-held` row records finite
+`palm_radius_norm` (0–1), `palm_azimuth_rad`, positive
+`palm_contact_area_m2`, and positive `palm_normal_load_n`. Every `don-rim` row
+records `head_hoop_contact` as `0` or `1`, and an accepted take must be `1`;
+this retains failed attempts without letting them satisfy coverage.
+
+The measured medians must explicitly bracket all three current model
+transitions: Tsu's 0.79 m/s transition between the 0.65/0.80 bins, Don Rim's
+1.00 m/s transition between 0.95/1.10, and Ka's 1.51 m/s transition between
+1.40/1.55. Experiment A and B may use separate synchronized sessions, but both
+complete matrices must name the same physical `drum_id` and `fixture_state_id`;
+that first fixture must be a nagado or chudaiko.
+
+Run `TaikorValidateCalibrationCapture --self-test` (also registered with CTest)
+to exercise the valid contract and rejected rate, calibration, clock,
+fixture-state, matrix, bin-count, traction-map, bachi mass/tip, palm/rim metadata
+and measured-median cases.
+Its valid inventory includes one unmatched accepted holdout and one rejected
+target miss; the missing-bin case proves neither can fill required coverage.
+
 ## Experiment A: linear mobility and radiation
 
 Start with one fully documented nagado or chū-daiko. Use an instrumented modal
@@ -74,6 +159,21 @@ Sequential scanning is acceptable if the fixture, tension and a fixed reference
 channel remain stable. Reciprocity is a measured validation result, not an
 assumption used to fill missing cells.
 
+Around each contact coordinate, add enough local input and observation scan
+points for the traction-weighted mobility integral to converge under spatial
+refinement. The inventory already permits these extra coordinate rows; the 3x3
+core remains only a minimum coverage check, not a claim that a millimetre-scale
+patch is resolved by three points.
+
+The 3x3 core is sufficient for the first reciprocal-mobility fit, not for
+claiming a measured angular mode map. Add one fixed-radius ring with at least
+17, preferably 32, LDV azimuths so an unknown field through `m=8` is not aliased.
+For every resolved split pair, report the principal-axis angle and uncertainty,
+test whether one shared material/tension axis explains the rows, and reserve
+azimuths for validation. Do not fill an unmeasured orientation from a random
+seed: after the two poles separate, that angle controls real beating and stereo
+residues rather than merely naming an equivalent cosine/sine basis.
+
 Capture near and far pressure during the same impacts. These hammer measurements
 identify the linear mechanical and acoustic transfers. Palm, rim, paired-hit and
 roll conditions do not belong in this fit.
@@ -82,21 +182,59 @@ roll conditions do not belong in this fit.
 
 Use a controlled striker or synchronized optical/LDV bachi tracking so incoming
 and rebound velocities are observed rather than inferred from audio. Record the
-following minimum set with 10 accepted repeats per row and speed:
+following minimum set with 10 accepted repeats per row and speed. The low-speed
+sweep is `0.25, 0.35, 0.50, 0.65, 0.80, 0.95, 1.10, 1.25, 1.40, 1.55, 1.70,
+1.85, 2.00, 3.50, 4.50 m/s`:
 
 | Stroke | Bachi | Radius | Incoming speeds |
 | --- | --- | ---: | --- |
 | Don | hard wood | 0.20, 0.75 | about 2.0, 3.5, 4.5 m/s |
-| Ka | hard wood | 0.85 | about 2.0, 3.5, 4.5 m/s |
+| Ka | hard wood | 0.91 | low-speed sweep |
+| Tsu, held palm | hard wood | 0.20 | low-speed sweep |
+| Don Rim, simultaneous head + hoop contact | hard wood | 0.97 | low-speed sweep |
 | Don | soft/wrapped | 0.20 | about 2.0, 3.5, 4.5 m/s |
 
-Bin takes by measured speed, not player labels such as *soft* and *hard*. Keep
-misses and double contacts in the archive with a rejection reason; silently
-deleting them biases the duration and rebound distributions.
+Measure each physical bachi's bare mass before adding sensors and record the
+moving sensor mass separately. Archive registered tip profilometry and a
+synchronized force-dependent contact-traction map for every strike condition;
+shaft diameter is not a substitute for the actual striking footprint.
 
-After the minimum set, add rim strikes, Tsu and held palms, same-position pairs
-at 20/50/100/200 ms, and short constant-speed rolls. Those are held-out
-interaction checks, not extra data for making a linear mobility fit look good.
+The post-capture analyzer—not this inventory preflight—derives principal tip
+curvatures and uncertainty, normalized traction `g=p/F`, and
+`a2_squared_m2(F) = 2 integral(|x-c|^2 p dA) / integral(p dA)` (equal to the
+radius squared for a uniform disk). It then forms the complex traction-weighted
+mobility from the measured velocity field, subtracts the explicit modal
+contribution, and fits the remainder jointly as a reciprocal positive-real
+matrix. Magnitude subtraction or a self-declared footprint radius is not an
+acceptable replacement.
+
+Bin takes by measured incoming relative speed
+`v_rel,in = v_bachi - v_head(contact)`, inward positive, not player labels or
+the striker's target setting. Use a +/-0.05 m/s acceptance window through
+2.0 m/s, +/-0.15 at 3.5 and +/-0.20 at 4.5; one take may fill one bin only.
+For each Ka/Tsu/Rim sweep, require the first median at or below 0.30 m/s, the
+last at or above 1.95 m/s and no adjacent median gap above 0.20 m/s. Keep misses
+and accidental second player strikes in the archive with a rejection reason;
+silently deleting them biases the duration and rebound distributions.
+
+The dense low-speed rows are not a demand that a real drum reproduce Taikor's
+current contact branches. They deliberately bracket rate-stable model changes
+near 0.79 m/s for Tsu, 1.00 m/s for Don Rim and 1.51 m/s for Ka, where impulse
+and duration collapse while peak force stays smooth. Smooth measured data is a
+valid falsification. Report peak force, impulse, positive-force duration,
+incoming and rebound relative velocity, restitution, force-run count, each
+run's duration and impulse, and every zero-force gap; peak or audio RMS alone
+cannot see this failure. Distinguish a secondary force run within one continuous
+bachi trajectory from an accidental second player strike. Preserve the former
+as measured contact behaviour rather than rejecting it as a double trigger.
+Tsu takes also record held-palm position, contact area and normal load, while
+Don Rim takes confirm that head
+and hoop were contacted together. Keep the speed list data-driven when later
+drum-family sessions add other transition regions.
+
+After the minimum set, add same-position pairs at 20/50/100/200 ms and short
+constant-speed rolls. Those are held-out interaction checks, not extra data for
+making a linear mobility fit look good.
 Repeat the proven protocol across the ō-daiko, okedo and shime family only after
 the first fixture closes the model/data loop.
 
@@ -109,7 +247,8 @@ Record beside the raw channels:
   measured tension, including the tension method;
 - body depth, wall thickness, material, mass, openings and mounting/stand;
 - temperature, humidity, room dimensions and direct-window limits;
-- bachi dimensions, mass, tip radius/footprint, material and sensor mass;
+- bachi dimensions, bare and sensor mass, material, raw tip profilometry and
+  contact-traction archive references;
 - strike radius, azimuth, incidence angle, incoming speed and articulation;
 - microphone, preamp, LDV and force-sensor models, calibration transfer,
   coordinates, orientation, gains and compensated latency;

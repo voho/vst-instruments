@@ -136,17 +136,25 @@ endif()
 # from the same JUCE-free engine the plug-in uses, so they cannot drift away
 # from what Taikor actually produces. It is built by default, including on
 # Linux CI, so it cannot rot unnoticed.
-option(TAIKOR_BUILD_TOOLS "Build the demo WAV renderer" ON)
+option(TAIKOR_BUILD_TOOLS "Build offline Taikor tools" ON)
 
 if(TAIKOR_BUILD_TOOLS)
     add_executable(TaikorRenderDemos Tools/RenderDemos.cpp)
     target_link_libraries(TaikorRenderDemos PRIVATE TaikorDSP)
     target_compile_features(TaikorRenderDemos PRIVATE cxx_std_20)
 
+    add_executable(TaikorValidateCalibrationCapture
+        Tools/ValidateCalibrationCapture.cpp)
+    target_compile_features(TaikorValidateCalibrationCapture PRIVATE cxx_std_20)
+
     if(MSVC)
         target_compile_options(TaikorRenderDemos PRIVATE /W4 /permissive-)
+        target_compile_options(TaikorValidateCalibrationCapture PRIVATE
+            /W4 /permissive-)
     else()
         target_compile_options(TaikorRenderDemos PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(TaikorValidateCalibrationCapture PRIVATE
+            -Wall -Wextra -Wpedantic)
     endif()
 endif()
 
@@ -175,6 +183,11 @@ if(BUILD_TESTING)
                  COMMAND TaikorRenderDemos --smoke
                          "${CMAKE_CURRENT_BINARY_DIR}/demo-smoke")
         set_tests_properties(Taikor.RenderDemos PROPERTIES TIMEOUT 60)
+
+        add_test(NAME Taikor.ValidateCalibrationCapture
+                 COMMAND TaikorValidateCalibrationCapture --self-test)
+        set_tests_properties(Taikor.ValidateCalibrationCapture PROPERTIES
+            TIMEOUT 30)
     endif()
 
     if(TAIKOR_BUILD_PLUGIN)
