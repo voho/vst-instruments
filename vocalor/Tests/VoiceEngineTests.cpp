@@ -1498,6 +1498,13 @@ void testDisplayMathHelpers()
             "the default room size did not reproduce the historical geometry");
     expect (vocalor::roomSizeScale (0.0f) < 0.5f && vocalor::roomSizeScale (1.0f) > 2.0f,
             "the room size range is too narrow to be useful");
+    expect (vocalor::roomSizeScale (-1.0f) == vocalor::roomSizeScale (0.0f),
+            "a below-range room size did not clamp to the smallest geometry");
+    expect (vocalor::roomSizeScale (2.0f) == vocalor::roomSizeScale (1.0f),
+            "an above-range room size did not clamp to the largest geometry");
+    expect (vocalor::roomSizeScale (std::numeric_limits<float>::quiet_NaN())
+                == vocalor::roomSizeScale (0.0f),
+            "a non-finite room size did not fall back to the smallest geometry");
     expect (std::abs (vocalor::formantShiftRatio (0.0f) - 1.0f) < 1.0e-6f,
             "a zero formant shift was not neutral");
     expect (std::abs (vocalor::formantShiftRatio (12.0f) - 2.0f) < 1.0e-4f,
@@ -1510,6 +1517,12 @@ void testDisplayMathHelpers()
                 && vocalor::glideTimeSeconds (1.0f) > 0.4f
                 && vocalor::glideTimeSeconds (0.5f) < vocalor::glideTimeSeconds (1.0f),
             "the glide time mapping is not monotonic over a useful range");
+    expect (vocalor::glideTimeSeconds (-1.0f) == 0.0f,
+            "a below-range glide knob did not clamp to an instant glide");
+    expect (vocalor::glideTimeSeconds (2.0f) == vocalor::glideTimeSeconds (1.0f),
+            "an above-range glide knob did not clamp to the longest glide");
+    expect (vocalor::glideTimeSeconds (std::numeric_limits<float>::quiet_NaN()) == 0.0f,
+            "a non-finite glide knob did not fall back to an instant glide");
 
     // vibratoExtentCents() is only exercised indirectly, through the engine's
     // chunk-rate vibrato depth and the peak-to-peak measurements documented in
