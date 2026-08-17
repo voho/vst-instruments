@@ -831,6 +831,7 @@ private:
     void renderMetallicOscillatorBanks (std::uint32_t activeBankMask) noexcept;
     [[nodiscard]] float renderMetallicBankSubstep (
         RelaxationOscillatorBank& bank) noexcept;
+    float pushMetallicSubstep (RelaxationOscillatorBank& bank) noexcept;
     [[nodiscard]] float decimateMetallicBank (
         const RelaxationOscillatorBank& bank) const noexcept;
     [[nodiscard]] float metallicSourceFor (Instrument instrument) const noexcept;
