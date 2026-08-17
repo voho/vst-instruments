@@ -238,6 +238,30 @@ struct YouKnow106TestAccess
         return YouKnow106Engine::pwmHoldSecondPoleSeconds;
     }
 
+    // Passthrough to the private two-pole PWM hold solve, mirroring
+    // process()'s own call: fullIntervalCoefficients is built from the same
+    // intervalSeconds passed to the solve itself, exactly as the render loop
+    // builds pwmFullInterval once per call and reuses it below.
+    struct PwmHoldSnapshot
+    {
+        double first { 0.0 };
+        double second { 0.0 };
+    };
+
+    static PwmHoldSnapshot exactPwmHoldEndpoint(
+        double stateFirst, double stateSecond, float target, bool hasEvent,
+        double eventPosition, float eventTarget,
+        double intervalSeconds) noexcept
+    {
+        const auto coefficients =
+            YouKnow106Engine::pwmHoldCoefficients(intervalSeconds);
+        const auto result = YouKnow106Engine::exactPwmHoldEndpoint(
+            YouKnow106Engine::PwmHoldState { stateFirst, stateSecond },
+            target, hasEvent, eventPosition, eventTarget, intervalSeconds,
+            coefficients);
+        return { result.first, result.second };
+    }
+
     static constexpr float voiceVcaHoldSeconds() noexcept
     {
         return YouKnow106Engine::voiceVcaHoldSlewSeconds;
@@ -4668,6 +4692,111 @@ void testPwmHoldCrossesItsTwoSmoothingPoles()
     }
 }
 
+void testExactPwmHoldEndpointNonFiniteGuards()
+{
+    // exactPwmHoldEndpoint is the shared exact two-pole solve behind
+    // testPwmHoldCrossesItsTwoSmoothingPoles above. Each of its four
+    // caller-supplied inputs (target, eventPosition, eventTarget,
+    // intervalSeconds) has its own documented non-finite fallback, and
+    // intervalSeconds also clamps a finite-but-negative value to zero
+    // elapsed time. Its only production call site (YouKnow106Engine::process)
+    // always feeds it an already-primed hold target, a scheduler-derived
+    // event position/target pair clamped into [0, 1] and a positive internal
+    // sample interval, so none of these branches has ever fired outside a
+    // test. Every case below compares a poisoned call against the same call
+    // with the documented fallback substituted explicitly, so the expected
+    // value is produced by the real production solve rather than a
+    // hand-rederived formula.
+    using Access = YouKnow106TestAccess;
+    // Exact binary fractions: state.first must round-trip through float
+    // unchanged, because the target guard's own fallback branch is the raw
+    // double `state.first`, while an explicit finite target first passes
+    // through a float parameter -- a decimal value like 0.21 would pick up a
+    // float/double rounding mismatch that has nothing to do with the guard.
+    constexpr double stateFirst = 0.25;
+    constexpr double stateSecond = 0.375;
+    constexpr float finiteTarget = 0.625f;
+    constexpr double finiteEventPosition = 0.5;
+    constexpr float finiteEventTarget = 0.6875f;
+    constexpr double finiteInterval = 0.001;
+
+    const auto expectSame = [](Access::PwmHoldSnapshot poisoned,
+                               Access::PwmHoldSnapshot fallback,
+                               const char* message) {
+        expect(poisoned.first == fallback.first
+                   && poisoned.second == fallback.second,
+               message);
+    };
+
+    // target's own guard falls back to the existing first-pole state,
+    // whether or not an event interrupts the interval.
+    for (const bool hasEvent : { false, true })
+        for (const float poisonedTarget :
+             { std::numeric_limits<float>::quiet_NaN(),
+               std::numeric_limits<float>::infinity(),
+               -std::numeric_limits<float>::infinity() })
+            expectSame(
+                Access::exactPwmHoldEndpoint(
+                    stateFirst, stateSecond, poisonedTarget, hasEvent,
+                    finiteEventPosition, finiteEventTarget, finiteInterval),
+                Access::exactPwmHoldEndpoint(
+                    stateFirst, stateSecond, static_cast<float>(stateFirst),
+                    hasEvent, finiteEventPosition, finiteEventTarget,
+                    finiteInterval),
+                "a non-finite PWM hold target did not fall back to the "
+                "existing first-pole state");
+
+    // intervalSeconds's own guard only matters when an event interrupts the
+    // interval -- the no-event path advances by the caller-built
+    // fullIntervalCoefficients instead of re-deriving a duration from this
+    // argument. A non-finite or negative interval falls back to zero
+    // elapsed time.
+    for (const double poisonedInterval :
+         { std::numeric_limits<double>::quiet_NaN(),
+           std::numeric_limits<double>::infinity(),
+           -std::numeric_limits<double>::infinity(), -1.0 })
+        expectSame(
+            Access::exactPwmHoldEndpoint(
+                stateFirst, stateSecond, finiteTarget, true,
+                finiteEventPosition, finiteEventTarget, poisonedInterval),
+            Access::exactPwmHoldEndpoint(
+                stateFirst, stateSecond, finiteTarget, true,
+                finiteEventPosition, finiteEventTarget, 0.0),
+            "a poisoned PWM hold interval did not fall back to zero "
+            "elapsed time");
+
+    // eventPosition's own guard falls back to 1.0 -- an end-of-interval
+    // event whose suffix response covers the whole span.
+    for (const double poisonedPosition :
+         { std::numeric_limits<double>::quiet_NaN(),
+           std::numeric_limits<double>::infinity(),
+           -std::numeric_limits<double>::infinity() })
+        expectSame(
+            Access::exactPwmHoldEndpoint(
+                stateFirst, stateSecond, finiteTarget, true,
+                poisonedPosition, finiteEventTarget, finiteInterval),
+            Access::exactPwmHoldEndpoint(
+                stateFirst, stateSecond, finiteTarget, true, 1.0,
+                finiteEventTarget, finiteInterval),
+            "a non-finite PWM hold event position did not fall back to "
+            "the end of the interval");
+
+    // eventTarget's own guard falls back to the already-resolved target.
+    for (const float poisonedEventTarget :
+         { std::numeric_limits<float>::quiet_NaN(),
+           std::numeric_limits<float>::infinity(),
+           -std::numeric_limits<float>::infinity() })
+        expectSame(
+            Access::exactPwmHoldEndpoint(
+                stateFirst, stateSecond, finiteTarget, true,
+                finiteEventPosition, poisonedEventTarget, finiteInterval),
+            Access::exactPwmHoldEndpoint(
+                stateFirst, stateSecond, finiteTarget, true,
+                finiteEventPosition, finiteTarget, finiteInterval),
+            "a non-finite PWM hold event target did not fall back to the "
+            "already-resolved target");
+}
+
 void testSubHoldUsesItsR11C1TimeConstant()
 {
     // The stored SUB level reaches its mixer OTA through R11 1 kOhm into C1
@@ -7872,6 +8001,7 @@ int main()
     testSilentVoiceDoesNotInventUnmeasuredVcaFeedthrough();
     testCommonVcaHoldUsesJackBoardC7TimeConstant();
     testPwmHoldCrossesItsTwoSmoothingPoles();
+    testExactPwmHoldEndpointNonFiniteGuards();
     testSubHoldUsesItsR11C1TimeConstant();
     testPortamentoRateFollowsItsControl();
     testOscillatorSurvivesMoreThanOneCyclePerSample();
