@@ -627,6 +627,16 @@ float TaikoEngine::propagatingSpreadFor (float micDistanceMetres) noexcept
     return 1.0f / (1.0f + micDistanceMetres / 0.12f);
 }
 
+// The membrane's own plan area, pi r^2. observeMode, buildVoiceModes,
+// contactCollisionMass and palmDampingRates each rebuilt this identically
+// from whichever already-floored or already-clamped radius they were
+// holding, so it is resolved once here rather than as four copies of the
+// same expression.
+float TaikoEngine::membraneAreaFor (float radius) noexcept
+{
+    return piFloat * radius * radius;
+}
+
 float TaikoEngine::continuumBandVariance (float lowCoefficient,
                                           float highCoefficient) noexcept
 {
@@ -1734,7 +1744,7 @@ TaikoEngine::ModeObservation TaikoEngine::observeMode (const DrumState& drum,
     const float radius = std::max (drum.radius, radiusFloor);
     const float sigmaB = drum.batterDensity;
     const float sigmaR = drum.resonantDensity;
-    const float area = piFloat * radius * radius;
+    const float area = membraneAreaFor (radius);
     // The full open stroke, which is the one a drum's pitch is heard in. Where
     // the stick lands decides which modes it can reach at all, so this has to
     // be a real stroke rather than a point at the centre - a strike on the
@@ -2556,7 +2566,7 @@ float TaikoEngine::contactCollisionMass (const DrumState& drum,
                                          float strikeRadius,
                                          float strikerMass) noexcept
 {
-    const float area = piFloat * drum.radius * drum.radius;
+    const float area = membraneAreaFor (drum.radius);
     const float rho = clampFloat (strikeRadius, 0.0f, 0.995f);
     const float coupling = profile.membraneGain * profile.levelScale;
     double inverseHeadMass = 0.0;
@@ -2847,7 +2857,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
     // redoing it for every entry x branch pair the loop below visits.
     const float sqrtSigmaB = std::sqrt (sigmaB);
     const float sqrtSigmaR = std::sqrt (sigmaR);
-    const float area = piFloat * radius * radius;
+    const float area = membraneAreaFor (radius);
 
     const float micRho = drum.micRadius / radius;
     const float micAngleL = drum.micAngleLeft;
@@ -3709,7 +3719,7 @@ void TaikoEngine::palmDampingRates (
 {
     const auto& entries = membraneModes();
     const float rho = clampFloat (strikeRadius, 0.0f, 0.995f);
-    const float area = piFloat * drum.radius * drum.radius;
+    const float area = membraneAreaFor (drum.radius);
     modeRates.fill (0.0f);
     // The hand has a size in metres, not as a fraction of the instrument. On a
     // head too small to contain the full palm, use the largest centred patch
@@ -3717,7 +3727,7 @@ void TaikoEngine::palmDampingRates (
     const float physicalPalmRadius =
         std::min (handPatchRadiusMetres, 0.35f * drum.radius);
     const float palmRadius = physicalPalmRadius / drum.radius;
-    const float palmArea = piFloat * physicalPalmRadius * physicalPalmRadius;
+    const float palmArea = membraneAreaFor (physicalPalmRadius);
     for (int index = 0; index < modeEntryCount; ++index)
     {
         const auto& entry = entries[static_cast<std::size_t> (index)];
