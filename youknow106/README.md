@@ -829,31 +829,41 @@ output shaft position — the one control on the instrument a player moves when
 one patch arrives hotter than the last — listed in
 [`Source/DSP/YouKnow106Presets.cpp`](Source/DSP/YouKnow106Presets.cpp).
 
-Those positions are attenuation only: 55 of the 128 sit below the 0.80 panel
+Those positions are attenuation only: 37 of the 128 sit below the 0.80 panel
 default and none above it, so the product never shouts over the player's own
 reference setting. They hold the bank inside two contracts the audit tool
 enforces rather than merely reports, failing the build if either breaks:
 
-- **No preset peaks above −1 dBFS.** At the uniform 0.80 default, 31 of them
-  crossed 0 dBFS, the worst being A48 Synth Bass I at +8.99 dBFS. That was a
-  digital overflow at the plug-in's own output boundary, not the modelled
-  output summer's soft rail, and it is now gone: the loudest peak in the bank
-  is −1.50 dBFS and no channel sample reaches 0 dBFS.
-- **No preset exceeds −18 dBFS gated RMS.** The loudest tone now measures
-  −18.500544 dBFS against a corpus median of −22.004379174 dBFS, and the
-  interquartile loudness spread is 6.5 dB.
+- **No preset peaks above −1 dBFS.** This is now a backstop rather than the
+  rule the trims are chosen against: since digital full scale was referred to
+  the output summer's own rail (see below), the untrimmed bank already peaks no
+  higher than −3.67 dBFS, and the shipping bank peaks at −6.676311 dBFS with no
+  channel sample anywhere near 0 dBFS.
+- **No preset exceeds −31 dBFS gated RMS.** Three decibels above the
+  −34.195822899 dBFS corpus median, frozen as an absolute figure. The loudest
+  tone measures −31.193549 dBFS and the interquartile loudness spread is 6.6 dB.
 
-Below those ceilings the figures remain measurements rather than targets. VR1
-has only about +2.25 dB of travel left above the default, which cannot close
-the 40 dB gap down to a patch like A86 Hand Claps, and closing it would be
-wrong anyway: the noise sweeps, thunder and hand claps at the quiet end are
-quieter because the instrument makes them quieter. Eight tones therefore remain
-outside the median ±18 dB band and are reported as such. The score includes
-unison and six-key stress, the absolute output reference remains the OQ-06
-measurement question, and the nominal common VCA LEVEL law is circuit-derived;
-OQ-02 now asks only how installed component, rail and IC variation moves it.
-The ten preview WAVs use one disclosed 0.649585 (−3.75 dB) common gain so their
-relative levels survive 16-bit delivery without clipping.
+Digital full scale is the modelled output stage's own ceiling — IC6's ±13.5 V
+rail seen through the volume wiper at its loudest — rather than a point 12.71 dB
+below it. Mapping 0 dBFS anywhere under that rail throws the difference away as
+digital clipping, which is what once put 31 factory presets over full scale and
+what kept the shared noise rail 13 dB below its service anchor. Referring the
+boundary to the rail means the plug-in cannot clip before the circuit it models
+does; the whole instrument is correspondingly quieter, and the volume control
+and the host are where that is made up.
+
+Below the ceilings the figures remain measurements rather than targets. VR1 has
+only about +2.25 dB of travel left above the default, which cannot close the
+remaining gap down to a patch like A86 Hand Claps, and closing it would be wrong
+anyway: the noise sweeps, thunder and hand claps at the quiet end are quieter
+because the instrument makes them quieter. Two tones remain outside the median
+±18 dB band and are reported as such. Much less of that gap is the model's doing
+than it was: restoring the shared noise generator to its service anchor lifted
+the twelve noise-only patches from 21.5 dB below the corpus median to 12.9 dB
+below it. The score includes unison and six-key stress, the absolute output
+reference remains the OQ-06 measurement question, and the nominal common VCA
+LEVEL law is circuit-derived; OQ-02 now asks only how installed component, rail
+and IC variation moves it.
 
 The hardware stores positions, not patch-name text. Names such as “Brass Set 1”
 and “Owgan” are conventional archival descriptions shown for navigation, not
@@ -1485,3 +1495,6 @@ binary.
 - 2026-08-16: Hardened `prepare` against a host reporting an unusable sample rate. A non-finite rate now falls back to 48 kHz instead of failing both clamp comparisons and reaching the internal grid, which every coefficient below divides by; the panel's rate readout reports the engine's own figure rather than the host's, so a clamped or substituted rate is displayed honestly. New `YouKnow106.Engine` coverage drives zero, negative, NaN, both infinities, 1 Hz and 1 THz through prepare and a 4,096-sample render, asserting a supported running rate, a legal quality factor and finite audio in every case.
 - 2026-08-16: Extended the oversampling audits to the whole ladder rather than its two ends. The domain-work audit gained 44.1k-2x, 48k-2x, 88.2k-4x, 96k-4x and 176.4k/192k-4x counter cases, and its equal-wall-time factor-invariance pairs are now derived from the case table by host rate instead of being frozen index pairs that a new rung silently mis-paired; the timing audit reports and pairs all three rungs. Verified by `ctest --test-dir youknow106/build-dsp` (all 15 suites passing) and the plug-in suite.
 - 2026-08-16: Made the engine's applied internal rate visible. `YouKnow106Display` already received the running sample rate and oversampling factor but drew neither, so a player who selected 4x on a 96 kHz host had no way to learn the engine was running 2x -- the one case where the QUALITY selector's request and its result differ. The status scope now reports the applied factor and the internal rate it produces ("4x 192.0k") in its top-left corner, opposite the trace's own gain readout, and the panel screenshot was retaken.
+- 2026-08-17: Restored the shared noise generator to its service anchor and referred digital full scale to the output summer's own rail, which turned out to be one defect with two faces. The 4 Vpp TP8 NOISE LEVEL adjustment had been written onto the source *ahead* of its C41/R79 shaping, and that pole keeps only 7.2733% of a white source's power, so the audible rail sat 11.383 dB under the figure it was named after. Measured through one identical path, the model put noise 23.35 dB below its own calibrated self-oscillation where the paired TP8 adjustments (6 Vpp sine at BANK 3, 4 Vpp noise at BANK 6, procedurally chained so the VCA cancels) put it between 8.5 and 12.6 dB below. `noiseMixVolts` 2.0 -> 7.4161 restores exactly what the shaping discards, so the same +/-2 V now describes the rail the adjustment measures; it assumes no crest convention and lands at -11.96 dB, inside the anchored band. Raising it required headroom that did not exist: one shared generator sums coherently across held voices at 20*log10(N), so a six-note NOISE-10 chord peaked at +1.97 dBFS -- which is what commit 3a68d51 heard as "high Noise settings sound broken" and treated by lowering the source 9.5 dB. Digital full scale is now IC6's own rail through the volume wiper at its loudest, so the plug-in cannot clip before the modelled circuit does: the absolute worst case, every source on with six voices and both controls at maximum, peaks at -1.45 dBFS against +11.08 dBFS before. The whole instrument is 12.71 dB quieter as a result. The 128 per-preset VR1 trims were recomputed against the new levels (37 trimmed, deepest 0.257, none above the panel default), the audit's gated ceiling moved -18 -> -31 dBFS with the calibration, and the twelve noise-only factory patches rose from 21.5 dB below the corpus median to 12.9 dB below it.
+- 2026-08-17: Referred every absolute output threshold in the suites to `outputBoundaryGain()` instead of re-pinning nine failing numbers by hand. The onset-proxy detector, the asymmetric-PWM coupling tail and the held-gate floor now look for a fixed level in the modelled circuit rather than a fixed dBFS, and the MN3009 idle-floor anchor follows the calibration because what the datasheet row fixes is a voltage, not a dBFS. One assertion changed meaning rather than scale: with full scale now at the rail, "the hot corpus must pass floating overloads above full scale" no longer describes a correct engine, so it asserts what it always meant -- that the bound is a soft analogue rail and not a limiter, with no sample pinned at exactly +/-1 and Solo Unison's stacked low note still crossing at 1.0161 through the coupling overshoot.
+- 2026-08-17: Investigated and rejected a candidate "quality-dependent noise level" defect. The shared rail's total RMS does fall about 0.9 dB from 4x to 1x, but the shortfall is almost entirely above 8 kHz -- bandwidth a 48 kHz internal grid legitimately cannot carry -- while the 20 Hz-2 kHz band holds within 0.5 dB, which is what `testMainNoiseDensityIsProcessingRateInvariant` already guards. Normalising the shaped rail's total power instead was implemented, measured and reverted: it buys the inaudible top octave back by pushing the audible band 0.65 dB the wrong way and breaks that contract at 44.1 and 48 kHz with the ladder at 1x. The `sqrt(rate)` density normalisation is correct and the reasoning is now recorded beside it.

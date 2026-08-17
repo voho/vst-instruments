@@ -38,22 +38,33 @@ constexpr float voltsToSample = 1.0f / YouKnow106Engine::internalVoltsPerUnit;
 constexpr float sawMixVolts = 6.0f;
 constexpr float pulseMixVolts = 6.0f;
 constexpr float subMixVolts = 5.0f;
-// The noise coordinate is a by-ear voicing call, NOT the TP8 anchor carried
-// over, and the two must not be confused because their numbers coincide. The
-// service procedure adjusts VR32 for 4 Vpp at TP8, which is the CH1 voice VCA
-// *output*; this constant scales the source *before* the shaping below, and
-// that shaping then discards 11.38 dB of it. So a +/-2 V coordinate here does
-// not deliver 4 Vpp there -- referred to the model's own calibrated 4.8 Vpp
-// self-oscillation, it lands the noise about 22.7 dB down where the paired TP8
-// figures put it 8.5-12.5 dB down, the exact reading depending on what crest
-// convention a scope trace of random noise is read with.
+// The noise coordinate names the SHAPED rail, not the raw generator, and that
+// distinction is the whole of it. The service procedure adjusts VR32 for 4 Vpp
+// at TP8 -- the CH1 voice VCA output -- and a +/-2 V figure written onto the
+// source *ahead* of the shaping below does not arrive there as 4 Vpp, because
+// the 4.82 kHz pole keeps only 7.27% of a white source's power (-11.383 dB).
+// A previous revision made exactly that substitution and left the audible noise
+// 11.38 dB light: referred to the model's own calibrated 4.8 Vpp
+// self-oscillation it measured -23.35 dB where the paired TP8 figures put it
+// between -8.5 and -12.6 dB, the spread being what crest convention a scope
+// trace of random noise is read with.
 //
-// The value is 2.0 because 6.0 was tried and rejected by ear as making high
-// NOISE settings sound broken. Whether that symptom was level or was summing
-// distortion further down the mixer is unresolved, and the mixer's own budget
-// (filterInputAttenuation below) has no circuit basis either, so raising this
-// alone is not obviously the fix. Both belong to OQ-15/OQ-16, which stay open.
-constexpr float noiseMixVolts = 2.0f;
+// 2.0 / sqrt(0.0727330) = 7.4161 restores precisely what the shaping discards,
+// so the same +/-2 V now describes the rail the adjustment measures. It is a
+// mechanical correction of the misplacement rather than a fit, which is why it
+// assumes no crest convention; it lands at -11.96 dB against self-oscillation,
+// inside the anchored band at its conservative end.
+//
+// Raising it required the output boundary to be referred to the summer's rail
+// first (see outputBoundaryGain). Without that, a six-note NOISE-10 chord peaks
+// at +1.97 dBFS: one shared generator sums coherently across held voices, at
+// 20*log10(N), so noise chords reach full scale far sooner than oscillator
+// chords do. That is what "high Noise settings sound broken" was.
+//
+// What stays open is placement, not size: the anchors fix the product of this
+// constant and filterInputAttenuation, and only the coincidence between the
+// deficit and the shaping loss says the noise leg alone was light. OQ-15/OQ-16.
+constexpr float noiseMixVolts = 7.4161f;
 
 // The noise generator's support circuit, module board p. 13: Tr21 (2SC945,
 // factory-selected for noise) with R104 470 kOhm collector load, coupled by
@@ -1407,6 +1418,22 @@ float YouKnow106Engine::noiseSourceHighPassHz() noexcept
 float YouKnow106Engine::noiseSourceLowPassHz() noexcept
 {
     return rcCornerHz(noiseOtaLoadCapacitanceF, noiseOtaLoadResistanceOhms);
+}
+
+float YouKnow106Engine::outputBoundaryGain() noexcept
+{
+    // One internal unit is internalVoltsPerUnit, the summer cannot pass its own
+    // rail, and the volume wiper at its loudest adds no more than its own
+    // maximum passband gain. Their product is the largest steady output the
+    // instrument can present, and that is what 0 dBFS is defined as.
+    const float fullScaleVolts = outputSummerRailVolts
+                               * outputCouplingHighGain(1.0f);
+    if (!(fullScaleVolts > 0.0f) || !std::isfinite(fullScaleVolts))
+        return 1.0f;
+    // Expressed through the same Vref helper every other boundary question
+    // uses: the reference is the RMS that lands on -18 dBFS once full scale is
+    // the rail, so the two cannot drift apart.
+    return outputReferenceGain(minus18DbfsAmplitude * fullScaleVolts);
 }
 
 float YouKnow106Engine::outputCouplingHighGain() noexcept
@@ -4890,8 +4917,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     const float outputGlide =
         1.0f - std::exp(-inverseSampleRate_ / panelGlideSeconds);
     const double scanPhasePerInternalSample = controlScanHz / oversampledRate_;
-    const float outputBoundaryGain =
-        outputReferenceGain(compatibilityOutputReferenceRmsVolts);
+    const float outputBoundaryGain = YouKnow106Engine::outputBoundaryGain();
     // TA75558S IC6 output slew limit, SR = 1.7 V/us (653846 engine units per
     // second at 2.6 V per unit). Depends only on the internal rate, which is
     // fixed for the whole call, so it belongs beside the other per-call slew

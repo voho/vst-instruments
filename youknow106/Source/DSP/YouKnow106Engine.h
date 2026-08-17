@@ -496,6 +496,20 @@ public:
     static constexpr float outputSummerClipExponent = 8.0f;
     [[nodiscard]] static float outputSummerClip(float value) noexcept;
 
+    // Digital full scale is the modelled output stage's own ceiling: IC6's rail
+    // seen through the volume wiper at its loudest setting. Mapping 0 dBFS
+    // anywhere below that throws the difference away as digital clipping, which
+    // is what used to put 31 factory presets over full scale and what stopped
+    // the shared noise rail from being raised to its service anchor. Referring
+    // the boundary to the rail instead means the plug-in cannot clip before the
+    // circuit it models does.
+    //
+    // The bound is the steady-state one. The output coupling is a high-pass, so
+    // a large enough transient can overshoot it; the measured worst case over
+    // every source at once, six voices and both controls at maximum is -1.45
+    // dBFS, so the margin is real but is not a mathematical guarantee.
+    [[nodiscard]] static float outputBoundaryGain() noexcept;
+
     // In the supplied hash-matched B-2 image, stored continuous controls are
     // seven-bit bytes: b<<7 in the 14-bit working domain, followed by b<<5 at
     // the physical 12-bit converter after two low bits are discarded.
@@ -1504,6 +1518,15 @@ private:
     float inverseSampleRate_ { 1.0f / 48000.0f };
     double oversampledRate_ { 192000.0 };
     float inverseOversampledRate_ { 1.0f / 192000.0f };
+    // Holds both discrete noise sources' power density constant with rate, so a
+    // quality change does not move the level a listener hears. It deliberately
+    // does NOT equalise their total power: a shallower grid carries less
+    // bandwidth, and the shaped rail's total RMS is therefore ~0.9 dB lower at
+    // 1x than at 4x. Nearly all of that sits above 8 kHz -- the 20 Hz-2 kHz
+    // band holds to within 0.5 dB, which is what
+    // testMainNoiseDensityIsProcessingRateInvariant guards. Equalising total
+    // power instead was tried and rejected: it buys the inaudible top octave
+    // back by pushing the audible band 0.65 dB the wrong way.
     float noiseRateScale_ { 1.0f };
     int oversampling_ { 4 };
     // Applied and requested rungs of the quality ladder, as factors. They differ
