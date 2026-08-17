@@ -4731,17 +4731,20 @@ void testExactPwmHoldEndpointNonFiniteGuards()
     // target's own guard falls back to the existing first-pole state,
     // whether or not an event interrupts the interval.
     for (const bool hasEvent : { false, true })
-        expectSame(
-            Access::exactPwmHoldEndpoint(
-                stateFirst, stateSecond,
-                std::numeric_limits<float>::quiet_NaN(), hasEvent,
-                finiteEventPosition, finiteEventTarget, finiteInterval),
-            Access::exactPwmHoldEndpoint(
-                stateFirst, stateSecond, static_cast<float>(stateFirst),
-                hasEvent, finiteEventPosition, finiteEventTarget,
-                finiteInterval),
-            "a non-finite PWM hold target did not fall back to the "
-            "existing first-pole state");
+        for (const float poisonedTarget :
+             { std::numeric_limits<float>::quiet_NaN(),
+               std::numeric_limits<float>::infinity(),
+               -std::numeric_limits<float>::infinity() })
+            expectSame(
+                Access::exactPwmHoldEndpoint(
+                    stateFirst, stateSecond, poisonedTarget, hasEvent,
+                    finiteEventPosition, finiteEventTarget, finiteInterval),
+                Access::exactPwmHoldEndpoint(
+                    stateFirst, stateSecond, static_cast<float>(stateFirst),
+                    hasEvent, finiteEventPosition, finiteEventTarget,
+                    finiteInterval),
+                "a non-finite PWM hold target did not fall back to the "
+                "existing first-pole state");
 
     // intervalSeconds's own guard only matters when an event interrupts the
     // interval -- the no-event path advances by the caller-built
@@ -4779,15 +4782,19 @@ void testExactPwmHoldEndpointNonFiniteGuards()
             "the end of the interval");
 
     // eventTarget's own guard falls back to the already-resolved target.
-    expectSame(
-        Access::exactPwmHoldEndpoint(
-            stateFirst, stateSecond, finiteTarget, true, finiteEventPosition,
-            std::numeric_limits<float>::quiet_NaN(), finiteInterval),
-        Access::exactPwmHoldEndpoint(
-            stateFirst, stateSecond, finiteTarget, true, finiteEventPosition,
-            finiteTarget, finiteInterval),
-        "a non-finite PWM hold event target did not fall back to the "
-        "already-resolved target");
+    for (const float poisonedEventTarget :
+         { std::numeric_limits<float>::quiet_NaN(),
+           std::numeric_limits<float>::infinity(),
+           -std::numeric_limits<float>::infinity() })
+        expectSame(
+            Access::exactPwmHoldEndpoint(
+                stateFirst, stateSecond, finiteTarget, true,
+                finiteEventPosition, poisonedEventTarget, finiteInterval),
+            Access::exactPwmHoldEndpoint(
+                stateFirst, stateSecond, finiteTarget, true,
+                finiteEventPosition, finiteTarget, finiteInterval),
+            "a non-finite PWM hold event target did not fall back to the "
+            "already-resolved target");
 }
 
 void testSubHoldUsesItsR11C1TimeConstant()
