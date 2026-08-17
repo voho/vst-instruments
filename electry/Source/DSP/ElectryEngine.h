@@ -977,6 +977,16 @@ private:
         std::memcpy(&unit, &bits, sizeof(unit));
         return 2.0f * (unit - 1.5f);
     }
+    // Three uniforms on [-1, 1] summed: unit variance exactly, and unable to
+    // leave +/-3 sigma, which is the bound every stroke-, strum- and vibrato-
+    // draw in this file needs. `drawStrokeVariation`, `beginChordStroke` and
+    // `drawVibratoCycle` each used to carry their own byte-identical copy of
+    // this one-line lambda over their own locally seeded state; this is that
+    // shared arithmetic, still advancing whichever state the caller passes.
+    static float sumThreeUniforms(std::uint32_t& state) noexcept
+    {
+        return bipolarNoise(state) + bipolarNoise(state) + bipolarNoise(state);
+    }
     // clampf/lerp/smoothStep live in DspMath.h now, shared with ElectryFx and
     // ElectryVisuals; unqualified calls in this class's member functions still
     // resolve to them via the enclosing electry namespace.
