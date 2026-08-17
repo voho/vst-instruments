@@ -1323,6 +1323,71 @@ void testPrepareSanitisesSampleRate()
            "a negative sample rate was not clamped to the floor");
 }
 
+// process()'s own guard - a null left or right pointer, or a non-positive
+// sample count, is a no-op, and an unprepared engine fills the caller's
+// buffer with silence and returns rather than touching any voice state - was
+// never driven directly anywhere in the suite: every call site above always
+// passes two valid pointers, a positive length and an already-prepared
+// engine. ElectryFx::process() carries the identical guard shape and has its
+// own direct coverage in testHostileInput(); this closes the same gap here.
+void testProcessRejectsInvalidBuffers()
+{
+    ElectryEngine engine;
+    engine.prepare(48000.0, 512);
+    engine.setParameters(EngineParameters {});
+    engine.reset();
+    engine.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+    engine.noteOn(pickKeyswitch(PickStyle::Down), 1.0f);
+    engine.noteOn(40, 0.9f);
+
+    // Nonzero sentinels, distinct per channel, so a regression that clears
+    // the surviving channel instead of leaving it untouched is caught -
+    // zero-initialised buffers would hide exactly that bug.
+    std::vector<float> left(64, 0.31f);
+    std::vector<float> right(64, -0.47f);
+    const std::vector<float> leftSentinel = left;
+    const std::vector<float> rightSentinel = right;
+
+    // A null pointer, on either side, must be a no-op rather than a crash -
+    // including leaving the other, valid channel's buffer untouched.
+    engine.process(nullptr, right.data(), static_cast<int>(right.size()));
+    engine.process(left.data(), nullptr, static_cast<int>(left.size()));
+    expect(left == leftSentinel && right == rightSentinel,
+           "a null-pointer process() call wrote into the other, valid channel");
+
+    // A non-positive sample count must also be a no-op.
+    engine.process(left.data(), right.data(), 0);
+    engine.process(left.data(), right.data(), -4);
+    expect(left == leftSentinel && right == rightSentinel,
+           "a non-positive sample count still wrote into the buffers");
+
+    expect(engine.getActiveVoiceCount() == 1,
+           "an invalid process() call disturbed the sounding voice");
+
+    // A genuinely valid call still renders audibly, showing the guards above
+    // rejected only the hostile shapes and not every call.
+    StereoBuffer buffer(2048);
+    renderInto(engine, buffer);
+    expect(allFinite(buffer) && peakAbs(buffer.left) > 1.0e-4f,
+           "a valid process() call after the hostile ones produced no audio");
+
+    // An unprepared engine fills the caller's buffer with silence and
+    // returns, rather than touching voice state sized for whatever the
+    // engine was (or was never) prepared at.
+    ElectryEngine fresh;
+    std::vector<float> unpreparedLeft(256, 0.7f);
+    std::vector<float> unpreparedRight(256, -0.7f);
+    fresh.process(unpreparedLeft.data(), unpreparedRight.data(),
+                 static_cast<int>(unpreparedLeft.size()));
+    expect(std::all_of(unpreparedLeft.begin(), unpreparedLeft.end(),
+                       [] (float sample) { return sample == 0.0f; })
+               && std::all_of(unpreparedRight.begin(), unpreparedRight.end(),
+                              [] (float sample) { return sample == 0.0f; }),
+           "an unprepared engine did not fill the buffer with silence");
+    expect(fresh.getActiveVoiceCount() == 0,
+           "an unprepared engine's process() call created a voice");
+}
+
 void testDeterminism()
 {
     constexpr double sampleRate = 48000.0;
@@ -8165,6 +8230,7 @@ int main()
     testPitchAccuracy();
     testDropELowNoteAtMaximumRate();
     testPrepareSanitisesSampleRate();
+    testProcessRejectsInvalidBuffers();
     testDeterminism();
     testKeyswitchesSelectStylesSilently();
     testAlternateStrokeSequence();
