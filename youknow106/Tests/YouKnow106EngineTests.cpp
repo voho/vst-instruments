@@ -28,6 +28,12 @@ namespace youknow106
 // suite has its own executable-local definition for circuit internals.
 struct YouKnow106TestAccess
 {
+    static std::uint64_t chorusSupportBuildCount(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return engine.chorus_.supportBuildCount_;
+    }
+
     static int lastVoiceMidi(const YouKnow106Engine& engine, int slot) noexcept
     {
         return engine.voices_[static_cast<std::size_t>(slot)].lastVoiceMidi;
@@ -4994,6 +5000,10 @@ void testQualityChangeWaitsForTheOutputPathToEmpty()
     constexpr double sampleRate = 48000.0;
     YouKnow106Engine engine;
     engine.prepare(sampleRate, blockSize, true);
+    const auto supportBuilds =
+        YouKnow106TestAccess::chorusSupportBuildCount(engine);
+    expect(supportBuilds == 3,
+           "prepare did not build exactly the three quality support chains");
     auto parameters = plainPatch();
     parameters.chorus = ChorusMode::Two;
     engine.setParameters(parameters);
@@ -5018,6 +5028,8 @@ void testQualityChangeWaitsForTheOutputPathToEmpty()
     render(engine, static_cast<int>(sampleRate * 0.1));
     expect(engine.getOversamplingFactor() == 1,
            "the quality change never applied after the output path emptied");
+    expect(YouKnow106TestAccess::chorusSupportBuildCount(engine) == supportBuilds,
+           "a live quality change rebuilt chorus matrices on the audio thread");
 }
 
 void testQualityLadderResolvesEveryRungAtEveryRate()
@@ -7496,6 +7508,13 @@ void testPanelLayout()
         expect(sections[index - 1].x + sections[index - 1].width
                    < sections[index].x,
                "adjacent synthesis sections lost their divider gap");
+    expect(sections[3].width >= 340.0f,
+           "the DCO section lost the breathing room required by its selector groups");
+    for (const auto& control : controls)
+        if (control.section == 3
+            && control.kind != panel::ControlKind::Slider)
+            expect(control.width >= 28.0f,
+                   std::string("a DCO selector is crowded again: ") + control.label);
     expect(sections[2].x == panel::instrumentLeft
                && sections[2].y == panel::soundRowTop,
            "the hardware synthesis strip no longer begins with LFO");

@@ -1,0 +1,220 @@
+name: Release YouKnow106
+
+on:
+  push:
+    tags:
+      - "youknow106-v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-youknow106
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    name: Sign, notarize and publish macOS
+    runs-on: macos-15
+    environment: youknow106-production
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the protected release source and repository settings
+        env:
+          RELEASE_SETTINGS_TOKEN: ${{ secrets.YOUKNOW106_RELEASE_SETTINGS_TOKEN }}
+        run: |
+          set -euo pipefail
+          : "${RELEASE_SETTINGS_TOKEN:?configure YOUKNOW106_RELEASE_SETTINGS_TOKEN in the protected environment}"
+
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "error: the release tag must point to a commit on main" >&2
+            exit 1
+          fi
+
+          api_version="2026-03-10"
+          immutable="$(GH_TOKEN="${RELEASE_SETTINGS_TOKEN}" gh api \
+            -H "X-GitHub-Api-Version: ${api_version}" \
+            "repos/${GITHUB_REPOSITORY}/immutable-releases" --jq '.enabled')"
+          if [[ "${immutable}" != "true" ]]; then
+            echo "error: GitHub release immutability is not enabled" >&2
+            exit 1
+          fi
+
+          tag_locks=0
+          while IFS= read -r ruleset_id; do
+            [[ -n "${ruleset_id}" ]] || continue
+            ruleset="$(GH_TOKEN="${RELEASE_SETTINGS_TOKEN}" gh api \
+              -H "X-GitHub-Api-Version: ${api_version}" \
+              "repos/${GITHUB_REPOSITORY}/rulesets/${ruleset_id}")"
+            if ! jq -e '.bypass_actors | type == "array"' \
+                <<< "${ruleset}" >/dev/null; then
+              echo "error: release token cannot inspect tag-ruleset bypass actors" >&2
+              echo "Grant repository Administration read/write, then retry." >&2
+              exit 1
+            fi
+            if jq -e '
+              .target == "tag" and .enforcement == "active" and
+              (.bypass_actors | length == 0) and
+              ((.conditions.ref_name.include // []) |
+                index("refs/tags/youknow106-v*") != null) and
+              ([.rules[]?.type] | index("update") != null) and
+              ([.rules[]?.type] | index("deletion") != null)
+            ' <<< "${ruleset}" >/dev/null; then
+              ((tag_locks += 1))
+            fi
+          done < <(GH_TOKEN="${RELEASE_SETTINGS_TOKEN}" gh api \
+            -H "X-GitHub-Api-Version: ${api_version}" \
+            "repos/${GITHUB_REPOSITORY}/rulesets?targets=tag" \
+            --jq '.[] | select(.target == "tag" and .enforcement == "active") | .id')
+          if (( tag_locks < 1 )); then
+            echo "error: an active no-bypass ruleset must prevent release-tag updates and deletions" >&2
+            exit 1
+          fi
+
+          environment="$(GH_TOKEN="${RELEASE_SETTINGS_TOKEN}" gh api \
+            -H "X-GitHub-Api-Version: ${api_version}" \
+            "repos/${GITHUB_REPOSITORY}/environments/youknow106-production")"
+          reviewers="$(printf '%s' "${environment}" | jq \
+            '[.protection_rules[] | select(.type == "required_reviewers") | .reviewers[]] | length')"
+          custom_tags="$(printf '%s' "${environment}" | jq -r \
+            '.deployment_branch_policy.custom_branch_policies')"
+          if (( reviewers < 1 )) || [[ "${custom_tags}" != "true" ]]; then
+            echo "error: youknow106-production must require a reviewer and custom tag policy" >&2
+            exit 1
+          fi
+
+          tag_policies="$(GH_TOKEN="${RELEASE_SETTINGS_TOKEN}" gh api \
+            -H "X-GitHub-Api-Version: ${api_version}" \
+            "repos/${GITHUB_REPOSITORY}/environments/youknow106-production/deployment-branch-policies" \
+            --jq '[.branch_policies[] | select(.name == "youknow106-v*")] | length')"
+          if (( tag_policies != 1 )); then
+            echo "error: the release environment must have one youknow106-v* tag policy" >&2
+            exit 1
+          fi
+
+      - name: Import Apple signing and notarization credentials
+        env:
+          APP_CERTIFICATE: ${{ secrets.YOUKNOW106_APP_CERTIFICATE_P12_BASE64 }}
+          APP_CERTIFICATE_PASSWORD: ${{ secrets.YOUKNOW106_APP_CERTIFICATE_P12_PASSWORD }}
+          INSTALLER_CERTIFICATE: ${{ secrets.YOUKNOW106_INSTALLER_CERTIFICATE_P12_BASE64 }}
+          INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.YOUKNOW106_INSTALLER_CERTIFICATE_P12_PASSWORD }}
+          NOTARY_KEY: ${{ secrets.YOUKNOW106_NOTARY_KEY_P8_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.YOUKNOW106_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.YOUKNOW106_NOTARY_ISSUER_ID }}
+          APP_SIGN_IDENTITY: ${{ vars.YOUKNOW106_APP_SIGN_IDENTITY }}
+          INSTALLER_SIGN_IDENTITY: ${{ vars.YOUKNOW106_INSTALLER_SIGN_IDENTITY }}
+        run: |
+          set -euo pipefail
+          : "${APP_CERTIFICATE:?missing application certificate}"
+          : "${APP_CERTIFICATE_PASSWORD:?missing application certificate password}"
+          : "${INSTALLER_CERTIFICATE:?missing installer certificate}"
+          : "${INSTALLER_CERTIFICATE_PASSWORD:?missing installer certificate password}"
+          : "${NOTARY_KEY:?missing App Store Connect API key}"
+          : "${NOTARY_KEY_ID:?missing App Store Connect API key ID}"
+          : "${NOTARY_ISSUER_ID:?missing App Store Connect API issuer ID}"
+          : "${APP_SIGN_IDENTITY:?missing YOUKNOW106_APP_SIGN_IDENTITY environment variable}"
+          : "${INSTALLER_SIGN_IDENTITY:?missing YOUKNOW106_INSTALLER_SIGN_IDENTITY environment variable}"
+
+          app_certificate="${RUNNER_TEMP}/youknow106-app.p12"
+          installer_certificate="${RUNNER_TEMP}/youknow106-installer.p12"
+          notary_key="${RUNNER_TEMP}/youknow106-notary.p8"
+          keychain="${RUNNER_TEMP}/youknow106-signing.keychain-db"
+          keychain_password="$(uuidgen)$(uuidgen)"
+
+          printf '%s' "${APP_CERTIFICATE}" | base64 --decode -o "${app_certificate}"
+          printf '%s' "${INSTALLER_CERTIFICATE}" | base64 --decode -o "${installer_certificate}"
+          printf '%s' "${NOTARY_KEY}" | base64 --decode -o "${notary_key}"
+          chmod 600 "${app_certificate}" "${installer_certificate}" "${notary_key}"
+
+          security create-keychain -p "${keychain_password}" "${keychain}"
+          security set-keychain-settings -lut 21600 "${keychain}"
+          security unlock-keychain -p "${keychain_password}" "${keychain}"
+          security import "${app_certificate}" -P "${APP_CERTIFICATE_PASSWORD}" \
+            -T /usr/bin/codesign -k "${keychain}"
+          security import "${installer_certificate}" -P "${INSTALLER_CERTIFICATE_PASSWORD}" \
+            -T /usr/bin/productsign -k "${keychain}"
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "${keychain_password}" "${keychain}"
+          security list-keychains -d user -s "${keychain}"
+
+          security find-identity -v "${keychain}" | grep -F -- "\"${APP_SIGN_IDENTITY}\"" >/dev/null
+          security find-identity -v "${keychain}" | grep -F -- "\"${INSTALLER_SIGN_IDENTITY}\"" >/dev/null
+          xcrun notarytool store-credentials youknow106-ci-notary \
+            --key "${notary_key}" --key-id "${NOTARY_KEY_ID}" \
+            --issuer "${NOTARY_ISSUER_ID}" --validate
+
+          rm -f "${app_certificate}" "${installer_certificate}" "${notary_key}"
+
+      - name: Build, test, sign, notarize and package
+        working-directory: youknow106
+        env:
+          APP_SIGN_IDENTITY: ${{ vars.YOUKNOW106_APP_SIGN_IDENTITY }}
+          INSTALLER_SIGN_IDENTITY: ${{ vars.YOUKNOW106_INSTALLER_SIGN_IDENTITY }}
+          NOTARY_PROFILE: youknow106-ci-notary
+        run: ./scripts/release-macos.sh
+
+      - name: Verify the publication set
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dist="youknow106/build-macos/dist"
+          packages=("${dist}"/YouKnow106-*-macOS-universal.pkg)
+          manifests=("${dist}"/YouKnow106-*-macOS-universal.manifest.txt)
+          checksums=("${dist}"/YouKnow106-*-macOS-universal-SHA256SUMS.txt)
+          if (( ${#packages[@]} != 1 || ${#manifests[@]} != 1 || ${#checksums[@]} != 1 )); then
+            echo "error: expected exactly one PKG, manifest and checksum file" >&2
+            exit 1
+          fi
+          grep -Fx -- "Release mode: 1" "${manifests[0]}" >/dev/null
+          grep -Fx -- "Notarization status: Accepted" "${manifests[0]}" >/dev/null
+          grep -E -- '^Customer licence SHA-256: [0-9a-f]{64}$' \
+            "${manifests[0]}" >/dev/null
+          grep -Fx -- "Standalone bundle identifier: cz.protocodus.youknow106" \
+            "${manifests[0]}" >/dev/null
+          grep -Fx -- "Audio Unit bundle identifier: cz.protocodus.youknow106.au" \
+            "${manifests[0]}" >/dev/null
+          grep -Fx -- "VST3 bundle identifier: cz.protocodus.youknow106.vst3" \
+            "${manifests[0]}" >/dev/null
+          grep -Fx -- "Package identifier: cz.protocodus.youknow106.pkg" \
+            "${manifests[0]}" >/dev/null
+          (cd "${dist}" && shasum -a 256 -c "$(basename "${checksums[0]}")")
+
+      - name: Publish the immutable GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(
+            youknow106/build-macos/dist/YouKnow106-*-macOS-universal.pkg
+            youknow106/build-macos/dist/YouKnow106-*-macOS-universal.manifest.txt
+            youknow106/build-macos/dist/YouKnow106-*-macOS-universal-SHA256SUMS.txt
+          )
+          version="${GITHUB_REF_NAME#youknow106-v}"
+          gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
+            --verify-tag --title "YouKnow106 ${version}" \
+            --notes "Signed, notarized and stapled commercial macOS release."
+
+          immutable="$(gh release view "${GITHUB_REF_NAME}" \
+            --json isImmutable --jq '.isImmutable')"
+          if [[ "${immutable}" != "true" ]]; then
+            echo "error: GitHub did not make the published release immutable" >&2
+            exit 1
+          fi
+
+      - name: Remove temporary signing material
+        if: always()
+        run: |
+          rm -f "${RUNNER_TEMP}/youknow106-app.p12" \
+            "${RUNNER_TEMP}/youknow106-installer.p12" \
+            "${RUNNER_TEMP}/youknow106-notary.p8"
+          security delete-keychain \
+            "${RUNNER_TEMP}/youknow106-signing.keychain-db" 2>/dev/null || true

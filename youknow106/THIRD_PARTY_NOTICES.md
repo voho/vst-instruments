@@ -22,9 +22,7 @@ implementations that accompany these papers, and none of them is included here.
 - Antti Huovilainen, *Non-linear digital implementation of the Moog ladder
   filter* (DAFx-04), and Stefano D'Angelo and Vesa Välimäki, *Generalized Moog
   Ladder Filter: Part II* (<https://doi.org/10.1109/TASLP.2014.2352556>) —
-  nonlinear delay-free-loop solutions for a transconductor cascade. YouKnow106
-  solves its own implicit system with a damped Newton step whose Jacobian is
-  bidiagonal plus one corner term contributed by the resonance return.
+  nonlinear delay-free-loop solutions for a transconductor cascade.
 - Vesa Välimäki, Jussi Pekonen and Juhan Nam, *Perceptually informed synthesis
   of bandlimited classical waveforms using integrated polynomial interpolation*
   (JASA, 2012) — integrated-B-spline BLEP residual tables built at 64x

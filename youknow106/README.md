@@ -3,6 +3,14 @@
 A six-voice circuit-modelled DCO polysynth for macOS, built as a self-contained
 JUCE project: VST3, Audio Unit and Standalone, universal `arm64`/`x86_64`.
 
+YouKnow106 is published by [Protocodus](https://protocodus.cz) and supports
+macOS 11 or later. Start with the [user guide](Docs/USER_GUIDE.md), see
+[customer-facing changes](CHANGELOG.md) and [privacy information](PRIVACY.md),
+or contact [protocodus@proton.me](mailto:protocodus@proton.me). This repository
+is currently a release candidate: no commercial binary should be published
+until every blocker in the [release checklist](Docs/RELEASE_CHECKLIST.md) is
+resolved and recorded.
+
 YouKnow106 models the voice architecture of a 1984 six-voice polysynth — the
 Roland Juno-106 — block by block, from its integer-divided note timers through
 its four-pole transconductor filter to its uncompanded bucket-brigade chorus. It
@@ -235,6 +243,8 @@ storage, latency or per-sample work. Final qualification is recorded below.
 
 ## Contents
 
+- [User guide](Docs/USER_GUIDE.md)
+- [Commercial release checklist](Docs/RELEASE_CHECKLIST.md)
 - [What makes it a circuit model rather than a lookalike](#what-makes-it-a-circuit-model-rather-than-a-lookalike)
 - [Fidelity ledger: stage by stage](#fidelity-ledger-stage-by-stage)
 - [Voices, analogue character and dispersion](#voices-analogue-character-and-dispersion)
@@ -1420,21 +1430,27 @@ youknow106/build-dsp/YouKnow106AuditFactoryPresets
 
 ## Sign, package and notarize
 
+For an ad-hoc local or nightly package:
+
 ```bash
 cd youknow106
 ./scripts/sign-and-package-macos.sh
 ```
 
-With no signing identities set this ad-hoc signs and produces an unsigned
-installer, which is what the nightly workflow ships. For public distribution,
-supply your own identities:
+That development path may emit an ad-hoc-signed PKG and ZIP. It must never be
+promoted to a paid/public release. Production starts from the clean, exact
+`youknow106-v1.1.0` tag and fails closed unless both Developer ID identities and
+a working `notarytool` profile are supplied:
 
 ```bash
 APP_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 INSTALLER_SIGN_IDENTITY="Developer ID Installer: Your Name (TEAMID)" \
 NOTARY_PROFILE=your-notary-profile \
-./scripts/sign-and-package-macos.sh
+./scripts/release-macos.sh
 ```
+
+The production path builds/tests universal macOS 11 artifacts and publishes
+only a signed, notarized and stapled PKG plus its manifest and SHA-256 file.
 
 ## Layout
 

@@ -1036,12 +1036,41 @@ float Chorus::Line::process(
     return static_cast<float>(exactOutputState[4] - exactOutputState[5]);
 }
 
+void Chorus::prepareSupportRates(double hostSampleRate) noexcept
+{
+    constexpr std::array<int, 3> factors { 1, 2, 4 };
+    const double base = std::clamp(hostSampleRate, 8000.0, 768000.0);
+    for (std::size_t index = 0; index < factors.size(); ++index)
+    {
+        const auto rate = static_cast<float> (
+            std::clamp(base * static_cast<double> (factors[index]),
+                       8000.0, 768000.0));
+        preparedSupportRates_[index] = rate;
+        preparedSupport_[index] = supportChainFor(rate);
+        ++supportBuildCount_;
+    }
+    supportRatesPrepared_ = true;
+}
+
 void Chorus::prepare(double sampleRate, bool preserveState) noexcept
 {
     sampleRate_ = static_cast<float>(std::clamp(sampleRate, 8000.0, 768000.0));
     inverseSampleRate_ = 1.0f / sampleRate_;
     wetMuteGlide_ = 1.0f - std::exp(-inverseSampleRate_ / wetMuteTimeConstantSeconds);
-    support_ = supportChainFor(sampleRate_);
+    const auto cached = supportRatesPrepared_
+        ? std::find(preparedSupportRates_.begin(), preparedSupportRates_.end(),
+                    sampleRate_)
+        : preparedSupportRates_.end();
+    if (cached != preparedSupportRates_.end())
+    {
+        support_ = preparedSupport_[static_cast<std::size_t> (
+            std::distance(preparedSupportRates_.begin(), cached))];
+    }
+    else
+    {
+        support_ = supportChainFor(sampleRate_);
+        ++supportBuildCount_;
+    }
     if (preserveState)
     {
         lineA_.resetAudioRateSupport();

@@ -3,6 +3,7 @@
 #include "YouKnow106Chorus.h"
 
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -475,7 +476,8 @@ public:
     static constexpr float internalVoltsPerUnit = 2.6f;
     // The chorus refers its BBD noise row to the same coordinate and has to
     // name it locally, so the two cannot be allowed to drift apart.
-    static_assert(Chorus::nodeVoltsPerUnit == internalVoltsPerUnit,
+    static_assert(std::bit_cast<std::uint32_t> (Chorus::nodeVoltsPerUnit)
+                      == std::bit_cast<std::uint32_t> (internalVoltsPerUnit),
                   "the chorus and the engine disagree about the node volt scale");
     static constexpr float minus18DbfsAmplitude = 0.125892541f;
     static constexpr float compatibilityOutputReferenceRmsVolts =
@@ -845,7 +847,9 @@ private:
     static constexpr float dcoHoldSlewSecondsVoiced = 522.0e-6f;
     static constexpr float resonanceHoldSlewSecondsVoiced = 522.0e-6f;
     static constexpr float noiseHoldSlewSecondsVoiced = 522.0e-6f;
-    static_assert(vcfHoldSlewSeconds == resonanceHoldSlewSecondsVoiced,
+    static_assert(std::bit_cast<std::uint32_t> (vcfHoldSlewSeconds)
+                      == std::bit_cast<std::uint32_t> (
+                          resonanceHoldSlewSecondsVoiced),
                   "the shared exact VCF-hold trajectory requires equal "
                   "cutoff and resonance constants");
     // The shared white-noise generator and each card's microscopic filter
