@@ -206,7 +206,10 @@ if [[ -z "${JUCE_SOURCE_DIR}" || ! -d "${JUCE_SOURCE_DIR}" ]]; then
     exit 1
 fi
 if [[ -z "${CXX_COMPILER}" || ! -x "${CXX_COMPILER}" ]]; then
-    echo "error: CMAKE_CXX_COMPILER in ${CACHE_FILE} is missing or invalid" >&2
+    CXX_COMPILER="$(xcrun --find clang++ 2>/dev/null || true)"
+fi
+if [[ -z "${CXX_COMPILER}" || ! -x "${CXX_COMPILER}" ]]; then
+    echo "error: no executable C++ compiler in ${CACHE_FILE} or xcrun" >&2
     exit 1
 fi
 if [[ "${RELEASE_MODE}" == "1" && "${DEPLOYMENT_TARGET}" != "${MINIMUM_MACOS}" ]]; then

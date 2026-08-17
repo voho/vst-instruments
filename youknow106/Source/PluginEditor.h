@@ -32,6 +32,8 @@ public:
                        int buttonW, int buttonH, juce::ComboBox&) override;
     void drawLabel (juce::Graphics&, juce::Label&) override;
     juce::Label* createSliderTextBox (juce::Slider&) override;
+    std::unique_ptr<juce::FocusOutline> createFocusOutlineForComponent (
+        juce::Component&) override;
 };
 
 // The moulded plastic of the faceplate: a maintained-but-used ABS material scan
@@ -173,6 +175,7 @@ private:
 
 class YouKnow106AudioProcessorEditor final : public juce::AudioProcessorEditor,
                                              public juce::FileDragAndDropTarget,
+                                             private juce::KeyListener,
                                              private juce::Timer
 {
 public:
@@ -194,12 +197,22 @@ public:
     // for it without a real pointer over a real window.
     [[nodiscard]] juce::String parameterValueTextFor (juce::Component*) const;
 
+    // Keyboard traversal and pointer hover share the fixed help strip. A newly
+    // focused control wins until the pointer really moves, at which point the
+    // hover target takes over again. Public for the same headless regression
+    // reason as parameterValueTextFor().
+    void refreshContextHelp (juce::Component* hovered,
+                             juce::Component* focused,
+                             bool mouseMoved);
+
 private:
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
     using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
+    using juce::AudioProcessorEditor::keyPressed;
 
     void timerCallback() override;
+    bool keyPressed (const juce::KeyPress&, juce::Component*) override;
     void buildPanelControls();
     void buildUtilityStrip();
     void buildPresetBar();
@@ -316,6 +329,9 @@ private:
     YouKnow106Keyboard keyboard;
     YouKnow106PerformanceLever performanceLever;
     YouKnow106ContextHelp contextHelp;
+    juce::Component::SafePointer<juce::Component> lastFocusedHelpComponent;
+    juce::Point<float> lastMouseScreenPosition;
+    bool contextHelpFollowsKeyboardFocus = false;
 
     std::vector<std::unique_ptr<SliderAttachment>> sliderAttachments;
     std::vector<std::unique_ptr<ButtonAttachment>> buttonAttachments;

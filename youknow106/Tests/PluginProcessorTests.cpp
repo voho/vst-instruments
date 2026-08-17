@@ -33,6 +33,49 @@ void expect (bool condition, const std::string& message)
     }
 }
 
+juce::Colour paletteColour (std::uint32_t rgb)
+{
+    return { static_cast<juce::uint8> ((rgb >> 16) & 0xffu),
+             static_cast<juce::uint8> ((rgb >> 8) & 0xffu),
+             static_cast<juce::uint8> (rgb & 0xffu) };
+}
+
+double relativeLuminance (juce::Colour colour)
+{
+    const auto linear = [] (double component)
+    {
+        return component <= 0.04045
+            ? component / 12.92
+            : std::pow ((component + 0.055) / 1.055, 2.4);
+    };
+
+    return 0.2126 * linear (colour.getFloatRed())
+         + 0.7152 * linear (colour.getFloatGreen())
+         + 0.0722 * linear (colour.getFloatBlue());
+}
+
+double contrastRatio (juce::Colour first, juce::Colour second)
+{
+    const auto firstLuminance = relativeLuminance (first);
+    const auto secondLuminance = relativeLuminance (second);
+    return (std::max (firstLuminance, secondLuminance) + 0.05)
+         / (std::min (firstLuminance, secondLuminance) + 0.05);
+}
+
+juce::Colour compositeOver (juce::Colour foreground, juce::Colour background)
+{
+    const auto alpha = foreground.getFloatAlpha();
+    const auto blend = [alpha] (float front, float back)
+    {
+        return front * alpha + back * (1.0f - alpha);
+    };
+
+    return juce::Colour::fromFloatRGBA (
+        blend (foreground.getFloatRed(), background.getFloatRed()),
+        blend (foreground.getFloatGreen(), background.getFloatGreen()),
+        blend (foreground.getFloatBlue(), background.getFloatBlue()), 1.0f);
+}
+
 struct ParameterExpectation
 {
     const char* id;
@@ -4205,6 +4248,103 @@ void testPersistentContextHelpAndValueBubbles()
     }
 }
 
+void testEditorContrastAndFocusContract()
+{
+    constexpr double minimumTextContrast = 4.5;
+    constexpr double minimumFocusContrast = 3.0;
+
+    const auto text = paletteColour (panel::colour::text);
+    const auto textDim = paletteColour (panel::colour::textDim);
+    const auto scope = paletteColour (panel::colour::scope);
+    const auto red = paletteColour (panel::colour::magenta);
+    expect (contrastRatio (text, red.darker (0.20f)) >= minimumTextContrast
+                && contrastRatio (text, red.darker (0.38f))
+                       >= minimumTextContrast,
+            "section-header text falls below 4.5:1 on its gradient");
+
+    YouKnow106LookAndFeel lookAndFeel;
+    const auto popupBackground = lookAndFeel.findColour (
+        juce::PopupMenu::backgroundColourId);
+    const auto popupHighlight = compositeOver (
+        lookAndFeel.findColour (
+            juce::PopupMenu::highlightedBackgroundColourId),
+        popupBackground);
+    expect (contrastRatio (
+                lookAndFeel.findColour (
+                    juce::PopupMenu::highlightedTextColourId),
+                popupHighlight) >= minimumTextContrast,
+            "selected patch-menu text falls below 4.5:1");
+    expect (contrastRatio (textDim,
+                           paletteColour (panel::colour::faceplateHigh))
+                >= minimumTextContrast,
+            "inactive secondary-button text falls below 4.5:1");
+
+    juce::Component focusTarget;
+    focusTarget.setBounds (0, 0, 80, 32);
+    expect (lookAndFeel.createFocusOutlineForComponent (focusTarget) != nullptr,
+            "the panel look-and-feel has no native JUCE focus outline");
+
+    const auto focusSurfaces = std::to_array<juce::Colour> ({
+        paletteColour (panel::colour::faceplate),
+        paletteColour (panel::colour::faceplateHigh),
+        paletteColour (panel::colour::faceplateLow),
+        paletteColour (panel::colour::magenta),
+        paletteColour (panel::colour::cyan),
+        paletteColour (panel::colour::control),
+        paletteColour (panel::colour::scope),
+        paletteColour (panel::colour::keyBlue),
+        paletteColour (panel::colour::keyAmber),
+        paletteColour (panel::colour::keyIvory)
+    });
+    for (const auto surface : focusSurfaces)
+        expect (std::max (contrastRatio (scope, surface),
+                          contrastRatio (text, surface))
+                    >= minimumFocusContrast,
+                "neither ring of the dual-tone focus outline reaches 3:1");
+}
+
+void testKeyboardFocusAndHoverShareContextHelp()
+{
+    YouKnow106AudioProcessor processor;
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    auto* ourEditor = dynamic_cast<YouKnow106AudioProcessorEditor*> (editor.get());
+    auto* help = editor != nullptr
+        ? dynamic_cast<YouKnow106ContextHelp*> (
+              findDescendantNamed (*editor, "Context help"))
+        : nullptr;
+    auto* frequency = editor != nullptr
+        ? findDescendantNamed (*editor, "FREQ") : nullptr;
+    auto* quality = editor != nullptr
+        ? findDescendantNamed (*editor, "Quality") : nullptr;
+    auto* patchBox = editor != nullptr
+        ? findDescendantNamed (*editor, "Patch selector") : nullptr;
+    expect (ourEditor != nullptr && help != nullptr && frequency != nullptr
+                && quality != nullptr && patchBox != nullptr,
+            "cannot test keyboard-focused contextual help");
+    if (ourEditor == nullptr || help == nullptr || frequency == nullptr
+        || quality == nullptr || patchBox == nullptr)
+        return;
+
+    const auto frequencyValue = ourEditor->parameterValueTextFor (frequency);
+    ourEditor->refreshContextHelp (patchBox, frequency, false);
+    expect (help->getHelpTitle() == "FREQ"
+                && help->getHelpValue() == frequencyValue
+                && frequencyValue.isNotEmpty(),
+            "keyboard focus does not drive contextual help and exact values");
+
+    ourEditor->refreshContextHelp (patchBox, frequency, true);
+    expect (help->getHelpTitle() == "PATCH SELECTOR"
+                && help->getHelpValue().isEmpty(),
+            "real pointer movement does not restore hover help");
+
+    const auto qualityValue = ourEditor->parameterValueTextFor (quality);
+    ourEditor->refreshContextHelp (patchBox, quality, false);
+    expect (help->getHelpTitle() == "QUALITY"
+                && help->getHelpValue() == qualityValue
+                && qualityValue.isNotEmpty(),
+            "a subsequent keyboard-focus change does not reclaim help");
+}
+
 void testColdStartProgramAndEditorAreInSync()
 {
     YouKnow106AudioProcessor processor;
@@ -5021,6 +5161,8 @@ int main()
     testQualitySelectorDrivesTheEngine();
     testEveryInteractiveEditorControlExplainsItself();
     testPersistentContextHelpAndValueBubbles();
+    testEditorContrastAndFocusContract();
+    testKeyboardFocusAndHoverShareContextHelp();
     testEditorReloadButtonDiscardsPatchEdits();
     testEditorRandomizeStrengthsAndReset();
     testClickingTheSelectedRadioKeepsItsLampLit();
