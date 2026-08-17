@@ -6102,23 +6102,27 @@ void testDecayKeyTracking()
     return sample;
 }
 
-// Only the first four of twenty partials carry a real decay, and - unlike
-// makeDecayingPartialSample's frequency-independent control - at genuinely
-// different rates per partial (tau_h = 0.30 h^-0.75, so partial 4 loses about
-// 2.83 times faster than partial 1); the rest hold as flat as
+// Only the first decayingPartialCount of twenty partials carry a real decay,
+// and - unlike makeDecayingPartialSample's frequency-independent control - at
+// genuinely different rates per partial (tau_h = 0.30 h^-0.75, so partial 4
+// loses about 2.83 times faster than partial 1); the rest hold as flat as
 // makeSustainedNoDecaySample()'s above. That is deliberately different from
-// used == 0: those four partials clear every per-partial gate
-// (PartialFit::finished's 6 dB-loss bar, the count >= 4 points, a positive
-// per-partial denominator and rate) and reach the harmonic-number regression,
-// so `used` lands at a small nonzero count still short of six - the one case
-// the used == 0 fixture above cannot distinguish from a disabled gate. With
-// four points on a real frequency-dependent trend the regression itself has
+// used == 0: those partials clear every per-partial gate (PartialFit::
+// finished's 6 dB-loss bar, the count >= 4 points, a positive per-partial
+// denominator and rate) and reach the harmonic-number regression, so `used`
+// lands at decayingPartialCount, still short of six - the one case the
+// used == 0 fixture above cannot distinguish from a disabled gate. With that
+// many points on a real frequency-dependent trend the regression itself has
 // both a nonzero denominator and a clearly nonzero slope to describe, so
 // weakening or removing the "used < 6" comparison would let a nonzero
 // exponent through here where the uniform-rate mistake this fixture avoids
-// would not; only that comparison forces the exact zero this asserts.
+// would not; only that comparison forces the exact zero this asserts. Called
+// at both decayingPartialCount = 4 and = 5 so the boundary itself - "used < 6"
+// against an off-by-one "used < 5" - is pinned rather than merely "used < 6"
+// against "the gate does nothing at all".
 [[nodiscard]] std::vector<float> makeFewDecayingPartialsSample(
-    double sampleRate, double fundamentalHz, double durationSeconds)
+    double sampleRate, double fundamentalHz, double durationSeconds,
+    int decayingPartialCount)
 {
     const auto sampleCount = static_cast<std::size_t>(
         std::llround(sampleRate * durationSeconds));
@@ -6138,7 +6142,8 @@ void testDecayKeyTracking()
         {
             const double number = static_cast<double>(partial);
             const double tau = 0.30 * std::pow(number, -0.75);
-            const double decay = partial <= 4 ? std::exp(-time / tau) : 1.0;
+            const double decay = partial <= decayingPartialCount
+                ? std::exp(-time / tau) : 1.0;
             value += std::pow(number, -1.2) * decay
                 * std::sin(2.0 * pi * fundamentalHz * number * time
                            + 0.29 * number);
@@ -6164,10 +6169,13 @@ void testDampingExponentIgnoresSustainedSource()
     const auto sustained = learn(
         makeSustainedNoDecaySample(sampleRate, fundamentalHz, 1.4),
         "sustained no-decay");
-    const auto fewSurvivors = learn(
-        makeFewDecayingPartialsSample(sampleRate, fundamentalHz, 1.4),
-        "few-survivor");
-    if (!sustained.model || !fewSurvivors.model)
+    const auto fourSurvivors = learn(
+        makeFewDecayingPartialsSample(sampleRate, fundamentalHz, 1.4, 4),
+        "four-survivor");
+    const auto fiveSurvivors = learn(
+        makeFewDecayingPartialsSample(sampleRate, fundamentalHz, 1.4, 5),
+        "five-survivor");
+    if (!sustained.model || !fourSurvivors.model || !fiveSurvivors.model)
         return;
 
     const auto fittedExponent = [sampleRate](const neuramar::NeuralModel& model)
@@ -6178,23 +6186,37 @@ void testDampingExponentIgnoresSustainedSource()
         return engine.dampingExponent();
     };
     const float sustainedExponent = fittedExponent(*sustained.model);
-    const float fewSurvivorsExponent = fittedExponent(*fewSurvivors.model);
+    const float fourSurvivorsExponent = fittedExponent(*fourSurvivors.model);
+    const float fiveSurvivorsExponent = fittedExponent(*fiveSurvivors.model);
     std::cout << "Damping exponent diagnostics: fitted exponent "
-              << sustainedExponent << " on a flat, non-decaying sustain and "
-              << fewSurvivorsExponent << " on a source with only four "
-                 "decaying partials\n";
+              << sustainedExponent << " on a flat, non-decaying sustain, "
+              << fourSurvivorsExponent << " on a source with four decaying "
+                 "partials, and " << fiveSurvivorsExponent << " on a source "
+                 "with five decaying partials\n";
     expect(sustainedExponent == 0.0f,
            "a source with no free decay at all fitted a damping exponent of "
                + std::to_string(sustainedExponent)
                + " instead of exactly zero, so fitDampingExponent()'s own "
                  "\"fewer than six partials survive\" count gate is not "
                  "doing its job");
-    expect(fewSurvivorsExponent == 0.0f,
+    expect(fourSurvivorsExponent == 0.0f,
            "a source with only four partials clearing the decay bar fitted a "
-           "damping exponent of " + std::to_string(fewSurvivorsExponent)
+           "damping exponent of " + std::to_string(fourSurvivorsExponent)
                + " instead of exactly zero, so the \"used < 6\" comparison "
                  "itself is not gating a regression that has enough points "
                  "to produce a nonzero answer");
+    // The precise boundary: five survivors is the largest count the documented
+    // "fewer than six partials survive" cutoff still has to reject. A "used <
+    // 5" off-by-one would pass every assertion above (four survivors still
+    // clears < 5) while admitting this fixture's regression through, so this
+    // is the one case that pins < 6 specifically rather than any nearby
+    // threshold.
+    expect(fiveSurvivorsExponent == 0.0f,
+           "a source with five partials clearing the decay bar fitted a "
+           "damping exponent of " + std::to_string(fiveSurvivorsExponent)
+               + " instead of exactly zero, so the \"used < 6\" comparison's "
+                 "own boundary is not excluding five survivors the way the "
+                 "documented cutoff requires");
 }
 
 // Twelve partials with tau_h = 0.30 h^-0.8 over a 4 ms noise burst: a struck

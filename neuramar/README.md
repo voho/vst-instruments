@@ -834,29 +834,30 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   from the function's own "fewer than six partials survive" count gate, which
   had no direct test. Added `makeSustainedNoDecaySample()` (a twenty-partial
   tone with a plain attack and no decay for its 1.4 s duration, driving the
-  gate's `used == 0` branch) and `makeFewDecayingPartialsSample()` (the same
-  tone but with four of its twenty partials decaying at genuinely different,
-  frequency-dependent rates, `tau_h = 0.30 h^-0.75`, driving `used == 4` -
-  the harder case, since those four points give the regression both a
-  nonzero denominator and a clearly nonzero slope to describe if the count
-  gate did not stop it), plus `testDampingExponentIgnoresSustainedSource()`
-  asserting `dampingExponent()` is exactly `0.0f` on both. Verified the new
-  test is a real regression test by instrumenting the fit to confirm the
-  survivor counts it depends on (`used` is `0` and `4` respectively on these
-  two fixtures, against 32-46 on the pre-existing decaying fixtures), then
-  temporarily weakening the gate to `used < 1`: the `used == 0` fixture still
-  passed, because a strictly-fewer-than-6-survivors count of exactly zero is
-  a special case a naive first attempt at this fixture could not distinguish
-  from a working gate (that first attempt is not what shipped - it was
-  caught in review before merging), but the `used == 4` fixture's own
-  assertion failed with a fitted exponent of 0.749, matching the fixture's
-  designed 0.75 law and confirming the regression really was reached; exactly
-  that one assertion failed among all tests, and restoring the original gate
+  gate's `used == 0` branch) and `makeFewDecayingPartialsSample()`, taking a
+  `decayingPartialCount` parameter so the same twenty-partial tone can put
+  exactly that many partials on genuinely different, frequency-dependent
+  decay rates (`tau_h = 0.30 h^-0.75`) while the rest hold flat, called at
+  both 4 and 5 - the harder cases, since those points give the regression
+  both a nonzero denominator and a clearly nonzero slope to describe if the
+  count gate did not stop it - plus `testDampingExponentIgnoresSustainedSource()`
+  asserting `dampingExponent()` is exactly `0.0f` on all three. The 5-survivor
+  case is what actually pins the "< 6" comparison itself rather than any
+  nearby threshold: a 4-survivor fixture alone cannot distinguish the correct
+  gate from an off-by-one `used < 5` weakening, since 4 clears both. Verified
+  each fixture's survivor count by instrumenting the fit (`used` is `0`, `4`,
+  and `5` respectively on the three fixtures, against 32-46 on the pre-existing
+  decaying fixtures), then confirmed the boundary two ways: temporarily
+  weakening the gate to `used < 1` failed only the 4- and 5-survivor
+  assertions (fitted exponents of 0.749, matching the fixtures' designed 0.75
+  law) while `used == 0` still passed as a working gate would; separately,
+  weakening it to `used < 5` failed only the 5-survivor assertion (fitted
+  exponent 0.749) while the 4-survivor assertion still passed, pinning the
+  boundary precisely at 6. Restoring the original gate after each check
   restored the original source exactly (`git diff` on it empty before
-  committing). Test-only change;
-  verified with the JUCE-free DSP suite (3/3 tests passed) and a fresh
-  `NeuramarRenderDemos` run confirming `git status neuramar/Docs/audio` clean
-  across all eight WAVs.
+  committing). Test-only change; verified with the JUCE-free DSP suite (3/3
+  tests passed) and a fresh `NeuramarRenderDemos` run confirming
+  `git status neuramar/Docs/audio` clean across all eight WAVs.
 - 2026-08-17: Added direct coverage for `SpectralEnvelope.h`'s
   `ShapePreservingEnvelope::sample()` at fractional coordinates strictly
   inside its two "evidence shoulders" - the hold below the first observed
