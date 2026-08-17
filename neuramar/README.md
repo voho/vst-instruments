@@ -823,6 +823,41 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-17: Added direct coverage for `NeuramarEngine.cpp`'s
+  `fitDampingExponent()` on genuinely driven, non-decaying sources, the case
+  its own comment names but that no existing fixture exercised: "a player's
+  vibrato lives on a driven source, and a driven source has no free decay to
+  fit." The pre-existing frequency-independent control elsewhere in the suite
+  (`makeDecayingPartialSample` with `decayExponent = 0`) still decays, just at
+  the same rate on every partial, so its near-zero fitted exponent comes from
+  the harmonic-number regression's own slope landing near zero rather than
+  from the function's own "fewer than six partials survive" count gate, which
+  had no direct test. Added `makeSustainedNoDecaySample()` (a twenty-partial
+  tone with a plain attack and no decay for its 1.4 s duration, driving the
+  gate's `used == 0` branch) and `makeFewDecayingPartialsSample()`, taking a
+  `decayingPartialCount` parameter so the same twenty-partial tone can put
+  exactly that many partials on genuinely different, frequency-dependent
+  decay rates (`tau_h = 0.30 h^-0.75`) while the rest hold flat, called at
+  both 4 and 5 - the harder cases, since those points give the regression
+  both a nonzero denominator and a clearly nonzero slope to describe if the
+  count gate did not stop it - plus `testDampingExponentIgnoresSustainedSource()`
+  asserting `dampingExponent()` is exactly `0.0f` on all three. The 5-survivor
+  case is what actually pins the "< 6" comparison itself rather than any
+  nearby threshold: a 4-survivor fixture alone cannot distinguish the correct
+  gate from an off-by-one `used < 5` weakening, since 4 clears both. Verified
+  each fixture's survivor count by instrumenting the fit (`used` is `0`, `4`,
+  and `5` respectively on the three fixtures, against 32-46 on the pre-existing
+  decaying fixtures), then confirmed the boundary two ways: temporarily
+  weakening the gate to `used < 1` failed only the 4- and 5-survivor
+  assertions (fitted exponents of 0.749, matching the fixtures' designed 0.75
+  law) while `used == 0` still passed as a working gate would; separately,
+  weakening it to `used < 5` failed only the 5-survivor assertion (fitted
+  exponent 0.749) while the 4-survivor assertion still passed, pinning the
+  boundary precisely at 6. Restoring the original gate after each check
+  restored the original source exactly (`git diff` on it empty before
+  committing). Test-only change; verified with the JUCE-free DSP suite (3/3
+  tests passed) and a fresh `NeuramarRenderDemos` run confirming
+  `git status neuramar/Docs/audio` clean across all eight WAVs.
 - 2026-08-17: `updateVoiceControl`'s Air-band and Bone-mode edge-fade gains now share one `edgeFadeGain` helper instead of repeating the same low-floor/high-limit clamp-and-multiply with different literals in each loop; pure dedup, verified with the JUCE-free DSP suite (3/3 tests passed) and `git status neuramar/Docs/audio` confirmed clean.
 - 2026-08-17: Added direct coverage for `NeuramarEngine::process`'s output-pointer
   handling beyond the ordinary two-distinct-non-null-buffers case every other
