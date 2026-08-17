@@ -4414,12 +4414,53 @@ That prototype is not released on its own. Its Don 0.50 hit grows a second
 **15.29 ms** force run carrying 91.5 % of the impulse, and complete demonstration
 RMS moves by as much as **5.47 dB**. The resolved bank supplies global head
 displacement but not the local high-wavenumber reactive mobility which ejects a
-real bachi. A point membrane has no parameter-free high-frequency completion;
-the missing contact footprint depends on tip geometry which the present Hertz
+real bachi. A pure-tension point membrane (`D = 0`) has no parameter-free
+high-frequency completion; the conditional stiff-plate point limit derived
+below still does not identify a real bachi's finite traction footprint.
+The missing contact footprint depends on tip geometry which the present Hertz
 stiffness does not identify separately. A duration cap would only hide that
 boundary. The eventual release path is therefore the verified free-flight and
 recontact topology together with the measured finite footprint and positive-real
 residual mobility, passing this same matrix.
+
+#### Rejected rim-return delay
+
+A second private prototype tried to postpone recontact until a nondispersive
+membrane ray could travel to the nearest rim and back:
+
+```text
+c = sqrt(T / sigma)
+t_gate = 2 a (1 - rho) / c
+N_gate = ceil(sample_rate t_gate)
+```
+
+That delay is not a valid unilateral-contact update. Compression can become
+positive while the bachi is excluded from the solve; switching Hunt--Crossley
+back on then creates `K delta^2.5 / 2.5` potential without contact work. The
+problem is also dispersive: for the underlying unnormalised tensioned-plate
+relation, with
+`u = D k^2 / T`, the group-speed ratio is
+
+```text
+c_g / c = (1 + 2 u) / sqrt(1 + u),
+```
+
+so retained high modes already return before the membrane-only estimate and
+omitted higher modes are faster again.
+
+The 120 ms audit covered six rates from 8 to 384 kHz, four octaves, four
+articulations and nine velocities (**864 cases**). Production produced one
+force run and retired in every case. The delayed prototype produced multiple
+runs in **203**, left **97** contacts active at the horizon, produced **221
+positive-compression rearm events** and reached **18** runs. On the 48 kHz factory
+odaiko Don at velocity 0.50, the first run ended at 0.708 ms; the 15.333 ms
+gate then rearmed the bachi **14.727 mm through the head**. The recreated
+potential was about **3,978 times** the initial bachi energy, peak force rose
+from 297 to 6,697 N, impulse from 0.0694 to 0.4696 N·s, and the explicit energy
+audit reached **70,746 times** its initial value. It failed 299 DSP assertions
+across contact, energy, dynamics and output bounds. The formula and
+counterexample are retained here so a travel-time gate is not rediscovered;
+recontact must remain continuously coupled through a passive residual mobility.
 
 ### Added-mass consistency boundary
 
@@ -4535,6 +4576,20 @@ reference Hertz pulse, and prove that an overlapping second strike does not
 rewrite the first strike's contribution. Until that representation exists, do
 not hide the mismatch with a brightness trim.
 
+For a completed contact the reference-compatible estimator is explicit. If
+`f_H` is the analytic Hertz arch and `H_b` is the existing response of continuum
+band `b`, then
+
+```text
+A_b(f) = A_b(f_H) || H_b * f ||_2 / || H_b * f_H ||_2.
+```
+
+The ratio returns the released fitted level exactly for `f = f_H` and avoids
+the transform-null instability of a centre-frequency-only correction. It is
+not causal in the current architecture: the norm and any later phase
+cancellation are known only after the complete contact, while the shared RMS
+envelope has already emitted the prefix.
+
 A smooth causal scalar ceiling does not repair that representation. In a
 private prefix-preserving prototype it cut an ordinary chū Don by about
 **3 dB**, worsened the known Tsu adjacent-energy cliff from **-5.884 to
@@ -4555,6 +4610,61 @@ duration at plausible footprint scale. The capture inventory therefore stores
 raw traction maps, bachi mass and tip profilometry; the analyzer must derive the
 traction-weighted complex mobility and fit one reciprocal positive-real spatial
 residual from those data.
+
+### Conditional ideal-point residual derivation
+
+The lossless infinite-domain tensioned Kirchhoff plate underlying the current
+model does admit a parameter-free *ideal point* mobility. With surface density
+`mu`, tension `T`, bending stiffness `D`, Laplace variable `s` in `Re(s) > 0`
+and the passive analytic branches of `sqrt`, `log` and `K0`, define
+
+```text
+Delta = T^2 - 4 D mu s^2,
+alpha^2 = (T - sqrt(Delta)) / (2 D),
+beta^2  = (T + sqrt(Delta)) / (2 D).
+```
+
+The infinite-domain cross mobility is
+
+```text
+Y(r,s) = s [K0(alpha r) - K0(beta r)] / (2 pi sqrt(Delta)),
+```
+
+and its finite point limit and high-frequency driving-point limit are
+
+```text
+Y(0,s) = s log((T + sqrt(Delta)) / (T - sqrt(Delta)))
+         / (4 pi sqrt(Delta)),
+Y_inf = lim_(s -> infinity) Y(0,s) = 1 / (8 sqrt(D mu)),
+Z_inf = 1 / Y_inf = 8 sqrt(D mu).
+```
+
+A common-pole quadrature with positive-semidefinite spatial residues can
+therefore be reciprocal and positive-real without a fitted resistance. That is
+a valid ideal-point research model, not a complete bachi contact. A real
+traction patch changes the high-frequency topology and introduces the missing
+second moment
+
+```text
+a2^2(F) = <r^2> / 4,
+a2^2(F) = b^2 / 10 = (R_tip / 10) (F / K)^(2/3)
+           for a spherical Hertz patch.
+```
+
+The released `K = (4/3) E* sqrt(R_tip)` cannot identify `R_tip`, hence cannot
+identify that form factor. On the factory odaiko the ideal-point plate length
+is about 6.34 mm and its asymptotic point impedance about 4.44 kg/s; plausible
+millimetre-scale patches change the residual by several decibels in the first
+five continuum bands. The derivation is retained for a future shared spatial
+state, but release still requires measured traction geometry and complex
+cross-mobility rather than treating `D` as a hidden tip-radius control.
+
+The private audit directories themselves are not product artifacts: each is a
+copied source tree plus build output, and the downloaded papers remain the
+copyright holders' files. This plan retains the original equations, numerical
+counterexamples, source links and release decision instead. Failed prototype
+code is deliberately not vendored as a stale patch that could be mistaken for
+a supported alternative.
 
 ### Live continuum variance under retuning
 
@@ -4760,11 +4870,21 @@ added. In the fixed-seed 48 kHz stereo-RMS audit, factory Okedo Ka changes by
 **−17.6 / −22.0 / −18.8 dB** over 0–5 / 5–30 / 30–120 ms and Tsu by
 **−4.0 / −10.3 / −20.5 dB**; Don Rim is bit-identical.
 
-The deletion agrees with the closest published head-struck, rope-laced
-double-head experiment, [Ono et al. (2009)](https://doi.org/10.1250/ast.30.410):
+The deletion is consistent with the closest published head-struck, rope-laced
+double-head experiment, [Ono et al. (2009)](https://doi.org/10.1250/ast.30.410),
+on a 20 mm wood-plastic p-wadaiko:
 its isolated shell resonance did not appear among the complete drum's peaks,
 while the approximately 200 Hz component was assigned to the membrane. It does
-not calibrate a replacement head-to-shell transfer.
+not prove zero mechanical shell drive or calibrate a replacement transfer. A
+nearby published shell frequency is not provenance for Taikor's 191 Hz pole:
+[Hwang and Suzuki (2016)](https://doi.org/10.1250/ast.37.115) measured hollow
+zelkova barrels with their diaphragms removed, and the smooth barrel's 192 Hz
+mode was the axial-varying `(1,2)` family; the closest axial-uniform `(0,2)`
+family was 137 Hz. The construction boundary is independently consistent with
+[Asano's Okedo patent](https://patents.google.com/patent/JP3097219U/ja), which
+calls 10--10.5 mm the usual thickness for conventional cedar boards and
+specifies quarter-sawn paulownia at 8--9 mm. Neither source supplies the
+coupled residue, Q, directivity or phase needed to define a replacement gain.
 That remaining path still requires joint head/shell mobility and pressure
 capture; adding an acoustic `levelScale`, infinite-cylinder efficiency or a
 fixed common floor would merely choose one of infinitely many mechanical
