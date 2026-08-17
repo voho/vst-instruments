@@ -3615,6 +3615,41 @@ void testGetInstrumentLevelSanitizesInvalidInstrument()
             " while the kit was sounding");
 }
 
+// getOutputLevel()'s own channel selector - `channel <= 0 ?
+// outputLevelLeft_ : outputLevelRight_` - is never exercised by
+// testMetering() above with anything but the two in-range indices 0 and 1:
+// every call there passes exactly one of them. A negative channel must
+// collapse onto the left meter and an index of two or more onto the right
+// one, the same way an explicit 0 or 1 already does, rather than the
+// ternary's comparison happening to land on whichever branch by accident.
+void testGetOutputLevelSanitizesInvalidChannel()
+{
+    constexpr double sampleRate = 48000.0;
+    drumalor::DrumEngine panned;
+    panned.prepare (sampleRate, defaultBlockSize);
+    auto hardLeft = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::Snare).defaultParameters;
+    hardLeft.pan = -1.0f;
+    panned.setInstrumentParameters (drumalor::Instrument::Snare, hardLeft);
+    panned.trigger (drumalor::Instrument::Snare, 1.0f);
+    renderMetrics (panned, 2400, defaultBlockSize);
+
+    expect (panned.getOutputLevel (0) > 10.0f * panned.getOutputLevel (1),
+            "sanity check: the hard-left channel was not actually louder");
+    expect (panned.getOutputLevel (-1) == panned.getOutputLevel (0),
+            "getOutputLevel did not fall back a negative channel onto the"
+            " left meter");
+    expect (panned.getOutputLevel (-100) == panned.getOutputLevel (0),
+            "getOutputLevel did not fall back a far negative channel onto"
+            " the left meter");
+    expect (panned.getOutputLevel (2) == panned.getOutputLevel (1),
+            "getOutputLevel did not fall back channel 2 onto the right"
+            " meter");
+    expect (panned.getOutputLevel (255) == panned.getOutputLevel (1),
+            "getOutputLevel did not fall back a far out-of-range channel"
+            " onto the right meter");
+}
+
 void testMembraneAndVelocityTimbre()
 {
     constexpr double sampleRate = 48000.0;
@@ -6284,6 +6319,7 @@ int main()
     testBusAutomationIsClickFree();
     testMetering();
     testGetInstrumentLevelSanitizesInvalidInstrument();
+    testGetOutputLevelSanitizesInvalidChannel();
     testMembraneAndVelocityTimbre();
     testMembraneTensionModulation();
     testMembraneModeSplitting();
