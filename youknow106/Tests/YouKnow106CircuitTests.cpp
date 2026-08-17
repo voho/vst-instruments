@@ -3536,6 +3536,56 @@ void testChorusToneStepFallbackGuard()
            "repeated fallback calls");
 }
 
+void testCorrelatedRandomStepFallbackGuard()
+{
+    // correlatedRandomStep's own rho guard -- `std::isfinite(correlation) ?
+    // clamp(correlation, -1, 1) : 0.0f` -- has two branches the fixture above
+    // never reaches: its single production call site always hands it
+    // OptionalNoiseComponents::commonRandomCorrelation, a "voiced placeholder
+    // for deterministic tests only" field with no host/panel control, so
+    // every value that fixture drives through is already finite and in
+    // range. Both branches have an exact, checkable algebraic signature
+    // rather than merely a finiteness bound: a non-finite correlation must
+    // match an explicit rho=0.0 call bit-for-bit (orthogonalGain becomes
+    // 1.0, so the second line becomes exactly the orthogonal draw with no
+    // admixture of the common one), and an out-of-range finite correlation
+    // must match the literal +/-1.0 endpoint it clamps to, not merely stay
+    // finite. Two independent state pairs, advanced from the same seed, let
+    // each comparison hold both the returned samples and the noise-state
+    // advance to bit-exact identity.
+    const auto compareAgainstReference = [](float poisoned, float reference,
+                                            const char* message) {
+        std::uint32_t poisonedCommon = 0x9e3779b9u;
+        std::uint32_t poisonedOrthogonal = 0x243f6a89u;
+        std::uint32_t referenceCommon = poisonedCommon;
+        std::uint32_t referenceOrthogonal = poisonedOrthogonal;
+        const auto poisonedSample = YouKnow106TestAccess::correlatedChorusNoiseStep(
+            poisonedCommon, poisonedOrthogonal, poisoned);
+        const auto referenceSample = YouKnow106TestAccess::correlatedChorusNoiseStep(
+            referenceCommon, referenceOrthogonal, reference);
+        expect(poisonedSample == referenceSample, message);
+        expect(poisonedCommon == referenceCommon
+                   && poisonedOrthogonal == referenceOrthogonal,
+               std::string(message) + " (noise states diverged)");
+    };
+
+    compareAgainstReference(
+        std::numeric_limits<float>::quiet_NaN(), 0.0f,
+        "correlatedRandomStep did not fall back to rho=0.0 for a NaN correlation");
+    compareAgainstReference(
+        std::numeric_limits<float>::infinity(), 0.0f,
+        "correlatedRandomStep did not fall back to rho=0.0 for a positive-infinite correlation");
+    compareAgainstReference(
+        -std::numeric_limits<float>::infinity(), 0.0f,
+        "correlatedRandomStep did not fall back to rho=0.0 for a negative-infinite correlation");
+    compareAgainstReference(
+        4.0f, 1.0f,
+        "correlatedRandomStep did not clamp an out-of-range positive correlation to 1.0");
+    compareAgainstReference(
+        -4.0f, -1.0f,
+        "correlatedRandomStep did not clamp an out-of-range negative correlation to -1.0");
+}
+
 void testChorusBypassStateAndWetMuteTiming()
 {
     constexpr float sampleRate = 48000.0f;
@@ -5511,6 +5561,7 @@ int main()
     testChorusLineNoiseMatchesTheMn3009NoiseRow();
     testChorusNoiseComponents();
     testChorusToneStepFallbackGuard();
+    testCorrelatedRandomStepFallbackGuard();
     testChorusBypassStateAndWetMuteTiming();
     testChorusRateChangePreservesPhysicalState();
     testBucketBrigadeDatasheetAnchors();
