@@ -363,6 +363,23 @@ struct ElectryEngineTestAccess
         return ElectryEngine::delayLineSize;
     }
 
+    struct DelayTapSnapshot
+    {
+        int offset { 0 };
+        float c0 { 0.0f }, c1 { 0.0f }, c2 { 0.0f }, c3 { 0.0f };
+    };
+
+    // A fresh DelayTap solved for one requested delay, so its own clamp and
+    // cubic-Lagrange coefficient solve can be checked directly rather than
+    // only through whatever pickup or sympathetic-tap position a configured
+    // voice happens to land on.
+    static DelayTapSnapshot delayTapAt(float delaySamples) noexcept
+    {
+        ElectryEngine::DelayTap tap;
+        tap.setDelay(delaySamples);
+        return { tap.offset, tap.c0, tap.c1, tap.c2, tap.c3 };
+    }
+
     static int stringForNote(const ElectryEngine& engine, int midiNote)
     {
         for (int s = 0; s < ElectryEngine::stringCount; ++s)
@@ -3468,6 +3485,62 @@ void testSetResonanceReturnLevelAndPalmMutePressureSanitisation()
     expect(allFinite(levelBuffer),
            "hostile resonance/return/palm-mute levels produced non-finite "
            "audio");
+}
+
+// DelayTap::setDelay - the cubic-Lagrange fractional read shared by both
+// pickup taps and the sympathetic-string bridge tap - clamps its request to
+// [4, delayLineSize - 8] before solving four interpolation coefficients from
+// the clamped delay's fractional part. Nothing in the suite ever asked it for
+// a delay outside that range directly, or checked the coefficients
+// themselves rather than the pickup or sympathetic audio they eventually
+// shape, so a clamp landing on the wrong boundary or a sign error in the
+// Lagrange solve would still have passed every existing test.
+void testDelayTapClampsAndInterpolates()
+{
+    // A request below the 4-sample floor (a cubic tap needs two samples on
+    // each side) clamps to exactly the same coefficients an explicit
+    // request for the floor itself would solve.
+    const auto belowFloor = TestAccess::delayTapAt(1.0f);
+    const auto atFloor = TestAccess::delayTapAt(4.0f);
+    expect(belowFloor.offset == atFloor.offset && belowFloor.c0 == atFloor.c0
+               && belowFloor.c1 == atFloor.c1 && belowFloor.c2 == atFloor.c2
+               && belowFloor.c3 == atFloor.c3,
+           "a delay below the 4-sample floor was not clamped to it");
+
+    // A request past the delayLineSize - 8 ceiling (room for the same
+    // two-sample margin at the top of the ring) clamps the same way.
+    const float ceiling =
+        static_cast<float>(TestAccess::delayLineCapacity() - 8);
+    const auto aboveCeiling = TestAccess::delayTapAt(ceiling + 500.0f);
+    const auto atCeiling = TestAccess::delayTapAt(ceiling);
+    expect(aboveCeiling.offset == atCeiling.offset
+               && aboveCeiling.c0 == atCeiling.c0
+               && aboveCeiling.c1 == atCeiling.c1
+               && aboveCeiling.c2 == atCeiling.c2
+               && aboveCeiling.c3 == atCeiling.c3,
+           "a delay past the delayLineSize-8 ceiling was not clamped to it");
+
+    // An exact integer delay needs no interpolation at all, so the four
+    // weights must collapse to a single unit tap rather than spreading
+    // across neighbouring samples.
+    const auto exact = TestAccess::delayTapAt(10.0f);
+    expect(exact.offset == 10,
+           "an exact-integer delay solved the wrong tap offset");
+    expect(exact.c0 == 0.0f && exact.c1 == 1.0f && exact.c2 == 0.0f
+               && exact.c3 == 0.0f,
+           "an exact-integer delay did not collapse to a single unit tap");
+
+    // A fractional delay's offset lands at the request's ceiling (the read
+    // arithmetic the loop actually uses), and its four weights - a genuine
+    // cubic Lagrange basis - sum to exactly unity, the identity that keeps a
+    // constant input passing through unattenuated.
+    const auto fractional = TestAccess::delayTapAt(10.25f);
+    expect(fractional.offset == 11,
+           "a fractional delay's offset was not the request's ceiling");
+    const float sum =
+        fractional.c0 + fractional.c1 + fractional.c2 + fractional.c3;
+    expect(std::abs(sum - 1.0f) < 1.0e-5f,
+           "a fractional delay's interpolation weights did not sum to unity");
 }
 
 // The natural harmonic is a finger resting on a node, not a transposition.
@@ -8260,6 +8333,7 @@ int main()
     testSetVibratoSanitisation();
     testSetPitchBendSanitisation();
     testSetResonanceReturnLevelAndPalmMutePressureSanitisation();
+    testDelayTapClampsAndInterpolates();
     testFrettingHandPosition();
     testTouchHarmonics();
     testPinchHarmonic();
