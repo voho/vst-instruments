@@ -55,6 +55,17 @@ struct DrumEngineTestAccess
         }
         return true;
     }
+
+    // HighResolutionVelocityPrefix::clear()'s own channel guard, exposed
+    // directly: driving clear() itself with an out-of-range channel and
+    // checking a sibling channel's own value survives is only an indirect
+    // proof, because writing pending_[static_cast<size_t>(channel)] for an
+    // out-of-range channel is undefined behaviour that is not guaranteed to
+    // land on that sibling's slot even with the guard removed.
+    [[nodiscard]] static bool prefixChannelValid (int channel) noexcept
+    {
+        return HighResolutionVelocityPrefix::valid (channel);
+    }
 };
 } // namespace drumalor
 
@@ -5439,6 +5450,33 @@ void testMidiSurfaceContract()
             prefixes.set (16, 40);
             expect (! prefixes.take (-1).has_value() && ! prefixes.take (16).has_value(),
                     "an out-of-range MIDI channel was accepted");
+
+            // clear() carries the same channel guard as set() and take(), but
+            // every clear() above this line only ever named channel 3 - already
+            // in range - so the guard itself had never been driven with
+            // anything invalid. An out-of-range clear() must be a no-op rather
+            // than reading or writing outside the sixteen-channel table, and a
+            // real channel's own pending prefix must survive it untouched.
+            //
+            // Driving clear() itself with an out-of-range channel and checking
+            // that a sibling channel's slot survives is only an indirect proof:
+            // pending_[static_cast<size_t>(channel)] for channel -1 or 16 is an
+            // out-of-bounds array access, which is undefined behaviour that is
+            // not guaranteed to touch channel 6's own slot even if the guard
+            // were missing. Pin the guard's own boundary directly first.
+            expect (! drumalor::DrumEngineTestAccess::prefixChannelValid (-1)
+                        && ! drumalor::DrumEngineTestAccess::prefixChannelValid (16)
+                        && drumalor::DrumEngineTestAccess::prefixChannelValid (0)
+                        && drumalor::DrumEngineTestAccess::prefixChannelValid (15),
+                    "HighResolutionVelocityPrefix::valid() no longer matches its "
+                    "documented [0, 16) channel range");
+
+            prefixes.set (6, 91);
+            prefixes.clear (-1);
+            prefixes.clear (16);
+            const auto stillPending = prefixes.take (6);
+            expect (stillPending.has_value() && *stillPending == 91,
+                    "an out-of-range clear() disturbed a real channel's CC 88 prefix");
 
             // And what a taken prefix is worth: the fourteen-bit scaling for
             // the note that consumed it, and the untouched seven-bit scaling
