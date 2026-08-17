@@ -77,6 +77,17 @@ struct DrumEngineTestAccess
     {
         return DrumEngine::validInstrument (instrument);
     }
+
+    // How many times setInstrumentParameters()'s own out-of-range instrument
+    // guard has returned early, mirroring nonPositiveProcessCallCount() above:
+    // this is what actually proves the guard inside setInstrumentParameters()
+    // itself fires, rather than only proving validInstrument() has the right
+    // boundary in isolation.
+    [[nodiscard]] static std::uint64_t rejectedSetInstrumentParametersCount (
+        const DrumEngine& engine) noexcept
+    {
+        return engine.rejectedSetInstrumentParametersCount_;
+    }
 };
 } // namespace drumalor
 
@@ -1217,14 +1228,19 @@ void testSetInstrumentParametersSanitizesInvalidCharacterAndDecay()
 // (instrument)) return;`, guarding the `parameters_[indexFor (instrument)]`
 // write just below it - is only ever driven by every other call in this
 // suite with one of Instrument's own enumerators, so the early return itself
-// has never been exercised. Driving setInstrumentParameters() itself with an
-// out-of-range instrument and checking that a real instrument's render comes
-// out unaffected is not a reliable proof on its own - like
-// HighResolutionVelocityPrefix::clear() above, the write the guard exists to
-// prevent is itself undefined behaviour, not guaranteed to land somewhere
-// that would visibly perturb any one instrument's audio - so pin
-// validInstrument() directly through the same TestAccess seam first, then
-// use the render comparison only as a secondary, whole-engine confirmation.
+// has never been exercised. Two earlier proof attempts each fall short on
+// their own: pinning validInstrument() directly only proves that helper's
+// own boundary, not that setInstrumentParameters() actually calls it and
+// returns before the write; and comparing a real instrument's render before
+// and after an out-of-range call relies on the write the guard prevents -
+// itself undefined behaviour - visibly perturbing that render, which a build
+// with the guard deleted was confirmed NOT to do (the whole suite still
+// passed). rejectedSetInstrumentParametersCount_ closes that gap the same
+// way nonPositiveProcessCallCount_ closes it for process(): it only
+// increments on the guard's own early return, so it fails if the guard (or
+// its return) is ever removed, independent of whatever the prevented write
+// would have disturbed. The validInstrument() and render checks stay as
+// secondary, whole-engine confirmation.
 void testSetInstrumentParametersRejectsOutOfRangeInstrument()
 {
     using TestAccess = drumalor::DrumEngineTestAccess;
@@ -1236,6 +1252,26 @@ void testSetInstrumentParametersRejectsOutOfRangeInstrument()
             "validInstrument() did not reject an instrument one past the table");
     expect (! TestAccess::instrumentValid (static_cast<drumalor::Instrument> (255)),
             "validInstrument() did not reject a far out-of-range instrument");
+
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+        drumalor::InstrumentParameters values;
+        expect (TestAccess::rejectedSetInstrumentParametersCount (engine) == 0,
+                "rejectedSetInstrumentParametersCount() was not zero on a fresh engine");
+        engine.setInstrumentParameters (drumalor::Instrument::Kick, values);
+        expect (TestAccess::rejectedSetInstrumentParametersCount (engine) == 0,
+                "setInstrumentParameters() counted a real instrument as rejected");
+        engine.setInstrumentParameters (
+            static_cast<drumalor::Instrument> (drumalor::instrumentCount), values);
+        expect (TestAccess::rejectedSetInstrumentParametersCount (engine) == 1,
+                "setInstrumentParameters() did not take its early return for an "
+                "instrument one past the table");
+        engine.setInstrumentParameters (static_cast<drumalor::Instrument> (255), values);
+        expect (TestAccess::rejectedSetInstrumentParametersCount (engine) == 2,
+                "setInstrumentParameters() did not take its early return for a "
+                "far out-of-range instrument");
+    }
 
     constexpr int samples = 4096;
     drumalor::InstrumentParameters loud;
