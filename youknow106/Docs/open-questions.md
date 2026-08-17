@@ -1236,7 +1236,21 @@ filter core. Service Notes p. 9 documents saw and pulse near 12 Vpp and the sub
 collector-supply amplitude mechanism; p. 19 adjusts shared noise to 4.0 Vpp at
 TP8. These are node-specific Vpp anchors, not RMS values or an end-to-end gain
 budget. The implementation currently uses peaks of 6.0 V saw, 6.0 V pulse,
-5.0 V sub and 2.0 V noise, then a `0.40` filter-input scale. The sub amplitude
+5.0 V sub and 7.4161 V noise, then a `0.40` filter-input scale. The noise figure
+looks out of family only because it is the one coordinate applied *before* a
+shaping stage: it delivers +/-2 V at the shaped rail, which is where the TP8
+adjustment measures, having lost 11.383 dB to the C41/R79 pole on the way (see
+OQ-16, level settled 2026-08-17).
+
+What that settlement does **not** decide is placement. The paired TP8
+adjustments constrain the *product* of the noise coordinate and this `0.40`
+filter-input scale, and the self-oscillation they are referred to is generated
+inside the filter, downstream of both. Attributing the whole 13 dB to the noise
+leg rests on the deficit coinciding with a noise-only mechanism -- the shaping
+loss -- to within the measurement band, plus the fact that moving the shared
+`0.40` would drive every tonal source that much further into the OTA
+non-linearity and re-voice the instrument. That is reasoning, not evidence, and
+it is exactly what a measured source-to-VCF-input budget would replace. The sub amplitude
 and complete node-to-node transfer are not explicitly anchored. A centered
 `+/-6 V` source is compatible with a 12 Vpp reading only at the same stated
 node; it does not prove the later numerical coordinate. TP8 is downstream, so
@@ -1315,6 +1329,23 @@ measurements), so that lead is downgraded until raw provenance surfaces.
 
 ### Task definition
 
+**Level: settled, 2026-08-17.** The 4.0 Vpp TP8 adjustment had been written
+onto the source *ahead* of its own C41/R79 shaping, which keeps only 7.2733% of
+a white source's power, so the audible rail sat 11.383 dB under the figure it
+was named after. Measured through one identical path, the model put noise
+23.35 dB below its own calibrated 4.8 Vpp self-oscillation where the two
+procedurally chained TP8 adjustments -- 6 Vpp sine at BANK 3, 4 Vpp noise at
+BANK 6, same VCA state so its gain cancels -- put it between 8.5 and 12.6 dB
+below, the spread being the crest convention a scope trace of noise is read
+with. `noiseMixVolts` is now 7.4161, which restores exactly what the shaping
+discards and therefore assumes no crest convention; it measures -11.96 dB.
+Raising it required digital full scale to be referred to the output summer's
+rail first, because one shared generator sums coherently across held voices at
+20*log10(N) and a six-note NOISE-10 chord otherwise peaked at +1.97 dBFS.
+What remains open below is spectrum, distribution and absolute PSD -- the level
+is now anchored, the *shape* is still a parts-value calculation never checked
+against a real rail.
+
 Characterise two distinct noise mechanisms that must not be conflated:
 (a) the one shared audible noise generator mixed into all voices and calibrated
 to 4.0 Vpp at TP8 (Service Notes pp. 5, 13 and 19), and (b) the much smaller
@@ -1354,7 +1385,15 @@ reconstructs those states. Dormant plug-in extension slots have no physical
 card and may stop processing. Both discrete sources are normalized by
 `sqrt(internal_rate / 192 kHz)` to preserve wall-clock spectral density across
 host rates and HQ modes; that is a numerical policy and does not settle their
-unknown hardware amplitudes or spectra. This task is separate from BBD chorus
+unknown hardware amplitudes or spectra. It normalises *density*, deliberately
+not total power: the shaped rail's total RMS is about 0.9 dB lower at 1x than
+at 4x because a shallower grid carries less bandwidth, and nearly all of that
+shortfall sits above 8 kHz while the 20 Hz-2 kHz band holds within 0.5 dB.
+Normalising the shaped total instead was implemented and reverted on
+2026-08-17: it recovers the inaudible top octave by pushing the audible band
+0.65 dB the wrong way and breaks
+`testMainNoiseDensityIsProcessingRateInvariant` at 44.1 and 48 kHz with the
+quality ladder at 1x. This task is separate from BBD chorus
 hiss in OQ-03.
 
 ### Needed output (for LLM)

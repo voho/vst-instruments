@@ -45,8 +45,15 @@ constexpr int auditOversampleFactor = 4;
 // moves every time a preset is retrimmed and can never be satisfied. Both are
 // enforced below; Source/DSP/YouKnow106Presets.cpp carries the per-preset VR1
 // positions that hold the bank inside them.
+//
+// Both moved down with the output calibration when digital full scale was
+// referred to the output summer's own rail. The peak figure is no longer what
+// the trims are chosen against -- the untrimmed bank already peaks no higher
+// than -3.67 dBFS -- so it now serves as a backstop; the gated figure is three
+// decibels above the untrimmed corpus median, which is what actually shapes
+// the bank.
 constexpr double factoryPeakCeilingDbfs = -1.0;
-constexpr double factoryGatedCeilingDbfs = -18.0;
+constexpr double factoryGatedCeilingDbfs = -31.0;
 constexpr int rmsWindowFrames = 19200; // 400 ms
 constexpr int rmsHopFrames = 4800;     // 100 ms
 constexpr double meterFloorDb = -140.0;
