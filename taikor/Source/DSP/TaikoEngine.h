@@ -1024,6 +1024,12 @@ private:
     // two copies of the same expression.
     [[nodiscard]] static float propagatingSpreadFor (
         float micDistanceMetres) noexcept;
+    // The membrane's own plan area, pi r^2. observeMode, buildVoiceModes,
+    // contactCollisionMass and palmDampingRates each rebuilt this identically
+    // from whichever already-floored or already-clamped radius they were
+    // holding, so it is resolved once here rather than as four copies of the
+    // same expression.
+    [[nodiscard]] static float membraneAreaFor (float radius) noexcept;
     // Exact white-noise variance of the continuum's two-high-pass/seven-low-pass
     // cascade. Computed only while a voice is built; rendering needs the nine
     // one-pole state updates per channel and band, but no matrix work.
