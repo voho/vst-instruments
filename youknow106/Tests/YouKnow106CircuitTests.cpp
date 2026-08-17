@@ -5312,6 +5312,22 @@ void testSupportFilterCornersLandWhereAsked()
     }
 }
 
+// `sallenKeyQ`'s own non-positive shunt-capacitance fallback guard -- its only
+// two production call sites (the anti-alias sections in `supportChainFor`)
+// always pass one of the four compile-time capacitor constants exercised
+// above, all of them positive, so the guard has never fired outside a test.
+// Without it, a zero or negative shunt would divide by zero or take a square
+// root of a negative ratio, handing an infinite or NaN Q into
+// `sallenKeyCoefficients`'s `1.0f / std::max(q, 0.05f)` and, from there, into
+// the Sallen-Key recursion itself.
+void testSallenKeyQNonPositiveShuntGuard()
+{
+    expect(Chorus::sallenKeyQ(820.0e-12f, 0.0f) == 0.5f,
+           "sallenKeyQ did not fall back to 0.5 for a zero shunt capacitance");
+    expect(Chorus::sallenKeyQ(820.0e-12f, -680.0e-12f) == 0.5f,
+           "sallenKeyQ did not fall back to 0.5 for a negative shunt capacitance");
+}
+
 void testCorrectionResidualsVanishAtTheEdges()
 {
     // The bandlimiting residuals are built by integration at construction, so
@@ -5572,6 +5588,7 @@ int main()
     testBbdOutputPolyBlepSeparatesPhysicalAndNumericalAliases();
     testCombinedBbdSupportTransitionAndStateSafety();
     testSupportFilterCornersLandWhereAsked();
+    testSallenKeyQNonPositiveShuntGuard();
     testHighPassReachesTheSummedSignal();
     testHighPassStateGuardSelfHeals();
     testNoiseSourceShapingFollowsItsCircuit();

@@ -998,6 +998,19 @@ struct TaikoEngineTestAccess
         return TaikoEngine::stiffnessStretch (besselZero, stiffness);
     }
 
+    // Exposes the mounting-loss shelf's own corner frequency on its own, so
+    // its "std::max(mountCorner, 1.0f)" floor can be asserted directly.
+    // resolveDrumGeometry only ever derives mountCorner as a fixed constant
+    // divided by drum.radius, itself clamped to [radiusFloor, radiusCeiling]
+    // (0.008 m .. 3.75 m), so the corner it ever hands to this function sits
+    // between roughly 7 Hz and 3.3 kHz - never at or below the floor - and
+    // the guard was previously reached nowhere at all, direct or indirect.
+    static float mountingLossAt (float mountLoss, float mountCorner,
+                                 float frequency) noexcept
+    {
+        return TaikoEngine::mountingLossAt (mountLoss, mountCorner, frequency);
+    }
+
     static std::uint64_t strokeCount (const TaikoEngine& engine) noexcept
     {
         return engine.noteSequence_;
@@ -7108,6 +7121,58 @@ void testStiffnessStretchGuardsItsOwnDomain()
             "unstretched ratio, not below it");
 }
 
+void testMountingLossGuardsItsOwnDomain()
+{
+    using taikor::TaikoEngineTestAccess;
+
+    // resolveDrumGeometry only ever derives mountCorner as a fixed constant
+    // over drum.radius, itself clamped to [radiusFloor, radiusCeiling], so
+    // the corner is always strictly positive and never near zero - roughly
+    // 7 Hz for the largest describable drum up to 3.3 kHz for the smallest.
+    // mountingLossAt's own "std::max(mountCorner, 1.0f)" floor guards a
+    // corner at or below 1 Hz, which nothing in Source/ ever passes it; a
+    // zero or negative corner would otherwise divide the ratio by zero (or
+    // flip its sign, which the following square erases anyway) rather than
+    // reading as the pinned 1 Hz shelf edge the floor documents.
+    constexpr float mountLoss = 5.0f;
+    constexpr float frequency = 10.0f;
+    const float floored = TaikoEngineTestAccess::mountingLossAt (
+        mountLoss, 1.0f, frequency);
+
+    expect (TaikoEngineTestAccess::mountingLossAt (mountLoss, 0.0f, frequency)
+                == floored,
+            "a zero corner must read as the floored 1 Hz corner, not divide "
+            "the ratio by zero");
+    expect (TaikoEngineTestAccess::mountingLossAt (mountLoss, -5.0f, frequency)
+                == floored,
+            "a negative corner must fall back to the same floor as zero");
+    expect (TaikoEngineTestAccess::mountingLossAt (mountLoss, 0.5f, frequency)
+                == floored,
+            "a corner inside the floor but still positive must also be "
+            "pinned to it, not used as-is");
+
+    // The floor's own reason to exist: at the corner it protects, a request
+    // for the shelf at frequency 0 divides 0 by 0. Every real call site's
+    // corner sits far above zero, so this is otherwise unreachable, but the
+    // floored function must still answer with the finite unbent-shelf loss
+    // rather than a NaN.
+    const float atOrigin = TaikoEngineTestAccess::mountingLossAt (
+        mountLoss, 0.0f, 0.0f);
+    expect (atOrigin == mountLoss,
+            "a zero corner and a zero frequency must read as the unbent "
+            "shelf, not propagate a 0/0 NaN");
+
+    // An ordinary corner, comfortably above the floor, must match the
+    // documented fourth-order shelf directly rather than only its guard.
+    constexpr float corner = 55.0f;
+    const float ordinary = TaikoEngineTestAccess::mountingLossAt (
+        mountLoss, corner, frequency);
+    const float ratio = frequency / corner;
+    const float expected = mountLoss / (1.0f + ratio * ratio * ratio * ratio);
+    expect (std::abs (ordinary - expected) < 1.0e-6f,
+            "an ordinary corner must resolve to the fourth-order shelf");
+}
+
 void testInvalidInputSafety()
 {
     taikor::TaikoEngine engine;
@@ -8199,6 +8264,7 @@ int main()
     testContactCollisionMassFallsBackWhenTheMembraneContributesNothing();
     testColumnStiffnessFactorGuardsItsOwnDomain();
     testStiffnessStretchGuardsItsOwnDomain();
+    testMountingLossGuardsItsOwnDomain();
     testInvalidInputSafety();
     testUiPresentationMath();
     testControlEndpointsAndGestures();
