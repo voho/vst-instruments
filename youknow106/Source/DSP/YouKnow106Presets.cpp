@@ -334,40 +334,44 @@ static_assert(factoryCorpusFnv1a() == 0xa78dab9d5bafb386ull);
 // player moves when one patch arrives hotter than the last. These trims are
 // that shaft position, chosen so the product bank behaves like a bank:
 //
-//   * No factory preset may exceed -1 dBFS sample peak. Thirty-one of them did
-//     at the uniform 0.80 default, up to +8.99 dBFS on A48, which is a digital
-//     overflow at the plug-in's own output boundary rather than the modelled
-//     output summer's soft rail.
-//   * No factory preset may exceed -18 dBFS gated loudness. That ceiling was
-//     derived once, as three decibels above the -21.48 dBFS corpus median
-//     measured before any trim was applied, and then frozen as an absolute
-//     figure. It is deliberately not re-expressed against the median: pulling
-//     the loud end down moves the median too (it now reads -22.00 dBFS), so a
-//     relative rule would chase itself and could never be satisfied.
-//     Tools/AuditFactoryPresets enforces both ceilings as absolutes.
+//   * No factory preset may exceed -1 dBFS sample peak. This is no longer the
+//     binding rule: once digital full scale was referred to the output summer's
+//     own rail, the untrimmed bank already peaked no higher than -3.67 dBFS.
+//     It stays as a floor under the contract rather than as the thing the
+//     trims are chosen to satisfy.
+//   * No factory preset may exceed -31 dBFS gated loudness. Derived once, as
+//     three decibels above the -34.20 dBFS corpus median measured with every
+//     preset at the panel default, then frozen as an absolute figure. It is
+//     deliberately not re-expressed against the median: pulling the loud end
+//     down moves the median too, so a relative rule would chase itself and
+//     could never be satisfied. Tools/AuditFactoryPresets enforces both as
+//     absolutes.
 //
 // Only attenuation is applied: no entry exceeds the 0.80 panel default, so a
 // preset is never made louder than the instrument's own nominal setting. The
 // intrinsically quiet percussion and noise-sweep patches keep their level --
 // VR1 has only about +2.25 dB of travel left above the default, which cannot
-// close a 40 dB gap, and their quietness is the hardware's own.
+// close the remaining gap, and their quietness is the hardware's own. Far less
+// of that gap is the model's doing than it once was: restoring the shared noise
+// rail to its service anchor lifted the twelve noise-only patches from 21.5 dB
+// below the corpus median to 12.9 dB below it.
 constexpr std::array<float, presetCount> factoryVolume {{
-    0.800f, 0.735f, 0.800f, 0.800f, 0.800f, 0.514f, 0.396f, 0.800f,
-    0.472f, 0.619f, 0.800f, 0.714f, 0.800f, 0.800f, 0.800f, 0.800f,
-    0.681f, 0.535f, 0.562f, 0.393f, 0.595f, 0.619f, 0.800f, 0.716f,
-    0.800f, 0.800f, 0.800f, 0.666f, 0.800f, 0.676f, 0.353f, 0.235f,
-    0.735f, 0.800f, 0.800f, 0.763f, 0.800f, 0.363f, 0.321f, 0.800f,
-    0.800f, 0.671f, 0.333f, 0.800f, 0.594f, 0.709f, 0.800f, 0.799f,
-    0.800f, 0.800f, 0.720f, 0.785f, 0.800f, 0.624f, 0.800f, 0.458f,
-    0.800f, 0.666f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f,
-    0.656f, 0.800f, 0.590f, 0.725f, 0.800f, 0.800f, 0.761f, 0.800f,
-    0.800f, 0.800f, 0.800f, 0.800f, 0.481f, 0.800f, 0.800f, 0.800f,
-    0.800f, 0.333f, 0.800f, 0.753f, 0.800f, 0.800f, 0.765f, 0.501f,
-    0.689f, 0.800f, 0.549f, 0.419f, 0.800f, 0.704f, 0.380f, 0.556f,
-    0.800f, 0.758f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f,
-    0.800f, 0.800f, 0.800f, 0.740f, 0.800f, 0.800f, 0.800f, 0.615f,
-    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.621f, 0.748f,
-    0.538f, 0.800f, 0.596f, 0.712f, 0.800f, 0.800f, 0.800f, 0.437f,
+    0.800f, 0.737f, 0.800f, 0.800f, 0.800f, 0.580f, 0.430f, 0.800f,
+    0.474f, 0.621f, 0.800f, 0.769f, 0.800f, 0.800f, 0.800f, 0.800f,
+    0.800f, 0.744f, 0.800f, 0.394f, 0.596f, 0.621f, 0.800f, 0.785f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.354f, 0.257f,
+    0.737f, 0.800f, 0.800f, 0.800f, 0.800f, 0.364f, 0.322f, 0.800f,
+    0.800f, 0.760f, 0.334f, 0.800f, 0.800f, 0.701f, 0.800f, 0.800f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.625f, 0.800f, 0.715f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f,
+    0.658f, 0.800f, 0.591f, 0.726f, 0.800f, 0.800f, 0.800f, 0.800f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.482f, 0.800f, 0.800f, 0.800f,
+    0.800f, 0.800f, 0.800f, 0.754f, 0.800f, 0.800f, 0.766f, 0.800f,
+    0.800f, 0.800f, 0.551f, 0.420f, 0.800f, 0.800f, 0.534f, 0.800f,
+    0.800f, 0.760f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f,
+    0.800f, 0.800f, 0.800f, 0.742f, 0.800f, 0.800f, 0.800f, 0.617f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.750f,
+    0.539f, 0.800f, 0.613f, 0.800f, 0.800f, 0.800f, 0.800f, 0.611f,
 }};
 
 struct BankStorage
