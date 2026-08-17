@@ -36,18 +36,24 @@ has been cleared.
   bundle, manifest, store page, and customer document. The supplied
   `www.protocodus.cz` hostname must not replace the working apex URL until its
   DNS and HTTPS configuration are live.
-- [ ] Bundle/package identifiers and AU/VST3 manufacturer and plug-in codes are
-  final and unchanged from any previously published build. Confirm Standalone
-  uses `cz.protocodus.youknow106`, Audio Unit uses
-  `cz.protocodus.youknow106.au`, and VST3 uses
-  `cz.protocodus.youknow106.vst3`.
+- [ ] Bundle/package identifiers are final for the first commercial release:
+  Standalone uses `cz.protocodus.youknow106`, Audio Unit uses
+  `cz.protocodus.youknow106.au`, VST3 uses
+  `cz.protocodus.youknow106.vst3`, and the package receipt uses
+  `cz.protocodus.youknow106.pkg`. The stable Audio Unit identity remains
+  `aumu/Yk06/Ykno`, and the approved VST3 class IDs remain unchanged.
+- [ ] Approve and test the one-time migration from the public pre-v1 Pluto
+  Audio nightly identifiers (`audio.youknow106.synth` and
+  `audio.youknow106.synth.pkg`): install an authentic old build, upgrade,
+  rescan, recall a session, and verify the documented receipt cleanup.
 - [ ] Release commit is reviewed, clean, and tagged exactly
   `youknow106-v<version>`; that annotated or lightweight tag points at HEAD.
 - [ ] Release uses the JUCE source fetched from the pinned CMake declaration;
   `JUCE_PATH`, `YOUKNOW106_JUCE_PATH`, `FETCHCONTENT_SOURCE_DIR_JUCE`, and
   cached local overrides are absent.
 - [ ] Candidate targets macOS 11.0 and contains both `arm64` and `x86_64` slices
-  in VST3, Audio Unit, and Standalone.
+  in VST3, Audio Unit, and Standalone. Confirm the packager verifies the actual
+  `LC_BUILD_VERSION` platform and `minos` for every Mach-O slice.
 
 ## Build and validation
 

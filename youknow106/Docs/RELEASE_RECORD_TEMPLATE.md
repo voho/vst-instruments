@@ -86,6 +86,7 @@ size.
 - Final PKG SHA-256:
 - Clean install/reboot/rescan result:
 - Upgrade/uninstall result:
+- Pre-v1 nightly identity migration result:
 
 ## Publication and support
 

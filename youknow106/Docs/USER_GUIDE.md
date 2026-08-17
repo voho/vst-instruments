@@ -15,7 +15,8 @@ open it, and follow the macOS Installer prompts. The package installs:
 - Documentation: `/Library/Application Support/Protocodus/YouKnow106/Documentation`
 
 If the release includes its `SHA256SUMS.txt` file, verify the download from the
-directory containing both files before opening the installer:
+directory containing the PKG, manifest, and `SHA256SUMS.txt` files before
+opening the installer:
 
 ```sh
 shasum -a 256 -c YouKnow106-1.1.0-macOS-universal-SHA256SUMS.txt
@@ -27,6 +28,19 @@ Restart the DAW after installation so it rescans plug-ins. If the Audio Unit
 does not appear, use the DAW's plug-in manager to rescan YouKnow106. The
 standalone application is available in `/Applications` and lets you select its
 audio and MIDI devices directly.
+
+### Upgrading from a pre-v1 nightly
+
+Pre-v1 public nightly builds used Pluto Audio bundle identifiers and the
+package receipt `audio.youknow106.synth.pkg`. The first commercial release uses
+the final Protocodus identifiers while preserving the Audio Unit and VST3 host
+identities. Quit the DAW, install v1, then restart and rescan it. After the new
+version is working, the obsolete receipt and documentation can be removed:
+
+```sh
+sudo pkgutil --forget audio.youknow106.synth.pkg
+sudo rm -rf "/Library/Application Support/YouKnow106"
+```
 
 ## First sound
 
