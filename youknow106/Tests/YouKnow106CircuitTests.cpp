@@ -3536,6 +3536,89 @@ void testChorusToneStepFallbackGuard()
            "repeated fallback calls");
 }
 
+void testCorrelatedRandomStepCorrelationGuard()
+{
+    // correlatedRandomStep's own `rho` line falls back to 0.0f (fully
+    // uncorrelated) whenever `correlation` is not finite, and otherwise
+    // clamps it to [-1, 1]. The only production call site always passes
+    // `optionalNoise_.commonRandomCorrelation`, which has no setter reachable
+    // from panel, preset or SysEx code and so stays fixed at its 1.0f default
+    // member initialiser for the lifetime of every Chorus instance; every
+    // fixture above this one, including the correlation sweep in
+    // testChorusNoiseComponents(), only ever drives finite in-range values
+    // (1.0f, -1.0f, 0.35f) through the friend seam directly. Neither branch
+    // has fired outside a test before now.
+    std::uint32_t commonNaN = 0x243f6a89u;
+    std::uint32_t orthogonalNaN = 0xb7e15163u;
+    std::uint32_t commonZero = 0x243f6a89u;
+    std::uint32_t orthogonalZero = 0xb7e15163u;
+    bool nanMatchedZeroCorrelation = true;
+    for (int index = 0; index < 64; ++index)
+    {
+        const auto viaNaN = YouKnow106TestAccess::correlatedChorusNoiseStep(
+            commonNaN, orthogonalNaN,
+            std::numeric_limits<float>::quiet_NaN());
+        const auto viaZero = YouKnow106TestAccess::correlatedChorusNoiseStep(
+            commonZero, orthogonalZero, 0.0f);
+        nanMatchedZeroCorrelation = nanMatchedZeroCorrelation
+            && viaNaN[0] == viaZero[0] && viaNaN[1] == viaZero[1];
+    }
+    expect(nanMatchedZeroCorrelation,
+           "correlatedRandomStep did not fall back to zero correlation for "
+           "a NaN correlation");
+
+    std::uint32_t commonPosInf = 0xd1b54a35u;
+    std::uint32_t orthogonalPosInf = 0x94d049bbu;
+    std::uint32_t commonNegInf = 0xd1b54a35u;
+    std::uint32_t orthogonalNegInf = 0x94d049bbu;
+    std::uint32_t commonReference = 0xd1b54a35u;
+    std::uint32_t orthogonalReference = 0x94d049bbu;
+    bool infinitiesMatchedZeroCorrelation = true;
+    for (int index = 0; index < 64; ++index)
+    {
+        const auto viaPosInf = YouKnow106TestAccess::correlatedChorusNoiseStep(
+            commonPosInf, orthogonalPosInf,
+            std::numeric_limits<float>::infinity());
+        const auto viaNegInf = YouKnow106TestAccess::correlatedChorusNoiseStep(
+            commonNegInf, orthogonalNegInf,
+            -std::numeric_limits<float>::infinity());
+        const auto viaZero = YouKnow106TestAccess::correlatedChorusNoiseStep(
+            commonReference, orthogonalReference, 0.0f);
+        infinitiesMatchedZeroCorrelation = infinitiesMatchedZeroCorrelation
+            && viaPosInf[0] == viaZero[0] && viaPosInf[1] == viaZero[1]
+            && viaNegInf[0] == viaZero[0] && viaNegInf[1] == viaZero[1];
+    }
+    expect(infinitiesMatchedZeroCorrelation,
+           "correlatedRandomStep did not fall back to zero correlation for "
+           "positive/negative infinite correlation");
+
+    // Out-of-range but finite correlation is clamped rather than substituted:
+    // 2.0 must behave exactly like the already-covered rho=+1 case (channels
+    // duplicated), and -2.0 exactly like rho=-1 (channels inverted).
+    std::uint32_t commonAboveOne = 0x243f6a89u;
+    std::uint32_t orthogonalAboveOne = 0xb7e15163u;
+    bool aboveOneDuplicatedExactly = true;
+    std::uint32_t commonBelowNegativeOne = 0x243f6a89u;
+    std::uint32_t orthogonalBelowNegativeOne = 0xb7e15163u;
+    bool belowNegativeOneInvertedExactly = true;
+    for (int index = 0; index < 64; ++index)
+    {
+        const auto above = YouKnow106TestAccess::correlatedChorusNoiseStep(
+            commonAboveOne, orthogonalAboveOne, 2.0f);
+        aboveOneDuplicatedExactly =
+            aboveOneDuplicatedExactly && above[0] == above[1];
+
+        const auto below = YouKnow106TestAccess::correlatedChorusNoiseStep(
+            commonBelowNegativeOne, orthogonalBelowNegativeOne, -2.0f);
+        belowNegativeOneInvertedExactly =
+            belowNegativeOneInvertedExactly && below[1] == -below[0];
+    }
+    expect(aboveOneDuplicatedExactly,
+           "correlatedRandomStep did not clamp an above-range correlation to +1");
+    expect(belowNegativeOneInvertedExactly,
+           "correlatedRandomStep did not clamp a below-range correlation to -1");
+}
+
 void testChorusBypassStateAndWetMuteTiming()
 {
     constexpr float sampleRate = 48000.0f;
@@ -5526,6 +5609,7 @@ int main()
     testChorusRateProportionalNoiseGainMatchesTheDerivedRatio();
     testChorusLineNoiseMatchesTheMn3009NoiseRow();
     testChorusNoiseComponents();
+    testCorrelatedRandomStepCorrelationGuard();
     testChorusToneStepFallbackGuard();
     testChorusBypassStateAndWetMuteTiming();
     testChorusRateChangePreservesPhysicalState();

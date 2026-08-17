@@ -84,6 +84,20 @@ public:
     [[nodiscard]] static bool
         hasUsableRootAndBinWidthForTests(float rootFrequencyHz,
                                          float analysisBinWidth);
+
+    // The Air-fit exclusion test that keeps an actively-resonating Bone
+    // mode's own energy out of the noise-floor measurement, exposed so the
+    // regression suite can drive its per-mode reliability skip directly: a
+    // mode findPersistentBoneModes() could not vouch for keeps a fallback
+    // ratio in the selection but a reliability of exactly 0, and this
+    // function must treat that slot as inactive no matter how closely a
+    // probe frequency lands on its fallback ratio. It is not part of the
+    // plug-in's runtime surface.
+    [[nodiscard]] static bool belongsToActiveBoneForTests(
+        float frequencyHz, float analysisBinWidth,
+        const std::array<float, NeuralModel::boneModeCount>& ratios,
+        const std::array<float, NeuralModel::boneModeCount>& reliabilities,
+        float rootFrequencyHz);
 };
 
 } // namespace neuramar

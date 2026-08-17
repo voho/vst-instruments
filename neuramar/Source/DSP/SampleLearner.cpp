@@ -2221,6 +2221,19 @@ bool SampleLearner::hasUsableRootAndBinWidthForTests(
     return hasUsableRootAndBinWidth(rootFrequencyHz, analysisBinWidth);
 }
 
+bool SampleLearner::belongsToActiveBoneForTests(
+    float frequencyHz, float analysisBinWidth,
+    const std::array<float, NeuralModel::boneModeCount>& ratios,
+    const std::array<float, NeuralModel::boneModeCount>& reliabilities,
+    float rootFrequencyHz)
+{
+    BoneSelection selection;
+    selection.ratios = ratios;
+    selection.reliabilities = reliabilities;
+    return belongsToActiveBone(frequencyHz, analysisBinWidth, selection,
+                               rootFrequencyHz);
+}
+
 SampleLearner::LearnResult SampleLearner::learn(
     const std::vector<float>& monoSample,
     double sampleRate,

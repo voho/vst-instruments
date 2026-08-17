@@ -55,6 +55,17 @@ struct DrumEngineTestAccess
         }
         return true;
     }
+
+    // HighResolutionVelocityPrefix::clear()'s own channel guard, exposed
+    // directly: driving clear() itself with an out-of-range channel and
+    // checking a sibling channel's own value survives is only an indirect
+    // proof, because writing pending_[static_cast<size_t>(channel)] for an
+    // out-of-range channel is undefined behaviour that is not guaranteed to
+    // land on that sibling's slot even with the guard removed.
+    [[nodiscard]] static bool prefixChannelValid (int channel) noexcept
+    {
+        return HighResolutionVelocityPrefix::valid (channel);
+    }
 };
 } // namespace drumalor
 
@@ -1110,6 +1121,85 @@ void testSetInstrumentParametersSanitizesInvalidPitchLevelAndPan()
             "setInstrumentParameters() did not clamp an excessive pan to its +1 ceiling");
     expect (renderWith (withPan (-4.0f)) == renderWith (withPan (-1.0f)),
             "setInstrumentParameters() did not clamp an excessive pan to its -1 floor");
+}
+
+// setInstrumentParameters()'s own characterA/characterB/decay guards - each
+// independently `clampUnit (value, fallback)`, i.e. `std::isfinite (value) ?
+// std::clamp (value, 0.0f, 1.0f) : fallback` - are only ever driven by the
+// broad invalid-values stress test below, which checks that the resulting
+// render stays finite but never pins the fallback to the instrument's own
+// documented default or the clamp to its [0, 1] range, unlike the pitch,
+// level and pan guards immediately above. Exercised the same way: a NaN,
+// infinite or out-of-range field must render bit-identically to the
+// equivalent, already-sanitized explicit call.
+void testSetInstrumentParametersSanitizesInvalidCharacterAndDecay()
+{
+    constexpr auto instrument = drumalor::Instrument::Kick;
+    constexpr int samples = 4096;
+    const auto defaults = drumalor::getInstrumentMetadata (instrument).defaultParameters;
+
+    const auto renderWith = [&] (const drumalor::InstrumentParameters& parameters)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.setInstrumentParameters (instrument, parameters);
+        engine.trigger (instrument, 0.9f);
+        return renderInterleaved (engine, samples, defaultBlockSize);
+    };
+
+    const auto withCharacterA = [&] (float characterA)
+    {
+        auto parameters = defaults;
+        parameters.characterA = characterA;
+        return parameters;
+    };
+    expect (renderWith (withCharacterA (std::numeric_limits<float>::quiet_NaN()))
+                == renderWith (withCharacterA (defaults.characterA)),
+            "setInstrumentParameters() did not fall back a NaN characterA to the instrument default");
+    expect (renderWith (withCharacterA (std::numeric_limits<float>::infinity()))
+                == renderWith (withCharacterA (defaults.characterA)),
+            "setInstrumentParameters() did not fall back a +infinity characterA to the instrument default");
+    expect (renderWith (withCharacterA (-std::numeric_limits<float>::infinity()))
+                == renderWith (withCharacterA (defaults.characterA)),
+            "setInstrumentParameters() did not fall back a -infinity characterA to the instrument default");
+    expect (renderWith (withCharacterA (4.0f)) == renderWith (withCharacterA (1.0f)),
+            "setInstrumentParameters() did not clamp an excessive characterA to its 1.0 ceiling");
+    expect (renderWith (withCharacterA (-4.0f)) == renderWith (withCharacterA (0.0f)),
+            "setInstrumentParameters() did not clamp an excessive characterA to its 0.0 floor");
+
+    const auto withCharacterB = [&] (float characterB)
+    {
+        auto parameters = defaults;
+        parameters.characterB = characterB;
+        return parameters;
+    };
+    expect (renderWith (withCharacterB (std::numeric_limits<float>::quiet_NaN()))
+                == renderWith (withCharacterB (defaults.characterB)),
+            "setInstrumentParameters() did not fall back a NaN characterB to the instrument default");
+    expect (renderWith (withCharacterB (std::numeric_limits<float>::infinity()))
+                == renderWith (withCharacterB (defaults.characterB)),
+            "setInstrumentParameters() did not fall back a +infinity characterB to the instrument default");
+    expect (renderWith (withCharacterB (100.0f)) == renderWith (withCharacterB (1.0f)),
+            "setInstrumentParameters() did not clamp an excessive characterB to its 1.0 ceiling");
+    expect (renderWith (withCharacterB (-100.0f)) == renderWith (withCharacterB (0.0f)),
+            "setInstrumentParameters() did not clamp an excessive characterB to its 0.0 floor");
+
+    const auto withDecay = [&] (float decay)
+    {
+        auto parameters = defaults;
+        parameters.decay = decay;
+        return parameters;
+    };
+    expect (renderWith (withDecay (std::numeric_limits<float>::quiet_NaN()))
+                == renderWith (withDecay (defaults.decay)),
+            "setInstrumentParameters() did not fall back a NaN decay to the instrument default");
+    expect (renderWith (withDecay (-std::numeric_limits<float>::infinity()))
+                == renderWith (withDecay (defaults.decay)),
+            "setInstrumentParameters() did not fall back a -infinity decay to the instrument default");
+    expect (renderWith (withDecay (7.0f)) == renderWith (withDecay (1.0f)),
+            "setInstrumentParameters() did not clamp an excessive decay to its 1.0 ceiling");
+    expect (renderWith (withDecay (-7.0f)) == renderWith (withDecay (0.0f)),
+            "setInstrumentParameters() did not clamp an excessive decay to its 0.0 floor");
 }
 
 // setKitParameters()'s own humanise/bleed/busDrive/busCompression guards -
@@ -5440,6 +5530,33 @@ void testMidiSurfaceContract()
             expect (! prefixes.take (-1).has_value() && ! prefixes.take (16).has_value(),
                     "an out-of-range MIDI channel was accepted");
 
+            // clear() carries the same channel guard as set() and take(), but
+            // every clear() above this line only ever named channel 3 - already
+            // in range - so the guard itself had never been driven with
+            // anything invalid. An out-of-range clear() must be a no-op rather
+            // than reading or writing outside the sixteen-channel table, and a
+            // real channel's own pending prefix must survive it untouched.
+            //
+            // Driving clear() itself with an out-of-range channel and checking
+            // that a sibling channel's slot survives is only an indirect proof:
+            // pending_[static_cast<size_t>(channel)] for channel -1 or 16 is an
+            // out-of-bounds array access, which is undefined behaviour that is
+            // not guaranteed to touch channel 6's own slot even if the guard
+            // were missing. Pin the guard's own boundary directly first.
+            expect (! drumalor::DrumEngineTestAccess::prefixChannelValid (-1)
+                        && ! drumalor::DrumEngineTestAccess::prefixChannelValid (16)
+                        && drumalor::DrumEngineTestAccess::prefixChannelValid (0)
+                        && drumalor::DrumEngineTestAccess::prefixChannelValid (15),
+                    "HighResolutionVelocityPrefix::valid() no longer matches its "
+                    "documented [0, 16) channel range");
+
+            prefixes.set (6, 91);
+            prefixes.clear (-1);
+            prefixes.clear (16);
+            const auto stillPending = prefixes.take (6);
+            expect (stillPending.has_value() && *stillPending == 91,
+                    "an out-of-range clear() disturbed a real channel's CC 88 prefix");
+
             // And what a taken prefix is worth: the fourteen-bit scaling for
             // the note that consumed it, and the untouched seven-bit scaling
             // for the next note on the same channel, which has none.
@@ -6253,6 +6370,7 @@ int main()
     testPrepareSanitizesInvalidSampleRate();
     testSetOutputGainSanitizesInvalidGain();
     testSetInstrumentParametersSanitizesInvalidPitchLevelAndPan();
+    testSetInstrumentParametersSanitizesInvalidCharacterAndDecay();
     testSetKitParametersSanitizesInvalidHumaniseBleedBusDriveAndBusCompression();
     testTriggerSanitizesInvalidInstrumentAndVelocity();
     testModalSampleRateConsistency();

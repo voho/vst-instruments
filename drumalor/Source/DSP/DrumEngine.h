@@ -164,6 +164,8 @@ public:
     void clearAll() noexcept;
 
 private:
+    friend struct DrumEngineTestAccess;
+
     [[nodiscard]] static bool valid (int channel) noexcept
     {
         return channel >= 0 && channel < channelCount;
