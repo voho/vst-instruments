@@ -824,6 +824,99 @@ void testHighGStabilityAndRecovery()
            "Merson recovery did not clear the whole coupled cascade");
 }
 
+void testCalibrationAndTrajectoryNonFiniteGuards()
+{
+    // `OtaCascade::process`'s scalar `calibration` argument falls back to
+    // 0.0 -- disabling the early-effect term exactly as an explicit 0.0f
+    // would -- whenever it is not finite. The engine's only production call
+    // site always hands it `parameters.calibration`, which `sanitise()`
+    // already guarantees is finite, so this guard had never fired outside
+    // a test.
+    constexpr float input = 0.83f;
+    constexpr float omega = 0.6f;
+    constexpr float feedback = 2.1f;
+    const float headroomVolts = static_cast<float>(Access::headroom());
+    constexpr std::array<double, 4> seedState { 0.12, -0.08, 0.05, -0.03 };
+
+    const auto renderWithCalibration = [&](float calibration) {
+        Cascade cascade;
+        cascade.reset();
+        Access::setState(cascade, seedState);
+        const float output = cascade.process(
+            input, omega, feedback, headroomVolts, true, calibration);
+        return std::make_pair(output, Access::state(cascade));
+    };
+
+    const auto calibrationFallback = renderWithCalibration(0.0f);
+    for (float poisoned : {
+             std::numeric_limits<float>::quiet_NaN(),
+             std::numeric_limits<float>::infinity(),
+             -std::numeric_limits<float>::infinity() })
+    {
+        const auto actual = renderWithCalibration(poisoned);
+        expect(actual.first == calibrationFallback.first
+                   && actual.second == calibrationFallback.second,
+               "OtaCascade::process's non-finite calibration guard no "
+               "longer matches its documented 0.0 fallback");
+    }
+
+    // The explicit control trajectory used for VCF hold events feeds every
+    // Merson node its own feedback/headroom value, guarded by the same
+    // non-finite fallback contract as the scalar arguments above (feedback
+    // -> 0.0, headroom -> max(0.0, 1e-5) = 1e-5). The engine only ever
+    // builds that trajectory from already-finite interpolated state, so
+    // neither per-node guard had ever fired outside a test either.
+    Access::ControlTrajectory baseline;
+    baseline.omegaStep.fill(omega);
+    baseline.feedback.fill(feedback);
+    baseline.headroom.fill(headroomVolts);
+    constexpr std::size_t poisonedPoint = 3;
+    constexpr std::array<double, 3> poisonedValues {
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::infinity(),
+        -std::numeric_limits<double>::infinity()
+    };
+
+    const auto renderWithTrajectory =
+        [&](const Access::ControlTrajectory& trajectory) {
+            Cascade cascade;
+            cascade.reset();
+            Access::setState(cascade, seedState);
+            const float output = cascade.process(
+                input, omega, feedback, headroomVolts, true, 0.70f,
+                &trajectory);
+            return std::make_pair(output, Access::state(cascade));
+        };
+
+    auto feedbackFallback = baseline;
+    feedbackFallback.feedback[poisonedPoint] = 0.0;
+    const auto feedbackFallbackResult = renderWithTrajectory(feedbackFallback);
+    for (double poisoned : poisonedValues)
+    {
+        auto poisonedTrajectory = baseline;
+        poisonedTrajectory.feedback[poisonedPoint] = poisoned;
+        const auto actual = renderWithTrajectory(poisonedTrajectory);
+        expect(actual.first == feedbackFallbackResult.first
+                   && actual.second == feedbackFallbackResult.second,
+               "OtaCascade::process's explicit-trajectory feedback guard no "
+               "longer matches its documented 0.0 per-node fallback");
+    }
+
+    auto headroomFallback = baseline;
+    headroomFallback.headroom[poisonedPoint] = 1.0e-5;
+    const auto headroomFallbackResult = renderWithTrajectory(headroomFallback);
+    for (double poisoned : poisonedValues)
+    {
+        auto poisonedTrajectory = baseline;
+        poisonedTrajectory.headroom[poisonedPoint] = poisoned;
+        const auto actual = renderWithTrajectory(poisonedTrajectory);
+        expect(actual.first == headroomFallbackResult.first
+                   && actual.second == headroomFallbackResult.second,
+               "OtaCascade::process's explicit-trajectory headroom guard no "
+               "longer matches its documented 1e-5 per-node fallback");
+    }
+}
+
 void testRetimePreservesPhysicalState()
 {
     Cascade cascade;
@@ -911,6 +1004,7 @@ int main()
     testRapidControlAlternationAgainstIndependentReference();
     testProductGridOmegaCapAndThermalContainment();
     testHighGStabilityAndRecovery();
+    testCalibrationAndTrajectoryNonFiniteGuards();
     testRetimePreservesPhysicalState();
 
     if (failures != 0)
