@@ -7,6 +7,7 @@ small shallow nicks. The editor embeds it as binary data and composites it at
 low contrast, so no loose file is required at runtime.
 
 Generation mode: OpenAI built-in image generation, new image (not an edit).
+SHA-256: `cfcdd00f5d885eff061ebee8e3b120dd619a704849e128999bf08ac5feb6b920`.
 
 Prompt:
 
@@ -27,3 +28,28 @@ Prompt:
 > single light direction, deep scratches, rust, grime, fingerprints, stains, or
 > watermark; texture must remain readable when tiled at low opacity behind
 > legible UI text.
+
+## Standalone app icon
+
+`youknow106-icon.png` is the 1024 px alpha-bearing source used by JUCE to
+generate the standalone application's platform icons. It is an original
+six-fader mark rather than a reproduction of the reference instrument's panel.
+
+Generation mode: OpenAI built-in image generation, new image, generated
+2026-08-17 and resampled to 1024 px for the project. SHA-256:
+`c1777c084a19f48135789657157d23c535399461a31448874093f24dda282068`.
+
+Prompt:
+
+> Use case: logo-brand. Asset type: 1024x1024 macOS standalone synthesizer app
+> icon. The YouKnow106 editor screenshot is a visual-language reference only;
+> do not reproduce its panel or controls literally. Create one restrained,
+> premium icon for an original circuit-modelled six-voice analog-style
+> synthesizer: a dark charcoal rounded-square instrument tile with six slim
+> vertical fader/light channels, a thin warm-red rail near the top and a thin
+> cyan rail near the bottom. Use a crisp high-end product-icon treatment with
+> subtle molded ABS grain and restrained physical depth, readable at 16-32 px.
+> Use charcoal, near-black, muted off-white, restrained warm red and cyan. Keep
+> generous inset and a bold silhouette, with genuine transparency outside the
+> rounded square. No text, numbers, logos, keyboard keys, brand marks,
+> watermark, or imitation of Roland/Juno trade dress.

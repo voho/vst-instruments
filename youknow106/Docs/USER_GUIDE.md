@@ -1,0 +1,106 @@
+# YouKnow106 user guide
+
+YouKnow106 1.1.0 is a six-voice software synthesizer from Protocodus. It runs
+on macOS 11 or later as a universal `arm64`/`x86_64` VST3, Audio Unit, and
+standalone application.
+
+## Install
+
+Download the signed and notarized `YouKnow106-1.1.0-macOS-universal.pkg`,
+open it, and follow the macOS Installer prompts. The package installs:
+
+- VST3: `/Library/Audio/Plug-Ins/VST3/YouKnow106.vst3`
+- Audio Unit: `/Library/Audio/Plug-Ins/Components/YouKnow106.component`
+- Standalone: `/Applications/YouKnow106.app`
+- Documentation: `/Library/Application Support/Protocodus/YouKnow106/Documentation`
+
+If the release includes its `SHA256SUMS.txt` file, verify the download from the
+directory containing both files before opening the installer:
+
+```sh
+shasum -a 256 -c YouKnow106-1.1.0-macOS-universal-SHA256SUMS.txt
+```
+
+Quit the DAW and standalone application before installing or upgrading.
+
+Restart the DAW after installation so it rescans plug-ins. If the Audio Unit
+does not appear, use the DAW's plug-in manager to rescan YouKnow106. The
+standalone application is available in `/Applications` and lets you select its
+audio and MIDI devices directly.
+
+## First sound
+
+Load YouKnow106 as a software instrument, choose a preset from the FACTORY BANK
+menu, and play MIDI notes. The panel follows the signal flow from LFO and DCO
+through HPF, VCF, VCA, envelope, and chorus. Hover a control for a short
+description and its current value.
+
+The QUALITY menu selects 1x, 2x, or 4x internal processing. New instances use
+2x for practical realtime headroom. Choose 4x for the highest-quality offline
+render or a lightly loaded session, and 1x when a dense project needs more CPU
+headroom. A quality change waits until the instrument is idle; at high host
+sample rates the effective factor may be reduced automatically.
+
+The factory bank is read-only. Host sessions and host presets retain edited
+states. The CUSTOM PATCH buttons load and save hardware-compatible `.syx`
+files. RELOAD discards edits to the selected program, RESET loads INIT, and
+PANIC clears held notes and sounding voices.
+
+Keyboard users can use Tab and Shift-Tab to reach every enabled control; a
+visible outline marks the current target. Arrow keys adjust sliders and menus,
+and Space or Return activates buttons. On the performance lever, hold Left or
+Right for pitch bend and Up for full modulation; releasing the arrow keys,
+moving focus, or pressing Space, Return, or Escape returns both spring-loaded
+axes to zero.
+
+## MIDI and patch files
+
+YouKnow106 responds to notes, pitch bend, modulation (CC 1), sustain (CC 64),
+all-notes-off, and Program Change 0–127. The synthesis panel is available to
+host automation but has no MIDI CC-learn mapping.
+
+LOAD imports the first compatible patch dump from a `.syx` file; a file can
+also be dropped on the editor. SAVE writes the current tone as a compatible
+single-patch `.syx` dump. Performance and plug-in extension controls are not
+part of that hardware-format tone data.
+
+## Troubleshooting
+
+- No plug-in in the DAW: restart the DAW, confirm that its plug-in format is
+  installed at the path above, then request a rescan.
+- No audio: confirm an instrument track is receiving MIDI and that the track,
+  host, and interface outputs are active. In the standalone app, check the
+  selected audio device.
+- Stuck note: click PANIC or send MIDI all-notes-off.
+- High CPU: choose a lower QUALITY setting while the instrument is idle.
+- A problem persists: include the YouKnow106 version, macOS version, Mac model,
+  host and host version, plug-in format, sample rate, and reproduction steps in
+  a message to [protocodus@proton.me](mailto:protocodus@proton.me).
+
+## Uninstall
+
+Quit all audio applications. Move the three YouKnow106 items listed under
+Install to the Trash, then remove the documentation folder. An administrator
+can instead remove those exact paths in Terminal:
+
+```sh
+sudo rm -rf "/Library/Audio/Plug-Ins/VST3/YouKnow106.vst3"
+sudo rm -rf "/Library/Audio/Plug-Ins/Components/YouKnow106.component"
+sudo rm -rf "/Applications/YouKnow106.app"
+sudo rm -rf "/Library/Application Support/Protocodus/YouKnow106"
+sudo pkgutil --forget cz.protocodus.youknow106.pkg
+```
+
+DAW projects may retain their own YouKnow106 state after uninstalling. The
+standalone app may also leave its audio/MIDI device preferences at
+`~/Library/Application Support/YouKnow106.settings` so a later installation can
+reuse them. Remove either kind of user data only if it is no longer needed.
+
+Privacy information, the source-code licence, third-party notices, and release
+history are included with the installed documentation. Product information is at
+[protocodus.cz](https://protocodus.cz).
+
+YouKnow106 is an independent Protocodus product. It is not affiliated with,
+endorsed by, sponsored by, or licensed by Roland Corporation. Roland and Juno
+are trademarks of Roland Corporation and are used only to identify the
+instrument architecture being modeled.

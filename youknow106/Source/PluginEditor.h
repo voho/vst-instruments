@@ -103,9 +103,14 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+    bool keyPressed (const juce::KeyPress&) override;
+    bool keyStateChanged (bool isKeyDown) override;
+    void focusLost (FocusChangeType) override;
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
 
     [[nodiscard]] float getPitchBend() const noexcept { return pitchBend; }
     [[nodiscard]] float getModulation() const noexcept { return modulation; }
+    [[nodiscard]] juce::String getAccessibilityValueText() const;
 
     std::function<void (float, float)> onPositionChanged;
 
@@ -116,6 +121,7 @@ private:
 
     float pitchBend = 0.0f;
     float modulation = 0.0f;
+    bool keyboardGestureActive = false;
 };
 
 // A stable home for the same explanatory strings exposed through
@@ -137,6 +143,7 @@ public:
     // still wins while it is up.
     void showNotice (juce::String title, juce::String text);
     void paint (juce::Graphics&) override;
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
 
     [[nodiscard]] const juce::String& getHelpTitle() const noexcept
     {
@@ -300,6 +307,9 @@ private:
     // Lit while the panel no longer matches the patch that was loaded, which is
     // the only way to tell a recalled patch from an edited one.
     juce::Label presetEditedLabel;
+    juce::Label customPatchLabel;
+    juce::TextButton customPatchLoadButton { "LOAD .SYX" };
+    juce::TextButton customPatchSaveButton { "SAVE .SYX" };
     int shownProgram = -1;
     bool shownEdited = false;
 

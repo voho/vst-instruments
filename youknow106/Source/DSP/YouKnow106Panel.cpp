@@ -199,18 +199,22 @@ Layout buildLayout() noexcept
                                             164.0f, programmerHeight },
         { "LFO",        2, instrumentLeft, soundRowTop,
                                              84.0f, soundRowHeight },
+        // The DCO carries three range keys, two modulation controls, two PWM
+        // source keys, two waveform keys and two mixer levels. Give that dense
+        // control family the widest cells in the strip; the adjacent sections
+        // still retain at least 33 panel units per slot.
         { "DCO",       10, 282.0f, soundRowTop,
-                                            311.0f, soundRowHeight },
-        { "HPF",        1, 601.0f, soundRowTop,
+                                            346.0f, soundRowHeight },
+        { "HPF",        1, 636.0f, soundRowTop,
                                              47.0f, soundRowHeight },
-        { "VCF",        6, 656.0f, soundRowTop,
-                                            212.0f, soundRowHeight },
-        { "VCA",        3, 876.0f, soundRowTop,
-                                            113.0f, soundRowHeight },
-        { "ENV",        4, 997.0f, soundRowTop,
-                                            147.0f, soundRowHeight },
-        { "CHORUS",     3, 1152.0f, soundRowTop,
-                                            116.0f, soundRowHeight },
+        { "VCF",        6, 691.0f, soundRowTop,
+                                            202.0f, soundRowHeight },
+        { "VCA",        3, 901.0f, soundRowTop,
+                                            103.0f, soundRowHeight },
+        { "ENV",        4, 1012.0f, soundRowTop,
+                                            137.0f, soundRowHeight },
+        { "CHORUS",     3, 1157.0f, soundRowTop,
+                                            111.0f, soundRowHeight },
     };
 
     for (int index = 0; index < sectionCount; ++index)

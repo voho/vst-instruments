@@ -2335,6 +2335,9 @@ YouKnow106Engine::YouKnow106Engine() noexcept
 {
     buildHalfbandKernel();
     (void) correctionTables();
+    // Function-local statics are thread-safe, but their first-use guards and
+    // exponentials do not belong in the first audio callback.
+    (void) chassisGradientMeanCelsius();
     buildVoiceCards();
     clearHeldNotes();
 }
@@ -2521,6 +2524,7 @@ void YouKnow106Engine::prepare(double sampleRate, int /*maxBlockSize*/,
     inverseSampleRate_ = static_cast<float>(1.0 / sampleRate_);
     oversamplingRequested_ = sanitiseOversampleFactor(requestedFactor);
     oversamplingApplied_ = oversamplingRequested_;
+    chorus_.prepareSupportRates(sampleRate_);
     updateProcessingRate();
     prepared_ = true;
     reset();

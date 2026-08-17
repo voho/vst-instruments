@@ -192,6 +192,10 @@ public:
     // reinitialised under the engine's zero-gain transition. The exact support
     // coordinates are physical voltages, not timestep-embedded TPT carries;
     // preserving and reseeding them is a separate, still-unqualified policy.
+    // The engine calls this from prepareToPlay so a later quality change only
+    // selects fixed coefficients on the audio thread instead of solving matrix
+    // exponentials there.
+    void prepareSupportRates(double hostSampleRate) noexcept;
     void prepare(double sampleRate,
                  bool preserveState = false) noexcept;
     void reset(bool preserveLfoPhase = false) noexcept;
@@ -563,6 +567,12 @@ private:
     // engine's highest internal rates and over long sessions.
     double lfoPhase_ { 0.0 };
     SupportChain support_ {};
+    std::array<SupportChain, 3> preparedSupport_ {};
+    std::array<float, 3> preparedSupportRates_ {};
+    bool supportRatesPrepared_ { false };
+    // Regression seam: Engine quality changes must only select these prepared
+    // values, never rebuild matrix transitions on the audio callback.
+    std::uint64_t supportBuildCount_ { 0 };
     float wetGain_ { 0.0f };
     float rateHz_ { 0.0f };
     float centreDelay_ { 0.0032f };

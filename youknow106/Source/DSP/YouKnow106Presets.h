@@ -11,8 +11,10 @@ namespace youknow106::presets
 // The complete 128-tone factory memory supplied with the reference instrument:
 // bank A followed by bank B, groups 1..8 and patches 1..8. Each entry is stored
 // from its original eighteen 7-bit tone bytes and decoded by the same path used
-// for a hardware SysEx dump; there are no hand-transcribed panel floats or
-// per-preset gain corrections.
+// for a hardware SysEx dump; there are no hand-transcribed tone floats and no
+// hidden per-preset DSP gain. Product presets add only the documented plug-in
+// controls below, including attenuation-only positions for the front-panel
+// output-volume shaft.
 //
 // The hardware stores no names. The names here are archival descriptive
 // metadata and do not take part in tone-memory or SysEx round trips. Provenance,

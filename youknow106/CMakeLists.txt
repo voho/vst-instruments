@@ -93,8 +93,12 @@ if(YOUKNOW106_BUILD_PLUGIN)
 
     juce_add_plugin(YouKnow106
         VERSION ${PROJECT_VERSION}
-        COMPANY_NAME "Pluto Audio"
-        BUNDLE_ID "audio.youknow106.synth"
+        COMPANY_NAME "Protocodus"
+        COMPANY_WEBSITE "https://protocodus.cz"
+        COMPANY_EMAIL "protocodus@proton.me"
+        COMPANY_COPYRIGHT "Copyright (c) 2026 Protocodus"
+        BUNDLE_ID "cz.protocodus.youknow106"
+        ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Assets/youknow106-icon.png"
         PLUGIN_MANUFACTURER_CODE Ykno
         PLUGIN_CODE Yk06
         PRODUCT_NAME "YouKnow106"
@@ -104,13 +108,39 @@ if(YOUKNOW106_BUILD_PLUGIN)
         AU_MAIN_TYPE kAudioUnitType_MusicDevice
         IS_SYNTH TRUE
         NEEDS_MIDI_INPUT TRUE
-        # The instrument can send its panel to hardware as a patch dump, so it
-        # needs somewhere to send it.
-        NEEDS_MIDI_OUTPUT TRUE
+        # Patch export is an explicit .syx file operation in v1. The synth does
+        # not expose a dormant MIDI-output bus to hosts.
+        NEEDS_MIDI_OUTPUT FALSE
         IS_MIDI_EFFECT FALSE
         EDITOR_WANTS_KEYBOARD_FOCUS TRUE
         AU_SANDBOX_SAFE TRUE
         COPY_PLUGIN_AFTER_BUILD FALSE)
+
+    # JUCE starts every wrapper from the shared BUNDLE_ID above. Give each
+    # distinct macOS bundle its own identifier while keeping the shared base ID
+    # in JucePlugin_CFBundleIdentifier, so AU/VST3 plug-in identity is unchanged.
+    if(APPLE)
+        function(youknow106_set_wrapper_bundle_identifier target identifier)
+            get_target_property(info_plist "${target}" MACOSX_BUNDLE_INFO_PLIST)
+            if(NOT info_plist OR info_plist MATCHES "-NOTFOUND$")
+                message(FATAL_ERROR "No generated Info.plist for ${target}")
+            endif()
+
+            execute_process(
+                COMMAND /usr/libexec/PlistBuddy -c
+                    "Set :CFBundleIdentifier ${identifier}" "${info_plist}"
+                COMMAND_ERROR_IS_FATAL ANY)
+            set_target_properties("${target}" PROPERTIES
+                XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${identifier}")
+        endfunction()
+
+        youknow106_set_wrapper_bundle_identifier(YouKnow106_Standalone
+            cz.protocodus.youknow106)
+        youknow106_set_wrapper_bundle_identifier(YouKnow106_AU
+            cz.protocodus.youknow106.au)
+        youknow106_set_wrapper_bundle_identifier(YouKnow106_VST3
+            cz.protocodus.youknow106.vst3)
+    endif()
 
     juce_generate_juce_header(YouKnow106)
 
@@ -544,5 +574,31 @@ if(BUILD_TESTING)
 
         add_test(NAME YouKnow106.PluginProcessor COMMAND YouKnow106PluginProcessorTests)
         set_tests_properties(YouKnow106.PluginProcessor PROPERTIES TIMEOUT 60)
+
+        if(APPLE)
+            # Exercise the product through the same dynamically loaded VST3
+            # boundary a DAW uses. This complements the processor tests; it is
+            # deliberately small and does not pretend to replace host/vendor
+            # validation of the final signed package.
+            add_executable(YouKnow106VST3BundleSmokeTests
+                Tests/VST3BundleSmokeTests.cpp)
+            target_link_libraries(YouKnow106VST3BundleSmokeTests PRIVATE
+                juce::juce_audio_processors_headless
+                juce::juce_recommended_config_flags)
+            target_compile_definitions(YouKnow106VST3BundleSmokeTests PRIVATE
+                JUCE_PLUGINHOST_VST3=1
+                JUCE_USE_CURL=0
+                JUCE_WEB_BROWSER=0)
+            target_compile_features(YouKnow106VST3BundleSmokeTests PRIVATE
+                cxx_std_20)
+            target_compile_options(YouKnow106VST3BundleSmokeTests PRIVATE
+                -Wall -Wextra -Wpedantic)
+            add_dependencies(YouKnow106VST3BundleSmokeTests YouKnow106_VST3)
+
+            add_test(NAME YouKnow106.VST3Bundle
+                COMMAND YouKnow106VST3BundleSmokeTests
+                        "$<TARGET_BUNDLE_DIR:YouKnow106_VST3>")
+            set_tests_properties(YouKnow106.VST3Bundle PROPERTIES TIMEOUT 60)
+        endif()
     endif()
 endif()

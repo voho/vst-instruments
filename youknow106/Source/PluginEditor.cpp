@@ -997,7 +997,11 @@ YouKnow106PerformanceLever::YouKnow106PerformanceLever()
     setTooltip (
         "Drag the spring-loaded lever left or right for pitch bend and "
         "upward for LFO modulation. Both axes spring to zero; the three BENDER "
-        "depth sliders set its DCO, VCF and LFO reach.");
+        "depth sliders set its DCO, VCF and LFO reach. With keyboard focus, "
+        "hold the arrow keys and release them to spring back to zero.");
+    setWantsKeyboardFocus (true);
+    setMouseClickGrabsKeyboardFocus (true);
+    setHasFocusOutline (true);
     setMouseCursor (juce::MouseCursor::DraggingHandCursor);
 }
 
@@ -1021,8 +1025,21 @@ void YouKnow106PerformanceLever::setValues (float bend, float mod, bool notify)
     pitchBend = newBend;
     modulation = newMod;
     repaint();
+    if (auto* handler = getAccessibilityHandler())
+        handler->notifyAccessibilityEvent (juce::AccessibilityEvent::valueChanged);
     if (notify && onPositionChanged)
         onPositionChanged (pitchBend, modulation);
+}
+
+juce::String YouKnow106PerformanceLever::getAccessibilityValueText() const
+{
+    const int bendPercent = juce::roundToInt (pitchBend * 100.0f);
+    juce::String result { "Pitch bend " };
+    if (bendPercent > 0)
+        result << "+";
+    result << bendPercent << "%, modulation "
+           << juce::roundToInt (modulation * 100.0f) << "%";
+    return result;
 }
 
 void YouKnow106PerformanceLever::updateFromPointer (juce::Point<float> position)
@@ -1037,6 +1054,7 @@ void YouKnow106PerformanceLever::updateFromPointer (juce::Point<float> position)
 
 void YouKnow106PerformanceLever::mouseDown (const juce::MouseEvent& event)
 {
+    keyboardGestureActive = false;
     updateFromPointer (event.position);
 }
 
@@ -1048,6 +1066,94 @@ void YouKnow106PerformanceLever::mouseDrag (const juce::MouseEvent& event)
 void YouKnow106PerformanceLever::mouseUp (const juce::MouseEvent&)
 {
     setValues (0.0f, 0.0f, true);
+}
+
+bool YouKnow106PerformanceLever::keyPressed (const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::leftKey)
+        setValues (-1.0f, modulation, true);
+    else if (key == juce::KeyPress::rightKey)
+        setValues (1.0f, modulation, true);
+    else if (key == juce::KeyPress::upKey)
+        setValues (pitchBend, 1.0f, true);
+    else if (key == juce::KeyPress::downKey)
+        setValues (pitchBend, 0.0f, true);
+    else if (key == juce::KeyPress::escapeKey
+             || key == juce::KeyPress::returnKey
+             || key == juce::KeyPress::spaceKey)
+    {
+        keyboardGestureActive = false;
+        setValues (0.0f, 0.0f, true);
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+
+    keyboardGestureActive = true;
+    return true;
+}
+
+bool YouKnow106PerformanceLever::keyStateChanged (bool isKeyDown)
+{
+    if (isKeyDown || ! keyboardGestureActive)
+        return false;
+
+    keyboardGestureActive = false;
+    setValues (0.0f, 0.0f, true);
+    return true;
+}
+
+void YouKnow106PerformanceLever::focusLost (FocusChangeType)
+{
+    if (! keyboardGestureActive)
+        return;
+
+    keyboardGestureActive = false;
+    setValues (0.0f, 0.0f, true);
+}
+
+std::unique_ptr<juce::AccessibilityHandler>
+YouKnow106PerformanceLever::createAccessibilityHandler()
+{
+    class ValueInterface final : public juce::AccessibilityTextValueInterface
+    {
+    public:
+        explicit ValueInterface (YouKnow106PerformanceLever& leverToWrap)
+            : lever (leverToWrap)
+        {
+        }
+
+        bool isReadOnly() const override { return true; }
+        juce::String getCurrentValueAsString() const override
+        {
+            return lever.getAccessibilityValueText();
+        }
+        void setValueAsString (const juce::String&) override {}
+
+    private:
+        YouKnow106PerformanceLever& lever;
+    };
+
+    class Handler final : public juce::AccessibilityHandler
+    {
+    public:
+        explicit Handler (YouKnow106PerformanceLever& leverToWrap)
+            : juce::AccessibilityHandler (
+                  leverToWrap, juce::AccessibilityRole::group, {},
+                  { std::make_unique<ValueInterface> (leverToWrap) }),
+              lever (leverToWrap)
+        {
+        }
+
+        juce::String getHelp() const override { return lever.getTooltip(); }
+
+    private:
+        YouKnow106PerformanceLever& lever;
+    };
+
+    return std::make_unique<Handler> (*this);
 }
 
 void YouKnow106PerformanceLever::paint (juce::Graphics& g)
@@ -1180,6 +1286,39 @@ void YouKnow106ContextHelp::setContent (juce::String title, juce::String text,
     helpText = std::move (text);
     helpValue = std::move (value);
     repaint();
+    if (auto* handler = getAccessibilityHandler())
+        handler->notifyAccessibilityEvent (juce::AccessibilityEvent::valueChanged);
+}
+
+std::unique_ptr<juce::AccessibilityHandler>
+YouKnow106ContextHelp::createAccessibilityHandler()
+{
+    class ValueInterface final : public juce::AccessibilityTextValueInterface
+    {
+    public:
+        explicit ValueInterface (YouKnow106ContextHelp& helpToWrap)
+            : help (helpToWrap)
+        {
+        }
+
+        bool isReadOnly() const override { return true; }
+        juce::String getCurrentValueAsString() const override
+        {
+            juce::String result = help.getHelpTitle() + ": " + help.getHelpText();
+            if (help.getHelpValue().isNotEmpty())
+                result << ", current value " << help.getHelpValue();
+            return result;
+        }
+        void setValueAsString (const juce::String&) override {}
+
+    private:
+        YouKnow106ContextHelp& help;
+    };
+
+    return std::make_unique<juce::AccessibilityHandler> (
+        *this, juce::AccessibilityRole::staticText, juce::AccessibilityActions {},
+        juce::AccessibilityHandler::Interfaces {
+            std::make_unique<ValueInterface> (*this) });
 }
 
 void YouKnow106ContextHelp::paint (juce::Graphics& g)
@@ -1297,6 +1436,23 @@ YouKnow106AudioProcessorEditor::YouKnow106AudioProcessorEditor (YouKnow106AudioP
     addAndMakeVisible (performanceLever);
 
     addAndMakeVisible (contextHelp);
+
+    // JUCE sliders opt out of keyboard focus by default. Put every public
+    // control in ordinary Tab traversal and use JUCE's native focus outline so
+    // the active target remains visible with this custom-drawn look-and-feel.
+    for (auto* child : getChildren())
+    {
+        const bool isSlider = dynamic_cast<juce::Slider*> (child) != nullptr;
+        const bool isInteractive = isSlider
+            || dynamic_cast<juce::Button*> (child) != nullptr
+            || dynamic_cast<juce::ComboBox*> (child) != nullptr
+            || dynamic_cast<juce::MidiKeyboardComponent*> (child) != nullptr
+            || dynamic_cast<YouKnow106PerformanceLever*> (child) != nullptr;
+        if (isSlider)
+            child->setWantsKeyboardFocus (true);
+        if (isInteractive)
+            child->setHasFocusOutline (true);
+    }
 
     setResizable (true, true);
     // Below this scale the narrowest authentic panel legends fall under the
@@ -1653,7 +1809,7 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
 
 void YouKnow106AudioProcessorEditor::buildPresetBar()
 {
-    presetLabel.setText ("HOST PRESET", juce::dontSendNotification);
+    presetLabel.setText ("FACTORY BANK", juce::dontSendNotification);
     presetLabel.setFont (panelFont (11.0f, true));
     presetLabel.setName ("Patch label");
     presetLabel.setTooltip (
@@ -1720,12 +1876,44 @@ void YouKnow106AudioProcessorEditor::buildPresetBar()
     presetEditedLabel.setText ("EDITED", juce::dontSendNotification);
     presetEditedLabel.setFont (panelFont (11.0f, true));
     presetEditedLabel.setColour (juce::Label::textColourId,
-                                 fromPalette (panel::colour::magenta));
+                                 fromPalette (panel::colour::magenta)
+                                     .interpolatedWith (
+                                         fromPalette (panel::colour::text), 0.25f));
     presetEditedLabel.setTooltip (
         "Lights when the current panel no longer matches the selected program.");
     presetEditedLabel.setJustificationType (juce::Justification::centredLeft);
     presetEditedLabel.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (presetEditedLabel);
+
+    customPatchLabel.setText ("CUSTOM PATCH", juce::dontSendNotification);
+    customPatchLabel.setFont (panelFont (11.0f, true));
+    customPatchLabel.setColour (juce::Label::textColourId,
+                                fromPalette (panel::colour::cyan));
+    customPatchLabel.setTooltip (
+        "Loads or saves one editable hardware-compatible .syx patch file.");
+    customPatchLabel.setJustificationType (juce::Justification::centredRight);
+    customPatchLabel.setName ("Custom patch label");
+    customPatchLabel.setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (customPatchLabel);
+
+    const auto configureCustomPatchButton = [this] (juce::TextButton& button,
+                                                     const juce::String& name,
+                                                     const juce::String& tooltip,
+                                                     auto action)
+    {
+        button.setName (name);
+        button.setTitle (name);
+        button.setTooltip (tooltip);
+        button.getProperties().set (compactStyleProperty, true);
+        button.onClick = std::move (action);
+        addAndMakeVisible (button);
+    };
+    configureCustomPatchButton (
+        customPatchLoadButton, "Load custom patch", syxLoadButton.getTooltip(),
+        [this] { chooseAndImportPatchFile(); });
+    configureCustomPatchButton (
+        customPatchSaveButton, "Save custom patch", syxSaveButton.getTooltip(),
+        [this] { chooseAndExportPatchFile(); });
 
     shownProgram = -1;
     refreshPresetBar();
@@ -2634,12 +2822,19 @@ void YouKnow106AudioProcessorEditor::resized()
         juce::jmax (9.5f, 10.5f * scale), true));
     presetEditedLabel.setFont (clearPanelFont (
         juce::jmax (9.5f, 10.5f * scale), true));
+    customPatchLabel.setFont (clearPanelFont (
+        juce::jmax (9.5f, 10.5f * scale), true));
     presetLabel.setBounds (scaled (198.0f, presetY, 90.0f, 22.0f).toNearestInt());
     presetPrevButton.setBounds (scaled (298.0f, presetY, 28.0f, 22.0f).toNearestInt());
     presetNextButton.setBounds (scaled (334.0f, presetY, 28.0f, 22.0f).toNearestInt());
     presetReloadButton.setBounds (scaled (374.0f, presetY, 70.0f, 22.0f).toNearestInt());
-    presetBox.setBounds (scaled (469.0f, presetY, 470.0f, 22.0f).toNearestInt());
-    presetEditedLabel.setBounds (scaled (951.0f, presetY, 58.0f, 22.0f).toNearestInt());
+    presetBox.setBounds (scaled (469.0f, presetY, 376.0f, 22.0f).toNearestInt());
+    presetEditedLabel.setBounds (scaled (855.0f, presetY, 58.0f, 22.0f).toNearestInt());
+    customPatchLabel.setBounds (scaled (935.0f, presetY, 128.0f, 22.0f).toNearestInt());
+    customPatchLoadButton.setBounds (
+        scaled (1073.0f, presetY, 84.0f, 22.0f).toNearestInt());
+    customPatchSaveButton.setBounds (
+        scaled (1167.0f, presetY, 91.0f, 22.0f).toNearestInt());
 
     juce::Slider* deckSliders[] = { &transposeSlider, &tuneSlider,
                                      &velocitySlider, &polyphonySlider };
@@ -2852,10 +3047,8 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
                         panel::instrumentRight - panel::instrumentLeft, 1.0f));
     g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.76f));
     g.setFont (clearPanelFont (juce::jmax (8.0f, 9.0f * scale), true));
-    g.drawText ("128 FACTORY TONES  |  A11-B88",
-                scaled (1018.0f, panel::presetTop + 6.0f,
-                        240.0f, 16.0f).toNearestInt(),
-                juce::Justification::centredRight, false);
+    g.fillRect (scaled (924.0f, panel::presetTop + 4.0f,
+                        1.0f, panel::presetHeight - 8.0f));
 
     // Controller cheek legends and moulded end strips.
     g.setColour (juce::Colours::black.withAlpha (0.52f));
