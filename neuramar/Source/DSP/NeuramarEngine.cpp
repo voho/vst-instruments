@@ -44,6 +44,21 @@ constexpr float twoPi = 2.0f * pi;
                       0.0f, 1.0f);
 }
 
+// The two-sided edge ramp that fades a resonance out as its centre frequency
+// approaches either end of the audible band: a linear rise from a fixed low
+// floor and a linear fall to a rate-dependent ceiling. The Air band loop and
+// the Bone mode loop in updateVoiceControl() each build exactly this shape
+// over their own floor/span/limit/fade literals, so it is resolved once here
+// instead of two independently maintained copies of the same
+// clamp/clamp/multiply.
+[[nodiscard]] float edgeFadeGain(float frequencyHz, float lowFloorHz,
+                                 float lowSpanHz, float highLimitHz,
+                                 float highFadeHz) noexcept
+{
+    return std::clamp((frequencyHz - lowFloorHz) / lowSpanHz, 0.0f, 1.0f)
+        * std::clamp((highLimitHz - frequencyHz) / highFadeHz, 0.0f, 1.0f);
+}
+
 // Ceiling on the level a voice-steal fade tail may hold. One frozen sample from
 // one voice is far below this, and the first steal into an idle slot is stored
 // unclamped, so an ordinary hand-off never reaches it; it only bounds the case
@@ -1493,11 +1508,8 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
             * voice.airVariationSin[band];
         const float desiredFrequency = model.airCentreFrequenciesHz_[band]
             * spectralScale * brightnessScale;
-        const float edgeGain = std::clamp(
-            (desiredFrequency - 20.0f) / 30.0f, 0.0f, 1.0f)
-            * std::clamp((airEdgeLimitHz_ - desiredFrequency)
-                             / airEdgeFadeHz_,
-                         0.0f, 1.0f);
+        const float edgeGain = edgeFadeGain(desiredFrequency, 20.0f, 30.0f,
+                                            airEdgeLimitHz_, airEdgeFadeHz_);
         // Air and Bone deliberately do not take the register compensation.
         // That gain does not scale the Core, it normalises it: after the loop
         // above, Core power is referencePower, which barely depends on the
@@ -1550,11 +1562,8 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
         const float desiredFrequency = model.metadata_.rootFrequencyHz
             * model.boneFrequencyRatios_[mode] * spectralScale;
         boneCentresHz[mode] = desiredFrequency;
-        const float edgeGain = std::clamp(
-            (desiredFrequency - 10.0f) / 20.0f, 0.0f, 1.0f)
-            * std::clamp((boneEdgeLimitHz_ - desiredFrequency)
-                             / boneEdgeFadeHz_,
-                         0.0f, 1.0f);
+        const float edgeGain = edgeFadeGain(desiredFrequency, 10.0f, 20.0f,
+                                            boneEdgeLimitHz_, boneEdgeFadeHz_);
         // No register compensation here either, for the reason given at the
         // Air targets above: the modal ring the source had is measured
         // independently of the Core and does not follow the Core's
