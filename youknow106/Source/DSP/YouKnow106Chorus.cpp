@@ -20,6 +20,11 @@ namespace youknow106
 {
 namespace
 {
+// Shared double-precision pi. Four support-network builders below and the
+// deterministic tone/heterodyne-bleed oscillators each wrote this literal out
+// independently; one file-scope constant keeps them from drifting apart.
+constexpr double pi = 3.14159265358979323846;
+
 // Aggregate charge-transfer inefficiency of the whole line, condensed to one
 // pole advanced at the BBD clock rate. The MN3009's 12 kHz bandwidth row at a
 // 40 kHz clock describes the complete part, including the rectangular output
@@ -334,7 +339,6 @@ Chorus::SupportChain::ExactTransition exactTransition(
 
 AnalogMatrix inputSupportMatrix() noexcept
 {
-    constexpr double pi = 3.14159265358979323846;
     const double w1 = 2.0 * pi * antiAliasFirstHz;
     const double w2 = 2.0 * pi * antiAliasSecondHz;
     const double wc = 2.0 * pi * inputCouplingHz;
@@ -363,7 +367,6 @@ AnalogMatrix inputSupportMatrix() noexcept
 
 AnalogDrive inputSupportDrive() noexcept
 {
-    constexpr double pi = 3.14159265358979323846;
     AnalogDrive drive {};
     drive[0] = 2.0 * pi * antiAliasFirstHz;
     return drive;
@@ -371,7 +374,6 @@ AnalogDrive inputSupportDrive() noexcept
 
 AnalogMatrix outputSupportMatrix(bool wetConnected) noexcept
 {
-    constexpr double pi = 3.14159265358979323846;
     const double wt = 2.0 * pi * idealSourceTapPoleHz;
     const double w1 = 2.0 * pi * reconstructionFirstHz;
     const double w2 = 2.0 * pi * reconstructionSecondHz;
@@ -400,7 +402,6 @@ AnalogMatrix outputSupportMatrix(bool wetConnected) noexcept
 
 AnalogDrive outputSupportDrive() noexcept
 {
-    constexpr double pi = 3.14159265358979323846;
     AnalogDrive drive {};
     drive[0] = 2.0 * pi * idealSourceTapPoleHz;
     return drive;
@@ -501,7 +502,7 @@ float Chorus::deterministicToneStep(double& phase, float frequencyHz,
     phase += static_cast<double>(std::max(frequencyHz, 0.0f))
            / static_cast<double>(sampleRate);
     phase -= std::floor(phase);
-    return static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * phase));
+    return static_cast<float>(std::sin(2.0 * pi * phase));
 }
 
 Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
@@ -673,7 +674,7 @@ float Chorus::wetOutputCouplingCornerHz(bool wetConnected) noexcept
         ? wetOutputBleedOhms * wetMixerInputOhms
             / (wetOutputBleedOhms + wetMixerInputOhms)
         : wetOutputBleedOhms;
-    return 1.0f / (2.0f * 3.14159265358979323846f
+    return 1.0f / (2.0f * static_cast<float>(pi)
                    * wetOutputCouplingCapacitanceF * resistance);
 }
 
@@ -1211,8 +1212,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         // contract -- process() documents 0.0 as removing every declared
         // chorus-noise component, and the bleed is one of them.
         const float bleedScale = 0.005f * noiseScale;
-        const float heterodyneBleedA = bleedScale * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * clockSpurPhaseA_));
-        const float heterodyneBleedB = bleedScale * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * clockSpurPhaseB_));
+        const float heterodyneBleedA = bleedScale * static_cast<float>(std::sin(2.0 * pi * clockSpurPhaseA_));
+        const float heterodyneBleedB = bleedScale * static_cast<float>(std::sin(2.0 * pi * clockSpurPhaseB_));
         wetA += heterodyneBleedA;
         wetB += heterodyneBleedB;
     }
