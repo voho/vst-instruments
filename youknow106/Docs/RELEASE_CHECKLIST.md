@@ -77,6 +77,9 @@ has been cleared.
 
 ## Sign, notarize, and package
 
+- [ ] Confirm the shared Nightly workflow retains development packages only as
+  short-lived Actions artifacts and does not create or update a public release
+  or tag. Public GitHub releases are reserved for immutable production builds.
 - [ ] Install valid `Developer ID Application` and `Developer ID Installer`
   identities, and create a tested `notarytool` Keychain profile.
 - [ ] Before using the hosted lane, enable GitHub release immutability and
@@ -113,8 +116,9 @@ has been cleared.
   validates the ticket, and passes `pkgutil --check-signature` and
   `spctl --assess --type install`.
 - [ ] Verify the manifest records the intended version, universal slices,
-  macOS 11.0 target, source commit, all three bundle identifiers, package
-  identifier, customer-licence and JUCE-licence hashes, notarization
+  macOS 11.0 target, CMake/Xcode/SDK/compiler versions, source commit, all
+  three bundle identifiers, package identifier, AU identity, VST3 processor
+  and controller CIDs, customer-licence and JUCE-licence hashes, notarization
   submission, and final package SHA-256.
 - [ ] Verify `shasum -a 256 -c YouKnow106-<version>-macOS-universal-SHA256SUMS.txt`
   from the distribution directory.
@@ -132,8 +136,9 @@ has been cleared.
 - [ ] Publish the matching changelog, system requirements, format list,
   installation/uninstallation steps, privacy notice, support address, price,
   licence, and no-affiliation statement.
-- [ ] Archive the source tag, compiler/Xcode/CMake versions, test and validator
-  reports, final PKG, manifest/checksums, notarization result, certificates and
-  expiry dates, store copy, and signed legal approvals.
+- [ ] Complete the [`RELEASE_RECORD_TEMPLATE.md`](RELEASE_RECORD_TEMPLATE.md)
+  and archive it with the source tag, test and validator reports, final PKG,
+  manifest/checksums, notarization result, certificate identities and expiry
+  dates, store copy, and signed legal approvals.
 - [ ] Test the support mailbox and website links, assign an owner for customer
   reports, and define the patch-release and certificate-renewal process.

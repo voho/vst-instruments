@@ -33,11 +33,10 @@ The project builds three products from one JUCE codebase:
 - Audio Unit v2 music device for Logic Pro and GarageBand
 - Standalone application for direct MIDI and drag-and-drop exploration
 
-> **Just want to try it?** The scheduled Nightly workflow publishes the latest
-> successful universal build from `main` to the rolling
-> [nightly release](https://github.com/voho/vst-instruments/releases/tag/nightly).
-> Those bundles are ad-hoc signed and not notarized; check the repository's
-> Nightly badge for the latest workflow result.
+> **Just want to try it?** Download the
+> `vst-instruments-nightly-all-platforms` artifact from the latest successful main-branch
+> [Nightly workflow run](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml).
+> The builds are ad-hoc signed, not notarized, and retained for 14 days.
 
 ## Contents
 

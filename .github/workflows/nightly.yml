@@ -7,11 +7,11 @@ on:
     - cron: "0 3 * * *" # 03:00 UTC daily
   workflow_dispatch: # allow manual runs from the Actions tab
 
-# Refresh the rolling "nightly" release so the latest build is always available.
+# Build the latest development packages as short-lived workflow artifacts.
 permissions:
   contents: read
 
-# Never interrupt an in-progress publish; just don't run two at once.
+# Never interrupt an in-progress package run; just don't run two at once.
 concurrency:
   group: nightly
   cancel-in-progress: false
@@ -30,7 +30,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # The build must not inherit the write credential; the push step
           # below supplies the token explicitly instead.
@@ -138,7 +138,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Nightly: re-render the committed demo audio"
           REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          for attempt in 1 2 3; do
+          for _ in 1 2 3; do
             git pull --rebase -X theirs "$REMOTE" main
             # If render-relevant instrument code landed on main while this job
             # ran, these WAVs describe the older model; publishing them would
@@ -177,8 +177,8 @@ jobs:
           echo "Every instrument rendered its full set of demo audio."
 
   # One job per instrument. Building all six in sequence meant a single flaky
-  # test cost every instrument after it its screenshot, its package and the
-  # release; now a failure is contained to its own instrument, and the six
+  # test cost every instrument after it its screenshot and package; now a
+  # failure is contained to its own instrument, and the six
   # builds run concurrently instead of end to end.
   build-macos:
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
@@ -207,7 +207,7 @@ jobs:
             directory: youknow106
             snapshot_variable: YOUKNOW106_EDITOR_SNAPSHOT
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # Build-time FetchContent code must not inherit the write credential.
           persist-credentials: false
@@ -267,7 +267,7 @@ jobs:
       # screenshot is only worth what its passing suite says about it. An
       # instrument whose suite failed keeps its previous image for a night.
       - name: Upload the rendered screenshot
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: nightly-screenshot-${{ matrix.directory }}
           path: ${{ matrix.directory }}/Docs/screenshots/${{ matrix.directory }}-standalone.png
@@ -300,10 +300,9 @@ jobs:
           fi
           printf 'Packaged %s\n' "${packages[@]}"
 
-      # Handed to the release job rather than published here, so the rolling
-      # release is switched once, as one complete cross-platform set.
+      # Handed to the aggregate artifact job as one complete cross-platform set.
       - name: Upload the distributable packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: nightly-packages-${{ matrix.directory }}
           path: |
@@ -339,7 +338,7 @@ jobs:
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
@@ -390,7 +389,7 @@ jobs:
           tar -tzf "$archive" >/dev/null
 
       - name: Upload the distributable Linux package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: nightly-packages-linux-${{ matrix.directory }}
           path: ${{ matrix.directory }}/build-linux/dist/${{ matrix.name }}-*-Linux-x64.tar.gz
@@ -424,7 +423,7 @@ jobs:
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
@@ -468,7 +467,7 @@ jobs:
           Write-Host "Packaged $zipPath"
 
       - name: Upload the distributable Windows package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: nightly-packages-win-${{ matrix.directory }}
           path: ${{ matrix.directory }}/build-win/dist/${{ matrix.name }}-*-Windows-x64.zip
@@ -487,7 +486,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # The push step below supplies the write credential explicitly.
           persist-credentials: false
@@ -495,7 +494,7 @@ jobs:
       # Nothing to download if every instrument failed, which is a reportable
       # state rather than an error in this step.
       - name: Download the rendered screenshots
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         continue-on-error: true
         with:
           pattern: nightly-screenshot-*
@@ -553,7 +552,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Nightly: regenerate the committed editor screenshots"
           REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          for attempt in 1 2 3; do
+          for _ in 1 2 3; do
             git pull --rebase -X theirs "$REMOTE" main
             # If an instrument's code moved on main while this build ran, these
             # PNGs were rendered from the older tree and replaying them onto the
@@ -597,19 +596,19 @@ jobs:
           fi
           echo "Every instrument rendered its editor screenshot."
 
-  # Publish a single rolling "nightly" release so all six instruments share a
-  # stable public download URL. It needs every instrument, so it runs only when
-  # all six built: a release is a complete set or it is not published at all.
-  publish-release:
+  # Keep one complete package set on the workflow run. A mutable rolling GitHub
+  # release is deliberately not used: repository release immutability protects
+  # commercial tags and assets, while development builds remain short-lived.
+  collect-packages:
     if: github.ref == 'refs/heads/main'
-    name: Publish the rolling nightly release
+    name: Collect the nightly workflow artifact
     needs: [build-macos, build-linux, build-windows]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Download every instrument's packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: nightly-packages-*
           merge-multiple: true
@@ -620,6 +619,8 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           for product in Vocalor Drumalor Neuramar Electry Taikor YouKnow106; do
+            # Deliberately expand this glob so the array contains every match.
+            # shellcheck disable=SC2206
             mac_zips=(dist/${product}-*-macOS-universal.zip)
             if (( ${#mac_zips[@]} != 1 )); then
               echo "error: expected exactly one ${product} macOS zip, found ${#mac_zips[@]}" >&2
@@ -627,7 +628,7 @@ jobs:
               exit 1
             fi
             filename="${mac_zips[0]##*/}"
-            version="${filename#${product}-}"
+            version="${filename#"${product}"-}"
             version="${version%-macOS-universal.zip}"
             if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
               echo "error: invalid ${product} version in $filename" >&2
@@ -657,116 +658,9 @@ jobs:
       # Retained on the workflow run itself (downloadable by anyone with repo
       # access), as one complete set rather than six per-instrument artifacts.
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: vst-instruments-nightly-all-platforms
           path: dist
           if-no-files-found: error
           retention-days: 14
-
-      - name: Publish rolling "nightly" release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          DATE="$(date -u +%Y-%m-%d)"
-          SHORT_SHA="${GITHUB_SHA:0:7}"
-
-          # Release-facing names stay stable so documentation can link directly
-          # to each rolling nightly download. The source packages retain their
-          # CMake-derived versions and were checked as one complete manifest
-          # before any release asset is replaced.
-          STAGING_DIR="${RUNNER_TEMP}/nightly-release-assets"
-          rm -rf "$STAGING_DIR"
-          mkdir -p "$STAGING_DIR"
-          staged_assets=()
-          for product in Vocalor Drumalor Neuramar Electry Taikor YouKnow106; do
-            for suffix in \
-              macOS-universal.zip \
-              macOS-universal.pkg \
-              Linux-x64.tar.gz \
-              Windows-x64.zip; do
-              matches=(dist/${product}-*-${suffix})
-              if (( ${#matches[@]} != 1 )); then
-                echo "error: expected one ${product} ${suffix} source, found ${#matches[@]}" >&2
-                exit 1
-              fi
-              staged="${STAGING_DIR}/${product}-nightly-${suffix}"
-              cp -p "${matches[0]}" "$staged"
-              staged_assets+=("$staged")
-            done
-          done
-          expected_asset_names=()
-          for asset in "${staged_assets[@]}"; do
-            expected_asset_names+=("${asset##*/}")
-          done
-
-          TITLE="VST instruments nightly ($DATE)"
-          NOTES="Automated macOS (universal arm64 + x86_64), Linux (x64), and Windows (x64) builds of Vocalor, Drumalor, Neuramar, Electry, Taikor, and YouKnow106 from \`main\` ($SHORT_SHA).
-
-          Linux packages are built on Ubuntu 24.04 x64 and target that runtime or newer.
-
-          **macOS bundles are ad-hoc signed and not notarized**, so Gatekeeper will warn. To run a nightly locally on macOS, clear the quarantine flag after unzipping:
-
-          \`\`\`bash
-          xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Vocalor.vst3 Library/Audio/Plug-Ins/Components/Vocalor.component Applications/Vocalor.app
-          \`\`\`
-
-          Not intended for production distribution."
-
-          if gh release view nightly >/dev/null 2>&1; then
-            gh release upload nightly "${staged_assets[@]}" --clobber
-
-            published_asset_names=()
-            while IFS= read -r asset_name; do
-              published_asset_names+=("$asset_name")
-            done < <(gh api \
-              "repos/${GITHUB_REPOSITORY}/releases/tags/nightly" \
-              --jq '.assets[] | select(.size > 0) | .name')
-            for expected_name in "${expected_asset_names[@]}"; do
-              found=0
-              for published_name in "${published_asset_names[@]}"; do
-                if [[ "$published_name" == "$expected_name" ]]; then
-                  found=1
-                  break
-                fi
-              done
-              if (( found == 0 )); then
-                echo "error: uploaded release asset was not verified: $expected_name" >&2
-                exit 1
-              fi
-            done
-
-            gh api --method PATCH \
-              "repos/${GITHUB_REPOSITORY}/git/refs/tags/nightly" \
-              -f sha="$GITHUB_SHA" -F force=true >/dev/null
-            gh release edit nightly --title "$TITLE" --prerelease --notes "$NOTES"
-
-            # Prune only after upload verification and metadata/tag switching.
-            # A pruning failure only leaves stale names beside the verified
-            # stable downloads.
-            while IFS=$'\t' read -r asset_id asset_name; do
-              is_expected=0
-              for expected_name in "${expected_asset_names[@]}"; do
-                if [[ "$asset_name" == "$expected_name" ]]; then
-                  is_expected=1
-                  break
-                fi
-              done
-              if (( is_expected == 0 )); then
-                echo "Removing stale nightly asset: $asset_name"
-                gh api --method DELETE \
-                  "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
-              fi
-            done < <(gh api \
-              "repos/${GITHUB_REPOSITORY}/releases/tags/nightly" \
-              --jq '.assets[] | [.id, .name] | @tsv')
-          else
-            gh release create nightly "${staged_assets[@]}" \
-              --title "$TITLE" \
-              --target "$GITHUB_SHA" \
-              --prerelease \
-              --notes "$NOTES"
-          fi

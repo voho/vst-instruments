@@ -65,6 +65,7 @@ jobs:
               (.bypass_actors | length == 0) and
               ((.conditions.ref_name.include // []) |
                 index("refs/tags/youknow106-v*") != null) and
+              ((.conditions.ref_name.exclude // []) | length == 0) and
               ([.rules[]?.type] | index("update") != null) and
               ([.rules[]?.type] | index("deletion") != null)
             ' <<< "${ruleset}" >/dev/null; then
@@ -91,12 +92,15 @@ jobs:
             exit 1
           fi
 
-          tag_policies="$(GH_TOKEN="${RELEASE_SETTINGS_TOKEN}" gh api \
+          deployment_policies="$(GH_TOKEN="${RELEASE_SETTINGS_TOKEN}" gh api \
             -H "X-GitHub-Api-Version: ${api_version}" \
-            "repos/${GITHUB_REPOSITORY}/environments/youknow106-production/deployment-branch-policies" \
-            --jq '[.branch_policies[] | select(.name == "youknow106-v*")] | length')"
-          if (( tag_policies != 1 )); then
-            echo "error: the release environment must have one youknow106-v* tag policy" >&2
+            "repos/${GITHUB_REPOSITORY}/environments/youknow106-production/deployment-branch-policies")"
+          tag_policies="$(jq \
+            '[.branch_policies[] | select(.name == "youknow106-v*" and .type == "tag")] | length' \
+            <<< "${deployment_policies}")"
+          policy_count="$(jq '.total_count' <<< "${deployment_policies}")"
+          if (( tag_policies != 1 || policy_count != 1 )); then
+            echo "error: the release environment must allow only one youknow106-v* tag policy" >&2
             exit 1
           fi
 
@@ -166,26 +170,96 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           dist="youknow106/build-macos/dist"
-          packages=("${dist}"/YouKnow106-*-macOS-universal.pkg)
-          manifests=("${dist}"/YouKnow106-*-macOS-universal.manifest.txt)
-          checksums=("${dist}"/YouKnow106-*-macOS-universal-SHA256SUMS.txt)
-          if (( ${#packages[@]} != 1 || ${#manifests[@]} != 1 || ${#checksums[@]} != 1 )); then
-            echo "error: expected exactly one PKG, manifest and checksum file" >&2
+          version="${GITHUB_REF_NAME#youknow106-v}"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "error: invalid release tag: ${GITHUB_REF_NAME}" >&2
             exit 1
           fi
-          grep -Fx -- "Release mode: 1" "${manifests[0]}" >/dev/null
-          grep -Fx -- "Notarization status: Accepted" "${manifests[0]}" >/dev/null
-          grep -E -- '^Customer licence SHA-256: [0-9a-f]{64}$' \
-            "${manifests[0]}" >/dev/null
+
+          package="${dist}/YouKnow106-${version}-macOS-universal.pkg"
+          manifest="${dist}/YouKnow106-${version}-macOS-universal.manifest.txt"
+          checksum="${dist}/YouKnow106-${version}-macOS-universal-SHA256SUMS.txt"
+          artifacts=("${dist}"/*)
+          if (( ${#artifacts[@]} != 3 )); then
+            echo "error: expected exactly three publication artifacts" >&2
+            printf '  %s\n' "${artifacts[@]:-(none)}" >&2
+            exit 1
+          fi
+          for artifact in "${package}" "${manifest}" "${checksum}"; do
+            if [[ ! -s "${artifact}" ]]; then
+              echo "error: missing or empty release artifact: ${artifact}" >&2
+              exit 1
+            fi
+          done
+
+          head_commit="$(git rev-parse HEAD)"
+          package_hash="$(shasum -a 256 "${package}" | awk '{print $1}')"
+          manifest_hash="$(shasum -a 256 "${manifest}" | awk '{print $1}')"
+          customer_licence_hash="$(shasum -a 256 youknow106/EULA.md | awk '{print $1}')"
+          juce_licence_hash="$(shasum -a 256 youknow106/ThirdParty/JUCE-LICENSE.md | awk '{print $1}')"
+          cmake_version="$(cmake --version | sed -n '1p')"
+          xcode_version="$(xcodebuild -version | paste -sd ' ' -)"
+          sdk_version="$(xcrun --sdk macosx --show-sdk-version)"
+          cxx_compiler="$(sed -n 's/^CMAKE_CXX_COMPILER:[^=]*=//p' \
+            youknow106/build-macos/CMakeCache.txt)"
+          cxx_version="$("${cxx_compiler}" --version | sed -n '1p')"
+
+          duplicate_keys="$(sed -n 's/^\([^:]*\):.*/\1/p' "${manifest}" \
+            | sort | uniq -d)"
+          if [[ -n "${duplicate_keys}" ]]; then
+            echo "error: manifest contains duplicate keys:" >&2
+            printf '  %s\n' "${duplicate_keys}" >&2
+            exit 1
+          fi
+
+          grep -Fx -- "Product: YouKnow106" "${manifest}" >/dev/null
+          grep -Fx -- "Vendor: Protocodus" "${manifest}" >/dev/null
+          grep -Fx -- "Website: https://protocodus.cz" "${manifest}" >/dev/null
+          grep -Fx -- "Support: protocodus@proton.me" "${manifest}" >/dev/null
+          grep -Fx -- "Version: ${version}" "${manifest}" >/dev/null
+          grep -Ex -- '^Architectures: (arm64 x86_64|x86_64 arm64)$' \
+            "${manifest}" >/dev/null
+          grep -Fx -- "Minimum macOS: 11.0" "${manifest}" >/dev/null
+          grep -Fx -- "CMake: ${cmake_version}" "${manifest}" >/dev/null
+          grep -Fx -- "Xcode: ${xcode_version}" "${manifest}" >/dev/null
+          grep -Fx -- "macOS SDK: ${sdk_version}" "${manifest}" >/dev/null
+          grep -Fx -- "C++ compiler: ${cxx_version}" "${manifest}" >/dev/null
+          grep -Fx -- "Package: $(basename "${package}")" "${manifest}" >/dev/null
+          grep -Fx -- "Package SHA-256: ${package_hash}" "${manifest}" >/dev/null
+          grep -Fx -- "Release mode: 1" "${manifest}" >/dev/null
+          grep -Fx -- "Notarization status: Accepted" "${manifest}" >/dev/null
+          grep -E -- '^Notarization submission: [0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$' \
+            "${manifest}" >/dev/null
+          grep -Fx -- "Source commit: ${head_commit}" "${manifest}" >/dev/null
+          grep -Fx -- "Source tree: clean" "${manifest}" >/dev/null
+          grep -Fx -- "Customer licence SHA-256: ${customer_licence_hash}" \
+            "${manifest}" >/dev/null
+          grep -Fx -- "JUCE LICENSE.md SHA-256: ${juce_licence_hash}" \
+            "${manifest}" >/dev/null
           grep -Fx -- "Standalone bundle identifier: cz.protocodus.youknow106" \
-            "${manifests[0]}" >/dev/null
+            "${manifest}" >/dev/null
           grep -Fx -- "Audio Unit bundle identifier: cz.protocodus.youknow106.au" \
-            "${manifests[0]}" >/dev/null
+            "${manifest}" >/dev/null
           grep -Fx -- "VST3 bundle identifier: cz.protocodus.youknow106.vst3" \
-            "${manifests[0]}" >/dev/null
+            "${manifest}" >/dev/null
           grep -Fx -- "Package identifier: cz.protocodus.youknow106.pkg" \
-            "${manifests[0]}" >/dev/null
-          (cd "${dist}" && shasum -a 256 -c "$(basename "${checksums[0]}")")
+            "${manifest}" >/dev/null
+          grep -Fx -- "Audio Unit identity: aumu/Yk06/Ykno" \
+            "${manifest}" >/dev/null
+          grep -Fx -- "VST3 processor CID: ABCDEF019182FAEB596B6E6F596B3036" \
+            "${manifest}" >/dev/null
+          grep -Fx -- "VST3 controller CID: ABCDEF011234ABCD596B6E6F596B3036" \
+            "${manifest}" >/dev/null
+          grep -Fx -- "${package_hash}  $(basename "${package}")" \
+            "${checksum}" >/dev/null
+          grep -Fx -- "${manifest_hash}  $(basename "${manifest}")" \
+            "${checksum}" >/dev/null
+          checksum_lines="$(wc -l < "${checksum}" | tr -d '[:space:]')"
+          if (( checksum_lines != 2 )); then
+            echo "error: checksum file must cover exactly the PKG and manifest" >&2
+            exit 1
+          fi
+          (cd "${dist}" && shasum -a 256 -c "$(basename "${checksum}")")
 
       - name: Publish the immutable GitHub release
         env:
@@ -193,6 +267,22 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
+          head_commit="$(git rev-parse HEAD)"
+          remote_tag="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}")"
+          remote_type="$(jq -r '.object.type' <<< "${remote_tag}")"
+          remote_sha="$(jq -r '.object.sha' <<< "${remote_tag}")"
+          while [[ "${remote_type}" == "tag" ]]; do
+            remote_tag="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/tags/${remote_sha}")"
+            remote_type="$(jq -r '.object.type' <<< "${remote_tag}")"
+            remote_sha="$(jq -r '.object.sha' <<< "${remote_tag}")"
+          done
+          if [[ "${remote_type}" != "commit" || "${remote_sha}" != "${head_commit}" ]]; then
+            echo "error: remote release tag no longer resolves to checked-out HEAD" >&2
+            exit 1
+          fi
+
           assets=(
             youknow106/build-macos/dist/YouKnow106-*-macOS-universal.pkg
             youknow106/build-macos/dist/YouKnow106-*-macOS-universal.manifest.txt
