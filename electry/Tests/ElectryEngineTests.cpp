@@ -3499,20 +3499,34 @@ void testDelayTapClampsAndInterpolates()
 {
     // A request below the 4-sample floor (a cubic tap needs two samples on
     // each side) clamps to exactly the same coefficients an explicit
-    // request for the floor itself would solve.
+    // request for the floor itself would solve. Pin the floor snapshot
+    // itself to offset 4 with unit-tap coefficients (rather than only
+    // comparing two requests that are both subject to the same clamp), so a
+    // floor that silently moved to, say, 5 would fail here even though
+    // delayTapAt(1.0f) and delayTapAt(4.0f) would still agree with each
+    // other.
     const auto belowFloor = TestAccess::delayTapAt(1.0f);
     const auto atFloor = TestAccess::delayTapAt(4.0f);
+    expect(atFloor.offset == 4 && atFloor.c0 == 0.0f && atFloor.c1 == 1.0f
+               && atFloor.c2 == 0.0f && atFloor.c3 == 0.0f,
+           "the 4-sample floor itself did not solve to a unit tap at offset 4");
     expect(belowFloor.offset == atFloor.offset && belowFloor.c0 == atFloor.c0
                && belowFloor.c1 == atFloor.c1 && belowFloor.c2 == atFloor.c2
                && belowFloor.c3 == atFloor.c3,
            "a delay below the 4-sample floor was not clamped to it");
 
     // A request past the delayLineSize - 8 ceiling (room for the same
-    // two-sample margin at the top of the ring) clamps the same way.
-    const float ceiling =
-        static_cast<float>(TestAccess::delayLineCapacity() - 8);
+    // two-sample margin at the top of the ring) clamps the same way. Pin the
+    // ceiling snapshot itself for the same reason as the floor above.
+    const int ceilingOffset = TestAccess::delayLineCapacity() - 8;
+    const float ceiling = static_cast<float>(ceilingOffset);
     const auto aboveCeiling = TestAccess::delayTapAt(ceiling + 500.0f);
     const auto atCeiling = TestAccess::delayTapAt(ceiling);
+    expect(atCeiling.offset == ceilingOffset && atCeiling.c0 == 0.0f
+               && atCeiling.c1 == 1.0f && atCeiling.c2 == 0.0f
+               && atCeiling.c3 == 0.0f,
+           "the delayLineSize-8 ceiling itself did not solve to a unit tap "
+           "at the expected offset");
     expect(aboveCeiling.offset == atCeiling.offset
                && aboveCeiling.c0 == atCeiling.c0
                && aboveCeiling.c1 == atCeiling.c1
