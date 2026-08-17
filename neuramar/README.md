@@ -824,7 +824,7 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 ## Changelog
 
 - 2026-08-17: Added direct coverage for `NeuramarEngine.cpp`'s
-  `fitDampingExponent()` on a genuinely driven, non-decaying source, the case
+  `fitDampingExponent()` on genuinely driven, non-decaying sources, the case
   its own comment names but that no existing fixture exercised: "a player's
   vibrato lives on a driven source, and a driven source has no free decay to
   fit." The pre-existing frequency-independent control elsewhere in the suite
@@ -832,17 +832,28 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   the same rate on every partial, so its near-zero fitted exponent comes from
   the harmonic-number regression's own slope landing near zero rather than
   from the function's own "fewer than six partials survive" count gate, which
-  had no direct test. Added `makeSustainedNoDecaySample()`, a twenty-partial
-  tone with a plain attack and no decay for its 1.4 s duration, and
-  `testDampingExponentIgnoresSustainedSource()`, asserting `dampingExponent()`
-  is exactly 0.0f after learning from it. Verified the new test is a real
-  regression test by instrumenting the fit to confirm zero partials ever
-  accumulate the four points the per-partial regression requires (`used == 0`
-  on this fixture, against 32-46 on the pre-existing decaying fixtures), then
-  temporarily making the `used == 0` case return a nonzero placeholder instead
-  of falling through the "used < 6" gate, confirming exactly this one new
-  assertion failed among all tests, then restoring the original code exactly
-  (`git diff` on the source empty before committing). Test-only change;
+  had no direct test. Added `makeSustainedNoDecaySample()` (a twenty-partial
+  tone with a plain attack and no decay for its 1.4 s duration, driving the
+  gate's `used == 0` branch) and `makeFewDecayingPartialsSample()` (the same
+  tone but with four of its twenty partials decaying at genuinely different,
+  frequency-dependent rates, `tau_h = 0.30 h^-0.75`, driving `used == 4` -
+  the harder case, since those four points give the regression both a
+  nonzero denominator and a clearly nonzero slope to describe if the count
+  gate did not stop it), plus `testDampingExponentIgnoresSustainedSource()`
+  asserting `dampingExponent()` is exactly `0.0f` on both. Verified the new
+  test is a real regression test by instrumenting the fit to confirm the
+  survivor counts it depends on (`used` is `0` and `4` respectively on these
+  two fixtures, against 32-46 on the pre-existing decaying fixtures), then
+  temporarily weakening the gate to `used < 1`: the `used == 0` fixture still
+  passed, because a strictly-fewer-than-6-survivors count of exactly zero is
+  a special case a naive first attempt at this fixture could not distinguish
+  from a working gate (that first attempt is not what shipped - it was
+  caught in review before merging), but the `used == 4` fixture's own
+  assertion failed with a fitted exponent of 0.749, matching the fixture's
+  designed 0.75 law and confirming the regression really was reached; exactly
+  that one assertion failed among all tests, and restoring the original gate
+  restored the original source exactly (`git diff` on it empty before
+  committing). Test-only change;
   verified with the JUCE-free DSP suite (3/3 tests passed) and a fresh
   `NeuramarRenderDemos` run confirming `git status neuramar/Docs/audio` clean
   across all eight WAVs.

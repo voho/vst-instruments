@@ -6102,31 +6102,99 @@ void testDecayKeyTracking()
     return sample;
 }
 
+// Only the first four of twenty partials carry a real decay, and - unlike
+// makeDecayingPartialSample's frequency-independent control - at genuinely
+// different rates per partial (tau_h = 0.30 h^-0.75, so partial 4 loses about
+// 2.83 times faster than partial 1); the rest hold as flat as
+// makeSustainedNoDecaySample()'s above. That is deliberately different from
+// used == 0: those four partials clear every per-partial gate
+// (PartialFit::finished's 6 dB-loss bar, the count >= 4 points, a positive
+// per-partial denominator and rate) and reach the harmonic-number regression,
+// so `used` lands at a small nonzero count still short of six - the one case
+// the used == 0 fixture above cannot distinguish from a disabled gate. With
+// four points on a real frequency-dependent trend the regression itself has
+// both a nonzero denominator and a clearly nonzero slope to describe, so
+// weakening or removing the "used < 6" comparison would let a nonzero
+// exponent through here where the uniform-rate mistake this fixture avoids
+// would not; only that comparison forces the exact zero this asserts.
+[[nodiscard]] std::vector<float> makeFewDecayingPartialsSample(
+    double sampleRate, double fundamentalHz, double durationSeconds)
+{
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double attack = 1.0 - std::exp(-time / 0.006);
+        const double sampleFromEnd = static_cast<double>(sample.size() - 1
+                                                          - index);
+        const double tailTaper = sampleFromEnd < 48.0
+            ? 0.5 - 0.5 * std::cos(pi * sampleFromEnd / 48.0)
+            : 1.0;
+        const double envelope = attack * tailTaper;
+        double value = 0.0;
+        for (int partial = 1; partial <= 20; ++partial)
+        {
+            const double number = static_cast<double>(partial);
+            const double tau = 0.30 * std::pow(number, -0.75);
+            const double decay = partial <= 4 ? std::exp(-time / tau) : 1.0;
+            value += std::pow(number, -1.2) * decay
+                * std::sin(2.0 * pi * fundamentalHz * number * time
+                           + 0.29 * number);
+        }
+        sample[index] = static_cast<float>(0.5 * envelope * value);
+    }
+    return sample;
+}
+
 void testDampingExponentIgnoresSustainedSource()
 {
     constexpr double sampleRate = 48000.0;
     constexpr double fundamentalHz = 220.01;
-    const auto learned = neuramar::SampleLearner::learn(
+    const auto learn = [](const std::vector<float>& source,
+                          const std::string& name)
+    {
+        auto learned = neuramar::SampleLearner::learn(source, sampleRate);
+        expect(static_cast<bool>(learned),
+               "the " + name + " damping-exponent fixture failed to learn: "
+                   + learned.error);
+        return learned;
+    };
+    const auto sustained = learn(
         makeSustainedNoDecaySample(sampleRate, fundamentalHz, 1.4),
-        sampleRate);
-    expect(static_cast<bool>(learned),
-           "the sustained no-decay fixture failed to learn: "
-               + learned.error);
-    if (!learned.model)
+        "sustained no-decay");
+    const auto fewSurvivors = learn(
+        makeFewDecayingPartialsSample(sampleRate, fundamentalHz, 1.4),
+        "few-survivor");
+    if (!sustained.model || !fewSurvivors.model)
         return;
 
-    neuramar::NeuramarEngine engine;
-    engine.prepare(sampleRate, 128);
-    engine.setModel(learned.model.get());
-    const float exponent = engine.dampingExponent();
-    std::cout << "Damping exponent diagnostics: fitted exponent " << exponent
-              << " on a flat, non-decaying sustain\n";
-    expect(exponent == 0.0f,
+    const auto fittedExponent = [sampleRate](const neuramar::NeuralModel& model)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(sampleRate, 128);
+        engine.setModel(&model);
+        return engine.dampingExponent();
+    };
+    const float sustainedExponent = fittedExponent(*sustained.model);
+    const float fewSurvivorsExponent = fittedExponent(*fewSurvivors.model);
+    std::cout << "Damping exponent diagnostics: fitted exponent "
+              << sustainedExponent << " on a flat, non-decaying sustain and "
+              << fewSurvivorsExponent << " on a source with only four "
+                 "decaying partials\n";
+    expect(sustainedExponent == 0.0f,
            "a source with no free decay at all fitted a damping exponent of "
-               + std::to_string(exponent)
+               + std::to_string(sustainedExponent)
                + " instead of exactly zero, so fitDampingExponent()'s own "
                  "\"fewer than six partials survive\" count gate is not "
                  "doing its job");
+    expect(fewSurvivorsExponent == 0.0f,
+           "a source with only four partials clearing the decay bar fitted a "
+           "damping exponent of " + std::to_string(fewSurvivorsExponent)
+               + " instead of exactly zero, so the \"used < 6\" comparison "
+                 "itself is not gating a regression that has enough points "
+                 "to produce a nonzero answer");
 }
 
 // Twelve partials with tau_h = 0.30 h^-0.8 over a 4 ms noise burst: a struck
