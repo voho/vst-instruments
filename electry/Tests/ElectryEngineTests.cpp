@@ -6928,8 +6928,9 @@ void testVisualStateAndGeometry()
 // rather than upstream: `testVisualStateAndGeometry` above exercises every
 // helper's ordinary range and only `meterBallistics`' non-finite `current`
 // guard, leaving `levelHeat`'s own guard, `meterBallistics`' non-finite
-// `target` guard, and `packStringVisual`'s non-finite level and out-of-range
-// note/fret/playStyle clamps unexercised by any existing test.
+// `target` guard, `vibrationShape`'s own guard on either argument, and
+// `packStringVisual`'s non-finite level and out-of-range note/fret/playStyle
+// clamps unexercised by any existing test.
 void testVisualStateSanitizesNonFiniteInput()
 {
     namespace visuals = electry::visuals;
@@ -6955,6 +6956,20 @@ void testVisualStateSanitizesNonFiniteInput()
     const float releasing = visuals::meterBallistics(1.0f, inf, 0.4f, 0.4f);
     expect(releasing < 1.0f && releasing >= 0.0f,
            "meterBallistics did not release toward zero for a non-finite target");
+
+    // vibrationShape() clamped both arguments but, unlike its siblings above,
+    // never checked either for non-finite before clampf() ran: clampf's
+    // comparisons all fail on NaN, so a NaN survived the clamp unchanged and
+    // reached std::sin() below, drawing a NaN offset into the string path
+    // instead of leaving it at rest.
+    expect(visuals::vibrationShape(nan, 0.0f) == 0.0f,
+           "vibrationShape did not recover from a non-finite position");
+    expect(visuals::vibrationShape(inf, 0.0f) == 0.0f,
+           "vibrationShape did not recover from an infinite position");
+    expect(visuals::vibrationShape(0.5f, nan) == 0.0f,
+           "vibrationShape did not recover from a non-finite stopped fraction");
+    expect(visuals::vibrationShape(0.5f, inf) == 0.0f,
+           "vibrationShape did not recover from an infinite stopped fraction");
 
     // packStringVisual's own guards: a non-finite level packs to silent
     // rather than propagating NaN through the lock-free word, and a
