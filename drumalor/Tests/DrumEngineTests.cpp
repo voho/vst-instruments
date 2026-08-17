@@ -3067,6 +3067,42 @@ void testChokeGroups()
             "an ungrouped retrigger still cut the previously grouped tail");
 }
 
+// setInstrumentParameters()'s own chokeGroup guard - std::clamp (values.chokeGroup,
+// 0, chokeGroupCount) - is only ever driven above and in the broad invalid-values
+// stress test by values already inside [0, chokeGroupCount] or barely outside it;
+// neither pins the guard's own ceiling. chokeGroup is private state with no public
+// accessor, so the clamp is proven the way testChokeGroups() above proves the group
+// mechanism itself: by observing which voice a triggered choke actually cuts. A
+// choke group number far past the documented ceiling has to collapse onto the real
+// top group (chokeGroupCount) rather than being passed through as its own
+// out-of-range group that nothing else ever joins - if it were, the ringing voice
+// below would survive the second trigger instead of being cut by it.
+void testSetInstrumentParametersClampsExcessiveChokeGroup()
+{
+    constexpr double sampleRate = 48000.0;
+    drumalor::DrumEngine engine;
+    engine.prepare (sampleRate, defaultBlockSize);
+
+    auto ringing = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::Perc2).defaultParameters;
+    ringing.decay = 1.0f;
+    ringing.chokeGroup = drumalor::chokeGroupCount;
+    engine.setInstrumentParameters (drumalor::Instrument::Perc2, ringing);
+    engine.trigger (drumalor::Instrument::Perc2, 1.0f);
+    renderMetrics (engine, static_cast<int> (0.020 * sampleRate));
+    expect (engine.getActiveVoiceCount() == 1, "Perc2 stopped before the clamp test");
+
+    auto excessive = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::LowTom).defaultParameters;
+    excessive.chokeGroup = std::numeric_limits<int>::max();
+    engine.setInstrumentParameters (drumalor::Instrument::LowTom, excessive);
+    engine.trigger (drumalor::Instrument::LowTom, 0.9f);
+    renderMetrics (engine, static_cast<int> (0.010 * sampleRate));
+    expect (engine.getActiveVoiceCount() == 1,
+            "an out-of-range chokeGroup was not clamped to the top group, so it "
+            "failed to cut the voice actually assigned to that group");
+}
+
 void testHumaniseDepth()
 {
     constexpr int hitCount = 6;
@@ -6204,6 +6240,7 @@ int main()
     testFactoryKitIsHarmonicallyTuned();
     testPerVoiceMixer();
     testChokeGroups();
+    testSetInstrumentParametersClampsExcessiveChokeGroup();
     testHumaniseDepth();
     testKitBusStage();
     testBusAutomationIsClickFree();
