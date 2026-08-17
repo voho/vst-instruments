@@ -170,11 +170,11 @@ struct PreparedSnapshot
 };
 
 PreparedSnapshot prepareSnapshot(const Scenario& scenario, int sampleRate,
-                                 bool highQuality)
+                                 int requestedFactor)
 {
     PreparedSnapshot snapshot;
     snapshot.engine.prepare(static_cast<double>(sampleRate), blockSize,
-                            highQuality);
+                            requestedFactor);
     snapshot.engine.setParameters(parametersFor(scenario.kind));
     if (scenario.holdChord)
         for (const int note : chordNotes)
@@ -389,10 +389,10 @@ int printFingerprints()
 {
     for (const auto& scenario : scenarios)
     {
-        for (const bool hq : { true, false })
+        for (const int requested : { 4, 2, 1 })
         {
-            const auto snapshot = prepareSnapshot(scenario, 48000, hq);
-            const int expectedFactor = hq ? 4 : 1;
+            const auto snapshot = prepareSnapshot(scenario, 48000, requested);
+            const int expectedFactor = requested;
             if (snapshot.factor != expectedFactor)
                 throw std::runtime_error("48 kHz quality selected an unexpected factor");
             std::cout << scenario.name << " " << snapshot.factor << "x "
@@ -417,51 +417,60 @@ int printFingerprints()
               << " fallback=process-cpu hash=fnv1a64-raw-interleaved-f32\n";
     std::cout << "schema timing scenario quality fingerprint median_cpu_ms"
                  " min_cpu_ms mad_cpu_ms median_cpu_x_realtime\n";
-    std::cout << "schema paired_ratio scenario median min mad\n";
+    std::cout << "schema paired_ratio scenario rung_pair median min mad\n";
 
     for (const auto& scenario : scenarios)
     {
-        const auto four = prepareSnapshot(scenario, 48000, true);
-        const auto one = prepareSnapshot(scenario, 48000, false);
-        if (four.factor != 4 || one.factor != 1)
-            throw std::runtime_error("48 kHz audit did not resolve to 4x/1x");
+        // Every rung of the ladder, not just its ends: the middle one is what a
+        // player picks when 4x will not fit and 1x gives up more than they want
+        // to, so its cost has to be measured rather than assumed halfway.
+        constexpr std::size_t rungs = YouKnow106Engine::oversampleFactors.size();
+        std::array<PreparedSnapshot, rungs> snapshots {
+            prepareSnapshot(scenario, 48000, 4),
+            prepareSnapshot(scenario, 48000, 2),
+            prepareSnapshot(scenario, 48000, 1)
+        };
+        constexpr std::array<int, rungs> expectedFactors { 4, 2, 1 };
+        constexpr std::array<std::string_view, rungs> rungNames { "4x", "2x", "1x" };
+        for (std::size_t rung = 0; rung < rungs; ++rung)
+            if (snapshots[rung].factor != expectedFactors[rung])
+                throw std::runtime_error("48 kHz audit did not resolve to "
+                                         + std::string(rungNames[rung]));
 
-        std::vector<double> fourTimes;
-        std::vector<double> oneTimes;
-        std::vector<double> pairedRatios;
-        std::vector<std::uint64_t> fourHashes;
-        std::vector<std::uint64_t> oneHashes;
-        fourTimes.reserve(timingRepetitions);
-        oneTimes.reserve(timingRepetitions);
-        pairedRatios.reserve(timingRepetitions);
+        std::array<std::vector<double>, rungs> times;
+        std::array<std::vector<std::uint64_t>, rungs> hashes;
+        // Each deeper rung against the cheapest one, measured inside the same
+        // repetition so a machine that speeds up or throttles midway biases
+        // both halves of the ratio equally.
+        std::array<std::vector<double>, rungs> pairedRatios;
+        for (std::size_t rung = 0; rung < rungs; ++rung)
+        {
+            times[rung].reserve(timingRepetitions);
+            hashes[rung].reserve(timingRepetitions);
+            pairedRatios[rung].reserve(timingRepetitions);
+        }
+        constexpr std::size_t cheapest = rungs - 1;
 
         for (int repetition = 0; repetition < timingRepetitions; ++repetition)
         {
-            TimedRun fourRun;
-            TimedRun oneRun;
-            if (repetition % 2 == 0)
+            // Alternate the visiting order so no rung permanently owns the
+            // warmed-up half of a repetition.
+            std::array<TimedRun, rungs> runs;
+            for (std::size_t step = 0; step < rungs; ++step)
             {
-                fourRun = renderTimed(four, clock);
-                oneRun = renderTimed(one, clock);
+                const std::size_t rung = repetition % 2 == 0
+                                       ? step : rungs - 1 - step;
+                runs[rung] = renderTimed(snapshots[rung], clock);
             }
-            else
+            for (std::size_t rung = 0; rung < rungs; ++rung)
             {
-                oneRun = renderTimed(one, clock);
-                fourRun = renderTimed(four, clock);
+                times[rung].push_back(runs[rung].cpuSeconds);
+                hashes[rung].push_back(runs[rung].fingerprint);
+                pairedRatios[rung].push_back(
+                    runs[rung].cpuSeconds
+                    / std::max(runs[cheapest].cpuSeconds, 1.0e-12));
             }
-            fourTimes.push_back(fourRun.cpuSeconds);
-            oneTimes.push_back(oneRun.cpuSeconds);
-            pairedRatios.push_back(fourRun.cpuSeconds
-                                 / std::max(oneRun.cpuSeconds, 1.0e-12));
-            fourHashes.push_back(fourRun.fingerprint);
-            oneHashes.push_back(oneRun.fingerprint);
         }
-
-        requireStableHash(fourHashes, scenario.name, "4x");
-        requireStableHash(oneHashes, scenario.name, "1x");
-        const auto fourSummary = summarize(fourTimes);
-        const auto oneSummary = summarize(oneTimes);
-        const auto ratioSummary = summarize(pairedRatios);
 
         const auto printRow = [&](std::string_view quality,
                                   std::uint64_t fingerprint,
@@ -474,22 +483,30 @@ int printFingerprints()
                       << summary.mad * 1000.0 << " "
                       << summary.median / renderedSeconds << "\n";
         };
-        printRow("4x", fourHashes.front(), fourSummary);
-        printRow("1x", oneHashes.front(), oneSummary);
-        std::cout << "paired_ratio " << scenario.name << " "
-                  << std::fixed << std::setprecision(3)
-                  << ratioSummary.median << " " << ratioSummary.minimum << " "
-                  << ratioSummary.mad << "\n";
-        const auto printRuns = [&](std::string_view quality,
-                                   const std::vector<double>& times) {
-            std::cout << "runs_cpu_ms " << scenario.name << " " << quality;
-            for (const double seconds : times)
+        for (std::size_t rung = 0; rung < rungs; ++rung)
+        {
+            requireStableHash(hashes[rung], scenario.name, rungNames[rung]);
+            printRow(rungNames[rung], hashes[rung].front(),
+                     summarize(times[rung]));
+        }
+        for (std::size_t rung = 0; rung < cheapest; ++rung)
+        {
+            const auto ratioSummary = summarize(pairedRatios[rung]);
+            std::cout << "paired_ratio " << scenario.name << " "
+                      << rungNames[rung] << "-over-" << rungNames[cheapest]
+                      << " " << std::fixed << std::setprecision(3)
+                      << ratioSummary.median << " " << ratioSummary.minimum
+                      << " " << ratioSummary.mad << "\n";
+        }
+        for (std::size_t rung = 0; rung < rungs; ++rung)
+        {
+            std::cout << "runs_cpu_ms " << scenario.name << " "
+                      << rungNames[rung];
+            for (const double seconds : times[rung])
                 std::cout << " " << std::fixed << std::setprecision(3)
                           << seconds * 1000.0;
             std::cout << "\n";
-        };
-        printRuns("4x", fourTimes);
-        printRuns("1x", oneTimes);
+        }
     }
     return 0;
 }
@@ -500,7 +517,7 @@ struct CounterCase
 {
     std::string_view name;
     int sampleRate;
-    bool highQuality;
+    int requestedFactor;
     int expectedFactor;
     std::uint64_t expectedPassiveHoldEvents;
     std::uint64_t expectedFractionalEvents;
@@ -513,22 +530,20 @@ constexpr std::array counterCases {
     // 2,048-host-frame window. A resonance event owns six physical-card
     // intervals; a VCF event owns one. Keeping both totals makes Step 11's VCF
     // work a golden subset of the broadened Step 12 scheduler.
-    CounterCase { "44.1k-4x", 44100, true, 4, 176u, 77u, 132u },
-    CounterCase { "44.1k-1x", 44100, false, 1, 176u, 77u, 132u },
-    CounterCase { "48k-4x", 48000, true, 4, 160u, 70u, 120u },
-    CounterCase { "48k-1x", 48000, false, 1, 160u, 70u, 120u },
-    CounterCase {
-        "88.2k-2x", 88200, true, 2, 88u, 39u, 64u
-    },
-    CounterCase {
-        "88.2k-1x", 88200, false, 1, 88u, 39u, 64u
-    },
-    CounterCase { "96k-2x", 96000, true, 2, 80u, 35u, 60u },
-    CounterCase { "96k-1x", 96000, false, 1, 80u, 35u, 60u },
-    CounterCase {
-        "176.4k-1x", 176400, true, 1, 45u, 20u, 30u
-    },
-    CounterCase { "192k-1x", 192000, true, 1, 40u, 18u, 28u },
+    CounterCase { "44.1k-4x", 44100, 4, 4, 176u, 77u, 132u },
+    CounterCase { "44.1k-2x", 44100, 2, 2, 176u, 77u, 132u },
+    CounterCase { "44.1k-1x", 44100, 1, 1, 176u, 77u, 132u },
+    CounterCase { "48k-4x", 48000, 4, 4, 160u, 70u, 120u },
+    CounterCase { "48k-2x", 48000, 2, 2, 160u, 70u, 120u },
+    CounterCase { "48k-1x", 48000, 1, 1, 160u, 70u, 120u },
+    CounterCase { "88.2k-4x", 88200, 4, 2, 88u, 39u, 64u },
+    CounterCase { "88.2k-2x", 88200, 2, 2, 88u, 39u, 64u },
+    CounterCase { "88.2k-1x", 88200, 1, 1, 88u, 39u, 64u },
+    CounterCase { "96k-4x", 96000, 4, 2, 80u, 35u, 60u },
+    CounterCase { "96k-2x", 96000, 2, 2, 80u, 35u, 60u },
+    CounterCase { "96k-1x", 96000, 1, 1, 80u, 35u, 60u },
+    CounterCase { "176.4k-4x", 176400, 4, 1, 45u, 20u, 30u },
+    CounterCase { "192k-4x", 192000, 4, 1, 40u, 18u, 28u },
 };
 
 struct CounterRun
@@ -541,7 +556,7 @@ CounterRun runCounterCase(const CounterCase& testCase)
 {
     const auto scenario = scenarios[2]; // six-voice resonant dry
     const auto snapshot = prepareSnapshot(scenario, testCase.sampleRate,
-                                          testCase.highQuality);
+                                          testCase.requestedFactor);
     if (snapshot.factor != testCase.expectedFactor)
         throw std::runtime_error(std::string(testCase.name)
                                  + " selected an unexpected factor");
@@ -762,9 +777,20 @@ int runCounterAudit(bool selfTestOnly)
     // only on their individually frozen totals. The VCF subset must remain
     // invariant too; its Merson/BBD work is already checked above per actual
     // internal frame, so broadening the passive latch cannot add a retry.
-    constexpr std::array<std::array<std::size_t, 2>, 4> factorPairs {{
-        { 0u, 1u }, { 2u, 3u }, { 4u, 5u }, { 6u, 7u }
-    }};
+    // Derived from the table rather than written out as fixed index pairs: a
+    // rung added to the ladder must be compared against its own host rate, not
+    // against whatever row a frozen index happens to land on afterwards. Each
+    // case is measured against the first case sharing its sample rate.
+    std::vector<std::array<std::size_t, 2>> factorPairs;
+    for (std::size_t index = 1; index < counterCases.size(); ++index)
+        for (std::size_t first = 0; first < index; ++first)
+            if (counterCases[first].sampleRate == counterCases[index].sampleRate)
+            {
+                factorPairs.push_back({ first, index });
+                break;
+            }
+    if (factorPairs.empty())
+        throw std::runtime_error("no host rate carries more than one rung");
     for (const auto& pair : factorPairs)
     {
         const auto& high = observed[pair[0]].counters;

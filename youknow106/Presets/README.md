@@ -1,16 +1,16 @@
 # YouKnow106 sound-design recipes
 
 YouKnow106 state is stored by the host. These original recipes are starting
-points for the version-1.0 parameter set. Every control is quoted as its panel
+points for the version-1.1 parameter set. Every control is quoted as its panel
 position in percent, because that is what the panel is: the engine maps each
 position through the modelled circuit's own law, and the plug-in displays the
 resulting time or frequency next to the control.
 
-Parameters not listed stay at their version-1.0 defaults — 8' range, saw on,
+Parameters not listed stay at their version-1.1 defaults — 8' range, saw on,
 pulse off, HPF 1, POLY 1, chorus off, and the six non-hardware controls at
 their hardware-aligned/product defaults (velocity 0%, six voices, chorus noise
-100%, Unit Character 0%). HQ is a persisted quality setting, not part of a
-patch, and changes take effect once the engine is idle.
+100%, Unit Character 0%). QUALITY is a persisted processing setting, not part
+of a patch, and changes take effect once the engine is idle.
 
 Three modelling habits are worth knowing before you start: envelope attack is
 linear while decay and release are exponential, and the current provisional
@@ -20,10 +20,12 @@ modulation is summed before the antilog stage, so the ENV and LFO sliders are
 octaves, not hertz; and VCA LEVEL is a shared post-voice patch trim before the
 chorus, not a multiplier on each voice's envelope.
 
-The shipped program bank is the byte-exact historical 128 and is not
-level-matched or rebalanced. The recipes below are original YouKnow106
-sound-design examples, not extra bundled factory entries. They may use the
-plug-in's extension controls, but there is no hidden per-program gain.
+The shipped program bank keeps the byte-exact historical 128 tone records.
+Its product presets also store attenuation-only positions for the visible VR1
+output-volume shaft so hot programs remain bounded; no tone byte is changed and
+there is no hidden corrective gain, EQ, or limiting. The recipes below are
+original YouKnow106 sound-design examples, not extra bundled factory entries.
+They may use the plug-in's extension controls.
 The [complete factory gain audit](../Docs/audio/factory-presets/README.md)
 publishes unnormalised metrics for all 128 tones and common-gain previews of a
 representative subset.

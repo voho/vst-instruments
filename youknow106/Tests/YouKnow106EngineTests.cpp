@@ -19,6 +19,7 @@
 #include <memory>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace youknow106
@@ -27,6 +28,12 @@ namespace youknow106
 // suite has its own executable-local definition for circuit internals.
 struct YouKnow106TestAccess
 {
+    static std::uint64_t chorusSupportBuildCount(
+        const YouKnow106Engine& engine) noexcept
+    {
+        return engine.chorus_.supportBuildCount_;
+    }
+
     static int lastVoiceMidi(const YouKnow106Engine& engine, int slot) noexcept
     {
         return engine.voices_[static_cast<std::size_t>(slot)].lastVoiceMidi;
@@ -4041,15 +4048,24 @@ void testFixedOutputBoundaryCorpus()
         // The fixtures, gain, window and broad four-percent guards are
         // unchanged; this records the intentional waveform change instead of
         // relaxing the product boundary.
-        Baseline { 0.419351, 0.851657, 0.863588, 0, 0 },
-        Baseline { 1.07258, 3.03933, 3.05536, 3220, 12830 },
-        Baseline { 2.30165, 4.39228, 4.39853, 6604, 26432 },
+        // Step 18 re-pins the corpus after digital full scale was referred to
+        // the output summer's own rail instead of sitting 12.71 dB below it.
+        // Every figure below is the previous one times that one scalar
+        // (0.231344), which is the point: the boundary is a pure gain, so the
+        // instrument's behaviour is unchanged and only where 0 dBFS lies moved.
+        // Solo Unison still crosses full scale, so the headroom probe below
+        // still has a subject -- the coupling high-pass overshoots the
+        // steady-state ceiling on that stacked low note, which is why the
+        // ceiling is documented as a bound and not as a guarantee.
+        Baseline { 0.0970109, 0.197019, 0.199779, 0, 0 },
+        Baseline { 0.248126, 0.703106, 0.706815, 0, 0 },
+        Baseline { 0.532455, 1.0161, 1.01754, 90, 362 },
         // Raised when the resonance profile was re-solved against Roland's own
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
-        Baseline { 0.196638, 0.279147, 0.279147, 0, 0 },
-        Baseline { 0.748344, 1.58686, 1.59534, 1528, 6132 },
-        Baseline { 0.489074, 1.52184, 1.52184, 42, 167 },
+        Baseline { 0.0454893, 0.0645766, 0.0645766, 0, 0 },
+        Baseline { 0.173119, 0.367097, 0.369059, 0, 0 },
+        Baseline { 0.11314, 0.352057, 0.352057, 0, 0 },
     };
 
     constexpr double sampleRate = 48000.0;
@@ -4060,6 +4076,7 @@ void testFixedOutputBoundaryCorpus()
     Render boundaryProbe;
     bool passedPositiveOne = false;
     bool passedNegativeOne = false;
+    int pinnedAtFullScale = 0;
 
     for (std::size_t fixtureIndex = 0; fixtureIndex < fixtures.size(); ++fixtureIndex)
     {
@@ -4115,6 +4132,11 @@ void testFixedOutputBoundaryCorpus()
             {
                 passedPositiveOne = passedPositiveOne || signal[index] > 1.0f;
                 passedNegativeOne = passedNegativeOne || signal[index] < -1.0f;
+                // A hard clamp writes the boundary value itself, over and over.
+                // A modelled rail approaches it and can overshoot past it, but
+                // never lands exactly on it.
+                if (signal[index] == 1.0f || signal[index] == -1.0f)
+                    ++pinnedAtFullScale;
             }
         }
 
@@ -4161,12 +4183,24 @@ void testFixedOutputBoundaryCorpus()
         }
     }
 
-    expect(passedPositiveOne && passedNegativeOne,
-           "the hot corpus was limited to +/-1 instead of passing floating overloads");
+    // Full scale is now the modelled output summer's own rail, so this is no
+    // longer asking the corpus to fly far past it -- that would mean the
+    // calibration was wrong. What still has to be true, and is the whole reason
+    // the check exists, is that nothing CLAMPS: the bound the corpus meets must
+    // be the soft analogue rail plus the coupling's overshoot, not a digital
+    // limiter. Solo Unison's stacked low note is the probe that reaches it.
+    expect(passedPositiveOne || passedNegativeOne,
+           "the hot corpus no longer reaches full scale at all, so it cannot "
+           "tell a modelled rail from a limiter");
+    expect(pinnedAtFullScale == 0,
+           "the output was pinned at exactly +/-1 on "
+               + std::to_string(pinnedAtFullScale)
+               + " samples, which is a limiter and not the modelled rail");
     expect(std::any_of(measured.begin(), measured.end(), [](const auto& metrics) {
-               return metrics.samplePeak > 1.01 && metrics.sampleOverloads > 0;
+               return metrics.samplePeak > 1.0 && metrics.sampleOverloads > 0;
            }),
-           "the output corpus no longer exercises unclipped headroom above full scale");
+           "no fixture crosses full scale, so the corpus stopped exercising "
+           "the rail it is supposed to characterise");
 
     // Vref is deliberately not an engine/control parameter. Its pure gain is
     // applied to the already-rendered post-volume pair. Recovering the source
@@ -4288,7 +4322,13 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
     constexpr int phaseCycleSamples = 1008;
     constexpr int preRollSamples = 96000;
     constexpr int maximumObservedLatency = 512;
-    constexpr float outputOnsetThreshold = 1.0e-4f;
+    // Referred to the output calibration rather than left as a bare number:
+    // this looks for a fixed level in the modelled circuit, and where 0 dBFS
+    // sits is a separate decision (see outputBoundaryGain). Pinning it in dBFS
+    // instead would make every latency below move when the boundary moved,
+    // which is a measurement artefact and not a latency change.
+    const float outputOnsetThreshold =
+        1.0e-4f * YouKnow106Engine::outputBoundaryGain();
     constexpr float oneTimeConstant = 0.63212056f;
 
     struct Observation
@@ -5109,6 +5149,10 @@ void testQualityChangeWaitsForTheOutputPathToEmpty()
     constexpr double sampleRate = 48000.0;
     YouKnow106Engine engine;
     engine.prepare(sampleRate, blockSize, true);
+    const auto supportBuilds =
+        YouKnow106TestAccess::chorusSupportBuildCount(engine);
+    expect(supportBuilds == 3,
+           "prepare did not build exactly the three quality support chains");
     auto parameters = plainPatch();
     parameters.chorus = ChorusMode::Two;
     engine.setParameters(parameters);
@@ -5133,6 +5177,168 @@ void testQualityChangeWaitsForTheOutputPathToEmpty()
     render(engine, static_cast<int>(sampleRate * 0.1));
     expect(engine.getOversamplingFactor() == 1,
            "the quality change never applied after the output path emptied");
+    expect(YouKnow106TestAccess::chorusSupportBuildCount(engine) == supportBuilds,
+           "a live quality change rebuilt chorus matrices on the audio thread");
+}
+
+void testQualityLadderResolvesEveryRungAtEveryRate()
+{
+    // A request is a ceiling, never a floor. The applied factor is the smaller
+    // of what was asked for and what the host rate still needs to reach the
+    // bandlimiting target, so the same selection resolves differently as the
+    // host rate climbs -- and no selection can ever push the internal grid
+    // higher than the deepest rung would at that rate.
+    struct Case
+    {
+        double rate;
+        int requested;
+        int expected;
+    };
+    constexpr std::array<Case, 12> cases {{
+        { 44100.0, 4, 4 }, { 44100.0, 2, 2 }, { 44100.0, 1, 1 },
+        { 48000.0, 4, 4 }, { 48000.0, 2, 2 }, { 48000.0, 1, 1 },
+        { 96000.0, 4, 2 }, { 96000.0, 2, 2 }, { 96000.0, 1, 1 },
+        { 192000.0, 4, 1 }, { 192000.0, 2, 1 }, { 192000.0, 1, 1 }
+    }};
+
+    for (const auto& item : cases)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(item.rate, blockSize, item.requested);
+        const auto where = std::to_string(static_cast<int>(item.rate)) + " Hz "
+                         + std::to_string(item.requested) + "x";
+        expect(engine.getOversamplingFactor() == item.expected,
+               "the ladder resolved the wrong factor at " + where);
+        expect(engine.getRequestedOversamplingFactor() == item.requested,
+               "the ladder forgot what was requested at " + where);
+        // Whatever rung is running, the host is told the same latency.
+        expect(engine.getProcessingLatencySamples() == 41,
+               "the reported latency moved at " + where);
+    }
+
+    // Only the three rungs exist. Anything else is snapped to the nearest one
+    // at or below it, and a nonsense request falls to the cheapest rather than
+    // to an internal grid nothing downstream is designed for.
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, 4);
+    const std::array<std::pair<int, int>, 7> snapped {{
+        { 3, 2 }, { 5, 4 }, { 8, 4 }, { 0, 1 }, { -1, 1 },
+        { std::numeric_limits<int>::max(), 4 },
+        { std::numeric_limits<int>::min(), 1 }
+    }};
+    for (const auto& [asked, wanted] : snapped)
+    {
+        engine.setOversamplingFactor(asked);
+        expect(engine.getRequestedOversamplingFactor() == wanted,
+               "a request of " + std::to_string(asked)
+                   + " did not snap to " + std::to_string(wanted));
+    }
+}
+
+void testQualityChangeThatCannotBeHeardIsNotPaidFor()
+{
+    // On a host already fast enough, two rungs resolve to the same internal
+    // grid: at 96 kHz both 4x and 2x run at 2x. Moving between them must be
+    // free -- no safety fade, no output-path rebuild, no wait for the delay
+    // lines to run dry -- because there is nothing on the grid to change.
+    constexpr double sampleRate = 96000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, 4);
+    auto parameters = plainPatch();
+    parameters.chorus = ChorusMode::Two;
+    engine.setParameters(parameters);
+    expect(engine.getOversamplingFactor() == 2,
+           "the 96 kHz fixture is not running the shared two-times grid");
+
+    engine.noteOn(60, 1.0f);
+    const auto before = render(engine, blockSize);
+
+    // Held notes and full delay lines would defer a real rate change; this one
+    // is adopted on the spot and reported as applied.
+    expect(engine.setOversamplingFactor(2),
+           "a rung change that cannot alter the internal grid was deferred");
+    expect(engine.getOversamplingFactor() == 2,
+           "an inaudible rung change moved the internal grid");
+    expect(engine.getRequestedOversamplingFactor() == 2,
+           "an inaudible rung change was not adopted");
+
+    // No fade was started, so the very next block continues at full level
+    // rather than ducking through a five-millisecond safety ramp.
+    const auto after = render(engine, blockSize);
+    double beforeEnergy = 0.0;
+    double afterEnergy = 0.0;
+    for (std::size_t index = 0; index < before.left.size(); ++index)
+        beforeEnergy += static_cast<double>(before.left[index]) * before.left[index];
+    for (std::size_t index = 0; index < after.left.size(); ++index)
+        afterEnergy += static_cast<double>(after.left[index]) * after.left[index];
+    expect(afterEnergy > beforeEnergy * 0.25,
+           "an inaudible rung change still spent a safety fade on the output");
+}
+
+void testQualityLadderKeepsTheSameOutputLevel()
+{
+    // Stepping down the ladder to save CPU must not also step the instrument's
+    // level, or a player trading quality for headroom would find the mix moved
+    // underneath them.
+    const auto levelAt = [](int requestedFactor) {
+        YouKnow106Engine engine;
+        engine.prepare(48000.0, blockSize, requestedFactor);
+        auto parameters = plainPatch();
+        parameters.cutoff = 0.7f;
+        engine.setParameters(parameters);
+        engine.noteOn(57, 1.0f);
+        const auto rendered = render(engine, 48000);
+        double energy = 0.0;
+        const auto from = rendered.left.size() / 2;
+        for (std::size_t index = from; index < rendered.left.size(); ++index)
+            energy += static_cast<double>(rendered.left[index]) * rendered.left[index];
+        return 10.0 * std::log10(energy / static_cast<double>(
+                                     rendered.left.size() - from) + 1.0e-30);
+    };
+
+    const double deepest = levelAt(4);
+    expectNear(levelAt(2), deepest, 1.5,
+               "the middle rung of the quality ladder moved the output level");
+    expectNear(levelAt(1), deepest, 1.5,
+               "the cheapest rung of the quality ladder moved the output level");
+}
+
+void testPrepareSurvivesAnUnusableHostSampleRate()
+{
+    // Hosts do report nonsense: a rate of zero before the device is open, a
+    // negative one from a mis-parsed setting, a NaN from an uninitialised
+    // double. Every internal coefficient divides by this figure, so a bad one
+    // must never reach the grid.
+    const std::array<double, 7> hostile {
+        0.0, -48000.0, std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::infinity(),
+        -std::numeric_limits<double>::infinity(), 1.0,
+        1.0e12
+    };
+
+    for (const double rate : hostile)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(rate, blockSize, 4);
+        const double running = engine.getSampleRate();
+        expect(std::isfinite(running) && running >= 8000.0
+                   && running <= YouKnow106Engine::maximumSupportedSampleRate,
+               "an unusable host rate reached the internal grid");
+        expect(engine.getOversamplingFactor() >= 1
+                   && engine.getOversamplingFactor() <= 4,
+               "an unusable host rate produced an impossible quality factor");
+
+        engine.setParameters(plainPatch());
+        engine.noteOn(60, 1.0f);
+        const auto rendered = render(engine, 4096);
+        for (std::size_t index = 0; index < rendered.left.size(); ++index)
+            if (!std::isfinite(rendered.left[index])
+                || !std::isfinite(rendered.right[index]))
+            {
+                expect(false, "an unusable host rate produced non-finite audio");
+                break;
+            }
+    }
 }
 
 void testQualityChangeFadesRateDependentOutputPath()
@@ -5325,7 +5531,11 @@ void testQualityChangePreservesOutputCouplingTail()
            "the coupling-tail quality change never completed");
     const std::size_t compareFrom = changed.left.size()
                                   - static_cast<std::size_t>(sampleRate * 0.02);
-    expect(peakOf(unchanged.left, compareFrom) > 0.002,
+    // Referred to the output calibration, like every other absolute output
+    // threshold here: the fixture is asking whether a tail exists in the
+    // circuit, not where 0 dBFS happens to sit.
+    expect(peakOf(unchanged.left, compareFrom)
+               > 0.002 * YouKnow106Engine::outputBoundaryGain(),
            "the asymmetric-PWM fixture produced no coupling tail to preserve");
     double difference = 0.0;
     for (std::size_t index = compareFrom; index < changed.left.size(); ++index)
@@ -6104,7 +6314,8 @@ void testEnvelopeAndGateModes()
     gated.setParameters(parameters);
     gated.noteOn(60, 1.0f);
     const auto held = render(gated, static_cast<int>(sampleRate));
-    expect(peakOf(held.left, held.left.size() / 2) > 0.05,
+    expect(peakOf(held.left, held.left.size() / 2)
+               > 0.05 * YouKnow106Engine::outputBoundaryGain(),
            "gate mode falls silent while the key is held");
 }
 
@@ -6395,7 +6606,14 @@ void testIdleOutputFloorCarriesTheMn3009NoiseRow()
 
     const double floorOne = idleFloorDbfs(ChorusMode::One);
     const double floorTwo = idleFloorDbfs(ChorusMode::Two);
-    expectNear(floorOne, -77.85, 0.5,
+    // What the MN3009 row anchors is a VOLTAGE -- 0.2 mVrms A-weighted -- so
+    // the dBFS this lands on is a consequence of where the output calibration
+    // puts 0 dBFS, not part of the anchor. The figure below was recorded when
+    // the boundary was unity; referring it to the boundary keeps it testing the
+    // line noise rather than the calibration.
+    const double boundaryDb =
+        20.0 * std::log10(YouKnow106Engine::outputBoundaryGain());
+    expectNear(floorOne, -77.85 + boundaryDb, 0.5,
                "the idle output floor left the MN3009 noise row");
 
     // The unchanged-chain observation gives one usable relative target even
@@ -6411,7 +6629,8 @@ void testIdleOutputFloorCarriesTheMn3009NoiseRow()
     // there is no pre-change engine left to render against. If a gain were
     // moved somewhere in the output path instead of the line noise, the floor
     // would land and the wet line would not.
-    constexpr double floorBeforeDbfs = -63.4409;
+    // Likewise recorded under a unity boundary; see boundaryDb above.
+    const double floorBeforeDbfs = -63.4409 + boundaryDb;
     constexpr double wetLineBeforeVrms = 1.0611e-3;
 
     constexpr double lineRate = 192000.0;
@@ -7709,6 +7928,13 @@ void testPanelLayout()
         expect(sections[index - 1].x + sections[index - 1].width
                    < sections[index].x,
                "adjacent synthesis sections lost their divider gap");
+    expect(sections[3].width >= 340.0f,
+           "the DCO section lost the breathing room required by its selector groups");
+    for (const auto& control : controls)
+        if (control.section == 3
+            && control.kind != panel::ControlKind::Slider)
+            expect(control.width >= 28.0f,
+                   std::string("a DCO selector is crowded again: ") + control.label);
     expect(sections[2].x == panel::instrumentLeft
                && sections[2].y == panel::soundRowTop,
            "the hardware synthesis strip no longer begins with LFO");
@@ -8010,6 +8236,10 @@ int main()
     testScanTimingSurvivesAProcessingRateChange();
     testUnisonStackGlidesFromOneOrigin();
     testQualityChangeWaitsForTheOutputPathToEmpty();
+    testQualityLadderResolvesEveryRungAtEveryRate();
+    testQualityChangeThatCannotBeHeardIsNotPaidFor();
+    testQualityLadderKeepsTheSameOutputLevel();
+    testPrepareSurvivesAnUnusableHostSampleRate();
     testQualityChangeFadesRateDependentOutputPath();
     testQualityChangePreservesOutputCouplingTail();
     testQualityChangePreservesFreeRunningClocks();

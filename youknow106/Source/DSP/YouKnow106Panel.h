@@ -68,7 +68,10 @@ inline constexpr auto velocity     = "velocity";
 inline constexpr auto calibration  = "calibration";
 inline constexpr auto chorusNoise  = "chorusNoise";
 inline constexpr auto polyphony    = "polyphony";
-inline constexpr auto hq           = "hq";
+// Internal-rate quality ladder: 1x, 2x, 4x. The earlier two-state `hq` id must
+// remain registered so Audio Unit parameter indices and old sessions survive.
+inline constexpr auto quality      = "quality";
+inline constexpr auto legacyHq     = "hq";
 } // namespace parameters
 
 namespace panel

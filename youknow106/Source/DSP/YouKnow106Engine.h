@@ -3,6 +3,7 @@
 #include "YouKnow106Chorus.h"
 
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -169,9 +170,37 @@ class YouKnow106Engine
 public:
     YouKnow106Engine() noexcept;
 
+    // The quality ladder. The requested factor is what the player asks for; the
+    // applied factor is that request capped so the internal rate never has to
+    // run further above the bandlimiting target than it needs to (see
+    // updateProcessingRate), which is why a 192 kHz host already runs at 1x
+    // with the highest setting selected.
+    static constexpr int minimumOversampleFactor = 1;
+    static constexpr int maximumOversampleFactor = 4;
+    // The host rates prepare() will run at. Anything outside this is clamped
+    // into it rather than reaching the internal grid; see prepare().
+    static constexpr double minimumSupportedSampleRate = 8000.0;
+    static constexpr double maximumSupportedSampleRate = 768000.0;
+    // The three rungs the panel offers, in increasing cost.
+    static constexpr std::array<int, 3> oversampleFactors {
+        minimumOversampleFactor, 2, maximumOversampleFactor };
+    // Nearest supported rung at or below `factor`; hostile input falls to 1x,
+    // which is the cheapest and can never overrun the internal grid.
+    [[nodiscard]] static constexpr int sanitiseOversampleFactor(int factor) noexcept
+    {
+        if (factor >= 4)
+            return 4;
+        return factor >= 2 ? 2 : 1;
+    }
+
     void prepare(double sampleRate, int maxBlockSize,
                  bool oversamplingEnabled = true);
+    void prepare(double sampleRate, int maxBlockSize, int requestedFactor);
     bool setOversamplingEnabled(bool enabled) noexcept;
+    // Requests a rung of the quality ladder. Like the boolean form, the change
+    // is deferred until the instrument is idle, and the return value says
+    // whether it has been applied yet.
+    bool setOversamplingFactor(int factor) noexcept;
     void reset();
     void setParameters(const EngineParameters& parameters);
     void noteOn(int midiNote, float velocity);
@@ -192,10 +221,18 @@ public:
     void process(float* left, float* right, int numSamples);
 
     [[nodiscard]] int getActiveVoiceCount() const noexcept { return activeVoiceCount_; }
+    // The rate the engine actually runs its output grid at, which is the host's
+    // once it has passed the guards in prepare(). A host that reports nothing
+    // usable is not the rate the panel should be displaying.
+    [[nodiscard]] double getSampleRate() const noexcept { return sampleRate_; }
     [[nodiscard]] int getOversamplingFactor() const noexcept { return oversampling_; }
-    [[nodiscard]] bool isOversamplingEnabled() const noexcept
+    [[nodiscard]] int getRequestedOversamplingFactor() const noexcept
     {
         return oversamplingRequested_;
+    }
+    [[nodiscard]] bool isOversamplingEnabled() const noexcept
+    {
+        return oversamplingRequested_ > 1;
     }
     [[nodiscard]] int getProcessingLatencySamples() const noexcept;
     // Panel display support. Plain relaxed reads of engine state; the plug-in
@@ -437,7 +474,8 @@ public:
     static constexpr float internalVoltsPerUnit = 2.6f;
     // The chorus refers its BBD noise row to the same coordinate and has to
     // name it locally, so the two cannot be allowed to drift apart.
-    static_assert(Chorus::nodeVoltsPerUnit == internalVoltsPerUnit,
+    static_assert(std::bit_cast<std::uint32_t> (Chorus::nodeVoltsPerUnit)
+                      == std::bit_cast<std::uint32_t> (internalVoltsPerUnit),
                   "the chorus and the engine disagree about the node volt scale");
     static constexpr float minus18DbfsAmplitude = 0.125892541f;
     static constexpr float compatibilityOutputReferenceRmsVolts =
@@ -459,6 +497,20 @@ public:
     static constexpr float outputSummerRailVolts = 13.5f;
     static constexpr float outputSummerClipExponent = 8.0f;
     [[nodiscard]] static float outputSummerClip(float value) noexcept;
+
+    // Digital full scale is the modelled output stage's own ceiling: IC6's rail
+    // seen through the volume wiper at its loudest setting. Mapping 0 dBFS
+    // anywhere below that throws the difference away as digital clipping, which
+    // is what used to put 31 factory presets over full scale and what stopped
+    // the shared noise rail from being raised to its service anchor. Referring
+    // the boundary to the rail instead means the plug-in cannot clip before the
+    // circuit it models does.
+    //
+    // The bound is the steady-state one. The output coupling is a high-pass, so
+    // a large enough transient can overshoot it; the measured worst case over
+    // every source at once, six voices and both controls at maximum is -1.45
+    // dBFS, so the margin is real but is not a mathematical guarantee.
+    [[nodiscard]] static float outputBoundaryGain() noexcept;
 
     // In the supplied hash-matched B-2 image, stored continuous controls are
     // seven-bit bytes: b<<7 in the 14-bit working domain, followed by b<<5 at
@@ -656,9 +708,7 @@ private:
     // double-precision solves. It is not part of the plug-in API.
     friend struct YouKnow106TestAccess;
 
-    static constexpr int maximumOversampleFactor = 4;
     static constexpr double minimumHqProcessingRate = 176400.0;
-    static constexpr double maximumSupportedSampleRate = 768000.0;
     static constexpr int halfbandTaps = 95;
     static constexpr int halfbandRingSize = 128;
     static constexpr int latencyPadRingSize = 64;
@@ -795,7 +845,9 @@ private:
     static constexpr float dcoHoldSlewSecondsVoiced = 522.0e-6f;
     static constexpr float resonanceHoldSlewSecondsVoiced = 522.0e-6f;
     static constexpr float noiseHoldSlewSecondsVoiced = 522.0e-6f;
-    static_assert(vcfHoldSlewSeconds == resonanceHoldSlewSecondsVoiced,
+    static_assert(std::bit_cast<std::uint32_t> (vcfHoldSlewSeconds)
+                      == std::bit_cast<std::uint32_t> (
+                          resonanceHoldSlewSecondsVoiced),
                   "the shared exact VCF-hold trajectory requires equal "
                   "cutoff and resonance constants");
     // The shared white-noise generator and each card's microscopic filter
@@ -1421,6 +1473,10 @@ private:
                       float noiseSample) noexcept;
     void advanceLfo(const EngineParameters& parameters) noexcept;
     void updateVoiceCardDrift(VoiceCard& card) noexcept;
+    // The factor the engine would actually run for a requested rung at the
+    // current host rate: the request, sanitised, capped by the deepest rung
+    // that rate still needs to reach the bandlimiting target.
+    [[nodiscard]] int effectiveOversampleFactor(int requestedFactor) const noexcept;
     void updateProcessingRate(bool preserveFreeRunningState = false) noexcept;
     void rebuildRateDependentVoiceState() noexcept;
     bool applyPendingOversamplingIfIdle() noexcept;
@@ -1466,10 +1522,21 @@ private:
     float inverseSampleRate_ { 1.0f / 48000.0f };
     double oversampledRate_ { 192000.0 };
     float inverseOversampledRate_ { 1.0f / 192000.0f };
+    // Holds both discrete noise sources' power density constant with rate, so a
+    // quality change does not move the level a listener hears. It deliberately
+    // does NOT equalise their total power: a shallower grid carries less
+    // bandwidth, and the shaped rail's total RMS is therefore ~0.9 dB lower at
+    // 1x than at 4x. Nearly all of that sits above 8 kHz -- the 20 Hz-2 kHz
+    // band holds to within 0.5 dB, which is what
+    // testMainNoiseDensityIsProcessingRateInvariant guards. Equalising total
+    // power instead was tried and rejected: it buys the inaudible top octave
+    // back by pushing the audible band 0.65 dB the wrong way.
     float noiseRateScale_ { 1.0f };
     int oversampling_ { 4 };
-    bool oversamplingEnabled_ { true };
-    bool oversamplingRequested_ { true };
+    // Applied and requested rungs of the quality ladder, as factors. They differ
+    // only while a deferred change waits for the instrument to fall idle.
+    int oversamplingApplied_ { maximumOversampleFactor };
+    int oversamplingRequested_ { maximumOversampleFactor };
     // How long the voices have been silent, and how long the output path needs
     // to run dry once they are: the delay lines' longest setting plus the
     // decimation and filter stages' group delay.

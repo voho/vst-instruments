@@ -3,6 +3,14 @@
 A six-voice circuit-modelled DCO polysynth for macOS, built as a self-contained
 JUCE project: VST3, Audio Unit and Standalone, universal `arm64`/`x86_64`.
 
+YouKnow106 is published by [Protocodus](https://protocodus.cz) and supports
+macOS 11 or later. Start with the [user guide](Docs/USER_GUIDE.md), see
+[customer-facing changes](CHANGELOG.md) and [privacy information](PRIVACY.md),
+or contact [protocodus@proton.me](mailto:protocodus@proton.me). This repository
+is currently a release candidate: no commercial binary should be published
+until every blocker in the [release checklist](Docs/RELEASE_CHECKLIST.md) is
+resolved and recorded.
+
 YouKnow106 models the voice architecture of a 1984 six-voice polysynth — the
 Roland Juno-106 — block by block, from its integer-divided note timers through
 its four-pole transconductor filter to its uncompanded bucket-brigade chorus. It
@@ -235,6 +243,8 @@ storage, latency or per-sample work. Final qualification is recorded below.
 
 ## Contents
 
+- [User guide](Docs/USER_GUIDE.md)
+- [Commercial release checklist](Docs/RELEASE_CHECKLIST.md)
 - [What makes it a circuit model rather than a lookalike](#what-makes-it-a-circuit-model-rather-than-a-lookalike)
 - [Fidelity ledger: stage by stage](#fidelity-ledger-stage-by-stage)
 - [Voices, analogue character and dispersion](#voices-analogue-character-and-dispersion)
@@ -596,7 +606,7 @@ remain external-validation debts, is the
 | BBD chorus and IC6 mix | Two uncompanded 256-stage MN3009 lines, anti-phase modulation, continuously running bypass, support-filter parts, coupling capacitors and IC6 dry/wet resistor gains are anchored/derived. The mode rates are derived from the JUNO-106 timing network as 0.5532934/0.8982608 Hz. BBD write nonlinearity is fitted to its datasheet test points. At the raw held node, upstream of numerical output reconstruction, the explicit zero-order hold plus fixed per-shift residual coefficient is −3.000 dB versus DC at 12 kHz/40 kHz, or −2.972 dB versus the datasheet's 1 kHz reference. The mode-I/base per-line hiss amplitude is the same datasheet's noise row, 0.2 mVrms max A-weighted, referred back to the injection point through the model's measured 0.4026 A-weighted transfer. | Sweep endpoints retain a calibrated sibling measurement of the shared clock driver; loaded support impedances and the wet-mute transient are voiced, as are stereo correlation and the optional common/hum/spur layer. The base hiss level is anchored to the part but sits inside a 10.5 dB bracket its own datasheet leaves open; the guaranteed maximum is the end this model takes. Mode II separately applies the reported approximately 3.95 dB complete-output factor from the same-chain real-unit captures. Treating their true-peak difference as a broadband amplitude factor is moderate-confidence policy, not a claim about the standalone part or physical insertion point (OQ-03). The 0.4026 transfer is a property of the current exact output chain at 192 kHz; HQ grids agree within 0.004 dB, while HQ-off reads about +0.05…+0.38 dB high over 96…44.1 kHz. Step 8 supplies causal current-plus-three-past interpolation at each BBD edge. Step 9 integrates each complete six-state support network in physical coordinates under the same causal cubic drive: output is exact at every rate, input is exact at internal rates ≥176.4 kHz and retains the reviewed TPT path below. Muted/connected wet loads select distinct prepared transitions over one shared physical state. These are numerical product mechanisms, not MN3009 circuitry. Edge timing/phase, bucket count and index progression, transfer law/update cadence, RNG sequence, hardware constants, global oversampling-factor selector and 41-sample latency are unchanged. The common-host 4× cells now pass the absolute four-case low-drive fixture gates at −53.442/−56.101 dB NRMS, 0.011/0.008 dB BGA error and −71.831/−65.381 dBc SGA; each cell has only one qualifying BGA line, and lower factors remain absolute REJECT. All six actual HQ selector paths pass that same bounded fixture; four HQ-off paths are retained only by frozen Step-8 nonregression gates. The closed-form oracle shares the documented component/model anchors and is not hardware truth or a nonlinear whole-line oracle. Step 14 adds a separate public-path dynamic whole-line contract: all six actual HQ rows pass hot stereo, I/Off/II transition, residual and stochastic gates, while every actual HQ-off q1 row rejects under the unchanged truth table. This is numerical classification, not a retune or hardware measurement. Panasonic's low-resolution typical curves at 10/40/100 kHz have been digitised at 600 dpi; their tracked-versus-broadband reading is self-contradictory, so one installed-unit tracked sweep still decides which interpretation applies (OQ-04). Loaded IC6 clipping remains unknown. |
 | VOLUME and output boundary | C17/C20, R54/R57, the nominal-linear 10KB×2 tracks and fixed internal wiper loading are component-derived, with independent left/right capacitor state. | Dual-gang tracking, selector/jack normaling, external loads and headphone transfer remain open. The fixed −18 dBFS RMS mapping and provisional physical reference are product policy, not an analogue circuit claim. |
 | Numerical cost | The VCF retains fixed solver work per internal sample: two Merson halfsteps, 10 right-hand-side and feedback evaluations, 40 stage and full-Early evaluations when Character is enabled, seven input reconstructions and no normal-path recovery. Event-containing VCF intervals additionally perform six control mappings; ordinary intervals do not. Settled per-card constants remain outside the sample loops. A compile-time-only work audit counts scan, passive holds, DCO, VCF, BBD/BLEP, exact/legacy support and decimator events on every 4×/2×/1× production branch; a separate executable times the uninstrumented shipping library with a thread-CPU clock. Normal and active-counter renders must remain raw-float identical, and preprocessing plus symbol/string scans keep audit instrumentation out of the shipping library. | None of it is a hardware claim, and no constant, level, corner or law moves. In the 2,048-host-frame 48 kHz fixture, HQ and HQ-off each see 160 passive fractional peeks/commits, while the retained VCF subset stays 70/70 and 120 exact affected card intervals. The fixed VCF and BBD work algebra is unchanged. Counters make no cycle-cost claim; the paired uninstrumented Step 11 → Step 12 audit ranges from −0.126874% to +1.342855%, with a worst Step 12 result of 0.853898× realtime. BBD support is unchanged. Counters prove structural work, not cycle cost or a split-rate saving; completed paired CPU measurements are in the [comparative assessment](Docs/comparative-assessment.md). |
-| Antialiasing, HQ and safety | These are intended to preserve the modeled circuit’s behavior at host sample rates: bandlimited discontinuities, optional oversampling, 95-tap Kaiser half-band decimation flat to 20 kHz at both common host rates, and guarded rate changes. HQ remains one global internal loop: 44.1/48 kHz selects 4×, 88.2/96 kHz 2× and 176.4 kHz or above 1×; HQ off selects 1×. The engine and processor report a fixed 41-host-sample numerical latency on the 4×, 2× and 1× paths (0.930 ms at 44.1 kHz, 0.854 ms at 48 kHz, 0.427 ms at 96 kHz and 0.214 ms at 192 kHz); shallower paths are padded to the deepest report. Nothing the quality switch selects is allowed to move a modelled physical quantity: noise density is normalized to elapsed time, and the warm-up clock accumulates wall-clock seconds in double precision so it reads the same at every supported rate and in both quality settings. The measured exception is numerical noise folding: after Step 9's recalibration, HQ-off wet-line noise reads about +0.36…+0.38 dB at 44.1 kHz, +0.30…+0.31 at 48 kHz, +0.06…+0.08 at 88.2 kHz and +0.05…+0.07 at 96 kHz. For the chorus, BBD-generated aliasing (BGA) means the physical-model images at `k*Fclock ± f`; simulation-generated aliasing (SGA) means the extra folds created by the internal sample grid. The bounded polyBLEP scheduler has 54 slots and uses at most 50 in the tested worst case, including multiple BBD edges in one internal sample. | They have no hardware counterpart. The reported 41 samples cover oscillator-reconstruction/decimation group delay only: converter scan, envelope/VCA-hold response, host/device buffering and wet BBD delay are separate. DCO, VCF/VCA, scan/holds, the complete BBD/support path and output slew all share that loop. The common-host audit treats each factor as a candidate rather than truth: DCO passes all tested factors; BBD and VCF pass at 4× and reject their lower common-host factors. Separate actual-policy matrices admit the BBD fixture and bounded VCF converter trajectories on all six standard HQ paths. Step 11's event-aware VCF extension also passes the 8 kHz/4× and 768 kHz/1× engine bounds without relaxing the −40 dB gate. Nothing changes the global factor selector or authorizes a split without inter-domain reconstruction, whole-engine and latency qualification. The idle-only quality change and short safety fades are product mechanisms. |
+| Antialiasing, quality ladder and safety | These are intended to preserve the modeled circuit’s behavior at host sample rates: bandlimited discontinuities, selectable oversampling, 95-tap Kaiser half-band decimation flat to 20 kHz at both common host rates, and guarded rate changes. The QUALITY selector offers three rungs — 1×, 2× and 4× — as one global internal loop, and the selection is a ceiling rather than a floor: the applied factor is the smaller of what was asked for and what the host rate still needs to reach the 176.4 kHz bandlimiting target. At 44.1/48 kHz the three rungs resolve to 4×/2×/1×; at 88.2/96 kHz both 4× and 2× resolve to 2×; at 176.4 kHz and above every rung resolves to 1×. Engine thread-CPU cost tracks the applied factor almost exactly linearly — on one Apple M1 Max core at 48 kHz/block 256, the six-voice resonant scenario measures 0.855× realtime at 4×, 0.439× at 2× and 0.231× at 1×, with paired 4×-over-1× ratios of 3.699–3.969 and 2×-over-1× ratios of 1.909–1.979 across the four audited scenarios. The engine and processor report a fixed 41-host-sample numerical latency on the 4×, 2× and 1× paths (0.930 ms at 44.1 kHz, 0.854 ms at 48 kHz, 0.427 ms at 96 kHz and 0.214 ms at 192 kHz); shallower paths are padded to the deepest report. Nothing the quality switch selects is allowed to move a modelled physical quantity: noise density is normalized to elapsed time, and the warm-up clock accumulates wall-clock seconds in double precision so it reads the same at every supported rate and in both quality settings. The measured exception is numerical noise folding: after Step 9's recalibration, HQ-off wet-line noise reads about +0.36…+0.38 dB at 44.1 kHz, +0.30…+0.31 at 48 kHz, +0.06…+0.08 at 88.2 kHz and +0.05…+0.07 at 96 kHz. For the chorus, BBD-generated aliasing (BGA) means the physical-model images at `k*Fclock ± f`; simulation-generated aliasing (SGA) means the extra folds created by the internal sample grid. The bounded polyBLEP scheduler has 54 slots and uses at most 50 in the tested worst case, including multiple BBD edges in one internal sample. | They have no hardware counterpart. The reported 41 samples cover oscillator-reconstruction/decimation group delay only: converter scan, envelope/VCA-hold response, host/device buffering and wet BBD delay are separate. DCO, VCF/VCA, scan/holds, the complete BBD/support path and output slew all share that loop. The common-host audit treats each factor as a candidate rather than truth: DCO passes all tested factors; BBD and VCF pass at 4× and reject their lower common-host factors. Separate actual-policy matrices admit the BBD fixture and bounded VCF converter trajectories on all six standard HQ paths. Step 11's event-aware VCF extension also passes the 8 kHz/4× and 768 kHz/1× engine bounds without relaxing the −40 dB gate. Nothing changes the global factor selector or authorizes a split without inter-domain reconstruction, whole-engine and latency qualification. The idle-only quality change and short safety fades are product mechanisms. |
 
 The maintained [audio corpus](Docs/audio/README.md) was rendered twice again
 for Step 16. Two independent demo renders and two independent full 128-preset
@@ -723,9 +733,9 @@ readability threshold.
 A slim host-preset navigator sits directly below the programmer, aligned with
 the BANK keys but isolated by its own recessed blue rail. The remaining
 plugin-only features are visibly bolted on below the keyboard in three separate
-cards: model extensions (Unit Character, chorus noise, HQ and a mouse-friendly
-UNISON key), performance extensions (transpose, rear-panel tune, velocity and
-variable polyphony), and live telemetry. Panic, reset and randomisation stay in
+cards: model extensions (Unit Character, chorus noise, the QUALITY selector and
+a mouse-friendly UNISON key), performance extensions (transpose, rear-panel
+tune, velocity and variable polyphony), and live telemetry. Panic, reset and randomisation stay in
 the bottom service bar beside contextual help.
 
 Sliders, switches and buttons are still placed by the JUCE-free description in
@@ -822,17 +832,48 @@ in its [Original 128 announcement](https://www.rolandcloud.com/home/news/the-ori
 No Roland Cloud product content was downloaded or extracted.
 
 The complete [factory gain audit](Docs/audio/factory-presets/README.md) renders
-all 128 tones through the shipping engine at 48 kHz/HQ with no per-preset
-normalisation. Its stress score found finite output for every tone, a median
-gated RMS of −21.480711305 dBFS, no preset below −60 dBFS maximum 400 ms RMS, and 31
-tones whose polyphonic/transient peaks crossed 0 dBFS. Those crossings are
-reported, not silently limited or rebalanced: the model intentionally permits
-floating output, the score includes unison and six-key stress, and the absolute
-output reference remains the OQ-06 measurement question. The nominal common
-VCA LEVEL law is circuit-derived; OQ-02 now asks only how installed component,
-rail and IC variation moves it. The ten preview WAVs use one disclosed
-0.543091 (−5.30 dB) common gain so their relative levels survive 16-bit
-delivery without clipping.
+all 128 tones through the shipping engine at 48 kHz and quality 4×. There is no
+per-preset corrective gain, EQ or limiting anywhere in the signal path, and the
+eighteen tone bytes are never touched. What each preset does carry is a VR1
+output shaft position — the one control on the instrument a player moves when
+one patch arrives hotter than the last — listed in
+[`Source/DSP/YouKnow106Presets.cpp`](Source/DSP/YouKnow106Presets.cpp).
+
+Those positions are attenuation only: 37 of the 128 sit below the 0.80 panel
+default and none above it, so the product never shouts over the player's own
+reference setting. They hold the bank inside two contracts the audit tool
+enforces rather than merely reports, failing the build if either breaks:
+
+- **No preset peaks above −1 dBFS.** This is now a backstop rather than the
+  rule the trims are chosen against: since digital full scale was referred to
+  the output summer's own rail (see below), the untrimmed bank already peaks no
+  higher than −3.67 dBFS, and the shipping bank peaks at −6.676311 dBFS with no
+  channel sample anywhere near 0 dBFS.
+- **No preset exceeds −31 dBFS gated RMS.** Three decibels above the
+  −34.195822899 dBFS corpus median, frozen as an absolute figure. The loudest
+  tone measures −31.193549 dBFS and the interquartile loudness spread is 6.6 dB.
+
+Digital full scale is the modelled output stage's own ceiling — IC6's ±13.5 V
+rail seen through the volume wiper at its loudest — rather than a point 12.71 dB
+below it. Mapping 0 dBFS anywhere under that rail throws the difference away as
+digital clipping, which is what once put 31 factory presets over full scale and
+what kept the shared noise rail 13 dB below its service anchor. Referring the
+boundary to the rail means the plug-in cannot clip before the circuit it models
+does; the whole instrument is correspondingly quieter, and the volume control
+and the host are where that is made up.
+
+Below the ceilings the figures remain measurements rather than targets. VR1 has
+only about +2.25 dB of travel left above the default, which cannot close the
+remaining gap down to a patch like A86 Hand Claps, and closing it would be wrong
+anyway: the noise sweeps, thunder and hand claps at the quiet end are quieter
+because the instrument makes them quieter. Two tones remain outside the median
+±18 dB band and are reported as such. Much less of that gap is the model's doing
+than it was: restoring the shared noise generator to its service anchor lifted
+the twelve noise-only patches from 21.5 dB below the corpus median to 12.9 dB
+below it. The score includes unison and six-key stress, the absolute output
+reference remains the OQ-06 measurement question, and the nominal common VCA
+LEVEL law is circuit-derived; OQ-02 now asks only how installed component, rail
+and IC variation moves it.
 
 The hardware stores positions, not patch-name text. Names such as “Brass Set 1”
 and “Owgan” are conventional archival descriptions shown for navigation, not
@@ -1389,21 +1430,27 @@ youknow106/build-dsp/YouKnow106AuditFactoryPresets
 
 ## Sign, package and notarize
 
+For an ad-hoc local or nightly package:
+
 ```bash
 cd youknow106
 ./scripts/sign-and-package-macos.sh
 ```
 
-With no signing identities set this ad-hoc signs and produces an unsigned
-installer, which is what the nightly workflow ships. For public distribution,
-supply your own identities:
+That development path may emit an ad-hoc-signed PKG and ZIP. It must never be
+promoted to a paid/public release. Production starts from the clean, exact
+`youknow106-v1.1.0` tag and fails closed unless both Developer ID identities and
+a working `notarytool` profile are supplied:
 
 ```bash
 APP_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 INSTALLER_SIGN_IDENTITY="Developer ID Installer: Your Name (TEAMID)" \
 NOTARY_PROFILE=your-notary-profile \
-./scripts/sign-and-package-macos.sh
+./scripts/release-macos.sh
 ```
+
+The production path builds/tests universal macOS 11 artifacts and publishes
+only a signed, notarized and stapled PKG plus its manifest and SHA-256 file.
 
 ## Layout
 
@@ -1458,3 +1505,12 @@ binary.
 - 2026-08-16: Added regression coverage for the non-positive/non-finite fallback guard shared by the seven `panelPositionFor*` inverse laws (attack, decay, release, LFO rate, LFO delay, cutoff, portamento), which host automation reaches via typed-text parsing and previously only had its in-range behaviour tested.
 - 2026-08-16: Deduplicated the single-pole RC corner-frequency formula `1 / (2*pi*R*C)` that `outputCouplingCornerHz`, `voiceBusCouplingCornerHz` (both overloads), `commonVcaInputCouplingCornerHz`, `moduleCouplingCornerHz`, `vcaInputCouplingCornerHz`, `noiseSourceHighPassHz` and `noiseSourceLowPassHz` in `YouKnow106Engine.cpp` each wrote out inline for their own capacitor/resistor pair, into one shared `rcCornerHz` helper; `highPassCornerHz`'s four-leg switched network was left alone since it selects between distinct branches rather than reducing to one fixed R and C. These laws only run inside `updateProcessingRate` on prepare/rate changes, not per sample, so this is cleanup rather than a performance change. No change to engine output, verified bit-identical against the rendered demo corpus and the full 15-suite `ctest --test-dir youknow106/build-dsp` run (all passing, including a clean `YouKnow106.RenderDemos`).
 - 2026-08-16: Closed a cross-file duplication `algebraicSoftClipDenominator`'s own header comment had claimed was already closed: `Chorus::bbdTransfer` in `YouKnow106Chorus.cpp` carried its own independent inline copy of the exact `(1 + x^n)^(1/n)` soft-clip formula that `YouKnow106Engine::vcfEffectiveCutoffHz` and `outputSummerClip` both call through the named helper, so the BBD write agreed with the other two sites only by construction, not by sharing code with them. The helper now lives once, as a free function in `YouKnow106Chorus.h` (the one header both DSP files already include), and all three call sites -- the BBD write, the VCF saturation and the output summer -- go through it. Pure refactor with the same double-precision arithmetic at every site; verified bit-identical against the rendered demo corpus and the full 15-suite `ctest --test-dir youknow106/build-dsp` run (all passing, including a clean `YouKnow106.RenderDemos`), plus the existing direct `bbdTransfer`/`outputSummerClip`/`vcfEffectiveCutoffHz` coverage in `YouKnow106CircuitTests.cpp`.
+- 2026-08-16: Replaced the two-state HQ switch with a three-rung QUALITY ladder (1x / 2x / 4x) ahead of the v1 release. The engine's oversampling request is now a factor rather than a boolean (`setOversamplingFactor`, `prepare(rate, block, factor)`; the boolean forms remain as thin wrappers), and the applied factor is `min(requested, deepest rung this host rate still needs)`, so a request is a ceiling and never a floor. Reported latency stays at the deepest path's 41 host samples on every rung, so no selection makes the host renegotiate its compensation. Measured engine thread-CPU on one Apple M1 Max core at 48 kHz/block 256: six-voice resonant 0.855x / 0.439x / 0.231x realtime at 4x / 2x / 1x, full-mixer Chorus II 0.735x / 0.372x / 0.192x, with paired 4x-over-1x ratios of 3.699-3.969 and 2x-over-1x ratios of 1.909-1.979 across all four audited scenarios.
+- 2026-08-16: Made the quality selection a property of the machine rather than of the sound. It is no longer carried in `Preset::Controls`, so a program recall, a hardware Program Change and RESET all leave it exactly where the player put it instead of forcing every factory preset back to the deepest rung; a session that saved the old `hq` boolean still restores, mapping on to 4x and off to 1x. The saved-state migration, the EDITED lamp, the randomiser exclusion list and the plug-in parameter contract were updated together, and `YouKnow106.PluginProcessor` now asserts the opposite contract: that a recall cannot overrule the selection.
+- 2026-08-16: Trimmed the factory bank's per-preset VR1 output positions so the shipping programs behave like a bank. At the uniform 0.80 default, 31 of the 128 crossed 0 dBFS -- a digital overflow at the plug-in's own output boundary, worst at A48 Synth Bass I with 11,058 channel samples and a +8.99 dBFS peak -- and the gated loudness spanned 53.2 dB. 55 presets now carry an attenuating shaft position (none above the 0.80 default, lowest 0.235); the loudest peak in the bank is -1.50 dBFS with no channel sample reaching 0 dBFS, the loudest gated RMS is -18.500544 dBFS against a -22.004379174 dBFS corpus median, and the interquartile loudness spread is 6.5 dB. No tone byte changed, and there is no per-preset corrective gain, EQ or limiting anywhere in the signal path. `YouKnow106AuditFactoryPresets` now *enforces* the -1 dBFS peak and -18 dBFS gated ceilings rather than reporting them, and the guard that every preset "requests HQ" became a guard that no preset asks for more than the panel default volume. The gate runs after the CSV and report are written, so a failing audit still publishes the evidence naming which presets need retrimming; and because the CTest contract runs `--smoke` (two presets, a shortened score), that run now says out loud that it only spot-checks the contract and does not certify the bank.
+- 2026-08-16: Hardened `prepare` against a host reporting an unusable sample rate. A non-finite rate now falls back to 48 kHz instead of failing both clamp comparisons and reaching the internal grid, which every coefficient below divides by; the panel's rate readout reports the engine's own figure rather than the host's, so a clamped or substituted rate is displayed honestly. New `YouKnow106.Engine` coverage drives zero, negative, NaN, both infinities, 1 Hz and 1 THz through prepare and a 4,096-sample render, asserting a supported running rate, a legal quality factor and finite audio in every case.
+- 2026-08-16: Extended the oversampling audits to the whole ladder rather than its two ends. The domain-work audit gained 44.1k-2x, 48k-2x, 88.2k-4x, 96k-4x and 176.4k/192k-4x counter cases, and its equal-wall-time factor-invariance pairs are now derived from the case table by host rate instead of being frozen index pairs that a new rung silently mis-paired; the timing audit reports and pairs all three rungs. Verified by `ctest --test-dir youknow106/build-dsp` (all 15 suites passing) and the plug-in suite.
+- 2026-08-16: Made the engine's applied internal rate visible. `YouKnow106Display` already received the running sample rate and oversampling factor but drew neither, so a player who selected 4x on a 96 kHz host had no way to learn the engine was running 2x -- the one case where the QUALITY selector's request and its result differ. The status scope now reports the applied factor and the internal rate it produces ("4x 192.0k") in its top-left corner, opposite the trace's own gain readout, and the panel screenshot was retaken.
+- 2026-08-17: Restored the shared noise generator to its service anchor and referred digital full scale to the output summer's own rail, which turned out to be one defect with two faces. The 4 Vpp TP8 NOISE LEVEL adjustment had been written onto the source *ahead* of its C41/R79 shaping, and that pole keeps only 7.2733% of a white source's power, so the audible rail sat 11.383 dB under the figure it was named after. Measured through one identical path, the model put noise 23.35 dB below its own calibrated self-oscillation where the paired TP8 adjustments (6 Vpp sine at BANK 3, 4 Vpp noise at BANK 6, procedurally chained so the VCA cancels) put it between 8.5 and 12.6 dB below. `noiseMixVolts` 2.0 -> 7.4161 restores exactly what the shaping discards, so the same +/-2 V now describes the rail the adjustment measures; it assumes no crest convention and lands at -11.96 dB, inside the anchored band. Raising it required headroom that did not exist: one shared generator sums coherently across held voices at 20*log10(N), so a six-note NOISE-10 chord peaked at +1.97 dBFS -- which is what commit 3a68d51 heard as "high Noise settings sound broken" and treated by lowering the source 9.5 dB. Digital full scale is now IC6's own rail through the volume wiper at its loudest, so the plug-in cannot clip before the modelled circuit does: the absolute worst case, every source on with six voices and both controls at maximum, peaks at -1.45 dBFS against +11.08 dBFS before. The whole instrument is 12.71 dB quieter as a result. The 128 per-preset VR1 trims were recomputed against the new levels (37 trimmed, deepest 0.257, none above the panel default), the audit's gated ceiling moved -18 -> -31 dBFS with the calibration, and the twelve noise-only factory patches rose from 21.5 dB below the corpus median to 12.9 dB below it.
+- 2026-08-17: Referred every absolute output threshold in the suites to `outputBoundaryGain()` instead of re-pinning nine failing numbers by hand. The onset-proxy detector, the asymmetric-PWM coupling tail and the held-gate floor now look for a fixed level in the modelled circuit rather than a fixed dBFS, and the MN3009 idle-floor anchor follows the calibration because what the datasheet row fixes is a voltage, not a dBFS. One assertion changed meaning rather than scale: with full scale now at the rail, "the hot corpus must pass floating overloads above full scale" no longer describes a correct engine, so it asserts what it always meant -- that the bound is a soft analogue rail and not a limiter, with no sample pinned at exactly +/-1 and Solo Unison's stacked low note still crossing at 1.0161 through the coupling overshoot.
+- 2026-08-17: Investigated and rejected a candidate "quality-dependent noise level" defect. The shared rail's total RMS does fall about 0.9 dB from 4x to 1x, but the shortfall is almost entirely above 8 kHz -- bandwidth a 48 kHz internal grid legitimately cannot carry -- while the 20 Hz-2 kHz band holds within 0.5 dB, which is what `testMainNoiseDensityIsProcessingRateInvariant` already guards. Normalising the shaped rail's total power instead was implemented, measured and reverted: it buys the inaudible top octave back by pushing the audible band 0.65 dB the wrong way and breaks that contract at 44.1 and 48 kHz with the ladder at 1x. The `sqrt(rate)` density normalisation is correct and the reasoning is now recorded beside it.

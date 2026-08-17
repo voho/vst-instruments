@@ -31,14 +31,40 @@ constexpr float twoPi = 6.28318530717958647692f;
 constexpr float filterInputAttenuation = 0.40f;
 constexpr float voltsToSample = 1.0f / YouKnow106Engine::internalVoltsPerUnit;
 
-// Voiced source-coordinate values constrained by the service anchors: saw and
-// pulse are adjusted near 12 Vpp, while shared noise is adjusted to 4.0 Vpp at
-// TP8. Intervening loading is still open, and the sub value has no equivalent
-// end-to-end anchor, so these must not be presented as measured mixer voltages.
+// Voiced source-coordinate values. Saw and pulse are constrained by the service
+// anchor near 12 Vpp; intervening loading is still open, and the sub value has
+// no equivalent end-to-end anchor, so none of these may be presented as
+// measured mixer voltages.
 constexpr float sawMixVolts = 6.0f;
 constexpr float pulseMixVolts = 6.0f;
 constexpr float subMixVolts = 5.0f;
-constexpr float noiseMixVolts = 2.0f;
+// The noise coordinate names the SHAPED rail, not the raw generator, and that
+// distinction is the whole of it. The service procedure adjusts VR32 for 4 Vpp
+// at TP8 -- the CH1 voice VCA output -- and a +/-2 V figure written onto the
+// source *ahead* of the shaping below does not arrive there as 4 Vpp, because
+// the 4.82 kHz pole keeps only 7.27% of a white source's power (-11.383 dB).
+// A previous revision made exactly that substitution and left the audible noise
+// 11.38 dB light: referred to the model's own calibrated 4.8 Vpp
+// self-oscillation it measured -23.35 dB where the paired TP8 figures put it
+// between -8.5 and -12.6 dB, the spread being what crest convention a scope
+// trace of random noise is read with.
+//
+// 2.0 / sqrt(0.0727330) = 7.4161 restores precisely what the shaping discards,
+// so the same +/-2 V now describes the rail the adjustment measures. It is a
+// mechanical correction of the misplacement rather than a fit, which is why it
+// assumes no crest convention; it lands at -11.96 dB against self-oscillation,
+// inside the anchored band at its conservative end.
+//
+// Raising it required the output boundary to be referred to the summer's rail
+// first (see outputBoundaryGain). Without that, a six-note NOISE-10 chord peaks
+// at +1.97 dBFS: one shared generator sums coherently across held voices, at
+// 20*log10(N), so noise chords reach full scale far sooner than oscillator
+// chords do. That is what "high Noise settings sound broken" was.
+//
+// What stays open is placement, not size: the anchors fix the product of this
+// constant and filterInputAttenuation, and only the coincidence between the
+// deficit and the shaping loss says the noise leg alone was light. OQ-15/OQ-16.
+constexpr float noiseMixVolts = 7.4161f;
 
 // The noise generator's support circuit, module board p. 13: Tr21 (2SC945,
 // factory-selected for noise) with R104 470 kOhm collector load, coupled by
@@ -46,9 +72,12 @@ constexpr float noiseMixVolts = 2.0f;
 // resistor -- a 33.9 Hz high-pass -- and whose output is loaded by C41 100 pF
 // against R79 330 kOhm -- a 4.82 kHz pole -- before the buffered NOISE rail.
 // The audible source is therefore band-shaped by its own circuit, not flat.
-// The generator's bounded +/-2 V pre-filter amplitude remains the voiced
-// stand-in for the TP8 adjustment; the shaping passes its passband at unity,
-// so the established in-band density is unchanged (OQ-16).
+// The shaping passes its passband at unity, so it does not change in-band
+// density -- but it does change total power: the 4.82 kHz pole keeps only
+// 6982.4 Hz of noise-equivalent bandwidth out of the 96 kHz the source is
+// white across at the 192 kHz internal rate, which is 7.3% of its power, or
+// -11.38 dB of RMS. That loss is why the pre-filter coordinate above cannot be
+// read as the TP8 figure (OQ-16).
 constexpr float noiseCouplingCapacitanceF = 1.0e-6f;      // C42
 constexpr float noiseCouplingLoadOhms = 4700.0f;          // R81, IC14 input
 constexpr float noiseOtaLoadCapacitanceF = 100.0e-12f;    // C41
@@ -1391,6 +1420,22 @@ float YouKnow106Engine::noiseSourceLowPassHz() noexcept
     return rcCornerHz(noiseOtaLoadCapacitanceF, noiseOtaLoadResistanceOhms);
 }
 
+float YouKnow106Engine::outputBoundaryGain() noexcept
+{
+    // One internal unit is internalVoltsPerUnit, the summer cannot pass its own
+    // rail, and the volume wiper at its loudest adds no more than its own
+    // maximum passband gain. Their product is the largest steady output the
+    // instrument can present, and that is what 0 dBFS is defined as.
+    const float fullScaleVolts = outputSummerRailVolts
+                               * outputCouplingHighGain(1.0f);
+    if (!(fullScaleVolts > 0.0f) || !std::isfinite(fullScaleVolts))
+        return 1.0f;
+    // Expressed through the same Vref helper every other boundary question
+    // uses: the reference is the RMS that lands on -18 dBFS once full scale is
+    // the rail, so the two cannot drift apart.
+    return outputReferenceGain(minus18DbfsAmplitude * fullScaleVolts);
+}
+
 float YouKnow106Engine::outputCouplingHighGain() noexcept
 {
     return outputCouplingPotOhms
@@ -2290,6 +2335,9 @@ YouKnow106Engine::YouKnow106Engine() noexcept
 {
     buildHalfbandKernel();
     (void) correctionTables();
+    // Function-local statics are thread-safe, but their first-use guards and
+    // exponentials do not belong in the first audio callback.
+    (void) chassisGradientMeanCelsius();
     buildVoiceCards();
     clearHeldNotes();
 }
@@ -2449,18 +2497,34 @@ void YouKnow106Engine::refreshVoiceCardStageTrims() noexcept
     }
 }
 
-void YouKnow106Engine::prepare(double sampleRate, int /*maxBlockSize*/,
+void YouKnow106Engine::prepare(double sampleRate, int maxBlockSize,
                                bool oversamplingEnabled)
+{
+    prepare(sampleRate, maxBlockSize,
+            oversamplingEnabled ? maximumOversampleFactor
+                                : minimumOversampleFactor);
+}
+
+void YouKnow106Engine::prepare(double sampleRate, int /*maxBlockSize*/,
+                               int requestedFactor)
 {
     // The frequency correction's limit-cycle table is solved on first use.
     // Touch it here, where blocking is allowed, so the first audio callback
     // never pays for it.
     (void) VoicedResonanceCompatibilityProfile::frequencyTrim(0.0f);
 
-    sampleRate_ = std::clamp(sampleRate, 8000.0, maximumSupportedSampleRate);
+    // A host that has not negotiated a rate yet, or one reporting a nonsense
+    // one, must not be able to put a zero, a negative or a NaN on the internal
+    // grid: every coefficient below divides by it. NaN fails both clamp
+    // comparisons, so it is caught explicitly rather than passed through.
+    sampleRate_ = std::isfinite(sampleRate)
+                    ? std::clamp(sampleRate, minimumSupportedSampleRate,
+                                 maximumSupportedSampleRate)
+                    : 48000.0;
     inverseSampleRate_ = static_cast<float>(1.0 / sampleRate_);
-    oversamplingRequested_ = oversamplingEnabled;
-    oversamplingEnabled_ = oversamplingEnabled;
+    oversamplingRequested_ = sanitiseOversampleFactor(requestedFactor);
+    oversamplingApplied_ = oversamplingRequested_;
+    chorus_.prepareSupportRates(sampleRate_);
     updateProcessingRate();
     prepared_ = true;
     reset();
@@ -2469,12 +2533,7 @@ void YouKnow106Engine::prepare(double sampleRate, int /*maxBlockSize*/,
 void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexcept
 {
     const double previousProcessingRate = oversampledRate_;
-    if (!oversamplingEnabled_ || sampleRate_ >= minimumHqProcessingRate)
-        oversampling_ = 1;
-    else if (sampleRate_ >= minimumHqProcessingRate / 2.0)
-        oversampling_ = 2;
-    else
-        oversampling_ = maximumOversampleFactor;
+    oversampling_ = effectiveOversampleFactor(oversamplingApplied_);
 
     oversampledRate_ = sampleRate_ * oversampling_;
     inverseOversampledRate_ = static_cast<float>(1.0 / oversampledRate_);
@@ -2544,18 +2603,48 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
     chorus_.prepare(oversampledRate_, preserveFreeRunningState);
 }
 
+int YouKnow106Engine::effectiveOversampleFactor(int requestedFactor) const noexcept
+{
+    // The deepest rung worth running at this host rate: the bandlimiting target
+    // is minimumHqProcessingRate, and going past it buys nothing but CPU. The
+    // player's request is then capped by that, so selecting 4x on a 192 kHz
+    // host quietly runs at 1x rather than at 768 kHz.
+    int ceilingFactor;
+    if (sampleRate_ >= minimumHqProcessingRate)
+        ceilingFactor = 1;
+    else if (sampleRate_ >= minimumHqProcessingRate / 2.0)
+        ceilingFactor = 2;
+    else
+        ceilingFactor = maximumOversampleFactor;
+
+    return std::min(sanitiseOversampleFactor(requestedFactor), ceilingFactor);
+}
+
 bool YouKnow106Engine::setOversamplingEnabled(bool enabled) noexcept
 {
-    oversamplingRequested_ = enabled;
+    return setOversamplingFactor(enabled ? maximumOversampleFactor
+                                         : minimumOversampleFactor);
+}
+
+bool YouKnow106Engine::setOversamplingFactor(int factor) noexcept
+{
+    oversamplingRequested_ = sanitiseOversampleFactor(factor);
     return applyPendingOversamplingIfIdle();
 }
 
 bool YouKnow106Engine::applyPendingOversamplingIfIdle() noexcept
 {
-    if (oversamplingRequested_ == oversamplingEnabled_)
+    // Nothing here is about the rung that was asked for; it is about the grid
+    // the engine would actually run. Two different rungs resolve to the same
+    // internal rate whenever the host is already fast enough -- 4x and 2x both
+    // run at 2x on a 96 kHz host -- and rebuilding the whole output path to
+    // arrive back at the rate it is already on would spend a safety fade on a
+    // change nobody can hear. Adopt the request and leave the grid alone.
+    if (effectiveOversampleFactor(oversamplingRequested_) == oversampling_)
     {
-        // A request can be withdrawn while the old path is fading. Bring it
-        // back without touching any rate-dependent state.
+        oversamplingApplied_ = oversamplingRequested_;
+        // A request can also be withdrawn while the old path is fading. Bring
+        // it back without touching any rate-dependent state.
         if (rateTransition_ == RateTransition::FadingOut)
             rateTransition_ = RateTransition::FadingIn;
         return true;
@@ -2587,7 +2676,7 @@ bool YouKnow106Engine::applyPendingOversamplingIfIdle() noexcept
     if (rateTransitionGain_ > 0.0f)
         return false;
 
-    oversamplingEnabled_ = oversamplingRequested_;
+    oversamplingApplied_ = oversamplingRequested_;
     updateProcessingRate(true);
     rebuildRateDependentVoiceState();
     clearRateDependentOutputPath(true);
@@ -4772,7 +4861,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     // lets every per-call rate-derived coefficient below be recomputed for the
     // correct side of the boundary.
     if (rateTransition_ == RateTransition::FadingOut
-        && oversamplingRequested_ != oversamplingEnabled_
+        && oversamplingRequested_ != oversamplingApplied_
         && rateTransitionGain_ > 0.0f)
     {
         const int samplesUntilZero = std::max(
@@ -4832,8 +4921,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     const float outputGlide =
         1.0f - std::exp(-inverseSampleRate_ / panelGlideSeconds);
     const double scanPhasePerInternalSample = controlScanHz / oversampledRate_;
-    const float outputBoundaryGain =
-        outputReferenceGain(compatibilityOutputReferenceRmsVolts);
+    const float outputBoundaryGain = YouKnow106Engine::outputBoundaryGain();
     // TA75558S IC6 output slew limit, SR = 1.7 V/us (653846 engine units per
     // second at 2.6 V per unit). Depends only on the internal rate, which is
     // fixed for the whole call, so it belongs beside the other per-call slew

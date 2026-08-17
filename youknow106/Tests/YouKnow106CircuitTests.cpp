@@ -517,7 +517,7 @@ struct YouKnow106TestAccess
         engine.updateSharedHighPass(engine.activeParameters_);
         result.afterModeChange = engine.voiceBusCoupling_.state;
 
-        engine.oversamplingEnabled_ = false;
+        engine.oversamplingApplied_ = 1;
         engine.updateProcessingRate(true);
         engine.updateSharedHighPass(parameters);
         result.afterRateChange = engine.voiceBusCoupling_.state;
@@ -599,8 +599,8 @@ struct YouKnow106TestAccess
     static void forceNoiseSourceProcessingQuality(
         YouKnow106Engine& engine, bool enabled) noexcept
     {
-        engine.oversamplingRequested_ = enabled;
-        engine.oversamplingEnabled_ = enabled;
+        engine.oversamplingRequested_ = enabled ? 4 : 1;
+        engine.oversamplingApplied_ = engine.oversamplingRequested_;
         engine.updateProcessingRate(true);
         engine.clearRateDependentOutputPath(true);
     }
@@ -4602,12 +4602,16 @@ void testNoiseSourceShapingFollowsItsCircuit()
     expect(energy > 1.0e-6, "the noise fixture rendered nothing to measure");
     const double rms = std::sqrt(
         energy / static_cast<double>(left.size() - half - 1));
-    // The compatibility profile declares a bounded +/-2 V source before the
-    // 0.40 mixer coordinate. A mistaken +/-6 V multiplier remained finite but
-    // drove this same fixture to 0.0173 RMS and made high Noise settings sound
-    // broken, while a dead source would fall through the lower bound.
-    expect(std::isfinite(rms) && rms > 0.004 && rms < 0.008,
-           "full-level main-noise RMS left its +/-2 V compatibility range: "
+    // The declared coordinate is +/-2 V at the SHAPED rail, which the source
+    // reaches by being generated at 7.4161 V and losing 11.383 dB to its own
+    // C41/R79 pole; the result is then read at an output whose full scale is
+    // the summer's rail. Those three are what this bound watches, and it is
+    // deliberately wide enough to fail only on a real mistake rather than on
+    // the last digit of any of them. Writing the coordinate onto the source
+    // ahead of the shaping instead -- which a previous revision did -- reads
+    // 11.4 dB low here, and a dead source falls through the floor.
+    expect(std::isfinite(rms) && rms > 0.0035 && rms < 0.0070,
+           "full-level main-noise RMS left its shaped +/-2 V range: "
                + std::to_string(rms));
     expect(differenceEnergy / energy < 1.2,
            "the rendered noise is too bright for the C41/R79-shaped source");

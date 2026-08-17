@@ -103,9 +103,14 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+    bool keyPressed (const juce::KeyPress&) override;
+    bool keyStateChanged (bool isKeyDown) override;
+    void focusLost (FocusChangeType) override;
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
 
     [[nodiscard]] float getPitchBend() const noexcept { return pitchBend; }
     [[nodiscard]] float getModulation() const noexcept { return modulation; }
+    [[nodiscard]] juce::String getAccessibilityValueText() const;
 
     std::function<void (float, float)> onPositionChanged;
 
@@ -116,6 +121,7 @@ private:
 
     float pitchBend = 0.0f;
     float modulation = 0.0f;
+    bool keyboardGestureActive = false;
 };
 
 // A stable home for the same explanatory strings exposed through
@@ -137,6 +143,7 @@ public:
     // still wins while it is up.
     void showNotice (juce::String title, juce::String text);
     void paint (juce::Graphics&) override;
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
 
     [[nodiscard]] const juce::String& getHelpTitle() const noexcept
     {
@@ -190,6 +197,7 @@ public:
 private:
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
+    using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
 
     void timerCallback() override;
     void buildPanelControls();
@@ -248,7 +256,10 @@ private:
     YouKnow106Display display;
 
     juce::TextButton panicButton { "PANIC" };
-    juce::TextButton hqButton { "HQ" };
+    // The quality ladder. A three-rung setting needs a selector, not a lamp:
+    // the button this replaced could only say on or off.
+    juce::ComboBox qualityBox;
+    juce::Label qualityLabel;
     juce::TextButton randomize1Button { "RND1%" };
     juce::TextButton randomize10Button { "RND10%" };
     juce::TextButton randomize50Button { "RND50%" };
@@ -296,6 +307,9 @@ private:
     // Lit while the panel no longer matches the patch that was loaded, which is
     // the only way to tell a recalled patch from an edited one.
     juce::Label presetEditedLabel;
+    juce::Label customPatchLabel;
+    juce::TextButton customPatchLoadButton { "LOAD .SYX" };
+    juce::TextButton customPatchSaveButton { "SAVE .SYX" };
     int shownProgram = -1;
     bool shownEdited = false;
 
@@ -305,6 +319,7 @@ private:
 
     std::vector<std::unique_ptr<SliderAttachment>> sliderAttachments;
     std::vector<std::unique_ptr<ButtonAttachment>> buttonAttachments;
+    std::vector<std::unique_ptr<ComboBoxAttachment>> comboBoxAttachments;
     std::vector<std::unique_ptr<juce::ParameterAttachment>> parameterAttachments;
 
     float scale = 1.0f;

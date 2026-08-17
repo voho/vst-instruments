@@ -18,6 +18,45 @@ constexpr int calibrationDefaultSchemaVersion = 1;
 constexpr int originalFactoryBankSchemaVersion = 3;
 constexpr float legacyCalibrationDefault = 0.35f;
 
+// JUCE's AudioParameterBool deliberately retains fractional normalised values
+// written by a host. The switch reads correctly, but that fractional value can
+// remain visible to the host after a state restore when the logical value did
+// not change. A two-step integer parameter has the same public contract and
+// snaps every incoming value before storing it.
+class SnappingBoolParameter final : public juce::AudioParameterInt
+{
+public:
+    SnappingBoolParameter (
+        const juce::ParameterID& id, const juce::String& parameterName,
+        bool defaultValue,
+        const juce::AudioParameterIntAttributes& attributes)
+        : juce::AudioParameterInt (id, parameterName, 0, 1,
+                                   defaultValue ? 1 : 0, attributes)
+    {
+    }
+
+private:
+    bool isDiscrete() const override { return true; }
+    bool isBoolean() const override { return true; }
+};
+
+juce::AudioParameterIntAttributes boolAttributes()
+{
+    return juce::AudioParameterIntAttributes()
+        .withStringFromValueFunction (
+            [] (int enabled, int) { return enabled != 0 ? "On" : "Off"; })
+        .withValueFromStringFunction (
+            [] (const juce::String& text)
+            {
+                const auto value = text.trim().toLowerCase();
+                if (value == "on" || value == "yes" || value == "true")
+                    return 1;
+                if (value == "off" || value == "no" || value == "false")
+                    return 0;
+                return text.getIntValue() != 0 ? 1 : 0;
+            });
+}
+
 float migrateLegacyVolumePosition (float legacyPosition) noexcept
 {
     // Schema 1 applied x^2 after the unloaded C17/R54/VR1 boundary. Schema 2
@@ -365,6 +404,18 @@ void YouKnow106AudioProcessor::migrateSplitModeParameters (juce::ValueTree& stat
     if (storedParameterValue (state, chorusI, 0.0f) > 0.5f
         && storedParameterValue (state, chorusII, 0.0f) > 0.5f)
         setStoredParameterValue (state, chorusI, 0.0f);
+
+    // The two-state HQ switch became the three-rung quality ladder. Its stored
+    // value is a boolean, so it names the two endpoints and nothing in between:
+    // on is the deepest rung, off the cheapest. A state that already carries the
+    // ladder is authoritative and the obsolete entry is ignored.
+    if (containsParameterState (state, legacyHq)
+        && ! containsParameterState (state, quality))
+        setStoredParameterValue (
+            state, quality,
+            static_cast<float> (storedParameterValue (state, legacyHq, 1.0f) > 0.5f
+                                    ? qualityChoiceCount - 1
+                                    : 0));
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout
@@ -380,6 +431,11 @@ YouKnow106AudioProcessor::createParameterLayout()
             juce::ParameterID { id, 1 }, name,
             juce::NormalisableRange<float> { 0.0f, 1.0f, 0.0f }, defaultValue,
             std::move (attributes));
+    };
+    const auto toggle = [] (const char* id, const char* name, bool defaultValue)
+    {
+        return std::make_unique<SnappingBoolParameter> (
+            juce::ParameterID { id, 1 }, name, defaultValue, boolAttributes());
     };
 
     // --- Front panel, in panel order --------------------------------------
@@ -410,10 +466,8 @@ YouKnow106AudioProcessor::createParameterLayout()
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { range, 1 }, "Range",
         juce::StringArray { "16'", "8'", "4'" }, 1));
-    layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { saw, 1 }, "Saw", true));
-    layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { pulse, 1 }, "Pulse", false));
+    layout.add (toggle (saw, "Saw", true));
+    layout.add (toggle (pulse, "Pulse", false));
     layout.add (travel (sub, "Sub", 0.0f, percentAttributes()));
     layout.add (travel (noise, "Noise", 0.0f, percentAttributes()));
 
@@ -488,29 +542,43 @@ YouKnow106AudioProcessor::createParameterLayout()
     // or at all, if it were automated back before the engine went idle.
     // Appended after every pre-existing parameter, with a later version hint,
     // so no historical Audio Unit index moves.
-    layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { poly1, 2 }, "Poly 1", true));
-    layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { poly2, 2 }, "Poly 2", false));
-    layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { chorusI, 2 }, "Chorus I", false));
-    layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { chorusII, 2 }, "Chorus II", false));
+    layout.add (std::make_unique<SnappingBoolParameter> (
+        juce::ParameterID { poly1, 2 }, "Poly 1", true, boolAttributes()));
+    layout.add (std::make_unique<SnappingBoolParameter> (
+        juce::ParameterID { poly2, 2 }, "Poly 2", false, boolAttributes()));
+    layout.add (std::make_unique<SnappingBoolParameter> (
+        juce::ParameterID { chorusI, 2 }, "Chorus I", false, boolAttributes()));
+    layout.add (std::make_unique<SnappingBoolParameter> (
+        juce::ParameterID { chorusII, 2 }, "Chorus II", false, boolAttributes()));
 
-    layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { hq, 1 }, "HQ", true,
-        juce::AudioParameterBoolAttributes()
+    // Keep the exact public parameter from the previous release. Removing it
+    // would reorder Audio Unit parameters and detach saved Logic automation.
+    // It is now an inert compatibility anchor; state migration below maps old
+    // saved values to the quality ladder's two historical endpoints.
+    layout.add (std::make_unique<SnappingBoolParameter> (
+        juce::ParameterID { legacyHq, 1 }, "HQ", true,
+        boolAttributes()
             .withAutomatable (false)
             .withStringFromValueFunction (
-                [] (bool enabled, int) { return enabled ? "On" : "Off"; })
+                [] (int enabled, int) { return enabled != 0 ? "On" : "Off"; })
             .withValueFromStringFunction (
                 [] (const juce::String& text)
                 {
-                    return text.containsIgnoreCase ("on")
+                    return (text.containsIgnoreCase ("on")
                         || text.containsIgnoreCase ("hq")
                         || text.containsIgnoreCase ("2")
-                        || text.containsIgnoreCase ("4");
+                        || text.containsIgnoreCase ("4")) ? 1 : 0;
                 })));
+
+    // The quality ladder, cheapest first, so a larger index is always more
+    // internal work. New instances start at 2x: it keeps practical scheduling
+    // headroom while 4x remains an explicit highest-fidelity choice. Version 3
+    // follows every parameter shipped by the two earlier public layouts.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { quality, 3 }, "Quality",
+        juce::StringArray { "1x", "2x", "4x" },
+        choiceForOversamplingFactor (2),
+        juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
     return layout;
 }
@@ -529,7 +597,7 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
         highPass, cutoff, resonance, envPolarity, vcfEnv, vcfLfo, keyFollow,
         vcaMode, vcaLevel, attack, decay, sustain, release, legacyChorus,
         transpose, masterTune, velocity, calibration, chorusNoise, polyphony,
-        poly1, poly2, chorusI, chorusII, hq
+        poly1, poly2, chorusI, chorusII, legacyHq, quality
     });
 
     // The pointer table has to be able to hold every id. Growing the list above
@@ -572,6 +640,13 @@ YouKnow106AudioProcessor::~YouKnow106AudioProcessor()
 
 float YouKnow106AudioProcessor::valueOf (const char* parameterId) const noexcept
 {
+    // Every production call uses the shared parameter-id constants, so avoid
+    // repeatedly comparing strings in the audio callback. Keep the string
+    // path for callers that provide an equal ID from different storage.
+    for (const auto& pointer : parameterPointers)
+        if (pointer.id == parameterId && pointer.value != nullptr)
+            return pointer.value->load (std::memory_order_relaxed);
+
     for (const auto& pointer : parameterPointers)
         if (pointer.id != nullptr && std::strcmp (pointer.id, parameterId) == 0
             && pointer.value != nullptr)
@@ -588,13 +663,17 @@ void YouKnow106AudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
 {
     engineReady.store (false, std::memory_order_release);
     engine.prepare (sampleRate, samplesPerBlock,
-                    valueOf (youknow106::parameters::hq) > 0.5f);
+                    oversamplingFactorForChoice (getQualityChoice()));
     (void) updateEngineParameters();
     uiLeverMailbox.store (emptyUiLeverMailbox, std::memory_order_release);
     discardUiMidiEvents();
+    keyboardResetRequested.store (false, std::memory_order_release);
     keyboardState.reset();
 
-    displaySampleRate.store (sampleRate, std::memory_order_relaxed);
+    // The engine's own figure, not the host's: prepare() clamps a rate outside
+    // the supported range and substitutes one for a non-finite report, and the
+    // panel must describe what is running rather than what was asked for.
+    displaySampleRate.store (engine.getSampleRate(), std::memory_order_relaxed);
     displayOversamplingFactor.store (engine.getOversamplingFactor(),
                                      std::memory_order_relaxed);
     setLatencySamples (engine.getProcessingLatencySamples());
@@ -608,7 +687,38 @@ void YouKnow106AudioProcessor::releaseResources()
     engine.reset();
     uiLeverMailbox.store (emptyUiLeverMailbox, std::memory_order_release);
     discardUiMidiEvents();
-    keyboardState.reset();
+    keyboardResetRequested.store (true, std::memory_order_release);
+}
+
+void YouKnow106AudioProcessor::reset()
+{
+    // Hosts use reset when transport/processing is torn down without a new
+    // prepareToPlay call. Clear voices, tails and transient controllers while
+    // retaining the negotiated rate, parameters and selected program.
+    const bool wasReady = engineReady.exchange (false, std::memory_order_acq_rel);
+    if (wasReady)
+        engine.reset();
+
+    keyboardResetRequested.store (true, std::memory_order_release);
+    discardUiMidiEvents();
+    uiLeverMailbox.store (emptyUiLeverMailbox, std::memory_order_release);
+    panicRequested.store (false, std::memory_order_release);
+    keyModeReassertRequested.store (false, std::memory_order_release);
+    pendingMidiToneShadowActive = false;
+    activeVoiceCount.store (0, std::memory_order_relaxed);
+    displayVoiceMask.store (0, std::memory_order_relaxed);
+    displayEnvelope.store (0.0f, std::memory_order_relaxed);
+    displayLfo.store (0.0f, std::memory_order_relaxed);
+    displayTemperature.store (engine.getDisplayTemperatureC(),
+                              std::memory_order_relaxed);
+    displayRailDroop.store (engine.getDisplayRailDroopVolts(),
+                            std::memory_order_relaxed);
+    for (auto& sample : scopeBuffer)
+        sample.store (0.0f, std::memory_order_relaxed);
+    scopeWriteIndex.store (0, std::memory_order_release);
+
+    if (wasReady)
+        engineReady.store (true, std::memory_order_release);
 }
 
 bool YouKnow106AudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -815,7 +925,8 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // the host having to be told anything. Calling setLatencySamples from the
     // audio callback would be a notification into host code that is free to
     // lock or allocate.
-    engine.setOversamplingEnabled (valueOf (youknow106::parameters::hq) > 0.5f);
+    engine.setOversamplingFactor (
+        oversamplingFactorForChoice (getQualityChoice()));
     displayOversamplingFactor.store (engine.getOversamplingFactor(),
                                      std::memory_order_relaxed);
 
@@ -988,23 +1099,6 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     if (pendingMidiNeedsResync)
         publishPendingMidiResyncMailbox();
 
-    // A requested patch dump is the one thing that does leave, on the plug-in's
-    // own MIDI output -- the only route a host actually exposes to a cable.
-    auto& dumpSlot = pendingSysExDumpQueue[
-        static_cast<std::size_t> (pendingSysExDumpReadIndex)];
-    if (dumpSlot.ready.load (std::memory_order_acquire))
-    {
-        const int size = dumpSlot.size;
-        if (size > 0)
-            midiMessages.addEvent (dumpSlot.bytes.data(), size, 0);
-
-        // Keep ownership until addEvent has synchronously copied the packet.
-        // Only then may the message thread reuse this slot for another click.
-        dumpSlot.ready.store (false, std::memory_order_release);
-        pendingSysExDumpReadIndex =
-            (pendingSysExDumpReadIndex + 1) % pendingSysExDumpQueueSlots;
-    }
-
     activeVoiceCount.store (engine.getActiveVoiceCount(), std::memory_order_relaxed);
     displayVoiceMask.store (engine.getDisplayVoiceMask(), std::memory_order_relaxed);
     displayEnvelope.store (engine.getDisplayEnvelope(), std::memory_order_relaxed);
@@ -1018,10 +1112,22 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     std::size_t writeIdx = scopeWriteIndex.load (std::memory_order_relaxed);
     for (int i = 0; i < numSamples; ++i)
     {
-        scopeBuffer[writeIdx] = 0.5f * (leftOut[i] + rightOut[i]);
+        scopeBuffer[writeIdx].store (0.5f * (leftOut[i] + rightOut[i]),
+                                     std::memory_order_relaxed);
         writeIdx = (writeIdx + 1) % scopeBufferSize;
     }
-    scopeWriteIndex.store (writeIdx, std::memory_order_relaxed);
+    scopeWriteIndex.store (writeIdx, std::memory_order_release);
+}
+
+void YouKnow106AudioProcessor::processBlockBypassed (
+    juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+{
+    // JUCE's default bypass assumes zero latency and ignores the instrument's
+    // MIDI stream. Keep the synth clock and note/controller state moving so a
+    // note-off received while bypassed cannot become a stuck note, then expose
+    // silence as an instrument with no input is expected to do.
+    processBlock (buffer, midiMessages);
+    buffer.clear();
 }
 
 void YouKnow106AudioProcessor::handleNoteOn (juce::MidiKeyboardState*, int,
@@ -1174,6 +1280,110 @@ void YouKnow106AudioProcessor::dispatchUiPerformanceControls() noexcept
     engine.setModWheel (static_cast<float> (modWheel) / 127.0f);
 }
 
+thread_local YouKnow106AudioProcessor::ScopedParameterWrite*
+    YouKnow106AudioProcessor::activeParameterWrite = nullptr;
+
+YouKnow106AudioProcessor::ScopedParameterWrite::ScopedParameterWrite (
+    YouKnow106AudioProcessor& owner) noexcept
+    : processor (owner), previous (activeParameterWrite)
+{
+    // A synchronous host callback may make another same-processor change. It
+    // belongs to the outer transaction and must not wait on its own odd marker.
+    for (auto* scope = previous; scope != nullptr; scope = scope->previous)
+        if (&scope->processor == &processor)
+        {
+            activeParameterWrite = this;
+            return;
+        }
+
+    // Different writer threads serialize here. Once this CAS owns the odd
+    // generation, neither the audio thread nor a state-save thread can accept
+    // a partially written parameter set.
+    auto observed =
+        processor.parameterWriteGeneration.load (std::memory_order_acquire);
+    for (;;)
+    {
+        if ((observed & 1u) != 0u)
+        {
+            juce::Thread::yield();
+            observed = processor.parameterWriteGeneration.load (
+                std::memory_order_acquire);
+            continue;
+        }
+        if (processor.parameterWriteGeneration.compare_exchange_weak (
+                observed, observed + 1u, std::memory_order_acq_rel,
+                std::memory_order_acquire))
+            break;
+    }
+
+    ownsGeneration = true;
+    for (std::size_t index = 0; index < values.size(); ++index)
+        if (const auto* raw = processor.parameterPointers[index].value)
+            values[index] = raw->load (std::memory_order_relaxed);
+    program = processor.currentProgram.load (std::memory_order_relaxed);
+    activeParameterWrite = this;
+}
+
+YouKnow106AudioProcessor::ScopedParameterWrite::~ScopedParameterWrite()
+{
+    jassert (activeParameterWrite == this);
+    activeParameterWrite = previous;
+    if (ownsGeneration)
+    {
+        const auto old = processor.parameterWriteGeneration.fetch_add (
+            1u, std::memory_order_release);
+        jassert ((old & 1u) != 0u);
+        (void) old;
+    }
+}
+
+const YouKnow106AudioProcessor::ScopedParameterWrite*
+YouKnow106AudioProcessor::activeWriteForThisThread() const noexcept
+{
+    for (auto* scope = activeParameterWrite;
+         scope != nullptr; scope = scope->previous)
+        if (&scope->processor == this && scope->ownsGeneration)
+            return scope;
+    return nullptr;
+}
+
+void YouKnow106AudioProcessor::serialiseWriteSnapshot (
+    const ScopedParameterWrite& snapshot,
+    juce::MemoryBlock& destinationData)
+{
+    juce::ValueTree state { parameters.state.getType() };
+    for (std::size_t index = 0; index < snapshot.values.size(); ++index)
+        if (const auto* id = parameterPointers[index].id)
+            setStoredParameterValue (state, id, snapshot.values[index]);
+    serialiseStateSnapshot (std::move (state), snapshot.program,
+                            destinationData);
+}
+
+void YouKnow106AudioProcessor::serialiseStateSnapshot (
+    juce::ValueTree state, int program, juce::MemoryBlock& destinationData)
+{
+    if (! state.isValid())
+        return;
+
+    // Host automation can address the two compatibility booleans without
+    // going through the interlocked panel. Persist the audio engine's
+    // canonical interpretation, mode II, rather than another both-on state.
+    if (storedParameterValue (state, youknow106::parameters::chorusI, 0.0f) > 0.5f
+        && storedParameterValue (state, youknow106::parameters::chorusII, 0.0f)
+               > 0.5f)
+        setStoredParameterValue (state, youknow106::parameters::chorusI, 0.0f);
+    if (storedParameterValue (state, youknow106::parameters::poly1, 0.0f) <= 0.5f
+        && storedParameterValue (state, youknow106::parameters::poly2, 0.0f)
+               <= 0.5f)
+        setStoredParameterValue (state, youknow106::parameters::poly1, 1.0f);
+
+    state.setProperty (stateSchemaVersionProperty, currentStateSchemaVersion,
+                       nullptr);
+    state.setProperty ("program", program, nullptr);
+    if (const auto xml = state.createXml())
+        copyXmlToBinary (*xml, destinationData);
+}
+
 void YouKnow106AudioProcessor::randomizeParameters (float amount)
 {
     if (const auto* messageManager = juce::MessageManager::getInstanceWithoutCreating();
@@ -1209,7 +1419,7 @@ void YouKnow106AudioProcessor::randomizeParameters (float amount)
         chorusI, chorusII
     });
 
-    parameterWriteGeneration.fetch_add (1, std::memory_order_acq_rel);
+    ScopedParameterWrite write { *this };
     juce::Random random;
     for (const auto* parameterId : soundParameterIds)
     {
@@ -1248,11 +1458,19 @@ void YouKnow106AudioProcessor::randomizeParameters (float amount)
         if (auto* first = parameters.getParameter (poly1))
             first->setValueNotifyingHost (first->convertTo0to1 (1.0f));
 
-    parameterWriteGeneration.fetch_add (1, std::memory_order_release);
 }
 
 void YouKnow106AudioProcessor::getStateInformation (juce::MemoryBlock& destinationData)
 {
+    // Parameter notifications are synchronous, so a host may save state from
+    // the same call stack as a multi-parameter write. Return the fixed snapshot
+    // taken immediately before that transaction rather than waiting on itself.
+    if (const auto* snapshot = activeWriteForThisThread())
+    {
+        serialiseWriteSnapshot (*snapshot, destinationData);
+        return;
+    }
+
     for (;;)
     {
         const unsigned before =
@@ -1269,29 +1487,8 @@ void YouKnow106AudioProcessor::getStateInformation (juce::MemoryBlock& destinati
             parameterWriteGeneration.load (std::memory_order_acquire);
         if (before != after || (after & 1u) != 0u)
             continue;
-        if (! state.isValid())
-            return;
 
-        // Host automation can address the two compatibility booleans without
-        // going through the interlocked panel. Persist the audio engine's
-        // canonical interpretation, mode II, rather than another both-on state.
-        if (storedParameterValue (state, youknow106::parameters::chorusI, 0.0f) > 0.5f
-            && storedParameterValue (state, youknow106::parameters::chorusII, 0.0f)
-                   > 0.5f)
-            setStoredParameterValue (state, youknow106::parameters::chorusI, 0.0f);
-        if (storedParameterValue (state, youknow106::parameters::poly1, 0.0f) <= 0.5f
-            && storedParameterValue (state, youknow106::parameters::poly2, 0.0f)
-                   <= 0.5f)
-            setStoredParameterValue (state, youknow106::parameters::poly1, 1.0f);
-
-        // The program index is not a parameter, so it would not survive a save
-        // on its own: the sound would come back and the host's program selector
-        // would still read INIT.
-        state.setProperty (stateSchemaVersionProperty, currentStateSchemaVersion,
-                           nullptr);
-        state.setProperty ("program", program, nullptr);
-        if (const auto xml = state.createXml())
-            copyXmlToBinary (*xml, destinationData);
+        serialiseStateSnapshot (std::move (state), program, destinationData);
         return;
     }
 }
@@ -1364,7 +1561,7 @@ void YouKnow106AudioProcessor::setStateInformation (const void* data, int sizeIn
     // the audio thread may be inside process(), and the engine's parameter
     // structs are plain values it reads without synchronisation. The next
     // processBlock picks the restored patch up on the thread that owns them.
-    parameterWriteGeneration.fetch_add (1, std::memory_order_acq_rel);
+    ScopedParameterWrite write { *this };
     parameters.replaceState (state);
 
     // The restored legacy values are the new baseline on both sides of the
@@ -1391,7 +1588,6 @@ void YouKnow106AudioProcessor::setStateInformation (const void* data, int sizeIn
     // Publish the parameter tree and its matching bridge baseline as one
     // stable snapshot. Ending the write before the baseline was published let
     // the audio thread briefly interpret a restore as fresh legacy automation.
-    parameterWriteGeneration.fetch_add (1, std::memory_order_release);
 }
 
 juce::AudioProcessorEditor* YouKnow106AudioProcessor::createEditor()
@@ -1441,7 +1637,7 @@ void YouKnow106AudioProcessor::setCurrentProgram (int index)
     // A host program is a complete product preset. Publish its index and every
     // visible control as one stable generation so a concurrent state save can
     // retry instead of serialising half of each program.
-    parameterWriteGeneration.fetch_add (1, std::memory_order_acq_rel);
+    ScopedParameterWrite write { *this };
     if (index == 0)
     {
         applyProgramValues (youknow106::sysex::Patch {},
@@ -1454,7 +1650,6 @@ void YouKnow106AudioProcessor::setCurrentProgram (int index)
         applyProgramValues (preset.patch, preset.controls);
     }
     currentProgram.store (index, std::memory_order_relaxed);
-    parameterWriteGeneration.fetch_add (1, std::memory_order_release);
 }
 
 void YouKnow106AudioProcessor::applyMidiProgramSelection (int index)
@@ -1465,10 +1660,9 @@ void YouKnow106AudioProcessor::applyMidiProgramSelection (int index)
     // Incoming Program Change models the JUNO's own patch selector. Its
     // real-time shadow carries only tone memory, so reflection must retain the
     // same boundary instead of changing performance controls a timer tick later.
-    parameterWriteGeneration.fetch_add (1, std::memory_order_acq_rel);
+    ScopedParameterWrite write { *this };
     applyPatchValues (programPatch (index));
     currentProgram.store (index, std::memory_order_relaxed);
-    parameterWriteGeneration.fetch_add (1, std::memory_order_release);
 }
 
 youknow106::sysex::Patch YouKnow106AudioProcessor::programPatch (int index) const
@@ -1515,8 +1709,9 @@ bool YouKnow106AudioProcessor::currentProgramIsEdited() const
         || differs (valueOf (velocity), expected.velocity)
         || differs (valueOf (calibration), expected.calibration)
         || differs (valueOf (chorusNoise), expected.chorusNoise)
-        || juce::roundToInt (valueOf (polyphony)) != expected.polyphony
-        || (valueOf (hq) > 0.5f) != expected.hq;
+        // Quality is deliberately absent: it is not part of a preset, so it
+        // cannot mark one as edited.
+        || juce::roundToInt (valueOf (polyphony)) != expected.polyphony;
 }
 
 const juce::String YouKnow106AudioProcessor::getProgramName (int index)
@@ -1533,9 +1728,8 @@ const juce::String YouKnow106AudioProcessor::getProgramName (int index)
 
 void YouKnow106AudioProcessor::applyPatch (const youknow106::sysex::Patch& patch)
 {
-    parameterWriteGeneration.fetch_add (1, std::memory_order_acq_rel);
+    ScopedParameterWrite write { *this };
     applyPatchValues (patch);
-    parameterWriteGeneration.fetch_add (1, std::memory_order_release);
 }
 
 void YouKnow106AudioProcessor::applyPatchValues (
@@ -1622,7 +1816,7 @@ void YouKnow106AudioProcessor::applyProgramValues (
     set (calibration, controls.calibration);
     set (chorusNoise, controls.chorusNoise);
     set (polyphony, static_cast<float> (controls.polyphony));
-    set (hq, controls.hq ? 1.0f : 0.0f);
+    // Quality is deliberately not recalled: see Preset::Controls.
 
     applyPatchValues (patch);
 }
@@ -2049,33 +2243,10 @@ bool YouKnow106AudioProcessor::readPendingMidiResyncMailbox (
     return false;
 }
 
-// Message thread. The bytes are assembled here so the audio callback only has
-// to copy them: building a juce::MidiMessage allocates owned storage, which is
-// not something a real-time callback should be doing.
-void YouKnow106AudioProcessor::requestSysExDump()
-{
-    const int index = pendingSysExDumpWriteIndex.load (std::memory_order_relaxed);
-    auto& slot = pendingSysExDumpQueue[static_cast<std::size_t> (index)];
-    if (slot.ready.load (std::memory_order_acquire))
-    {
-        pendingSysExDumpDropped.fetch_add (1, std::memory_order_relaxed);
-        return;
-    }
-
-    const auto written = youknow106::sysex::writePatchMessage (
-        currentPatch(), sysExChannel.load (std::memory_order_relaxed),
-        slot.bytes.data(), slot.bytes.size());
-    if (written == 0)
-        return;
-
-    slot.size = static_cast<int> (written);
-    slot.ready.store (true, std::memory_order_release);
-    pendingSysExDumpWriteIndex.store (
-        (index + 1) % pendingSysExDumpQueueSlots, std::memory_order_relaxed);
-}
-
 void YouKnow106AudioProcessor::timerCallback()
 {
+    if (keyboardResetRequested.exchange (false, std::memory_order_acq_rel))
+        keyboardState.reset();
     drainPendingMidiQueue();
     forwardLegacyModeParameters();
 }
@@ -2163,27 +2334,25 @@ void YouKnow106AudioProcessor::forwardLegacyModeParameters()
         // The pair has two public parameters but is one firmware transition.
         // Keep the audio thread on its previous stable snapshot until both
         // writes and their bridge publication are complete.
-        parameterWriteGeneration.fetch_add (1, std::memory_order_acq_rel);
+        ScopedParameterWrite write { *this };
         lastLegacyKeyMode.store (keyMode, std::memory_order_relaxed);
         const auto mode = static_cast<youknow106::KeyMode> (keyMode);
         set (poly1, youknow106::poly1Engaged (mode));
         set (poly2, youknow106::poly2Engaged (mode));
         forwardedLegacyKeyMode.store (keyMode, std::memory_order_relaxed);
         keyModeForwardGeneration.fetch_add (1, std::memory_order_release);
-        parameterWriteGeneration.fetch_add (1, std::memory_order_release);
     }
 
     const int chorusMode = choiceOf (legacyChorus, 2);
     if (chorusMode != lastLegacyChorus.load (std::memory_order_relaxed))
     {
-        parameterWriteGeneration.fetch_add (1, std::memory_order_acq_rel);
+        ScopedParameterWrite write { *this };
         lastLegacyChorus.store (chorusMode, std::memory_order_relaxed);
         const auto mode = static_cast<youknow106::ChorusMode> (chorusMode);
         set (chorusI, youknow106::chorusOneEngaged (mode));
         set (chorusII, youknow106::chorusTwoEngaged (mode));
         forwardedLegacyChorus.store (chorusMode, std::memory_order_relaxed);
         chorusForwardGeneration.fetch_add (1, std::memory_order_release);
-        parameterWriteGeneration.fetch_add (1, std::memory_order_release);
     }
 
     // Direct host automation can bypass the editor's button interlock. The
@@ -2227,20 +2396,22 @@ void YouKnow106AudioProcessor::reflectPendingMidiEvent (
         const bool hasNewProgram =
             event.programIndex >= 0
             && event.programSequence > reflectedMidiProgramSequence;
-        parameterWriteGeneration.fetch_add (1, std::memory_order_acq_rel);
-        if (event.replacesTone)
-            applyPatchValues (event.snapshot);
-        else
-            for (int parameter = 0;
-                 parameter < youknow106::sysex::toneByteCount; ++parameter)
-                if ((event.touchedToneBytes
-                     & (1u << static_cast<unsigned> (parameter))) != 0)
-                    applyToneParameterValues (
-                        parameter, youknow106::sysex::parameterValue (
-                                       event.snapshot, parameter));
-        if (hasNewProgram)
-            currentProgram.store (event.programIndex, std::memory_order_relaxed);
-        parameterWriteGeneration.fetch_add (1, std::memory_order_release);
+        {
+            ScopedParameterWrite write { *this };
+            if (event.replacesTone)
+                applyPatchValues (event.snapshot);
+            else
+                for (int parameter = 0;
+                     parameter < youknow106::sysex::toneByteCount; ++parameter)
+                    if ((event.touchedToneBytes
+                         & (1u << static_cast<unsigned> (parameter))) != 0)
+                        applyToneParameterValues (
+                            parameter, youknow106::sysex::parameterValue (
+                                           event.snapshot, parameter));
+            if (hasNewProgram)
+                currentProgram.store (event.programIndex,
+                                      std::memory_order_relaxed);
+        }
 
         if (hasNewProgram)
         {
@@ -2318,9 +2489,8 @@ void YouKnow106AudioProcessor::applyToneParameter (int parameter, int value)
     if (parameter < 0 || parameter >= youknow106::sysex::toneByteCount)
         return;
 
-    parameterWriteGeneration.fetch_add (1, std::memory_order_acq_rel);
+    ScopedParameterWrite write { *this };
     applyToneParameterValues (parameter, value);
-    parameterWriteGeneration.fetch_add (1, std::memory_order_release);
 }
 
 void YouKnow106AudioProcessor::applyToneParameterValues (int parameter, int value)

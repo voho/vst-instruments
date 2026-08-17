@@ -11,8 +11,10 @@ namespace youknow106::presets
 // The complete 128-tone factory memory supplied with the reference instrument:
 // bank A followed by bank B, groups 1..8 and patches 1..8. Each entry is stored
 // from its original eighteen 7-bit tone bytes and decoded by the same path used
-// for a hardware SysEx dump; there are no hand-transcribed panel floats or
-// per-preset gain corrections.
+// for a hardware SysEx dump; there are no hand-transcribed tone floats and no
+// hidden per-preset DSP gain. Product presets add only the documented plug-in
+// controls below, including attenuation-only positions for the front-panel
+// output-volume shaft.
 //
 // The hardware stores no names. The names here are archival descriptive
 // metadata and do not take part in tone-memory or SysEx round trips. Provenance,
@@ -29,8 +31,9 @@ struct Preset
     // the tone inside them still round-trips through the JUNO's 18-byte patch
     // format.  These are the controls which the hardware's tone memory does
     // not carry.  Keeping them beside the tone, rather than teaching SysEx
-    // about plug-in-only data, lets the preset bar restore every visible
-    // control without changing what an imported hardware patch means.
+    // about plug-in-only data, lets the preset bar restore the player's whole
+    // setup without changing what an imported hardware patch means.  "Whole
+    // setup" stops short of one visible control: see the note below the fields.
     struct Controls
     {
         float volume { 0.80f };
@@ -45,7 +48,10 @@ struct Preset
         float calibration { 1.0f };
         float chorusNoise { 1.0f };
         int polyphony { 6 };
-        bool hq { true };
+        // Deliberately no quality/oversampling entry. The internal rate is a
+        // property of the machine the plug-in is running on, not of the sound,
+        // so recalling a preset must not overrule a player who chose a cheaper
+        // setting to fit a session's CPU budget.
     };
 
     Controls controls {};

@@ -7,9 +7,11 @@
 #include "DSP/YouKnow106SysEx.h"
 #include "DSP/YouKnow106Panel.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <limits>
 
 class YouKnow106AudioProcessorEditor;
 
@@ -24,23 +26,27 @@ public:
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
+    void reset() override;
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    void processBlockBypassed (juce::AudioBuffer<float>&,
+                               juce::MidiBuffer&) override;
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
     const juce::String getName() const override { return JucePlugin_Name; }
     bool acceptsMidi() const override { return true; }
-    // The instrument sends nothing of its own, but a requested patch dump
-    // leaves on the MIDI output, and a host that asks the processor rather
-    // than the wrapper metadata has to be told so or it may not route it.
-    bool producesMidi() const override { return true; }
+    bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    // The exact B-2 recurrence reaches digital zero after about 25.55 s at the
-    // slowest release setting; round up to cover the chorus/output settling.
-    static constexpr double maximumTailLengthSeconds = 26.0;
-    double getTailLengthSeconds() const override { return maximumTailLengthSeconds; }
+    // The musical envelope reaches digital zero after about 25.55 s, but an
+    // enabled chorus intentionally retains its modelled analogue noise floor.
+    // Report that conservative infinite tail so a host never truncates it or
+    // suspends the instrument while the physical-noise path is still audible.
+    double getTailLengthSeconds() const override
+    {
+        return std::numeric_limits<double>::infinity();
+    }
 
     // The factory bank is exposed as host programs, numbered the way the
     // modelled instrument numbers its patches.
@@ -82,12 +88,6 @@ public:
     int getMidiEventDroppedCount() const noexcept
     {
         return pendingMidiDropped.load (std::memory_order_relaxed);
-    }
-    // Outgoing dumps dropped because every fixed handoff slot was still in use.
-    // Only for tests; a user cannot normally click SEND fast enough to fill it.
-    int getSysExDumpDroppedCount() const noexcept
-    {
-        return pendingSysExDumpDropped.load (std::memory_order_relaxed);
     }
     // The current panel settings as a patch.
     youknow106::sysex::Patch currentPatch() const;
@@ -136,11 +136,6 @@ public:
     {
         return keyModeReassertSequence.load (std::memory_order_relaxed);
     }
-    // Asks for the current panel to be sent out as a patch dump on the next
-    // block. The message leaves through the plug-in's MIDI output, which is
-    // the only route a host actually exposes to a cable.
-    void requestSysExDump();
-
     int getActiveVoiceCount() const noexcept
     {
         return activeVoiceCount.load (std::memory_order_relaxed);
@@ -169,6 +164,34 @@ public:
     {
         return displayOversamplingFactor.load (std::memory_order_relaxed);
     }
+    // The quality ladder as the panel offers it: index 0..2 selects 1x, 2x or
+    // 4x. The engine may run a *lower* factor than the selected one when the
+    // host rate is already high enough, which is what the display factor above
+    // reports; this is the request.
+    // Both directions are derived from the engine's own ladder rather than
+    // restating it, so a rung added there appears on the panel by itself.
+    static constexpr int qualityChoiceCount = static_cast<int> (
+        youknow106::YouKnow106Engine::oversampleFactors.size());
+    static constexpr int oversamplingFactorForChoice (int choice) noexcept
+    {
+        return youknow106::YouKnow106Engine::oversampleFactors[
+            static_cast<std::size_t> (
+                std::clamp (choice, 0, qualityChoiceCount - 1))];
+    }
+    // The rung that runs `factor`, or the deepest one at or below it.
+    static constexpr int choiceForOversamplingFactor (int factor) noexcept
+    {
+        const auto& factors = youknow106::YouKnow106Engine::oversampleFactors;
+        int choice = 0;
+        for (int index = 1; index < qualityChoiceCount; ++index)
+            if (factors[static_cast<std::size_t> (index)] <= factor)
+                choice = index;
+        return choice;
+    }
+    int getQualityChoice() const noexcept
+    {
+        return choiceOf (youknow106::parameters::quality, qualityChoiceCount - 1);
+    }
     bool isEngineReady() const noexcept
     {
         return engineReady.load (std::memory_order_acquire);
@@ -183,11 +206,11 @@ public:
     }
     void getOscilloscopeBuffer (std::array<float, 256>& destination) const noexcept
     {
-        const std::size_t currentWrite = scopeWriteIndex.load (std::memory_order_relaxed);
+        const std::size_t currentWrite = scopeWriteIndex.load (std::memory_order_acquire);
         for (std::size_t i = 0; i < 256; ++i)
         {
             const std::size_t srcIdx = (currentWrite + i) % 256;
-            destination[i] = scopeBuffer[srcIdx];
+            destination[i] = scopeBuffer[srcIdx].load (std::memory_order_relaxed);
         }
     }
 
@@ -211,6 +234,10 @@ private:
     // Key releases the queue had no room for. Dropping a press costs a note
     // nobody hears; dropping a release leaves one held down for good.
     std::array<std::atomic<std::uint64_t>, 2> uiPendingNoteOff { };
+    // A host may call reset() from its processing thread. MidiKeyboardState's
+    // reset takes a lock, so its visual cleanup is deferred to the existing
+    // message-thread timer while the engine and audio queues reset immediately.
+    std::atomic<bool> keyboardResetRequested { false };
 
     static constexpr std::uint32_t emptyUiLeverMailbox = 0xffffffffu;
     std::atomic<std::uint32_t> uiLeverMailbox { emptyUiLeverMailbox };
@@ -240,7 +267,8 @@ private:
         const char* id = nullptr;
         std::atomic<float>* value = nullptr;
     };
-    std::array<ParameterPointer, 41> parameterPointers {};
+    static constexpr std::size_t parameterPointerCount = 42;
+    std::array<ParameterPointer, parameterPointerCount> parameterPointers {};
 
     youknow106::YouKnow106Engine engine;
     // The last complete APVTS/performance snapshot accepted by the audio
@@ -327,6 +355,25 @@ private:
     // keeps the previous engine settings for one block instead of rendering a
     // hybrid of two patches.
     std::atomic<unsigned> parameterWriteGeneration { 0 };
+    struct ScopedParameterWrite final
+    {
+        explicit ScopedParameterWrite (YouKnow106AudioProcessor&) noexcept;
+        ~ScopedParameterWrite();
+        ScopedParameterWrite (const ScopedParameterWrite&) = delete;
+        ScopedParameterWrite& operator= (const ScopedParameterWrite&) = delete;
+
+        YouKnow106AudioProcessor& processor;
+        ScopedParameterWrite* previous { nullptr };
+        std::array<float, parameterPointerCount> values {};
+        int program { 0 };
+        bool ownsGeneration { false };
+    };
+    static thread_local ScopedParameterWrite* activeParameterWrite;
+    const ScopedParameterWrite* activeWriteForThisThread() const noexcept;
+    void serialiseWriteSnapshot (const ScopedParameterWrite&,
+                                 juce::MemoryBlock& destinationData);
+    static void serialiseStateSnapshot (juce::ValueTree state, int program,
+                                        juce::MemoryBlock& destinationData);
     std::atomic<bool>* midiReflectionSnapshotCapturedForTest { nullptr };
     std::atomic<bool>* midiReflectionSnapshotResumeForTest { nullptr };
     void drainPendingMidiQueue();
@@ -455,23 +502,6 @@ private:
     std::atomic<bool> panicRequested { false };
     std::atomic<bool> keyModeReassertRequested { false };
     std::atomic<unsigned> keyModeReassertSequence { 0 };
-    // SEND travels in the opposite direction from incoming SysEx: the message
-    // thread publishes a complete fixed packet and the audio thread owns that
-    // slot until MidiBuffer::addEvent has copied it. A single shared array plus
-    // an atomic request flag is not sufficient -- clearing the flag before the
-    // copy lets a second click rewrite bytes which the callback is reading.
-    static constexpr int pendingSysExDumpQueueSlots = 8;
-    struct PendingSysExDumpSlot
-    {
-        std::array<std::uint8_t, youknow106::sysex::patchMessageBytes> bytes {};
-        int size { 0 };
-        std::atomic<bool> ready { false };
-    };
-    std::array<PendingSysExDumpSlot, pendingSysExDumpQueueSlots>
-        pendingSysExDumpQueue {};
-    std::atomic<int> pendingSysExDumpWriteIndex { 0 };
-    int pendingSysExDumpReadIndex { 0 };
-    std::atomic<int> pendingSysExDumpDropped { 0 };
     // The channel the connected instrument last spoke on. A dump addressed to
     // channel 1 is ignored by hardware set to anything else.
     std::atomic<int> sysExChannel { 0 };
@@ -487,7 +517,8 @@ private:
     std::atomic<float> displayRailDroop { 0.0f };
 
     static constexpr std::size_t scopeBufferSize = 256;
-    std::array<float, scopeBufferSize> scopeBuffer {};
+    static_assert (std::atomic<float>::is_always_lock_free);
+    std::array<std::atomic<float>, scopeBufferSize> scopeBuffer {};
     std::atomic<std::size_t> scopeWriteIndex { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (YouKnow106AudioProcessor)

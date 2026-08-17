@@ -327,6 +327,53 @@ constexpr std::uint64_t factoryCorpusFnv1a() noexcept
 
 static_assert(factoryCorpusFnv1a() == 0xa78dab9d5bafb386ull);
 
+// Per-preset output-volume trim, in panel position, one entry per bank slot.
+//
+// The eighteen tone bytes are the hardware's and are never touched; VR1's shaft
+// position is not part of them, and on the instrument it is exactly what a
+// player moves when one patch arrives hotter than the last. These trims are
+// that shaft position, chosen so the product bank behaves like a bank:
+//
+//   * No factory preset may exceed -1 dBFS sample peak. This is no longer the
+//     binding rule: once digital full scale was referred to the output summer's
+//     own rail, the untrimmed bank already peaked no higher than -3.67 dBFS.
+//     It stays as a floor under the contract rather than as the thing the
+//     trims are chosen to satisfy.
+//   * No factory preset may exceed -31 dBFS gated loudness. Derived once, as
+//     three decibels above the -34.20 dBFS corpus median measured with every
+//     preset at the panel default, then frozen as an absolute figure. It is
+//     deliberately not re-expressed against the median: pulling the loud end
+//     down moves the median too, so a relative rule would chase itself and
+//     could never be satisfied. Tools/AuditFactoryPresets enforces both as
+//     absolutes.
+//
+// Only attenuation is applied: no entry exceeds the 0.80 panel default, so a
+// preset is never made louder than the instrument's own nominal setting. The
+// intrinsically quiet percussion and noise-sweep patches keep their level --
+// VR1 has only about +2.25 dB of travel left above the default, which cannot
+// close the remaining gap, and their quietness is the hardware's own. Far less
+// of that gap is the model's doing than it once was: restoring the shared noise
+// rail to its service anchor lifted the twelve noise-only patches from 21.5 dB
+// below the corpus median to 12.9 dB below it.
+constexpr std::array<float, presetCount> factoryVolume {{
+    0.800f, 0.737f, 0.800f, 0.800f, 0.800f, 0.580f, 0.430f, 0.800f,
+    0.474f, 0.621f, 0.800f, 0.769f, 0.800f, 0.800f, 0.800f, 0.800f,
+    0.800f, 0.744f, 0.800f, 0.394f, 0.596f, 0.621f, 0.800f, 0.785f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.354f, 0.257f,
+    0.737f, 0.800f, 0.800f, 0.800f, 0.800f, 0.364f, 0.322f, 0.800f,
+    0.800f, 0.760f, 0.334f, 0.800f, 0.800f, 0.701f, 0.800f, 0.800f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.625f, 0.800f, 0.715f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f,
+    0.658f, 0.800f, 0.591f, 0.726f, 0.800f, 0.800f, 0.800f, 0.800f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.482f, 0.800f, 0.800f, 0.800f,
+    0.800f, 0.800f, 0.800f, 0.754f, 0.800f, 0.800f, 0.766f, 0.800f,
+    0.800f, 0.800f, 0.551f, 0.420f, 0.800f, 0.800f, 0.534f, 0.800f,
+    0.800f, 0.760f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f,
+    0.800f, 0.800f, 0.800f, 0.742f, 0.800f, 0.800f, 0.800f, 0.617f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.750f,
+    0.539f, 0.800f, 0.613f, 0.800f, 0.800f, 0.800f, 0.800f, 0.611f,
+}};
+
 struct BankStorage
 {
     std::array<std::array<char, 4>, presetCount> numbers {};
@@ -361,6 +408,7 @@ struct BankStorage
             // supplies the playing setup; hardware Program Change and SysEx
             // deliberately leave the player's performance controls alone.
             Preset::Controls controls {};
+            controls.volume = factoryVolume[index];
             switch (index)
             {
                 case 13: // A26 Celeste: play one octave up
