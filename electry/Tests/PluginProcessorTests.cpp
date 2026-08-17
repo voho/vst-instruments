@@ -888,6 +888,94 @@ void testChannelPressureAndAftertouchVibratoDispatch()
                 + std::to_string (centsTouched) + " full-value)");
 }
 
+// dispatchMidiData()'s handling of MIDI CC121 (Reset All Controllers) fans
+// out into five separate engine calls - setPitchBend(0), setResonance(0),
+// setPalmMutePressure(0), setVibrato(0) and setSustainPedal(false) - a path no
+// existing test drives: testMidiControllersAndVoiceLifecycle() only ever
+// sends CC64, CC120 and CC123, and every other performance control is
+// exercised through its own dedicated controller number, never CC121. A
+// dropped call, a wrong controller number, or a typo'd reset value here would
+// leave a bent pitch wheel or a held sustain pedal stuck exactly when a host
+// issues the routine Reset All Controllers message a DAW sends on transport
+// stop or program change, while every existing test kept passing. This drives
+// two of the five resets end to end through actual rendered audio - the
+// pitch-bend glide, mirroring testPitchWheelMidiDispatch(), and the
+// sustain-pedal release, mirroring testMidiControllersAndVoiceLifecycle() -
+// since both have an audible, unambiguous signature a dropped call would
+// miss.
+void testResetAllControllersDispatch()
+{
+    constexpr double openLowStringHz = 41.2034; // E1, MIDI note 28
+
+    // Pitch bend: bend the open low string fully up, let the glide settle,
+    // then send Reset All Controllers and confirm the bend glides back to the
+    // unbent pitch exactly as a centred pitch wheel would.
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::pitchWheel (1, 16383), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, electry::ElectryEngine::lowestPlayableNote, (juce::uint8) 100), 0);
+        renderBlock (processor, audio, midi);
+        renderSeconds (processor, audio, 0.5);
+
+        const auto bentSettled = renderCapture (processor, audio, 0.4);
+        const auto bentHz = measureFundamentalHz (
+            bentSettled, 0, static_cast<int> (bentSettled.size()), sampleRate,
+            openLowStringHz * std::pow (2.0, 2.0 / 12.0));
+        const auto centsBent = 1200.0 * std::log2 (bentHz / openLowStringHz);
+        expect (centsBent > 170.0,
+                "setup: a full-up pitch wheel did not bend the open low "
+                "string before the reset (measured "
+                    + std::to_string (centsBent) + " cents)");
+
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, 121, 0), 0);
+        renderBlock (processor, audio, midi);
+        renderSeconds (processor, audio, 0.5);
+
+        const auto resetSettled = renderCapture (processor, audio, 0.4);
+        const auto resetHz = measureFundamentalHz (
+            resetSettled, 0, static_cast<int> (resetSettled.size()), sampleRate,
+            openLowStringHz);
+        const auto centsAfterReset = 1200.0 * std::log2 (resetHz / openLowStringHz);
+        expect (std::abs (centsAfterReset) < 10.0,
+                "Reset All Controllers (CC121) did not clear a pending pitch "
+                "bend (measured " + std::to_string (centsAfterReset)
+                    + " cents from the open string)");
+        processor.releaseResources();
+    }
+
+    // Sustain pedal: hold the pedal down, release a note (which only flags
+    // the voice sustained rather than stopping it - see setSustainPedal()'s
+    // documented CC64 semantics), then send Reset All Controllers and confirm
+    // the flagged voice is released exactly as an explicit pedal-up would.
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, 64, 127), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (1, 45, (juce::uint8) 100), 0);
+        renderBlock (processor, audio, midi);
+        midi.addEvent (juce::MidiMessage::noteOff (1, 45), 0);
+        renderBlock (processor, audio, midi);
+        expect (processor.getActiveVoiceCount() == 1,
+                "setup: the sustain pedal did not hold the released string");
+
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, 121, 0), 0);
+        renderBlock (processor, audio, midi);
+        renderSeconds (processor, audio, 3.0);
+        expect (processor.getActiveVoiceCount() == 0,
+                "Reset All Controllers (CC121) did not release a "
+                "sustain-held string");
+        processor.releaseResources();
+    }
+}
+
 void testUiArticulationTriggerAndPanic()
 {
     ElectryAudioProcessor processor;
@@ -1373,6 +1461,7 @@ int main()
     testPitchWheelMidiDispatch();
     testResonanceWheelFeedback();
     testChannelPressureAndAftertouchVibratoDispatch();
+    testResetAllControllersDispatch();
     testUiArticulationTriggerAndPanic();
     testOutputGainImpact();
     testPerformanceControls();
