@@ -5405,6 +5405,19 @@ void testMidiSurfaceContract()
             expect (! prefixes.take (-1).has_value() && ! prefixes.take (16).has_value(),
                     "an out-of-range MIDI channel was accepted");
 
+            // clear() carries the same channel guard as set() and take(), but
+            // every clear() above this line only ever named channel 3 - already
+            // in range - so the guard itself had never been driven with
+            // anything invalid. An out-of-range clear() must be a no-op rather
+            // than reading or writing outside the sixteen-channel table, and a
+            // real channel's own pending prefix must survive it untouched.
+            prefixes.set (6, 91);
+            prefixes.clear (-1);
+            prefixes.clear (16);
+            const auto stillPending = prefixes.take (6);
+            expect (stillPending.has_value() && *stillPending == 91,
+                    "an out-of-range clear() disturbed a real channel's CC 88 prefix");
+
             // And what a taken prefix is worth: the fourteen-bit scaling for
             // the note that consumed it, and the untouched seven-bit scaling
             // for the next note on the same channel, which has none.
