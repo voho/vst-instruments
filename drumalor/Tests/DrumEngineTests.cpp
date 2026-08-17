@@ -1123,6 +1123,85 @@ void testSetInstrumentParametersSanitizesInvalidPitchLevelAndPan()
             "setInstrumentParameters() did not clamp an excessive pan to its -1 floor");
 }
 
+// setInstrumentParameters()'s own characterA/characterB/decay guards - each
+// independently `clampUnit (value, fallback)`, i.e. `std::isfinite (value) ?
+// std::clamp (value, 0.0f, 1.0f) : fallback` - are only ever driven by the
+// broad invalid-values stress test below, which checks that the resulting
+// render stays finite but never pins the fallback to the instrument's own
+// documented default or the clamp to its [0, 1] range, unlike the pitch,
+// level and pan guards immediately above. Exercised the same way: a NaN,
+// infinite or out-of-range field must render bit-identically to the
+// equivalent, already-sanitized explicit call.
+void testSetInstrumentParametersSanitizesInvalidCharacterAndDecay()
+{
+    constexpr auto instrument = drumalor::Instrument::Kick;
+    constexpr int samples = 4096;
+    const auto defaults = drumalor::getInstrumentMetadata (instrument).defaultParameters;
+
+    const auto renderWith = [&] (const drumalor::InstrumentParameters& parameters)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.setInstrumentParameters (instrument, parameters);
+        engine.trigger (instrument, 0.9f);
+        return renderInterleaved (engine, samples, defaultBlockSize);
+    };
+
+    const auto withCharacterA = [&] (float characterA)
+    {
+        auto parameters = defaults;
+        parameters.characterA = characterA;
+        return parameters;
+    };
+    expect (renderWith (withCharacterA (std::numeric_limits<float>::quiet_NaN()))
+                == renderWith (withCharacterA (defaults.characterA)),
+            "setInstrumentParameters() did not fall back a NaN characterA to the instrument default");
+    expect (renderWith (withCharacterA (std::numeric_limits<float>::infinity()))
+                == renderWith (withCharacterA (defaults.characterA)),
+            "setInstrumentParameters() did not fall back a +infinity characterA to the instrument default");
+    expect (renderWith (withCharacterA (-std::numeric_limits<float>::infinity()))
+                == renderWith (withCharacterA (defaults.characterA)),
+            "setInstrumentParameters() did not fall back a -infinity characterA to the instrument default");
+    expect (renderWith (withCharacterA (4.0f)) == renderWith (withCharacterA (1.0f)),
+            "setInstrumentParameters() did not clamp an excessive characterA to its 1.0 ceiling");
+    expect (renderWith (withCharacterA (-4.0f)) == renderWith (withCharacterA (0.0f)),
+            "setInstrumentParameters() did not clamp an excessive characterA to its 0.0 floor");
+
+    const auto withCharacterB = [&] (float characterB)
+    {
+        auto parameters = defaults;
+        parameters.characterB = characterB;
+        return parameters;
+    };
+    expect (renderWith (withCharacterB (std::numeric_limits<float>::quiet_NaN()))
+                == renderWith (withCharacterB (defaults.characterB)),
+            "setInstrumentParameters() did not fall back a NaN characterB to the instrument default");
+    expect (renderWith (withCharacterB (std::numeric_limits<float>::infinity()))
+                == renderWith (withCharacterB (defaults.characterB)),
+            "setInstrumentParameters() did not fall back a +infinity characterB to the instrument default");
+    expect (renderWith (withCharacterB (100.0f)) == renderWith (withCharacterB (1.0f)),
+            "setInstrumentParameters() did not clamp an excessive characterB to its 1.0 ceiling");
+    expect (renderWith (withCharacterB (-100.0f)) == renderWith (withCharacterB (0.0f)),
+            "setInstrumentParameters() did not clamp an excessive characterB to its 0.0 floor");
+
+    const auto withDecay = [&] (float decay)
+    {
+        auto parameters = defaults;
+        parameters.decay = decay;
+        return parameters;
+    };
+    expect (renderWith (withDecay (std::numeric_limits<float>::quiet_NaN()))
+                == renderWith (withDecay (defaults.decay)),
+            "setInstrumentParameters() did not fall back a NaN decay to the instrument default");
+    expect (renderWith (withDecay (-std::numeric_limits<float>::infinity()))
+                == renderWith (withDecay (defaults.decay)),
+            "setInstrumentParameters() did not fall back a -infinity decay to the instrument default");
+    expect (renderWith (withDecay (7.0f)) == renderWith (withDecay (1.0f)),
+            "setInstrumentParameters() did not clamp an excessive decay to its 1.0 ceiling");
+    expect (renderWith (withDecay (-7.0f)) == renderWith (withDecay (0.0f)),
+            "setInstrumentParameters() did not clamp an excessive decay to its 0.0 floor");
+}
+
 // setKitParameters()'s own humanise/bleed/busDrive/busCompression guards -
 // each independently `clampUnit (value, fallback)`, i.e. `std::isfinite
 // (value) ? std::clamp (value, 0.0f, 1.0f) : fallback` - are only ever driven
@@ -6291,6 +6370,7 @@ int main()
     testPrepareSanitizesInvalidSampleRate();
     testSetOutputGainSanitizesInvalidGain();
     testSetInstrumentParametersSanitizesInvalidPitchLevelAndPan();
+    testSetInstrumentParametersSanitizesInvalidCharacterAndDecay();
     testSetKitParametersSanitizesInvalidHumaniseBleedBusDriveAndBusCompression();
     testTriggerSanitizesInvalidInstrumentAndVelocity();
     testModalSampleRateConsistency();
