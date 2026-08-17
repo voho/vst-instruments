@@ -1438,6 +1438,37 @@ void testDisplayMathHelpers()
     expect (vocalor::formantResponseDbFromCoefficients (700.0f, nullptr, nullptr, nullptr, 0, 0.0f)
                 <= -119.0f,
             "the precomputed-coefficient formant response did not fall back safely on missing data");
+    // That combined case only proves the guard trips when every term is
+    // invalid at once, which formantResponseCoefficients()'s own guard tests
+    // above deliberately avoid relying on for the same reason: a regression
+    // that dropped any single term from formantResponseDbFromCoefficients()'s
+    // condition would still pass it. Check each term in isolation against an
+    // otherwise-valid, already-resolved coefficient set.
+    constexpr float kGuardFallbackDb = -120.0f;
+    expect (vocalor::formantResponseDbFromCoefficients (
+                700.0f, nullptr, responseA2.data(), responseScale.data(),
+                vocalor::kFormantCount, 48000.0f) == kGuardFallbackDb,
+            "a null a1 pointer did not fall back to the guard value");
+    expect (vocalor::formantResponseDbFromCoefficients (
+                700.0f, responseA1.data(), nullptr, responseScale.data(),
+                vocalor::kFormantCount, 48000.0f) == kGuardFallbackDb,
+            "a null a2 pointer did not fall back to the guard value");
+    expect (vocalor::formantResponseDbFromCoefficients (
+                700.0f, responseA1.data(), responseA2.data(), nullptr,
+                vocalor::kFormantCount, 48000.0f) == kGuardFallbackDb,
+            "a null scale pointer did not fall back to the guard value");
+    expect (vocalor::formantResponseDbFromCoefficients (
+                700.0f, responseA1.data(), responseA2.data(), responseScale.data(),
+                0, 48000.0f) == kGuardFallbackDb,
+            "a non-positive formant count did not fall back to the guard value");
+    expect (vocalor::formantResponseDbFromCoefficients (
+                700.0f, responseA1.data(), responseA2.data(), responseScale.data(),
+                vocalor::kFormantCount, 0.0f) == kGuardFallbackDb,
+            "a zero sample rate did not fall back to the guard value");
+    expect (vocalor::formantResponseDbFromCoefficients (
+                700.0f, responseA1.data(), responseA2.data(), responseScale.data(),
+                vocalor::kFormantCount, -48000.0f) == kGuardFallbackDb,
+            "a negative sample rate did not fall back to the guard value");
 
     // Logarithmic frequency axis round trip.
     for (const float probe : { 100.0f, 440.0f, 3000.0f, 9000.0f })
