@@ -1,7 +1,7 @@
 # Taikor presets
 
 The current plug-in stores its
-[22-parameter drum state](../README.md#controls) in the host session and exposes
+[25-parameter drum state](../README.md#controls) in the host session and exposes
 the version-1 defaults on first launch. Those defaults are not the midpoint of
 every control: they describe one specific instrument — a five-shaku (150 cm)
 ō-daiko with a thick cowhide head on a heavy carved zelkova shell, struck with
@@ -15,8 +15,9 @@ separately. See [the four drums](../README.md#the-four-drums).
 
 Factory preset files are intentionally not baked into the project yet. Keeping
 them out avoids silently changing sound design while the physical model is still
-being refined, and every parameter here is a physical quantity rather than a
-voicing choice, so a preset is a description of a drum rather than a patch.
+being refined. The drum-design controls describe physical quantities rather
+than arbitrary voicing labels, so a preset should describe an instrument rather
+than a mood.
 
 When presets are added, name **4 Drums** settings after the *set* they describe —
 `Kumi-daiko`, `Hira-daiko set`, `Studio kit` — rather than after a mood. A
@@ -44,7 +45,7 @@ shaku is what the bottom of a kumi-daiko set actually is.
 
 ## Moving the whole family from the controls
 
-The parameters are physical, so a set of drums can be dialled in by describing
+The physical-model controls let a set of drums be dialled in by describing
 the largest of them. Head Diameter is a scale factor on all four; the other
 four drum controls are offsets carried across all four. So these describe the
 C3 ō-daiko, and the rest of the family follows it:
