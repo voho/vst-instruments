@@ -1305,24 +1305,7 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     {
         band.envelope = 0.0f;
         band.level = 0.0f;
-        band.lowStateLeft = 0.0f;
-        band.lowStateLeft2 = 0.0f;
-        band.highStateLeft = 0.0f;
-        band.highStateLeft2 = 0.0f;
-        band.highStateLeft3 = 0.0f;
-        band.highStateLeft4 = 0.0f;
-        band.highStateLeft5 = 0.0f;
-        band.highStateLeft6 = 0.0f;
-        band.highStateLeft7 = 0.0f;
-        band.lowStateRight = 0.0f;
-        band.lowStateRight2 = 0.0f;
-        band.highStateRight = 0.0f;
-        band.highStateRight2 = 0.0f;
-        band.highStateRight3 = 0.0f;
-        band.highStateRight4 = 0.0f;
-        band.highStateRight5 = 0.0f;
-        band.highStateRight6 = 0.0f;
-        band.highStateRight7 = 0.0f;
+        resetContinuumBandFilterState (band);
     }
     for (auto& mode : voice.modes)
     {
@@ -3328,24 +3311,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
             entry.lowCoefficient = continuumEdgeCoefficient (low, nyquist, rate);
             entry.highCoefficient = continuumEdgeCoefficient (high, nyquist, rate);
             entry.centre = centre;
-            entry.lowStateLeft = 0.0f;
-            entry.lowStateLeft2 = 0.0f;
-            entry.highStateLeft = 0.0f;
-            entry.highStateLeft2 = 0.0f;
-            entry.highStateLeft3 = 0.0f;
-            entry.highStateLeft4 = 0.0f;
-            entry.highStateLeft5 = 0.0f;
-            entry.highStateLeft6 = 0.0f;
-            entry.highStateLeft7 = 0.0f;
-            entry.lowStateRight = 0.0f;
-            entry.lowStateRight2 = 0.0f;
-            entry.highStateRight = 0.0f;
-            entry.highStateRight2 = 0.0f;
-            entry.highStateRight3 = 0.0f;
-            entry.highStateRight4 = 0.0f;
-            entry.highStateRight5 = 0.0f;
-            entry.highStateRight6 = 0.0f;
-            entry.highStateRight7 = 0.0f;
+            resetContinuumBandFilterState (entry);
 
             // Two microphones a fixed distance apart hear a long wavelength in
             // common and a short one independently. The crossover is where the
@@ -5051,6 +5017,48 @@ void TaikoEngine::injectContinuumEnergy (const Voice& voice, Voice& physical,
     }
 }
 
+float TaikoEngine::continuumEdgeCascade (
+    float& lowState, float& lowState2, float& highState, float& highState2,
+    float& highState3, float& highState4, float& highState5,
+    float& highState6, float& highState7, float input, float lowCoefficient,
+    float highCoefficient) noexcept
+{
+    lowState += lowCoefficient * (input - lowState);
+    const float highPassed = input - lowState;
+    lowState2 += lowCoefficient * (highPassed - lowState2);
+    const float highPassed2 = highPassed - lowState2;
+    highState += highCoefficient * (highPassed2 - highState);
+    highState2 += highCoefficient * (highState - highState2);
+    highState3 += highCoefficient * (highState2 - highState3);
+    highState4 += highCoefficient * (highState3 - highState4);
+    highState5 += highCoefficient * (highState4 - highState5);
+    highState6 += highCoefficient * (highState5 - highState6);
+    highState7 += highCoefficient * (highState6 - highState7);
+    return highState7;
+}
+
+void TaikoEngine::resetContinuumBandFilterState (Voice::ContinuumBand& band) noexcept
+{
+    band.lowStateLeft = 0.0f;
+    band.lowStateLeft2 = 0.0f;
+    band.highStateLeft = 0.0f;
+    band.highStateLeft2 = 0.0f;
+    band.highStateLeft3 = 0.0f;
+    band.highStateLeft4 = 0.0f;
+    band.highStateLeft5 = 0.0f;
+    band.highStateLeft6 = 0.0f;
+    band.highStateLeft7 = 0.0f;
+    band.lowStateRight = 0.0f;
+    band.lowStateRight2 = 0.0f;
+    band.highStateRight = 0.0f;
+    band.highStateRight2 = 0.0f;
+    band.highStateRight3 = 0.0f;
+    band.highStateRight4 = 0.0f;
+    band.highStateRight5 = 0.0f;
+    band.highStateRight6 = 0.0f;
+    band.highStateRight7 = 0.0f;
+}
+
 float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
                                 float& rightOut) noexcept
 {
@@ -5186,50 +5194,21 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
         // skirt. The asymmetry is intentional: the contact and loss laws make
         // the crossover bands the persistent masking risk, so their upward
         // leakage must die before the higher octaves begin.
-        band.lowStateLeft += band.lowCoefficient * (inLeft - band.lowStateLeft);
-        const float highPassedLeft = inLeft - band.lowStateLeft;
-        band.lowStateLeft2 +=
-            band.lowCoefficient * (highPassedLeft - band.lowStateLeft2);
-        const float highPassedLeft2 = highPassedLeft - band.lowStateLeft2;
-        band.highStateLeft +=
-            band.highCoefficient * (highPassedLeft2 - band.highStateLeft);
-        band.highStateLeft2 +=
-            band.highCoefficient * (band.highStateLeft - band.highStateLeft2);
-        band.highStateLeft3 +=
-            band.highCoefficient * (band.highStateLeft2 - band.highStateLeft3);
-        band.highStateLeft4 +=
-            band.highCoefficient * (band.highStateLeft3 - band.highStateLeft4);
-        band.highStateLeft5 +=
-            band.highCoefficient * (band.highStateLeft4 - band.highStateLeft5);
-        band.highStateLeft6 +=
-            band.highCoefficient * (band.highStateLeft5 - band.highStateLeft6);
-        band.highStateLeft7 +=
-            band.highCoefficient * (band.highStateLeft6 - band.highStateLeft7);
-
-        band.lowStateRight += band.lowCoefficient * (inRight - band.lowStateRight);
-        const float highPassedRight = inRight - band.lowStateRight;
-        band.lowStateRight2 +=
-            band.lowCoefficient * (highPassedRight - band.lowStateRight2);
-        const float highPassedRight2 = highPassedRight - band.lowStateRight2;
-        band.highStateRight +=
-            band.highCoefficient * (highPassedRight2 - band.highStateRight);
-        band.highStateRight2 +=
-            band.highCoefficient * (band.highStateRight - band.highStateRight2);
-        band.highStateRight3 +=
-            band.highCoefficient * (band.highStateRight2 - band.highStateRight3);
-        band.highStateRight4 +=
-            band.highCoefficient * (band.highStateRight3 - band.highStateRight4);
-        band.highStateRight5 +=
-            band.highCoefficient * (band.highStateRight4 - band.highStateRight5);
-        band.highStateRight6 +=
-            band.highCoefficient * (band.highStateRight5 - band.highStateRight6);
-        band.highStateRight7 +=
-            band.highCoefficient * (band.highStateRight6 - band.highStateRight7);
+        const float filteredLeft = continuumEdgeCascade (
+            band.lowStateLeft, band.lowStateLeft2, band.highStateLeft,
+            band.highStateLeft2, band.highStateLeft3, band.highStateLeft4,
+            band.highStateLeft5, band.highStateLeft6, band.highStateLeft7,
+            inLeft, band.lowCoefficient, band.highCoefficient);
+        const float filteredRight = continuumEdgeCascade (
+            band.lowStateRight, band.lowStateRight2, band.highStateRight,
+            band.highStateRight2, band.highStateRight3, band.highStateRight4,
+            band.highStateRight5, band.highStateRight6, band.highStateRight7,
+            inRight, band.lowCoefficient, band.highCoefficient);
 
         const float gain = band.level * band.envelope;
         band.envelope *= band.envelopeDecay;
-        membraneLeft += band.highStateLeft7 * gain;
-        membraneRight += band.highStateRight7 * gain;
+        membraneLeft += filteredLeft * gain;
+        membraneRight += filteredRight * gain;
     }
 
     if (! voice.physicalBank)
