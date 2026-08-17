@@ -1338,6 +1338,25 @@ private:
     // sites shared this loop rather than each keeping its own copy of it.
     static void injectContinuumEnergy (const Voice& voice, Voice& physical,
                                        float share) noexcept;
+    // One channel's pass through a continuum band's two-high-pass/seven-
+    // low-pass cascade: renderVoice ran this identically for the left and
+    // right channel of every band, differing only in which of the band's two
+    // sets of nine state variables it touched. Shared here so the two
+    // channels' filters cannot drift apart, and so continuumBandVariance's
+    // own derivation of this cascade's exact white-noise gain has a single
+    // definition to match against.
+    [[nodiscard]] static float continuumEdgeCascade (
+        float& lowState, float& lowState2, float& highState,
+        float& highState2, float& highState3, float& highState4,
+        float& highState5, float& highState6, float& highState7,
+        float input, float lowCoefficient, float highCoefficient) noexcept;
+    // Zeroes a continuum band's eighteen filter-state variables (the nine per
+    // channel that continuumEdgeCascade advances) without disturbing its
+    // coefficients, gain or envelope. silenceVoice's full reset and
+    // buildVoiceModes's per-band retune both need exactly this and nothing
+    // else, so both call it instead of each listing the eighteen fields by
+    // hand.
+    static void resetContinuumBandFilterState (Voice::ContinuumBand& band) noexcept;
     [[nodiscard]] float renderVoice (Voice& voice, Voice* physical,
                                      float& rightOut) noexcept;
     [[nodiscard]] int findVoiceSlot() noexcept;
