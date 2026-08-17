@@ -99,6 +99,15 @@ float meterBallistics(float current, float target, float attack,
 
 float vibrationShape(float positionFraction, float stoppedFraction) noexcept
 {
+    // Every other helper here (levelHeat, meterBallistics, packStringVisual)
+    // folds a non-finite input to a safe fallback before its own clamp runs;
+    // this one clamped both inputs but never checked them first, so a NaN
+    // position or stopped fraction survived clampf() unchanged - NaN fails
+    // every comparison clampf makes - and reached the `position <= stopped`
+    // early-out as false, then std::sin() below, propagating NaN into the
+    // fretboard's drawn string path instead of drawing it at rest.
+    if (! std::isfinite(positionFraction) || ! std::isfinite(stoppedFraction))
+        return 0.0f;
     const float stopped = clampf(stoppedFraction, 0.0f, 0.98f);
     const float position = clampf(positionFraction, 0.0f, 1.0f);
     if (position <= stopped)

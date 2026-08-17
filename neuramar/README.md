@@ -858,6 +858,7 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   committing). Test-only change; verified with the JUCE-free DSP suite (3/3
   tests passed) and a fresh `NeuramarRenderDemos` run confirming
   `git status neuramar/Docs/audio` clean across all eight WAVs.
+- 2026-08-17: `updateVoiceControl`'s Air-band and Bone-mode edge-fade gains now share one `edgeFadeGain` helper instead of repeating the same low-floor/high-limit clamp-and-multiply with different literals in each loop; pure dedup, verified with the JUCE-free DSP suite (3/3 tests passed) and `git status neuramar/Docs/audio` confirmed clean.
 - 2026-08-17: Added direct coverage for `NeuramarEngine::process`'s output-pointer
   handling beyond the ordinary two-distinct-non-null-buffers case every other
   test in the suite already used - `right == nullptr` (mono, left channel only,
