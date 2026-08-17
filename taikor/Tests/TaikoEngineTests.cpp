@@ -824,16 +824,32 @@ struct TaikoEngineTestAccess
         float highCoefficient { 0.0f };
         float targetRms { 0.0f };
         float level { 0.0f };
+        // The exact value continuumBandVariance returned for this band's own
+        // coefficients when buildVoiceModes populated continuumVarianceCache_ -
+        // read back from the cache itself rather than recovered from level,
+        // since level is scaled again by the contact's excitation and duration
+        // after buildVoiceModes sets it (see the corner/excitationScale loop in
+        // trigger()) and no longer equals targetRms / sqrt(variance) alone.
+        float cachedVariance { 1.0f };
     };
 
     static std::vector<ContinuumBandInfo> continuumBands (const TaikoEngine& engine)
     {
         std::vector<ContinuumBandInfo> result;
         const auto& voice = engine.voices_[0];
-        for (const auto& band : voice.continuum)
+        const auto drumIndex = static_cast<std::size_t> (
+            std::clamp (voice.octaveOffset, taikor::lowestOctaveOffset,
+                        taikor::highestOctaveOffset)
+            - taikor::lowestOctaveOffset);
+        for (std::size_t index = 0; index < voice.continuum.size(); ++index)
+        {
+            const auto& band = voice.continuum[index];
             if (band.level > 0.0f)
                 result.push_back ({ band.centre, band.lowCoefficient,
-                                    band.highCoefficient, band.targetRms, band.level });
+                                    band.highCoefficient, band.targetRms, band.level,
+                                    engine.continuumVarianceCache_[drumIndex][index]
+                                        .variance });
+        }
         return result;
     }
 
@@ -1009,6 +1025,23 @@ struct TaikoEngineTestAccess
                                  float frequency) noexcept
     {
         return TaikoEngine::mountingLossAt (mountLoss, mountCorner, frequency);
+    }
+
+    // Exposes the continuum band's exact state-space variance solve on its
+    // own, so its "!(isfinite(variance) && variance > 1e-12)" fallback to
+    // unit variance - taken when the Lyapunov iteration's own stationary
+    // covariance comes out non-finite or too small to be real - can be
+    // asserted directly. buildVoiceModes's sole call site always derives its
+    // pair as lowCoefficient = continuumEdgeCoefficient(centre / bandwidth,
+    // ...) and highCoefficient = continuumEdgeCoefficient(centre * bandwidth,
+    // ...), and continuumEdgeCoefficient is non-decreasing in its cutoff, so
+    // lowCoefficient sits strictly below highCoefficient for every band any
+    // drum ever builds; only an inverted or coincident pair reaches the
+    // fallback, and nothing in Source/ ever passes one.
+    static float continuumBandVariance (float lowCoefficient,
+                                        float highCoefficient) noexcept
+    {
+        return TaikoEngine::continuumBandVariance (lowCoefficient, highCoefficient);
     }
 
     static std::uint64_t strokeCount (const TaikoEngine& engine) noexcept
@@ -7173,6 +7206,70 @@ void testMountingLossGuardsItsOwnDomain()
             "an ordinary corner must resolve to the fourth-order shelf");
 }
 
+void testContinuumBandVarianceGuardsItsOwnDomain()
+{
+    using taikor::TaikoEngineTestAccess;
+    const auto nan = std::numeric_limits<float>::quiet_NaN();
+
+    // An inverted pair - a high coefficient at or below the low one - is the
+    // only way to reach the fallback, and it must report the documented unit
+    // variance rather than whatever sign or magnitude the ill-posed solve
+    // produced (measured: -4.0e-32 for this exact pair, which would have
+    // handed a live band a negative variance and an imaginary level).
+    expect (TaikoEngineTestAccess::continuumBandVariance (0.5f, 1.0e-6f) == 1.0f,
+            "a high coefficient below the low one must fall back to unit "
+            "variance rather than propagate a negative or vanishing solve");
+    expect (TaikoEngineTestAccess::continuumBandVariance (1.0f, 1.0f) == 1.0f,
+            "coincident low/high coefficients must fall back the same way");
+    // A NaN argument does not itself reach the fallback: the internal clamp
+    // (clampFloat's own "!(value == value)" branch) turns a NaN low or high
+    // coefficient into the floor, 1e-7, same as any other out-of-range input,
+    // and a floor paired with an ordinary partner is not degenerate - it is
+    // clampFloat, not this guard, that keeps a NaN from ever reaching the
+    // Lyapunov solve. Pairing NaN on both sides collapses them to the same
+    // floor and does reach the fallback, exactly as the coincident case above.
+    expect (TaikoEngineTestAccess::continuumBandVariance (nan, nan) == 1.0f,
+            "two NaN coefficients must clamp to the same floor and fall back "
+            "as a coincident pair");
+    expect (TaikoEngineTestAccess::continuumBandVariance (nan, 0.1f) != 1.0f,
+            "a NaN low coefficient paired with an ordinary high one must "
+            "clamp to the floor and resolve normally, not fall back");
+
+    // Every reachable pair keeps lowCoefficient < highCoefficient by
+    // construction (see the wrapper's own comment), and a real drum's live
+    // bands must therefore never take the fallback branch. Cross-checking
+    // against continuumVarianceCache_'s own stored result ties this direct
+    // call to the one buildVoiceModes actually relies on, rather than
+    // trusting the formula in isolation.
+    taikor::TaikoEngine engine;
+    auto parameters = defaultParameters();
+    parameters.humanise = 0.0f;
+    engine.setParameters (parameters);
+    engine.prepare (48000.0, 64);
+    engine.trigger (taikor::Articulation::Ka, 0, 0.9f);
+    const auto bands = TaikoEngineTestAccess::continuumBands (engine);
+    expect (! bands.empty(),
+            "a Ka at velocity 0.9 must light at least one continuum band");
+
+    bool checkedOne = false;
+    for (const auto& band : bands)
+    {
+        expect (band.lowCoefficient < band.highCoefficient,
+                "every live band's low coefficient must sit strictly below "
+                "its high one, keeping it off the fallback branch");
+        expect (band.cachedVariance != 1.0f,
+                "a live band must not be reading back the fallback constant");
+
+        const float direct = TaikoEngineTestAccess::continuumBandVariance (
+            band.lowCoefficient, band.highCoefficient);
+        expect (direct == band.cachedVariance,
+                "a direct call with a live band's own coefficients must "
+                "reproduce continuumVarianceCache_'s stored value bit for bit");
+        checkedOne = true;
+    }
+    expect (checkedOne, "the cross-check must run on at least one live band");
+}
+
 void testInvalidInputSafety()
 {
     taikor::TaikoEngine engine;
@@ -8265,6 +8362,7 @@ int main()
     testColumnStiffnessFactorGuardsItsOwnDomain();
     testStiffnessStretchGuardsItsOwnDomain();
     testMountingLossGuardsItsOwnDomain();
+    testContinuumBandVarianceGuardsItsOwnDomain();
     testInvalidInputSafety();
     testUiPresentationMath();
     testControlEndpointsAndGestures();

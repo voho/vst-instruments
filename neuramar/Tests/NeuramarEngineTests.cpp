@@ -3197,6 +3197,114 @@ void testStereoPanAndOverlappingNoteOff(const neuramar::NeuralModel& model)
            "the second note-off did not release the remaining overlapping voice");
 }
 
+// process()'s output-pointer handling has three branches beyond the ordinary
+// two-distinct-non-null-buffers case every other test in this suite uses:
+// right == nullptr (mono, left channel only - the null right pointer is
+// simply never dereferenced), left == nullptr (still takes the *stereo*
+// write path, because a null left pointer can never equal a non-null right
+// one, so right renders the plain right channel), and right == left (an
+// aliased mono buffer, the one case that takes the explicit
+// 0.5f * (outputLeft + outputRight) downmix at the bottom of the sample
+// loop). PluginProcessor always hands process() two distinct, non-null
+// channel pointers - its output bus is fixed to stereo - so none of the
+// three had ever been driven directly.
+void testProcessNullAndAliasedOutputBuffers(const neuramar::NeuralModel& model)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 128;
+    constexpr int sampleCount = 1536;
+
+    const auto prepareEngine = [&model](neuramar::NeuramarEngine& engine)
+    {
+        engine.prepare(sampleRate, blockSize);
+        engine.setModel(&model);
+        neuramar::EngineParameters parameters;
+        parameters.air = 0.5f;
+        parameters.bone = 0.5f;
+        parameters.spread = 1.0f;
+        parameters.outputGain = 0.4f;
+        engine.setParameters(parameters);
+        engine.noteOn(model.rootMidiNote() + 4, 0.73f);
+    };
+
+    neuramar::NeuramarEngine reference;
+    prepareEngine(reference);
+    std::vector<float> referenceLeft(sampleCount, 0.0f);
+    std::vector<float> referenceRight(sampleCount, 0.0f);
+    for (int offset = 0; offset < sampleCount; offset += blockSize)
+        reference.process(referenceLeft.data() + offset,
+                           referenceRight.data() + offset, blockSize);
+
+    // A signal with genuine left/right disagreement is what makes the
+    // aliased-buffer assertion below meaningful - at Spread 0 the downmix
+    // formula and a plain copy would be indistinguishable.
+    float maximumStereoDifference = 0.0f;
+    for (int index = 0; index < sampleCount; ++index)
+        maximumStereoDifference = std::max(maximumStereoDifference,
+            std::abs(referenceLeft[index] - referenceRight[index]));
+    expect(maximumStereoDifference > 1.0e-4f,
+           "the fixture note rendered identical left and right channels, so "
+           "the aliased-buffer assertion below could not distinguish a "
+           "downmix from a plain copy");
+
+    // right == left: the aliased-buffer downmix branch.
+    {
+        neuramar::NeuramarEngine engine;
+        prepareEngine(engine);
+        std::vector<float> aliased(sampleCount, 0.0f);
+        for (int offset = 0; offset < sampleCount; offset += blockSize)
+            engine.process(aliased.data() + offset, aliased.data() + offset,
+                           blockSize);
+        float maximumDifference = 0.0f;
+        for (int index = 0; index < sampleCount; ++index)
+            maximumDifference = std::max(maximumDifference, std::abs(
+                aliased[index]
+                    - 0.5f * (referenceLeft[index] + referenceRight[index])));
+        expect(maximumDifference < 1.0e-6f,
+               "process() with an aliased left/right pointer did not "
+               "downmix to 0.5*(left+right) (max difference "
+                   + std::to_string(maximumDifference) + ")");
+    }
+
+    // right == nullptr: left renders exactly as it does in stereo, and the
+    // null right pointer is never dereferenced.
+    {
+        neuramar::NeuramarEngine engine;
+        prepareEngine(engine);
+        std::vector<float> leftOnly(sampleCount, 0.0f);
+        for (int offset = 0; offset < sampleCount; offset += blockSize)
+            engine.process(leftOnly.data() + offset, nullptr, blockSize);
+        float maximumDifference = 0.0f;
+        for (int index = 0; index < sampleCount; ++index)
+            maximumDifference = std::max(maximumDifference,
+                std::abs(leftOnly[index] - referenceLeft[index]));
+        expect(maximumDifference < 1.0e-6f,
+               "process() with a null right pointer changed the left "
+               "channel (max difference " + std::to_string(maximumDifference)
+                   + ")");
+    }
+
+    // left == nullptr: right still takes the two-distinct-buffers path (it
+    // is compared against left by pointer value, and nullptr never equals a
+    // real buffer), so it renders the plain right channel rather than a
+    // downmix - unlike the right == left case above.
+    {
+        neuramar::NeuramarEngine engine;
+        prepareEngine(engine);
+        std::vector<float> rightOnly(sampleCount, 0.0f);
+        for (int offset = 0; offset < sampleCount; offset += blockSize)
+            engine.process(nullptr, rightOnly.data() + offset, blockSize);
+        float maximumDifference = 0.0f;
+        for (int index = 0; index < sampleCount; ++index)
+            maximumDifference = std::max(maximumDifference,
+                std::abs(rightOnly[index] - referenceRight[index]));
+        expect(maximumDifference < 1.0e-6f,
+               "process() with a null left pointer did not render the plain "
+               "right channel (max difference "
+                   + std::to_string(maximumDifference) + ")");
+    }
+}
+
 // Least-squares amplitude of one sinusoid over an explicit interval, Hann
 // weighted. windowedSinusoidAmplitude() above is anchored to a centre and a
 // fixed half-window; these measurements are stated as spans instead, because
@@ -7459,6 +7567,7 @@ int main()
         testDenseVoiceStealTailStaysBounded(*fixture.first.model);
         testMutationZeroRetriggerDeterminism(*fixture.first.model);
         testStereoPanAndOverlappingNoteOff(*fixture.first.model);
+        testProcessNullAndAliasedOutputBuffers(*fixture.first.model);
         testHeldNoteDoesNotMoveInImage(*fixture.first.model);
         testHighRegisterRenderThroughput(*fixture.first.model);
         testRegisterTiltTracksTheKeyboard(*fixture.first.model);

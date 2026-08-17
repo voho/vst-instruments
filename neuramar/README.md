@@ -858,6 +858,28 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   committing). Test-only change; verified with the JUCE-free DSP suite (3/3
   tests passed) and a fresh `NeuramarRenderDemos` run confirming
   `git status neuramar/Docs/audio` clean across all eight WAVs.
+- 2026-08-17: Added direct coverage for `NeuramarEngine::process`'s output-pointer
+  handling beyond the ordinary two-distinct-non-null-buffers case every other
+  test in the suite already used - `right == nullptr` (mono, left channel only,
+  the null right pointer never dereferenced), `left == nullptr` (right still
+  takes the *stereo* write path, since a null left pointer can never equal a
+  non-null right one, so it renders the plain right channel rather than a
+  downmix), and `right == left` (an aliased mono buffer, the one case that
+  takes the explicit `0.5f * (outputLeft + outputRight)` downmix at the bottom
+  of the sample loop) - none of which any caller in the plug-in reaches, since
+  `PluginProcessor` always hands `process()` two distinct, non-null channel
+  pointers from a bus fixed to stereo, and none of which any existing test
+  drove either. Added `testProcessNullAndAliasedOutputBuffers`, rendering an
+  off-root, spread-1, Air/Bone-engaged note through a reference stereo pair
+  and then through each of the three pointer combinations, asserting the
+  aliased case matches the reference downmix formula and the two null cases
+  match the corresponding untouched channel. Verified the new test is a real
+  regression test by temporarily replacing the aliased branch's downmix with
+  a plain `outputRight` write, confirming exactly the new aliased-buffer
+  assertion failed and no others, then restoring it. Test-only; no engine or
+  header behavior change, verified with the JUCE-free DSP suite (3/3 tests
+  passed) and a fresh `NeuramarRenderDemos` run confirming `git status
+  neuramar/Docs/audio` clean across all eight WAVs.
 - 2026-08-17: Added direct coverage for `SampleLearner.cpp`'s `belongsToActiveBone` -
   the Air-fit exclusion test that keeps an actively-resonating Bone mode's own
   energy out of the noise-floor measurement, the sibling of

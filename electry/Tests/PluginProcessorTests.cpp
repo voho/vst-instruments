@@ -273,6 +273,95 @@ void testParameterTextFormatting()
             "pickup selector does not format its Bridge choice");
 }
 
+void expectParameterValueForText (ElectryAudioProcessor& processor, const char* id,
+                                  const juce::String& text, float expectedValue,
+                                  float tolerance, const std::string& label)
+{
+    auto* parameter = processor.parameters.getParameter (id);
+    expect (parameter != nullptr, std::string ("cannot parse missing parameter ") + id);
+    if (parameter == nullptr)
+        return;
+
+    const auto actualValue =
+        parameter->convertFrom0to1 (parameter->getValueForText (text));
+    expect (std::abs (actualValue - expectedValue) < tolerance,
+            label + ": expected " + std::to_string (expectedValue) + ", got "
+                + std::to_string (actualValue));
+}
+
+// getText() (a parameter's plain value formatted into automation text) is
+// covered above by testParameterTextFormatting(), but every parameter here
+// also installs the opposite direction - getValueForText(), reached whenever
+// a host or the generic parameter editor parses typed automation text back
+// into a value - and nothing in the suite had ever called it: percentValue(),
+// plainNumericValue() and timeValue() in PluginProcessor.cpp, plus
+// scaleLength's own bespoke inches parser, could all have silently
+// mis-parsed without failing a single existing test.
+void testParameterTextParsing()
+{
+    ElectryAudioProcessor processor;
+
+    // percentValue(): a 0..1-ranged parameter's plain value equals its
+    // normalised one, so the parsed percentage is the expected value exactly.
+    expectParameterValueForText (processor, electry::parameters::tone, "80%", 0.80f,
+                                 1.0e-4f, "tone \"80%\"");
+    expectParameterValueForText (processor, electry::parameters::artifacts, "18%", 0.18f,
+                                 1.0e-4f, "artifacts \"18%\"");
+
+    // plainNumericValue(): output level's dB text keeps its sign through the
+    // round trip in both directions.
+    expectParameterValueForText (processor, electry::parameters::output, "-6.0dB", -6.0f,
+                                 1.0e-3f, "output \"-6.0dB\"");
+    expectParameterValueForText (processor, electry::parameters::output, "+3.0dB", 3.0f,
+                                 1.0e-3f, "output \"+3.0dB\"");
+
+    // resonanceDepth's percentText100()/plainNumericValue() pair is a
+    // 0..100-ranged percent, unlike tone/artifacts' 0..1 one above.
+    expectParameterValueForText (processor, electry::parameters::resonanceDepth, "35%",
+                                 35.0f, 1.0e-3f, "resonanceDepth \"35%\"");
+
+    // strumSpread reuses plainNumericValue() too, but its own display text
+    // falls back to the word "Block chord" below 0.05 ms - a string with no
+    // digits at all, so a naive re-parse of exactly what the control just
+    // displayed must fold to 0.0 rather than leave String::getFloatValue()
+    // to choke on an all-alphabetic string.
+    expectParameterValueForText (processor, electry::parameters::strumSpread,
+                                 "Block chord", 0.0f, 1.0e-3f,
+                                 "strumSpread \"Block chord\"");
+    expectParameterValueForText (processor, electry::parameters::strumSpread,
+                                 "18.0 ms/string", 18.0f, 1.0e-3f,
+                                 "strumSpread \"18.0 ms/string\"");
+
+    // timeValue()'s branch on whether the typed text contains "ms": bendTime's
+    // own display crosses from milliseconds to seconds at 1.0 s, so both
+    // spellings of the same duration - one with the suffix, one without -
+    // must parse back to the identical value rather than one of them silently
+    // landing 1000x off.
+    expectParameterValueForText (processor, electry::parameters::bendTime, "280 ms", 0.28f,
+                                 1.0e-3f, "bendTime \"280 ms\"");
+    expectParameterValueForText (processor, electry::parameters::bendTime, "1.50 s", 1.50f,
+                                 1.0e-3f, "bendTime \"1.50 s\" (no \"ms\" suffix)");
+    expectParameterValueForText (processor, electry::parameters::bendTime, "1500ms", 1.50f,
+                                 1.0e-3f, "bendTime \"1500ms\" (\"ms\" suffix)");
+
+    // scaleLength's bespoke inverse lambda is the only valueFromString
+    // installed here that clamps its result (juce::jlimit(0.0f, 1.0f, ...))
+    // instead of handing the raw parse straight to the parameter's range, so
+    // it is also the one whose guard is worth checking directly: a typed inch
+    // value past either end of the 25.50"-28.00" span must clamp to that end
+    // rather than extrapolate to a negative or >1 normalised value.
+    expectParameterValueForText (processor, electry::parameters::scaleLength, "25.50\"",
+                                 0.0f, 1.0e-3f, "scaleLength \"25.50\\\"\"");
+    expectParameterValueForText (processor, electry::parameters::scaleLength, "28.00\"",
+                                 1.0f, 1.0e-3f, "scaleLength \"28.00\\\"\"");
+    expectParameterValueForText (processor, electry::parameters::scaleLength, "20.00\"",
+                                 0.0f, 1.0e-3f,
+                                 "scaleLength \"20.00\\\"\" (below range clamps)");
+    expectParameterValueForText (processor, electry::parameters::scaleLength, "40.00\"",
+                                 1.0f, 1.0e-3f,
+                                 "scaleLength \"40.00\\\"\" (above range clamps)");
+}
+
 void testStateRoundTrip()
 {
     ElectryAudioProcessor source;
@@ -888,6 +977,94 @@ void testChannelPressureAndAftertouchVibratoDispatch()
                 + std::to_string (centsTouched) + " full-value)");
 }
 
+// dispatchMidiData()'s handling of MIDI CC121 (Reset All Controllers) fans
+// out into five separate engine calls - setPitchBend(0), setResonance(0),
+// setPalmMutePressure(0), setVibrato(0) and setSustainPedal(false) - a path no
+// existing test drives: testMidiControllersAndVoiceLifecycle() only ever
+// sends CC64, CC120 and CC123, and every other performance control is
+// exercised through its own dedicated controller number, never CC121. A
+// dropped call, a wrong controller number, or a typo'd reset value here would
+// leave a bent pitch wheel or a held sustain pedal stuck exactly when a host
+// issues the routine Reset All Controllers message a DAW sends on transport
+// stop or program change, while every existing test kept passing. This drives
+// two of the five resets end to end through actual rendered audio - the
+// pitch-bend glide, mirroring testPitchWheelMidiDispatch(), and the
+// sustain-pedal release, mirroring testMidiControllersAndVoiceLifecycle() -
+// since both have an audible, unambiguous signature a dropped call would
+// miss.
+void testResetAllControllersDispatch()
+{
+    constexpr double openLowStringHz = 41.2034; // E1, MIDI note 28
+
+    // Pitch bend: bend the open low string fully up, let the glide settle,
+    // then send Reset All Controllers and confirm the bend glides back to the
+    // unbent pitch exactly as a centred pitch wheel would.
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::pitchWheel (1, 16383), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, electry::ElectryEngine::lowestPlayableNote, (juce::uint8) 100), 0);
+        renderBlock (processor, audio, midi);
+        renderSeconds (processor, audio, 0.5);
+
+        const auto bentSettled = renderCapture (processor, audio, 0.4);
+        const auto bentHz = measureFundamentalHz (
+            bentSettled, 0, static_cast<int> (bentSettled.size()), sampleRate,
+            openLowStringHz * std::pow (2.0, 2.0 / 12.0));
+        const auto centsBent = 1200.0 * std::log2 (bentHz / openLowStringHz);
+        expect (centsBent > 170.0,
+                "setup: a full-up pitch wheel did not bend the open low "
+                "string before the reset (measured "
+                    + std::to_string (centsBent) + " cents)");
+
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, 121, 0), 0);
+        renderBlock (processor, audio, midi);
+        renderSeconds (processor, audio, 0.5);
+
+        const auto resetSettled = renderCapture (processor, audio, 0.4);
+        const auto resetHz = measureFundamentalHz (
+            resetSettled, 0, static_cast<int> (resetSettled.size()), sampleRate,
+            openLowStringHz);
+        const auto centsAfterReset = 1200.0 * std::log2 (resetHz / openLowStringHz);
+        expect (std::abs (centsAfterReset) < 10.0,
+                "Reset All Controllers (CC121) did not clear a pending pitch "
+                "bend (measured " + std::to_string (centsAfterReset)
+                    + " cents from the open string)");
+        processor.releaseResources();
+    }
+
+    // Sustain pedal: hold the pedal down, release a note (which only flags
+    // the voice sustained rather than stopping it - see setSustainPedal()'s
+    // documented CC64 semantics), then send Reset All Controllers and confirm
+    // the flagged voice is released exactly as an explicit pedal-up would.
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, 64, 127), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (1, 45, (juce::uint8) 100), 0);
+        renderBlock (processor, audio, midi);
+        midi.addEvent (juce::MidiMessage::noteOff (1, 45), 0);
+        renderBlock (processor, audio, midi);
+        expect (processor.getActiveVoiceCount() == 1,
+                "setup: the sustain pedal did not hold the released string");
+
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, 121, 0), 0);
+        renderBlock (processor, audio, midi);
+        renderSeconds (processor, audio, 3.0);
+        expect (processor.getActiveVoiceCount() == 0,
+                "Reset All Controllers (CC121) did not release a "
+                "sustain-held string");
+        processor.releaseResources();
+    }
+}
+
 void testUiArticulationTriggerAndPanic()
 {
     ElectryAudioProcessor processor;
@@ -1364,6 +1541,7 @@ int main()
     juce::ScopedJuceInitialiser_GUI guiInitialiser;
     testParameterLayoutAndDefaults();
     testParameterTextFormatting();
+    testParameterTextParsing();
     testStateRoundTrip();
     testBusAndPluginContract();
     testSampleAccurateNoteAndSound();
@@ -1373,6 +1551,7 @@ int main()
     testPitchWheelMidiDispatch();
     testResonanceWheelFeedback();
     testChannelPressureAndAftertouchVibratoDispatch();
+    testResetAllControllersDispatch();
     testUiArticulationTriggerAndPanic();
     testOutputGainImpact();
     testPerformanceControls();
