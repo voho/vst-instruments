@@ -110,6 +110,13 @@ struct VoiceEngineTestAccess
         return 0.0f;
     }
 
+    /** The sample rate prepare() actually settled on, after its own NaN/Inf
+        fallback and 8 kHz-192 kHz clamp have run. */
+    static double preparedSampleRate(const VoiceEngine& engine) noexcept
+    {
+        return engine.sampleRate_;
+    }
+
     static int soundingMidiNote(const VoiceEngine& engine) noexcept
     {
         for (const auto& voice : engine.voices_)
@@ -3380,6 +3387,50 @@ void testPreparationIsExplicit()
     engine.process(left.data(), right.data(), static_cast<int>(left.size()));
     expect(engine.getActiveVoiceCount() == 1,
            "an explicitly prepared engine did not accept its first note");
+}
+
+/** prepare()'s own sanitisation of the sample rate a host hands it: a NaN or
+    infinite value -- something a host can report transiently, e.g. mid audio-
+    device switch -- falls back to 48 kHz, and any other value is clamped into
+    the 8 kHz-192 kHz range every formant ceiling, room delay tap and mip guard
+    is derived from. Every other prepare() call in the suite (including
+    testSampleRateInvariance()'s own sweep) passes an already-sane, in-range
+    rate, so neither the fallback nor the clamp had ever been exercised
+    directly, and PluginProcessor::prepareToPlay() forwards the host's rate
+    straight through with no clamp of its own. */
+void testPrepareSanitisesInvalidSampleRate()
+{
+    vocalor::VoiceEngine nan;
+    nan.prepare(std::numeric_limits<double>::quiet_NaN(), blockSize);
+    expect(vocalor::VoiceEngineTestAccess::preparedSampleRate(nan) == 48000.0,
+           "prepare() did not fall back to 48 kHz for a NaN sample rate");
+
+    vocalor::VoiceEngine infinite;
+    infinite.prepare(std::numeric_limits<double>::infinity(), blockSize);
+    expect(vocalor::VoiceEngineTestAccess::preparedSampleRate(infinite) == 48000.0,
+           "prepare() did not fall back to 48 kHz for an infinite sample rate");
+
+    vocalor::VoiceEngine tooLow;
+    tooLow.prepare(100.0, blockSize);
+    expect(vocalor::VoiceEngineTestAccess::preparedSampleRate(tooLow) == 8000.0,
+           "prepare() did not clamp a below-range sample rate to its 8 kHz floor");
+
+    vocalor::VoiceEngine tooHigh;
+    tooHigh.prepare(500000.0, blockSize);
+    expect(vocalor::VoiceEngineTestAccess::preparedSampleRate(tooHigh) == 192000.0,
+           "prepare() did not clamp an above-range sample rate to its 192 kHz ceiling");
+
+    // Confirm the sanitised engine is actually usable afterwards, not merely
+    // holding a sane sampleRate_ while process() still misbehaves.
+    std::array<float, 64> left {};
+    std::array<float, 64> right {};
+    nan.reset();
+    nan.noteOn(60, 0.8f);
+    nan.process(left.data(), right.data(), static_cast<int>(left.size()));
+    expect(nan.getActiveVoiceCount() == 1
+               && std::any_of(left.begin(), left.end(),
+                              [](float value) { return value != 0.0f; }),
+           "an engine prepared with a NaN sample rate did not render normally afterwards");
 }
 
 /** noteOn()'s non-positive-velocity guard (see
@@ -9208,6 +9259,7 @@ void testPerformanceExpression()
 int main()
 {
     testPreparationIsExplicit();
+    testPrepareSanitisesInvalidSampleRate();
     testNoteOnWithNonPositiveVelocityIsSafeBeforePrepare();
     testRenderMatrix();
     testReleaseCompletes();
