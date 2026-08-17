@@ -1311,12 +1311,7 @@ void DrumEngine::resetMetallicOscillatorBanks() noexcept
         // Fill the complete reconstruction history from the running circuit
         // rather than exposing a zero-state filter transient on the first hit.
         for (int substep = 0; substep < metallicDecimatorTapCount_; ++substep)
-        {
-            bank.decimatorHistory[static_cast<std::size_t> (
-                bank.decimatorWriteIndex)] = renderMetallicBankSubstep (bank);
-            if (++bank.decimatorWriteIndex >= maximumMetallicDecimatorTaps)
-                bank.decimatorWriteIndex = 0;
-        }
+            pushMetallicSubstep (bank);
     }
 }
 
@@ -1369,12 +1364,7 @@ void DrumEngine::wakeMetallicOscillatorBank (RelaxationOscillatorBank& bank) noe
     }
 
     for (std::uint64_t substep = 0; substep < replaySubsteps; ++substep)
-    {
-        bank.decimatorHistory[static_cast<std::size_t> (
-            bank.decimatorWriteIndex)] = renderMetallicBankSubstep (bank);
-        if (++bank.decimatorWriteIndex >= maximumMetallicDecimatorTaps)
-            bank.decimatorWriteIndex = 0;
-    }
+        pushMetallicSubstep (bank);
 }
 
 void DrumEngine::wakeMetallicOscillatorBankFor (Instrument instrument) noexcept
@@ -1610,6 +1600,20 @@ float DrumEngine::renderMetallicBankSubstep (
     return sum / static_cast<float> (bank.activeOscillators);
 }
 
+float DrumEngine::pushMetallicSubstep (RelaxationOscillatorBank& bank) noexcept
+{
+    // The one thing every caller that advances a bank's circuit does with the
+    // result: write it into the ring buffer the reconstruction filter reads
+    // and step the write index, wrapping it back to the start. Resetting a
+    // bank, waking one from a frozen gap, and the engine's own per-sample
+    // render loop each used to spell this out separately.
+    const float sample = renderMetallicBankSubstep (bank);
+    bank.decimatorHistory[static_cast<std::size_t> (bank.decimatorWriteIndex)] = sample;
+    if (++bank.decimatorWriteIndex >= maximumMetallicDecimatorTaps)
+        bank.decimatorWriteIndex = 0;
+    return sample;
+}
+
 float DrumEngine::decimateMetallicBank (
     const RelaxationOscillatorBank& bank) const noexcept
 {
@@ -1662,13 +1666,7 @@ void DrumEngine::renderMetallicOscillatorBanks (
 
         float latestSource = 0.0f;
         for (int substep = 0; substep < metallicOversampleFactor_; ++substep)
-        {
-            latestSource = renderMetallicBankSubstep (bank);
-            bank.decimatorHistory[static_cast<std::size_t> (
-                bank.decimatorWriteIndex)] = latestSource;
-            if (++bank.decimatorWriteIndex >= maximumMetallicDecimatorTaps)
-                bank.decimatorWriteIndex = 0;
-        }
+            latestSource = pushMetallicSubstep (bank);
 
         bank.output = metallicOversampleFactor_ > 1
             ? decimateMetallicBank (bank) : latestSource;
