@@ -307,12 +307,9 @@ float polyBlep (float phase, float phaseIncrement) noexcept
     return 0.0f;
 }
 
-// Every call site clamps pan to [-1, 1] into a local of its own before
-// passing that same value in here, on every note-on, every sympathetic-bed
-// refresh, and every processed block's per-instrument mixer update.
-// Clamping it again on entry only reproduced a result the caller had just
-// computed. The two functions now trust the [-1, 1] contract their four call
-// sites already uphold instead of redoing it.
+// Only applyPan() below calls these now, always with the value it just
+// clamped to [-1, 1] itself, so the two functions trust that contract
+// instead of reclamping a result their one caller just computed.
 float constantPowerLeft (float clampedPan) noexcept
 {
     return std::sqrt (0.5f * (1.0f - clampedPan));
@@ -321,6 +318,19 @@ float constantPowerLeft (float clampedPan) noexcept
 float constantPowerRight (float clampedPan) noexcept
 {
     return std::sqrt (0.5f * (1.0f + clampedPan));
+}
+
+// Every one of the four call sites above - a triggered voice, a sympathetic
+// bed's initial configuration, its per-block pan refresh, and the per-block
+// mixer target update - clamped pan to [-1, 1] into a local of its own and
+// then spelled out the same two constant-power assignments. One shared
+// helper now does the clamp once and writes both channels, with no change to
+// what any of them compute.
+void applyPan (float pan, float& panLeft, float& panRight) noexcept
+{
+    const float clampedPan = std::clamp (pan, -1.0f, 1.0f);
+    panLeft = constantPowerLeft (clampedPan);
+    panRight = constantPowerRight (clampedPan);
 }
 
 float rationalShaper (float value, float positiveCurvature,
@@ -3138,9 +3148,7 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
 
     // Placement is now an automatable per-voice control whose defaults are the
     // former hard-coded kit positions, so an untouched kit images identically.
-    const float pan = std::clamp (values.pan, -1.0f, 1.0f);
-    voice.panLeft = constantPowerLeft (pan);
-    voice.panRight = constantPowerRight (pan);
+    applyPan (values.pan, voice.panLeft, voice.panRight);
 
     // A triggered analogue oscillator rarely begins at precisely the same
     // capacitor voltage. Keep the displacement small for punch consistency,
@@ -4432,9 +4440,7 @@ void DrumEngine::configureSympatheticBed (std::size_t index) noexcept
     const auto values = snapshotParameters (bed.instrument);
     bed.lastPitch = values.pitch;
     bed.lastDecay = values.decay;
-    const float pan = std::clamp (values.pan, -1.0f, 1.0f);
-    bed.panLeft = constantPowerLeft (pan);
-    bed.panRight = constantPowerRight (pan);
+    applyPan (values.pan, bed.panLeft, bed.panRight);
 
     const float root = roots[index] * std::exp2 (values.pitch / 12.0f);
     // An undriven head rings for a fraction of a struck one: nothing is
@@ -4473,9 +4479,7 @@ void DrumEngine::updateSympatheticBeds() noexcept
     {
         auto& bed = sympatheticBeds_[index];
         const auto values = snapshotParameters (bed.instrument);
-        const float pan = std::clamp (values.pan, -1.0f, 1.0f);
-        bed.panLeft = constantPowerLeft (pan);
-        bed.panRight = constantPowerRight (pan);
+        applyPan (values.pan, bed.panLeft, bed.panRight);
         if (values.pitch == bed.lastPitch && values.decay == bed.lastDecay)
             continue;
         // Retuning a head clears what it was ringing with, which is what
@@ -4666,9 +4670,7 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         const auto values = snapshotParameters (static_cast<Instrument> (index));
         auto& mixer = mixerTargets_[index];
         mixer.levelGain = decibelsToGain (values.level);
-        const float pan = std::clamp (values.pan, -1.0f, 1.0f);
-        mixer.panLeft = constantPowerLeft (pan);
-        mixer.panRight = constantPowerRight (pan);
+        applyPan (values.pan, mixer.panLeft, mixer.panRight);
     }
 
     // The whole coupling path is skipped, not merely scaled to nothing, while
