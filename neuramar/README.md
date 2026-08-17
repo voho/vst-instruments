@@ -845,6 +845,29 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   behavior change, verified with the JUCE-free DSP suite (3/3 tests passed)
   and a fresh `NeuramarRenderDemos` run confirming `git status
   neuramar/Docs/audio` clean across all eight WAVs.
+- 2026-08-17: Added direct coverage for `SpectralEnvelope.h`'s
+  `ShapePreservingEnvelope::sample()` at fractional coordinates strictly
+  inside its two "evidence shoulders" - the hold below the first observed
+  partial and the linear fade-to-zero above the last one, which the class
+  comment calls out as deliberately asymmetric so Body Lock degenerates to
+  pitch-following below the first partial instead of notching low harmonics.
+  The existing tests only ever landed on these branches' integer boundary
+  knots (coordinate 1.0f takes the cubic-segment path with a zero fraction;
+  coordinate `HarmonicCount` lands on the back-of-array case of that same
+  path), so a genuinely fractional coordinate inside either shoulder had
+  never been driven directly. Added `testSpectralEnvelopeShoulders()`,
+  asserting the hold returns the first partial's exact magnitude at three
+  fractional coordinates below it, and that the fade matches its documented
+  `magnitudes_.back() * (lastCoordinate - oneBasedCoordinate)` formula and
+  decreases monotonically across three fractional coordinates above the last
+  partial. Verified the new test is a real regression test by temporarily
+  breaking both shoulder branches (a flat half-magnitude hold and a
+  non-fading plateau), confirming exactly its five new assertions failed
+  (plus two unrelated pre-existing tests that also depend on correct
+  shoulder behaviour), then restoring the original code. Test-only change;
+  verified with the JUCE-free DSP suite (3/3 tests passed) and a fresh
+  `NeuramarRenderDemos` run confirming `git status neuramar/Docs/audio`
+  clean across all eight WAVs.
 - 2026-08-16: `NeuramarEngine`'s `setParameters`/`loadParameters` now walk one shared, data-driven table of the eighteen parameter fields instead of repeating each field's name across two near-identical eighteen-statement bodies.
 - 2026-08-16: `SampleLearner.cpp`'s `chooseLoop` inner candidate-pair loop -
   which compares every admissible loop-start/loop-end pair across all 93
