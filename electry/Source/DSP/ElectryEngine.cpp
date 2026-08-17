@@ -2375,10 +2375,7 @@ void ElectryEngine::drawStrokeVariation(Voice& voice) noexcept
     // cannot move further along the string than the plectrum's width lets the
     // player feel, nor further than the heel of the hand anchored on the
     // bridge allows.
-    const auto normal = [&state]
-    {
-        return bipolarNoise(state) + bipolarNoise(state) + bipolarNoise(state);
-    };
+    const auto normal = [&state] { return sumThreeUniforms(state); };
 
     // Contact position. 4 mm of standard deviation along the string is the
     // scale the plectrum's own width and the anchored hand bracket; at the
@@ -2430,10 +2427,7 @@ void ElectryEngine::beginChordStroke(int stringIndex, bool strokeIsUp,
     // same MIDI still renders the same audio.
     std::uint32_t state = hash32(
         static_cast<std::uint32_t>(chordSequence_ * 2891336453u) ^ 0x7feb352du);
-    const auto normal = [&state]
-    {
-        return bipolarNoise(state) + bipolarNoise(state) + bipolarNoise(state);
-    };
+    const auto normal = [&state] { return sumThreeUniforms(state); };
 
     // Three uniforms sum to unit variance and cannot leave +/-3 sigma, so the
     // acceleration stays between 0.55 and 1.45 of nominal and the ramp cannot
@@ -2535,10 +2529,7 @@ void ElectryEngine::drawVibratoCycle(Voice& voice) noexcept
     std::uint32_t state = hash32(voice.vibratoSeed
                                  ^ (voice.vibratoCycle * 2654435761u));
     ++voice.vibratoCycle;
-    const auto normal = [&state]
-    {
-        return bipolarNoise(state) + bipolarNoise(state) + bipolarNoise(state);
-    };
+    const auto normal = [&state] { return sumThreeUniforms(state); };
     // Three uniforms sum to unit variance and cannot leave +/-3 sigma, so the
     // rate stays inside 0.64..1.36 of nominal and the excursion inside
     // 0.55..1.45 - a hand that wanders, not one that stumbles.

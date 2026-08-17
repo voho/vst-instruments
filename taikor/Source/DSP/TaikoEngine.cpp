@@ -1105,6 +1105,8 @@ void TaikoEngine::prepare (double sampleRate, int maxBlockSize) noexcept
     sampleRate_ = std::clamp (sampleRate, minimumSupportedSampleRate,
                               maximumSupportedSampleRate);
     inverseSampleRate_ = static_cast<float> (1.0 / sampleRate_);
+    maximumTailSamples_ =
+        static_cast<std::uint64_t> (maximumTailSeconds * sampleRate_);
     maxBlockSize_ = maxBlockSize > 0 ? maxBlockSize : 512;
 
     const auto rate = static_cast<float> (sampleRate_);
@@ -3489,8 +3491,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         ? voice.modes[0].audibleSamples + static_cast<std::uint64_t> (rate * 0.02f)
         : static_cast<std::uint64_t> (rate * 0.05f);
     voice.maximumSamples = std::min (
-        voice.maximumSamples,
-        static_cast<std::uint64_t> (maximumTailSeconds * sampleRate_));
+        voice.maximumSamples, maximumTailSamples_);
 }
 
 void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcept
@@ -3681,9 +3682,7 @@ void TaikoEngine::ensurePhysicalDrum (int octave, const DrumState& drum) noexcep
                   / (tensionFollowerSeconds * static_cast<float> (sampleRate_)));
 
     physical.ageSamples = rebuilding ? savedAge : 0;
-    physical.maximumSamples = rebuilding
-        ? savedDeadline
-        : static_cast<std::uint64_t> (maximumTailSeconds * sampleRate_);
+    physical.maximumSamples = rebuilding ? savedDeadline : maximumTailSamples_;
     physical.controlCountdown = rebuilding && ! savedPalmActive ? savedCountdown : 0;
     physical.active = rebuilding ? wasActive : false;
     physical.tensionEnvelope = rebuilding ? savedTensionEnvelope : 0.0f;
@@ -4248,8 +4247,7 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
         }
 
         voice.maximumSamples = std::min (
-            voice.maximumSamples + scheduleEnd,
-            static_cast<std::uint64_t> (maximumTailSeconds * sampleRate_));
+            voice.maximumSamples + scheduleEnd, maximumTailSamples_);
     }
 
     // This slot owns only contact/direct-path transients. The physical tail has
@@ -4270,9 +4268,7 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
 
     physical.active = true;
     physical.activeModeCount = physical.modeCount;
-    physical.maximumSamples = physical.ageSamples
-                            + static_cast<std::uint64_t> (
-                                  maximumTailSeconds * sampleRate_);
+    physical.maximumSamples = physical.ageSamples + maximumTailSamples_;
     physical.retireGain = 1.0f;
     physical.retireStep = 0.0f;
 
@@ -4470,7 +4466,7 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
         voice.maximumSamples = std::min (
             std::max (voice.maximumSamples,
                       longest + static_cast<std::uint64_t> (rate * 0.02f)),
-            static_cast<std::uint64_t> (maximumTailSeconds * sampleRate_));
+            maximumTailSamples_);
 
     // And a fade already armed against the old deadline has to be called off,
     // or extending the deadline achieves nothing: the render loop is

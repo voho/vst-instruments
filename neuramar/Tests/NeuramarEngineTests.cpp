@@ -4489,6 +4489,72 @@ void testAirFitSubtractedHarmonicGuards()
            "index");
 }
 
+// belongsToActiveBone() is makeAirFitDesign()'s sibling exclusion test for
+// the Bone layer: it keeps an actively-resonating mode's own energy out of
+// the Air noise-floor measurement the same way belongsToSubtractedHarmonic()
+// does for a subtracted harmonic. Its only production caller,
+// makeAirFitDesign(), always hands it the BoneSelection findPersistentBoneModes()
+// just produced - a fixed-size array where every unfilled slot keeps a
+// fallback ratio (one of the four persistentBoneRatios literals) but a
+// reliability of exactly 0 - so the `reliabilities[mode] <= 0.0f` skip this
+// test exercises has never been driven directly: nothing in the suite checks
+// that a probe frequency sitting exactly on an unreliable slot's fallback
+// ratio is still treated as ordinary noise-floor evidence rather than
+// excluded Bone content. Test-only; no engine or header change.
+void testAirFitActiveBoneGuard()
+{
+    using neuramar::SampleLearner;
+    using neuramar::NeuralModel;
+
+    constexpr float root = 220.0f;
+    constexpr float binWidth = 5.0f;
+    std::array<float, NeuralModel::boneModeCount> ratios {};
+    std::array<float, NeuralModel::boneModeCount> reliabilities {};
+    ratios[3] = 2.5f;
+    reliabilities[3] = 0.6f;
+    ratios[7] = 4.1f;
+    reliabilities[7] = 0.0f; // an unfilled, unreliable slot
+
+    // A probe sitting exactly on the reliable mode's frequency is excluded.
+    expect(SampleLearner::belongsToActiveBoneForTests(
+               root * ratios[3], binWidth, ratios, reliabilities, root),
+           "a probe on a reliable Bone mode's own frequency was not "
+           "recognised as Bone content");
+    // Nudging just inside the 2.5-bin-width acceptance window still counts.
+    expect(SampleLearner::belongsToActiveBoneForTests(
+               root * ratios[3] + 2.0f * binWidth, binWidth, ratios,
+               reliabilities, root),
+           "a probe within the acceptance window around a reliable mode was "
+           "not recognised as Bone content");
+    // Just outside the window, it is ordinary noise-floor evidence again.
+    expect(!SampleLearner::belongsToActiveBoneForTests(
+               root * ratios[3] + 3.0f * binWidth, binWidth, ratios,
+               reliabilities, root),
+           "a probe well outside every reliable mode's window was wrongly "
+           "excluded as Bone content");
+
+    // The guard under test: a probe sitting exactly on the *unreliable*
+    // slot's fallback frequency must not be excluded, because
+    // reliabilities[7] == 0 means findPersistentBoneModes() never actually
+    // vouched for that ratio. Without the `reliabilities[mode] <= 0.0f` skip,
+    // this call would wrongly return true instead.
+    expect(!SampleLearner::belongsToActiveBoneForTests(
+               root * ratios[7], binWidth, ratios, reliabilities, root),
+           "an unreliable Bone slot's fallback ratio was wrongly treated as "
+           "active Bone content");
+
+    // A selection with every mode unreliable never excludes anything, no
+    // matter how many candidate frequencies are probed.
+    std::array<float, NeuralModel::boneModeCount> allUnreliable {};
+    for (std::size_t mode = 0; mode < NeuralModel::boneModeCount; ++mode)
+    {
+        expect(!SampleLearner::belongsToActiveBoneForTests(
+                   root * (static_cast<float>(mode) + 1.0f), binWidth, ratios,
+                   allUnreliable, root),
+               "a fully unreliable Bone selection excluded a probe frequency");
+    }
+}
+
 void testHighRegisterRenderThroughput(const neuramar::NeuralModel& model)
 {
     neuramar::NeuramarEngine engine;
@@ -7351,6 +7417,7 @@ int main()
     testResamplerHostileInputs();
     testConditionSampleHostileInputs();
     testAirFitSubtractedHarmonicGuards();
+    testAirFitActiveBoneGuard();
     if (fixture.first.model)
     {
         testLearnedPitchContour(*fixture.first.model);

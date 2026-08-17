@@ -857,6 +857,28 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
   verified with the JUCE-free DSP suite (3/3 tests passed) and a fresh
   `NeuramarRenderDemos` run confirming `git status neuramar/Docs/audio` clean
   across all eight WAVs.
+- 2026-08-17: Added direct coverage for `SampleLearner.cpp`'s `belongsToActiveBone` -
+  the Air-fit exclusion test that keeps an actively-resonating Bone mode's own
+  energy out of the noise-floor measurement, the sibling of
+  `belongsToSubtractedHarmonic` covering the Bone rather than the Core layer -
+  and specifically its per-mode `reliabilities[mode] <= 0.0f` skip. Its one
+  caller, `makeAirFitDesign`, always hands it the `BoneSelection`
+  `findPersistentBoneModes` just produced, where every slot the persistence
+  scoring could not fill keeps one of the four `persistentBoneRatios`
+  fallback literals but a reliability of exactly 0, so nothing in the suite
+  had ever checked that a probe frequency landing exactly on such an
+  unfilled slot's fallback ratio is still measured as ordinary noise-floor
+  evidence instead of being wrongly excluded as Bone content. Added a small
+  test-only accessor, `SampleLearner::belongsToActiveBoneForTests`, taking
+  raw ratio/reliability arrays so the private `BoneSelection` type stays
+  internal to the translation unit, alongside the existing
+  `belongsToSubtractedHarmonicForTests` pattern. Verified the new case
+  actually depends on the guard by temporarily commenting out the
+  `reliabilities[mode] <= 0.0f` skip, confirming exactly that one assertion
+  failed and no others, then restoring it. Test-only; no engine or header
+  behavior change, verified with the JUCE-free DSP suite (3/3 tests passed)
+  and a fresh `NeuramarRenderDemos` run confirming `git status
+  neuramar/Docs/audio` clean across all eight WAVs.
 - 2026-08-17: Added direct coverage for `SpectralEnvelope.h`'s
   `ShapePreservingEnvelope::sample()` at fractional coordinates strictly
   inside its two "evidence shoulders" - the hold below the first observed
