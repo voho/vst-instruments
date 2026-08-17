@@ -127,6 +127,101 @@ float renderSeconds (ElectryAudioProcessor& processor, juce::AudioBuffer<float>&
     return peak;
 }
 
+// Renders and keeps the left channel's raw samples, for the one check below
+// that needs to measure a frequency rather than just a peak level.
+std::vector<float> renderCapture (ElectryAudioProcessor& processor,
+                                  juce::AudioBuffer<float>& audio, double seconds)
+{
+    juce::MidiBuffer emptyMidi;
+    std::vector<float> captured;
+    int remaining = static_cast<int> (seconds * sampleRate);
+    captured.reserve (static_cast<std::size_t> (std::max (0, remaining)));
+    while (remaining > 0)
+    {
+        const int samples = std::min (blockSize, remaining);
+        renderBlock (processor, audio, emptyMidi, samples);
+        const auto* channel = audio.getReadPointer (0);
+        captured.insert (captured.end(), channel, channel + samples);
+        remaining -= samples;
+    }
+    return captured;
+}
+
+// Hann-windowed DFT magnitude at an arbitrary frequency, evaluated with a
+// phasor recurrence so the scan stays fast. Mirrors the DSP library's own
+// dftMagnitude() in Tests/ElectryEngineTests.cpp; duplicated rather than
+// shared because this test binary links the plug-in target, not ElectryDSP.
+double dftMagnitude (const std::vector<float>& data, int start, int length,
+                     double localSampleRate, double frequency)
+{
+    const int first = std::max (0, start);
+    const int last = std::min<int> (first + length, static_cast<int> (data.size()));
+    const int n = last - first;
+    if (n < 16)
+        return 0.0;
+
+    const double omega = 2.0 * juce::MathConstants<double>::pi * frequency
+                        / localSampleRate;
+    const double stepReal = std::cos (omega);
+    const double stepImag = -std::sin (omega);
+    double phasorReal = 1.0;
+    double phasorImag = 0.0;
+    double sumReal = 0.0;
+    double sumImag = 0.0;
+    const double windowStep = juce::MathConstants<double>::pi
+                             / static_cast<double> (n - 1);
+
+    for (int i = 0; i < n; ++i)
+    {
+        const double window = std::sin (windowStep * i);
+        const double sample = window * window
+            * static_cast<double> (data[static_cast<std::size_t> (first + i)]);
+        sumReal += sample * phasorReal;
+        sumImag += sample * phasorImag;
+        const double nextReal = phasorReal * stepReal - phasorImag * stepImag;
+        phasorImag = phasorReal * stepImag + phasorImag * stepReal;
+        phasorReal = nextReal;
+    }
+    return std::sqrt (sumReal * sumReal + sumImag * sumImag);
+}
+
+// Locates the strongest spectral component near an expected fundamental by a
+// coarse-to-fine scan, scoring a short harmonic series rather than assuming
+// fundamental dominance: a magnetic pickup's output is an induced EMF, so its
+// fundamental can be weaker than its first few partials.
+double measureFundamentalHz (const std::vector<float>& data, int start, int length,
+                             double localSampleRate, double expectedHz)
+{
+    const auto scan = [&] (double centre, double spanCents, double stepCents)
+    {
+        double bestFrequency = centre;
+        double bestMagnitude = -1.0;
+        for (double cents = -spanCents; cents <= spanCents; cents += stepCents)
+        {
+            const double frequency = centre * std::pow (2.0, cents / 1200.0);
+            double magnitude = 0.0;
+            for (int partial = 1; partial <= 5; ++partial)
+            {
+                const double partialFrequency = frequency * partial;
+                if (partialFrequency >= 0.45 * localSampleRate)
+                    break;
+                magnitude += dftMagnitude (data, start, length, localSampleRate,
+                                          partialFrequency)
+                           / std::sqrt (static_cast<double> (partial));
+            }
+            if (magnitude > bestMagnitude)
+            {
+                bestMagnitude = magnitude;
+                bestFrequency = frequency;
+            }
+        }
+        return bestFrequency;
+    };
+
+    const double coarse = scan (expectedHz, 120.0, 6.0);
+    return scan (coarse, 6.0, 0.5);
+}
+
 void testParameterLayoutAndDefaults()
 {
     ElectryAudioProcessor processor;
@@ -453,6 +548,135 @@ void testMidiControllersAndVoiceLifecycle()
     processor.releaseResources();
 }
 
+// ElectryAudioProcessor::decodePitchBend14()'s 14-bit reconstruction is exact
+// integer/float arithmetic, so it is asserted on precisely here rather than
+// only inferred from rendered audio: the low-order MIDI data byte alone
+// contributes at most a few cents to a full two-semitone bend (127 of the
+// 8191/8192-count range), which testPitchWheelMidiDispatch()'s audio
+// measurement below cannot reliably resolve. An implementation that dropped
+// the low-order byte entirely - value14 = data2 << 7 - would still pass a
+// full-down/centre/full-up rendered-audio check, since data1 happens to be 0
+// or 127 at exactly those three positions either way; fixing data2 and
+// sweeping data1 catches that directly.
+void testPitchWheelByteReconstruction()
+{
+    using Processor = ElectryAudioProcessor;
+
+    // The three positions testPitchWheelMidiDispatch() renders, checked here
+    // to their exact decoded value instead of only through audio.
+    expect (Processor::decodePitchBend14 (0, 0) == -1.0f,
+            "full-down pitch wheel (0x0000) did not decode to exactly -1.0");
+    expect (Processor::decodePitchBend14 (0, 64) == 0.0f,
+            "centred pitch wheel (0x2000) did not decode to exactly 0.0");
+    expect (Processor::decodePitchBend14 (127, 127) == 1.0f,
+            "full-up pitch wheel (0x3fff) did not decode to exactly 1.0");
+
+    // Fix the high-order byte at its centre-position value (64) and sweep
+    // the low-order one across its full range. A decode that used only
+    // data2 would return exactly 0.0 for all three, since they all share
+    // data2 = 64.
+    const float atLowByte0 = Processor::decodePitchBend14 (0, 64);
+    const float atLowByte64 = Processor::decodePitchBend14 (64, 64);
+    const float atLowByte127 = Processor::decodePitchBend14 (127, 64);
+    expect (std::abs (atLowByte64 - 64.0f / 8191.0f) < 1.0e-6f,
+            "data1=64, data2=64 (value14=8256) did not decode to its exact "
+            "fractional bend");
+    expect (std::abs (atLowByte127 - 127.0f / 8191.0f) < 1.0e-6f,
+            "data1=127, data2=64 (value14=8319) did not decode to its exact "
+            "fractional bend");
+    expect (atLowByte0 != atLowByte64 && atLowByte64 != atLowByte127,
+            "varying only the low-order MIDI data byte at or above centre "
+            "left the decoded bend unchanged, meaning it was not read");
+
+    // The same sweep just below centre, so both the value14 < 8192 and
+    // value14 >= 8192 branches of the asymmetric divisor are exercised with
+    // a fixed high-order byte.
+    const float belowLow0 = Processor::decodePitchBend14 (0, 63);
+    const float belowLow127 = Processor::decodePitchBend14 (127, 63);
+    expect (std::abs (belowLow0 - (-128.0f / 8192.0f)) < 1.0e-6f,
+            "data1=0, data2=63 (value14=8064) did not decode to its exact "
+            "fractional bend");
+    expect (std::abs (belowLow127 - (-1.0f / 8192.0f)) < 1.0e-6f,
+            "data1=127, data2=63 (value14=8191) did not decode to its exact "
+            "fractional bend");
+    expect (belowLow0 != belowLow127,
+            "varying only the low-order MIDI data byte below centre left "
+            "the decoded bend unchanged, meaning it was not read");
+}
+
+// dispatchMidiData() reconstructs the pitch wheel's 14-bit position from its
+// two 7-bit MIDI data bytes and then divides the excursion below centre by
+// 8192 but above centre by 8191, matching the MIDI spec's asymmetric bend
+// range - byte-level parsing that lives only in the shell and is untouched by
+// any other test: ElectryEngineTests drives ElectryEngine::setPitchBend()
+// directly with already-decoded floats, and this file's own controller test
+// only exercises 7-bit CCs. A wrong byte order, a swapped divisor, a dropped
+// clamp or a sign flip here would still pass every existing test while
+// bending every host's pitch wheel by the wrong amount or the wrong
+// direction, so this measures the actual rendered pitch a raw pitch-wheel
+// message produces on the open, full-range low string (bend sensitivity 1.0),
+// as an end-to-end check alongside testPitchWheelByteReconstruction()'s exact
+// one.
+void testPitchWheelMidiDispatch()
+{
+    constexpr double openLowStringHz = 41.2034; // E1, MIDI note 28
+
+    // measureFundamentalHz() only scans +/-120 cents around its seed, so each
+    // case seeds it with the nominal bend the wheel position is documented to
+    // produce (bend sensitivity is exactly 1.0 on this, the most compliant,
+    // string) rather than the open note - a real +/-2-semitone bend would
+    // otherwise fall entirely outside a window centred on the unbent pitch.
+    const auto nominalHz = [openLowStringHz] (int wheelPosition14) -> double
+    {
+        const double excursion = wheelPosition14 < 8192
+            ? static_cast<double> (wheelPosition14 - 8192) / 8192.0
+            : static_cast<double> (wheelPosition14 - 8192) / 8191.0;
+        return openLowStringHz * std::pow (2.0, 2.0 * excursion / 12.0);
+    };
+
+    const auto measuredHz = [] (int wheelPosition14, double expectedHz) -> double
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::pitchWheel (1, wheelPosition14), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, electry::ElectryEngine::lowestPlayableNote, (juce::uint8) 100), 0);
+        renderBlock (processor, audio, midi);
+
+        // Let the pick transient decay and the bend glide (bend time
+        // defaults to 280 ms) fully settle before measuring, then capture a
+        // separate steady window to analyse.
+        renderSeconds (processor, audio, 0.5);
+        const auto settled = renderCapture (processor, audio, 0.4);
+        processor.releaseResources();
+        return measureFundamentalHz (settled, 0, static_cast<int> (settled.size()),
+                                     sampleRate, expectedHz);
+    };
+
+    const auto centre = measuredHz (8192, nominalHz (8192));
+    const auto bentUp = measuredHz (16383, nominalHz (16383));
+    const auto bentDown = measuredHz (0, nominalHz (0));
+
+    const auto centsAtCentre = 1200.0 * std::log2 (centre / openLowStringHz);
+    const auto centsUp = 1200.0 * std::log2 (bentUp / centre);
+    const auto centsDown = 1200.0 * std::log2 (bentDown / centre);
+
+    expect (std::abs (centsAtCentre) < 10.0,
+            "a centred pitch wheel (0x2000) left the open low string detuned "
+            "by " + std::to_string (centsAtCentre) + " cents");
+    expect (centsUp > 170.0 && centsUp < 230.0,
+            "a full-up pitch wheel (0x3fff) did not bend the open low string "
+            "up by the documented two semitones (measured "
+                + std::to_string (centsUp) + " cents)");
+    expect (centsDown < -170.0 && centsDown > -230.0,
+            "a full-down pitch wheel (0x0000) did not bend the open low "
+            "string down by the documented two semitones (measured "
+                + std::to_string (centsDown) + " cents)");
+}
+
 // The CC1 resonance and the acoustic-return wiring live in the shell: the
 // processor pushes each processed block back into the engine and derives the
 // rig's loudness from its amplifier controls. This closes the actual plug-in
@@ -498,6 +722,170 @@ void testResonanceWheelFeedback()
                 + std::to_string (fed) + ")");
 
     processor.releaseResources();
+}
+
+// Channel pressure (status nibble 0xd0, one data byte) and polyphonic
+// aftertouch (status nibble 0xa0, note number then pressure) both dispatch to
+// ElectryEngine::setVibrato() through raw MIDI byte reads in
+// dispatchMidiData() - data[1] for channel pressure, but data[2] for
+// polyphonic aftertouch, since its data[1] is the note number instead - a
+// path with no coverage anywhere else: ElectryEngineTests drives
+// setVibrato() directly with already-decoded floats, and this file's own
+// testMidiControllersAndVoiceLifecycle() and testPerformanceControls() only
+// ever send 7-bit CCs (status 0xb0). A status-nibble typo, a swapped data
+// index, a dropped clamp or a missing "/ 127.0f" here would leave every
+// host's pressure/aftertouch vibrato silently inert (or scaled wrong) while
+// still passing every existing test. This measures the actual rendered pitch
+// on a fretted (not open) string: the vibrato is documented to push a
+// fingered string sharp and never flat (see ElectryEngine.h's setVibrato()
+// and README.md's "Fretting-hand vibrato"), so once its 258 ms onset ramp has
+// settled, a window spanning several of its ~5-6 Hz swing cycles reads
+// measurably sharper than the same window with no pressure applied, even
+// though the finger dwells at the fretted pitch between excursions.
+void testChannelPressureAndAftertouchVibratoDispatch()
+{
+    // A2 open (45) + 2 frets, the same fixture ElectryEngineTests' own
+    // testFrettingHandVibrato() uses: fretted, so the hand has a string to
+    // rock. An open string is deliberately left alone by design and would
+    // make this a no-op either way.
+    constexpr int frettedNote = 47;
+    const double frettedHz = 440.0 * std::pow (2.0, (frettedNote - 69) / 12.0);
+
+    enum class Pressure
+    {
+        None,
+        ChannelPressure,
+        // Half-value, not full-value: both dispatch branches clamp their
+        // decoded float into setVibrato(), so a full-value 127 alone cannot
+        // tell a genuine "/ 127.0f" scale apart from a missing one - either
+        // way the clamp lands on the same 1.0f. A half-value message only
+        // reproduces the full-value bias if the byte was actually divided
+        // down first.
+        HalfChannelPressure,
+        // Channel 9, not channel 1: dispatchMidiData masks the status byte
+        // with "& 0xf0u" before comparing it, so the channel nibble should
+        // never matter. Sending channel 1 only would let a regression that
+        // compared the whole status byte (0xd0 exactly) instead of the
+        // masked nibble pass unnoticed on every channel but the one tested.
+        ChannelPressureOtherChannel,
+        PolyAftertouch,
+        // Same half-value reasoning as HalfChannelPressure, applied to the
+        // independent data[2] scale in the aftertouch branch: a full-value
+        // 127 alone cannot tell "data[2] / 127.0f" apart from a missing
+        // divisor, since both clamp to the same 1.0f.
+        HalfPolyAftertouch,
+    };
+    const auto measuredHz = [&] (Pressure kind) -> double
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, frettedNote, (juce::uint8) 100), 0);
+        if (kind == Pressure::ChannelPressure)
+            midi.addEvent (juce::MidiMessage::channelPressureChange (1, 127), 0);
+        else if (kind == Pressure::HalfChannelPressure)
+            midi.addEvent (juce::MidiMessage::channelPressureChange (1, 64), 0);
+        else if (kind == Pressure::ChannelPressureOtherChannel)
+            midi.addEvent (juce::MidiMessage::channelPressureChange (9, 127), 0);
+        else if (kind == Pressure::PolyAftertouch)
+            // The note byte deliberately does not name the fretted note:
+            // dispatchMidiData never reads it (Electry has one fretting hand
+            // for the whole engine, not one per key), so a swapped-index
+            // regression that read this byte as the pressure instead of
+            // data[2] would decode to 3 / 127 - far too small to sharpen the
+            // note - rather than accidentally producing a passing result the
+            // way reusing frettedNote (47) here would.
+            midi.addEvent (
+                juce::MidiMessage::aftertouchChange (1, 3, 127), 0);
+        else if (kind == Pressure::HalfPolyAftertouch)
+            midi.addEvent (
+                juce::MidiMessage::aftertouchChange (1, 3, 64), 0);
+        renderBlock (processor, audio, midi);
+
+        // Let the attack settle and the vibrato's onset ramp (258 ms, see
+        // ElectryEngine.h's vibratoOnsetSeconds) reach its steady swing
+        // before measuring, then capture several full cycles so the window's
+        // own frequency estimate reflects the vibrato's genuine time-average
+        // rather than one arbitrary phase of it.
+        renderSeconds (processor, audio, 0.5);
+        const auto settled = renderCapture (processor, audio, 0.6);
+        processor.releaseResources();
+        return measureFundamentalHz (settled, 0, static_cast<int> (settled.size()),
+                                     sampleRate, frettedHz);
+    };
+
+    const auto still = measuredHz (Pressure::None);
+    const auto pressed = measuredHz (Pressure::ChannelPressure);
+    const auto halfPressed = measuredHz (Pressure::HalfChannelPressure);
+    const auto pressedOtherChannel =
+        measuredHz (Pressure::ChannelPressureOtherChannel);
+    const auto touched = measuredHz (Pressure::PolyAftertouch);
+    const auto halfTouched = measuredHz (Pressure::HalfPolyAftertouch);
+
+    const auto centsStill = 1200.0 * std::log2 (still / frettedHz);
+    const auto centsPressed = 1200.0 * std::log2 (pressed / frettedHz);
+    const auto centsHalfPressed = 1200.0 * std::log2 (halfPressed / frettedHz);
+    const auto centsPressedOtherChannel =
+        1200.0 * std::log2 (pressedOtherChannel / frettedHz);
+    const auto centsTouched = 1200.0 * std::log2 (touched / frettedHz);
+    const auto centsHalfTouched = 1200.0 * std::log2 (halfTouched / frettedHz);
+
+    expect (std::abs (centsStill) < 10.0,
+            "an unpressed fretted note drifted " + std::to_string (centsStill)
+                + " cents off its fretted pitch");
+    // Differential rather than an absolute cents target, for the same reason
+    // ElectryEngineTests' own testFrettingHandVibrato() compares two engines
+    // instead of asserting one fixed value: the vibrato's average bias over a
+    // multi-cycle window (rock^2 time-averages to a fraction of the nominal
+    // 40-cent excursion, not the excursion itself) is a function of the
+    // depth/rate constants rather than a documented number, so the robust
+    // assertion is that applying either message sharpens the note well beyond
+    // the unpressed measurement's own noise floor. An upper bound catches a
+    // runaway/nonsense measurement without pinning the exact bias.
+    expect (centsPressed - centsStill > 5.0 && centsPressed < 100.0,
+            "full-value channel pressure (status 0xd0) did not sharpen the "
+            "fretted note by the vibrato's documented upward bias (measured "
+                + std::to_string (centsPressed) + " cents against "
+                + std::to_string (centsStill) + " unpressed)");
+    // Half-value pressure must still clear the noise floor - it is a real
+    // press, not a no-op - but land measurably below the full-value bias, the
+    // signature of an actual "/ 127.0f" scale rather than a clamp that
+    // saturates at 1.0f for any nonzero byte.
+    expect (centsHalfPressed - centsStill > 2.0
+                && centsHalfPressed < centsPressed - 2.0,
+            "half-value channel pressure did not land strictly between "
+            "unpressed and full-value pressure (measured "
+                + std::to_string (centsHalfPressed) + " cents against "
+                + std::to_string (centsStill) + " unpressed and "
+                + std::to_string (centsPressed) + " full-value)");
+    // Same message on channel 9 rather than channel 1: dispatchMidiData is
+    // documented to mask the channel nibble out of the status byte before
+    // comparing it, so this should sharpen the note exactly as the channel-1
+    // case does.
+    expect (centsPressedOtherChannel - centsStill > 5.0
+                && centsPressedOtherChannel < 100.0,
+            "full-value channel pressure on channel 9 did not sharpen the "
+            "fretted note the same way channel 1 does (measured "
+                + std::to_string (centsPressedOtherChannel)
+                + " cents against " + std::to_string (centsStill)
+                + " unpressed)");
+    expect (centsTouched - centsStill > 5.0 && centsTouched < 100.0,
+            "full-value polyphonic aftertouch (status 0xa0) did not sharpen "
+            "the fretted note by the vibrato's documented upward bias "
+            "(measured " + std::to_string (centsTouched) + " cents against "
+                + std::to_string (centsStill) + " unpressed)");
+    // Same half-value-versus-full-value reasoning as the channel-pressure
+    // case, applied to the aftertouch branch's own independent data[2] scale.
+    expect (centsHalfTouched - centsStill > 2.0
+                && centsHalfTouched < centsTouched - 2.0,
+            "half-value polyphonic aftertouch did not land strictly between "
+            "unpressed and full-value aftertouch (measured "
+                + std::to_string (centsHalfTouched) + " cents against "
+                + std::to_string (centsStill) + " unpressed and "
+                + std::to_string (centsTouched) + " full-value)");
 }
 
 void testUiArticulationTriggerAndPanic()
@@ -981,7 +1369,10 @@ int main()
     testSampleAccurateNoteAndSound();
     testKeyswitchContract();
     testMidiControllersAndVoiceLifecycle();
+    testPitchWheelByteReconstruction();
+    testPitchWheelMidiDispatch();
     testResonanceWheelFeedback();
+    testChannelPressureAndAftertouchVibratoDispatch();
     testUiArticulationTriggerAndPanic();
     testOutputGainImpact();
     testPerformanceControls();

@@ -229,7 +229,14 @@ public:
 private:
     static constexpr int maxVoices = 64;
     static constexpr int retiringVoiceCount = maxVoices;
-    static constexpr int oscillatorCount = 8;
+    // The per-voice tonal core oscillator() draws on: renderSnare reads slots 0
+    // and 1 for its body's fundamental and shell, and renderTom reads the same
+    // two for its head fundamental and shell. No other render path or index is
+    // ever read, so two is a real count rather than headroom - a larger one
+    // only bought initialiseVoice() unread phase/asymmetry draws on every
+    // trigger of every voice, including the ones that never call oscillator()
+    // at all.
+    static constexpr int oscillatorCount = 2;
     // Twelve was the size of the mode table. Eighteen is the size of the table
     // with every m > 0 mode allowed to be the pair it physically is: an ideal
     // circular head's m > 0 modes are doubly degenerate, and buildHeadBank now
@@ -244,6 +251,13 @@ private:
     static constexpr int maximumMetallicDecimatorTaps = 401;
     static constexpr int sineTableSize = 2048;
     static constexpr int sineTableMask = sineTableSize - 1;
+    // Constant-power gain (sqrt(0.5)) for a dead-centre pan. Three otherwise
+    // unrelated structs - a voice's own pan smoother, a sympathetic bed's, and
+    // the per-instrument mixer target process() smooths every voice towards -
+    // each start life at this same centred gain before the first pan is ever
+    // resolved, so one named constant keeps their defaults from drifting to
+    // different float roundings of the same value.
+    static constexpr float centerPanGain = 0.70710678f;
 
     // The 909's cymbal ROMs. On the machine these are mask ROMs holding a
     // recorded cymbal, and every hit reads the same data - so they are engine
@@ -581,8 +595,8 @@ private:
         // hertz. Written by the voices that have one and read only by the
         // metering pass; nothing in the audio path consumes it.
         float oscillatorFrequency { 0.0f };
-        float panLeft { 0.70710678f };
-        float panRight { 0.70710678f };
+        float panLeft { centerPanGain };
+        float panRight { centerPanGain };
         std::array<float, oscillatorCount> phases {};
         std::array<float, oscillatorCount> phaseIncrements {};
         std::array<float, oscillatorCount> oscillatorAsymmetries {};
@@ -616,8 +630,8 @@ private:
         int modeCount { 0 };
         float lastPitch { 0.0f };
         float lastDecay { 0.5f };
-        float panLeft { 0.70710678f };
-        float panRight { 0.70710678f };
+        float panLeft { centerPanGain };
+        float panRight { centerPanGain };
         std::array<Resonator, sympatheticModeCount> resonators {};
         Biquad drive {};
         Biquad wires {};
@@ -868,8 +882,8 @@ private:
     struct MixerTarget
     {
         float levelGain { 1.0f };
-        float panLeft { 0.7071f };
-        float panRight { 0.7071f };
+        float panLeft { centerPanGain };
+        float panRight { centerPanGain };
     };
     std::array<MixerTarget, instrumentCount> mixerTargets_ {};
     std::array<AtomicInstrumentParameters, instrumentCount> parameters_ {};

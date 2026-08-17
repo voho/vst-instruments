@@ -586,6 +586,16 @@ struct YouKnow106TestAccess
             intervalSeconds).endpoint;
     }
 
+    static double exactOnePoleHoldEndpoint(
+        double state, float target, bool hasEvent, double eventPosition,
+        float eventTarget, double intervalSeconds,
+        double timeConstantSeconds, double fullIntervalDecay) noexcept
+    {
+        return YouKnow106Engine::exactOnePoleHoldEndpoint(
+            state, target, hasEvent, eventPosition, eventTarget,
+            intervalSeconds, timeConstantSeconds, fullIntervalDecay);
+    }
+
     static std::array<double, 7> cutoffVcfHoldNodes(
         const YouKnow106Engine& engine, int slot) noexcept
     {
@@ -846,6 +856,16 @@ struct YouKnow106TestAccess
         const auto& dco =
             engine.voices_[static_cast<std::size_t>(slot)].dco;
         return { dco.pulseState, dco.subState };
+    }
+
+    // `sanitise` is private: `setParameters` only ever exposes its effect
+    // through rendered audio, so a defect that swapped two fields' documented
+    // fallback defaults, or turned a finite-but-out-of-range clamp into a
+    // fallback substitution (or vice versa), would still render finite audio
+    // and pass unnoticed. This reaches the exact per-field result directly.
+    static EngineParameters sanitise(const EngineParameters& parameters) noexcept
+    {
+        return YouKnow106Engine::sanitise(parameters);
     }
 };
 } // namespace youknow106
@@ -7087,6 +7107,277 @@ void testParameterSanitisation()
            "the engine stopped sounding after hostile parameters");
 }
 
+// `testParameterSanitisation` above only confirms that hostile parameters
+// still render finite audio; it cannot tell a correct fallback from a wrong
+// one, because both keep the engine finite. `sanitise` itself has two
+// distinct branches per field -- a non-finite input takes a named fallback
+// constant, a finite out-of-range input is clamped instead -- and every one
+// of those fallback constants happens to equal the field's own default
+// member initialiser above. This drives every field through both branches
+// directly and checks the exact returned value, which would catch a
+// fallback drifting out of step with its declared default, or the two
+// branches swapping behaviour, in either direction, for any single field.
+void testSanitiseFallbackDefaultsMatchDeclaredDefaults()
+{
+    struct Field
+    {
+        float EngineParameters::*member;
+        const char* name;
+    };
+    static const std::array<Field, 23> zeroToOneFields {{
+        { &EngineParameters::lfoRate, "lfoRate" },
+        { &EngineParameters::lfoDelay, "lfoDelay" },
+        { &EngineParameters::dcoLfoDepth, "dcoLfoDepth" },
+        { &EngineParameters::pwmDepth, "pwmDepth" },
+        { &EngineParameters::subLevel, "subLevel" },
+        { &EngineParameters::noiseLevel, "noiseLevel" },
+        { &EngineParameters::cutoff, "cutoff" },
+        { &EngineParameters::resonance, "resonance" },
+        { &EngineParameters::envDepth, "envDepth" },
+        { &EngineParameters::vcfLfoDepth, "vcfLfoDepth" },
+        { &EngineParameters::keyFollow, "keyFollow" },
+        { &EngineParameters::vcaLevel, "vcaLevel" },
+        { &EngineParameters::attack, "attack" },
+        { &EngineParameters::decay, "decay" },
+        { &EngineParameters::sustain, "sustain" },
+        { &EngineParameters::release, "release" },
+        { &EngineParameters::portamento, "portamento" },
+        { &EngineParameters::benderDcoDepth, "benderDcoDepth" },
+        { &EngineParameters::benderVcfDepth, "benderVcfDepth" },
+        { &EngineParameters::benderLfoDepth, "benderLfoDepth" },
+        { &EngineParameters::volume, "volume" },
+        { &EngineParameters::velocityDepth, "velocityDepth" },
+        { &EngineParameters::chorusNoise, "chorusNoise" },
+    }};
+
+    const EngineParameters declaredDefaults;
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+
+    for (const auto& field : zeroToOneFields)
+    {
+        for (const float poison : { nan, inf, -inf })
+        {
+            EngineParameters hostile;
+            hostile.*field.member = poison;
+            const auto sanitised = YouKnow106TestAccess::sanitise(hostile);
+            expect(sanitised.*field.member == declaredDefaults.*field.member,
+                   std::string(field.name)
+                       + " non-finite input did not fall back to its "
+                         "declared default");
+        }
+
+        EngineParameters low;
+        low.*field.member = -5.0f;
+        expect(YouKnow106TestAccess::sanitise(low).*field.member == 0.0f,
+               std::string(field.name)
+                   + " finite below-range input did not clamp to 0");
+
+        EngineParameters high;
+        high.*field.member = 5.0f;
+        expect(YouKnow106TestAccess::sanitise(high).*field.member == 1.0f,
+               std::string(field.name)
+                   + " finite above-range input did not clamp to 1");
+    }
+
+    // Unlike every field above, calibration's ceiling is 2 rather than 1 and
+    // its own fallback is 1 rather than 0 -- the one field whose fix01-style
+    // branch was hand-written out rather than shared, per the type's own
+    // comment on `calibrationCeiling`.
+    for (const float poison : { nan, inf, -inf })
+    {
+        EngineParameters hostile;
+        hostile.calibration = poison;
+        expect(YouKnow106TestAccess::sanitise(hostile).calibration
+                   == declaredDefaults.calibration,
+               "calibration non-finite input did not fall back to its "
+                   "declared default");
+    }
+    EngineParameters calibrationHigh;
+    calibrationHigh.calibration = 5.0f;
+    expect(YouKnow106TestAccess::sanitise(calibrationHigh).calibration
+               == EngineParameters::calibrationCeiling,
+           "calibration above its ceiling did not clamp to it");
+    EngineParameters calibrationLow;
+    calibrationLow.calibration = -5.0f;
+    expect(YouKnow106TestAccess::sanitise(calibrationLow).calibration
+               == 0.0f,
+           "calibration below zero did not clamp to zero");
+
+    // masterTuneCents clamps to +-50 cents, not [0, 1].
+    for (const float poison : { nan, inf, -inf })
+    {
+        EngineParameters hostile;
+        hostile.masterTuneCents = poison;
+        expect(YouKnow106TestAccess::sanitise(hostile).masterTuneCents
+                   == declaredDefaults.masterTuneCents,
+               "masterTuneCents non-finite input did not fall back to its "
+                   "declared default");
+    }
+    EngineParameters tuneHigh;
+    tuneHigh.masterTuneCents = 900.0f;
+    expect(YouKnow106TestAccess::sanitise(tuneHigh).masterTuneCents
+               == 50.0f,
+           "masterTuneCents above range did not clamp to +50");
+    EngineParameters tuneLow;
+    tuneLow.masterTuneCents = -900.0f;
+    expect(YouKnow106TestAccess::sanitise(tuneLow).masterTuneCents
+               == -50.0f,
+           "masterTuneCents below range did not clamp to -50");
+
+    // keyTranspose and polyphony are integers: always clamped, with no
+    // non-finite branch to take.
+    EngineParameters transposeHigh;
+    transposeHigh.keyTranspose = 500;
+    expect(YouKnow106TestAccess::sanitise(transposeHigh).keyTranspose == 12,
+           "keyTranspose above range did not clamp to +12");
+    EngineParameters transposeLow;
+    transposeLow.keyTranspose = -500;
+    expect(YouKnow106TestAccess::sanitise(transposeLow).keyTranspose == -12,
+           "keyTranspose below range did not clamp to -12");
+
+    EngineParameters polyphonyHigh;
+    polyphonyHigh.polyphony = 500;
+    expect(YouKnow106TestAccess::sanitise(polyphonyHigh).polyphony
+               == YouKnow106Engine::maxVoices,
+           "polyphony above range did not clamp to maxVoices");
+    EngineParameters polyphonyLow;
+    polyphonyLow.polyphony = -5;
+    expect(YouKnow106TestAccess::sanitise(polyphonyLow).polyphony == 1,
+           "polyphony below range did not clamp to 1");
+}
+
+// `exactOnePoleHoldEndpoint` backs every passive hold that is not the VCF's
+// own segmented solve -- common VCA, SUB and each voice's own VCA -- and each
+// of its seven inputs has its own non-finite (or, for the time constant,
+// non-positive) fallback. Every production call site builds every one of
+// those inputs from already-finite state, sanitised panel targets and
+// compile-time or precomputed-`std::exp` constants, so none of the seven
+// guards has ever fired outside a test. This drives one poisoned argument at
+// a time through the function directly (via the engine-suite's existing
+// private-access seam) and checks the exact documented fallback -- state to
+// 0.0, target and eventTarget to the already-resolved target, the interval
+// to zero elapsed time, the time constant to 1.0, the precomputed decay to a
+// freshly solved `exp(-duration/timeConstant)`, and the event position to 1.0
+// (an event at the very end of the interval, contributing nothing) -- rather
+// than a poisoned value propagating into the held state.
+void testExactOnePoleHoldEndpointNonFiniteGuards()
+{
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double inf = std::numeric_limits<double>::infinity();
+
+    // Every state/target/eventTarget value below is an exact binary fraction
+    // (a sum of a few powers of two) so that passing it through a `float`
+    // parameter and back to `double` -- as the production `target` and
+    // `eventTarget` arguments do -- round-trips bit-for-bit. A decimal
+    // literal like 0.9 is not exactly representable in either width, so a
+    // `double` expectation built from the decimal literal would differ from
+    // what the function actually computed from the rounded `float` by an
+    // amount far smaller than this suite's other tolerances suggest but
+    // still well outside `1.0e-12`.
+    constexpr double state = 0.125;
+    constexpr double target = 0.875;
+
+    // A non-finite `state` falls back to 0.0, not to whatever bit pattern the
+    // caller handed in. `target` and `fullIntervalDecay` (computed once here
+    // and reused verbatim, rather than retyped as a decimal literal) stay
+    // finite so the only unknown is where `initial` (i.e. state) landed.
+    const double decayA = std::exp(-0.02 / 0.05);
+    for (const double poison : { nan, inf, -inf })
+    {
+        const double endpoint = YouKnow106TestAccess::exactOnePoleHoldEndpoint(
+            poison, static_cast<float>(target), false, 1.0,
+            static_cast<float>(target), 0.02, 0.05, decayA);
+        expectNear(endpoint, target + (0.0 - target) * decayA, 1.0e-12,
+                   "a non-finite state did not fall back to 0.0");
+    }
+
+    // A non-finite `target` falls back to the already-resolved `initial`
+    // (here, the finite state), which collapses the endpoint to exactly that
+    // state regardless of the decay supplied -- a decayed jump toward a
+    // fallback target would move away from `state` instead.
+    for (const double poison : { nan, inf, -inf })
+    {
+        const double endpoint = YouKnow106TestAccess::exactOnePoleHoldEndpoint(
+            state, static_cast<float>(poison), false, 1.0,
+            static_cast<float>(target), 0.02, 0.05, 0.37);
+        expectNear(endpoint, state, 1.0e-12,
+                   "a non-finite target did not fall back to the resolved "
+                   "state");
+    }
+
+    // A non-finite `intervalSeconds` falls back to zero elapsed time. Forcing
+    // `fullIntervalDecay` itself non-finite makes the endpoint depend on that
+    // duration through a freshly solved `exp(-0/timeConstant) == 1`, which
+    // leaves the state exactly where it started rather than decaying toward
+    // -- or, on a sign error, jumping to -- the target.
+    for (const double poison : { nan, inf, -inf })
+    {
+        const double endpoint = YouKnow106TestAccess::exactOnePoleHoldEndpoint(
+            state, static_cast<float>(target), false, 1.0,
+            static_cast<float>(target), poison, 0.05, nan);
+        expectNear(endpoint, state, 1.0e-12,
+                   "a non-finite interval did not fall back to zero elapsed "
+                   "time");
+    }
+
+    // A non-finite or non-positive `timeConstantSeconds` falls back to 1.0
+    // second, again forcing the decay to be freshly solved -- via the same
+    // expression the production code uses -- so the fallback is actually
+    // exercised rather than masked by a supplied decay.
+    const double decayB = std::exp(-0.3 / 1.0);
+    for (const double poison : { nan, inf, -inf, 0.0, -5.0 })
+    {
+        const double endpoint = YouKnow106TestAccess::exactOnePoleHoldEndpoint(
+            state, static_cast<float>(target), false, 1.0,
+            static_cast<float>(target), 0.3, poison, nan);
+        expectNear(endpoint, target + (state - target) * decayB, 1.0e-12,
+                   "a non-finite or non-positive time constant did not fall "
+                   "back to 1.0 second");
+    }
+
+    // A non-finite `fullIntervalDecay` falls back to a freshly solved
+    // `exp(-duration/timeConstant)` rather than an unclamped poison value
+    // multiplying the state difference.
+    for (const double poison : { nan, inf, -inf })
+    {
+        const double endpoint = YouKnow106TestAccess::exactOnePoleHoldEndpoint(
+            state, static_cast<float>(target), false, 1.0,
+            static_cast<float>(target), 0.3, 1.0, poison);
+        expectNear(endpoint, target + (state - target) * decayB, 1.0e-12,
+                   "a non-finite precomputed decay was not freshly solved");
+    }
+
+    // A non-finite `eventPosition` falls back to 1.0 -- an event at the very
+    // end of the interval, whose suffix response is exactly zero -- so it
+    // contributes nothing regardless of `eventTarget`, rather than an
+    // unclamped position producing a partial or reversed suffix response.
+    const double baseEndpoint =
+        target + (state - target) * decayA; // no-event decay term, reused below
+    for (const double poison : { nan, inf, -inf })
+    {
+        const double endpoint = YouKnow106TestAccess::exactOnePoleHoldEndpoint(
+            state, static_cast<float>(target), true, poison, 0.5f, 0.02, 0.05,
+            decayA);
+        expectNear(endpoint, baseEndpoint, 1.0e-12,
+                   "a non-finite event position did not fall back to an "
+                   "end-of-interval event contributing nothing");
+    }
+
+    // A non-finite `eventTarget` falls back to the already-resolved target,
+    // which zeroes the event's own contribution -- `nextTarget -
+    // initialTarget` -- regardless of where in the interval the event falls.
+    for (const double poison : { nan, inf, -inf })
+    {
+        const double endpoint = YouKnow106TestAccess::exactOnePoleHoldEndpoint(
+            state, static_cast<float>(target), true, 0.3,
+            static_cast<float>(poison), 0.02, 0.05, decayA);
+        expectNear(endpoint, baseEndpoint, 1.0e-12,
+                   "a non-finite event target did not fall back to the "
+                   "resolved target, leaving a stale event contribution");
+    }
+}
+
 void testSustainPedalHoldsAndReleases()
 {
     YouKnow106Engine engine;
@@ -7624,6 +7915,8 @@ int main()
     testDeterminismAndSilence();
     testExtremeAutomationStaysFinite();
     testParameterSanitisation();
+    testSanitiseFallbackDefaultsMatchDeclaredDefaults();
+    testExactOnePoleHoldEndpointNonFiniteGuards();
     testSustainPedalHoldsAndReleases();
     testFactoryPresetCorpusStaysNumericallySafe();
     testPairedSwitchModes();

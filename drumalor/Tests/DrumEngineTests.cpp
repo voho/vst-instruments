@@ -3532,6 +3532,42 @@ void testMetering()
             "reset did not clear the published metering state");
 }
 
+// getInstrumentLevel()'s own guard - `validInstrument (instrument) ?
+// instrumentLevels_[indexFor (instrument)].load (...) : 0.0f` - is never
+// exercised by testMetering() above or by any other caller in the suite:
+// every one of them only ever passes one of Instrument's own enumerators, in
+// range 0..instrumentCount-1. An out-of-range Instrument must therefore
+// report silence rather than reading past the end of instrumentLevels_, and
+// it must do so even while the kit is loud, since the guard has to reject the
+// index before ever touching the array rather than merely happening to land
+// on a quiet slot.
+void testGetInstrumentLevelSanitizesInvalidInstrument()
+{
+    constexpr double sampleRate = 48000.0;
+    drumalor::DrumEngine engine;
+    engine.prepare (sampleRate, defaultBlockSize);
+
+    expect (engine.getInstrumentLevel (
+                static_cast<drumalor::Instrument> (drumalor::instrumentCount)) == 0.0f,
+            "getInstrumentLevel did not fall back on an index one past the table"
+            " while silent");
+    expect (engine.getInstrumentLevel (static_cast<drumalor::Instrument> (255)) == 0.0f,
+            "getInstrumentLevel did not fall back on a far out-of-range index"
+            " while silent");
+
+    engine.trigger (drumalor::Instrument::Kick, 1.0f);
+    renderMetrics (engine, 2400, defaultBlockSize);
+    expect (engine.getInstrumentLevel (drumalor::Instrument::Kick) > 0.01f,
+            "sanity check: the kick was not actually sounding");
+    expect (engine.getInstrumentLevel (
+                static_cast<drumalor::Instrument> (drumalor::instrumentCount)) == 0.0f,
+            "getInstrumentLevel did not fall back on an index one past the table"
+            " while the kit was sounding");
+    expect (engine.getInstrumentLevel (static_cast<drumalor::Instrument> (255)) == 0.0f,
+            "getInstrumentLevel did not fall back on a far out-of-range index"
+            " while the kit was sounding");
+}
+
 void testMembraneAndVelocityTimbre()
 {
     constexpr double sampleRate = 48000.0;
@@ -6172,6 +6208,7 @@ int main()
     testKitBusStage();
     testBusAutomationIsClickFree();
     testMetering();
+    testGetInstrumentLevelSanitizesInvalidInstrument();
     testMembraneAndVelocityTimbre();
     testMembraneTensionModulation();
     testMembraneModeSplitting();

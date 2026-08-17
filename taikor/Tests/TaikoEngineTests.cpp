@@ -985,6 +985,19 @@ struct TaikoEngineTestAccess
         return TaikoEngine::columnStiffnessFactor (x);
     }
 
+    // Exposes the head's bending-stiffness stretch factor on its own, so its
+    // "!(stiffness > 0.0f)" fallback to an ideal membrane (1.0, no stretch)
+    // can be asserted directly. resolveDrumGeometry's stiffnessBatter and
+    // stiffnessResonant are both a positive rigidity divided by a positive
+    // tension and radius squared - never zero, negative or NaN for any
+    // sanitised EngineParameters - so the guard is never reached from
+    // Source/; it was previously exercised only indirectly, and only on its
+    // ordinary branch, through a resolved drum's headStiffnessParameter.
+    static float stiffnessStretch (float besselZero, float stiffness) noexcept
+    {
+        return TaikoEngine::stiffnessStretch (besselZero, stiffness);
+    }
+
     static std::uint64_t strokeCount (const TaikoEngine& engine) noexcept
     {
         return engine.noteSequence_;
@@ -7052,6 +7065,49 @@ void testColumnStiffnessFactorGuardsItsOwnDomain()
             "an ordinary x must resolve to x*cot(x)");
 }
 
+void testStiffnessStretchGuardsItsOwnDomain()
+{
+    using taikor::TaikoEngineTestAccess;
+    const auto nan = std::numeric_limits<float>::quiet_NaN();
+    constexpr float besselZero = 2.4048255577f; // an arbitrary mode's own zero
+
+    // resolveDrumGeometry's rigidity is a positive modulus times a positive
+    // thickness cubed, divided by a positive tension and radius squared, so
+    // stiffnessBatter/stiffnessResonant are always strictly positive for any
+    // sanitised EngineParameters - the "!(stiffness > 0.0f)" fallback below
+    // is never reached from Source/, and testHeadStiffnessOpensTheModalRatios
+    // only ever exercises the ordinary branch through a resolved drum.
+    expect (TaikoEngineTestAccess::stiffnessStretch (besselZero, 0.0f) == 1.0f,
+            "zero stiffness must report an ideal membrane, no stretch");
+    expect (TaikoEngineTestAccess::stiffnessStretch (besselZero, -1.0f) == 1.0f,
+            "a negative stiffness must fall back the same way as zero");
+    expect (TaikoEngineTestAccess::stiffnessStretch (besselZero, nan) == 1.0f,
+            "a NaN stiffness must fall back the same way as zero");
+
+    // The stretch is taken relative to the (0,1) mode's own zero, so a mode
+    // evaluated at that same zero must see no stretch at all regardless of
+    // how stiff the head is - the numerator and denominator coincide.
+    expect (std::abs (TaikoEngineTestAccess::stiffnessStretch (
+                std::sqrt (5.7831859629467f), 0.4f) - 1.0f) < 1.0e-5f,
+            "the (0,1) mode itself must never be stretched by its own "
+            "reference stiffness");
+
+    // An ordinary higher mode must match the closed form directly, pinning
+    // the formula itself rather than only its domain guard.
+    constexpr float higherZero = 5.5200781103f; // the (0,2) mode's zero
+    constexpr float stiffness = 0.4f;
+    const float stretched =
+        TaikoEngineTestAccess::stiffnessStretch (higherZero, stiffness);
+    const float expected = std::sqrt (
+        (1.0f + stiffness * higherZero * higherZero)
+        / (1.0f + stiffness * 5.7831859629467f));
+    expect (std::abs (stretched - expected) < 1.0e-6f,
+            "an ordinary mode must resolve to the documented sqrt ratio");
+    expect (stretched > 1.0f,
+            "a higher mode with positive stiffness must open out above the "
+            "unstretched ratio, not below it");
+}
+
 void testInvalidInputSafety()
 {
     taikor::TaikoEngine engine;
@@ -7201,6 +7257,19 @@ void testUiPresentationMath()
             "a degenerate row must not divide by zero");
     expect (rowLayout (600, 0, 6, 0).cellSize == 1,
             "a row with no columns must not divide by zero");
+    // A positive extent that still cannot fit its columns takes the same
+    // floor as the two all-degenerate cases above, but through the
+    // `available > columns` comparison rather than a zero or negative
+    // `available`: nine pixels shared across twelve columns divides down to
+    // zero without it. No call site in the editor reaches this - the
+    // editor's own minimum width is more than an order of magnitude wider
+    // than any row's column count needs - so only the two degenerate cases
+    // just above had ever been asserted directly.
+    const auto crampedRow = rowLayout (20, 12, 1, 12);
+    expect (crampedRow.cellSize == 1,
+            "a row too narrow for its columns must floor to a one-pixel cell, not zero");
+    expect (crampedRow.origin == 0,
+            "a cramped row's overflowing centring math must clamp to zero, not go negative");
 
     // A short row stays centred under a longer one.
     const auto shortRow = rowLayout (600, 12, 6, 5);
@@ -8129,6 +8198,7 @@ int main()
     testParametersForOctaveIsIdentityAtBothOfItsOwnEndpoints();
     testContactCollisionMassFallsBackWhenTheMembraneContributesNothing();
     testColumnStiffnessFactorGuardsItsOwnDomain();
+    testStiffnessStretchGuardsItsOwnDomain();
     testInvalidInputSafety();
     testUiPresentationMath();
     testControlEndpointsAndGestures();

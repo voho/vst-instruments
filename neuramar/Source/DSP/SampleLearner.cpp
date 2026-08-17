@@ -1874,10 +1874,18 @@ void chooseLoop(const std::vector<TargetFrame>& targets,
     std::size_t bestEnd = frameAtOrAfter(0.86f);
     const std::size_t firstCandidate = frameAtOrAfter(earliestStartTime);
     const std::size_t lastCandidate = frameAtOrAfter(latestStartTime);
+    // firstSlope and targets[first] depend only on the outer candidate, not on
+    // second, but the inner loop below used to rederive both from scratch on
+    // every one of its iterations. Hoisting them here turns that into one
+    // lookup per (first, second, output) instead of two subtractions.
+    TargetFrame firstSlope {};
     for (std::size_t first = firstCandidate;
          first <= lastCandidate && first + 1 < targets.size(); ++first)
     {
         const float startTime = spectra[first].normalisedTime;
+        const auto& firstTarget = targets[first];
+        for (std::size_t output = 0; output < NeuralModel::outputSize; ++output)
+            firstSlope[output] = targets[first + 1][output] - firstTarget[output];
         for (std::size_t second = first + 1;
              second + 1 < targets.size(); ++second)
         {
@@ -1886,12 +1894,10 @@ void chooseLoop(const std::vector<TargetFrame>& targets,
             float distance = 0.0f;
             for (std::size_t output = 0; output < NeuralModel::outputSize; ++output)
             {
-                const float delta = targets[first][output] - targets[second][output];
-                const float firstSlope = targets[first + 1][output]
-                    - targets[first][output];
+                const float delta = firstTarget[output] - targets[second][output];
                 const float secondSlope = targets[second + 1][output]
                     - targets[second][output];
-                const float slopeDelta = firstSlope - secondSlope;
+                const float slopeDelta = firstSlope[output] - secondSlope;
                 distance += delta * delta + 0.35f * slopeDelta * slopeDelta;
             }
             distance /= static_cast<float>(NeuralModel::outputSize);
