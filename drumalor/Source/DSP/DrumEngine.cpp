@@ -960,7 +960,10 @@ void DrumEngine::setInstrumentParameters (Instrument instrument,
                                            const InstrumentParameters& values) noexcept
 {
     if (! validInstrument (instrument))
+    {
+        ++rejectedSetInstrumentParametersCount_;
         return;
+    }
     const auto& defaults = getInstrumentMetadata (instrument).defaultParameters;
     auto& target = parameters_[indexFor (instrument)];
     target.characterA.store (clampUnit (values.characterA, defaults.characterA),

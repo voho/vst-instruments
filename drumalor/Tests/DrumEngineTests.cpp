@@ -66,6 +66,28 @@ struct DrumEngineTestAccess
     {
         return HighResolutionVelocityPrefix::valid (channel);
     }
+
+    // setInstrumentParameters()'s own instrument guard, exposed directly for
+    // the same reason as prefixChannelValid() above: an indirect proof would
+    // have to drive parameters_[indexFor(instrument)] with an out-of-range
+    // instrument, which is itself an out-of-bounds array write and therefore
+    // undefined behaviour, not a reliable stand-in for the guard's own
+    // boundary.
+    [[nodiscard]] static bool instrumentValid (Instrument instrument) noexcept
+    {
+        return DrumEngine::validInstrument (instrument);
+    }
+
+    // How many times setInstrumentParameters()'s own out-of-range instrument
+    // guard has returned early, mirroring nonPositiveProcessCallCount() above:
+    // this is what actually proves the guard inside setInstrumentParameters()
+    // itself fires, rather than only proving validInstrument() has the right
+    // boundary in isolation.
+    [[nodiscard]] static std::uint64_t rejectedSetInstrumentParametersCount (
+        const DrumEngine& engine) noexcept
+    {
+        return engine.rejectedSetInstrumentParametersCount_;
+    }
 };
 } // namespace drumalor
 
@@ -1200,6 +1222,92 @@ void testSetInstrumentParametersSanitizesInvalidCharacterAndDecay()
             "setInstrumentParameters() did not clamp an excessive decay to its 1.0 ceiling");
     expect (renderWith (withDecay (-7.0f)) == renderWith (withDecay (0.0f)),
             "setInstrumentParameters() did not clamp an excessive decay to its 0.0 floor");
+}
+
+// setInstrumentParameters()'s own instrument guard - `if (! validInstrument
+// (instrument)) return;`, guarding the `parameters_[indexFor (instrument)]`
+// write just below it - is only ever driven by every other call in this
+// suite with one of Instrument's own enumerators, so the early return itself
+// has never been exercised. Two earlier proof attempts each fall short on
+// their own: pinning validInstrument() directly only proves that helper's
+// own boundary, not that setInstrumentParameters() actually calls it and
+// returns before the write; and comparing a real instrument's render before
+// and after an out-of-range call relies on the write the guard prevents -
+// itself undefined behaviour - visibly perturbing that render, which a build
+// with the guard deleted was confirmed NOT to do (the whole suite still
+// passed). rejectedSetInstrumentParametersCount_ closes that gap the same
+// way nonPositiveProcessCallCount_ closes it for process(): it only
+// increments on the guard's own early return, so it fails if the guard (or
+// its return) is ever removed, independent of whatever the prevented write
+// would have disturbed. The validInstrument() and render checks stay as
+// secondary, whole-engine confirmation.
+void testSetInstrumentParametersRejectsOutOfRangeInstrument()
+{
+    using TestAccess = drumalor::DrumEngineTestAccess;
+    expect (TestAccess::instrumentValid (drumalor::Instrument::Kick)
+                && TestAccess::instrumentValid (drumalor::Instrument::Perc2),
+            "validInstrument() rejected a real instrument");
+    expect (! TestAccess::instrumentValid (
+                    static_cast<drumalor::Instrument> (drumalor::instrumentCount)),
+            "validInstrument() did not reject an instrument one past the table");
+    expect (! TestAccess::instrumentValid (static_cast<drumalor::Instrument> (255)),
+            "validInstrument() did not reject a far out-of-range instrument");
+
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+        drumalor::InstrumentParameters values;
+        expect (TestAccess::rejectedSetInstrumentParametersCount (engine) == 0,
+                "rejectedSetInstrumentParametersCount() was not zero on a fresh engine");
+        engine.setInstrumentParameters (drumalor::Instrument::Kick, values);
+        expect (TestAccess::rejectedSetInstrumentParametersCount (engine) == 0,
+                "setInstrumentParameters() counted a real instrument as rejected");
+        engine.setInstrumentParameters (
+            static_cast<drumalor::Instrument> (drumalor::instrumentCount), values);
+        expect (TestAccess::rejectedSetInstrumentParametersCount (engine) == 1,
+                "setInstrumentParameters() did not take its early return for an "
+                "instrument one past the table");
+        engine.setInstrumentParameters (static_cast<drumalor::Instrument> (255), values);
+        expect (TestAccess::rejectedSetInstrumentParametersCount (engine) == 2,
+                "setInstrumentParameters() did not take its early return for a "
+                "far out-of-range instrument");
+    }
+
+    constexpr int samples = 4096;
+    drumalor::InstrumentParameters loud;
+    loud.characterA = 1.0f;
+    loud.characterB = 1.0f;
+    loud.pitch = 24.0f;
+    loud.decay = 1.0f;
+    loud.level = 6.0f;
+    loud.pan = 1.0f;
+    loud.chokeGroup = 3;
+
+    const auto renderAfter = [&] (auto&& act)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+        act (engine);
+        engine.trigger (drumalor::Instrument::Perc2, 0.9f);
+        return renderInterleaved (engine, samples, defaultBlockSize);
+    };
+
+    const auto reference = renderAfter ([] (drumalor::DrumEngine&) {});
+
+    expect (renderAfter ([&] (drumalor::DrumEngine& engine)
+                {
+                    engine.setInstrumentParameters (
+                        static_cast<drumalor::Instrument> (drumalor::instrumentCount), loud);
+                })
+                == reference,
+            "setInstrumentParameters() did not reject an instrument one past the table");
+    expect (renderAfter ([&] (drumalor::DrumEngine& engine)
+                {
+                    engine.setInstrumentParameters (
+                        static_cast<drumalor::Instrument> (255), loud);
+                })
+                == reference,
+            "setInstrumentParameters() did not reject a far out-of-range instrument");
 }
 
 // setKitParameters()'s own humanise/bleed/busDrive/busCompression guards -
@@ -6371,6 +6479,7 @@ int main()
     testSetOutputGainSanitizesInvalidGain();
     testSetInstrumentParametersSanitizesInvalidPitchLevelAndPan();
     testSetInstrumentParametersSanitizesInvalidCharacterAndDecay();
+    testSetInstrumentParametersRejectsOutOfRangeInstrument();
     testSetKitParametersSanitizesInvalidHumaniseBleedBusDriveAndBusCompression();
     testTriggerSanitizesInvalidInstrumentAndVelocity();
     testModalSampleRateConsistency();
