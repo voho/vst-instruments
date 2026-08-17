@@ -156,6 +156,62 @@ private:
         std::atomic<float> registerTilt { 0.0f };
     };
 
+    // Every field setParameters() sanitises and loadParameters() reads back is
+    // otherwise identical in shape - a pointer into EngineParameters, the
+    // matching pointer into AtomicParameters, and the [minimum, maximum,
+    // fallback] clampParameter() already takes - so the eighteen fields used
+    // to be named three times over: once in each of the two functions' bodies,
+    // plus once again in AtomicParameters' own member list. Naming each field
+    // exactly once here, as data, lets both functions become one loop apiece
+    // instead of eighteen near-identical statements apiece, and makes adding
+    // a field a one-line, can't-desync change instead of two.
+    struct ParameterField
+    {
+        std::atomic<float> AtomicParameters::* atomicMember;
+        float EngineParameters::* engineMember;
+        float minimum;
+        float maximum;
+        float fallback;
+    };
+    static constexpr std::array<ParameterField, 18> parameterFields {{
+        { &AtomicParameters::imprint, &EngineParameters::imprint,
+          0.0f, 1.0f, 1.0f },
+        { &AtomicParameters::bodyLock, &EngineParameters::bodyLock,
+          0.0f, 1.0f, 0.65f },
+        { &AtomicParameters::air, &EngineParameters::air,
+          0.0f, 1.0f, 0.35f },
+        { &AtomicParameters::bone, &EngineParameters::bone,
+          0.0f, 1.0f, 0.30f },
+        { &AtomicParameters::brightness, &EngineParameters::brightness,
+          0.0f, 1.0f, 0.50f },
+        { &AtomicParameters::evolutionRate, &EngineParameters::evolutionRate,
+          0.125f, 4.0f, 1.0f },
+        { &AtomicParameters::orbit, &EngineParameters::orbit,
+          0.0f, 1.0f, 0.15f },
+        { &AtomicParameters::mutation, &EngineParameters::mutation,
+          0.0f, 1.0f, 0.10f },
+        { &AtomicParameters::noise, &EngineParameters::noise,
+          0.0f, 1.0f, 0.0f },
+        { &AtomicParameters::attackSeconds, &EngineParameters::attackSeconds,
+          0.0f, 10.0f, 0.0f },
+        { &AtomicParameters::releaseSeconds, &EngineParameters::releaseSeconds,
+          0.005f, 20.0f, 0.35f },
+        { &AtomicParameters::spread, &EngineParameters::spread,
+          0.0f, 1.0f, 0.35f },
+        { &AtomicParameters::rootOffsetSemitones,
+          &EngineParameters::rootOffsetSemitones, -12.0f, 12.0f, 0.0f },
+        { &AtomicParameters::outputGain, &EngineParameters::outputGain,
+          0.0f, 2.0f, 0.72f },
+        { &AtomicParameters::stretch, &EngineParameters::stretch,
+          0.0f, 2.0f, 1.0f },
+        { &AtomicParameters::formantShiftSemitones,
+          &EngineParameters::formantShiftSemitones, -24.0f, 24.0f, 0.0f },
+        { &AtomicParameters::touch, &EngineParameters::touch,
+          0.0f, 1.0f, 0.0f },
+        { &AtomicParameters::registerTilt, &EngineParameters::registerTilt,
+          -1.0f, 1.0f, 0.0f },
+    }};
+
     // One coefficient set with two independent state pairs. The Air layer needs
     // a decorrelated second realisation for stereo width, and the side copy
     // must track exactly the same ramped response as the centred one.
