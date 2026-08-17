@@ -404,6 +404,45 @@ void testSpectralEnvelopeHostileInputs()
            "hostile neighbours");
 }
 
+// sample()'s two "evidence shoulder" branches - `oneBasedCoordinate < 1.0f`
+// holding the lowest observed magnitude below the first partial, and
+// `oneBasedCoordinate > lastHarmonic` fading the highest observed magnitude
+// linearly to zero above the last one - are exercised only at their integer
+// boundary knots by the tests above (coordinate 1.0f lands in the cubic
+// branch with fraction 0.0f; coordinate `HarmonicCount` lands in the
+// back-of-array branch of the cubic segment), never at a genuinely
+// fractional coordinate strictly inside either shoulder. The class comment
+// calls this asymmetry deliberate - the renderer relies on the hold to make
+// Body Lock degenerate to pitch-following below the first partial, and on
+// the fade to avoid inventing energy above the last one - so this drives
+// both branches directly at fractional coordinates and checks the fade's
+// documented linearity.
+void testSpectralEnvelopeShoulders()
+{
+    using SmallEnvelope = neuramar::spectral::ShapePreservingEnvelope<8>;
+    const std::array<float, 8> notched {
+        0.82f, 0.006f, 0.47f, 0.0f, 0.19f, 0.031f, 0.11f, 0.002f
+    };
+    SmallEnvelope envelope;
+    envelope.prepare(notched);
+
+    expect(envelope.sample(0.25f) == notched.front()
+               && envelope.sample(0.5f) == notched.front()
+               && envelope.sample(0.99f) == notched.front(),
+           "sample() did not hold the first partial's magnitude below it");
+
+    constexpr float lastCoordinate = static_cast<float>(notched.size()) + 1.0f;
+    for (const float fraction : { 0.1f, 0.5f, 0.9f })
+    {
+        const float coordinate = static_cast<float>(notched.size()) + fraction;
+        const float expected = notched.back() * (lastCoordinate - coordinate);
+        expect(std::abs(envelope.sample(coordinate) - expected) < 1.0e-6f,
+               "sample() did not fade linearly to zero above the last partial");
+    }
+    expect(envelope.sample(8.01f) > envelope.sample(8.99f),
+           "sample() did not decrease monotonically across the fade-out shoulder");
+}
+
 [[nodiscard]] std::vector<float> makeLearningSample(double sampleRate,
                                                      double frequencyHz,
                                                      double durationSeconds)
@@ -7130,6 +7169,7 @@ int main()
 {
     testShapePreservingSpectralInterpolation();
     testSpectralEnvelopeHostileInputs();
+    testSpectralEnvelopeShoulders();
     testHostileInputSanitizing();
     testAirFilterCoefficientHostileInputs();
     testAirFilterNoisePowerResponseHostileInputs();
