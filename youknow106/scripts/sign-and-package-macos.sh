@@ -27,6 +27,11 @@ STANDALONE_BUNDLE_IDENTIFIER="cz.protocodus.youknow106"
 AU_BUNDLE_IDENTIFIER="cz.protocodus.youknow106.au"
 VST3_BUNDLE_IDENTIFIER="cz.protocodus.youknow106.vst3"
 PACKAGE_IDENTIFIER="cz.protocodus.youknow106.pkg"
+AU_TYPE="aumu"
+AU_SUBTYPE="Yk06"
+AU_MANUFACTURER="Ykno"
+VST3_PROCESSOR_CID="ABCDEF019182FAEB596B6E6F596B3036"
+VST3_CONTROLLER_CID="ABCDEF011234ABCD596B6E6F596B3036"
 PRODUCT_COPYRIGHT="Copyright (c) 2026 ${VENDOR_NAME}"
 MINIMUM_MACOS="11.0"
 
@@ -56,7 +61,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     exit 1
 fi
 
-for tool in codesign ditto lipo mktemp pkgbuild plutil shasum xattr; do
+for tool in cmake codesign ditto lipo mktemp pkgbuild plutil shasum xattr; do
     command -v "${tool}" >/dev/null 2>&1 || {
         echo "error: required tool '${tool}' was not found" >&2
         exit 1
@@ -191,6 +196,7 @@ fi
 JUCE_SOURCE_DIR="$(sed -n 's/^JUCE_SOURCE_DIR:[^=]*=//p' "${CACHE_FILE}")"
 DEPLOYMENT_TARGET="$(sed -n 's/^CMAKE_OSX_DEPLOYMENT_TARGET:[^=]*=//p' \
     "${CACHE_FILE}")"
+CXX_COMPILER="$(sed -n 's/^CMAKE_CXX_COMPILER:[^=]*=//p' "${CACHE_FILE}")"
 LOCAL_JUCE_OVERRIDE="$(sed -n \
     -e 's/^YOUKNOW106_JUCE_PATH:[^=]*=//p' \
     -e 's/^FETCHCONTENT_SOURCE_DIR_JUCE:[^=]*=//p' \
@@ -199,8 +205,34 @@ if [[ -z "${JUCE_SOURCE_DIR}" || ! -d "${JUCE_SOURCE_DIR}" ]]; then
     echo "error: JUCE_SOURCE_DIR in ${CACHE_FILE} is missing or invalid" >&2
     exit 1
 fi
+if [[ -z "${CXX_COMPILER}" || ! -x "${CXX_COMPILER}" ]]; then
+    echo "error: CMAKE_CXX_COMPILER in ${CACHE_FILE} is missing or invalid" >&2
+    exit 1
+fi
 if [[ "${RELEASE_MODE}" == "1" && "${DEPLOYMENT_TARGET}" != "${MINIMUM_MACOS}" ]]; then
     echo "error: release build must target macOS ${MINIMUM_MACOS}; cache has '${DEPLOYMENT_TARGET:-unset}'" >&2
+    exit 1
+fi
+
+CMAKE_TOOL_VERSION="$(cmake --version | sed -n '1p')"
+CXX_TOOL_VERSION="$("${CXX_COMPILER}" --version | sed -n '1p')"
+XCODE_TOOL_VERSION="unavailable"
+if XCODE_VERSION_OUTPUT="$(xcodebuild -version 2>/dev/null)"; then
+    XCODE_TOOL_VERSION="$(printf '%s\n' "${XCODE_VERSION_OUTPUT}" | paste -sd ' ' -)"
+fi
+MACOS_SDK_VERSION="unavailable"
+if command -v xcrun >/dev/null 2>&1; then
+    MACOS_SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null \
+        || printf 'unavailable')"
+fi
+if [[ -z "${CMAKE_TOOL_VERSION}" || -z "${CXX_TOOL_VERSION}" ]]; then
+    echo "error: could not record the CMake or C++ compiler version" >&2
+    exit 1
+fi
+if [[ "${RELEASE_MODE}" == "1" \
+      && ( "${XCODE_TOOL_VERSION}" == "unavailable" \
+           || "${MACOS_SDK_VERSION}" == "unavailable" ) ]]; then
+    echo "error: release mode requires a full Xcode installation and macOS SDK" >&2
     exit 1
 fi
 if [[ "${RELEASE_MODE}" == "1" && -n "${LOCAL_JUCE_OVERRIDE}" ]]; then
@@ -296,11 +328,11 @@ for bundle in "${VST3}" "${AU}" "${APP}"; do
         "${PRODUCT_COPYRIGHT}" "$(bundle_value "${bundle}" NSHumanReadableCopyright)"
 done
 
-require_value "Audio Unit type" "aumu" \
+require_value "Audio Unit type" "${AU_TYPE}" \
     "$(bundle_value "${AU}" AudioComponents:0:type)"
-require_value "Audio Unit subtype" "Yk06" \
+require_value "Audio Unit subtype" "${AU_SUBTYPE}" \
     "$(bundle_value "${AU}" AudioComponents:0:subtype)"
-require_value "Audio Unit manufacturer" "Ykno" \
+require_value "Audio Unit manufacturer" "${AU_MANUFACTURER}" \
     "$(bundle_value "${AU}" AudioComponents:0:manufacturer)"
 
 VST3_MODULE_INFO="${VST3}/Contents/Resources/moduleinfo.json"
@@ -319,6 +351,10 @@ require_value "VST3 website" "${PRODUCT_WEBSITE}" \
     "$(module_value 'Factory Info.URL')"
 require_value "VST3 support email" "${SUPPORT_EMAIL}" \
     "$(module_value 'Factory Info.E-Mail')"
+require_value "VST3 processor CID" "${VST3_PROCESSOR_CID}" \
+    "$(module_value 'Classes.0.CID')"
+require_value "VST3 controller CID" "${VST3_CONTROLLER_CID}" \
+    "$(module_value 'Classes.1.CID')"
 
 if [[ ! -f "${APP}/Contents/Resources/AppIcon.icns" ]]; then
     echo "error: standalone app icon is missing" >&2
@@ -580,11 +616,19 @@ fi
     printf 'Formats: VST3, Audio Unit, Standalone\n'
     printf 'Architectures: %s\n' "${APP_ARCHS}"
     printf 'Minimum macOS: %s\n' "${DEPLOYMENT_TARGET}"
+    printf 'CMake: %s\n' "${CMAKE_TOOL_VERSION}"
+    printf 'Xcode: %s\n' "${XCODE_TOOL_VERSION}"
+    printf 'macOS SDK: %s\n' "${MACOS_SDK_VERSION}"
+    printf 'C++ compiler: %s\n' "${CXX_TOOL_VERSION}"
     printf 'Standalone bundle identifier: %s\n' \
         "${STANDALONE_BUNDLE_IDENTIFIER}"
     printf 'Audio Unit bundle identifier: %s\n' "${AU_BUNDLE_IDENTIFIER}"
     printf 'VST3 bundle identifier: %s\n' "${VST3_BUNDLE_IDENTIFIER}"
     printf 'Package identifier: %s\n' "${PACKAGE_IDENTIFIER}"
+    printf 'Audio Unit identity: %s/%s/%s\n' \
+        "${AU_TYPE}" "${AU_SUBTYPE}" "${AU_MANUFACTURER}"
+    printf 'VST3 processor CID: %s\n' "${VST3_PROCESSOR_CID}"
+    printf 'VST3 controller CID: %s\n' "${VST3_CONTROLLER_CID}"
     printf 'Package: %s\n' "$(basename "${PKG_FINAL}")"
     printf 'Package SHA-256: %s\n' "${PACKAGE_SHA256}"
     printf 'Release mode: %s\n' "${RELEASE_MODE}"
