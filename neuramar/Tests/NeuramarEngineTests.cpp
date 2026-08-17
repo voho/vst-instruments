@@ -6057,6 +6057,78 @@ void testDecayKeyTracking()
                  "constant rather than by the exponent the source fitted");
 }
 
+// Twenty partials that never lose amplitude at all: a steady excitation with
+// no free decay, the driven case fitDampingExponent()'s own comment names -
+// "a player's vibrato lives on a driven source, and a driven source has no
+// free decay to fit". None of the frequency-independent fixtures elsewhere in
+// this file exercise that path: makeDecayingPartialSample's decayExponent = 0
+// control still decays, just at the same rate on every partial, so its
+// near-zero exponent comes from the harmonic-number regression's own slope
+// landing near zero. Here every partial fails the "lost at least 6 dB across
+// the fitted window" test that PartialFit::finished guards, so fewer than six
+// of them ever accumulate enough points to enter the regression at all, and
+// the function's own "used < 6" gate has to abandon the fit and return
+// exactly zero - the same answer a source with no decay data at all always
+// gets.
+[[nodiscard]] std::vector<float> makeSustainedNoDecaySample(
+    double sampleRate, double fundamentalHz, double durationSeconds)
+{
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double attack = 1.0 - std::exp(-time / 0.006);
+        // A cosine taper confined to the last millisecond only avoids a click
+        // at the buffer's edge; it is far shorter than the learner's own
+        // analysis window, so it leaves no decay for the fit to find.
+        const double sampleFromEnd = static_cast<double>(sample.size() - 1
+                                                          - index);
+        const double tailTaper = sampleFromEnd < 48.0
+            ? 0.5 - 0.5 * std::cos(pi * sampleFromEnd / 48.0)
+            : 1.0;
+        const double envelope = attack * tailTaper;
+        double value = 0.0;
+        for (int partial = 1; partial <= 20; ++partial)
+        {
+            const double number = static_cast<double>(partial);
+            value += std::pow(number, -1.2)
+                * std::sin(2.0 * pi * fundamentalHz * number * time
+                           + 0.29 * number);
+        }
+        sample[index] = static_cast<float>(0.5 * envelope * value);
+    }
+    return sample;
+}
+
+void testDampingExponentIgnoresSustainedSource()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr double fundamentalHz = 220.01;
+    const auto learned = neuramar::SampleLearner::learn(
+        makeSustainedNoDecaySample(sampleRate, fundamentalHz, 1.4),
+        sampleRate);
+    expect(static_cast<bool>(learned),
+           "the sustained no-decay fixture failed to learn: "
+               + learned.error);
+    if (!learned.model)
+        return;
+
+    neuramar::NeuramarEngine engine;
+    engine.prepare(sampleRate, 128);
+    engine.setModel(learned.model.get());
+    const float exponent = engine.dampingExponent();
+    std::cout << "Damping exponent diagnostics: fitted exponent " << exponent
+              << " on a flat, non-decaying sustain\n";
+    expect(exponent == 0.0f,
+           "a source with no free decay at all fitted a damping exponent of "
+               + std::to_string(exponent)
+               + " instead of exactly zero, so fitDampingExponent()'s own "
+                 "\"fewer than six partials survive\" count gate is not "
+                 "doing its job");
+}
+
 // Twelve partials with tau_h = 0.30 h^-0.8 over a 4 ms noise burst: a struck
 // source whose peak is the strike itself, which is what makes it the fixture
 // that can see both a change in how hard the thing was hit and a loss of
@@ -7204,6 +7276,7 @@ int main()
     testOrbitDetrendFollowsTheLayersBeingRendered();
     testReleaseDarkensTail();
     testDecayKeyTracking();
+    testDampingExponentIgnoresSustainedSource();
     testRepeatedNotesVaryInStrength();
     testFormantShift();
     testResamplerAccuracyAndCost();

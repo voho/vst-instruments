@@ -823,6 +823,29 @@ scripts/                 macOS build, signing, packaging, and notarization helpe
 
 ## Changelog
 
+- 2026-08-17: Added direct coverage for `NeuramarEngine.cpp`'s
+  `fitDampingExponent()` on a genuinely driven, non-decaying source, the case
+  its own comment names but that no existing fixture exercised: "a player's
+  vibrato lives on a driven source, and a driven source has no free decay to
+  fit." The pre-existing frequency-independent control elsewhere in the suite
+  (`makeDecayingPartialSample` with `decayExponent = 0`) still decays, just at
+  the same rate on every partial, so its near-zero fitted exponent comes from
+  the harmonic-number regression's own slope landing near zero rather than
+  from the function's own "fewer than six partials survive" count gate, which
+  had no direct test. Added `makeSustainedNoDecaySample()`, a twenty-partial
+  tone with a plain attack and no decay for its 1.4 s duration, and
+  `testDampingExponentIgnoresSustainedSource()`, asserting `dampingExponent()`
+  is exactly 0.0f after learning from it. Verified the new test is a real
+  regression test by instrumenting the fit to confirm zero partials ever
+  accumulate the four points the per-partial regression requires (`used == 0`
+  on this fixture, against 32-46 on the pre-existing decaying fixtures), then
+  temporarily making the `used == 0` case return a nonzero placeholder instead
+  of falling through the "used < 6" gate, confirming exactly this one new
+  assertion failed among all tests, then restoring the original code exactly
+  (`git diff` on the source empty before committing). Test-only change;
+  verified with the JUCE-free DSP suite (3/3 tests passed) and a fresh
+  `NeuramarRenderDemos` run confirming `git status neuramar/Docs/audio` clean
+  across all eight WAVs.
 - 2026-08-17: Added direct coverage for `SpectralEnvelope.h`'s
   `ShapePreservingEnvelope::sample()` at fractional coordinates strictly
   inside its two "evidence shoulders" - the hold below the first observed
