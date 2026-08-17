@@ -1417,6 +1417,12 @@ private:
 
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };
+    // maximumTailSeconds converted to samples at the current rate. Every voice
+    // and physical-drum deadline clamps to this, and it used to be
+    // recomputed - the same multiply and truncation - at every one of those
+    // call sites; it only ever changes when prepare() moves sampleRate_.
+    std::uint64_t maximumTailSamples_ {
+        static_cast<std::uint64_t> (maximumTailSeconds * 48000.0) };
     int maxBlockSize_ { 512 };
     bool prepared_ { false };
     std::uint64_t noteSequence_ { 0 };
