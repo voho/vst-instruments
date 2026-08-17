@@ -3531,12 +3531,21 @@ void testDelayTapClampsAndInterpolates()
            "an exact-integer delay did not collapse to a single unit tap");
 
     // A fractional delay's offset lands at the request's ceiling (the read
-    // arithmetic the loop actually uses), and its four weights - a genuine
-    // cubic Lagrange basis - sum to exactly unity, the identity that keeps a
-    // constant input passing through unattenuated.
+    // arithmetic the loop actually uses), and its four weights are pinned to
+    // the closed-form cubic Lagrange basis for t = ceil(10.25) - 10.25 =
+    // 0.75, computed independently of DelayTap::setDelay's own formula, not
+    // just their sum: an implementation that always returned the exact-tap
+    // weights {0, 1, 0, 0} would still sum to unity while turning every
+    // fractional read into an incorrect integer one.
     const auto fractional = TestAccess::delayTapAt(10.25f);
     expect(fractional.offset == 11,
            "a fractional delay's offset was not the request's ceiling");
+    expect(std::abs(fractional.c0 - (-0.0390625f)) < 1.0e-6f
+               && std::abs(fractional.c1 - 0.2734375f) < 1.0e-6f
+               && std::abs(fractional.c2 - 0.8203125f) < 1.0e-6f
+               && std::abs(fractional.c3 - (-0.0546875f)) < 1.0e-6f,
+           "a fractional delay's interpolation weights did not match the "
+           "closed-form Lagrange basis for t = 0.75");
     const float sum =
         fractional.c0 + fractional.c1 + fractional.c2 + fractional.c3;
     expect(std::abs(sum - 1.0f) < 1.0e-5f,
