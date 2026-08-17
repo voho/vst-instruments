@@ -66,6 +66,17 @@ struct DrumEngineTestAccess
     {
         return HighResolutionVelocityPrefix::valid (channel);
     }
+
+    // setInstrumentParameters()'s own instrument guard, exposed directly for
+    // the same reason as prefixChannelValid() above: an indirect proof would
+    // have to drive parameters_[indexFor(instrument)] with an out-of-range
+    // instrument, which is itself an out-of-bounds array write and therefore
+    // undefined behaviour, not a reliable stand-in for the guard's own
+    // boundary.
+    [[nodiscard]] static bool instrumentValid (Instrument instrument) noexcept
+    {
+        return DrumEngine::validInstrument (instrument);
+    }
 };
 } // namespace drumalor
 
@@ -1200,6 +1211,67 @@ void testSetInstrumentParametersSanitizesInvalidCharacterAndDecay()
             "setInstrumentParameters() did not clamp an excessive decay to its 1.0 ceiling");
     expect (renderWith (withDecay (-7.0f)) == renderWith (withDecay (0.0f)),
             "setInstrumentParameters() did not clamp an excessive decay to its 0.0 floor");
+}
+
+// setInstrumentParameters()'s own instrument guard - `if (! validInstrument
+// (instrument)) return;`, guarding the `parameters_[indexFor (instrument)]`
+// write just below it - is only ever driven by every other call in this
+// suite with one of Instrument's own enumerators, so the early return itself
+// has never been exercised. Driving setInstrumentParameters() itself with an
+// out-of-range instrument and checking that a real instrument's render comes
+// out unaffected is not a reliable proof on its own - like
+// HighResolutionVelocityPrefix::clear() above, the write the guard exists to
+// prevent is itself undefined behaviour, not guaranteed to land somewhere
+// that would visibly perturb any one instrument's audio - so pin
+// validInstrument() directly through the same TestAccess seam first, then
+// use the render comparison only as a secondary, whole-engine confirmation.
+void testSetInstrumentParametersRejectsOutOfRangeInstrument()
+{
+    using TestAccess = drumalor::DrumEngineTestAccess;
+    expect (TestAccess::instrumentValid (drumalor::Instrument::Kick)
+                && TestAccess::instrumentValid (drumalor::Instrument::Perc2),
+            "validInstrument() rejected a real instrument");
+    expect (! TestAccess::instrumentValid (
+                    static_cast<drumalor::Instrument> (drumalor::instrumentCount)),
+            "validInstrument() did not reject an instrument one past the table");
+    expect (! TestAccess::instrumentValid (static_cast<drumalor::Instrument> (255)),
+            "validInstrument() did not reject a far out-of-range instrument");
+
+    constexpr int samples = 4096;
+    drumalor::InstrumentParameters loud;
+    loud.characterA = 1.0f;
+    loud.characterB = 1.0f;
+    loud.pitch = 24.0f;
+    loud.decay = 1.0f;
+    loud.level = 6.0f;
+    loud.pan = 1.0f;
+    loud.chokeGroup = 3;
+
+    const auto renderAfter = [&] (auto&& act)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+        act (engine);
+        engine.trigger (drumalor::Instrument::Perc2, 0.9f);
+        return renderInterleaved (engine, samples, defaultBlockSize);
+    };
+
+    const auto reference = renderAfter ([] (drumalor::DrumEngine&) {});
+
+    expect (renderAfter ([&] (drumalor::DrumEngine& engine)
+                {
+                    engine.setInstrumentParameters (
+                        static_cast<drumalor::Instrument> (drumalor::instrumentCount), loud);
+                })
+                == reference,
+            "setInstrumentParameters() did not reject an instrument one past the table");
+    expect (renderAfter ([&] (drumalor::DrumEngine& engine)
+                {
+                    engine.setInstrumentParameters (
+                        static_cast<drumalor::Instrument> (255), loud);
+                })
+                == reference,
+            "setInstrumentParameters() did not reject a far out-of-range instrument");
 }
 
 // setKitParameters()'s own humanise/bleed/busDrive/busCompression guards -
@@ -6371,6 +6443,7 @@ int main()
     testSetOutputGainSanitizesInvalidGain();
     testSetInstrumentParametersSanitizesInvalidPitchLevelAndPan();
     testSetInstrumentParametersSanitizesInvalidCharacterAndDecay();
+    testSetInstrumentParametersRejectsOutOfRangeInstrument();
     testSetKitParametersSanitizesInvalidHumaniseBleedBusDriveAndBusCompression();
     testTriggerSanitizesInvalidInstrumentAndVelocity();
     testModalSampleRateConsistency();
