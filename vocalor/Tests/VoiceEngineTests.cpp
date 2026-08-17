@@ -3427,10 +3427,16 @@ void testPrepareSanitisesInvalidSampleRate()
     nan.reset();
     nan.noteOn(60, 0.8f);
     nan.process(left.data(), right.data(), static_cast<int>(left.size()));
-    expect(nan.getActiveVoiceCount() == 1
+    const bool allFinite =
+        std::all_of(left.begin(), left.end(),
+                    [](float value) { return std::isfinite(value); })
+        && std::all_of(right.begin(), right.end(),
+                       [](float value) { return std::isfinite(value); });
+    expect(nan.getActiveVoiceCount() == 1 && allFinite
                && std::any_of(left.begin(), left.end(),
                               [](float value) { return value != 0.0f; }),
-           "an engine prepared with a NaN sample rate did not render normally afterwards");
+           "an engine prepared with a NaN sample rate did not render normally "
+           "afterwards (finite, non-silent output)");
 }
 
 /** noteOn()'s non-positive-velocity guard (see
