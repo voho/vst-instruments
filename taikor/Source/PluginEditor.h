@@ -83,7 +83,10 @@ class TaikorKnob final : public juce::Component,
                          public juce::SettableTooltipClient
 {
 public:
-    enum class ValueStyle { Plain, Percent, Semitones, Centimetres, Decibels };
+    enum class ValueStyle
+    {
+        Plain, Percent, Semitones, Degrees, Centimetres, Decibels
+    };
     enum class VisualRole { Drum, Stroke, Microphone, Master };
 
     TaikorKnob (juce::String name, ValueStyle style, VisualRole role);
@@ -254,7 +257,13 @@ private:
                               TaikorKnob::VisualRole::Stroke };
     TaikorKnob strikePositionKnob { "POSITION", TaikorKnob::ValueStyle::Plain,
                                     TaikorKnob::VisualRole::Stroke };
+    TaikorKnob strikeAzimuthKnob { "AZIMUTH", TaikorKnob::ValueStyle::Degrees,
+                                   TaikorKnob::VisualRole::Stroke };
+    TaikorKnob performerKnob { "PERFORMER", TaikorKnob::ValueStyle::Plain,
+                               TaikorKnob::VisualRole::Stroke };
     TaikorKnob velocityDepthKnob { "VELOCITY", TaikorKnob::ValueStyle::Percent,
+                                   TaikorKnob::VisualRole::Stroke };
+    TaikorKnob velocityCurveKnob { "CURVE", TaikorKnob::ValueStyle::Plain,
                                    TaikorKnob::VisualRole::Stroke };
     TaikorKnob tensionModKnob { "TENSION MOD", TaikorKnob::ValueStyle::Percent,
                                 TaikorKnob::VisualRole::Stroke };

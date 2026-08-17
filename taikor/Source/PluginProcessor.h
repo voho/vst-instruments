@@ -37,8 +37,11 @@ inline constexpr auto micSpread = "micSpread";
 inline constexpr auto stereoWidth = "width";
 inline constexpr auto drive = "drive";
 inline constexpr auto output = "output";
+inline constexpr auto strikeAzimuth = "strikeAzimuth";
+inline constexpr auto performer = "performer";
+inline constexpr auto velocityCurve = "velocityCurve";
 
-inline constexpr int parameterCount = 22;
+inline constexpr int parameterCount = 25;
 
 // Head diameter is presented in centimetres because that is how drums are
 // sold; the engine works in metres.
@@ -98,9 +101,9 @@ public:
     {
         engine.getVisualState (destination);
     }
-    // The drum the current parameters describe, for the editor's readout. Safe
-    // to call from the message thread: it re-solves from the parameter values
-    // rather than reading engine state.
+    // The drum and strike point the current host controls plus live CC16/17
+    // overrides describe, for the editor's readout. Safe on the message thread:
+    // it re-solves from parameter values and lock-free gesture snapshots.
     [[nodiscard]] taikor::TaikoEngine::DrumMeasurements measureDrum (
         int octaveOffset) const noexcept;
     [[nodiscard]] double getCurrentSampleRateForDisplay() const noexcept
@@ -154,6 +157,10 @@ private:
     std::atomic<bool> engineReady { false };
     std::atomic<int> activeVoiceCount { 0 };
     std::atomic<double> displaySampleRate { 0.0 };
+    // Raw 7-bit live strike controllers, or -1 when the host knobs own the
+    // coordinate. The message-thread readout uses the same gesture as audio.
+    std::atomic<int> strikeAzimuthController { -1 };
+    std::atomic<int> strikePositionController { -1 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TaikorAudioProcessor)
 };

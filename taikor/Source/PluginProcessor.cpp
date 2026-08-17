@@ -36,6 +36,9 @@ enum Slot
     slotStereoWidth,
     slotDrive,
     slotOutput,
+    slotStrikeAzimuth,
+    slotPerformer,
+    slotVelocityCurve,
     slotCount
 };
 
@@ -48,8 +51,18 @@ constexpr std::array<const char*, slotCount> parameterIds {
     ids::headDamping, ids::shellResonance, ids::pitch, ids::bachiHardness,
     ids::strikePosition, ids::velocityDepth, ids::tensionModulation,
     ids::strikeNoise, ids::humanise, ids::octaveBody, ids::micDistance,
-    ids::micSpread, ids::stereoWidth, ids::drive, ids::output
+    ids::micSpread, ids::stereoWidth, ids::drive, ids::output,
+    ids::strikeAzimuth, ids::performer, ids::velocityCurve
 };
+
+float bipolarControllerValue (int rawValue) noexcept
+{
+    // MIDI's conventional centre is the exact value 64: 64 steps below it,
+    // 63 above it.
+    return rawValue < 64
+        ? static_cast<float> (rawValue - 64) / 64.0f
+        : static_cast<float> (rawValue - 64) / 63.0f;
+}
 
 std::unique_ptr<juce::RangedAudioParameter> makePercentParameter (
     const juce::String& id, const juce::String& name, float defaultValue)
@@ -259,13 +272,9 @@ TaikorAudioProcessor::createParameterLayout()
 
     result.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { ids::output, 1 }, "Output",
-        // The loudest stroke the instrument can make - a full-velocity rim
-        // shot on the largest drum - sits about 22 dB above unity, so this
-        // default is chosen to leave everything short of that one extreme
-        // just under full scale rather than to make a middling stroke as
-        // loud as possible. A ghost stroke is about thirty-four decibels
-        // below a full blow on the same drum, which is the range the model
-        // actually covers.
+        // The model's fixed post-Drive reference calibration owns single-hit
+        // headroom. Keep this public range and default stable so existing host
+        // automation retains its exact normalised curve.
         juce::NormalisableRange<float> { -24.0f, 6.0f, 0.1f }, -22.5f,
         juce::AudioParameterFloatAttributes()
             .withLabel ("dB")
@@ -276,6 +285,51 @@ TaikorAudioProcessor::createParameterLayout()
             .withValueFromStringFunction ([] (const juce::String& text)
             {
                 return text.retainCharacters ("0123456789.-").getFloatValue();
+            })));
+
+    // Appended after the established host slots so every earlier automation
+    // index and saved parameter ID keeps its meaning.
+    result.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { ids::strikeAzimuth, 1 }, "Strike Azimuth",
+        juce::NormalisableRange<float> { -180.0f, 180.0f, 0.1f }, 0.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel (juce::String::fromUTF8 ("\xc2\xb0"))
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (value, 1);
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.-").getFloatValue();
+            })));
+
+    result.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { ids::performer, 1 }, "Performer",
+        juce::StringArray { "P1", "P2", "P3", "P4" }, 0,
+        juce::AudioParameterChoiceAttributes().withAutomatable (false)));
+
+    result.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { ids::velocityCurve, 1 }, "Velocity Curve",
+        juce::NormalisableRange<float> { -1.0f, 1.0f, 0.01f }, 0.0f,
+        juce::AudioParameterFloatAttributes()
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                const auto amount = juce::roundToInt (std::abs (value) * 100.0f);
+                if (amount == 0)
+                    return juce::String ("Linear");
+                return (value < 0.0f ? juce::String ("Soft ")
+                                     : juce::String ("Hard "))
+                     + juce::String (amount);
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                const auto trimmed = text.trim().toUpperCase();
+                if (trimmed.startsWith ("LINEAR"))
+                    return 0.0f;
+                const auto amount = std::abs (
+                    trimmed.retainCharacters ("0123456789.-").getFloatValue())
+                                  * 0.01f;
+                return trimmed.startsWith ("SOFT") ? -amount : amount;
             })));
 
     jassert (static_cast<int> (result.size()) == ids::parameterCount);
@@ -315,6 +369,9 @@ taikor::EngineParameters TaikorAudioProcessor::snapshotEngineParameters() const 
     next.stereoWidth = read (slotStereoWidth);
     next.drive = read (slotDrive);
     next.outputGain = juce::Decibels::decibelsToGain (read (slotOutput));
+    next.strikeAzimuth = juce::degreesToRadians (read (slotStrikeAzimuth));
+    next.performer = juce::roundToInt (read (slotPerformer));
+    next.velocityCurve = read (slotVelocityCurve);
     return next;
 }
 
@@ -325,11 +382,19 @@ taikor::TaikoEngine::DrumMeasurements TaikorAudioProcessor::measureDrum (
     // engine will actually instantiate at it - see TaikoEngine::soundingMode.
     // Zero means the host has not prepared us yet, and then the measurement's
     // own default stands.
+    auto current = snapshotEngineParameters();
+    const int azimuth = strikeAzimuthController.load (std::memory_order_relaxed);
+    const int position = strikePositionController.load (std::memory_order_relaxed);
+    if (azimuth >= 0)
+        current.strikeAzimuth = bipolarControllerValue (azimuth)
+                              * juce::MathConstants<float>::pi;
+    if (position >= 0)
+        current.strikePosition = bipolarControllerValue (position);
+
     const auto rate = displaySampleRate.load (std::memory_order_relaxed);
     return rate > 0.0
-             ? taikor::TaikoEngine::measure (snapshotEngineParameters(), octaveOffset,
-                                             0.0f, rate)
-             : taikor::TaikoEngine::measure (snapshotEngineParameters(), octaveOffset);
+             ? taikor::TaikoEngine::measure (current, octaveOffset, 0.0f, rate)
+             : taikor::TaikoEngine::measure (current, octaveOffset);
 }
 
 void TaikorAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -341,6 +406,8 @@ void TaikorAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     // first stroke starts at the restored gain rather than gliding to it.
     updateEngineParameters();
     engine.prepare (sampleRate, samplesPerBlock);
+    strikeAzimuthController.store (-1, std::memory_order_relaxed);
+    strikePositionController.store (-1, std::memory_order_relaxed);
     displaySampleRate.store (sampleRate, std::memory_order_relaxed);
     activeVoiceCount.store (0, std::memory_order_relaxed);
     engineReady.store (true, std::memory_order_release);
@@ -353,6 +420,8 @@ void TaikorAudioProcessor::releaseResources()
     discardUiTriggers();
     engine.allSoundsOff();
     engine.reset();
+    strikeAzimuthController.store (-1, std::memory_order_relaxed);
+    strikePositionController.store (-1, std::memory_order_relaxed);
     activeVoiceCount.store (0, std::memory_order_relaxed);
     displaySampleRate.store (0.0, std::memory_order_relaxed);
 }
@@ -381,6 +450,7 @@ void TaikorAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     {
         discardUiTriggers();
         engine.allSoundsOff();
+        engine.clearStrikeOverrides();
     }
 
     // Editor pad strokes are deliberately quantised to the next block boundary.
@@ -441,7 +511,12 @@ void TaikorAudioProcessor::dispatchMidiData (const juce::uint8* data,
     else if (kind == 0xb0u && numBytes >= 3)
     {
         const auto controller = data[1] & 0x7fu;
-        const auto value = static_cast<float> (data[2] & 0x7fu) / 127.0f;
+        const auto rawValue = static_cast<int> (data[2] & 0x7fu);
+        const auto value = static_cast<float> (rawValue) / 127.0f;
+        // Standard bipolar MIDI controls have a real centre at 64. Mapping the
+        // whole byte through raw/127 would put that value slightly positive,
+        // so use the 64 steps below centre and 63 above it explicitly.
+        const float bipolarValue = bipolarControllerValue (rawValue);
 
         if (controller == 1u)
         {
@@ -449,15 +524,26 @@ void TaikorAudioProcessor::dispatchMidiData (const juce::uint8* data,
             // changing anything about the strokes that follow.
             engine.setHandDamping (value);
         }
+        else if (controller == 16u)
+        {
+            strikeAzimuthController.store (rawValue, std::memory_order_relaxed);
+            engine.setStrikeAzimuthOverride (
+                bipolarValue * juce::MathConstants<float>::pi);
+        }
+        else if (controller == 17u)
+        {
+            strikePositionController.store (rawValue, std::memory_order_relaxed);
+            engine.setStrikePositionOverride (bipolarValue);
+        }
         else if (controller == 121u)
         {
-            // Reset All Controllers. Both of Taikor's performable controls go
-            // back to where they started: the hand comes off the head and the
-            // wheel returns to centre. Without this a host that resets its
-            // controller state left the drum muted or bent, and every stroke
-            // after it inherited a gesture the sender believed it had cleared.
+            // Reset All Controllers returns every live gesture to its host
+            // parameter: hand off, wheel centred, and strike overrides cleared.
             engine.setHandDamping (0.0f);
             engine.setPitchBend (0.0f);
+            engine.clearStrikeOverrides();
+            strikeAzimuthController.store (-1, std::memory_order_relaxed);
+            strikePositionController.store (-1, std::memory_order_relaxed);
         }
         else if (controller == 120u || controller == 123u)
         {
@@ -479,6 +565,8 @@ void TaikorAudioProcessor::requestPanic() noexcept
     // Events published before this generation change are stale even if their
     // producer races the audio-thread queue flush.
     uiQueueGeneration.fetch_add (1, std::memory_order_acq_rel);
+    strikeAzimuthController.store (-1, std::memory_order_relaxed);
+    strikePositionController.store (-1, std::memory_order_relaxed);
     panicRequested.store (true, std::memory_order_release);
 }
 

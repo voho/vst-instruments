@@ -510,6 +510,7 @@ TaikorKnob::TaikorKnob (juce::String name, ValueStyle style, VisualRole roleToUs
         case ValueStyle::Plain:       break;
         case ValueStyle::Percent:     slider.setTextValueSuffix (" %"); break;
         case ValueStyle::Semitones:   slider.setTextValueSuffix (" st"); break;
+        case ValueStyle::Degrees:     slider.setTextValueSuffix (" deg"); break;
         case ValueStyle::Centimetres: slider.setTextValueSuffix (" cm"); break;
         case ValueStyle::Decibels:    slider.setTextValueSuffix (" dB"); break;
     }
@@ -1094,7 +1095,7 @@ TaikorAudioProcessorEditor::TaikorAudioProcessorEditor (TaikorAudioProcessor& pr
     addKnob (headDampingKnob, ids::headDamping,
              "Extra loss in the head on top of the material's own.");
     addKnob (shellResonanceKnob, ids::shellResonance,
-             "How much of the wooden body colours an ordinary head stroke.");
+             "How much the wooden body rings when Don Rim catches the hoop.");
     addKnob (pitchKnob, ids::pitch,
              "Musical transposition, applied as head tension because that is what "
              "tuning a drum is.");
@@ -1105,9 +1106,18 @@ TaikorAudioProcessorEditor::TaikorAudioProcessorEditor (TaikorAudioProcessor& pr
     addKnob (strikePositionKnob, ids::strikePosition,
              "Moves every stroke towards the centre or towards the rim, on top of "
              "the position its own articulation already asks for.");
+    addKnob (strikeAzimuthKnob, ids::strikeAzimuth,
+             "Turns the strike around the head. CC16 overrides this angle for "
+             "sample-accurate left and right hand placement.");
+    addKnob (performerKnob, ids::performer,
+             "Selects one of four repeatable players, each with a stable touch "
+             "and strike character.");
     addKnob (velocityDepthKnob, ids::velocityDepth,
              "How far MIDI velocity moves the impact speed. The timbre follows on "
              "its own: contact time goes as impact speed to the minus one fifth.");
+    addKnob (velocityCurveKnob, ids::velocityCurve,
+             "Shapes MIDI velocity before impact speed: Soft opens up quiet playing, "
+             "Linear leaves it unchanged, and Hard asks for a firmer hit.");
     addKnob (tensionModKnob, ids::tensionModulation,
              "Attack pitch glide. A hard stroke stretches the head, raising its "
              "tension until the stroke decays.");
@@ -1438,7 +1448,8 @@ void TaikorAudioProcessorEditor::resized()
                   &cavityKnob, &depthKnob, &resonantKnob, &headDampingKnob,
                   &shellResonanceKnob, &pitchKnob });
     layoutDeck (areas.strokeDeck, strokeDeckLabel, 1,
-                { &hardnessKnob, &strikePositionKnob, &velocityDepthKnob,
+                { &hardnessKnob, &strikePositionKnob, &strikeAzimuthKnob,
+                  &performerKnob, &velocityDepthKnob, &velocityCurveKnob,
                   &tensionModKnob, &strikeNoiseKnob, &humaniseKnob, &octaveBodyKnob });
     layoutDeck (areas.microphoneDeck, microphoneDeckLabel, 1,
                 { &micDistanceKnob, &micSpreadKnob, &widthKnob, &driveKnob,
