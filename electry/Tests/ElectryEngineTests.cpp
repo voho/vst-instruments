@@ -3498,27 +3498,33 @@ void testSetResonanceReturnLevelAndPalmMutePressureSanitisation()
 void testDelayTapClampsAndInterpolates()
 {
     // A request below the 4-sample floor (a cubic tap needs two samples on
-    // each side) clamps to exactly the same coefficients an explicit
-    // request for the floor itself would solve.
+    // each side) clamps to the floor itself. Both the floor and the ceiling
+    // below are exact integers, so each collapses to a single unit tap;
+    // pinning the offset and coefficients against the documented 4 directly
+    // (rather than only against a second, equally-movable call at the same
+    // nominal boundary) is what actually catches the floor constant itself
+    // drifting, since both sides of a merely-relative comparison would drift
+    // together.
     const auto belowFloor = TestAccess::delayTapAt(1.0f);
-    const auto atFloor = TestAccess::delayTapAt(4.0f);
-    expect(belowFloor.offset == atFloor.offset && belowFloor.c0 == atFloor.c0
-               && belowFloor.c1 == atFloor.c1 && belowFloor.c2 == atFloor.c2
-               && belowFloor.c3 == atFloor.c3,
-           "a delay below the 4-sample floor was not clamped to it");
+    expect(belowFloor.offset == 4,
+           "a delay below the 4-sample floor did not clamp to offset 4");
+    expect(belowFloor.c0 == 0.0f && belowFloor.c1 == 1.0f
+               && belowFloor.c2 == 0.0f && belowFloor.c3 == 0.0f,
+           "a delay below the 4-sample floor did not collapse to a unit tap "
+           "at the floor");
 
     // A request past the delayLineSize - 8 ceiling (room for the same
-    // two-sample margin at the top of the ring) clamps the same way.
-    const float ceiling =
-        static_cast<float>(TestAccess::delayLineCapacity() - 8);
-    const auto aboveCeiling = TestAccess::delayTapAt(ceiling + 500.0f);
-    const auto atCeiling = TestAccess::delayTapAt(ceiling);
-    expect(aboveCeiling.offset == atCeiling.offset
-               && aboveCeiling.c0 == atCeiling.c0
-               && aboveCeiling.c1 == atCeiling.c1
-               && aboveCeiling.c2 == atCeiling.c2
-               && aboveCeiling.c3 == atCeiling.c3,
-           "a delay past the delayLineSize-8 ceiling was not clamped to it");
+    // two-sample margin at the top of the ring) clamps the same way, pinned
+    // against the documented ceiling for the same reason.
+    const int ceilingSamples = TestAccess::delayLineCapacity() - 8;
+    const auto aboveCeiling =
+        TestAccess::delayTapAt(static_cast<float>(ceilingSamples) + 500.0f);
+    expect(aboveCeiling.offset == ceilingSamples,
+           "a delay past the delayLineSize-8 ceiling did not clamp to it");
+    expect(aboveCeiling.c0 == 0.0f && aboveCeiling.c1 == 1.0f
+               && aboveCeiling.c2 == 0.0f && aboveCeiling.c3 == 0.0f,
+           "a delay past the delayLineSize-8 ceiling did not collapse to a "
+           "unit tap at the ceiling");
 
     // An exact integer delay needs no interpolation at all, so the four
     // weights must collapse to a single unit tap rather than spreading
@@ -3531,12 +3537,32 @@ void testDelayTapClampsAndInterpolates()
            "an exact-integer delay did not collapse to a single unit tap");
 
     // A fractional delay's offset lands at the request's ceiling (the read
-    // arithmetic the loop actually uses), and its four weights - a genuine
-    // cubic Lagrange basis - sum to exactly unity, the identity that keeps a
-    // constant input passing through unattenuated.
+    // arithmetic the loop actually uses). Partition of unity alone (every
+    // Lagrange basis satisfies it, even one evaluated at the wrong
+    // fractional position - t = delaySamples - ceiling rather than
+    // ceiling - delaySamples still sums to one) is not enough to pin the
+    // solve, so the four weights are checked against the closed-form cubic
+    // Lagrange basis at t = ceiling - delaySamples = 0.75 as well: with
+    // t, t-1, t-2 and t+1 all exact quarters, every product before the
+    // final /6 or *0.5 is an exact power-of-two fraction, so the reference
+    // values below are exact and a tight tolerance still only allows for
+    // float rounding in the division, not for a sign or ordering error.
     const auto fractional = TestAccess::delayTapAt(10.25f);
     expect(fractional.offset == 11,
            "a fractional delay's offset was not the request's ceiling");
+    constexpr float tolerance = 1.0e-6f;
+    expect(std::abs(fractional.c0 - (-0.0390625f)) < tolerance,
+           "a fractional delay's c0 weight did not match the closed-form "
+           "cubic Lagrange basis");
+    expect(std::abs(fractional.c1 - 0.2734375f) < tolerance,
+           "a fractional delay's c1 weight did not match the closed-form "
+           "cubic Lagrange basis");
+    expect(std::abs(fractional.c2 - 0.8203125f) < tolerance,
+           "a fractional delay's c2 weight did not match the closed-form "
+           "cubic Lagrange basis");
+    expect(std::abs(fractional.c3 - (-0.0546875f)) < tolerance,
+           "a fractional delay's c3 weight did not match the closed-form "
+           "cubic Lagrange basis");
     const float sum =
         fractional.c0 + fractional.c1 + fractional.c2 + fractional.c3;
     expect(std::abs(sum - 1.0f) < 1.0e-5f,
