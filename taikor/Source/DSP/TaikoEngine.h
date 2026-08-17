@@ -1323,6 +1323,12 @@ private:
     void applyTensionShift (Voice& voice, float shift) noexcept;
     void updateVoiceControl (Voice& voice) noexcept;
     void advancePhysicalContacts (Voice& physical) noexcept;
+    // The absolute hard cap on any voice's lifetime, in samples at the current
+    // sample rate: maximumTailSeconds converted once rather than at each of
+    // its five call sites (buildVoiceModes, ensurePhysicalDrum, trigger twice
+    // over and applyTensionShift), which all rebuilt the identical
+    // static_cast<std::uint64_t> (maximumTailSeconds * sampleRate_) by hand.
+    [[nodiscard]] std::uint64_t maximumTailSamples() const noexcept;
     // Adds a strike's per-band continuum injections into the physical bank's
     // unresolved envelopes as energy rather than amplitude - hypot, not a sum -
     // because distinct unresolved modes do not add coherently. `share` is the
