@@ -24,3 +24,5 @@ Notable customer-facing changes to YouKnow106 are recorded here.
   moved quality-dependent chorus coefficient work out of the audio callback.
 - Added a signed, notarized, stapled PKG release path with bundled licence and
   user documentation, a build manifest, and SHA-256 checksums.
+- Finalized the Protocodus bundle and package identifiers for v1 and documented
+  migration from the earlier public Pluto Audio nightly builds.

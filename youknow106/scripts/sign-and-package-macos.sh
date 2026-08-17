@@ -61,7 +61,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     exit 1
 fi
 
-for tool in cmake codesign ditto lipo mktemp pkgbuild plutil shasum xattr; do
+for tool in cmake codesign ditto lipo mktemp pkgbuild plutil shasum xattr xcrun; do
     command -v "${tool}" >/dev/null 2>&1 || {
         echo "error: required tool '${tool}' was not found" >&2
         exit 1
@@ -210,6 +210,10 @@ if [[ -z "${CXX_COMPILER}" || ! -x "${CXX_COMPILER}" ]]; then
 fi
 if [[ -z "${CXX_COMPILER}" || ! -x "${CXX_COMPILER}" ]]; then
     echo "error: no executable C++ compiler in ${CACHE_FILE} or xcrun" >&2
+    exit 1
+fi
+if [[ -z "${DEPLOYMENT_TARGET}" ]]; then
+    echo "error: CMAKE_OSX_DEPLOYMENT_TARGET is missing from ${CACHE_FILE}" >&2
     exit 1
 fi
 if [[ "${RELEASE_MODE}" == "1" && "${DEPLOYMENT_TARGET}" != "${MINIMUM_MACOS}" ]]; then
@@ -385,6 +389,45 @@ if [[ "${RELEASE_MODE}" == "1" && "${ARTIFACT_ARCH}" != "universal" ]]; then
     echo "error: release artifacts must contain both arm64 and x86_64" >&2
     exit 1
 fi
+
+VTOOL="$(xcrun --find vtool 2>/dev/null || true)"
+if [[ -z "${VTOOL}" || ! -x "${VTOOL}" ]]; then
+    echo "error: xcrun could not find an executable vtool" >&2
+    exit 1
+fi
+
+require_macos_target() {
+    local executable="$1"
+    local architecture="$2"
+    local build_info=""
+    local platform=""
+    local minimum=""
+
+    if ! build_info="$("${VTOOL}" -arch "${architecture}" -show-build \
+            "${executable}" 2>&1)"; then
+        echo "error: vtool could not inspect ${executable} (${architecture})" >&2
+        printf '%s\n' "${build_info}" >&2
+        exit 1
+    fi
+
+    platform="$(printf '%s\n' "${build_info}" \
+        | awk '$1 == "platform" { print $2; exit }')"
+    minimum="$(printf '%s\n' "${build_info}" \
+        | awk '$1 == "minos" { print $2; exit }')"
+    require_value "$(basename "${executable}") ${architecture} platform" \
+        "MACOS" "${platform}"
+    require_value "$(basename "${executable}") ${architecture} minimum macOS" \
+        "${DEPLOYMENT_TARGET}" "${minimum}"
+}
+
+for executable in \
+    "${VST3}/Contents/MacOS/YouKnow106" \
+    "${AU}/Contents/MacOS/YouKnow106" \
+    "${APP}/Contents/MacOS/YouKnow106"; do
+    for architecture in ${APP_ARCHS}; do
+        require_macos_target "${executable}" "${architecture}"
+    done
+done
 
 case "${PACKAGE_ROOT}" in
     "${BUILD_DIR}"/*) ;;
