@@ -636,6 +636,13 @@ private:
     void silenceVoice(Voice& voice) noexcept;
     void beginRelease(Voice& voice) noexcept;
     int voicesForMode(const EngineParameters& p) const noexcept;
+    // The engine holds twelve distinct singer identities, so an ensemble
+    // larger than that could only be built from duplicates of the ones it
+    // already has. Shared by setParameters() (sanitising the incoming
+    // choirSize before it is stored) and voicesForMode() (re-deriving the
+    // active voice count from it), so the 2..singerCount range has one
+    // definition instead of two that could drift apart.
+    static int effectiveChoirSize(int requestedChoirSize) noexcept;
     int chordMidiForSinger(int root, int singer, const EngineParameters& p) const noexcept;
     int findFreeVoice() const noexcept;
     void makeRoomFor(int required);

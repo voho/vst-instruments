@@ -778,6 +778,14 @@ VocalorAudioProcessorEditor::VocalorAudioProcessorEditor (VocalorAudioProcessor&
     humanizeKnob.slider.setDoubleClickReturnValue (true, 0.52);
     nasalKnob.slider.setDoubleClickReturnValue (true, 0.0);
     dynamicsKnob.slider.setDoubleClickReturnValue (true, 1.0);
+    // Overrides the generic "Adjust dynamics" text set above: a mod wheel or
+    // channel-pressure message takes permanent ownership of this level from
+    // its first move (CC 121 hands it back), which a screen-reader user has
+    // no other way to discover, matching what the README's MIDI mapping table
+    // already documents.
+    dynamicsKnob.slider.setDescription (
+        "Base performance dynamic; a MIDI mod wheel or channel-pressure message takes over this "
+        "level from its first move until CC 121 (Reset All Controllers) hands it back");
     intonationKnob.slider.setDoubleClickReturnValue (true, 0.0);
     glideKnob.slider.setDoubleClickReturnValue (true, 0.0);
     spreadKnob.slider.setDoubleClickReturnValue (true, 0.62);

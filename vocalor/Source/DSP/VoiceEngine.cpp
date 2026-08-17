@@ -434,9 +434,7 @@ void VoiceEngine::setParameters(const EngineParameters& p)
     const int mode = p.mode == PerformanceMode::Choir ? 1 : (p.mode == PerformanceMode::Chord ? 2 : 0);
     const int vowel = vowelIndexOf(p.vowel);
     const int quality = p.chordQuality == ChordQuality::Minor ? 1 : 0;
-    // The engine holds twelve distinct singer identities, so an ensemble larger
-    // than that could only be built from duplicates of the ones it already has.
-    const int choir = std::clamp(p.choirSize, 2, singerCount);
+    const int choir = effectiveChoirSize(p.choirSize);
 
     atomicParameters_.profile.store(profile, std::memory_order_relaxed);
     atomicParameters_.mode.store(mode, std::memory_order_relaxed);
@@ -1049,12 +1047,17 @@ void VoiceEngine::buildSingerIdentities()
     }
 }
 
+int VoiceEngine::effectiveChoirSize(int requestedChoirSize) noexcept
+{
+    return std::clamp(requestedChoirSize, 2, singerCount);
+}
+
 int VoiceEngine::voicesForMode(const EngineParameters& p) const noexcept
 {
     if (p.mode == PerformanceMode::Chord)
         return 6;
     if (p.mode == PerformanceMode::Choir)
-        return std::clamp(p.choirSize, 2, singerCount);
+        return effectiveChoirSize(p.choirSize);
     return 1;
 }
 

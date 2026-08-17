@@ -9181,6 +9181,33 @@ void testPerformanceExpression()
         engine.setPitchBend (std::numeric_limits<float>::quiet_NaN());
         const auto recovered = render (engine, static_cast<int> (sampleRate * 0.2));
         expect (recovered.finite, "a non-finite pitch bend produced non-finite audio");
+
+        // setPitchBend()'s own clamp to +/-48 semitones, which every bend
+        // exercised above (2, -12, and NaN's zero fallback) stays well inside
+        // of -- the largest magnitude tried anywhere in the suite is 22
+        // semitones -- and which production never reaches either:
+        // PluginProcessor::dispatchMidiData() scales the 14-bit MIDI wheel by
+        // kPitchBendSemitones, a fixed +/-2. A finite value far past either
+        // side of the clamp is asserted to land on exactly the four-octave
+        // ratio the clamp promises rather than a larger one. Comparing in the
+        // semitone domain (rather than a fixed absolute tolerance on the raw
+        // ratio) keeps the bound equally tight on both sides: an absolute
+        // ratio tolerance of 0.01 is negligible against the upward ratio
+        // (16.0) but was over three semitones of slack against the downward
+        // ratio (0.0625), so it did not actually pin the -48 semitone bound.
+        engine.setPitchBend (1000.0f);
+        render (engine, static_cast<int> (sampleRate * 0.2));
+        const auto clampedUp = static_cast<double> (
+            vocalor::VoiceEngineTestAccess::frequencyForRoot (engine, 60));
+        expect (std::abs (12.0 * std::log2 (clampedUp / unbent) - 48.0) < 0.05,
+                "an out-of-range upward bend did not clamp to four octaves up");
+
+        engine.setPitchBend (-1000.0f);
+        render (engine, static_cast<int> (sampleRate * 0.2));
+        const auto clampedDown = static_cast<double> (
+            vocalor::VoiceEngineTestAccess::frequencyForRoot (engine, 60));
+        expect (std::abs (12.0 * std::log2 (clampedDown / unbent) - (-48.0)) < 0.05,
+                "an out-of-range downward bend did not clamp to four octaves down");
     }
 
     // Sustain pedal: a note-off arriving under a held pedal is deferred, not

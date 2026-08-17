@@ -900,6 +900,12 @@ private:
     // non-positive block is otherwise observationally identical to simply
     // not calling process() at all.
     std::uint64_t nonPositiveProcessCallCount_ { 0 };
+    // How many times setInstrumentParameters()'s own out-of-range instrument
+    // guard has returned early. Exists so tests can pin that guard directly,
+    // since the write it prevents - parameters_[indexFor (instrument)] with
+    // an out-of-range instrument - is itself undefined behaviour, not
+    // guaranteed to visibly perturb any one instrument's rendered audio.
+    std::uint64_t rejectedSetInstrumentParametersCount_ { 0 };
 
     friend struct DrumEngineTestAccess;
     std::array<Voice, maxVoices> voices_ {};
