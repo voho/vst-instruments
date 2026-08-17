@@ -202,6 +202,13 @@ jobs:
           sdk_version="$(xcrun --sdk macosx --show-sdk-version)"
           cxx_compiler="$(sed -n 's/^CMAKE_CXX_COMPILER:[^=]*=//p' \
             youknow106/build-macos/CMakeCache.txt)"
+          if [[ -z "${cxx_compiler}" || ! -x "${cxx_compiler}" ]]; then
+            cxx_compiler="$(xcrun --find clang++ 2>/dev/null || true)"
+          fi
+          if [[ -z "${cxx_compiler}" || ! -x "${cxx_compiler}" ]]; then
+            echo "error: no executable C++ compiler in CMake cache or xcrun" >&2
+            exit 1
+          fi
           cxx_version="$("${cxx_compiler}" --version | sed -n '1p')"
 
           duplicate_keys="$(sed -n 's/^\([^:]*\):.*/\1/p' "${manifest}" \

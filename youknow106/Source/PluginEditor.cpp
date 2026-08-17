@@ -168,7 +168,7 @@ YouKnow106LookAndFeel::YouKnow106LookAndFeel()
     setColour (juce::PopupMenu::highlightedBackgroundColourId,
                fromPalette (panel::colour::cyan).withAlpha (0.85f));
     setColour (juce::PopupMenu::highlightedTextColourId,
-               fromPalette (panel::colour::faceplate));
+               fromPalette (panel::colour::scope));
     setColour (juce::PopupMenu::headerTextColourId,
                fromPalette (panel::colour::textDim));
 
@@ -184,6 +184,35 @@ YouKnow106LookAndFeel::YouKnow106LookAndFeel()
                fromPalette (panel::colour::cyan).withAlpha (0.45f));
     setColour (juce::MidiKeyboardComponent::shadowColourId,
                juce::Colours::black.withAlpha (0.6f));
+}
+
+std::unique_ptr<juce::FocusOutline>
+YouKnow106LookAndFeel::createFocusOutlineForComponent (juce::Component&)
+{
+    struct WindowProperties final : public juce::FocusOutline::OutlineWindowProperties
+    {
+        juce::Rectangle<int> getOutlineBounds (juce::Component& component) override
+        {
+            return component.getScreenBounds().expanded (3);
+        }
+
+        void drawOutline (juce::Graphics& g, int width, int height) override
+        {
+            const auto bounds = juce::Rectangle<float> (
+                static_cast<float> (width), static_cast<float> (height));
+
+            // Adjacent dark and light rings remain visible over every panel,
+            // key and illuminated control colour without guessing which one
+            // happens to be behind the focused component.
+            g.setColour (fromPalette (panel::colour::scope));
+            g.drawRoundedRectangle (bounds.reduced (1.5f), 4.0f, 3.0f);
+            g.setColour (fromPalette (panel::colour::text));
+            g.drawRoundedRectangle (bounds.reduced (3.5f), 2.5f, 1.5f);
+        }
+    };
+
+    return std::make_unique<juce::FocusOutline> (
+        std::make_unique<WindowProperties>());
 }
 
 void YouKnow106LookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y,
@@ -526,13 +555,10 @@ void YouKnow106LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton&
     const auto text = button.getButtonText();
     const bool compact = static_cast<bool> (
         button.getProperties().getWithDefault (compactStyleProperty, false));
-    const bool secondary = static_cast<bool> (
-        button.getProperties().getWithDefault (secondaryStyleProperty, false));
     const bool hardware = static_cast<bool> (
         button.getProperties().getWithDefault (hardwareStyleProperty, false));
     g.setColour (fromPalette (button.getToggleState() ? panel::colour::text
-                                                      : panel::colour::textDim)
-                     .withAlpha (secondary ? 0.72f : 1.0f));
+                                                      : panel::colour::textDim));
 
     if (hardware)
     {
@@ -1451,7 +1477,10 @@ YouKnow106AudioProcessorEditor::YouKnow106AudioProcessorEditor (YouKnow106AudioP
         if (isSlider)
             child->setWantsKeyboardFocus (true);
         if (isInteractive)
+        {
             child->setHasFocusOutline (true);
+            child->addKeyListener (this);
+        }
     }
 
     setResizable (true, true);
@@ -1471,6 +1500,9 @@ YouKnow106AudioProcessorEditor::YouKnow106AudioProcessorEditor (YouKnow106AudioP
 YouKnow106AudioProcessorEditor::~YouKnow106AudioProcessorEditor()
 {
     stopTimer();
+    for (auto* child : getChildren())
+        child->removeKeyListener (this);
+
     // Closing a plug-in window during a drag must not leave its last physical
     // gesture latched in the engine after the control itself has disappeared.
     // Do not publish an unsolicited centre event for an untouched lever: that
@@ -2923,8 +2955,8 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
         const auto header = scaled (section.x, section.y, section.width,
                                     panel::headerHeight);
         juce::ColourGradient headerGradient (
-            red.brighter (0.08f), header.getX(), header.getY(),
-            red.darker (0.12f), header.getX(), header.getBottom(), false);
+            red.darker (0.20f), header.getX(), header.getY(),
+            red.darker (0.38f), header.getX(), header.getBottom(), false);
         g.setGradientFill (headerGradient);
         g.fillRect (header);
         g.setColour (ink);
@@ -3112,10 +3144,55 @@ void YouKnow106AudioProcessorEditor::timerCallback()
     // TooltipClient remains the single source of accessible help text, but its
     // presentation is the fixed strip. Poll the same mouse source JUCE's
     // TooltipWindow uses and climb nested slider/combo children in showFor().
+    // A focus change without pointer motion is keyboard traversal, so the
+    // focused control gets the same explanation and exact value as hover.
     const auto mouse = juce::Desktop::getInstance().getMainMouseSource();
     auto* hovered = mouse.isTouch() ? nullptr : mouse.getComponentUnderMouse();
-    if (hovered == this || isParentOf (hovered))
-        contextHelp.showFor (hovered, parameterValueTextFor (hovered));
+    const auto mousePosition = mouse.getScreenPosition();
+    const bool mouseMoved = mousePosition != lastMouseScreenPosition;
+    lastMouseScreenPosition = mousePosition;
+    refreshContextHelp (hovered, juce::Component::getCurrentlyFocusedComponent(),
+                        mouseMoved);
+}
+
+bool YouKnow106AudioProcessorEditor::keyPressed (const juce::KeyPress&,
+                                                 juce::Component* source)
+{
+    if (source == this || isParentOf (source))
+    {
+        lastFocusedHelpComponent = source;
+        contextHelpFollowsKeyboardFocus = true;
+        contextHelp.showFor (source, parameterValueTextFor (source));
+    }
+
+    // Observe the gesture without consuming it; the focused JUCE control keeps
+    // its native Tab, arrow, Space and Return behaviour.
+    return false;
+}
+
+void YouKnow106AudioProcessorEditor::refreshContextHelp (
+    juce::Component* hovered, juce::Component* focused, bool mouseMoved)
+{
+    const auto belongsToEditor = [this] (const juce::Component* component)
+    {
+        return component != nullptr
+            && (component == this || isParentOf (component));
+    };
+
+    if (mouseMoved)
+        contextHelpFollowsKeyboardFocus = false;
+
+    if (focused != lastFocusedHelpComponent.getComponent())
+    {
+        lastFocusedHelpComponent = focused;
+        contextHelpFollowsKeyboardFocus = belongsToEditor (focused);
+    }
+
+    auto* target = contextHelpFollowsKeyboardFocus && belongsToEditor (focused)
+        ? focused : hovered;
+
+    if (belongsToEditor (target))
+        contextHelp.showFor (target, parameterValueTextFor (target));
     else
         contextHelp.showIdle();
 }
