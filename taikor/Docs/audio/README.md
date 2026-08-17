@@ -71,12 +71,12 @@ ghost strokes in the velocity take.
 | `07-chudaiko-phrase.wav` | The same phrase on the chu-daiko | 6.7 s | −17.1 dBFS | +14.1 dB |
 | `08-okedo-phrase.wav` | The same phrase on the okedo-daiko | 5.1 s | −9.5 dBFS | +6.5 dB |
 | `09-shime-phrase.wav` | The same phrase on the shime-daiko | 4.2 s | −22.2 dBFS | +19.2 dB |
-| `10-velocity-dynamics.wav` | One stroke from a ghost note to a full-arm hit | 5.9 s | −19.4 dBFS | +16.4 dB |
+| `10-velocity-dynamics.wav` | One stroke from a ghost note to a full-arm hit | 5.9 s | −18.1 dBFS | +15.1 dB |
 | `11-rolls-and-presses.wav` | Press rolls, a played flam and a roll accelerating into a rim shot | 5.4 s | −7.1 dBFS | +4.1 dB |
 | `12-bachi-hardness.wav` | Felt beater through to a hard oak bachi | 4.8 s | −12.8 dBFS | +9.8 dB |
 | `13-strike-position.wav` | The same stroke walked from centre to rim | 4.6 s | −16.3 dBFS | +13.3 dB |
 | `14-head-tension.wav` | Slack head through to fully tacked | 5.5 s | −16.8 dBFS | +13.8 dB |
-| `15-head-material.wav` | Thin synthetic film through to thick cowhide | 5.5 s | −19.6 dBFS | +16.6 dB |
+| `15-head-material.wav` | Thin synthetic film through to thick cowhide | 5.5 s | −21.6 dBFS | +18.6 dB |
 | `16-shell-material.wav` | Light laminated staves through to dense carved zelkova, on a rim shot | 5.4 s | −8.1 dBFS | +5.1 dB |
 | `17-air-coupling.wav` | Open body through to a fully sealed one | 5.5 s | −18.6 dBFS | +15.6 dB |
 | `18-body-depth.wav` | Shallow body through to deep | 5.5 s | −21.3 dBFS | +18.3 dB |
@@ -84,8 +84,8 @@ ghost strokes in the velocity take.
 | `20-octave-body.wav` | The keyboard as one drum retuned four times, then as the four drums | 7.8 s | −22.6 dBFS | +19.6 dB |
 | `21-mic-distance.wav` | The close pair from 3 cm out to 40 cm | 4.5 s | −11.8 dBFS | +8.8 dB |
 | `22-mic-spread.wav` | The close pair from coincident to fully opened | 4.5 s | −16.6 dBFS | +13.6 dB |
-| `23-hand-damping.wav` | A hand laid on a ringing head, from MIDI CC1 | 6.0 s | −20.5 dBFS | +17.5 dB |
-| `24-pitch-wheel.wav` | The wheel pressing the head sharp and flat | 4.3 s | −21.1 dBFS | +18.1 dB |
+| `23-hand-damping.wav` | A hand laid on a ringing head, from MIDI CC1 | 6.0 s | −20.0 dBFS | +17.0 dB |
+| `24-pitch-wheel.wav` | The wheel pressing the head sharp and flat | 4.3 s | −21.0 dBFS | +18.0 dB |
 | `25-ensemble-piece.wav` | A longer piece moving between all four drums of the grid | 10.4 s | −11.5 dBFS | +8.5 dB |
 | `26-polar-strikes.wav` | Fixed left, centre and right strikes, then one circuit around the head | 8.6 s | −21.8 dBFS | +18.8 dB |
 | `27-performer-ensemble.wav` | Phase-locked P1 copies, then the same phrase layered as P1-P4 | 5.7 s | −13.1 dBFS | +10.1 dB |
