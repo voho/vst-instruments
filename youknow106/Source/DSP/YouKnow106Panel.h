@@ -57,9 +57,8 @@ inline constexpr auto release      = "release";
 inline constexpr auto chorusI      = "chorusI";
 inline constexpr auto chorusII     = "chorusII";
 
-// Controls the modelled instrument does not have. Character controls occupy an
-// explicit extension card and keyboard-facing controls the live lower deck, so
-// neither can be mistaken for stored hardware tone parameters. Their defaults
+// Product extensions remain distinct from stored hardware tone parameters even
+// when the editor places one beside its closest original control. Their defaults
 // preserve the base compatibility model; only explicitly documented structural
 // defaults should be read as hardware claims.
 inline constexpr auto transpose    = "transpose";
@@ -107,11 +106,10 @@ inline constexpr std::uint32_t keyIvory      = 0xd9d2c4u;
 // Geometry, in abstract panel units. The editor scales the whole description to
 // whatever size the window is, so nothing here depends on a pixel density.
 inline constexpr float sectionPadding = 14.0f;
-inline constexpr float sectionGap = 10.0f;
 inline constexpr float panelMargin = 14.0f;
 inline constexpr float headerHeight = 26.0f;
 inline constexpr float controlLabelHeight = 20.0f;
-// Expanded cards give each function more air without turning a single fader
+// Expanded cells give each function more air without turning a single fader
 // cap into a paddle. The cell owns the label and tick field; the mechanical
 // fader itself stays within this convincingly physical width.
 inline constexpr float maximumSliderWidth = 38.0f;
@@ -140,10 +138,10 @@ inline constexpr float instrumentRight = editorWidth - panelMargin;
 inline constexpr float vectorPadX = 24.0f;
 inline constexpr float vectorPadWidth = 170.0f;
 
-// Everything without a front-panel hardware counterpart lives below the
+// Plug-in-only controls without a useful hardware neighbour live below the
 // keybed in one unmistakable add-on bay. Its quiet zones follow the hardware
-// above: global model controls under the cheek, voice and pitch controls under
-// their original families, dynamics under VCA/ENV, and noise under CHORUS.
+// above: global model controls under the cheek, continuous voice controls
+// below VOICE MODE, and pitch controls below the DCO.
 inline constexpr float extensionDeckTop = panelHeight + keyboardHeight + 10.0f;
 inline constexpr float extensionDeckHeight = 128.0f;
 inline constexpr float modelZoneX = 14.0f;
@@ -154,12 +152,8 @@ inline constexpr float pitchZoneX = 420.0f;
 inline constexpr float pitchZoneWidth = 232.0f;
 inline constexpr float monitorZoneX = 664.0f;
 inline constexpr float monitorZoneWidth = 390.0f;
-inline constexpr float dynamicsZoneX = 1066.0f;
-inline constexpr float dynamicsZoneWidth = 350.0f;
-inline constexpr float chorusZoneX = 1428.0f;
-inline constexpr float chorusZoneWidth = 78.0f;
-inline constexpr float operationsBarX = 872.0f;
-inline constexpr float operationsBarWidth = 634.0f;
+inline constexpr float operationsBarX = 1066.0f;
+inline constexpr float operationsBarWidth = 440.0f;
 
 inline constexpr float helpStripGap = 10.0f;
 inline constexpr float helpStripHeight = 48.0f;
@@ -239,13 +233,13 @@ inline constexpr int controlCount = 38;
 
 // Type sizes the editor draws with, in panel units. They live here rather than
 // in the editor so the fit checks below and the drawing code cannot disagree.
-inline constexpr float headerPointSize = 12.0f;
-inline constexpr float labelPointSize = 11.5f;
-inline constexpr float buttonPointSizeMax = 13.0f;
+inline constexpr float headerPointSize = 21.0f;
+inline constexpr float labelPointSize = 13.5f;
+inline constexpr float buttonPointSizeMax = 14.0f;
 // The original compact selector keys carry unusually small legends. Keep a
 // hard floor for them while allowing the proportions of those switches to
 // remain authentic at the supported minimum editor size.
-inline constexpr float buttonPointSizeMin = 7.5f;
+inline constexpr float buttonPointSizeMin = 9.5f;
 // The reference panel uses a moderately condensed grotesque. Applying a small
 // horizontal scale gives the platform font that character and, importantly,
 // preserves full-size legends instead of relying on ellipses.

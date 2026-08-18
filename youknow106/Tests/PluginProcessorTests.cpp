@@ -3711,6 +3711,9 @@ void testDerivedOriginalPanelSwitchesDriveTheirExistingParameters()
     if (chorusOff == nullptr || portamento == nullptr || keyTranspose == nullptr)
         return;
 
+    expect (keyTranspose->getButtonText() == "TRANSPOSE",
+            "the transpose key still carries the redundant KEY prefix");
+
     chorusOff->onClick();
     expect (parameterValue (processor, parameters::chorusI) < 0.5f
                 && parameterValue (processor, parameters::chorusII) < 0.5f,
@@ -3726,11 +3729,11 @@ void testDerivedOriginalPanelSwitchesDriveTheirExistingParameters()
 
     keyTranspose->onClick();
     expect (std::abs (parameterValue (processor, parameters::transpose)) < 0.5f,
-            "KEY TRANSPOSE did not switch the selected interval off");
+            "TRANSPOSE did not switch the selected interval off");
     keyTranspose->onClick();
     expect (std::abs (parameterValue (processor, parameters::transpose) - 12.0f)
                 < 0.5f,
-            "KEY TRANSPOSE did not restore the selected interval");
+            "TRANSPOSE did not restore the selected interval");
 }
 
 // Everything in the parameter contract except the quality ladder and its
@@ -3823,7 +3826,7 @@ void testEveryPanelLegendFitsInTheRealFont()
         if (section.y >= panel::performanceDeckTop)
             return;
 
-        float available = (section.width - 16.0f) * scale;
+        float available = (section.width - 8.0f) * scale;
         float codeWidth = 0.0f;
         if (section.displayCode[0] != '\0')
         {
@@ -3831,21 +3834,25 @@ void testEveryPanelLegendFitsInTheRealFont()
             available -= codeWidth + 4.0f * scale;
         }
 
-        float titleSize = juce::jmax (9.0f,
+        float titleSize = juce::jmax (11.0f,
                                        panel::headerPointSize * scale);
         const float natural = juce::GlyphArrangement::getStringWidth (
-            clearBoldFont (titleSize), section.displayTitle);
+            boldFont (titleSize), section.displayTitle);
         if (natural > available && natural > 0.0f)
             titleSize *= available / natural;
-        titleSize = juce::jmax (7.8f, titleSize);
+        titleSize = juce::jmax (9.5f, titleSize);
 
         const float drawn = juce::GlyphArrangement::getStringWidth (
-            clearBoldFont (titleSize), section.displayTitle);
+            boldFont (titleSize), section.displayTitle);
         expect (drawn <= available + 0.1f,
                 say (juce::String (sizeName) + " section header is truncated: "
                      + section.displayTitle + " needs "
-                     + juce::String (drawn, 1) + " in "
-                     + juce::String (available, 1)));
+                      + juce::String (drawn, 1) + " in "
+                      + juce::String (available, 1)));
+        expect (titleSize <= (panel::headerHeight - 3.0f) * scale + 0.1f,
+                say (juce::String (sizeName)
+                     + " section header is vertically clipped: "
+                     + section.displayTitle));
 
         if (section.displayCode[0] != '\0')
         {
@@ -3915,7 +3922,7 @@ void testEveryPanelLegendFitsInTheRealFont()
             || control.kind == panel::ControlKind::Knob
             || control.kind == panel::ControlKind::Steps)
         {
-            const float size = juce::jmax (10.0f,
+            const float size = juce::jmax (10.5f,
                                            panel::labelPointSize * minimumScale);
             const float drawn = juce::GlyphArrangement::getStringWidth (
                 boldFont (size), control.label);
@@ -4063,15 +4070,17 @@ void testEveryInteractiveEditorControlExplainsItself()
 
     // Six extension knobs, ten utility buttons plus the QUALITY selector,
     // six factory/custom patch controls,
-    // twenty-two original-programmer controls, the keybed and the bender.
+    // twenty-one original-programmer controls, the keybed and the bender.
     // Disabled hardware-only keys remain public so their help explains why
     // the immutable factory bank cannot perform that operation.
     constexpr int expectedInteractiveCount =
-        panel::controlCount + 6 + 11 + 6 + 22 + 1 + 1;
+        panel::controlCount + 6 + 11 + 6 + 21 + 1 + 1;
     expect (interactiveCount == expectedInteractiveCount,
             "the contextual-help audit did not cover every interactive control");
     expect (findDescendantButtonWithText (*editor, "SEND") == nullptr,
             "the removed SEND operation returned to the compact editor");
+    expect (findDescendantNamed (*editor, "MIDI channel") == nullptr,
+            "the removed MIDI-channel key returned to the programmer");
 }
 
 void testPersistentContextHelpAndValueBubbles()
@@ -4733,7 +4742,7 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
         const char* caption;
     };
     constexpr auto expected = std::to_array<UtilityExpectation> ({
-        { "Transpose",      "TRANSPOSE" },
+        { "Transpose",      "AMOUNT" },
         { "Master tune",    "TUNE" },
         { "Velocity",       "VELOCITY" },
         { "Unit Character", "CHARACTER" },
@@ -4780,7 +4789,7 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
             expect (! occupiedAreas[index].intersects (occupiedAreas[previous]),
                     context + " cell overlaps another utility control");
 
-        const float minimumFontHeight = atSupportedMinimum ? 9.0f : 11.0f;
+        const float minimumFontHeight = atSupportedMinimum ? 10.5f : 12.0f;
         expect (caption->getFont().getHeight() >= minimumFontHeight - 0.05f,
                 context + " caption is below the readable font floor");
         expect (labelTextFitsAtItsDeclaredSize (*caption),
@@ -4841,9 +4850,9 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
                      panel::modelZoneWidth, "Model");
     checkInsideZone ("Quality", panel::modelZoneX,
                      panel::modelZoneWidth, "Model");
-    checkInsideZone ("UNISON", panel::voiceZoneX,
-                     panel::voiceZoneWidth, "Voice");
     checkInsideZone ("Polyphony", panel::voiceZoneX,
+                     panel::voiceZoneWidth, "Voice");
+    checkInsideZone ("Velocity", panel::voiceZoneX,
                      panel::voiceZoneWidth, "Voice");
     checkInsideZone ("Key transpose", panel::pitchZoneX,
                      panel::pitchZoneWidth, "Pitch");
@@ -4853,10 +4862,109 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
                      panel::pitchZoneWidth, "Pitch");
     checkInsideZone ("Status display", panel::monitorZoneX,
                      panel::monitorZoneWidth, "Monitor");
-    checkInsideZone ("Velocity", panel::dynamicsZoneX,
-                     panel::dynamicsZoneWidth, "Dynamics");
-    checkInsideZone ("Chorus noise", panel::chorusZoneX,
-                     panel::chorusZoneWidth, "Chorus");
+    checkInsideZone ("PANIC", panel::operationsBarX,
+                     panel::operationsBarWidth, "Session");
+    checkInsideZone ("INIT", panel::operationsBarX,
+                     panel::operationsBarWidth, "Session");
+    checkInsideZone ("DRIFT 1%", panel::operationsBarX,
+                     panel::operationsBarWidth, "Session");
+    checkInsideZone ("VARY 10%", panel::operationsBarX,
+                     panel::operationsBarWidth, "Session");
+    checkInsideZone ("MORPH 50%", panel::operationsBarX,
+                     panel::operationsBarWidth, "Session");
+
+    struct SessionLegend
+    {
+        const char* componentName;
+        const char* displayText;
+    };
+    constexpr auto sessionLegends = std::to_array<SessionLegend> ({
+        { "PANIC", "PANIC" }, { "INIT", "INIT" },
+        { "DRIFT 1%", "1%" }, { "VARY 10%", "10%" },
+        { "MORPH 50%", "50%" },
+    });
+    for (const auto& legend : sessionLegends)
+    {
+        auto* button = dynamic_cast<juce::TextButton*> (
+            findDescendantNamed (editor, legend.componentName));
+        if (button == nullptr)
+            continue;
+
+        const float height = static_cast<float> (button->getHeight());
+        const float fontHeight = juce::jlimit (10.5f, 13.0f, height * 0.55f);
+        const float contentHeight = height - 2.0f;
+        const float iconWidth = juce::jmin (18.0f, contentHeight * 0.72f);
+        const float textWidth = static_cast<float> (button->getWidth())
+                              - 6.0f - iconWidth - 3.0f;
+        const auto font = juce::Font (
+            juce::FontOptions (fontHeight, juce::Font::bold));
+        expect (realTextWidth (font, legend.displayText) <= textWidth + 0.1f,
+                std::string (atSupportedMinimum ? "minimum-size "
+                                                : "default-size ")
+                    + legend.componentName + " session legend is clipped");
+    }
+
+    const auto checkInsideSection = [&] (const char* componentName,
+                                          int sectionIndex,
+                                          const char* sectionName)
+    {
+        auto* component = findDescendantNamed (editor, componentName);
+        expect (component != nullptr,
+                std::string (sectionName) + " section is missing "
+                    + componentName);
+        if (component == nullptr)
+            return;
+
+        const auto& section = panel::sections()[static_cast<std::size_t> (
+            sectionIndex)];
+        const auto sectionArea = juce::Rectangle<float> (
+            section.x * layoutScale, section.y * layoutScale,
+            section.width * layoutScale,
+            section.height * layoutScale).toNearestInt();
+        const auto componentArea = editor.getLocalArea (
+            component, component->getLocalBounds());
+        expect (sectionArea.contains (componentArea),
+                std::string (componentName) + " is no longer inside the "
+                    + sectionName + " section");
+    };
+    checkInsideSection ("UNISON", 1, "Voice Mode");
+    checkInsideSection ("Chorus noise", 8, "Chorus");
+    checkInsideSection ("Chorus noise label", 8, "Chorus");
+
+    const auto componentArea = [&] (juce::Component* component)
+    {
+        return editor.getLocalArea (component, component->getLocalBounds());
+    };
+    auto* unison = findDescendantNamed (editor, "UNISON");
+    auto* poly1 = findDescendantNamed (editor, "POLY 1");
+    auto* poly2 = findDescendantNamed (editor, "POLY 2");
+    expect (unison != nullptr && poly1 != nullptr && poly2 != nullptr,
+            "Voice Mode is missing a POLY or UNISON key");
+    if (unison != nullptr && poly1 != nullptr && poly2 != nullptr)
+    {
+        const auto unisonArea = componentArea (unison);
+        expect (! unisonArea.intersects (componentArea (poly1))
+                    && ! unisonArea.intersects (componentArea (poly2)),
+                "UNISON overlaps an original Voice Mode key");
+    }
+
+    auto* hiss = findDescendantNamed (editor, "Chorus noise");
+    auto* hissLabel = findDescendantNamed (editor, "Chorus noise label");
+    auto* chorusOff = findDescendantNamed (editor, "OFF");
+    auto* chorusI = findDescendantNamed (editor, "I");
+    auto* chorusII = findDescendantNamed (editor, "II");
+    expect (hiss != nullptr && hissLabel != nullptr && chorusOff != nullptr
+                && chorusI != nullptr && chorusII != nullptr,
+            "Chorus is missing HISS or an OFF/I/II key");
+    if (hiss != nullptr && hissLabel != nullptr && chorusOff != nullptr
+        && chorusI != nullptr && chorusII != nullptr)
+    {
+        for (auto* chorusKey : { chorusOff, chorusI, chorusII })
+            expect (! componentArea (hiss).intersects (componentArea (chorusKey))
+                        && ! componentArea (hissLabel).intersects (
+                            componentArea (chorusKey)),
+                    "HISS overlaps an original Chorus key");
+    }
 
     auto* keyTranspose = dynamic_cast<juce::Button*> (
         findDescendantNamed (editor, "Key transpose"));
@@ -4920,20 +5028,16 @@ void checkSynthesisSectionsDominateUtilities (
 {
     // Measure each separated utility family independently. Taking one union of
     // spatially aligned controls would count the intentional whitespace between
-    // MODEL and CHORUS as occupied control area.
+    // MODEL and the session actions as occupied control area.
     constexpr auto modelControls = std::to_array<const char*> ({
         "Unit Character", "Unit Character label",
         "Quality", "Quality label"
-    });
-    constexpr auto chorusControl = std::to_array<const char*> ({
-        "Chorus noise", "Chorus noise label"
     });
     constexpr auto operations = std::to_array<const char*> ({
         "PANIC", "DRIFT 1%", "VARY 10%", "MORPH 50%", "INIT"
     });
     const double utilityAndSystemArea =
         namedGroupFootprint (editor, modelControls, "Model controls")
-        + namedGroupFootprint (editor, chorusControl, "Chorus control")
         + namedGroupFootprint (editor, operations, "Operations");
 
     const double scale = std::min (
@@ -4948,8 +5052,8 @@ void checkSynthesisSectionsDominateUtilities (
 
     expect (utilityAndSystemArea > 0.0,
             "the utility/system footprint could not be measured");
-    // The intended folded layout is about 4.45:1. Three-to-one is visibly
-    // synthesis-first while retaining generous room for future label polish.
+    // Three-to-one is visibly synthesis-first while retaining generous room
+    // for readable utility labels.
     constexpr double minimumDominance = 3.0;
     expect (synthesisArea > utilityAndSystemArea * minimumDominance,
             "synthesis sections no longer dominate the console area (ratio "
@@ -4992,6 +5096,7 @@ void testEditorBuildsAndRenders()
         findDescendantNamed (*editor, "Save custom patch"));
     auto* firstBankKey = dynamic_cast<juce::Button*> (
         findDescendantNamed (*editor, "Bank 1"));
+    auto* makerLabel = findDescendantLabelWithText (*editor, "by Protocodus");
     expect (playableKeyboard != nullptr,
             "the editor has no playable keyboard to range-check");
     expect (performanceLever != nullptr,
@@ -5003,6 +5108,8 @@ void testEditorBuildsAndRenders()
     expect (customPatchLabel != nullptr && customPatchLoad != nullptr
                 && customPatchSave != nullptr,
             "the preset rail does not expose custom patch load/save actions");
+    expect (makerLabel != nullptr,
+            "the independent maker credit is missing from the identity field");
     if (playableKeyboard != nullptr)
     {
         expect (playableKeyboard->getRangeStart()
@@ -5038,6 +5145,9 @@ void testEditorBuildsAndRenders()
     expect (editor->isOpaque(), "the editor does not advertise an opaque surface");
     checkUtilityKnobLayout (*editor, false);
     checkSynthesisSectionsDominateUtilities (*editor);
+    if (makerLabel != nullptr)
+        expect (makerLabel->getFont().getHeight() >= 16.0f,
+                "the maker credit is too small at the default size");
 
     // Exercise the layout at both extremes as well as at its default size. Read
     // the supported minimum from the constrainer so raising the readability
@@ -5056,7 +5166,12 @@ void testEditorBuildsAndRenders()
         editor->setSize (size.x, size.y);
         editor->resized();
         if (size == supportedMinimum)
+        {
             checkUtilityKnobLayout (*editor, true);
+            if (makerLabel != nullptr)
+                expect (makerLabel->getFont().getHeight() >= 14.0f,
+                        "the maker credit is too small at the minimum size");
+        }
         checkSynthesisSectionsDominateUtilities (*editor);
         if (playableKeyboard != nullptr)
         {
@@ -5098,21 +5213,15 @@ void testEditorBuildsAndRenders()
                 expect (helpArea.getY() >= keyboardArea.getBottom()
                             && ! helpArea.intersects (keyboardArea),
                         "the fixed help display is not below the keys");
-                // The help text used to own the whole bottom strip. It now
-                // shares that strip with the five service keys, which moved off
-                // the instrument surface so the deck's knob legends could print
-                // at full width. What still has to hold is that help occupies
-                // the entire run *up to* those keys, so it remains a stable
-                // area rather than a box that resizes with its contents. The
-                // bound is derived from the same constants the editor lays the
-                // bar out with, so the two cannot drift apart.
+                // Session actions now occupy the lower bay's otherwise empty
+                // right side, leaving one uninterrupted help strip below.
                 expect (helpArea.getWidth()
                             >= juce::roundToInt (
-                                (panel::operationsBarX
-                                 - 2.0f * panel::panelMargin - 8.0f)
+                                (panel::panelWidth()
+                                 - 2.0f * panel::panelMargin)
                                 * static_cast<float> (size.x)
                                 / panel::panelWidth()),
-                        "the help display no longer spans the bar beside the service keys");
+                        "the help display no longer spans the full bottom strip");
             }
             if (transpose != nullptr)
             {

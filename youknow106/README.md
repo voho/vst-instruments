@@ -714,10 +714,10 @@ VOLUME and PORTAMENTO return to the left performance cheek with the three
 bender-depth faders, the portamento switch and spring lever; the 61-key keyboard
 begins beside that cheek instead of spanning under it.
 
-Directly below the synthesis strip is the hardware programmer tier: POLY 1/2,
-MIDI channel, A/B group, eight BANK keys, the recessed red display, eight PATCH
-keys, MANUAL, WRITE and tape SAVE/VERIFY/LOAD. The immutable factory bank makes
-MIDI CH, WRITE and VERIFY explanatory disabled controls;
+Directly below the synthesis strip is the hardware programmer tier: POLY 1/2
+plus the UNISON shortcut, A/B group, eight BANK keys, the recessed red display,
+eight PATCH keys, MANUAL, WRITE and tape SAVE/VERIFY/LOAD. The immutable factory
+bank makes WRITE and VERIFY explanatory disabled controls;
 bank/patch selection, MANUAL and SysEx SAVE/LOAD are live. OFF/I/II chorus keys
 and the oscillator's range and waveform keys are vertically grouped to keep
 both sections compact without losing the broad signal-flow order.
@@ -733,18 +733,19 @@ and the resize floor keeps them above the tested readability threshold.
 
 A slim host-preset navigator sits directly below the programmer, aligned with
 the BANK keys but isolated by its own recessed muted-teal rail. The remaining
-plugin-only features share one quiet lower faceplate and align with the original
-families above: UNISON and variable voices follow VOICE MODE, Key Transpose and
-tuning sit under the DCO, velocity sits under VCA/ENV, and chorus noise sits
-directly under CHORUS. Global Character/Quality controls stay beneath the left
-cheek, with the Voice Monitor beside voice allocation. PANIC, INIT and three
-clearly graded variation actions remain in the bottom service bar beside help.
+plugin-only features stay close to the original families: UNISON completes the
+three-key VOICE MODE group, HISS sits inside CHORUS, and VELOCITY shares the
+lower VOICE group with the continuous voice-limit control. Transpose and tuning
+remain under the DCO; global Character/Quality controls stay beneath the
+left cheek, with the Voice Monitor beside voice allocation. PANIC and INIT use
+the lower SESSION zone; three clearly graded actions sit beside them under
+VARIATION, leaving one uninterrupted help strip across the bottom.
 
-Sliders, switches and buttons are still placed by the JUCE-free description in
-`Source/DSP/YouKnow106Panel.cpp`, so tests prove that the row does not overlap,
-escape its cards or shrink its legends below the readability floor — including
-at the smallest window, which is the binding case and is what fixes the lower
-deck's depth. A bundled low-contrast material scan adds maintained ABS grain,
+The original synthesis controls are placed by the JUCE-free description in
+`Source/DSP/YouKnow106Panel.cpp`; explicit editor checks cover the adjacent
+extension controls as well. Tests prove that controls do not overlap or shrink
+their legends below the readability floor, including at the smallest window.
+A bundled low-contrast material scan adds maintained ABS grain,
 polished touch wear, cleaning swirls and sparse hairline scuffs. Recessed fader
 channels, bevelled and grooved caps, and inset illuminated switches add a
 refined vintage material language while remaining project-drawn vectors. The
@@ -753,7 +754,7 @@ rather than reproducing a manufacturer mark.
 
 Descriptions no longer float over the instrument. Hovering any interactive
 element updates the fixed help display below the keys immediately.
-All 83 public controls are covered: the synthesis and controller panel, original
+All 84 public controls are covered: the synthesis and controller panel, original
 programmer tier, six extension knobs, utility and host patch controls, 61-key
 keyboard and pitch/mod lever. That strip also carries the hovered control's **current
 setting**, in its own lit right-hand column and in the parameter's own units, so

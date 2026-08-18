@@ -286,7 +286,7 @@ private:
     juce::TextButton syxLoadButton { "LOAD" };
     juce::TextButton syxSaveButton { "SAVE" };
     std::unique_ptr<juce::FileChooser> sysExFileChooser;
-    juce::TextButton keyTransposeButton { "KEY TRANSPOSE" };
+    juce::TextButton keyTransposeButton { "TRANSPOSE" };
     juce::Slider transposeSlider;
     juce::Slider tuneSlider;
     juce::Slider velocitySlider;
@@ -299,7 +299,6 @@ private:
     // The original programmer tier. The immutable factory bank maps directly
     // to GROUP A/B, BANK 1..8 and PATCH 1..8; unsupported write/verify
     // operations remain present and honestly disabled.
-    juce::TextButton midiChannelButton { "MIDI CH" };
     std::array<juce::TextButton, 2> groupButtons {};
     std::array<juce::TextButton, 8> bankButtons {};
     std::array<juce::TextButton, 8> patchButtons {};

@@ -7925,11 +7925,21 @@ void testPanelLayout()
                std::string("panel section is out of hardware order: ")
                    + sections[index].name);
     for (std::size_t index = 3; index < sections.size(); ++index)
+    {
         expect(sections[index - 1].x + sections[index - 1].width
                    < sections[index].x,
                "adjacent synthesis sections lost their divider gap");
+        expect(sections[index].x
+                   - (sections[index - 1].x + sections[index - 1].width)
+                   >= 20.0f,
+               "adjacent synthesis sections lost their readable padding");
+    }
+    expect(panel::headerPointSize >= 21.0f,
+           "the abbreviated synthesis headers lost their enlarged hierarchy");
     expect(sections[3].slots == 7 && sections[3].width >= 294.0f,
            "the compact DCO grid lost a full-width control column");
+    expect(sections[8].slots == 2 && sections[8].width >= 110.0f,
+           "the Chorus group no longer reserves a readable HISS column");
     for (const auto& control : controls)
         if (control.section == 3
             && control.kind != panel::ControlKind::Slider)
@@ -7947,6 +7957,14 @@ void testPanelLayout()
     const auto* range4 = findDcoControl("4'");
     const auto* pulse = findDcoControl("PULSE");
     const auto* saw = findDcoControl("SAW");
+    const panel::Control* pwmSource = nullptr;
+    for (const auto& control : controls)
+        if (control.section == 3
+            && std::strcmp(control.parameterId, parameters::pwmMode) == 0)
+        {
+            pwmSource = &control;
+            break;
+        }
     expect(range16 != nullptr && range8 != nullptr && range4 != nullptr,
            "the DCO range stack is incomplete");
     expect(pulse != nullptr && saw != nullptr,
@@ -7959,6 +7977,9 @@ void testPanelLayout()
     if (pulse != nullptr && saw != nullptr)
         expect(std::abs(pulse->x - saw->x) < 1.0e-5f && pulse->y < saw->y,
                "the pulse/saw selectors are no longer one vertical stack");
+    if (pwmSource != nullptr && pulse != nullptr)
+        expect(pulse->x - (pwmSource->x + pwmSource->width) >= 10.0f,
+               "the PWM-source and waveform stacks are crowded again");
 
     const panel::Control* chorusOff = nullptr;
     const panel::Control* chorusI = nullptr;

@@ -51,14 +51,14 @@ constexpr Placement placements[controlCount] = {
       ControlKind::Knob, 0, 1, 0, 1, -1, 0 },
 
     // MODE. Two momentary selection buttons whose lamps are firmware-latched:
-    // one is always selected, and pressing both is Solo Unison. Each button
-    // prints its own legend -- POLY 1 and POLY 2 -- inside itself.
+    // one is always selected, and pressing both is Solo Unison. The third cell
+    // is reserved for the editor's equivalent simultaneous-contact key.
     { parameters::poly1, "POLY 1",
       "POLY 1 reuses a key's previous voice card when possible, otherwise the longest-free card. Re-click to rebuild held assignments.",
-      ControlKind::Toggle, 1, 0, 0, 2, -1, 0, 2, true },
+      ControlKind::Toggle, 1, 0, 0, 1, -1, 0 },
     { parameters::poly2, "POLY 2",
       "POLY 2 scans from voice 1 for each note, so new notes can cut released tails but never steal a held key. Re-click to rebuild held assignments.",
-      ControlKind::Toggle, 1, 0, 1, 2, -1, 0, 2, true },
+      ControlKind::Toggle, 1, 1, 0, 1, -1, 0 },
 
     // LFO
     { parameters::lfoRate, "RATE",
@@ -191,30 +191,32 @@ Layout buildLayout() noexcept
         float width;
         float height;
     };
-    // The seven sound sections retain the original dimensions and order.  The
-    // controller is the separate left cheek and MODE begins the programmer
-    // tier under the sound strip.
+    // The seven sound sections retain the original order. The controller is
+    // the separate left cheek and MODE begins the programmer tier under the
+    // sound strip; widths reserve air for the integrated extension controls.
     constexpr SectionSpec specs[sectionCount] = {
         { "CONTROLLER", "CONTROLLER", "", 4, controllerX, performanceDeckTop,
                                             controllerWidth, performanceDeckHeight },
         { "MODE", "VOICE MODE", "", 3, instrumentLeft, performanceDeckTop,
-                                            190.0f, programmerHeight },
+                                            242.0f, programmerHeight },
         { "LFO", "LFO", "", 2, instrumentLeft, soundRowTop,
-                                             98.0f, soundRowHeight },
-        // The range and waveform selectors each share one vertical column,
-        // leaving a shared 42-unit pitch across the surrounding sound strip.
-        { "DCO", "DCO", "", 7, 344.0f, soundRowTop,
-                                            308.0f, soundRowHeight },
-        { "HPF", "HPF", "", 1, 680.0f, soundRowTop,
+                                            100.0f, soundRowHeight },
+        // The range and waveform selectors each share one vertical column.
+        // A common 21-unit section gutter and compact stacked keys leave clear
+        // air between every DCO sub-group.
+        { "DCO", "DCO", "", 7, 339.0f, soundRowTop,
+                                            322.0f, soundRowHeight },
+        { "HPF", "HPF", "", 1, 682.0f, soundRowTop,
                                              64.0f, soundRowHeight },
-        { "VCF", "VCF", "", 6, 772.0f, soundRowTop,
+        { "VCF", "VCF", "", 6, 767.0f, soundRowTop,
                                             266.0f, soundRowHeight },
-        { "VCA", "VCA", "", 3, 1066.0f, soundRowTop,
-                                            140.0f, soundRowHeight },
-        { "ENV", "ENV", "", 4, 1234.0f, soundRowTop,
-                                            182.0f, soundRowHeight },
-        { "CHORUS", "CHORUS", "", 1, 1442.0f, soundRowTop,
-                                             64.0f, soundRowHeight },
+        { "VCA", "VCA", "", 3, 1054.0f, soundRowTop,
+                                            128.0f, soundRowHeight },
+        { "ENV", "ENV", "", 4, 1203.0f, soundRowTop,
+                                            166.0f, soundRowHeight },
+        // HISS uses the second column beside the vertical OFF/I/II stack.
+        { "CHORUS", "CHORUS", "", 2, 1390.0f, soundRowTop,
+                                            116.0f, soundRowHeight },
     };
 
     for (int index = 0; index < sectionCount; ++index)
@@ -316,6 +318,16 @@ Layout buildLayout() noexcept
                               ? controlInset : 2.0f;
             controlWidth = span - 2.0f * inset;
             controlX = x + inset;
+            // The DCO's stacked selectors are intentionally narrower than a
+            // full cell. Their centred faces create a visible gutter between
+            // PWM source and waveform while labels retain the full cell width.
+            if (placement.section == 3
+                && placement.kind != ControlKind::Slider
+                && placement.kind != ControlKind::Steps)
+            {
+                controlWidth = std::min (34.0f, span - 4.0f);
+                controlX = x + (span - controlWidth) * 0.5f;
+            }
         }
         else
         {
@@ -437,14 +449,14 @@ const char* overflowingLabel() noexcept
         // Match the engraved title area, including the reserved hardware code
         // at its right edge. The conservative JUCE-free width model is paired
         // with a real-font check in the editor suite.
-        float available = section.width - 16.0f;
+        float available = section.width - 8.0f;
         if (section.displayCode[0] != '\0')
             available -= std::min (40.0f, available * 0.28f) + 4.0f;
-        float size = std::max (9.0f, headerPointSize);
+        float size = std::max (11.0f, headerPointSize);
         const float natural = textWidth (section.displayTitle, size, true);
         if (natural > available && natural > 0.0f)
             size *= available / natural;
-        size = std::max (7.8f, size);
+        size = std::max (9.5f, size);
         if (textWidth (section.displayTitle, size, true) > available + 0.1f)
             return section.displayTitle;
     }

@@ -200,17 +200,13 @@ void drawActionIcon (juce::Graphics& g, juce::Rectangle<float> area,
 
     if (icon == "random")
     {
-        const auto die = area.reduced (area.getWidth() * 0.15f,
-                                       area.getHeight() * 0.10f);
-        g.drawRoundedRectangle (die, juce::jmax (1.5f, die.getWidth() * 0.12f),
-                                stroke);
-        const float dot = juce::jmax (1.6f, die.getWidth() * 0.13f);
-        for (const auto point : { juce::Point<float> (die.getX() + die.getWidth() * 0.28f,
-                                                       die.getY() + die.getHeight() * 0.28f),
-                                  die.getCentre(),
-                                  juce::Point<float> (die.getRight() - die.getWidth() * 0.28f,
-                                                       die.getBottom() - die.getHeight() * 0.28f) })
-            g.fillEllipse (juce::Rectangle<float> (dot, dot).withCentre (point));
+        // A die collapses into an anonymous dotted box at this size. The
+        // question mark remains legible and says exactly what variation does.
+        juce::Graphics::ScopedSaveState saveState (g);
+        g.setFont (clearPanelFont (
+            juce::jlimit (14.0f, 19.0f, area.getHeight() * 0.92f), true));
+        g.drawText ("?", area.toNearestInt(), juce::Justification::centred,
+                    false);
         return;
     }
 
@@ -350,7 +346,8 @@ void drawFootRegisterLegend (juce::Graphics& g, juce::Rectangle<float> area,
                              const juce::String& text)
 {
     const auto number = text.dropLastCharacters (1);
-    const float fontHeight = juce::jlimit (10.0f, 13.0f, area.getHeight() * 0.38f);
+    const float fontHeight = juce::jlimit (14.0f, 16.0f,
+                                           area.getHeight() * 0.76f);
     const auto font = panelFont (fontHeight, true);
     const float numberWidth = juce::GlyphArrangement::getStringWidth (font, number);
     const float primeWidth = juce::jmax (2.5f, fontHeight * 0.25f);
@@ -489,17 +486,16 @@ void YouKnow106LookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y,
     g.setColour (fromPalette (panel::colour::controlShadow).withAlpha (0.30f));
     g.fillRoundedRectangle (rail, rail.getWidth() * 0.5f);
 
-    // Seven ticks are enough to read travel at a glance. Keeping only the
-    // endpoints and centre strong prevents forty adjacent faders from turning
-    // their scales into a wall of dashes.
-    for (int tick = 0; tick <= 6; ++tick)
+    // Only the endpoints and midpoint remain: 0%, 50% and 100% are useful
+    // physical references, while extra graduations imply precision the panel
+    // does not print or need.
+    for (int tick = 0; tick < 3; ++tick)
     {
         const float t = bounds.getY() + 3.0f
-                      + (bounds.getHeight() - 6.0f) * static_cast<float> (tick) / 6.0f;
-        const bool major = tick == 0 || tick == 3 || tick == 6;
-        const float length = major ? 7.0f : 3.5f;
-        g.setColour (fromPalette (panel::colour::textDim)
-                         .withAlpha (major ? 0.38f : 0.20f));
+                      + (bounds.getHeight() - 6.0f)
+                          * static_cast<float> (tick) / 2.0f;
+        constexpr float length = 7.0f;
+        g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.38f));
         g.fillRect (bounds.getX() + 1.0f, t, length, 1.0f);
         g.fillRect (bounds.getRight() - 1.0f - length, t, length, 1.0f);
     }
@@ -776,9 +772,9 @@ void YouKnow106LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton&
 
     if (hardware)
     {
-        const bool twoLines = text == "KEY TRANSPOSE" || text == "MIDI CH";
-        const float legendHeight = twoLines
-            ? juce::jlimit (17.0f, 25.0f, bounds.getHeight() * 0.40f)
+        const bool footRegister = isFootRegisterLegend (text);
+        const float legendHeight = footRegister
+            ? juce::jlimit (17.0f, 20.0f, bounds.getHeight() * 0.38f)
             : juce::jlimit (12.0f, 22.0f, bounds.getHeight() * 0.29f);
         const auto legend = bounds.withHeight (legendHeight);
         g.setColour (fromPalette (panel::colour::text)
@@ -794,20 +790,14 @@ void YouKnow106LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton&
             return;
         }
 
-        float size = twoLines
-                   ? juce::jlimit (7.5f, 9.5f, legendHeight * 0.42f)
-                   : juce::jlimit (7.5f, 11.5f, legendHeight * 0.78f);
-        const auto measuredText = text == "KEY TRANSPOSE" ? juce::String ("TRANSPOSE")
-                                : text == "MIDI CH" ? juce::String ("MIDI")
-                                                     : text;
+        float size = juce::jlimit (9.0f, 13.0f, legendHeight * 0.82f);
         const float natural = juce::GlyphArrangement::getStringWidth (
-            clearPanelFont (size, true), measuredText);
+            clearPanelFont (size, true), text);
         if (natural > legend.getWidth() - 2.0f && natural > 0.0f)
             size *= (legend.getWidth() - 2.0f) / natural;
-        g.setFont (clearPanelFont (juce::jmax (7.5f, size), true));
+        g.setFont (clearPanelFont (juce::jmax (9.0f, size), true));
         g.drawFittedText (text, legend.toNearestInt(),
-                          juce::Justification::centredTop,
-                          twoLines ? 2 : 1, 1.0f);
+                          juce::Justification::centredTop, 1, 1.0f);
         return;
     }
 
@@ -853,22 +843,26 @@ void YouKnow106LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton&
 
     if (compact)
     {
-        const float size = juce::jlimit (10.0f, 12.0f,
+        const float size = juce::jlimit (10.5f, 13.0f,
                                          bounds.getHeight() * 0.55f);
         g.setFont (clearPanelFont (size, true));
+        const auto displayText = text == "DRIFT 1%" ? juce::String ("1%")
+                               : text == "VARY 10%" ? juce::String ("10%")
+                               : text == "MORPH 50%" ? juce::String ("50%")
+                                                      : text;
         auto content = bounds.reduced (3.0f, 1.0f);
         if (actionIcon.isNotEmpty())
         {
-            const float iconSize = juce::jmin (22.0f, content.getHeight() * 0.78f);
-            auto iconArea = content.removeFromLeft (iconSize + 5.0f)
+            const float iconSize = juce::jmin (18.0f, content.getHeight() * 0.72f);
+            auto iconArea = content.removeFromLeft (iconSize + 3.0f)
                                    .withSizeKeepingCentre (iconSize, iconSize);
             const auto tint = actionIcon == "stop"
                             ? fromPalette (panel::colour::led)
                             : fromPalette (panel::colour::textDim);
             drawActionIcon (g, iconArea, actionIcon, tint);
         }
-        g.drawText (text, content.toNearestInt(), juce::Justification::centred,
-                    false);
+        g.drawText (displayText, content.toNearestInt(),
+                    juce::Justification::centred, false);
         return;
     }
 
@@ -1114,7 +1108,7 @@ void YouKnow106Display::paint (juce::Graphics& g)
     const float pitch = voiceRow.getWidth() / static_cast<float> (lamps);
     const float lampSize = juce::jmin (10.5f, voiceRow.getHeight() * 0.44f,
                                        pitch * 0.52f);
-    g.setFont (clearPanelFont (8.0f, true));
+    g.setFont (clearPanelFont (9.5f, true));
     for (int voice = 0; voice < lamps; ++voice)
     {
         const float centreX = voiceRow.getX()
@@ -1135,7 +1129,7 @@ void YouKnow106Display::paint (juce::Graphics& g)
     }
 
     g.setColour (fromPalette (panel::colour::textDim));
-    g.setFont (clearPanelFont (9.5f, true));
+    g.setFont (clearPanelFont (11.0f, true));
     g.drawText (ready ? juce::String (voices) + " / " + juce::String (lamps) + " ACTIVE"
                       : juce::String ("STANDBY"),
                 readout.toNearestInt(), juce::Justification::centredRight);
@@ -1146,7 +1140,7 @@ void YouKnow106Display::paint (juce::Graphics& g)
     {
         auto labelArea = row.removeFromLeft (28.0f);
         g.setColour (fromPalette (panel::colour::textDim));
-        g.setFont (panelFont (9.5f, true));
+        g.setFont (panelFont (10.5f, true));
         g.drawText (caption, labelArea.toNearestInt(), juce::Justification::centredLeft);
 
         const auto track = row.reduced (0.0f, row.getHeight() * 0.33f);
@@ -1192,7 +1186,7 @@ void YouKnow106Display::paint (juce::Graphics& g)
 
     // Telemetry: unit warmup temperature and PSU rail voltage, on one line
     // across the full column width instead of stacked above the trace.
-    g.setFont (panelFont (9.0f, true));
+    g.setFont (panelFont (14.0f, true));
     g.setColour (fromPalette (panel::colour::cyan).withAlpha (0.90f));
     g.drawText (juce::String (temperature, 1) + juce::String (juce::CharPointer_UTF8 ("\xc2\xb0")) + "C",
                 area.toNearestInt(), juce::Justification::centredLeft);
@@ -1270,7 +1264,7 @@ void YouKnow106Display::paint (juce::Graphics& g)
     g.setColour (fromPalette (panel::colour::cyan));
     g.strokePath (wavePath, juce::PathStrokeType (1.1f, juce::PathStrokeType::mitered, juce::PathStrokeType::rounded));
 
-    g.setFont (panelFont (8.5f, true));
+    g.setFont (panelFont (9.5f, true));
     g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.85f));
     g.drawText (juce::String (juce::roundToInt (scopeGain)) + "x",
                 screen.reduced (4.0f, 2.0f).toNearestInt(),
@@ -1464,7 +1458,7 @@ void YouKnow106PerformanceLever::paint (juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat().reduced (0.5f);
     auto header = bounds.reduced (8.0f, 1.0f).removeFromTop (11.0f);
-    g.setFont (clearPanelFont (9.0f, true));
+    g.setFont (clearPanelFont (10.5f, true));
     g.setColour (fromPalette (panel::colour::text));
     g.drawText ("BENDER", header.toNearestInt(), juce::Justification::centredLeft);
     g.setColour (fromPalette (panel::colour::textDim));
@@ -1635,8 +1629,8 @@ void YouKnow106ContextHelp::paint (juce::Graphics& g)
 
     auto content = bounds.reduced (juce::jmax (8.0f, bounds.getHeight() * 0.28f),
                                    juce::jmax (2.0f, bounds.getHeight() * 0.10f));
-    const float fontHeight = juce::jlimit (10.0f, 12.0f,
-                                           bounds.getHeight() * 0.34f);
+    const float fontHeight = juce::jlimit (12.0f, 13.0f,
+                                           bounds.getHeight() * 0.36f);
 
     // The current setting, right-aligned in its own lit column. Reading a value
     // used to need a drag, because only JUCE's transient bubble carried it;
@@ -1699,7 +1693,7 @@ YouKnow106AudioProcessorEditor::YouKnow106AudioProcessorEditor (YouKnow106AudioP
     addAndMakeVisible (logoLabel);
 
     editionLabel.setText ("by Protocodus", juce::dontSendNotification);
-    editionLabel.setFont (clearPanelFont (10.5f));
+    editionLabel.setFont (clearPanelFont (14.0f));
     editionLabel.setColour (juce::Label::textColourId,
                             fromPalette (panel::colour::textDim));
     editionLabel.setJustificationType (juce::Justification::centredLeft);
@@ -1831,7 +1825,8 @@ void YouKnow106AudioProcessorEditor::buildPanelControls()
             // the whole key jump when an ordinary resize crossed a breakpoint.
             entry.button->getProperties().set (
                 hardwareKeyCentreProperty,
-                description.height > 110.0f ? 0.34
+                isFootRegisterLegend (description.label) ? 0.80
+                    : description.height > 110.0f ? 0.34
                     : description.height > 65.0f ? 0.62 : 0.72);
             const auto keyColour = description.section == 8
                                  ? fromPalette (panel::colour::keyAmber)
@@ -1962,8 +1957,11 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     configure (calibrationSlider, calibration, "Unit Character", utilityTooltips[3]);
     configure (chorusNoiseSlider, chorusNoise, "Chorus noise", utilityTooltips[4]);
     configure (polyphonySlider, polyphony, "Polyphony", utilityTooltips[5]);
+    // HISS now lives inside the primary CHORUS block, so its full-size knob
+    // matches that tier rather than the smaller lower-bay utilities.
+    chorusNoiseSlider.getProperties().set (secondaryStyleProperty, false);
 
-    const char* captions[] = { "TRANSPOSE", "TUNE", "VELOCITY",
+    const char* captions[] = { "AMOUNT", "TUNE", "VELOCITY",
                                "CHARACTER", "HISS", "VOICES" };
     const char* controlNames[] = { "Transpose", "Master tune", "Velocity",
                                    "Unit Character", "Chorus noise", "Polyphony" };
@@ -1980,6 +1978,8 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
         label.setInterceptsMouseClicks (false, false);
         addAndMakeVisible (label);
     }
+    utilityLabels[4].setColour (juce::Label::textColourId,
+                                fromPalette (panel::colour::text));
 
     const auto nameButton = [] (juce::TextButton& button)
     {
@@ -2041,7 +2041,12 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     addAndMakeVisible (qualityLabel);
 
     unisonButton.setClickingTogglesState (false);
-    unisonButton.getProperties().set (secondaryStyleProperty, true);
+    unisonButton.getProperties().set (hardwareStyleProperty, true);
+    unisonButton.getProperties().set (hardwareKeyCentreProperty, 0.62);
+    unisonButton.setColour (juce::TextButton::buttonColourId,
+                            fromPalette (panel::colour::keyIvory));
+    unisonButton.setColour (juce::TextButton::buttonOnColourId,
+                            fromPalette (panel::colour::keyIvory).brighter (0.08f));
     unisonButton.setTooltip (
         "Convenience key for pressing both original POLY contacts together "
         "to enter Solo Unison; the hardware has no separate Unison key.");
@@ -2129,7 +2134,7 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
 
 void YouKnow106AudioProcessorEditor::buildPresetBar()
 {
-    presetLabel.setText ("FACTORY PROGRAM", juce::dontSendNotification);
+    presetLabel.setText ("PRESET", juce::dontSendNotification);
     presetLabel.setFont (panelFont (11.0f, true));
     presetLabel.setName ("Patch label");
     presetLabel.setTooltip (
@@ -2269,13 +2274,8 @@ void YouKnow106AudioProcessorEditor::buildHardwareProgrammer()
 
     configureKey (keyTransposeButton, amber, "Key transpose",
                   "Switches the selected keyboard transposition on or off. "
-                  "Choose its semitone amount with the adjacent TRANSPOSE knob.");
+                  "Choose its semitone amount with the adjacent AMOUNT knob.");
     attachKeyTransposeButton (keyTransposeButton);
-
-    configureKey (midiChannelButton, blue, "MIDI channel",
-                  "The original MIDI-channel key is shown here; plug-in MIDI "
-                  "channel routing is owned by the host.");
-    midiChannelButton.setEnabled (false);
 
     for (int index = 0; index < static_cast<int> (groupButtons.size()); ++index)
     {
@@ -3054,7 +3054,7 @@ void YouKnow106AudioProcessorEditor::resized()
         if (entry.label != nullptr)
         {
             entry.label->setFont (panelFont (
-                juce::jmax (10.0f, panel::labelPointSize * scale)));
+                juce::jmax (10.5f, panel::labelPointSize * scale), true));
             entry.label->setBounds (
                 scaled (description.labelX, description.labelY,
                         description.labelWidth,
@@ -3064,16 +3064,22 @@ void YouKnow106AudioProcessorEditor::resized()
 
     // The left identity field deliberately keeps the negative space of the
     // hardware while using this instrument's own name.
-    logoLabel.setFont (panelFont (juce::jmax (24.0f, 32.0f * scale), true));
+    logoLabel.setFont (panelFont (juce::jmax (27.0f, 36.0f * scale), true));
     editionLabel.setFont (clearPanelFont (
-        juce::jmax (9.5f, 10.5f * scale)));
+        juce::jmax (13.5f, 18.0f * scale)));
     logoLabel.setBounds (scaled (24.0f, 72.0f, 174.0f, 40.0f).toNearestInt());
-    editionLabel.setBounds (scaled (24.0f, 111.0f, 174.0f, 18.0f).toNearestInt());
+    editionLabel.setBounds (scaled (24.0f, 113.0f, 174.0f, 22.0f).toNearestInt());
     // Original programmer tier: group, bank and patch keys remain primary.
     constexpr float programmerKeyTop = 296.0f;
     constexpr float programmerKeyHeight = 68.0f;
-    midiChannelButton.setBounds (
-        scaled (418.0f, programmerKeyTop, 44.0f,
+    const auto& voiceModeSection = panel::sections()[1];
+    const float voiceModeCell = (voiceModeSection.width - panel::sectionPadding)
+                              / static_cast<float> (voiceModeSection.slots);
+    unisonButton.setBounds (
+        scaled (voiceModeSection.x + panel::sectionPadding * 0.5f
+                    + 2.0f * voiceModeCell + panel::controlInset,
+                programmerKeyTop,
+                voiceModeCell - 2.0f * panel::controlInset,
                 programmerKeyHeight).toNearestInt());
     for (int index = 0; index < 2; ++index)
         groupButtons[static_cast<std::size_t> (index)].setBounds (
@@ -3124,15 +3130,19 @@ void YouKnow106AudioProcessorEditor::resized()
     keyboard.setKeyWidth (static_cast<float> (keyboard.getWidth())
                           / static_cast<float> (panel::keyboardWhiteKeyCount));
 
-    // Modern host and model controls share one visually separate add-on bay.
-    // Horizontal position ties each extension to the related original family
-    // above; whitespace supplies the grouping instead of another row of boxes.
+    // Remaining host and model controls share one visually separate add-on bay.
+    // UNISON and HISS now live directly in their hardware families above;
+    // VOICES and VELOCITY share the continuous-control VOICE group here.
     for (auto& label : utilityLabels)
-        label.setFont (clearPanelFont (juce::jmax (9.0f, 12.3f * scale)));
-    qualityLabel.setFont (clearPanelFont (juce::jmax (9.0f, 12.3f * scale)));
+        label.setFont (panelFont (
+            juce::jmax (10.5f, 14.0f * scale), true));
+    qualityLabel.setFont (panelFont (
+        juce::jmax (10.5f, 14.0f * scale), true));
+    utilityLabels[4].setFont (panelFont (
+        juce::jmax (10.5f, panel::labelPointSize * scale), true));
     constexpr float labelTop = panel::extensionDeckTop + 32.0f;
     constexpr float knobTop = panel::extensionDeckTop + 52.0f;
-    constexpr float labelHeight = 14.0f;
+    constexpr float labelHeight = 16.0f;
     constexpr float knobSize = 56.0f;
 
     // MODEL: global circuit character and processing quality sit beneath the
@@ -3146,53 +3156,62 @@ void YouKnow106AudioProcessorEditor::resized()
     qualityBox.setBounds (
         scaled (115.0f, knobTop + 16.0f, 78.0f, 24.0f).toNearestInt());
 
-    // VOICE: both extensions sit directly below the original POLY mode keys.
-    unisonButton.setBounds (
-        scaled (230.0f, knobTop + 7.0f, 78.0f, 43.0f).toNearestInt());
+    // VOICE: the continuous voice-limit and response controls share a baseline.
     utilityLabels[5].setBounds (
-        scaled (318.0f, labelTop, 80.0f, labelHeight).toNearestInt());
+        scaled (228.0f, labelTop, 80.0f, labelHeight).toNearestInt());
     polyphonySlider.setBounds (
+        scaled (240.0f, knobTop, knobSize, knobSize).toNearestInt());
+    utilityLabels[2].setBounds (
+        scaled (318.0f, labelTop, 80.0f, labelHeight).toNearestInt());
+    velocitySlider.setBounds (
         scaled (330.0f, knobTop, knobSize, knobSize).toNearestInt());
 
-    // PITCH follows the DCO footprint. Keep the hardware-style Key Transpose
+    // PITCH follows the DCO footprint. Keep the hardware-style Transpose
     // switch next to its amount, then the fine tune control.
     keyTransposeButton.setBounds (
-        scaled (426.0f, labelTop + 3.0f, 56.0f, 81.0f).toNearestInt());
+        scaled (422.0f, labelTop + 3.0f, 82.0f, 81.0f).toNearestInt());
     utilityLabels[0].setBounds (
-        scaled (488.0f, labelTop, 72.0f, labelHeight).toNearestInt());
+        scaled (508.0f, labelTop, 64.0f, labelHeight).toNearestInt());
     transposeSlider.setBounds (
-        scaled (496.0f, knobTop, knobSize, knobSize).toNearestInt());
+        scaled (512.0f, knobTop, knobSize, knobSize).toNearestInt());
     utilityLabels[1].setBounds (
-        scaled (572.0f, labelTop, 72.0f, labelHeight).toNearestInt());
+        scaled (578.0f, labelTop, 66.0f, labelHeight).toNearestInt());
     tuneSlider.setBounds (
-        scaled (580.0f, knobTop, knobSize, knobSize).toNearestInt());
+        scaled (583.0f, knobTop, knobSize, knobSize).toNearestInt());
 
-    // The monitor stays beside voice allocation, while velocity is centred
-    // exactly beneath the VCA/ENV span and chorus hiss beneath CHORUS.
+    // The monitor stays beside voice allocation.
     display.setBounds (
         scaled (panel::monitorZoneX + 10.0f,
                 panel::extensionDeckTop + 23.0f,
                 panel::monitorZoneWidth - 20.0f,
                 panel::extensionDeckHeight - 35.0f).toNearestInt());
-    utilityLabels[2].setBounds (
-        scaled (1213.0f, labelTop, knobSize, labelHeight).toNearestInt());
-    velocitySlider.setBounds (
-        scaled (1213.0f, knobTop, knobSize, knobSize).toNearestInt());
+
+    // HISS is a full-size Chorus control beside the vertical OFF/I/II stack.
+    const auto& chorusSection = panel::sections()[8];
+    const float chorusCell = (chorusSection.width - panel::sectionPadding)
+                           / static_cast<float> (chorusSection.slots);
+    const float hissSlotX = chorusSection.x + panel::sectionPadding * 0.5f
+                          + chorusCell;
+    const float soundLabelTop = chorusSection.y + 99.0f;
+    constexpr float hissLabelHeight = 16.0f;
+    constexpr float hissKnobSize = 50.0f;
+    const float hissKnobX = hissSlotX + (chorusCell - hissKnobSize) * 0.5f;
     utilityLabels[4].setBounds (
-        scaled (panel::chorusZoneX, labelTop, panel::chorusZoneWidth,
-                labelHeight).toNearestInt());
+        scaled (hissKnobX, soundLabelTop, hissKnobSize,
+                hissLabelHeight).toNearestInt());
     chorusNoiseSlider.setBounds (
-        scaled (1439.0f, knobTop, knobSize, knobSize).toNearestInt());
+        scaled (hissKnobX, soundLabelTop + hissLabelHeight + 8.0f,
+                hissKnobSize, hissKnobSize).toNearestInt());
 
     // The host-friendly navigator gets its own rail immediately under the
     // physical A/B, BANK and PATCH keys instead of competing with aux knobs.
     constexpr float presetY = panel::presetTop + 4.0f;
     presetLabel.setFont (clearPanelFont (
-        juce::jmax (9.5f, 10.5f * scale), true));
+        juce::jmax (10.5f, 12.5f * scale), true));
     presetEditedLabel.setFont (clearPanelFont (
-        juce::jmax (9.5f, 10.5f * scale), true));
+        juce::jmax (10.5f, 12.5f * scale), true));
     customPatchLabel.setFont (clearPanelFont (
-        juce::jmax (9.5f, 10.5f * scale), true));
+        juce::jmax (10.5f, 12.5f * scale), true));
     constexpr float presetControlHeight = 24.0f;
     presetLabel.setBounds (
         scaled (226.0f, presetY, 104.0f,
@@ -3222,26 +3241,25 @@ void YouKnow106AudioProcessorEditor::resized()
         scaled (1342.0f, presetY, 148.0f,
                 presetControlHeight).toNearestInt());
 
-    constexpr float operationPitch = panel::operationsBarWidth / 5.0f;
-    constexpr float operationWidth = operationPitch - 8.0f;
-    constexpr float operationTop = panel::extensionDeckTop
-                                 + panel::extensionDeckHeight
-                                 + panel::helpStripGap + 15.0f;
+    constexpr float operationPitch = (panel::operationsBarWidth - 10.0f) / 5.0f;
+    constexpr float operationWidth = 80.0f;
+    constexpr float operationTop = panel::extensionDeckTop + 54.0f;
     juce::Button* operationButtons[] = { &panicButton, &resetButton,
                                          &randomize1Button, &randomize10Button,
                                          &randomize50Button };
     for (int index = 0; index < 5; ++index)
         operationButtons[index]->setBounds (
             scaled (panel::operationsBarX
+                        + 8.0f
                         + operationPitch * static_cast<float> (index),
                     operationTop, operationWidth,
-                    panel::helpStripHeight - 18.0f).toNearestInt());
+                    42.0f).toNearestInt());
 
     contextHelp.setBounds (
         scaled (panel::panelMargin,
                 panel::extensionDeckTop + panel::extensionDeckHeight
                     + panel::helpStripGap,
-                panel::operationsBarX - panel::panelMargin - 8.0f,
+                panel::panelWidth() - 2.0f * panel::panelMargin,
                 panel::helpStripHeight).toNearestInt());
 }
 
@@ -3282,7 +3300,7 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
                         panel::soundRowTop + 47.0f,
                         panel::controllerWidth - 20.0f, 1.0f));
     g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.86f));
-    g.setFont (clearPanelFont (juce::jmax (9.0f, 10.0f * scale), true));
+    g.setFont (clearPanelFont (juce::jmax (10.0f, 12.5f * scale), true));
     g.drawFittedText ("PROGRAMMABLE\nSIX-VOICE\nSYNTHESIZER",
                       scaled (24.0f, 145.0f, 174.0f, 54.0f).toNearestInt(),
                       juce::Justification::centredLeft, 3, 1.0f);
@@ -3312,7 +3330,7 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
         const char* title = section.displayTitle;
         const char* code = section.displayCode;
 
-        auto titleArea = header.reduced (8.0f * scale, 2.0f * scale)
+        auto titleArea = header.reduced (4.0f * scale, 0.0f)
                                .withTrimmedBottom (3.0f * scale);
         juce::Rectangle<float> codeArea;
         if (code[0] != '\0')
@@ -3322,13 +3340,14 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
             titleArea.removeFromRight (4.0f * scale);
         }
 
-        float titleSize = juce::jmax (9.0f, 12.0f * scale);
+        float titleSize = juce::jmax (11.0f,
+                                      panel::headerPointSize * scale);
         const float titleWidth = juce::GlyphArrangement::getStringWidth (
-            clearPanelFont (titleSize, true), title);
+            panelFont (titleSize, true), title);
         if (titleWidth > titleArea.getWidth() && titleWidth > 0.0f)
             titleSize *= titleArea.getWidth() / titleWidth;
         g.setColour (ink);
-        g.setFont (clearPanelFont (juce::jmax (7.8f, titleSize), true));
+        g.setFont (panelFont (juce::jmax (9.5f, titleSize), true));
         g.drawText (title, titleArea.toNearestInt(),
                     juce::Justification::centredLeft, false);
         if (! codeArea.isEmpty())
@@ -3373,77 +3392,24 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
     g.fillRect (scaled (panel::instrumentRight - 1.0f, panel::soundRowTop,
                         1.0f, panel::soundRowHeight));
 
-    // Sparse hardware scale numerals complement the vector tick marks.
-    g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.82f));
-    g.setFont (panelFont (juce::jmax (7.0f, 8.0f * scale), true));
-    std::array<bool, panel::sectionCount> scaleDrawn {};
-    for (const auto& control : panel::controls())
-    {
-        if ((control.kind != panel::ControlKind::Slider
-             && control.kind != panel::ControlKind::Steps)
-            || control.section < 2)
-            continue;
-
-        const bool primaryScale = ! scaleDrawn[static_cast<std::size_t> (
-            control.section)];
-        scaleDrawn[static_cast<std::size_t> (control.section)] = true;
-
-        const bool isHpf = std::strcmp (control.parameterId,
-                                        parameters::highPass) == 0;
-        const bool isVca = std::strcmp (control.parameterId,
-                                        parameters::vcaLevel) == 0;
-        const std::array<const char*, 4> hpf { "3", "2", "1", "0" };
-        const std::array<const char*, 3> normal {
-            isVca ? "+5" : "10", "5", isVca ? "-5" : "0" };
-        g.setColour (fromPalette (panel::colour::textDim).withAlpha (
-            primaryScale ? 0.82f : 0.50f));
-        if (isHpf)
-        {
-            for (int tick = 0; tick < 4; ++tick)
-                g.drawText (hpf[static_cast<std::size_t> (tick)],
-                            scaled (control.x - 10.0f,
-                                    control.y - 4.0f
-                                        + control.height * static_cast<float> (tick) / 3.0f,
-                                    10.0f, 8.0f).toNearestInt(),
-                            juce::Justification::centredRight, false);
-        }
-        else
-        {
-            for (int tick = 0; tick < 3; ++tick)
-            {
-                if (! primaryScale && tick == 1)
-                    continue;
-                g.setColour (fromPalette (panel::colour::textDim).withAlpha (
-                    primaryScale ? 0.82f : 0.50f));
-                g.drawText (normal[static_cast<std::size_t> (tick)],
-                            scaled (control.x - 15.0f,
-                                    control.y - 4.0f
-                                        + control.height * static_cast<float> (tick) / 2.0f,
-                                    14.0f, 8.0f).toNearestInt(),
-                            juce::Justification::centredRight, false);
-            }
-        }
-    }
-
     // Quiet captions are enough to group the programmer; the surrounding
     // sound row and preset rail already provide its two structural edges.
     const auto programmerCaption = [&] (const char* text, float x, float width)
     {
         g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.92f));
-        float captionSize = juce::jmax (8.0f, 9.5f * scale);
+        float captionSize = juce::jmax (10.5f, 13.0f * scale);
         const float captionWidth = juce::GlyphArrangement::getStringWidth (
             clearPanelFont (captionSize, true), text);
         const float availableWidth = (width - 4.0f) * scale;
         if (captionWidth > availableWidth && captionWidth > 0.0f)
             captionSize *= availableWidth / captionWidth;
-        g.setFont (clearPanelFont (juce::jmax (7.5f, captionSize), true));
+        g.setFont (clearPanelFont (juce::jmax (9.0f, captionSize), true));
         g.drawText (text,
                     scaled (x, panel::performanceDeckTop + 9.0f,
-                            width, 12.0f).toNearestInt(),
+                            width, 14.0f).toNearestInt(),
                     juce::Justification::centred, false);
     };
-    programmerCaption ("VOICE MODE", 218.0f, 124.0f);
-    programmerCaption ("MIDI", 418.0f, 44.0f);
+    programmerCaption ("VOICE MODE", 218.0f, 242.0f);
     programmerCaption ("GROUP", 470.0f, 70.0f);
     programmerCaption ("BANK", 550.0f, 282.0f);
     programmerCaption ("PROGRAM", 842.0f, 64.0f);
@@ -3502,9 +3468,8 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
                         panel::instrumentLeft - panel::controllerX
                             - panel::controllerWidth,
                         panel::performanceDeckHeight));
-    // Modern controls are visibly bolted on below the original keybed. One
-    // continuous surface keeps it calm; terse headings and physical alignment
-    // associate each add-on with the hardware family above.
+    // Remaining modern controls share one calm lower surface. UNISON and HISS
+    // have moved into the related hardware groups rather than being repeated.
     g.setColour (juce::Colours::black.withAlpha (0.58f));
     g.fillRect (scaled (0.0f, panel::extensionDeckTop - 4.0f,
                         panel::panelWidth(), panel::extensionDeckHeight + 8.0f));
@@ -3518,10 +3483,10 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
                                             const char* title)
     {
         g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.82f));
-        g.setFont (clearPanelFont (juce::jmax (8.5f, 9.5f * scale), true));
+        g.setFont (clearPanelFont (juce::jmax (10.5f, 13.0f * scale), true));
         g.drawText (title,
                     scaled (x + 7.0f, panel::extensionDeckTop + 3.0f,
-                            width - 14.0f, 12.0f).toNearestInt(),
+                            width - 14.0f, 14.0f).toNearestInt(),
                     juce::Justification::centredLeft, false);
     };
     drawExtensionHeading (panel::modelZoneX, panel::modelZoneWidth, "MODEL");
@@ -3529,19 +3494,12 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
     drawExtensionHeading (panel::pitchZoneX, panel::pitchZoneWidth, "PITCH");
     drawExtensionHeading (panel::monitorZoneX, panel::monitorZoneWidth,
                           "MONITOR");
-    drawExtensionHeading (panel::dynamicsZoneX, panel::dynamicsZoneWidth,
-                          "VCA / ENV");
-    drawExtensionHeading (panel::chorusZoneX, panel::chorusZoneWidth,
-                          "CHORUS");
-
-    const float toolsTop = panel::extensionDeckTop + panel::extensionDeckHeight
-                         + panel::helpStripGap;
-    g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.82f));
-    g.setFont (clearPanelFont (juce::jmax (7.8f, 8.5f * scale), true));
-    g.drawText ("SESSION TOOLS",
-                scaled (panel::operationsBarX + 4.0f, toolsTop + 1.0f,
-                        panel::operationsBarWidth - 8.0f, 11.0f).toNearestInt(),
-                juce::Justification::centredLeft, false);
+    constexpr float operationPitch = (panel::operationsBarWidth - 10.0f) / 5.0f;
+    drawExtensionHeading (panel::operationsBarX, operationPitch * 2.0f,
+                          "SESSION");
+    drawExtensionHeading (panel::operationsBarX + operationPitch * 2.0f,
+                          panel::operationsBarWidth - operationPitch * 2.0f,
+                          "VARIATION");
     // Hard separation keeps the original hardware and the add-on bay distinct.
     g.setColour (juce::Colours::black.withAlpha (0.72f));
     g.fillRect (scaled (0.0f, panel::panelHeight + panel::keyboardHeight,
