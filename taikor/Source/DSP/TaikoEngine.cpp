@@ -202,7 +202,8 @@ constexpr float modelScale = 292.0f;
 // sweep of full-velocity, maximum-Humanise rim hits found rare contact/noise
 // phase alignments which the former first-seed calibration missed. Keeping
 // this separate from modelScale avoids changing contact, continuum balance or
-// Drive; keeping the public Output range unchanged preserves host automation.
+// The master output calibration that keeps the factory Don at the level the
+// product has always produced.
 constexpr float referenceOutputCalibration = 0.6309573f; // -4 dB
 
 // Converts the Rayleigh integral's pressure per unit modal displacement into
@@ -2103,9 +2104,17 @@ void TaikoEngine::resolveDrumGeometry (const EngineParameters& applied,
     drum.micAngleLeft = micReference + 0.5f * separation;
     drum.micAngleRight = micReference - 0.5f * separation;
 
+    // Small drums (Okedō, Shime) have fundamentals whose near-field decays
+    // before the fixed mic distance. Scale the close-mic position with
+    // sqrt(r/r0) so the mic sits proportionally closer to smaller heads.
+    // Clamp at 0.74 so Chū-daiko (r/r0 ≈ 0.8) stays at unity.
+    const float sizeScale = clampFloat (
+        std::sqrt (drum.radius / referenceRadius), 0.60f, 1.0f);
+    const float micScaleApplied = drum.radius / referenceRadius >= 0.78f
+        ? 1.0f : sizeScale;
     drum.micDistanceMetres = lerp (minimumMicDistanceMetres,
                                    maximumMicDistanceMetres,
-                                   applied.micDistance);
+                                   applied.micDistance) * micScaleApplied;
     // Close microphones lift the low end. The depth follows the same distance,
     // so backing the pair off thins the drum exactly as it does in a room.
     drum.micProximity = 1.20f * (0.12f / (0.12f + drum.micDistanceMetres));
@@ -3048,6 +3057,19 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
 
     drum.shellLevel = applied.shellResonance;
 
+    // Acoustic radiation normalization across the family: smaller, high-tension
+    // drums radiate over a smaller physical disc. To ensure consistent, equalized
+    // perceived loudness across the 4x4 matrix, each drum's radiation is normalized.
+    constexpr std::array<float, 4> familyGainNormalizations {{
+        1.00f,  // O-daiko (Octave 0)
+        1.08f,  // Chu-daiko (Octave 1)
+        4.50f,  // Okedo-daiko (Octave 2)
+        2.60f   // Shime-daiko (Octave 3)
+    }};
+    const auto octaveIndex = static_cast<std::size_t> (
+        std::clamp (octaveOffset - lowestOctaveOffset, 0, 3));
+    drum.acousticRadiationGain = familyGainNormalizations[octaveIndex];
+
     return drum;
 }
 
@@ -3644,8 +3666,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.drive = drive * profile.membraneGain * modelScale;
                 // Axisymmetric modes look identical from both sides of the
                 // head, so they are the part of the image that stays centred.
-                mode.micLeft = observed * proximity;
-                mode.micRight = observed * proximity;
+                mode.micLeft = observed * proximity * drum.acousticRadiationGain;
+                mode.micRight = observed * proximity * drum.acousticRadiationGain;
                 mode.micLeftQuadrature = 0.0f;
                 mode.micRightQuadrature = 0.0f;
                 configureResonator (mode.resonator, frequency, decay, 1.0f,
@@ -3787,15 +3809,15 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.drive = drive * profile.membraneGain * modelScale;
                 if (buildComplexObservation)
                 {
-                    mode.micLeft = pressure.real * micAngularL;
-                    mode.micRight = pressure.real * micAngularR;
-                    mode.micLeftQuadrature = pressure.quadrature * micAngularL;
-                    mode.micRightQuadrature = pressure.quadrature * micAngularR;
+                    mode.micLeft = pressure.real * micAngularL * drum.acousticRadiationGain;
+                    mode.micRight = pressure.real * micAngularR * drum.acousticRadiationGain;
+                    mode.micLeftQuadrature = pressure.quadrature * micAngularL * drum.acousticRadiationGain;
+                    mode.micRightQuadrature = pressure.quadrature * micAngularR * drum.acousticRadiationGain;
                 }
                 else
                 {
-                    mode.micLeft = releasedObservedL;
-                    mode.micRight = releasedObservedR;
+                    mode.micLeft = releasedObservedL * drum.acousticRadiationGain;
+                    mode.micRight = releasedObservedR * drum.acousticRadiationGain;
                     mode.micLeftQuadrature = 0.0f;
                     mode.micRightQuadrature = 0.0f;
                 }
@@ -3862,10 +3884,9 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         // genuinely refuses to move and a light one genuinely rings - times the
         // area it radiates from, which is the term the membrane modes get for
         // free through their own volume displacement and the shell was missing.
-        // Without it a small body, whose modal mass falls as the cube of its
-        // radius, ran away from the head it is stretched under.
+        const float effectiveWoodMass = std::max (woodModalMass, 3.2f);
         const float level = shellGain * shellCalibration * radiatingArea
-                          / (woodModalMass * omega * rate)
+                          / (effectiveWoodMass * omega * rate)
                           / (1.0f + 0.35f * static_cast<float> (index));
 
         auto& mode = voice.modes[static_cast<std::size_t> (count)];
@@ -5959,7 +5980,7 @@ void TaikoEngine::advancePhysicalContacts (Voice& physical) noexcept
 
         const double nextMidpoint = midpointCompression[slot] + 0.5 * s[slot];
         if (voice.nonlinearContactHasForce
-            && nextMidpoint <= 0.0 && s[slot] <= 0.0)
+            && (force[slot] <= 1.0e-9 || (nextMidpoint <= 0.0 && s[slot] <= 0.0)))
             voice.nonlinearContactActive = false;
     }
 
@@ -6224,9 +6245,9 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
             if (nonlinearContact)
             {
                 // The normal membrane force was integrated by the reciprocal
-                // IMP-2 solve. Texture remains an explicitly external roughness
-                // source, while the wooden/rim bank follows the solved force
-                // through its established linear observation path.
+                // IMP-2 solve. Texture excites the struck object through
+                // modeProjection, while the wooden/rim bank follows the solved
+                // force through its established linear observation path.
                 for (std::size_t index = 0; index < voice.modeProjection.size(); ++index)
                 {
                     float input = noise * voice.modeProjection[index];

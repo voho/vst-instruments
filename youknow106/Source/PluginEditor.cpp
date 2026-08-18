@@ -580,7 +580,10 @@ void YouKnow106LookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
         const float proportion = static_cast<float> (tick) / 6.0f;
         const float angle = rotaryStartAngle
                           + proportion * (rotaryEndAngle - rotaryStartAngle);
-        const float outerRadius = diameter * 0.54f;
+        // Cap the tick tips inside the component so the left/up/right majors
+        // are not flat-cut by the clip boundary once the knob passes 54 px.
+        const float outerRadius = juce::jmin (diameter * 0.54f,
+            juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f - 0.7f);
         const float innerRadius = outerRadius - (tick % 3 == 0 ? 3.4f : 2.0f);
         const auto centre = well.getCentre();
         g.drawLine (centre.x + std::sin (angle) * innerRadius,
@@ -761,7 +764,8 @@ void YouKnow106LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton&
                                 .getWithDefault (actionIconProperty, juce::var())
                                 .toString();
     g.setColour (fromPalette (button.getToggleState() ? panel::colour::text
-                                                      : panel::colour::textDim));
+                                                      : panel::colour::textDim)
+                     .withMultipliedAlpha (button.isEnabled() ? 1.0f : 0.45f));
 
     if (hardware)
     {
@@ -856,9 +860,15 @@ void YouKnow106LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton&
                             ? fromPalette (panel::colour::led)
                             : fromPalette (panel::colour::textDim);
             drawActionIcon (g, iconArea, actionIcon, tint);
+            // The legend deliberately matches its icon tint (PANIC reads in
+            // LED red); state it rather than inherit whatever colour the icon
+            // path left behind.
+            g.setColour (tint);
         }
-        g.drawText (displayText, content.toNearestInt(),
-                    juce::Justification::centred, false);
+        // Fitted, not curtailed: "PANIC" overruns this cell by a few pixels
+        // with the wider Windows system font at the minimum editor size.
+        g.drawFittedText (displayText, content.toNearestInt(),
+                          juce::Justification::centred, 1, 0.7f);
         return;
     }
 
@@ -1104,18 +1114,26 @@ void YouKnow106Display::paint (juce::Graphics& g)
     const float pitch = voiceRow.getWidth() / static_cast<float> (lamps);
     const float lampSize = juce::jmin (10.5f, voiceRow.getHeight() * 0.44f,
                                        pitch * 0.52f);
-    g.setFont (clearPanelFont (9.5f, true));
+    // Number the lamps only while the widest numeral fits its cell. Above
+    // nine voices the cells are a few pixels wide at every supported editor
+    // size, and drawText would curtail "10".."16" to a misleading "1"; the
+    // "N / lamps ACTIVE" readout keeps the count legible instead.
+    const auto numeralFont = clearPanelFont (9.5f, true);
+    const bool numeralsFit = juce::GlyphArrangement::getStringWidth (
+                                 numeralFont, juce::String (lamps)) <= pitch;
+    g.setFont (numeralFont);
     for (int voice = 0; voice < lamps; ++voice)
     {
         const float centreX = voiceRow.getX()
                             + (static_cast<float> (voice) + 0.5f) * pitch;
         g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.72f));
-        g.drawText (juce::String (voice + 1),
-                    juce::Rectangle<float> (centreX - pitch * 0.5f,
-                                            voiceRow.getY(), pitch,
-                                            voiceRow.getHeight() * 0.38f)
-                        .toNearestInt(),
-                    juce::Justification::centred, false);
+        if (numeralsFit)
+            g.drawText (juce::String (voice + 1),
+                        juce::Rectangle<float> (centreX - pitch * 0.5f,
+                                                voiceRow.getY(), pitch,
+                                                voiceRow.getHeight() * 0.38f)
+                            .toNearestInt(),
+                        juce::Justification::centred, false);
         const auto lamp = juce::Rectangle<float> (lampSize, lampSize)
                               .withCentre ({ centreX,
                                              voiceRow.getY()
@@ -1126,9 +1144,12 @@ void YouKnow106Display::paint (juce::Graphics& g)
 
     g.setColour (fromPalette (panel::colour::textDim));
     g.setFont (clearPanelFont (11.0f, true));
-    g.drawText (ready ? juce::String (voices) + " / " + juce::String (lamps) + " ACTIVE"
-                      : juce::String ("STANDBY"),
-                readout.toNearestInt(), juce::Justification::centredRight);
+    // Fitted, not ellipsised: "0 / 6 ACTIVE" is wider than the readout at the
+    // default editor size, and "ACTI…" is what every player would read.
+    g.drawFittedText (ready ? juce::String (voices) + " / " + juce::String (lamps) + " ACTIVE"
+                            : juce::String ("STANDBY"),
+                      readout.toNearestInt(), juce::Justification::centredRight,
+                      1, 0.6f);
 
     // Modulation and envelope meters.
     const auto meter = [&g] (juce::Rectangle<float> row, float value, bool bipolar,
@@ -2319,8 +2340,6 @@ void YouKnow106AudioProcessorEditor::buildHardwareProgrammer()
     hardwarePatchDisplay.setTooltip (
         "Shows the selected two-digit bank and patch location, from 11 to 88.");
     hardwarePatchDisplay.setJustificationType (juce::Justification::centred);
-    hardwarePatchDisplay.setFont (juce::Font (
-        juce::FontOptions (25.0f, juce::Font::bold)));
     hardwarePatchDisplay.setColour (juce::Label::textColourId,
                                     fromPalette (panel::colour::led));
     hardwarePatchDisplay.setColour (juce::Label::backgroundColourId,
@@ -3082,8 +3101,6 @@ void YouKnow106AudioProcessorEditor::resized()
             scaled (550.0f + 36.0f * static_cast<float> (index),
                     programmerKeyTop, 30.0f,
                     programmerKeyHeight).toNearestInt());
-    hardwarePatchDisplay.setFont (juce::Font (
-        juce::FontOptions (juce::jmax (20.0f, 25.0f * scale), juce::Font::bold)));
     hardwarePatchDisplay.setBounds (
         scaled (848.0f, 304.0f, 52.0f, 46.0f).toNearestInt());
     for (int index = 0; index < 8; ++index)

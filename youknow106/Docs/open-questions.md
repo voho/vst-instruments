@@ -1296,6 +1296,24 @@ pass could not be re-located in that project's current tree (its own engine
 mixes sub at 0.67 against 0.5 waves, ratio 1.34, as engine constants, not
 measurements), so that lead is downgraded until raw provenance surfaces.
 
+**Quantified contradiction, 2026-08-18 (external recording, not promotable):**
+the [external sound validation](external-sound-validation.md) compared all
+128 factory renders against synthmania.com's per-patch hardware recordings
+(undocumented unit and chain). On the noise-forward drum programs the
+noise-versus-sub balance inverts: A64 Snare Drum (saw/pulse off, key follow
+0, noise 91, sub 64) is noise-dominated on the hardware recording (centroid
+~2.7 kHz, broadband to 8 kHz) while the model renders the noise leg
+9.7–10.8 dB **below** the sub leg — a ~13–16 dB inversion that survives
+register matching and cannot be a chain tilt, because both legs share one
+take and the corpus-wide chain tilt is only −8.2 dB median. A65 shows the
+same signature, A66 a milder one behind its more closed filter, and the
+sub-only A83 passes clean, which points the residual at the unanchored
+`subMixVolts = 5.0` rather than the ±~4 dB-anchored noise leg. The direction
+is solid; the magnitude inherits the recording chain's uncertainty, so no
+coordinate is retuned from it. The measured source-to-VCF budget this task
+already demands would decide it; any future fit must also re-check the
+noise-forward set A64/A65/A66/A67/A86 as a family.
+
 ### Needed output (for LLM)
 
 - A designator-level signal path and impedance/gain budget for saw, pulse, sub
