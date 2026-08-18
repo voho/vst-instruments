@@ -90,17 +90,17 @@ inline constexpr std::uint32_t magenta       = 0xa8443cu; // oxblood enamel sign
 inline constexpr std::uint32_t cyan          = 0x4d929du; // desaturated programmer teal
 inline constexpr std::uint32_t control       = 0xd0c9bcu; // warm nickel/ivory control caps
 inline constexpr std::uint32_t controlShadow = 0x6f6b63u;
-inline constexpr std::uint32_t brass         = 0xa78758u; // indicator bezels and fine trim
-inline constexpr std::uint32_t brassHigh     = 0xd0b47du;
 inline constexpr std::uint32_t led           = 0xff573bu; // warm red panel lamps
 inline constexpr std::uint32_t ledDim        = 0x491b16u;
 inline constexpr std::uint32_t text          = 0xf2ede4u;
 inline constexpr std::uint32_t textDim       = 0xaaa79fu;
 inline constexpr std::uint32_t slot          = 0x101110u; // slider cut-out
-inline constexpr std::uint32_t scope         = 0x080b0bu; // scope screen glass
-inline constexpr std::uint32_t keyBlue       = 0x7ca8aeu;
-inline constexpr std::uint32_t keyAmber      = 0xd99a35u;
-inline constexpr std::uint32_t keyIvory      = 0xd9d2c4u;
+inline constexpr std::uint32_t scope         = slot; // shared recess/scope glass
+
+// Semantic material roles reuse the two accent families and neutral metals;
+// they must not introduce extra decorative hues.
+inline constexpr std::uint32_t brass         = textDim;
+inline constexpr std::uint32_t brassHigh     = control;
 } // namespace colour
 
 // Geometry, in abstract panel units. The editor scales the whole description to

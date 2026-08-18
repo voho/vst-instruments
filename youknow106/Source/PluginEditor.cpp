@@ -389,7 +389,7 @@ YouKnow106LookAndFeel::YouKnow106LookAndFeel()
                fromPalette (panel::colour::textDim));
 
     setColour (juce::MidiKeyboardComponent::whiteNoteColourId,
-               fromPalette (panel::colour::keyIvory));
+               fromPalette (panel::colour::control));
     setColour (juce::MidiKeyboardComponent::blackNoteColourId,
                fromPalette (panel::colour::faceplateLow));
     setColour (juce::MidiKeyboardComponent::keySeparatorLineColourId,
@@ -959,7 +959,7 @@ void YouKnow106LookAndFeel::drawLabel (juce::Graphics& g, juce::Label& label)
                                   .withSizeKeepingCentre (diameter, diameter);
         const bool on = static_cast<bool> (label.getProperties().getWithDefault (
             statusLampOnProperty, false));
-        drawJewelLamp (g, lampArea, on, fromPalette (panel::colour::keyAmber));
+        drawJewelLamp (g, lampArea, on, fromPalette (panel::colour::led));
     }
 
     g.setColour (label.findColour (juce::Label::textColourId));
@@ -1824,9 +1824,7 @@ void YouKnow106AudioProcessorEditor::buildPanelControls()
                 isFootRegisterLegend (description.label) ? 0.80
                     : description.height > 110.0f ? 0.34
                     : description.height > 65.0f ? 0.62 : 0.72);
-            const auto keyColour = description.section == 8
-                                 ? fromPalette (panel::colour::keyAmber)
-                                 : fromPalette (panel::colour::keyIvory);
+            const auto keyColour = fromPalette (panel::colour::control);
             entry.button->setColour (juce::TextButton::buttonColourId, keyColour);
             entry.button->setColour (juce::TextButton::buttonOnColourId,
                                      keyColour.brighter (0.08f));
@@ -2040,9 +2038,9 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     unisonButton.getProperties().set (hardwareStyleProperty, true);
     unisonButton.getProperties().set (hardwareKeyCentreProperty, 0.62);
     unisonButton.setColour (juce::TextButton::buttonColourId,
-                            fromPalette (panel::colour::keyIvory));
+                            fromPalette (panel::colour::control));
     unisonButton.setColour (juce::TextButton::buttonOnColourId,
-                            fromPalette (panel::colour::keyIvory).brighter (0.08f));
+                            fromPalette (panel::colour::control).brighter (0.08f));
     unisonButton.setTooltip (
         "Convenience key for pressing both original POLY contacts together "
         "to enter Solo Unison; the hardware has no separate Unison key.");
@@ -2053,7 +2051,7 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     portamentoToggleButton.getProperties().set (hardwareStyleProperty, true);
     portamentoToggleButton.getProperties().set (hardwareKeyCentreProperty, 0.62);
     portamentoToggleButton.setColour (juce::TextButton::buttonColourId,
-                                      fromPalette (panel::colour::keyIvory));
+                                      fromPalette (panel::colour::control));
     portamentoToggleButton.setTooltip (
         "Switches portamento off or restores its last non-zero time, matching "
         "the separate switch beside the original Portamento Time knob.");
@@ -2198,9 +2196,7 @@ void YouKnow106AudioProcessorEditor::buildPresetBar()
     presetEditedLabel.setText ("EDITED", juce::dontSendNotification);
     presetEditedLabel.setFont (panelFont (11.0f, true));
     presetEditedLabel.setColour (juce::Label::textColourId,
-                                 fromPalette (panel::colour::magenta)
-                                     .interpolatedWith (
-                                         fromPalette (panel::colour::text), 0.25f));
+                                 fromPalette (panel::colour::text));
     presetEditedLabel.setTooltip (
         "Lights when the current panel no longer matches the selected program.");
     presetEditedLabel.setName ("Program state");
@@ -2264,11 +2260,10 @@ void YouKnow106AudioProcessorEditor::buildHardwareProgrammer()
         addAndMakeVisible (button);
     };
 
-    const auto blue = fromPalette (panel::colour::keyBlue);
-    const auto amber = fromPalette (panel::colour::keyAmber);
-    const auto ivory = fromPalette (panel::colour::keyIvory);
+    const auto memory = fromPalette (panel::colour::cyan);
+    const auto neutral = fromPalette (panel::colour::control);
 
-    configureKey (keyTransposeButton, amber, "Key transpose",
+    configureKey (keyTransposeButton, neutral, "Key transpose",
                   "Switches the selected keyboard transposition on or off. "
                   "Choose its semitone amount with the adjacent AMOUNT knob.");
     attachKeyTransposeButton (keyTransposeButton);
@@ -2279,7 +2274,7 @@ void YouKnow106AudioProcessorEditor::buildHardwareProgrammer()
         const auto groupName = juce::String::charToString (
             static_cast<juce::juce_wchar> ('A' + index));
         button.setButtonText (groupName);
-        configureKey (button, blue, "Group " + groupName,
+        configureKey (button, memory, "Group " + groupName,
                       "Selects factory-memory group " + groupName
                           + " while retaining the chosen bank and patch number.");
         button.onClick = [this, index]
@@ -2294,7 +2289,7 @@ void YouKnow106AudioProcessorEditor::buildHardwareProgrammer()
         auto& button = bankButtons[static_cast<std::size_t> (index)];
         const auto number = juce::String (index + 1);
         button.setButtonText (number);
-        configureKey (button, blue, "Bank " + number,
+        configureKey (button, memory, "Bank " + number,
                       "Selects factory-memory bank " + number
                           + " while retaining the current group and patch number.");
         button.onClick = [this, index]
@@ -2309,7 +2304,7 @@ void YouKnow106AudioProcessorEditor::buildHardwareProgrammer()
         auto& button = patchButtons[static_cast<std::size_t> (index)];
         const auto number = juce::String (index + 1);
         button.setButtonText (number);
-        configureKey (button, blue, "Patch " + number,
+        configureKey (button, memory, "Patch " + number,
                       "Loads patch number " + number
                           + " from the selected factory group and bank.");
         button.onClick = [this, index]
@@ -2334,23 +2329,23 @@ void YouKnow106AudioProcessorEditor::buildHardwareProgrammer()
     hardwarePatchDisplay.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (hardwarePatchDisplay);
 
-    configureKey (manualButton, ivory, "Manual mode",
+    configureKey (manualButton, neutral, "Manual mode",
                   "Selects the INIT/manual panel state instead of a stored "
                   "factory memory location.");
     manualButton.onClick = [this] { selectProgram (0); };
 
-    configureKey (writeButton, amber, "Write memory",
+    configureKey (writeButton, neutral, "Write memory",
                   "The original WRITE key is shown here; the bundled factory "
                   "bank is read-only, so host presets store edited states.");
     writeButton.setEnabled (false);
 
-    configureKey (syxSaveButton, amber, "Save patch file",
+    configureKey (syxSaveButton, neutral, "Save patch file",
                   syxSaveButton.getTooltip());
-    configureKey (verifyButton, amber, "Verify tape data",
+    configureKey (verifyButton, neutral, "Verify tape data",
                   "The original tape VERIFY key is shown here; file integrity "
                   "is checked automatically when a SysEx file is loaded.");
     verifyButton.setEnabled (false);
-    configureKey (syxLoadButton, amber, "Load patch file",
+    configureKey (syxLoadButton, neutral, "Load patch file",
                   syxLoadButton.getTooltip());
 
     shownProgram = -1;
@@ -2410,7 +2405,7 @@ void YouKnow106AudioProcessorEditor::refreshPresetBar()
     presetEditedLabel.getProperties().set (statusLampOnProperty, edited);
     presetEditedLabel.setColour (
         juce::Label::textColourId,
-        edited ? fromPalette (panel::colour::keyAmber).brighter (0.12f)
+        edited ? fromPalette (panel::colour::text)
                : fromPalette (panel::colour::textDim).withAlpha (0.76f));
     presetEditedLabel.setVisible (true);
     presetPrevButton.setEnabled (program > 0);

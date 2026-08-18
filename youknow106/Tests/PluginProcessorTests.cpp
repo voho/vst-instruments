@@ -4326,10 +4326,7 @@ void testEditorContrastAndFocusContract()
         paletteColour (panel::colour::magenta),
         paletteColour (panel::colour::cyan),
         paletteColour (panel::colour::control),
-        paletteColour (panel::colour::scope),
-        paletteColour (panel::colour::keyBlue),
-        paletteColour (panel::colour::keyAmber),
-        paletteColour (panel::colour::keyIvory)
+        paletteColour (panel::colour::scope)
     });
     for (const auto surface : focusSurfaces)
         expect (std::max (contrastRatio (scope, surface),

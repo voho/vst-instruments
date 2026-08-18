@@ -722,12 +722,14 @@ bank/patch selection, MANUAL and SysEx SAVE/LOAD are live. OFF/I/II chorus keys
 and the oscillator's range and waveform keys are vertically grouped to keep
 both sections compact without losing the broad signal-flow order.
 
-The original surface is planar warm-charcoal metal with restrained oxblood and
-muted-teal accents, warm rectangular keys, jewel-style red lamps and warm-nickel
-fader caps. Engraved charcoal headers use only the concise LFO, DCO, HPF, VCF,
-VCA, ENV and CHORUS abbreviations. Whitespace and small recesses separate the
-controls without turning each section into a rounded dashboard card. Functional
-waveform, foot-register and action marks remain project-native vectors. Small
+The interface uses planar warm-charcoal metal with only two chromatic families:
+restrained oxblood and muted teal. Memory keys reuse the teal; every other
+switch and cap shares neutral nickel. Jewel-style red lamps remain the only
+bright state colour. Engraved charcoal headers use only the concise
+LFO, DCO, HPF, VCF, VCA, ENV and CHORUS abbreviations. Whitespace and small
+recesses separate the controls without turning each section into a rounded
+dashboard card. Functional waveform, foot-register and action marks remain
+project-native vectors. Small
 programmer legends use an open system sans rather than condensed display type,
 and the resize floor keeps them above the tested readability threshold.
 
