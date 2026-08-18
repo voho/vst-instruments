@@ -18,6 +18,9 @@ Notable customer-facing changes to YouKnow106 are recorded here.
   randomization utilities.
 - Clarified the factory/custom patch rail and widened the oscillator controls
   for cleaner alignment at every supported editor size.
+- Fixed panel text that could truncate (monitor voice readout, PANIC key,
+  voice-lamp numbers above nine voices), dimmed disabled keys, and kept knob
+  tick marks inside their controls at large editor sizes.
 - Hardened host operation across transport reset, standard bypass, variable
   block sizes, concurrent state saves, and synchronous state-save callbacks.
 - Preserved historical Audio Unit parameter ordering while adding QUALITY, and
