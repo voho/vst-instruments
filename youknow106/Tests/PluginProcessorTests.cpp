@@ -3809,23 +3809,65 @@ void testEveryPanelLegendFitsInTheRealFont()
         font.setHorizontalScale (panel::typefaceHorizontalScale);
         return font;
     };
+    const auto clearBoldFont = [] (float height) {
+        return juce::Font (juce::FontOptions (height, juce::Font::bold));
+    };
     // expect() takes a std::string; every message here is built as a
     // juce::String, so it is converted at the point of use.
     const auto say = [] (const juce::String& text) { return text.toStdString(); };
 
+    const auto expectHeaderFits = [&] (const panel::Section& section,
+                                       float scale,
+                                       const char* sizeName)
+    {
+        if (section.y >= panel::performanceDeckTop)
+            return;
+
+        float available = (section.width - 16.0f) * scale;
+        float codeWidth = 0.0f;
+        if (section.displayCode[0] != '\0')
+        {
+            codeWidth = juce::jmin (40.0f * scale, available * 0.28f);
+            available -= codeWidth + 4.0f * scale;
+        }
+
+        float titleSize = juce::jmax (9.0f,
+                                       panel::headerPointSize * scale);
+        const float natural = juce::GlyphArrangement::getStringWidth (
+            clearBoldFont (titleSize), section.displayTitle);
+        if (natural > available && natural > 0.0f)
+            titleSize *= available / natural;
+        titleSize = juce::jmax (7.8f, titleSize);
+
+        const float drawn = juce::GlyphArrangement::getStringWidth (
+            clearBoldFont (titleSize), section.displayTitle);
+        expect (drawn <= available + 0.1f,
+                say (juce::String (sizeName) + " section header is truncated: "
+                     + section.displayTitle + " needs "
+                     + juce::String (drawn, 1) + " in "
+                     + juce::String (available, 1)));
+
+        if (section.displayCode[0] != '\0')
+        {
+            const float codeSize = juce::jmax (7.5f, 9.0f * scale);
+            const float codeDrawn = juce::GlyphArrangement::getStringWidth (
+                clearBoldFont (codeSize), section.displayCode);
+            expect (codeDrawn <= codeWidth,
+                    say (juce::String (sizeName) + " section code is truncated: "
+                         + section.displayCode));
+        }
+    };
+
+    const float defaultScale = juce::jmin (
+        static_cast<float> (panel::defaultEditorWidth) / panel::panelWidth(),
+        static_cast<float> (panel::defaultEditorHeight) / panel::editorHeight);
+    const float minimumScale = juce::jmin (
+        static_cast<float> (panel::minimumEditorWidth) / panel::panelWidth(),
+        static_cast<float> (panel::minimumEditorHeight) / panel::editorHeight);
     for (const auto& section : panel::sections())
     {
-        const float available = section.width - panel::sectionPadding;
-        const float drawn = juce::GlyphArrangement::getStringWidth (
-            boldFont (panel::headerPointSize), section.name);
-        expect (drawn <= available,
-                say (juce::String ("section header is truncated: ") + section.name
-                     + " needs " + juce::String (drawn, 1) + " in "
-                     + juce::String (available, 1)));
-        // The approximation must also be an over-estimate, not merely close:
-        // that is the property the JUCE-free check depends on.
-        expect (panel::textWidth (section.name, panel::headerPointSize, true) >= drawn,
-                say (juce::String ("the width model under-estimates ") + section.name));
+        expectHeaderFits (section, defaultScale, "default-size");
+        expectHeaderFits (section, minimumScale, "minimum-size");
     }
 
     for (const auto& control : panel::controls())
@@ -3867,22 +3909,6 @@ void testEveryPanelLegendFitsInTheRealFont()
     // The nominal layout can fit while the smallest supported editor silently
     // turns ten-point legends into eight-point ones. Check the actual font and
     // the actual scaled boxes at the resize floor as a separate contract.
-    const float minimumScale = juce::jmin (
-        static_cast<float> (panel::minimumEditorWidth) / panel::panelWidth(),
-        static_cast<float> (panel::minimumEditorHeight)
-            / panel::editorHeight);
-
-    for (const auto& section : panel::sections())
-    {
-        const float size = juce::jmax (10.0f,
-                                       panel::headerPointSize * minimumScale);
-        const float drawn = juce::GlyphArrangement::getStringWidth (
-            boldFont (size), section.name);
-        expect (drawn <= (section.width - panel::sectionPadding) * minimumScale,
-                say (juce::String ("minimum-size header is truncated: ")
-                     + section.name));
-    }
-
     for (const auto& control : panel::controls())
     {
         if (control.kind == panel::ControlKind::Slider
@@ -4035,13 +4061,13 @@ void testEveryInteractiveEditorControlExplainsItself()
     };
     audit (audit, *editor);
 
-    // Six extension knobs, nine utility buttons plus the QUALITY selector,
+    // Six extension knobs, ten utility buttons plus the QUALITY selector,
     // six factory/custom patch controls,
-    // twenty-three original-programmer controls, the keybed and the bender.
+    // twenty-two original-programmer controls, the keybed and the bender.
     // Disabled hardware-only keys remain public so their help explains why
     // the immutable factory bank cannot perform that operation.
     constexpr int expectedInteractiveCount =
-        panel::controlCount + 6 + 10 + 6 + 23 + 1 + 1;
+        panel::controlCount + 6 + 11 + 6 + 22 + 1 + 1;
     expect (interactiveCount == expectedInteractiveCount,
             "the contextual-help audit did not cover every interactive control");
     expect (findDescendantButtonWithText (*editor, "SEND") == nullptr,
@@ -4364,9 +4390,11 @@ void testColdStartProgramAndEditorAreInSync()
                 && patchBox->getText() == processor.getProgramName (0),
             "the cold preset selector does not show INIT");
 
-    auto* edited = findDescendantLabelWithText (*editor, "EDITED");
-    expect (edited != nullptr && ! edited->isVisible(),
-            "the cold editor claims its untouched INIT is edited");
+    auto* programState = dynamic_cast<juce::Label*> (
+        findDescendantNamed (*editor, "Program state"));
+    expect (programState != nullptr && programState->isVisible()
+                && programState->getText() == "LOADED",
+            "the cold editor does not report its untouched INIT as loaded");
 
     struct SliderSync { const char* name; const char* parameter; };
     constexpr auto sliders = std::to_array<SliderSync> ({
@@ -4503,9 +4531,9 @@ void testEditorRandomizeStrengthsAndReset()
         float maximumMovement;
     };
     constexpr auto actions = std::to_array<RandomizeAction> ({
-        { "RND1%",  0.01f },
-        { "RND10%", 0.10f },
-        { "RND50%", 0.50f },
+        { "DRIFT 1%",  0.01f },
+        { "VARY 10%",  0.10f },
+        { "MORPH 50%", 0.50f },
     });
 
     expect (! hasDescendantButtonWithTextPrefix (*editor, "RANDOMIZE"),
@@ -4558,23 +4586,24 @@ void testEditorRandomizeStrengthsAndReset()
     const float poisonedQuality =
         parameterValue (processor, parameters::quality);
 
-    auto* reset = findDescendantButtonWithText (*editor, "RESET");
-    expect (reset != nullptr, "the editor is missing RESET");
+    auto* reset = findDescendantButtonWithText (*editor, "INIT");
+    expect (reset != nullptr, "the editor is missing INIT");
     expect (reset != nullptr && static_cast<bool> (reset->onClick),
-            "RESET has no action");
+            "INIT has no action");
     if (reset != nullptr && reset->onClick)
         reset->onClick();
 
     expect (processor.getCurrentProgram() == 0,
-            "RESET did not select the complete INIT program");
+            "INIT did not select the complete INIT program");
     expect (! processor.currentProgramIsEdited(),
-            "RESET left INIT marked as edited");
+            "INIT left the program marked as edited");
     for (int index = 0; index < parameterCount; ++index)
     {
         const auto* parameter = processor.getParameters()[index];
-        // RESET returns the panel to INIT, which is a patch operation. The
-        // quality ladder is not in a patch, so it stays where the player left
-        // it here for the same reason a program recall leaves it alone.
+        // The INIT key returns the panel to the initial patch, which is a patch
+        // operation. The quality ladder is not in a patch, so it stays where
+        // the player left it here for the same reason a program recall leaves
+        // it alone.
         if (parameter
                 == processor.parameters.getParameter (parameters::quality)
             || parameter
@@ -4582,17 +4611,17 @@ void testEditorRandomizeStrengthsAndReset()
             continue;
         expect (std::abs (parameter->getValue()
                          - initValues[static_cast<std::size_t> (index)]) < 1.0e-6f,
-                "RESET did not restore every INIT control");
+                "INIT did not restore every initial control");
     }
     expect (std::abs (parameterValue (processor, parameters::quality)
                      - poisonedQuality) < 1.0e-6f,
-            "RESET overruled the player's quality selection");
+            "INIT overruled the player's quality selection");
 
     if (auto* preset = findDescendantComboBox (*editor))
         expect (preset->getSelectedId() == 1,
-                "RESET did not bring the patch display back to INIT");
+                "INIT did not bring the patch display back to its initial state");
     else
-        expect (false, "RESET test could not find the patch display");
+        expect (false, "INIT test could not find the patch display");
 }
 
 void testClickingTheSelectedRadioKeepsItsLampLit()
@@ -4707,8 +4736,8 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
         { "Transpose",      "TRANSPOSE" },
         { "Master tune",    "TUNE" },
         { "Velocity",       "VELOCITY" },
-        { "Unit Character", "UNIT CHARACTER" },
-        { "Chorus noise",   "CHORUS NOISE" },
+        { "Unit Character", "CHARACTER" },
+        { "Chorus noise",   "HISS" },
         { "Polyphony",      "VOICES" },
     });
 
@@ -4784,6 +4813,74 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
             }
         }
     }
+
+    const float layoutScale = juce::jmin (
+        static_cast<float> (editor.getWidth()) / panel::panelWidth(),
+        static_cast<float> (editor.getHeight()) / panel::editorHeight);
+    const auto checkInsideZone = [&] (const char* componentName, float x,
+                                      float width, const char* zoneName)
+    {
+        auto* component = findDescendantNamed (editor, componentName);
+        expect (component != nullptr,
+                std::string (zoneName) + " zone is missing " + componentName);
+        if (component == nullptr)
+            return;
+
+        const auto area = editor.getLocalArea (component,
+                                               component->getLocalBounds());
+        const auto zone = juce::Rectangle<float> (
+            x * layoutScale, panel::extensionDeckTop * layoutScale,
+            width * layoutScale,
+            panel::extensionDeckHeight * layoutScale).toNearestInt();
+        expect (zone.contains (area),
+                std::string (componentName) + " is no longer inside the "
+                    + zoneName + " extension zone");
+    };
+
+    checkInsideZone ("Unit Character", panel::modelZoneX,
+                     panel::modelZoneWidth, "Model");
+    checkInsideZone ("Quality", panel::modelZoneX,
+                     panel::modelZoneWidth, "Model");
+    checkInsideZone ("UNISON", panel::voiceZoneX,
+                     panel::voiceZoneWidth, "Voice");
+    checkInsideZone ("Polyphony", panel::voiceZoneX,
+                     panel::voiceZoneWidth, "Voice");
+    checkInsideZone ("Key transpose", panel::pitchZoneX,
+                     panel::pitchZoneWidth, "Pitch");
+    checkInsideZone ("Transpose", panel::pitchZoneX,
+                     panel::pitchZoneWidth, "Pitch");
+    checkInsideZone ("Master tune", panel::pitchZoneX,
+                     panel::pitchZoneWidth, "Pitch");
+    checkInsideZone ("Status display", panel::monitorZoneX,
+                     panel::monitorZoneWidth, "Monitor");
+    checkInsideZone ("Velocity", panel::dynamicsZoneX,
+                     panel::dynamicsZoneWidth, "Dynamics");
+    checkInsideZone ("Chorus noise", panel::chorusZoneX,
+                     panel::chorusZoneWidth, "Chorus");
+
+    auto* keyTranspose = dynamic_cast<juce::Button*> (
+        findDescendantNamed (editor, "Key transpose"));
+    auto* transpose = dynamic_cast<juce::Slider*> (
+        findDescendantNamed (editor, "Transpose"));
+    expect (keyTranspose != nullptr && transpose != nullptr,
+            "the pitch extension zone is missing its transpose pair");
+    if (keyTranspose != nullptr && transpose != nullptr)
+    {
+        const auto keyArea = editor.getLocalArea (
+            keyTranspose, keyTranspose->getLocalBounds());
+        const auto knobArea = editor.getLocalArea (
+            transpose, transpose->getLocalBounds());
+        const auto pitchArea = juce::Rectangle<float> (
+            panel::pitchZoneX * layoutScale,
+            panel::extensionDeckTop * layoutScale,
+            panel::pitchZoneWidth * layoutScale,
+            panel::extensionDeckHeight * layoutScale).toNearestInt();
+        expect (pitchArea.contains (keyArea),
+                "Key transpose is no longer inside the pitch extension zone");
+        expect (keyArea.getRight() <= knobArea.getX()
+                    && ! keyArea.intersects (knobArea),
+                "Key transpose is no longer beside the TRANSPOSE knob");
+    }
 }
 
 template <std::size_t Size>
@@ -4821,21 +4918,22 @@ double namedGroupFootprint (juce::AudioProcessorEditor& editor,
 void checkSynthesisSectionsDominateUtilities (
     juce::AudioProcessorEditor& editor)
 {
-    // Measure the allocations, not individual knobs. A sparse utility card can
-    // otherwise look artificially tiny while still taking half the console.
-    // Character Lab and Operations are the two non-synthesis cards competing
-    // for control-panel space. The masthead and live performance deck serve
-    // navigation/playing rather than utility configuration, so folding those
-    // into this comparison would measure a different design decision.
-    constexpr auto characterLab = std::to_array<const char*> ({
+    // Measure each separated utility family independently. Taking one union of
+    // spatially aligned controls would count the intentional whitespace between
+    // MODEL and CHORUS as occupied control area.
+    constexpr auto modelControls = std::to_array<const char*> ({
         "Unit Character", "Unit Character label",
-        "Chorus noise", "Chorus noise label", "Quality", "Quality label"
+        "Quality", "Quality label"
+    });
+    constexpr auto chorusControl = std::to_array<const char*> ({
+        "Chorus noise", "Chorus noise label"
     });
     constexpr auto operations = std::to_array<const char*> ({
-        "PANIC", "RND1%", "RND10%", "RND50%", "RESET"
+        "PANIC", "DRIFT 1%", "VARY 10%", "MORPH 50%", "INIT"
     });
     const double utilityAndSystemArea =
-        namedGroupFootprint (editor, characterLab, "Character Lab")
+        namedGroupFootprint (editor, modelControls, "Model controls")
+        + namedGroupFootprint (editor, chorusControl, "Chorus control")
         + namedGroupFootprint (editor, operations, "Operations");
 
     const double scale = std::min (
@@ -4917,13 +5015,13 @@ void testEditorBuildsAndRenders()
                 "the on-screen keyboard does not begin on the physical low C");
     }
 
-    // The default size follows the panel description, so widening a section to
-    // fit a legend or adding a row moves it. Both dimensions are therefore
-    // derived here rather than written down: the height was still a literal and
-    // failed the moment the panel legitimately grew a patch bar, which is the
-    // exact trap the width had already been rescued from.
-    const int expectedWidth = juce::roundToInt (panel::panelWidth());
-    const int expectedHeight = juce::roundToInt (panel::editorHeight);
+    // The layout grid is deliberately wider than the opening window: controls
+    // retain their spacing model while the default leaves room for window
+    // chrome in a 1440-wide host.
+    // Keep both dimensions named beside the resize limits so changing one
+    // cannot silently distort the fixed panel aspect.
+    const int expectedWidth = panel::defaultEditorWidth;
+    const int expectedHeight = panel::defaultEditorHeight;
     expect (editor->getWidth() == expectedWidth
                 && editor->getHeight() == expectedHeight,
             "the editor did not open at its default size");

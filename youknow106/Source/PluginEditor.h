@@ -30,6 +30,8 @@ public:
     void drawComboBox (juce::Graphics&, int width, int height,
                        bool isButtonDown, int buttonX, int buttonY,
                        int buttonW, int buttonH, juce::ComboBox&) override;
+    void drawCornerResizer (juce::Graphics&, int width, int height,
+                            bool isMouseOver, bool isMouseDragging) override;
     void drawLabel (juce::Graphics&, juce::Label&) override;
     juce::Label* createSliderTextBox (juce::Slider&) override;
     std::unique_ptr<juce::FocusOutline> createFocusOutlineForComponent (
@@ -273,10 +275,10 @@ private:
     // the button this replaced could only say on or off.
     juce::ComboBox qualityBox;
     juce::Label qualityLabel;
-    juce::TextButton randomize1Button { "RND1%" };
-    juce::TextButton randomize10Button { "RND10%" };
-    juce::TextButton randomize50Button { "RND50%" };
-    juce::TextButton resetButton { "RESET" };
+    juce::TextButton randomize1Button { "DRIFT 1%" };
+    juce::TextButton randomize10Button { "VARY 10%" };
+    juce::TextButton randomize50Button { "MORPH 50%" };
+    juce::TextButton resetButton { "INIT" };
     juce::TextButton unisonButton { "UNISON" };
     juce::TextButton portamentoToggleButton { "ON" };
     // The tape section's own pairing: LOAD and SAVE move one patch between
@@ -284,6 +286,7 @@ private:
     juce::TextButton syxLoadButton { "LOAD" };
     juce::TextButton syxSaveButton { "SAVE" };
     std::unique_ptr<juce::FileChooser> sysExFileChooser;
+    juce::TextButton keyTransposeButton { "KEY TRANSPOSE" };
     juce::Slider transposeSlider;
     juce::Slider tuneSlider;
     juce::Slider velocitySlider;
@@ -291,11 +294,11 @@ private:
     juce::Slider chorusNoiseSlider;
     juce::Slider polyphonySlider;
     std::array<juce::Label, 6> utilityLabels {};
+    int lastTransposeSemitones = 12;
 
     // The original programmer tier. The immutable factory bank maps directly
     // to GROUP A/B, BANK 1..8 and PATCH 1..8; unsupported write/verify
     // operations remain present and honestly disabled.
-    juce::TextButton keyTransposeButton { "KEY TRANSPOSE" };
     juce::TextButton midiChannelButton { "MIDI CH" };
     std::array<juce::TextButton, 2> groupButtons {};
     std::array<juce::TextButton, 8> bankButtons {};
@@ -308,7 +311,6 @@ private:
     int selectedHardwareBank = 0;
     int selectedHardwarePatch = 0;
     float lastPortamentoTime = 0.25f;
-    int lastTransposeSemitones = 12;
 
     // The patch bar. The programs live on the processor -- the host addresses
     // them too -- so this only names them and asks it to switch.

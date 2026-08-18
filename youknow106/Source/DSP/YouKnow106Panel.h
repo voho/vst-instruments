@@ -84,76 +84,86 @@ namespace panel
 // Panel palette, 0xRRGGBB.
 namespace colour
 {
-inline constexpr std::uint32_t faceplate     = 0x303236u; // charcoal painted metal
-inline constexpr std::uint32_t faceplateHigh = 0x3b3e43u; // raised/moulded surface
-inline constexpr std::uint32_t faceplateLow  = 0x202226u; // routed recess
-inline constexpr std::uint32_t magenta       = 0xe0443eu; // hardware-style red/orange rail
-inline constexpr std::uint32_t cyan          = 0x3c9fd1u; // programmer blue rail
-inline constexpr std::uint32_t control       = 0xc7c5bdu; // warm grey switch/fader caps
-inline constexpr std::uint32_t controlShadow = 0x6e7074u;
-inline constexpr std::uint32_t led           = 0xff3f2fu; // red panel lamps
-inline constexpr std::uint32_t ledDim        = 0x4c1715u;
-inline constexpr std::uint32_t text          = 0xf0eee7u;
-inline constexpr std::uint32_t textDim       = 0xa7a9acu;
-inline constexpr std::uint32_t slot          = 0x111214u; // slider cut-out
-inline constexpr std::uint32_t scope         = 0x090c0fu; // scope screen glass
-inline constexpr std::uint32_t keyBlue       = 0x86b9cfu;
-inline constexpr std::uint32_t keyAmber      = 0xf0a124u;
-inline constexpr std::uint32_t keyIvory      = 0xd7d4c9u;
+inline constexpr std::uint32_t faceplate     = 0x2d2d2bu; // warm charcoal painted metal
+inline constexpr std::uint32_t faceplateHigh = 0x3b3a36u; // raised/moulded surface
+inline constexpr std::uint32_t faceplateLow  = 0x1c1d1cu; // routed recess
+inline constexpr std::uint32_t magenta       = 0xa8443cu; // oxblood enamel signal rail
+inline constexpr std::uint32_t cyan          = 0x4d929du; // desaturated programmer teal
+inline constexpr std::uint32_t control       = 0xd0c9bcu; // warm nickel/ivory control caps
+inline constexpr std::uint32_t controlShadow = 0x6f6b63u;
+inline constexpr std::uint32_t brass         = 0xa78758u; // indicator bezels and fine trim
+inline constexpr std::uint32_t brassHigh     = 0xd0b47du;
+inline constexpr std::uint32_t led           = 0xff573bu; // warm red panel lamps
+inline constexpr std::uint32_t ledDim        = 0x491b16u;
+inline constexpr std::uint32_t text          = 0xf2ede4u;
+inline constexpr std::uint32_t textDim       = 0xaaa79fu;
+inline constexpr std::uint32_t slot          = 0x101110u; // slider cut-out
+inline constexpr std::uint32_t scope         = 0x080b0bu; // scope screen glass
+inline constexpr std::uint32_t keyBlue       = 0x7ca8aeu;
+inline constexpr std::uint32_t keyAmber      = 0xd99a35u;
+inline constexpr std::uint32_t keyIvory      = 0xd9d2c4u;
 } // namespace colour
 
 // Geometry, in abstract panel units. The editor scales the whole description to
 // whatever size the window is, so nothing here depends on a pixel density.
-inline constexpr float sectionPadding = 12.0f;
-inline constexpr float sectionGap = 8.0f;
-inline constexpr float panelMargin = 12.0f;
-inline constexpr float headerHeight = 22.0f;
-inline constexpr float controlLabelHeight = 18.0f;
+inline constexpr float sectionPadding = 14.0f;
+inline constexpr float sectionGap = 10.0f;
+inline constexpr float panelMargin = 14.0f;
+inline constexpr float headerHeight = 26.0f;
+inline constexpr float controlLabelHeight = 20.0f;
 // Expanded cards give each function more air without turning a single fader
 // cap into a paddle. The cell owns the label and tick field; the mechanical
 // fader itself stays within this convincingly physical width.
 inline constexpr float maximumSliderWidth = 38.0f;
 
-// The hardware surface occupies the top 522 units.  The sound strip begins to
+// The hardware surface and keybed occupy the top 596 units. The sound strip begins to
 // the right of the identity/controller cheek, the programmer tier sits below
 // it, and the 61-key bed starts beside rather than underneath the bender.
-inline constexpr float editorWidth = 1280.0f;
-inline constexpr float displayReferenceHeight = 90.0f;
-inline constexpr float soundRowTop = 12.0f;
-inline constexpr float soundRowHeight = 218.0f;
-inline constexpr float performanceDeckTop = 238.0f;
-inline constexpr float performanceDeckHeight = 288.0f;
-inline constexpr float programmerHeight = 92.0f;
+inline constexpr float editorWidth = 1520.0f;
+inline constexpr float displayReferenceHeight = 106.0f;
+inline constexpr float soundRowTop = 14.0f;
+inline constexpr float soundRowHeight = 244.0f;
+inline constexpr float performanceDeckTop = 268.0f;
+inline constexpr float performanceDeckHeight = 328.0f;
+inline constexpr float programmerHeight = 104.0f;
 // The host navigator is an add-on rail directly below the programmer: close
 // enough to support the bank keys, but clearly outside the original controls.
-inline constexpr float presetTop = 338.0f;
-inline constexpr float presetHeight = 28.0f;
-inline constexpr float panelHeight = 374.0f;
-inline constexpr float keyboardHeight = 152.0f;
+inline constexpr float presetTop = 382.0f;
+inline constexpr float presetHeight = 32.0f;
+inline constexpr float panelHeight = 424.0f;
+inline constexpr float keyboardHeight = 172.0f;
 
-inline constexpr float controllerX = 12.0f;
-inline constexpr float controllerWidth = 166.0f;
-inline constexpr float instrumentLeft = 190.0f;
+inline constexpr float controllerX = 14.0f;
+inline constexpr float controllerWidth = 190.0f;
+inline constexpr float instrumentLeft = 218.0f;
 inline constexpr float instrumentRight = editorWidth - panelMargin;
-inline constexpr float vectorPadX = 20.0f;
-inline constexpr float vectorPadWidth = 150.0f;
+inline constexpr float vectorPadX = 24.0f;
+inline constexpr float vectorPadWidth = 170.0f;
 
 // Everything without a front-panel hardware counterpart lives below the
-// keybed in one unmistakable add-on bay.
-inline constexpr float extensionDeckTop = panelHeight + keyboardHeight + 8.0f;
-inline constexpr float extensionDeckHeight = 112.0f;
-inline constexpr float characterCardX = 12.0f;
-inline constexpr float characterCardWidth = 416.0f;
-inline constexpr float keyboardCardX = 440.0f;
-inline constexpr float keyboardCardWidth = 500.0f;
-inline constexpr float displayCardX = 952.0f;
-inline constexpr float displayCardWidth = 316.0f;
-inline constexpr float operationsBarX = 780.0f;
-inline constexpr float operationsBarWidth = 488.0f;
+// keybed in one unmistakable add-on bay. Its quiet zones follow the hardware
+// above: global model controls under the cheek, voice and pitch controls under
+// their original families, dynamics under VCA/ENV, and noise under CHORUS.
+inline constexpr float extensionDeckTop = panelHeight + keyboardHeight + 10.0f;
+inline constexpr float extensionDeckHeight = 128.0f;
+inline constexpr float modelZoneX = 14.0f;
+inline constexpr float modelZoneWidth = 190.0f;
+inline constexpr float voiceZoneX = 218.0f;
+inline constexpr float voiceZoneWidth = 190.0f;
+inline constexpr float pitchZoneX = 420.0f;
+inline constexpr float pitchZoneWidth = 232.0f;
+inline constexpr float monitorZoneX = 664.0f;
+inline constexpr float monitorZoneWidth = 390.0f;
+inline constexpr float dynamicsZoneX = 1066.0f;
+inline constexpr float dynamicsZoneWidth = 350.0f;
+inline constexpr float chorusZoneX = 1428.0f;
+inline constexpr float chorusZoneWidth = 78.0f;
+inline constexpr float operationsBarX = 872.0f;
+inline constexpr float operationsBarWidth = 634.0f;
 
-inline constexpr float helpStripGap = 8.0f;
-inline constexpr float helpStripHeight = 40.0f;
-inline constexpr float editorBottomMargin = 8.0f;
+inline constexpr float helpStripGap = 10.0f;
+inline constexpr float helpStripHeight = 48.0f;
+inline constexpr float editorBottomMargin = 10.0f;
 inline constexpr float editorHeight = extensionDeckTop + extensionDeckHeight
                                     + helpStripGap + helpStripHeight
                                     + editorBottomMargin;
@@ -165,13 +175,15 @@ inline constexpr int keyboardLowestMidiNote = 36;
 inline constexpr int keyboardHighestMidiNote = 96;
 inline constexpr int keyboardWhiteKeyCount = 5 * 7 + 1;
 // Both corners keep the panel's own aspect ratio, which the shorter one-row
-// composition widens from 1.44 to about 1.84.
-inline constexpr int minimumEditorWidth = 1130;
-inline constexpr int minimumEditorHeight = 620;
-inline constexpr int maximumEditorWidth = 1920;
-inline constexpr int maximumEditorHeight = 1053;
+// composition widens from 1.44 to about 1.90.
+inline constexpr int defaultEditorWidth = 1360;
+inline constexpr int defaultEditorHeight = 718;
+inline constexpr int minimumEditorWidth = 1200;
+inline constexpr int minimumEditorHeight = 633;
+inline constexpr int maximumEditorWidth = 2280;
+inline constexpr int maximumEditorHeight = 1203;
 inline constexpr float controlInset = 5.0f;
-inline constexpr float stackGap = 6.0f;
+inline constexpr float stackGap = 8.0f;
 
 enum class ControlKind
 {
@@ -185,6 +197,8 @@ enum class ControlKind
 struct Section
 {
     const char* name;
+    const char* displayTitle;
+    const char* displayCode;
     int slots;
     float x;
     float y;
@@ -225,8 +239,8 @@ inline constexpr int controlCount = 38;
 
 // Type sizes the editor draws with, in panel units. They live here rather than
 // in the editor so the fit checks below and the drawing code cannot disagree.
-inline constexpr float headerPointSize = 13.0f;
-inline constexpr float labelPointSize = 11.0f;
+inline constexpr float headerPointSize = 12.0f;
+inline constexpr float labelPointSize = 11.5f;
 inline constexpr float buttonPointSizeMax = 13.0f;
 // The original compact selector keys carry unusually small legends. Keep a
 // hard floor for them while allowing the proportions of those switches to
@@ -239,7 +253,7 @@ inline constexpr float typefaceHorizontalScale = 0.92f;
 // A slider's legend is drawn in a box overhanging its control by this much on
 // each side, because the legend belongs to the slot rather than to the narrow
 // slider cut-out.
-inline constexpr float labelOverhang = 7.0f;
+inline constexpr float labelOverhang = 4.0f;
 
 [[nodiscard]] const std::array<Section, sectionCount>& sections() noexcept;
 [[nodiscard]] const std::array<Control, controlCount>& controls() noexcept;

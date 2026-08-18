@@ -36,6 +36,11 @@ juce::Font clearPanelFont (float height, bool bold = false)
 constexpr auto compactStyleProperty = "compactStyle";
 constexpr auto secondaryStyleProperty = "secondaryStyle";
 constexpr auto hardwareStyleProperty = "hardwareStyle";
+constexpr auto hardwareKeyCentreProperty = "hardwareKeyCentre";
+constexpr auto actionIconProperty = "actionIcon";
+constexpr auto segmentDisplayStyleProperty = "segmentDisplayStyle";
+constexpr auto statusLampStyleProperty = "statusLampStyle";
+constexpr auto statusLampOnProperty = "statusLampOn";
 
 // Every enclosing UI surface uses this same quiet neutral frame. Section
 // colours remain as thin header rules, where they communicate signal role,
@@ -71,6 +76,227 @@ void drawFramedSurface (juce::Graphics& g, juce::Rectangle<float> bounds,
                         juce::Colour fill, float uiScale = 1.0f)
 {
     drawFramedSurface (g, bounds, fill, surfaceBorderColour(), uiScale);
+}
+
+void drawJewelLamp (juce::Graphics& g, juce::Rectangle<float> lens, bool on,
+                    juce::Colour activeColour, float alpha = 1.0f)
+{
+    if (lens.isEmpty())
+        return;
+
+    const float diameter = juce::jmin (lens.getWidth(), lens.getHeight());
+    lens = juce::Rectangle<float> (diameter, diameter).withCentre (lens.getCentre());
+
+    if (on)
+    {
+        g.setColour (activeColour.withAlpha (0.13f * alpha));
+        g.fillEllipse (lens.expanded (diameter * 0.55f));
+        g.setColour (activeColour.withAlpha (0.20f * alpha));
+        g.fillEllipse (lens.expanded (diameter * 0.28f));
+    }
+
+    const auto bezel = lens.expanded (juce::jmax (0.9f, diameter * 0.14f));
+    juce::ColourGradient bezelGradient (
+        fromPalette (panel::colour::brassHigh).withAlpha (0.58f * alpha),
+        bezel.getX(), bezel.getY(),
+        fromPalette (panel::colour::controlShadow).darker (0.45f)
+            .withAlpha (0.88f * alpha),
+        bezel.getRight(), bezel.getBottom(), false);
+    g.setGradientFill (bezelGradient);
+    g.fillEllipse (bezel);
+    g.setColour (juce::Colours::black.withAlpha (0.78f * alpha));
+    g.drawEllipse (bezel.reduced (0.45f), juce::jmax (0.8f, diameter * 0.09f));
+
+    const auto glass = lens.reduced (juce::jmax (0.35f, diameter * 0.05f));
+    const auto glassTop = on ? activeColour.brighter (0.52f)
+                             : fromPalette (panel::colour::ledDim).brighter (0.30f);
+    const auto glassBottom = on ? activeColour.darker (0.36f)
+                                : fromPalette (panel::colour::ledDim).darker (0.42f);
+    juce::ColourGradient glassGradient (
+        glassTop.withAlpha ((on ? 1.0f : 0.78f) * alpha), glass.getX(), glass.getY(),
+        glassBottom.withAlpha ((on ? 1.0f : 0.86f) * alpha),
+        glass.getRight(), glass.getBottom(), false);
+    g.setGradientFill (glassGradient);
+    g.fillEllipse (glass);
+
+    g.setColour (juce::Colours::white.withAlpha ((on ? 0.72f : 0.18f) * alpha));
+    g.fillEllipse (juce::Rectangle<float> (diameter * 0.22f, diameter * 0.16f)
+                       .withCentre ({ glass.getCentreX() - diameter * 0.18f,
+                                      glass.getCentreY() - diameter * 0.20f }));
+}
+
+void drawActionIcon (juce::Graphics& g, juce::Rectangle<float> area,
+                     const juce::String& icon, juce::Colour colour)
+{
+    area = area.reduced (juce::jmax (1.0f, area.getWidth() * 0.08f));
+    if (area.isEmpty())
+        return;
+
+    const float stroke = juce::jlimit (1.2f, 2.0f, area.getHeight() * 0.10f);
+    g.setColour (colour);
+
+    if (icon == "load" || icon == "save")
+    {
+        const bool down = icon == "load";
+        const float centreX = area.getCentreX();
+        const float shaftTop = area.getY() + area.getHeight() * 0.14f;
+        const float shaftBottom = area.getY() + area.getHeight() * 0.66f;
+        const float headY = down ? shaftBottom : shaftTop;
+        const float tailY = down ? shaftTop : shaftBottom;
+        g.drawLine (centreX, tailY, centreX, headY, stroke);
+        juce::Path arrow;
+        arrow.startNewSubPath (centreX - area.getWidth() * 0.18f,
+                               headY + (down ? -1.0f : 1.0f)
+                                           * area.getHeight() * 0.16f);
+        arrow.lineTo (centreX, headY);
+        arrow.lineTo (centreX + area.getWidth() * 0.18f,
+                      headY + (down ? -1.0f : 1.0f)
+                                  * area.getHeight() * 0.16f);
+        g.strokePath (arrow, juce::PathStrokeType (
+                                 stroke, juce::PathStrokeType::curved,
+                                 juce::PathStrokeType::rounded));
+        juce::Path tray;
+        tray.startNewSubPath (area.getX() + area.getWidth() * 0.16f,
+                              area.getBottom() - area.getHeight() * 0.23f);
+        tray.lineTo (area.getX() + area.getWidth() * 0.16f,
+                     area.getBottom() - area.getHeight() * 0.08f);
+        tray.lineTo (area.getRight() - area.getWidth() * 0.16f,
+                     area.getBottom() - area.getHeight() * 0.08f);
+        tray.lineTo (area.getRight() - area.getWidth() * 0.16f,
+                     area.getBottom() - area.getHeight() * 0.23f);
+        g.strokePath (tray, juce::PathStrokeType (
+                                stroke, juce::PathStrokeType::curved,
+                                juce::PathStrokeType::rounded));
+        return;
+    }
+
+    if (icon == "reload" || icon == "reset")
+    {
+        const auto centre = area.getCentre();
+        const float radius = juce::jmin (area.getWidth(), area.getHeight()) * 0.34f;
+        constexpr float start = -2.15f;
+        constexpr float finish = 2.65f;
+        juce::Path arc;
+        arc.addCentredArc (centre.x, centre.y, radius, radius, 0.0f,
+                           start, finish, true);
+        g.strokePath (arc, juce::PathStrokeType (
+                               stroke, juce::PathStrokeType::curved,
+                               juce::PathStrokeType::rounded));
+        const juce::Point<float> tip {
+            centre.x + std::sin (finish) * radius,
+            centre.y - std::cos (finish) * radius
+        };
+        juce::Path head;
+        head.startNewSubPath (tip.x - area.getWidth() * 0.19f,
+                              tip.y - area.getHeight() * 0.03f);
+        head.lineTo (tip);
+        head.lineTo (tip.x - area.getWidth() * 0.03f,
+                     tip.y + area.getHeight() * 0.18f);
+        g.strokePath (head, juce::PathStrokeType (
+                                stroke, juce::PathStrokeType::curved,
+                                juce::PathStrokeType::rounded));
+        return;
+    }
+
+    if (icon == "random")
+    {
+        const auto die = area.reduced (area.getWidth() * 0.15f,
+                                       area.getHeight() * 0.10f);
+        g.drawRoundedRectangle (die, juce::jmax (1.5f, die.getWidth() * 0.12f),
+                                stroke);
+        const float dot = juce::jmax (1.6f, die.getWidth() * 0.13f);
+        for (const auto point : { juce::Point<float> (die.getX() + die.getWidth() * 0.28f,
+                                                       die.getY() + die.getHeight() * 0.28f),
+                                  die.getCentre(),
+                                  juce::Point<float> (die.getRight() - die.getWidth() * 0.28f,
+                                                       die.getBottom() - die.getHeight() * 0.28f) })
+            g.fillEllipse (juce::Rectangle<float> (dot, dot).withCentre (point));
+        return;
+    }
+
+    if (icon == "stop")
+    {
+        const auto outer = area.reduced (area.getWidth() * 0.12f,
+                                         area.getHeight() * 0.08f);
+        g.drawRoundedRectangle (outer, outer.getWidth() * 0.22f, stroke);
+        g.fillRoundedRectangle (outer.reduced (outer.getWidth() * 0.28f),
+                                outer.getWidth() * 0.08f);
+    }
+}
+
+juce::uint8 segmentMaskFor (juce::juce_wchar character) noexcept
+{
+    switch (character)
+    {
+        case '0': return 0x3f;
+        case '1': return 0x06;
+        case '2': return 0x5b;
+        case '3': return 0x4f;
+        case '4': return 0x66;
+        case '5': return 0x6d;
+        case '6': return 0x7d;
+        case '7': return 0x07;
+        case '8': return 0x7f;
+        case '9': return 0x6f;
+        case '-': return 0x40;
+        default:  return 0x00;
+    }
+}
+
+void drawSegmentDigit (juce::Graphics& g, juce::Rectangle<float> area,
+                       juce::uint8 activeSegments)
+{
+    area = area.reduced (area.getWidth() * 0.10f, area.getHeight() * 0.06f);
+    const float left = area.getX();
+    const float right = area.getRight();
+    const float top = area.getY();
+    const float middle = area.getCentreY();
+    const float bottom = area.getBottom();
+    const std::array<std::pair<juce::Point<float>, juce::Point<float>>, 7> segments {{
+        { { left, top },       { right, top } },
+        { { right, top },      { right, middle } },
+        { { right, middle },   { right, bottom } },
+        { { left, bottom },    { right, bottom } },
+        { { left, middle },    { left, bottom } },
+        { { left, top },       { left, middle } },
+        { { left, middle },    { right, middle } },
+    }};
+    const float width = juce::jlimit (2.1f, 4.2f, area.getWidth() * 0.16f);
+
+    for (std::size_t index = 0; index < segments.size(); ++index)
+    {
+        const auto& segment = segments[index];
+        g.setColour (fromPalette (panel::colour::ledDim).withAlpha (0.36f));
+        g.drawLine ({ segment.first, segment.second }, width);
+        if ((activeSegments & (1u << index)) == 0)
+            continue;
+
+        g.setColour (fromPalette (panel::colour::led).withAlpha (0.18f));
+        g.drawLine ({ segment.first, segment.second }, width * 2.2f);
+        g.setColour (fromPalette (panel::colour::led));
+        g.drawLine ({ segment.first, segment.second }, width);
+        g.setColour (juce::Colours::white.withAlpha (0.28f));
+        g.drawLine ({ segment.first, segment.second }, width * 0.28f);
+    }
+}
+
+void drawSegmentDisplay (juce::Graphics& g, juce::Rectangle<float> bounds,
+                         const juce::String& text)
+{
+    bounds = bounds.reduced (juce::jmax (2.0f, bounds.getWidth() * 0.06f),
+                             juce::jmax (2.0f, bounds.getHeight() * 0.08f));
+    constexpr int digits = 2;
+    const float gap = juce::jmax (3.0f, bounds.getWidth() * 0.10f);
+    const float digitWidth = (bounds.getWidth() - gap) / digits;
+    for (int index = 0; index < digits; ++index)
+    {
+        const auto character = index < text.length() ? text[index] : ' ';
+        drawSegmentDigit (g,
+                          { bounds.getX() + static_cast<float> (index)
+                                               * (digitWidth + gap),
+                            bounds.getY(), digitWidth, bounds.getHeight() },
+                          segmentMaskFor (character));
+    }
 }
 
 bool isWaveformLegend (const juce::String& text) noexcept
@@ -166,18 +392,18 @@ YouKnow106LookAndFeel::YouKnow106LookAndFeel()
                fromPalette (panel::colour::faceplateLow));
     setColour (juce::PopupMenu::textColourId, fromPalette (panel::colour::text));
     setColour (juce::PopupMenu::highlightedBackgroundColourId,
-               fromPalette (panel::colour::cyan).withAlpha (0.85f));
+               fromPalette (panel::colour::cyan).brighter (0.14f).withAlpha (0.98f));
     setColour (juce::PopupMenu::highlightedTextColourId,
                fromPalette (panel::colour::scope));
     setColour (juce::PopupMenu::headerTextColourId,
                fromPalette (panel::colour::textDim));
 
     setColour (juce::MidiKeyboardComponent::whiteNoteColourId,
-               fromPalette (panel::colour::control));
+               fromPalette (panel::colour::keyIvory));
     setColour (juce::MidiKeyboardComponent::blackNoteColourId,
                fromPalette (panel::colour::faceplateLow));
     setColour (juce::MidiKeyboardComponent::keySeparatorLineColourId,
-               fromPalette (panel::colour::faceplate));
+               fromPalette (panel::colour::controlShadow));
     setColour (juce::MidiKeyboardComponent::keyDownOverlayColourId,
                fromPalette (panel::colour::magenta).withAlpha (0.85f));
     setColour (juce::MidiKeyboardComponent::mouseOverKeyOverlayColourId,
@@ -295,25 +521,31 @@ void YouKnow106LookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y,
     g.setColour (juce::Colours::black.withAlpha (0.68f));
     g.fillRoundedRectangle (cap.expanded (1.2f).translated (0.0f, 2.0f), 2.2f);
 
-    g.setColour (fromPalette (panel::colour::slot).brighter (0.12f));
+    const auto face = cap.reduced (1.2f);
+    juce::ColourGradient shellGradient (
+        fromPalette (panel::colour::control).brighter (0.10f),
+        cap.getX(), cap.getY(),
+        fromPalette (panel::colour::controlShadow).darker (0.18f),
+        cap.getX(), cap.getBottom(), false);
+    g.setGradientFill (shellGradient);
     g.fillRoundedRectangle (cap, 2.1f);
 
-    const auto face = cap.reduced (1.2f);
-    juce::ColourGradient gradient (fromPalette (panel::colour::faceplateHigh).brighter (0.08f),
-                                   face.getX(), face.getY(),
-                                   fromPalette (panel::colour::slot),
-                                   face.getX(), face.getBottom(), false);
+    juce::ColourGradient gradient (
+        fromPalette (panel::colour::control).brighter (0.18f),
+        face.getX(), face.getY(),
+        fromPalette (panel::colour::controlShadow).brighter (0.04f),
+        face.getX(), face.getBottom(), false);
     g.setGradientFill (gradient);
     g.fillRoundedRectangle (face, 1.5f);
 
-    g.setColour (surfaceBorderColour().withMultipliedAlpha (
-        slider.isMouseOverOrDragging() ? 1.75f : 1.0f));
+    g.setColour (fromPalette (panel::colour::brass).withMultipliedAlpha (
+        slider.isMouseOverOrDragging() ? 0.95f : 0.56f));
     g.drawRoundedRectangle (cap.reduced (0.45f), 2.0f, 1.0f);
 
-    g.setColour (juce::Colours::white.withAlpha (0.22f));
+    g.setColour (juce::Colours::white.withAlpha (0.34f));
     g.drawLine (face.getX() + 2.0f, face.getY() + 1.0f,
                 face.getRight() - 2.0f, face.getY() + 1.0f, 1.0f);
-    g.setColour (juce::Colours::black.withAlpha (0.20f));
+    g.setColour (juce::Colours::black.withAlpha (0.16f));
     for (const float fraction : { 0.24f, 0.76f })
     {
         const float grooveX = face.getX() + face.getWidth() * fraction;
@@ -322,10 +554,10 @@ void YouKnow106LookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y,
     }
 
     // The witness line the eye actually reads the value from.
-    g.setColour (juce::Colours::black.withAlpha (0.72f));
+    g.setColour (juce::Colours::black.withAlpha (0.76f));
     g.fillRect (face.getX() + 1.0f, face.getCentreY() - 0.9f,
                 face.getWidth() - 2.0f, 1.8f);
-    g.setColour (fromPalette (panel::colour::text).withAlpha (0.92f));
+    g.setColour (fromPalette (panel::colour::magenta).brighter (0.28f));
     g.fillRect (face.getCentreX() - 3.5f, face.getCentreY() - 0.9f,
                 7.0f, 1.8f);
 }
@@ -436,9 +668,9 @@ void YouKnow106LookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Butto
     {
         const float keyHeight = juce::jlimit (12.0f, 22.0f,
                                               bounds.getHeight() * 0.30f);
-        const float keyCentreFraction = bounds.getHeight() > 110.0f ? 0.34f
-                                      : bounds.getHeight() > 65.0f ? 0.62f
-                                                                  : 0.72f;
+        const float keyCentreFraction = static_cast<float> (
+            button.getProperties().getWithDefault (
+                hardwareKeyCentreProperty, 0.72));
         // The component owns the full grid cell for an easy target; the
         // physical key is inset so adjacent switches have a consistent gutter.
         auto key = juce::Rectangle<float> (
@@ -462,21 +694,17 @@ void YouKnow106LookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Butto
             button.isEnabled() ? (isHighlighted ? 0.36f : 0.20f) : 0.08f));
         g.drawRect (key, 1.0f);
 
-        const float lensSize = juce::jlimit (3.6f, 5.5f,
-                                             bounds.getWidth() * 0.16f);
+        const float lensSize = juce::jlimit (5.6f, 7.2f,
+                                             bounds.getWidth() * 0.18f);
         const auto lamp = juce::Rectangle<float> (lensSize, lensSize)
                               .withCentre ({ key.getCentreX(), key.getY() - 7.0f });
-        g.setColour (juce::Colours::black.withAlpha (0.82f));
-        g.fillEllipse (lamp.expanded (1.0f));
+        drawJewelLamp (g, lamp, on, fromPalette (panel::colour::led),
+                       button.isEnabled() ? 1.0f : 0.42f);
         if (on)
         {
-            g.setColour (fromPalette (panel::colour::led).withAlpha (0.24f));
-            g.fillEllipse (lamp.expanded (lensSize * 0.75f));
+            g.setColour (fromPalette (panel::colour::brassHigh).withAlpha (0.42f));
+            g.drawRect (key.reduced (0.4f), 1.0f);
         }
-        g.setColour (fromPalette (on ? panel::colour::led
-                                    : panel::colour::ledDim)
-                         .withMultipliedAlpha (button.isEnabled() ? 1.0f : 0.45f));
-        g.fillEllipse (lamp);
         return;
     }
 
@@ -523,29 +751,12 @@ void YouKnow106LookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Butto
 
     // A lit button glows; an unlit one still shows its lens, so the panel reads
     // the same whether or not anything is on.
-    const float lens = juce::jlimit (4.0f, 7.0f, key.getHeight() * 0.22f);
+    const float lens = juce::jlimit (5.2f, 7.8f, key.getHeight() * 0.24f);
     const auto led = juce::Rectangle<float> (lens, lens)
                          .withCentre ({ key.getCentreX(),
                                         key.getY() + key.getHeight() * 0.25f });
-    g.setColour (juce::Colours::black.withAlpha (0.78f));
-    g.fillEllipse (led.expanded (1.3f));
-    if (on)
-    {
-        g.setColour (fromPalette (panel::colour::led)
-                         .withAlpha (secondary ? 0.15f : 0.28f));
-        g.fillEllipse (led.expanded (lens * (secondary ? 0.65f : 0.95f)));
-        g.setColour (fromPalette (panel::colour::led)
-                         .withAlpha (secondary ? 0.78f : 1.0f));
-    }
-    else
-    {
-        g.setColour (fromPalette (panel::colour::ledDim));
-    }
-    g.fillEllipse (led);
-    g.setColour (juce::Colours::white.withAlpha (on ? 0.48f : 0.10f));
-    g.fillEllipse (juce::Rectangle<float> (lens * 0.28f, lens * 0.28f)
-                       .withCentre ({ led.getCentreX() - lens * 0.16f,
-                                      led.getCentreY() - lens * 0.16f }));
+    drawJewelLamp (g, led, on, fromPalette (panel::colour::led),
+                   secondary ? 0.82f : 1.0f);
 }
 
 void YouKnow106LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& button,
@@ -557,6 +768,9 @@ void YouKnow106LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton&
         button.getProperties().getWithDefault (compactStyleProperty, false));
     const bool hardware = static_cast<bool> (
         button.getProperties().getWithDefault (hardwareStyleProperty, false));
+    const auto actionIcon = button.getProperties()
+                                .getWithDefault (actionIconProperty, juce::var())
+                                .toString();
     g.setColour (fromPalette (button.getToggleState() ? panel::colour::text
                                                       : panel::colour::textDim));
 
@@ -642,8 +856,19 @@ void YouKnow106LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton&
         const float size = juce::jlimit (10.0f, 12.0f,
                                          bounds.getHeight() * 0.55f);
         g.setFont (clearPanelFont (size, true));
-        g.drawText (text, button.getLocalBounds().reduced (3, 1),
-                    juce::Justification::centred, false);
+        auto content = bounds.reduced (3.0f, 1.0f);
+        if (actionIcon.isNotEmpty())
+        {
+            const float iconSize = juce::jmin (22.0f, content.getHeight() * 0.78f);
+            auto iconArea = content.removeFromLeft (iconSize + 5.0f)
+                                   .withSizeKeepingCentre (iconSize, iconSize);
+            const auto tint = actionIcon == "stop"
+                            ? fromPalette (panel::colour::led)
+                            : fromPalette (panel::colour::textDim);
+            drawActionIcon (g, iconArea, actionIcon, tint);
+        }
+        g.drawText (text, content.toNearestInt(), juce::Justification::centred,
+                    false);
         return;
     }
 
@@ -675,6 +900,14 @@ void YouKnow106LookAndFeel::drawComboBox (juce::Graphics& g, int width, int heig
     drawFramedSurface (
         g, bounds, box.findColour (juce::ComboBox::backgroundColourId),
         box.findColour (juce::ComboBox::outlineColourId), uiScale);
+    g.setColour (juce::Colours::white.withAlpha (0.055f));
+    g.drawLine (bounds.getX() + 2.0f, bounds.getY() + 1.0f,
+                bounds.getRight() - 2.0f, bounds.getY() + 1.0f,
+                juce::jmax (1.0f, uiScale));
+    g.setColour (box.findColour (juce::ComboBox::outlineColourId)
+                     .withMultipliedAlpha (0.55f));
+    g.drawVerticalLine (buttonX, bounds.getY() + 3.0f,
+                        bounds.getBottom() - 3.0f);
 
     // A drawn chevron keeps the selector in the same crisp vector language as
     // the adjacent previous/next keys and avoids JUCE's platform-specific
@@ -701,11 +934,47 @@ void YouKnow106LookAndFeel::drawComboBox (juce::Graphics& g, int width, int heig
                                                 juce::PathStrokeType::rounded));
 }
 
+void YouKnow106LookAndFeel::drawCornerResizer (juce::Graphics& g, int width,
+                                                int height, bool isMouseOver,
+                                                bool isMouseDragging)
+{
+    const float alpha = isMouseDragging ? 0.92f : isMouseOver ? 0.68f : 0.30f;
+    g.setColour (fromPalette (panel::colour::brassHigh).withAlpha (alpha));
+    for (int index = 0; index < 3; ++index)
+    {
+        const float inset = 4.0f + static_cast<float> (index) * 4.0f;
+        g.drawLine (static_cast<float> (width) - inset - 5.0f,
+                    static_cast<float> (height) - 2.5f,
+                    static_cast<float> (width) - 2.5f,
+                    static_cast<float> (height) - inset - 5.0f,
+                    1.2f);
+    }
+}
+
 void YouKnow106LookAndFeel::drawLabel (juce::Graphics& g, juce::Label& label)
 {
+    if (static_cast<bool> (label.getProperties().getWithDefault (
+            segmentDisplayStyleProperty, false)))
+    {
+        drawSegmentDisplay (g, label.getLocalBounds().toFloat(), label.getText());
+        return;
+    }
+
+    auto textBounds = label.getLocalBounds().toFloat();
+    if (static_cast<bool> (label.getProperties().getWithDefault (
+            statusLampStyleProperty, false)))
+    {
+        const float diameter = juce::jmin (8.0f, textBounds.getHeight() * 0.34f);
+        auto lampArea = textBounds.removeFromLeft (diameter + 9.0f)
+                                  .withSizeKeepingCentre (diameter, diameter);
+        const bool on = static_cast<bool> (label.getProperties().getWithDefault (
+            statusLampOnProperty, false));
+        drawJewelLamp (g, lampArea, on, fromPalette (panel::colour::keyAmber));
+    }
+
     g.setColour (label.findColour (juce::Label::textColourId));
     g.setFont (label.getFont());
-    g.drawFittedText (label.getText(), label.getLocalBounds(),
+    g.drawFittedText (label.getText(), textBounds.toNearestInt(),
                       label.getJustificationType(), 2, 1.0f);
 }
 
@@ -780,7 +1049,7 @@ void PlasticTexture::fill (juce::Graphics& g, juce::Rectangle<int> area,
     // Preserve the panel palette while letting polished patches, cleaning
     // swirls and fine scratches remain visible. The source is deliberately
     // low-contrast, so this opacity reads as wear rather than a photograph.
-    g.setOpacity (0.50f);
+    g.setOpacity (0.28f);
     for (int y = area.getY(); y < area.getBottom(); y += tile.getHeight())
         for (int x = area.getX(); x < area.getRight(); x += tile.getWidth())
             g.drawImageAt (tile, x, y);
@@ -820,11 +1089,9 @@ void YouKnow106Display::refresh (const YouKnow106AudioProcessor& source)
 
 void YouKnow106Display::paint (juce::Graphics& g)
 {
-    const auto bounds = getLocalBounds().toFloat().reduced (1.0f);
+    const auto bounds = getLocalBounds().toFloat();
     const float uiScale = static_cast<float> (getHeight())
                         / panel::displayReferenceHeight;
-    drawFramedSurface (g, bounds, fromPalette (panel::colour::faceplateLow),
-                       uiScale);
 
     auto area = bounds.reduced (8.0f, 6.0f);
 
@@ -845,26 +1112,31 @@ void YouKnow106Display::paint (juce::Graphics& g)
     const int lamps =
         juce::jlimit (1, youknow106::YouKnow106Engine::maxVoices, voiceLimit);
     const float pitch = voiceRow.getWidth() / static_cast<float> (lamps);
-    const float lampSize = juce::jmin (9.0f, voiceRow.getHeight() * 0.7f, pitch * 0.62f);
+    const float lampSize = juce::jmin (10.5f, voiceRow.getHeight() * 0.44f,
+                                       pitch * 0.52f);
+    g.setFont (clearPanelFont (8.0f, true));
     for (int voice = 0; voice < lamps; ++voice)
     {
+        const float centreX = voiceRow.getX()
+                            + (static_cast<float> (voice) + 0.5f) * pitch;
+        g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.72f));
+        g.drawText (juce::String (voice + 1),
+                    juce::Rectangle<float> (centreX - pitch * 0.5f,
+                                            voiceRow.getY(), pitch,
+                                            voiceRow.getHeight() * 0.38f)
+                        .toNearestInt(),
+                    juce::Justification::centred, false);
         const auto lamp = juce::Rectangle<float> (lampSize, lampSize)
-                              .withCentre ({ voiceRow.getX()
-                                                 + (static_cast<float> (voice) + 0.5f) * pitch,
-                                             voiceRow.getCentreY() });
+                              .withCentre ({ centreX,
+                                             voiceRow.getY()
+                                                 + voiceRow.getHeight() * 0.70f });
         const bool lit = (voiceMask & (1 << voice)) != 0;
-        if (lit)
-        {
-            g.setColour (fromPalette (panel::colour::led).withAlpha (0.28f));
-            g.fillEllipse (lamp.expanded (lampSize * 0.6f));
-        }
-        g.setColour (fromPalette (lit ? panel::colour::led : panel::colour::ledDim));
-        g.fillEllipse (lamp);
+        drawJewelLamp (g, lamp, lit, fromPalette (panel::colour::led));
     }
 
     g.setColour (fromPalette (panel::colour::textDim));
-    g.setFont (panelFont (10.0f));
-    g.drawText (ready ? juce::String (voices) + " / " + juce::String (lamps) + " VOICES"
+    g.setFont (clearPanelFont (9.5f, true));
+    g.drawText (ready ? juce::String (voices) + " / " + juce::String (lamps) + " ACTIVE"
                       : juce::String ("STANDBY"),
                 readout.toNearestInt(), juce::Justification::centredRight);
 
@@ -879,23 +1151,34 @@ void YouKnow106Display::paint (juce::Graphics& g)
 
         const auto track = row.reduced (0.0f, row.getHeight() * 0.33f);
         g.setColour (fromPalette (panel::colour::slot));
-        g.fillRoundedRectangle (track, 1.5f);
+        g.fillRoundedRectangle (track, 2.0f);
 
-        g.setColour (fromPalette (tint));
+        juce::Rectangle<float> fill;
         if (bipolar)
         {
             const float centre = track.getCentreX();
             const float span = track.getWidth() * 0.5f * juce::jlimit (-1.0f, 1.0f, value);
-            g.fillRoundedRectangle (juce::Rectangle<float> (
-                                        juce::jmin (centre, centre + span), track.getY(),
-                                        std::abs (span), track.getHeight()), 1.5f);
+            fill = { juce::jmin (centre, centre + span), track.getY(),
+                     std::abs (span), track.getHeight() };
+            g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.52f));
+            g.drawVerticalLine (juce::roundToInt (centre), track.getY() - 1.0f,
+                                track.getBottom() + 1.0f);
         }
         else
         {
-            g.fillRoundedRectangle (juce::Rectangle<float> (
-                                        track.getX(), track.getY(),
-                                        track.getWidth() * juce::jlimit (0.0f, 1.0f, value),
-                                        track.getHeight()), 1.5f);
+            fill = { track.getX(), track.getY(),
+                     track.getWidth() * juce::jlimit (0.0f, 1.0f, value),
+                     track.getHeight() };
+        }
+        if (fill.getWidth() > 0.1f)
+        {
+            g.setColour (fromPalette (tint).withAlpha (0.20f));
+            g.fillRoundedRectangle (fill.expanded (1.4f, 1.0f), 2.0f);
+            g.setColour (fromPalette (tint));
+            g.fillRoundedRectangle (fill, 1.7f);
+            g.setColour (juce::Colours::white.withAlpha (0.16f));
+            g.drawLine (fill.getX() + 1.0f, fill.getY() + 1.0f,
+                        fill.getRight() - 1.0f, fill.getY() + 1.0f, 0.8f);
         }
     };
 
@@ -920,18 +1203,13 @@ void YouKnow106Display::paint (juce::Graphics& g)
                 juce::Justification::centredRight);
 
     // --- Right Section: real-time oscilloscope, full height ---
-    drawFramedSurface (g, rightBox, fromPalette (panel::colour::faceplateHigh),
-                       uiScale);
-
-    // Oscilloscope CRT Screen
-    const auto screen = rightBox.reduced (3.0f, 2.0f);
+    // One quiet CRT bezel is enough; the lower faceplate supplies the surface.
+    const auto screen = rightBox.reduced (1.0f);
     g.setColour (fromPalette (panel::colour::scope));
     g.fillRoundedRectangle (screen, 2.0f);
-
-    // Scope grid
-    g.setColour (fromPalette (panel::colour::cyan).withAlpha (0.12f));
-    g.drawHorizontalLine (juce::roundToInt (screen.getCentreY()), screen.getX(), screen.getRight());
-    g.drawVerticalLine (juce::roundToInt (screen.getCentreX()), screen.getY(), screen.getBottom());
+    g.setColour (surfaceBorderColour().withAlpha (0.48f));
+    g.drawRoundedRectangle (screen.reduced (0.5f), 2.0f,
+                            juce::jmax (0.8f, uiScale));
 
     constexpr std::size_t numScopePoints = 128;
 
@@ -1414,15 +1692,14 @@ YouKnow106AudioProcessorEditor::YouKnow106AudioProcessorEditor (YouKnow106AudioP
     setOpaque (true);
     texture.ensureBuilt (1024);
 
-    logoLabel.setText ("YOUKNOW-106", juce::dontSendNotification);
-    logoLabel.setFont (panelFont (22.0f, true));
+    logoLabel.setText ("YouKnow;)", juce::dontSendNotification);
+    logoLabel.setFont (panelFont (28.0f, true));
     logoLabel.setColour (juce::Label::textColourId, fromPalette (panel::colour::text));
     logoLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (logoLabel);
 
-    editionLabel.setText ("PROGRAMMABLE POLYPHONIC SYNTHESIZER",
-                          juce::dontSendNotification);
-    editionLabel.setFont (clearPanelFont (11.0f, true));
+    editionLabel.setText ("by Protocodus", juce::dontSendNotification);
+    editionLabel.setFont (clearPanelFont (10.5f));
     editionLabel.setColour (juce::Label::textColourId,
                             fromPalette (panel::colour::textDim));
     editionLabel.setJustificationType (juce::Justification::centredLeft);
@@ -1492,8 +1769,7 @@ YouKnow106AudioProcessorEditor::YouKnow106AudioProcessorEditor (YouKnow106AudioP
         constrainer->setFixedAspectRatio (
             static_cast<double> (panel::panelWidth())
             / static_cast<double> (panel::editorHeight));
-    setSize (juce::roundToInt (panel::panelWidth()),
-             juce::roundToInt (panel::editorHeight));
+    setSize (panel::defaultEditorWidth, panel::defaultEditorHeight);
     startTimerHz (24);
 }
 
@@ -1551,6 +1827,12 @@ void YouKnow106AudioProcessorEditor::buildPanelControls()
         {
             entry.button = std::make_unique<juce::TextButton> (description.label);
             entry.button->getProperties().set (hardwareStyleProperty, true);
+            // Store the logical key role once. Pixel-height thresholds made
+            // the whole key jump when an ordinary resize crossed a breakpoint.
+            entry.button->getProperties().set (
+                hardwareKeyCentreProperty,
+                description.height > 110.0f ? 0.34
+                    : description.height > 65.0f ? 0.62 : 0.72);
             const auto keyColour = description.section == 8
                                  ? fromPalette (panel::colour::keyAmber)
                                  : fromPalette (panel::colour::keyIvory);
@@ -1618,10 +1900,10 @@ void YouKnow106AudioProcessorEditor::buildPanelControls()
 
         entry.label = std::make_unique<juce::Label>();
         entry.label->setText (description.label, juce::dontSendNotification);
-        entry.label->setFont (panelFont (panel::labelPointSize, true));
+        entry.label->setFont (panelFont (panel::labelPointSize));
         entry.label->setColour (juce::Label::textColourId,
                                 fromPalette (panel::colour::text));
-        entry.label->setJustificationType (juce::Justification::centredTop);
+        entry.label->setJustificationType (juce::Justification::centred);
         entry.label->setTooltip (description.tooltip);
         entry.label->setInterceptsMouseClicks (false, false);
         // A stacked button already carries its own legend; repeating it under
@@ -1682,7 +1964,7 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     configure (polyphonySlider, polyphony, "Polyphony", utilityTooltips[5]);
 
     const char* captions[] = { "TRANSPOSE", "TUNE", "VELOCITY",
-                               "UNIT CHARACTER", "CHORUS NOISE", "VOICES" };
+                               "CHARACTER", "HISS", "VOICES" };
     const char* controlNames[] = { "Transpose", "Master tune", "Velocity",
                                    "Unit Character", "Chorus noise", "Polyphony" };
     for (std::size_t index = 0; index < utilityLabels.size(); ++index)
@@ -1768,6 +2050,7 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
 
     portamentoToggleButton.setClickingTogglesState (false);
     portamentoToggleButton.getProperties().set (hardwareStyleProperty, true);
+    portamentoToggleButton.getProperties().set (hardwareKeyCentreProperty, 0.62);
     portamentoToggleButton.setColour (juce::TextButton::buttonColourId,
                                       fromPalette (panel::colour::keyIvory));
     portamentoToggleButton.setTooltip (
@@ -1837,11 +2120,16 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     for (auto* button : { &panicButton, &resetButton, &randomize1Button,
                           &randomize10Button, &randomize50Button })
         button->getProperties().set (compactStyleProperty, true);
+    panicButton.getProperties().set (actionIconProperty, "stop");
+    resetButton.getProperties().set (actionIconProperty, "reset");
+    randomize1Button.getProperties().set (actionIconProperty, "random");
+    randomize10Button.getProperties().set (actionIconProperty, "random");
+    randomize50Button.getProperties().set (actionIconProperty, "random");
 }
 
 void YouKnow106AudioProcessorEditor::buildPresetBar()
 {
-    presetLabel.setText ("FACTORY BANK", juce::dontSendNotification);
+    presetLabel.setText ("FACTORY PROGRAM", juce::dontSendNotification);
     presetLabel.setFont (panelFont (11.0f, true));
     presetLabel.setName ("Patch label");
     presetLabel.setTooltip (
@@ -1895,6 +2183,7 @@ void YouKnow106AudioProcessorEditor::buildPresetBar()
     presetReloadButton.setName ("Reload patch");
     presetReloadButton.setTitle ("Reload patch");
     presetReloadButton.getProperties().set (compactStyleProperty, true);
+    presetReloadButton.getProperties().set (actionIconProperty, "reload");
     presetReloadButton.setTooltip (
         "Reloads the selected program exactly and discards all tone, "
         "performance and plug-in-control edits, apart from QUALITY, which "
@@ -1913,11 +2202,13 @@ void YouKnow106AudioProcessorEditor::buildPresetBar()
                                          fromPalette (panel::colour::text), 0.25f));
     presetEditedLabel.setTooltip (
         "Lights when the current panel no longer matches the selected program.");
+    presetEditedLabel.setName ("Program state");
+    presetEditedLabel.getProperties().set (statusLampStyleProperty, true);
     presetEditedLabel.setJustificationType (juce::Justification::centredLeft);
     presetEditedLabel.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (presetEditedLabel);
 
-    customPatchLabel.setText ("CUSTOM PATCH", juce::dontSendNotification);
+    customPatchLabel.setText ("PATCH FILE", juce::dontSendNotification);
     customPatchLabel.setFont (panelFont (11.0f, true));
     customPatchLabel.setColour (juce::Label::textColourId,
                                 fromPalette (panel::colour::cyan));
@@ -1946,6 +2237,8 @@ void YouKnow106AudioProcessorEditor::buildPresetBar()
     configureCustomPatchButton (
         customPatchSaveButton, "Save custom patch", syxSaveButton.getTooltip(),
         [this] { chooseAndExportPatchFile(); });
+    customPatchLoadButton.getProperties().set (actionIconProperty, "load");
+    customPatchSaveButton.getProperties().set (actionIconProperty, "save");
 
     shownProgram = -1;
     refreshPresetBar();
@@ -1963,6 +2256,7 @@ void YouKnow106AudioProcessorEditor::buildHardwareProgrammer()
         button.setTooltip (tooltip);
         button.setClickingTogglesState (false);
         button.getProperties().set (hardwareStyleProperty, true);
+        button.getProperties().set (hardwareKeyCentreProperty, 0.72);
         button.setColour (juce::TextButton::buttonColourId, colour);
         button.setColour (juce::TextButton::buttonOnColourId,
                           colour.brighter (0.08f));
@@ -1975,7 +2269,7 @@ void YouKnow106AudioProcessorEditor::buildHardwareProgrammer()
 
     configureKey (keyTransposeButton, amber, "Key transpose",
                   "Switches the selected keyboard transposition on or off. "
-                  "Choose its semitone amount with the separate extension knob.");
+                  "Choose its semitone amount with the adjacent TRANSPOSE knob.");
     attachKeyTransposeButton (keyTransposeButton);
 
     configureKey (midiChannelButton, blue, "MIDI channel",
@@ -2040,6 +2334,7 @@ void YouKnow106AudioProcessorEditor::buildHardwareProgrammer()
                                     fromPalette (panel::colour::led));
     hardwarePatchDisplay.setColour (juce::Label::backgroundColourId,
                                     fromPalette (panel::colour::scope));
+    hardwarePatchDisplay.getProperties().set (segmentDisplayStyleProperty, true);
     hardwarePatchDisplay.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (hardwarePatchDisplay);
 
@@ -2114,7 +2409,14 @@ void YouKnow106AudioProcessorEditor::refreshPresetBar()
     shownProgram = program;
     shownEdited = edited;
     presetBox.setSelectedId (program + 1, juce::dontSendNotification);
-    presetEditedLabel.setVisible (edited);
+    presetEditedLabel.setText (edited ? "EDITED" : "LOADED",
+                               juce::dontSendNotification);
+    presetEditedLabel.getProperties().set (statusLampOnProperty, edited);
+    presetEditedLabel.setColour (
+        juce::Label::textColourId,
+        edited ? fromPalette (panel::colour::keyAmber).brighter (0.12f)
+               : fromPalette (panel::colour::textDim).withAlpha (0.76f));
+    presetEditedLabel.setVisible (true);
     presetPrevButton.setEnabled (program > 0);
     presetNextButton.setEnabled (program < audioProcessor.getNumPrograms() - 1);
 
@@ -2752,7 +3054,7 @@ void YouKnow106AudioProcessorEditor::resized()
         if (entry.label != nullptr)
         {
             entry.label->setFont (panelFont (
-                juce::jmax (10.0f, panel::labelPointSize * scale), true));
+                juce::jmax (10.0f, panel::labelPointSize * scale)));
             entry.label->setBounds (
                 scaled (description.labelX, description.labelY,
                         description.labelWidth,
@@ -2762,40 +3064,56 @@ void YouKnow106AudioProcessorEditor::resized()
 
     // The left identity field deliberately keeps the negative space of the
     // hardware while using this instrument's own name.
-    logoLabel.setFont (panelFont (juce::jmax (20.0f, 26.0f * scale), true));
+    logoLabel.setFont (panelFont (juce::jmax (24.0f, 32.0f * scale), true));
     editionLabel.setFont (clearPanelFont (
-        juce::jmax (9.5f, 10.5f * scale), true));
-    logoLabel.setBounds (scaled (18.0f, 72.0f, 154.0f, 30.0f).toNearestInt());
-    editionLabel.setBounds (scaled (18.0f, 104.0f, 154.0f, 28.0f).toNearestInt());
+        juce::jmax (9.5f, 10.5f * scale)));
+    logoLabel.setBounds (scaled (24.0f, 72.0f, 174.0f, 40.0f).toNearestInt());
+    editionLabel.setBounds (scaled (24.0f, 111.0f, 174.0f, 18.0f).toNearestInt());
     // Original programmer tier: group, bank and patch keys remain primary.
-    keyTransposeButton.setBounds (scaled (196.0f, 263.0f, 45.0f, 60.0f).toNearestInt());
-    midiChannelButton.setBounds (scaled (362.0f, 263.0f, 36.0f, 60.0f).toNearestInt());
+    constexpr float programmerKeyTop = 296.0f;
+    constexpr float programmerKeyHeight = 68.0f;
+    midiChannelButton.setBounds (
+        scaled (418.0f, programmerKeyTop, 44.0f,
+                programmerKeyHeight).toNearestInt());
     for (int index = 0; index < 2; ++index)
         groupButtons[static_cast<std::size_t> (index)].setBounds (
-            scaled (404.0f + 30.0f * static_cast<float> (index),
-                    263.0f, 26.0f, 60.0f).toNearestInt());
+            scaled (470.0f + 38.0f * static_cast<float> (index),
+                    programmerKeyTop, 32.0f,
+                    programmerKeyHeight).toNearestInt());
     for (int index = 0; index < 8; ++index)
         bankButtons[static_cast<std::size_t> (index)].setBounds (
-            scaled (469.0f + 32.0f * static_cast<float> (index),
-                    263.0f, 28.0f, 60.0f).toNearestInt());
+            scaled (550.0f + 36.0f * static_cast<float> (index),
+                    programmerKeyTop, 30.0f,
+                    programmerKeyHeight).toNearestInt());
     hardwarePatchDisplay.setFont (juce::Font (
         juce::FontOptions (juce::jmax (20.0f, 25.0f * scale), juce::Font::bold)));
     hardwarePatchDisplay.setBounds (
-        scaled (729.0f, 268.0f, 50.0f, 42.0f).toNearestInt());
+        scaled (848.0f, 304.0f, 52.0f, 46.0f).toNearestInt());
     for (int index = 0; index < 8; ++index)
         patchButtons[static_cast<std::size_t> (index)].setBounds (
-            scaled (789.0f + 32.0f * static_cast<float> (index),
-                    263.0f, 28.0f, 60.0f).toNearestInt());
-    manualButton.setBounds (scaled (1047.0f, 263.0f, 40.0f, 60.0f).toNearestInt());
-    writeButton.setBounds (scaled (1093.0f, 263.0f, 36.0f, 60.0f).toNearestInt());
-    syxSaveButton.setBounds (scaled (1135.0f, 263.0f, 38.0f, 60.0f).toNearestInt());
-    verifyButton.setBounds (scaled (1179.0f, 263.0f, 42.0f, 60.0f).toNearestInt());
-    syxLoadButton.setBounds (scaled (1227.0f, 263.0f, 39.0f, 60.0f).toNearestInt());
+            scaled (916.0f + 36.0f * static_cast<float> (index),
+                    programmerKeyTop, 30.0f,
+                    programmerKeyHeight).toNearestInt());
+    manualButton.setBounds (
+        scaled (1221.2f, programmerKeyTop, 48.0f,
+                programmerKeyHeight).toNearestInt());
+    writeButton.setBounds (
+        scaled (1275.6f, programmerKeyTop, 48.0f,
+                programmerKeyHeight).toNearestInt());
+    syxSaveButton.setBounds (
+        scaled (1330.0f, programmerKeyTop, 48.0f,
+                programmerKeyHeight).toNearestInt());
+    verifyButton.setBounds (
+        scaled (1384.4f, programmerKeyTop, 48.0f,
+                programmerKeyHeight).toNearestInt());
+    syxLoadButton.setBounds (
+        scaled (1438.8f, programmerKeyTop, 48.0f,
+                programmerKeyHeight).toNearestInt());
 
     portamentoToggleButton.setBounds (
-        scaled (132.0f, 341.0f, 30.0f, 82.0f).toNearestInt());
+        scaled (158.0f, 397.0f, 32.0f, 98.0f).toNearestInt());
     performanceLever.setBounds (
-        scaled (panel::vectorPadX, 464.0f, panel::vectorPadWidth, 50.0f).toNearestInt());
+        scaled (panel::vectorPadX, 526.0f, panel::vectorPadWidth, 58.0f).toNearestInt());
 
     keyboard.setBounds (scaled (panel::instrumentLeft, panel::panelHeight,
                                 panel::instrumentRight - panel::instrumentLeft,
@@ -2806,96 +3124,109 @@ void YouKnow106AudioProcessorEditor::resized()
     keyboard.setKeyWidth (static_cast<float> (keyboard.getWidth())
                           / static_cast<float> (panel::keyboardWhiteKeyCount));
 
-    // Modern host and model controls occupy a visually separate add-on bay.
-    // The QUALITY caption is not one of the six knob labels but sits in the
-    // same card beside them, so it takes the same scaled face here rather than
-    // keeping the fixed size it was built with and drifting out of step with
-    // its neighbours at every window size but one.
+    // Modern host and model controls share one visually separate add-on bay.
+    // Horizontal position ties each extension to the related original family
+    // above; whitespace supplies the grouping instead of another row of boxes.
     for (auto& label : utilityLabels)
-        label.setFont (clearPanelFont (juce::jmax (9.5f, 11.5f * scale)));
-    qualityLabel.setFont (clearPanelFont (juce::jmax (9.5f, 11.5f * scale)));
+        label.setFont (clearPanelFont (juce::jmax (9.0f, 12.3f * scale)));
+    qualityLabel.setFont (clearPanelFont (juce::jmax (9.0f, 12.3f * scale)));
     constexpr float labelTop = panel::extensionDeckTop + 32.0f;
-    constexpr float knobTop = panel::extensionDeckTop + 49.0f;
-    constexpr float labelHeight = 13.0f;
-    constexpr float knobSize = 54.0f;
+    constexpr float knobTop = panel::extensionDeckTop + 52.0f;
+    constexpr float labelHeight = 14.0f;
+    constexpr float knobSize = 56.0f;
 
-    constexpr float characterInset = 8.0f;
-    constexpr float characterCell =
-        (panel::characterCardWidth - 2.0f * characterInset) / 4.0f;
-    const float characterLeft = panel::characterCardX + characterInset;
+    // MODEL: global circuit character and processing quality sit beneath the
+    // global controller cheek rather than impersonating original synth blocks.
     utilityLabels[3].setBounds (
-        scaled (characterLeft + 4.0f, labelTop, characterCell - 8.0f,
-                labelHeight).toNearestInt());
+        scaled (20.0f, labelTop, 82.0f, labelHeight).toNearestInt());
     calibrationSlider.setBounds (
-        scaled (characterLeft + (characterCell - knobSize) * 0.5f, knobTop,
-                knobSize, knobSize).toNearestInt());
+        scaled (33.0f, knobTop, knobSize, knobSize).toNearestInt());
+    qualityLabel.setBounds (
+        scaled (108.0f, labelTop, 90.0f, labelHeight).toNearestInt());
+    qualityBox.setBounds (
+        scaled (115.0f, knobTop + 16.0f, 78.0f, 24.0f).toNearestInt());
+
+    // VOICE: both extensions sit directly below the original POLY mode keys.
+    unisonButton.setBounds (
+        scaled (230.0f, knobTop + 7.0f, 78.0f, 43.0f).toNearestInt());
+    utilityLabels[5].setBounds (
+        scaled (318.0f, labelTop, 80.0f, labelHeight).toNearestInt());
+    polyphonySlider.setBounds (
+        scaled (330.0f, knobTop, knobSize, knobSize).toNearestInt());
+
+    // PITCH follows the DCO footprint. Keep the hardware-style Key Transpose
+    // switch next to its amount, then the fine tune control.
+    keyTransposeButton.setBounds (
+        scaled (426.0f, labelTop + 3.0f, 56.0f, 81.0f).toNearestInt());
+    utilityLabels[0].setBounds (
+        scaled (488.0f, labelTop, 72.0f, labelHeight).toNearestInt());
+    transposeSlider.setBounds (
+        scaled (496.0f, knobTop, knobSize, knobSize).toNearestInt());
+    utilityLabels[1].setBounds (
+        scaled (572.0f, labelTop, 72.0f, labelHeight).toNearestInt());
+    tuneSlider.setBounds (
+        scaled (580.0f, knobTop, knobSize, knobSize).toNearestInt());
+
+    // The monitor stays beside voice allocation, while velocity is centred
+    // exactly beneath the VCA/ENV span and chorus hiss beneath CHORUS.
+    display.setBounds (
+        scaled (panel::monitorZoneX + 10.0f,
+                panel::extensionDeckTop + 23.0f,
+                panel::monitorZoneWidth - 20.0f,
+                panel::extensionDeckHeight - 35.0f).toNearestInt());
+    utilityLabels[2].setBounds (
+        scaled (1213.0f, labelTop, knobSize, labelHeight).toNearestInt());
+    velocitySlider.setBounds (
+        scaled (1213.0f, knobTop, knobSize, knobSize).toNearestInt());
     utilityLabels[4].setBounds (
-        scaled (characterLeft + characterCell + 4.0f, labelTop,
-                characterCell - 8.0f,
+        scaled (panel::chorusZoneX, labelTop, panel::chorusZoneWidth,
                 labelHeight).toNearestInt());
     chorusNoiseSlider.setBounds (
-        scaled (characterLeft + characterCell
-                    + (characterCell - knobSize) * 0.5f,
-                knobTop, knobSize, knobSize).toNearestInt());
-    qualityLabel.setBounds (
-        scaled (characterLeft + 2.0f * characterCell + 4.0f, labelTop,
-                characterCell - 8.0f, labelHeight).toNearestInt());
-    qualityBox.setBounds (
-        scaled (characterLeft + 2.0f * characterCell + 17.0f,
-                knobTop + 16.0f, characterCell - 34.0f, 22.0f).toNearestInt());
-    unisonButton.setBounds (
-        scaled (characterLeft + 3.0f * characterCell + 14.0f,
-                knobTop + 8.0f, characterCell - 28.0f, 38.0f).toNearestInt());
+        scaled (1439.0f, knobTop, knobSize, knobSize).toNearestInt());
 
     // The host-friendly navigator gets its own rail immediately under the
     // physical A/B, BANK and PATCH keys instead of competing with aux knobs.
-    constexpr float presetY = panel::presetTop + 3.0f;
+    constexpr float presetY = panel::presetTop + 4.0f;
     presetLabel.setFont (clearPanelFont (
         juce::jmax (9.5f, 10.5f * scale), true));
     presetEditedLabel.setFont (clearPanelFont (
         juce::jmax (9.5f, 10.5f * scale), true));
     customPatchLabel.setFont (clearPanelFont (
         juce::jmax (9.5f, 10.5f * scale), true));
-    presetLabel.setBounds (scaled (198.0f, presetY, 90.0f, 22.0f).toNearestInt());
-    presetPrevButton.setBounds (scaled (298.0f, presetY, 28.0f, 22.0f).toNearestInt());
-    presetNextButton.setBounds (scaled (334.0f, presetY, 28.0f, 22.0f).toNearestInt());
-    presetReloadButton.setBounds (scaled (374.0f, presetY, 70.0f, 22.0f).toNearestInt());
-    presetBox.setBounds (scaled (469.0f, presetY, 376.0f, 22.0f).toNearestInt());
-    presetEditedLabel.setBounds (scaled (855.0f, presetY, 58.0f, 22.0f).toNearestInt());
-    customPatchLabel.setBounds (scaled (935.0f, presetY, 128.0f, 22.0f).toNearestInt());
+    constexpr float presetControlHeight = 24.0f;
+    presetLabel.setBounds (
+        scaled (226.0f, presetY, 104.0f,
+                presetControlHeight).toNearestInt());
+    presetPrevButton.setBounds (
+        scaled (340.0f, presetY, 30.0f,
+                presetControlHeight).toNearestInt());
+    presetNextButton.setBounds (
+        scaled (378.0f, presetY, 30.0f,
+                presetControlHeight).toNearestInt());
+    presetReloadButton.setBounds (
+        scaled (416.0f, presetY, 94.0f,
+                presetControlHeight).toNearestInt());
+    presetBox.setBounds (
+        scaled (550.0f, presetY, 410.0f,
+                presetControlHeight).toNearestInt());
+    presetEditedLabel.setBounds (
+        scaled (970.0f, presetY, 80.0f,
+                presetControlHeight).toNearestInt());
+    customPatchLabel.setBounds (
+        scaled (1060.0f, presetY, 116.0f,
+                presetControlHeight).toNearestInt());
     customPatchLoadButton.setBounds (
-        scaled (1073.0f, presetY, 84.0f, 22.0f).toNearestInt());
+        scaled (1186.0f, presetY, 146.0f,
+                presetControlHeight).toNearestInt());
     customPatchSaveButton.setBounds (
-        scaled (1167.0f, presetY, 91.0f, 22.0f).toNearestInt());
-
-    juce::Slider* deckSliders[] = { &transposeSlider, &tuneSlider,
-                                     &velocitySlider, &polyphonySlider };
-    const std::array<int, 4> deckLabelIndices { 0, 1, 2, 5 };
-    constexpr float keyboardInset = 12.0f;
-    constexpr float keyboardCell =
-        (panel::keyboardCardWidth - 2.0f * keyboardInset) / 4.0f;
-    for (int index = 0; index < 4; ++index)
-    {
-        const float cellLeft = panel::keyboardCardX + keyboardInset
-                             + keyboardCell * static_cast<float> (index);
-        utilityLabels[static_cast<std::size_t> (
-            deckLabelIndices[static_cast<std::size_t> (index)])].setBounds (
-            scaled (cellLeft + 4.0f, labelTop, keyboardCell - 8.0f,
-                    labelHeight).toNearestInt());
-        deckSliders[index]->setBounds (
-            scaled (cellLeft + (keyboardCell - knobSize) * 0.5f,
-                    knobTop, knobSize, knobSize).toNearestInt());
-    }
-    display.setBounds (
-        scaled (panel::displayCardX + 7.0f, panel::extensionDeckTop + 9.0f,
-                panel::displayCardWidth - 14.0f,
-                panel::extensionDeckHeight - 18.0f).toNearestInt());
+        scaled (1342.0f, presetY, 148.0f,
+                presetControlHeight).toNearestInt());
 
     constexpr float operationPitch = panel::operationsBarWidth / 5.0f;
-    constexpr float operationWidth = operationPitch - 4.0f;
+    constexpr float operationWidth = operationPitch - 8.0f;
     constexpr float operationTop = panel::extensionDeckTop
                                  + panel::extensionDeckHeight
-                                 + panel::helpStripGap + 6.0f;
+                                 + panel::helpStripGap + 15.0f;
     juce::Button* operationButtons[] = { &panicButton, &resetButton,
                                          &randomize1Button, &randomize10Button,
                                          &randomize50Button };
@@ -2904,7 +3235,7 @@ void YouKnow106AudioProcessorEditor::resized()
             scaled (panel::operationsBarX
                         + operationPitch * static_cast<float> (index),
                     operationTop, operationWidth,
-                    panel::helpStripHeight - 12.0f).toNearestInt());
+                    panel::helpStripHeight - 18.0f).toNearestInt());
 
     contextHelp.setBounds (
         scaled (panel::panelMargin,
@@ -2938,13 +3269,23 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
                         panel::controllerWidth, panel::performanceDeckHeight));
 
     // Identity-field rails echo the physical composition without reproducing
-    // a manufacturer mark.
+    // a manufacturer mark. Their subdued enamel/brass pairing leaves the
+    // wordmark as the focus instead of making the cheek another control card.
     g.setColour (red);
     g.fillRect (scaled (panel::controllerX, panel::soundRowTop,
-                        panel::controllerWidth, 2.0f));
+                        panel::controllerWidth, 3.0f));
     g.setColour (blue);
-    g.fillRect (scaled (panel::controllerX, panel::soundRowTop + 22.0f,
+    g.fillRect (scaled (panel::controllerX, panel::soundRowTop + 28.0f,
                         panel::controllerWidth, 2.0f));
+    g.setColour (fromPalette (panel::colour::brass).withAlpha (0.62f));
+    g.fillRect (scaled (panel::controllerX + 10.0f,
+                        panel::soundRowTop + 47.0f,
+                        panel::controllerWidth - 20.0f, 1.0f));
+    g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.86f));
+    g.setFont (clearPanelFont (juce::jmax (9.0f, 10.0f * scale), true));
+    g.drawFittedText ("PROGRAMMABLE\nSIX-VOICE\nSYNTHESIZER",
+                      scaled (24.0f, 145.0f, 174.0f, 54.0f).toNearestInt(),
+                      juce::Justification::centredLeft, 3, 1.0f);
 
     const auto& sections = panel::sections();
     for (const auto& section : sections)
@@ -2955,20 +3296,74 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
         const auto header = scaled (section.x, section.y, section.width,
                                     panel::headerHeight);
         juce::ColourGradient headerGradient (
-            red.darker (0.20f), header.getX(), header.getY(),
-            red.darker (0.38f), header.getX(), header.getBottom(), false);
+            fromPalette (panel::colour::faceplateLow).brighter (0.12f),
+            header.getX(), header.getY(),
+            fromPalette (panel::colour::faceplateLow).darker (0.14f),
+            header.getX(), header.getBottom(), false);
         g.setGradientFill (headerGradient);
         g.fillRect (header);
+        g.setColour (juce::Colours::white.withAlpha (0.055f));
+        g.fillRect (header.getX(), header.getY(), header.getWidth(),
+                    juce::jmax (1.0f, scale));
+        g.setColour (red.darker (0.04f));
+        g.fillRect (header.getX(), header.getBottom() - 3.0f * scale,
+                    header.getWidth(), 3.0f * scale);
+
+        const char* title = section.displayTitle;
+        const char* code = section.displayCode;
+
+        auto titleArea = header.reduced (8.0f * scale, 2.0f * scale)
+                               .withTrimmedBottom (3.0f * scale);
+        juce::Rectangle<float> codeArea;
+        if (code[0] != '\0')
+        {
+            codeArea = titleArea.removeFromRight (
+                juce::jmin (40.0f * scale, titleArea.getWidth() * 0.28f));
+            titleArea.removeFromRight (4.0f * scale);
+        }
+
+        float titleSize = juce::jmax (9.0f, 12.0f * scale);
+        const float titleWidth = juce::GlyphArrangement::getStringWidth (
+            clearPanelFont (titleSize, true), title);
+        if (titleWidth > titleArea.getWidth() && titleWidth > 0.0f)
+            titleSize *= titleArea.getWidth() / titleWidth;
         g.setColour (ink);
-        g.setFont (panelFont (juce::jmax (10.0f,
-                                         panel::headerPointSize * scale), true));
-        g.drawText (section.name, header.toNearestInt(),
-                    juce::Justification::centred);
+        g.setFont (clearPanelFont (juce::jmax (7.8f, titleSize), true));
+        g.drawText (title, titleArea.toNearestInt(),
+                    juce::Justification::centredLeft, false);
+        if (! codeArea.isEmpty())
+        {
+            g.setColour (fromPalette (panel::colour::brassHigh).withAlpha (0.86f));
+            g.setFont (clearPanelFont (juce::jmax (7.5f, 9.0f * scale), true));
+            g.drawText (code, codeArea.toNearestInt(),
+                        juce::Justification::centredRight, false);
+        }
 
         g.setColour (hairline);
         g.fillRect (scaled (section.x - 1.0f, section.y,
                             1.0f, section.height));
     }
+
+    // Quiet internal dividers make the dense oscillator and filter families
+    // read as related sub-groups without adding another row of tiny captions.
+    const auto subgroupDividers = [&] (const panel::Section& section,
+                                        std::initializer_list<int> afterSlots)
+    {
+        const float cell = (section.width - panel::sectionPadding)
+                         / static_cast<float> (section.slots);
+        for (const int slot : afterSlots)
+        {
+            const float x = section.x + panel::sectionPadding * 0.5f
+                          + cell * static_cast<float> (slot);
+            g.setColour (fromPalette (panel::colour::brass).withAlpha (0.14f));
+            g.fillRect (scaled (x, section.y + panel::headerHeight + 7.0f,
+                                1.0f,
+                                section.height - panel::headerHeight - 15.0f));
+        }
+    };
+    subgroupDividers (sections[3], { 1, 4, 5 });
+    subgroupDividers (sections[5], { 2, 4 });
+    subgroupDividers (sections[6], { 2 });
 
     g.setColour (red);
     g.fillRect (scaled (panel::instrumentLeft,
@@ -2981,12 +3376,17 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
     // Sparse hardware scale numerals complement the vector tick marks.
     g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.82f));
     g.setFont (panelFont (juce::jmax (7.0f, 8.0f * scale), true));
+    std::array<bool, panel::sectionCount> scaleDrawn {};
     for (const auto& control : panel::controls())
     {
         if ((control.kind != panel::ControlKind::Slider
              && control.kind != panel::ControlKind::Steps)
             || control.section < 2)
             continue;
+
+        const bool primaryScale = ! scaleDrawn[static_cast<std::size_t> (
+            control.section)];
+        scaleDrawn[static_cast<std::size_t> (control.section)] = true;
 
         const bool isHpf = std::strcmp (control.parameterId,
                                         parameters::highPass) == 0;
@@ -2995,6 +3395,8 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
         const std::array<const char*, 4> hpf { "3", "2", "1", "0" };
         const std::array<const char*, 3> normal {
             isVca ? "+5" : "10", "5", isVca ? "-5" : "0" };
+        g.setColour (fromPalette (panel::colour::textDim).withAlpha (
+            primaryScale ? 0.82f : 0.50f));
         if (isHpf)
         {
             for (int tick = 0; tick < 4; ++tick)
@@ -3008,27 +3410,26 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
         else
         {
             for (int tick = 0; tick < 3; ++tick)
+            {
+                if (! primaryScale && tick == 1)
+                    continue;
+                g.setColour (fromPalette (panel::colour::textDim).withAlpha (
+                    primaryScale ? 0.82f : 0.50f));
                 g.drawText (normal[static_cast<std::size_t> (tick)],
                             scaled (control.x - 15.0f,
                                     control.y - 4.0f
                                         + control.height * static_cast<float> (tick) / 2.0f,
                                     14.0f, 8.0f).toNearestInt(),
                             juce::Justification::centredRight, false);
+            }
         }
     }
 
-    // Programmer rails and group captions.
-    g.setColour (blue);
-    g.fillRect (scaled (panel::instrumentLeft, panel::performanceDeckTop,
-                        panel::instrumentRight - panel::instrumentLeft, 2.0f));
-    g.fillRect (scaled (panel::instrumentLeft,
-                        panel::performanceDeckTop + panel::programmerHeight - 2.0f,
-                        panel::instrumentRight - panel::instrumentLeft, 2.0f));
+    // Quiet captions are enough to group the programmer; the surrounding
+    // sound row and preset rail already provide its two structural edges.
     const auto programmerCaption = [&] (const char* text, float x, float width)
     {
-        g.setColour (blue);
-        g.fillRect (scaled (x, 243.0f, width, 3.0f));
-        g.setColour (ink);
+        g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.92f));
         float captionSize = juce::jmax (8.0f, 9.5f * scale);
         const float captionWidth = juce::GlyphArrangement::getStringWidth (
             clearPanelFont (captionSize, true), text);
@@ -3036,29 +3437,39 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
         if (captionWidth > availableWidth && captionWidth > 0.0f)
             captionSize *= availableWidth / captionWidth;
         g.setFont (clearPanelFont (juce::jmax (7.5f, captionSize), true));
-        g.drawText (text, scaled (x, 247.0f, width, 12.0f).toNearestInt(),
+        g.drawText (text,
+                    scaled (x, panel::performanceDeckTop + 9.0f,
+                            width, 12.0f).toNearestInt(),
                     juce::Justification::centred, false);
     };
-    programmerCaption ("MODE", 190.0f, 164.0f);
-    programmerCaption ("SELECT GROUP", 362.0f, 98.0f);
-    programmerCaption ("BANK", 469.0f, 252.0f);
-    programmerCaption ("BANK / PATCH", 724.0f, 60.0f);
-    programmerCaption ("PATCH NUMBER", 789.0f, 252.0f);
-    programmerCaption ("TAPE", 1135.0f, 131.0f);
+    programmerCaption ("VOICE MODE", 218.0f, 124.0f);
+    programmerCaption ("MIDI", 418.0f, 44.0f);
+    programmerCaption ("GROUP", 470.0f, 70.0f);
+    programmerCaption ("BANK", 550.0f, 282.0f);
+    programmerCaption ("PROGRAM", 842.0f, 64.0f);
+    programmerCaption ("PATCH", 916.0f, 282.0f);
+    programmerCaption ("DATA", 1218.0f, 272.0f);
 
     // The two-digit memory readout sits behind smoked glass in a recessed
     // bezel. The label above supplies the red segments; this paint supplies
     // the physical cavity even when INIT shows only two dashes.
-    const auto memoryBezel = scaled (724.0f, 263.0f, 60.0f, 56.0f);
+    const auto memoryBezel = scaled (842.0f, 296.0f, 64.0f, 68.0f);
     g.setColour (juce::Colours::black.withAlpha (0.84f));
-    g.fillRect (memoryBezel.translated (0.0f, 1.0f * scale));
-    g.setColour (fromPalette (panel::colour::slot));
-    g.fillRect (memoryBezel.reduced (1.0f * scale));
-    const auto memoryGlass = memoryBezel.reduced (5.0f * scale, 6.0f * scale);
+    g.fillRoundedRectangle (memoryBezel.translated (0.0f, 1.5f * scale),
+                            3.0f * scale);
+    juce::ColourGradient memoryBezelGradient (
+        fromPalette (panel::colour::brassHigh).withAlpha (0.44f),
+        memoryBezel.getX(), memoryBezel.getY(),
+        fromPalette (panel::colour::slot),
+        memoryBezel.getRight(), memoryBezel.getBottom(), false);
+    g.setGradientFill (memoryBezelGradient);
+    g.fillRoundedRectangle (memoryBezel.reduced (1.0f * scale), 2.5f * scale);
+    const auto memoryGlass = memoryBezel.reduced (6.0f * scale, 8.0f * scale);
     g.setColour (fromPalette (panel::colour::scope));
-    g.fillRect (memoryGlass);
+    g.fillRoundedRectangle (memoryGlass, 2.0f * scale);
     g.setColour (fromPalette (panel::colour::led).withAlpha (0.10f));
-    g.drawRect (memoryGlass, juce::jmax (1.0f, scale));
+    g.drawRoundedRectangle (memoryGlass, 2.0f * scale,
+                            juce::jmax (1.0f, scale));
     g.setColour (juce::Colours::white.withAlpha (0.08f));
     g.drawLine (memoryGlass.getX() + 1.0f, memoryGlass.getY() + 1.0f,
                 memoryGlass.getRight() - 1.0f, memoryGlass.getY() + 1.0f,
@@ -3079,7 +3490,7 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
                         panel::instrumentRight - panel::instrumentLeft, 1.0f));
     g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.76f));
     g.setFont (clearPanelFont (juce::jmax (8.0f, 9.0f * scale), true));
-    g.fillRect (scaled (924.0f, panel::presetTop + 4.0f,
+    g.fillRect (scaled (1055.0f, panel::presetTop + 5.0f,
                         1.0f, panel::presetHeight - 8.0f));
 
     // Controller cheek legends and moulded end strips.
@@ -3091,42 +3502,46 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
                         panel::instrumentLeft - panel::controllerX
                             - panel::controllerWidth,
                         panel::performanceDeckHeight));
-    g.setColour (blue);
-    g.fillRect (scaled (panel::controllerX, panel::performanceDeckTop,
-                        panel::controllerWidth, 2.0f));
-    // Modern controls are visibly bolted on below the original keybed.
+    // Modern controls are visibly bolted on below the original keybed. One
+    // continuous surface keeps it calm; terse headings and physical alignment
+    // associate each add-on with the hardware family above.
     g.setColour (juce::Colours::black.withAlpha (0.58f));
     g.fillRect (scaled (0.0f, panel::extensionDeckTop - 4.0f,
                         panel::panelWidth(), panel::extensionDeckHeight + 8.0f));
-    const auto drawExtensionCard = [&] (float x, float width,
-                                         const char* title, const char* code)
-    {
-        auto card = scaled (x, panel::extensionDeckTop, width,
-                            panel::extensionDeckHeight);
-        drawFramedSurface (g, card,
-                           fromPalette (panel::colour::faceplateLow)
-                               .withAlpha (0.92f), scale);
-        g.setColour (blue.withAlpha (0.72f));
-        g.fillRect (card.getX() + 2.0f * scale, card.getY(),
-                    card.getWidth() - 4.0f * scale, 2.0f * scale);
-        g.setColour (fromPalette (panel::colour::textDim));
-        g.setFont (clearPanelFont (juce::jmax (8.5f, 9.5f * scale), true));
-        if (title[0] != '\0')
-            g.drawText (title,
-                        card.reduced (8.0f * scale, 2.0f * scale).toNearestInt(),
-                        juce::Justification::topLeft, false);
-        if (code[0] != '\0')
-            g.drawText (code,
-                        card.reduced (8.0f * scale, 2.0f * scale).toNearestInt(),
-                        juce::Justification::topRight, false);
-    };
-    drawExtensionCard (panel::characterCardX, panel::characterCardWidth,
-                       "PLUGIN EXTENSIONS", "MODEL / 04");
-    drawExtensionCard (panel::keyboardCardX, panel::keyboardCardWidth,
-                       "PERFORMANCE EXTENSIONS", "HOST / 04");
-    drawExtensionCard (panel::displayCardX, panel::displayCardWidth,
-                       "STATUS", "LIVE");
+    const auto deck = scaled (panel::panelMargin, panel::extensionDeckTop,
+                              panel::panelWidth() - 2.0f * panel::panelMargin,
+                              panel::extensionDeckHeight);
+    g.setColour (fromPalette (panel::colour::faceplateLow).withAlpha (0.92f));
+    g.fillRoundedRectangle (deck, juce::jmax (2.5f, 4.0f * scale));
 
+    const auto drawExtensionHeading = [&] (float x, float width,
+                                            const char* title)
+    {
+        g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.82f));
+        g.setFont (clearPanelFont (juce::jmax (8.5f, 9.5f * scale), true));
+        g.drawText (title,
+                    scaled (x + 7.0f, panel::extensionDeckTop + 3.0f,
+                            width - 14.0f, 12.0f).toNearestInt(),
+                    juce::Justification::centredLeft, false);
+    };
+    drawExtensionHeading (panel::modelZoneX, panel::modelZoneWidth, "MODEL");
+    drawExtensionHeading (panel::voiceZoneX, panel::voiceZoneWidth, "VOICE");
+    drawExtensionHeading (panel::pitchZoneX, panel::pitchZoneWidth, "PITCH");
+    drawExtensionHeading (panel::monitorZoneX, panel::monitorZoneWidth,
+                          "MONITOR");
+    drawExtensionHeading (panel::dynamicsZoneX, panel::dynamicsZoneWidth,
+                          "VCA / ENV");
+    drawExtensionHeading (panel::chorusZoneX, panel::chorusZoneWidth,
+                          "CHORUS");
+
+    const float toolsTop = panel::extensionDeckTop + panel::extensionDeckHeight
+                         + panel::helpStripGap;
+    g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.82f));
+    g.setFont (clearPanelFont (juce::jmax (7.8f, 8.5f * scale), true));
+    g.drawText ("SESSION TOOLS",
+                scaled (panel::operationsBarX + 4.0f, toolsTop + 1.0f,
+                        panel::operationsBarWidth - 8.0f, 11.0f).toNearestInt(),
+                juce::Justification::centredLeft, false);
     // Hard separation keeps the original hardware and the add-on bay distinct.
     g.setColour (juce::Colours::black.withAlpha (0.72f));
     g.fillRect (scaled (0.0f, panel::panelHeight + panel::keyboardHeight,
