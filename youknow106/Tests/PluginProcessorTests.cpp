@@ -4896,12 +4896,29 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
                          - panel::operationsGroupSplitX,
                      "Variation");
 
-    struct SessionLegend
+    struct CompactLegend
     {
         const char* componentName;
         const char* displayText;
     };
-    constexpr auto sessionLegends = std::to_array<SessionLegend> ({
+    const auto expectCompactLegendFits = [&] (const juce::TextButton& button,
+                                               const CompactLegend& legend)
+    {
+        const float height = static_cast<float> (button.getHeight());
+        const float fontHeight = juce::jlimit (10.5f, 13.0f, height * 0.55f);
+        const float contentHeight = height - 8.0f;
+        const float iconWidth = juce::jmin (15.0f, contentHeight);
+        const float textWidth = static_cast<float> (button.getWidth())
+                              - 10.0f - iconWidth - 3.0f;
+        const auto font = juce::Font (
+            juce::FontOptions (fontHeight, juce::Font::bold));
+        expect (realTextWidth (font, legend.displayText) <= textWidth + 0.1f,
+                std::string (atSupportedMinimum ? "minimum-size "
+                                                : "default-size ")
+                    + legend.componentName + " compact legend is clipped");
+    };
+
+    constexpr auto sessionLegends = std::to_array<CompactLegend> ({
         { "PANIC", "PANIC" }, { "INIT", "INIT" },
         { "DRIFT 1%", "1%" }, { "VARY 10%", "10%" },
         { "MORPH 50%", "50%" },
@@ -4921,18 +4938,22 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
                         + " is too close to the preceding action");
         previousAction = area;
 
-        const float height = static_cast<float> (button->getHeight());
-        const float fontHeight = juce::jlimit (10.5f, 13.0f, height * 0.55f);
-        const float contentHeight = height - 2.0f;
-        const float iconWidth = juce::jmin (18.0f, contentHeight * 0.72f);
-        const float textWidth = static_cast<float> (button->getWidth())
-                              - 6.0f - iconWidth - 3.0f;
-        const auto font = juce::Font (
-            juce::FontOptions (fontHeight, juce::Font::bold));
-        expect (realTextWidth (font, legend.displayText) <= textWidth + 0.1f,
-                std::string (atSupportedMinimum ? "minimum-size "
-                                                : "default-size ")
-                    + legend.componentName + " session legend is clipped");
+        expectCompactLegendFits (*button, legend);
+    }
+
+    constexpr auto presetLegends = std::to_array<CompactLegend> ({
+        { "Reload patch", "RELOAD" },
+        { "Load custom patch", "LOAD .SYX" },
+        { "Save custom patch", "SAVE .SYX" },
+    });
+    for (const auto& legend : presetLegends)
+    {
+        auto* button = dynamic_cast<juce::TextButton*> (
+            findDescendantNamed (editor, legend.componentName));
+        expect (button != nullptr,
+                std::string ("missing compact button ") + legend.componentName);
+        if (button != nullptr)
+            expectCompactLegendFits (*button, legend);
     }
 
     const auto checkInsideSection = [&] (const char* componentName,

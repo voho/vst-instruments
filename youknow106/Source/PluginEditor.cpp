@@ -843,12 +843,15 @@ void YouKnow106LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton&
                                : text == "VARY 10%" ? juce::String ("10%")
                                : text == "MORPH 50%" ? juce::String ("50%")
                                                       : text;
-        auto content = bounds.reduced (3.0f, 1.0f);
+        // Keep every glyph inside the moving key face rather than merely
+        // inside the component's outer bezel.
+        auto content = bounds.reduced (5.0f, 4.0f);
         if (actionIcon.isNotEmpty())
         {
-            const float iconSize = juce::jmin (18.0f, content.getHeight() * 0.72f);
-            auto iconArea = content.removeFromLeft (iconSize + 3.0f)
+            const float iconSize = juce::jmin (15.0f, content.getHeight());
+            auto iconArea = content.removeFromLeft (iconSize)
                                    .withSizeKeepingCentre (iconSize, iconSize);
+            content.removeFromLeft (3.0f);
             const auto tint = actionIcon == "stop"
                             ? fromPalette (panel::colour::led)
                             : fromPalette (panel::colour::textDim);
