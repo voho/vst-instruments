@@ -7925,16 +7925,83 @@ void testPanelLayout()
                std::string("panel section is out of hardware order: ")
                    + sections[index].name);
     for (std::size_t index = 3; index < sections.size(); ++index)
+    {
         expect(sections[index - 1].x + sections[index - 1].width
                    < sections[index].x,
                "adjacent synthesis sections lost their divider gap");
-    expect(sections[3].width >= 340.0f,
-           "the DCO section lost the breathing room required by its selector groups");
+        expect(sections[index].x
+                   - (sections[index - 1].x + sections[index - 1].width)
+                   >= 20.0f,
+               "adjacent synthesis sections lost their readable padding");
+    }
+    expect(panel::headerPointSize >= 21.0f,
+           "the abbreviated synthesis headers lost their enlarged hierarchy");
+    expect(sections[3].slots == 7 && sections[3].width >= 294.0f,
+           "the compact DCO grid lost a full-width control column");
+    expect(sections[8].slots == 2 && sections[8].width >= 110.0f,
+           "the Chorus group no longer reserves a readable HISS column");
     for (const auto& control : controls)
         if (control.section == 3
             && control.kind != panel::ControlKind::Slider)
             expect(control.width >= 28.0f,
                    std::string("a DCO selector is crowded again: ") + control.label);
+
+    const auto findDcoControl = [&controls] (const char* label) {
+        for (const auto& control : controls)
+            if (control.section == 3 && std::strcmp(control.label, label) == 0)
+                return &control;
+        return static_cast<const panel::Control*>(nullptr);
+    };
+    const auto* range16 = findDcoControl("16'");
+    const auto* range8 = findDcoControl("8'");
+    const auto* range4 = findDcoControl("4'");
+    const auto* pulse = findDcoControl("PULSE");
+    const auto* saw = findDcoControl("SAW");
+    const panel::Control* pwmSource = nullptr;
+    for (const auto& control : controls)
+        if (control.section == 3
+            && std::strcmp(control.parameterId, parameters::pwmMode) == 0)
+        {
+            pwmSource = &control;
+            break;
+        }
+    expect(range16 != nullptr && range8 != nullptr && range4 != nullptr,
+           "the DCO range stack is incomplete");
+    expect(pulse != nullptr && saw != nullptr,
+           "the DCO waveform stack is incomplete");
+    if (range16 != nullptr && range8 != nullptr && range4 != nullptr)
+        expect(std::abs(range4->x - range8->x) < 1.0e-5f
+                   && std::abs(range8->x - range16->x) < 1.0e-5f
+                   && range4->y < range8->y && range8->y < range16->y,
+               "the 4'/8'/16' selectors are no longer one vertical stack");
+    if (pulse != nullptr && saw != nullptr)
+        expect(std::abs(pulse->x - saw->x) < 1.0e-5f && pulse->y < saw->y,
+               "the pulse/saw selectors are no longer one vertical stack");
+    if (pwmSource != nullptr && pulse != nullptr)
+        expect(pulse->x - (pwmSource->x + pwmSource->width) >= 10.0f,
+               "the PWM-source and waveform stacks are crowded again");
+
+    const panel::Control* chorusOff = nullptr;
+    const panel::Control* chorusI = nullptr;
+    const panel::Control* chorusII = nullptr;
+    for (const auto& control : controls)
+    {
+        if (control.section != 8)
+            continue;
+        if (std::strcmp(control.label, "OFF") == 0)
+            chorusOff = &control;
+        else if (std::strcmp(control.label, "I") == 0)
+            chorusI = &control;
+        else if (std::strcmp(control.label, "II") == 0)
+            chorusII = &control;
+    }
+    expect(chorusOff != nullptr && chorusI != nullptr && chorusII != nullptr,
+           "the chorus selector stack is incomplete");
+    if (chorusOff != nullptr && chorusI != nullptr && chorusII != nullptr)
+        expect(std::abs(chorusOff->x - chorusI->x) < 1.0e-5f
+                   && std::abs(chorusI->x - chorusII->x) < 1.0e-5f
+                   && chorusOff->y < chorusI->y && chorusI->y < chorusII->y,
+               "the OFF/I/II selectors are no longer one vertical stack");
     expect(sections[2].x == panel::instrumentLeft
                && sections[2].y == panel::soundRowTop,
            "the hardware synthesis strip no longer begins with LFO");

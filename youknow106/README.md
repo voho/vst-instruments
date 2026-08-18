@@ -708,50 +708,56 @@ of requiring a second clock multiplier.
 ## Interface
 
 The interface keeps the reference instrument's control inventory **and its
-reading order** in a 1280×702 console. The continuous synthesis strip is LFO,
-DCO, HPF, VCF, VCA, ENV and CHORUS. VOLUME and PORTAMENTO return to the left
-performance cheek with the three bender-depth faders, the portamento switch and
-spring lever; the 61-key keyboard begins beside that cheek instead of spanning
-under it.
+reading order** in a 1360×718 opening window backed by a wider spacing grid.
+The continuous synthesis strip is LFO, DCO, HPF, VCF, VCA, ENV and CHORUS.
+VOLUME and PORTAMENTO return to the left performance cheek with the three
+bender-depth faders, the portamento switch and spring lever; the 61-key keyboard
+begins beside that cheek instead of spanning under it.
 
-Directly below the synthesis strip is the hardware programmer tier: KEY
-TRANSPOSE, POLY 1/2, MIDI channel, A/B group, eight BANK keys, the recessed red
-display, eight PATCH keys, MANUAL, WRITE and tape SAVE/VERIFY/LOAD. The immutable
-factory bank makes MIDI CH, WRITE and VERIFY explanatory disabled controls;
+Directly below the synthesis strip is the hardware programmer tier: POLY 1/2
+plus the UNISON shortcut, A/B group, eight BANK keys, the recessed red display,
+eight PATCH keys, MANUAL, WRITE and tape SAVE/VERIFY/LOAD. The immutable factory
+bank makes WRITE and VERIFY explanatory disabled controls;
 bank/patch selection, MANUAL and SysEx SAVE/LOAD are live. OFF/I/II chorus keys
-and the original horizontal range and waveform keys restore the smaller panel
-relationships as well as the broad section order.
+and the oscillator's range and waveform keys are vertically grouped to keep
+both sections compact without losing the broad signal-flow order.
 
-The original surface is planar charcoal metal with red synthesis rails, a blue
-programmer rail, warm rectangular keys, red lamps and graphite fader caps.
-Thin dividers and small recesses provide depth without turning each section into
-a rounded dashboard card. Functional waveform and foot-register marks remain
-project-native vectors. Small programmer legends use an open system sans rather
-than condensed display type, and the resize floor keeps them above the tested
-readability threshold.
+The interface uses planar warm-charcoal metal with only two chromatic families:
+restrained oxblood and muted teal. Memory keys reuse the teal; every other
+switch and cap shares neutral nickel. Jewel-style red lamps remain the only
+bright state colour. Engraved charcoal headers use only the concise
+LFO, DCO, HPF, VCF, VCA, ENV and CHORUS abbreviations. Whitespace and small
+recesses separate the controls without turning each section into a rounded
+dashboard card. Functional waveform, foot-register and action marks remain
+project-native vectors. Small
+programmer legends use an open system sans rather than condensed display type,
+and the resize floor keeps them above the tested readability threshold.
 
 A slim host-preset navigator sits directly below the programmer, aligned with
-the BANK keys but isolated by its own recessed blue rail. The remaining
-plugin-only features are visibly bolted on below the keyboard in three separate
-cards: model extensions (Unit Character, chorus noise, the QUALITY selector and
-a mouse-friendly UNISON key), performance extensions (transpose, rear-panel
-tune, velocity and variable polyphony), and live telemetry. Panic, reset and randomisation stay in
-the bottom service bar beside contextual help.
+the BANK keys but isolated by its own recessed host band. The remaining
+plugin-only features stay close to the original families: UNISON completes the
+three-key VOICE MODE group, HISS sits inside CHORUS, and VELOCITY shares the
+lower VOICE group with the continuous voice-limit control. Transpose and tuning
+remain under the DCO; global Character/Quality controls stay beneath the
+left cheek, with the Voice Monitor beside voice allocation. PANIC and INIT use
+the lower SESSION zone; three clearly graded actions sit beside them under
+VARIATION. Quiet gray separators and consistent inner gutters repeat the upper
+panel's section rhythm, leaving one uninterrupted help strip across the bottom.
 
-Sliders, switches and buttons are still placed by the JUCE-free description in
-`Source/DSP/YouKnow106Panel.cpp`, so tests prove that the row does not overlap,
-escape its cards or shrink its legends below the readability floor — including
-at the smallest window, which is the binding case and is what fixes the lower
-deck's depth. A bundled low-contrast material scan adds maintained ABS grain,
+The original synthesis controls are placed by the JUCE-free description in
+`Source/DSP/YouKnow106Panel.cpp`; explicit editor checks cover the adjacent
+extension controls as well. Tests prove that controls do not overlap or shrink
+their legends below the readability floor, including at the smallest window.
+A bundled low-contrast material scan adds maintained ABS grain,
 polished touch wear, cleaning swirls and sparse hairline scuffs. Recessed fader
 channels, bevelled and grooved caps, and inset illuminated switches add a
 refined vintage material language while remaining project-drawn vectors. The
-hardware-inspired red/blue hierarchy remains under independent branding rather
-than reproducing a manufacturer mark.
+hardware-inspired oxblood/teal hierarchy remains under independent branding
+rather than reproducing a manufacturer mark.
 
 Descriptions no longer float over the instrument. Hovering any interactive
 element updates the fixed help display below the keys immediately.
-All 83 public controls are covered: the synthesis and controller panel, original
+All 84 public controls are covered: the synthesis and controller panel, original
 programmer tier, six extension knobs, utility and host patch controls, 61-key
 keyboard and pitch/mod lever. That strip also carries the hovered control's **current
 setting**, in its own lit right-hand column and in the parameter's own units, so
@@ -795,8 +801,9 @@ the gain is exactly 1.0 and the render is bit-identical to the hardware-faithful
 one, which is what the suite asserts rather than a recorded hash.
 
 The host preset rail recalls the factory bank with a stepper, name list,
-RELOAD and EDITED lamp. It shows the same program as the host and the controls
-are synchronised to the complete selected program on the first editor frame,
+RELOAD and an always-present LOADED/EDITED jewel indicator. It shows the same
+program as the host, and the controls are synchronised to the complete selected
+program on the first editor frame,
 before the first audio block. Cold construction explicitly applies INIT through
 the same complete recall path used later, preventing a default change from
 leaving the preset name and panel out of step. RELOAD discards all control edits.

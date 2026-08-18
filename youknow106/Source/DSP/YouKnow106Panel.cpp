@@ -51,14 +51,14 @@ constexpr Placement placements[controlCount] = {
       ControlKind::Knob, 0, 1, 0, 1, -1, 0 },
 
     // MODE. Two momentary selection buttons whose lamps are firmware-latched:
-    // one is always selected, and pressing both is Solo Unison. Each button
-    // prints its own legend -- POLY 1 and POLY 2 -- inside itself.
+    // one is always selected, and pressing both is Solo Unison. The third cell
+    // is reserved for the editor's equivalent simultaneous-contact key.
     { parameters::poly1, "POLY 1",
       "POLY 1 reuses a key's previous voice card when possible, otherwise the longest-free card. Re-click to rebuild held assignments.",
-      ControlKind::Toggle, 1, 1, 0, 2, -1, 0, 2, true },
+      ControlKind::Toggle, 1, 0, 0, 1, -1, 0 },
     { parameters::poly2, "POLY 2",
       "POLY 2 scans from voice 1 for each note, so new notes can cut released tails but never steal a held key. Re-click to rebuild held assignments.",
-      ControlKind::Toggle, 1, 1, 1, 2, -1, 0, 2, true },
+      ControlKind::Toggle, 1, 1, 0, 1, -1, 0 },
 
     // LFO
     { parameters::lfoRate, "RATE",
@@ -69,39 +69,39 @@ constexpr Placement placements[controlCount] = {
       ControlKind::Slider, 2, 1, 0, 1, -1, 0 },
 
     // DCO
-    { parameters::range, "16'",
-      "Selects the 16-foot oscillator range, one octave below the normal 8-foot range.",
-      ControlKind::Radio, 3, 0, 0, 3, 2, 0, 3, true },
-    { parameters::range, "8'",
-      "Selects the normal 8-foot oscillator range.",
-      ControlKind::Radio, 3, 0, 1, 3, 2, 1, 3, true },
     { parameters::range, "4'",
       "Selects the 4-foot oscillator range, one octave above the normal 8-foot range.",
-      ControlKind::Radio, 3, 0, 2, 3, 2, 2, 3, true },
+      ControlKind::Radio, 3, 0, 0, 3, 2, 2 },
+    { parameters::range, "8'",
+      "Selects the normal 8-foot oscillator range.",
+      ControlKind::Radio, 3, 0, 1, 3, 2, 1 },
+    { parameters::range, "16'",
+      "Selects the 16-foot oscillator range, one octave below the normal 8-foot range.",
+      ControlKind::Radio, 3, 0, 2, 3, 2, 0 },
     { parameters::dcoLfo, "LFO",
       "Sets delayed-LFO pitch modulation depth: the patch's vibrato amount, up to plus or minus 4 semitones.",
-      ControlKind::Slider, 3, 3, 0, 1, -1, 0 },
+      ControlKind::Slider, 3, 1, 0, 1, -1, 0 },
     { parameters::pwm, "PWM",
       "In MAN mode this sets a fixed pulse width of roughly 50-95%; in LFO mode it sets the maximum LFO sweep width.",
-      ControlKind::Slider, 3, 4, 0, 1, -1, 0 },
+      ControlKind::Slider, 3, 2, 0, 1, -1, 0 },
     { parameters::pwmMode, "LFO",
       "Makes the shared, delay-gated LFO sweep pulse width; PWM sets the depth.",
-      ControlKind::Radio, 3, 5, 0, 2, 1, 0 },
+      ControlKind::Radio, 3, 3, 0, 2, 1, 0 },
     { parameters::pwmMode, "MAN",
       "Makes the PWM slider set one fixed manual pulse width.",
-      ControlKind::Radio, 3, 5, 1, 2, 1, 1 },
+      ControlKind::Radio, 3, 3, 1, 2, 1, 1 },
     { parameters::pulse, "PULSE",
       "Turns the variable-width pulse waveform on or off; the PWM controls determine its width.",
-      ControlKind::Toggle, 3, 6, 0, 2, -1, 0, 2, true },
+      ControlKind::Toggle, 3, 4, 0, 2, -1, 0 },
     { parameters::saw, "SAW",
       "Turns the rising sawtooth waveform on or off.",
-      ControlKind::Toggle, 3, 6, 1, 2, -1, 0, 2, true },
+      ControlKind::Toggle, 3, 4, 1, 2, -1, 0 },
     { parameters::sub, "SUB",
       "Sets the level of the square-wave sub-oscillator, one octave below the DCO and independent of PWM.",
-      ControlKind::Slider, 3, 8, 0, 1, -1, 0 },
+      ControlKind::Slider, 3, 5, 0, 1, -1, 0 },
     { parameters::noise, "NOISE",
       "Sets the level of the shared analogue-noise source mixed into every voice.",
-      ControlKind::Slider, 3, 9, 0, 1, -1, 0 },
+      ControlKind::Slider, 3, 6, 0, 1, -1, 0 },
 
     // HPF
     { parameters::highPass, "HPF",
@@ -160,13 +160,13 @@ constexpr Placement placements[controlCount] = {
     // effect keys. The pair remains authoritative underneath.
     { parameters::legacyChorus, "OFF",
       "Switches the hardware chorus off by releasing both Chorus I and Chorus II latches.",
-      ControlKind::Toggle, 8, 0, 0, 3, -1, 0, 3, true },
+      ControlKind::Toggle, 8, 0, 0, 3, -1, 0 },
     { parameters::chorusI, "I",
       "Toggles the slower stereo BBD Chorus I; press the lit button again for Off. Its 0.553 Hz rate is derived from this instrument's timing network; installed-unit confirmation remains open.",
-      ControlKind::Toggle, 8, 0, 1, 3, -1, 0, 3, true },
+      ControlKind::Toggle, 8, 0, 1, 3, -1, 0 },
     { parameters::chorusII, "II",
       "Toggles the faster stereo BBD Chorus II; press the lit button again for Off. Its 0.898 Hz rate is derived from this instrument's timing network; installed-unit confirmation remains open.",
-      ControlKind::Toggle, 8, 0, 2, 3, -1, 0, 3, true },
+      ControlKind::Toggle, 8, 0, 2, 3, -1, 0 },
 };
 
 struct Layout
@@ -183,45 +183,48 @@ Layout buildLayout() noexcept
     struct SectionSpec
     {
         const char* name;
+        const char* displayTitle;
+        const char* displayCode;
         int slots;
         float x;
         float y;
         float width;
         float height;
     };
-    // The seven sound sections retain the original dimensions and order.  The
-    // controller is the separate left cheek and MODE begins the programmer
-    // tier under the sound strip.
+    // The seven sound sections retain the original order. The controller is
+    // the separate left cheek and MODE begins the programmer tier under the
+    // sound strip; widths reserve air for the integrated extension controls.
     constexpr SectionSpec specs[sectionCount] = {
-        { "CONTROLLER", 4, controllerX, performanceDeckTop,
+        { "CONTROLLER", "CONTROLLER", "", 4, controllerX, performanceDeckTop,
                                             controllerWidth, performanceDeckHeight },
-        { "MODE",       3, instrumentLeft, performanceDeckTop,
-                                            164.0f, programmerHeight },
-        { "LFO",        2, instrumentLeft, soundRowTop,
-                                             84.0f, soundRowHeight },
-        // The DCO carries three range keys, two modulation controls, two PWM
-        // source keys, two waveform keys and two mixer levels. Give that dense
-        // control family the widest cells in the strip; the adjacent sections
-        // still retain at least 33 panel units per slot.
-        { "DCO",       10, 282.0f, soundRowTop,
-                                            346.0f, soundRowHeight },
-        { "HPF",        1, 636.0f, soundRowTop,
-                                             47.0f, soundRowHeight },
-        { "VCF",        6, 691.0f, soundRowTop,
-                                            202.0f, soundRowHeight },
-        { "VCA",        3, 901.0f, soundRowTop,
-                                            103.0f, soundRowHeight },
-        { "ENV",        4, 1012.0f, soundRowTop,
-                                            137.0f, soundRowHeight },
-        { "CHORUS",     3, 1157.0f, soundRowTop,
-                                            111.0f, soundRowHeight },
+        { "MODE", "VOICE MODE", "", 3, instrumentLeft, performanceDeckTop,
+                                            242.0f, programmerHeight },
+        { "LFO", "LFO", "", 2, instrumentLeft, soundRowTop,
+                                            100.0f, soundRowHeight },
+        // The range and waveform selectors each share one vertical column.
+        // A common 21-unit section gutter and compact stacked keys leave clear
+        // air between every DCO sub-group.
+        { "DCO", "DCO", "", 7, 339.0f, soundRowTop,
+                                            322.0f, soundRowHeight },
+        { "HPF", "HPF", "", 1, 682.0f, soundRowTop,
+                                             64.0f, soundRowHeight },
+        { "VCF", "VCF", "", 6, 767.0f, soundRowTop,
+                                            266.0f, soundRowHeight },
+        { "VCA", "VCA", "", 3, 1054.0f, soundRowTop,
+                                            128.0f, soundRowHeight },
+        { "ENV", "ENV", "", 4, 1203.0f, soundRowTop,
+                                            166.0f, soundRowHeight },
+        // HISS uses the second column beside the vertical OFF/I/II stack.
+        { "CHORUS", "CHORUS", "", 2, 1390.0f, soundRowTop,
+                                            116.0f, soundRowHeight },
     };
 
     for (int index = 0; index < sectionCount; ++index)
     {
         const auto& spec = specs[index];
         layout.sections[static_cast<std::size_t>(index)] =
-            { spec.name, spec.slots, spec.x, spec.y, spec.width, spec.height };
+            { spec.name, spec.displayTitle, spec.displayCode, spec.slots,
+              spec.x, spec.y, spec.width, spec.height };
     }
     layout.width = editorWidth;
 
@@ -246,13 +249,13 @@ Layout buildLayout() noexcept
             {
                 const bool isVolume = std::strcmp (placement.parameterId,
                                                     parameters::volume) == 0;
-                x = section.x + (isVolume ? 10.0f : 88.0f);
-                y = section.y + 31.0f;
-                width = 58.0f;
-                height = 58.0f;
-                labelX = section.x + (isVolume ? 2.0f : 80.0f);
-                labelY = section.y + 10.0f;
-                labelWidth = isVolume ? 74.0f : 86.0f;
+                x = section.x + (isVolume ? 12.0f : 102.0f);
+                y = section.y + 38.0f;
+                width = 64.0f;
+                height = 64.0f;
+                labelX = section.x + (isVolume ? 2.0f : 94.0f);
+                labelY = section.y + 12.0f;
+                labelWidth = isVolume ? 84.0f : 94.0f;
             }
             else
             {
@@ -260,13 +263,13 @@ Layout buildLayout() noexcept
                                                        parameters::benderDco) == 0 ? 0
                                       : std::strcmp (placement.parameterId,
                                                      parameters::benderVcf) == 0 ? 1 : 2;
-                x = section.x + 10.0f + static_cast<float> (benderIndex) * 38.0f;
-                y = section.y + 124.0f;
-                width = 28.0f;
-                height = 67.0f;
+                x = section.x + 12.0f + static_cast<float> (benderIndex) * 42.0f;
+                y = section.y + 144.0f;
+                width = 30.0f;
+                height = 78.0f;
                 labelX = x - 5.0f;
-                labelY = section.y + 103.0f;
-                labelWidth = 38.0f;
+                labelY = section.y + 120.0f;
+                labelWidth = 40.0f;
             }
 
             layout.controls[static_cast<std::size_t>(index)] = {
@@ -284,10 +287,10 @@ Layout buildLayout() noexcept
         const float x = innerX + static_cast<float>(placement.slot) * cellWidth;
 
         const bool isMode = placement.section == 1;
-        const float labelY = section.y + headerHeight + (isMode ? 1.0f : 5.0f);
-        const float controlTop = isMode ? section.y + 25.0f
-                                        : labelY + controlLabelHeight + 2.0f;
-        const float controlHeight = section.y + section.height - 7.0f - controlTop;
+        const float labelY = section.y + headerHeight + (isMode ? 1.0f : 7.0f);
+        const float controlTop = isMode ? section.y + headerHeight + 2.0f
+                                        : labelY + controlLabelHeight + 4.0f;
+        const float controlHeight = section.y + section.height - 8.0f - controlTop;
         float controlX = x;
         float y = controlTop;
         float height = controlHeight;
@@ -315,6 +318,16 @@ Layout buildLayout() noexcept
                               ? controlInset : 2.0f;
             controlWidth = span - 2.0f * inset;
             controlX = x + inset;
+            // The DCO's stacked selectors are intentionally narrower than a
+            // full cell. Their centred faces create a visible gutter between
+            // PWM source and waveform while labels retain the full cell width.
+            if (placement.section == 3
+                && placement.kind != ControlKind::Slider
+                && placement.kind != ControlKind::Steps)
+            {
+                controlWidth = std::min (34.0f, span - 4.0f);
+                controlX = x + (span - controlWidth) * 0.5f;
+            }
         }
         else
         {
@@ -433,11 +446,19 @@ const char* overflowingLabel() noexcept
 {
     for (const auto& section : sections())
     {
-        // The header bar is the section box inset by the same padding the
-        // editor draws it with.
-        const float available = section.width - sectionPadding;
-        if (textWidth(section.name, headerPointSize, true) > available)
-            return section.name;
+        // Match the engraved title area, including the reserved hardware code
+        // at its right edge. The conservative JUCE-free width model is paired
+        // with a real-font check in the editor suite.
+        float available = section.width - 8.0f;
+        if (section.displayCode[0] != '\0')
+            available -= std::min (40.0f, available * 0.28f) + 4.0f;
+        float size = std::max (11.0f, headerPointSize);
+        const float natural = textWidth (section.displayTitle, size, true);
+        if (natural > available && natural > 0.0f)
+            size *= available / natural;
+        size = std::max (9.5f, size);
+        if (textWidth (section.displayTitle, size, true) > available + 0.1f)
+            return section.displayTitle;
     }
 
     for (const auto& control : controls())
@@ -564,11 +585,12 @@ bool layoutIsConsistent() noexcept
                 return false;
         }
 
-    // Every radio group must be a contiguous run selecting 0..n-1 of one
-    // parameter, because that is what the plug-in attaches it to.
+    // Every radio group must select each value 0..n-1 exactly once from one
+    // parameter. Visual order need not equal value order.
     for (int group = 0; group < 8; ++group)
     {
-        int expected = 0;
+        std::array<bool, controlCount> seenValues {};
+        int memberCount = 0;
         const char* parameterId = nullptr;
         for (const auto& control : controlList)
         {
@@ -578,9 +600,15 @@ bool layoutIsConsistent() noexcept
                 parameterId = control.parameterId;
             else if (std::strcmp(parameterId, control.parameterId) != 0)
                 return false;
-            if (control.groupValue != expected++)
+            if (control.groupValue < 0 || control.groupValue >= controlCount
+                || seenValues[static_cast<std::size_t>(control.groupValue)])
                 return false;
+            seenValues[static_cast<std::size_t>(control.groupValue)] = true;
+            ++memberCount;
         }
+        for (int value = 0; value < memberCount; ++value)
+            if (! seenValues[static_cast<std::size_t>(value)])
+                return false;
     }
 
     return true;

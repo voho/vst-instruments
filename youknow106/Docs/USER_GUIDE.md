@@ -44,7 +44,7 @@ sudo rm -rf "/Library/Application Support/YouKnow106"
 
 ## First sound
 
-Load YouKnow106 as a software instrument, choose a preset from the FACTORY BANK
+Load YouKnow106 as a software instrument, choose a sound from PRESET
 menu, and play MIDI notes. The panel follows the signal flow from LFO and DCO
 through HPF, VCF, VCA, envelope, and chorus. Hover a control for a short
 description and its current value.
@@ -56,9 +56,9 @@ headroom. A quality change waits until the instrument is idle; at high host
 sample rates the effective factor may be reduced automatically.
 
 The factory bank is read-only. Host sessions and host presets retain edited
-states. The CUSTOM PATCH buttons load and save hardware-compatible `.syx`
-files. RELOAD discards edits to the selected program, RESET loads INIT, and
-PANIC clears held notes and sounding voices.
+states. The PATCH FILE buttons load and save hardware-compatible `.syx` files.
+RELOAD discards edits to the selected program, INIT restores the initial patch,
+and PANIC clears held notes and sounding voices.
 
 Keyboard users can use Tab and Shift-Tab to reach every enabled control; a
 visible outline marks the current target. Arrow keys adjust sliders and menus,
