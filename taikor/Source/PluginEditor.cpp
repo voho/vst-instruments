@@ -784,7 +784,8 @@ TaikorStatusDisplay::TaikorStatusDisplay()
 
 void TaikorStatusDisplay::setStatus (int activeVoices, bool ready, double sampleRate)
 {
-    if (voices == activeVoices && isReady == ready && rate == sampleRate)
+    if (voices == activeVoices && isReady == ready
+        && std::abs (rate - sampleRate) < 0.5)
         return;
     voices = activeVoices;
     isReady = ready;
@@ -955,9 +956,9 @@ std::unique_ptr<juce::AccessibilityHandler> TaikorMeter::createAccessibilityHand
 // Editor
 // ---------------------------------------------------------------------------
 
-TaikorAudioProcessorEditor::TaikorAudioProcessorEditor (TaikorAudioProcessor& processor)
-    : juce::AudioProcessorEditor (&processor),
-      audioProcessor (processor),
+TaikorAudioProcessorEditor::TaikorAudioProcessorEditor (TaikorAudioProcessor& processorToUse)
+    : juce::AudioProcessorEditor (&processorToUse),
+      audioProcessor (processorToUse),
       tooltipWindow (this, 650)
 {
     setLookAndFeel (&lookAndFeel);
@@ -1211,19 +1212,24 @@ TaikorAudioProcessorEditor::calculateLayout() const
     LayoutAreas areas;
     auto bounds = getLocalBounds().reduced (18);
 
-    areas.header = bounds.removeFromTop (juce::roundToInt (bounds.getHeight() * 0.080f));
+    areas.header = bounds.removeFromTop (
+        juce::roundToInt (static_cast<float> (bounds.getHeight()) * 0.080f));
     bounds.removeFromTop (12);
 
-    auto middle = bounds.removeFromTop (juce::roundToInt (bounds.getHeight() * 0.49f));
-    areas.gridArea = middle.removeFromLeft (juce::roundToInt (middle.getWidth() * 0.61f));
+    auto middle = bounds.removeFromTop (
+        juce::roundToInt (static_cast<float> (bounds.getHeight()) * 0.49f));
+    areas.gridArea = middle.removeFromLeft (
+        juce::roundToInt (static_cast<float> (middle.getWidth()) * 0.61f));
     middle.removeFromLeft (14);
     areas.rightUpperArea = middle;
     areas.head = areas.rightUpperArea;
 
     bounds.removeFromTop (12);
-    areas.drumDeck = bounds.removeFromTop (juce::roundToInt (bounds.getHeight() * 0.43f));
+    areas.drumDeck = bounds.removeFromTop (
+        juce::roundToInt (static_cast<float> (bounds.getHeight()) * 0.43f));
     bounds.removeFromTop (10);
-    areas.strokeDeck = bounds.removeFromTop (juce::roundToInt (bounds.getHeight() * 0.50f));
+    areas.strokeDeck = bounds.removeFromTop (
+        juce::roundToInt (static_cast<float> (bounds.getHeight()) * 0.50f));
     bounds.removeFromTop (10);
     areas.microphoneDeck = bounds;
 
@@ -1327,8 +1333,10 @@ void TaikorAudioProcessorEditor::resized()
     const auto areas = calculateLayout();
 
     auto header = areas.header;
-    auto branding = header.removeFromLeft (juce::roundToInt (header.getWidth() * 0.32f));
-    auto brandTop = branding.removeFromTop (juce::roundToInt (branding.getHeight() * 0.66f));
+    auto branding = header.removeFromLeft (
+        juce::roundToInt (static_cast<float> (header.getWidth()) * 0.32f));
+    auto brandTop = branding.removeFromTop (
+        juce::roundToInt (static_cast<float> (branding.getHeight()) * 0.66f));
     logoLabel.setBounds (brandTop.removeFromLeft (juce::jmin (148, brandTop.getWidth())));
     auto seal = brandTop.removeFromLeft (brandTop.getHeight()).reduced (4, 3);
     sealLabel.setBounds (seal);
@@ -1336,7 +1344,8 @@ void TaikorAudioProcessorEditor::resized()
 
     panicButton.setBounds (header.removeFromRight (82).reduced (0, 9));
     header.removeFromRight (12);
-    meter.setBounds (header.removeFromRight (juce::roundToInt (header.getWidth() * 0.44f))
+    meter.setBounds (header.removeFromRight (
+        juce::roundToInt (static_cast<float> (header.getWidth()) * 0.44f))
                          .reduced (0, 6));
     header.removeFromRight (12);
     statusDisplay.setBounds (header.removeFromRight (juce::jmin (190, header.getWidth()))
@@ -1354,7 +1363,7 @@ void TaikorAudioProcessorEditor::resized()
     const int gap = 7;
     const int rowHeaderGap = 9;
     const int rowHeaderWidth = juce::jlimit (
-        108, 142, juce::roundToInt (gridArea.getWidth() * 0.19f));
+        108, 142, juce::roundToInt (static_cast<float> (gridArea.getWidth()) * 0.19f));
 
     auto strokeHeader = gridArea.removeFromTop (23);
     strokeHeader.removeFromLeft (rowHeaderWidth + rowHeaderGap);

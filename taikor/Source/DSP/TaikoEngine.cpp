@@ -6224,9 +6224,9 @@ float TaikoEngine::renderVoice (Voice& voice, Voice* physical,
             if (nonlinearContact)
             {
                 // The normal membrane force was integrated by the reciprocal
-                // IMP-2 solve. Texture remains an explicitly external roughness
-                // source, while the wooden/rim bank follows the solved force
-                // through its established linear observation path.
+                // IMP-2 solve. Texture excites the struck object through
+                // modeProjection, while the wooden/rim bank follows the solved
+                // force through its established linear observation path.
                 for (std::size_t index = 0; index < voice.modeProjection.size(); ++index)
                 {
                     float input = noise * voice.modeProjection[index];
