@@ -1029,6 +1029,7 @@ private:
         // which mode is loudest whenever two of them straddle 1/tau - see
         // observeMode and contactSpectrum.
         float contactSeconds { 0.0015f };
+        float acousticRadiationGain { 1.0f };
     };
 
     [[nodiscard]] static EngineParameters sanitise (
