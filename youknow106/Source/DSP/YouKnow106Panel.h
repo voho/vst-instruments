@@ -154,6 +154,8 @@ inline constexpr float monitorZoneX = 664.0f;
 inline constexpr float monitorZoneWidth = 390.0f;
 inline constexpr float operationsBarX = 1066.0f;
 inline constexpr float operationsBarWidth = 440.0f;
+inline constexpr float extensionControlPadding = 8.0f;
+inline constexpr float operationsGroupSplitX = 1250.0f;
 
 inline constexpr float helpStripGap = 10.0f;
 inline constexpr float helpStripHeight = 48.0f;

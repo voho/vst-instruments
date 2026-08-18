@@ -4826,6 +4826,9 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
     const float layoutScale = juce::jmin (
         static_cast<float> (editor.getWidth()) / panel::panelWidth(),
         static_cast<float> (editor.getHeight()) / panel::editorHeight);
+    const int extensionPadding = juce::jmax (
+        1, static_cast<int> (std::floor (
+               panel::extensionControlPadding * layoutScale)));
     const auto checkInsideZone = [&] (const char* componentName, float x,
                                       float width, const char* zoneName)
     {
@@ -4841,37 +4844,57 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
             x * layoutScale, panel::extensionDeckTop * layoutScale,
             width * layoutScale,
             panel::extensionDeckHeight * layoutScale).toNearestInt();
-        expect (zone.contains (area),
+        expect (zone.reduced (extensionPadding).contains (area),
                 std::string (componentName) + " is no longer inside the "
-                    + zoneName + " extension zone");
+                    + zoneName + " extension zone with sufficient padding");
     };
 
     checkInsideZone ("Unit Character", panel::modelZoneX,
                      panel::modelZoneWidth, "Model");
+    checkInsideZone ("Unit Character label", panel::modelZoneX,
+                     panel::modelZoneWidth, "Model");
     checkInsideZone ("Quality", panel::modelZoneX,
+                     panel::modelZoneWidth, "Model");
+    checkInsideZone ("Quality label", panel::modelZoneX,
                      panel::modelZoneWidth, "Model");
     checkInsideZone ("Polyphony", panel::voiceZoneX,
                      panel::voiceZoneWidth, "Voice");
+    checkInsideZone ("Polyphony label", panel::voiceZoneX,
+                     panel::voiceZoneWidth, "Voice");
     checkInsideZone ("Velocity", panel::voiceZoneX,
+                     panel::voiceZoneWidth, "Voice");
+    checkInsideZone ("Velocity label", panel::voiceZoneX,
                      panel::voiceZoneWidth, "Voice");
     checkInsideZone ("Key transpose", panel::pitchZoneX,
                      panel::pitchZoneWidth, "Pitch");
     checkInsideZone ("Transpose", panel::pitchZoneX,
                      panel::pitchZoneWidth, "Pitch");
+    checkInsideZone ("Transpose label", panel::pitchZoneX,
+                     panel::pitchZoneWidth, "Pitch");
     checkInsideZone ("Master tune", panel::pitchZoneX,
+                     panel::pitchZoneWidth, "Pitch");
+    checkInsideZone ("Master tune label", panel::pitchZoneX,
                      panel::pitchZoneWidth, "Pitch");
     checkInsideZone ("Status display", panel::monitorZoneX,
                      panel::monitorZoneWidth, "Monitor");
     checkInsideZone ("PANIC", panel::operationsBarX,
-                     panel::operationsBarWidth, "Session");
+                     panel::operationsGroupSplitX - panel::operationsBarX,
+                     "Session");
     checkInsideZone ("INIT", panel::operationsBarX,
-                     panel::operationsBarWidth, "Session");
-    checkInsideZone ("DRIFT 1%", panel::operationsBarX,
-                     panel::operationsBarWidth, "Session");
-    checkInsideZone ("VARY 10%", panel::operationsBarX,
-                     panel::operationsBarWidth, "Session");
-    checkInsideZone ("MORPH 50%", panel::operationsBarX,
-                     panel::operationsBarWidth, "Session");
+                     panel::operationsGroupSplitX - panel::operationsBarX,
+                     "Session");
+    checkInsideZone ("DRIFT 1%", panel::operationsGroupSplitX,
+                     panel::operationsBarX + panel::operationsBarWidth
+                         - panel::operationsGroupSplitX,
+                     "Variation");
+    checkInsideZone ("VARY 10%", panel::operationsGroupSplitX,
+                     panel::operationsBarX + panel::operationsBarWidth
+                         - panel::operationsGroupSplitX,
+                     "Variation");
+    checkInsideZone ("MORPH 50%", panel::operationsGroupSplitX,
+                     panel::operationsBarX + panel::operationsBarWidth
+                         - panel::operationsGroupSplitX,
+                     "Variation");
 
     struct SessionLegend
     {
@@ -4883,12 +4906,20 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
         { "DRIFT 1%", "1%" }, { "VARY 10%", "10%" },
         { "MORPH 50%", "50%" },
     });
+    juce::Rectangle<int> previousAction;
     for (const auto& legend : sessionLegends)
     {
         auto* button = dynamic_cast<juce::TextButton*> (
             findDescendantNamed (editor, legend.componentName));
         if (button == nullptr)
             continue;
+
+        const auto area = editor.getLocalArea (button, button->getLocalBounds());
+        if (! previousAction.isEmpty())
+            expect (area.getX() - previousAction.getRight() >= extensionPadding,
+                    std::string (legend.componentName)
+                        + " is too close to the preceding action");
+        previousAction = area;
 
         const float height = static_cast<float> (button->getHeight());
         const float fontHeight = juce::jlimit (10.5f, 13.0f, height * 0.55f);

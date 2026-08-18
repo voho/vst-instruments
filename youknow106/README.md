@@ -739,7 +739,8 @@ lower VOICE group with the continuous voice-limit control. Transpose and tuning
 remain under the DCO; global Character/Quality controls stay beneath the
 left cheek, with the Voice Monitor beside voice allocation. PANIC and INIT use
 the lower SESSION zone; three clearly graded actions sit beside them under
-VARIATION, leaving one uninterrupted help strip across the bottom.
+VARIATION. Quiet gray separators and consistent inner gutters repeat the upper
+panel's section rhythm, leaving one uninterrupted help strip across the bottom.
 
 The original synthesis controls are placed by the JUCE-free description in
 `Source/DSP/YouKnow106Panel.cpp`; explicit editor checks cover the adjacent

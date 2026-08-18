@@ -3141,13 +3141,13 @@ void YouKnow106AudioProcessorEditor::resized()
     // MODEL: global circuit character and processing quality sit beneath the
     // global controller cheek rather than impersonating original synth blocks.
     utilityLabels[3].setBounds (
-        scaled (20.0f, labelTop, 82.0f, labelHeight).toNearestInt());
+        scaled (22.0f, labelTop, 80.0f, labelHeight).toNearestInt());
     calibrationSlider.setBounds (
         scaled (33.0f, knobTop, knobSize, knobSize).toNearestInt());
     qualityLabel.setBounds (
-        scaled (108.0f, labelTop, 90.0f, labelHeight).toNearestInt());
+        scaled (110.0f, labelTop, 86.0f, labelHeight).toNearestInt());
     qualityBox.setBounds (
-        scaled (115.0f, knobTop + 16.0f, 78.0f, 24.0f).toNearestInt());
+        scaled (114.0f, knobTop + 16.0f, 78.0f, 24.0f).toNearestInt());
 
     // VOICE: the continuous voice-limit and response controls share a baseline.
     utilityLabels[5].setBounds (
@@ -3162,15 +3162,15 @@ void YouKnow106AudioProcessorEditor::resized()
     // PITCH follows the DCO footprint. Keep the hardware-style Transpose
     // switch next to its amount, then the fine tune control.
     keyTransposeButton.setBounds (
-        scaled (422.0f, labelTop + 3.0f, 82.0f, 81.0f).toNearestInt());
+        scaled (428.0f, labelTop + 3.0f, 82.0f, 81.0f).toNearestInt());
     utilityLabels[0].setBounds (
-        scaled (508.0f, labelTop, 64.0f, labelHeight).toNearestInt());
+        scaled (518.0f, labelTop, 62.0f, labelHeight).toNearestInt());
     transposeSlider.setBounds (
-        scaled (512.0f, knobTop, knobSize, knobSize).toNearestInt());
+        scaled (521.0f, knobTop, knobSize, knobSize).toNearestInt());
     utilityLabels[1].setBounds (
-        scaled (578.0f, labelTop, 66.0f, labelHeight).toNearestInt());
+        scaled (588.0f, labelTop, 56.0f, labelHeight).toNearestInt());
     tuneSlider.setBounds (
-        scaled (583.0f, knobTop, knobSize, knobSize).toNearestInt());
+        scaled (588.0f, knobTop, knobSize, knobSize).toNearestInt());
 
     // The monitor stays beside voice allocation.
     display.setBounds (
@@ -3234,18 +3234,16 @@ void YouKnow106AudioProcessorEditor::resized()
         scaled (1342.0f, presetY, 148.0f,
                 presetControlHeight).toNearestInt());
 
-    constexpr float operationPitch = (panel::operationsBarWidth - 10.0f) / 5.0f;
-    constexpr float operationWidth = 80.0f;
     constexpr float operationTop = panel::extensionDeckTop + 54.0f;
     juce::Button* operationButtons[] = { &panicButton, &resetButton,
                                          &randomize1Button, &randomize10Button,
                                          &randomize50Button };
+    constexpr float operationX[] = { 1074.0f, 1162.0f, 1262.0f,
+                                     1342.0f, 1422.0f };
+    constexpr float operationWidth[] = { 80.0f, 80.0f, 72.0f, 72.0f, 72.0f };
     for (int index = 0; index < 5; ++index)
         operationButtons[index]->setBounds (
-            scaled (panel::operationsBarX
-                        + 8.0f
-                        + operationPitch * static_cast<float> (index),
-                    operationTop, operationWidth,
+            scaled (operationX[index], operationTop, operationWidth[index],
                     42.0f).toNearestInt());
 
     contextHelp.setBounds (
@@ -3454,14 +3452,29 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
     g.setColour (fromPalette (panel::colour::faceplateLow).withAlpha (0.92f));
     g.fillRoundedRectangle (deck, juce::jmax (2.5f, 4.0f * scale));
 
+    // Repeat the synthesis strip's planar section language in the extension
+    // bay: one shared surface, padded groups, and quiet gray separators.
+    const float extensionDividers[] = {
+        (panel::modelZoneX + panel::modelZoneWidth + panel::voiceZoneX) * 0.5f,
+        (panel::voiceZoneX + panel::voiceZoneWidth + panel::pitchZoneX) * 0.5f,
+        (panel::pitchZoneX + panel::pitchZoneWidth + panel::monitorZoneX) * 0.5f,
+        (panel::monitorZoneX + panel::monitorZoneWidth
+            + panel::operationsBarX) * 0.5f,
+        panel::operationsGroupSplitX,
+    };
+    g.setColour (surfaceBorderColour());
+    for (const float x : extensionDividers)
+        g.fillRect (scaled (x, panel::extensionDeckTop + 8.0f, 1.0f,
+                            panel::extensionDeckHeight - 16.0f));
+
     const auto drawExtensionHeading = [&] (float x, float width,
                                             const char* title)
     {
         g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.82f));
         g.setFont (clearPanelFont (juce::jmax (10.5f, 13.0f * scale), true));
         g.drawText (title,
-                    scaled (x + 7.0f, panel::extensionDeckTop + 3.0f,
-                            width - 14.0f, 14.0f).toNearestInt(),
+                    scaled (x + 10.0f, panel::extensionDeckTop + 7.0f,
+                            width - 20.0f, 14.0f).toNearestInt(),
                     juce::Justification::centredLeft, false);
     };
     drawExtensionHeading (panel::modelZoneX, panel::modelZoneWidth, "MODEL");
@@ -3469,11 +3482,13 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
     drawExtensionHeading (panel::pitchZoneX, panel::pitchZoneWidth, "PITCH");
     drawExtensionHeading (panel::monitorZoneX, panel::monitorZoneWidth,
                           "MONITOR");
-    constexpr float operationPitch = (panel::operationsBarWidth - 10.0f) / 5.0f;
-    drawExtensionHeading (panel::operationsBarX, operationPitch * 2.0f,
+    drawExtensionHeading (panel::operationsBarX,
+                          panel::operationsGroupSplitX
+                              - panel::operationsBarX,
                           "SESSION");
-    drawExtensionHeading (panel::operationsBarX + operationPitch * 2.0f,
-                          panel::operationsBarWidth - operationPitch * 2.0f,
+    drawExtensionHeading (panel::operationsGroupSplitX,
+                          panel::operationsBarX + panel::operationsBarWidth
+                              - panel::operationsGroupSplitX,
                           "VARIATION");
 }
 
