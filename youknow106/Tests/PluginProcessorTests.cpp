@@ -3826,7 +3826,7 @@ void testEveryPanelLegendFitsInTheRealFont()
         if (section.y >= panel::performanceDeckTop)
             return;
 
-        float available = (section.width - 8.0f) * scale;
+        float available = (section.width - 10.0f) * scale;
         float codeWidth = 0.0f;
         if (section.displayCode[0] != '\0')
         {
@@ -3849,7 +3849,7 @@ void testEveryPanelLegendFitsInTheRealFont()
                      + section.displayTitle + " needs "
                       + juce::String (drawn, 1) + " in "
                       + juce::String (available, 1)));
-        expect (titleSize <= (panel::headerHeight - 3.0f) * scale + 0.1f,
+        expect (titleSize <= panel::headerHeight * scale + 0.1f,
                 say (juce::String (sizeName)
                      + " section header is vertically clipped: "
                      + section.displayTitle));

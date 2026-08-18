@@ -42,9 +42,8 @@ constexpr auto segmentDisplayStyleProperty = "segmentDisplayStyle";
 constexpr auto statusLampStyleProperty = "statusLampStyle";
 constexpr auto statusLampOnProperty = "statusLampOn";
 
-// Every enclosing UI surface uses this same quiet neutral frame. Section
-// colours remain as thin header rules, where they communicate signal role,
-// instead of turning adjacent cards into a collection of unrelated borders.
+// Framed controls share one quiet neutral edge. Broad tonal fields carry the
+// panel hierarchy instead of outlining every surface.
 constexpr float surfaceCornerRadius = 4.0f;
 constexpr float surfaceBorderWidth = 1.0f;
 
@@ -70,12 +69,6 @@ void drawFramedSurface (juce::Graphics& g, juce::Rectangle<float> bounds,
     g.setColour (fill);
     g.fillRoundedRectangle (bounds, corner);
     drawSurfaceBorder (g, bounds, border, uiScale);
-}
-
-void drawFramedSurface (juce::Graphics& g, juce::Rectangle<float> bounds,
-                        juce::Colour fill, float uiScale = 1.0f)
-{
-    drawFramedSurface (g, bounds, fill, surfaceBorderColour(), uiScale);
 }
 
 void drawJewelLamp (juce::Graphics& g, juce::Rectangle<float> lens, bool on,
@@ -1623,9 +1616,9 @@ void YouKnow106ContextHelp::paint (juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat().reduced (0.5f);
     const float uiScale = static_cast<float> (getHeight()) / panel::helpStripHeight;
-    drawFramedSurface (g, bounds,
-                       fromPalette (panel::colour::faceplateLow).withAlpha (0.88f),
-                       uiScale);
+    g.setColour (fromPalette (panel::colour::faceplateLow).withAlpha (0.88f));
+    g.fillRoundedRectangle (bounds,
+                            juce::jmax (2.5f, surfaceCornerRadius * uiScale));
 
     auto content = bounds.reduced (juce::jmax (8.0f, bounds.getHeight() * 0.28f),
                                    juce::jmax (2.0f, bounds.getHeight() * 0.10f));
@@ -3269,7 +3262,6 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
     texture.fill (g, bounds, fromPalette (panel::colour::faceplate));
 
     const auto red = fromPalette (panel::colour::magenta);
-    const auto blue = fromPalette (panel::colour::cyan);
     const auto ink = fromPalette (panel::colour::text);
     const auto hairline = ink.withAlpha (0.34f);
 
@@ -3279,6 +3271,7 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
     g.fillRect (scaled (panel::instrumentLeft, panel::soundRowTop,
                         panel::instrumentRight - panel::instrumentLeft,
                         panel::soundRowHeight));
+    g.setColour (fromPalette (panel::colour::faceplateLow).withAlpha (0.68f));
     g.fillRect (scaled (panel::instrumentLeft, panel::performanceDeckTop,
                         panel::instrumentRight - panel::instrumentLeft,
                         panel::programmerHeight));
@@ -3286,19 +3279,17 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
     g.fillRect (scaled (panel::controllerX, panel::performanceDeckTop,
                         panel::controllerWidth, panel::performanceDeckHeight));
 
-    // Identity-field rails echo the physical composition without reproducing
-    // a manufacturer mark. Their subdued enamel/brass pairing leaves the
-    // wordmark as the focus instead of making the cheek another control card.
-    g.setColour (red);
-    g.fillRect (scaled (panel::controllerX, panel::soundRowTop,
-                        panel::controllerWidth, 3.0f));
-    g.setColour (blue);
-    g.fillRect (scaled (panel::controllerX, panel::soundRowTop + 28.0f,
-                        panel::controllerWidth, 2.0f));
-    g.setColour (fromPalette (panel::colour::brass).withAlpha (0.62f));
-    g.fillRect (scaled (panel::controllerX + 10.0f,
-                        panel::soundRowTop + 47.0f,
-                        panel::controllerWidth - 20.0f, 1.0f));
+    // One broad enamel inlay gives the identity field its vintage accent
+    // without stacking decorative rules above the wordmark.
+    const auto identityBand = scaled (panel::controllerX, 64.0f,
+                                      panel::controllerWidth, 74.0f);
+    juce::ColourGradient identityGradient (
+        red.darker (0.48f).withAlpha (0.62f),
+        identityBand.getX(), identityBand.getY(),
+        fromPalette (panel::colour::faceplateLow).withAlpha (0.78f),
+        identityBand.getX(), identityBand.getBottom(), false);
+    g.setGradientFill (identityGradient);
+    g.fillRect (identityBand);
     g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.86f));
     g.setFont (clearPanelFont (juce::jmax (10.0f, 12.5f * scale), true));
     g.drawFittedText ("PROGRAMMABLE\nSIX-VOICE\nSYNTHESIZER",
@@ -3314,24 +3305,17 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
         const auto header = scaled (section.x, section.y, section.width,
                                     panel::headerHeight);
         juce::ColourGradient headerGradient (
-            fromPalette (panel::colour::faceplateLow).brighter (0.12f),
+            red.darker (0.52f).withAlpha (0.58f),
             header.getX(), header.getY(),
-            fromPalette (panel::colour::faceplateLow).darker (0.14f),
+            fromPalette (panel::colour::faceplateLow).withAlpha (0.88f),
             header.getX(), header.getBottom(), false);
         g.setGradientFill (headerGradient);
         g.fillRect (header);
-        g.setColour (juce::Colours::white.withAlpha (0.055f));
-        g.fillRect (header.getX(), header.getY(), header.getWidth(),
-                    juce::jmax (1.0f, scale));
-        g.setColour (red.darker (0.04f));
-        g.fillRect (header.getX(), header.getBottom() - 3.0f * scale,
-                    header.getWidth(), 3.0f * scale);
 
         const char* title = section.displayTitle;
         const char* code = section.displayCode;
 
-        auto titleArea = header.reduced (4.0f * scale, 0.0f)
-                               .withTrimmedBottom (3.0f * scale);
+        auto titleArea = header.reduced (5.0f * scale, 0.0f);
         juce::Rectangle<float> codeArea;
         if (code[0] != '\0')
         {
@@ -3384,10 +3368,6 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
     subgroupDividers (sections[5], { 2, 4 });
     subgroupDividers (sections[6], { 2 });
 
-    g.setColour (red);
-    g.fillRect (scaled (panel::instrumentLeft,
-                        panel::soundRowTop + panel::soundRowHeight - 3.0f,
-                        panel::instrumentRight - panel::instrumentLeft, 3.0f));
     g.setColour (hairline);
     g.fillRect (scaled (panel::instrumentRight - 1.0f, panel::soundRowTop,
                         1.0f, panel::soundRowHeight));
@@ -3441,19 +3421,12 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
                 memoryGlass.getRight() - 1.0f, memoryGlass.getY() + 1.0f,
                 juce::jmax (1.0f, scale));
 
-    // Modern host navigation is adjacent to the memory keys, but its slim
-    // recessed rail and explicit label keep it out of the original tier.
+    // Modern host navigation is adjacent to the memory keys. A deeper tonal
+    // band distinguishes it without adding top and bottom rules.
     g.setColour (fromPalette (panel::colour::faceplateLow).withAlpha (0.94f));
     g.fillRect (scaled (panel::instrumentLeft, panel::presetTop,
                         panel::instrumentRight - panel::instrumentLeft,
                         panel::presetHeight));
-    g.setColour (blue.withAlpha (0.30f));
-    g.fillRect (scaled (panel::instrumentLeft, panel::presetTop,
-                        panel::instrumentRight - panel::instrumentLeft, 1.0f));
-    g.setColour (juce::Colours::black.withAlpha (0.64f));
-    g.fillRect (scaled (panel::instrumentLeft,
-                        panel::presetTop + panel::presetHeight - 1.0f,
-                        panel::instrumentRight - panel::instrumentLeft, 1.0f));
     g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.76f));
     g.setFont (clearPanelFont (juce::jmax (8.0f, 9.0f * scale), true));
     g.fillRect (scaled (1055.0f, panel::presetTop + 5.0f,
@@ -3471,8 +3444,10 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
     // Remaining modern controls share one calm lower surface. UNISON and HISS
     // have moved into the related hardware groups rather than being repeated.
     g.setColour (juce::Colours::black.withAlpha (0.58f));
-    g.fillRect (scaled (0.0f, panel::extensionDeckTop - 4.0f,
-                        panel::panelWidth(), panel::extensionDeckHeight + 8.0f));
+    const float lowerSurfaceTop = panel::panelHeight + panel::keyboardHeight;
+    g.fillRect (scaled (0.0f, lowerSurfaceTop, panel::panelWidth(),
+                        panel::extensionDeckTop + panel::extensionDeckHeight
+                            + 4.0f - lowerSurfaceTop));
     const auto deck = scaled (panel::panelMargin, panel::extensionDeckTop,
                               panel::panelWidth() - 2.0f * panel::panelMargin,
                               panel::extensionDeckHeight);
@@ -3500,10 +3475,6 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
     drawExtensionHeading (panel::operationsBarX + operationPitch * 2.0f,
                           panel::operationsBarWidth - operationPitch * 2.0f,
                           "VARIATION");
-    // Hard separation keeps the original hardware and the add-on bay distinct.
-    g.setColour (juce::Colours::black.withAlpha (0.72f));
-    g.fillRect (scaled (0.0f, panel::panelHeight + panel::keyboardHeight,
-                        panel::panelWidth(), 3.0f));
 }
 
 void YouKnow106AudioProcessorEditor::timerCallback()

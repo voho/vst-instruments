@@ -732,7 +732,7 @@ programmer legends use an open system sans rather than condensed display type,
 and the resize floor keeps them above the tested readability threshold.
 
 A slim host-preset navigator sits directly below the programmer, aligned with
-the BANK keys but isolated by its own recessed muted-teal rail. The remaining
+the BANK keys but isolated by its own recessed host band. The remaining
 plugin-only features stay close to the original families: UNISON completes the
 three-key VOICE MODE group, HISS sits inside CHORUS, and VELOCITY shares the
 lower VOICE group with the continuous voice-limit control. Transpose and tuning
