@@ -2425,6 +2425,23 @@ void YouKnow106Engine::buildHalfbandKernel() noexcept
         halfbandKernel_[static_cast<std::size_t>(centre)] +=
             static_cast<float>(1.0 - normalisedSum);
     }
+
+    // Compact the taps the decimator will actually accumulate. Normalisation
+    // above divides every entry by one positive scalar and then corrects the
+    // centre, so the analytic zeros are still exactly zero here and this
+    // reproduces the same set the old per-tap branch selected, in the same
+    // order.
+    halfbandActiveTapCount_ = 0;
+    for (int tap = 0; tap < halfbandTaps; ++tap)
+    {
+        const float coefficient = halfbandKernel_[static_cast<std::size_t>(tap)];
+        if (coefficient == 0.0f)
+            continue;
+        auto& active = halfbandActiveTaps_[
+            static_cast<std::size_t>(halfbandActiveTapCount_++)];
+        active.coefficient = coefficient;
+        active.tap = tap;
+    }
 }
 
 void YouKnow106Engine::buildVoiceCards() noexcept
@@ -4816,20 +4833,22 @@ void YouKnow106Engine::downsamplePair(HalfbandDecimator& decimator,
 
     float sumLeft = 0.0f;
     float sumRight = 0.0f;
-    int index = (decimator.writeIndex - 1) & (halfbandRingSize - 1);
-    for (int tap = 0; tap < halfbandTaps; ++tap)
+    // Walking the compacted active taps rather than all 95 with a per-tap
+    // branch. Same taps, same ascending order, same accumulation sequence.
+    const int newest = (decimator.writeIndex - 1) & (halfbandRingSize - 1);
+    for (int entry = 0; entry < halfbandActiveTapCount_; ++entry)
     {
-        const float coefficient = halfbandKernel_[static_cast<std::size_t>(tap)];
-        if (coefficient != 0.0f)
-        {
 #if defined(YOUKNOW106_WORK_AUDIT)
-            YOUKNOW106_COUNT_DOMAIN_WORK(decimatorNonzeroTapVisits, 1);
-            YOUKNOW106_COUNT_DOMAIN_WORK(decimatorStereoMacs, 2);
+        YOUKNOW106_COUNT_DOMAIN_WORK(decimatorNonzeroTapVisits, 1);
+        YOUKNOW106_COUNT_DOMAIN_WORK(decimatorStereoMacs, 2);
 #endif
-            sumLeft += coefficient * decimator.left[static_cast<std::size_t>(index)];
-            sumRight += coefficient * decimator.right[static_cast<std::size_t>(index)];
-        }
-        index = (index - 1) & (halfbandRingSize - 1);
+        const auto& active =
+            halfbandActiveTaps_[static_cast<std::size_t>(entry)];
+        const int index = (newest - active.tap) & (halfbandRingSize - 1);
+        sumLeft += active.coefficient
+            * decimator.left[static_cast<std::size_t>(index)];
+        sumRight += active.coefficient
+            * decimator.right[static_cast<std::size_t>(index)];
     }
 
     outputLeft = sumLeft;

@@ -1681,6 +1681,25 @@ private:
     HalfbandDecimator firstDecimator_ {};
     HalfbandDecimator secondDecimator_ {};
     std::array<float, halfbandTaps> halfbandKernel_ {};
+    // The half-band kernel is analytically zero at every even non-centre tap,
+    // so 46 of its 95 entries contribute nothing. `downsamplePair` used to walk
+    // all 95 and skip those with a per-tap branch, paying 95 loads and 95
+    // compares to perform 49 stereo multiply-accumulates. The active taps are
+    // compacted here once, at the same point the kernel is built, so the hot
+    // loop visits only the 49 that matter.
+    //
+    // This is a loop-shape change and nothing else. The retained taps keep
+    // their original ascending order, so the accumulation sequence -- and
+    // therefore the float result -- is bit-identical to walking the full
+    // kernel: the entries dropped are exactly the ones the old branch already
+    // declined to accumulate.
+    struct HalfbandActiveTap
+    {
+        float coefficient { 0.0f };
+        int tap { 0 };   // ordinal in the full kernel, for the ring offset
+    };
+    std::array<HalfbandActiveTap, halfbandTaps> halfbandActiveTaps_ {};
+    int halfbandActiveTapCount_ { 0 };
     std::array<float, latencyPadRingSize> latencyPadLeft_ {};
     std::array<float, latencyPadRingSize> latencyPadRight_ {};
     int latencyPadWriteIndex_ { 0 };
