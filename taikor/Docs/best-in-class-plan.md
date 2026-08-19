@@ -5030,3 +5030,504 @@ an explicit identity branch, is the default, and is injected into legacy states,
 so the established response and default audio do not move. This calibrates the
 player's pads and technique to the model's impact-speed range. It does not claim
 that a response curve is an acoustic property of a taiko.
+
+## Fifteen proposed mechanisms, adjudicated — 2026-08-19
+
+Two batches of proposed acoustic and performance mechanisms were put to the
+engine. None of them survives to a released change, and this section records
+what each one asked for, what the shipping tree already does, and what the
+number is where a number decides it. Four of the fifteen are re-statements of
+mechanisms this document already struck, and those entries say where; the rest
+are adjudicated here for the first time. Two corrections to the README fell out
+of the work and are described at the end, along with the two guards added to the
+suite.
+
+Everything below was measured on this tree with a standalone program linked
+against `TaikorDSP`, at 48 kHz, factory controls unless stated.
+
+### 1. A ground-reflection image source and a far perspective
+
+Already adjudicated under "A single image-source floor reflection" in the second
+pass, and the verdict is unchanged: the Allen–Berkley construction is exact,
+needs no impulse responses, and needs the height of the head above the floor,
+which Taikor does not model. What this pass adds is how much that missing number
+decides, because the earlier entry states the objection without sizing it.
+
+The first comb notch of a single specular floor image sits at *c/2Δ* with
+*Δ = √(d² + 4h²) − d*. At the factory capsule distance of 15.95 cm:
+
+| head height | extra path | first notch | image level re direct |
+|---|---|---|---|
+| 0.4 m | 0.656 m | 261.3 Hz | −14.18 dB |
+| 0.5 m | 0.853 m | 201.0 Hz | −16.05 dB |
+| 0.9 m | 1.648 m | 104.1 Hz | −21.08 dB |
+| 1.3 m | 2.445 m | 70.1 Hz | −24.26 dB |
+| 1.6 m | 3.044 m | 56.3 Hz | −26.06 dB |
+
+The factory ō-daiko's resolved bank runs from 32.65 Hz to 226.0 Hz. So across
+the range of stand heights a kumi-daiko stage plausibly spans, the first notch
+sweeps the whole of that bank — it lands above every resolved mode at one end
+and between the two branches of the fundamental pair at the other. The drawn
+number does not set a subtle depth cue; it sets which of the drum's own partials
+gets a notch cut in it.
+
+The proposal's own 1.5–3.0 m perspective makes this worse rather than better,
+because that is where the image stops being a decoration: at 1.5 m the reflected
+path is only **1.1 to 7.4 dB** below the direct one across the same height
+range, so the comb approaches full depth. A mechanism whose audible result is a
+±6 dB comb positioned by an invented constant is not an improvement on having no
+room at all, which is what the near-field pair honestly is.
+
+The far half of the proposal has a second blocker that is already documented:
+the released observer is a real scalar near-field approximation, and the complex
+Rayleigh observer that would be valid at metres exists behind a false release
+gate pending the controlled near/far pressure capture. Extending Mic Distance
+past 40 cm would run the near-field law outside its own derivation.
+
+*Still the right feature. It becomes available the day the stand does, and the
+stand is an absence finding with no numbers behind it, not an oversight.*
+
+### 2. A Hertz contact patch as a spatial low-pass
+
+Already struck in review under "Letting the contact patch widen with the force
+(gap 5)". Re-measured on this tree, on the resolved bank rather than on the
+continuum the earlier prototype tested, and the verdict holds by a wider margin
+than the earlier entry claims.
+
+*a_c = √R_tip · (F/K)^(1/3)* follows from the Hertz pair *K = (4/3)E\*√R_tip*
+and *a_c³ = 3FR_tip/4E\**. The engine carries only the product *K* — a
+geometric interpolation from 2e6 to 6e8 scaled by `profile.hardnessScale` — so
+*R_tip* has to be supplied from outside. The nearest thing this repository ever
+had to one is the 24 mm dowel of the retired `resolveStickFor`, whose 12 mm
+radius is used below as a stand-in for the tip's curvature — which is itself the
+objection, since a dowel end is flat and a flat punch is not a Hertz contact at
+all. At full velocity, for a Don:
+
+| drum | head radius | peak force | *a_c* | *k·a_c* | *2J₁/x* |
+|---|---|---|---|---|---|
+| ō-daiko | 0.7500 m | 1717 N | 2.751 mm | 0.0477 | −0.0025 dB |
+| chū-daiko | 0.3900 m | 716 N | 2.055 mm | 0.0686 | −0.0051 dB |
+| okedo | 0.1997 m | 252 N | 1.452 mm | 0.0946 | −0.0097 dB |
+| shime | 0.1498 m | 149 N | 1.219 mm | 0.1059 | −0.0122 dB |
+
+Worst over all four strokes on those four drums is **0.0330 dB**. Halving the
+assumed tip to 6 mm takes it to **0.0165 dB**: *a_c* goes as *√R_tip*, so the
+attenuation — *x²/8* to leading order — is linear in the number that had to be
+drawn. The largest value anywhere the controls reach is **2.92 dB**, on a 3 cm
+head at Bachi Hardness 0, which is not an instrument.
+
+Two further findings, neither in the earlier entry:
+
+- **The mechanism runs the wrong way for the audible impact claimed for it.**
+  The proposal offers it as rounding off harsh high-frequency ping on heavy
+  blows while keeping light taps crisp. Measured, the patch is *largest* for the
+  *softest* stick — 6.14 mm at Bachi Hardness 0 against 2.75 mm at the factory
+  0.7 on the ō-daiko — because contact stiffness rises across that control far
+  faster than peak force does. Releasing it would dull soft strokes, which are
+  already dull, and leave hard strokes essentially untouched.
+- The small-deformation limit the Hertz solution is derived under is respected
+  at the factory hardness (16.7 % of the tip) and is not at Bachi Hardness 0
+  (51 % against a 12 mm tip, 72 % against 6 mm), which is the earlier entry's
+  second objection, now located on the control that causes it.
+
+*Struck for the resolved bank, as it was already struck for the continuum.*
+`testTheContactPatchWouldNotBeAudibleOnTheResolvedBank` recomputes the whole
+table from the engine's own contact solve so the claim cannot go stale.
+
+### 3. Reciprocal head-to-shell coupling on membrane strikes
+
+The proposal is to route a fraction of the membrane's rim reaction force
+*F = ∮ T ∂w/∂r ds* into the shell's six ring modes, so that a Don wakes the
+wooden body. Three things stop it, and the first is decisive.
+
+**The net rim force is orthogonal to every mode the shell bank carries.** The
+ring frequencies come from the thin-cylinder flexural result
+
+```text
+f_n = n(n^2-1)/sqrt(n^2+1) * h/(2 pi R^2) * sqrt(E/(12 rho (1-nu^2)))
+```
+
+evaluated at `n = index + 2`, so the bank is orders 2 through 7. That formula is
+zero at *n* = 0 and *n* = 1 by construction: the bank has no breathing mode and
+no translation. A *net* downward rim force is exactly the *n* = 0 component of
+the edge load, and a membrane mode with circumferential order *m* delivers its
+rim load as *cos(mθ)*, whose only nonzero projection is onto ring order *m*.
+Coupling the net axisymmetric force into orders 2–7 is projecting a load onto
+modes it is orthogonal to; the result would not be the chest thump the proposal
+describes, because the chest thump is the *n* = 0 mode and that mode is not in
+the bank.
+
+**The order-matched version that is legal needs a coefficient the engine cannot
+supply.** Membrane order *m* → ring order *m* is the correct projection and has
+the right behaviour for free — a centred Don barely excites *m* ≥ 2, an edge Ka
+excites it strongly — but the rim load is *axial* and a flexural ring mode is
+*radial*, so the two are joined by the shell end's axial-to-radial edge
+compliance. The bank is six frequencies with a drawn *Q* of `12 + 40 ·
+shellMaterial`, not a shell solve; putting a Donnell edge-load compliance on top
+of it would be a precise mechanism attached to an imprecise object.
+
+**The proposal's own magnitude is drawn.** "≈2–5 % of the net force", scaled by
+*h_wall/r_drum*. The 2–5 % is exactly the kind of number this document exists to
+refuse, and the code comment that currently sits where the coupling would go
+says so: the previous attempt copied the solved normal force into the ring modes
+and made the light Okedo body overwhelm its head; what it needs is "a measured
+mechanical projection rather than that duplicate force".
+
+*Not planned. The mechanism is real; the engine's shell is not solved finely
+enough to receive it, and the head's own boundary loss already accounts for the
+work sent into the mounting.* Note also that the proposal's description of the
+code is of an older tree: `usesDrumBody` does not exist here — the field that
+gates the shell is `profile.strikesHoop`, and only Don Rim sets it.
+
+### 4. Thermoviscous cavity losses tied to Body Depth
+
+The physics is right and the arithmetic kills it, in two separate ways.
+
+**The stated scaling is backwards.** For a closed cylinder,
+*S/V = 2/R + 2/L*, which *falls* as the body gets deeper. The proposal's
+*γ ∝ (√ω/R)(1 + L/R)* rises with *L*. The measured surface-to-volume ratio on
+the factory ō-daiko is 4.235 /m at a 1.275 m body; the shime at its shallowest
+is 29.99 /m. Deep drums have *less* boundary-layer loss per unit volume, not
+more, so releasing this would shorten shallow drums rather than lengthen deep
+ones — the opposite of the claimed audible impact.
+
+**The size is inaudible.** Kirchhoff's boundary-layer result for an enclosed gas
+gives the compliance a loss factor *(γ−1)·δ_t·S/2V* with
+*δ_t = √(2α/ω)*; on the resolved drums that runs 2.8e-4 to 6.6e-4. It reaches a
+mode only through the share of that mode's stiffness the cavity actually holds,
+which is exact here because the cavity's contribution to the symmetrised
+two-by-two is a rank-one *c·vvᵀ*. Over four octaves × eleven Body Depths × three
+Air Couplings:
+
+| where | branch | cavity share | *η_cav* | added decay | T60 |
+|---|---|---|---|---|---|
+| worst anywhere | 567.68 Hz | 0.2846 | 6.57e-4 | **1.486 %** | 0.3078 → 0.3032 s |
+| factory ō-daiko, breathing | 61.37 Hz | 0.7162 | 2.82e-4 | 0.573 % | 1.0163 → 1.0105 s |
+| factory ō-daiko, lower | 32.65 Hz | 0.0002 | 3.87e-4 | 0.0001 % | 0.5670 → 0.5670 s |
+
+A 1.49 % worst case is 4.5 ms on a 308 ms tail. There is also a validity
+objection: the lumped column already runs to *x* ≈ 0.94 against the half-column
+quarter-wave at *π/2*, and a boundary-layer loss factor derived for a compliance
+would be applied outside its own range at the same corners the stiffness is.
+
+*Struck on audibility, as gap 13 was.* `testTheEnclosedAirIsLosslessOnlyWhereThatIsInaudible`
+recomputes the bound from the resolved drum every run.
+
+### 5. Spatially localised and frequency-dependent hand muting
+
+Half of this shipped in "Passive contact and controller palm — 2026-08-11" and
+the proposal's premise — "MIDI CC1 currently applies a single uniform decay
+multiplier across all 40 modes" — is not true of this tree. CC1 anchors a palm
+patch at Tsu's radius and takes each mode's rate from `palmDampingRates`, which
+integrates the mode shape over a physical hand-sized disc. Measured on the
+factory ō-daiko, the per-mode rates run from **0.0001 /s to 122.4 /s** across
+the resolved bank — six orders of magnitude — and they do it in exactly the way
+the proposal asks for:
+
+| mode | frequency | hand rate | tail kept under full CC1 |
+|---|---|---|---|
+| entry 19, *m*=8 | 214.73 Hz | 0.0001 /s | 100.0 % |
+| entry 17, *m*=6 | 172.92 Hz | 0.0034 /s | 99.9 % |
+| entry 13, *m*=4 | 130.14 Hz | 0.115 /s | 96.9 % |
+| entry 10, *m*=3 | 107.71 Hz | 0.676 /s | 83.1 % |
+| entry 8, *m*=2 | 142.50 Hz | 29.56 /s | 10.5 % |
+| entry 1, *m*=0 | 85.64 Hz | 99.07 /s | 3.9 % |
+| entry 6, *m*=1 | 171.59 Hz | 122.38 /s | 5.6 % |
+
+A mode with a node under the palm keeps its tail; a mode with an antinode there
+is quenched. Note that this ordering is not frequency: the highest resolved mode
+at 226.01 Hz keeps 12.2 % while a mode 11 Hz below it keeps all of it, because
+the *m* = 8 shape has almost nothing under a hand at the middle of the head.
+That is the proposal's own second bullet, shipped. The suite already guards it:
+`testHandControllerIsAPhysicalPalm` fails if the palm collapses to one global
+gain. Two axisymmetric branches read exactly zero, which is also right — they
+live on the rear head, and a hand on the batter head does not touch them.
+
+What genuinely remains uniform is the *continuum* — one rate for all five bands
+— and its comment gives the reason: in the high-modal-density limit the local
+mean square cancels between the patch and the whole-head modal norm, leaving the
+area ratio, which carries no frequency. That is correct for a viscous surface
+damper and is not an oversight.
+
+That leaves the proposal's *η_hand = η₀(1 + c₁ω/ω₀)*, which is the request to
+replace a dashpot with a viscoelastic contact. `muteSurfaceDamping = 5000
+kg/(m²s)` is already named in the source as one of the two fitted parts of that
+contact; adding *c₁* would be a second fitted constant sizing a term whose only
+evidence is that it sounds plausible. A hand's mechanical impedance against a
+hide is measurable, and it is on the capture contract as head mobility.
+
+*Not planned as stated. The spatial half is shipped and measured; the frequency
+half is one drawn constant away and belongs to the capture.*
+
+### 6, and batch two's 8 and 9. Sympathetic coupling, stage bleed, ensemble staging
+
+Three statements of one mechanism, already adjudicated as "An ensemble inside
+one instance (gap 6, narrowed)" and answered by Performer identity. Nothing has
+changed: a cross-drum bus needs the distance between two drums, their relative
+angles and a coupling level, and Taikor models one drum with a stated head
+diameter and no position in any room. The proposal supplies "<−40 dBFS", the
+staging variant supplies "±3–12 ms" and "0.5 dB/10 m at 10 kHz", and each of
+those is drawn. The air-absorption figure is the only derivable one in the set,
+and it is derivable precisely because it is a property of air rather than of a
+stage this instrument does not have.
+
+The honest compositional route remains what the Performer step built for: layer
+instances, route the same part, select distinct P1–P4 identities, and let the
+arranger own timing and placement.
+
+*Not planned, for the third time.*
+
+### Batch two, 1. Hide anisotropy splitting the degenerate pairs
+
+The premise is not true of this tree, and the physics does not say what the
+proposal says it says.
+
+**The pairs are already split.** `nonAxisymmetricDetune` puts every
+non-axisymmetric doublet a fraction of a per cent apart with a fixed per-entry
+hash, so nothing here is degenerate. Measured on the factory ō-daiko, the (1,1)
+pair sits at 59.747 and 59.572 Hz — 5.08 cents, a 0.175 Hz beat.
+
+**A grain axis cannot split the pairs the proposal names.** Write the doublet as
+*e^{±imθ}*. The off-diagonal element that lifts the degeneracy at first order is
+*⟨e^{−imθ}|V|e^{imθ}⟩*, which requires the perturbation to carry an *e^{−2imθ}*
+component; the two diagonal elements need only its *p* = 0 part and are equal.
+So a perturbation whose angular dependence is *cos(pθ)* splits the *m*-doublet
+at first order if and only if *p* = 2*m*. A hide with one stiff direction is
+two-fold — *p* = 2 — so it splits *m* = 1 and nothing else at first order;
+*m* = 2 and above split at second order in the anisotropy and below. The
+proposal's own list, "(1,1), (2,1), (3,1)", is therefore right about the first
+entry and wrong about the other two.
+
+**And on the one doublet it can reach, it is smaller than what is already
+there.** *E∥* ≈ 4.2 GPa against *E⊥* ≈ 2.8 GPa is the hide's *bending* modulus,
+which enters this engine as `stiffnessBatter`, the dimensionless *B* of
+`stiffnessStretch`. Measured across the family, *B* runs 2.4e-5 on the shime to
+1.5e-4 on the chū-daiko, and what it is worth on the (1,1) mode — the only one a
+two-fold axis splits at first order — is **0.19 to 1.18 cents**:
+
+| drum | *B* | bending on (1,1) | bending at the top of the bank |
+|---|---|---|---|
+| ō-daiko | 7.15e-5 | 0.55 cents | 10.1 cents |
+| chū-daiko | 1.53e-4 | 1.18 cents | 21.4 cents |
+| okedo | 6.53e-5 | 0.50 cents | 9.2 cents |
+| shime | 2.42e-5 | 0.19 cents | 3.4 cents |
+
+Those quoted moduli are a fractional anisotropy of about 0.2, and the first-order
+split cannot exceed that fraction of the bending contribution, so the largest
+grain split available on a family instrument is around **0.24 cents** — against
+the **5.08 cents** the engine's own irregularity model already applies to the
+same pair. A listener would hear the existing split and not the grain. (The
+corner where bending is large — a 15 cm head at full tension in the thickest
+hide, where *B* reaches 2.4e-2 and bending is worth 151 cents on the (1,1) mode
+— is the same corner that is not an instrument.) The split the proposal actually
+describes would have to come from anisotropic *tension*, which the quoted moduli
+say nothing about, and a hide creeps towards uniform tension as it is mounted
+and pulled.
+
+**And the orientation is already adjudicated.** "Split-mode orientation
+boundary" rejected a hashed global principal axis after building it — it removed
+all silent partners and moved the sounding anchor by five cents — on the ground
+that a global material axis and independent random irregularity are two
+different head models, and nothing in the present scalar controls distinguishes
+them. Resolving that needs the fixed-radius ring of 17 to 32 LDV azimuths the
+capture contract specifies. Naming the axis "grain" does not identify it.
+
+*Not planned. Same gate as before, now with the selection rule written down.*
+
+### Batch two, 2. Non-linear inter-modal energy cascade
+
+This is gap 4, "Letting the head's own stretching pump the continuum", struck in
+review and corrected once since. The mechanism is not in doubt — the engine
+already carries the Berger/von Kármán term as the attack glide, driven from the
+area-mean squared slopes of every resolved batter-head mode — but what the
+proposal wants is energy transported *into* the unresolved bands, and that is
+gated on gap 2: each continuum band is the difference of two doubled one-poles
+and the crossover band is louder than every band above it in its own octave, so
+relighting bands 2 through 5 changes nothing a listener reaches. The gate is
+still shut.
+
+*Struck, unchanged, and behind a gate that is somebody else's step.*
+
+### Batch two, 3. The bachi as a flexural resonator on rim strikes
+
+This is gap 6, and it is the most thoroughly adjudicated entry in this document:
+implemented twice, independently, both times working and both times far too
+loud, with the second attempt raising a plain Don by 15.06 dB across 500 Hz to
+4.4 kHz and driving five strokes at octave −2 into the safety limiter. The
+level is `stickCalibration · radiatingArea / (modalMass · ω)` and
+`stickCalibration` is free: it can be moved six decibels without changing the
+one stroke it was calibrated by, anywhere that stroke is the stick.
+
+Two corrections to the proposal's framing. The frequencies it quotes — 500,
+1370, 2690, 4450 Hz — are `resolveStickFor`'s output at the factory Bachi
+Hardness, and that function is not in this tree at all: it went when the
+stick-against-stick stroke left the grid, rather than sit unreachable. And "when
+striking the wooden hoop (Ka or Don Rim)" is wrong about Ka, which has
+`strikesHoop` false and drives the ring modes not at all —
+`testOnlyTheHoopStrikeDrivesTheShell` requires exactly that. Ka's `rimGain` of
+0.30 reaches the continuum's edge boost and the tack line, which are the head
+and its iron, not the body.
+
+The gate the earlier entry identified is unchanged and is worth restating
+because it is the one derivable thing in the area: every membrane mode radiates
+through `radiationEfficiency(order, ka)` and the wooden bank does not, taking a
+bare `radiatingArea` instead. A 12 mm bar at 497.71 Hz has *ka* = 0.109, which
+that function puts 19.3 dB down, against 3.1 dB down at 4446 Hz — a 16 dB tilt
+across exactly the region the step measures. Until the wooden bank radiates
+through the same law the head does, the striker has a spectrum and no level.
+
+*Struck. Its gate is a change to the shell as well as the stick and belongs to a
+pass that owns the shell revoice.*
+
+### Batch two, 4. A press roll solved from the bounce
+
+Already adjudicated under "A press roll solved from the bounce rather than
+written down", and the ground has moved under it since: the Buzz stroke is no
+longer on the playing grid. All four strokes carry `contacts = 1`, so there is
+no scripted 19 ms × 0.82^k train left in the engine to replace. The wrist
+oscillator the proposal writes down would be a new articulation, and it would
+need a press force and a bounce restitution the model does not have — the
+restitution it does carry, 0.42, is the impulsive figure for a bachi meeting a
+head and collapses a roll inside twenty milliseconds.
+
+*Not planned. The thing it proposed to fix no longer exists.*
+
+### Batch two, 5. Frequency-dependent directivity and shell shadowing
+
+Split in three, and each third has a different answer.
+
+The *ka* law for the head is already the engine's central radiation term:
+`radiationEfficiency(order, ka)` gives a mode of circumferential order *m* an
+efficiency rising as *(ka)^(2m+2)* until *ka* reaches the mode's own order.
+That is what makes a centre strike a boom and an edge strike a slap, and it is
+not missing.
+
+The complex directivity — real polar lobes rather than a scalar efficiency —
+is built, tested and behind a false release gate, for three stated reasons that
+are unchanged: changing the observation changes which partial the octave solve
+is heard at, Pitch automation can move a ringing bank two octaves while a built
+radiation residue is frequency-dependent, and no owned capture separates batter
+radiation from the rear head, shell, capsule and room.
+
+Shadowing by the body is absent, and so is the neighbouring term that gap 6
+already named as its gate: the wooden bank does not radiate through any *ka* law
+at all, taking a bare `radiatingArea` where every membrane mode goes through
+`radiationEfficiency(order, ka)`. The two are not the same thing — one is
+diffraction around the shell on the way to a capsule, the other is how well the
+shell's own ring modes couple to air — but they are the same missing physics
+seen twice, and the second is computable from what the engine already has.
+Fixing it is not free: it moves the shell on all four strokes and
+`shellCalibration` would have to be re-pinned, so it belongs to a pass that
+takes on the shell, with the mono/side revoice "Local-palm and shell prototype
+audit" already identified.
+
+*The first third is shipped, the second is capture-gated, the third is a real
+gap already named as somebody's next step.*
+
+### Batch two, 6. Oblique strike angle and shear friction
+
+New to this document. It does not survive.
+
+The normal half is degenerate with a control that already exists: resolving the
+impact into *F cos θ* scales the impact speed, and impact speed is exactly what
+MIDI velocity sets. A naname-dai stroke at 40° arrives with 77 % of the normal
+speed of the same blow struck square, and the engine already reaches every
+impact speed between 0.12 and 6 m/s from the keyboard. Nothing in the timbre
+would distinguish the two, because contact time follows impact speed as
+*v^(−1/5)* down the same path either way.
+
+The tangential half needs three things the engine does not have: a stand angle
+(no stand), a friction coefficient for oak on treated cowhide (not in the
+model, not in the literature this document has been able to reach), and an
+in-plane degree of freedom on the head. Taikor solves transverse displacement
+*w* only; a stick-slip scrape is a shear wave in a coordinate that does not
+exist here, and adding one is a larger change than the whole of any step in this
+document.
+
+*Not planned. One half is a rename of Velocity, the other is a new field
+variable plus two drawn constants.*
+
+### Batch two, 7. Climate: temperature and humidity
+
+Already adjudicated under "Temperature and humidity drift", where the sole
+blocker is that Ando's AST 33(4) (2012) measurements could not be opened and
+"the size of the shift is the whole content of the step". That is still the
+blocker. The paper was located this session —
+["Resonance frequency changes of Japanese drum (nagado daiko) diaphragms due to
+temperature, humidity, and aging"](https://www.jstage.jst.go.jp/article/ast/33/4/33_E1209/_article),
+*Acoustical Science and Technology* 33(4), 277–278 — and J-STAGE is not
+reachable from this environment, directly or through the DOI.
+
+The proposal supplies its own figures instead: 20 % off Young's modulus above
+75 % RH, and a rise in *tan δ*. Implementing from those would be inventing the
+measurement the step exists to carry, which is the same reason it was left out
+the first time. Note also that the *mechanism* the proposal names is the wrong
+one to reach for first: on a tension-dominated head, *E* enters through the
+bending term, and what humidity actually moves on a nagadō is the tension, via
+the hide's length and the tacked rim.
+
+*Still the best cheap step nobody can take. It unblocks the moment the paper is
+in hand.*
+
+### Batch two, 10. A 3D modal displacement visualiser
+
+Withdrawn by the requester during this pass.
+
+### What changed on the tree
+
+Two claims in the README were wrong and are corrected, and both were found by
+validating proposal 4 rather than by looking for them.
+
+**Body Depth does move the decay.** The README said "Body Depth moves the pitch
+of the split and never the decay of either branch". Measured on the factory
+ō-daiko, the breathing branch's T60 runs 0.8927 s at Body Depth 0, 1.0163 s at
+0.5 and 0.9408 s at 1.0 — a 13.9 % spread, and not monotone, because radiation
+falls as the branch comes down in frequency while the mounting loss rises
+towards its corner. The lower branch moves 1.5 %. What the model lacks is a loss
+belonging to the *air*, which is a much narrower statement.
+
+**The cavity loss factor was quoted an order of magnitude low, against the wrong
+term.** The README gave "around 1e-4 … three orders of magnitude under what
+radiation is already taking out of the same mode". Kirchhoff's result on the
+resolved drums is 2.8e-4 to 6.6e-4, and on the factory ō-daiko's lower branch —
+where the loss factor is largest — radiation is 0.7 % of the loss and the
+mounting is 92.6 %, so radiation was not what the comparison should have been
+against. The conclusion survives: 1.49 % of the decay at worst, anywhere.
+
+Two guards were added, each recomputing its finding from the resolved drum
+rather than remembering a figure, on the precedent of
+`testTheStickBankIsOnlyCalibratedAtTheBottomOfTheKeyboard`:
+
+- `testTheEnclosedAirIsLosslessOnlyWhereThatIsInaudible` scans four octaves ×
+  eleven Body Depths × three Air Couplings, requires the cavity's own
+  thermoviscous loss to stay under 2 % of every axisymmetric branch's decay,
+  requires the scan to actually find a cavity (so the bound cannot pass for the
+  wrong reason), and requires Body Depth to keep its authority over the
+  breathing branch's tail.
+- `testTheContactPatchWouldNotBeAudibleOnTheResolvedBank` rebuilds the Hertz
+  patch from the engine's contact solve, requires the spatial low-pass to stay
+  under 0.1 dB on the four family instruments, and requires the answer to still
+  halve when the assumed tip radius halves — because that sensitivity is the
+  finding.
+
+No rendered audio moves: nothing in the signal path was touched, and the
+committed demonstration takes under `Docs/audio` are unchanged.
+
+### What a future pass should take from this
+
+Ranked by what is actually blocking each one, rather than by claimed impact:
+
+1. **The wooden bank radiating through `radiationEfficiency`.** The only term
+   named anywhere in these fifteen that the engine is missing, could compute
+   from what it already carries, *and* would be audible. (The cavity's
+   thermoviscous loss meets the first two and fails the third by two orders of
+   magnitude.) It gates gap 6 and it is half of batch two's fifth proposal. It
+   costs a re-pin of `shellCalibration` and a shell revoice.
+2. **The stand.** It unblocks the floor image, which is the highest-impact
+   proposal in either batch, and it is currently an absence finding with no
+   numbers at all.
+3. **Ando 2012.** One two-page letter stands between this instrument and a
+   climate control no sample library can have.
+4. **The LDV azimuth ring.** It decides between a global material axis and
+   random irregularity, and therefore whether the hide has a grain in this
+   model.

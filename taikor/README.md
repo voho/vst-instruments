@@ -635,6 +635,23 @@ shime-daiko with an odaiko club. Leaving it fixed made the smallest drums about
 twenty-five decibels louder than the largest — a property of the wrong stick
 rather than of the instrument.
 
+What it is not is a contact *patch*. The bachi meets the head at a point, and a
+real one meets it over a small disc whose radius grows with the force, which
+would low-pass the modal bank spatially by *2J₁(k·a_c)/(k·a_c)*. That is left
+out for two reasons, both measured. The engine carries only the Hertz product
+*K = (4/3)E\*√R*, never the tip radius on its own, so *a_c* cannot be formed
+without drawing one — and halving the assumed tip halves the answer. And with
+the 12 mm dowel radius of the retired stick model standing in for the tip's
+curvature, the factor is worth **0.033 dB**
+at most on the four family instruments at full velocity (0.0025 dB on the
+ō-daiko, 0.0122 dB for a Don on the shime). It reaches 2.9 dB only on a 3 cm
+head struck with the softest beater, which the controls reach and no taiko is.
+Note also which way it runs: a *softer* stick makes a *larger* patch, because
+contact stiffness falls far faster than peak force rises, so the mechanism would
+dull soft strokes and leave hard ones alone rather than the other way about.
+`testTheContactPatchWouldNotBeAudibleOnTheResolvedBank` keeps all of that
+recomputed from the engine's own contact solve.
+
 ### The attack pitch glide
 
 A membrane clamped at its rim cannot move without getting longer, and a longer
@@ -839,12 +856,27 @@ column but not its mass or its own resonances: above the body's first axial
 resonance — 212 Hz on the ō-daiko, 819 on the shime, and between 139 and 451 Hz
 across Body Depth on the ō-daiko — the column is treated as absent rather than
 as the mass it becomes.
-Nothing anywhere associates a loss with the enclosed air either, so Body Depth
-moves the pitch of the split and never the decay of either branch. That last one
-is an omission with a number behind it rather than an oversight: thermal
-exchange with the walls gives the cavity a loss factor around 1e-4, which is
-three orders of magnitude under what radiation is already taking out of the same
-mode, so modelling it would change nothing anyone could hear.
+Nothing anywhere associates a loss with the enclosed air either. Body Depth still
+has authority over the tail — it moves the breathing branch's T60 on the factory
+ō-daiko from 0.893 s at the shallowest body to 1.016 s in the middle and 0.941 s
+at the deepest, and it is not a monotone control, because radiation falls as the
+branch comes down in frequency while the mounting loss rises towards its corner
+— but every bit of that comes from where the branch lands, not from the air.
+
+The missing term is an omission with a number behind it rather than an
+oversight. Wall thermal exchange gives an enclosed volume a loss factor
+*(γ−1)·δ_t·S/2V*, with *δ_t = √(2α/ω)* the thermal boundary layer; on the
+resolved drums that runs 2.8e-4 to 6.6e-4, and it only reaches the mode through
+the share of that mode's stiffness the cavity actually holds. Taken over four
+octaves, eleven Body Depths and three Air Couplings, the largest decay it would
+add anywhere is **1.49 %** of the branch's own — the shallowest small drum at
+full coupling, T60 0.3078 s against 0.3032 s. On the factory ō-daiko's breathing
+branch it is 0.57 %, and on the branch below it, which barely touches the
+cavity, 0.0001 %. The README used to compare that figure against radiation;
+on the lower branch radiation is only 0.7 % of the loss and the mounting is
+92.6 %, so the comparison was against the wrong term as well as being the wrong
+size. `testTheEnclosedAirIsLosslessOnlyWhereThatIsInaudible` recomputes all of
+this from the resolved drum rather than remembering it.
 
 Each axisymmetric pair gets its own positive-stiffness column solve. On the
 factory ō-daiko their factors are 0.823, 0.610, 0 and 0; relative to reusing the
@@ -993,7 +1025,12 @@ including the level of the head's continuum, bit-exact determinism, the velocity
 and contact-time laws, the instrument's dynamic range, the Linear response's
 evenness and every Velocity Curve's monotonic fixed endpoints, the head's
 bending stiffness and the modal ratios it opens
-out, the enclosed air solved as a finite column rather than an infinite spring,
+out, the enclosed air solved as a finite column rather than an infinite spring
+and lossless only where that is inaudible — its own thermoviscous loss
+recomputed from the resolved drum and required to stay far under the decay
+already there, while Body Depth keeps its authority over the breathing branch's
+tail — the Hertz contact patch the bachi does not have and what it would be
+worth if it did,
 the attack glide's dependence on the head rather than on a clock and its silence
 above the resolved bank, the tack line's threshold, what one passive,
 non-adhesive nonlinear contact does to a head another stroke left ringing —
@@ -1121,6 +1158,28 @@ this repository's own code.
 
 ## Changelog
 
+- 2026-08-19: Adjudicated fifteen proposed acoustic and performance mechanisms
+  against the shipping engine; none is released and the record is
+  [Docs/best-in-class-plan.md](Docs/best-in-class-plan.md), "Fifteen proposed
+  mechanisms, adjudicated". Two README claims were wrong and are corrected here.
+  Body Depth *does* move the decay of the axisymmetric pair — the factory
+  ō-daiko's breathing branch runs T60 0.893 s, 1.016 s and 0.941 s at Body Depth
+  0, 0.5 and 1.0, non-monotonically, because radiation falls as the branch comes
+  down in frequency while the mounting loss rises towards its corner — so what
+  the model lacks is a loss belonging to the enclosed *air*, not authority over
+  the tail. And that missing loss factor is 2.8e-4 to 6.6e-4 by Kirchhoff's
+  boundary-layer result, not "around 1e-4", and on the branch where it is
+  largest the loss it was being compared against, radiation, is 0.7 % of the
+  total while the mounting is 92.6 %. The conclusion is unchanged and now has a
+  bound: 1.49 % of the decay at worst over four octaves, eleven Body Depths and
+  three Air Couplings. The section on the stick also records why the bachi is a
+  point force rather than a growing Hertz contact patch, with the measured
+  0.033 dB the patch would be worth on a family instrument. Two guards were
+  added — `testTheEnclosedAirIsLosslessOnlyWhereThatIsInaudible` and
+  `testTheContactPatchWouldNotBeAudibleOnTheResolvedBank` — each recomputing its
+  finding from the resolved drum rather than pinning a remembered figure. No
+  signal path was touched; all 27 committed demonstration WAVs re-render
+  sha256-identical.
 - 2026-08-17: Deduplicated the continuum band's per-channel two-high-pass/seven-low-pass filter cascade, previously written out separately for the left and right channel in `renderVoice`'s per-sample loop, into one shared `continuumEdgeCascade` helper, and also extracted the eighteen-field filter-state reset repeated identically in `silenceVoice` and `buildVoiceModes` into a `resetContinuumBandFilterState` helper, with no change to any resolved drum or rendered audio.
 - 2026-08-17: Removed the unsupported one-way shell copy from head-only Don,
   Ka and Tsu. Their normal contact force already loses energy through the

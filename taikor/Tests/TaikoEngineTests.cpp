@@ -2747,6 +2747,314 @@ struct TaikoEngineTestAccess
                                       * speed * 1.42;
         return reconstructedImpulse / collisionImpulse;
     }
+
+    // Two absence findings, each recomputed from the resolved drum rather than
+    // pinned as a literal, so a change that made either mechanism matter would
+    // be caught instead of silently invalidating what the README says is left
+    // out. See "Fifteen proposed mechanisms" in Docs/best-in-class-plan.md.
+
+    struct CavityLossProbe
+    {
+        // The largest share of any axisymmetric branch's decay that the
+        // enclosed air's own thermoviscous loss would add if it were modelled.
+        double worstFractionOfDecay { 0.0 };
+        double worstLossFactor { 0.0 };
+        double worstCavityStiffnessShare { 0.0 };
+        double worstBranchHz { 0.0 };
+        double worstT60Seconds { 0.0 };
+        double worstT60WithLossSeconds { 0.0 };
+        // The spread in the (0,1) breathing branch's tail across Body Depth on
+        // the factory drum, as a ratio of longest to shortest.
+        double breathingTailSpread { 1.0 };
+        int branchesScanned { 0 };
+    };
+
+    // Kirchhoff's boundary-layer result for an enclosed gas: the wall thermal
+    // exchange gives the cavity's compliance a loss factor
+    //   eta = (gamma - 1) * delta_t * S / (2 V),   delta_t = sqrt(2 alpha / w)
+    // with alpha the thermal diffusivity of air. Nothing here is fitted; S and
+    // V come from the drum the controls resolve to. The viscous half is
+    // omitted because a uniformly compressed cavity has almost no tangential
+    // wall velocity for it to act on, and its own boundary layer is thinner
+    // than the thermal one.
+    static double cavityLossFactor (const TaikoEngine::DrumState& drum,
+                                    double omega) noexcept
+    {
+        constexpr double gammaAir = 1.4;
+        constexpr double thermalDiffusivity = 2.14e-5;   // m^2/s, air at 20 C
+        constexpr double pi = 3.1415926535897932384626433832795;
+        const double radius = drum.radius;
+        const double length = drum.depth;
+        if (! (radius > 0.0) || ! (length > 0.0) || ! (omega > 0.0))
+            return 0.0;
+        const double surface = 2.0 * pi * radius * length
+                             + 2.0 * pi * radius * radius;
+        const double volume = pi * radius * radius * length;
+        const double layer = std::sqrt (2.0 * thermalDiffusivity / omega);
+        return (gammaAir - 1.0) * layer * surface / (2.0 * volume);
+    }
+
+    // The decay the renderer actually builds for one axisymmetric branch.
+    static double builtAxisymmetricDecay (const TaikoEngine::DrumState& drum,
+                                          int entryIndex, int branch) noexcept
+    {
+        TaikoEngine engine;
+        engine.prepare (48000.0, 64);
+        TaikoEngine::Voice voice;
+        voice.physicalBank = true;
+        voice.strikeRadius = TaikoEngine::strikeRadiusFor (
+            TaikoEngine::strikeProfile (Articulation::Don), 0.0f);
+        voice.strikeAngle = 0.0f;
+        engine.buildVoiceModes (
+            voice, drum, TaikoEngine::strikeProfile (Articulation::Don), 0.0f,
+            false);
+        for (int index = 0; index < voice.modeCount; ++index)
+        {
+            const auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (mode.membrane && mode.modeEntry == entryIndex
+                && mode.physicalIndex == 2 * entryIndex + branch)
+                return mode.decayRate;
+        }
+        return 0.0;
+    }
+
+    static CavityLossProbe probeCavityLoss() noexcept
+    {
+        CavityLossProbe result;
+        const auto& entries = TaikoEngine::membraneModes();
+
+        for (int octave = 0; octave < drumCount; ++octave)
+        {
+            for (int depthStep = 0; depthStep <= 10; ++depthStep)
+            {
+                for (int couplingStep = 0; couplingStep <= 2; ++couplingStep)
+                {
+                    EngineParameters raw;
+                    raw.bodyDepth = 0.1f * static_cast<float> (depthStep);
+                    raw.cavityCoupling = 0.5f * static_cast<float> (couplingStep);
+                    const auto parameters = TaikoEngine::sanitise (raw);
+                    const auto drum =
+                        TaikoEngine::resolveDrumFor (parameters, 0.0f, octave);
+
+                    for (int entry = 0; entry < TaikoEngine::axisymmetricEntryCount;
+                         ++entry)
+                    {
+                        const auto slot = static_cast<std::size_t> (entry);
+                        const double lambda = entries[slot].besselZero;
+                        const auto omegas = TaikoEngine::membraneModeOmegas (
+                            drum, drum.radius, static_cast<float> (lambda), 0.0f);
+                        const TaikoEngine::FundamentalPair fundamentals {
+                            static_cast<float> (lambda), omegas.batter,
+                            omegas.resonant
+                        };
+                        float diagonalB = 0.0f;
+                        float diagonalR = 0.0f;
+                        float offDiagonal = 0.0f;
+                        TaikoEngine::axisymmetricDiagonals (
+                            drum, fundamentals, drum.cavityStiffnesses[slot],
+                            diagonalB, diagonalR, offDiagonal);
+                        // The cavity's contribution to the symmetrised stiffness
+                        // is a rank-one c*v*v^T, so an eigenvector's share of it
+                        // is exact rather than apportioned.
+                        const double cavity = drum.cavityStiffnesses[slot] * 4.0
+                                            / (lambda * lambda);
+                        const double vectorB =
+                            1.0 / std::sqrt (static_cast<double> (drum.batterDensity));
+                        const double vectorR =
+                            1.0 / std::sqrt (static_cast<double> (drum.resonantDensity));
+
+                        for (int branch = 0; branch < 2; ++branch)
+                        {
+                            float eigenvalue = 0.0f;
+                            float componentB = 0.0f;
+                            float componentR = 0.0f;
+                            TaikoEngine::solveAxisymmetricBranch (
+                                diagonalB, diagonalR, offDiagonal, branch,
+                                eigenvalue, componentB, componentR);
+                            if (! (eigenvalue > 0.0f))
+                                continue;
+                            const double omega = std::sqrt (
+                                static_cast<double> (eigenvalue));
+                            constexpr double pi =
+                                3.1415926535897932384626433832795;
+                            const double hz = omega / (2.0 * pi);
+                            if (hz < 5.0 || hz > 20000.0)
+                                continue;
+                            const double decay =
+                                builtAxisymmetricDecay (drum, entry, branch);
+                            if (! (decay > 0.0))
+                                continue;
+                            ++result.branchesScanned;
+
+                            const double projection = componentB * vectorB
+                                                    + componentR * vectorR;
+                            const double share = cavity * projection * projection
+                                               / static_cast<double> (eigenvalue);
+                            const double lossFactor = cavityLossFactor (drum, omega);
+                            // A lossy spring adds half its loss factor times
+                            // omega to the amplitude decay, weighted by the
+                            // share of the modal stiffness it is.
+                            const double added = 0.5 * lossFactor * share * omega;
+                            const double fraction = added / decay;
+                            if (fraction > result.worstFractionOfDecay)
+                            {
+                                result.worstFractionOfDecay = fraction;
+                                result.worstLossFactor = lossFactor;
+                                result.worstCavityStiffnessShare = share;
+                                result.worstBranchHz = hz;
+                                result.worstT60Seconds = 6.907755 / decay;
+                                result.worstT60WithLossSeconds =
+                                    6.907755 / (decay + added);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Body Depth has authority over the tail today, through the frequency
+        // dependence of the mounting, radiation and hide losses rather than
+        // through any loss of the air's own.
+        double shortest = std::numeric_limits<double>::max();
+        double longest = 0.0;
+        for (int depthStep = 0; depthStep <= 10; ++depthStep)
+        {
+            EngineParameters raw;
+            raw.bodyDepth = 0.1f * static_cast<float> (depthStep);
+            const auto parameters = TaikoEngine::sanitise (raw);
+            const auto drum = TaikoEngine::resolveDrumFor (parameters, 0.0f, 0);
+            const double decay = builtAxisymmetricDecay (drum, 0, 0);
+            if (! (decay > 0.0))
+                continue;
+            const double tail = 6.907755 / decay;
+            shortest = std::min (shortest, tail);
+            longest = std::max (longest, tail);
+        }
+        if (shortest > 0.0 && shortest < std::numeric_limits<double>::max())
+            result.breathingTailSpread = longest / shortest;
+        return result;
+    }
+
+    struct ContactPatchProbe
+    {
+        // Worst spatial low-pass, in decibels, that a finite Hertz contact
+        // patch would impose on the highest resolved membrane mode.
+        double worstFamilyDb { 0.0 };
+        double worstReachableDb { 0.0 };
+        // Patch radius as a fraction of the assumed tip radius, at the same
+        // corner - the Hertz solution's own small-deformation limit.
+        double worstFamilyPatchFraction { 0.0 };
+        // How much the family answer moves when the assumed tip radius halves.
+        double familyDbAtHalfTip { 0.0 };
+    };
+
+    // 2 J1(x)/x, the spatial transfer of a uniformly loaded circular patch of
+    // radius a_c onto a mode of spatial wavenumber k, with x = k a_c.
+    static double patchSpatialFilterDb (double x) noexcept
+    {
+        if (x < 1.0e-9)
+            return 0.0;
+        const double transfer = 2.0 * TaikoEngine::besselJ (1, x) / x;
+        return 20.0 * std::log10 (std::max (transfer, 1.0e-12));
+    }
+
+    // a_c = sqrt(R_tip) * (F / K)^(1/3) follows from the Hertz pair
+    // K = (4/3) E* sqrt(R_tip) and a_c^3 = 3 F R_tip / (4 E*). The engine
+    // carries only the product K, so R_tip has to be supplied here - which is
+    // the finding, not an oversight of this probe.
+    static double contactPatchRadius (const TaikoEngine::DrumState& drum,
+                                      const TaikoEngine::StrikeProfile& profile,
+                                      float bachiHardness, float impactSpeed,
+                                      double tipRadiusMetres) noexcept
+    {
+        float strikerMass = 0.0f;
+        float impedance = 0.0f;
+        TaikoEngine::drumContactTerms (drum, strikerMass, impedance);
+        const float radius = TaikoEngine::strikeRadiusFor (profile, 0.0f);
+        const float collisionMass = TaikoEngine::contactCollisionMass (
+            drum, profile, radius, strikerMass);
+        float contactSeconds = 0.0f;
+        float peakForce = 0.0f;
+        TaikoEngine::solveContact (collisionMass, impedance, profile,
+                                   bachiHardness, impactSpeed, contactSeconds,
+                                   peakForce);
+        const double stiffness =
+            TaikoEngine::contactStiffnessFor (profile, bachiHardness);
+        return std::sqrt (tipRadiusMetres)
+             * std::cbrt (static_cast<double> (peakForce) / stiffness);
+    }
+
+    static double highestResolvedWavenumber (const TaikoEngine::DrumState& drum) noexcept
+    {
+        const auto& entries = TaikoEngine::membraneModes();
+        double largest = 0.0;
+        for (int index = 0; index < TaikoEngine::modeEntryCount; ++index)
+            largest = std::max (
+                largest, entries[static_cast<std::size_t> (index)].besselZero);
+        return largest / static_cast<double> (drum.radius);
+    }
+
+    // Worst attenuation over a scan. `familyOnly` restricts it to the factory
+    // controls, which is the instrument the product actually is; the full scan
+    // also reaches head diameters no taiko has.
+    static double worstPatchAttenuationDb (bool familyOnly, double tipRadiusMetres,
+                                           double& patchFractionOfTip) noexcept
+    {
+        constexpr float fullVelocitySpeed = 6.0f;   // maximumImpactSpeed
+        double worst = 0.0;
+        patchFractionOfTip = 0.0;
+        for (int octave = 0; octave < drumCount; ++octave)
+        {
+            for (int hardnessStep = 0; hardnessStep <= 10; ++hardnessStep)
+            {
+                if (familyOnly && hardnessStep != 7)
+                    continue;
+                for (int diameterStep = 0; diameterStep <= 4; ++diameterStep)
+                {
+                    if (familyOnly && diameterStep != 4)
+                        continue;
+                    EngineParameters raw;
+                    raw.bachiHardness = 0.1f * static_cast<float> (hardnessStep);
+                    raw.headDiameter =
+                        0.15f + 0.3375f * static_cast<float> (diameterStep);
+                    const auto parameters = TaikoEngine::sanitise (raw);
+                    const auto drum =
+                        TaikoEngine::resolveDrumFor (parameters, 0.0f, octave);
+                    const double wavenumber = highestResolvedWavenumber (drum);
+                    for (std::size_t index = 0; index < articulationCount; ++index)
+                    {
+                        const auto& profile = TaikoEngine::strikeProfile (
+                            static_cast<Articulation> (index));
+                        const double patch = contactPatchRadius (
+                            drum, profile, parameters.bachiHardness,
+                            fullVelocitySpeed, tipRadiusMetres);
+                        const double attenuation =
+                            -patchSpatialFilterDb (wavenumber * patch);
+                        if (attenuation > worst)
+                        {
+                            worst = attenuation;
+                            patchFractionOfTip = patch / tipRadiusMetres;
+                        }
+                    }
+                }
+            }
+        }
+        return worst;
+    }
+
+    static ContactPatchProbe probeContactPatch (double tipRadiusMetres) noexcept
+    {
+        ContactPatchProbe result;
+        double reachableFraction = 0.0;
+        result.worstFamilyDb = worstPatchAttenuationDb (
+            true, tipRadiusMetres, result.worstFamilyPatchFraction);
+        double ignored = 0.0;
+        result.familyDbAtHalfTip = worstPatchAttenuationDb (
+            true, 0.5 * tipRadiusMetres, ignored);
+        result.worstReachableDb = worstPatchAttenuationDb (
+            false, tipRadiusMetres, reachableFraction);
+        return result;
+    }
 };
 } // namespace taikor
 
@@ -5423,6 +5731,115 @@ void testTheReadoutNamesAPartialTheRendererBuilds()
     expect (silent > 0 && silent < total / 4,
             "the number of drums with no membrane tone at their sample rate is "
                 + std::to_string (silent) + " of " + std::to_string (total));
+}
+
+// Two mechanisms this instrument leaves out on purpose, each guarded by the
+// arithmetic that says it is inaudible rather than by a remembered figure.
+//
+// The enclosed air is a lossless spring. Wall thermal exchange gives a real
+// cavity a loss factor, and this recomputes Kirchhoff's boundary-layer result
+// from whatever drum the controls resolve to, weights it by the share of each
+// axisymmetric branch's stiffness the cavity actually holds, and requires the
+// decay it would add to stay far under anything a listener could reach. It also
+// pins the fact that Body Depth already has authority over the tail - through
+// the frequency dependence of the mounting, radiation and hide losses, not
+// through any loss of the air's own - because the README used to say it had
+// none.
+void testTheEnclosedAirIsLosslessOnlyWhereThatIsInaudible()
+{
+    const auto probe = taikor::TaikoEngineTestAccess::probeCavityLoss();
+
+    expect (probe.branchesScanned > 100,
+            "the cavity-loss scan found almost no axisymmetric branches: "
+                + std::to_string (probe.branchesScanned));
+
+    // Measured worst case over four octaves x eleven Body Depths x three Air
+    // Couplings is 1.49 % of the branch's own decay, on the shallowest small
+    // drum at full coupling. Two per cent leaves room for the family to move
+    // without leaving room for the omission to become audible: at two per cent
+    // of a one-second tail the T60 moves by 20 ms.
+    expect (probe.worstFractionOfDecay < 0.02,
+            "the enclosed air's own thermoviscous loss would now be "
+                + std::to_string (100.0 * probe.worstFractionOfDecay)
+                + " % of an axisymmetric branch's decay ("
+                + std::to_string (probe.worstBranchHz) + " Hz, T60 "
+                + std::to_string (probe.worstT60Seconds) + " s -> "
+                + std::to_string (probe.worstT60WithLossSeconds)
+                + " s), which is no longer negligible");
+
+    // The scan has to be finding a cavity to be worth anything: if a change
+    // decoupled every branch from the air, the fraction above would go to zero
+    // for the wrong reason.
+    expect (probe.worstCavityStiffnessShare > 0.05,
+            "no axisymmetric branch stores a meaningful share of its stiffness "
+            "in the cavity, so the bound above proves nothing: share "
+                + std::to_string (probe.worstCavityStiffnessShare));
+    expect (probe.worstLossFactor > 1.0e-5 && probe.worstLossFactor < 1.0e-2,
+            "the cavity loss factor left the range boundary-layer theory puts "
+            "it in: " + std::to_string (probe.worstLossFactor));
+
+    // Body Depth moves the breathing branch's tail by about 14 % on the factory
+    // drum (0.893 s at the shallowest, 1.016 s in the middle, 0.941 s at the
+    // deepest). It is not a monotone control: radiation falls as the branch
+    // comes down in frequency while the mounting loss rises towards its corner.
+    expect (probe.breathingTailSpread > 1.05,
+            "Body Depth no longer moves the breathing branch's decay at all; "
+            "the spread is " + std::to_string (probe.breathingTailSpread));
+}
+
+// The bachi is a point force, not a contact patch with a radius that grows with
+// the force. A finite patch would low-pass the modal bank spatially by
+// 2 J1(k a_c) / (k a_c). This recomputes that factor from the engine's own
+// contact solve and requires it to stay inaudible on the four instruments the
+// family table describes - and separately records how far the answer moves when
+// the one quantity the engine does not carry, the bachi's tip radius, is
+// halved. That sensitivity is the finding: the size of the effect is set by a
+// number that would have to be drawn.
+void testTheContactPatchWouldNotBeAudibleOnTheResolvedBank()
+{
+    // A 12 mm tip is the dowel the retired stick model described.
+    const auto probe = taikor::TaikoEngineTestAccess::probeContactPatch (0.012);
+
+    // Measured 0.0330 dB at the factory controls, worst over the four strokes
+    // on the shime - the smallest of the four instruments and therefore the one
+    // with the highest resolved wavenumber. A plain Don there is 0.0122 dB, and
+    // the o-daiko is 0.0025 dB. A tenth of a decibel leaves the family room to
+    // move and is still an order of magnitude under anything audible on one
+    // partial.
+    expect (probe.worstFamilyDb < 0.1,
+            "a finite contact patch would now attenuate the top of the resolved "
+            "bank by " + std::to_string (probe.worstFamilyDb)
+                + " dB on a family instrument");
+
+    // The patch reaches 16.7 % of the tip at the factory hardness, inside the
+    // small-deformation regime the Hertz solution is derived under. It does not
+    // stay there at Bachi Hardness 0, where it reaches 51 % on the o-daiko and
+    // 72 % against a 6 mm tip, which is the second reason the law would need a
+    // cap that is itself drawn.
+    expect (probe.worstFamilyPatchFraction < 0.35,
+            "the Hertz patch reached "
+                + std::to_string (100.0 * probe.worstFamilyPatchFraction)
+                + " % of the tip radius at the factory controls, outside the "
+                  "small-deformation limit the solution assumes");
+
+    // a_c goes as the square root of the tip radius, so halving the tip takes
+    // k a_c down by 1/sqrt(2) and the attenuation - which is x^2/8 to leading
+    // order - down by half: 0.0330 dB against 0.0165 dB. Requiring a real
+    // difference keeps that sensitivity visible. If it ever stopped mattering,
+    // the effect would be derivable from what the engine carries after all.
+    expect (probe.familyDbAtHalfTip < probe.worstFamilyDb * 0.75,
+            "the contact patch's effect stopped depending on the tip radius the "
+            "engine does not carry: "
+                + std::to_string (probe.worstFamilyDb) + " dB at 12 mm against "
+                + std::to_string (probe.familyDbAtHalfTip) + " dB at 6 mm");
+
+    // Outside the family the controls reach a 3 cm head struck with the softest
+    // beater, where the same factor is worth about 2.9 dB. It is recorded so a
+    // future attempt knows where the mechanism does bite; it is not a taiko.
+    expect (probe.worstReachableDb > probe.worstFamilyDb * 10.0
+                && probe.worstReachableDb < 12.0,
+            "the reachable-corner contact patch attenuation is "
+                + std::to_string (probe.worstReachableDb) + " dB");
 }
 
 void testTheDrumIsTunedByThePitchItSounds()
@@ -11294,6 +11711,8 @@ int main()
     testTheFourDrumsAreFourInstruments();
     testTheFourStrokesAreMutuallyDistinct();
     testTheCavityIsAColumnNotAnInfiniteSpring();
+    testTheEnclosedAirIsLosslessOnlyWhereThatIsInaudible();
+    testTheContactPatchWouldNotBeAudibleOnTheResolvedBank();
     testTheDrumIsTunedByThePitchItSounds();
     testTheFourDrumsStepInHeardOctaves();
     testThePitchTransformIsContinuousUnderAutomation();
