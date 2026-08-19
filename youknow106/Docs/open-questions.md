@@ -5127,6 +5127,19 @@ question stays open.
   and is a different, much larger, DC mechanism. Neither may be routed to DCO
   pitch, which is an integer division of a crystal-derived clock.
 
+  **Why the cutoff path is small enough, stated in the units that matter
+  (2026-08-19).** The 0.03 cents above assumes some supply rejection on the CV
+  amplifier. It does not need to: the anchored divider puts 714 mV per octave at
+  the hold node, so even routing the full rail ripple onto the CV with **no
+  rejection at all** gives 0.92 cents at the derived 379 µV, or 1.82 cents at
+  the guardrail's 50 ppm figure. Both are inaudible *as cutoff*, which is the
+  whole point -- the ear resolves a cent of pitch and nothing like a cent of
+  cutoff, cutoff being a broad spectral feature on a shallow slope. This is also
+  why the sentence below forbidding a route to DCO pitch is the load-bearing
+  half of the guardrail: at pitch the same microvolts would be audible vibrato,
+  and the only thing preventing it is that pitch is integer division of a
+  crystal-derived clock and structurally cannot receive them.
+
   **The additive path is now covered too (2026-08-19).** The best-in-class
   comparison recorded that this derivation reached only the cutoff-modulation
   path and not the additive one, which left an acknowledged hole a competitor
