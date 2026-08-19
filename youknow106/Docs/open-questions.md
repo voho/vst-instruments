@@ -1535,9 +1535,26 @@ same claims are not re-litigated.
   which weighs directly against the companion claim that a performer moved
   A64's SUB slider before capture. Taken with the hashed bank giving A64 sub
   byte 64, the balance of what is checkable currently supports leaving the
-  coordinate where it is. What would still settle it is a direct read of
-  synthmania's own description of its recording chain, specifically for the
-  Juno-106 files.
+  coordinate where it is.
+
+  **Closed 2026-08-19: the claim has no source.** The submission was supplied a
+  second time as its original page, which was read in full. It contains no
+  synthmania URL and no external citation of any kind -- every link in it is
+  the host application's own infrastructure -- and its four `[cite: N]` markers
+  reference nothing present in the document. The outboard-EQ/M300 assertion is
+  therefore unsourced, and so is the companion claim that a performer moved
+  A64's SUB slider. Neither can be checked because there is nothing behind them
+  to check. Combined with the hashed bank giving A64 sub byte 64, with a search
+  pass finding no corroboration for the M300 anywhere, and with the same
+  document carrying three claims that contradict settled items here, the case
+  for reverting `subMixVolts` does not stand up. The coordinate stays at 2.0.
+
+  This does not make the coordinate anchored, and nothing above should be read
+  that way. It stays **voiced**, the ~10 dB it takes beyond what circuit
+  analysis supports stays recorded as unexplained, and the measured
+  source-to-VCF budget this task asks for is still what would replace it. What
+  changed is only that a specific challenge to the evidence was chased to
+  ground and found to have nothing behind it.
 - **"Sub is 1.0 Vpp at pin 1 (+/-0.5 V) at full" — internally inconsistent.**
   Against the anchored 68 k/560 attenuator the pair's linear span referred to
   that node is +/-6.37 V, so +/-0.5 V is 7.9% of it and cannot produce the
