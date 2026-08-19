@@ -1500,6 +1500,55 @@ measurement this task asks for and nothing else substitutes for -- or the A64
 reference recording is not the stock patch it is being read as. Until one of
 those closes, the shipped coordinate stays voiced and this question stays open.
 
+**2026-08-19, second research submission — adjudicated, nothing promoted.**
+A findings document was supplied answering the five questions this pass raised.
+It is mixed: two answers corroborate existing derivations, one is contradicted
+by a hashed artefact in this tree, one is internally inconsistent, and one
+conflicts with three settled items. None of it moves a constant. Recorded so the
+same claims are not re-litigated.
+
+- **"Factory A64 has SUB = 0" — contradicted here.** The repo's decoded bank
+  gives A64 as `52 27 0 0 91 94 11 17 0 0 101 0 25 0 30 64 34 17`: noise byte
+  91, sub byte **64**. That payload is 2,304 bytes, SHA-256 recorded in
+  README.md, checksum-verified and mechanically decoded with zero mismatches.
+  The submission also quotes A64 parameters on a 0-255 scale ("Resonance 220",
+  "Noise 255") which the hardware's 7-bit tone memory cannot represent, so it is
+  unlikely to be reading the tone bytes at all. The sub-slider-at-zero claim is
+  **rejected**; the bank stands.
+- **Outboard processing on the reference archive — the one claim that would
+  change the answer, and it is not settled here.** The same submission states
+  that synthmania applies external EQ and a TC Electronic M300 across its
+  archive. If true it does not need the SUB-zero claim to matter: a 13 dB
+  judgement about the balance of two sources inside those files would not be
+  safe, and the re-voicing above rests on them. This is now the live question
+  against `subMixVolts`, ahead of anything circuit-side. It is recorded, not
+  acted on, because the submission cites no page for it.
+- **"Sub is 1.0 Vpp at pin 1 (+/-0.5 V) at full" — internally inconsistent.**
+  Against the anchored 68 k/560 attenuator the pair's linear span referred to
+  that node is +/-6.37 V, so +/-0.5 V is 7.9% of it and cannot produce the
+  "third-harmonic clipping" the same paragraph says it is sized to prevent. It
+  would also place the sub 21.6 dB under the service-anchored saw at full, which
+  is not what the instrument does. No saw or noise figure at the same node is
+  given, so it does not close this task's budget either way.
+- **8253 Mode 3, control word 0x36 — corroborates the OQ-08 lead.** 0x36 decodes
+  exactly as stated (SC 00, RL 11, M 011, BCD 0) and matches the reload-at-
+  terminal-count semantics filed under OQ-08 on this date from the datasheet
+  side. Still a lead: no image offset or capture is cited, and this project's
+  own disassembly source self-describes as partial and unofficial.
+- **TP4 at 20 Vpp — corroborates OQ-01's derivation.** The tree derives the
+  triangle as `beta * V_sat` with `beta = 33/47`, which puts it at 18.3-19.7 Vpp
+  for a 13-14 V saturated swing. An independent 20 Vpp reading lands inside that
+  within a volt. The reported 48/52 rise/fall split is the same asymmetry OQ-01
+  gained as a lead on this date, at four times the size that a 2% rail imbalance
+  predicts.
+- **Three claims in the same section conflict with settled items** and are
+  rejected: TP3 described as "analog ground reference" (this tree has TP3
+  carrying the *inverted* triangle for the second line), a chorus mode-rate
+  ratio of 2.00 (anchored here at 1.6234799 from the T-network), and Chorus I
+  and II summing when engaged together (a settled guardrail: the board has one
+  enable and one binary mode line, and both-buttons canonicalises to II). Their
+  presence is why nothing else in the document was promoted on its own word.
+
 ### Needed output (for LLM)
 
 - A designator-level signal path and impedance/gain budget for saw, pulse, sub
