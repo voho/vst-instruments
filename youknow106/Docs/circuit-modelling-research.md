@@ -34,6 +34,47 @@ Every constant below is one of:
 - **product policy** — an explicit plug-in choice, not a hardware claim; or
 - **voiced** — chosen inside a range the sources bound but do not fix.
 
+## How these claims go stale
+
+Six checks, each earned by finding the failure it describes in this tree rather
+than by imagining it. A pass that reopens any recorded decision should run them
+before re-deriving anything, because in every case below the tree already held
+the answer and was not saying so.
+
+1. **A blocker that names a missing value — check whether a later pass supplied
+   it.** Entry 14 declined to size CD4051 charge injection because "neither the
+   hold capacitance nor the mux on-resistance is established"; OQ-07's
+   designator read had put all 23 holds at 0.01 µF a year of entries earlier,
+   and nothing propagated it back.
+2. **A number reported as inert — check whether it measured the physics or the
+   implementation.** Entries 14 and 22 both read −360 dBc, and in both cases
+   that measured a write into a field the next converter write overwrote, not a
+   mechanism that is small. Entry 22 was correctly reinstated once someone
+   noticed; entry 14 kept the number as though it were evidence.
+3. **A rejection stated as "small" — restate it in the unit that decides
+   audibility.** Mains ripple reaching cutoff is about a cent, and a cent of
+   *cutoff* is nothing while a cent of *pitch* is audible vibrato. Written as
+   "small" the guardrail looks like a magnitude argument; the load-bearing half
+   is actually its ban on routing ripple to pitch, which only survives because
+   pitch is integer division of a crystal-derived clock.
+4. **An entry describing code — check the code still exists.** The queue carried
+   "stateful-formulation ADAA in the cascade" as open work against a
+   divided-difference solver that Step 10 had deleted outright.
+5. **Arithmetic inside a comment — check it against the equation beside it.**
+   The upper-knee comment stated 8.9 MHz before the divider and 64 kHz after,
+   a ratio of 139 where the divider it names is 122.43; the figure was the
+   270 pF answer carried against the 240 pF the same sentence claims.
+6. **A recording is not a witness to a stored patch on any control the player
+   can touch.** The JUNO-106's sliders are not motorised: a stored byte holds
+   only until the physical control moves. A reference capture can therefore
+   differ from the patch it is named after on any panel parameter, which is what
+   sank a mixer re-voicing fitted to one.
+
+The common shape is that a claim was true when written and nothing re-checked it
+against what the tree learned afterwards. Dated entries are the right convention
+and should stay; what they need is that a pass touching a question re-reads the
+entries that question owns, rather than only the row that summarises it.
+
 Where a law is fitted through *behavioural* anchors of a firmware table — the
 times or rates the table produces at stated slider positions — rather than
 through the table's entries, the row says so. No table data is copied; the
