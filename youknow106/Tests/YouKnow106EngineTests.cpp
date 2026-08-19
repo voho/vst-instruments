@@ -4057,15 +4057,26 @@ void testFixedOutputBoundaryCorpus()
         // still has a subject -- the coupling high-pass overshoots the
         // steady-state ceiling on that stacked low note, which is why the
         // ceiling is documented as a bound and not as a guarantee.
-        Baseline { 0.0970109, 0.197019, 0.199779, 0, 0 },
-        Baseline { 0.248126, 0.703106, 0.706815, 0, 0 },
-        Baseline { 0.532455, 1.0161, 1.01754, 90, 362 },
+        // Re-pinned 2026-08-19 for the sub mixer coordinate moving 5.0 -> 2.0
+        // against the factory-bank comparison (OQ-15), and for the headroom
+        // probe below being rebuilt to cross the rail with margin rather than
+        // on 2 samples. As with every re-pin above, this records an intentional
+        // level change; the fixtures, window and four-percent guards are
+        // unchanged and the product boundary is not relaxed.
+        //
+        // The self-oscillation row is the control and it does not move at all:
+        // that fixture runs `subLevel = 0`, so a sub coordinate cannot reach
+        // it. Every row that does move carries sub, which is the check that
+        // this re-pin records the change that was actually made.
+        Baseline { 0.0936581, 0.178013, 0.180501, 0, 0 },
+        Baseline { 0.255813, 0.744713, 0.749102, 0, 0 },
+        Baseline { 0.510594, 1.05372, 1.05543, 200, 800 },
         // Raised when the resonance profile was re-solved against Roland's own
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
         Baseline { 0.0454893, 0.0645766, 0.0645766, 0, 0 },
-        Baseline { 0.173119, 0.367097, 0.369059, 0, 0 },
-        Baseline { 0.11314, 0.352057, 0.352057, 0, 0 },
+        Baseline { 0.172211, 0.359811, 0.362189, 0, 0 },
+        Baseline { 0.105279, 0.311392, 0.311392, 0, 0 },
     };
 
     constexpr double sampleRate = 48000.0;
@@ -4098,6 +4109,17 @@ void testFixedOutputBoundaryCorpus()
             parameters.keyMode = KeyMode::Unison;
             // This low-register, unnormalised six-card stack is the deliberate
             // headroom probe: it must cross full scale without a hidden rail.
+            //
+            // It carries its own sub and note because it is the only fixture
+            // whose job is to reach the rail, and the corpus-wide 0.50 sub at
+            // MIDI 36 no longer does. It never had much margin -- it crossed
+            // on 2 samples of 8192 -- so the 2026-08-19 sub re-voicing (OQ-15)
+            // tipped it under and the whole rail characterisation went dark
+            // with it. Full sub at MIDI 24 crosses on 190 samples instead,
+            // which is the margin this probe should have had all along. What
+            // it proves is unchanged: the bound the corpus meets is the soft
+            // analogue rail, never a clamp.
+            parameters.subLevel = 1.0f;
         }
         else if (fixture.playing == Playing::SelfOscillation)
         {
@@ -4113,7 +4135,7 @@ void testFixedOutputBoundaryCorpus()
             for (const int note : { 36, 43, 48, 52, 55, 60 })
                 engine.noteOn(note, 1.0f);
         else
-            engine.noteOn(fixture.playing == Playing::SoloUnison ? 36 : 60, 1.0f);
+            engine.noteOn(fixture.playing == Playing::SoloUnison ? 24 : 60, 1.0f);
 
         const int warmupSamples = fixture.playing == Playing::SelfOscillation
                                 ? 96000 : 24000;

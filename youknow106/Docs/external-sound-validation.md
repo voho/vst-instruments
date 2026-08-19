@@ -330,3 +330,16 @@ program material.
 No engine constant, preset byte or audit gate changed as a result of this
 pass. The comparison tooling was deliberately kept out of the product tree;
 this record plus the cited public sources suffice to reproduce it.
+
+**Superseded in part, 2026-08-19.** That paragraph describes this pass only, and
+its restraint stood on a judgement rather than on a rule: `subMixVolts` has
+always been a **voiced** coordinate -- "chosen inside a range the sources bound
+but do not fix" -- so retuning it never required an exemption from the research
+contract, only that the result stay labelled voiced, which it does. On the
+owner's decision that real-unit recordings are the most valuable reference
+available and that a factory-preset discrepancy should be acted on,
+`subMixVolts` moved 5.0 -> 2.0, taking 7.96 dB of A64's 10.10 dB inversion and
+leaving it at -2.26 dB. The isolated measurement behind it, the measured
+bank-wide cost, and the part of the A65/A66 residual that is *not* this
+constant's are recorded under OQ-15 in [open-questions.md](open-questions.md).
+Every other adjudication in this pass is unaffected.

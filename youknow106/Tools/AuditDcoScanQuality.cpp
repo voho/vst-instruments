@@ -392,8 +392,13 @@ std::complex<double> analyticCoefficient(Access::Waveform waveform,
             if (harmonic % 2 == 0)
                 return {};
             // In sub-period coordinates, the divider is high from 0 to
-            // rise/2 and from (1+rise)/2 to 1.  Its two levels are +/-5 V.
-            return 10.0
+            // rise/2 and from (1+rise)/2 to 1.  Its two levels are +/-2 V
+            // (+/-5 V until 2026-08-19, when the sub mixer coordinate was
+            // re-voiced against the factory-bank comparison -- see OQ-15).
+            // This reference states the source amplitude independently of the
+            // engine on purpose, which is why it caught that change at
+            // 7.96 dB; it has to be moved deliberately alongside it.
+            return 4.0
                  * (1.0 - std::polar(1.0, -omega * rise * 0.5)
                     + std::polar(1.0, -omega * (1.0 + rise) * 0.5)
                     - std::polar(1.0, -omega)) / jOmega;

@@ -4,6 +4,11 @@ Notable customer-facing changes to YouKnow106 are recorded here.
 
 ## 1.1.0 - Unreleased
 
+- Rebalanced the sub oscillator against the noise source in the voice mixer.
+  Noise-forward programs — snare, toms, timpani and other percussive patches —
+  now let the noise through with the bite the hardware reference recordings
+  show, instead of sitting behind the sub octave. Patches that feature the sub
+  heavily are correspondingly quieter and may want their SUB slider raised.
 - Added a universal macOS 11+ VST3, Audio Unit, and Standalone distribution.
 - Added a three-level 1x/2x/4x QUALITY control with fixed reported latency;
   new instances default to the balanced 2x mode.

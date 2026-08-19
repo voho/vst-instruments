@@ -1315,7 +1315,8 @@ filter core. Service Notes p. 9 documents saw and pulse near 12 Vpp and the sub
 collector-supply amplitude mechanism; p. 19 adjusts shared noise to 4.0 Vpp at
 TP8. These are node-specific Vpp anchors, not RMS values or an end-to-end gain
 budget. The implementation currently uses peaks of 6.0 V saw, 6.0 V pulse,
-5.0 V sub and 7.4161 V noise, then a `0.40` filter-input scale. The noise figure
+2.0 V sub (5.0 until 2026-08-19) and 7.4161 V noise, then a `0.40` filter-input
+scale. The noise figure
 looks out of family only because it is the one coordinate applied *before* a
 shaping stage: it delivers +/-2 V at the shaped rail, which is where the TP8
 adjustment measures, having lost 11.383 dB to the C41/R79 pole on the way (see
@@ -1334,7 +1335,7 @@ and complete node-to-node transfer are not explicitly anchored. A centered
 `+/-6 V` source is compatible with a 12 Vpp reading only at the same stated
 node; it does not prove the later numerical coordinate. TP8 is downstream, so
 its 4.0 Vpp noise adjustment cannot directly establish a `+/-2 V` pre-filter
-noise amplitude or distribution. Treat `+/-5 V` sub, `+/-2 V` noise and `0.40`
+noise amplitude or distribution. Treat the sub coordinate, `+/-2 V` noise and `0.40`
 as voiced compatibility values. This task must not compare voltages from
 different nodes as though they were interchangeable.
 
@@ -1388,10 +1389,102 @@ take and the corpus-wide chain tilt is only −8.2 dB median. A65 shows the
 same signature, A66 a milder one behind its more closed filter, and the
 sub-only A83 passes clean, which points the residual at the unanchored
 `subMixVolts = 5.0` rather than the ±~4 dB-anchored noise leg. The direction
-is solid; the magnitude inherits the recording chain's uncertainty, so no
-coordinate is retuned from it. The measured source-to-VCF budget this task
-already demands would decide it; any future fit must also re-check the
-noise-forward set A64/A65/A66/A67/A86 as a family.
+is solid; the magnitude inherits the recording chain's uncertainty.
+
+**2026-08-19 — `subMixVolts` re-voiced 5.0 -> 2.0 on the owner's decision to act
+on real-unit factory-preset discrepancies. OQ-15 stays open.**
+
+The pass above recorded the contradiction and retuned nothing. That was a
+judgement call rather than something this contract compelled: `subMixVolts` has
+always been labelled **voiced** -- "chosen inside a range the sources bound but
+do not fix" -- so changing it never required an exemption. What the contract
+forbids is *promoting* such a number to anchored or measured, and nothing here
+does that. It remains voiced, and this task's measured budget is still what
+would settle it.
+
+What the change rests on, measured on the shipping engine rather than inferred:
+
+- With both legs at full slider, no saw or pulse, a flat envelope and the filter
+  wide open, the noise leg rendered **13.3 dB below** the sub leg. The figure
+  moves less than 0.1 dB across MIDI 36/48/60 and under 1 dB from cutoff 1.00 to
+  0.85, so it is the mix constants and not a patch or filter artefact. This is
+  the "off by more than triple that band" figure above, now measured directly.
+- At A64's own slider values the model rendered noise **10.10 dB** under sub,
+  reproducing the 9.7-10.8 dB this task already recorded.
+
+The correction goes on the sub leg because it is the coordinate with no
+end-to-end anchor, while the noise leg is tied to the 4 Vpp TP8 adjustment
+within about 4 dB *and* is derived (`2.0 / sqrt(0.0727330)`) rather than chosen.
+Closing the gap from the noise side would break an anchor to fix an unanchored
+number.
+
+2.0 takes 7.96 dB of the 10.10, leaving A64 at **-2.26 dB** -- balanced within
+the corpus's own 8.2 dB median chain tilt, and deliberately short of the full
+inversion the recording implies, because the magnitude inherits an undocumented
+MP3 chain's uncertainty even though the direction does not.
+
+Bank cost, measured rather than assumed, as the level change on each program:
+
+| program | sub byte | change |
+| --- | --- | --- |
+| A83 Drum Booms (1 oct. down) | 46 | **-7.80 dB** |
+| A12 Brass Swell | 70 | -1.40 dB |
+| A21 Organ I | 23 | -0.16 dB |
+| A11 Brass Set 1, B11 Strings | 0 | none |
+
+Most of the bank is untouched: a program either has `sub = 0` or has its sub
+masked by saw and pulse. A83 is a sub-feature patch and takes the whole cost.
+
+**What this does not fix, and why it is not this constant's to fix.** A65 Tom
+Toms and A66 Timpani remain sub-dominant afterwards at -9.19 and -7.07 dB. No
+single scalar here reconciles the family: A64 needs 0.30x, A66 0.18x and A65
+0.10x. Both run much more closed filters than A64, which attenuates the
+broadband noise leg far more than the low sub -- the same reading this queue
+already gave A66. Their residual is a filter-and-level interaction and stays
+open here. A67 Shaker and A86 Hand Claps carry `sub = 0` and cannot constrain
+this coordinate at all, so the "re-check as a family" instruction above is
+narrower than it looked: only A64/A65/A66 have both legs.
+
+**2026-08-19, same pass — a supplied circuit study does not account for the
+gap, and that is the useful part of it.** A grounded research note was reviewed
+against this queue. Its topology agrees with the 2026-08-07 designator read and
+adds nothing this task disputes: sub through R101/R97 27 kOhm behind D5/D6 with
+the R99/R102 33 kOhm bridge, noise through R98/R103 39 kOhm, both into the
+module's 68 kOhm input, C56/C50 coupling, the 33.86 Hz and 4822.88 Hz noise
+corners, and the 4 Vpp TP8 adjustment. Its conclusion, that modelling those legs
+plus `subMixVolts = 3.5` "perfectly restores the balance on A64, A65, A66 and
+A67", does not follow from its own numbers:
+
+| mechanism it proposes | effect on the noise-versus-sub balance |
+| --- | --- |
+| per-leg dividers, sub 68/(68+27) vs noise 68/(68+39) | **+1.03 dB the wrong way** |
+| the same with its 27k\|\|33k conducting-half reading | **+2.22 dB the wrong way** |
+| `subMixVolts` 5.0 -> 3.5 | -3.10 dB |
+| unipolar diode law at A64's sub byte 64 | -1.10 dB |
+| **net** | **about -3.2 dB, leaving A64 near -7 dB** |
+
+The sub leg has the *lower* series resistance, so its own per-leg dividers make
+the sub relatively louder and widen the discrepancy they were offered to close.
+
+Two things follow. First, the per-leg dividers are **not** implemented, and not
+only because they point the wrong way: computing them needs the WAVE output's
+source impedance, which is precisely what this task lists as unresolved. The
+study assumes the node is terminated by the 68 kOhm module input alone; a WAVE
+output with low source impedance loads that node and moves every divider. This
+is the error class the tree already committed once, when a revision modelled
+four switchable 100 kOhm legs against the module's 68 kOhm and took a phantom
+1.76 dB from every patch with both waveforms on.
+
+Second, and more usefully: **no circuit mechanism yet identified accounts for
+the measured 13.3 dB.** Everything on the table above reaches about 3 dB. That
+bears directly on the `subMixVolts = 2.0` shipped above, which is a fit to the
+recording and not a derived value -- roughly 10 dB of the gap has no circuit
+explanation at all. Either the magnitude the undocumented MP3 chain implies is
+overstated, or the cause is somewhere this task has not looked. The strongest
+remaining candidate is the noise generator's amplitude distribution and crest
+convention, which **OQ-16 already owns** and which the shipped bounded-uniform
+source only voices. Until one of those closes, the shipped coordinate stays
+voiced and this question stays open.
 
 ### Needed output (for LLM)
 
