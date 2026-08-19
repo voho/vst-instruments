@@ -1520,9 +1520,24 @@ same claims are not re-litigated.
   that synthmania applies external EQ and a TC Electronic M300 across its
   archive. If true it does not need the SUB-zero claim to matter: a 13 dB
   judgement about the balance of two sources inside those files would not be
-  safe, and the re-voicing above rests on them. This is now the live question
+  safe, and the re-voicing above rests on them. This is the live question
   against `subMixVolts`, ahead of anything circuit-side. It is recorded, not
   acted on, because the submission cites no page for it.
+
+  **Attempted 2026-08-19, not settled.** The source could not be reached from
+  the environment this was written in (outbound access limited to package
+  registries), so synthmania's own pages were not read. A search pass found no
+  corroboration for the M300 or outboard-EQ claim anywhere. It did surface two
+  things pointing the other way, both at snippet strength and neither anchored:
+  that the site's demo methodology presents material dry and then wet, where
+  wet appears to mean the instrument's *own* chorus rather than outboard
+  processing; and that its factory-preset material uses only factory patches,
+  which weighs directly against the companion claim that a performer moved
+  A64's SUB slider before capture. Taken with the hashed bank giving A64 sub
+  byte 64, the balance of what is checkable currently supports leaving the
+  coordinate where it is. What would still settle it is a direct read of
+  synthmania's own description of its recording chain, specifically for the
+  Juno-106 files.
 - **"Sub is 1.0 Vpp at pin 1 (+/-0.5 V) at full" — internally inconsistent.**
   Against the anchored 68 k/560 attenuator the pair's linear span referred to
   that node is +/-6.37 V, so +/-0.5 V is 7.9% of it and cannot produce the
