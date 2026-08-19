@@ -947,6 +947,54 @@ first gain at 69/191/314; the fixed numerical host report remains 41 samples.
 Neither coordinate identifies an original-unit timestamp or audible latency.
 OQ-08 remains open at P1.
 
+**2026-08-19 lead — what an 8253 write forces, and the unison comb it implies.**
+This question already asks what the 8253 write and surrounding DCO circuitry
+actually force, and at which edge. A mechanism answer is available from the part
+rather than from the instrument, and it points away from the model's current
+choice.
+
+An Intel 8253/8254 counter in either periodic mode does **not** restart on the
+write. In Mode 2 and Mode 3 a count written while the counter is running leaves
+the counting sequence in progress alone; the new value is taken from the buffer
+register at the end of that cycle — the counter's own terminal count — and only
+the following period has the new length. Mode 0 is the contrasting case, where
+the write does disturb the count in progress. If the 106 programs its note
+timers in a periodic mode, then a changed-pitch write cannot force a ramp reset
+*at the write*, and the reset edge is each channel's own next terminal count:
+six edges scattered by whatever the six counters had left to run, not six edges
+laid out on the converter's write grid.
+
+`restartDcoBandlimited` currently does the opposite. It zeroes `dco.phase` and
+forces the comparator and sub-divider states at the instant of that voice's
+Pitch write, and `converterEventPhases` places those writes on a uniform
+`ordinal/23` grid at consecutive ordinals 3–8. A six-voice Solo Unison restart
+therefore lays six identical ramps down at 4.2 ms / 23 = 182.6 µs spacing, and
+because all six divide the same reference by the same integer those offsets
+never decay: the stack sums as a fixed six-tap comb whose first null sits at
+1 / (6 × 182.6 µs) = 913 Hz and stands for as long as the note is held. The
+restart is only reached on a pitch change to a card that is not already running
+(`initialiseVoice`), so held repeats and legato already keep the free-running
+behaviour the claims boundary describes; it is the changed-pitch case that is
+at issue.
+
+Why nothing moves yet. The reload-at-terminal-count behaviour is reported
+consistently by secondary restatements of the Intel datasheet, but the datasheet
+itself could not be retrieved in the environment this note was written in, so it
+is recorded as a **lead** rather than as the component-datasheet anchor the
+taxonomy would otherwise allow. More decisively, **which mode the 106 programs
+is not established** — neither the service notes nor the A-5/B-2 images in hand
+have been read for the timer control word — and the mechanism only bites in the
+periodic modes. Nor is it settled that the 8253 output edge resets the ramp
+integrator rather than merely clocking it. Acting now would replace one
+unmeasured restart law with another, so the uniform grid stands.
+
+What would settle it: the control word the firmware writes to the timer, which
+a read of the initialization path in the supplied B-2 image would give; and a
+capture of two or more cards' ramp outputs across a changed-pitch write, showing
+whether the resets land on the converter's write spacing or on the counters'
+residual counts. The second also answers whether the 913 Hz comb above exists on
+hardware, which is the audible half of this question.
+
 ### Needed output (for LLM)
 
 - A timestamped scan timeline covering a complete pass: LFO/envelope
@@ -1542,6 +1590,37 @@ now bends toward that asymptote with a single fitted exponent. The 50 kHz cap
 remains, and now binds only at and above the top of the slider. What this task
 still wants is a Roland-published or independently reproduced curve to replace
 the one third-party table that exponent was fitted to.
+
+**2026-08-19 — the 64 kHz asymptote does not follow from 700 µA on 240 pF.**
+The paragraph above, the shipping comment and the step record all state the knee
+as "700 µA … a pole near 64 kHz on this circuit's own 240 pF / 68 kΩ". That
+arithmetic does not close. In the coordinate the cascade is actually solved in —
+`wc = Ig · stageAttenuation / (2 Vt C)`, equivalently `Ig / (C H)` with
+`H = 2 Vt / stageAttenuation = 6.3663 V` — 700 µA on 240 pF is **72.9 kHz**. The
+same 700 µA is quoted as 8.9 MHz ahead of the 560/68560 divider, and
+8.9 MHz × 0.00816803 = 72.9 kHz; the two figures were carried side by side in a
+ratio of 139 where that divider is 122.43.
+
+64 kHz is instead what the same equation returns on **270 pF** (64.8 kHz) — the
+Open80017a integrator value this queue records as a contradiction against the
+service circuit's 240 pF — or what **614 µA** returns on 240 pF. Which of those
+produced the number is not recorded anywhere in tree.
+
+Two consequences. First, `vcfControlSaturationHz` is reclassified from derived
+to **voiced**, bracketed by 64.8 and 72.9 kHz, and the shipping comment now says
+so. It is **not** retuned: the exponent was fitted to the measured
+code-to-frequency curve with this ceiling already standing, so the pair moves
+together or not at all, and the 248 Hz self-oscillation anchor pins absolute
+cutoff either way. Second, the 240-versus-270 pF item in the best-in-class queue
+said the 270 pF reading "moves the derived 64 kHz upper knee to roughly 57 kHz";
+that scaled a figure which was already the 270 pF answer, double-counting the
+capacitance. Corrected there.
+
+This sharpens the 40 kHz disagreement rather than softening it: the project's own
+derivation, done correctly on its own shipped capacitance, sits at 72.9 kHz —
+further from KR-106's 40 kHz ceiling, not nearer. Nothing here promotes either
+figure. A Roland-published or independently reproduced high-code curve remains
+what this task wants.
 
 ### Needed output (for LLM)
 

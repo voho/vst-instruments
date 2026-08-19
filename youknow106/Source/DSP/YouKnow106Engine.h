@@ -382,9 +382,28 @@ public:
 
     // Where the transconductor's own control current stops following the
     // anti-log converter. An AS3109 teardown reports the internal control
-    // current saturating at 700 uA, which is a pole near 64 kHz on this
-    // circuit's C = 240 pF / R = 68 kOhm test condition -- the physical origin
-    // of the upper knee, and consistent with Roland's published 50 kHz top.
+    // current saturating at 700 uA -- the physical origin of the upper knee,
+    // and consistent with Roland's published 50 kHz top.
+    //
+    // That current does not by itself produce the figure below, and this
+    // comment used to say it did. On the C = 240 pF the cascade above solves
+    // with, and the H = 6.37 V span it solves in, Ig / (2 pi C H) is
+    // 72.9 kHz. The same 700 uA the cascade comment reads as 8.9 MHz ahead of
+    // the 560/68560 divider lands at 8.9 MHz * 0.0081680 = 72.9 kHz behind it;
+    // the two figures carried here stood in a ratio of 139 where that divider
+    // is 122.43. 64 kHz is instead what the same equation returns on 270 pF --
+    // the Open80017a reconstruction's integrator value, not the service
+    // circuit's -- or what 614 uA returns on 240 pF. Which of those the number
+    // came from is not recorded.
+    //
+    // The constant is deliberately NOT changed here. The exponent below was
+    // fitted to a measured code-to-frequency curve with this ceiling already
+    // standing, so the pair moves together or not at all, and the 248 Hz
+    // self-oscillation anchor pins absolute cutoff either way. What changes is
+    // its classification: voiced, bracketed by 64.8 kHz (270 pF) and 72.9 kHz
+    // (240 pF), no longer presented as derived from 700 uA on 240 pF.
+    // Refitting the pair belongs to OQ-18, beside the 240-vs-270 pF
+    // integrator question it shares a cause with.
     //
     // The shape is the generalized algebraic clip above, shared with the
     // output summer and the BBD write: numerically linear through the whole
@@ -748,7 +767,9 @@ private:
     // the pair's linear span referred to the node and the coordinate the
     // solver actually runs in. Dropping the divider here states a pole 122x
     // too high -- it would put the 700 uA saturation at 8.9 MHz instead of the
-    // 64 kHz asserted against vcfControlSaturationHz below. The suites solve
+    // 72.9 kHz that divider actually leaves. (The shipped
+    // vcfControlSaturationHz is 64 kHz, which is *not* that figure; see its
+    // own comment for why the constant nonetheless stands.) The suites solve
     // the same ODE.
     static constexpr float thermalVoltage = 0.026f;
     static constexpr float poleCapacitorFarads = 240.0e-12f;

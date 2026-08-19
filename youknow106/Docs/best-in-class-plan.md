@@ -551,17 +551,23 @@ where this pass will file them:
    alongside the same 560 Ω and 68 kΩ values the model does use. The engine
    hard-codes `poleCapacitorFarads = 240.0e-12f` from the service circuit.
    That is a 12.5% first-order disagreement — about two semitones of cutoff
-   scale — and it moves the derived "240 pF / 68 kΩ" 64 kHz upper knee to
-   roughly 57 kHz. The 248 Hz self-oscillation anchor pins absolute cutoff
+   scale. It does *not* move a "derived 240 pF / 68 kΩ 64 kHz upper knee" to
+   roughly 57 kHz, as this line said until 2026-08-19: 700 µA is 72.9 kHz on
+   240 pF and 64.8 kHz on 270 pF, so the shipped 64 kHz was already the 270 pF
+   answer and rescaling it by 240/270 double-counted the capacitance. The two
+   readings bracket the shipped constant rather than straddling it (OQ-18).
+   The 248 Hz self-oscillation anchor pins absolute cutoff
    either way, so nothing audible has to move; what the project's discipline
    requires is that the 240 pF figure stop being carried as unqualified
    "anchored" (OQ-18).
 2. **40 kHz versus 64 kHz expo-converter ceiling.** KR-106 v2.3.1 places the
    IR3109 exponential converter's tanh saturation at a 40 kHz ceiling; this
-   project places the top of the cutoff law at ~64 kHz. The two disagree by
-   most of an octave on where the sweep stops opening, in the same direction as
-   the 270 pF finding and in the same region as the unresolved upper-mid
-   darkness lead (OQ-18).
+   project ships the top of the cutoff law at ~64 kHz, and its own equation on
+   its own 240 pF gives 72.9 kHz. The disagreement is therefore more than an
+   octave against the derivation and about two-thirds of one against the
+   shipped constant — and the 2026-08-19 arithmetic correction moved it away
+   from KR-106, not toward it. Same region as the unresolved upper-mid darkness
+   lead (OQ-18).
 3. **KR-106 zeroed its VCF input compensation.** v2.5.12: "VCF input
    compression disabled (kInputCompressAmount = 0)", reversing its own v2.4.12
    "VCF InputComp and output gain recalibrated from hardware recordings". The
