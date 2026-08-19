@@ -558,8 +558,13 @@ where this pass will file them:
    readings bracket the shipped constant rather than straddling it (OQ-18).
    The 248 Hz self-oscillation anchor pins absolute cutoff
    either way, so nothing audible has to move; what the project's discipline
-   requires is that the 240 pF figure stop being carried as unqualified
-   "anchored" (OQ-18).
+   required is that the 240 pF figure stop being carried as unqualified
+   "anchored" (OQ-18). **Paid 2026-08-19**: the research contract's filter-core
+   row now carries the integrator as voiced pending OQ-18 rather than inside its
+   anchored component values, the README fidelity ledger no longer lists it
+   among the hardware-fixed figures, and the comparative assessment's knee entry
+   is qualified with both bracket values. The capacitance question itself stays
+   open.
 2. **40 kHz versus 64 kHz expo-converter ceiling.** KR-106 v2.3.1 places the
    IR3109 exponential converter's tanh saturation at a 40 kHz ceiling; this
    project ships the top of the cutoff law at ~64 kHz, and its own equation on

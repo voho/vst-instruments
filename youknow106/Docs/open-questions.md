@@ -2383,9 +2383,11 @@ expo scale of **−19 mV/octave typ** (−17.5 … −20.5); a measured teardown
 IR3109 reports −290 dB/V, i.e. **20.8 mV/octave**, bracketing it.
 
 Critically, the same teardown reports the control current **saturates internally at
-700 µA**. That corresponds to a pole near **64 kHz** — which is the physical origin
-of the upper knee OQ-18 asks about, and it is consistent with Roland's published
-50 kHz top. The knee is OTA current saturation, not an arbitrary cap. A replacement
+700 µA**. That is the physical origin of the upper knee OQ-18 asks about, and it
+is consistent with Roland's published 50 kHz top. This paragraph originally put
+the corresponding pole "near **64 kHz**"; corrected 2026-08-19 above — 700 µA is
+72.9 kHz on the shipped 240 pF and 64.8 kHz on the reconstruction's 270 pF, and
+the shipped 64 kHz ceiling is voiced between them. The knee is OTA current saturation, not an arbitrary cap. A replacement
 for the single-pole `R_e` compression should be shaped by that saturation.
 
 Also confirmed: **the 560 Ω is internal to the IR3109**, so the model's
@@ -2594,7 +2596,9 @@ The ADJUSTMENT table's own numbers, taken seriously for the first time.
   replaced by the transconductor's own control-current saturation, using the
   generalized algebraic clip already used twice elsewhere in the engine, with
   the asymptote taken from the AS3109 teardown's 700 µA internal saturation
-  (a 64 kHz pole on this circuit's 240 pF / 68 kΩ) and only the exponent fitted
+  (stated then as a 64 kHz pole on this circuit's 240 pF / 68 kΩ; that
+  attribution is corrected under OQ-18 above, 2026-08-19 — 700 µA on 240 pF is
+  72.9 kHz, and 64 kHz is the 270 pF answer) and only the exponent fitted
   to the measured card. The base and slope are **not** refitted: they are pinned
   by Roland's own 248 Hz calibration anchor, and the search's own conclusion was
   that the exponential law and 1143 counts/octave are sound.
@@ -4691,6 +4695,19 @@ figure and OQ-16's capture.
 Net: OQ-08 and OQ-01 gain one recorded lead each, OQ-18 and the best-in-class
 queue gain one arithmetic correction each, and `vcfControlSaturationHz` is
 reclassified from derived to voiced without moving. No question closed.
+
+**Classification sweep, same date.** The OQ-18 correction exposed a claim the
+best-in-class queue had already flagged as owed: the 240 pF integrator was being
+carried as an unqualified anchor while a reconstruction lineage reads 270 pF in
+the same position. Three places now say otherwise — the research contract's
+filter-core row (component values anchored *except* the integrator, voiced
+pending OQ-18), the README fidelity ledger (no longer among the hardware-fixed
+figures, and the knee's 64 kHz ceiling stated as voiced between 64.8 and
+72.9 kHz), and the comparative assessment's knee entry. The three older
+paragraphs that state the knee as "a pole near 64 kHz on this circuit's own
+240 pF" are left in place per this document's dated-record convention, each now
+carrying a pointer to the correction. No constant moved and the capacitance
+question stays open.
 
 ## Settled guardrails — do not reopen without contradictory primary evidence
 
