@@ -1315,8 +1315,7 @@ filter core. Service Notes p. 9 documents saw and pulse near 12 Vpp and the sub
 collector-supply amplitude mechanism; p. 19 adjusts shared noise to 4.0 Vpp at
 TP8. These are node-specific Vpp anchors, not RMS values or an end-to-end gain
 budget. The implementation currently uses peaks of 6.0 V saw, 6.0 V pulse,
-2.0 V sub (5.0 until 2026-08-19) and 7.4161 V noise, then a `0.40` filter-input
-scale. The noise figure
+5.0 V sub and 7.4161 V noise, then a `0.40` filter-input scale. The noise figure
 looks out of family only because it is the one coordinate applied *before* a
 shaping stage: it delivers +/-2 V at the shaped rail, which is where the TP8
 adjustment measures, having lost 11.383 dB to the C41/R79 pole on the way (see
@@ -1335,7 +1334,7 @@ and complete node-to-node transfer are not explicitly anchored. A centered
 `+/-6 V` source is compatible with a 12 Vpp reading only at the same stated
 node; it does not prove the later numerical coordinate. TP8 is downstream, so
 its 4.0 Vpp noise adjustment cannot directly establish a `+/-2 V` pre-filter
-noise amplitude or distribution. Treat the sub coordinate, `+/-2 V` noise and `0.40`
+noise amplitude or distribution. Treat `+/-5 V` sub, `+/-2 V` noise and `0.40`
 as voiced compatibility values. This task must not compare voltages from
 different nodes as though they were interchangeable.
 
@@ -1606,6 +1605,51 @@ same claims are not re-litigated.
   and II summing when engaged together (a settled guardrail: the board has one
   enable and one binary mode line, and both-buttons canonicalises to II). Their
   presence is why nothing else in the document was promoted on its own word.
+
+**2026-08-19, reverted to 5.0 after measuring the reference recording directly.**
+The A64 MP3 was decoded and measured here rather than argued about. Over its
+first eight hits the hardware reads a median spectral centroid of **2951 Hz** and
+a 2-8 kHz band sitting **+4.61 dB** above 100-800 Hz: noise-dominated, as this
+task recorded. Measured on the same 300 ms window and metric:
+
+| render | centroid | 2-8 kHz vs 100-800 Hz | vs hardware |
+| --- | --- | --- | --- |
+| hardware A64 | 2951 Hz | +4.61 dB | — |
+| model, `subMixVolts` 5.0, sub byte 64 | 414 Hz | −13.20 dB | **−17.81 dB** |
+| model, 5.0, sub byte 16 | 1999 Hz | −2.20 dB | −6.81 dB |
+| model, 5.0, sub byte **4** | 3227 Hz | +4.42 dB | **−0.19 dB** |
+| model, 5.0, sub muted | 3404 Hz | +5.93 dB | +1.32 dB |
+
+Two things follow, and they point away from the coordinate that was moved.
+
+**The noise leg and the filter are already right.** Muting the sub lands within
+1.3 dB of the hardware on this metric and in the right centroid decade. Whatever
+is wrong is the sub leg alone; nothing here indicts the noise shaping, the noise
+level, or the VCF.
+
+**The gap is ~24 dB at mid-travel, which no mix constant can carry.** The
+hardware behaves as if A64's sub sat at byte 4 while the stored bank byte is 64.
+Closing that with `subMixVolts` would need a 24 dB cut, which would remove the
+sub from every program that uses it. The 5.0 -> 2.0 move made this metric better
+by 7.5 dB and was still 10.3 dB short, which is the signature of correcting the
+wrong parameter.
+
+**The likeliest explanation is that the recording does not reproduce the stored
+patch.** The JUNO-106's panel sliders are not motorised: a stored byte holds
+only until someone moves the physical control, after which the sound follows the
+slider. A recording is therefore not a witness to the stored patch on any
+control the player touched, and "sub behaving like byte 4 where the patch stores
+64" is exactly what a lowered SUB slider looks like. The second research
+submission asserted this in substance; its stated form -- that the factory bank
+itself carries SUB = 0 -- remains wrong, since the hashed bank gives byte 64.
+The alternative, that the byte-to-amplitude law is far more compressive at
+mid-travel than the near-linear map the model uses, is not excluded and is
+exactly the "sub/noise level laws" this task's needed output already asks for.
+
+`subMixVolts` is therefore back at **5.0**. What is kept is the measurement: the
+13.3 dB isolated leg ratio, the bank-wide cost table, and the table above. What
+is discarded is a 7.96 dB correction that was fitted to a recording which cannot
+be shown to reproduce the patch it is named after.
 
 ### Needed output (for LLM)
 

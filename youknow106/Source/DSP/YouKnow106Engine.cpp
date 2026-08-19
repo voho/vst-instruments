@@ -37,36 +37,7 @@ constexpr float voltsToSample = 1.0f / YouKnow106Engine::internalVoltsPerUnit;
 // measured mixer voltages.
 constexpr float sawMixVolts = 6.0f;
 constexpr float pulseMixVolts = 6.0f;
-// Re-voiced 5.0 -> 2.0 on 2026-08-19 against the factory-bank comparison, and
-// it is still a voiced coordinate rather than a measured one -- OQ-15's
-// source-to-VCF budget is what would settle it.
-//
-// What forced it: measured on the shipping engine with both legs at full
-// slider, no saw or pulse, a flat envelope and the filter wide open, the noise
-// leg renders 13.3 dB BELOW the sub leg, and that figure barely moves with note
-// or cutoff, so it is the mix constants alone. The hardware recording of A64
-// Snare Drum -- saw and pulse off, key follow 0, so its snare character can
-// only come from the noise leg -- is noise-dominated. At A64's own slider
-// values (noise 91, sub 64) the model rendered noise 10.1 dB under sub.
-//
-// The correction goes here rather than on the noise leg because this is the
-// coordinate with no end-to-end anchor at all, while the noise leg is tied to
-// the 4 Vpp TP8 adjustment within about 4 dB and its value is derived rather
-// than chosen (see noiseMixVolts). Raising noise to close the same gap would
-// break an anchor to fix an unanchored number, which is backwards.
-//
-// 2.0 takes 7.96 dB of the 10.1, leaving A64 at -2.3 dB -- inside the corpus's
-// own 8.2 dB median chain tilt of balanced, and short of the full inversion the
-// recording implies, deliberately: the magnitude inherits an undocumented MP3
-// chain's uncertainty even though its direction does not. The bank cost was
-// measured rather than assumed -- A83 Drum Booms, a sub-feature patch, loses
-// 7.8 dB; Brass Swell 1.4 dB; Organ I 0.2 dB; every sub-0 program is untouched.
-//
-// A65 Tom Toms and A66 Timpani stay sub-dominant after this, at -9.2 and
-// -7.1 dB. That residual is not this constant's: both run much more closed
-// filters than A64, which attenuates the broadband noise leg far more than the
-// low sub, and no single scalar here fixes all three. OQ-15 keeps them.
-constexpr float subMixVolts = 2.0f;
+constexpr float subMixVolts = 5.0f;
 // The noise coordinate names the SHAPED rail, not the raw generator, and that
 // distinction is the whole of it. The service procedure adjusts VR32 for 4 Vpp
 // at TP8 -- the CH1 voice VCA output -- and a +/-2 V figure written onto the
