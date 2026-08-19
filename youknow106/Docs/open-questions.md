@@ -1480,11 +1480,25 @@ the measured 13.3 dB.** Everything on the table above reaches about 3 dB. That
 bears directly on the `subMixVolts = 2.0` shipped above, which is a fit to the
 recording and not a derived value -- roughly 10 dB of the gap has no circuit
 explanation at all. Either the magnitude the undocumented MP3 chain implies is
-overstated, or the cause is somewhere this task has not looked. The strongest
-remaining candidate is the noise generator's amplitude distribution and crest
-convention, which **OQ-16 already owns** and which the shipped bounded-uniform
-source only voices. Until one of those closes, the shipped coordinate stays
-voiced and this question stays open.
+overstated, or the cause is somewhere this task has not looked.
+
+**Corrected the same day:** this note first named OQ-16's noise amplitude
+distribution as the strongest remaining candidate. It is not, and the arithmetic
+rules it out rather than supporting it. The shipped source is bounded-uniform
+and delivers 1.155 V RMS at full slider. If the hardware generator is Gaussian,
+as an avalanche source is, and the 4.0 Vpp TP8 figure is a visual read of that
+trace, its RMS is 1.000 V at +/-2 sigma, 0.667 V at +/-3 sigma and 0.500 V at
++/-4 sigma -- the model is 1.25 to 7.27 dB *louder* than hardware, not quieter.
+Correcting the distribution would therefore push A64 further sub-dominant.
+
+That leaves every mechanism examined so far pointing the wrong way or too small:
+per-leg dividers +1.03 dB wrong way, Gaussian crest +1.25 to +7.27 dB wrong way,
+the diode law -1.10 dB and `subMixVolts` 3.5 -3.10 dB right way. The remaining
+possibilities are narrower than they looked: either the sub leg's real amplitude
+at the mixer node is far below the modelled coordinate -- which is exactly the
+measurement this task asks for and nothing else substitutes for -- or the A64
+reference recording is not the stock patch it is being read as. Until one of
+those closes, the shipped coordinate stays voiced and this question stays open.
 
 ### Needed output (for LLM)
 
