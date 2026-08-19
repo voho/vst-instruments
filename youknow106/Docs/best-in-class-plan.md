@@ -2195,17 +2195,29 @@ name are real and a later pass will want the reasoning rather than the idea.
   changelog. They belong in OQ-18 and OQ-09 with their lineage stated, which is
   where this pass will file them, and the 248 Hz self-oscillation anchor pins
   absolute cutoff either way so nothing audible is blocked by leaving them open.
-- **Stateful-formulation ADAA (Holters, DAFx-19) in the cascade.** The
-  engine's memoryless divided-difference of `ln cosh` applied to four
-  nonlinearities inside a stateful feedback solve is the wrong formulation, and
-  the citation gap is real. But the measured payoff at the shipping 4x rate is
-  small — worst inharmonic line −67.3 dBc on both engines in the head-to-head,
-  −64.9 dB A/H on the hot resonant saw — so the honest reason to do it is to
-  keep that cleanliness at 2x or 1x, which only pays off inside a wider
-  oversampling rework. It is a large change with no audible delta at the default
-  quality, so it fails the "must change what the instrument sounds like" rule as
-  a standalone step. Record the citation gap in the research contract now; carry
-  the work with the oversampling item below.
+- **Stateful-formulation ADAA (Holters, DAFx-19) in the cascade — the
+  formulation this item objected to no longer exists (reviewed 2026-08-19).**
+  When this was written the cascade carried a memoryless divided-difference of
+  `ln cosh` applied to four nonlinearities inside a stateful feedback solve,
+  which is the wrong formulation, and the item asked for the citation gap to be
+  recorded in the research contract. Step 10 removed that path-average/Newton
+  discretization outright: production evaluates the declared `tanh` terms
+  directly at ten fixed Merson right-hand-side nodes per interval, and no
+  antiderivative, divided difference or capped Newton solve remains anywhere in
+  the audio path. (`oscillationRatio`'s Newton iteration is the
+  describing-function phase condition, not the cascade.) The citation gap is
+  discharged by deletion rather than by citation, and the contract's
+  "Former cascade elementary-function optimization" row already records the
+  removal. The sibling DAFx-21 item below had been updated for Step 10; this one
+  had not, and read as though it still described the shipping engine.
+
+  What does not carry over: the −67.3 dBc worst inharmonic line and the
+  −64.9 dB A/H hot resonant saw were measured against the removed engine and
+  describe no current decision. What does carry over is the motivation. The
+  present scheme buys its cleanliness from the 4x rate and the decimation filter
+  rather than from the nonlinearity's own formulation, so admitting 2x or 1x
+  reopens antialiasing on the Merson path's terms rather than the old solver's.
+  Carried with the oversampling item below.
 - **Replacing the capped Newton solve with a bounded-work construction inspired
   by Danish, Bilbao & Ducceschi, DAFx-21 — first feasibility candidate rejected
   on 2026-08-09.** The paper gives a
