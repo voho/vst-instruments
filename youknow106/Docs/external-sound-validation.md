@@ -331,11 +331,28 @@ No engine constant, preset byte or audit gate changed as a result of this
 pass. The comparison tooling was deliberately kept out of the product tree;
 this record plus the cited public sources suffice to reproduce it.
 
-**Superseded in part, 2026-08-19.** That paragraph describes this pass only, and
-its restraint stood on a judgement rather than on a rule: `subMixVolts` has
-always been a **voiced** coordinate -- "chosen inside a range the sources bound
-but do not fix" -- so retuning it never required an exemption from the research
-contract, only that the result stay labelled voiced, which it does. On the
+**Superseded in part, 2026-08-19, and that supersession is itself qualified
+below.** On the owner's decision that real-unit recordings are the most valuable
+reference available and that a factory-preset discrepancy should be acted on,
+`subMixVolts` was moved 5.0 -> 2.0.
+
+The 2026-08-19 note first argued that this pass's restraint "stood on a
+judgement rather than on a rule", on the reasoning that `subMixVolts` is a
+**voiced** coordinate and so never required an exemption. That reading was too
+convenient and is withdrawn. The taxonomy does permit a voiced value to change,
+but the header above is making a different and better point: the reference chain
+is undocumented, so it should not be allowed to set a number at all, whatever
+that number's label. Letting it do so launders an unreliable source into the
+model under a category that was meant for engineering latitude, not for fitting.
+
+Later the same day the chain stopped being merely undocumented and became known
+to be processed -- synthmania's own MKS-50 page records "a pinch of reverb from
+a T.C. Electronic M300 multieffect ... added to all examples", with the M300
+also used to "process the sounds a little", and the practice is reported across
+the site's instrument pages. Reverb is HF-weighted and biases a centroid reading
+upward, which is the same direction as the A64 finding. This pass's caution is
+therefore better founded than the note that overrode it, and OQ-15 records what
+that does to the shipped coordinate. On the
 owner's decision that real-unit recordings are the most valuable reference
 available and that a factory-preset discrepancy should be acted on,
 `subMixVolts` moved 5.0 -> 2.0, taking 7.96 dB of A64's 10.10 dB inversion and
