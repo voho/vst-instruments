@@ -4696,6 +4696,91 @@ Net: OQ-08 and OQ-01 gain one recorded lead each, OQ-18 and the best-in-class
 queue gain one arithmetic correction each, and `vcfControlSaturationHz` is
 reclassified from derived to voiced without moving. No question closed.
 
+**Batch 3 — tooling, performance, product features and QA.** One change shipped;
+the rest were already done, outside the contract, or product decisions this pass
+does not get to make on its own.
+
+- **Half-band decimator tap compaction — implemented.** The proposal asked for
+  hand-written NEON/AVX2 in `downsamplePair`, claiming ~15–20% of engine CPU and
+  no change to floating-point output. Both halves are wrong: vectorising a MAC
+  reduction splits it into per-lane partial sums, which reorders the additions
+  and is *not* bit-identical, and the decimator is nowhere near that share of the
+  engine. What the loop did carry was real waste — it walked all 95 taps and
+  skipped the 46 analytically-zero ones with a per-tap branch, paying 95 loads
+  and 95 compares to perform 49 stereo multiply-accumulates. Those taps are now
+  compacted once, where the kernel is built, in their original ascending order,
+  so the accumulation sequence is unchanged and the result is bit-identical by
+  construction. Measured: the loop in isolation runs 10.4% faster; whole-engine
+  render time moves within run-to-run noise, which is the honest answer to the
+  15–20% claim.
+- **Denormal flush on the high-pass state nodes — already handled.**
+  `juce::ScopedNoDenormals` wraps the whole audio callback and sets FTZ/DAZ for
+  every subnormal the DSP can produce. Per-node manual flushing would be
+  redundant.
+- **Thermal and rail-droop readout — already shipped.** The engine exposes
+  `getDisplayTemperatureC()` and `getDisplayRailDroopVolts()`, the processor
+  publishes both as atomics, and the display paints them on one telemetry line.
+- **Hardware EDIT dot — already shipped in the form this UI supports.** The
+  plug-in has no 2-digit patch LED to put a decimal point on; patch selection
+  lives on the add-on host-navigator rail, where an `EDITED` lamp driven by
+  `currentProgramIsEdited()` already serves the same purpose.
+- **SysEx fuzz harness — low incremental value.** The parser reads a
+  fixed-length binary format and already has targeted coverage for truncation,
+  malformed content, null pointers and buffer bounds.
+- **OQ-15 mixer sensitivity sweep tool — declined.** A tool that sweeps
+  `subMixVolts` and reports where bank-wide spectral error minimises would take
+  that minimum from the same undocumented MP3 chain the research contract
+  refuses to retune against, and would dress a fit as preparation for a
+  measurement. OQ-15's direction is already recorded with numbers; what is
+  missing is the hardware capture, not a sweep.
+- **MR-STFT distance in the comparison tool** is a reasonable idea, but nothing
+  here shows a gap the existing dBc/NRMS/BGA/SGA gates miss.
+- **MTS-ESP/Scala microtuning, voice pan spread and MPE pressure** are product
+  decisions rather than model questions. The instrument has no aftertouch and no
+  pan spread, so each would ship as a labelled product extension alongside the
+  existing voice-count and velocity ones. Not taken unilaterally here.
+
+**Batch 4 — circuit acoustics.** Nothing implemented: three of the eight are
+already in the model, and the rest are unanchored or do not survive their
+arithmetic.
+
+- **Filter slew-rate limiting at low cutoff — already modelled, exactly.** The
+  cascade integrates `dV/dt = ω · gScale · early · H · tanh(…)`, and `|tanh| ≤ 1`
+  puts a hard ceiling of `ω · H` on every stage. Since `ω = Ig / (C H)`, that
+  ceiling *is* `Ig / C` — precisely the bound the proposal derives. Solving the
+  real nonlinear ODE rather than a linear filter gives this for free, and it is
+  one of the things that formulation buys.
+- **Sallen-Key reconstruction peak — already modelled, at the same number.**
+  `Chorus::sallenKeyQ` computes `Q = 0.5·√(C_feedback / C_shunt)`; on the
+  proposal's own 1.8 nF / 270 pF that is 1.291, the figure it quotes. The
+  passband peak is a consequence of a Q the engine already carries.
+- **Inter-voice rail coupling — already modelled and already measured.** Rail
+  droop under polyphonic load is in the engine and reported to the display; the
+  best-in-class pass measured it at 0.104 cents across the entire one-to-six
+  voice load change and records it as modelled-and-inert.
+- **HPF Position-0 boost driving the output stages — already emergent.** The
+  +10.50 dB / 59.41 Hz Boost shelf and the summer's algebraic soft clip are both
+  modelled, and the boost sits ahead of the common VCA and line drivers, so the
+  interaction the proposal wants is already what the chain does.
+- **Open-collector pulse rise/fall asymmetry — does not survive its own
+  numbers.** A 200–400 ns rise is a bandwidth of roughly `0.35 / t_r` ≈ 1 MHz,
+  two orders above the 12 kHz content the proposal says it tames; at the 192 kHz
+  internal rate that edge is 0.06 of a sample, below anything the grid
+  represents. The comparator part identity is also not established in tree.
+- **Sub-oscillator diode knee — topology already carried, magnitude
+  unanchored.** D5/D6 and the 27 kΩ legs are in the mixer model; a forward-knee
+  softening of the divider's square is not, and the tree already reverted one
+  0.3% sub-level asymmetry as mis-attributed to an edge-timing effect.
+- **OTA differential-pair bulk-resistance compression — real, unmodelled,
+  unanchored.** Emitter bulk resistance would soften the pair's transfer below
+  the ideal `tanh`, which the cascade does not carry. Its size needs a device
+  measurement; recorded here as a lead beside the Early-effect coefficient,
+  where a previous revision using sixteen times the supportable value is the
+  standing warning about guessing it.
+- **Anti-phase BBD clock crossing — speculative.** Stray inter-trace coupling is
+  unquantified, and the audible claim sits next to `enableChorusClockBleed`,
+  already off pending OQ-03's calibrated capture.
+
 **Classification sweep, same date.** The OQ-18 correction exposed a claim the
 best-in-class queue had already flagged as owed: the 240 pF integrator was being
 carried as an unqualified anchor while a reconstruction lineage reads 270 pF in
