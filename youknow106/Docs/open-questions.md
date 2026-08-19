@@ -269,6 +269,37 @@ IC1a's saturated swing measures β itself (their ratio is `2·β·V_sat`
 against `2·V_sat`). The falsified `1/48` divider figure must not be used in
 any of that arithmetic.
 
+**2026-08-19 lead — the triangle ships symmetric, and its asymmetry rides on the
+capture already requested.** `Chorus` derives the modulator as an IC1b
+integrator charged at constant current for the whole of each half cycle against
+IC1a's two-resistor Schmitt, and ships "a straight, symmetric triangle". That
+symmetry assumes the comparator's two saturated output levels are equal in
+magnitude. A real µPC062 does not saturate symmetrically, and in this topology
+both the charging current *and* the trip threshold derive from that same
+saturated output, so the imbalance appears twice:
+
+    T_fall / T_rise = V_OL / V_OH ,
+
+with the triangle spanning −β·V_OH to +β·V_OL rather than a centred ±β·V_sat. A
+2% rail imbalance buys about 2% of half-period asymmetry and roughly −0.1 V of
+offset on a ±9.6 V triangle — an up-swing and a down-swing of different
+durations, which in the delay domain is the same "asymmetric dip and swoop"
+character the frequency-linear sweep hypothesis reaches for by a different
+route. The total period also stops being `4·β·R_eff·C3`, so the rate scale and
+the asymmetry are not separable.
+
+Nothing is implemented from this, and the magnitudes above use invented rails:
+no loaded µPC062 saturation figure for this board is in tree, and a chosen pair
+would set both the asymmetry and a correction to the derived rate scale at once
+— the "draw a curve" failure this queue exists to prevent. What makes it worth
+recording is that it costs no extra measurement. The raw multi-cycle TP4 capture
+already first on the needed-output list below shows half-period inequality and
+triangle offset directly, and the paired TP3 capture bounds IC2a's R9/R10
+inverting gain — a 1–2% resistor pair is ±2% of line B's modulation depth, about
+43 µs on a ±2.13 ms swing, against the 16 µs RMS residual of the only trajectory
+series in existence. One capture settles the sweep law, the rate scale, β, the
+up/down asymmetry and the two lines' depth match together.
+
 ### Needed output (for LLM)
 
 - Raw, multi-cycle TP3 and TP4 low-frequency modulation captures in Chorus I
@@ -4585,6 +4616,81 @@ the final audio-index/canonical-23 hashes are
 `a6bb49018b312bab2a8e82dcabb9bc105ccd19e076bf39ec0e580631108ed3aa` /
 `19053f2cb7b57eef5fccb7bfa9f7f5e14ab2e1e932af1672b5138565430d196c`.
 No renderer-owned payload changes. **Step 17 is complete. DOCS FROZEN.**
+
+## Proposed-mechanism adjudication pass — 2026-08-19 (two arithmetic corrections; no OQ closed)
+
+Two batches of proposed "realism win" mechanisms were checked against this
+queue, the claims boundary and the shipping code. No DSP constant moved. The
+value of the pass is in what it corrected about the tree's own claims, and in
+separating mechanisms that are genuinely unrecorded from ones already shipped or
+already owned by an open question.
+
+**Batch 1 — oscillator/filter/chorus/output constants.** Four proposals were
+already adjudicated and declined in tree, with reasons the proposals did not
+engage: the 40 kHz expo ceiling and 270 pF integrator (best-in-class queue, item
+1–2 of the recorded-contradictions list), the 0.275 input compensation (its full
+Open80017a derivation is written into the shipping header, declined as one
+reconstruction lineage against OQ-09's measured family), the hyperbolic chorus
+sweep (contradicted by the only trajectory measurement in existence — see OQ-01
+above), and the chorus clock bleed (amplitude is an unvalidated placeholder
+pending OQ-03). One was live and correctly identified: the noise-versus-sub
+balance on the drum programs, already recorded under OQ-15 above, where the
+direction points at the unanchored `subMixVolts` rather than the ±4 dB-anchored
+noise leg — a proposal to raise noise instead would break the anchor established
+on 2026-08-17. One produced the OQ-18 correction recorded above. One — an
+always-on summing-bus noise floor — restated gap 7 with a −105…−112 dBFS target
+that the derivable Johnson figure (≈1.32 µVrms, ~124 dB below a nominal patch)
+does not support; the audible version still needs the µPC1252H2 excess-noise
+figure and OQ-16's capture.
+
+**Batch 2 — eight further mechanisms.** Outcomes:
+
+- **Even-harmonic self-oscillation from stage DC asymmetry — already shipped.**
+  `Voice::filter.offsetVoltage[4]` carries per-stage offsets seeded per card and
+  referred into node coordinates through `stageAttenuation`, alongside per-stage
+  pole scatter, under `enableVcfStageOffsets` (default on). The code comment
+  states the same purpose the proposal does: four identical poles give a
+  self-oscillation "more symmetric and purer than any real four-section filter
+  produces". The narrower claim — that the BA662 resonance VCA specifically
+  injects DC into stage 1 — is not modelled, and the header already declines to
+  reuse VR30's trim as a BA662 signal-input offset. Unanchored magnitude; no
+  change.
+- **Control-current (I_abc) slew feeding through to a differential transient —
+  not modelled, unanchored.** The mechanism is real in principle and distinct
+  from what the cascade carries, but its size is set by an unmeasured V_be
+  mismatch, and the 522 µs hold law already governs how fast the control moves.
+  Recorded here only; belongs with OQ-09/OQ-18 if a measurement ever bounds it.
+  The proposal's acoustic account misroutes it through C59, which is the
+  VCF→VCA coupling the engine already carries.
+- **8253 reload on terminal count — filed under OQ-08** (see above).
+- **PWM comparator propagation delay — magnitude does not survive checking.**
+  A constant t_pd shifts both edges alike and so moves the pulse in time rather
+  than changing its width; only the *difference* in t_pd between the two
+  crossings tilts duty, which is second order in overdrive. Even taking the
+  whole delay as tilt, 1200 ns against the top of the 8' range (2093 Hz) is
+  0.25%, and 300 ns at 1.5 kHz is 0.045% — not the 0.5–1% claimed. The
+  comparator part identity is also not established in tree. No change.
+- **Chorus modulator triangle up/down asymmetry — new, and recorded under
+  OQ-01** above. The only batch-2 item that adds something the queue did not
+  have.
+- **Anti-phase inverter gain tolerance — same capture, recorded with it.** A
+  1–2% R9/R10 pair is ±2% of line B's modulation depth; folded into the OQ-01
+  note rather than given its own entry, because the TP3 capture that bounds it
+  is already on OQ-01's needed-output list.
+- **TC4052 deselected-capacitor charge memory and mode-change transient —
+  already OQ-21**, at P2, in more detail than the proposal carries: parts,
+  placement and control are settled, and the deselected decays are established
+  at 15.705/4.9209 ms against the proposal's estimated ~22 ms. Nothing new.
+- **Headphone driver current limiting — already OQ-17, and misdirected.** IC7's
+  101 kΩ input is modelled as a load on the VOLUME wiper; driven headphone
+  output is explicitly OQ-17's. The proposal's premise concerns how third-party
+  *reference recordings* may have been captured, which is a caveat on comparison
+  material, not a property of the product's line output; modelling headphone
+  current limiting on the main output would model the wrong path.
+
+Net: OQ-08 and OQ-01 gain one recorded lead each, OQ-18 and the best-in-class
+queue gain one arithmetic correction each, and `vcfControlSaturationHz` is
+reclassified from derived to voiced without moving. No question closed.
 
 ## Settled guardrails — do not reopen without contradictory primary evidence
 
