@@ -5126,6 +5126,24 @@ question stays open.
   50 ppm of 15 V — about 0.03 cents of cutoff shift. Rail *droop* is modelled
   and is a different, much larger, DC mechanism. Neither may be routed to DCO
   pitch, which is an integer division of a crystal-derived clock.
+
+  **The additive path is now covered too (2026-08-19).** The best-in-class
+  comparison recorded that this derivation reached only the cutoff-modulation
+  path and not the additive one, which left an acknowledged hole a competitor
+  fills with an explicit 120/240/360 Hz floor source. The same anchored values
+  close it. `I / (2 f C)` on 3300 µF at 0.25 A and full-wave 50 Hz mains is
+  **0.379 V p-p** at the reservoir; the M5230L's own rejection puts about
+  **379 µV** on the card rail, which is 25 ppm of 15 V and agrees with the
+  50 ppm order above. Reaching the audio it crosses the summing and output
+  amplifiers' supply rejection, and the conclusion does not depend on knowing
+  that figure: against a nominal patch at the summer output (2.09 V RMS, from
+  gap 7's own numbers) the additive term lands at −154.8 dB for 80 dB PSRR,
+  −134.8 dB for 60, −114.8 dB for 40, and still **−94.8 dB at an absurd 20 dB**.
+  Every plausible device sits far below the Johnson floor gap 7 already
+  declines to ship as inaudible, so no PSRR measurement is needed to reject the
+  additive path — it is rejected across the whole range the parameter could
+  take. Modelling a hum component here would be choosing a nicer-sounding
+  constant, not representing the circuit.
 - **Chorus support-chain boundaries:** the populated pre/post-BBD topology,
   wet-input 15.9 Hz coupling, nominal component-only 7.23/11.31 Hz wet-output
   coupling, datasheet-fitted nonlinearity, and split zero-order-hold/residual

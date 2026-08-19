@@ -513,8 +513,13 @@ verified this session):
   spectrum", on top of v2.5.0's separate "broadband, mains ripple
   (120/240/360 Hz), and BBD clock bleed" sources with independent controls.
   YouKnow106 models no always-on electronics floor (gap 7) and rejects mains
-  ripple through a derivation that covers only the *cutoff-modulation* path,
-  not the additive one.
+  ripple. That rejection originally covered only the *cutoff-modulation* path;
+  the additive one is now covered as well (2026-08-19, recorded with the
+  guardrail in open-questions.md). The same anchored 3300 µF / 0.25 A / M5230L
+  values put about 379 µV on a card rail, and against a nominal patch at the
+  summer output the additive term is −154.8 dB at 80 dB supply rejection and
+  still −94.8 dB at an absurd 20 dB — rejected across the entire range the
+  device parameter could take, so no measurement is needed to close it.
 - v2.5.7: "Variable VCF oversample (Off/2x/4x)"; v2.4.2: "Oscillator runs at
   base sample rate; VCF handles its own oversampling internally". YouKnow106's
   HQ is a binary switch that oversamples the whole engine, chorus and scanned
