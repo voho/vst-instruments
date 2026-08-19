@@ -1119,6 +1119,22 @@ private:
     // holding, so it is resolved once here rather than as four copies of the
     // same expression.
     [[nodiscard]] static float membraneAreaFor (float radius) noexcept;
+    // How much a close capsule lifts the low end at a given distance, and how
+    // far the pair sits from a head of a given size. resolveDrumFor sets
+    // drum.micProximity and drum.micDistanceMetres from these, and the shell's
+    // perspective has to rebuild the pair's factory position from the drum
+    // alone, so both are resolved here rather than written out twice.
+    [[nodiscard]] static float micProximityFor (float micDistanceMetres) noexcept;
+    [[nodiscard]] static float micDistanceSizeScale (float radius) noexcept;
+    // What one shell ring mode is worth to a capsule at this distance, against
+    // what it is worth at this drum's own factory position. The wooden bank
+    // had no distance behaviour at all - Mic Distance moved the head and the
+    // head's continuum and left the body at one fixed level - so backing the
+    // pair off thinned the drum around a shell that never moved. See the
+    // definition for why a ring mode is read the way a membrane mode is.
+    [[nodiscard]] static float shellPerspectiveGain (
+        const DrumState& drum, int ringOrder, float omega, float frequency,
+        float micDistanceMetres) noexcept;
     struct ComplexObservation
     {
         float real { 0.0f };

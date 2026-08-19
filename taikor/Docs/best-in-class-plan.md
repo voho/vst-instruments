@@ -5531,3 +5531,143 @@ Ranked by what is actually blocking each one, rather than by claimed impact:
 4. **The LDV azimuth ring.** It decides between a global material axis and
    random irregularity, and therefore whether the hide has a grain in this
    model.
+
+## The body moves with the pair — 2026-08-19
+
+Mic Distance moved the head's own near field and the head's continuum and left
+the wooden shell at one fixed level. Backing the capsules off therefore thinned
+the drum around a body that never moved: two thirds of the instrument had a
+perspective and the third that gives a taiko its weight did not.
+
+### What the plan's own note asked for, and why it was wrong
+
+The previous section listed "the wooden bank radiating through
+`radiationEfficiency`" as the one derivable term the engine was missing. Built
+and measured, that construction does not survive.
+
+For the head, `radiationEfficiency(order, ka)` sets the **damping** —
+`radiationLoss = radiationPrefactor * efficiency` — while the **observation** is
+a separate near-field-plus-propagating split. The note asked for a far-field
+power law to be applied to a close-mic *observation*, which is the wrong term in
+the wrong place. The pair sits 15.95 cm from the head and about 40 cm from the
+wall, deep in the shell's near field, where a low ring mode's multipole
+cancellation is nowhere near complete.
+
+The arithmetic makes the size of the error plain. On the factory ō-daiko the law
+puts the *n* = 2 ring mode **27.4 dB** down, and that mode carries almost all of
+the bank's energy — its `|drive · micLeft|` is 6.02e-05 against 1.29e-05 for
+*n* = 3 and it has the slowest decay of the six. Holding the Don Rim's wooden
+energy across the change therefore needs a **29.5×** re-pin of
+`shellCalibration`, which leaves *n* = 4 through 7 — modes the law barely
+touches — nearly thirty times louder than they were. The body stops being a
+thump and becomes a mid ring. The evanescent reading of that same mode is about
+6 dB down, not 27.
+
+Applying it to the damping instead is not available either: the shell's decay is
+a drawn *Q* of `12 + 40 · shellMaterial`, a lumped stand-in that already
+contains whatever radiation the body does. Adding a derived radiation loss on
+top would double-count it, and separating the two needs a measured body
+mobility.
+
+### What shipped instead
+
+A ring mode is now read the way a membrane mode is. Its shape around the body is
+`cos(n theta)`, so its spatial wavenumber is *n/R* and `nearFieldAttenuation`
+takes the ring order where a membrane mode hands it a Bessel zero; the path is
+from the wall to the capsule rather than from the head to it, because that is
+where the wood is. On top of that evanescent term sit the same `proximityLift`
+and propagating share the head carries, so the body and the head answer the pair
+through one construction rather than two.
+
+The result is taken as a **ratio against this drum's own capsule distance at the
+factory Mic Distance**, the same arrangement the continuum's perspective law
+uses. Per drum, not against one fixed distance: the capsules are scaled
+proportionally closer to the small heads, so a single reference has the okedo
+and the shime reading their bodies from a position the pair never occupies.
+
+Measured, in decibels relative to each drum's factory position:
+
+| drum | ring | frequency | Mic 0.00 | Mic 0.35 | Mic 1.00 |
+|---|---|---|---|---|---|
+| ō-daiko | 2 | 96.59 Hz | +2.46 | 0.000000 | −3.62 |
+| | 7 | 1710.55 Hz | +0.96 | 0.000000 | −0.56 |
+| chū-daiko | 2 | 176.96 Hz | +3.30 | 0.000000 | −7.46 |
+| okedo | 2 | 191.58 Hz | +6.52 | 0.000000 | −15.95 |
+| | 3 | 541.87 Hz | +6.61 | 0.000000 | −18.32 |
+| | 5 | 1680.26 Hz | +0.09 | 0.000000 | −0.05 |
+| shime | 2 | 529.48 Hz | +5.13 | 0.000000 | −13.28 |
+
+The factory column is exactly zero on every drum and every ring mode, which is
+what keeps `shellCalibration` meaning what it was pinned to mean and leaves
+every factory preset rendering as it did. The low ring modes move far more than
+the high ones, and that is the physics rather than a taper: the evanescent rate
+is `sqrt((n/R)^2 - (w/c)^2)`, and a ring mode's frequency climbs as about *n²*
+while its wavenumber climbs as *n*, so the high modes are already propagating
+and barely care where the pair stands. The light stave okedo moves most, which
+is the drum whose body is loudest against its own head.
+
+### The verdict was taken by ear
+
+Five candidates were rendered against the shipping engine as an A–F listening
+test under the convention added to the repository's `CLAUDE.md` in the same
+pass: Don Rim at three Mic Distances on the ō-daiko and the okedo, level-matched
+on the factory-position sections, letters carrying no hint of the mechanism.
+
+| letter | what it was | outcome |
+|---|---|---|
+| A | shipping engine | baseline |
+| B | perspective, normalised per drum | **chosen** |
+| C | `radiationEfficiency` on the level, re-pinned 29.5× | not chosen |
+| D | perspective, normalised against one fixed 15.95 cm | not chosen; peak 0.985, past the suite's 0.95 clause |
+| E | `radiationEfficiency` on the level, un-re-pinned | not chosen; the body nearly disappears |
+| F | perspective, near field only | not chosen |
+
+The user chose **B**. This is recorded as a choice made by ear: the measurements
+rule out C, D and E on their own terms — C needs a 29.5× fitted re-pin, D breaks
+a suite clause, E is uncalibrated — but nothing measurable separates B from F,
+which differ only in whether the propagating share the head carries reaches the
+body as well. B keeps the construction identical to the head's; that it also
+sounds right is the listener's finding, not a derivation.
+
+### What guards it
+
+`testTheBodyMovesWithThePair` holds four clauses, each recomputed from the
+resolved drum:
+
+1. the factory Mic Distance moves nothing, on every drum and every ring mode —
+   reverting the per-drum reference to a single fixed one fails this on the
+   okedo at gains of 1.22, 1.25 and 1.13;
+2. every other distance does move it, monotonically, closer being louder;
+3. the highest ring mode falls off with distance at less than half the rate of
+   the lowest, which is the evanescent signature rather than a taper;
+4. a rim shot's rendered wooden bank recedes as the pair backs off, and a
+   head-only stroke still has no wooden bank at all.
+
+Making the gain a constant 1 fails clauses 2, 3 and 4.
+
+### Cost, and what moved
+
+`shellPerspectiveGain` is evaluated six times per voice build, never in the
+render loop. Two expressions that `resolveDrumFor` held inline — the close-mic
+proximity shelf and the size scaling that puts the pair proportionally closer to
+a small head — were extracted to `micProximityFor` and `micDistanceSizeScale`,
+because the shell's perspective has to rebuild the pair's factory position from
+the drum alone. Both produce the values they produced before.
+
+**Twenty-six of the twenty-seven demonstration takes are bit-identical.** The
+twenty-seventh is `21-mic-distance.wav`, and it changed because it could not
+show the change: it swept Mic Distance on a **Ka**, which does not touch the
+hoop, so its wooden bank is silent and the take that exists to demonstrate the
+control could only ever show two thirds of it. It now takes the same five
+positions twice, on a Ka and then on a Don Rim. 4.5 s to 8.5 s, −11.8 to
+−8.6 dBFS peak.
+
+### Still open
+
+The shell's *damping* remains a drawn `Q`, so the body's decay does not know
+what it radiates; separating material, mounting and radiation losses in it needs
+the body mobility on the capture contract. The wooden bank also still has no
+angular doublet — the legacy common pickup with a 0.20 spread stands, and the
+prototype that replaced it was rejected in "Local-palm and shell prototype
+audit" for inverting wide-pair rim cases. Neither is touched here: this pass
+gives the body a perspective, not a directivity.

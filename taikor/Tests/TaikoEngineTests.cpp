@@ -2753,6 +2753,27 @@ struct TaikoEngineTestAccess
     // be caught instead of silently invalidating what the README says is left
     // out. See "Fifteen proposed mechanisms" in Docs/best-in-class-plan.md.
 
+    // The shell's per-ring-mode distance gain at a given Mic Distance control
+    // value, relative to this drum's own factory position.
+    static std::array<float, TaikoEngine::shellResonatorCount> shellPerspective (
+        int octave, float micDistanceControl) noexcept
+    {
+        EngineParameters raw;
+        raw.micDistance = micDistanceControl;
+        const auto parameters = TaikoEngine::sanitise (raw);
+        const auto drum = TaikoEngine::resolveDrumFor (parameters, 0.0f, octave);
+        std::array<float, TaikoEngine::shellResonatorCount> gains {};
+        for (int index = 0; index < TaikoEngine::shellResonatorCount; ++index)
+        {
+            const auto slot = static_cast<std::size_t> (index);
+            const float frequency = drum.shellFrequencies[slot];
+            const float omega = 2.0f * 3.14159265358979f * frequency;
+            gains[slot] = TaikoEngine::shellPerspectiveGain (
+                drum, index + 2, omega, frequency, drum.micDistanceMetres);
+        }
+        return gains;
+    }
+
     struct CavityLossProbe
     {
         // The largest share of any axisymmetric branch's decay that the
@@ -5745,6 +5766,84 @@ void testTheReadoutNamesAPartialTheRendererBuilds()
 // the frequency dependence of the mounting, radiation and hide losses, not
 // through any loss of the air's own - because the README used to say it had
 // none.
+// The wooden body moves with the pair. Mic Distance used to change the head's
+// near field and the head's continuum and leave the shell at one fixed level,
+// so backing the capsules off thinned the drum around a body that never moved.
+// A ring mode is now read the way a membrane mode is - an evanescent term at
+// its own circumferential wavenumber n/R over the wall-to-capsule path, plus
+// the same proximity lift and propagating share - taken as a ratio against
+// this drum's own capsule distance at the factory Mic Distance.
+//
+// Three things have to hold, and the first is what keeps shellCalibration
+// meaning what it was pinned to mean.
+void testTheBodyMovesWithThePair()
+{
+    // 1. Exactly nothing happens at the factory position, on every drum and
+    //    every ring mode. Per drum, because the capsules are scaled closer to
+    //    the small heads: a single fixed reference passes this on the o-daiko
+    //    and fails it on the okedo and the shime.
+    for (int octave = taikor::lowestOctaveOffset;
+         octave <= taikor::highestOctaveOffset; ++octave)
+    {
+        const auto gains = taikor::TaikoEngineTestAccess::shellPerspective (
+            octave, 0.35f);
+        for (std::size_t ring = 0; ring < gains.size(); ++ring)
+            expect (std::abs (gains[ring] - 1.0f) < 1.0e-5f,
+                    "the shell moved at the factory Mic Distance on octave "
+                        + std::to_string (octave) + ", ring order "
+                        + std::to_string (ring + 2) + ": gain "
+                        + std::to_string (gains[ring]));
+    }
+
+    // 2. It does move everywhere else, monotonically, and in the right
+    //    direction: closer is louder. Measured on the okedo, whose light stave
+    //    shell is the drum the body is most audible on, the lowest ring mode
+    //    runs +6.5 dB at the closest position and -16.0 dB at the furthest.
+    const auto close = taikor::TaikoEngineTestAccess::shellPerspective (2, 0.0f);
+    const auto mid = taikor::TaikoEngineTestAccess::shellPerspective (2, 0.35f);
+    const auto far = taikor::TaikoEngineTestAccess::shellPerspective (2, 1.0f);
+    expect (close[0] > mid[0] * 1.5f && far[0] < mid[0] * 0.5f,
+            "Mic Distance no longer moves the okedo's lowest ring mode: "
+                + std::to_string (close[0]) + " / " + std::to_string (mid[0])
+                + " / " + std::to_string (far[0]));
+    for (std::size_t ring = 0; ring < close.size(); ++ring)
+        expect (close[ring] >= mid[ring] && mid[ring] >= far[ring],
+                "the shell's perspective is not monotone in Mic Distance at "
+                "ring order " + std::to_string (ring + 2));
+
+    // 3. The low ring modes move far more than the high ones, which is the
+    //    physical signature rather than a taper: the evanescent rate is
+    //    sqrt((n/R)^2 - (w/c)^2), and a ring mode's frequency climbs as about
+    //    n^2 while its wavenumber climbs as n, so the high modes are already
+    //    propagating and barely care where the pair stands.
+    expect (far[0] < far[close.size() - 1] * 0.5f,
+            "the shell's highest ring mode now falls off with distance as fast "
+            "as its lowest: " + std::to_string (far[0]) + " against "
+                + std::to_string (far[close.size() - 1]));
+
+    // 4. And it reaches the rendered bank, on the stroke that has a wooden
+    //    bank to reach. A head-only stroke has no shell drive at all, so its
+    //    wooden projection stays at zero however the pair is placed - the
+    //    perspective must not have quietly given Don, Ka or Tsu a body.
+    const auto woodAt = [] (taikor::Articulation articulation, float distance)
+    {
+        auto parameters = defaultParameters();
+        parameters.humanise = 0.0f;
+        parameters.micDistance = distance;
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.trigger (articulation, 2, 0.95f);
+        return taikor::TaikoEngineTestAccess::woodDrive (engine);
+    };
+    expect (woodAt (taikor::Articulation::DonRim, 0.0f)
+                > woodAt (taikor::Articulation::DonRim, 1.0f) * 1.5,
+            "a rim shot's wooden bank did not recede as the pair backed off");
+    for (const float distance : { 0.0f, 0.35f, 1.0f })
+        expect (woodAt (taikor::Articulation::Don, distance) == 0.0,
+                "the shell perspective gave a head-only stroke a body");
+}
+
 void testTheEnclosedAirIsLosslessOnlyWhereThatIsInaudible()
 {
     const auto probe = taikor::TaikoEngineTestAccess::probeCavityLoss();
@@ -11711,6 +11810,7 @@ int main()
     testTheFourDrumsAreFourInstruments();
     testTheFourStrokesAreMutuallyDistinct();
     testTheCavityIsAColumnNotAnInfiniteSpring();
+    testTheBodyMovesWithThePair();
     testTheEnclosedAirIsLosslessOnlyWhereThatIsInaudible();
     testTheContactPatchWouldNotBeAudibleOnTheResolvedBank();
     testTheDrumIsTunedByThePitchItSounds();

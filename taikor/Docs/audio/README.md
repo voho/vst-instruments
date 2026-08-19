@@ -82,7 +82,7 @@ ghost strokes in the velocity take.
 | `18-body-depth.wav` | Shallow body through to deep | 5.5 s | −21.3 dBFS | +18.3 dB |
 | `19-head-damping.wav` | Open head through to heavily damped | 6.3 s | −21.5 dBFS | +18.5 dB |
 | `20-octave-body.wav` | The keyboard as one drum retuned four times, then as the four drums | 7.8 s | −19.3 dBFS | +16.3 dB |
-| `21-mic-distance.wav` | The close pair from 3 cm out to 40 cm | 4.5 s | −11.8 dBFS | +8.8 dB |
+| `21-mic-distance.wav` | The close pair from 3 cm out to 40 cm, on the head and then on the body | 8.5 s | −8.6 dBFS | +5.6 dB |
 | `22-mic-spread.wav` | The close pair from coincident to fully opened | 4.5 s | −16.6 dBFS | +13.6 dB |
 | `23-hand-damping.wav` | A hand laid on a ringing head, from MIDI CC1 | 6.0 s | −20.0 dBFS | +17.0 dB |
 | `24-pitch-wheel.wav` | The wheel pressing the head sharp and flat | 4.3 s | −21.0 dBFS | +18.0 dB |

@@ -595,11 +595,34 @@ Take renderDrumLayout()
     return take;
 }
 
+// Mic Distance moves the whole instrument, and a head stroke only shows two
+// thirds of it: the head's own near field and its continuum both change with
+// the pair, and so now does the wooden body - but only a hoop strike wakes the
+// body at all. So the sweep is taken twice, once on a Ka and once on a Don Rim,
+// and the second pass is the one where the drum's shell recedes with the
+// capsules rather than staying nailed at one level behind them.
 Take renderMicDistanceSweep()
 {
-    return renderParameterSweep (&EngineParameters::micDistance,
-                                 { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f },
-                                 Articulation::Ka, 0, 0.60, 1.4);
+    constexpr std::array<float, 5> positions { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f };
+    auto parameters = defaultVoicing();
+    // A diagnostic sweep must move only the named axis.
+    parameters.humanise = 0.0f;
+    Take take (parameters);
+    take.rest (0.10);
+
+    for (const auto articulation : { Articulation::Ka, Articulation::DonRim })
+    {
+        for (const float value : positions)
+        {
+            parameters.micDistance = value;
+            take.setParameters (parameters);
+            take.hit (articulation, 0, 0.90f, 0.60);
+        }
+        take.rest (0.50);
+    }
+
+    take.rest (1.4);
+    return take;
 }
 
 Take renderMicSpreadSweep()
@@ -718,7 +741,8 @@ const std::array<Demo, 27>& demos()
         { "20-octave-body.wav",
           "The keyboard as one drum retuned four times, then as the four drums",
           renderDrumLayout },
-        { "21-mic-distance.wav", "The close pair from 3 cm out to 40 cm",
+        { "21-mic-distance.wav",
+          "The close pair from 3 cm out to 40 cm, on the head and then on the body",
           renderMicDistanceSweep },
         { "22-mic-spread.wav", "The close pair from coincident to fully opened",
           renderMicSpreadSweep },

@@ -460,6 +460,35 @@ top of the drum where the body should only have been adding weight, and it left
 a hand laid on the head unable to damp anything anyone could still hear — since
 a hand on the head does not touch the body.
 
+The body moves with the microphones, and is read the way the head is. A ring
+mode's shape around the shell is *cos(nθ)*, so its spatial wavenumber is *n/R*,
+and the same evanescent law that carries the head's shape to a close capsule
+carries the wall's — over the path from the wall to the capsule rather than from
+the head to it, because that is where the wood is. The same proximity lift and
+propagating share sit on top of it. Mic Distance used to move the head's near
+field and the head's continuum and leave the shell nailed at one level, so
+backing the pair off thinned the drum around a body that never receded.
+
+It is taken as a ratio against each drum's own capsule distance at the factory
+Mic Distance, exactly as the continuum's perspective law is — per drum, because
+the pair sits proportionally closer to the small heads. Every factory preset
+therefore renders as it did. Moving the pair out to 40 cm now takes the
+ō-daiko's lowest ring mode down 3.6 dB and the okedo's down 16.0 dB, while the
+top of either bank barely moves: the evanescent rate is
+*√((n/R)² − (ω/c)²)*, and a ring mode's frequency climbs as about *n²* where its
+wavenumber climbs as *n*, so the high ring modes are already propagating and do
+not care where the pair stands. The light stave okedo moves most, which is the
+drum whose body is loudest against its own head.
+
+What the shell still does not have is a radiation-aware *decay* — its Q is a
+single lumped figure that already contains whatever the body radiates, so a
+derived radiation loss cannot be added on top of it without counting it twice —
+or an angular doublet. See
+[`Docs/best-in-class-plan.md`](Docs/best-in-class-plan.md), "The body moves with
+the pair", including why gating the shell's *level* on `radiationEfficiency`,
+which an earlier note in that document asked for, is the wrong term in the wrong
+place.
+
 ### Above the modes: the head's continuum
 
 A modal bank can only resolve so far. The mode table runs to the Bessel zeros
@@ -1025,9 +1054,10 @@ including the level of the head's continuum, bit-exact determinism, the velocity
 and contact-time laws, the instrument's dynamic range, the Linear response's
 evenness and every Velocity Curve's monotonic fixed endpoints, the head's
 bending stiffness and the modal ratios it opens
-out, the enclosed air solved as a finite column rather than an infinite spring
-and lossless only where that is inaudible — its own thermoviscous loss
-recomputed from the resolved drum and required to stay far under the decay
+out, the wooden body receding as the pair backs off while the factory position
+stays exactly where it was, the enclosed air solved as a finite column rather
+than an infinite spring and lossless only where that is inaudible — its own
+thermoviscous loss recomputed from the resolved drum and required to stay far under the decay
 already there, while Body Depth keeps its authority over the breathing branch's
 tail — the Hertz contact patch the bachi does not have and what it would be
 worth if it did,
@@ -1158,6 +1188,28 @@ this repository's own code.
 
 ## Changelog
 
+- 2026-08-19: Gave the wooden shell a perspective. Mic Distance moved the head's
+  near field and the head's continuum and left the body at one fixed level, so
+  backing the pair off thinned the drum around a shell that never receded. A
+  ring mode is now read the way a membrane mode is — an evanescent term at its
+  own circumferential wavenumber `n/R` over the wall-to-capsule path, plus the
+  same proximity lift and propagating share — taken as a ratio against each
+  drum's own capsule distance at the factory Mic Distance, so every factory
+  preset renders exactly as it did and `shellCalibration` keeps the meaning it
+  was pinned with. At 40 cm the ō-daiko's lowest ring mode is 3.6 dB down and
+  the okedo's 16.0 dB, while the top of either bank moves under a decibel.
+  Chosen by ear from a six-way listening test under the new `CLAUDE.md`
+  convention; the alternatives and why the measurements rule three of them out
+  are in `Docs/best-in-class-plan.md`. In particular, gating the shell's *level*
+  on `radiationEfficiency` — which that document previously named as the missing
+  term — is the wrong term in the wrong place: it is a far-field power law and
+  the pair is in the shell's near field, and holding the Don Rim's wooden energy
+  across it needs a 29.5× fitted re-pin. Guarded by
+  `testTheBodyMovesWithThePair`. Twenty-six of the twenty-seven demonstration
+  takes are bit-identical; `21-mic-distance.wav` changed because it swept the
+  control on a Ka, which never touches the hoop, and so could only ever show two
+  thirds of what Mic Distance does — it now takes the same five positions on a
+  Ka and then on a Don Rim.
 - 2026-08-19: Adjudicated fifteen proposed acoustic and performance mechanisms
   against the shipping engine; none is released and the record is
   [Docs/best-in-class-plan.md](Docs/best-in-class-plan.md), "Fifteen proposed

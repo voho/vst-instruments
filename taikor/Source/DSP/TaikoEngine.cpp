@@ -708,6 +708,72 @@ float TaikoEngine::membraneAreaFor (float radius) noexcept
     return piFloat * radius * radius;
 }
 
+// Close microphones lift the low end. The depth follows the same distance, so
+// backing the pair off thins the drum exactly as it does in a room.
+float TaikoEngine::micProximityFor (float micDistanceMetres) noexcept
+{
+    return 1.20f * (0.12f / (0.12f + micDistanceMetres));
+}
+
+// Small drums (Okedo, Shime) have fundamentals whose near-field decays before
+// the fixed mic distance. Scale the close-mic position with sqrt(r/r0) so the
+// mic sits proportionally closer to smaller heads. Clamp at 0.74 so Chu-daiko
+// (r/r0 ~ 0.8) stays at unity.
+float TaikoEngine::micDistanceSizeScale (float radius) noexcept
+{
+    if (radius / referenceRadius >= 0.78f)
+        return 1.0f;
+    return clampFloat (std::sqrt (radius / referenceRadius), 0.60f, 1.0f);
+}
+
+// A ring mode is read the way a membrane mode is. Its shape around the body is
+// cos(n theta), so its spatial wavenumber is n/R, and nearFieldAttenuation
+// takes the ring order where a membrane mode hands it a Bessel zero. The
+// distance is from the wall to the capsule rather than from the head to it,
+// because that is where the wood is: the pair stands over the head at
+// micRadius and the shell is out at the drum's own radius. On top of that
+// evanescent term sit the same proximity lift and propagating share the head
+// carries, so the body and the head answer the pair through one construction.
+//
+// The result is a ratio rather than an absolute, taken against this drum's own
+// capsule distance at the factory Mic Distance. Per drum, because the capsules
+// are scaled proportionally closer to the small heads and one fixed reference
+// would have the okedo and the shime reading their bodies from a position the
+// pair never occupies - measured, that put 10 dB of extra body on a close okedo
+// and took the loudest rim shot to 0.985 of full scale, past the limiter clause
+// the suite holds at 0.95. Against each drum's own position instead, every
+// factory preset renders as it did and shellCalibration keeps the meaning it
+// was pinned with; only moving the pair means anything.
+//
+// Which of these to ship was decided by ear, in the A-Z listening test recorded
+// under "The body moves with the pair" in Docs/best-in-class-plan.md.
+float TaikoEngine::shellPerspectiveGain (const DrumState& drum, int ringOrder,
+                                         float omega, float frequency,
+                                         float micDistanceMetres) noexcept
+{
+    const auto ring = static_cast<float> (ringOrder);
+    const float efficiency =
+        radiationEfficiency (ringOrder, omega * drum.radius / soundSpeed);
+    const float lateral = std::max (drum.radius - drum.micRadius, 0.0f);
+
+    const auto readAt = [&] (float distance)
+    {
+        const float path = std::sqrt (lateral * lateral + distance * distance);
+        return nearFieldAttenuation (ring, drum.radius, omega, path)
+                 * proximityLift (micProximityFor (distance), frequency)
+             + 0.35f * efficiency * propagatingSpreadFor (distance);
+    };
+
+    // Built exactly the way resolveDrumFor builds drum.micDistanceMetres, at
+    // the factory Mic Distance control value.
+    const float reference = continuumReferenceDistanceMetres
+                          * micDistanceSizeScale (drum.radius);
+    const float atReference = readAt (reference);
+    if (! (atReference > 1.0e-12f))
+        return 1.0f;
+    return readAt (micDistanceMetres) / atReference;
+}
+
 TaikoEngine::ComplexObservation TaikoEngine::baffledModeObservation (
     float radius, float micRadius, float micDistanceMetres,
     int circumferentialOrder, float lambda, float omega,
@@ -2104,20 +2170,11 @@ void TaikoEngine::resolveDrumGeometry (const EngineParameters& applied,
     drum.micAngleLeft = micReference + 0.5f * separation;
     drum.micAngleRight = micReference - 0.5f * separation;
 
-    // Small drums (Okedō, Shime) have fundamentals whose near-field decays
-    // before the fixed mic distance. Scale the close-mic position with
-    // sqrt(r/r0) so the mic sits proportionally closer to smaller heads.
-    // Clamp at 0.74 so Chū-daiko (r/r0 ≈ 0.8) stays at unity.
-    const float sizeScale = clampFloat (
-        std::sqrt (drum.radius / referenceRadius), 0.60f, 1.0f);
-    const float micScaleApplied = drum.radius / referenceRadius >= 0.78f
-        ? 1.0f : sizeScale;
     drum.micDistanceMetres = lerp (minimumMicDistanceMetres,
                                    maximumMicDistanceMetres,
-                                   applied.micDistance) * micScaleApplied;
-    // Close microphones lift the low end. The depth follows the same distance,
-    // so backing the pair off thins the drum exactly as it does in a room.
-    drum.micProximity = 1.20f * (0.12f / (0.12f + drum.micDistanceMetres));
+                                   applied.micDistance)
+                           * micDistanceSizeScale (drum.radius);
+    drum.micProximity = micProximityFor (drum.micDistanceMetres);
     // And the width trim the output stage will put on the finished pair, which
     // is part of the microphone geometry rather than part of the mix: it
     // decides how much of the difference between the two capsules survives, and
@@ -3455,7 +3512,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
     const float referencePropagatingSpread =
         propagatingSpreadFor (continuumReferenceDistanceMetres);
     const float referenceMicProximity =
-        1.20f * (0.12f / (0.12f + continuumReferenceDistanceMetres));
+        micProximityFor (continuumReferenceDistanceMetres);
 
     const float edgeLoss = drum.edgeLoss * (1.0f + 3.0f * extraDamping);
     // The hide's own loss, kept as the two coefficients materialDamping sums
@@ -3887,7 +3944,9 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         const float effectiveWoodMass = std::max (woodModalMass, 3.2f);
         const float level = shellGain * shellCalibration * radiatingArea
                           / (effectiveWoodMass * omega * rate)
-                          / (1.0f + 0.35f * static_cast<float> (index));
+                          / (1.0f + 0.35f * static_cast<float> (index))
+                          * shellPerspectiveGain (drum, index + 2, omega,
+                                                  frequency, micDistance);
 
         auto& mode = voice.modes[static_cast<std::size_t> (count)];
         beginMode (mode, omega, frequency, decay);
