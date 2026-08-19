@@ -1537,7 +1537,33 @@ same claims are not re-litigated.
   byte 64, the balance of what is checkable currently supports leaving the
   coordinate where it is.
 
-  **Closed 2026-08-19: the claim has no source.** The submission was supplied a
+  **That closure was wrong, corrected the same day -- the claim is sourced.**
+  Synthmania's own MKS-50 page states that "a pinch of reverb from a T.C.
+  Electronic M300 multieffect has been added to all examples", with the M300
+  also used to "process the sounds a little", and the practice is reported
+  across the site's instrument pages rather than that one. The submission did
+  not cite this and could not be checked from the environment the paragraph
+  below was written in; that is a fault in the submission's sourcing and in the
+  check, not evidence against the claim, and the paragraph below drew the wrong
+  conclusion from it.
+
+  **What it does to this task.** The A64 comparison is against a recording that
+  carries added reverb and unspecified light processing. Reverb is
+  HF-weighted, so it biases a spectral-centroid reading *upward* -- the same
+  direction as "the reference is noise-dominated and the model is not". The
+  confound therefore points the same way as the finding, which is the
+  unfavourable case. It is not obviously worth 13 dB: a pinch of reverb does
+  not invert which of two sources dominates by that margin, and the recorded
+  inversion was a within-take comparison rather than a centroid alone. But the
+  direction of the evidence is now compromised as well as the magnitude, and
+  the honest statement is that both halves of the A64 finding are weaker than
+  when `subMixVolts` was moved on the strength of it.
+
+  What remains unsupported is the companion claim that a performer moved A64's
+  SUB slider: the decoded bank's hashed payload gives sub byte 64, and nothing
+  in the submission bears on that.
+
+  **Superseded closure follows, retained for the record:** The submission was supplied a
   second time as its original page, which was read in full. It contains no
   synthmania URL and no external citation of any kind -- every link in it is
   the host application's own infrastructure -- and its four `[cite: N]` markers
