@@ -663,10 +663,12 @@ void validateCounterAlgebra(const CounterCase& testCase,
             >= static_cast<std::uint64_t>(
                 youknow106::Chorus::minimumExactInputSupportRate);
     const std::uint64_t bbdLineFrames = 2u * internal;
+    // The input support network is shared by both wet branches and advanced
+    // once per internal frame; only the two output chains are per line.
     const std::uint64_t exactInputAdvances = exactInputSelected
-        ? bbdLineFrames : 0u;
+        ? internal : 0u;
     const std::uint64_t legacyInputFrames = exactInputSelected
-        ? 0u : bbdLineFrames;
+        ? 0u : internal;
     const std::uint64_t exactOutputAdvances = bbdLineFrames;
     const std::uint64_t exactAdvances = exactInputAdvances
                                       + exactOutputAdvances;

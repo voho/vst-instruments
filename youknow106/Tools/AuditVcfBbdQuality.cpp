@@ -116,8 +116,12 @@ struct YouKnow106TestAccess
     static float processBbdLine(Chorus& chorus, float input, float clockHz,
                                 float sampleRate) noexcept
     {
+        // The input support network belongs to the Chorus and feeds both wet
+        // branches; drive it exactly as the production path does, then the one
+        // line this oracle isolates.
+        const float limited = chorus.advanceInputSupport(input);
         return chorus.lineA_.process(
-            input, clockHz, sampleRate, chorus.support_,
+            limited, clockHz, sampleRate,
             chorus.support_.exactOutputConnected, 0.0f);
     }
 

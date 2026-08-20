@@ -265,8 +265,11 @@ struct YouKnow106TestAccess
         // Both sides use the exact same physical support. The seam changes
         // only whether its output side sees the BLEP-corrected or raw held
         // BBD staircase, so the comparison cannot accidentally measure two
-        // different filter implementations.
-        return line.process(input, clockHz, chorus.sampleRate_, support,
+        // different filter implementations. The input side is shared by the
+        // two branches and belongs to the Chorus, so drive it here exactly as
+        // Chorus::process does.
+        const float limited = chorus.advanceInputSupport(input);
+        return line.process(limited, clockHz, chorus.sampleRate_,
                             support.exactOutputConnected, 0.0f, useBlep);
     }
 
@@ -278,14 +281,15 @@ struct YouKnow106TestAccess
         const auto& support = chorus.support_;
         const auto& transition = wetConnected
             ? support.exactOutputConnected : support.exactOutputMuted;
-        return line.process(input, clockHz, chorus.sampleRate_, support,
+        const float limited = chorus.advanceInputSupport(input);
+        return line.process(limited, clockHz, chorus.sampleRate_,
                             transition, 0.0f, true);
     }
 
     static const std::array<double, 6>& chorusExactInputState(
         const Chorus& chorus) noexcept
     {
-        return chorus.lineA_.exactInputState;
+        return chorus.inputSupport_.exactState;
     }
 
     static const std::array<double, 6>& chorusExactOutputState(
@@ -298,9 +302,9 @@ struct YouKnow106TestAccess
         const Chorus& chorus) noexcept
     {
         const auto& line = chorus.lineA_;
-        return std::isfinite(line.exactInputPrevious)
-            && std::isfinite(line.exactInputPrevious2)
-            && std::isfinite(line.exactInputPrevious3)
+        return std::isfinite(chorus.inputSupport_.exactPrevious)
+            && std::isfinite(chorus.inputSupport_.exactPrevious2)
+            && std::isfinite(chorus.inputSupport_.exactPrevious3)
             && std::isfinite(line.exactOutputPrevious)
             && std::isfinite(line.exactOutputPrevious2)
             && std::isfinite(line.exactOutputPrevious3);
@@ -387,23 +391,25 @@ struct YouKnow106TestAccess
             return line.previousInput == 0.0f
                 && line.previousInput2 == 0.0f
                 && line.previousInput3 == 0.0f
-                && line.inputCouplingState == 0.0f
-                && line.antiAliasState == 0.0f
-                && line.antiAliasFirst.s1 == 0.0f
-                && line.antiAliasFirst.s2 == 0.0f
-                && line.antiAliasSecond.s1 == 0.0f
-                && line.antiAliasSecond.s2 == 0.0f
-                && allZero(line.exactInputState)
                 && allZero(line.exactOutputState)
-                && line.exactInputPrevious == 0.0
-                && line.exactInputPrevious2 == 0.0
-                && line.exactInputPrevious3 == 0.0
                 && line.exactOutputPrevious == 0.0
                 && line.exactOutputPrevious2 == 0.0
                 && line.exactOutputPrevious3 == 0.0
                 && line.pastBlepEventCount == 0;
         };
-        return clear(chorus.lineA_) && clear(chorus.lineB_);
+        const auto& shared = chorus.inputSupport_;
+        const auto sharedIsClear = shared.couplingState == 0.0f
+            && shared.passiveState == 0.0f
+            && shared.antiAliasFirst.s1 == 0.0f
+            && shared.antiAliasFirst.s2 == 0.0f
+            && shared.antiAliasSecond.s1 == 0.0f
+            && shared.antiAliasSecond.s2 == 0.0f
+            && std::all_of(shared.exactState.begin(), shared.exactState.end(),
+                           [](double value) { return value == 0.0; })
+            && shared.exactPrevious == 0.0
+            && shared.exactPrevious2 == 0.0
+            && shared.exactPrevious3 == 0.0;
+        return sharedIsClear && clear(chorus.lineA_) && clear(chorus.lineB_);
     }
 
     static std::vector<float> renderOutputCoupling(
