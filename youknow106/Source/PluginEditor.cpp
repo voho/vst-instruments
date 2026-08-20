@@ -37,10 +37,11 @@ constexpr auto compactStyleProperty = "compactStyle";
 constexpr auto secondaryStyleProperty = "secondaryStyle";
 constexpr auto hardwareStyleProperty = "hardwareStyle";
 constexpr auto hardwareKeyCentreProperty = "hardwareKeyCentre";
-// The fixed help strip. Its body is one column of running text, and it is the
-// only place a control's explanation appears -- there is no floating tooltip
-// window -- so it must print the whole of it.
-constexpr int helpBodyMaximumLines = 3;
+constexpr auto actionIconProperty = "actionIcon";
+constexpr auto segmentDisplayStyleProperty = "segmentDisplayStyle";
+constexpr auto statusLampStyleProperty = "statusLampStyle";
+constexpr auto statusLampOnProperty = "statusLampOn";
+
 // Where a key face sits inside its cell, as a fraction of the cell height.
 // An ordinary key takes `hardwareKeyCentre`. The sound row's stacked pairs --
 // two keys sharing one column, each in a cell tall enough to hold the other's
@@ -54,10 +55,11 @@ constexpr double footRegisterKeyCentre = 0.80;
 // VOICE MODE too, which left POLY 1, POLY 2 and UNISON six pixels above the
 // GROUP, BANK, PATCH and DATA keys they share the programmer row with.
 constexpr float stackedCellHeight = 80.0f;
-constexpr auto actionIconProperty = "actionIcon";
-constexpr auto segmentDisplayStyleProperty = "segmentDisplayStyle";
-constexpr auto statusLampStyleProperty = "statusLampStyle";
-constexpr auto statusLampOnProperty = "statusLampOn";
+
+// The fixed help strip. Its body is one column of running text, and it is the
+// only place a control's explanation appears -- there is no floating tooltip
+// window -- so it must print the whole of it.
+constexpr int helpBodyMaximumLines = 3;
 
 // Framed controls share one quiet neutral edge. Broad tonal fields carry the
 // panel hierarchy instead of outlining every surface.
@@ -1451,10 +1453,15 @@ bool YouKnow106PerformanceLever::keyStateChanged (bool isKeyDown)
         juce::KeyPress::isKeyCurrentlyDown (juce::KeyPress::rightKey);
     const bool upHeld =
         juce::KeyPress::isKeyCurrentlyDown (juce::KeyPress::upKey);
+    // Down is part of the gesture too -- keyPressed uses it to release
+    // modulation -- so a player holding it must not have modulation handed
+    // back by an unrelated key going up.
+    const bool downHeld =
+        juce::KeyPress::isKeyCurrentlyDown (juce::KeyPress::downKey);
 
-    const auto axes = axesForHeldKeys (leftHeld, rightHeld, upHeld);
+    const auto axes = axesForHeldKeys (leftHeld, rightHeld, upHeld, downHeld);
     setValues (axes.bend, axes.modulation, true);
-    keyboardGestureActive = leftHeld || rightHeld || upHeld;
+    keyboardGestureActive = leftHeld || rightHeld || upHeld || downHeld;
     return true;
 }
 

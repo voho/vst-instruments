@@ -122,9 +122,11 @@ public:
     std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
 
     // Where the lever sits for a given set of held arrow keys. Both horizontal
-    // keys held is a player pressing against themselves, so the lever rests.
-    // Free-standing because it is the whole of what a key release has to
-    // decide, and a headless suite cannot press real keys to reach it.
+    // keys held is a player pressing against themselves, so the lever rests;
+    // Down is the key that releases modulation, so holding it keeps modulation
+    // released however long Up is held with it. Free-standing because it is
+    // the whole of what a key release has to decide, and a headless suite
+    // cannot press real keys to reach it.
     struct Axes
     {
         float bend;
@@ -132,10 +134,11 @@ public:
     };
     [[nodiscard]] static constexpr Axes axesForHeldKeys (bool leftHeld,
                                                          bool rightHeld,
-                                                         bool upHeld) noexcept
+                                                         bool upHeld,
+                                                         bool downHeld) noexcept
     {
         return { leftHeld == rightHeld ? 0.0f : (rightHeld ? 1.0f : -1.0f),
-                 upHeld ? 1.0f : 0.0f };
+                 upHeld && ! downHeld ? 1.0f : 0.0f };
     }
 
     [[nodiscard]] float getPitchBend() const noexcept { return pitchBend; }

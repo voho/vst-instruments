@@ -276,8 +276,8 @@ inline constexpr float labelOverhang = 4.0f;
 
 // The add-on keys below the keybed -- PANIC, INIT, the variation strengths and
 // the patch-file rail -- are drawn from a fixed pixel budget rather than from
-// the panel table, because they carry an icon beside the legend. These are the
-// three numbers that budget is made of, in the same pixels the editor draws in.
+// the panel table, because they carry an icon beside the legend. This is that
+// budget, in the same pixels the editor draws in.
 inline constexpr float compactLegendPointSizeMax = 13.0f;
 inline constexpr float compactLegendPointSizeMin = 10.5f;
 inline constexpr float compactLegendHeightRatio = 0.55f;
@@ -311,8 +311,8 @@ inline constexpr float defaultEditorScale =
 [[nodiscard]] float compactLegendPointSize(float buttonHeight,
                                            float editorScale) noexcept;
 
-// What is left for the legend on a compact key once its padding, icon and icon
-// gap are taken out. `iconSize` is zero for a key with no icon.
+// What is left for the legend on a compact key once its padding and, for a key
+// that has one, its icon and the gap beside it are taken out.
 [[nodiscard]] float compactLegendWidth(float buttonWidth, float buttonHeight,
                                        bool hasIcon) noexcept;
 

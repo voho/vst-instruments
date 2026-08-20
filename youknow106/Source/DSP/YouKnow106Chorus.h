@@ -510,9 +510,10 @@ private:
         float previousInput { 0.0f };
         float previousInput2 { 0.0f };
         float previousInput3 { 0.0f };
-        // The wet input has its own coupling high-pass and five low-pass
-        // poles: two Sallen-Key sections and one passive pole. The
-        // output has the tap-summing pole followed by two Sallen-Key sections.
+        // The output has the tap-summing pole followed by two Sallen-Key
+        // sections. The wet input's own coupling high-pass and five low-pass
+        // poles are shared by the two lines and live on the Chorus: see
+        // `InputSupport` below.
         //
         // The BBD's clock-grid images are physical and remain in the modeled
         // staircase. Sampling that asynchronous staircase on the numerical
@@ -521,8 +522,6 @@ private:
         // hardware output poles. It is numerical state: unlike buckets,
         // clock phase, transfer loss and held noise, it is cleared when the
         // engine changes processing rate.
-        // The input side of that chain is shared and lives on the Chorus, not
-        // here: see `InputSupport` below.
         std::array<double, 6> exactOutputState {};
         double exactOutputPrevious { 0.0 };
         double exactOutputPrevious2 { 0.0 };

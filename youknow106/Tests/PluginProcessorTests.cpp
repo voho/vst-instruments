@@ -1905,13 +1905,25 @@ void testBypassedTelemetryShowsTheSilenceTheHostReceives()
     processor.getOscilloscopeBuffer (scope);
     expect (scopePeak() == 0.0f,
             "the panel drew the audio the bypass had already thrown away");
+    // The lamps and meters describe the same output the trace does.
+    expect (processor.getActiveVoiceCount() == 0
+                && processor.getVoiceMaskForDisplay() == 0
+                && processor.getEnvelopeForDisplay() == 0.0f,
+            "a bypassed instrument still lights a voice lamp and drives the "
+            "envelope meter");
+    // The chassis is still powered, so its own readouts keep reporting.
+    expect (processor.getTemperatureForDisplay() >= 25.0f,
+            "bypass stopped the chassis readout");
 
     // The engine kept running behind the bypass, so the note is still held and
-    // comes back the moment the host stops bypassing.
+    // comes back the moment the host stops bypassing -- lamps included.
     buffer.clear();
     processor.processBlock (buffer, empty);
     expect (bufferPeak (buffer) > 0.0f,
             "the held note did not resume after bypass");
+    expect (processor.getActiveVoiceCount() > 0
+                && processor.getVoiceMaskForDisplay() != 0,
+            "the voice lamps did not come back when the bypass was released");
     processor.releaseResources();
 }
 
@@ -4237,6 +4249,29 @@ void testEveryInteractiveEditorControlExplainsItself()
             "the removed MIDI-channel key returned to the programmer");
 }
 
+// The characters a laid-out arrangement actually carries, spaces removed.
+// Not the same as the source text's characters: shapers substitute ligatures,
+// so "off." can come back as three glyphs rather than four. Comparing counts
+// against the source therefore reports a truncation that did not happen --
+// what a cut body loses is its tail, so that is what gets compared.
+juce::String laidOutGlyphs (juce::GlyphArrangement& arrangement)
+{
+    juce::String drawn;
+    for (int index = 0; index < arrangement.getNumGlyphs(); ++index)
+        drawn << arrangement.getGlyph (index).getCharacter();
+    return drawn.removeCharacters (" ");
+}
+
+// The same text shaped with nothing to bump into, so its tail is the tail the
+// bounded layout has to reach.
+juce::String untruncatedGlyphs (const juce::Font& font, const juce::String& text)
+{
+    juce::GlyphArrangement reference;
+    reference.addFittedText (font, text, 0.0f, 0.0f, 1.0e6f, 1.0e6f,
+                             juce::Justification::centredLeft, 1, 1.0f);
+    return laidOutGlyphs (reference);
+}
+
 // The strip is the only place a control's explanation appears -- there is no
 // floating tooltip window -- so it has to print the whole of it. JUCE cannot
 // condense at a minimum horizontal scale of one, so an overlong body was
@@ -4296,33 +4331,34 @@ void testHelpStripPrintsEveryExplanationInFull()
                 continue;
 
             const auto layout = help->bodyLayout();
+            const juce::Font font { juce::FontOptions (layout.headingPointSize) };
             juce::GlyphArrangement arrangement;
             arrangement.addFittedText (
-                juce::Font (juce::FontOptions (layout.headingPointSize)), text,
+                font, text,
                 static_cast<float> (layout.body.getX()),
                 static_cast<float> (layout.body.getY()),
                 static_cast<float> (layout.body.getWidth()),
                 static_cast<float> (layout.body.getHeight()),
                 juce::Justification::centredLeft, layout.maximumLines, 1.0f);
 
-            // JUCE stops adding glyphs when it runs out of lines: a cut body
-            // simply carries fewer of them, usually with no ellipsis to show
-            // for it. Compare what was laid out against what was asked for.
-            juce::String drawn;
-            for (int index = 0; index < arrangement.getNumGlyphs(); ++index)
-                drawn << arrangement.getGlyph (index).getCharacter();
-
-            const auto printing = text.removeCharacters (" ");
-            const auto drawnPrinting = drawn.removeCharacters (" ");
+            // JUCE stops adding glyphs when it runs out of lines, usually with
+            // no ellipsis to show for it, so what a cut body loses is its
+            // tail. Require the tail the same text reaches with nothing to
+            // bump into.
+            const auto drawn = laidOutGlyphs (arrangement);
+            const auto whole = untruncatedGlyphs (font, text);
+            const auto tail = whole.getLastCharacters (
+                juce::jmin (12, whole.length()));
             expect (! drawn.containsChar (juce::juce_wchar (0x2026))
-                        && ! drawn.endsWith ("...")
-                        && drawnPrinting.length() >= printing.length(),
+                        && drawn.endsWith (tail),
                     std::string ("the help strip truncated the explanation of ")
                         + target->getName().toStdString() + " at "
                         + std::to_string (size.x) + "x"
                         + std::to_string (size.y) + ": drew "
-                        + std::to_string (drawnPrinting.length()) + " of "
-                        + std::to_string (printing.length()) + " characters");
+                        + std::to_string (drawn.length()) + " of "
+                        + std::to_string (whole.length()) + " glyphs, ending '"
+                        + drawn.getLastCharacters (12).toStdString()
+                        + "' rather than '" + tail.toStdString() + "'");
             ++checked;
         }
     }
@@ -4332,7 +4368,11 @@ void testHelpStripPrintsEveryExplanationInFull()
     // the sweep above would pass by being blind rather than by the help fitting.
     editor->setSize (panel::minimumEditorWidth, panel::minimumEditorHeight);
     editor->resized();
-    help->showNotice ("GUARD", juce::String::repeatedString ("overlong ", 200));
+    // The filler repeats, so the tail has to be something that appears once:
+    // a suffix check against a repeating string matches its own middle.
+    help->showNotice ("GUARD",
+                      juce::String::repeatedString ("overlong ", 200)
+                          + "and this last clause has to survive.");
     const auto overlong = help->bodyLayout();
     juce::GlyphArrangement guardArrangement;
     guardArrangement.addFittedText (
@@ -4343,10 +4383,11 @@ void testHelpStripPrintsEveryExplanationInFull()
         static_cast<float> (overlong.body.getWidth()),
         static_cast<float> (overlong.body.getHeight()),
         juce::Justification::centredLeft, overlong.maximumLines, 1.0f);
-    juce::String guardDrawn;
-    for (int index = 0; index < guardArrangement.getNumGlyphs(); ++index)
-        guardDrawn << guardArrangement.getGlyph (index).getCharacter();
-    expect (guardDrawn.length() < help->getHelpText().length(),
+    const auto guardDrawn = laidOutGlyphs (guardArrangement);
+    const auto guardWhole = untruncatedGlyphs (
+        juce::Font (juce::FontOptions (overlong.headingPointSize)),
+        help->getHelpText());
+    expect (! guardDrawn.endsWith (guardWhole.getLastCharacters (12)),
             "the help-fit check cannot detect a body that does not fit");
 
     editor->setSize (panel::defaultEditorWidth, panel::defaultEditorHeight);
@@ -5076,9 +5117,9 @@ void testProgrammerRowKeysShareOneKeyFace()
 void testPerformanceLeverKeepsTheAxisStillHeld()
 {
     using Lever = YouKnow106PerformanceLever;
-    const auto axes = [] (bool left, bool right, bool up)
+    const auto axes = [] (bool left, bool right, bool up, bool down = false)
     {
-        return Lever::axesForHeldKeys (left, right, up);
+        return Lever::axesForHeldKeys (left, right, up, down);
     };
 
     expect (axes (false, false, false).bend == 0.0f
@@ -5104,6 +5145,16 @@ void testPerformanceLeverKeepsTheAxisStillHeld()
             "holding both horizontal keys does not rest the lever");
     expect (axes (true, true, true).modulation == 1.0f,
             "opposing bend keys also cancelled modulation");
+    // Down releases modulation, so holding it keeps modulation released even
+    // while Up is still down: a bend key going up must not hand it back.
+    expect (axes (false, false, true, true).modulation == 0.0f,
+            "a held Down key did not keep modulation released");
+    expect (axes (false, true, true, true).bend == 1.0f
+                && axes (false, true, true, true).modulation == 0.0f,
+            "a held Down key stopped working when a bend key was held too");
+    expect (axes (false, false, false, true).modulation == 0.0f
+                && axes (false, false, false, true).bend == 0.0f,
+            "Down alone is not a lever at rest");
 }
 
 void testPolyButtonsKeepAValidFirmwareLatch()

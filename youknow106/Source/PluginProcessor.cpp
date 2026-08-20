@@ -1059,8 +1059,9 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             engine.allNotesOff();
         else if (message.isAllNotesOff())
             // All notes off means release the keys, not cut the sound: the
-            // exact B-2 release can take about 25.55 seconds to reach digital
-            // zero, and truncating it would be an all-sound-off.
+            // exact B-2 release runs for up to 25.55 s -- and the output
+            // coupling for another 28 s after it -- so truncating it would be
+            // an all-sound-off.
             engine.releaseAllNotes();
         else if (message.isPitchWheel())
             engine.setPitchBend ((static_cast<float> (message.getPitchWheelValue())
@@ -1126,10 +1127,20 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     if (pendingMidiNeedsResync)
         publishPendingMidiResyncMailbox();
 
-    activeVoiceCount.store (engine.getActiveVoiceCount(), std::memory_order_relaxed);
-    displayVoiceMask.store (engine.getDisplayVoiceMask(), std::memory_order_relaxed);
-    displayEnvelope.store (engine.getDisplayEnvelope(), std::memory_order_relaxed);
-    displayLfo.store (engine.getDisplayLfo(), std::memory_order_relaxed);
+    // The lamps, the meters and the trace below all describe the instrument's
+    // output, and under bypass there is none: the render behind the mute keeps
+    // MIDI state moving, it is not something the player is hearing. The scope
+    // ring takes care of itself, because the buffer it reads was cleared
+    // above. The chassis readouts are not output -- the modelled instrument is
+    // still powered and still warming -- so those keep reporting.
+    activeVoiceCount.store (renderingBypassed ? 0 : engine.getActiveVoiceCount(),
+                            std::memory_order_relaxed);
+    displayVoiceMask.store (renderingBypassed ? 0 : engine.getDisplayVoiceMask(),
+                            std::memory_order_relaxed);
+    displayEnvelope.store (renderingBypassed ? 0.0f : engine.getDisplayEnvelope(),
+                           std::memory_order_relaxed);
+    displayLfo.store (renderingBypassed ? 0.0f : engine.getDisplayLfo(),
+                      std::memory_order_relaxed);
     displayTemperature.store (engine.getDisplayTemperatureC(), std::memory_order_relaxed);
     displayRailDroop.store (engine.getDisplayRailDroopVolts(), std::memory_order_relaxed);
 
