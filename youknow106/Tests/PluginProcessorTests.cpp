@@ -4237,6 +4237,122 @@ void testEveryInteractiveEditorControlExplainsItself()
             "the removed MIDI-channel key returned to the programmer");
 }
 
+// The strip is the only place a control's explanation appears -- there is no
+// floating tooltip window -- so it has to print the whole of it. JUCE cannot
+// condense at a minimum horizontal scale of one, so an overlong body was
+// ellipsised: the QUALITY selector's help lost its last sentence at the
+// smaller editor sizes. This drives every component in the editor that carries
+// help, at both extremes of the resize range and at the default, and rebuilds
+// exactly the arrangement paint draws.
+void testHelpStripPrintsEveryExplanationInFull()
+{
+    YouKnow106AudioProcessor processor;
+    std::unique_ptr<juce::AudioProcessorEditor> base (processor.createEditor());
+    auto* editor = dynamic_cast<YouKnow106AudioProcessorEditor*> (base.get());
+    expect (editor != nullptr, "cannot test the contextual-help strip");
+    if (editor == nullptr)
+        return;
+
+    auto* help = dynamic_cast<YouKnow106ContextHelp*> (
+        findDescendantNamed (*editor, "Context help"));
+    expect (help != nullptr, "the editor has no fixed contextual-help strip");
+    if (help == nullptr)
+        return;
+
+    // Every component that can become the help target.
+    std::vector<juce::Component*> targets;
+    const std::function<void (juce::Component&)> collect =
+        [&targets, &collect] (juce::Component& parent)
+    {
+        for (auto* child : parent.getChildren())
+        {
+            if (auto* client = dynamic_cast<juce::TooltipClient*> (child))
+                if (client->getTooltip().trim().isNotEmpty())
+                    targets.push_back (child);
+            collect (*child);
+        }
+    };
+    collect (*editor);
+    expect (targets.size() >= 40,
+            "the help-fit sweep found almost nothing to explain");
+
+    const std::array<juce::Point<int>, 3> sizes {
+        juce::Point<int> { panel::minimumEditorWidth, panel::minimumEditorHeight },
+        juce::Point<int> { panel::defaultEditorWidth, panel::defaultEditorHeight },
+        juce::Point<int> { panel::maximumEditorWidth, panel::maximumEditorHeight },
+    };
+
+    int checked = 0;
+    for (const auto size : sizes)
+    {
+        editor->setSize (size.x, size.y);
+        editor->resized();
+
+        for (auto* target : targets)
+        {
+            help->showFor (target, editor->parameterValueTextFor (target));
+            const auto text = help->getHelpText();
+            if (text.isEmpty())
+                continue;
+
+            const auto layout = help->bodyLayout();
+            juce::GlyphArrangement arrangement;
+            arrangement.addFittedText (
+                juce::Font (juce::FontOptions (layout.headingPointSize)), text,
+                static_cast<float> (layout.body.getX()),
+                static_cast<float> (layout.body.getY()),
+                static_cast<float> (layout.body.getWidth()),
+                static_cast<float> (layout.body.getHeight()),
+                juce::Justification::centredLeft, layout.maximumLines, 1.0f);
+
+            // JUCE stops adding glyphs when it runs out of lines: a cut body
+            // simply carries fewer of them, usually with no ellipsis to show
+            // for it. Compare what was laid out against what was asked for.
+            juce::String drawn;
+            for (int index = 0; index < arrangement.getNumGlyphs(); ++index)
+                drawn << arrangement.getGlyph (index).getCharacter();
+
+            const auto printing = text.removeCharacters (" ");
+            const auto drawnPrinting = drawn.removeCharacters (" ");
+            expect (! drawn.containsChar (juce::juce_wchar (0x2026))
+                        && ! drawn.endsWith ("...")
+                        && drawnPrinting.length() >= printing.length(),
+                    std::string ("the help strip truncated the explanation of ")
+                        + target->getName().toStdString() + " at "
+                        + std::to_string (size.x) + "x"
+                        + std::to_string (size.y) + ": drew "
+                        + std::to_string (drawnPrinting.length()) + " of "
+                        + std::to_string (printing.length()) + " characters");
+            ++checked;
+        }
+    }
+    expect (checked >= 120, "the help-fit sweep checked almost nothing");
+
+    // Guard the guard: a body far too long for the strip must be reported, or
+    // the sweep above would pass by being blind rather than by the help fitting.
+    editor->setSize (panel::minimumEditorWidth, panel::minimumEditorHeight);
+    editor->resized();
+    help->showNotice ("GUARD", juce::String::repeatedString ("overlong ", 200));
+    const auto overlong = help->bodyLayout();
+    juce::GlyphArrangement guardArrangement;
+    guardArrangement.addFittedText (
+        juce::Font (juce::FontOptions (overlong.headingPointSize)),
+        help->getHelpText(),
+        static_cast<float> (overlong.body.getX()),
+        static_cast<float> (overlong.body.getY()),
+        static_cast<float> (overlong.body.getWidth()),
+        static_cast<float> (overlong.body.getHeight()),
+        juce::Justification::centredLeft, overlong.maximumLines, 1.0f);
+    juce::String guardDrawn;
+    for (int index = 0; index < guardArrangement.getNumGlyphs(); ++index)
+        guardDrawn << guardArrangement.getGlyph (index).getCharacter();
+    expect (guardDrawn.length() < help->getHelpText().length(),
+            "the help-fit check cannot detect a body that does not fit");
+
+    editor->setSize (panel::defaultEditorWidth, panel::defaultEditorHeight);
+    editor->resized();
+}
+
 void testPersistentContextHelpAndValueBubbles()
 {
     YouKnow106AudioProcessor processor;
@@ -5751,6 +5867,7 @@ int main()
     testQualitySelectorDrivesTheEngine();
     testEveryInteractiveEditorControlExplainsItself();
     testPersistentContextHelpAndValueBubbles();
+    testHelpStripPrintsEveryExplanationInFull();
     testEditorContrastAndFocusContract();
     testKeyboardFocusAndHoverShareContextHelp();
     testEditorReloadButtonDiscardsPatchEdits();

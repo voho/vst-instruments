@@ -172,6 +172,26 @@ public:
     // holds the idle strip for a few seconds and then yields. Hover help
     // still wins while it is up.
     void showNotice (juce::String title, juce::String text);
+
+    // Where the strip's three columns land and what they are set in. The body
+    // size is chosen so the whole explanation is printed rather than
+    // ellipsised, and that choice depends on the platform's own sans, so the
+    // fit check has to ask for the same answer paint uses instead of
+    // reproducing the decision. Public for that reason only.
+    struct BodyLayout
+    {
+        juce::Rectangle<float> value;
+        juce::Rectangle<float> title;
+        juce::Rectangle<int> body;
+        float dividerX { 0.0f };
+        float headingPointSize { 13.0f };
+        // How many lines the body may take. JUCE fits a body by stepping the
+        // type down and the line count up until the text fits, so this is the
+        // whole of what decides whether a long explanation is printed or cut.
+        int maximumLines { 3 };
+    };
+    [[nodiscard]] BodyLayout bodyLayout() const;
+
     void paint (juce::Graphics&) override;
     std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
 

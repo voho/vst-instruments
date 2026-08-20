@@ -37,6 +37,10 @@ constexpr auto compactStyleProperty = "compactStyle";
 constexpr auto secondaryStyleProperty = "secondaryStyle";
 constexpr auto hardwareStyleProperty = "hardwareStyle";
 constexpr auto hardwareKeyCentreProperty = "hardwareKeyCentre";
+// The fixed help strip. Its body is one column of running text, and it is the
+// only place a control's explanation appears -- there is no floating tooltip
+// window -- so it must print the whole of it.
+constexpr int helpBodyMaximumLines = 3;
 // Where a key face sits inside its cell, as a fraction of the cell height.
 // An ordinary key takes `hardwareKeyCentre`. The sound row's stacked pairs --
 // two keys sharing one column, each in a cell tall enough to hold the other's
@@ -1670,60 +1674,79 @@ YouKnow106ContextHelp::createAccessibilityHandler()
             std::make_unique<ValueInterface> (*this) });
 }
 
-void YouKnow106ContextHelp::paint (juce::Graphics& g)
+YouKnow106ContextHelp::BodyLayout YouKnow106ContextHelp::bodyLayout() const
 {
     auto bounds = getLocalBounds().toFloat().reduced (0.5f);
-    const float uiScale = static_cast<float> (getHeight()) / panel::helpStripHeight;
-    g.setColour (fromPalette (panel::colour::faceplateLow).withAlpha (0.88f));
-    g.fillRoundedRectangle (bounds,
-                            juce::jmax (2.5f, surfaceCornerRadius * uiScale));
-
     auto content = bounds.reduced (juce::jmax (8.0f, bounds.getHeight() * 0.28f),
                                    juce::jmax (2.0f, bounds.getHeight() * 0.10f));
-    const float fontHeight = juce::jlimit (12.0f, 13.0f,
-                                           bounds.getHeight() * 0.36f);
+    BodyLayout layout;
+    layout.headingPointSize = juce::jlimit (12.0f, 13.0f,
+                                            bounds.getHeight() * 0.36f);
 
-    // The current setting, right-aligned in its own lit column. Reading a value
-    // used to need a drag, because only JUCE's transient bubble carried it;
-    // hovering is enough now, and the bubble still appears while dragging.
     if (helpValue.isNotEmpty())
     {
-        auto valueArea = content.removeFromRight (
+        layout.value = content.removeFromRight (
             juce::jlimit (90.0f, 200.0f, bounds.getWidth() * 0.13f));
-        g.setColour (fromPalette (panel::colour::led));
-        g.setFont (panelFont (fontHeight, true));
-        g.drawFittedText (helpValue, valueArea.toNearestInt(),
-                          juce::Justification::centredRight, 1, 0.9f);
-        g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.42f));
-        g.drawVerticalLine (juce::roundToInt (valueArea.getX() - 8.0f),
-                            valueArea.getY(), valueArea.getBottom());
         content.removeFromRight (12.0f);
     }
 
     // The title column carries a control's full name, which is routinely longer
     // than one short word. Three times the original width lets it read on one
     // line instead of eliding.
-    const float titleWidth = juce::jlimit (276.0f, 384.0f,
-                                           bounds.getWidth() * 0.255f);
-    const auto titleArea = content.removeFromLeft (titleWidth);
+    layout.title = content.removeFromLeft (
+        juce::jlimit (276.0f, 384.0f, bounds.getWidth() * 0.255f));
+    layout.dividerX = content.getX() - 8.0f;
+    content.removeFromLeft (4.0f);
+    layout.body = content.toNearestInt();
+    layout.maximumLines = helpBodyMaximumLines;
+    return layout;
+}
+
+void YouKnow106ContextHelp::paint (juce::Graphics& g)
+{
+    const auto bounds = getLocalBounds().toFloat().reduced (0.5f);
+    const float uiScale = static_cast<float> (getHeight()) / panel::helpStripHeight;
+    g.setColour (fromPalette (panel::colour::faceplateLow).withAlpha (0.88f));
+    g.fillRoundedRectangle (bounds,
+                            juce::jmax (2.5f, surfaceCornerRadius * uiScale));
+
+    const auto layout = bodyLayout();
+
+    // The current setting, right-aligned in its own lit column. Reading a value
+    // used to need a drag, because only JUCE's transient bubble carried it;
+    // hovering is enough now, and the bubble still appears while dragging.
+    if (helpValue.isNotEmpty())
+    {
+        g.setColour (fromPalette (panel::colour::led));
+        g.setFont (panelFont (layout.headingPointSize, true));
+        g.drawFittedText (helpValue, layout.value.toNearestInt(),
+                          juce::Justification::centredRight, 1, 0.9f);
+        g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.42f));
+        g.drawVerticalLine (juce::roundToInt (layout.value.getX() - 8.0f),
+                            layout.value.getY(), layout.value.getBottom());
+    }
 
     g.setColour (fromPalette (panel::colour::cyan));
-    g.setFont (panelFont (fontHeight, true));
-    g.drawFittedText (helpTitle, titleArea.toNearestInt(),
+    g.setFont (panelFont (layout.headingPointSize, true));
+    g.drawFittedText (helpTitle, layout.title.toNearestInt(),
                       juce::Justification::centredLeft, 1, 1.0f);
 
     g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.42f));
-    const float dividerX = content.getX() - 8.0f;
-    g.drawVerticalLine (juce::roundToInt (dividerX), content.getY(),
-                        content.getBottom());
+    g.drawVerticalLine (juce::roundToInt (layout.dividerX),
+                        layout.title.getY(), layout.title.getBottom());
 
-    content.removeFromLeft (4.0f);
     const bool showingIdlePrompt = helpTitle == "HELP";
     g.setColour (fromPalette (showingIdlePrompt ? panel::colour::textDim
                                                 : panel::colour::text));
-    g.setFont (panelFont (fontHeight));
-    g.drawFittedText (helpText, content.toNearestInt(),
-                      juce::Justification::centredLeft, 2, 1.0f);
+    // Three lines, not two. JUCE fits a body by stepping the type down and the
+    // line count up until the text fits, and only ellipsises when it runs out
+    // of both; capping the count at two ran it out one line early on the
+    // longest explanations, so the QUALITY selector's help lost its closing
+    // sentence at the smaller editor sizes. Everything that fitted two lines
+    // still gets two lines at the reading size -- the search starts there.
+    g.setFont (panelFont (layout.headingPointSize));
+    g.drawFittedText (helpText, layout.body, juce::Justification::centredLeft,
+                      layout.maximumLines, 1.0f);
 }
 
 // ---------------------------------------------------------------------------
