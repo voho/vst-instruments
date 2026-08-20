@@ -521,5 +521,14 @@ private:
     std::array<std::atomic<float>, scopeBufferSize> scopeBuffer {};
     std::atomic<std::size_t> scopeWriteIndex { 0 };
 
+    // Set only for the duration of a processBlockBypassed call, on the audio
+    // thread that made it, so the render can silence the buffer before the
+    // panel telemetry is taken from it.
+    bool renderingBypassed { false };
+
+    // Retires every panel readout the audio thread publishes. Shared by the
+    // host reset and the resource teardown, which both stop the instrument.
+    void clearDisplayTelemetry() noexcept;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (YouKnow106AudioProcessor)
 };

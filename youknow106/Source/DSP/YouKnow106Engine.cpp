@@ -2908,6 +2908,20 @@ void YouKnow106Engine::reset()
     oversamplingIdleSamples_ = oversamplingQuietSamples_;
 }
 
+void YouKnow106Engine::resetForHostStop()
+{
+    // The chassis does not return to ambient because the transport stopped.
+    // The warm-up timer and the fraction derived from it are the whole of the
+    // free-running physical state `reset()` clears -- the voice-card trims
+    // outlive it already, and the rail droop is an instantaneous load measure
+    // of voices this call is about to silence.
+    const double warmupSeconds = thermalWarmupSeconds_;
+    const float warmupFraction = thermalWarmupFraction_;
+    reset();
+    thermalWarmupSeconds_ = warmupSeconds;
+    thermalWarmupFraction_ = warmupFraction;
+}
+
 // ---------------------------------------------------------------------------
 // Parameters
 // ---------------------------------------------------------------------------

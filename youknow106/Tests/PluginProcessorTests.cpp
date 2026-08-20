@@ -1806,6 +1806,160 @@ void testHostResetClearsRuntimeStateWithoutUnpreparing()
     processor.releaseResources();
 }
 
+// A host reset is what Cubase, Reaper and Logic issue on every transport stop
+// and locate. It clears what is sounding; it is not a power cycle, and the
+// modelled chassis does not return to ambient because the transport did. Before
+// this was separated the warm-up restarted from zero at every stop, so the 900 s
+// law never ran in a normal editing session and an offline bounce and a long
+// real-time pass rendered different filter headroom from the same patch.
+void testHostResetKeepsTheModelledChassisWarm()
+{
+    YouKnow106AudioProcessor processor;
+    processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+    processor.prepareToPlay (sampleRate, blockSize);
+    setParameterValue (processor, parameters::sustain, 1.0f);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer note;
+    note.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+    processor.processBlock (buffer, note);
+    juce::MidiBuffer empty;
+    // Enough audio for the warm-up to leave ambient by more than the
+    // comparison tolerance below.
+    for (int block = 0; block < 400; ++block)
+    {
+        buffer.clear();
+        processor.processBlock (buffer, empty);
+    }
+
+    const float warmed = processor.getTemperatureForDisplay();
+    expect (warmed > 25.0f + 1.0e-3f,
+            "the warm-up fixture never left ambient");
+
+    processor.reset();
+    expect (processor.getTemperatureForDisplay() >= warmed - 1.0e-4f,
+            "a host transport stop cooled the modelled chassis back to ambient");
+    expect (processor.getActiveVoiceCount() == 0,
+            "the host reset left an active voice behind");
+
+    // It still has to be a reset: the note is gone and the output is silent.
+    buffer.clear();
+    processor.processBlock (buffer, empty);
+    expect (bufferPeak (buffer) == 0.0f,
+            "a voice survived the host reset that kept the chassis warm");
+    // And it keeps advancing from where it was rather than from zero.
+    for (int block = 0; block < 8; ++block)
+    {
+        buffer.clear();
+        processor.processBlock (buffer, empty);
+    }
+    expect (processor.getTemperatureForDisplay() > warmed,
+            "the warm-up did not resume after a host reset");
+
+    // prepareToPlay is the cold path and still is: that one is a power cycle.
+    processor.prepareToPlay (sampleRate, blockSize);
+    expect (std::abs (processor.getTemperatureForDisplay() - 25.0f) < 1.0e-4f,
+            "preparing the processor no longer starts the chassis from ambient");
+    processor.releaseResources();
+}
+
+// The oscilloscope draws the instrument's output, so a bypassed instrument has
+// to draw silence. The render deliberately keeps running behind the bypass to
+// keep MIDI state moving; the trace used to show that hidden audio at full
+// amplitude while the host received nothing.
+void testBypassedTelemetryShowsTheSilenceTheHostReceives()
+{
+    YouKnow106AudioProcessor processor;
+    processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+    processor.prepareToPlay (sampleRate, blockSize);
+    setParameterValue (processor, parameters::sustain, 1.0f);
+    setParameterValue (processor, parameters::attack, 0.0f);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer note;
+    note.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+    buffer.clear();
+    processor.processBlock (buffer, note);
+    std::array<float, 256> scope {};
+    processor.getOscilloscopeBuffer (scope);
+    const auto scopePeak = [&scope]
+    {
+        float peak = 0.0f;
+        for (const float value : scope)
+            peak = juce::jmax (peak, std::abs (value));
+        return peak;
+    };
+    expect (scopePeak() > 0.0f,
+            "the bypass telemetry fixture drew no trace before bypass");
+
+    juce::MidiBuffer empty;
+    // One whole ring's worth of bypassed audio, so nothing pre-bypass remains.
+    const int blocksToFillRing = 1 + static_cast<int> (scope.size()) / blockSize;
+    for (int block = 0; block < blocksToFillRing; ++block)
+    {
+        buffer.clear();
+        processor.processBlockBypassed (buffer, empty);
+        expect (bufferPeak (buffer) == 0.0f,
+                "a bypassed instrument emitted audio");
+    }
+    processor.getOscilloscopeBuffer (scope);
+    expect (scopePeak() == 0.0f,
+            "the panel drew the audio the bypass had already thrown away");
+
+    // The engine kept running behind the bypass, so the note is still held and
+    // comes back the moment the host stops bypassing.
+    buffer.clear();
+    processor.processBlock (buffer, empty);
+    expect (bufferPeak (buffer) > 0.0f,
+            "the held note did not resume after bypass");
+    processor.releaseResources();
+}
+
+// releaseResources is a teardown: a device change, a deactivated track, a
+// closed project. The editor may still be open, and it drew the last block's
+// voice lamps, envelope meter and trace beside its own STANDBY legend.
+void testReleaseResourcesRetiresThePanelReadouts()
+{
+    YouKnow106AudioProcessor processor;
+    processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+    processor.prepareToPlay (sampleRate, blockSize);
+    setParameterValue (processor, parameters::sustain, 1.0f);
+    setParameterValue (processor, parameters::attack, 0.0f);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer note;
+    note.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+    buffer.clear();
+    processor.processBlock (buffer, note);
+    juce::MidiBuffer empty;
+    for (int block = 0; block < 4; ++block)
+    {
+        buffer.clear();
+        processor.processBlock (buffer, empty);
+    }
+    expect (processor.getActiveVoiceCount() > 0
+                && processor.getVoiceMaskForDisplay() != 0
+                && processor.getEnvelopeForDisplay() > 0.0f,
+            "the teardown fixture had nothing on the panel to retire");
+
+    processor.releaseResources();
+    expect (! processor.isEngineReady(),
+            "releaseResources left the engine reporting ready");
+    expect (processor.getActiveVoiceCount() == 0,
+            "a torn-down instrument still reports a sounding voice");
+    expect (processor.getVoiceMaskForDisplay() == 0,
+            "a torn-down instrument still lights a voice lamp");
+    expect (processor.getEnvelopeForDisplay() == 0.0f,
+            "a torn-down instrument still drives the envelope meter");
+    std::array<float, 256> scope {};
+    processor.getOscilloscopeBuffer (scope);
+    float peak = 0.0f;
+    for (const float value : scope)
+        peak = juce::jmax (peak, std::abs (value));
+    expect (peak == 0.0f,
+            "a torn-down instrument left a frozen trace on the oscilloscope");
+}
+
 void testHostResetDoesNotWaitForTheUiKeyboard()
 {
     YouKnow106AudioProcessor processor;
@@ -5558,6 +5712,9 @@ int main()
     testBusLayoutsAndTail();
     testBypassSilencesOutputAndKeepsMidiStateMoving();
     testHostResetClearsRuntimeStateWithoutUnpreparing();
+    testHostResetKeepsTheModelledChassisWarm();
+    testBypassedTelemetryShowsTheSilenceTheHostReceives();
+    testReleaseResourcesRetiresThePanelReadouts();
     testHostResetDoesNotWaitForTheUiKeyboard();
     testProgramChangeRecallsEveryHardwareSlot();
     testProgramChangeAffectsFollowingNoteWithoutTheMessageThread();
