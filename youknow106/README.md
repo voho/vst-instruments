@@ -784,9 +784,10 @@ session state.
 
 Unit Character remains the optional deterministic voice-variation amount; zero
 is the calibrated nominal baseline because real post-calibration distributions
-remain unmeasured. The other extension defaults are inert or hardware-aligned:
-velocity does nothing, polyphony is six voices, and the delay lines retain their
-modeled noise floor.
+remain unmeasured, and a new instance starts at 100%, the "matches real
+hardware" reference. The other extension defaults are likewise inert or
+hardware-aligned: velocity does nothing, polyphony is six voices, and the delay
+lines retain their modeled noise floor.
 
 VELOCITY, when it is turned up, is a dynamics control rather than a second
 output trim. The one gain `1 − depth·(1 − velocity)` now scales the ENV amount
@@ -991,7 +992,8 @@ cmake --build youknow106/build-dsp --parallel
 ctest --test-dir youknow106/build-dsp --output-on-failure
 ```
 
-There are 15 JUCE-free CTest contracts, and 16 with the plug-in suite enabled:
+There are 15 JUCE-free CTest contracts, 16 with the plug-in suite enabled, and
+17 on macOS, where the VST3 bundle smoke test is registered as well:
 
 - **`YouKnow106.Circuit`** compares the model against something independent for
   every block: the four transconductor stages against an explicit reference
@@ -1028,6 +1030,11 @@ There are 15 JUCE-free CTest contracts, and 16 with the plug-in suite enabled:
   legacy/modern automation ordering, exact patch reload, all 128 incoming
   Program Change locations, complete host-control restoration, and that the
   editor lays out and renders at its extreme sizes.
+- **`YouKnow106.VST3Bundle`** (macOS only) loads the VST3 bundle this build
+  produced through `juce_audio_processors_headless`, the same dynamically
+  loaded boundary a DAW uses, and exercises it there. It complements the
+  processor suite above, which links the plug-in directly, and it deliberately
+  does not stand in for host or vendor validation of the signed package.
 - **`YouKnow106.SysEx`** checks the documented hardware messages byte for byte,
   including malformed-message rejection, single-parameter switch decoding, all
   128 factory round-trips and the canonical corpus checksum.
@@ -1365,9 +1372,12 @@ Engine/Circuit at **206.86/7.56 s**. A fresh ASan+UBSan Engine-target build is
 also warning-clean in **8.81 s**; the two-regression startup gate passes in
 **0.64 s** under `halt_on_error=1`, `detect_leaks=0`, with no diagnostic.
 
-The final universal plugin-on all-target build takes **127.43 s**, registers
-the exact 16-contract inventory and emits only the two inherited
-Engine-header `-Wfloat-equal` warnings at lines 431/789. Its initial serial run
+The final universal plugin-on all-target build takes **127.43 s** and emits
+only the two inherited Engine-header `-Wfloat-equal` warnings at lines
+431/789. Its contract count was written down here as 16; the macOS plugin-on
+lane registers 17, because `YouKnow106.VST3Bundle` is added inside `if(APPLE)`
+after `YouKnow106.PluginProcessor`. That count is corrected rather than
+re-measured -- the timings above are the ones that run reported. Its initial serial run
 passed tests 1–15 before PluginProcessor exposed a stale test chronology: its
 reference had startup-primed pulse while the MIDI path changed pulse at sample
 1. The test-only correction keeps the full dump at sample 0 only on the
@@ -1481,6 +1491,7 @@ binary.
 
 ## Changelog
 
+- 2026-08-20: Corrected three documentation claims the tree contradicts. (1) `Presets/README.md` listed the shipped Unit Character default as 0%. The parameter is declared over 0..2 with a default of 1.0 and a percent formatter, the plug-in suite asserts that default, the engine agrees and the control's own tooltip says "100% matches real hardware" -- so a fresh instance reads 100%, and every recipe that names a lower figure was being read as an increase rather than the reduction it is. (2) The CTest inventory said "15 JUCE-free contracts, and 16 with the plug-in suite enabled". `CMakeLists.txt` registers 15 with the plug-in off, 16 with it on away from Apple, and 17 on macOS, where `YouKnow106.VST3Bundle` is added inside `if(APPLE)` -- which is exactly the configuration `scripts/build-macos.sh` and the release checklist tell a release engineer to run. The count now says so and the contract list gained the bullet that test never had. (3) The Step-17 shipping-qualification record wrote that same count down as 16; it is corrected in place rather than re-measured, and says which of its numbers is a correction and which are the ones that run reported.
 - 2026-08-20: Made the help strip print the whole of every explanation. The fixed strip is the only place a control's help appears -- the suite asserts there is no floating `TooltipWindow` -- and its body was drawn with a two-line cap. JUCE fits a body by stepping the type down and the line count up until the text fits, and ellipsises only when it runs out of both; capping the count at two ran it out one line early on the longest strings. Measured against the real font at the supported minimum, the QUALITY selector's 327-character help laid out 272 of its characters and simply stopped, losing "This has no hardware counterpart and is not part of a patch."; at the default 1360x718 it lost 18 of its 270 printing characters. The cap is now three lines, which is what the strip's own height allows. Everything that fitted two lines still gets two lines at the reading size, because JUCE's search starts there: the rendered editor at its default size is byte-identical. `testHelpStripPrintsEveryExplanationInFull` drives every component in the editor that carries help -- 60 of them, at the minimum, default and maximum sizes -- rebuilds exactly the arrangement `paint` draws, and requires it to carry every character it was given, with an overlong body as the guard that the check can still say no. The layout the check measures is the layout that is drawn: `bodyLayout()` returns it, and `paint` uses nothing else.
 - 2026-08-20: Stopped solving the pulse comparator for slots whose answer is thrown away. The per-internal-sample voice loop ran `updatePulseComparator` for all sixteen slots while guarding `updateVoiceAudio` one line below with `voice.active || slot < hardwareVoices`. Both feed `renderVoice`, which returns for an inactive extension slot before it reads either result -- `voice.rampCurrentScale` and `voice.pulseDuty` are read only after that early return, and a voice's card index is always its slot -- so for the ten extension slots the comparator solved a duty cycle, wrote two floats into an otherwise cold `Voice` and touched a `VoiceCard` the rest of the frame never sees, all for nothing. The two calls now share the one guard, which is the exact negation of `renderVoice`'s early return, so the change is bit-exact by construction. The work counters confirm it: `pulseComparatorUpdates` falls from 131,072 to 49,152 per 2,048 host frames at 4x -- 16 per internal frame to 6 -- and now equals `voiceAudioUpdates`, which the oversampling contract asserts so the two cannot drift apart again. An 81-scenario FNV fingerprint across 44.1/48/96 kHz, 1x/2x/4x, 6/10/16 voices and chorus Off/I/II matches the pre-change build exactly, and the demonstration corpus re-renders byte-identically. Whole-engine wall-clock moves within run-to-run noise on a loaded four-core machine, as the decimator entry below also found; the counter is the measurement that means something.
 - 2026-08-20: Stopped the two chorus branches computing one input support chain twice. Both wet branches take the same node through the same pre-BBD network -- two Sallen-Key sections, the wet-only C44/C47 coupling high-pass and the passive 10 kOhm / 2.2 nF pole beside the MN3009 input -- and the model gives the two branches' parts identical values. Both lines' support state is zeroed identically by `Line::reset` and `Line::resetAudioRateSupport`, and the clock, the only argument that differs between them, is not read until the BBD core, so the two chains produced the same float on every sample for the life of the plug-in. The chain now lives on the `Chorus` as `InputSupport` and is advanced once. The `YOUKNOW106_WORK_AUDIT` counters state the saving exactly: at a 48 kHz host with 4x quality, `bbdExactInputSupportAdvances` falls from 2 to 1 per internal frame and `bbdExactSupportMacs` from 1,966,080 to 1,474,560 per 2,048 host frames -- 60 fewer double multiply-adds per internal frame, or 11.5 M/s at the 192 kHz internal rate, a quarter of all exact-support work in the chorus. The change is bit-exact by construction and by measurement: a 81-scenario FNV fingerprint over 44.1/48/96 kHz, 1x/2x/4x, 6/10/16 voices and chorus Off/I/II matches the pre-change build exactly, and all ten committed demonstration WAVs re-render byte-identically. This is as physical as the duplicate was and no more -- it says the two networks are modelled as identical, which they are. Giving either branch's parts their own tolerance would have to split it back into the two lines first, and the type says so.
