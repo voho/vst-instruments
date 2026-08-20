@@ -7855,6 +7855,106 @@ void testNoLabelIsTruncated()
            "the width model thinks a ten-character legend fits a narrow button");
 }
 
+// The add-on keys below the keybed are not in the panel table -- they carry an
+// icon beside the legend and are laid out from the editor's own constants -- so
+// the truncation check above cannot see them. This is that check for them, over
+// the whole supported editor size range rather than at one size. It caught
+// "PANIC" holding full-size type inside a key the minimum editor size had
+// already made 11% narrower, which the wider Linux and Windows system fonts
+// then condensed.
+void testCompactKeyLegendsFitAtEverySupportedSize()
+{
+    struct CompactKey
+    {
+        const char* legend;
+        float width;   // panel units, from the editor's own layout
+        float height;
+    };
+    // PANIC/INIT and the three variation strengths sit in the extension bay;
+    // RELOAD and the two patch-file keys sit on the host preset rail.
+    static constexpr CompactKey keys[] {
+        { "PANIC", 80.0f, 42.0f },     { "INIT", 80.0f, 42.0f },
+        { "1%", 72.0f, 42.0f },        { "10%", 72.0f, 42.0f },
+        { "50%", 72.0f, 42.0f },       { "RELOAD", 94.0f, 24.0f },
+        { "LOAD .SYX", 146.0f, 24.0f }, { "SAVE .SYX", 148.0f, 24.0f },
+    };
+
+    // These are the extreme scales a user can actually reach.
+    const float minimumScale = panel::editorScaleFor(
+        panel::minimumEditorWidth, panel::minimumEditorHeight);
+    const float maximumScale = panel::editorScaleFor(
+        panel::maximumEditorWidth, panel::maximumEditorHeight);
+    expect(minimumScale > 0.0f && maximumScale > minimumScale,
+           "the supported editor size range is empty");
+    expect(panel::defaultEditorScale > minimumScale
+               && panel::defaultEditorScale < maximumScale,
+           "the default editor size is outside the supported range");
+
+    constexpr int steps = 2000;
+    for (int step = 0; step <= steps; ++step)
+    {
+        const float scale =
+            minimumScale
+            + (maximumScale - minimumScale) * static_cast<float>(step)
+                  / static_cast<float>(steps);
+        for (const auto& key : keys)
+        {
+            // The editor rounds each laid-out edge to whole pixels, so the fit
+            // has to hold for the rounded key, not for the exact real number.
+            const float width =
+                std::round(key.width * scale);
+            const float height =
+                std::round(key.height * scale);
+            const float available =
+                panel::compactLegendWidth(width, height, true);
+            const float needed = panel::textWidth(
+                key.legend, panel::compactLegendPointSize(height, scale),
+                true);
+            expect(needed <= available,
+                   std::string("the compact key legend ") + key.legend
+                       + " does not fit its key at editor scale "
+                       + std::to_string(scale));
+        }
+    }
+
+    // Guard the guard: the budget has to be able to say no. A legend far too
+    // long for the smallest key must be refused, or the sweep above would pass
+    // by being blind rather than by the keys fitting.
+    expect(panel::textWidth("EMERGENCY STOP",
+                            panel::compactLegendPointSize(
+                                std::round(42.0f * minimumScale),
+                                minimumScale),
+                            true)
+               > panel::compactLegendWidth(std::round(80.0f * minimumScale),
+                                           std::round(42.0f * minimumScale),
+                                           true),
+           "the compact key budget thinks a fourteen-character legend fits");
+
+    // A key with no icon keeps the icon's width and its gap for the legend.
+    expect(panel::compactLegendWidth(80.0f, 42.0f, false)
+               > panel::compactLegendWidth(80.0f, 42.0f, true),
+           "dropping the icon did not return its width to the legend");
+    // And a key narrower than its own padding folds to zero rather than
+    // reporting negative room to draw in.
+    expect(panel::compactLegendWidth(4.0f, 42.0f, false) == 0.0f,
+           "a key narrower than its padding should report no legend width");
+    expect(panel::compactLegendPointSize(1.0f, panel::defaultEditorScale)
+               == panel::compactLegendPointSizeMin,
+           "the compact legend size should stop at its own floor");
+    expect(panel::compactLegendPointSize(1000.0f, panel::defaultEditorScale)
+               == panel::compactLegendPointSizeMax,
+           "the compact legend size should stop at its own ceiling");
+    // Above the default size the ceiling stops following the panel, so a
+    // larger window enlarges the key without enlarging its legend.
+    expect(panel::compactLegendPointSize(1000.0f, maximumScale)
+               == panel::compactLegendPointSizeMax,
+           "the compact legend size grew past its design size");
+    // Below it the ceiling comes down with the panel.
+    expect(panel::compactLegendPointSize(1000.0f, minimumScale)
+               < panel::compactLegendPointSizeMax,
+           "the compact legend size ignored a smaller panel");
+}
+
 // The width model's two defensive branches -- a null legend and a button too
 // narrow to leave any drawing room -- are exercised nowhere else. Both matter
 // for the same reason the truncation guard above does: a caller that trusts
@@ -8348,6 +8448,7 @@ int main()
     testFactoryPresetCorpusStaysNumericallySafe();
     testPairedSwitchModes();
     testNoLabelIsTruncated();
+    testCompactKeyLegendsFitAtEverySupportedSize();
     testPanelTextWidthEdgeCases();
     testPanelLayout();
     testPanelHelpMatchesTheModulationRouting();

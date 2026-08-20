@@ -36,6 +36,15 @@ public:
     juce::Label* createSliderTextBox (juce::Slider&) override;
     std::unique_ptr<juce::FocusOutline> createFocusOutlineForComponent (
         juce::Component&) override;
+
+    // The editor's own description scale. The compact add-on keys are the one
+    // thing drawn here whose type has to know how large the whole panel is,
+    // not merely how large one key is; the editor hands it over from resized()
+    // rather than this class guessing from a top-level component.
+    void setEditorScale (float newScale) noexcept { editorScale = newScale; }
+
+private:
+    float editorScale { youknow106::panel::defaultEditorScale };
 };
 
 // The moulded plastic of the faceplate: a maintained-but-used ABS material scan
@@ -111,6 +120,23 @@ public:
     bool keyStateChanged (bool isKeyDown) override;
     void focusLost (FocusChangeType) override;
     std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
+
+    // Where the lever sits for a given set of held arrow keys. Both horizontal
+    // keys held is a player pressing against themselves, so the lever rests.
+    // Free-standing because it is the whole of what a key release has to
+    // decide, and a headless suite cannot press real keys to reach it.
+    struct Axes
+    {
+        float bend;
+        float modulation;
+    };
+    [[nodiscard]] static constexpr Axes axesForHeldKeys (bool leftHeld,
+                                                         bool rightHeld,
+                                                         bool upHeld) noexcept
+    {
+        return { leftHeld == rightHeld ? 0.0f : (rightHeld ? 1.0f : -1.0f),
+                 upHeld ? 1.0f : 0.0f };
+    }
 
     [[nodiscard]] float getPitchBend() const noexcept { return pitchBend; }
     [[nodiscard]] float getModulation() const noexcept { return modulation; }

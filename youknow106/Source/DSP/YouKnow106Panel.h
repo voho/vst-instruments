@@ -274,6 +274,48 @@ inline constexpr float labelOverhang = 4.0f;
                                        float height) noexcept;
 [[nodiscard]] float buttonPointSizeFor(const Control& control) noexcept;
 
+// The add-on keys below the keybed -- PANIC, INIT, the variation strengths and
+// the patch-file rail -- are drawn from a fixed pixel budget rather than from
+// the panel table, because they carry an icon beside the legend. These are the
+// three numbers that budget is made of, in the same pixels the editor draws in.
+inline constexpr float compactLegendPointSizeMax = 13.0f;
+inline constexpr float compactLegendPointSizeMin = 10.5f;
+inline constexpr float compactLegendHeightRatio = 0.55f;
+// The key face the legend is drawn on, and the icon that shares it.
+inline constexpr float compactLegendPaddingX = 5.0f;
+inline constexpr float compactLegendPaddingY = 4.0f;
+inline constexpr float compactLegendIconSize = 15.0f;
+inline constexpr float compactLegendIconGap = 3.0f;
+
+// The editor scales the whole description by the smaller of the two window
+// ratios, so this is the factor every pixel geometry above is expressed in.
+[[nodiscard]] constexpr float editorScaleFor(int width, int height) noexcept
+{
+    const float horizontal = static_cast<float>(width) / editorWidth;
+    const float vertical = static_cast<float>(height) / editorHeight;
+    return horizontal < vertical ? horizontal : vertical;
+}
+inline constexpr float defaultEditorScale =
+    editorScaleFor(defaultEditorWidth, defaultEditorHeight);
+
+// The legend size for a compact key of this pixel height, at this editor
+// scale. The editor draws with it and the fit checks measure with it, so the
+// two cannot disagree about what is on screen.
+//
+// The height sets the size and the scale caps it. Without the cap the tall
+// action keys sat at the ceiling over the whole supported size range, so a
+// key that the minimum editor width had already made 11% narrower still held
+// full-size type -- which is what pushed "PANIC" past its own key face on the
+// wider Linux and Windows system fonts. Type never grows past its design size
+// and never stays larger than the panel around it.
+[[nodiscard]] float compactLegendPointSize(float buttonHeight,
+                                           float editorScale) noexcept;
+
+// What is left for the legend on a compact key once its padding, icon and icon
+// gap are taken out. `iconSize` is zero for a key with no icon.
+[[nodiscard]] float compactLegendWidth(float buttonWidth, float buttonHeight,
+                                       bool hasIcon) noexcept;
+
 // True when every control lies inside its own section, no two controls overlap,
 // and every radio group is contiguous and complete. The suite asserts this
 // rather than trusting the table by eye.

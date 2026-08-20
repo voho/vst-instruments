@@ -440,6 +440,37 @@ float buttonPointSizeFor(const Control& control) noexcept
     return buttonPointSizeFor(control.label, control.width, control.height);
 }
 
+float compactLegendPointSize(float buttonHeight, float editorScale) noexcept
+{
+    // A key at or above the default editor size keeps its full design size;
+    // below it the ceiling comes down with the panel, so the legend shrinks
+    // with the key rather than staying behind on a key that no longer fits it.
+    const float scaleRatio = editorScale / defaultEditorScale;
+    const float ceiling =
+        compactLegendPointSizeMax * (scaleRatio < 1.0f ? scaleRatio : 1.0f);
+
+    float size = buttonHeight * compactLegendHeightRatio;
+    if (size > ceiling)
+        size = ceiling;
+    if (size < compactLegendPointSizeMin)
+        size = compactLegendPointSizeMin;
+    return size;
+}
+
+float compactLegendWidth(float buttonWidth, float buttonHeight,
+                         bool hasIcon) noexcept
+{
+    float available = buttonWidth - 2.0f * compactLegendPaddingX;
+    if (hasIcon)
+    {
+        const float faceHeight = buttonHeight - 2.0f * compactLegendPaddingY;
+        const float icon = faceHeight < compactLegendIconSize
+                               ? faceHeight : compactLegendIconSize;
+        available -= (icon > 0.0f ? icon : 0.0f) + compactLegendIconGap;
+    }
+    return available > 0.0f ? available : 0.0f;
+}
+
 namespace
 {
 const char* overflowingLabel() noexcept

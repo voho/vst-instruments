@@ -4661,6 +4661,181 @@ void testClickingTheSelectedRadioKeepsItsLampLit()
             "clicking the selected range radio moved its parameter");
 }
 
+// The two chorus contacts interlock, so a press on one releases the other.
+// That is a property of a press. While the interlock ran from a
+// ButtonAttachment it also ran for parameter-driven lamp updates, so a host
+// automating Chorus I silently wrote Chorus II as well -- but only while the
+// editor happened to be open, which made the rendered mode depend on whether
+// the window was on screen.
+void testChorusInterlockOnlyRunsForARealPress()
+{
+    YouKnow106AudioProcessor processor;
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    expect (editor != nullptr, "cannot test the chorus interlock without an editor");
+    if (editor == nullptr)
+        return;
+
+    auto* chorusOne = dynamic_cast<juce::Button*> (
+        findDescendantNamed (*editor, "I"));
+    auto* chorusTwo = dynamic_cast<juce::Button*> (
+        findDescendantNamed (*editor, "II"));
+    expect (chorusOne != nullptr && chorusTwo != nullptr,
+            "the editor's two chorus buttons were not found");
+    if (chorusOne == nullptr || chorusTwo == nullptr)
+        return;
+
+    expect (! chorusOne->getClickingTogglesState()
+                && ! chorusTwo->getClickingTogglesState(),
+            "the chorus keys still drive their own lamps");
+
+    // A host lane -- or a preset recall, or a patch dump -- writing one of the
+    // pair must leave the other exactly where it was.
+    setParameterValue (processor, parameters::chorusI, 0.0f);
+    setParameterValue (processor, parameters::chorusII, 1.0f);
+    setParameterValue (processor, parameters::chorusI, 1.0f);
+    expect (parameterValue (processor, parameters::chorusII) > 0.5f,
+            "a host write to Chorus I moved Chorus II with the editor open");
+    expect (parameterValue (processor, parameters::chorusI) > 0.5f,
+            "a host write to Chorus I did not take");
+
+    // A press still interlocks, which is what the panel does.
+    setParameterValue (processor, parameters::chorusI, 0.0f);
+    setParameterValue (processor, parameters::chorusII, 1.0f);
+    chorusOne->onClick();
+    expect (parameterValue (processor, parameters::chorusI) > 0.5f,
+            "pressing the Chorus I key did not engage it");
+    expect (parameterValue (processor, parameters::chorusII) < 0.5f,
+            "pressing the Chorus I key left Chorus II engaged");
+
+    // And pressing the lit key switches the chorus off, as on the panel.
+    chorusOne->onClick();
+    expect (parameterValue (processor, parameters::chorusI) < 0.5f
+                && parameterValue (processor, parameters::chorusII) < 0.5f,
+            "pressing the lit Chorus I key did not switch the chorus off");
+
+    // The lamps read their own parameters when the window opens, so a session
+    // or patch recalled while the editor was shut shows the right key lit.
+    setParameterValue (processor, parameters::chorusI, 0.0f);
+    setParameterValue (processor, parameters::chorusII, 1.0f);
+    editor.reset();
+    std::unique_ptr<juce::AudioProcessorEditor> reopened (processor.createEditor());
+    expect (reopened != nullptr, "the editor could not be reopened");
+    if (reopened == nullptr)
+        return;
+    auto* reopenedOne = dynamic_cast<juce::Button*> (
+        findDescendantNamed (*reopened, "I"));
+    auto* reopenedTwo = dynamic_cast<juce::Button*> (
+        findDescendantNamed (*reopened, "II"));
+    expect (reopenedOne != nullptr && reopenedTwo != nullptr,
+            "the reopened editor lost its chorus buttons");
+    if (reopenedOne != nullptr && reopenedTwo != nullptr)
+        expect (reopenedTwo->getToggleState() && ! reopenedOne->getToggleState(),
+                "the chorus lamps do not follow their parameters when the "
+                "window opens");
+}
+
+// The programmer row is one row of keys sharing one cell top and one cell
+// height. The drawn key face is placed at a fraction of that cell, so the whole
+// row has to carry one fraction: reading it from the cell height alone left
+// POLY 1, POLY 2 and UNISON drawing six pixels above the rest of the row.
+void testProgrammerRowKeysShareOneKeyFace()
+{
+    YouKnow106AudioProcessor processor;
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    expect (editor != nullptr, "cannot test the programmer row without an editor");
+    if (editor == nullptr)
+        return;
+
+    editor->setSize (panel::defaultEditorWidth, panel::defaultEditorHeight);
+
+    static constexpr const char* rowKeys[] {
+        "POLY 1", "POLY 2", "UNISON", "Group A", "Group B",
+        "Bank 1", "Bank 8", "Patch 1", "Patch 8",
+        "Manual mode", "Write memory", "Save patch file", "Verify tape data",
+        "Load patch file",
+    };
+
+    juce::Rectangle<int> rowArea;
+    double rowKeyCentre = -1.0;
+    for (const char* name : rowKeys)
+    {
+        auto* key = dynamic_cast<juce::Button*> (
+            findDescendantNamed (*editor, name));
+        expect (key != nullptr,
+                std::string ("the programmer row is missing ") + name);
+        if (key == nullptr)
+            continue;
+
+        const auto area = editor->getLocalArea (key, key->getLocalBounds());
+        if (rowArea.isEmpty())
+            rowArea = area;
+        else
+            expect (area.getY() == rowArea.getY()
+                        && area.getHeight() == rowArea.getHeight(),
+                    std::string (name)
+                        + " does not share the programmer row's cell");
+
+        const auto centre = static_cast<double> (
+            key->getProperties().getWithDefault ("hardwareKeyCentre", -1.0));
+        expect (centre > 0.0,
+                std::string (name) + " has no key-face position");
+        if (rowKeyCentre < 0.0)
+            rowKeyCentre = centre;
+        else
+            expect (std::abs (centre - rowKeyCentre) < 1.0e-9,
+                    std::string (name)
+                        + " draws its key face at a different height from the "
+                          "rest of the programmer row");
+    }
+
+    // The sound row's stacked pairs are a different shape and keep their own
+    // lifted face, or the guard above would pass by making every key the same.
+    if (auto* stacked = dynamic_cast<juce::Button*> (
+            findDescendantNamed (*editor, "GATE")))
+    {
+        const auto centre = static_cast<double> (
+            stacked->getProperties().getWithDefault ("hardwareKeyCentre", -1.0));
+        expect (centre > 0.0 && std::abs (centre - rowKeyCentre) > 1.0e-9,
+                "the stacked sound-row keys lost their own key-face position");
+    }
+}
+
+// Any key release reaches the lever, not only the one that started the gesture,
+// and it does not say which key moved. Springing both axes to zero there
+// dropped a held pitch bend the moment the player let go of the modulation key.
+void testPerformanceLeverKeepsTheAxisStillHeld()
+{
+    using Lever = YouKnow106PerformanceLever;
+    const auto axes = [] (bool left, bool right, bool up)
+    {
+        return Lever::axesForHeldKeys (left, right, up);
+    };
+
+    expect (axes (false, false, false).bend == 0.0f
+                && axes (false, false, false).modulation == 0.0f,
+            "the lever does not rest when no arrow key is held");
+    expect (axes (false, true, false).bend == 1.0f,
+            "holding Right does not bend up");
+    expect (axes (true, false, false).bend == -1.0f,
+            "holding Left does not bend down");
+    // The defect: Right still held, Up just released.
+    expect (axes (false, true, false).bend == 1.0f
+                && axes (false, true, false).modulation == 0.0f,
+            "releasing modulation collapsed a pitch bend that is still held");
+    // And the other way round.
+    expect (axes (false, false, true).modulation == 1.0f
+                && axes (false, false, true).bend == 0.0f,
+            "releasing a bend collapsed modulation that is still held");
+    expect (axes (false, true, true).bend == 1.0f
+                && axes (false, true, true).modulation == 1.0f,
+            "the lever cannot hold both axes at once");
+    // Pressing against oneself is a lever at rest, not a fight over the sign.
+    expect (axes (true, true, false).bend == 0.0f,
+            "holding both horizontal keys does not rest the lever");
+    expect (axes (true, true, true).modulation == 1.0f,
+            "opposing bend keys also cancelled modulation");
+}
+
 void testPolyButtonsKeepAValidFirmwareLatch()
 {
     YouKnow106AudioProcessor processor;
@@ -4901,12 +5076,14 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
     const auto expectCompactLegendFits = [&] (const juce::TextButton& button,
                                                const CompactLegend& legend)
     {
+        // Measured with the panel's own compact-key budget, which is what the
+        // look and feel draws with, rather than with a second copy of the
+        // formula that could drift away from it.
         const float height = static_cast<float> (button.getHeight());
-        const float fontHeight = juce::jlimit (10.5f, 13.0f, height * 0.55f);
-        const float contentHeight = height - 8.0f;
-        const float iconWidth = juce::jmin (15.0f, contentHeight);
-        const float textWidth = static_cast<float> (button.getWidth())
-                              - 10.0f - iconWidth - 3.0f;
+        const float fontHeight = panel::compactLegendPointSize (
+            height, panel::editorScaleFor (editor.getWidth(), editor.getHeight()));
+        const float textWidth = panel::compactLegendWidth (
+            static_cast<float> (button.getWidth()), height, true);
         const auto font = juce::Font (
             juce::FontOptions (fontHeight, juce::Font::bold));
         expect (realTextWidth (font, legend.displayText) <= textWidth + 0.1f,
@@ -5422,6 +5599,9 @@ int main()
     testEditorReloadButtonDiscardsPatchEdits();
     testEditorRandomizeStrengthsAndReset();
     testClickingTheSelectedRadioKeepsItsLampLit();
+    testChorusInterlockOnlyRunsForARealPress();
+    testProgrammerRowKeysShareOneKeyFace();
+    testPerformanceLeverKeepsTheAxisStillHeld();
     testPolyButtonsKeepAValidFirmwareLatch();
     testEditorBuildsAndRenders();
 
