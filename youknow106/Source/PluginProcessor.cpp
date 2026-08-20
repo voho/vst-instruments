@@ -235,7 +235,10 @@ juce::AudioParameterFloatAttributes portamentoAttributes()
     return juce::AudioParameterFloatAttributes()
         .withStringFromValueFunction ([] (float value, int)
         {
-            const auto seconds = YouKnow106Engine::portamentoSeconds (value);
+            // The stored value is knob travel; the loaded 50KB/47k divider
+            // sits between it and the raw ADC fraction the B-2 law reads.
+            const auto seconds = YouKnow106Engine::portamentoSeconds (
+                YouKnow106Engine::portamentoTravelAdcFraction (value));
             if (seconds <= 0.0f)
                 return juce::String ("OFF");
             return secondsText (seconds, 0) + "/oct";
@@ -244,8 +247,9 @@ juce::AudioParameterFloatAttributes portamentoAttributes()
         {
             if (text.trim().equalsIgnoreCase ("off"))
                 return 0.0f;
-            return YouKnow106Engine::panelPositionForPortamento (
-                secondsFromText (text));
+            return YouKnow106Engine::portamentoTravelForAdcFraction (
+                YouKnow106Engine::panelPositionForPortamento (
+                    secondsFromText (text)));
         });
 }
 

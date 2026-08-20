@@ -910,6 +910,42 @@ float YouKnow106Engine::lfoDelaySeconds(float panelPosition) noexcept
     return static_cast<float>((holdPasses + fadePasses) / controlScanHz);
 }
 
+namespace
+{
+// Bender-board PORTAMENTO network, Service Notes p. 16 (2026-08-20 read):
+// VR2 50KB linear track across +5 V, wiper through SW1 into R16 47 kOhm to
+// ground at the slave ADC node. Both mapping directions share these values.
+constexpr float portamentoTrackOhms = 50000.0f;
+constexpr float portamentoLoadOhms = 47000.0f;
+} // namespace
+
+float YouKnow106Engine::portamentoTravelAdcFraction(float travel) noexcept
+{
+    // With lower-section resistance x*R_T loaded by R_L, the wiper divider
+    // solves to x*R_L / (R_L + x*(1-x)*R_T): exact 0 and 1 at the track
+    // ends, 0.39496 at half travel.
+    const float x = clamp01(sanitised(travel, 0.0f));
+    return x * portamentoLoadOhms
+         / (portamentoLoadOhms + x * (1.0f - x) * portamentoTrackOhms);
+}
+
+float YouKnow106Engine::portamentoTravelForAdcFraction(float fraction) noexcept
+{
+    // The forward law rearranges to the quadratic
+    // f*R_T*x^2 + (R_L - f*R_T)*x - f*R_L = 0, whose positive root inverts
+    // it exactly; f = 0 short-circuits the division at a = 0.
+    const float f = clamp01(sanitised(fraction, 0.0f));
+    if (f == 0.0f)
+        return 0.0f;
+    const float a = f * portamentoTrackOhms;
+    const float b = portamentoLoadOhms - f * portamentoTrackOhms;
+    const float c = -f * portamentoLoadOhms;
+    const float discriminant = b * b - 4.0f * a * c;
+    const float root = (-b + std::sqrt(std::max(discriminant, 0.0f)))
+                     / (2.0f * a);
+    return clamp01(root);
+}
+
 float YouKnow106Engine::portamentoSeconds(float panelPosition) noexcept
 {
     // The performance pot is read as an eight-bit ADC value. Raw zero is the
@@ -983,6 +1019,40 @@ YouKnow106Engine::converterEventPhases(ConverterTimingProfile profile) noexcept
     std::array<double, converterWritesPerPass> phases {};
     if (profile == ConverterTimingProfile::PhaseZeroDiagnostic)
         return phases;
+
+    if (profile == ConverterTimingProfile::MeasuredChartGeometry)
+    {
+        // The Service Notes p. 8 "D/A & S/H TIMING CHART", measured from the
+        // 400 dpi print on 2026-08-20: stroke-center x coordinates of the 24
+        // slot boundaries, in page pixels, with the 4.2 ms arrow spanning the
+        // leading NOISE write (x 4165.5) to the trailing one (x 6052), i.e.
+        // 1886.5 px per pass. The chart is NOISE-first; this queue starts at
+        // RESONANCE (x 4216), so each phase is (x - 4216) / 1886.5 with the
+        // pass-closing NOISE write taken from the next pass's leading stroke.
+        // Boundary uncertainty is +/-3 px (+/-7 us); the widths quantize onto
+        // a 10:7:5 drafting grid, so these are the figure's deliberate
+        // proportions, not calibrated hardware timestamps.
+        constexpr double resonanceStrokePixel = 4216.0;
+        constexpr double passSpanPixels = 1886.5;
+        constexpr std::array<double, converterWritesPerPass> strokePixels {
+            4216.0,  // RESONANCE
+            4313.5,  // VCA LEVEL
+            4412.5,  // SUB
+            4515.5, 4616.5, 4718.5, 4819.5, 4920.0, 5021.0, // DCO CV CH1-6
+            5121.0,  // PWM
+            5172.0, 5240.5,  // VCF1 / VCA1
+            5309.0, 5379.0,  // VCF2 / VCA2
+            5450.5, 5521.5,  // VCF3 / VCA3
+            5594.0, 5664.5,  // VCF4 / VCA4
+            5735.5, 5803.0,  // VCF5 / VCA5
+            5877.0, 5982.0,  // VCF6 / VCA6
+            6052.0   // NOISE (the chart's next-pass leading stroke)
+        };
+        for (std::size_t ordinal = 0; ordinal < phases.size(); ++ordinal)
+            phases[ordinal] = (strokePixels[ordinal] - resonanceStrokePixel)
+                            / passSpanPixels;
+        return phases;
+    }
 
     // The service chart establishes sequential activity spread across the
     // pass, but its drawing is not a calibrated timing capture. A normalized
@@ -2464,6 +2534,8 @@ void YouKnow106Engine::buildVoiceCards() noexcept
         card.driftPhase = 0.5f * (hashBipolar(seed + 7u) + 1.0f);
         card.vcaGainError = hashBipolar(seed + 8u);
         card.noiseLevelError = hashBipolar(seed + 9u);
+        card.agingWeight = 0.5f * (hashBipolar(seed + 30u) + 1.0f);
+        card.agingCutoffCounts = 0.0f;
         for (std::size_t stage = 0; stage < 4; ++stage)
         {
             card.vcfStageOffsets[stage] =
@@ -2474,6 +2546,25 @@ void YouKnow106Engine::buildVoiceCards() noexcept
         card.driftValue = 0.0f;
         card.driftState = seed | 1u;
     }
+}
+
+void YouKnow106Engine::refreshAgedUnitState() noexcept
+{
+    // The aged-unit extension precomputes here -- called only where `aging`
+    // can actually change (setParameters and reset), never on the per-note
+    // path -- so the render paths stay pure: the per-card flatward cutoff
+    // shift in converter counts, and one shared noise-trim gain. Both are
+    // exactly inert at aging zero.
+    const float aging = activeParameters_.aging;
+    for (auto& card : cards_)
+        card.agingCutoffCounts =
+            aging > 0.0f ? agingCutoffDriftCents / 1200.0f * vcfCountsPerOctave
+                               * aging * card.agingWeight
+                         : 0.0f;
+    agedNoiseGain_ =
+        aging > 0.0f
+            ? std::pow(10.0f, agingNoiseDriftDecibels * aging / 20.0f)
+            : 1.0f;
 }
 
 void YouKnow106Engine::refreshVoiceCardStageTrims() noexcept
@@ -2854,6 +2945,7 @@ void YouKnow106Engine::reset()
     // `voice = Voice {}` above zeroed the offsets, and the cards outlive a
     // reset, so put them back before anything can render a symmetric filter.
     refreshVoiceCardStageTrims();
+    refreshAgedUnitState();
 
     clearOutputPath();
     clearHeldNotes();
@@ -2881,8 +2973,7 @@ void YouKnow106Engine::reset()
     lfoDelayHoldoff_ = 0u;
     lfoDelayFade_ = 0u;
     controlScanPhase_ = 1.0;
-    converterEventPhases_ = converterEventPhases(
-        ConverterTimingProfile::NormalizedServiceChart);
+    converterEventPhases_ = converterEventPhases(converterTimingProfile_);
     nextConverterWrite_ = 0;
     converterPassLfoGated_ = 0.0f;
     passiveHoldEventLatch_ = {};
@@ -2976,6 +3067,7 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
     fix01(result.benderLfoDepth, 0.0f);
     fix01(result.volume, 0.80f);
     fix01(result.velocityDepth, 0.0f);
+    fix01(result.aging, 0.0f);
     // Unlike every other 0-1 control, Unit Character extends to 2: 0 is the
     // digital reference, 1 matches real hardware, and the headroom to 2
     // extrapolates every blended mechanism past its physical draw. The old
@@ -3031,8 +3123,10 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
     // panel control applied outside the scanned converter path; it glides in
     // the render loop so host automation cannot make a block-boundary step.
     activeParameters_ = targetParameters_;
-    // Unit Character scales the stage offsets, so they follow the panel.
+    // Unit Character scales the stage offsets, so they follow the panel; the
+    // aged-unit precompute follows only panel edits and reset, not note-ons.
     refreshVoiceCardStageTrims();
+    refreshAgedUnitState();
 
     // A host may deliver its saved snapshot before prepare(), after prepare(),
     // or more than once while restoring state. Until audio time begins, prime
@@ -3346,7 +3440,8 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
     const float target = static_cast<float>(voiceMidi);
     voice.targetMidi = target;
 
-    voice.glideSemitonesPerScan = resolveGlideStepPerScan(parameters.portamento);
+    voice.glideSemitonesPerScan = resolveGlideStepPerScan(
+        portamentoTravelAdcFraction(parameters.portamento));
     if (voice.glideSemitonesPerScan > 0.0f)
     {
         // The glide integrator is per voice and survives retirement, so a
@@ -3811,7 +3906,8 @@ void YouKnow106Engine::updateVoiceEnvelopeAndPitch(
     // scan rather than leaving it crawling. Every sounding voice reads the same
     // shared PORTAMENTO position here, so this goes through the memoized
     // resolver rather than recomputing the table lookup once per voice.
-    voice.glideSemitonesPerScan = resolveGlideStepPerScan(parameters.portamento);
+    voice.glideSemitonesPerScan = resolveGlideStepPerScan(
+        portamentoTravelAdcFraction(parameters.portamento));
 
     if (voice.glideSemitonesPerScan > 0.0f)
     {
@@ -4155,8 +4251,28 @@ bool YouKnow106Engine::latchUpcomingPassiveHoldEvent(
     return true;
 }
 
+float YouKnow106Engine::CircuitDerivedResonanceProfile::loopGain(
+    float panelPosition) noexcept
+{
+    // Linear above the grounded-base stage's junction onset, zero below it,
+    // sharing the voiced profile's amplitude-anchored endpoint. The per-card
+    // slope trim cancels here by construction: the calibrated card's full
+    // travel lands on the same maximumFeedback the service trim realises.
+    const float position = clamp01(panelPosition);
+    const float active = std::max(0.0f, position - onsetTravel)
+                       / (1.0f - onsetTravel);
+    return VoicedResonanceCompatibilityProfile::maximumFeedback * active;
+}
+
+void YouKnow106Engine::selectConverterTimingProfile(
+    ConverterTimingProfile profile) noexcept
+{
+    converterTimingProfile_ = profile;
+}
+
 float YouKnow106Engine::resonanceFeedbackFor(
-    float resonanceCv, const VoiceCard& card, float calibration) noexcept
+    float resonanceCv, const VoiceCard& card, float calibration,
+    bool circuitDerivedShape) noexcept
 {
     // The regeneration control voltage is shared -- one converter output for
     // all six loops -- but each voice's loop amplifier has its own gain
@@ -4169,7 +4285,9 @@ float YouKnow106Engine::resonanceFeedbackFor(
     // residual is not its parts' tolerance.
     const float resonancePanel = clamp01(resonanceCv
         + card.resonanceError * 0.02f * calibration);
-    return VoicedResonanceCompatibilityProfile::loopGain(resonancePanel);
+    return circuitDerivedShape
+             ? CircuitDerivedResonanceProfile::loopGain(resonancePanel)
+             : VoicedResonanceCompatibilityProfile::loopGain(resonancePanel);
 }
 
 float YouKnow106Engine::cutoffAnalogCounts(
@@ -4188,11 +4306,26 @@ float YouKnow106Engine::cutoffAnalogCounts(
     // eighteen siblings rather than quadratically.
     const float psuCutoffShift =
         -powerSupplyDroop * railToCutoffCountsPerVolt * calibration;
+    // The trim residual is bounded by Roland's own printed acceptance
+    // (p. 19 procedures 7/8: repeat "until within +/-10 cents" at both check
+    // points): one +/-10-cent draw at the code-6272 FREQ point, one at the
+    // WIDTH point two octaves up, the line through them elsewhere. The
+    // former +/-0.07 octave and +/-5%-of-total-counts here were voiced with
+    // no bounding source; a freshly calibrated card cannot legitimately
+    // disperse past what the service procedure accepts at the points it
+    // checks. Field drift beyond the windows is the separate `aging`
+    // mechanism's, precomputed per card.
+    const float trimSpanPosition =
+        (cutoffCounts - vcfFreqTrimAnchorCounts) / vcfWidthTrimSpanCounts;
+    const float trimResidualCounts =
+        (card.cutoffOffsetError * (1.0f - trimSpanPosition)
+         + card.cutoffScaleError * trimSpanPosition)
+        * vcfTrimResidualOctaves * vcfCountsPerOctave * calibration;
     return cutoffCounts
-        * (1.0f + card.cutoffScaleError * 0.05f * calibration)
-        + card.cutoffOffsetError * 0.07f * vcfCountsPerOctave * calibration
+        + trimResidualCounts
         + card.driftValue * 40.0f * calibration
-        + psuCutoffShift;
+        + psuCutoffShift
+        + card.agingCutoffCounts;
 }
 
 float YouKnow106Engine::rampCurrentScaleFor(
@@ -4217,7 +4350,9 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
     const float tolerance = parameters.calibration;
 
-    voice.feedback = resonanceFeedbackFor(resonanceCv_, card, tolerance);
+    voice.feedback = resonanceFeedbackFor(
+        resonanceCv_, card, tolerance,
+        parameters.useCircuitDerivedResonanceShape);
     voice.inputCompensation =
         VoicedResonanceCompatibilityProfile::inputCompensation(voice.feedback);
 
@@ -4678,7 +4813,8 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         mixed += pulseOut;
     mixed += subOut;
     mixed += noiseSample * noiseMixVolts * noiseCv_
-           * (1.0f + card.noiseLevelError * 0.03f * parameters.calibration);
+           * (1.0f + card.noiseLevelError * 0.03f * parameters.calibration)
+           * agedNoiseGain_;
 
     voice.noiseState = xorshift32(voice.noiseState);
     const float microscopicNoise =
@@ -4740,7 +4876,8 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         const auto mapHeldControls = [&](double cutoffCounts,
                                          double resonanceCv) {
             const float mappedFeedback = resonanceFeedbackFor(
-                static_cast<float>(resonanceCv), card, parameters.calibration);
+                static_cast<float>(resonanceCv), card, parameters.calibration,
+                parameters.useCircuitDerivedResonanceShape);
             const float mappedAnalogCounts = cutoffAnalogCounts(
                 static_cast<float>(cutoffCounts), card, parameters.calibration,
                 powerSupplyDroop_);
