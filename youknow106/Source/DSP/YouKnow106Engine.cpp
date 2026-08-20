@@ -5318,10 +5318,16 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     internalIntervalSeconds,
                     static_cast<double>(voiceVcaHoldSlewSeconds),
                     voiceVcaDecay);
-                updatePulseComparator(voice, parameters);
-
+                // Both of these feed `renderVoice`, which returns before it
+                // reads any of their results for an inactive extension slot
+                // (`!voice.active && cardIndex >= hardwareVoices`, and
+                // `cardIndex` is always the slot). One guard, so the two
+                // cannot drift apart from that early return or each other.
                 if (voice.active || slot < hardwareVoices)
+                {
+                    updatePulseComparator(voice, parameters);
                     updateVoiceAudio(voice, parameters);
+                }
 
                 if (!voice.active)
                 {

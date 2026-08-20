@@ -684,10 +684,16 @@ void validateCounterAlgebra(const CounterCase& testCase,
                 counters.scanPolls, internal);
     expectEqual(errors, testCase.name, "holdVoiceUpdates",
                 counters.holdVoiceUpdates, voiceSlots);
+    // Both of these are behind one guard, because both feed a `renderVoice`
+    // that returns before it reads either for an inactive extension slot.
+    // This fixture holds no notes, so only the six powered cards run: the
+    // comparator used to run for all sixteen slots and discard ten of them.
     expectEqual(errors, testCase.name, "pulseComparatorUpdates",
-                counters.pulseComparatorUpdates, voiceSlots);
+                counters.pulseComparatorUpdates, voiceCards);
     expectEqual(errors, testCase.name, "voiceAudioUpdates",
                 counters.voiceAudioUpdates, voiceCards);
+    expectEqual(errors, testCase.name, "comparator/audio partition",
+                counters.pulseComparatorUpdates, counters.voiceAudioUpdates);
     expectEqual(errors, testCase.name, "dcoFrames",
                 counters.dcoFrames, voiceCards);
     expectEqual(errors, testCase.name, "chorusFrames",
