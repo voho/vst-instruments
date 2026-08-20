@@ -2737,6 +2737,14 @@ void YouKnow106Engine::clearOutputPath() noexcept
     clearRateDependentOutputPath(false);
     outputCouplingLeft_.reset();
     outputCouplingRight_.reset();
+    // IC6's own output node. It was the one mutable state in the output path
+    // this did not clear, so `reset()` did not put the engine in one state:
+    // what it rendered next depended on what it had been rendering before. The
+    // leak is tiny -- the slew limit is 1.7 V/us, so the integrator collapses
+    // within an internal sample or two of a stop -- but a reset that does not
+    // reset is not something a deterministic re-render can rely on.
+    outputSlewStateLeft_ = 0.0f;
+    outputSlewStateRight_ = 0.0f;
 }
 
 void YouKnow106Engine::rebuildRateDependentVoiceState() noexcept

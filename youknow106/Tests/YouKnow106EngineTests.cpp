@@ -7831,6 +7831,83 @@ void testPairedSwitchModes()
         }
 }
 
+// A reset has to put the engine in one state. It is the contract every
+// deterministic re-render in this repository leans on -- and the one
+// `allNotesOff()` states for itself, that "a hard stop has to be silent now".
+// IC6's output slew integrator was the one mutable node in the output path
+// that neither cleared, so what the engine rendered after a stop depended on
+// what it had been rendering before it. Measured before the fix: up to
+// 1.3e-9 of difference at output sample 17.
+void testResetLeavesNoHistoryInTheOutputPath()
+{
+    const auto loudPatch = [] {
+        EngineParameters parameters {};
+        parameters.sawEnabled = true;
+        parameters.pulseEnabled = true;
+        parameters.subLevel = 1.0f;
+        parameters.cutoff = 0.8f;
+        parameters.resonance = 0.85f;
+        parameters.vcaLevel = 1.0f;
+        parameters.volume = 1.0f;
+        parameters.attack = 0.0f;
+        parameters.decay = 0.5f;
+        parameters.sustain = 1.0f;
+        parameters.release = 0.5f;
+        parameters.chorus = ChorusMode::Two;
+        parameters.highPass = HighPassMode::Boost;
+        parameters.polyphony = 6;
+        return parameters;
+    };
+
+    // One side leaves a loud six-voice chord in the output path, the other
+    // leaves nothing. Both then reset and render the same note.
+    //
+    // Only reset() is held to this. `allNotesOff()` is a panic, not a power
+    // cycle: the six cards stay powered behind their closed VCAs, so their
+    // oscillator phase and filter charge deliberately carry across it, and
+    // this comparison fails for that reason alone if it is pointed there.
+    const auto renderAfterStop = [&loudPatch] (double rate, int factor,
+                                               bool playFirst)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(rate, 512, factor);
+        engine.setParameters(loudPatch());
+        if (playFirst)
+            for (int note = 0; note < 6; ++note)
+                engine.noteOn(60 + note * 3, 1.0f);
+
+        const int preRoll = static_cast<int>(rate * 0.2);
+        std::vector<float> left(static_cast<std::size_t>(preRoll));
+        std::vector<float> right(static_cast<std::size_t>(preRoll));
+        engine.process(left.data(), right.data(), preRoll);
+
+        engine.reset();
+
+        engine.setParameters(loudPatch());
+        engine.noteOn(64, 1.0f);
+        std::vector<float> outLeft(1024);
+        std::vector<float> outRight(1024);
+        engine.process(outLeft.data(), outRight.data(), 1024);
+        return outLeft;
+    };
+
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+        for (const int factor : { 1, 2, 4 })
+        {
+            const auto afterChord = renderAfterStop(rate, factor, true);
+            const auto afterSilence = renderAfterStop(rate, factor, false);
+            bool identical = true;
+            for (std::size_t index = 0; index < afterChord.size(); ++index)
+                identical = identical
+                    && afterChord[index] == afterSilence[index];
+            expect(identical,
+                   std::string("reset() let the previous run reach the next "
+                               "one at ")
+                       + std::to_string(static_cast<int>(rate)) + " Hz x"
+                       + std::to_string(factor));
+        }
+}
+
 // Every legend on the panel has to be drawn in full. This is the check that
 // caught "VOLUME" being ellipsized into a slider cut-out narrower than the
 // word, and the stacked buttons whose legends were set at a size that did not
@@ -8440,6 +8517,7 @@ int main()
     testVcfEarlyEffectBelongsToUnitCharacter();
     testSpatialThermalGradientBelongsToUnitCharacter();
     testDeterminismAndSilence();
+    testResetLeavesNoHistoryInTheOutputPath();
     testExtremeAutomationStaysFinite();
     testParameterSanitisation();
     testSanitiseFallbackDefaultsMatchDeclaredDefaults();
