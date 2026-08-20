@@ -1775,9 +1775,16 @@ YouKnow106AudioProcessorEditor::YouKnow106AudioProcessorEditor (YouKnow106AudioP
 
     display.setName ("Status display");
     display.setTitle ("Status display");
+    // Two of these readouts print an "Nx" figure and they mean different
+    // things -- the scope's own vertical gain, and the oversampling factor the
+    // engine actually applied. Naming both is the point of listing all six.
     display.setTooltip (
-        "Shows the six physical voice cards, the active voice limit, LFO and "
-        "envelope motion.");
+        "Shows the six physical voice cards and the active voice limit, LFO "
+        "and envelope motion, the modelled chassis temperature and supply "
+        "rail, and the output waveform. The scope prints its own vertical "
+        "gain; the corner below it prints the oversampling the engine applied "
+        "and the internal rate that produces, which can be lower than QUALITY "
+        "asked for.");
     addAndMakeVisible (display);
 
     buildPanelControls();
