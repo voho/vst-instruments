@@ -4103,7 +4103,7 @@ retune; three are listening-test material under the repository's A–Z rules,
 which is where "more realistic" decisions that measurements cannot close are
 made by the user's ear.
 
-- [ ] **P1. Circuit-derived resonance-shape candidate (OQ-09).** Build
+- [x] **P1. Circuit-derived resonance-shape candidate (OQ-09).** Build
   `CircuitDerivedResonanceProfile` beside the shipping voiced
   quadratic-then-linear curve: loop gain linear-above-threshold in the stored
   byte, from the now Roland-printed control chain (0…+10 V hold → 27 kΩ +
@@ -4116,6 +4116,19 @@ made by the user's ear.
   KR-106's measured J106 points sit between them and their raw sweeps are
   unpublished). *Closes nothing; replaces a voiced shape with a derived one
   only if the user prefers it by ear, exactly as the contract allows.*
+  *What actually shipped, 2026-08-20.* `CircuitDerivedResonanceProfile`
+  (onset 0.6 V of the 9.921875 V span ≈ byte 8; endpoint =
+  `maximumFeedback`; k = 4 threshold at travel 0.895, independently near the
+  voiced 0.9) behind `useCircuitDerivedResonanceShape`, default off,
+  threaded through both `resonanceFeedbackFor` consumers so the exact
+  held-interval reconstruction follows the flag;
+  `testCircuitDerivedResonanceCandidate` asserts default-off, endpoints,
+  onset, monotonicity, above-onset linearity and the threshold. The A/B
+  listening test was rendered through the shipping path (44.1 kHz, HQ,
+  7.5 s takes, chorus off, Character 0, resonance 0.55; whole-file RMS
+  matched — A trimmed −0.314 dB, then one shared +23.9 dB lift to a −3 dBFS
+  peak) and delivered with its unread-by-design key. The default stays
+  voiced until the user decides by ear.
 - [ ] **P2. B-2 pitch-write semantics determination (OQ-08).** Behavioral
   analysis of the hash-identified B-2 image's converter/timer path: does a
   pitch change write counts only, or rewrite control words — and which mode
@@ -4128,7 +4141,11 @@ made by the user's ear.
   the restart model is either confirmed or replaced on device-documented
   grounds, with the strike's fixture objections addressed by testing from
   played state rather than reset state.
-- [ ] **P3. Chart-geometry timing profile (OQ-07/OQ-08).** Add the measured
+  *Status, 2026-08-20: blocked in this environment.* The repository carries
+  no firmware image by policy and none was supplied to this session, so the
+  determination cannot run here; the step stays open for whoever holds the
+  hash-identified B-2 image.
+- [x] **P3. Chart-geometry timing profile (OQ-07/OQ-08).** Add the measured
   p. 8 slot table (three width classes, 10:7:5 grid, VCF6 anomaly, NOISE
   phase origin) as a selectable `ConverterTimingProfile` beside
   `NormalizedServiceChart`, labelled drawn-artwork provenance. Default
@@ -4137,7 +4154,14 @@ made by the user's ear.
   second-half VCF/VCA clustering within 1.6 % at VCF1); if the two profiles
   are indistinguishable by ear at realistic material, OQ-08's audible-impact
   priority drops and the queue should say so.
-- [ ] **P4. Spec-endpoint regression fixtures (OQ-12/OQ-13).** Deterministic
+  *What actually shipped, 2026-08-20.* `MeasuredChartGeometry` in
+  `ConverterTimingProfile`, phases computed from the 24 recorded stroke-center
+  pixels over the 1886.5 px span, rebased to the queue's RESONANCE origin;
+  the reset path keeps `NormalizedServiceChart` and the suite pins the
+  ordinal grid value-for-value beside the new profile's strokes, width
+  classes, VCF6 anomaly and +371.4 µs PWM deviation
+  (`testConverterQueueAndOutputReference`).
+- [x] **P4. Spec-endpoint regression fixtures (OQ-12/OQ-13).** Deterministic
   tests asserting the reconciliation this pass derived: slowest attack
   3.2802 s to full / 2.9526 s to 90 %, slowest decay one-τ 12.63 s, LFO top
   29.761905 Hz, delay hold 3.2802 s at nominal T = 4.2 ms — pinning the
@@ -4145,7 +4169,14 @@ made by the user's ear.
   stated conventions, so a future pass period or table change that breaks the
   Roland-printed corroboration fails a test instead of passing silently.
   Tests only; no DSP change.
-- [ ] **P5. Portamento knob law (OQ-14).** Map the plug-in's portamento
+  *What actually shipped, 2026-08-20.*
+  `testServiceSpecificationEndpointReconciliation`: 703/781 attack passes,
+  the exact e⁻¹ crossing at pass 3008, the −20 dB reading's self-exclusion
+  against the 30 Hz LFO top, the 4.1667 ms LFO-top inversion, the byte-0
+  guard against bending toward the irreconcilable 0.1 Hz floor, the
+  781-pass delay hold, ln(9)·687 µs against the 1.5 ms floors and the
+  −0.068 dB sustain ceiling, all inside the ±9 % pass-period cluster.
+- [x] **P5. Portamento knob law (OQ-14).** Map the plug-in's portamento
   control through the now designator-complete loaded-pot transfer (50KB
   linear track, wiper → switch → 47 kΩ load; midpoint ≈ 0.395 of full scale;
   off = raw 0) so the physical knob's taper — not a linear byte ramp — sets
@@ -4153,7 +4184,15 @@ made by the user's ear.
   bytes); this touches only the panel-to-byte mapping. Derived from the
   printed network; small, honest, and the kind of faithfulness a player
   touches every time.
-- [ ] **P6. Calibration-bounded Unit Character (OQ-10).** Cap the
+  *What actually shipped, 2026-08-20.* `portamentoTravelAdcFraction` and its
+  exact quadratic inverse, applied at the two knob boundaries (both
+  `resolveGlideStepPerScan` consumers in the engine; the parameter's
+  text/value functions in the processor); the raw-code-addressed B-2 laws
+  and their vectors stay byte-exact. The suite asserts the endpoints, the
+  0.39496 half-travel value, strict monotonicity, below-linear sag,
+  round-trip inversion at 65 grid points, and that half knob travel now
+  selects raw code 101's glide rather than raw 128's.
+- [x] **P6. Calibration-bounded Unit Character (OQ-10).** Cap the
   calibrated-state Unit Character residuals with Roland's own printed
   acceptance windows — duty 48–52 %/93–97 %, VCF trim ±10 cents, VCA BIAS
   20 mV window, rails −15 V ±10 mV/+15 V ±0.8 V — so "a freshly calibrated
@@ -4162,6 +4201,22 @@ made by the user's ear.
   one documented recalibration lead (five undisturbed voices ≈ a quarter-tone
   flat after four years, one dead-on; noise drifted to 6 Vp-p against the
   4 Vp-p spec) — voiced, single-unit lineage stated at the control.
+  *What actually shipped, 2026-08-20.* The trim residual in
+  `cutoffAnalogCounts` now draws each printed check point independently
+  inside ±10 cents (`vcfTrimResidualOctaves` at the code-6272 FREQ anchor
+  and at the WIDTH point two octaves up, the line through them elsewhere),
+  replacing the voiced ±0.07 octave/±5 %-of-total-counts pair; the review
+  pass caught and corrected a first cut that multiplied total counts and
+  overshot the printed window 2.7× at the very point the procedure checks
+  (`testVcfTrimResidualHonoursPrintedWindows` pins the corrected law); the PWM
+  comparator's ±0.24 V was already exactly the printed 48–52 % window and
+  the untrimmed VCA/resonance/level magnitudes stay voiced (p. 19 prints no
+  tolerance for them). The `aging` extension landed engine-level only —
+  default 0, clamped to [0, 1], precomputed per card
+  (`agingCutoffCounts`, seeded unit weights) plus one shared
+  `agedNoiseGain_`, exactly inert at zero — deliberately not exposed as a
+  host parameter; `testAgedUnitExtensionStaysInertByDefault` asserts
+  inertness, bounds, per-card dispersion, the +3.52 dB gain and the clamp.
 - [ ] **P7. OQ-06 reference candidate, put to the user.** Roland's era
   convention (printed on the RS-505 selector spec) reads "0dBm = 0.775 v
   RMS"; adopting `Vref_rms = 0.775 V` for the High tap would pin the −18 dBFS
@@ -4177,3 +4232,16 @@ impedance, not more); the wet-mute click and off-state bleed stay unmodelled
 with their new datasheet-derived bounds recorded as below audibility at
 typical values; the 0.775 V reference is not adopted; no timing profile
 becomes default on drawn-artwork evidence.
+
+**Implementation, 2026-08-20 (on request).** P1, P3, P4, P5 and P6 landed the
+same day, suite green (the DSP tree's full 15-test suite plus the JUCE
+processor build against a pinned local 8.0.14 checkout). One departure from
+this document's one-commit-per-step convention is recorded: the five steps
+share `YouKnow106Engine.h/.cpp` and the circuit-test file so heavily that
+they landed as a single implementation commit with this documentation commit
+beside it, rather than as five interleaved partial-file commits. P2 is
+blocked in the implementing environment (no firmware image is or may be in
+the repository, and none was supplied); P7 remains recorded, not adopted —
+both stay open above. The P1 default stays the voiced curve until the
+delivered A/B is decided by ear; the verdict, when it arrives, is recorded
+here as chosen by ear per the A–Z rules.

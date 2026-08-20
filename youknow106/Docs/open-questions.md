@@ -5670,6 +5670,71 @@ candidate reference. Eleven stale records in this tree are corrected. The
 research queue count is unchanged at 20 open questions plus the OQ-06
 dependency.
 
+## Implementation pass — 2026-08-20 (proposed steps landed on request; no OQ closed)
+
+**Work mode:** implementation of the same-day evidence pass's proposed steps,
+on explicit request. **No hardware was measured.** Suite green throughout
+(the DSP tree's full 15-test suite; the JUCE plug-in and processor tests
+built against a pinned local 8.0.14 checkout after the sandbox refused the
+FetchContent archive host).
+
+### Landed
+
+- **P4 — spec-endpoint fixtures.** `testServiceSpecificationEndpointReconciliation`
+  pins the 2026-08-20 reconciliation: 703/781 attack passes, the exact e⁻¹
+  decay crossing at pass 3008, the −20 dB reading's self-exclusion against
+  the 30 Hz LFO top, the 4.1667 ms LFO-top inversion, a guard against
+  bending rate byte 0 toward the irreconcilable printed 0.1 Hz floor, the
+  781-pass delay hold, ln(9)·687 µs against the three 1.5 ms floors, and the
+  −0.068 dB sustain ceiling. Tests only; OQ-12/OQ-13 unchanged.
+- **P3 — `MeasuredChartGeometry`.** The p. 8 chart's measured stroke table
+  ships as a third, selectable `ConverterTimingProfile` (drawn-artwork
+  provenance in the header; phases computed from the recorded stroke pixels
+  over the 1886.5 px span, rebased to the queue's RESONANCE origin). The
+  reset path keeps `NormalizedServiceChart`, whose ordinal grid the suite
+  now pins value-for-value beside the new profile's strokes, width classes,
+  VCF6 anomaly and +371.4 µs PWM deviation. OQ-07/OQ-08 unchanged.
+- **P5 — portamento knob law.** `portamentoTravelAdcFraction` (the p. 16
+  loaded divider, 0.39496 at half travel) and its exact quadratic inverse
+  now sit at the knob boundaries — both engine glide consumers and the
+  parameter's text/value functions — while the raw-code-addressed B-2 laws
+  and their vectors stay byte-exact. Derived from the printed network;
+  OQ-14's tolerance/cadence/revision asks unchanged.
+- **P1 — `CircuitDerivedResonanceProfile`.** The drawn-chain shape candidate
+  (linear above a 0.6 V junction onset ≈ byte 8 of the 9.921875 V span;
+  endpoint shared with the voiced profile's `maximumFeedback`; k = 4
+  threshold at travel 0.895) behind `useCircuitDerivedResonanceShape`,
+  default off, reaching both `resonanceFeedbackFor` consumers so the exact
+  held-interval reconstruction follows the flag. The A–Z listening test was
+  rendered through the shipping path, RMS-matched (A −0.314 dB, one shared
+  +23.9 dB lift) and delivered with its unread-by-design key; the default
+  stays the voiced curve until the user decides by ear. OQ-09 unchanged.
+- **P6 — calibration-bounded Unit Character.** The VCF trim residual now
+  uses Roland's printed acceptance: one ±10-cent draw at each printed check
+  point (the code-6272 FREQ anchor and the WIDTH point two octaves up), the
+  line through them elsewhere — an adversarial review of the first cut
+  caught it multiplying total counts, overshooting the window 2.7× at the
+  checked point, and the corrected two-point law is suite-pinned — replacing
+  the former voiced ±0.07 octave/±5 % that no source bounded —
+  a classification upgrade (voiced span → anchored acceptance bound) and an
+  audible-at-Character narrowing of the calibrated state. The PWM
+  comparator's ±0.24 V already was the printed window; the untrimmed
+  VCA/resonance/level magnitudes stay voiced (p. 19 prints no tolerance for
+  them). A separate engine-level `aging` extension (default 0, clamped
+  [0, 1], deliberately not a host parameter) applies the one documented
+  recalibration lead — flatward per-card VCF drift up to a quarter tone on
+  seeded unit weights, +3.52 dB noise-trim drift — exactly inert at zero and
+  suite-asserted so. Voiced, single-unit lineage; OQ-10 owns promotion.
+
+### Not landed
+
+- **P2** is blocked here: the repository carries no firmware image by policy
+  and none was supplied to this session. The determination (control-word
+  versus count-only pitch writes, and the programmed mode) remains the
+  cheapest decisive OQ-08 step for whoever holds the hash-identified B-2.
+- **P7** stays recorded, not adopted: `Vref_rms` = 0.775 V is a candidate,
+  and OQ-06's calibration still routes through OQ-05/OQ-17 evidence.
+
 ## Settled guardrails — do not reopen without contradictory primary evidence
 
 - **Chorus modes:** the JUNO-106 has Off, I and II. Its owner's manual says I
