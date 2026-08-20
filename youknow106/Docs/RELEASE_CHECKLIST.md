@@ -70,10 +70,16 @@ has been cleared.
 - [ ] Exercise note/MIDI input, automation and state recall, all factory
   programs, QUALITY changes, chorus, SysEx load/save, and audio-device changes.
 - [ ] Profile idle and standard-bypass behavior in the supported hosts with
-  several instances. The continuous chorus-noise model currently reports an
-  infinite tail and therefore may prevent host suspension; explicitly accept
-  that behavior for v1 or qualify a finite-tail/idle-retirement policy before
-  release.
+  several instances. The continuous chorus-noise model reports an infinite tail
+  and therefore may prevent host suspension; explicitly accept that behavior for
+  v1 or qualify a finite-tail/idle-retirement policy before release. Measured on
+  the shipping engine to inform that decision, six voices with the longest
+  release, from the last key lift: with the chorus off, or engaged with Chorus
+  Noise at zero, the output falls below -140 dBFS after 25.41 s and reaches
+  bit-exact zero after 53.3-53.9 s across 44.1/48 kHz and 1x/4x; with the chorus
+  engaged and its noise present it is still not silent after 120 s. 65 of the
+  128 factory programs store the chorus off, so accepting the infinite tail
+  accepts that a host cannot idle-suspend those either.
 - [ ] Test every control keyboard-only and with VoiceOver at every supported UI
   size; confirm the performance lever announces both axes and springs to zero.
 - [ ] Confirm support, privacy, change history, approved customer terms,

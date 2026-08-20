@@ -510,9 +510,10 @@ private:
         float previousInput { 0.0f };
         float previousInput2 { 0.0f };
         float previousInput3 { 0.0f };
-        // The wet input has its own coupling high-pass and five low-pass
-        // poles: two Sallen-Key sections and one passive pole. The
-        // output has the tap-summing pole followed by two Sallen-Key sections.
+        // The output has the tap-summing pole followed by two Sallen-Key
+        // sections. The wet input's own coupling high-pass and five low-pass
+        // poles are shared by the two lines and live on the Chorus: see
+        // `InputSupport` below.
         //
         // The BBD's clock-grid images are physical and remain in the modeled
         // staircase. Sampling that asynchronous staircase on the numerical
@@ -521,15 +522,7 @@ private:
         // hardware output poles. It is numerical state: unlike buckets,
         // clock phase, transfer loss and held noise, it is cleared when the
         // engine changes processing rate.
-        float inputCouplingState { 0.0f };
-        float antiAliasState { 0.0f };
-        BiquadState antiAliasFirst {};
-        BiquadState antiAliasSecond {};
-        std::array<double, 6> exactInputState {};
         std::array<double, 6> exactOutputState {};
-        double exactInputPrevious { 0.0 };
-        double exactInputPrevious2 { 0.0 };
-        double exactInputPrevious3 { 0.0 };
         double exactOutputPrevious { 0.0 };
         double exactOutputPrevious2 { 0.0 };
         double exactOutputPrevious3 { 0.0 };
@@ -547,14 +540,44 @@ private:
         [[nodiscard]] float processClockedCore(
             float limitedInput, float clockHz, float sampleRate,
             float noiseScale) noexcept;
-        float process(float input, float clockHz, float sampleRate,
-                      const SupportChain& support,
+        // `limitedInput` has already been through the shared input support
+        // chain -- see `Chorus::advanceInputSupport`.
+        float process(float limitedInput, float clockHz, float sampleRate,
                       const SupportChain::ExactTransition& outputTransition,
                       float noiseScale, bool useBlep = true) noexcept;
     };
 
+    // Both wet branches take the same node through the same input support
+    // network: two Sallen-Key sections, the wet-only coupling high-pass and
+    // the passive pole beside the MN3009 input. The model gives the two
+    // branches' parts identical values, and both lines' support state is
+    // zeroed identically by every reset, so the two chains produced the same
+    // float for the life of the plug-in -- the chain was simply advanced twice
+    // on the same operands. It is advanced once, here.
+    //
+    // This is exactly as physical as the duplicate was, and no more: it says
+    // the two networks are modelled as identical, which they are. Give either
+    // branch's parts their own tolerance -- a per-line Unit Character spread,
+    // say -- and this has to be split back into the two lines first.
+    struct InputSupport
+    {
+        float couplingState { 0.0f };
+        float passiveState { 0.0f };
+        BiquadState antiAliasFirst {};
+        BiquadState antiAliasSecond {};
+        std::array<double, 6> exactState {};
+        double exactPrevious { 0.0 };
+        double exactPrevious2 { 0.0 };
+        double exactPrevious3 { 0.0 };
+
+        void reset() noexcept;
+    };
+
+    [[nodiscard]] float advanceInputSupport(float input) noexcept;
+
     Line lineA_ {};
     Line lineB_ {};
+    InputSupport inputSupport_ {};
     float sampleRate_ { 48000.0f };
     float inverseSampleRate_ { 1.0f / 48000.0f };
     // 1 - exp(-inverseSampleRate_ / wetMuteTimeConstantSeconds): the per-sample

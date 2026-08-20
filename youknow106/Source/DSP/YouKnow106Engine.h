@@ -202,6 +202,14 @@ public:
     // whether it has been applied yet.
     bool setOversamplingFactor(int factor) noexcept;
     void reset();
+    // A host's transport stop is not a power cycle. `reset()` above is the
+    // cold one -- `prepare()` and a device change use it -- and returns every
+    // state to the moment the instrument was switched on. This one clears the
+    // same sounding voices, tails and transient controllers but leaves the
+    // modelled circuit state that outlives a run where it was, as the voice
+    // cards' own component trims already do: a chassis that has been powered
+    // for ten minutes is still warm when the transport stops.
+    void resetForHostStop();
     void setParameters(const EngineParameters& parameters);
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);

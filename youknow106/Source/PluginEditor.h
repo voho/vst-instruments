@@ -36,6 +36,15 @@ public:
     juce::Label* createSliderTextBox (juce::Slider&) override;
     std::unique_ptr<juce::FocusOutline> createFocusOutlineForComponent (
         juce::Component&) override;
+
+    // The editor's own description scale. The compact add-on keys are the one
+    // thing drawn here whose type has to know how large the whole panel is,
+    // not merely how large one key is; the editor hands it over from resized()
+    // rather than this class guessing from a top-level component.
+    void setEditorScale (float newScale) noexcept { editorScale = newScale; }
+
+private:
+    float editorScale { youknow106::panel::defaultEditorScale };
 };
 
 // The moulded plastic of the faceplate: a maintained-but-used ABS material scan
@@ -112,6 +121,26 @@ public:
     void focusLost (FocusChangeType) override;
     std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
 
+    // Where the lever sits for a given set of held arrow keys. Both horizontal
+    // keys held is a player pressing against themselves, so the lever rests;
+    // Down is the key that releases modulation, so holding it keeps modulation
+    // released however long Up is held with it. Free-standing because it is
+    // the whole of what a key release has to decide, and a headless suite
+    // cannot press real keys to reach it.
+    struct Axes
+    {
+        float bend;
+        float modulation;
+    };
+    [[nodiscard]] static constexpr Axes axesForHeldKeys (bool leftHeld,
+                                                         bool rightHeld,
+                                                         bool upHeld,
+                                                         bool downHeld) noexcept
+    {
+        return { leftHeld == rightHeld ? 0.0f : (rightHeld ? 1.0f : -1.0f),
+                 upHeld && ! downHeld ? 1.0f : 0.0f };
+    }
+
     [[nodiscard]] float getPitchBend() const noexcept { return pitchBend; }
     [[nodiscard]] float getModulation() const noexcept { return modulation; }
     [[nodiscard]] juce::String getAccessibilityValueText() const;
@@ -146,6 +175,26 @@ public:
     // holds the idle strip for a few seconds and then yields. Hover help
     // still wins while it is up.
     void showNotice (juce::String title, juce::String text);
+
+    // Where the strip's three columns land and what they are set in. The body
+    // size is chosen so the whole explanation is printed rather than
+    // ellipsised, and that choice depends on the platform's own sans, so the
+    // fit check has to ask for the same answer paint uses instead of
+    // reproducing the decision. Public for that reason only.
+    struct BodyLayout
+    {
+        juce::Rectangle<float> value;
+        juce::Rectangle<float> title;
+        juce::Rectangle<int> body;
+        float dividerX { 0.0f };
+        float headingPointSize { 13.0f };
+        // How many lines the body may take. JUCE fits a body by stepping the
+        // type down and the line count up until the text fits, so this is the
+        // whole of what decides whether a long explanation is printed or cut.
+        int maximumLines { 3 };
+    };
+    [[nodiscard]] BodyLayout bodyLayout() const;
+
     void paint (juce::Graphics&) override;
     std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
 

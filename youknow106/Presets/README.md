@@ -9,8 +9,11 @@ resulting time or frequency next to the control.
 Parameters not listed stay at their version-1.1 defaults — 8' range, saw on,
 pulse off, HPF 1, POLY 1, chorus off, and the six non-hardware controls at
 their hardware-aligned/product defaults (velocity 0%, six voices, chorus noise
-100%, Unit Character 0%). QUALITY is a persisted processing setting, not part
-of a patch, and changes take effect once the engine is idle.
+100%, Unit Character 100%). Unit Character is the one of those whose
+hardware-aligned value is its top: 100% is the "matches real hardware"
+reference a fresh instance starts on, and 0% is the calibrated nominal model
+with every per-card tolerance removed. QUALITY is a persisted processing
+setting, not part of a patch, and changes take effect once the engine is idle.
 
 Three modelling habits are worth knowing before you start: envelope attack is
 linear while decay and release are exponential, and the current provisional
@@ -87,8 +90,10 @@ representative subset.
 - Pulse on, saw off, PWM 30% (`LFO`), LFO rate 78%.
 - HPF 3; VCF freq 58%, res 70%, ENV `+` 66%, KYBD 55%.
 - ENV 0% / 22% / 0% / 16%.
-- Unit Character 80% — the optional voiced per-card spread stops a fast
-  repeated figure sounding machine-stamped; zero remains the nominal model.
+- Unit Character 80% — a small step down from the shipped 100%: the voiced
+  per-card spread still stops a fast repeated figure sounding machine-stamped
+  without letting the cards wander as far apart. Zero remains the nominal
+  model.
 
 ## Self-Oscillating Sine
 

@@ -746,6 +746,64 @@ Chorus::SupportChain Chorus::supportChainFor(float sampleRate) noexcept
     return chain;
 }
 
+void Chorus::InputSupport::reset() noexcept
+{
+    couplingState = 0.0f;
+    passiveState = 0.0f;
+    antiAliasFirst.reset();
+    antiAliasSecond.reset();
+    exactState.fill(0.0);
+    exactPrevious = 0.0;
+    exactPrevious2 = 0.0;
+    exactPrevious3 = 0.0;
+}
+
+float Chorus::advanceInputSupport(float input) noexcept
+{
+    // Band-limit ahead of the lines. Everything above half the clock would
+    // fold, exactly as it does in the part. The two Sallen-Key sections
+    // precede the wet-only C44/C47 coupling high-pass; the passive
+    // 10 kOhm / 2.2 nF pole is last, immediately beside the MN3009 input.
+    // A corrupt host buffer must not poison the persistent support state.
+    // Sixty-four model units is over 160 V at this node and therefore far
+    // outside every circuit or engine fixture; treat anything beyond it as a
+    // corrupt sample instead of turning it into a long full-scale BBD burst.
+    constexpr float maximumSupportInput = 64.0f;
+    const float supportInput = std::isfinite(input)
+            && std::abs(input) <= maximumSupportInput
+        ? input : 0.0f;
+    if (sampleRate_ >= Chorus::minimumExactInputSupportRate)
+    {
+#if defined(YOUKNOW106_WORK_AUDIT)
+        YOUKNOW106_COUNT_DOMAIN_WORK(bbdExactInputSupportAdvances, 1);
+        YOUKNOW106_COUNT_DOMAIN_WORK(bbdExactSupportCoordinateUpdates, 6);
+        YOUKNOW106_COUNT_DOMAIN_WORK(bbdExactSupportMacs, 60);
+#endif
+        const double exactInput = static_cast<double>(supportInput);
+        advanceExactSupport(
+            inputSupport_.exactState, support_.exactInput,
+            exactInput, inputSupport_.exactPrevious,
+            inputSupport_.exactPrevious2, inputSupport_.exactPrevious3);
+        inputSupport_.exactPrevious3 = inputSupport_.exactPrevious2;
+        inputSupport_.exactPrevious2 = inputSupport_.exactPrevious;
+        inputSupport_.exactPrevious = exactInput;
+        return static_cast<float>(inputSupport_.exactState[5]);
+    }
+
+#if defined(YOUKNOW106_WORK_AUDIT)
+    YOUKNOW106_COUNT_DOMAIN_WORK(bbdLegacyInputSupportFrames, 1);
+#endif
+    float limited = Chorus::biquadStep(
+        inputSupport_.antiAliasFirst, supportInput, support_.antiAliasFirst);
+    limited = Chorus::biquadStep(
+        inputSupport_.antiAliasSecond, limited, support_.antiAliasSecond);
+    const float couplingLow = Chorus::supportFilterStep(
+        inputSupport_.couplingState, limited, support_.inputCouplingG);
+    limited -= couplingLow;
+    return Chorus::supportFilterStep(
+        inputSupport_.passiveState, limited, support_.passiveG);
+}
+
 void Chorus::Line::reset(std::uint32_t seed) noexcept
 {
     cells.fill(0.0f);
@@ -755,15 +813,7 @@ void Chorus::Line::reset(std::uint32_t seed) noexcept
     previousInput = 0.0f;
     previousInput2 = 0.0f;
     previousInput3 = 0.0f;
-    inputCouplingState = 0.0f;
-    antiAliasState = 0.0f;
-    antiAliasFirst.reset();
-    antiAliasSecond.reset();
-    exactInputState.fill(0.0);
     exactOutputState.fill(0.0);
-    exactInputPrevious = 0.0f;
-    exactInputPrevious2 = 0.0f;
-    exactInputPrevious3 = 0.0f;
     exactOutputPrevious = 0.0f;
     exactOutputPrevious2 = 0.0f;
     exactOutputPrevious3 = 0.0f;
@@ -783,19 +833,12 @@ void Chorus::Line::resetAudioRateSupport() noexcept
     previousInput = 0.0f;
     previousInput2 = 0.0f;
     previousInput3 = 0.0f;
-    inputCouplingState = 0.0f;
-    antiAliasState = 0.0f;
-    antiAliasFirst.reset();
-    antiAliasSecond.reset();
     // The exact coordinates are physical and mode-compatible, but this rate
     // boundary still deliberately reinitializes the entire numerical support
     // under the engine's established zero-gain transition. Preserving them
     // while clearing/reseeding the cubic drive is a separate qualification.
-    exactInputState.fill(0.0);
+    // The shared input side is cleared beside this, by the same callers.
     exactOutputState.fill(0.0);
-    exactInputPrevious = 0.0f;
-    exactInputPrevious2 = 0.0f;
-    exactInputPrevious3 = 0.0f;
     exactOutputPrevious = 0.0f;
     exactOutputPrevious2 = 0.0f;
     exactOutputPrevious3 = 0.0f;
@@ -957,60 +1000,13 @@ float Chorus::Line::processClockedCore(float limitedInput, float clockHz,
 }
 
 float Chorus::Line::process(
-    float input, float clockHz, float sampleRate,
-    const SupportChain& support,
+    float limited, float clockHz, float sampleRate,
     const SupportChain::ExactTransition& outputTransition,
     float noiseScale, bool useBlep) noexcept
 {
 #if defined(YOUKNOW106_WORK_AUDIT)
     YOUKNOW106_COUNT_DOMAIN_WORK(bbdLineFrames, 1);
 #endif
-    // Band-limit ahead of the line. Everything above half the clock would fold,
-    // exactly as it does in the part. The two Sallen-Key sections precede the
-    // wet-only C44/C47 coupling high-pass; the passive 10 kOhm / 2.2 nF pole is
-    // last, immediately beside the MN3009 input.
-    // A corrupt host buffer must not poison either persistent support state.
-    // Sixty-four model units is over 160 V at this node and therefore far
-    // outside every circuit or engine fixture; treat anything beyond it as a
-    // corrupt sample instead of turning it into a long full-scale BBD burst.
-    constexpr float maximumSupportInput = 64.0f;
-    const float supportInput = std::isfinite(input)
-            && std::abs(input) <= maximumSupportInput
-        ? input : 0.0f;
-    float limited = 0.0f;
-    if (sampleRate >= Chorus::minimumExactInputSupportRate)
-    {
-#if defined(YOUKNOW106_WORK_AUDIT)
-        YOUKNOW106_COUNT_DOMAIN_WORK(bbdExactInputSupportAdvances, 1);
-        YOUKNOW106_COUNT_DOMAIN_WORK(bbdExactSupportCoordinateUpdates, 6);
-        YOUKNOW106_COUNT_DOMAIN_WORK(bbdExactSupportMacs, 60);
-#endif
-        const double exactInput = static_cast<double>(supportInput);
-        advanceExactSupport(
-            exactInputState, support.exactInput,
-            exactInput, exactInputPrevious, exactInputPrevious2,
-            exactInputPrevious3);
-        exactInputPrevious3 = exactInputPrevious2;
-        exactInputPrevious2 = exactInputPrevious;
-        exactInputPrevious = exactInput;
-        limited = static_cast<float>(exactInputState[5]);
-    }
-    else
-    {
-#if defined(YOUKNOW106_WORK_AUDIT)
-        YOUKNOW106_COUNT_DOMAIN_WORK(bbdLegacyInputSupportFrames, 1);
-#endif
-        limited = Chorus::biquadStep(
-            antiAliasFirst, supportInput, support.antiAliasFirst);
-        limited = Chorus::biquadStep(
-            antiAliasSecond, limited, support.antiAliasSecond);
-        const float couplingLow = Chorus::supportFilterStep(
-            inputCouplingState, limited, support.inputCouplingG);
-        limited -= couplingLow;
-        limited = Chorus::supportFilterStep(
-            antiAliasState, limited, support.passiveG);
-    }
-
     const float correctedHold = processClockedCore(
         limited, clockHz, sampleRate, noiseScale);
     const float reconstructedHold = useBlep ? correctedHold : held;
@@ -1075,6 +1071,7 @@ void Chorus::prepare(double sampleRate, bool preserveState) noexcept
     {
         lineA_.resetAudioRateSupport();
         lineB_.resetAudioRateSupport();
+        inputSupport_.reset();
     }
     else
         reset(false);
@@ -1085,6 +1082,7 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     const double continuingPhase = lfoPhase_;
     lineA_.reset(0x9e3779b9u);
     lineB_.reset(0x85ebca6bu);
+    inputSupport_.reset();
     lfoPhase_ = preserveLfoPhase ? continuingPhase : 0.0;
     const auto runningWhileMuted = settingsFor(ChorusMode::Off);
     wetGain_ = runningWhileMuted.wetGain;
@@ -1224,9 +1222,13 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         ? rateProportionalNoiseGain(rateHz_)
         : measuredModeNoiseGain(runningMode_);
     const float lineNoiseScale = noiseScale * modeNoiseGain;
-    float wetA = lineA_.process(input, clockA, sampleRate_, support_,
+    // One input support network for both wet branches; only the clock differs
+    // between them. See `InputSupport` for why that is the model rather than
+    // an optimisation of it.
+    const float limitedInput = advanceInputSupport(input);
+    float wetA = lineA_.process(limitedInput, clockA, sampleRate_,
                                 wetOutputTransition, lineNoiseScale);
-    float wetB = lineB_.process(input, clockB, sampleRate_, support_,
+    float wetB = lineB_.process(limitedInput, clockB, sampleRate_,
                                 wetOutputTransition, lineNoiseScale);
 
     if (enableClockBleed)

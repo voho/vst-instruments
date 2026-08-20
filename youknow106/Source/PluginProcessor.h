@@ -39,10 +39,24 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    // The musical envelope reaches digital zero after about 25.55 s, but an
-    // enabled chorus intentionally retains its modelled analogue noise floor.
-    // Report that conservative infinite tail so a host never truncates it or
-    // suspends the instrument while the physical-noise path is still audible.
+    // Measured on the shipping engine, six voices with the longest release,
+    // from the moment the last key lifts: with the chorus off -- or engaged
+    // with Chorus Noise at zero -- the output falls below -140 dBFS after
+    // 25.41 s and reaches bit-exact zero after 53.8 s (53.3-53.9 s over
+    // 44.1/48 kHz and 1x/4x). With the chorus engaged and its noise present it
+    // never reaches zero: the modelled analogue floor is part of the effect,
+    // and it is still running after two minutes.
+    //
+    // 25.55 s is `envelopeReleaseSeconds(1.0f)`, the modelled envelope's own
+    // longest release. It is not the instrument's tail, and the output
+    // coupling takes roughly as long again to settle after it -- so a tail
+    // reported from the envelope alone would truncate the instrument by half.
+    //
+    // Infinity is therefore reported unconditionally: it is right whenever the
+    // chorus is running, and a value that changed with a patch would have to
+    // be re-announced to hosts that cache it. The cost is that a host cannot
+    // idle-suspend an instance whose patch has the chorus off, which
+    // Docs/RELEASE_CHECKLIST.md carries as an explicit accept-or-qualify.
     double getTailLengthSeconds() const override
     {
         return std::numeric_limits<double>::infinity();
@@ -520,6 +534,15 @@ private:
     static_assert (std::atomic<float>::is_always_lock_free);
     std::array<std::atomic<float>, scopeBufferSize> scopeBuffer {};
     std::atomic<std::size_t> scopeWriteIndex { 0 };
+
+    // Set only for the duration of a processBlockBypassed call, on the audio
+    // thread that made it, so the render can silence the buffer before the
+    // panel telemetry is taken from it.
+    bool renderingBypassed { false };
+
+    // Retires every panel readout the audio thread publishes. Shared by the
+    // host reset and the resource teardown, which both stop the instrument.
+    void clearDisplayTelemetry() noexcept;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (YouKnow106AudioProcessor)
 };

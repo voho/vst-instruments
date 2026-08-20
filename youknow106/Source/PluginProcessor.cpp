@@ -677,34 +677,20 @@ void YouKnow106AudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     displayOversamplingFactor.store (engine.getOversamplingFactor(),
                                      std::memory_order_relaxed);
     setLatencySamples (engine.getProcessingLatencySamples());
+    // prepare() is the cold path: the engine has just been returned to the
+    // moment it was switched on, so the panel has to be too. Without this the
+    // readouts kept the previous configuration's voice lamps and chassis
+    // temperature until the first block of the new one arrived.
+    clearDisplayTelemetry();
     engineReady.store (true, std::memory_order_release);
 }
 
-void YouKnow106AudioProcessor::releaseResources()
+void YouKnow106AudioProcessor::clearDisplayTelemetry() noexcept
 {
-    engineReady.store (false, std::memory_order_release);
-    engine.allNotesOff();
-    engine.reset();
-    uiLeverMailbox.store (emptyUiLeverMailbox, std::memory_order_release);
-    discardUiMidiEvents();
-    keyboardResetRequested.store (true, std::memory_order_release);
-}
-
-void YouKnow106AudioProcessor::reset()
-{
-    // Hosts use reset when transport/processing is torn down without a new
-    // prepareToPlay call. Clear voices, tails and transient controllers while
-    // retaining the negotiated rate, parameters and selected program.
-    const bool wasReady = engineReady.exchange (false, std::memory_order_acq_rel);
-    if (wasReady)
-        engine.reset();
-
-    keyboardResetRequested.store (true, std::memory_order_release);
-    discardUiMidiEvents();
-    uiLeverMailbox.store (emptyUiLeverMailbox, std::memory_order_release);
-    panicRequested.store (false, std::memory_order_release);
-    keyModeReassertRequested.store (false, std::memory_order_release);
-    pendingMidiToneShadowActive = false;
+    // Everything the panel draws from the audio thread. The readouts are the
+    // one part of the surface whose job is to say what is coming out, so any
+    // path that stops the instrument has to retire them together rather than
+    // leave a lit voice lamp and a frozen trace behind.
     activeVoiceCount.store (0, std::memory_order_relaxed);
     displayVoiceMask.store (0, std::memory_order_relaxed);
     displayEnvelope.store (0.0f, std::memory_order_relaxed);
@@ -716,6 +702,40 @@ void YouKnow106AudioProcessor::reset()
     for (auto& sample : scopeBuffer)
         sample.store (0.0f, std::memory_order_relaxed);
     scopeWriteIndex.store (0, std::memory_order_release);
+}
+
+void YouKnow106AudioProcessor::releaseResources()
+{
+    engineReady.store (false, std::memory_order_release);
+    engine.allNotesOff();
+    engine.reset();
+    uiLeverMailbox.store (emptyUiLeverMailbox, std::memory_order_release);
+    discardUiMidiEvents();
+    keyboardResetRequested.store (true, std::memory_order_release);
+    // The host has torn the instrument down. Without this the panel kept the
+    // last block's voice lamps, envelope meter and oscilloscope trace beside
+    // its own STANDBY legend for as long as the window stayed open.
+    clearDisplayTelemetry();
+}
+
+void YouKnow106AudioProcessor::reset()
+{
+    // Hosts use reset when transport/processing is torn down without a new
+    // prepareToPlay call. Clear voices, tails and transient controllers while
+    // retaining the negotiated rate, parameters and selected program -- and,
+    // because a transport stop is not a power cycle, the modelled chassis
+    // warm-up the engine has been accumulating.
+    const bool wasReady = engineReady.exchange (false, std::memory_order_acq_rel);
+    if (wasReady)
+        engine.resetForHostStop();
+
+    keyboardResetRequested.store (true, std::memory_order_release);
+    discardUiMidiEvents();
+    uiLeverMailbox.store (emptyUiLeverMailbox, std::memory_order_release);
+    panicRequested.store (false, std::memory_order_release);
+    keyModeReassertRequested.store (false, std::memory_order_release);
+    pendingMidiToneShadowActive = false;
+    clearDisplayTelemetry();
 
     if (wasReady)
         engineReady.store (true, std::memory_order_release);
@@ -1039,8 +1059,9 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             engine.allNotesOff();
         else if (message.isAllNotesOff())
             // All notes off means release the keys, not cut the sound: the
-            // exact B-2 release can take about 25.55 seconds to reach digital
-            // zero, and truncating it would be an all-sound-off.
+            // exact B-2 release runs for up to 25.55 s -- and the output
+            // coupling for another 28 s after it -- so truncating it would be
+            // an all-sound-off.
             engine.releaseAllNotes();
         else if (message.isPitchWheel())
             engine.setPitchBend ((static_cast<float> (message.getPitchWheelValue())
@@ -1092,6 +1113,13 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // here rather than passing through.
     midiMessages.clear();
 
+    // Bypass exposes silence. Clearing it here rather than after this call
+    // returns is what makes the oscilloscope below describe the block the host
+    // will actually receive: it used to draw a full-amplitude trace of audio
+    // the bypass had already thrown away.
+    if (renderingBypassed)
+        buffer.clear();
+
     // The message thread may have made room while this block was rendering.
     // A second attempt lets an offline render which ends on the overflow block
     // publish its final coalesced state without waiting for another MIDI event.
@@ -1099,10 +1127,20 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     if (pendingMidiNeedsResync)
         publishPendingMidiResyncMailbox();
 
-    activeVoiceCount.store (engine.getActiveVoiceCount(), std::memory_order_relaxed);
-    displayVoiceMask.store (engine.getDisplayVoiceMask(), std::memory_order_relaxed);
-    displayEnvelope.store (engine.getDisplayEnvelope(), std::memory_order_relaxed);
-    displayLfo.store (engine.getDisplayLfo(), std::memory_order_relaxed);
+    // The lamps, the meters and the trace below all describe the instrument's
+    // output, and under bypass there is none: the render behind the mute keeps
+    // MIDI state moving, it is not something the player is hearing. The scope
+    // ring takes care of itself, because the buffer it reads was cleared
+    // above. The chassis readouts are not output -- the modelled instrument is
+    // still powered and still warming -- so those keep reporting.
+    activeVoiceCount.store (renderingBypassed ? 0 : engine.getActiveVoiceCount(),
+                            std::memory_order_relaxed);
+    displayVoiceMask.store (renderingBypassed ? 0 : engine.getDisplayVoiceMask(),
+                            std::memory_order_relaxed);
+    displayEnvelope.store (renderingBypassed ? 0.0f : engine.getDisplayEnvelope(),
+                           std::memory_order_relaxed);
+    displayLfo.store (renderingBypassed ? 0.0f : engine.getDisplayLfo(),
+                      std::memory_order_relaxed);
     displayTemperature.store (engine.getDisplayTemperatureC(), std::memory_order_relaxed);
     displayRailDroop.store (engine.getDisplayRailDroopVolts(), std::memory_order_relaxed);
 
@@ -1126,8 +1164,8 @@ void YouKnow106AudioProcessor::processBlockBypassed (
     // MIDI stream. Keep the synth clock and note/controller state moving so a
     // note-off received while bypassed cannot become a stuck note, then expose
     // silence as an instrument with no input is expected to do.
+    const juce::ScopedValueSetter<bool> bypassing (renderingBypassed, true);
     processBlock (buffer, midiMessages);
-    buffer.clear();
 }
 
 void YouKnow106AudioProcessor::handleNoteOn (juce::MidiKeyboardState*, int,

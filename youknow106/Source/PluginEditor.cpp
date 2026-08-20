@@ -42,6 +42,25 @@ constexpr auto segmentDisplayStyleProperty = "segmentDisplayStyle";
 constexpr auto statusLampStyleProperty = "statusLampStyle";
 constexpr auto statusLampOnProperty = "statusLampOn";
 
+// Where a key face sits inside its cell, as a fraction of the cell height.
+// An ordinary key takes `hardwareKeyCentre`. The sound row's stacked pairs --
+// two keys sharing one column, each in a cell tall enough to hold the other's
+// legend as well -- lift their faces so the pair reads as one switch.
+constexpr double hardwareKeyCentre = 0.72;
+constexpr double stackedHardwareKeyCentre = 0.62;
+constexpr double tallHardwareKeyCentre = 0.34;
+constexpr double footRegisterKeyCentre = 0.80;
+// The shortest stacked cell in the sound row is 85.5 units; the tallest
+// unstacked one is the 68-unit VOICE MODE cell. Splitting them at 65 lifted
+// VOICE MODE too, which left POLY 1, POLY 2 and UNISON six pixels above the
+// GROUP, BANK, PATCH and DATA keys they share the programmer row with.
+constexpr float stackedCellHeight = 80.0f;
+
+// The fixed help strip. Its body is one column of running text, and it is the
+// only place a control's explanation appears -- there is no floating tooltip
+// window -- so it must print the whole of it.
+constexpr int helpBodyMaximumLines = 3;
+
 // Framed controls share one quiet neutral edge. Broad tonal fields carry the
 // panel hierarchy instead of outlining every surface.
 constexpr float surfaceCornerRadius = 4.0f;
@@ -662,7 +681,7 @@ void YouKnow106LookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Butto
                                               bounds.getHeight() * 0.30f);
         const float keyCentreFraction = static_cast<float> (
             button.getProperties().getWithDefault (
-                hardwareKeyCentreProperty, 0.72));
+                hardwareKeyCentreProperty, hardwareKeyCentre));
         // The component owns the full grid cell for an easy target; the
         // physical key is inset so adjacent switches have a consistent gutter.
         auto key = juce::Rectangle<float> (
@@ -840,22 +859,26 @@ void YouKnow106LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton&
 
     if (compact)
     {
-        const float size = juce::jlimit (10.5f, 13.0f,
-                                         bounds.getHeight() * 0.55f);
-        g.setFont (clearPanelFont (size, true));
+        // The size and the width budget both come from the panel description,
+        // so the legend drawn here is the legend the fit checks measured.
+        g.setFont (clearPanelFont (
+            panel::compactLegendPointSize (bounds.getHeight(), editorScale),
+            true));
         const auto displayText = text == "DRIFT 1%" ? juce::String ("1%")
                                : text == "VARY 10%" ? juce::String ("10%")
                                : text == "MORPH 50%" ? juce::String ("50%")
                                                       : text;
         // Keep every glyph inside the moving key face rather than merely
         // inside the component's outer bezel.
-        auto content = bounds.reduced (5.0f, 4.0f);
+        auto content = bounds.reduced (panel::compactLegendPaddingX,
+                                       panel::compactLegendPaddingY);
         if (actionIcon.isNotEmpty())
         {
-            const float iconSize = juce::jmin (15.0f, content.getHeight());
+            const float iconSize = juce::jmin (panel::compactLegendIconSize,
+                                               content.getHeight());
             auto iconArea = content.removeFromLeft (iconSize)
                                    .withSizeKeepingCentre (iconSize, iconSize);
-            content.removeFromLeft (3.0f);
+            content.removeFromLeft (panel::compactLegendIconGap);
             const auto tint = actionIcon == "stop"
                             ? fromPalette (panel::colour::led)
                             : fromPalette (panel::colour::textDim);
@@ -865,8 +888,10 @@ void YouKnow106LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton&
             // path left behind.
             g.setColour (tint);
         }
-        // Fitted, not curtailed: "PANIC" overruns this cell by a few pixels
-        // with the wider Windows system font at the minimum editor size.
+        // The size above already leaves every compact legend room at every
+        // supported editor size, on the panel width model's deliberately
+        // generous advances. The residual horizontal scale is a floor for a
+        // system font wider still than that model, not the normal path.
         g.drawFittedText (displayText, content.toNearestInt(),
                           juce::Justification::centred, 1, 0.7f);
         return;
@@ -1415,8 +1440,28 @@ bool YouKnow106PerformanceLever::keyStateChanged (bool isKeyDown)
     if (isKeyDown || ! keyboardGestureActive)
         return false;
 
-    keyboardGestureActive = false;
-    setValues (0.0f, 0.0f, true);
+    // Every key release reaches this, not only the one that started the
+    // gesture, and it does not say which key moved. Springing both axes to
+    // zero here therefore dropped the pitch bend when a player who was
+    // holding Right let go of Up -- with Right still physically down and its
+    // auto-repeat now finished, nothing brought the bend back. Re-derive both
+    // axes from the arrow keys that are still held instead, and end the
+    // gesture only when none of them is.
+    const bool leftHeld =
+        juce::KeyPress::isKeyCurrentlyDown (juce::KeyPress::leftKey);
+    const bool rightHeld =
+        juce::KeyPress::isKeyCurrentlyDown (juce::KeyPress::rightKey);
+    const bool upHeld =
+        juce::KeyPress::isKeyCurrentlyDown (juce::KeyPress::upKey);
+    // Down is part of the gesture too -- keyPressed uses it to release
+    // modulation -- so a player holding it must not have modulation handed
+    // back by an unrelated key going up.
+    const bool downHeld =
+        juce::KeyPress::isKeyCurrentlyDown (juce::KeyPress::downKey);
+
+    const auto axes = axesForHeldKeys (leftHeld, rightHeld, upHeld, downHeld);
+    setValues (axes.bend, axes.modulation, true);
+    keyboardGestureActive = leftHeld || rightHeld || upHeld || downHeld;
     return true;
 }
 
@@ -1636,60 +1681,79 @@ YouKnow106ContextHelp::createAccessibilityHandler()
             std::make_unique<ValueInterface> (*this) });
 }
 
-void YouKnow106ContextHelp::paint (juce::Graphics& g)
+YouKnow106ContextHelp::BodyLayout YouKnow106ContextHelp::bodyLayout() const
 {
     auto bounds = getLocalBounds().toFloat().reduced (0.5f);
-    const float uiScale = static_cast<float> (getHeight()) / panel::helpStripHeight;
-    g.setColour (fromPalette (panel::colour::faceplateLow).withAlpha (0.88f));
-    g.fillRoundedRectangle (bounds,
-                            juce::jmax (2.5f, surfaceCornerRadius * uiScale));
-
     auto content = bounds.reduced (juce::jmax (8.0f, bounds.getHeight() * 0.28f),
                                    juce::jmax (2.0f, bounds.getHeight() * 0.10f));
-    const float fontHeight = juce::jlimit (12.0f, 13.0f,
-                                           bounds.getHeight() * 0.36f);
+    BodyLayout layout;
+    layout.headingPointSize = juce::jlimit (12.0f, 13.0f,
+                                            bounds.getHeight() * 0.36f);
 
-    // The current setting, right-aligned in its own lit column. Reading a value
-    // used to need a drag, because only JUCE's transient bubble carried it;
-    // hovering is enough now, and the bubble still appears while dragging.
     if (helpValue.isNotEmpty())
     {
-        auto valueArea = content.removeFromRight (
+        layout.value = content.removeFromRight (
             juce::jlimit (90.0f, 200.0f, bounds.getWidth() * 0.13f));
-        g.setColour (fromPalette (panel::colour::led));
-        g.setFont (panelFont (fontHeight, true));
-        g.drawFittedText (helpValue, valueArea.toNearestInt(),
-                          juce::Justification::centredRight, 1, 0.9f);
-        g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.42f));
-        g.drawVerticalLine (juce::roundToInt (valueArea.getX() - 8.0f),
-                            valueArea.getY(), valueArea.getBottom());
         content.removeFromRight (12.0f);
     }
 
     // The title column carries a control's full name, which is routinely longer
     // than one short word. Three times the original width lets it read on one
     // line instead of eliding.
-    const float titleWidth = juce::jlimit (276.0f, 384.0f,
-                                           bounds.getWidth() * 0.255f);
-    const auto titleArea = content.removeFromLeft (titleWidth);
+    layout.title = content.removeFromLeft (
+        juce::jlimit (276.0f, 384.0f, bounds.getWidth() * 0.255f));
+    layout.dividerX = content.getX() - 8.0f;
+    content.removeFromLeft (4.0f);
+    layout.body = content.toNearestInt();
+    layout.maximumLines = helpBodyMaximumLines;
+    return layout;
+}
+
+void YouKnow106ContextHelp::paint (juce::Graphics& g)
+{
+    const auto bounds = getLocalBounds().toFloat().reduced (0.5f);
+    const float uiScale = static_cast<float> (getHeight()) / panel::helpStripHeight;
+    g.setColour (fromPalette (panel::colour::faceplateLow).withAlpha (0.88f));
+    g.fillRoundedRectangle (bounds,
+                            juce::jmax (2.5f, surfaceCornerRadius * uiScale));
+
+    const auto layout = bodyLayout();
+
+    // The current setting, right-aligned in its own lit column. Reading a value
+    // used to need a drag, because only JUCE's transient bubble carried it;
+    // hovering is enough now, and the bubble still appears while dragging.
+    if (helpValue.isNotEmpty())
+    {
+        g.setColour (fromPalette (panel::colour::led));
+        g.setFont (panelFont (layout.headingPointSize, true));
+        g.drawFittedText (helpValue, layout.value.toNearestInt(),
+                          juce::Justification::centredRight, 1, 0.9f);
+        g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.42f));
+        g.drawVerticalLine (juce::roundToInt (layout.value.getX() - 8.0f),
+                            layout.value.getY(), layout.value.getBottom());
+    }
 
     g.setColour (fromPalette (panel::colour::cyan));
-    g.setFont (panelFont (fontHeight, true));
-    g.drawFittedText (helpTitle, titleArea.toNearestInt(),
+    g.setFont (panelFont (layout.headingPointSize, true));
+    g.drawFittedText (helpTitle, layout.title.toNearestInt(),
                       juce::Justification::centredLeft, 1, 1.0f);
 
     g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.42f));
-    const float dividerX = content.getX() - 8.0f;
-    g.drawVerticalLine (juce::roundToInt (dividerX), content.getY(),
-                        content.getBottom());
+    g.drawVerticalLine (juce::roundToInt (layout.dividerX),
+                        layout.title.getY(), layout.title.getBottom());
 
-    content.removeFromLeft (4.0f);
     const bool showingIdlePrompt = helpTitle == "HELP";
     g.setColour (fromPalette (showingIdlePrompt ? panel::colour::textDim
                                                 : panel::colour::text));
-    g.setFont (panelFont (fontHeight));
-    g.drawFittedText (helpText, content.toNearestInt(),
-                      juce::Justification::centredLeft, 2, 1.0f);
+    // Three lines, not two. JUCE fits a body by stepping the type down and the
+    // line count up until the text fits, and only ellipsises when it runs out
+    // of both; capping the count at two ran it out one line early on the
+    // longest explanations, so the QUALITY selector's help lost its closing
+    // sentence at the smaller editor sizes. Everything that fitted two lines
+    // still gets two lines at the reading size -- the search starts there.
+    g.setFont (panelFont (layout.headingPointSize));
+    g.drawFittedText (helpText, layout.body, juce::Justification::centredLeft,
+                      layout.maximumLines, 1.0f);
 }
 
 // ---------------------------------------------------------------------------
@@ -1718,9 +1782,16 @@ YouKnow106AudioProcessorEditor::YouKnow106AudioProcessorEditor (YouKnow106AudioP
 
     display.setName ("Status display");
     display.setTitle ("Status display");
+    // Two of these readouts print an "Nx" figure and they mean different
+    // things -- the scope's own vertical gain, and the oversampling factor the
+    // engine actually applied. Naming both is the point of listing all six.
     display.setTooltip (
-        "Shows the six physical voice cards, the active voice limit, LFO and "
-        "envelope motion.");
+        "Shows the six physical voice cards and the active voice limit, LFO "
+        "and envelope motion, the modelled chassis temperature and supply "
+        "rail, and the output waveform. The scope prints its own vertical "
+        "gain; the corner below it prints the oversampling the engine applied "
+        "and the internal rate that produces, which can be lower than QUALITY "
+        "asked for.");
     addAndMakeVisible (display);
 
     buildPanelControls();
@@ -1842,9 +1913,11 @@ void YouKnow106AudioProcessorEditor::buildPanelControls()
             // the whole key jump when an ordinary resize crossed a breakpoint.
             entry.button->getProperties().set (
                 hardwareKeyCentreProperty,
-                isFootRegisterLegend (description.label) ? 0.80
-                    : description.height > 110.0f ? 0.34
-                    : description.height > 65.0f ? 0.62 : 0.72);
+                isFootRegisterLegend (description.label) ? footRegisterKeyCentre
+                    : description.height > 110.0f ? tallHardwareKeyCentre
+                    : description.height > stackedCellHeight
+                        ? stackedHardwareKeyCentre
+                        : hardwareKeyCentre);
             const auto keyColour = fromPalette (panel::colour::control);
             entry.button->setColour (juce::TextButton::buttonColourId, keyColour);
             entry.button->setColour (juce::TextButton::buttonOnColourId,
@@ -2057,7 +2130,8 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
 
     unisonButton.setClickingTogglesState (false);
     unisonButton.getProperties().set (hardwareStyleProperty, true);
-    unisonButton.getProperties().set (hardwareKeyCentreProperty, 0.62);
+    unisonButton.getProperties().set (hardwareKeyCentreProperty,
+                                      hardwareKeyCentre);
     unisonButton.setColour (juce::TextButton::buttonColourId,
                             fromPalette (panel::colour::control));
     unisonButton.setColour (juce::TextButton::buttonOnColourId,
@@ -2070,7 +2144,8 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
 
     portamentoToggleButton.setClickingTogglesState (false);
     portamentoToggleButton.getProperties().set (hardwareStyleProperty, true);
-    portamentoToggleButton.getProperties().set (hardwareKeyCentreProperty, 0.62);
+    portamentoToggleButton.getProperties().set (hardwareKeyCentreProperty,
+                                                stackedHardwareKeyCentre);
     portamentoToggleButton.setColour (juce::TextButton::buttonColourId,
                                       fromPalette (panel::colour::control));
     portamentoToggleButton.setTooltip (
@@ -2274,7 +2349,8 @@ void YouKnow106AudioProcessorEditor::buildHardwareProgrammer()
         button.setTooltip (tooltip);
         button.setClickingTogglesState (false);
         button.getProperties().set (hardwareStyleProperty, true);
-        button.getProperties().set (hardwareKeyCentreProperty, 0.72);
+        button.getProperties().set (hardwareKeyCentreProperty,
+                                    hardwareKeyCentre);
         button.setColour (juce::TextButton::buttonColourId, colour);
         button.setColour (juce::TextButton::buttonOnColourId,
                           colour.brighter (0.08f));
@@ -2605,19 +2681,73 @@ void YouKnow106AudioProcessorEditor::attachButton (juce::Button& button,
 void YouKnow106AudioProcessorEditor::attachExclusiveButton (
     juce::Button& button, const char* parameterId, const char* otherParameterId)
 {
-    attachButton (button, parameterId);
-    button.onClick = [this, &button, otherParameterId]
-    {
-        if (! button.getToggleState())
-            return; // Pressing the lit hardware button switches chorus off.
+    // The two chorus contacts interlock, so pressing one releases the other.
+    // That transition belongs to a real press. Driving the lamp from a
+    // ButtonAttachment ran it for parameter-driven lamp changes as well --
+    // the hazard attachPolyButton below is written to avoid -- so a host lane
+    // that automated Chorus I also wrote Chorus II whenever the window
+    // happened to be open, and the instrument then rendered mode I with the
+    // window open and mode II with it shut. The lamp now follows its
+    // parameter and only a click moves anything.
+    auto* attachedParameter = audioProcessor.parameters.getParameter (parameterId);
+    auto* companionParameter =
+        audioProcessor.parameters.getParameter (otherParameterId);
+    jassert (attachedParameter != nullptr && companionParameter != nullptr);
+    if (attachedParameter == nullptr || companionParameter == nullptr)
+        return;
 
-        if (auto* other = audioProcessor.parameters.getParameter (otherParameterId))
-        {
-            other->beginChangeGesture();
-            other->setValueNotifyingHost (other->convertTo0to1 (0.0f));
-            other->endChangeGesture();
-        }
+    button.setClickingTogglesState (false);
+    // Both parameters refresh the lamp: releasing the companion is what turns
+    // this one's own lamp off during a host recall.
+    const auto refresh = [this, &button, parameterId] (float)
+    {
+        if (const auto* value =
+                audioProcessor.parameters.getRawParameterValue (parameterId))
+            button.setToggleState (
+                value->load (std::memory_order_relaxed) > 0.5f,
+                juce::dontSendNotification);
     };
+
+    auto attachment = std::make_unique<juce::ParameterAttachment> (
+        *attachedParameter, refresh, nullptr);
+    auto companion = std::make_unique<juce::ParameterAttachment> (
+        *companionParameter, refresh, nullptr);
+
+    button.onClick = [this, parameterId, otherParameterId]
+    {
+        // Read the decision from the parameter atomics, not from the lamp:
+        // the lamp update is asynchronous and can lag a host write.
+        const auto isOn = [this] (const char* id)
+        {
+            if (const auto* value =
+                    audioProcessor.parameters.getRawParameterValue (id))
+                return value->load (std::memory_order_relaxed) > 0.5f;
+            return false;
+        };
+        const auto set = [this] (const char* id, bool on)
+        {
+            if (auto* target = audioProcessor.parameters.getParameter (id))
+            {
+                target->beginChangeGesture();
+                target->setValueNotifyingHost (
+                    target->convertTo0to1 (on ? 1.0f : 0.0f));
+                target->endChangeGesture();
+            }
+        };
+
+        // Pressing the lit key switches the chorus off, as on the panel.
+        const bool ownWasOn = isOn (parameterId);
+        set (parameterId, ! ownWasOn);
+        if (! ownWasOn && isOn (otherParameterId))
+            set (otherParameterId, false);
+    };
+
+    auto* attachmentPointer = attachment.get();
+    auto* companionPointer = companion.get();
+    parameterAttachments.push_back (std::move (attachment));
+    parameterAttachments.push_back (std::move (companion));
+    attachmentPointer->sendInitialUpdate();
+    companionPointer->sendInitialUpdate();
 }
 
 void YouKnow106AudioProcessorEditor::attachPolyButton (
@@ -3047,6 +3177,7 @@ void YouKnow106AudioProcessorEditor::resized()
     const float totalUnits = panel::editorHeight;
     scale = juce::jmin (static_cast<float> (bounds.getWidth()) / panel::panelWidth(),
                         static_cast<float> (bounds.getHeight()) / totalUnits);
+    lookAndFeel.setEditorScale (scale);
 
     const auto& controls = panel::controls();
     for (std::size_t index = 0; index < controls.size(); ++index)

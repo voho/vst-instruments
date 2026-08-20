@@ -2737,6 +2737,14 @@ void YouKnow106Engine::clearOutputPath() noexcept
     clearRateDependentOutputPath(false);
     outputCouplingLeft_.reset();
     outputCouplingRight_.reset();
+    // IC6's own output node. It was the one mutable state in the output path
+    // this did not clear, so `reset()` did not put the engine in one state:
+    // what it rendered next depended on what it had been rendering before. The
+    // leak is tiny -- the slew limit is 1.7 V/us, so the integrator collapses
+    // within an internal sample or two of a stop -- but a reset that does not
+    // reset is not something a deterministic re-render can rely on.
+    outputSlewStateLeft_ = 0.0f;
+    outputSlewStateRight_ = 0.0f;
 }
 
 void YouKnow106Engine::rebuildRateDependentVoiceState() noexcept
@@ -2906,6 +2914,32 @@ void YouKnow106Engine::reset()
     // A reset leaves nothing in the output path, so a quality change asked for
     // before the first block does not have to wait for one that never comes.
     oversamplingIdleSamples_ = oversamplingQuietSamples_;
+}
+
+void YouKnow106Engine::resetForHostStop()
+{
+    // The chassis does not return to ambient because the transport stopped.
+    // The warm-up timer and the fraction derived from it are the whole of the
+    // free-running physical state `reset()` clears -- the voice-card trims
+    // outlive it already, and the rail droop is an instantaneous load measure
+    // of voices this call is about to silence, so zero is its correct value
+    // once they are gone rather than a cold supply beside a warm chassis.
+    //
+    // This is a decision about what a host reset means, not a measurement. It
+    // moves a boundary the engine draws elsewhere: `reset()` is written as a
+    // power cycle -- the comment on the quality switch says a live rate change
+    // is not one "because a prepare/reset is" -- and on that reading a host
+    // that resets on every transport stop is simply asking for a power cycle
+    // each time. The reading taken here is that a transport stop is not one:
+    // the modelled instrument is not switched off when the player stops the
+    // song, and a 900 s warm-up that restarts at every stop never runs at all.
+    // `prepare()` remains the cold path, and it is the one a rate change,
+    // a device change and a fresh instance all go through.
+    const double warmupSeconds = thermalWarmupSeconds_;
+    const float warmupFraction = thermalWarmupFraction_;
+    reset();
+    thermalWarmupSeconds_ = warmupSeconds;
+    thermalWarmupFraction_ = warmupFraction;
 }
 
 // ---------------------------------------------------------------------------
@@ -5296,10 +5330,16 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     internalIntervalSeconds,
                     static_cast<double>(voiceVcaHoldSlewSeconds),
                     voiceVcaDecay);
-                updatePulseComparator(voice, parameters);
-
+                // Both of these feed `renderVoice`, which returns before it
+                // reads any of their results for an inactive extension slot
+                // (`!voice.active && cardIndex >= hardwareVoices`, and
+                // `cardIndex` is always the slot). One guard, so the two
+                // cannot drift apart from that early return or each other.
                 if (voice.active || slot < hardwareVoices)
+                {
+                    updatePulseComparator(voice, parameters);
                     updateVoiceAudio(voice, parameters);
+                }
 
                 if (!voice.active)
                 {

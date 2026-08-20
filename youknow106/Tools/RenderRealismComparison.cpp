@@ -110,6 +110,11 @@ struct YouKnow106TestAccess
         const float internalRate = static_cast<float>(
             tools::realism::comparisonSampleRate * (highQuality ? 4 : 1));
         auto support = Chorus::supportChainFor(internalRate);
+        // The input support network is shared by the two wet branches, so it
+        // is driven from a prepared Chorus exactly as the production path
+        // drives it; only the two BBD lines are isolated here.
+        Chorus inputStage;
+        inputStage.prepare(internalRate);
         Chorus::Line lineA;
         Chorus::Line lineB;
         lineA.reset(0x9e3779b9u);
@@ -123,10 +128,11 @@ struct YouKnow106TestAccess
                 phase += static_cast<double>(inputFrequencyHz)
                        / static_cast<double>(rate);
                 phase -= std::floor(phase);
+                const float limited = inputStage.advanceInputSupport(input);
                 return std::array<float, 2> {
-                    lineA.process(input, clockHz, rate, support,
+                    lineA.process(limited, clockHz, rate,
                                   support.exactOutputConnected, 0.0f),
-                    lineB.process(input, clockHz, rate, support,
+                    lineB.process(limited, clockHz, rate,
                                   support.exactOutputConnected, 0.0f)
                 };
             });
