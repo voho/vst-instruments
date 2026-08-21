@@ -213,15 +213,17 @@ void testFactoryProgramsAreTheSoundCharts()
     namespace ids = ghost::parameters;
     GhostAudioProcessor processor;
 
-    expect(processor.getNumPrograms() == 11,
-           "the program bank is not the manual's eleven Sound Charts");
-    expect(processor.getProgramName(0) == "Preparatory Pattern",
-           "the bank does not open with the Preparatory Pattern");
-    expect(processor.getProgramName(2) == "Fat Filter",
-           "program 2 is not the Fat Filter chart");
+    expect(processor.getNumPrograms() == 12,
+           "the program bank is not Init plus the eleven Sound Charts");
+    expect(processor.getProgramName(0) == "Init",
+           "the bank does not open with the default voice");
+    expect(processor.getProgramName(1) == "Preparatory Pattern",
+           "the charts do not start with the Preparatory Pattern");
+    expect(processor.getProgramName(3) == "Fat Filter",
+           "program 3 is not the Fat Filter chart");
 
-    processor.setCurrentProgram(2);
-    expect(processor.getCurrentProgram() == 2,
+    processor.setCurrentProgram(3);
+    expect(processor.getCurrentProgram() == 3,
            "the selected program index was not retained");
 
     auto* cutoff = processor.parameters.getRawParameterValue(ids::cutoff);
@@ -238,9 +240,24 @@ void testFactoryProgramsAreTheSoundCharts()
            "selecting a chart did not pull the X wheel fully back");
 
     // An out-of-range selection must be ignored, not clamp or crash.
-    processor.setCurrentProgram(11);
-    expect(processor.getCurrentProgram() == 2,
+    processor.setCurrentProgram(12);
+    expect(processor.getCurrentProgram() == 3,
            "an out-of-range program selection was not ignored");
+
+    // The selected program's name must survive a state round trip; the
+    // values themselves already travel as parameters.
+    juce::MemoryBlock state;
+    processor.getStateInformation(state);
+    GhostAudioProcessor restored;
+    restored.setStateInformation(state.getData(),
+                                 static_cast<int>(state.getSize()));
+    expect(restored.getCurrentProgram() == 3,
+           "the program index did not survive the state round trip");
+    auto* restoredCutoff =
+        restored.parameters.getRawParameterValue(ids::cutoff);
+    expect(restoredCutoff != nullptr
+               && std::abs(restoredCutoff->load() - 0.45f) < 0.002f,
+           "the restored state lost the chart's cutoff travel");
 
     processor.prepareToPlay(sampleRate, blockSize);
     juce::MidiBuffer midi;

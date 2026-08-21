@@ -32,6 +32,8 @@ Notable customer-facing changes to Ghost are recorded here.
 - Factory programs: the modelled instrument's manual teaches eleven Sound
   Charts instead of shipping presets, and those charts are Ghost's program
   bank — from the silent Preparatory Pattern the lessons all start from,
-  through Fat Filter, Sync and Sample & Hold, to the Inverted Guitar.
+  through Fat Filter, Sync and Sample & Hold, to the Inverted Guitar —
+  behind an Init program that is the default voice itself. The selected
+  program survives session save and restore.
 - Ten committed demonstration renders under `Docs/audio`, regenerated
   nightly from the shipping engine.

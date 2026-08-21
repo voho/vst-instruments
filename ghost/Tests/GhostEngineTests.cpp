@@ -544,13 +544,16 @@ void testArpFirstStepIsTheScanBottom()
 // Preparatory Pattern is the documented exception: it "produces no sound".
 void testEveryFactorySoundChartRenders()
 {
-    check(ghost::factoryPresetCount() == 11,
-          "the factory bank carries the manual's eleven Sound Charts");
+    check(ghost::factoryPresetCount() == 12,
+          "the factory bank is Init plus the manual's eleven Sound Charts");
     check(ghost::factoryPresetName(0) != nullptr
-              && std::string(ghost::factoryPresetName(0))
+              && std::string(ghost::factoryPresetName(0)) == "Init",
+          "the bank opens with the default voice");
+    check(ghost::factoryPresetName(1) != nullptr
+              && std::string(ghost::factoryPresetName(1))
                      == "Preparatory Pattern",
-          "the bank opens with the Preparatory Pattern");
-    check(ghost::factoryPresetName(11) == nullptr,
+          "the charts start with the Preparatory Pattern");
+    check(ghost::factoryPresetName(12) == nullptr,
           "an out-of-range program has no name");
 
     for (int index = 0; index < ghost::factoryPresetCount(); ++index)
@@ -563,7 +566,7 @@ void testEveryFactorySoundChartRenders()
         const auto rendered = render(engine, 2.0, 44100.0);
         const std::string name = ghost::factoryPresetName(index);
         check(finite(rendered), (name + " renders finite audio").c_str());
-        if (index == 0)
+        if (name == "Preparatory Pattern")
             check(peak(rendered) == 0.0,
                   "the Preparatory Pattern produces no sound");
         else

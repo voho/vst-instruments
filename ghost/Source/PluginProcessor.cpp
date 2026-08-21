@@ -516,8 +516,13 @@ void GhostAudioProcessor::getStateInformation(
     juce::MemoryBlock& destinationData)
 {
     if (auto state = parameters.copyState(); state.isValid())
+    {
+        // The program index rides along so a restored session keeps its
+        // program name; the parameters themselves are the sound.
+        state.setProperty("program", currentProgram, nullptr);
         if (const auto xml = state.createXml())
             copyXmlToBinary(*xml, destinationData);
+    }
 }
 
 void GhostAudioProcessor::setStateInformation(const void* data,
@@ -525,7 +530,15 @@ void GhostAudioProcessor::setStateInformation(const void* data,
 {
     if (const auto xml = getXmlFromBinary(data, sizeInBytes))
         if (xml->hasTagName(parameters.state.getType()))
-            parameters.replaceState(juce::ValueTree::fromXml(*xml));
+        {
+            const auto restored = juce::ValueTree::fromXml(*xml);
+            // Restore the label only, not the preset's values: the saved
+            // parameters may have been edited after the program was picked.
+            const int program = restored.getProperty("program", 0);
+            if (program >= 0 && program < ghost::factoryPresetCount())
+                currentProgram = program;
+            parameters.replaceState(restored);
+        }
 }
 
 juce::AudioProcessorEditor* GhostAudioProcessor::createEditor()

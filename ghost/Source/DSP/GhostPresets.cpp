@@ -282,9 +282,12 @@ namespace
         return p;
     }
 
-    const std::array<Preset, 11>& presets()
+    const std::array<Preset, 12>& presets()
     {
-        static const std::array<Preset, 11> table {{
+        static const std::array<Preset, 12> table {{
+            // The engine's default voice: what a fresh instance already
+            // sounds like, so the program a host labels 0 tells the truth.
+            { "Init", EngineParameters {} },
             { "Preparatory Pattern", preparatoryPattern() },
             { "Sound Sources", soundSources() },
             { "Fat Filter", fatFilter() },
@@ -316,7 +319,7 @@ const char* factoryPresetName(int index) noexcept
 EngineParameters factoryPresetParameters(int index) noexcept
 {
     if (index < 0 || index >= factoryPresetCount())
-        return preparatoryPattern();
+        return EngineParameters {};
     return presets()[static_cast<std::size_t>(index)].parameters;
 }
 

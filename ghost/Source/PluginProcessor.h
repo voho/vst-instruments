@@ -107,9 +107,10 @@ public:
 
     // Factory programs: the modelled instrument's manual teaches eleven
     // Sound Charts instead of shipping presets, and those charts are the
-    // bank. The table lives in the JUCE-free core so the DSP suite renders
-    // every one; this layer only writes those engine parameters into the
-    // host parameters that publish them.
+    // bank, behind an Init program that is the default voice a fresh
+    // instance already carries. The table lives in the JUCE-free core so
+    // the DSP suite renders every one; this layer only writes those engine
+    // parameters into the host parameters that publish them.
     int getNumPrograms() override { return ghost::factoryPresetCount(); }
     int getCurrentProgram() override { return currentProgram; }
     void setCurrentProgram(int index) override;
