@@ -163,6 +163,24 @@ struct EngineParameters
     // multiply the two profiles. OQ-03 still owns absolute level and causality.
     bool useChorusRateNoiseHypothesis { false };
     bool enableElectrolyticC14Nonlinearity { true };
+    // Off by default: substitutes CircuitDerivedResonanceProfile's
+    // linear-above-onset byte-to-loop-gain shape (drawn control chain plus
+    // BA662-family linear gm, 2026-08-20) for the voiced quadratic-then-linear
+    // panel curve. Same anchored endpoint, same compensation and frequency
+    // correction; only the shape between the ends changes. A listening-test
+    // switch under this repository's A-Z rules -- OQ-09's measured family
+    // still owns the shape, so neither candidate is promoted by it.
+    bool useCircuitDerivedResonanceShape { false };
+    // Engine-level aged-unit extension, defaulted off and deliberately not a
+    // host parameter yet (exposing it is a product-surface decision). Zero is
+    // the freshly calibrated instrument every other mechanism describes; one
+    // applies the single documented recalibration lead (2026-08-20 pass): a
+    // unit re-trimmed after about four years whose undisturbed VCF trims had
+    // drifted flat by up to about a quarter tone with one card near dead-on,
+    // and whose noise trim had drifted 6 Vp-p against the 4 Vp-p spec
+    // (+3.5 dB). Voiced, single-unit lineage, qualitative pattern only;
+    // OQ-10's population data owns any promotion.
+    float aging { 0.0f };
 };
 
 class YouKnow106Engine
@@ -379,6 +397,41 @@ public:
         [[nodiscard]] static float frequencyTrim(float feedback) noexcept;
     };
 
+    // OQ-09 shape candidate, selectable through
+    // `useCircuitDerivedResonanceShape` and never the silent default. The
+    // 2026-08-20 junction-level read of the module board's control chain --
+    // shared 0..+10 V RESO CV hold, per-card series trimmer plus 27 kOhm into
+    // a grounded-base 2SA1015-class stage, collector straight into the
+    // resonance BA662's control pin with no converter drawn anywhere on the
+    // path -- makes the control current linear in the held voltage above one
+    // emitter-junction drop. With the BA662 architecture's gm linear in its
+    // control current (Rohm BA6110 and Alfa AS662 bracket data), loop gain is
+    // linear in the stored byte above that onset. The per-card trimmer sets
+    // only the slope, which is exactly what the 4.8 Vp-p service adjustment
+    // calibrates away, so the anchored endpoint is the voiced profile's own
+    // `maximumFeedback` and the onset is the one new constant. Between those
+    // ends nothing here is measured: this is a derivable shape beside a
+    // voiced one, and OQ-09's measured response-versus-resonance family owns
+    // the decision.
+    struct CircuitDerivedResonanceProfile
+    {
+        // Byte 127 -> aligned word 0x3F80 -> physical code 4064 on the
+        // 0..+10 V branch (Service Notes p. 8): 10 * 4064 / 4096.
+        static constexpr float controlFullScaleVolts = 9.921875f;
+        // Nominal silicon emitter-junction drop of the grounded-base stage.
+        // One reconstruction lineage reads ~150 mV for a *calibrated* card
+        // (atosynth); that trimmed figure is recorded under OQ-09 and not
+        // adopted -- the nominal drop is the defensible uncalibrated prior.
+        static constexpr float onsetVolts = 0.6f;
+        static constexpr float onsetTravel =
+            onsetVolts / controlFullScaleVolts;
+
+        [[nodiscard]] static float loopGain(float panelPosition) noexcept;
+        // Compensation and frequency correction operate in the loop-gain
+        // coordinate and belong to the mechanism, not the shape, so this
+        // profile shares the voiced profile's functions for both.
+    };
+
     // The generalized algebraic soft clip the output summer and the VCF
     // saturation below both fit -- along with the BBD write in
     // `Chorus::bbdTransfer` -- is `algebraicSoftClipDenominator` in
@@ -455,6 +508,21 @@ public:
     [[nodiscard]] static float lfoDelaySeconds(float panelPosition) noexcept;
     [[nodiscard]] static float portamentoSeconds(float panelPosition) noexcept;
 
+    // The PORTAMENTO control is a physical divider before it is a byte:
+    // a 50KB linear track across +5 V whose wiper reaches the slave CPU's
+    // AN1 through the on/off switch, against R16 47 kOhm to ground (Service
+    // Notes p. 16 bender-board read, 2026-08-20). Wiper travel x therefore
+    // lands at x*R_L / (R_L + x*(1-x)*R_T) of the ADC's full scale -- 0.395
+    // at half travel -- and the knob's taper is the loaded pot's, not a
+    // linear byte ramp. These map between knob travel and that ADC
+    // fraction; the raw-code-addressed laws above stay byte-exact and
+    // unchanged. Switch-open Off is the pulled-down raw 0 the recurrence
+    // already treats as immediate, so travel 0 still means Off.
+    [[nodiscard]] static float portamentoTravelAdcFraction(
+        float travel) noexcept;
+    [[nodiscard]] static float portamentoTravelForAdcFraction(
+        float fraction) noexcept;
+
     // Hash-matched B-2 coefficient laws. These functions reproduce the
     // observable 0..127 behaviour without embedding the ROM or a coefficient
     // table dump in the project.
@@ -485,14 +553,29 @@ public:
     enum class ConverterTimingProfile : std::uint8_t
     {
         NormalizedServiceChart,
-        PhaseZeroDiagnostic
+        PhaseZeroDiagnostic,
+        MeasuredChartGeometry
     };
     // NormalizedServiceChart is an explicit compatibility/product profile: it
     // preserves the chart's sequential writes across one pass without claiming
     // exact physical timestamps. PhaseZeroDiagnostic is the minimal-evidence
-    // comparison in which only ordinal order remains.
+    // comparison in which only ordinal order remains. MeasuredChartGeometry
+    // carries the 2026-08-20 pixel measurement of the p. 8 D/A & S/H timing
+    // chart itself (three slot-width classes on a 10:7:5 drafting grid,
+    // rebased from the chart's NOISE-first origin to this queue's
+    // RESONANCE-first ordinal 0): drawn-artwork proportions, deliberately
+    // non-uniform, still not hardware timestamps -- the figure is drafting,
+    // not a capture. It ships as a selectable comparison profile only; the
+    // reset path keeps NormalizedServiceChart.
     [[nodiscard]] static std::array<double, converterWritesPerPass>
         converterEventPhases(ConverterTimingProfile profile) noexcept;
+    // Selects the profile reset()/prepare() install, so a comparison profile
+    // can drive the complete shipping signal path (the A-Z rules forbid
+    // offline approximations). Mid-pass switching is deliberately
+    // unsupported: the phases are pass-relative coordinates and moving them
+    // under a running pass would invent an event discontinuity no hardware
+    // has, so a selection takes effect at the next reset()/prepare().
+    void selectConverterTimingProfile(ConverterTimingProfile profile) noexcept;
 
     // Output calibration is a product convention, not a JUNO-106 voltage.
     // One internal unit is still the established 2.6 V model coordinate used
@@ -793,6 +876,30 @@ private:
     // is the ordinary class. Voiced under OQ-10, like the other card
     // dispersions -- no measured population fixes it.
     static constexpr float vcfStageCapacitorTolerance = 0.02f;
+    // The two VCF trims are the exception among the card dispersions: Roland
+    // prints their acceptance. ADJUSTMENT procedures 7/8 (p. 19) repeat the
+    // FREQ trim (248 Hz with C4 held, converter code 6272) and the WIDTH
+    // trim (992 Hz with C6 held, two octaves up) "until satisfactory result
+    // is obtained (within +/-10 cents on the tuner)" -- the procedure bounds
+    // the two CHECK POINTS, not an offset and a slope separately, and the
+    // note that the procedures interact means both windows hold jointly on a
+    // passing card. The model therefore draws each check point's residual
+    // independently inside +/-10 cents and takes the line through them:
+    // `cutoffOffsetError` is the C4-point draw, `cutoffScaleError` the
+    // C6-point draw, interpolated in counts about the anchored code-6272
+    // trim point (extrapolation beyond the checked span is unbounded, as the
+    // procedure leaves it). Anchored acceptance windows (2026-08-20 pass),
+    // replacing the former voiced +/-0.07 octave and +/-5% magnitudes that
+    // no source bounded. Field drift beyond the windows belongs to `aging`.
+    static constexpr float vcfTrimResidualOctaves = 10.0f / 1200.0f;
+    static constexpr float vcfFreqTrimAnchorCounts = 6272.0f;
+    static constexpr float vcfWidthTrimSpanCounts = 2.0f * vcfCountsPerOctave;
+    // The aged-unit lead's two magnitudes (see EngineParameters::aging):
+    // about a quarter tone of flatward VCF drift at full weight, and the
+    // +3.52 dB noise-trim drift the same account measured against the
+    // 4 Vp-p spec. Voiced, single-unit lineage.
+    static constexpr float agingCutoffDriftCents = -50.0f;
+    static constexpr float agingNoiseDriftDecibels = 3.52f;
     // Early-effect transconductance modulation inside the cascade. With
     // V_A ~ 100 V and a few hundred millivolts of collector swing at the
     // differential pair, the fractional change in g is a few parts per
@@ -1174,6 +1281,15 @@ private:
         float vcaGainError { 0.0f };
         float subLevelError { 0.0f };
         float noiseLevelError { 0.0f };
+        // How much of the aged-unit cutoff flattening this card takes: a
+        // seeded uniform [0, 1] draw, so some cards drift little -- the
+        // documented recalibration's qualitative pattern (most voices about a
+        // quarter tone flat, one near dead-on) without fitting that single
+        // unit's exact residuals. Consumed only when `aging` is nonzero.
+        float agingWeight { 0.0f };
+        // The precomputed aged cutoff shift in converter counts (zero unless
+        // `aging` is raised), so the static count transform can stay pure.
+        float agingCutoffCounts { 0.0f };
         float driftPhase { 0.0f };
         float driftValue { 0.0f };
         std::uint32_t driftState { 1u };
@@ -1366,6 +1482,7 @@ private:
     // when the panel does, so this is called where those change, not from the
     // audio path.
     void refreshVoiceCardStageTrims() noexcept;
+    void refreshAgedUnitState() noexcept;
     // One internal sample of chassis warm-up: the wall-clock timer and the
     // exponential the voices read. The render loop's only way to advance it,
     // so a fixture that drives it directly drives exactly what audio does.
@@ -1478,7 +1595,8 @@ private:
     // interior nodes of an exact held-interval reconstruction, so both call
     // through here rather than risk the two paths drifting apart.
     [[nodiscard]] static float resonanceFeedbackFor(
-        float resonanceCv, const VoiceCard& card, float calibration) noexcept;
+        float resonanceCv, const VoiceCard& card, float calibration,
+        bool circuitDerivedShape) noexcept;
     [[nodiscard]] static float cutoffAnalogCounts(
         float cutoffCounts, const VoiceCard& card, float calibration,
         float powerSupplyDroop) noexcept;
@@ -1590,6 +1708,8 @@ private:
     // not exact physical offsets. The default normalized profile prevents the
     // six DCOs from being falsely reset on one sample; a measured profile can
     // replace it without changing destination ownership or queue order.
+    ConverterTimingProfile converterTimingProfile_ {
+        ConverterTimingProfile::NormalizedServiceChart };
     std::array<double, converterWritesPerPass> converterEventPhases_ {};
     std::size_t nextConverterWrite_ { 0 };
     float converterPassLfoGated_ { 0.0f };
@@ -1597,6 +1717,9 @@ private:
     VcfHoldInterval resonanceVcfHoldInterval_ {};
     std::array<VcfHoldInterval, maxVoices> cutoffVcfHoldIntervals_ {};
     std::array<bool, maxVoices> exactVcfControlInterval_ {};
+    // Precomputed 10^(aging * drift / 20) so the per-sample noise mix never
+    // pays a pow; exactly 1 at aging zero.
+    float agedNoiseGain_ { 1.0f };
     bool assignmentRescanPending_ { false };
     bool assignmentRescanPassArmed_ { false };
     // A mutable plug-in voice count has no hardware equivalent. If a Unison

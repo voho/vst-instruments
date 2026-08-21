@@ -666,8 +666,8 @@ fixed-seed voiced profile enables these full-scale mechanisms:
 | --- | --- |
 | DCO ramp current | up to ±3% |
 | PWM comparator threshold | up to ±0.24 V |
-| VCF cutoff scale trim | up to ±5% |
-| VCF cutoff offset trim | up to ±0.07 octave |
+| VCF trim residual, FREQ check point | up to ±10 cents (the printed p. 19 acceptance; was a voiced ±0.07-octave offset) |
+| VCF trim residual, WIDTH check point | up to ±10 cents, the line through the two points elsewhere (the printed p. 19 acceptance; was a voiced ±5% of total counts) |
 | Resonance control offset | up to ±0.02 panel travel |
 | Voice-VCA control-hold offset (not the VR30 audio-input null) | up to ±0.004 normalized control |
 | Voice-VCA gain | up to ±3% |
@@ -679,6 +679,15 @@ fixed-seed voiced profile enables these full-scale mechanisms:
 | Spatial thermal gradient — card temperature | up to +4 °C across the six cards, plus a +15 °C warm-up on the law `25 + 15(1 − e^−t/900)`, raising the OTA thermal voltage and its headroom. The curve runs to completion: 34.481808 °C and 6.568748 V of headroom at 900 s, the same at every host rate and in both quality settings |
 | Spatial thermal gradient — cutoff | up to ±0.6% on each card's integrator gain (±10 cents), from the same exponential card profile as the temperature above |
 | Cutoff converter carry error | −4.6, +23.3 and −4.5 cents at the three top bit boundaries |
+
+The two VCF trim rows are bounded by Roland's own printed acceptance
+(ADJUSTMENT procedures 7/8 repeat each trim "until within ±10 cents on the
+tuner", jointly): each printed check point gets its own ±10-cent draw and
+the residual is the line through them, so the calibrated state cannot
+disperse past what the service procedure accepts at the points it checks; what drifts beyond those windows in the field belongs to
+the separate engine-level `aging` extension (default 0, voiced against one
+documented recalibration: up to about a quarter tone of flatward per-card
+VCF drift and +3.5 dB of noise-trim drift, OQ-10).
 
 The cutoff row above used to read ±165 cents — a monotonic ramp by card index,
 roughly ten times what the temperature computation beside it supports, linear in

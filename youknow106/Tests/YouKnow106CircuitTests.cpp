@@ -61,6 +61,11 @@ struct YouKnow106TestAccess
         return YouKnow106Engine::subHoldSlewSeconds;
     }
 
+    static constexpr float voiceVcaHoldSlewSeconds() noexcept
+    {
+        return YouKnow106Engine::voiceVcaHoldSlewSeconds;
+    }
+
     static std::vector<float> renderCascade(const std::vector<float>& input,
                                             float omegaStep, float feedback)
     {
@@ -1499,6 +1504,63 @@ void testResonanceLeavesTheCornerAloneBelowOscillation()
            "gain the service trim sets");
 }
 
+void testCircuitDerivedResonanceCandidate()
+{
+    using Voiced = YouKnow106Engine::VoicedResonanceCompatibilityProfile;
+    using Derived = YouKnow106Engine::CircuitDerivedResonanceProfile;
+
+    // The candidate shape is linear in the stored byte above one
+    // emitter-junction drop of the drawn 0..+10 V control chain, sharing the
+    // voiced profile's amplitude-anchored endpoint. It is selectable, never
+    // the default: OQ-09's measured family owns the shape and the A-Z rules
+    // own the choice between these two defensible candidates.
+    expect(!EngineParameters {}.useCircuitDerivedResonanceShape,
+           "the circuit-derived resonance shape became a silent default");
+
+    expectNear(Derived::controlFullScaleVolts, 10.0 * 4064.0 / 4096.0, 0.0,
+               "the derived profile's full-scale voltage left the p. 8 "
+               "0..+10 V branch at physical code 4064");
+    expectNear(Derived::onsetTravel, 0.6 / 9.921875, 1.0e-7,
+               "the derived profile's onset left one junction drop of the "
+               "control span");
+    expect(Derived::onsetTravel * 127.0f > 7.0f
+               && Derived::onsetTravel * 127.0f < 9.0f,
+           "the derived onset left the byte-8 region");
+
+    expect(Derived::loopGain(0.0f) == 0.0f
+               && Derived::loopGain(Derived::onsetTravel) == 0.0f,
+           "the derived shape conducts below its junction onset");
+    expectNear(Derived::loopGain(1.0f), Voiced::maximumFeedback, 0.0f,
+               "the derived shape left the amplitude-anchored endpoint");
+    float previous = -1.0f;
+    for (int byte = 0; byte <= 127; ++byte)
+    {
+        const float panel = static_cast<float>(byte) / 127.0f;
+        const float gain = Derived::loopGain(panel);
+        expect(std::isfinite(gain) && gain >= previous,
+               "the derived resonance shape is not finite and monotone");
+        previous = gain;
+    }
+    // Linearity above the onset: equal byte steps add equal loop gain.
+    const float low = Derived::loopGain(0.25f);
+    const float mid = Derived::loopGain(0.50f);
+    const float high = Derived::loopGain(0.75f);
+    expectNear(mid - low, high - mid, 1.0e-6,
+               "the derived shape is not linear above its onset");
+    // Its oscillation threshold lands at travel 0.895, independently close
+    // to the voiced curve's 0.9 -- a convergence recorded, not enforced, so
+    // the tolerance is the derivation's own, not the voiced constant's.
+    const float threshold = Derived::onsetTravel
+                          + (Voiced::nominalOscillationFeedback
+                             / Voiced::maximumFeedback)
+                                * (1.0f - Derived::onsetTravel);
+    expect(threshold > 0.885f && threshold < 0.905f,
+           "the derived shape's oscillation threshold left the 0.895 region");
+    expectNear(Derived::loopGain(threshold),
+               Voiced::nominalOscillationFeedback, 1.0e-5,
+               "the derived shape's threshold no longer solves its own law");
+}
+
 void testVoicedResonanceCompatibilityProfile()
 {
     using Profile = YouKnow106Engine::VoicedResonanceCompatibilityProfile;
@@ -2342,6 +2404,126 @@ void testSharedHighPassAgainstNominalNetwork()
     }
 }
 
+void testServiceSpecificationEndpointReconciliation()
+{
+    // Service Notes p. 1 prints ENV ATTACK 1.5 ms-3 s, DECAY/RELEASE
+    // 1.5 ms-12 s, LFO RATE 0.1-30 Hz and DELAY 0-3 s without any threshold
+    // convention. The 2026-08-20 evidence pass reconciled those printed
+    // endpoints against the hash-matched B-2 generators at the nominal
+    // 4.2 ms pass: every reconcilable ceiling inverts to a pass period
+    // within 9% of 4.2 ms, the identical 1.5 ms floors sit on the analogue
+    // hold slew rather than any table time, and two figures (LFO 0.1 Hz,
+    // decay/release 12 s read as anything but one time constant) stay
+    // recorded contradictions. These fixtures pin that reconciliation so a
+    // later pass-period or generator change that silently breaks the
+    // printed corroboration fails here instead of passing unnoticed.
+    constexpr double nominalPassSeconds = 0.0042;
+    constexpr double clusterTolerance = 0.09 * nominalPassSeconds;
+
+    // Attack ceiling. The slowest increment reaches 90% of the 14-bit peak
+    // in 703 passes (2.9526 s) and saturates in 781 (3.2802 s); the printed
+    // "3s" sits between the two readings, so both invert into the cluster.
+    const std::uint16_t slowestAttack =
+        YouKnow106Engine::envelopeAttackIncrement(1.0f);
+    expect(slowestAttack == 21u,
+           "the slowest B-2 attack increment moved from 21");
+    {
+        std::uint16_t level = 0u;
+        int passes = 0;
+        int passesToNinety = 0;
+        while (level != YouKnow106Engine::envelopePeak && passes < 1000)
+        {
+            level = YouKnow106Engine::envelopeAttackLevel(level, slowestAttack);
+            ++passes;
+            if (passesToNinety == 0
+                && static_cast<double>(level)
+                       >= 0.9 * YouKnow106Engine::envelopePeak)
+                passesToNinety = passes;
+        }
+        expect(passesToNinety == 703 && passes == 781,
+               "slowest attack no longer reaches 90% in 703 and full scale "
+               "in 781 passes");
+        expectNear(3.0 / passes, nominalPassSeconds, clusterTolerance,
+                   "the printed 3 s attack ceiling read as time-to-full no "
+                   "longer inverts near the 4.2 ms pass");
+        expectNear(3.0 / passesToNinety, nominalPassSeconds, clusterTolerance,
+                   "the printed 3 s attack ceiling read as time-to-90% no "
+                   "longer inverts near the 4.2 ms pass");
+    }
+
+    // Decay/release ceiling. Only the one-time-constant reading of the
+    // printed "12s" is arithmetically compatible with the slowest fall:
+    // the exact e^-1 crossing lands at pass 3008 (12.6336 s, +5.3%). The
+    // digital-zero and -20 dB readings imply pass periods at which the same
+    // firmware's LFO top would print above 45 Hz, not 30 - that exclusion
+    // is asserted, not assumed.
+    const std::uint16_t slowestFall =
+        YouKnow106Engine::envelopeDecayReleaseMultiplier(1.0f);
+    expect(slowestFall == 65524u,
+           "the slowest B-2 decay/release coefficient moved from 65524");
+    {
+        const double oneTau =
+            std::exp(-1.0) * YouKnow106Engine::envelopePeak;
+        std::uint16_t level = YouKnow106Engine::envelopePeak;
+        int passes = 0;
+        while (static_cast<double>(level) >= oneTau && passes < 10000)
+        {
+            level = YouKnow106Engine::envelopeReleaseLevel(level, slowestFall);
+            ++passes;
+        }
+        expect(passes == 3008,
+               "slowest fall no longer crosses one time constant at pass 3008");
+        expectNear(12.0 / passes, nominalPassSeconds, clusterTolerance,
+                   "the printed 12 s ceiling read as one time constant no "
+                   "longer inverts near the 4.2 ms pass");
+        // -20 dB at the same coefficient takes 5137 passes (asserted by the
+        // decay-seconds law elsewhere); forcing 12 s onto that reading gives
+        // T = 2.336 ms, at which the B-2 LFO top (two passes per ramp) would
+        // print 1/(8T) = 53.5 Hz.
+        expect(1.0 / (8.0 * (12.0 / 5137.0)) > 45.0,
+               "the -20 dB reading of the 12 s ceiling stopped excluding "
+               "itself against the printed 30 Hz LFO top");
+    }
+
+    // LFO endpoints. The printed 30 Hz top inverts to 4.1667 ms (inside the
+    // cluster); the printed 0.1 Hz floor is unreconcilable with rate byte 0
+    // at any pass period (endpoint ratio 819.5 against the spec's 300), and
+    // the generator must not be bent toward it.
+    expectNear(1.0 / (8.0 * 30.0), nominalPassSeconds, clusterTolerance,
+               "the printed 30 Hz LFO top no longer inverts near the 4.2 ms "
+               "pass");
+    expect(YouKnow106Engine::lfoRateHz(0.0f) > 0.03f
+               && YouKnow106Engine::lfoRateHz(0.0f) < 0.04f,
+           "rate byte 0 was bent toward the spec's irreconcilable 0.1 Hz "
+           "floor");
+
+    // Delay ceiling. The printed "0 to 3s" quotes the silent hold phase
+    // alone: the slowest hold is ceil(16384/21) = 781 passes = 3.2802 s,
+    // while hold plus fade (4.3554 s, asserted elsewhere) cannot round to 3.
+    {
+        const int holdPasses = (16384 + slowestAttack - 1) / slowestAttack;
+        expect(holdPasses == 781,
+               "the slowest delay hold no longer lasts 781 passes");
+        expectNear(3.0 / holdPasses, nominalPassSeconds, clusterTolerance,
+                   "the printed 3 s delay ceiling read as the hold phase no "
+                   "longer inverts near the 4.2 ms pass");
+    }
+
+    // The three identical 1.5 ms floors are analogue-scale: no pass period
+    // reproduces them from the tables (the fastest attack is one pass, the
+    // fastest fall reaches digital zero in four), while the derived voice-VCA
+    // hold's 10-90% rise, ln(9) * 687 us, lands on the printed figure.
+    expectNear(std::log(9.0) * YouKnow106TestAccess::voiceVcaHoldSlewSeconds(),
+               0.0015, 5.0e-5,
+               "the derived hold slew no longer reproduces the spec's 1.5 ms "
+               "floor");
+
+    // SUSTAIN "0 to 100%" is nominal: the stored maximum S = 128*127 sits
+    // 0.068 dB under the attack peak.
+    expectNear(20.0 * std::log10(16256.0 / 16383.0), -0.0677, 1.0e-3,
+               "the sustain ceiling's distance from the attack peak moved");
+}
+
 void testModulationAndGlideLaws()
 {
     // Exact hash-matched B-2 rate vectors. A signed cycle is four clamped
@@ -2449,6 +2631,42 @@ void testModulationAndGlideLaws()
                    == YouKnow106Engine::portamentoIncrement((raw + 1) / 255.0f),
                "paired portamento ADC codes select different coefficients at raw "
                    + std::to_string(raw));
+
+    // Between the knob and those raw codes sits the bender board's loaded
+    // divider (p. 16, 2026-08-20 read): a 50KB linear track whose wiper
+    // drives the slave ADC against R16 47 kOhm to ground. The mapping is
+    // exact at both track ends, sags below linear everywhere between them
+    // (0.39496 at half travel), inverts exactly, and reaches the raw-code
+    // law only through this one function.
+    expect(YouKnow106Engine::portamentoTravelAdcFraction(0.0f) == 0.0f
+               && YouKnow106Engine::portamentoTravelAdcFraction(1.0f) == 1.0f,
+           "the loaded portamento divider moved its track endpoints");
+    expectNear(YouKnow106Engine::portamentoTravelAdcFraction(0.5f),
+               23.5 / 59.5, 1.0e-6,
+               "the loaded portamento divider misses its half-travel value");
+    float previousFraction = -1.0f;
+    for (int step = 0; step <= 64; ++step)
+    {
+        const float travel = static_cast<float>(step) / 64.0f;
+        const float fraction =
+            YouKnow106Engine::portamentoTravelAdcFraction(travel);
+        expect(fraction > previousFraction,
+               "the loaded portamento divider is not strictly monotone");
+        if (step != 0 && step != 64)
+            expect(fraction < travel,
+                   "the loaded portamento divider stopped sagging below "
+                   "linear travel");
+        expectNear(YouKnow106Engine::portamentoTravelForAdcFraction(fraction),
+                   travel, 1.0e-5,
+                   "the portamento divider inverse does not round-trip");
+        previousFraction = fraction;
+    }
+    // Half knob travel therefore realises raw code 101's glide, not raw 128's.
+    expectNear(YouKnow106Engine::portamentoSeconds(
+                   YouKnow106Engine::portamentoTravelAdcFraction(0.5f)),
+               YouKnow106Engine::portamentoSeconds(101.0f / 255.0f), 0.0f,
+               "half knob travel stopped selecting the loaded divider's raw "
+               "code");
 }
 
 void testConverterQueueAndOutputReference()
@@ -2510,6 +2728,61 @@ void testConverterQueueAndOutputReference()
                return phase == 0.0;
            }),
            "phase-zero diagnostic profile contains an invented timestamp");
+
+    // The default compatibility profile stays the exact ordinal grid; the
+    // measured-chart profile below is a selectable comparison, not a new
+    // default, so the grid itself is pinned value-for-value.
+    for (std::size_t index = 0; index < normalized.size(); ++index)
+        expect(normalized[index]
+                   == static_cast<double>(index)
+                          / static_cast<double>(normalized.size()),
+               "the normalized compatibility profile left its ordinal grid");
+
+    // MeasuredChartGeometry carries the 2026-08-20 pixel measurement of the
+    // p. 8 chart (drawn-artwork proportions, +/-3 px per stroke, rebased to
+    // this queue's RESONANCE-first origin). Its deliberate non-uniformity is
+    // asserted here exactly as measured; none of this promotes the drawing
+    // to hardware timestamps.
+    const auto measured = YouKnow106Engine::converterEventPhases(
+        YouKnow106Engine::ConverterTimingProfile::MeasuredChartGeometry);
+    expect(measured.front() == 0.0 && measured.back() < 1.0,
+           "measured-chart profile does not fit inside one pass");
+    for (std::size_t index = 1; index < measured.size(); ++index)
+        expect(measured[index] > measured[index - 1],
+               "measured-chart profile collapsed or reordered an event");
+    constexpr double chartSpanPixels = 1886.5;
+    const auto chartPhase = [&](double pixelsFromResonance) {
+        return pixelsFromResonance / chartSpanPixels;
+    };
+    expectNear(measured[1], chartPhase(97.5), 1.0e-12,
+               "measured VCA LEVEL phase does not match the chart stroke");
+    expectNear(measured[9], chartPhase(905.0), 1.0e-12,
+               "measured PWM phase does not match the chart stroke");
+    expectNear(measured[10], chartPhase(956.0), 1.0e-12,
+               "measured VCF1 phase does not match the chart stroke");
+    expectNear(measured[22], chartPhase(1836.0), 1.0e-12,
+               "measured NOISE phase does not match the chart stroke");
+    // Three drawn width classes (full / VCF-VCA / half on a 10:7:5 grid).
+    // The six DCO slots are full-width and near-equal; the VCF/VCA pairs are
+    // narrower; VCF6 is the chart's one anomaly at ~1.5 VCF-widths.
+    for (std::size_t ordinal = 3; ordinal + 1 <= 9; ++ordinal)
+    {
+        const double slotSeconds =
+            (measured[ordinal + 1] - measured[ordinal]) * 0.0042;
+        expect(slotSeconds > 219.0e-6 && slotSeconds < 229.0e-6,
+               "a drawn DCO slot left its measured full-width class");
+    }
+    const double vcf1Slot = (measured[11] - measured[10]) * 0.0042;
+    expect(vcf1Slot > 148.0e-6 && vcf1Slot < 166.0e-6,
+           "the drawn VCF1 slot left its measured VCF/VCA width class");
+    const double vcf6Slot = (measured[21] - measured[20]) * 0.0042;
+    expect(vcf6Slot > 228.0e-6 && vcf6Slot < 240.0e-6,
+           "the chart's VCF6 width anomaly disappeared");
+    // The drawing's largest departure from the ordinal grid is the PWM write,
+    // +371.4 us later than 9/23 of the pass at the drawn scale.
+    expectNear((measured[9] - normalized[9]) * 0.0042, 371.4e-6, 8.0e-6,
+               "the measured chart's PWM deviation from the ordinal grid "
+               "moved");
 
     // The compatibility reference is chosen to make the newly explicit final
     // boundary unity, preserving existing sessions while declaring -18 dBFS
@@ -5605,10 +5878,12 @@ int main()
     testStoredControlDigitalVectors();
     testResonanceLeavesTheCornerAloneBelowOscillation();
     testVoicedResonanceCompatibilityProfile();
+    testCircuitDerivedResonanceCandidate();
     testEnvelopeAndAmplifierLaws();
     testPulseWidthAndHighPassLaws();
     testPwmDutyCycleDefensiveGuard();
     testSharedHighPassAgainstNominalNetwork();
+    testServiceSpecificationEndpointReconciliation();
     testModulationAndGlideLaws();
     testConverterQueueAndOutputReference();
     testPanelLawsInvert();

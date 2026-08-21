@@ -645,6 +645,38 @@ struct YouKnow106TestAccess
         return engine.glidedVolume_;
     }
 
+    static float cardAgingCutoffCounts(const YouKnow106Engine& engine,
+                                       int card) noexcept
+    {
+        return engine.cards_[static_cast<std::size_t>(card)].agingCutoffCounts;
+    }
+
+    static float cardAgingWeight(const YouKnow106Engine& engine,
+                                 int card) noexcept
+    {
+        return engine.cards_[static_cast<std::size_t>(card)].agingWeight;
+    }
+
+    static float agedNoiseGain(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.agedNoiseGain_;
+    }
+
+    static double converterEventPhase(const YouKnow106Engine& engine,
+                                      int ordinal) noexcept
+    {
+        return engine.converterEventPhases_[static_cast<std::size_t>(ordinal)];
+    }
+
+    static float trimmedAnalogCounts(float counts, float offsetPointError,
+                                     float widthPointError) noexcept
+    {
+        YouKnow106Engine::VoiceCard card {};
+        card.cutoffOffsetError = offsetPointError;
+        card.cutoffScaleError = widthPointError;
+        return YouKnow106Engine::cutoffAnalogCounts(counts, card, 1.0f, 0.0f);
+    }
+
     static float rateTransitionGain(const YouKnow106Engine& engine) noexcept
     {
         return engine.rateTransitionGain_;
@@ -3401,6 +3433,124 @@ void testInactiveVoiceKeepsAdvancingPortamento()
     const double octaveBelow = magnitudeAt(replay.left, start, 8192, 261.626, sampleRate);
     expect(destination > 4.0 * octaveBelow,
            "portamento stopped advancing when the voice became inactive");
+}
+
+void testVcfTrimResidualHonoursPrintedWindows()
+{
+    // Roland's p. 19 acceptance bounds the two trim CHECK POINTS at
+    // +/-10 cents each (procedures 7/8, repeated jointly); the model draws
+    // each point inside its window and takes the line through them, so a
+    // full-scale draw contributes exactly ten cents at its own point, zero
+    // at the other, and half at the midpoint. The former voiced form
+    // multiplied total counts and overshot the printed window 2.7x at the
+    // very point the procedure checks.
+    constexpr float anchor = 6272.0f;
+    constexpr float span = 2.0f * 1143.0f;
+    constexpr float tenCents = 10.0f / 1200.0f * 1143.0f;
+    const auto residual = [](float counts, float offsetDraw, float widthDraw) {
+        return YouKnow106TestAccess::trimmedAnalogCounts(counts, offsetDraw,
+                                                         widthDraw)
+             - counts;
+    };
+    expectNear(residual(anchor, 1.0f, 0.0f), tenCents, 1.0e-3,
+               "a full offset draw misses ten cents at the FREQ check point");
+    expectNear(residual(anchor + span, 1.0f, 0.0f), 0.0, 1.0e-3,
+               "the offset draw leaks into the WIDTH check point");
+    expectNear(residual(anchor, 0.0f, 1.0f), 0.0, 1.0e-3,
+               "the width draw leaks into the FREQ check point");
+    expectNear(residual(anchor + span, 0.0f, 1.0f), tenCents, 1.0e-3,
+               "a full width draw misses ten cents at the WIDTH check point");
+    expectNear(residual(anchor + 0.5f * span, 1.0f, 0.0f), 0.5f * tenCents,
+               1.0e-3, "the residual between the check points is not the "
+                       "line through them");
+    expectNear(residual(anchor, -1.0f, 1.0f), -tenCents, 1.0e-3,
+               "opposed draws do not stay inside their own windows");
+}
+
+void testConverterTimingProfileSelectionAppliesAtReset()
+{
+    // The measured-chart profile must be able to drive the complete shipping
+    // signal path (the A-Z rules forbid offline approximations), but a
+    // mid-pass phase swap would invent an event discontinuity no hardware
+    // has -- so selection is latched and consumed by the next reset/prepare,
+    // and the default stays the normalized ordinal grid.
+    using Profile = YouKnow106Engine::ConverterTimingProfile;
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, false);
+    expect(YouKnow106TestAccess::converterEventPhase(engine, 9) == 9.0 / 23.0,
+           "the default converter profile left the ordinal grid");
+
+    engine.selectConverterTimingProfile(Profile::MeasuredChartGeometry);
+    expect(YouKnow106TestAccess::converterEventPhase(engine, 9) == 9.0 / 23.0,
+           "a profile selection took effect without a reset");
+    engine.reset();
+    expectNear(YouKnow106TestAccess::converterEventPhase(engine, 9),
+               905.0 / 1886.5, 0.0,
+               "reset did not install the selected measured-chart profile");
+
+    engine.selectConverterTimingProfile(Profile::NormalizedServiceChart);
+    engine.reset();
+    expect(YouKnow106TestAccess::converterEventPhase(engine, 9) == 9.0 / 23.0,
+           "reselecting the normalized profile did not restore the grid");
+}
+
+void testAgedUnitExtensionStaysInertByDefault()
+{
+    // The aged-unit extension is a labelled engine-level lead (one documented
+    // recalibration; voiced) and must be exactly absent until raised: zero
+    // per-card cutoff shift and unity noise gain, not merely small ones.
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, false);
+    auto parameters = plainPatch();
+    engine.setParameters(parameters);
+    for (int card = 0; card < 6; ++card)
+        expect(YouKnow106TestAccess::cardAgingCutoffCounts(engine, card)
+                   == 0.0f,
+               "an aged cutoff shift leaked into the freshly calibrated state");
+    expect(YouKnow106TestAccess::agedNoiseGain(engine) == 1.0f,
+           "an aged noise gain leaked into the freshly calibrated state");
+
+    // At full aging the documented pattern appears: flatward-only shifts
+    // bounded by the quarter-tone lead, dispersed per card by the seeded
+    // uniform weight, plus the account's +3.52 dB noise-trim drift.
+    parameters.aging = 1.0f;
+    engine.setParameters(parameters);
+    int distinct = 0;
+    float previous = 1.0f;
+    for (int card = 0; card < 6; ++card)
+    {
+        const float counts =
+            YouKnow106TestAccess::cardAgingCutoffCounts(engine, card);
+        const float weight = YouKnow106TestAccess::cardAgingWeight(engine, card);
+        expect(counts <= 0.0f && counts >= -47.7f,
+               "an aged cutoff shift left the flatward quarter-tone bound");
+        expect(weight >= 0.0f && weight <= 1.0f,
+               "an aging weight left its unit draw");
+        expectNear(counts, -50.0 / 1200.0 * 1143.0 * weight, 1.0e-3,
+                   "an aged cutoff shift does not follow its card weight");
+        if (counts != previous)
+            ++distinct;
+        previous = counts;
+    }
+    expect(distinct >= 2, "the aged cutoff shifts collapsed to one value");
+    expectNear(YouKnow106TestAccess::agedNoiseGain(engine),
+               std::pow(10.0, 3.52 / 20.0), 1.0e-5,
+               "full aging misses the documented +3.52 dB noise-trim drift");
+
+    // The control is clamped to its unit range and returns to exact zero.
+    parameters.aging = 7.5f;
+    engine.setParameters(parameters);
+    expectNear(YouKnow106TestAccess::agedNoiseGain(engine),
+               std::pow(10.0, 3.52 / 20.0), 1.0e-5,
+               "aging escaped its unit clamp");
+    parameters.aging = 0.0f;
+    engine.setParameters(parameters);
+    for (int card = 0; card < 6; ++card)
+        expect(YouKnow106TestAccess::cardAgingCutoffCounts(engine, card)
+                   == 0.0f,
+               "returning aging to zero left a residual cutoff shift");
+    expect(YouKnow106TestAccess::agedNoiseGain(engine) == 1.0f,
+           "returning aging to zero left a residual noise gain");
 }
 
 void testPortamentoStateUsesEightEightGrid()
@@ -8454,6 +8604,9 @@ int main()
     testPoly1AffinityUsesThePhysicalKey();
     testRepressingPolyModeRebuildsHeldAssignments();
     testInactiveVoiceKeepsAdvancingPortamento();
+    testVcfTrimResidualHonoursPrintedWindows();
+    testConverterTimingProfileSelectionAppliesAtReset();
+    testAgedUnitExtensionStaysInertByDefault();
     testPortamentoStateUsesEightEightGrid();
     testUnisonUsesEveryVoiceWithoutDetuning();
     testVoiceCountAboveTheHardwareSixWorks();

@@ -555,6 +555,12 @@ where this pass will file them:
    ([netlist](https://raw.githubusercontent.com/ThomHPL/Open80017a/main/Simulations/dksynth_80017A.asc)),
    alongside the same 560 Ω and 68 kΩ values the model does use. The engine
    hard-codes `poleCapacitorFarads = 240.0e-12f` from the service circuit.
+   *(Provenance corrected 2026-08-20: "the service circuit" is the JUNO-60's
+   printed circuit — sibling — since the 106's own module drawing prints no
+   component values; the same reattribution extends to the 68 kΩ/560 Ω pair,
+   whose topology alone is Roland-printed for the 106. Additionally, the 270 pF
+   side traces to clone-parts substitution with no claimed hardware
+   measurement. See `Docs/open-questions.md`, Evidence search — 2026-08-20.)*
    That is a 12.5% first-order disagreement — about two semitones of cutoff
    scale. It does *not* move a "derived 240 pF / 68 kΩ 64 kHz upper knee" to
    roughly 57 kHz, as this line said until 2026-08-19: 700 µA is 72.9 kHz on
@@ -577,7 +583,10 @@ where this pass will file them:
    octave against the derivation and about two-thirds of one against the
    shipped constant — and the 2026-08-19 arithmetic correction moved it away
    from KR-106, not toward it. Same region as the unresolved upper-mid darkness
-   lead (OQ-18).
+   lead (OQ-18). *(Relabelled 2026-08-20: KR-106's 40 kHz tanh ceiling lives in
+   their Juno-6 frequency map — sibling — while their Juno-106 path tops at
+   their measured 52.2 kHz table; the live disagreement is 52.2-vs-64 kHz,
+   which OQ-18 already owns.)*
 3. **KR-106 zeroed its VCF input compensation.** v2.5.12: "VCF input
    compression disabled (kInputCompressAmount = 0)", reversing its own v2.4.12
    "VCF InputComp and output gain recalibrated from hardware recordings". The
@@ -586,6 +595,12 @@ where this pass will file them:
    recalibrated it against hardware recordings subsequently zeroed it, which is
    evidence that the magnitude is contested by someone who looked at hardware.
    That belongs in OQ-09's row beside the shipping `0.2296` (OQ-09).
+   *(Corrected 2026-08-20, at commit level: what was zeroed and later deleted
+   was a separate drive-dependent input compressor; KR-106's
+   resonance-dependent input boost still ships at ratio 0.458, with a
+   non-shipping tool variant at 0.22955 — numerically this project's voiced
+   0.2296, one lineage, never mutual corroboration. See open-questions.md,
+   Evidence search — 2026-08-20.)*
 
 **Third-party measured captures now exist for two P0 rows.** KR-106 publishes
 in-tree analyses of real filter-sweep and oscillator recordings — per-file
@@ -599,6 +614,13 @@ header reads "Juno-106 Recording Analysis", and the quoted rolloff figures
 The right action is a targeted read of the analysis scripts to establish unit
 and estimator, then record the result against OQ-09/OQ-15 as third-party
 measured. **No step below fits a constant to these numbers.**
+*(Done 2026-08-20; both cautions resolved against the evidence: the "Juno-106"
+report header is a hardcoded analyzer string, the resonance-peak family is
+their Juno-6 — sibling — and the per-waveform level table is KR-106's own
+render, not hardware. Both items leave the P0 evidence column; the one
+genuinely new Juno-106 hardware curve found is their 29-step resonance family
+(April 2026), recorded against OQ-09. See open-questions.md, Evidence
+search — 2026-08-20.)*
 
 **Historical literature absence (2026-08-07; resolved by continuous step 4).**
 At the time of this sweep the research contract cited Zavalishin, Stilson &
@@ -4027,3 +4049,199 @@ evidence about a physical JUNO-106.
   `19053f2cb7b57eef5fccb7bfa9f7f5e14ab2e1e932af1672b5138565430d196c`.
   The 20 WAV/128-row validation metrics remain frozen and no renderer-owned
   payload changes. **Step 17 is complete. DOCS FROZEN.**
+
+---
+
+## YouKnow106 — grounded-research pass, 2026-08-20
+
+**Work mode: evidence search plus analysis of supplied evidence. No hardware
+was measured, no DSP constant moved, no step below was executed.** This pass
+ran the owed primary reads (the KR-106 measured-artefact read named at §7's
+lineage note, the TAL sentence's source read, the blocked-host retries), took
+the Service Notes' own figures seriously as measurable artwork for the first
+time, and put datasheet columns under the parts the manual names but does not
+characterize. Its evidence lands in
+`Docs/open-questions.md` § *Evidence search — 2026-08-20*; the research
+contract's affected rows are updated in the same change. What belongs to this
+document is (a) the corrections to its own recorded contradictions, applied at
+their rows above, and (b) the proposal list below, which is the pass's answer
+to "what would make the sound more real that the evidence actually licenses".
+
+### What this pass corrected in this document
+
+- The **40 kHz tanh** contradiction row: KR-106's 40 kHz ceiling is their
+  *Juno-6* frequency map; their Juno-106 path tops at their measured 52.2 kHz
+  table. Relabelled sibling at the row.
+- The **kInputCompressAmount reversal** row: what v2.5.12 zeroed (and v2.5.13
+  deleted, verified at commit level) was a separate drive-dependent
+  input-compression mechanism; KR-106's resonance-dependent input boost still
+  ships, at ratio 0.458 in their shipping header, while a non-shipping tool
+  variant carries 0.22955 — numerically this project's voiced 0.2296, one
+  lineage, never to be cited as mutual corroboration.
+- The **"third-party measured captures now exist for two P0 rows"**
+  paragraph: the per-waveform level table is KR-106's own render run through
+  their analyzer, and the 9.5/10.5/17.9 dB resonance-peak family is their
+  Juno-6 (the "Juno-106" report header is a hardcoded string). The
+  directory-versus-header caution resolves against the header; both items
+  leave the P0 evidence column.
+- The **`poleCapacitorFarads` provenance** sentence: "from the service
+  circuit" now reads "from the JUNO-60's printed circuit (sibling)" — the
+  106's own manual prints the module interior with no values (junction-level
+  read, twice, 2026-08-20), and the same reattribution extends to the
+  68 kΩ/560 Ω pair.
+- The owed **KR-106 targeted read** is done: two units resolved (Karl's
+  Juno-6 SN#193284; the lfrancis Juno-106, clone voice modules, no serial),
+  estimators established per artefact, ADSR endpoints found spec-pinned
+  rather than measured, and the one genuinely new Juno-106 hardware curve
+  (the 29-step resonance family, April 2026) recorded against OQ-09 with its
+  k(0.3) ≈ 1.4–1.6 discrepancy against the sibling-derived 0.91 landmark.
+
+### Proposed steps — recorded, not executed
+
+Each proposal names its evidence class and its decision path. None is a
+retune; three are listening-test material under the repository's A–Z rules,
+which is where "more realistic" decisions that measurements cannot close are
+made by the user's ear.
+
+- [x] **P1. Circuit-derived resonance-shape candidate (OQ-09).** Build
+  `CircuitDerivedResonanceProfile` beside the shipping voiced
+  quadratic-then-linear curve: loop gain linear-above-threshold in the stored
+  byte, from the now Roland-printed control chain (0…+10 V hold → 27 kΩ +
+  per-card trim → grounded-base PNP → BA662 control pin) with the
+  BA662-architecture brackets' linear gm-in-current, onset where the DAC code
+  crosses the emitter-junction drop, slope owned by the same 4.8 Vp-p
+  endpoint that owns the voiced curve. Two defensible shapes, no measurement
+  to pick one: **A–Z listening test** (A = shipping curve), material chosen
+  to expose mid-travel resonance (the region where the curves differ most;
+  KR-106's measured J106 points sit between them and their raw sweeps are
+  unpublished). *Closes nothing; replaces a voiced shape with a derived one
+  only if the user prefers it by ear, exactly as the contract allows.*
+  *What actually shipped, 2026-08-20.* `CircuitDerivedResonanceProfile`
+  (onset 0.6 V of the 9.921875 V span ≈ byte 8; endpoint =
+  `maximumFeedback`; k = 4 threshold at travel 0.895, independently near the
+  voiced 0.9) behind `useCircuitDerivedResonanceShape`, default off,
+  threaded through both `resonanceFeedbackFor` consumers so the exact
+  held-interval reconstruction follows the flag;
+  `testCircuitDerivedResonanceCandidate` asserts default-off, endpoints,
+  onset, monotonicity, above-onset linearity and the threshold. The A/B
+  listening test was rendered through the shipping path (44.1 kHz, HQ,
+  7.5 s takes, chorus off, Character 0, resonance 0.55; whole-file RMS
+  matched — A trimmed −0.314 dB, then one shared +23.9 dB lift to a −3 dBFS
+  peak) and delivered with its unread-by-design key. The default stays
+  voiced until the user decides by ear.
+- [ ] **P2. B-2 pitch-write semantics determination (OQ-08).** Behavioral
+  analysis of the hash-identified B-2 image's converter/timer path: does a
+  pitch change write counts only, or rewrite control words — and which mode
+  does initialization program? With the 82C53-family sheet now on file
+  (count-only writes load at the end of the current period/half-cycle;
+  control-word writes force a genuine restart), this single firmware read
+  decides whether the modelled bandlimited phase-zero restart is the
+  documented branch or whether a changed-pitch write glides. The 2026-08-08
+  strike of the terminal-count step stands until this read exists; after it,
+  the restart model is either confirmed or replaced on device-documented
+  grounds, with the strike's fixture objections addressed by testing from
+  played state rather than reset state.
+  *Status, 2026-08-20: blocked in this environment.* The repository carries
+  no firmware image by policy and none was supplied to this session, so the
+  determination cannot run here; the step stays open for whoever holds the
+  hash-identified B-2 image.
+- [x] **P3. Chart-geometry timing profile (OQ-07/OQ-08).** Add the measured
+  p. 8 slot table (three width classes, 10:7:5 grid, VCF6 anomaly, NOISE
+  phase origin) as a selectable `ConverterTimingProfile` beside
+  `NormalizedServiceChart`, labelled drawn-artwork provenance. Default
+  unchanged. Value: the first A/B-able realization of non-uniform intra-pass
+  placement (KR-106's independent cycle-count lineage agrees on the
+  second-half VCF/VCA clustering within 1.6 % at VCF1); if the two profiles
+  are indistinguishable by ear at realistic material, OQ-08's audible-impact
+  priority drops and the queue should say so.
+  *What actually shipped, 2026-08-20.* `MeasuredChartGeometry` in
+  `ConverterTimingProfile`, phases computed from the 24 recorded stroke-center
+  pixels over the 1886.5 px span, rebased to the queue's RESONANCE origin;
+  the reset path keeps `NormalizedServiceChart` and the suite pins the
+  ordinal grid value-for-value beside the new profile's strokes, width
+  classes, VCF6 anomaly and +371.4 µs PWM deviation
+  (`testConverterQueueAndOutputReference`).
+- [x] **P4. Spec-endpoint regression fixtures (OQ-12/OQ-13).** Deterministic
+  tests asserting the reconciliation this pass derived: slowest attack
+  3.2802 s to full / 2.9526 s to 90 %, slowest decay one-τ 12.63 s, LFO top
+  29.761905 Hz, delay hold 3.2802 s at nominal T = 4.2 ms — pinning the
+  model's realized endpoints to the spec page's printed figures under their
+  stated conventions, so a future pass period or table change that breaks the
+  Roland-printed corroboration fails a test instead of passing silently.
+  Tests only; no DSP change.
+  *What actually shipped, 2026-08-20.*
+  `testServiceSpecificationEndpointReconciliation`: 703/781 attack passes,
+  the exact e⁻¹ crossing at pass 3008, the −20 dB reading's self-exclusion
+  against the 30 Hz LFO top, the 4.1667 ms LFO-top inversion, the byte-0
+  guard against bending toward the irreconcilable 0.1 Hz floor, the
+  781-pass delay hold, ln(9)·687 µs against the 1.5 ms floors and the
+  −0.068 dB sustain ceiling, all inside the ±9 % pass-period cluster.
+- [x] **P5. Portamento knob law (OQ-14).** Map the plug-in's portamento
+  control through the now designator-complete loaded-pot transfer (50KB
+  linear track, wiper → switch → 47 kΩ load; midpoint ≈ 0.395 of full scale;
+  off = raw 0) so the physical knob's taper — not a linear byte ramp — sets
+  the feel. Byte-level SysEx compatibility unchanged (stored bytes are
+  bytes); this touches only the panel-to-byte mapping. Derived from the
+  printed network; small, honest, and the kind of faithfulness a player
+  touches every time.
+  *What actually shipped, 2026-08-20.* `portamentoTravelAdcFraction` and its
+  exact quadratic inverse, applied at the two knob boundaries (both
+  `resolveGlideStepPerScan` consumers in the engine; the parameter's
+  text/value functions in the processor); the raw-code-addressed B-2 laws
+  and their vectors stay byte-exact. The suite asserts the endpoints, the
+  0.39496 half-travel value, strict monotonicity, below-linear sag,
+  round-trip inversion at 65 grid points, and that half knob travel now
+  selects raw code 101's glide rather than raw 128's.
+- [x] **P6. Calibration-bounded Unit Character (OQ-10).** Cap the
+  calibrated-state Unit Character residuals with Roland's own printed
+  acceptance windows — duty 48–52 %/93–97 %, VCF trim ±10 cents, VCA BIAS
+  20 mV window, rails −15 V ±10 mV/+15 V ±0.8 V — so "a freshly calibrated
+  unit" disperses no further than the service procedure permits; and add a
+  separately labelled, defaulted-off **aged-unit** extension motivated by the
+  one documented recalibration lead (five undisturbed voices ≈ a quarter-tone
+  flat after four years, one dead-on; noise drifted to 6 Vp-p against the
+  4 Vp-p spec) — voiced, single-unit lineage stated at the control.
+  *What actually shipped, 2026-08-20.* The trim residual in
+  `cutoffAnalogCounts` now draws each printed check point independently
+  inside ±10 cents (`vcfTrimResidualOctaves` at the code-6272 FREQ anchor
+  and at the WIDTH point two octaves up, the line through them elsewhere),
+  replacing the voiced ±0.07 octave/±5 %-of-total-counts pair; the review
+  pass caught and corrected a first cut that multiplied total counts and
+  overshot the printed window 2.7× at the very point the procedure checks
+  (`testVcfTrimResidualHonoursPrintedWindows` pins the corrected law); the PWM
+  comparator's ±0.24 V was already exactly the printed 48–52 % window and
+  the untrimmed VCA/resonance/level magnitudes stay voiced (p. 19 prints no
+  tolerance for them). The `aging` extension landed engine-level only —
+  default 0, clamped to [0, 1], precomputed per card
+  (`agingCutoffCounts`, seeded unit weights) plus one shared
+  `agedNoiseGain_`, exactly inert at zero — deliberately not exposed as a
+  host parameter; `testAgedUnitExtensionStaysInertByDefault` asserts
+  inertness, bounds, per-card dispersion, the +3.52 dB gain and the clamp.
+- [ ] **P7. OQ-06 reference candidate, put to the user.** Roland's era
+  convention (printed on the RS-505 selector spec) reads "0dBm = 0.775 v
+  RMS"; adopting `Vref_rms = 0.775 V` for the High tap would pin the −18 dBFS
+  convention to the instrument's published nominal rating rather than a
+  placeholder. Product decision by the user, consistency-checkable against
+  the TA75558 swing bracket (≈ ±12–14 V) only once OQ-05/OQ-17's measurements
+  exist; recorded as the standing candidate, not adopted here.
+
+**What this pass deliberately does not do.** No mixer or noise constant moves
+(OQ-15's A64 contradiction stands; the corrected sub-leg topology makes the
+per-leg arithmetic *less* computable without the chip-internal WAVE source
+impedance, not more); the wet-mute click and off-state bleed stay unmodelled
+with their new datasheet-derived bounds recorded as below audibility at
+typical values; the 0.775 V reference is not adopted; no timing profile
+becomes default on drawn-artwork evidence.
+
+**Implementation, 2026-08-20 (on request).** P1, P3, P4, P5 and P6 landed the
+same day, suite green (the DSP tree's full 15-test suite plus the JUCE
+processor build against a pinned local 8.0.14 checkout). One departure from
+this document's one-commit-per-step convention is recorded: the five steps
+share `YouKnow106Engine.h/.cpp` and the circuit-test file so heavily that
+they landed as a single implementation commit with this documentation commit
+beside it, rather than as five interleaved partial-file commits. P2 is
+blocked in the implementing environment (no firmware image is or may be in
+the repository, and none was supplied); P7 remains recorded, not adopted —
+both stay open above. The P1 default stays the voiced curve until the
+delivered A/B is decided by ear; the verdict, when it arrives, is recorded
+here as chosen by ear per the A–Z rules.
