@@ -19,6 +19,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -49,6 +50,55 @@ void appendLittleEndian(std::vector<std::uint8_t>& bytes, std::uint32_t value,
 {
     for (int index = 0; index < byteCount; ++index)
         bytes.push_back(static_cast<std::uint8_t>((value >> (8 * index)) & 0xffu));
+}
+
+// Every file this tool produces goes through one door: the bytes are written
+// to a uniquely named sibling temporary and take the live name only after a
+// successful close. A full filesystem therefore cannot truncate an existing
+// file, no pre-existing file of any name is destroyed before the replacement
+// is safely on disk, and opening through std::ofstream's path overload keeps
+// non-ASCII directories working on Windows, where fopen(path.string()) would
+// go through the narrow code page.
+bool writeFileAtomically(const std::filesystem::path& path, const char* data,
+                         std::size_t size)
+{
+    std::random_device device;
+    std::filesystem::path temporary;
+    for (int attempt = 0; attempt < 16; ++attempt)
+    {
+        char suffix[24];
+        std::snprintf(suffix, sizeof suffix, ".%08x.tmp",
+                      static_cast<unsigned>(device()));
+        auto candidate = path;
+        candidate += suffix;
+        if (!std::filesystem::exists(candidate))
+        {
+            temporary = candidate;
+            break;
+        }
+    }
+    if (temporary.empty())
+        return false;
+
+    std::ofstream output(temporary, std::ios::binary);
+    output.write(data, static_cast<std::streamsize>(size));
+    output.close();
+    if (output.fail())
+    {
+        std::error_code removeError;
+        std::filesystem::remove(temporary, removeError);
+        return false;
+    }
+
+    std::error_code renameError;
+    std::filesystem::rename(temporary, path, renameError);
+    if (renameError)
+    {
+        std::error_code removeError;
+        std::filesystem::remove(temporary, removeError);
+        return false;
+    }
+    return true;
 }
 
 // Ghost is a monophonic instrument, but every take is written as a stereo
@@ -102,16 +152,9 @@ bool writeWav(const std::filesystem::path& path, const std::vector<float>& left,
         appendLittleEndian(bytes, encode(right[frame]), 2);
     }
 
-    std::FILE* file = std::fopen(path.string().c_str(), "wb");
-    if (file == nullptr)
-        return false;
-    const bool written =
-        std::fwrite(bytes.data(), 1, bytes.size(), file) == bytes.size();
-    // fwrite can buffer the tail and leave the failure for the closing flush
-    // (a full filesystem does exactly this), so the close result is part of
-    // whether the WAV actually reached the disk intact.
-    const bool closed = std::fclose(file) == 0;
-    return written && closed;
+    return writeFileAtomically(path,
+                               reinterpret_cast<const char*>(bytes.data()),
+                               bytes.size());
 }
 
 // ---------------------------------------------------------------------------
@@ -394,15 +437,17 @@ bool claimFreshDirectory(const std::filesystem::path& directory)
     if (!std::filesystem::is_empty(directory))
         return false;
 
-    std::ofstream output(directory / "README.md",
-                         std::ios::binary | std::ios::trunc);
-    output << "# Ghost audio corpus\n\n"
-           << "Rendered by GhostRenderDemos from the JUCE-free engine. The\n"
-           << "level table between the markers below is regenerated on every\n"
-           << "full render.\n\n"
-           << peaksTableBegin << "\n" << peaksTableEnd << "\n";
-    output.close();
-    return !output.fail();
+    const std::string manifest =
+        std::string("# Ghost audio corpus\n\n")
+        + "Rendered by GhostRenderDemos from the JUCE-free engine. The\n"
+          "level table between the markers below is regenerated on every\n"
+          "full render.\n\n"
+        + peaksTableBegin + "\n" + peaksTableEnd + "\n";
+    // Atomic like every other write, so a failure cannot leave a partial,
+    // marker-less README that would make the directory look foreign while no
+    // longer being empty.
+    return writeFileAtomically(directory / "README.md", manifest.data(),
+                               manifest.size());
 }
 
 // A demo removed from or renamed in the tables above must also disappear from
@@ -513,29 +558,8 @@ bool updatePeaksTable(const std::filesystem::path& directory,
     if (updated == readme)
         return true;
 
-    // The replacement is complete on disk before it takes the live name, so
-    // a full filesystem cannot leave the manifest — and the hand-written
-    // prose around the table — truncated, or strip the markers future
-    // ownership checks depend on.
-    const auto temporaryPath = directory / "README.md.tmp";
-    std::ofstream output(temporaryPath, std::ios::binary | std::ios::trunc);
-    output << updated;
-    output.close();
-    if (output.fail())
+    if (!writeFileAtomically(readmePath, updated.data(), updated.size()))
     {
-        std::error_code removeError;
-        std::filesystem::remove(temporaryPath, removeError);
-        std::fprintf(stderr, "could not write %s\n",
-                     temporaryPath.string().c_str());
-        return false;
-    }
-
-    std::error_code renameError;
-    std::filesystem::rename(temporaryPath, readmePath, renameError);
-    if (renameError)
-    {
-        std::error_code removeError;
-        std::filesystem::remove(temporaryPath, removeError);
         std::fprintf(stderr, "could not replace %s\n",
                      readmePath.string().c_str());
         return false;
