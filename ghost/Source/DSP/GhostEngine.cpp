@@ -72,13 +72,43 @@ void GhostEngine::reset()
 
 void GhostEngine::setParameters(const EngineParameters& parameters)
 {
-    parameters_ = parameters;
+    // A NaN smuggled in through host automation or corrupted state would
+    // otherwise reach pow() and the filter coefficients, and the poisoned
+    // envelope/ladder state would outlive the next valid parameter set. Every
+    // panel field is therefore normalised to a finite value in its documented
+    // 0..1 travel before it is stored; a non-finite field falls back to its
+    // power-on default.
+    constexpr EngineParameters defaults {};
+    const auto travel = [](float value, float fallback) noexcept {
+        if (!std::isfinite(value))
+            return fallback;
+        return std::clamp(value, 0.0f, 1.0f);
+    };
+
+    EngineParameters sane = parameters;
+    sane.cutoff = travel(parameters.cutoff, defaults.cutoff);
+    sane.resonance = travel(parameters.resonance, defaults.resonance);
+    sane.envToCutoff = travel(parameters.envToCutoff, defaults.envToCutoff);
+    sane.attack = travel(parameters.attack, defaults.attack);
+    sane.decay = travel(parameters.decay, defaults.decay);
+    sane.sustain = travel(parameters.sustain, defaults.sustain);
+    sane.release = travel(parameters.release, defaults.release);
+    sane.volume = travel(parameters.volume, defaults.volume);
+    parameters_ = sane;
 }
 
 void GhostEngine::noteOn(int midiNote, float velocity)
 {
     if (midiNote < 0 || midiNote > 127)
         return;
+
+    // Running status lets a MIDI sender encode Note Off as Note On with
+    // velocity zero; treating it as a press would hold the gate open forever.
+    if (!(velocity > 0.0f))
+    {
+        noteOff(midiNote);
+        return;
+    }
 
     // Re-pressing a held key moves it to the top of the stack rather than
     // duplicating it.

@@ -107,8 +107,11 @@ bool writeWav(const std::filesystem::path& path, const std::vector<float>& left,
         return false;
     const bool written =
         std::fwrite(bytes.data(), 1, bytes.size(), file) == bytes.size();
-    std::fclose(file);
-    return written;
+    // fwrite can buffer the tail and leave the failure for the closing flush
+    // (a full filesystem does exactly this), so the close result is part of
+    // whether the WAV actually reached the disk intact.
+    const bool closed = std::fclose(file) == 0;
+    return written && closed;
 }
 
 // ---------------------------------------------------------------------------
@@ -525,6 +528,11 @@ int main(int argc, char** argv)
     if (!removeStaleWavs(directory))
         return 1;
 
+    // Deletion above and overwriting below answer to the same ownership
+    // proof: pointing the ordinary output argument at a folder of music must
+    // not replace a colliding file any more than it may remove one.
+    const bool owned = ownsDirectory(directory);
+
     std::vector<RenderedLevel> levels;
 
     for (const auto& demo : demos())
@@ -568,6 +576,14 @@ int main(int argc, char** argv)
         }
 
         const auto path = directory / demo.fileName;
+        if (!owned && std::filesystem::exists(path))
+        {
+            std::fprintf(stderr,
+                         "%s already exists in a directory this renderer does "
+                         "not own; refusing to overwrite it.\n",
+                         path.string().c_str());
+            return 1;
+        }
         if (!writeWav(path, take.left(), take.right()))
         {
             std::fprintf(stderr, "could not write %s\n", path.string().c_str());

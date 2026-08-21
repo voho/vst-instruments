@@ -200,6 +200,51 @@ void testKeyMemorySpansTheWholeMidiDomain()
     check(!engine.isGateOpen(), "releasing the final held key closes the gate");
 }
 
+// Running status lets a MIDI sender encode Note Off as Note On with velocity
+// zero; the engine must treat that as a release, not a silent held note.
+void testZeroVelocityNoteOnReleases()
+{
+    GhostEngine engine;
+    engine.prepare(44100.0, 256);
+    engine.setParameters(EngineParameters {});
+    engine.noteOn(60, 0.9f);
+    check(engine.isGateOpen(), "a sounding note holds the gate open");
+    engine.noteOn(60, 0.0f);
+    check(!engine.isGateOpen(),
+          "a zero-velocity note-on releases the sounding note");
+
+    engine.reset();
+    engine.noteOn(64, 0.0f);
+    check(!engine.isGateOpen(),
+          "a zero-velocity note-on for an unheld note does not open the gate");
+    const auto rendered = render(engine, 0.25, 44100.0);
+    check(peak(rendered) == 0.0,
+          "a zero-velocity note-on for an unheld note stays silent");
+}
+
+// A NaN smuggled into any panel field must neither sound nor poison state
+// that outlives the next valid parameter set.
+void testNonFiniteParametersAreSanitised()
+{
+    GhostEngine engine;
+    engine.prepare(44100.0, 256);
+    EngineParameters poisoned;
+    poisoned.attack = std::numeric_limits<float>::quiet_NaN();
+    poisoned.decay = std::numeric_limits<float>::infinity();
+    poisoned.envToCutoff = -std::numeric_limits<float>::infinity();
+    poisoned.cutoff = std::numeric_limits<float>::quiet_NaN();
+    engine.setParameters(poisoned);
+    engine.noteOn(48, 0.9f);
+    const auto rendered = render(engine, 0.5, 44100.0);
+    check(finite(rendered), "poisoned parameters still render finite audio");
+
+    engine.setParameters(EngineParameters {});
+    const auto recovered = render(engine, 0.5, 44100.0);
+    check(finite(recovered), "valid parameters recover a finite render");
+    check(peak(recovered) > 1.0e-3,
+          "the engine still sounds after recovering from poisoned parameters");
+}
+
 void testFullResonanceStaysBounded()
 {
     GhostEngine engine;
@@ -224,6 +269,8 @@ int main()
     testHostileRatesAreClamped();
     testTopNoteAtLowestRateStaysAnOscillation();
     testKeyMemorySpansTheWholeMidiDomain();
+    testZeroVelocityNoteOnReleases();
+    testNonFiniteParametersAreSanitised();
     testFullResonanceStaysBounded();
 
     if (failures != 0)
