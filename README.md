@@ -81,7 +81,9 @@ Circuit-modelled six-voice DCO polysynth: integer-divided note timers with true 
 
 ## [Ghost](ghost/)
 
-*DSP-first phase: engine, tests and rendered demos exist; the plug-in wrapper and editor come next, so there is no binary to download yet.*
+[![Ghost](ghost/Docs/screenshots/ghost-standalone.png)](ghost/README.md)
+
+- **Nightly builds**: download the 14-day `vst-instruments-nightly-all-platforms` artifact from the latest successful main-branch [Nightly workflow run](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml).
 
 Circuit-modelled monophonic dual-filter analog synthesizer, built from the documentation of a 1983 Moog-designed Italian mono synth: two bandlimited oscillators with hard sync and the panel's exact duty-cycle sets, a triangle-cross ring modulator with un-nulled carrier bleed, and the signature series dual filter — a lower multimode section (parametric boost, inter-filter overdrive, resonant highpass) sliding against a 12/24 dB upper lowpass with a frozen-formant tracking mode — feeding two parallel audio paths with independent VCAs. Modulation includes the RIPPLE/ARPEGGIO/LEAP arpeggiator, patterned and random sample-and-hold, red-noise drift, and the Shaper Y variable-rate integrator routed through performance wheels.
 

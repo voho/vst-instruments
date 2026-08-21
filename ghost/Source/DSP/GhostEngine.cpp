@@ -413,6 +413,12 @@ void GhostEngine::noteOff(int midiNote)
     keyGate_ = false;
 }
 
+void GhostEngine::releaseAllKeys() noexcept
+{
+    keyStackSize_ = 0;
+    keyGate_ = false;
+}
+
 void GhostEngine::setPitchBend(float normalisedBipolar) noexcept
 {
     if (!std::isfinite(normalisedBipolar))

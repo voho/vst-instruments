@@ -52,15 +52,11 @@ jobs:
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
             target_demo: YouKnow106RenderDemos
             expected_demos: 10
-          # Ghost is in its DSP-first phase: the engine, tests and demo
-          # renderer exist before any JUCE wrapper does, so its lane skips
-          # the plug-in steps until the wrapper lands.
           - name: Ghost
             directory: ghost
             build_plugin_option: GHOST_BUILD_PLUGIN
             target_demo: GhostRenderDemos
             expected_demos: 10
-            dsp_only: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -169,6 +165,9 @@ jobs:
           - name: YouKnow106
             directory: youknow106
             snapshot_variable: YOUKNOW106_EDITOR_SNAPSHOT
+          - name: Ghost
+            directory: ghost
+            snapshot_variable: GHOST_EDITOR_SNAPSHOT
     steps:
       - uses: actions/checkout@v4
         with:
@@ -232,11 +231,9 @@ jobs:
           - name: YouKnow106
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
-          # DSP-first phase: no plug-in steps until the wrapper lands.
           - name: Ghost
             directory: ghost
             build_plugin_option: GHOST_BUILD_PLUGIN
-            dsp_only: true
     steps:
       - uses: actions/checkout@v4
         with:

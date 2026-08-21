@@ -208,6 +208,9 @@ jobs:
           - name: YouKnow106
             directory: youknow106
             snapshot_variable: YOUKNOW106_EDITOR_SNAPSHOT
+          - name: Ghost
+            directory: ghost
+            snapshot_variable: GHOST_EDITOR_SNAPSHOT
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -339,6 +342,9 @@ jobs:
           - name: YouKnow106
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
+          - name: Ghost
+            directory: ghost
+            build_plugin_option: GHOST_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -424,6 +430,9 @@ jobs:
           - name: YouKnow106
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
+          - name: Ghost
+            directory: ghost
+            build_plugin_option: GHOST_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -507,7 +516,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=()
-          for directory in vocalor drumalor neuramar electry taikor youknow106; do
+          for directory in vocalor drumalor neuramar electry taikor youknow106 ghost; do
             rendered="rendered-screenshots/${directory}-standalone.png"
             if [[ -s "$rendered" ]]; then
               mkdir -p "${directory}/Docs/screenshots"
@@ -536,7 +545,7 @@ jobs:
           # brand-new instrument whose build failed cannot cost the others
           # their commit.
           paths=()
-          for directory in vocalor drumalor neuramar electry taikor youknow106; do
+          for directory in vocalor drumalor neuramar electry taikor youknow106 ghost; do
             if [[ -d "${directory}/Docs/screenshots" ]]; then
               paths+=("${directory}/Docs/screenshots")
             fi
@@ -616,11 +625,11 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Check the twenty-four-file manifest
+      - name: Check the twenty-eight-file manifest
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for product in Vocalor Drumalor Neuramar Electry Taikor YouKnow106; do
+          for product in Vocalor Drumalor Neuramar Electry Taikor YouKnow106 Ghost; do
             # Deliberately expand this glob so the array contains every match.
             # shellcheck disable=SC2206
             mac_zips=(dist/${product}-*-macOS-universal.zip)
@@ -650,8 +659,8 @@ jobs:
             done
           done
           assets=(dist/*)
-          if (( ${#assets[@]} != 24 )); then
-            echo "error: expected exactly twenty-four release assets, found ${#assets[@]}" >&2
+          if (( ${#assets[@]} != 28 )); then
+            echo "error: expected exactly twenty-eight release assets, found ${#assets[@]}" >&2
             printf '  %s\n' "${assets[@]:-(none)}" >&2
             exit 1
           fi
