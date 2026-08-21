@@ -155,6 +155,9 @@ public:
     void setParameters(const EngineParameters& parameters);
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
+    // Releases every held key through the normal envelope path, as a
+    // controller asking for all notes off means. reset() is the hard stop.
+    void releaseAllKeys() noexcept;
     // The bend lever: full travel is ±8 semitones, derived by anchoring the
     // bend network against the tune network (see the research document).
     void setPitchBend(float normalisedBipolar) noexcept;

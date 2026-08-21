@@ -1,10 +1,10 @@
 # Ghost
 
 A circuit-modelled monophonic dual-filter analog synthesizer, built as a
-self-contained C++20 project. Ghost is currently in its **DSP-first phase**:
-the complete engine, its test suites and the demo renderer exist before any
-JUCE wrapper or editor does, so the sound can be judged before a single
-pixel is drawn.
+self-contained JUCE project: VST3, Audio Unit and Standalone, universal
+`arm64`/`x86_64` on macOS, plus Linux and Windows builds.
+
+![Ghost](Docs/screenshots/ghost-standalone.png)
 
 Ghost models the voice architecture of a 1983 monophonic analog synthesizer
 — the Crumar Spirit, designed by Jim Scott, Tom Rhea and Bob Moog — block by
@@ -33,13 +33,25 @@ what Ghost actually sounds like.
 
 ## Building
 
+The JUCE-free DSP core, tests and demo renderer:
+
 ```sh
-cmake -S . -B build-dsp -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake -S . -B build-dsp -DCMAKE_BUILD_TYPE=Release \
+  -DGHOST_BUILD_PLUGIN=OFF -DBUILD_TESTING=ON
 cmake --build build-dsp --parallel
 ctest --test-dir build-dsp --output-on-failure
 ./build-dsp/GhostRenderDemos Docs/audio
 ```
 
-`GHOST_BUILD_PLUGIN` exists but errors when enabled: the plug-in wrapper is
-the next phase, and asking for it today should fail loudly rather than
-silently produce nothing.
+The full plug-in (JUCE 8.0.14 is fetched pinned to its release commit, or
+pass `-DGHOST_JUCE_PATH=/path/to/JUCE`):
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+On macOS, `./scripts/build-macos.sh` drives the same build through Xcode as
+a universal binary and renders the committed editor screenshot while the
+suite runs.

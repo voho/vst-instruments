@@ -213,6 +213,9 @@ jobs:
           - name: YouKnow201
             directory: youknow201
             snapshot_variable: YOUKNOW201_EDITOR_SNAPSHOT
+          - name: Ghost
+            directory: ghost
+            snapshot_variable: GHOST_EDITOR_SNAPSHOT
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -347,6 +350,9 @@ jobs:
           - name: YouKnow201
             directory: youknow201
             build_plugin_option: YOUKNOW201_BUILD_PLUGIN
+          - name: Ghost
+            directory: ghost
+            build_plugin_option: GHOST_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -435,6 +441,9 @@ jobs:
           - name: YouKnow201
             directory: youknow201
             build_plugin_option: YOUKNOW201_BUILD_PLUGIN
+          - name: Ghost
+            directory: ghost
+            build_plugin_option: GHOST_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -518,7 +527,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=()
-          for directory in vocalor drumalor neuramar electry taikor youknow106 youknow201; do
+          for directory in vocalor drumalor neuramar electry taikor youknow106 youknow201 ghost; do
             rendered="rendered-screenshots/${directory}-standalone.png"
             if [[ -s "$rendered" ]]; then
               mkdir -p "${directory}/Docs/screenshots"
@@ -547,7 +556,7 @@ jobs:
           # brand-new instrument whose build failed cannot cost the others
           # their commit.
           paths=()
-          for directory in vocalor drumalor neuramar electry taikor youknow106 youknow201; do
+          for directory in vocalor drumalor neuramar electry taikor youknow106 youknow201 ghost; do
             if [[ -d "${directory}/Docs/screenshots" ]]; then
               paths+=("${directory}/Docs/screenshots")
             fi
@@ -574,11 +583,12 @@ jobs:
             # churn (including the audio job's own commit) does not invalidate a
             # render, so it does not defer the push.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                vocalor drumalor neuramar electry taikor youknow106 youknow201 \
+                vocalor drumalor neuramar electry taikor youknow106 \
+                youknow201 ghost \
                 ':(exclude)vocalor/Docs' ':(exclude)drumalor/Docs' \
                 ':(exclude)neuramar/Docs' ':(exclude)electry/Docs' \
                 ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs' \
-                ':(exclude)youknow201/Docs'; then
+                ':(exclude)youknow201/Docs' ':(exclude)ghost/Docs'; then
               echo "Instrument code changed upstream during the build; deferring the screenshot refresh to the next nightly."
               exit 0
             fi
@@ -628,11 +638,11 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Check the twenty-eight-file manifest
+      - name: Check the thirty-two-file manifest
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for product in Vocalor Drumalor Neuramar Electry Taikor YouKnow106 YouKnow201; do
+          for product in Vocalor Drumalor Neuramar Electry Taikor YouKnow106 YouKnow201 Ghost; do
             # Deliberately expand this glob so the array contains every match.
             # shellcheck disable=SC2206
             mac_zips=(dist/${product}-*-macOS-universal.zip)
@@ -662,8 +672,8 @@ jobs:
             done
           done
           assets=(dist/*)
-          if (( ${#assets[@]} != 28 )); then
-            echo "error: expected exactly twenty-eight release assets, found ${#assets[@]}" >&2
+          if (( ${#assets[@]} != 32 )); then
+            echo "error: expected exactly thirty-two release assets, found ${#assets[@]}" >&2
             printf '  %s\n' "${assets[@]:-(none)}" >&2
             exit 1
           fi
