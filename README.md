@@ -75,7 +75,7 @@ Physically modeled taiko drum suite: struck circular membranes solved from Besse
 
 Circuit-modelled six-voice DCO polysynth: integer-divided note timers with true pitch quantisation, scanned control converter with per-hold slew and 7-bit patch digitisation, firmware envelopes with exponential decay into a measured quasi-linear amplifier, four-pole transconductor filter with implicitly solved resonance loop, input-side resonance compensation, non-stealing key assigner, and an uncompanded two-line bucket-brigade chorus with authentic saturation and MN3009 noise. Features balanced dual-nonlinearity resonance, filter-output DC block, LFO delay width pulse holding, rate-independent 34.48 °C warm-up model, and optional velocity-to-filter envelope routing.
 
-- **Documentation**: [YouKnow106 README](youknow106/README.md) · [Rendered Demos](youknow106/Docs/audio/README.md) · [Circuit Research](youknow106/Docs/circuit-modelling-research.md)
+- **Documentation**: [YouKnow106 README](youknow106/README.md) · [Rendered Demos](youknow106/Docs/audio/README.md) · [Circuit Research](youknow106/Docs/research.md)
 
 ---
 

@@ -56,8 +56,10 @@ Commit a set only when the user asks, under
 `*/Docs/audio/listening-tests/<date>-<topic>/` with its `key.md`, and freeze it
 on merge exactly like the per-fix previews above.
 
-**What gets committed is the verdict.** Record in that instrument's
-`Docs/best-in-class-plan.md`: what was being decided, what each letter was, which
+**What gets committed is the verdict.** Record in that instrument's decision
+log — `Docs/best-in-class-plan.md`, or `Docs/research.md` where an
+instrument's research docs are consolidated (youknow106) — what was being
+decided, what each letter was, which
 letter the user chose, and what that choice licensed. A direction chosen by ear
 is recorded as chosen by ear — never written up as though a measurement had
 settled it.

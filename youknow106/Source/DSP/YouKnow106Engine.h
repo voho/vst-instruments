@@ -289,7 +289,7 @@ public:
     // These are the circuit's own transfer relations, exposed as pure
     // functions so the regression suites can check them against the
     // service-note anchors and against an independent numeric solve without
-    // reaching into a live voice. Docs/circuit-modelling-research.md records
+    // reaching into a live voice. Docs/research.md records
     // where every constant below comes from.
     // ------------------------------------------------------------------
 

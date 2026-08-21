@@ -4510,7 +4510,7 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // did scale this by a per-card thermal factor, which spread the six cards
     // over 13 cents and removed the one thing this architecture exists to
     // guarantee -- see the note on tuning stability in
-    // Docs/circuit-modelling-research.md.
+    // Docs/research.md.
     const double increment = dco.periodSamples > 1.0e-9
                            ? 1.0 / dco.periodSamples : 0.0;
     const auto resetAndRise = dcoResetAndRise(dco.periodSamples);
