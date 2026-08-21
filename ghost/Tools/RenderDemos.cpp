@@ -385,6 +385,26 @@ bool ownsDirectory(const std::filesystem::path& directory)
         && beginPos < endPos;
 }
 
+// A directory the renderer starts empty is the renderer's to keep: writing
+// the manifest README first makes the first render's output replaceable by
+// the second, while a directory that already held anything keeps its foreign
+// status and the collision guard's full protection.
+bool claimFreshDirectory(const std::filesystem::path& directory)
+{
+    if (!std::filesystem::is_empty(directory))
+        return false;
+
+    std::ofstream output(directory / "README.md",
+                         std::ios::binary | std::ios::trunc);
+    output << "# Ghost audio corpus\n\n"
+           << "Rendered by GhostRenderDemos from the JUCE-free engine. The\n"
+           << "level table between the markers below is regenerated on every\n"
+           << "full render.\n\n"
+           << peaksTableBegin << "\n" << peaksTableEnd << "\n";
+    output.close();
+    return !output.fail();
+}
+
 // A demo removed from or renamed in the tables above must also disappear from
 // the output directory, or automation that commits the directory preserves
 // the stale file forever while the level table drops its row.
@@ -493,12 +513,37 @@ bool updatePeaksTable(const std::filesystem::path& directory,
     if (updated == readme)
         return true;
 
-    std::ofstream output(readmePath, std::ios::binary | std::ios::trunc);
+    // The replacement is complete on disk before it takes the live name, so
+    // a full filesystem cannot leave the manifest — and the hand-written
+    // prose around the table — truncated, or strip the markers future
+    // ownership checks depend on.
+    const auto temporaryPath = directory / "README.md.tmp";
+    std::ofstream output(temporaryPath, std::ios::binary | std::ios::trunc);
     output << updated;
     output.close();
+    if (output.fail())
+    {
+        std::error_code removeError;
+        std::filesystem::remove(temporaryPath, removeError);
+        std::fprintf(stderr, "could not write %s\n",
+                     temporaryPath.string().c_str());
+        return false;
+    }
+
+    std::error_code renameError;
+    std::filesystem::rename(temporaryPath, readmePath, renameError);
+    if (renameError)
+    {
+        std::error_code removeError;
+        std::filesystem::remove(temporaryPath, removeError);
+        std::fprintf(stderr, "could not replace %s\n",
+                     readmePath.string().c_str());
+        return false;
+    }
+
     std::printf("Updated the rendered-peak table in %s\n",
                 readmePath.string().c_str());
-    return !output.fail();
+    return true;
 }
 } // namespace
 
@@ -535,6 +580,11 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "not a directory: %s\n", directory.string().c_str());
         return 1;
     }
+
+    // A directory this run created (or found empty) becomes the renderer's
+    // own before anything is written into it, so the documented render
+    // command can be run twice; anything else must already prove ownership.
+    claimFreshDirectory(directory);
 
     if (!removeStaleWavs(directory))
         return 1;

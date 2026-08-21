@@ -283,7 +283,12 @@ void GhostEngine::process(float* left, float* right, int numSamples)
             s = (a2 * a * st[0] + a2 * st[1] + a * st[2] + st[3]) / (1.0 + gm);
         }
         const double input = static_cast<double>(std::tanh(1.5f * saw));
-        const double u = (input - k * s) / (1.0 + k * a * a * a * a);
+        // The saturation sits inside the feedback loop, not only on the
+        // external input: a linear loop at gain 4 is marginally stable and a
+        // sustained note slowly accumulates output without bound, while the
+        // hardware this stands in for limits its own feedback.
+        const double u =
+            std::tanh((input - k * s) / (1.0 + k * a * a * a * a));
         double stageIn = u;
         for (auto& state : ladder_.state)
         {

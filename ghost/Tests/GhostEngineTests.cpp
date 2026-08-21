@@ -309,6 +309,24 @@ void testFullResonanceStaysBounded()
     const auto rendered = render(engine, 1.0, 44100.0);
     check(finite(rendered), "full-resonance render is finite");
     check(peak(rendered) < 4.0, "full-resonance render stays bounded");
+
+    // The marginal case: exact loop gain 4 at the lowest supported rate with
+    // a top note held for a long time. A linear loop accumulates without
+    // bound here; the saturated loop must not.
+    GhostEngine marginal;
+    marginal.prepare(8000.0, 256);
+    EngineParameters hot;
+    hot.cutoff = 1.0f;
+    hot.resonance = 1.0f;
+    hot.sustain = 1.0f;
+    hot.attack = 0.0f;
+    marginal.setParameters(hot);
+    marginal.noteOn(127, 1.0f);
+    render(marginal, 30.0, 8000.0);
+    const auto late = render(marginal, 2.0, 8000.0);
+    check(finite(late), "long marginal full-resonance render is finite");
+    check(peak(late) < 4.0,
+          "long marginal full-resonance render does not accumulate");
 }
 } // namespace
 
