@@ -102,5 +102,20 @@ if(BUILD_TESTING)
                  COMMAND GhostRenderDemos --smoke
                          "${CMAKE_CURRENT_BINARY_DIR}/demo-smoke")
         set_tests_properties(Ghost.RenderDemos PROPERTIES TIMEOUT 60)
+
+        # A full render run twice into the same directory proves the
+        # atomic-replacement path — a rename over an existing WAV and README —
+        # on every CI platform, not only POSIX. std::filesystem::rename is
+        # specified with POSIX replace semantics, and this pair keeps that
+        # from being a claim CI never exercises on Windows.
+        add_test(NAME Ghost.RenderDemosFullRender
+                 COMMAND GhostRenderDemos
+                         "${CMAKE_CURRENT_BINARY_DIR}/demo-full")
+        add_test(NAME Ghost.RenderDemosRerender
+                 COMMAND GhostRenderDemos
+                         "${CMAKE_CURRENT_BINARY_DIR}/demo-full")
+        set_tests_properties(Ghost.RenderDemosFullRender PROPERTIES TIMEOUT 60)
+        set_tests_properties(Ghost.RenderDemosRerender PROPERTIES TIMEOUT 60
+                             DEPENDS Ghost.RenderDemosFullRender)
     endif()
 endif()
