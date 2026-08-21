@@ -52,6 +52,17 @@ void appendLittleEndian(std::vector<std::uint8_t>& bytes, std::uint32_t value,
         bytes.push_back(static_cast<std::uint8_t>((value >> (8 * index)) & 0xffu));
 }
 
+// Whether the directory entry itself exists, without following a symlink: a
+// dangling link is still somebody's entry, and exists() would look through it
+// and report the missing target instead. An undeterminable status counts as
+// existing, because the guard that asks must then refuse to write.
+bool entryExists(const std::filesystem::path& path)
+{
+    std::error_code error;
+    const auto type = std::filesystem::symlink_status(path, error).type();
+    return type != std::filesystem::file_type::not_found;
+}
+
 // Every file this tool produces goes through one door: the bytes are written
 // to a uniquely named sibling temporary and take the live name only after a
 // successful close. A full filesystem therefore cannot truncate an existing
@@ -368,7 +379,7 @@ int runSmokeTest(const std::filesystem::path& directory)
     // The smoke path takes an ordinary directory argument just like the full
     // render, so it gets the same respect for other people's files: it only
     // ever writes a file it can prove it is not replacing.
-    if (std::filesystem::exists(path))
+    if (entryExists(path))
     {
         std::fprintf(stderr,
                      "smoke test: %s already exists; refusing to overwrite "
@@ -676,7 +687,7 @@ int main(int argc, char** argv)
         }
 
         const auto path = directory / demo.fileName;
-        if (!owned && std::filesystem::exists(path))
+        if (!owned && entryExists(path))
         {
             std::fprintf(stderr,
                          "%s already exists in a directory this renderer does "
