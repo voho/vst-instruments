@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <vector>
 
 namespace
@@ -136,10 +137,67 @@ void testHostileRatesAreClamped()
     engine.prepare(1.0e9, 256);
     check(engine.getSampleRate() == GhostEngine::maximumSupportedSampleRate,
           "an absurd host rate clamps to the maximum supported rate");
+
+    // std::clamp passes NaN through, so the engine must sanitise before it.
+    engine.prepare(std::numeric_limits<double>::quiet_NaN(), 256);
+    check(std::isfinite(engine.getSampleRate()),
+          "a NaN host rate resolves to a finite rate");
+    engine.noteOn(60, 1.0f);
+    const auto nanRateRender = render(engine, 0.25, engine.getSampleRate());
+    check(finite(nanRateRender), "post-NaN-rate render is finite");
+    engine.noteOff(60);
+
     engine.prepare(48000.0, 256);
     engine.noteOn(60, 1.0f);
     const auto rendered = render(engine, 0.25, 48000.0);
     check(finite(rendered), "post-clamp render is finite");
+}
+
+// Note 127 is ~12.5 kHz, above an 8 kHz host's Nyquist; the oscillator must
+// bound its frequency rather than let the phase step exceed a whole cycle and
+// settle into DC.
+void testTopNoteAtLowestRateStaysAnOscillation()
+{
+    GhostEngine engine;
+    engine.prepare(8000.0, 256);
+    EngineParameters parameters;
+    parameters.cutoff = 1.0f;
+    parameters.attack = 0.0f;
+    parameters.sustain = 1.0f;
+    engine.setParameters(parameters);
+    engine.noteOn(127, 1.0f);
+    render(engine, 0.5, 8000.0);
+    const auto settled = render(engine, 0.5, 8000.0);
+    check(finite(settled), "top note at 8 kHz renders finite audio");
+    check(peak(settled) < 4.0, "top note at 8 kHz stays bounded");
+
+    double mean = 0.0;
+    for (const float value : settled.left)
+        mean += static_cast<double>(value);
+    mean /= static_cast<double>(settled.left.size());
+    double deviation = 0.0;
+    for (const float value : settled.left)
+        deviation = std::max(deviation,
+                             std::abs(static_cast<double>(value) - mean));
+    check(deviation > 1.0e-3,
+          "top note at 8 kHz keeps oscillating instead of settling to DC");
+}
+
+// Every distinct MIDI note held at once must survive in the held-key memory:
+// releasing every newer key has to fall back to the very first one.
+void testKeyMemorySpansTheWholeMidiDomain()
+{
+    GhostEngine engine;
+    engine.prepare(44100.0, 256);
+    engine.setParameters(EngineParameters {});
+    for (int note = 0; note < 128; ++note)
+        engine.noteOn(note, 0.9f);
+    for (int note = 127; note >= 1; --note)
+        engine.noteOff(note);
+    check(engine.isGateOpen(),
+          "the oldest of 128 held keys still holds the gate open");
+    engine.noteOff(0);
+    check(!engine.isGateOpen(), "releasing the final held key closes the gate");
 }
 
 void testFullResonanceStaysBounded()
@@ -164,6 +222,8 @@ int main()
     testReleaseDecaysToSilence();
     testHeldKeyMemoryReturnsToOlderKey();
     testHostileRatesAreClamped();
+    testTopNoteAtLowestRateStaysAnOscillation();
+    testKeyMemorySpansTheWholeMidiDomain();
     testFullResonanceStaysBounded();
 
     if (failures != 0)

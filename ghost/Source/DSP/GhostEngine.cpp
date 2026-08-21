@@ -47,6 +47,11 @@ GhostEngine::GhostEngine() noexcept = default;
 void GhostEngine::prepare(double sampleRate, int maxBlockSize)
 {
     (void) maxBlockSize;
+    // std::clamp passes NaN through (its comparisons are all false), so a
+    // host reporting a non-finite rate must be caught before the clamp or
+    // every later division poisons the render.
+    if (!std::isfinite(sampleRate))
+        sampleRate = 44100.0;
     sampleRate_ = std::clamp(sampleRate, minimumSupportedSampleRate,
                              maximumSupportedSampleRate);
     reset();
@@ -88,13 +93,8 @@ void GhostEngine::noteOn(int midiNote, float velocity)
             break;
         }
     }
-    if (keyStackSize_ == keyStackCapacity)
-    {
-        for (int shift = 0; shift < keyStackSize_ - 1; ++shift)
-            keyStack_[static_cast<std::size_t>(shift)] =
-                keyStack_[static_cast<std::size_t>(shift + 1)];
-        --keyStackSize_;
-    }
+    // The stack spans the whole MIDI note domain and holds each note at most
+    // once, so after the deduplication above it cannot be full here.
     keyStack_[static_cast<std::size_t>(keyStackSize_)] =
         static_cast<std::int16_t>(midiNote);
     ++keyStackSize_;
@@ -163,10 +163,17 @@ void GhostEngine::process(float* left, float* right, int numSamples)
     const double releaseCoefficient =
         1.0 - std::exp(-dt / (releaseSeconds / 3.0));
 
+    // The top MIDI notes exceed Nyquist at the lowest supported host rates
+    // (note 127 is ~12.5 kHz against an 8 kHz host), which would push the
+    // phase step past a whole cycle per sample. The oscillator is bounded
+    // below Nyquist instead, where the PolyBLEP correction's assumptions
+    // hold.
+    const double maximumOscillatorHz = 0.45 * sampleRate_;
     const double baseHz =
         currentNote_ >= 0
-            ? midiToHz(static_cast<double>(currentNote_)
-                       + 2.0 * static_cast<double>(pitchBend_))
+            ? std::min(midiToHz(static_cast<double>(currentNote_)
+                                + 2.0 * static_cast<double>(pitchBend_)),
+                       maximumOscillatorHz)
             : 0.0;
 
     const double cutoffHz =
@@ -217,8 +224,7 @@ void GhostEngine::process(float* left, float* right, int numSamples)
             saw = static_cast<float>(2.0 * oscPhase_ - 1.0)
                 - polyBlep(oscPhase_, phaseStep);
             oscPhase_ += phaseStep;
-            if (oscPhase_ >= 1.0)
-                oscPhase_ -= 1.0;
+            oscPhase_ -= std::floor(oscPhase_);
         }
 
         // Linear zero-delay-feedback ladder; the researched filter model

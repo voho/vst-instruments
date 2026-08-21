@@ -363,7 +363,12 @@ bool ownsDirectory(const std::filesystem::path& directory)
     std::ifstream input(readmePath, std::ios::binary);
     const std::string readme((std::istreambuf_iterator<char>(input)),
                              std::istreambuf_iterator<char>());
-    return readme.find(peaksTableBegin) != std::string::npos;
+    // Both markers, in order: a truncated or conflict-mangled README that
+    // kept only the begin marker must not authorise deleting anything.
+    const auto beginPos = readme.find(peaksTableBegin);
+    const auto endPos = readme.find(peaksTableEnd);
+    return beginPos != std::string::npos && endPos != std::string::npos
+        && beginPos < endPos;
 }
 
 // A demo removed from or renamed in the tables above must also disappear from
