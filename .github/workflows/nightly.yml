@@ -145,10 +145,11 @@ jobs:
             # ran, these WAVs describe the older model; publishing them would
             # be wrong, and the next nightly will render the newer tree.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                vocalor drumalor neuramar electry taikor youknow106 \
+                vocalor drumalor neuramar electry taikor youknow106 ghost \
                 ':(exclude)vocalor/Docs' ':(exclude)drumalor/Docs' \
                 ':(exclude)neuramar/Docs' ':(exclude)electry/Docs' \
-                ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs'; then
+                ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs' \
+                ':(exclude)ghost/Docs'; then
               echo "An instrument changed upstream during the render; deferring to the next nightly."
               exit 0
             fi

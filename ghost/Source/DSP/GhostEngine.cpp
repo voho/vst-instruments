@@ -140,6 +140,17 @@ namespace
             return fallback;
         return std::clamp(value, 0.0f, 1.0f);
     }
+
+    // A switch enum smuggled in out of range (a corrupted preset, a hostile
+    // host) must not index past a lookup table; it falls back to the
+    // power-on detent instead.
+    template <typename Enum>
+    [[nodiscard]] Enum sanitisedSwitch(Enum value, int positionCount,
+                                       Enum fallback) noexcept
+    {
+        const int raw = static_cast<int>(value);
+        return raw < 0 || raw >= positionCount ? fallback : value;
+    }
 } // namespace
 
 GhostEngine::GhostEngine() noexcept = default;
@@ -181,6 +192,7 @@ void GhostEngine::reset()
     keyGate_ = false;
     currentNote_ = -1;
     pendingTrigger_ = false;
+    pendingShaperTrigger_ = false;
     pitchBend_ = 0.0f;
     modWheel_ = 0.0f;
     shaperWheel_ = 0.0f;
@@ -277,6 +289,33 @@ void GhostEngine::setParameters(const EngineParameters& parameters)
     sane.shaperRate = travel(parameters.shaperRate, defaults.shaperRate);
     sane.glide = travel(parameters.glide, defaults.glide);
 
+    sane.octave = sanitisedSwitch(parameters.octave, 4, defaults.octave);
+    sane.oscAWaveform =
+        sanitisedSwitch(parameters.oscAWaveform, 6, defaults.oscAWaveform);
+    sane.oscBWaveform =
+        sanitisedSwitch(parameters.oscBWaveform, 6, defaults.oscBWaveform);
+    sane.oscBRange =
+        sanitisedSwitch(parameters.oscBRange, 6, defaults.oscBRange);
+    sane.lowerMode =
+        sanitisedSwitch(parameters.lowerMode, 4, defaults.lowerMode);
+    sane.slope = sanitisedSwitch(parameters.slope, 2, defaults.slope);
+    sane.upperResonance = sanitisedSwitch(parameters.upperResonance, 2,
+                                          defaults.upperResonance);
+    sane.tracking =
+        sanitisedSwitch(parameters.tracking, 2, defaults.tracking);
+    sane.trigger = sanitisedSwitch(parameters.trigger, 2, defaults.trigger);
+    sane.modSource =
+        sanitisedSwitch(parameters.modSource, 6, defaults.modSource);
+    sane.modXTo = sanitisedSwitch(parameters.modXTo, 6, defaults.modXTo);
+    sane.shaperYTo =
+        sanitisedSwitch(parameters.shaperYTo, 6, defaults.shaperYTo);
+    sane.shaperMode =
+        sanitisedSwitch(parameters.shaperMode, 4, defaults.shaperMode);
+    sane.arpeggiator =
+        sanitisedSwitch(parameters.arpeggiator, 4, defaults.arpeggiator);
+    sane.glideMode =
+        sanitisedSwitch(parameters.glideMode, 3, defaults.glideMode);
+
     parameters_ = sane;
     oscADuty_ = dutyFor(sane.oscAWaveform, true);
     oscBDuty_ = dutyFor(sane.oscBWaveform, false);
@@ -320,9 +359,10 @@ void GhostEngine::noteOn(int midiNote, float velocity)
 
     // MULTIPLE re-gates on every new key; SINGLE re-gates only after all
     // keys were released. The Shaper's RESET mode is always
-    // multiple-trigger, which pendingTrigger's consumer honours.
+    // multiple-trigger regardless of that switch, so it records every press.
     if (parameters_.trigger == TriggerMode::Multiple || firstKey)
         pendingTrigger_ = true;
+    pendingShaperTrigger_ = true;
 }
 
 void GhostEngine::noteOff(int midiNote)
@@ -539,9 +579,12 @@ void GhostEngine::advanceControls() noexcept
             || (p.gateYExt && shaperGate_));
     const bool gateRise = combinedGateNow && !previousGateForShaper_;
     // RESET mode is always multiple-trigger: every key press restarts it
-    // regardless of the TRIGGER switch.
+    // regardless of the TRIGGER switch — including a legato press under
+    // SINGLE, which never raises pendingTrigger_ or the gate edge.
     const bool shaperRetrigger =
-        gateRise || (p.shaperMode == ShaperMode::Reset && pendingTrigger_);
+        gateRise
+        || (p.shaperMode == ShaperMode::Reset && pendingShaperTrigger_);
+    pendingShaperTrigger_ = false;
 
     switch (p.shaperMode)
     {
@@ -821,10 +864,15 @@ void GhostEngine::advanceControls() noexcept
     // zero gain, so FREE mode's negative half-cycle is silent.
     controlShaperVcaGain_ = std::max(0.0, shaperLevel_);
 
-    // BRIGHTNESS: 100k log pot + 27 nF — ~59 Hz at full resistance,
-    // effectively open at zero.
+    // BRIGHTNESS: 100k log pot + 27 nF — ~59 Hz at full resistance, and the
+    // pot genuinely reaches zero at full travel, leaving only the residual
+    // series resistance (~17.9 kHz pole): the maximum setting is effectively
+    // open, not a shelf.
+    constexpr double brightnessFloor = 0.00316227766016838; // 10^-2.5
+    const double brightnessSpan =
+        std::pow(10.0, -2.5 * static_cast<double>(p.brightness));
     const double brightnessR =
-        100.0e3 * std::pow(10.0, -2.5 * static_cast<double>(p.brightness))
+        100.0e3 * (brightnessSpan - brightnessFloor) / (1.0 - brightnessFloor)
         + 330.0;
     const double brightnessHz =
         std::min(1.0 / (2.0 * pi * brightnessR * 27.0e-9),

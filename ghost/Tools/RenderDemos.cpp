@@ -988,6 +988,25 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    // Every destination name is checked before anything renders: a foreign
+    // directory holding only a *later* demo's name must be refused up front,
+    // not after the earlier takes have already landed in it.
+    if (!owned)
+    {
+        for (const auto& demo : demos())
+        {
+            if (entryExists(directory / demo.fileName))
+            {
+                std::fprintf(stderr,
+                             "%s already exists in a directory this renderer "
+                             "does not own; refusing to write anything "
+                             "there.\n",
+                             (directory / demo.fileName).string().c_str());
+                return 1;
+            }
+        }
+    }
+
     std::vector<RenderedLevel> levels;
 
     for (const auto& demo : demos())

@@ -20,9 +20,9 @@ render, so the documented levels can never drift from the committed WAVs.
 | `02-formant-brass.wav` | FORMANT tracking: a frozen lower-filter peak under articulated brass stabs | 10.2 s | −9.8 dBFS | +6.8 dB |
 | `03-overdrive-growl.wav` | The soft clipper between the filters on a two-oscillator bass riff | 8.4 s | −13.5 dBFS | +10.5 dB |
 | `04-sync-sweep.wav` | Hard sync: Shaper Y sweeps Osc B through the lock on every note | 8.4 s | −13.9 dBFS | +10.9 dB |
-| `05-ring-bells.wav` | The triangle-cross ring modulator's clangorous register | 10.5 s | −8.6 dBFS | +5.6 dB |
+| `05-ring-bells.wav` | The triangle-cross ring modulator's clangorous register | 10.5 s | −8.5 dBFS | +5.5 dB |
 | `06-leap-arpeggio.wav` | The LEAP arpeggiator cycling unison, up an octave, down an octave per note | 7.1 s | −15.7 dBFS | +12.7 dB |
-| `07-two-path-drone.wav` | Both audio paths split left/right: enveloped bass against a free-running ring-and-noise drone | 14.5 s | −13.6 dBFS | +10.6 dB |
+| `07-two-path-drone.wav` | Both audio paths split left/right: enveloped bass against a free-running ring-and-noise drone | 14.5 s | −13.5 dBFS | +10.5 dB |
 | `08-sample-hold-filter.wav` | S+H RANDOM stepping both filter cutoffs over a held fifth | 8.6 s | −13.3 dBFS | +10.3 dB |
 | `09-auto-glide-lead.wav` | AUTO glide legato lead with vibrato ridden in on the X wheel | 8.0 s | −14.3 dBFS | +11.3 dB |
 | `10-red-noise-drift.wav` | RED NOISE wander on both oscillators' pitch | 8.3 s | −12.1 dBFS | +9.1 dB |

@@ -318,6 +318,55 @@ void testNonFinitePerformanceControlsAreSanitised()
           "NaN performance controls do not silence the sounding note");
 }
 
+// A corrupted preset can hand setParameters() an out-of-range switch value;
+// it must fall back to the power-on detent instead of indexing a lookup
+// table out of bounds.
+void testOutOfRangeSwitchesAreSanitised()
+{
+    GhostEngine engine;
+    engine.prepare(44100.0, 256);
+    EngineParameters poisoned = brightPanel();
+    poisoned.octave = static_cast<ghost::MasterOctave>(-1);
+    poisoned.oscBRange = static_cast<ghost::OscBRange>(99);
+    poisoned.oscAWaveform = static_cast<ghost::Waveform>(-7);
+    poisoned.lowerMode = static_cast<ghost::LowerFilterMode>(12);
+    poisoned.shaperMode = static_cast<ghost::ShaperMode>(-3);
+    poisoned.arpeggiator = static_cast<ghost::ArpeggiatorMode>(8);
+    engine.setParameters(poisoned);
+    engine.noteOn(60, 0.9f);
+    const auto rendered = render(engine, 0.5, 44100.0);
+    check(finite(rendered), "out-of-range switches still render finite audio");
+    check(peak(rendered) > 1.0e-3,
+          "out-of-range switches fall back to sounding detents");
+}
+
+// RESET mode is always multiple-trigger: a legato second press under SINGLE
+// must restart the Shaper's cycle even though the ADSRs are not re-gated.
+void testShaperResetRetriggersOnLegatoPress()
+{
+    GhostEngine engine;
+    engine.prepare(44100.0, 256);
+    EngineParameters parameters;
+    parameters.filterPathA = 0.0f;
+    parameters.shaperPathA = 0.8f;
+    parameters.trigger = ghost::TriggerMode::Single;
+    parameters.shaperMode = ghost::ShaperMode::Reset;
+    parameters.shaperRate = 0.75f;   // a short single cycle
+    parameters.shaperShape = 0.5f;
+    engine.setParameters(parameters);
+
+    engine.noteOn(48, 0.9f);
+    render(engine, 1.5, 44100.0);   // the single cycle completes
+    const auto quiet = render(engine, 0.4, 44100.0);
+    check(peak(quiet) < 1.0e-3,
+          "the RESET cycle has finished and the Shaper path is silent");
+
+    engine.noteOn(55, 0.9f);        // legato: the first key is still held
+    const auto retriggered = render(engine, 0.4, 44100.0);
+    check(peak(retriggered) > 1.0e-3,
+          "a legato press under SINGLE restarts the RESET cycle");
+}
+
 void testFullResonanceStaysBounded()
 {
     GhostEngine marginal;
@@ -399,6 +448,8 @@ int main()
     testTopNoteAtLowestRateStaysBounded();
     testNonFiniteParametersAreSanitised();
     testNonFinitePerformanceControlsAreSanitised();
+    testOutOfRangeSwitchesAreSanitised();
+    testShaperResetRetriggersOnLegatoPress();
     testFullResonanceStaysBounded();
     testArpeggiatorStepsHeldKeys();
     testFasterThanRealtime();

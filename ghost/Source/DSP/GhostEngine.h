@@ -219,6 +219,10 @@ private:
     bool keyGate_ { false };
     int currentNote_ { -1 };
     bool pendingTrigger_ { false };
+    // RESET mode is always multiple-trigger regardless of the TRIGGER
+    // switch, so the Shaper needs its own record of every key press —
+    // pendingTrigger_ above answers to SINGLE/MULTIPLE and cannot serve.
+    bool pendingShaperTrigger_ { false };
 
     float pitchBend_ { 0.0f };
     float modWheel_ { 0.0f };
