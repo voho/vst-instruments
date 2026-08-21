@@ -654,6 +654,12 @@ void YouKnow201AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     }
     uiRead.store (read, std::memory_order_release);
 
+    if (uiLeverDirty.exchange (false, std::memory_order_acquire))
+    {
+        engine.setPitchBend (uiBend.load (std::memory_order_relaxed));
+        engine.setModulation (uiMod.load (std::memory_order_relaxed));
+    }
+
     engine.setMasterLevel ((int) std::lround (
         masterValue->load (std::memory_order_relaxed)));
     engine.setPatch (snapshotPatch());

@@ -61,6 +61,14 @@ public:
     }
     void triggerFromUi (int note, int velocity) noexcept;
     void releaseFromUi (int note) noexcept;
+    // The on-screen bend/modulation lever, mirroring the hardware's lever
+    // left of the keys. Applied on the audio thread each block.
+    void setLeverFromUi (float bendMinus1to1, float mod0to1) noexcept
+    {
+        uiBend.store (bendMinus1to1, std::memory_order_relaxed);
+        uiMod.store (mod0to1, std::memory_order_relaxed);
+        uiLeverDirty.store (true, std::memory_order_release);
+    }
 
     // Reads the current parameter values into an engine patch. Shared by the
     // audio thread and tests, so the two can never disagree.
@@ -106,6 +114,9 @@ private:
     std::array<UiNoteEvent, uiQueueCapacity> uiQueue {};
     std::atomic<unsigned> uiWrite { 0 };
     std::atomic<unsigned> uiRead { 0 };
+    std::atomic<float> uiBend { 0.0f };
+    std::atomic<float> uiMod { 0.0f };
+    std::atomic<bool> uiLeverDirty { false };
 
     JUCE_DECLARE_WEAK_REFERENCEABLE (YouKnow201AudioProcessor)
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (YouKnow201AudioProcessor)
