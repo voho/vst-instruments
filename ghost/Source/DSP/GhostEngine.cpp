@@ -526,10 +526,13 @@ void GhostEngine::handleArpClock() noexcept
             break;
     }
 
-    arpSoundingNote_ = std::clamp(
+    // The transposed value is an internal CV, not a MIDI event: clamping it
+    // to the MIDI domain would turn the documented octave step into seven
+    // semitones at the extremes. The oscillator already bounds its rendered
+    // frequency.
+    arpSoundingNote_ =
         static_cast<int>(sorted[static_cast<std::size_t>(noteIndex)])
-            + octaveOffset,
-        0, 127);
+        + octaveOffset;
     ++arpStep_;
 }
 
@@ -688,17 +691,27 @@ void GhostEngine::advanceControls() noexcept
         anyGateSelected && (pendingTrigger_ || gateRise) && combinedGateNow;
     pendingTrigger_ = false;
 
+    // Decay and release are ordinary exponentials, read as ~95 % settled
+    // (three time constants) inside the labelled 5 ms–10 s. The attack aims
+    // past its peak at 1.5 and ends at 1.0, which takes ln(3) time
+    // constants, so its coefficient is derived from that threshold — the
+    // labelled time is the actual time-to-peak, not 2.7x shorter.
     const auto segmentCoefficient = [dt](double travel) {
         const double seconds = exponentialTravel(travel, 0.005, 10.0);
-        return 1.0 - std::exp(-dt / (seconds / 3.0));
+        return 1.0 - std::exp(-dt * 3.0 / seconds);
+    };
+    const auto attackCoefficient = [dt](double travel) {
+        constexpr double lnThree = 1.0986122886681098;
+        const double seconds = exponentialTravel(travel, 0.005, 10.0);
+        return 1.0 - std::exp(-dt * lnThree / seconds);
     };
     advanceEnvelope(filterEnvelope_, combinedGateNow, triggerPulse,
-                    segmentCoefficient(p.filterAttack),
+                    attackCoefficient(p.filterAttack),
                     segmentCoefficient(p.filterDecay),
                     segmentCoefficient(p.filterRelease),
                     static_cast<double>(p.filterSustain));
     advanceEnvelope(loudnessEnvelope_, combinedGateNow, triggerPulse,
-                    segmentCoefficient(p.loudnessAttack),
+                    attackCoefficient(p.loudnessAttack),
                     segmentCoefficient(p.loudnessDecay),
                     segmentCoefficient(p.loudnessRelease),
                     static_cast<double>(p.loudnessSustain));
@@ -1010,9 +1023,12 @@ void GhostEngine::renderVoiceSample() noexcept
 
     // Upper filter: 24 dB cascades two sections (the first held at the LOW
     // Q; the second carries the control — voiced split, OQ-09); 12 dB is the
-    // controlled section alone.
+    // controlled section alone. The first section always advances so its
+    // state stays live across slope switches, like the lower section's.
+    const double upperFirstLp =
+        runSection(upperFirst_, filterPath, upperG, 2.0).lp;
     if (p.slope == UpperSlope::TwentyFourDb)
-        filterPath = runSection(upperFirst_, filterPath, upperG, 2.0).lp;
+        filterPath = upperFirstLp;
     filterPath =
         runSection(upperSecond_, filterPath, upperG, controlUpperK_).lp;
 

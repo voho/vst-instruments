@@ -436,6 +436,61 @@ void testArpeggiatorStepsHeldKeys()
           "the arpeggiator moves between held pitches");
 }
 
+// The labelled attack time is the actual time-to-peak: at a half-second
+// setting the level must still be climbing shortly before the half-second
+// mark and at full level shortly after it.
+void testAttackReachesPeakAtItsLabelledTime()
+{
+    GhostEngine engine;
+    engine.prepare(44100.0, 256);
+    auto parameters = brightPanel();
+    // 0.5 s on the 5 ms - 10 s exponential: travel = ln(100)/ln(2000).
+    parameters.loudnessAttack = 0.6059f;
+    parameters.loudnessSustain = 1.0f;
+    engine.setParameters(parameters);
+    engine.noteOn(48, 0.9f);
+
+    render(engine, 0.30, 44100.0);
+    const auto climbing = render(engine, 0.10, 44100.0);   // 0.30..0.40 s
+    render(engine, 0.15, 44100.0);
+    const auto peaked = render(engine, 0.10, 44100.0);     // 0.55..0.65 s
+    const double climbingLevel = rms(climbing);
+    const double peakedLevel = rms(peaked);
+    check(peakedLevel > 1.0e-3, "the attack reaches an audible peak");
+    check(climbingLevel < 0.9 * peakedLevel,
+          "the level is still climbing well before the labelled attack time");
+    render(engine, 0.2, 44100.0);
+    const auto settled = render(engine, 0.10, 44100.0);
+    check(std::abs(rms(settled) - peakedLevel) < 0.08 * peakedLevel,
+          "the level is at its peak just after the labelled attack time");
+}
+
+// The arpeggiator's octave steps are internal CV, not MIDI events: a held
+// note near the top of the MIDI range must still step a full octave up.
+void testArpOctaveStepsSurviveTheMidiCeiling()
+{
+    GhostEngine engine;
+    engine.prepare(48000.0, 256);
+    auto parameters = brightPanel();
+    parameters.arpeggiator = ghost::ArpeggiatorMode::Leap;
+    parameters.lfoRate = 0.55f;
+    engine.setParameters(parameters);
+    engine.noteOn(120, 0.9f);   // ~8372 Hz; +1 octave exceeds MIDI 127
+    render(engine, 0.4, 48000.0);
+
+    double maximumWindowHz = 0.0;
+    for (int window = 0; window < 24; ++window)
+    {
+        const auto slice = render(engine, 0.05, 48000.0);
+        maximumWindowHz =
+            std::max(maximumWindowHz, zeroCrossingHz(slice.left, 48000.0));
+    }
+    // The octave above note 120 is ~16.7 kHz; a MIDI-clamped step (note 127)
+    // would top out near 12.5 kHz.
+    check(maximumWindowHz > 14000.0,
+          "the up-octave step above MIDI 127 keeps its full octave");
+}
+
 void testFasterThanRealtime()
 {
     GhostEngine engine;
@@ -477,6 +532,8 @@ int main()
     testShaperResetSelfGateCompletesItsCycle();
     testFullResonanceStaysBounded();
     testArpeggiatorStepsHeldKeys();
+    testAttackReachesPeakAtItsLabelledTime();
+    testArpOctaveStepsSurviveTheMidiCeiling();
     testFasterThanRealtime();
 
     if (failures != 0)
