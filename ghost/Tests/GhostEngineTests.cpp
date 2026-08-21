@@ -491,6 +491,53 @@ void testArpOctaveStepsSurviveTheMidiCeiling()
           "the up-octave step above MIDI 127 keeps its full octave");
 }
 
+// With X auto-repeat as the only gate source, a key press changes pitch but
+// must not articulate: the trigger chain derives from the selected bus, and
+// the keyboard is not on it.
+void testKeyPressDoesNotRetriggerWithoutKbdGate()
+{
+    GhostEngine engine;
+    engine.prepare(44100.0, 256);
+    auto parameters = brightPanel();
+    parameters.gateKbd = false;
+    parameters.gateX = true;
+    parameters.lfoRate = 0.1f;        // ~0.5 Hz: a long high half-cycle
+    parameters.loudnessAttack = 0.0f;
+    parameters.loudnessDecay = 0.25f;
+    parameters.loudnessSustain = 0.25f;
+    engine.setParameters(parameters);
+    engine.noteOn(48, 0.9f);
+
+    // The X edge articulates at t=0; by 0.5 s the envelope sits at sustain.
+    render(engine, 0.5, 44100.0);
+    const auto before = render(engine, 0.15, 44100.0);
+    engine.noteOn(60, 0.9f);          // mid-high-cycle press: pitch only
+    const auto after = render(engine, 0.15, 44100.0);
+    check(rms(before) > 1.0e-4, "X auto-repeat articulates on its own clock");
+    check(rms(after) < 1.3 * rms(before),
+          "a key press with KBD deselected does not re-articulate");
+}
+
+// The arpeggiator's first sounding note is the bottom of the scan, from the
+// very first clock edge — not the last-pressed key for a whole period.
+void testArpFirstStepIsTheScanBottom()
+{
+    GhostEngine engine;
+    engine.prepare(48000.0, 256);
+    auto parameters = brightPanel();
+    parameters.arpeggiator = ghost::ArpeggiatorMode::Ripple;
+    parameters.lfoRate = 0.0f;        // the slowest clock: one step for ~3 s
+    engine.setParameters(parameters);
+    engine.noteOn(48, 0.9f);
+    engine.noteOn(55, 0.9f);
+    engine.noteOn(64, 0.9f);          // last-pressed is the highest key
+    render(engine, 0.1, 48000.0);
+    const auto opening = render(engine, 0.4, 48000.0);
+    const double hz = zeroCrossingHz(opening.left, 48000.0);
+    check(std::abs(hz - 130.8) < 6.0,
+          "the opening arpeggio step is the lowest held key");
+}
+
 void testFasterThanRealtime()
 {
     GhostEngine engine;
@@ -534,6 +581,8 @@ int main()
     testArpeggiatorStepsHeldKeys();
     testAttackReachesPeakAtItsLabelledTime();
     testArpOctaveStepsSurviveTheMidiCeiling();
+    testKeyPressDoesNotRetriggerWithoutKbdGate();
+    testArpFirstStepIsTheScanBottom();
     testFasterThanRealtime();
 
     if (failures != 0)

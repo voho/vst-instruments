@@ -737,12 +737,30 @@ int runSmokeTest(const std::filesystem::path& directory)
                      path.string().c_str());
         return 1;
     }
-    const auto size = std::filesystem::file_size(path, error);
-    std::filesystem::remove(path, error);
+    std::error_code sizeError;
+    const auto size = std::filesystem::file_size(path, sizeError);
+    std::error_code removeError;
+    const bool removed = std::filesystem::remove(path, removeError);
+    if (sizeError)
+    {
+        std::fprintf(stderr,
+                     "smoke test: could not stat %s: %s\n",
+                     path.string().c_str(), sizeError.message().c_str());
+        return 1;
+    }
     if (size < 44u + take.left().size() * 4u)
     {
         std::fprintf(stderr, "smoke test: short WAV (%llu bytes)\n",
                      static_cast<unsigned long long>(size));
+        return 1;
+    }
+    // A leftover smoke.wav would trip the next run's collision guard, so a
+    // failed cleanup is a failure now rather than a mystery later.
+    if (!removed || removeError)
+    {
+        std::fprintf(stderr,
+                     "smoke test: could not remove %s: %s\n",
+                     path.string().c_str(), removeError.message().c_str());
         return 1;
     }
 
@@ -769,7 +787,12 @@ constexpr const char* peaksTableEnd = "<!-- peaks-table-end -->";
 bool ownsDirectory(const std::filesystem::path& directory)
 {
     const auto readmePath = directory / "README.md";
-    if (!std::filesystem::exists(readmePath))
+    // The ownership proof must be a local regular file: a symlink pointing
+    // at a genuine manifest elsewhere would otherwise deputise an unrelated
+    // directory for deletion and overwriting.
+    std::error_code statusError;
+    if (std::filesystem::symlink_status(readmePath, statusError).type()
+        != std::filesystem::file_type::regular)
         return false;
 
     std::ifstream input(readmePath, std::ios::binary);

@@ -221,6 +221,7 @@ void GhostEngine::reset()
 
     lfoPhase_ = 0.0;
     lfoSquareHigh_ = false;
+    previousLfoSquareHigh_ = false;
     redNoiseState_ = 0.0;
     sampleHoldValue_ = 0.0;
     noiseSeed_ = 0x9e3779b9u;
@@ -556,15 +557,17 @@ void GhostEngine::advanceControls() noexcept
     }
 
     lfoPhase_ += lfoHz * dt;
-    bool lfoWrapped = false;
     if (lfoPhase_ >= 1.0)
-    {
         lfoPhase_ -= std::floor(lfoPhase_);
-        lfoWrapped = true;
-    }
     const double lfoTriangle = triangleWave(lfoPhase_);
     lfoSquareHigh_ = lfoPhase_ < 0.5;
     const double lfoSquare = lfoSquareHigh_ ? 1.0 : -1.0;
+    // The S&H and arpeggiator clock on the square's rising edge — including
+    // the very first one after a reset, so the arpeggiator's opening step is
+    // the documented bottom-of-the-scan note, not a full clock period of the
+    // last-pressed key.
+    const bool clockEdge = lfoSquareHigh_ && !previousLfoSquareHigh_;
+    previousLfoSquareHigh_ = lfoSquareHigh_;
 
     // Red noise: slow continuous random (about 1.5 Hz pole, gain restored).
     noiseSeed_ = noiseSeed_ * 1664525u + 1013904223u;
@@ -575,7 +578,7 @@ void GhostEngine::advanceControls() noexcept
     redNoiseState_ += redCoefficient * (white - redNoiseState_);
     const double redNoise = std::clamp(redNoiseState_ * 18.0, -1.0, 1.0);
 
-    if (lfoWrapped)
+    if (clockEdge)
     {
         sampleHoldValue_ = p.modSource == ModSource::SampleHoldY
                                ? shaperLevel_
@@ -687,8 +690,12 @@ void GhostEngine::advanceControls() noexcept
     shaperGate_ = shaperLevel_ > 0.01;
 
     // ------------------------------------------------------------ Envelopes
-    const bool triggerPulse =
-        anyGateSelected && (pendingTrigger_ || gateRise) && combinedGateNow;
+    // A key press articulates only through the keyboard's own gate source:
+    // with KBD deselected, the trigger chain never sees the press, and X
+    // auto-repeat articulates on its clock alone — as the hardware's
+    // selected-bus trigger derivation behaves.
+    const bool triggerPulse = anyGateSelected && combinedGateNow
+        && ((pendingTrigger_ && p.gateKbd) || gateRise);
     pendingTrigger_ = false;
 
     // Decay and release are ordinary exponentials, read as ~95 % settled

@@ -23,7 +23,7 @@ render, so the documented levels can never drift from the committed WAVs.
 | `05-ring-bells.wav` | The triangle-cross ring modulator's clangorous register | 10.5 s | −8.5 dBFS | +5.5 dB |
 | `06-leap-arpeggio.wav` | The LEAP arpeggiator cycling unison, up an octave, down an octave per note | 7.1 s | −15.8 dBFS | +12.8 dB |
 | `07-two-path-drone.wav` | Both audio paths split left/right: enveloped bass against a free-running ring-and-noise drone | 14.5 s | −13.6 dBFS | +10.6 dB |
-| `08-sample-hold-filter.wav` | S+H RANDOM stepping both filter cutoffs over a held fifth | 8.6 s | −13.4 dBFS | +10.4 dB |
+| `08-sample-hold-filter.wav` | S+H RANDOM stepping both filter cutoffs over a held fifth | 8.6 s | −13.3 dBFS | +10.3 dB |
 | `09-auto-glide-lead.wav` | AUTO glide legato lead with vibrato ridden in on the X wheel | 8.0 s | −14.2 dBFS | +11.2 dB |
 | `10-red-noise-drift.wav` | RED NOISE wander on both oscillators' pitch | 8.3 s | −12.2 dBFS | +9.2 dB |
 <!-- peaks-table-end -->

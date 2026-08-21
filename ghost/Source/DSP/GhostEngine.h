@@ -234,6 +234,7 @@ private:
 
     double lfoPhase_ { 0.0 };
     bool lfoSquareHigh_ { false };
+    bool previousLfoSquareHigh_ { false };
     double redNoiseState_ { 0.0 };
     double sampleHoldValue_ { 0.0 };
     std::uint32_t noiseSeed_ { 0x9e3779b9u };
