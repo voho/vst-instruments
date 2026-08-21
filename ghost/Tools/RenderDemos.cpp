@@ -618,6 +618,21 @@ int main(int argc, char** argv)
     // not replace a colliding file any more than it may remove one.
     const bool owned = ownsDirectory(directory);
 
+    // A README without the manifest markers means somebody else's directory
+    // with somebody else's documentation. Failing here, before the first WAV
+    // is written, keeps a doomed run from polluting it — the table update at
+    // the end would reject that README anyway, but only after the demos had
+    // already landed. A directory with no README at all stays usable as an
+    // ad-hoc output target.
+    if (!owned && std::filesystem::exists(directory / "README.md"))
+    {
+        std::fprintf(stderr,
+                     "%s has a README that is not this renderer's manifest; "
+                     "no demos will be written there.\n",
+                     directory.string().c_str());
+        return 1;
+    }
+
     std::vector<RenderedLevel> levels;
 
     for (const auto& demo : demos())
