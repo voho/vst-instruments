@@ -57,6 +57,7 @@ jobs:
             "electry:ElectryRenderDemos:14"
             "taikor:TaikorRenderDemos:27"
             "youknow106:YouKnow106RenderDemos:10"
+            "ghost:GhostRenderDemos:10"
           )
 
           # A failed instrument contributes nothing to the commit below. The
@@ -129,7 +130,7 @@ jobs:
           # which git diff alone would not see.
           git add -A vocalor/Docs/audio drumalor/Docs/audio \
             neuramar/Docs/audio electry/Docs/audio taikor/Docs/audio \
-            youknow106/Docs/audio
+            youknow106/Docs/audio ghost/Docs/audio
           if git diff --cached --quiet; then
             echo "Demo audio is unchanged; nothing to commit."
             exit 0
@@ -144,10 +145,11 @@ jobs:
             # ran, these WAVs describe the older model; publishing them would
             # be wrong, and the next nightly will render the newer tree.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                vocalor drumalor neuramar electry taikor youknow106 \
+                vocalor drumalor neuramar electry taikor youknow106 ghost \
                 ':(exclude)vocalor/Docs' ':(exclude)drumalor/Docs' \
                 ':(exclude)neuramar/Docs' ':(exclude)electry/Docs' \
-                ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs'; then
+                ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs' \
+                ':(exclude)ghost/Docs'; then
               echo "An instrument changed upstream during the render; deferring to the next nightly."
               exit 0
             fi
