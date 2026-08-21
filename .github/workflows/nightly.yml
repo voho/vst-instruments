@@ -57,6 +57,7 @@ jobs:
             "electry:ElectryRenderDemos:14"
             "taikor:TaikorRenderDemos:27"
             "youknow106:YouKnow106RenderDemos:10"
+            "youknow201:YouKnow201RenderDemos:10"
             "ghost:GhostRenderDemos:10"
           )
 
@@ -130,7 +131,7 @@ jobs:
           # which git diff alone would not see.
           git add -A vocalor/Docs/audio drumalor/Docs/audio \
             neuramar/Docs/audio electry/Docs/audio taikor/Docs/audio \
-            youknow106/Docs/audio ghost/Docs/audio
+            youknow106/Docs/audio youknow201/Docs/audio ghost/Docs/audio
           if git diff --cached --quiet; then
             echo "Demo audio is unchanged; nothing to commit."
             exit 0
@@ -145,11 +146,12 @@ jobs:
             # ran, these WAVs describe the older model; publishing them would
             # be wrong, and the next nightly will render the newer tree.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                vocalor drumalor neuramar electry taikor youknow106 ghost \
+                vocalor drumalor neuramar electry taikor youknow106 \
+                youknow201 ghost \
                 ':(exclude)vocalor/Docs' ':(exclude)drumalor/Docs' \
                 ':(exclude)neuramar/Docs' ':(exclude)electry/Docs' \
                 ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs' \
-                ':(exclude)ghost/Docs'; then
+                ':(exclude)youknow201/Docs' ':(exclude)ghost/Docs'; then
               echo "An instrument changed upstream during the render; deferring to the next nightly."
               exit 0
             fi
@@ -208,6 +210,9 @@ jobs:
           - name: YouKnow106
             directory: youknow106
             snapshot_variable: YOUKNOW106_EDITOR_SNAPSHOT
+          - name: YouKnow201
+            directory: youknow201
+            snapshot_variable: YOUKNOW201_EDITOR_SNAPSHOT
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -339,6 +344,9 @@ jobs:
           - name: YouKnow106
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
+          - name: YouKnow201
+            directory: youknow201
+            build_plugin_option: YOUKNOW201_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -424,6 +432,9 @@ jobs:
           - name: YouKnow106
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
+          - name: YouKnow201
+            directory: youknow201
+            build_plugin_option: YOUKNOW201_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -507,7 +518,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=()
-          for directory in vocalor drumalor neuramar electry taikor youknow106; do
+          for directory in vocalor drumalor neuramar electry taikor youknow106 youknow201; do
             rendered="rendered-screenshots/${directory}-standalone.png"
             if [[ -s "$rendered" ]]; then
               mkdir -p "${directory}/Docs/screenshots"
@@ -536,7 +547,7 @@ jobs:
           # brand-new instrument whose build failed cannot cost the others
           # their commit.
           paths=()
-          for directory in vocalor drumalor neuramar electry taikor youknow106; do
+          for directory in vocalor drumalor neuramar electry taikor youknow106 youknow201; do
             if [[ -d "${directory}/Docs/screenshots" ]]; then
               paths+=("${directory}/Docs/screenshots")
             fi
@@ -563,10 +574,11 @@ jobs:
             # churn (including the audio job's own commit) does not invalidate a
             # render, so it does not defer the push.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                vocalor drumalor neuramar electry taikor youknow106 \
+                vocalor drumalor neuramar electry taikor youknow106 youknow201 \
                 ':(exclude)vocalor/Docs' ':(exclude)drumalor/Docs' \
                 ':(exclude)neuramar/Docs' ':(exclude)electry/Docs' \
-                ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs'; then
+                ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs' \
+                ':(exclude)youknow201/Docs'; then
               echo "Instrument code changed upstream during the build; deferring the screenshot refresh to the next nightly."
               exit 0
             fi
@@ -616,11 +628,11 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Check the twenty-four-file manifest
+      - name: Check the twenty-eight-file manifest
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for product in Vocalor Drumalor Neuramar Electry Taikor YouKnow106; do
+          for product in Vocalor Drumalor Neuramar Electry Taikor YouKnow106 YouKnow201; do
             # Deliberately expand this glob so the array contains every match.
             # shellcheck disable=SC2206
             mac_zips=(dist/${product}-*-macOS-universal.zip)
@@ -650,15 +662,15 @@ jobs:
             done
           done
           assets=(dist/*)
-          if (( ${#assets[@]} != 24 )); then
-            echo "error: expected exactly twenty-four release assets, found ${#assets[@]}" >&2
+          if (( ${#assets[@]} != 28 )); then
+            echo "error: expected exactly twenty-eight release assets, found ${#assets[@]}" >&2
             printf '  %s\n' "${assets[@]:-(none)}" >&2
             exit 1
           fi
           printf 'Release asset: %s\n' "${assets[@]}"
 
       # Retained on the workflow run itself (downloadable by anyone with repo
-      # access), as one complete set rather than six per-instrument artifacts.
+      # access), as one complete set rather than seven per-instrument artifacts.
       - name: Upload workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
