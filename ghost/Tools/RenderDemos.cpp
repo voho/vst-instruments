@@ -25,8 +25,20 @@
 
 namespace
 {
+using ghost::ArpeggiatorMode;
 using ghost::EngineParameters;
 using ghost::GhostEngine;
+using ghost::GlideMode;
+using ghost::LowerFilterMode;
+using ghost::ModSource;
+using ghost::ModXDestination;
+using ghost::OscBRange;
+using ghost::ShaperMode;
+using ghost::ShaperYDestination;
+using ghost::TrackingMode;
+using ghost::TriggerMode;
+using ghost::UpperResonanceMode;
+using ghost::Waveform;
 
 // 44.1 kHz 16-bit is what a listener's browser, phone and DAW all handle
 // without conversion, and it is the rate the instrument is most often used at.
@@ -192,7 +204,8 @@ public:
     void on(int note, float velocity = 1.0f) { engine_->noteOn(note, velocity); }
     void off(int note) { engine_->noteOff(note); }
     void bend(float amount) { engine_->setPitchBend(amount); }
-    void wheel(float amount) { engine_->setModWheel(amount); }
+    void xWheel(float amount) { engine_->setModWheel(amount); }
+    void yWheel(float amount) { engine_->setShaperWheel(amount); }
 
     // Strike a key, hold it for `holdSeconds`, release it, then let it ring
     // for `gapSeconds` before returning.
@@ -202,6 +215,18 @@ public:
         rest(holdSeconds);
         off(note);
         rest(gapSeconds);
+    }
+
+    void chordOn(std::initializer_list<int> notes)
+    {
+        for (const int note : notes)
+            on(note);
+    }
+
+    void chordOff(std::initializer_list<int> notes)
+    {
+        for (const int note : notes)
+            off(note);
     }
 
     void rest(double seconds) { render(seconds); }
@@ -299,10 +324,22 @@ private:
     std::vector<float> right_;
 };
 
-// The panel every score starts from.
+// The panel every score starts from: saw A into the Filter/ADSR path, the
+// upper filter well open, keyboard gating, everything else at rest.
 EngineParameters plainPanel()
 {
     EngineParameters parameters;
+    parameters.filterPathA = 0.8f;
+    parameters.cutoff = 0.62f;
+    parameters.resonance = 0.1f;
+    parameters.kbAmount = 0.4f;
+    parameters.filterEnvAmount = 0.62f;
+    parameters.filterDecay = 0.5f;
+    parameters.filterSustain = 0.35f;
+    parameters.loudnessAttack = 0.02f;
+    parameters.loudnessDecay = 0.5f;
+    parameters.loudnessSustain = 0.75f;
+    parameters.loudnessRelease = 0.35f;
     return parameters;
 }
 
@@ -310,23 +347,298 @@ EngineParameters plainPanel()
 // The takes
 // ---------------------------------------------------------------------------
 
-// Placeholder take proving the render path end to end; the researched model
-// replaces the whole table.
-Take renderSkeletonVoice()
+// The signature: the lower filter's parametric boost slid against the upper
+// lowpass — the relative-offset "vocal" register the dual filter is famous
+// for. The LOWER ONLY control moves during held chords.
+Take renderDualFilterVocal()
 {
     auto parameters = plainPanel();
+    parameters.oscAWaveform = Waveform::Sawtooth;
+    parameters.filterPathB = 0.55f;
+    parameters.interval = 0.53f;   // the manual's warmth detune
+    parameters.lowerMode = LowerFilterMode::BandPass;
+    parameters.resonance = 0.72f;
     parameters.cutoff = 0.55f;
-    parameters.envToCutoff = 0.4f;
-    parameters.attack = 0.0f;
-    parameters.decay = 0.5f;
-    parameters.sustain = 0.6f;
-    parameters.release = 0.35f;
+    parameters.lowerOnly = 0.35f;
+    parameters.filterEnvAmount = 0.55f;
     Take take(parameters);
 
-    take.rest(0.10);
-    take.hit(36, 0.9f, 0.5, 0.3);
-    take.hit(43, 0.9f, 0.5, 0.3);
-    take.hit(48, 0.9f, 0.9, 1.6);
+    take.rest(0.1);
+    take.on(45);
+    take.on(52);
+    for (int step = 0; step <= 24; ++step)
+    {
+        parameters.lowerOnly = 0.30f + 0.02f * static_cast<float>(step);
+        take.setParameters(parameters);
+        take.rest(0.16);
+    }
+    take.off(45);
+    take.off(52);
+    take.rest(0.4);
+    parameters.lowerOnly = 0.45f;
+    take.setParameters(parameters);
+    take.hit(41, 1.0f, 1.6, 0.2);
+    take.hit(48, 1.0f, 2.2, 2.0);
+    return take;
+}
+
+// FORMANT tracking: the lower filter frozen as a fixed vocal-tract peak
+// while the upper filter articulates — the starred brass configuration.
+Take renderFormantBrass()
+{
+    auto parameters = plainPanel();
+    parameters.lowerMode = LowerFilterMode::BandPass;
+    parameters.tracking = TrackingMode::Formant;
+    parameters.upperResonance = UpperResonanceMode::Low;
+    parameters.resonance = 0.8f;
+    parameters.cutoff = 0.48f;
+    parameters.lowerOnly = 0.62f;
+    parameters.kbAmount = 0.55f;
+    parameters.filterEnvAmount = 0.72f;
+    parameters.filterAttack = 0.22f;
+    parameters.filterDecay = 0.55f;
+    parameters.filterSustain = 0.55f;
+    parameters.loudnessAttack = 0.12f;
+    Take take(parameters);
+
+    take.rest(0.1);
+    take.hit(48, 1.0f, 0.7, 0.12);
+    take.hit(50, 1.0f, 0.7, 0.12);
+    take.hit(52, 1.0f, 0.7, 0.12);
+    take.hit(48, 1.0f, 1.1, 0.3);
+    take.hit(43, 1.0f, 1.3, 0.3);
+    take.hit(45, 1.0f, 2.4, 2.2);
+    return take;
+}
+
+// OVERDRIVE: the soft clipper between the filters, re-filtered by the upper
+// lowpass — the fuzz-y, raunchy register on a bass riff.
+Take renderOverdriveGrowl()
+{
+    auto parameters = plainPanel();
+    parameters.oscAWaveform = Waveform::Sawtooth;
+    parameters.filterPathB = 0.7f;
+    parameters.oscBRange = OscBRange::MinusOne;
+    parameters.lowerMode = LowerFilterMode::Overdrive;
+    parameters.resonance = 0.55f;
+    parameters.cutoff = 0.42f;
+    parameters.lowerOnly = 0.55f;
+    parameters.filterEnvAmount = 0.68f;
+    parameters.filterDecay = 0.42f;
+    parameters.filterSustain = 0.2f;
+    parameters.loudnessAttack = 0.0f;
+    parameters.loudnessSustain = 0.85f;
+    Take take(parameters);
+
+    take.rest(0.1);
+    const int riff[] = { 33, 33, 36, 33, 31, 33, 40, 38 };
+    for (int pass = 0; pass < 2; ++pass)
+        for (const int note : riff)
+            take.hit(note, 1.0f, 0.21, 0.07);
+    take.hit(33, 1.0f, 1.8, 2.0);
+    return take;
+}
+
+// Hard sync: B alone is heard while the Shaper Y RUN envelope sweeps B's
+// pitch through the lock every note — the classic tearing sync voice.
+Take renderSyncSweep()
+{
+    auto parameters = plainPanel();
+    parameters.filterPathA = 0.0f;
+    parameters.filterPathB = 0.8f;
+    parameters.sync = true;
+    parameters.interval = 0.8f;
+    parameters.cutoff = 0.75f;
+    parameters.filterEnvAmount = 0.5f;
+    parameters.shaperMode = ShaperMode::Reset;
+    parameters.shaperRate = 0.62f;
+    parameters.shaperShape = 0.15f;
+    parameters.shaperYTo = ShaperYDestination::OscB;
+    parameters.gateKbd = true;
+    Take take(parameters);
+
+    take.yWheel(0.85f);
+    take.rest(0.1);
+    take.hit(45, 1.0f, 1.1, 0.15);
+    take.hit(48, 1.0f, 1.1, 0.15);
+    take.hit(43, 1.0f, 1.1, 0.15);
+    take.hit(45, 1.0f, 2.6, 2.0);
+    return take;
+}
+
+// The ring modulator's clangorous register, on the Shaper path with KBD
+// HOLD shaping and a slightly offset Osc B for inharmonic partials.
+Take renderRingBells()
+{
+    EngineParameters parameters;
+    parameters.shaperPathRing = 0.85f;
+    parameters.shaperPathA = 0.15f;
+    parameters.brightness = 0.8f;
+    parameters.oscBRange = OscBRange::PlusOne;
+    parameters.interval = 0.68f;
+    parameters.shaperMode = ShaperMode::Reset;
+    parameters.shaperRate = 0.35f;
+    parameters.shaperShape = 0.05f;
+    parameters.gateKbd = true;
+    Take take(parameters);
+
+    take.rest(0.1);
+    take.hit(60, 1.0f, 1.4, 0.4);
+    take.hit(67, 1.0f, 1.4, 0.4);
+    take.hit(63, 1.0f, 1.4, 0.4);
+    take.hit(55, 1.0f, 2.6, 2.4);
+    return take;
+}
+
+// The LEAP arpeggiator: each successive note cycles through unison, up an
+// octave, down an octave — with X gating every step.
+Take renderLeapArpeggio()
+{
+    auto parameters = plainPanel();
+    parameters.arpeggiator = ArpeggiatorMode::Leap;
+    parameters.lfoRate = 0.62f;
+    parameters.gateKbd = false;
+    parameters.gateX = true;
+    parameters.cutoff = 0.5f;
+    parameters.resonance = 0.45f;
+    parameters.filterEnvAmount = 0.68f;
+    parameters.filterDecay = 0.35f;
+    parameters.filterSustain = 0.1f;
+    parameters.loudnessAttack = 0.0f;
+    parameters.loudnessDecay = 0.4f;
+    parameters.loudnessSustain = 0.4f;
+    Take take(parameters);
+
+    take.rest(0.1);
+    take.on(45);
+    take.on(52);
+    take.on(57);
+    take.rest(6.2);
+    take.off(45);
+    take.off(52);
+    take.off(57);
+    take.rest(0.8);
+    return take;
+}
+
+// Both paths at once: an enveloped bass line on the Filter/ADSR path while
+// the Shaper path drones ring mod and noise through BRIGHTNESS in FREE mode
+// — the quasi-two-voice trick, split across the stereo field.
+Take renderTwoPathDrone()
+{
+    auto parameters = plainPanel();
+    parameters.splitPaths = true;
+    parameters.filterPathA = 0.75f;
+    parameters.cutoff = 0.45f;
+    parameters.resonance = 0.35f;
+    parameters.shaperPathRing = 0.5f;
+    parameters.shaperPathNoise = 0.25f;
+    parameters.shaperPathB = 0.3f;
+    parameters.oscBRange = OscBRange::Bass;
+    parameters.interval = 0.35f;
+    parameters.brightness = 0.55f;
+    parameters.shaperMode = ShaperMode::Free;
+    parameters.shaperRate = 0.55f;
+    parameters.shaperShape = 0.7f;
+    Take take(parameters);
+
+    take.rest(0.1);
+    const int line[] = { 33, 40, 36, 31 };
+    for (int pass = 0; pass < 3; ++pass)
+        for (const int note : line)
+            take.hit(note, 1.0f, 0.55, 0.25);
+    take.hit(33, 1.0f, 2.2, 2.6);
+    return take;
+}
+
+// Sample-and-hold to both filters: the metronomic random filter steps of
+// the S+H RANDOM source, over a held drone fifth.
+Take renderSampleHoldFilter()
+{
+    auto parameters = plainPanel();
+    parameters.filterPathB = 0.7f;
+    parameters.interval = 0.5f;
+    parameters.oscBRange = OscBRange::MinusOne;
+    parameters.cutoff = 0.5f;
+    parameters.resonance = 0.6f;
+    parameters.modSource = ModSource::SampleHoldRandom;
+    parameters.lfoRate = 0.55f;
+    parameters.modXTo = ModXDestination::FilterUL;
+    parameters.filterEnvAmount = 0.5f;
+    Take take(parameters);
+
+    take.xWheel(0.55f);
+    take.rest(0.1);
+    take.on(45);
+    take.rest(7.5);
+    take.off(45);
+    take.rest(1.0);
+    return take;
+}
+
+// AUTO glide: portamento only when a second key overlaps the first, with
+// delayed vibrato ridden in on the MOD X wheel.
+Take renderAutoGlideLead()
+{
+    auto parameters = plainPanel();
+    parameters.glide = 0.45f;
+    parameters.glideMode = GlideMode::Auto;
+    parameters.trigger = TriggerMode::Single;
+    parameters.cutoff = 0.68f;
+    parameters.modSource = ModSource::LfoTriangle;
+    parameters.lfoRate = 0.52f;
+    parameters.modXTo = ModXDestination::OscAB;
+    Take take(parameters);
+
+    take.rest(0.1);
+    take.on(57);
+    take.rest(0.7);
+    take.on(64);           // overlapped: glides
+    take.rest(0.35);
+    take.off(57);
+    take.rest(0.6);
+    for (int step = 0; step <= 10; ++step)
+    {
+        take.xWheel(0.012f * static_cast<float>(step));
+        take.rest(0.09);
+    }
+    take.rest(0.8);
+    take.on(62);
+    take.rest(0.3);
+    take.off(64);
+    take.rest(1.0);
+    take.on(69);           // overlapped: glides up
+    take.rest(0.4);
+    take.off(62);
+    take.rest(1.6);
+    take.off(69);
+    take.xWheel(0.0f);
+    take.rest(1.2);
+    return take;
+}
+
+// RED NOISE drift on both oscillators: the continuous slow-random source
+// that makes held tones wander like an unserviced panel.
+Take renderRedNoiseDrift()
+{
+    auto parameters = plainPanel();
+    parameters.oscAWaveform = Waveform::RectMid;
+    parameters.filterPathB = 0.65f;
+    parameters.oscBWaveform = Waveform::RectNarrow;
+    parameters.interval = 0.52f;
+    parameters.cutoff = 0.5f;
+    parameters.modSource = ModSource::RedNoise;
+    parameters.modXTo = ModXDestination::OscAB;
+    parameters.loudnessAttack = 0.25f;
+    parameters.loudnessRelease = 0.5f;
+    Take take(parameters);
+
+    take.xWheel(0.06f);
+    take.rest(0.1);
+    take.chordOn({ 45, 52, 60 });
+    take.rest(6.0);
+    take.chordOff({ 45, 52, 60 });
+    take.rest(2.2);
     return take;
 }
 
@@ -341,12 +653,44 @@ struct Demo
     Take (*render)();
 };
 
-const std::array<Demo, 1>& demos()
+const std::array<Demo, 10>& demos()
 {
-    static const std::array<Demo, 1> table {{
-        { "01-skeleton-voice.wav",
-          "Pre-research skeleton voice: proves the render path, not a sound",
-          renderSkeletonVoice },
+    static const std::array<Demo, 10> table {{
+        { "01-dual-filter-vocal.wav",
+          "The signature dual filter: the lower parametric boost slid "
+          "against the upper lowpass",
+          renderDualFilterVocal },
+        { "02-formant-brass.wav",
+          "FORMANT tracking: a frozen lower-filter peak under articulated "
+          "brass stabs",
+          renderFormantBrass },
+        { "03-overdrive-growl.wav",
+          "The soft clipper between the filters on a two-oscillator bass "
+          "riff",
+          renderOverdriveGrowl },
+        { "04-sync-sweep.wav",
+          "Hard sync: Shaper Y sweeps Osc B through the lock on every note",
+          renderSyncSweep },
+        { "05-ring-bells.wav",
+          "The triangle-cross ring modulator's clangorous register",
+          renderRingBells },
+        { "06-leap-arpeggio.wav",
+          "The LEAP arpeggiator cycling unison, up an octave, down an "
+          "octave per note",
+          renderLeapArpeggio },
+        { "07-two-path-drone.wav",
+          "Both audio paths split left/right: enveloped bass against a "
+          "free-running ring-and-noise drone",
+          renderTwoPathDrone },
+        { "08-sample-hold-filter.wav",
+          "S+H RANDOM stepping both filter cutoffs over a held fifth",
+          renderSampleHoldFilter },
+        { "09-auto-glide-lead.wav",
+          "AUTO glide legato lead with vibrato ridden in on the X wheel",
+          renderAutoGlideLead },
+        { "10-red-noise-drift.wav",
+          "RED NOISE wander on both oscillators' pitch",
+          renderRedNoiseDrift },
     }};
     return table;
 }
@@ -357,7 +701,7 @@ const std::array<Demo, 1>& demos()
 int runSmokeTest(const std::filesystem::path& directory)
 {
     auto parameters = plainPanel();
-    parameters.attack = 0.0f;
+    parameters.loudnessAttack = 0.0f;
     Take take(parameters);
     take.hit(60, 0.95f, 0.30, 0.25);
 

@@ -59,7 +59,7 @@ jobs:
             directory: ghost
             build_plugin_option: GHOST_BUILD_PLUGIN
             target_demo: GhostRenderDemos
-            expected_demos: 1
+            expected_demos: 10
             dsp_only: true
     steps:
       - uses: actions/checkout@v4
