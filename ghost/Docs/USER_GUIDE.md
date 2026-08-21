@@ -162,6 +162,31 @@ own pitch, without retriggering.
 | CC 120 | All sound off: the hard stop |
 | CC 123 | All notes off: releases held keys through the envelopes |
 
+## Factory programs
+
+The modelled instrument shipped no presets; its manual instead teaches
+eleven **Sound Charts**, each a drawn panel setting with a lesson attached.
+Those charts are Ghost's factory program bank, selectable from the host's
+program menu:
+
+| # | Program | The lesson |
+|---|---|---|
+| 1 | Preparatory Pattern | The neutral starting point every chart is dialled from. All gates are off, so it is **silent by design**. |
+| 2 | Sound Sources | VCA bypass drone: audition each mixer source raw. |
+| 3 | Fat Filter | Keyboard gating, resonance and the filter envelope. |
+| 4 | Mod Whistle | LFO vibrato through the MOD X wheel — raise X to hear it. |
+| 5 | Sync | The sync siren: Shaper Y sweeps Osc B against locked A. |
+| 6 | Shake Shape | SHAPE X WITH Y: the Y wheel patterns the vibrato. |
+| 7 | Sample & Hold | Stepped random voltages to the filter and oscillators. |
+| 8 | Parallel Rectangles | A fifth apart, independent PWM per oscillator. |
+| 9 | Arpeggio | The arpeggiator clocking gates with Shaper-path noise. |
+| 10 | Noise Scale | Resonance at maximum turns noise into a keyed pitch. |
+| 11 | Inverted Guitar | The inverted filter envelope pluck. |
+
+Selecting a program writes its chart onto every panel control (and pulls
+the performance wheels fully back, as the charts instruct), so it is also a
+readable lesson: open the editor and see how the sound is made.
+
 ## Hearing the instrument
 
 The ten committed renders under [`Docs/audio`](audio/README.md) demonstrate

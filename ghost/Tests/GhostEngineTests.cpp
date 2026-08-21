@@ -5,6 +5,7 @@
 // fallback without retrigger, the gate-select rule, VCA bypass droning).
 
 #include "DSP/GhostEngine.h"
+#include "DSP/GhostPresets.h"
 
 #include <algorithm>
 #include <array>
@@ -538,6 +539,38 @@ void testArpFirstStepIsTheScanBottom()
           "the opening arpeggio step is the lowest held key");
 }
 
+// The factory bank is the manual's eleven Sound Charts. Every chart renders
+// finite audio with a key held; every chart but the first is audible. The
+// Preparatory Pattern is the documented exception: it "produces no sound".
+void testEveryFactorySoundChartRenders()
+{
+    check(ghost::factoryPresetCount() == 11,
+          "the factory bank carries the manual's eleven Sound Charts");
+    check(ghost::factoryPresetName(0) != nullptr
+              && std::string(ghost::factoryPresetName(0))
+                     == "Preparatory Pattern",
+          "the bank opens with the Preparatory Pattern");
+    check(ghost::factoryPresetName(11) == nullptr,
+          "an out-of-range program has no name");
+
+    for (int index = 0; index < ghost::factoryPresetCount(); ++index)
+    {
+        GhostEngine engine;
+        engine.prepare(44100.0, 256);
+        engine.setParameters(ghost::factoryPresetParameters(index));
+        engine.noteOn(48, 0.9f);
+        engine.noteOn(55, 0.9f);
+        const auto rendered = render(engine, 2.0, 44100.0);
+        const std::string name = ghost::factoryPresetName(index);
+        check(finite(rendered), (name + " renders finite audio").c_str());
+        if (index == 0)
+            check(peak(rendered) == 0.0,
+                  "the Preparatory Pattern produces no sound");
+        else
+            check(peak(rendered) > 1.0e-4, (name + " is audible").c_str());
+    }
+}
+
 void testFasterThanRealtime()
 {
     GhostEngine engine;
@@ -583,6 +616,7 @@ int main()
     testArpOctaveStepsSurviveTheMidiCeiling();
     testKeyPressDoesNotRetriggerWithoutKbdGate();
     testArpFirstStepIsTheScanBottom();
+    testEveryFactorySoundChartRenders();
     testFasterThanRealtime();
 
     if (failures != 0)

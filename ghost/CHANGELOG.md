@@ -29,5 +29,9 @@ Notable customer-facing changes to Ghost are recorded here.
   silkscreen's own detent labels; MIDI CC1/CC2 ride the X and Y wheels,
   CC120 is the hard stop and CC123 releases held keys through the
   envelopes.
+- Factory programs: the modelled instrument's manual teaches eleven Sound
+  Charts instead of shipping presets, and those charts are Ghost's program
+  bank — from the silent Preparatory Pattern the lessons all start from,
+  through Fat Filter, Sync and Sample & Hold, to the Inverted Guitar.
 - Ten committed demonstration renders under `Docs/audio`, regenerated
   nightly from the shipping engine.
