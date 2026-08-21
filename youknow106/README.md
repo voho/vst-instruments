@@ -685,9 +685,12 @@ The two VCF trim rows are bounded by Roland's own printed acceptance
 tuner", jointly): each printed check point gets its own ±10-cent draw and
 the residual is the line through them, so the calibrated state cannot
 disperse past what the service procedure accepts at the points it checks; what drifts beyond those windows in the field belongs to
-the separate engine-level `aging` extension (default 0, voiced against one
+the separate engine-level `aging` extension — since 2026-08-21 the **Aging**
+host parameter beside Unit Character (default 0, voiced against one
 documented recalibration: up to about a quarter tone of flatward per-card
-VCF drift and +3.5 dB of noise-trim drift, OQ-10).
+VCF drift and +3.5 dB of noise-trim drift, OQ-10). Aging is an instrument
+description, not a patch control: it is excluded from randomisation and
+program recall, exactly like Unit Character's exclusion from randomisation.
 
 The cutoff row above used to read ±165 cents — a monotonic ramp by card index,
 roughly ten times what the temperature computation beside it supports, linear in
@@ -747,7 +750,7 @@ the BANK keys but isolated by its own recessed host band. The remaining
 plugin-only features stay close to the original families: UNISON completes the
 three-key VOICE MODE group, HISS sits inside CHORUS, and VELOCITY shares the
 lower VOICE group with the continuous voice-limit control. Transpose and tuning
-remain under the DCO; global Character/Quality controls stay beneath the
+remain under the DCO; global Character/Aging/Quality controls stay beneath the
 left cheek, with the Voice Monitor beside voice allocation. PANIC and INIT use
 the lower SESSION zone; three clearly graded actions sit beside them under
 VARIATION. Quiet gray separators and consistent inner gutters repeat the upper

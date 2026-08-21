@@ -4215,7 +4215,12 @@ made by the user's ear.
   default 0, clamped to [0, 1], precomputed per card
   (`agingCutoffCounts`, seeded unit weights) plus one shared
   `agedNoiseGain_`, exactly inert at zero — deliberately not exposed as a
-  host parameter; `testAgedUnitExtensionStaysInertByDefault` asserts
+  host parameter at that pass (exposed 2026-08-21, on request: the `Aging`
+  parameter sits beside Unit Character in the editor's MODEL zone, appended
+  with AU version hint 4 after every shipped layout so no historical Audio
+  Unit index moves, and is excluded from randomisation and program recall
+  because it describes the instrument, not the patch);
+  `testAgedUnitExtensionStaysInertByDefault` asserts
   inertness, bounds, per-card dispersion, the +3.52 dB gain and the clamp.
 - [ ] **P7. OQ-06 reference candidate, put to the user.** Roland's era
   convention (printed on the RS-505 selector spec) reads "0dBm = 0.775 v

@@ -171,8 +171,8 @@ struct EngineParameters
     // switch under this repository's A-Z rules -- OQ-09's measured family
     // still owns the shape, so neither candidate is promoted by it.
     bool useCircuitDerivedResonanceShape { false };
-    // Engine-level aged-unit extension, defaulted off and deliberately not a
-    // host parameter yet (exposing it is a product-surface decision). Zero is
+    // Engine-level aged-unit extension, exposed as the Aging host parameter
+    // (2026-08-21, on request) and still defaulted off. Zero is
     // the freshly calibrated instrument every other mechanism describes; one
     // applies the single documented recalibration lead (2026-08-20 pass): a
     // unit re-trimmed after about four years whose undisturbed VCF trims had

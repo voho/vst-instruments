@@ -584,6 +584,17 @@ YouKnow106AudioProcessor::createParameterLayout()
         choiceForOversamplingFactor (2),
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
+    // Time since the modelled unit's last service, beside Unit Character on
+    // the panel but appended after every shipped parameter, with a later
+    // version hint, so no historical Audio Unit index moves. Zero -- the
+    // default -- is the freshly calibrated instrument every other mechanism
+    // describes; see EngineParameters::aging for the documented recalibration
+    // the full travel applies.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { aging, 4 }, "Aging",
+        juce::NormalisableRange<float> { 0.0f, 1.0f, 0.0f }, 0.0f,
+        percentAttributes()));
+
     return layout;
 }
 
@@ -601,7 +612,7 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
         highPass, cutoff, resonance, envPolarity, vcfEnv, vcfLfo, keyFollow,
         vcaMode, vcaLevel, attack, decay, sustain, release, legacyChorus,
         transpose, masterTune, velocity, calibration, chorusNoise, polyphony,
-        poly1, poly2, chorusI, chorusII, legacyHq, quality
+        poly1, poly2, chorusI, chorusII, legacyHq, quality, aging
     });
 
     // The pointer table has to be able to hold every id. Growing the list above
@@ -848,6 +859,7 @@ bool YouKnow106AudioProcessor::updateEngineParameters() noexcept
     engineParameters.masterTuneCents = valueOf (masterTune);
     engineParameters.velocityDepth = valueOf (velocity);
     engineParameters.calibration = valueOf (calibration);
+    engineParameters.aging = valueOf (aging);
     engineParameters.chorusNoise = valueOf (chorusNoise);
     engineParameters.polyphony = juce::roundToInt (valueOf (polyphony));
 
@@ -1446,8 +1458,8 @@ void YouKnow106AudioProcessor::randomizeParameters (float amount)
 
     using namespace youknow106::parameters;
     // Deliberately sound-design controls only. Main volume, voice count,
-    // oversampling, and the two controls that describe the *instrument* rather
-    // than the patch — Unit Character and Chorus Noise — are excluded. Stored VCA
+    // oversampling, and the controls that describe the *instrument* rather
+    // than the patch — Unit Character, Aging and Chorus Noise — are excluded. Stored VCA
     // LEVEL remains included because it is the hardware's per-patch balance
     // trim, not the player's output-volume control.
     static constexpr auto soundParameterIds = std::to_array<const char*> ({
@@ -1751,8 +1763,8 @@ bool YouKnow106AudioProcessor::currentProgramIsEdited() const
         || differs (valueOf (velocity), expected.velocity)
         || differs (valueOf (calibration), expected.calibration)
         || differs (valueOf (chorusNoise), expected.chorusNoise)
-        // Quality is deliberately absent: it is not part of a preset, so it
-        // cannot mark one as edited.
+        // Quality and Aging are deliberately absent: neither is part of a
+        // preset, so neither can mark one as edited.
         || juce::roundToInt (valueOf (polyphony)) != expected.polyphony;
 }
 
@@ -1858,7 +1870,8 @@ void YouKnow106AudioProcessor::applyProgramValues (
     set (calibration, controls.calibration);
     set (chorusNoise, controls.chorusNoise);
     set (polyphony, static_cast<float> (controls.polyphony));
-    // Quality is deliberately not recalled: see Preset::Controls.
+    // Quality is deliberately not recalled: see Preset::Controls. Aging is
+    // not either -- loading a program does not service or age the unit.
 
     applyPatchValues (patch);
 }

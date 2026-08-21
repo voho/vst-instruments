@@ -129,6 +129,7 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::polyphony,   6.0f,   1.0e-5f },
     { parameters::legacyHq,    1.0f,   1.0e-5f },
     { parameters::quality,     1.0f,   1.0e-5f },
+    { parameters::aging,       0.0f,   1.0e-5f },
 });
 
 float parameterValue (const YouKnow106AudioProcessor& processor, const char* id)
@@ -486,7 +487,7 @@ void testParameterContract()
         return static_cast<juce::uint32> (a->paramID.hashCode())
              < static_cast<juce::uint32> (b->paramID.hashCode());
     });
-    expect (auParameters.size() == historicalAuOrder.size() + 1,
+    expect (auParameters.size() == historicalAuOrder.size() + 2,
             "the Audio Unit parameter contract has an unexpected size");
     for (std::size_t index = 0;
          index < historicalAuOrder.size() && index < auParameters.size(); ++index)
@@ -500,8 +501,16 @@ void testParameterContract()
     {
         expect (quality->getVersionHint() == 3,
                 "Quality was not appended after both historical AU layouts");
-        expect (! auParameters.empty() && auParameters.back() == quality,
-                "Quality is not the final Audio Unit parameter");
+        expect (auParameters.size() > historicalAuOrder.size()
+                    && auParameters[historicalAuOrder.size()] == quality,
+                "Quality moved from its shipped slot after the historical layouts");
+    }
+    if (const auto* aging = processor.parameters.getParameter (parameters::aging))
+    {
+        expect (aging->getVersionHint() == 4,
+                "Aging was not appended after every shipped AU layout");
+        expect (! auParameters.empty() && auParameters.back() == aging,
+                "Aging is not the final Audio Unit parameter");
     }
 }
 
@@ -1612,6 +1621,7 @@ void testEveryStoredPatchFieldRecallsWithoutMovingPerformanceControls()
         { parameters::masterTune,  13.0f },
         { parameters::velocity,     0.43f },
         { parameters::calibration,  0.17f },
+        { parameters::aging,        0.19f },
         { parameters::chorusNoise,  0.27f },
         { parameters::polyphony,    4.0f },
         { parameters::quality,      0.0f },
@@ -1692,6 +1702,7 @@ void testRandomizerPreservesQualityAndLevel()
     const float volume = parameterValue (processor, parameters::volume);
     const float voices = parameterValue (processor, parameters::polyphony);
     const float quality = parameterValue (processor, parameters::quality);
+    const float aging = parameterValue (processor, parameters::aging);
 
     processor.randomizeParameters (1.0f);
 
@@ -1701,6 +1712,8 @@ void testRandomizerPreservesQualityAndLevel()
             "the randomiser moved the voice count");
     expect (std::abs (parameterValue (processor, parameters::quality) - quality) < 1.0e-4f,
             "the randomiser moved a quality setting");
+    expect (std::abs (parameterValue (processor, parameters::aging) - aging) < 1.0e-4f,
+            "the randomiser aged the instrument");
 }
 
 void testBusLayoutsAndTail()
@@ -3671,7 +3684,9 @@ void testEditedFlagFollowsTheCompleteProgram()
         if (std::strcmp (expected.id, parameters::legacyKeyMode) == 0
             || std::strcmp (expected.id, parameters::legacyChorus) == 0
             || std::strcmp (expected.id, parameters::legacyHq) == 0
-            || std::strcmp (expected.id, parameters::quality) == 0)
+            || std::strcmp (expected.id, parameters::quality) == 0
+            // Aging is not part of a preset, so it cannot mark one as edited.
+            || std::strcmp (expected.id, parameters::aging) == 0)
             continue;
 
         processor.setCurrentProgram (0);
@@ -3902,12 +3917,15 @@ void testDerivedOriginalPanelSwitchesDriveTheirExistingParameters()
             "TRANSPOSE did not restore the selected interval");
 }
 
-// Everything in the parameter contract except the quality ladder and its
-// inert historical anchor. Neither is stored in or restored by a program.
+// Everything in the parameter contract except the quality ladder, its inert
+// historical anchor, and Aging. None of these is stored in or restored by a
+// program: quality is a session choice and Aging describes the instrument --
+// loading a program does not service or age the unit.
 bool isProgramParameter (const char* id)
 {
     return std::strcmp (id, parameters::quality) != 0
-        && std::strcmp (id, parameters::legacyHq) != 0;
+        && std::strcmp (id, parameters::legacyHq) != 0
+        && std::strcmp (id, parameters::aging) != 0;
 }
 
 void testEveryProductProgramRestoresEveryParameter()
@@ -3939,6 +3957,8 @@ void testEveryProductProgramRestoresEveryParameter()
             parameterValue (processor, parameters::quality);
         const float poisonedLegacyHq =
             parameterValue (processor, parameters::legacyHq);
+        const float poisonedAging =
+            parameterValue (processor, parameters::aging);
 
         expect (processor.currentProgramIsEdited(),
                 std::string ("program ") + std::to_string (program)
@@ -3951,13 +3971,20 @@ void testEveryProductProgramRestoresEveryParameter()
             if (! isProgramParameter (expected.id))
             {
                 // The opposite contract: a recall must leave the poisoned
-                // quality selection exactly where the player put it.
+                // quality selection -- and the instrument's age -- exactly
+                // where the player put them.
+                const float poisoned =
+                    std::strcmp (expected.id, parameters::quality) == 0
+                        ? poisonedQuality
+                        : std::strcmp (expected.id, parameters::aging) == 0
+                              ? poisonedAging
+                              : poisonedLegacyHq;
                 expect (std::abs (parameterValue (processor, expected.id)
-                                 - (std::strcmp (expected.id, parameters::quality) == 0
-                                        ? poisonedQuality : poisonedLegacyHq))
+                                 - poisoned)
                             <= expected.tolerance,
                         std::string ("program ") + std::to_string (program)
-                            + " moved a non-program quality parameter");
+                            + " moved a non-program parameter: "
+                            + expected.id);
                 continue;
             }
             expect (std::abs (parameterValue (processor, expected.id)
@@ -4234,13 +4261,13 @@ void testEveryInteractiveEditorControlExplainsItself()
     };
     audit (audit, *editor);
 
-    // Six extension knobs, ten utility buttons plus the QUALITY selector,
+    // Seven extension knobs, ten utility buttons plus the QUALITY selector,
     // six factory/custom patch controls,
     // twenty-one original-programmer controls, the keybed and the bender.
     // Disabled hardware-only keys remain public so their help explains why
     // the immutable factory bank cannot perform that operation.
     constexpr int expectedInteractiveCount =
-        panel::controlCount + 6 + 11 + 6 + 21 + 1 + 1;
+        panel::controlCount + 7 + 11 + 6 + 21 + 1 + 1;
     expect (interactiveCount == expectedInteractiveCount,
             "the contextual-help audit did not cover every interactive control");
     expect (findDescendantButtonWithText (*editor, "SEND") == nullptr,
@@ -4565,7 +4592,7 @@ void testPersistentContextHelpAndValueBubbles()
     // fixed help presentation cannot silently remove exact values.
     std::vector<juce::Slider*> sliders;
     collectDescendantsOfType (*editor, sliders);
-    int expectedSliders = 6;
+    int expectedSliders = 7;
     for (const auto& control : panel::controls())
         if (control.kind == panel::ControlKind::Slider
             || control.kind == panel::ControlKind::Knob
@@ -4920,11 +4947,14 @@ void testEditorRandomizeStrengthsAndReset()
         // The INIT key returns the panel to the initial patch, which is a patch
         // operation. The quality ladder is not in a patch, so it stays where
         // the player left it here for the same reason a program recall leaves
-        // it alone.
+        // it alone -- and so does Aging, which describes the instrument
+        // rather than the patch.
         if (parameter
                 == processor.parameters.getParameter (parameters::quality)
             || parameter
-                == processor.parameters.getParameter (parameters::legacyHq))
+                == processor.parameters.getParameter (parameters::legacyHq)
+            || parameter
+                == processor.parameters.getParameter (parameters::aging))
             continue;
         expect (std::abs (parameter->getValue()
                          - initValues[static_cast<std::size_t> (index)]) < 1.0e-6f,
@@ -5239,6 +5269,7 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
         { "Master tune",    "TUNE" },
         { "Velocity",       "VELOCITY" },
         { "Unit Character", "CHARACTER" },
+        { "Aging",          "AGING" },
         { "Chorus noise",   "HISS" },
         { "Polyphony",      "VOICES" },
     });
@@ -5345,6 +5376,10 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
     checkInsideZone ("Unit Character", panel::modelZoneX,
                      panel::modelZoneWidth, "Model");
     checkInsideZone ("Unit Character label", panel::modelZoneX,
+                     panel::modelZoneWidth, "Model");
+    checkInsideZone ("Aging", panel::modelZoneX,
+                     panel::modelZoneWidth, "Model");
+    checkInsideZone ("Aging label", panel::modelZoneX,
                      panel::modelZoneWidth, "Model");
     checkInsideZone ("Quality", panel::modelZoneX,
                      panel::modelZoneWidth, "Model");

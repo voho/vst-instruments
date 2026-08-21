@@ -281,7 +281,7 @@ private:
         const char* id = nullptr;
         std::atomic<float>* value = nullptr;
     };
-    static constexpr std::size_t parameterPointerCount = 42;
+    static constexpr std::size_t parameterPointerCount = 43;
     std::array<ParameterPointer, parameterPointerCount> parameterPointers {};
 
     youknow106::YouKnow106Engine engine;

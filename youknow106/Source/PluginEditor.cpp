@@ -2036,13 +2036,19 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
         "Scales the modeled hiss of the uncompanded bucket-brigade chorus. "
         "100% is the modeled floor; zero is a clean plug-in extension.",
         "Sets the active voice limit from 1 to 16. Six matches the hardware; "
-        "values above six add digital extension voices."
+        "values above six add digital extension voices.",
+        "Ages the modeled unit by the drift of one documented four-year "
+        "service interval: each voice's filter tuning drifts flat by its own "
+        "share of up to a quarter tone and the noise source rises by up to "
+        "3.5 dB. Zero is freshly serviced. Unit Character scales build "
+        "tolerances; Aging adds time since the last calibration."
     };
 
     configure (transposeSlider, transpose, "Transpose", utilityTooltips[0]);
     configure (tuneSlider, masterTune, "Master tune", utilityTooltips[1]);
     configure (velocitySlider, velocity, "Velocity", utilityTooltips[2]);
     configure (calibrationSlider, calibration, "Unit Character", utilityTooltips[3]);
+    configure (agingSlider, aging, "Aging", utilityTooltips[6]);
     configure (chorusNoiseSlider, chorusNoise, "Chorus noise", utilityTooltips[4]);
     configure (polyphonySlider, polyphony, "Polyphony", utilityTooltips[5]);
     // HISS now lives inside the primary CHORUS block, so its full-size knob
@@ -2050,9 +2056,10 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     chorusNoiseSlider.getProperties().set (secondaryStyleProperty, false);
 
     const char* captions[] = { "AMOUNT", "TUNE", "VELOCITY",
-                               "CHARACTER", "HISS", "VOICES" };
+                               "CHARACTER", "HISS", "VOICES", "AGING" };
     const char* controlNames[] = { "Transpose", "Master tune", "Velocity",
-                                   "Unit Character", "Chorus noise", "Polyphony" };
+                                   "Unit Character", "Chorus noise", "Polyphony",
+                                   "Aging" };
     for (std::size_t index = 0; index < utilityLabels.size(); ++index)
     {
         auto& label = utilityLabels[index];
@@ -3073,6 +3080,7 @@ const char* YouKnow106AudioProcessorEditor::parameterIdFor (
         { &tuneSlider,        masterTune },
         { &velocitySlider,    velocity },
         { &calibrationSlider, calibration },
+        { &agingSlider,       aging },
         { &chorusNoiseSlider, chorusNoise },
         { &polyphonySlider,   polyphony },
         { &qualityBox,        quality },
@@ -3284,26 +3292,32 @@ void YouKnow106AudioProcessorEditor::resized()
     constexpr float labelHeight = 16.0f;
     constexpr float knobSize = 56.0f;
 
-    // MODEL: global circuit character and processing quality sit beneath the
-    // global controller cheek rather than impersonating original synth blocks.
+    // MODEL: global circuit character, the age of the unit and processing
+    // quality sit beneath the global controller cheek rather than
+    // impersonating original synth blocks. Character keeps its full-width
+    // legend; AGING beside it, then the quality ladder.
     utilityLabels[3].setBounds (
         scaled (22.0f, labelTop, 80.0f, labelHeight).toNearestInt());
     calibrationSlider.setBounds (
-        scaled (33.0f, knobTop, knobSize, knobSize).toNearestInt());
+        scaled (34.0f, knobTop, knobSize, knobSize).toNearestInt());
+    utilityLabels[6].setBounds (
+        scaled (106.0f, labelTop, 52.0f, labelHeight).toNearestInt());
+    agingSlider.setBounds (
+        scaled (104.0f, knobTop, knobSize, knobSize).toNearestInt());
     qualityLabel.setBounds (
-        scaled (110.0f, labelTop, 86.0f, labelHeight).toNearestInt());
+        scaled (162.0f, labelTop, 64.0f, labelHeight).toNearestInt());
     qualityBox.setBounds (
-        scaled (114.0f, knobTop + 16.0f, 78.0f, 24.0f).toNearestInt());
+        scaled (164.0f, knobTop + 16.0f, 62.0f, 24.0f).toNearestInt());
 
     // VOICE: the continuous voice-limit and response controls share a baseline.
     utilityLabels[5].setBounds (
-        scaled (228.0f, labelTop, 80.0f, labelHeight).toNearestInt());
+        scaled (254.0f, labelTop, 64.0f, labelHeight).toNearestInt());
     polyphonySlider.setBounds (
-        scaled (240.0f, knobTop, knobSize, knobSize).toNearestInt());
+        scaled (258.0f, knobTop, knobSize, knobSize).toNearestInt());
     utilityLabels[2].setBounds (
-        scaled (318.0f, labelTop, 80.0f, labelHeight).toNearestInt());
+        scaled (322.0f, labelTop, 80.0f, labelHeight).toNearestInt());
     velocitySlider.setBounds (
-        scaled (330.0f, knobTop, knobSize, knobSize).toNearestInt());
+        scaled (334.0f, knobTop, knobSize, knobSize).toNearestInt());
 
     // PITCH follows the DCO footprint. Keep the hardware-style Transpose
     // switch next to its amount, then the fine tune control.
