@@ -52,6 +52,15 @@ jobs:
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
             target_demo: YouKnow106RenderDemos
             expected_demos: 10
+          # Ghost is in its DSP-first phase: the engine, tests and demo
+          # renderer exist before any JUCE wrapper does, so its lane skips
+          # the plug-in steps until the wrapper lands.
+          - name: Ghost
+            directory: ghost
+            build_plugin_option: GHOST_BUILD_PLUGIN
+            target_demo: GhostRenderDemos
+            expected_demos: 1
+            dsp_only: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -95,6 +104,7 @@ jobs:
           echo "${{ matrix.name }}: rendered all $rendered demo WAVs"
 
       - name: Configure Linux plug-in build
+        if: matrix.dsp_only != true
         run: |
           cmake \
             -S "${{ matrix.directory }}" \
@@ -104,11 +114,13 @@ jobs:
             -DBUILD_TESTING=OFF
 
       - name: Build Linux VST3 and standalone
+        if: matrix.dsp_only != true
         run: |
           cmake --build "${{ matrix.directory }}/build-dsp" --parallel \
             --target "${{ matrix.name }}_VST3" "${{ matrix.name }}_Standalone"
 
       - name: Package Linux VST3 and standalone
+        if: matrix.dsp_only != true
         run: |
           set -euo pipefail
           artefacts="${{ matrix.directory }}/build-dsp/${{ matrix.name }}_artefacts/Release"
@@ -124,6 +136,7 @@ jobs:
           tar -tzf "$archive" >/dev/null
 
       - name: Upload Linux package
+        if: matrix.dsp_only != true
         uses: actions/upload-artifact@v4
         with:
           name: ci-linux-${{ matrix.directory }}
@@ -219,6 +232,11 @@ jobs:
           - name: YouKnow106
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
+          # DSP-first phase: no plug-in steps until the wrapper lands.
+          - name: Ghost
+            directory: ghost
+            build_plugin_option: GHOST_BUILD_PLUGIN
+            dsp_only: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -234,14 +252,17 @@ jobs:
           ctest --test-dir "${{ matrix.directory }}/build-win" -C Release --output-on-failure
 
       - name: Configure Windows plug-in build
+        if: matrix.dsp_only != true
         run: |
           cmake -S "${{ matrix.directory }}" -B "${{ matrix.directory }}/build-win" "-D${{ matrix.build_plugin_option }}=ON" -DBUILD_TESTING=OFF
 
       - name: Build Windows VST3 and standalone
+        if: matrix.dsp_only != true
         run: |
           cmake --build "${{ matrix.directory }}/build-win" --config Release --parallel --target "${{ matrix.name }}_VST3" "${{ matrix.name }}_Standalone"
 
       - name: Package Windows VST3 and standalone
+        if: matrix.dsp_only != true
         shell: pwsh
         run: |
           $artefacts = "${{ matrix.directory }}/build-win/${{ matrix.name }}_artefacts/Release"
@@ -263,6 +284,7 @@ jobs:
           }
 
       - name: Upload Windows package
+        if: matrix.dsp_only != true
         uses: actions/upload-artifact@v4
         with:
           name: ci-windows-${{ matrix.directory }}

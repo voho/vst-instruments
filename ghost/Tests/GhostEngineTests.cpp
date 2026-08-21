@@ -245,6 +245,58 @@ void testNonFiniteParametersAreSanitised()
           "the engine still sounds after recovering from poisoned parameters");
 }
 
+// A NaN controller value must read as the lever at rest, not silence the
+// sounding note through a NaN oscillator frequency.
+void testNonFinitePerformanceControlsAreSanitised()
+{
+    GhostEngine engine;
+    engine.prepare(44100.0, 256);
+    EngineParameters parameters;
+    parameters.attack = 0.0f;
+    parameters.sustain = 1.0f;
+    engine.setParameters(parameters);
+    engine.noteOn(57, 0.9f);
+    render(engine, 0.25, 44100.0);
+    engine.setPitchBend(std::numeric_limits<float>::quiet_NaN());
+    engine.setModWheel(std::numeric_limits<float>::quiet_NaN());
+    const auto rendered = render(engine, 0.5, 44100.0);
+    check(finite(rendered), "NaN performance controls keep the render finite");
+    check(peak(rendered) > 1.0e-3,
+          "NaN performance controls do not silence the sounding note");
+}
+
+// Falling back to a held key must restore that key's own strike velocity,
+// not carry the released newer key's level.
+void testFallbackRestoresHeldVelocity()
+{
+    GhostEngine engine;
+    engine.prepare(44100.0, 256);
+    EngineParameters parameters;
+    parameters.cutoff = 1.0f;
+    parameters.envToCutoff = 0.0f;
+    parameters.attack = 0.0f;
+    parameters.sustain = 1.0f;
+    engine.setParameters(parameters);
+
+    engine.noteOn(48, 0.25f);
+    render(engine, 0.2, 44100.0);
+    const auto soft = render(engine, 0.3, 44100.0);
+    engine.noteOn(60, 1.0f);
+    render(engine, 0.2, 44100.0);
+    const auto loud = render(engine, 0.3, 44100.0);
+    engine.noteOff(60);
+    render(engine, 0.2, 44100.0);
+    const auto fallback = render(engine, 0.3, 44100.0);
+
+    check(peak(loud) > 2.5 * peak(soft),
+          "the full-velocity note is much louder than the soft one");
+    check(peak(fallback) < 0.6 * peak(loud),
+          "the fallback does not keep the released note's velocity");
+    check(peak(fallback) > 0.5 * peak(soft)
+              && peak(fallback) < 1.5 * peak(soft),
+          "the fallback sounds near the held key's own strike level");
+}
+
 void testFullResonanceStaysBounded()
 {
     GhostEngine engine;
@@ -271,6 +323,8 @@ int main()
     testKeyMemorySpansTheWholeMidiDomain();
     testZeroVelocityNoteOnReleases();
     testNonFiniteParametersAreSanitised();
+    testNonFinitePerformanceControlsAreSanitised();
+    testFallbackRestoresHeldVelocity();
     testFullResonanceStaysBounded();
 
     if (failures != 0)

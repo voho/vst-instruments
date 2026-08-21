@@ -77,11 +77,17 @@ private:
     double sampleRate_ { 44100.0 };
 
     // Held-key memory: a released newer key falls back to the newest key that
-    // is still down, as a hardware mono keyboard's key scanner does. The
+    // is still down, as a hardware mono keyboard's key scanner does, and it
+    // falls back at that key's own strike velocity, not the newer key's. The
     // capacity covers the whole MIDI note domain — each note occupies at most
     // one slot, so no held key can ever be discarded.
+    struct HeldKey
+    {
+        std::int16_t note { 0 };
+        float velocity { 0.0f };
+    };
     static constexpr int keyStackCapacity = 128;
-    std::array<std::int16_t, keyStackCapacity> keyStack_ {};
+    std::array<HeldKey, keyStackCapacity> keyStack_ {};
     int keyStackSize_ { 0 };
 
     bool gateOpen_ { false };

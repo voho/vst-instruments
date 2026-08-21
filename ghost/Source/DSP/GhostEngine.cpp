@@ -114,7 +114,7 @@ void GhostEngine::noteOn(int midiNote, float velocity)
     // duplicating it.
     for (int index = 0; index < keyStackSize_; ++index)
     {
-        if (keyStack_[static_cast<std::size_t>(index)] == midiNote)
+        if (keyStack_[static_cast<std::size_t>(index)].note == midiNote)
         {
             for (int shift = index; shift < keyStackSize_ - 1; ++shift)
                 keyStack_[static_cast<std::size_t>(shift)] =
@@ -123,14 +123,14 @@ void GhostEngine::noteOn(int midiNote, float velocity)
             break;
         }
     }
+    velocity_ = std::clamp(velocity, 0.0f, 1.0f);
     // The stack spans the whole MIDI note domain and holds each note at most
     // once, so after the deduplication above it cannot be full here.
     keyStack_[static_cast<std::size_t>(keyStackSize_)] =
-        static_cast<std::int16_t>(midiNote);
+        HeldKey { static_cast<std::int16_t>(midiNote), velocity_ };
     ++keyStackSize_;
 
     currentNote_ = midiNote;
-    velocity_ = std::clamp(velocity, 0.0f, 1.0f);
     gateOpen_ = true;
     envelope_.stage = Envelope::Stage::Attack;
 }
@@ -139,7 +139,7 @@ void GhostEngine::noteOff(int midiNote)
 {
     for (int index = 0; index < keyStackSize_; ++index)
     {
-        if (keyStack_[static_cast<std::size_t>(index)] == midiNote)
+        if (keyStack_[static_cast<std::size_t>(index)].note == midiNote)
         {
             for (int shift = index; shift < keyStackSize_ - 1; ++shift)
                 keyStack_[static_cast<std::size_t>(shift)] =
@@ -154,7 +154,12 @@ void GhostEngine::noteOff(int midiNote)
 
     if (keyStackSize_ > 0)
     {
-        currentNote_ = keyStack_[static_cast<std::size_t>(keyStackSize_ - 1)];
+        // The fallback key sounds as it was originally struck, so its stored
+        // velocity returns with its pitch.
+        const auto& fallback =
+            keyStack_[static_cast<std::size_t>(keyStackSize_ - 1)];
+        currentNote_ = fallback.note;
+        velocity_ = fallback.velocity;
         envelope_.stage = Envelope::Stage::Attack;
         return;
     }
@@ -165,11 +170,18 @@ void GhostEngine::noteOff(int midiNote)
 
 void GhostEngine::setPitchBend(float normalisedBipolar) noexcept
 {
+    // std::clamp passes NaN through, and a NaN bend would silence the note
+    // via a NaN oscillator frequency; a non-finite controller value reads as
+    // the lever at rest.
+    if (!std::isfinite(normalisedBipolar))
+        normalisedBipolar = 0.0f;
     pitchBend_ = std::clamp(normalisedBipolar, -1.0f, 1.0f);
 }
 
 void GhostEngine::setModWheel(float amount) noexcept
 {
+    if (!std::isfinite(amount))
+        amount = 0.0f;
     modWheel_ = std::clamp(amount, 0.0f, 1.0f);
 }
 

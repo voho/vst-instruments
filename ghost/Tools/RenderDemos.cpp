@@ -322,6 +322,17 @@ int runSmokeTest(const std::filesystem::path& directory)
     std::error_code error;
     std::filesystem::create_directories(directory, error);
     const auto path = directory / "smoke.wav";
+    // The smoke path takes an ordinary directory argument just like the full
+    // render, so it gets the same respect for other people's files: it only
+    // ever writes a file it can prove it is not replacing.
+    if (std::filesystem::exists(path))
+    {
+        std::fprintf(stderr,
+                     "smoke test: %s already exists; refusing to overwrite "
+                     "it.\n",
+                     path.string().c_str());
+        return 1;
+    }
     if (!writeWav(path, take.left(), take.right()))
     {
         std::fprintf(stderr, "smoke test: could not write %s\n",
