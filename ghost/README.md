@@ -6,6 +6,13 @@ self-contained JUCE project: VST3, Audio Unit and Standalone, universal
 
 ![Ghost](Docs/screenshots/ghost-standalone.png)
 
+Start with the [user guide](Docs/USER_GUIDE.md), see
+[customer-facing changes](CHANGELOG.md) and
+[privacy information](PRIVACY.md); framework licensing is described in
+[third-party notices](THIRD_PARTY_NOTICES.md). Ghost is at version 0.9.0: a
+complete instrument whose voiced constants are still open refinement targets
+before a 1.0.
+
 Ghost models the voice architecture of a 1983 monophonic analog synthesizer
 — the Crumar Spirit, designed by Jim Scott, Tom Rhea and Bob Moog — block by
 block: two bandlimited oscillators with one-directional hard sync and the
