@@ -271,6 +271,10 @@ private:
     double phaseB_ { 0.0 };
     double lastOscBWave_ { 0.0 };
     double pinkState_[3] { 0.0, 0.0, 0.0 };
+    // Pinking poles re-derived for the internal rate in prepare(), so the
+    // noise colour does not move with the host rate.
+    std::array<double, 3> pinkA_ { 0.99765, 0.96300, 0.57000 };
+    std::array<double, 3> pinkG_ { 0.0990460, 0.2965164, 1.0526913 };
     double brightnessState_ { 0.0 };
 
     SvfSection lowerSection_ {};

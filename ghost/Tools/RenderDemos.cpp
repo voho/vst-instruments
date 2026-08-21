@@ -1009,6 +1009,11 @@ int main(int argc, char** argv)
 
     std::vector<RenderedLevel> levels;
 
+    // Every take is rendered and validated in memory before the first WAV is
+    // replaced: a take that fails validation must abort the whole render
+    // without leaving a corpus half from this engine and half from the last.
+    std::vector<Take> validatedTakes;
+    validatedTakes.reserve(demos().size());
     for (const auto& demo : demos())
     {
         auto take = demo.render();
@@ -1049,6 +1054,20 @@ int main(int argc, char** argv)
             return 1;
         }
 
+        RenderedLevel level;
+        level.fileName = demo.fileName;
+        level.description = demo.description;
+        level.seconds = static_cast<double>(take.left().size()) / demoSampleRate;
+        level.renderedPeakDb = 20.0 * std::log10(renderedPeak);
+        level.normalisationDb = 20.0 * std::log10(gain);
+        levels.push_back(std::move(level));
+        validatedTakes.push_back(std::move(take));
+    }
+
+    for (std::size_t index = 0; index < demos().size(); ++index)
+    {
+        const auto& demo = demos()[index];
+        const auto& take = validatedTakes[index];
         const auto path = directory / demo.fileName;
         if (!owned && entryExists(path))
         {
@@ -1064,16 +1083,10 @@ int main(int argc, char** argv)
             return 1;
         }
 
-        RenderedLevel level;
-        level.fileName = demo.fileName;
-        level.description = demo.description;
-        level.seconds = static_cast<double>(take.left().size()) / demoSampleRate;
-        level.renderedPeakDb = 20.0 * std::log10(renderedPeak);
-        level.normalisationDb = 20.0 * std::log10(gain);
-        levels.push_back(std::move(level));
-
+        const auto& level = levels[index];
         std::printf("Rendered %-28s peak %6.3f, %5.1f s\n", demo.fileName,
-                    renderedPeak, level.seconds);
+                    std::pow(10.0, level.renderedPeakDb / 20.0),
+                    level.seconds);
     }
 
     if (!updatePeaksTable(directory, levels))

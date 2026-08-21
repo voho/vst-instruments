@@ -367,6 +367,30 @@ void testShaperResetRetriggersOnLegatoPress()
           "a legato press under SINGLE restarts the RESET cycle");
 }
 
+// RESET with the Shaper's own gate as the only selected source must not
+// clamp itself at its own threshold: a key press has to yield one complete,
+// audible rise/fall cycle.
+void testShaperResetSelfGateCompletesItsCycle()
+{
+    GhostEngine engine;
+    engine.prepare(44100.0, 256);
+    EngineParameters parameters;
+    parameters.filterPathA = 0.0f;
+    parameters.shaperPathA = 0.8f;
+    parameters.gateKbd = false;
+    parameters.gateX = false;
+    parameters.gateYExt = true;      // the Shaper gates itself
+    parameters.shaperMode = ghost::ShaperMode::Reset;
+    parameters.shaperRate = 0.7f;
+    engine.setParameters(parameters);
+
+    engine.noteOn(57, 0.9f);
+    const auto cycle = render(engine, 0.6, 44100.0);
+    check(peak(cycle) > 1.0e-2,
+          "a self-gated RESET cycle rises audibly instead of clamping at "
+          "its own threshold");
+}
+
 void testFullResonanceStaysBounded()
 {
     GhostEngine marginal;
@@ -450,6 +474,7 @@ int main()
     testNonFinitePerformanceControlsAreSanitised();
     testOutOfRangeSwitchesAreSanitised();
     testShaperResetRetriggersOnLegatoPress();
+    testShaperResetSelfGateCompletesItsCycle();
     testFullResonanceStaysBounded();
     testArpeggiatorStepsHeldKeys();
     testFasterThanRealtime();

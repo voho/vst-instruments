@@ -183,6 +183,25 @@ void GhostEngine::prepare(double sampleRate, int maxBlockSize)
     for (auto& tap : halfbandKernel_)
         tap /= sum;
 
+    // The pinking network's poles are physical frequencies, not per-sample
+    // constants: the reference recurrence coefficients describe poles at a
+    // 44.1 kHz design rate, and each is re-derived here for the actual
+    // internal rate, with its input gain rescaled to keep the per-band DC
+    // gain — so the noise colour survives any host rate.
+    static constexpr std::array<double, 3> pinkReferenceA {
+        0.99765, 0.96300, 0.57000 };
+    static constexpr std::array<double, 3> pinkReferenceG {
+        0.0990460, 0.2965164, 1.0526913 };
+    constexpr double pinkDesignRate = 44100.0;
+    for (std::size_t pole = 0; pole < 3; ++pole)
+    {
+        const double poleHz = -std::log(pinkReferenceA[pole]) * pinkDesignRate
+                            / (2.0 * pi);
+        pinkA_[pole] = std::exp(-2.0 * pi * poleHz / internalRate_);
+        pinkG_[pole] = pinkReferenceG[pole] * (1.0 - pinkA_[pole])
+                     / (1.0 - pinkReferenceA[pole]);
+    }
+
     reset();
 }
 
@@ -580,10 +599,12 @@ void GhostEngine::advanceControls() noexcept
     const bool gateRise = combinedGateNow && !previousGateForShaper_;
     // RESET mode is always multiple-trigger: every key press restarts it
     // regardless of the TRIGGER switch — including a legato press under
-    // SINGLE, which never raises pendingTrigger_ or the gate edge.
+    // SINGLE. Key presses alone drive the reset; a gate-bus edge must not,
+    // because with Y/EXT as the only selected source the Shaper's own gate
+    // would clamp the Shaper back to zero the moment it crossed its own
+    // threshold, and the single rise/fall cycle could never complete.
     const bool shaperRetrigger =
-        gateRise
-        || (p.shaperMode == ShaperMode::Reset && pendingShaperTrigger_);
+        p.shaperMode == ShaperMode::Reset && pendingShaperTrigger_;
     pendingShaperTrigger_ = false;
 
     switch (p.shaperMode)
@@ -617,7 +638,7 @@ void GhostEngine::advanceControls() noexcept
                 shaperLevel_ = std::max(0.0, shaperLevel_ - fallStep);
             break;
         case ShaperMode::Reset:
-            if (shaperRetrigger)
+            if (shaperRetrigger || (gateRise && !shaperCycleActive_))
             {
                 shaperLevel_ = 0.0;
                 shaperRising_ = true;
@@ -935,9 +956,9 @@ void GhostEngine::renderVoiceSample() noexcept
     const double white =
         static_cast<double>(static_cast<std::int32_t>(noiseSeed_))
         / 2147483648.0;
-    pinkState_[0] = 0.99765 * pinkState_[0] + white * 0.0990460;
-    pinkState_[1] = 0.96300 * pinkState_[1] + white * 0.2965164;
-    pinkState_[2] = 0.57000 * pinkState_[2] + white * 1.0526913;
+    pinkState_[0] = pinkA_[0] * pinkState_[0] + white * pinkG_[0];
+    pinkState_[1] = pinkA_[1] * pinkState_[1] + white * pinkG_[1];
+    pinkState_[2] = pinkA_[2] * pinkState_[2] + white * pinkG_[2];
     const double pink =
         (pinkState_[0] + pinkState_[1] + pinkState_[2] + white * 0.1848)
         * 0.18;
@@ -958,33 +979,33 @@ void GhostEngine::renderVoiceSample() noexcept
         pi * std::min(controlLowerCutoffHz_, 0.45 * internalRate_)
         / internalRate_);
 
-    if (p.lowerMode != LowerFilterMode::Out)
+    // The lower section always processes the signal, as the hardware chip
+    // does — the OUT position routes around it rather than halting it. That
+    // keeps its state live, so a mode switched back in later carries the
+    // current signal, not a stale charge from seconds ago.
+    const auto lower =
+        runSection(lowerSection_, filterPath, lowerG, controlLowerK_);
+    switch (p.lowerMode)
     {
-        const auto lower =
-            runSection(lowerSection_, filterPath, lowerG, controlLowerK_);
-        switch (p.lowerMode)
+        case LowerFilterMode::BandPass:
+            // Parametric boost: dry plus the resonant band-pass — a peak
+            // without attenuation far from it, not a true band-pass.
+            filterPath = filterPath + lower.bp;
+            break;
+        case LowerFilterMode::Overdrive:
         {
-            case LowerFilterMode::BandPass:
-                // Parametric boost: dry plus the resonant band-pass — a
-                // peak without attenuation far from it, not a true
-                // band-pass.
-                filterPath = filterPath + lower.bp;
-                break;
-            case LowerFilterMode::Overdrive:
-            {
-                // The soft clipper sits between the filters, so the upper
-                // lowpass re-filters the distortion products. Knee and
-                // drive voiced (OQ-10).
-                const double boosted = filterPath + lower.bp;
-                filterPath = 0.45 * std::tanh(6.0 * boosted);
-                break;
-            }
-            case LowerFilterMode::HighPass:
-                filterPath = lower.hp;
-                break;
-            case LowerFilterMode::Out:
-                break;
+            // The soft clipper sits between the filters, so the upper
+            // lowpass re-filters the distortion products. Knee and drive
+            // voiced (OQ-10).
+            const double boosted = filterPath + lower.bp;
+            filterPath = 0.45 * std::tanh(6.0 * boosted);
+            break;
         }
+        case LowerFilterMode::HighPass:
+            filterPath = lower.hp;
+            break;
+        case LowerFilterMode::Out:
+            break;
     }
 
     // Upper filter: 24 dB cascades two sections (the first held at the LOW
