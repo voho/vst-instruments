@@ -91,6 +91,16 @@ Ten-voice virtual-analog synthesizer modelling the Roland SH-201's documented ar
 
 ---
 
+## [Ghost](ghost/)
+
+*DSP-first phase: engine, tests and rendered demos exist; the plug-in wrapper and editor come next, so there is no binary to download yet.*
+
+Circuit-modelled monophonic dual-filter analog synthesizer, built from the documentation of a 1983 Moog-designed Italian mono synth: two bandlimited oscillators with hard sync and the panel's exact duty-cycle sets, a triangle-cross ring modulator with un-nulled carrier bleed, and the signature series dual filter — a lower multimode section (parametric boost, inter-filter overdrive, resonant highpass) sliding against a 12/24 dB upper lowpass with a frozen-formant tracking mode — feeding two parallel audio paths with independent VCAs. Modulation includes the RIPPLE/ARPEGGIO/LEAP arpeggiator, patterned and random sample-and-hold, red-noise drift, and the Shaper Y variable-rate integrator routed through performance wheels.
+
+- **Documentation**: [Ghost README](ghost/README.md) · [Rendered Demos](ghost/Docs/audio/README.md) · [Circuit Research](ghost/Docs/circuit-modelling-research.md)
+
+---
+
 ## macOS Gatekeeper Note
 
 Nightly workflow artifacts are ad-hoc signed. If macOS Gatekeeper prevents opening a downloaded build, clear the quarantine attribute:
