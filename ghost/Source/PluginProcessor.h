@@ -101,9 +101,11 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    // The longest release travels ten seconds; self-oscillating filters ring
-    // beyond it, so the advertised tail has headroom.
-    double getTailLengthSeconds() const override { return 12.0; }
+    // The longest release decays at 3/10 s^-1 (three time constants across
+    // the labelled 10 s) and the engine idles the envelope at 1e-5, reached
+    // after ln(1e5)/0.3 = 38.4 s; the advertised tail rounds that up so a
+    // host honouring it never truncates an audible release.
+    double getTailLengthSeconds() const override { return 40.0; }
 
     // Factory programs: the modelled instrument's manual teaches eleven
     // Sound Charts instead of shipping presets, and those charts are the
@@ -127,6 +129,11 @@ public:
 
     void requestPanic() noexcept
     {
+        // Snapshot the UI queue at the click: the panic discards what
+        // preceded it, while a key pressed after the click still sounds.
+        // The release store on the flag publishes the snapshot with it.
+        panicDropBefore.store(uiWriteIndex.load(std::memory_order_acquire),
+                              std::memory_order_relaxed);
         panicRequested.store(true, std::memory_order_release);
     }
     // The editor's spring-loaded bend wheel; applied at the next block.
@@ -172,6 +179,9 @@ private:
 
     ghost::GhostEngine engine;
     std::atomic<bool> panicRequested { false };
+    // Where the UI queue stood when panic was last requested; events
+    // enqueued before this position are dropped by the panic handling.
+    std::atomic<unsigned> panicDropBefore { 0 };
     std::atomic<bool> gateOpenForDisplay { false };
     std::atomic<float> uiPitchBend { 0.0f };
     float lastAppliedUiBend { 0.0f };  // audio thread only

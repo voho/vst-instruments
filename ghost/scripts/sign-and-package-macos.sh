@@ -5,7 +5,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-${PROJECT_DIR}/build-macos}"
 CONFIG="${CONFIG:-Release}"
-VERSION="${VERSION:-1.1.0}"
+# The default rides the CMake project version so a manual run can never
+# label packages with a number the binaries do not carry.
+if [[ -z "${VERSION:-}" ]]; then
+    VERSION="$(sed -n 's/^project(Ghost VERSION \([0-9][0-9.]*\).*/\1/p' \
+        "${PROJECT_DIR}/CMakeLists.txt")"
+fi
+if [[ ! "${VERSION}" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+    echo "error: could not determine a valid version: '${VERSION}'" >&2
+    exit 1
+fi
 APP_SIGN_IDENTITY="${APP_SIGN_IDENTITY:--}"
 INSTALLER_SIGN_IDENTITY="${INSTALLER_SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
@@ -52,6 +61,17 @@ mkdir -p \
 ditto "${VST3}" "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/VST3/Ghost.vst3"
 ditto "${AU}" "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/Components/Ghost.component"
 ditto "${APP}" "${PACKAGE_ROOT}/Applications/Ghost.app"
+
+# Licence and notice files ride inside the package root at the standard
+# documentation path, so the drag-install zip and the installer package
+# both carry them (the MIT licence requires the notice to accompany
+# binaries; the installer lands them at /Library/Documentation/Ghost).
+DOC_DIR="${PACKAGE_ROOT}/Library/Documentation/Ghost"
+mkdir -p "${DOC_DIR}"
+cp "${PROJECT_DIR}/LICENSE" \
+   "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md" \
+   "${PROJECT_DIR}/ThirdParty/JUCE-LICENSE.md" \
+   "${DOC_DIR}/"
 
 sign_bundle() {
     local bundle="$1"

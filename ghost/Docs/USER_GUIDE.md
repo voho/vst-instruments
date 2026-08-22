@@ -42,14 +42,20 @@ labels.
 
 ## TRIGGER and GATE SELECT
 
-- **TRIGGER** — MULTIPLE re-articulates the envelopes on every key press;
-  SINGLE holds one gate while any key is down and re-articulates only after
-  all keys are released (legato phrasing).
+- **TRIGGER** — with KBD selected, MULTIPLE re-articulates the envelopes
+  on every key press; SINGLE holds one gate while any key is down and
+  re-articulates only after all keys are released (legato phrasing). With
+  KBD off, key presses do not re-articulate at all: X and Y/EXT patches
+  articulate on their own gate edges, as the hardware's selected-bus
+  trigger derivation does.
 - **GATE SELECT** — the envelopes' gate sources, OR'ed: **KBD** (the
   keyboard), **X** (the LFO square — auto-repeat, one gate per clock),
   **Y/EXT** (the Shaper's own gate). *At least one must be on for the
-  envelopes to run at all* — with none selected, keyed notes are silent
-  unless VCA BYPASS drones the path open.
+  envelopes to run at all* — with none selected, the Filter/ADSR path is
+  silent unless VCA BYPASS drones it open. The Shaper path is the
+  exception: its VCA follows the Shaper contour itself, so raised
+  Shaper-path sliders keep sounding (FREE mode cycles on its own, and
+  RESET restarts on every key press) without any gate selected.
 
 ## MOD X
 
@@ -144,8 +150,14 @@ The signature series dual filter.
   "toward zero volts": a bipolar source keeps its symmetry, a unipolar one
   scales toward silence.
 - **SPLIT** — the two audio paths to left (Filter/ADSR) and right (Shaper),
-  as the modelled hardware's two rear jacks.
-- **PANIC** — the hard stop: resets the whole engine.
+  as the modelled hardware's two rear jacks. On a mono output bus the two
+  paths stay summed — there is no right jack to split onto.
+- **PANIC** — the hard stop: kills every sounding voice and resets the
+  engine's voice state. Panel settings are parameters and survive, so a
+  drone dialled in with VCA BYPASS or a raised Shaper path in a
+  self-running mode starts again immediately — pull those controls down
+  to stop it. The X/Y wheels likewise keep their positions, and a bend
+  still held on a wheel reapplies itself.
 
 The keyboard plays with **last-note priority and held-note memory**:
 releasing the newest key falls back to the newest key still held, at its
@@ -159,7 +171,7 @@ own pitch, without retriggering.
 | Pitch bend | ± 8 semitones at full range |
 | CC 1 (mod wheel) | The MOD X wheel parameter |
 | CC 2 (breath) | The SHAPER Y wheel parameter |
-| CC 120 | All sound off: the hard stop |
+| CC 120 | All sound off: kills every sounding voice, keeping wheel and bend positions (a drone dialled in with VCA BYPASS or raised Shaper-path sliders starts again immediately — pull those controls down to stop it) |
 | CC 123 | All notes off: releases held keys through the envelopes |
 
 ## Factory programs

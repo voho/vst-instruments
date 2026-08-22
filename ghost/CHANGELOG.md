@@ -26,8 +26,10 @@ Notable customer-facing changes to Ghost are recorded here.
   bypass droning, a spring-loaded ±8-semitone bend wheel and assignable
   X/Y performance wheels.
 - Every modelled panel control is a host-automatable parameter with the
-  silkscreen's own detent labels; MIDI CC1/CC2 ride the X and Y wheels,
-  CC120 is the hard stop and CC123 releases held keys through the
+  silkscreen's own detent labels (the spring-loaded bend wheel is the one
+  momentary exception: it rides MIDI pitch bend, not a parameter); MIDI
+  CC1/CC2 ride the X and Y wheels, CC120 stops all sound while keeping
+  controller positions, and CC123 releases held keys through the
   envelopes.
 - Factory programs: the modelled instrument's manual teaches eleven Sound
   Charts instead of shipping presets, and those charts are Ghost's program

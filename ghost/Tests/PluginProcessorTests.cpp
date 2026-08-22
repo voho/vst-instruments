@@ -11,6 +11,7 @@
 #include <iostream>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -205,6 +206,138 @@ void testStateRoundTrip()
            "a stored switch position did not survive the round trip");
 }
 
+// Zero-crossing pitch estimate over rendered blocks, for checks that need
+// to hear *which* note sounded rather than just that something did.
+double renderedZeroCrossingHz(GhostAudioProcessor& processor, int blocks)
+{
+    juce::AudioBuffer<float> buffer(2, blockSize);
+    juce::MidiBuffer empty;
+    std::vector<float> collected;
+    for (int block = 0; block < blocks; ++block)
+    {
+        buffer.clear();
+        juce::MidiBuffer events;
+        processor.processBlock(buffer, events);
+        const auto* samples = buffer.getReadPointer(0);
+        collected.insert(collected.end(), samples, samples + blockSize);
+    }
+    int crossings = 0;
+    for (std::size_t index = 1; index < collected.size(); ++index)
+        if ((collected[index - 1] < 0.0f) != (collected[index] < 0.0f))
+            ++crossings;
+    const double seconds =
+        static_cast<double>(collected.size()) / sampleRate;
+    return static_cast<double>(crossings) / (2.0 * seconds);
+}
+
+// MIDI CC120 (All Sound Off) must silence the instrument without resetting
+// controllers: a pitch bend held across it still applies to the next note.
+void testAllSoundOffKeepsTheBend()
+{
+    GhostAudioProcessor processor;
+    processor.prepareToPlay(sampleRate, blockSize);
+
+    juce::MidiBuffer noteOn;
+    noteOn.addEvent(
+        juce::MidiMessage::noteOn(1, 48, static_cast<juce::uint8>(100)), 0);
+    renderBlocks(processor, 24, noteOn);
+    const double unbentHz = renderedZeroCrossingHz(processor, 90);
+
+    juce::MidiBuffer bendThenStop;
+    bendThenStop.addEvent(juce::MidiMessage::pitchWheel(1, 16383), 0);
+    bendThenStop.addEvent(juce::MidiMessage::controllerEvent(1, 120, 0), 8);
+    renderBlocks(processor, 1, bendThenStop);
+    juce::MidiBuffer quiet;
+    const double stopped = renderBlocks(processor, 8, quiet);
+    expect(stopped < 1.0e-4, "CC120 did not silence the sounding voice");
+
+    renderBlocks(processor, 24, noteOn);
+    const double bentHz = renderedZeroCrossingHz(processor, 90);
+    expect(bentHz > unbentHz * 1.35,
+           "the pitch bend did not survive CC120");
+    processor.releaseResources();
+}
+
+// A mono host layout has no right channel to split onto; enabling SPLIT
+// there must fold both paths into the mono output instead of silently
+// discarding the whole Shaper path.
+void testMonoLayoutKeepsTheShaperPath()
+{
+    namespace ids = ghost::parameters;
+    GhostAudioProcessor processor;
+    auto layout = processor.getBusesLayout();
+    layout.outputBuses.getReference(0) = juce::AudioChannelSet::mono();
+    expect(processor.setBusesLayout(layout),
+           "the processor did not accept a mono output layout");
+
+    const auto set = [&processor](const char* id, float value) {
+        if (auto* parameter = processor.parameters.getParameter(id))
+            parameter->setValueNotifyingHost(value);
+    };
+    set(ids::splitPaths, 1.0f);
+    set(ids::filterPathA, 0.0f);
+    set(ids::filterPathB, 0.0f);
+    set(ids::filterPathNoise, 0.0f);
+    set(ids::shaperPathA, 0.8f);
+    set(ids::shaperMode, 1.0f / 3.0f); // KBD HOLD: contour rises while held
+
+    processor.prepareToPlay(sampleRate, blockSize);
+    juce::AudioBuffer<float> buffer(1, blockSize);
+    juce::MidiBuffer midi;
+    midi.addEvent(
+        juce::MidiMessage::noteOn(1, 48, static_cast<juce::uint8>(100)), 0);
+    double lastPeak = 0.0;
+    double heard = 0.0;
+    for (int block = 0; block < 48; ++block)
+    {
+        buffer.clear();
+        juce::MidiBuffer events = block == 0 ? midi : juce::MidiBuffer {};
+        processor.processBlock(buffer, events);
+        expect(isFinite(buffer), "a mono block carried non-finite audio");
+        lastPeak = peakOf(buffer);
+        heard = std::max(heard, lastPeak);
+    }
+    expect(heard > 1.0e-4,
+           "the Shaper path fell silent in a mono layout with SPLIT on");
+    processor.releaseResources();
+}
+
+// A note queued from the on-screen keyboard before PANIC is clicked must
+// not replay after the reset.
+void testPanicDropsQueuedUiNotes()
+{
+    GhostAudioProcessor processor;
+    processor.prepareToPlay(sampleRate, blockSize);
+
+    processor.keyboardState.noteOn(1, 60, 1.0f);
+    processor.requestPanic();
+    juce::MidiBuffer quiet;
+    const double after = renderBlocks(processor, 12, quiet);
+    expect(after < 1.0e-4, "a note queued before panic replayed after it");
+    expect(!processor.isGateOpenForDisplay(),
+           "panic left the keying gate open");
+
+    // Only what precedes the click dies: a key pressed after PANIC but
+    // before the next audio callback is a fresh note and must sound.
+    processor.keyboardState.noteOff(1, 60, 0.0f);
+    processor.keyboardState.noteOn(1, 64, 1.0f);
+    processor.requestPanic();
+    processor.keyboardState.noteOn(1, 60, 1.0f);
+    const double post = renderBlocks(processor, 24, quiet);
+    expect(post > 1.0e-4,
+           "a note pressed after panic was dropped with the stale queue");
+    processor.releaseResources();
+}
+
+// The longest release decays at 3/10 per second down to the engine's 1e-5
+// idle floor; the advertised tail must cover that, or hosts truncate it.
+void testAdvertisedTailCoversTheLongestRelease()
+{
+    GhostAudioProcessor processor;
+    expect(processor.getTailLengthSeconds() >= std::log(1.0e5) / 0.3,
+           "the advertised tail is shorter than the longest release");
+}
+
 // The factory bank is the manual's eleven Sound Charts. The host-facing
 // contract: the count and names are published, selecting a program writes
 // its chart into the host parameters, and a selected chart actually plays.
@@ -314,6 +447,10 @@ int main()
     testAllNotesOffReleasesEveryKey();
     testStateRoundTrip();
     testFactoryProgramsAreTheSoundCharts();
+    testAllSoundOffKeepsTheBend();
+    testMonoLayoutKeepsTheShaperPath();
+    testPanicDropsQueuedUiNotes();
+    testAdvertisedTailCoversTheLongestRelease();
     testEditorRendering();
 
     if (failureCount != 0)
