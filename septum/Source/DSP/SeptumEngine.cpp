@@ -457,7 +457,6 @@ void Engine::reset()
         voice.active = false;
         voice.note = -1;
         voice.held = false;
-        voice.sostenuto = false;
         voice.ampEnv.kill();
         voice.filterEnv.kill();
         voice.pitchEnv.active = false;
@@ -804,7 +803,7 @@ void Engine::releaseNoteForPart (Part part, int note)
                 triggerVoice (voice, part, previousNote, previousVelocity / 127.0,
                               tone.mono == MonoMode::SoloLegato);
             }
-            else if (hold_ || voice.sostenuto)
+            else if (hold_ || runtime.sostenutoHolds (voice.note))
             {
                 voice.held = true;
             }
@@ -822,7 +821,7 @@ void Engine::releaseNoteForPart (Part part, int note)
     {
         if (! voice.active || voice.part != part || voice.note != note)
             continue;
-        if (hold_ || voice.sostenuto)
+        if (hold_ || runtime.sostenutoHolds (note))
         {
             voice.held = true;
             continue;
@@ -904,9 +903,6 @@ void Engine::triggerVoice (Voice& voice, Part part, int note, double velocity,
     voice.note = note;
     voice.velocity = velocity;
     voice.held = true;
-    // Whatever this voice was before, it is a new note now: a sostenuto latch
-    // belonged to the note it caught, not to the physical voice.
-    voice.sostenuto = false;
     voice.age = ++voiceClock_;
 
     // Portamento: glide from the part's previous pitch. With legato mode the
@@ -965,12 +961,13 @@ bool Engine::keyStillDown (const Voice& voice) noexcept
 }
 
 // A voice lets go only when nothing is still holding it: not the key, not the
-// hold pedal, and not a sostenuto latch it was caught by.
+// hold pedal, and not a sostenuto latch on the note it is playing.
 void Engine::releaseIfNoPedalHolds (Voice& voice) noexcept
 {
     if (! voice.active)
         return;
-    if (hold_ || voice.sostenuto || keyStillDown (voice))
+    const ToneRuntime& runtime = tones_[voice.part == Part::Upper ? 0 : 1];
+    if (hold_ || runtime.sostenutoHolds (voice.note) || keyStillDown (voice))
         return;
     voice.held = false;
     voice.ampEnv.release();
@@ -999,18 +996,25 @@ void Engine::setSostenuto (bool down)
     sostenuto_ = down;
     if (down)
     {
-        for (auto& voice : voices_)
-            if (voice.active && voice.held && keyStillDown (voice))
-                voice.sostenuto = true;
+        // Latch the notes whose keys are down right now, per tone.
+        for (auto& runtime : tones_)
+        {
+            runtime.sostenutoNotes.fill (0ull);
+            for (int i = 0; i < runtime.heldCount; ++i)
+            {
+                const int note = runtime.heldNotes[static_cast<std::size_t> (i)];
+                if (note >= 0 && note <= 127)
+                    runtime.sostenutoNotes[static_cast<std::size_t> (note >> 6)] |=
+                        1ull << (note & 63);
+            }
+        }
         return;
     }
+    for (auto& runtime : tones_)
+        runtime.sostenutoNotes.fill (0ull);
     for (auto& voice : voices_)
-    {
-        if (! voice.sostenuto)
-            continue;
-        voice.sostenuto = false;
-        releaseIfNoPedalHolds (voice);
-    }
+        if (voice.held)
+            releaseIfNoPedalHolds (voice);
 }
 
 void Engine::setPitchBend (double normalised)
@@ -1053,7 +1057,6 @@ void Engine::allNotesOff()
         if (voice.active)
         {
             voice.held = false;
-            voice.sostenuto = false;
             voice.ampEnv.release();
             voice.filterEnv.release();
         }
@@ -1062,6 +1065,7 @@ void Engine::allNotesOff()
     {
         tone.heldCount = 0;
         tone.anyKeyDown = false;
+        tone.sostenutoNotes.fill (0ull);
     }
     for (auto& runtime : arpeggios_)
         runtime.clearKeys();
@@ -1074,7 +1078,6 @@ void Engine::allSoundOff()
     {
         voice.active = false;
         voice.held = false;
-        voice.sostenuto = false;
         voice.ampEnv.kill();
         voice.filterEnv.kill();
         voice.pitchEnv.active = false;
@@ -1083,6 +1086,7 @@ void Engine::allSoundOff()
     {
         tone.heldCount = 0;
         tone.anyKeyDown = false;
+        tone.sostenutoNotes.fill (0ull);
     }
     for (auto& runtime : arpeggios_)
     {
@@ -1846,6 +1850,8 @@ void Engine::arpeggioStopPart (Part part)
     {
         if (row.note >= 0)
             releaseNoteForPart (part, row.note);
+        if (row.tailNote >= 0)
+            releaseNoteForPart (part, row.tailNote);
         row = ArpeggioRuntime::Row {};
     }
     runtime.cycle = 0;
@@ -1902,7 +1908,22 @@ void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
         }
 
         if (state.note >= 0)
-            releaseNoteForPart (part, state.note);
+        {
+            if (! state.sustained && state.remaining > 0)
+            {
+                // The gate runs past its grid (DURATION 120 %): let it finish
+                // over the top of the note starting here, which is the whole
+                // point of a duration above 100 %.
+                if (state.tailNote >= 0)
+                    releaseNoteForPart (part, state.tailNote);
+                state.tailNote = state.note;
+                state.tailRemaining = state.remaining;
+            }
+            else
+            {
+                releaseNoteForPart (part, state.note);
+            }
+        }
 
         const int keyIndex = mapping::arpeggioKeyIndexForRow (
             arp.motif, runtime.keyCount, row + 1, span, window);
@@ -1911,7 +1932,9 @@ void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
             row + 1, span, window);
         if (key < 0)
         {
-            state = ArpeggioRuntime::Row {};
+            state.note = -1;
+            state.remaining = 0;
+            state.sustained = false;
             continue;
         }
         const int note = clampRaw (key + 12 * octave, 0, 127);
@@ -1933,6 +1956,8 @@ void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
         const int velocity = clampRaw ((int) std::lround (patterned), 1, 127);
 
         startNoteForPart (part, note, velocity);
+        // `tailNote` deliberately survives: a 120 % gate from the previous
+        // grid is still running underneath this one.
         state.note = note;
         state.sustained = sustained;
         state.remaining =
@@ -1984,20 +2009,57 @@ void Engine::advanceArpeggiator (int samples)
                 runtime.latched = false;
             }
 
+    // Which rows the current style ever plays. A row outside that set has
+    // nothing left to end it, so a FUL note left on it by a previous style
+    // would sustain for as long as the chord was held.
+    std::uint32_t rowsInUse = 0u;
+    {
+        const ArpeggioStyle& style = arp.style;
+        const int endStep = std::clamp (style.endStep, 1, arpeggioMaxSteps);
+        for (int step = 0; step < endStep; ++step)
+            for (int row = 0; row < arpeggioMaxRows; ++row)
+                if (style.cell (step, row) != arpeggioRest)
+                    rowsInUse |= 1u << row;
+    }
+
     // Scheduled note-offs, at control-tick resolution like everything else.
     for (int index = 0; index < partCount; ++index)
     {
         const Part part = index == 0 ? Part::Upper : Part::Lower;
         auto& runtime = arpeggios_[static_cast<std::size_t> (index)];
-        for (auto& row : runtime.rows)
+        for (int row = 0; row < arpeggioMaxRows; ++row)
         {
-            if (row.note < 0 || row.sustained)
-                continue;
-            row.remaining -= samples;
-            if (row.remaining <= 0)
+            auto& state = runtime.rows[static_cast<std::size_t> (row)];
+            if (state.tailNote >= 0)
             {
-                releaseNoteForPart (part, row.note);
-                row = ArpeggioRuntime::Row {};
+                state.tailRemaining -= samples;
+                if (state.tailRemaining <= 0)
+                {
+                    releaseNoteForPart (part, state.tailNote);
+                    state.tailNote = -1;
+                    state.tailRemaining = 0;
+                }
+            }
+            if (state.note < 0)
+                continue;
+            if (state.sustained)
+            {
+                if ((rowsInUse & (1u << row)) == 0u)
+                {
+                    // The style changed under a held FUL note and this row is
+                    // no longer played: nothing would ever end it.
+                    releaseNoteForPart (part, state.note);
+                    state.note = -1;
+                    state.sustained = false;
+                }
+                continue;
+            }
+            state.remaining -= samples;
+            if (state.remaining <= 0)
+            {
+                releaseNoteForPart (part, state.note);
+                state.note = -1;
+                state.remaining = 0;
             }
         }
     }
