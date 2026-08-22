@@ -220,3 +220,43 @@ unchanged to the resolution of the sweep, and the cost table (§2.4) is
 unchanged. Two tests fence the result — the filter envelope may not open
 slower than the amp envelope from the same slider value, and a fast S&H filter
 LFO must still produce no sample-level discontinuity.
+
+#### Step 2 — the overdrive stops depending on the host rate
+
+The AMP overdrive is evaluated inside a fixed 176.4–192 kHz band whatever the
+host runs at: 4× oversampling at 44.1/48 kHz, 2× at 88.2/96 kHz, none above,
+through two equiripple half-band polyphase stages, with `tanh` under
+first-order antiderivative anti-aliasing inside the loop. The transfer curve
+is untouched, so OQ-11 is exactly where it was.
+
+Measured after, same harness as §2.3, alias energy inside 20 Hz – 20 kHz
+relative to harmonic energy, at 44.1 kHz:
+
+| | drive 64 | drive 96 | drive 127 |
+|---|---|---|---|
+| note 69, before | −65.0 dB | −56.9 dB | −34.5 dB |
+| note 69, after | −65.0 dB | **−63.9 dB** | **−60.8 dB** |
+| note 81, before | −60.1 dB | −35.6 dB | −24.8 dB |
+| note 81, after | −60.9 dB | **−60.5 dB** | **−59.3 dB** |
+| note 93, before | −37.6 dB | −23.2 dB | −18.7 dB |
+| note 93, after | **−57.4 dB** | **−56.7 dB** | **−54.9 dB** |
+
+The sharper reading is the one line that isolates the mechanism. The 25th
+harmonic of 1760 Hz is 44 kHz, which folds to exactly 100 Hz at a 44.1 kHz
+host rate and does not fold at all at any other rate. Relative to the
+fundamental, that line measured **−29.3 dB before and −77.1 dB after** — a
+47.8 dB drop — while at 48, 88.2, 96 and 176.4 kHz it stays below −134 dB in
+both. Across those five rates the audible-band alias floor now spans 7–10 dB
+instead of 27–41 dB, and never rises above −53.7 dB.
+
+The chain's group delay is carried by every voice, shaping or not, so a clean
+tone layered under an overdriven one stays in phase; the plug-in reports it
+(19 samples at 44.1 kHz, 16 at 88.2/96 kHz, none above). Cost with ten voices,
+both tones overdriven at DRIVE 127 and the effects running: 0.079 → 0.095 ×
+realtime on the §2.4 machine. Patches with OVERDRIVE off are unchanged apart
+from the shared delay.
+
+Three tests fence it: the 100 Hz fold line must stay 60 dB below the
+fundamental at 44.1, 48 and 88.2 kHz; the clean and overdriven paths must
+cross-correlate to a peak at lag zero; and the reported latency must match the
+chain at each rate.

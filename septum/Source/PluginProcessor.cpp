@@ -492,6 +492,10 @@ void SeptumAudioProcessor::prepareToPlay (double sampleRate,
     engine.setPatch (snapshotPatch());
     engine.reset();
     monoScratch.assign ((std::size_t) juce::jmax (samplesPerBlock, 16), 0.0f);
+    // The AMP overdrive's oversampling chain has a fixed group delay, and
+    // every voice carries it whether it is shaping or not so layered tones
+    // stay in phase. Report it so the host can line the track back up.
+    setLatencySamples (engine.latencySamples());
 }
 
 void SeptumAudioProcessor::releaseResources() {}

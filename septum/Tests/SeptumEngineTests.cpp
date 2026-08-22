@@ -763,6 +763,100 @@ void testSampleHoldStepsStayContinuous()
             "(worst jump " + std::to_string (worstJump) + ")");
 }
 
+// The 25th harmonic of 1760 Hz is 44 kHz: at a 44.1 kHz host rate it folds
+// back to exactly 100 Hz, and at every other rate it does not fold at all.
+// The level of that 100 Hz line is therefore a direct read of how much the
+// shaper's evaluation rate is leaking into the instrument's character.
+void testOverdriveDoesNotFoldAtTheHostRate()
+{
+    septum::Patch patch = septum::initPatch();
+    patch.upper.osc1.wave = septum::Waveform::Sine;
+    patch.upper.balance = -63;
+    patch.upper.filterType = septum::FilterType::Bypass;
+    patch.upper.overdrive = true;
+    patch.upper.drive = 127;
+    patch.upper.level = 127;
+    patch.upper.ampEnvAttack = 0;
+    patch.upper.ampEnvDecay = 127;
+    patch.upper.ampEnvSustain = 127;
+
+    for (double sampleRate : { 44100.0, 48000.0, 88200.0 })
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.reset();
+        auto take = renderScore (engine, { { 0.0, true, 93, 100 } }, 1.2, sampleRate);
+        const auto from = (std::size_t) (sampleRate * 0.2);
+        const auto to = take.left.size();
+        const double fold = goertzel (take.left, from, to, 100.0, sampleRate);
+        const double fundamental = goertzel (take.left, from, to, 1760.0, sampleRate);
+        const double ratioDb = 20.0 * std::log10 (fold / std::max (1.0e-30, fundamental));
+        expect (ratioDb < -60.0,
+                "full DRIVE does not fold its 25th harmonic into the audible band at "
+                    + std::to_string ((int) sampleRate) + " Hz (" + std::to_string (ratioDb)
+                    + " dB)");
+    }
+}
+
+// Every voice carries the overdrive stage's group delay whether it is shaping
+// or not, so a clean tone layered under an overdriven one stays in phase with
+// it. Cross-correlate the two paths and require the peak at lag zero.
+void testOverdriveKeepsCleanVoicesAligned()
+{
+    const double sampleRate = 44100.0;
+    septum::Patch clean = plainSawPatch();
+    clean.upper.balance = -63;
+    clean.upper.level = 127;
+    clean.upper.overdrive = false;
+    septum::Patch driven = clean;
+    driven.upper.overdrive = true;
+    driven.upper.drive = 0;   // unity pre-gain: the same waveform, gently shaped
+
+    const auto render = [&] (const septum::Patch& patch)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.reset();
+        return renderScore (engine, { { 0.0, true, 57, 100 } }, 0.5, sampleRate);
+    };
+    const auto a = render (clean);
+    const auto b = render (driven);
+
+    const std::size_t from = 4410, to = 17640;
+    double best = -1.0e30;
+    int bestLag = 99;
+    for (int lag = -24; lag <= 24; ++lag)
+    {
+        double sum = 0.0;
+        for (std::size_t i = from; i < to; ++i)
+            sum += a.left[i] * (double) b.left[(std::size_t) ((long long) i + lag)];
+        if (sum > best)
+        {
+            best = sum;
+            bestLag = lag;
+        }
+    }
+    expect (bestLag == 0,
+            "the clean and overdriven paths share one group delay (peak at lag "
+                + std::to_string (bestLag) + ")");
+
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    expect (engine.latencySamples() == 19,
+            "the reported latency is the overdrive chain's group delay at 44.1 kHz "
+            "(value " + std::to_string (engine.latencySamples()) + ")");
+    engine.prepare (96000.0, 256);
+    expect (engine.latencySamples() == 16,
+            "96 kHz needs only the outer half-band, so the latency drops (value "
+                + std::to_string (engine.latencySamples()) + ")");
+    engine.prepare (192000.0, 256);
+    expect (engine.latencySamples() == 0,
+            "above the shaper's internal rate there is nothing to resample (value "
+                + std::to_string (engine.latencySamples()) + ")");
+}
+
 void testAllNotesOffAndReset()
 {
     septum::Engine engine;
@@ -810,6 +904,8 @@ int main()
     testSyncFollowsSpecialOsc2Waves();
     testFilterEnvelopeIsAsFastAsTheAmpEnvelope();
     testSampleHoldStepsStayContinuous();
+    testOverdriveDoesNotFoldAtTheHostRate();
+    testOverdriveKeepsCleanVoicesAligned();
     testAllNotesOffAndReset();
 
     if (failures == 0)

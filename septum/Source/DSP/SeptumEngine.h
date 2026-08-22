@@ -170,6 +170,27 @@ namespace mapping
         return std::pow (10.0, (drive / 127.0) * (32.0 / 20.0));
     }
 
+    // [voiced] The rate the OVERDRIVE shaper is evaluated at. The modelled
+    // engine runs at one fixed rate (OQ-01); a plug-in runs at the host's, so
+    // a shaper evaluated at the host rate folds a *different* amount of alias
+    // energy depending on what the user's interface is set to — the character
+    // of the port, not of the instrument. The stage is oversampled to land
+    // inside this band whatever the host does, so its alias signature is a
+    // property of the model. Closing OQ-11 with a captured transfer would say
+    // what curve to evaluate; it would not change where.
+    inline constexpr double overdriveInternalRateHz = 176400.0;
+
+    // [voiced] The oversampling factor that puts the shaper in that band:
+    // 4x at 44.1/48 kHz, 2x at 88.2/96 kHz, none above.
+    [[nodiscard]] inline int overdriveOversampling (double hostRateHz) noexcept
+    {
+        if (hostRateHz * 1.0 >= overdriveInternalRateHz * 0.98)
+            return 1;
+        if (hostRateHz * 2.0 >= overdriveInternalRateHz * 0.98)
+            return 2;
+        return 4;
+    }
+
     // [voiced, OQ-12] Delay TIME 0-127 -> seconds, 1 ms to 1.3 s.
     [[nodiscard]] inline double delaySeconds (double value) noexcept
     {
@@ -211,6 +232,123 @@ namespace mapping
 // --------------------------------------------------------------------------
 // Engine
 // --------------------------------------------------------------------------
+
+// --------------------------------------------------------------------------
+// Half-band polyphase resampling, used only around the AMP overdrive.
+//
+// A half-band FIR of length N = 4p+1 has its centre tap at exactly 0.5 and
+// every other even tap at zero, so both directions cost p folded multiplies
+// per slow-rate sample and the even phase is a pure delay. Both filters are
+// equiripple designs (Parks-McClellan, then used with their natural half-band
+// structure rather than a forced one); their measured responses are quoted at
+// the coefficient tables. Each direction delays by p slow-rate samples, so a
+// round trip through one stage costs 2p.
+// --------------------------------------------------------------------------
+struct HalfBandStage
+{
+    static constexpr int historySize = 32;   // power of two, >= 2 * maxPairs
+    static constexpr int historyMask = historySize - 1;
+
+    const double* taps { nullptr };  // the folded odd taps, `pairs` of them
+    int pairs { 0 };                 // p
+
+    std::array<double, historySize> upHistory {};
+    std::array<double, historySize> downEven {};
+    std::array<double, historySize> downOdd {};
+    int upWrite { 0 }, downWrite { 0 };
+
+    void configure (const double* coefficients, int pairCount) noexcept
+    {
+        taps = coefficients;
+        pairs = pairCount;
+        clear();
+    }
+
+    void clear() noexcept
+    {
+        upHistory.fill (0.0);
+        downEven.fill (0.0);
+        downOdd.fill (0.0);
+        upWrite = downWrite = 0;
+    }
+
+    // One slow-rate sample in, two fast-rate samples out.
+    void upsample (double x, double& even, double& odd) noexcept
+    {
+        upHistory[static_cast<std::size_t> (upWrite)] = x;
+        even = upHistory[static_cast<std::size_t> ((upWrite - pairs) & historyMask)];
+        double sum = 0.0;
+        const int span = 2 * pairs - 1;
+        for (int j = 0; j < pairs; ++j)
+            sum += taps[j]
+                   * (upHistory[static_cast<std::size_t> ((upWrite - j) & historyMask)]
+                      + upHistory[static_cast<std::size_t> ((upWrite - (span - j))
+                                                            & historyMask)]);
+        odd = 2.0 * sum;
+        upWrite = (upWrite + 1) & historyMask;
+    }
+
+    // Two fast-rate samples in, one slow-rate sample out.
+    [[nodiscard]] double downsample (double even, double odd) noexcept
+    {
+        downEven[static_cast<std::size_t> (downWrite)] = even;
+        downOdd[static_cast<std::size_t> (downWrite)] = odd;
+        double sum =
+            0.5 * downEven[static_cast<std::size_t> ((downWrite - pairs) & historyMask)];
+        const int span = 2 * pairs - 1;
+        for (int j = 0; j < pairs; ++j)
+            sum += taps[j]
+                   * (downOdd[static_cast<std::size_t> ((downWrite - 1 - j) & historyMask)]
+                      + downOdd[static_cast<std::size_t> ((downWrite - 1 - (span - j))
+                                                          & historyMask)]);
+        downWrite = (downWrite + 1) & historyMask;
+        return sum;
+    }
+};
+
+// Outer stage, host rate <-> 2x. N = 33, passband to 0.215, stopband from
+// 0.285: passband droop 0.06 dB, stopband -43.1 dB, delay 8 slow samples.
+inline constexpr std::array<double, 8> halfBandOuterTaps {
+    -0.0067193719785342918, 0.0086866417484826458, -0.014239894060670263,
+    0.022346726321779357, -0.034675518871777167, 0.055571891864522723,
+    -0.10108701398731906, 0.31661168588312411
+};
+
+// Inner stage, 2x <-> 4x, where the images sit an octave further out. N = 13,
+// passband to 0.180, stopband from 0.320: droop 0.19 dB, stopband -33.3 dB,
+// delay 3 slow samples.
+inline constexpr std::array<double, 3> halfBandInnerTaps {
+    0.03358705057227105, -0.08268763122280455, 0.30989245062299142
+};
+
+// The AMP section's OVERDRIVE, evaluated at a fixed internal rate.
+//
+// Inside the oversampled loop the `tanh` shaper is evaluated with first-order
+// antiderivative anti-aliasing (Parker, Zavalishin & Bozkurt, DAFx-16): the
+// sample's output is the transfer's average over the step just taken rather
+// than its value at the step's end, which is what a continuous-time
+// nonlinearity would produce. It costs one `log1p` in place of one `tanh` and
+// it composes with the oversampling rather than replacing it.
+//
+// The stage has a fixed group delay, so a voice whose OVERDRIVE is *off* is
+// pushed through a matched pure delay instead of the resampler. Without that
+// an overdriven UPPER and a clean LOWER would sound the same note 19 samples
+// apart and comb each other around 1 kHz.
+struct OverdriveStage
+{
+    int factor { 1 };
+    int latency { 0 };               // host-rate samples, both paths
+    HalfBandStage outer {}, inner {};
+    double previousInput { 0.0 };    // the ADAA step's left endpoint
+    double previousIntegral { 0.0 };
+    std::array<double, 32> bypass {};
+    int bypassWrite { 0 };
+
+    void prepare (double hostRateHz) noexcept;
+    void clear() noexcept;
+    [[nodiscard]] double process (double x, double preGain, double compensation,
+                                  bool enabled) noexcept;
+};
 
 class Engine
 {
@@ -259,6 +397,12 @@ public:
     // the documented ±98 % — ring longer on the hardware too; a finite report
     // is the practical bound, not a claim that ±98 % ever fully dies.
     [[nodiscard]] static double maximumTailSeconds() noexcept { return 30.0; }
+
+    // The AMP overdrive's oversampling chain has a fixed group delay, and
+    // every voice carries it whether its OVERDRIVE is on or off so layered
+    // tones stay aligned. That makes it the instrument's latency, and a host
+    // can compensate for it.
+    [[nodiscard]] int latencySamples() const noexcept { return latencySamples_; }
 
 private:
     enum class Part { Upper, Lower };
@@ -376,6 +520,7 @@ private:
         double filterGTarget { 0.1 }, filterKTarget { 2.0 };
         double ampGainL { 0.0 }, ampGainR { 0.0 };
         BiquadCoeffs superHpf1 {}, superHpf2 {};
+        OverdriveStage overdrive {};
         std::uint32_t noiseRng { 0x1234567u };
         // Control slew (voiced ~2.5 ms) on the *parameter* side of the cutoff
         // sum only — the knob, key follow, velocity offset and the LFO, which
@@ -463,6 +608,7 @@ private:
     Patch patch_ {};
     double sampleRate_ { 44100.0 };
     int maxBlock_ { 512 };
+    int latencySamples_ { 0 };
 
     int masterLevel_ { 127 };
     double masterTuneHz_ { 440.0 };

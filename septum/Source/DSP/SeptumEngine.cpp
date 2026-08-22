@@ -260,6 +260,111 @@ double Engine::Lfo::advance (const LfoParams& params, double hz,
 }
 
 // ---------------------------------------------------------------------------
+// OVERDRIVE, at a fixed internal rate
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // log(cosh(x)), the antiderivative of tanh, in the form that does not
+    // overflow: |x| is exact for large arguments and log1p carries the rest.
+    [[nodiscard]] inline double logCosh (double x) noexcept
+    {
+        const double a = std::abs (x);
+        return a + std::log1p (std::exp (-2.0 * a)) - 0.69314718055994531;
+    }
+} // namespace
+
+void OverdriveStage::prepare (double hostRateHz) noexcept
+{
+    factor = mapping::overdriveOversampling (hostRateHz);
+    outer.configure (halfBandOuterTaps.data(),
+                     static_cast<int> (halfBandOuterTaps.size()));
+    inner.configure (halfBandInnerTaps.data(),
+                     static_cast<int> (halfBandInnerTaps.size()));
+    // One round trip through a stage costs 2p of that stage's slow rate; the
+    // inner stage's slow rate is 2x, so its cost halves in host-rate samples.
+    latency = factor >= 2 ? 2 * outer.pairs : 0;
+    if (factor >= 4)
+        latency += inner.pairs;
+    clear();
+}
+
+void OverdriveStage::clear() noexcept
+{
+    outer.clear();
+    inner.clear();
+    previousInput = 0.0;
+    previousIntegral = logCosh (0.0);
+    bypass.fill (0.0);
+    bypassWrite = 0;
+}
+
+double OverdriveStage::process (double x, double preGain, double compensation,
+                                bool enabled) noexcept
+{
+    if (! enabled)
+    {
+        // The matched pure delay: identical latency, bit-identical signal.
+        if (latency == 0)
+            return x;
+        const auto size = static_cast<int> (bypass.size());
+        bypass[static_cast<std::size_t> (bypassWrite)] = x;
+        const double out =
+            bypass[static_cast<std::size_t> ((bypassWrite - latency + size) % size)];
+        bypassWrite = (bypassWrite + 1) % size;
+        return out;
+    }
+
+    // First-order antiderivative anti-aliasing of tanh.
+    const auto shape = [this] (double input)
+    {
+        const double integral = logCosh (input);
+        const double step = input - previousInput;
+        const double result =
+            std::abs (step) < 1.0e-6
+                ? std::tanh (0.5 * (input + previousInput))
+                : (integral - previousIntegral) / step;
+        previousInput = input;
+        previousIntegral = integral;
+        return result;
+    };
+
+    // ADAA carries state from one internal sample to the next, so every call
+    // to `shape` lands in a named local first: the order the shaper sees its
+    // input in is the order time runs in, not whatever order the compiler
+    // picks for a call's arguments.
+    double shaped = 0.0;
+    if (factor == 1)
+    {
+        shaped = shape (preGain * x);
+    }
+    else if (factor == 2)
+    {
+        double a = 0.0, b = 0.0;
+        outer.upsample (x, a, b);
+        const double shapedA = shape (preGain * a);
+        const double shapedB = shape (preGain * b);
+        shaped = outer.downsample (shapedA, shapedB);
+    }
+    else
+    {
+        double a = 0.0, b = 0.0;
+        outer.upsample (x, a, b);
+        double a0 = 0.0, a1 = 0.0, b0 = 0.0, b1 = 0.0;
+        inner.upsample (a, a0, a1);
+        inner.upsample (b, b0, b1);
+        const double shapedA0 = shape (preGain * a0);
+        const double shapedA1 = shape (preGain * a1);
+        const double down0 = inner.downsample (shapedA0, shapedA1);
+        const double shapedB0 = shape (preGain * b0);
+        const double shapedB1 = shape (preGain * b1);
+        const double down1 = inner.downsample (shapedB0, shapedB1);
+        shaped = outer.downsample (down0, down1);
+    }
+    return shaped * compensation;
+}
+
+// ---------------------------------------------------------------------------
 // Reverb container
 // ---------------------------------------------------------------------------
 
@@ -298,7 +403,9 @@ void Engine::prepare (double sampleRate, int maxBlockSize)
     {
         voice.osc1.comb.assign (combSamples, 0.0f);
         voice.osc2.comb.assign (combSamples, 0.0f);
+        voice.overdrive.prepare (sampleRate_);
     }
+    latencySamples_ = voices_.front().overdrive.latency;
 
     const auto delaySamples = static_cast<std::size_t> (sampleRate_ * 1.45) + 8;
     delayL_.buffer.assign (delaySamples, 0.0f);
@@ -366,6 +473,7 @@ void Engine::reset()
         voice.osc2.superPhases.fill (0.0);
         voice.osc1.clearRuntime();
         voice.osc2.clearRuntime();
+        voice.overdrive.clear();
     }
     for (auto& tone : tones_)
     {
@@ -741,6 +849,7 @@ void Engine::triggerVoice (Voice& voice, Part part, int note, double velocity,
                 phase = nextRandom() * (1.0 / 4294967296.0);
             osc->clearRuntime();
         }
+        voice.overdrive.clear();
         voice.noiseRng = nextRandom() | 1u;
         voice.controlsPrimed = false;  // snap cutoff/resonance to this note
         if (! wasActive)
@@ -1242,6 +1351,10 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples)
         return out * 0.6;
     };
 
+    // [voiced, OQ-11] The drive curve, hoisted out of the sample loop.
+    const double overdrivePreGain = mapping::overdrivePreGain (tone.drive);
+    const double overdriveCompensation = std::pow (overdrivePreGain, -0.4);
+
     // Per-sample walk from this tick's starting coefficients to the ones the
     // control update just computed.
     const double inverseSamples = 1.0 / std::max (1, samples);
@@ -1417,11 +1530,11 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples)
         }
 
         // ---- AMP: overdrive, envelope, level, pan ------------------------
-        if (tone.overdrive)
-        {
-            const double pre = mapping::overdrivePreGain (tone.drive);
-            filtered = std::tanh (pre * filtered) * std::pow (pre, -0.4);
-        }
+        // The stage runs for every voice, shaping or not: its group delay is
+        // the same either way, so a clean tone layered under an overdriven
+        // one stays in phase with it.
+        filtered = voice.overdrive.process (filtered, overdrivePreGain,
+                                            overdriveCompensation, tone.overdrive);
 
         const double env = voice.ampEnv.advance (1);
         mono[i] = static_cast<float> (filtered * env);

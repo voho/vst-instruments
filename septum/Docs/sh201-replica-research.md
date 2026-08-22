@@ -283,6 +283,30 @@ Voiced (OQ-11): drive maps to 0…32 dB of pre-gain into a tanh clipper,
 output-compensated (`pre^−0.4`) to keep loudness roughly constant; level
 knob is a squared amplitude law; pan is equal-power.
 
+**Where the shaper is evaluated is not the same question as what it
+evaluates.** The modelled engine runs at one fixed rate (OQ-01); a plug-in
+runs at the host's, so a shaper evaluated at the host rate folds a *different*
+amount of alias energy depending on what the user's interface happens to be
+set to — the character of the port, not of the instrument. Measured before
+this was addressed: a full-DRIVE sine at note 93 folded inharmonic energy back
+at −18.7 dB relative to its own harmonics at 44.1 kHz and −48.9 dB at
+176.4 kHz, a 30 dB spread across host rates for one patch. The stage is
+therefore oversampled to land in a fixed 176.4–192 kHz band whatever the host
+does — 4× at 44.1/48 kHz, 2× at 88.2/96 kHz, none above — through two
+equiripple half-band polyphase stages (N = 33, stopband −43.1 dB, and N = 13,
+stopband −33.3 dB), with the `tanh` evaluated inside the loop under
+first-order antiderivative anti-aliasing (Parker, Zavalishin & Bozkurt,
+DAFx-16). The transfer curve is untouched — this is not an answer to OQ-11,
+and a captured transfer would replace the curve without changing where it is
+evaluated.
+
+The chain has a fixed group delay (19 samples at 44.1 kHz, 16 at 88.2/96 kHz,
+none above), so **every voice carries that delay whether its OVERDRIVE is on
+or not**: an overdriven UPPER against a clean LOWER would otherwise sound the
+same note 19 samples apart and comb around 1 kHz. A voice with the switch off
+passes through a matched pure delay, bit-identical apart from the shift, and
+the plug-in reports the delay as its latency.
+
 ### Effects
 
 Settled: modulation delay → reverb in series, shared TIME and switches,
