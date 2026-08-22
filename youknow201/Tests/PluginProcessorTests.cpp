@@ -336,13 +336,13 @@ void testRetriggerAfterOverflowSurvives()
             "a re-pressed key outlives its overflowed release");
 }
 
-void testProgramStagingConsumedWithoutMessagePump()
+void testProgramChangeLandsWithoutMessagePump()
 {
-    // A MIDI program change stages the factory patch and queues the
-    // parameter spray on the message thread. A host that drives processing
-    // from the message thread never pumps that queue, so the staging must be
-    // consumed in-process — otherwise it would pin the factory patch and eat
-    // every later parameter edit for the rest of the render.
+    // A MIDI program change writes the program into the raw parameter
+    // values on the audio path itself; the queued message-thread spray only
+    // repeats them with host/UI notification. So even in a host that never
+    // pumps the message loop, the program must land and later parameter
+    // edits must compose on top of it instead of being eaten.
     YouKnow201AudioProcessor processor;
     processor.prepareToPlay (44100.0, 512);
 
@@ -496,7 +496,7 @@ int main()
     testProgramChangeStagesOnTheAudioPath();
     testUiQueueOverflowStillReleases();
     testRetriggerAfterOverflowSurvives();
-    testProgramStagingConsumedWithoutMessagePump();
+    testProgramChangeLandsWithoutMessagePump();
     testProgramsLoad();
     testStateRoundTrip();
     testEditorAndSnapshot();

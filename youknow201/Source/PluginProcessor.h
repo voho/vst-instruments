@@ -86,6 +86,11 @@ private:
     bool handleController (int controller, int value);
     void applyProgram (int index);
     void applyProgramAsync (int index);
+    // Writes a factory program straight into the cached raw-value atomics.
+    // Allocation-free, so the audio thread can land a MIDI program change
+    // without depending on the message loop ever running; the queued
+    // applyProgram then re-sets the same values with host/UI notification.
+    void writeProgramToParameters (int index) noexcept;
     void cacheParameterPointers();
 
     // Audio-thread lookups resolved once at construction: raw-value atomics
@@ -122,11 +127,16 @@ private:
     // When the UI queue overflows, a note-off must still reach the engine
     // eventually: the release is latched here and applied on the next block.
     std::array<std::atomic<std::uint64_t>, 2> forcedRelease { 0u, 0u };
-    // A program selected from the audio path (MIDI program change) or being
-    // sprayed into the APVTS on the message thread: while set, the audio
-    // path renders the staged factory patch atomically instead of a
-    // possibly half-updated parameter snapshot.
+    // Set only while applyProgram sprays a program into the APVTS on the
+    // message thread: the audio path then renders that factory patch
+    // atomically instead of a half-updated parameter snapshot. MIDI program
+    // changes do not stage — they write the raw values directly.
     std::atomic<int> stagedProgram { -1 };
+    // Seqlock guard for snapshotPatch against message-thread multi-parameter
+    // writes (program sprays, state restores): odd while a write burst is in
+    // flight, bumped again when it completes. A snapshot that saw a burst is
+    // discarded and the engine keeps the previous block's patch.
+    std::atomic<std::uint32_t> patchGeneration { 0 };
 
     JUCE_DECLARE_WEAK_REFERENCEABLE (YouKnow201AudioProcessor)
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (YouKnow201AudioProcessor)

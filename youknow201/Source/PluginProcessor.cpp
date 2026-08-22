@@ -3,6 +3,7 @@
 
 #include <bit>
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 namespace
@@ -631,10 +632,12 @@ bool YouKnow201AudioProcessor::handleMidiMessage (const juce::MidiMessage& messa
         if (program >= 0 && program < getNumPrograms())
         {
             currentProgram.store (program, std::memory_order_relaxed);
-            // Stage the factory patch for the audio path immediately — notes
-            // later in this same block must already play the new program —
-            // and let the message thread bring the parameters up behind it.
-            stagedProgram.store (program, std::memory_order_release);
+            // Land the program in the raw parameter values right here: notes
+            // later in this same block must already play it, later edits must
+            // compose on top of it, and none of that may depend on a message
+            // loop that an offline host might never pump. The queued spray
+            // only repeats these values with host/UI notification.
+            writeProgramToParameters (program);
             applyProgramAsync (program);
             return true;
         }
@@ -644,6 +647,28 @@ bool YouKnow201AudioProcessor::handleMidiMessage (const juce::MidiMessage& messa
     else if (message.isAllSoundOff())
         engine.allSoundOff();
     return false;
+}
+
+void YouKnow201AudioProcessor::writeProgramToParameters (int index) noexcept
+{
+    if (index < 0 || index >= getNumPrograms())
+        return;
+    const Patch& patch =
+        youknow201::factoryPatches()[(std::size_t) index].patch;
+
+    const auto& bindings = toneBindings();
+    for (std::size_t i = 0; i < bindings.size(); ++i)
+    {
+        upperValues[i]->store (bindings[i].get (patch.upper),
+                               std::memory_order_relaxed);
+        lowerValues[i]->store (bindings[i].get (patch.lower),
+                               std::memory_order_relaxed);
+    }
+    const auto& shared = patchBindings();
+    for (std::size_t i = 0; i < shared.size(); ++i)
+        if (std::strcmp (shared[i].id, "master_level") != 0)
+            patchValues[i]->store (shared[i].get (patch),
+                                   std::memory_order_relaxed);
 }
 
 void YouKnow201AudioProcessor::applyProgramAsync (int program)
@@ -700,31 +725,28 @@ void YouKnow201AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     engine.setMasterLevel ((int) std::lround (
         masterValue->load (std::memory_order_relaxed)));
 
-    // A MIDI program change queues its parameter spray on the message
-    // thread. When the host drives processing from the message thread itself
-    // (offline renders, headless harnesses), that queued call can never run
-    // before the next block, and the staging would pin the factory patch
-    // and eat every later parameter edit — so consume it here: on this
-    // thread, spraying the parameters is legal and cannot race the queued
-    // call, which also runs only on this thread.
-    if (const int pending = stagedProgram.load (std::memory_order_acquire);
-        pending >= 0)
-    {
-        auto* messageManager = juce::MessageManager::getInstanceWithoutCreating();
-        if (messageManager != nullptr && messageManager->isThisTheMessageThread())
-            applyProgram (pending);
-    }
-
-    // While a program load is in flight, render the staged factory patch
-    // atomically rather than a half-updated parameter snapshot.
+    // The engine's patch never depends on the message loop: MIDI program
+    // changes write the raw values directly, and the snapshot is validated
+    // against the message thread's write bursts (program sprays, state
+    // restores) so a half-written mix is never rendered — the staged factory
+    // patch or the previous block's patch covers the gap instead.
     const auto applyCurrentPatch = [this]
     {
         const int staged = stagedProgram.load (std::memory_order_acquire);
         if (staged >= 0 && staged < (int) youknow201::factoryPatches().size())
+        {
             engine.setPatch (
                 youknow201::factoryPatches()[(std::size_t) staged].patch);
-        else
-            engine.setPatch (snapshotPatch());
+            return;
+        }
+        const auto generation = patchGeneration.load (std::memory_order_acquire);
+        const youknow201::Patch snapshot = snapshotPatch();
+        if ((generation & 1u) == 0u
+            && patchGeneration.load (std::memory_order_acquire) == generation)
+            engine.setPatch (snapshot);
+        // Otherwise a burst was in flight while the snapshot was read: keep
+        // the previous patch for this segment and pick up the completed
+        // values on the next one.
     };
     applyCurrentPatch();
 
@@ -790,8 +812,10 @@ void YouKnow201AudioProcessor::applyProgram (int index)
 
     // The audio path renders this factory patch directly until every
     // parameter below has been written, so a block can never snapshot a
-    // half-loaded program.
+    // half-loaded program. The generation goes odd behind it: a snapshot
+    // that overlapped this spray in any way is discarded.
     stagedProgram.store (index, std::memory_order_release);
+    patchGeneration.fetch_add (1, std::memory_order_acq_rel);
 
     const auto apply = [this] (const juce::String& id, float natural)
     {
@@ -816,6 +840,7 @@ void YouKnow201AudioProcessor::applyProgram (int index)
 
     // Every parameter now matches the program; the audio path can go back to
     // snapshotting the APVTS.
+    patchGeneration.fetch_add (1, std::memory_order_acq_rel);
     stagedProgram.store (-1, std::memory_order_release);
 }
 
@@ -849,7 +874,12 @@ void YouKnow201AudioProcessor::setStateInformation (const void* data,
         {
             currentProgram.store (state.getProperty ("program", 0),
                                   std::memory_order_relaxed);
+            // A state restore is a multi-parameter write burst like a
+            // program spray: keep the generation odd across it so the audio
+            // thread discards any snapshot that overlapped it.
+            patchGeneration.fetch_add (1, std::memory_order_acq_rel);
             parameters.replaceState (state);
+            patchGeneration.fetch_add (1, std::memory_order_acq_rel);
         }
     }
 }
