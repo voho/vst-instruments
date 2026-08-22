@@ -162,7 +162,7 @@ halfband stages; TPT state-variable filter sections whose nonlinearity is
 a term of the continuous system rather than a per-sample map, so the same
 patch converges to the same filter at every host rate; audio-rate
 modulation applied at the internal rate; denormal flushing throughout.
-The whole voice renders 7.7× faster than realtime on a hard patch.
+The whole voice renders about 10× faster than realtime on a hard patch.
 
 **The standing limitation (OQ-11):** no owned hardware, no calibration
 captures, and none available in the field. Every constant marked *voiced*
@@ -435,6 +435,20 @@ quantity rather than as defects.
 **Cost.** The engine renders 30 s of a hard patch (both oscillators, ring,
 OVERDRIVE, VARIABLE resonance) in 3.9 s — 7.7x realtime, down from 22.7x
 before this work and far above the suite's bound.
+
+*Corrected 2026-08-22, after review.* The two halfband kernels were not
+in fact sparse when that figure was taken. A halfband's sinc vanishes at
+every even offset from its centre, and the design skipped those taps by
+testing the computed coefficient against zero — but `sin(pi n / 2)` at even
+`n` evaluates to a rounding residue near 1e-16, not to zero, so every tap
+was kept: 31 and 127 rather than 17 and 65, and the decimator did close to
+twice the arithmetic the comment beside it claimed. The zeros are now
+identified by position instead. Measured on one machine in one session, the
+same 30 s hard patch goes from 3.21 s to 2.92 s — 9.4x to 10.3x realtime.
+All twelve committed demo WAVs render bit-identical across the change,
+which is the evidence that the discarded taps really were carrying nothing.
+The tap counts are now pinned by a test, because nothing audible depends on
+them and so nothing else would have noticed.
 
 ## Step 2 closed as no drift — 2026-08-22
 

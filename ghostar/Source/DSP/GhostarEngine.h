@@ -191,6 +191,19 @@ public:
     [[nodiscard]] static double longestReleaseTailSeconds() noexcept;
     [[nodiscard]] int getCurrentNote() const noexcept { return currentNote_; }
 
+    // How many taps each decimation stage actually visits per output sample.
+    // Exposed because a halfband's sparsity is invisible from the outside:
+    // losing the structural zeros costs about twice the decimator's
+    // arithmetic and changes nothing audible, so nothing else would notice.
+    [[nodiscard]] int decimatorStageATaps() const noexcept
+    {
+        return stageAKernel_.count;
+    }
+    [[nodiscard]] int decimatorStageBTaps() const noexcept
+    {
+        return stageBKernel_.count;
+    }
+
 private:
     // ------------------------------------------------------------------ DSP
     struct Adsr

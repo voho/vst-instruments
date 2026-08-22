@@ -856,6 +856,22 @@ void testWheelGatedProgramsNameTheirWheel()
     }
 }
 
+// A halfband's sinc vanishes at every even offset from its centre, and the
+// decimator stores only the taps that survive. Nothing audible depends on
+// that — the discarded taps are zero — so if the sparsity is ever lost the
+// only symptom is the decimator quietly costing about twice as much. The
+// counts are therefore pinned directly.
+void testTheHalfbandKernelsAreSparse()
+{
+    GhostarEngine engine;
+    engine.prepare(44100.0, 256);
+    // 31 and 127 taps: the centre tap plus every odd offset either side.
+    check(engine.decimatorStageATaps() == 17,
+          "the first decimation stage is visiting its structural zeros");
+    check(engine.decimatorStageBTaps() == 65,
+          "the second decimation stage is visiting its structural zeros");
+}
+
 void testFasterThanRealtime()
 {
     GhostarEngine engine;
@@ -908,6 +924,7 @@ int main()
     testStopAllSoundKeepsControllers();
     testEveryFactoryProgramRenders();
     testWheelGatedProgramsNameTheirWheel();
+    testTheHalfbandKernelsAreSparse();
     testFasterThanRealtime();
 
     if (failures != 0)

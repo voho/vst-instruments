@@ -447,9 +447,17 @@ namespace
         double sum = 0.0;
         for (int index = 0; index < taps; ++index)
         {
-            const double n = static_cast<double>(index - center);
-            const double sinc =
-                n == 0.0 ? 1.0 : std::sin(pi * n / 2.0) / (pi * n / 2.0);
+            const int offset = index - center;
+            const double n = static_cast<double>(offset);
+            // The structural zeros are written as zero rather than computed.
+            // sin(pi * n / 2) at even n is a rounding residue around 1e-16,
+            // not 0, so evaluating it and then testing the result against
+            // zero would keep every tap — and the kernel would not be sparse
+            // at all.
+            const double sinc = offset == 0 ? 1.0
+                              : offset % 2 == 0
+                                  ? 0.0
+                                  : std::sin(pi * n / 2.0) / (pi * n / 2.0);
             const double ratio = n / static_cast<double>(center);
             const double window =
                 besselI0(beta
@@ -461,9 +469,13 @@ namespace
         kernel.count = 0;
         for (int index = 0; index < taps; ++index)
         {
-            const double value = full[static_cast<std::size_t>(index)] / sum;
-            if (value == 0.0)
+            // Skipped by position, for the same reason: the tap that is
+            // structurally zero is known from where it sits, not from what
+            // its arithmetic came out as.
+            const int offset = index - center;
+            if (offset != 0 && offset % 2 == 0)
                 continue;
+            const double value = full[static_cast<std::size_t>(index)] / sum;
             kernel.offsets[static_cast<std::size_t>(kernel.count)] =
                 taps - 1 - index;
             kernel.values[static_cast<std::size_t>(kernel.count)] = value;
