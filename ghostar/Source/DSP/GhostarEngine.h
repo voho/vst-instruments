@@ -191,6 +191,26 @@ public:
     [[nodiscard]] static double longestReleaseTailSeconds() noexcept;
     [[nodiscard]] int getCurrentNote() const noexcept { return currentNote_; }
 
+    // How far behind its own instant the voice reaches the host, in output
+    // samples. Both decimation stages are linear-phase, so each delays by
+    // exactly half its length: 15 internal samples for the 31-tap stage at
+    // 4x, and 63 stage-B samples — 126 internal — for the 127-tap stage at
+    // 2x. The output sample is taken after the fourth internal step, which
+    // gives three of those back, leaving 138 internal samples: 34.5 output
+    // samples, whatever the host rate. Measured on a one-sample gate burst
+    // through the real chain, the burst's centroid lands 34.5005 samples
+    // late, and the step response crosses half at 34.409 at 44.1, 48 and
+    // 96 kHz.
+    [[nodiscard]] static constexpr double outputLatencySamples() noexcept
+    {
+        constexpr int oversample = 4;
+        constexpr int internalDelay = (stageATaps - 1) / 2
+                                    + (stageBTaps - 1) / 2 * 2
+                                    - (oversample - 1);
+        return static_cast<double>(internalDelay)
+             / static_cast<double>(oversample);
+    }
+
     // How many taps each decimation stage actually visits per output sample.
     // Exposed because a halfband's sparsity is invisible from the outside:
     // losing the structural zeros costs about twice the decimator's

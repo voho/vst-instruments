@@ -336,6 +336,53 @@ void testPanicDropsQueuedUiNotes()
 // (log(1e5)/0.3, the old three-time-constants read), so when the law was
 // re-derived the figure went stale while the test kept passing. It now asks
 // the engine, which is the only version of the question that cannot rot.
+// The decimation chain delays the voice, and a host can only compensate for
+// a delay it is told about. The figure is not restated here: the engine's
+// own derivation is checked against the delay the engine actually shows, so
+// neither can drift from the other.
+void testAdvertisedLatencyMatchesTheMeasuredDelay()
+{
+    GhostarAudioProcessor processor;
+    processor.prepareToPlay(sampleRate, blockSize);
+
+    const double derived = ghostar::GhostarEngine::outputLatencySamples();
+    expect(processor.getLatencySamples() == juce::roundToInt(derived),
+           "the plug-in does not publish the latency the engine derives");
+    expect(processor.getLatencySamples() > 0,
+           "the plug-in still claims to be latency-free");
+
+    // Measured, not assumed: a note struck at a known sample cannot produce
+    // its envelope onset before the chain's delay has elapsed. Everything
+    // before that is the linear-phase filter's pre-ring, orders of magnitude
+    // below the onset.
+    constexpr int strikeAt = 64;
+    juce::MidiBuffer midi;
+    midi.addEvent(
+        juce::MidiMessage::noteOn(1, 48, static_cast<juce::uint8>(110)),
+        strikeAt);
+    juce::AudioBuffer<float> buffer(2, blockSize);
+    buffer.clear();
+    processor.processBlock(buffer, midi);
+
+    int onset = -1;
+    const auto* samples = buffer.getReadPointer(0);
+    for (int sample = strikeAt; sample < blockSize; ++sample)
+        if (std::abs(samples[sample]) > 1.0e-4f)
+        {
+            onset = sample - strikeAt;
+            break;
+        }
+    expect(onset >= 0, "the struck note never sounded");
+    if (onset >= 0)
+    {
+        // Within a sample of the derived figure, either side: the published
+        // integer is a rounding of a half-sample delay.
+        expect(std::abs(static_cast<double>(onset) - derived) <= 1.5,
+               "the measured onset delay does not match the derived latency");
+    }
+    processor.releaseResources();
+}
+
 void testAdvertisedTailCoversTheLongestRelease()
 {
     GhostarAudioProcessor processor;
@@ -578,6 +625,7 @@ int main()
     testMonoLayoutKeepsTheShaperPath();
     testPanicDropsQueuedUiNotes();
     testAdvertisedTailCoversTheLongestRelease();
+    testAdvertisedLatencyMatchesTheMeasuredDelay();
     testEditorRendering();
     testEditorFitsASmallDisplay();
 

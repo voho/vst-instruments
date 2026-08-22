@@ -275,6 +275,14 @@ void GhostarAudioProcessor::setCurrentProgram(int index)
 void GhostarAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     engine.prepare(sampleRate, samplesPerBlock);
+    // The voice runs at 4x and comes back through two linear-phase halfband
+    // stages, which delay it by a fixed 34.5 samples at any host rate. Told
+    // nothing, a host assumes zero and lands Ghostar a third of a
+    // millisecond behind everything it is layered with. The delay is not a
+    // whole number of samples, so the nearest one is what can be published;
+    // half a sample is what the host cannot compensate.
+    setLatencySamples(juce::roundToInt(
+        ghostar::GhostarEngine::outputLatencySamples()));
     updateEngineParameters();
 }
 
