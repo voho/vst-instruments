@@ -61,7 +61,7 @@ jobs:
             directory: ghostar
             build_plugin_option: GHOSTAR_BUILD_PLUGIN
             target_demo: GhostarRenderDemos
-            expected_demos: 10
+            expected_demos: 12
     steps:
       - uses: actions/checkout@v4
         with:

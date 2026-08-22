@@ -275,6 +275,14 @@ void GhostarAudioProcessor::setCurrentProgram(int index)
 void GhostarAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     engine.prepare(sampleRate, samplesPerBlock);
+    // The voice runs at 4x and comes back through two linear-phase halfband
+    // stages, which delay it by a fixed 34.5 samples at any host rate. Told
+    // nothing, a host assumes zero and lands Ghostar a third of a
+    // millisecond behind everything it is layered with. The delay is not a
+    // whole number of samples, so the nearest one is what can be published;
+    // half a sample is what the host cannot compensate.
+    setLatencySamples(juce::roundToInt(
+        ghostar::GhostarEngine::outputLatencySamples()));
     updateEngineParameters();
 }
 
@@ -493,7 +501,12 @@ void GhostarAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     for (int channel = 2; channel < buffer.getNumChannels(); ++channel)
         buffer.clear(channel, 0, numSamples);
 
-    gateOpenForDisplay.store(engine.isGateOpen(), std::memory_order_relaxed);
+    // The lamp means "the envelopes are being held open", which is the
+    // OR'ed gate bus and not the keyboard: an X- or Y-gated patch
+    // articulates with no key down, and a key with KBD deselected
+    // articulates nothing.
+    gateOpenForDisplay.store(engine.isEnvelopeGateOpen(),
+                             std::memory_order_relaxed);
 }
 
 void GhostarAudioProcessor::handleNoteOn(juce::MidiKeyboardState*, int,

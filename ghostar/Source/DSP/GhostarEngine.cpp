@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace ghostar
 {
@@ -23,25 +24,47 @@ namespace
         return std::clamp(value, 0.0, 1.0);
     }
 
-    // Two-sample polynomial bandlimited step correction.
-    [[nodiscard]] double polyBlep(double t, double dt) noexcept
+    // ---------------------------------------------------------------------
+    // Bandlimited oscillator core. Every waveform discontinuity — sawtooth
+    // and pulse value jumps, the triangle's slope corners, and the value
+    // *and* slope jumps a hard-sync reset makes at an arbitrary phase — is
+    // an event with a sub-sample time, corrected by a two-sample
+    // polynomial BLEP (value jumps) or its integral, the BLAMP (slope
+    // jumps). An event discovered mid-sample must also correct the sample
+    // *before* it; rather than predicting events one sample ahead (exact
+    // only while the frequency holds still), each oscillator emits with one
+    // internal sample of delay, so the earlier half of every correction is
+    // applied to a sample that has not left the oscillator yet.
+    //
+    // Conventions: an event at fraction u of the current internal sample
+    // corrects the held (previous) sample by r(-u) and the current one by
+    // r(1-u), where for a unit value step r is the C1 quadratic BLEP
+    // residual r(a) = (1+a)^2/2 for a in [-1,0), -(1-a)^2/2 for a in
+    // [0,1); the BLAMP residual is its integral, (1+a)^3/6 and (1-a)^3/6,
+    // scaled by the slope change per sample.
+
+    struct OscCorrections
     {
-        if (t < dt)
-        {
-            const double x = t / dt;
-            return x + x - x * x - 1.0;
-        }
-        if (t > 1.0 - dt)
-        {
-            const double x = (t - 1.0) / dt;
-            return x * x + x + x + 1.0;
-        }
-        return 0.0;
+        double selectedHeld { 0.0 };
+        double selectedNow { 0.0 };
+        double triangleHeld { 0.0 };
+        double triangleNow { 0.0 };
+    };
+
+    void addStepEvent(double& held, double& now, double u,
+                      double delta) noexcept
+    {
+        const double before = 1.0 - u;
+        held += delta * before * before * 0.5;
+        now -= delta * u * u * 0.5;
     }
 
-    [[nodiscard]] double wrapPhase(double phase) noexcept
+    void addRampEvent(double& held, double& now, double u,
+                      double slopeChangePerSample) noexcept
     {
-        return phase - std::floor(phase);
+        const double before = 1.0 - u;
+        held += slopeChangePerSample * before * before * before / 6.0;
+        now += slopeChangePerSample * u * u * u / 6.0;
     }
 
     // A slider or pot's 0..1 travel mapped exponentially across a stated
@@ -51,6 +74,31 @@ namespace
     {
         return low * std::pow(high / low, clamp01(travel));
     }
+
+    // The ADSR sliders' RC time constant. Each of the six A/D/R sliders is
+    // 2 MΩ log into the shared 4.7 µF cap, with ~1 kΩ of series resistance
+    // (the drawn 100 Ω plus the slider's own end resistance) at the fast
+    // end: τ therefore runs 4.7 ms to 9.4 s, which is what the manual
+    // prints as "5 milliseconds to 10 seconds" (SM DWG 3; OQ-04).
+    constexpr double envelopeCapacitance = 4.7e-6;
+    constexpr double envelopeSeriesOhms = 1.0e3;
+    constexpr double envelopeSliderOhms = 2.0e6;
+
+    [[nodiscard]] double envelopeTau(double travel) noexcept
+    {
+        return envelopeCapacitance
+             * exponentialTravel(travel, envelopeSeriesOhms,
+                                 envelopeSliderOhms);
+    }
+
+    // Below this the envelope is treated as finished and snaps to idle.
+    constexpr double envelopeIdleLevel = 1.0e-5;
+
+    // What the attack charges toward, as a multiple of the envelope's peak:
+    // the 556's output-high level less the series diode, against the +7.5 V
+    // the drawing labels at the control-voltage pin. The documents bound it
+    // to 1.22–1.35; the nominal ships (derived, OQ-04).
+    constexpr double attackAimRatio = 1.3;
 
     // The panel duty-cycle sets: A = 50/30/15/6 %, B = 40/20/10/3 %
     // (anchored: panel line-art and photos; see the research document).
@@ -66,56 +114,225 @@ namespace
         }
     }
 
-    // Naive triangle: −1 at phase 0, +1 at phase 0.5. Its spectrum falls at
-    // 12 dB/oct, and the whole voice runs at 2x, so corner bandlimiting is
-    // deliberately omitted in v0.
+    // Naive waveforms: what the events above correct. Triangle is −1 at
+    // phase 0, +1 at phase 0.5.
     [[nodiscard]] double triangleWave(double phase) noexcept
     {
         return phase < 0.5 ? 4.0 * phase - 1.0 : 3.0 - 4.0 * phase;
     }
 
-    [[nodiscard]] double oscillatorWave(Waveform waveform, double phase,
-                                        double dt, double duty) noexcept
+    [[nodiscard]] double triangleSlope(double phase) noexcept
+    {
+        return phase < 0.5 ? 4.0 : -4.0;
+    }
+
+    [[nodiscard]] double naiveWave(Waveform waveform, double phase,
+                                   double duty) noexcept
     {
         switch (waveform)
         {
-            case Waveform::Triangle:
-                return triangleWave(phase);
-            case Waveform::Sawtooth:
-                return 2.0 * phase - 1.0 - polyBlep(phase, dt);
-            default:
-            {
-                const double raw = phase < duty ? 1.0 : -1.0;
-                return raw + polyBlep(phase, dt)
-                     - polyBlep(wrapPhase(phase - duty + 1.0), dt);
-            }
+            case Waveform::Triangle: return triangleWave(phase);
+            case Waveform::Sawtooth: return 2.0 * phase - 1.0;
+            default:                 return phase < duty ? 1.0 : -1.0;
         }
     }
 
-    // The BA130 anti-parallel pair that bounds each filter's resonant node.
-    // Diodes conduct nothing below their knee, so the limiter must be exactly
-    // linear there — a plain tanh compresses from zero amplitude and
-    // collapses the resonance the CEM3350's Q control is supposed to reach.
-    // Knee and ceiling voiced (the node's own units).
-    [[nodiscard]] double resonantNodeLimit(double value) noexcept
+    // Registers the discontinuity events one linear phase segment crosses:
+    // the pulse's falling edge at the duty boundary, the triangle's corner
+    // at 0.5, and the wrap at 1 (a saw or pulse value jump and a triangle
+    // corner at once). The frequency cap keeps a sample's advance under
+    // half a cycle, so each boundary is crossed at most once — except the
+    // duty and 0.5 boundaries, which can be crossed a second time after a
+    // wrap, and are re-checked there.
+    void scanLinearSegment(double startPhase, double uStart, double uEnd,
+                           double step, Waveform waveform, double duty,
+                           OscCorrections& c, double& endPhase) noexcept
     {
-        constexpr double knee = 1.2;
-        constexpr double ceiling = 2.2;
-        const double magnitude = std::abs(value);
-        if (magnitude <= knee)
-            return value;
-        const double limited =
-            knee + (ceiling - knee) * std::tanh((magnitude - knee)
-                                                / (ceiling - knee));
-        return value < 0.0 ? -limited : limited;
+        const double advance = (uEnd - uStart) * step;
+        const double target = startPhase + advance;
+        const bool isPulse =
+            waveform != Waveform::Triangle && waveform != Waveform::Sawtooth;
+
+        const auto crossing = [&](double boundary) noexcept {
+            return uStart + (boundary - startPhase) / step;
+        };
+        const auto pulseEdge = [&](double u) noexcept {
+            addStepEvent(c.selectedHeld, c.selectedNow, u, -2.0);
+        };
+        const auto triangleCorner = [&](double u, double change) noexcept {
+            addRampEvent(c.triangleHeld, c.triangleNow, u, change * step);
+            if (waveform == Waveform::Triangle)
+                addRampEvent(c.selectedHeld, c.selectedNow, u,
+                             change * step);
+        };
+
+        // Boundaries below 1, in phase order. duty may sit on either side
+        // of the triangle corner, or exactly on it (the 50 % position), so
+        // each boundary fires its own events once and a coincident pair is
+        // visited once.
+        const double first = std::min(duty, 0.5);
+        const double second = std::max(duty, 0.5);
+        for (int index = 0; index < (second > first ? 2 : 1); ++index)
+        {
+            const double boundary = index == 0 ? first : second;
+            if (!(startPhase < boundary && boundary <= target))
+                continue;
+            const double u = crossing(boundary);
+            if (boundary == duty && isPulse)
+                pulseEdge(u);
+            if (boundary == 0.5)
+                triangleCorner(u, -8.0);
+        }
+
+        if (target >= 1.0)
+        {
+            const double u = crossing(1.0);
+            if (waveform == Waveform::Sawtooth)
+                addStepEvent(c.selectedHeld, c.selectedNow, u, -2.0);
+            else if (isPulse)
+                addStepEvent(c.selectedHeld, c.selectedNow, u, 2.0);
+            triangleCorner(u, 8.0);
+
+            const double wrapped = target - 1.0;
+            if (isPulse && duty <= wrapped)
+                pulseEdge(crossing(1.0 + duty));
+            if (0.5 <= wrapped)
+                triangleCorner(crossing(1.5), -8.0);
+            endPhase = wrapped;
+        }
+        else
+        {
+            endPhase = target;
+        }
     }
 
-    // A wider bound for the lowpass integrator: negligible below the node
-    // limiter's range, it only stops the second state from drifting away
-    // during regenerative self-oscillation.
-    [[nodiscard]] double integratorBound(double value) noexcept
+    // Advances one oscillator through one internal sample, registering every
+    // discontinuity it crosses — including a hard-sync reset at fraction
+    // resetU, which jumps the value to phase 0's and breaks the slope, both
+    // corrected against the phase the wave actually held at the reset
+    // instant. Returns the end-of-sample phase.
+    [[nodiscard]] double scanOscillatorSample(double oldPhase, double step,
+                                              Waveform waveform, double duty,
+                                              double resetU,
+                                              OscCorrections& c) noexcept
     {
-        return 4.0 * std::tanh(value * 0.25);
+        double endPhase = oldPhase;
+        if (resetU >= 0.0)
+        {
+            scanLinearSegment(oldPhase, 0.0, resetU, step, waveform, duty, c,
+                              endPhase);
+            const double preReset = endPhase;
+
+            const double selectedJump = naiveWave(waveform, 0.0, duty)
+                                      - naiveWave(waveform, preReset, duty);
+            if (selectedJump != 0.0)
+                addStepEvent(c.selectedHeld, c.selectedNow, resetU,
+                             selectedJump);
+            if (waveform == Waveform::Triangle)
+                addRampEvent(c.selectedHeld, c.selectedNow, resetU,
+                             (4.0 - triangleSlope(preReset)) * step);
+
+            addStepEvent(c.triangleHeld, c.triangleNow, resetU,
+                         -1.0 - triangleWave(preReset));
+            addRampEvent(c.triangleHeld, c.triangleNow, resetU,
+                         (4.0 - triangleSlope(preReset)) * step);
+
+            scanLinearSegment(0.0, resetU, 1.0, step, waveform, duty, c,
+                              endPhase);
+        }
+        else
+        {
+            scanLinearSegment(oldPhase, 0.0, 1.0, step, waveform, duty, c,
+                              endPhase);
+        }
+        return endPhase;
+    }
+
+    // The BA130 anti-parallel pair that bounds each filter's resonant node,
+    // written as what the circuit actually is: a diode shunt current in the
+    // band-pass integrator's equation, not a per-sample map. The alias
+    // audit's control row proved the distinction is not pedantry — a map
+    // applied once per sample compresses more per second the more samples
+    // there are, so the same patch converged to a different filter at every
+    // rate. The shunt obeys v' = −lambda · V0 · sinh(v / V0) (the
+    // anti-parallel pair's exponential law; sharpness V0 and small-signal
+    // leak lambda voiced, OQ-12, until the BA130 derivation pins them), and
+    // the sub-step is solved exactly — the equation is separable, giving
+    //   tanh(v_new / 2·V0) = tanh(v / 2·V0) · exp(−lambda · dt)
+    // — so the operator split is unconditionally stable and the sub-step
+    // itself is exactly rate-invariant (solving over dt twice is solving
+    // over 2·dt once).
+    // The BA130's own numbers, from the Fairchild 1978 Diode Data Book
+    // (BA128·BA130, printed p.3-12, with the D4 family curves on p.4-6):
+    // a diffused silicon planar diode specified down to 10 µA, whose
+    // digitised typical curve runs 99 mV per decade — ideality n ≈ 1.68,
+    // saturation current ≈ 2.3 nA — so an anti-parallel pair obeys
+    // I(V) = 2·Is·sinh(V/(n·V_T)) with n·V_T ≈ 43 mV. That is a markedly
+    // softer knee than an ideal junction's 59 mV/decade, and it is why the
+    // Spirit's limiter and clipper round rather than corner.
+    constexpr double diodeSaturationAmps = 2.3e-9;
+    constexpr double diodeThermalVolts = 0.043;
+
+    // The resonant node's sharpness in the node's own units. The diode law
+    // above fixes the *shape*; what a node volt is worth in engine units is
+    // the level trace OQ-12 still lacks, so this constant is n·V_T divided
+    // by that untraced scaling — 0.12 corresponds to ≈0.36 V per engine
+    // unit at the node, which is where a buffered audio node sits.
+    constexpr double diodeV0 = 0.12;
+    constexpr double diodeLeakPerSecond = 1.0;
+
+    [[nodiscard]] double diodeShunt(double value, double decay) noexcept
+    {
+        const double u = std::tanh(value / (2.0 * diodeV0)) * decay;
+        return 2.0 * diodeV0 * std::atanh(u);
+    }
+
+    // ------------------------------------------------- The OVERDRIVE stage
+    // Between the two filters sits an inverting TL082 with an anti-parallel
+    // BA130 pair across its feedback resistor (SM DWG 2: 2k2 in, 33k back —
+    // the CEM3350 datasheet's own "Hi-Q overload limiter" figure with its
+    // 1N914s substituted). Its transfer is therefore not a tanh but the
+    // solution of
+    //     i = V_out/R_f + 2·Is·sinh(V_out/(n·V_T)),   i = V_in/R_in
+    // which is linear at gain R_f/R_in until the diodes wake, then rises
+    // only about 0.1 V per decade of drive — a ceiling near ±0.5 V that
+    // never quite stops climbing, where a tanh flattens hard onto its own.
+    constexpr double overdriveInputOhms = 2.2e3;
+    constexpr double overdriveFeedbackOhms = 33.0e3;
+    // Volts per engine unit at the stage's input, and volts per unit at its
+    // output. These two are the level trace OQ-10 still lacks; they are
+    // pinned so the stage keeps the small-signal gain (2.7) and ceiling
+    // (0.45) the previous voiced tanh had, leaving the *shape* — the part
+    // the datasheet actually determines — as the whole of the change.
+    constexpr double overdriveVoltsPerUnit = 0.2;
+    constexpr double overdriveVoltsPerOutputUnit = 1.1111111111111112;
+
+    [[nodiscard]] double overdriveClip(double value) noexcept
+    {
+        const double magnitude = std::abs(value) * overdriveVoltsPerUnit;
+        const double current = magnitude / overdriveInputOhms;
+        // Newton from the smaller of the two asymptotes (ohmic below the
+        // knee, diode-dominated above it) converges to within ten parts per
+        // million in three steps across the whole audio range.
+        const double ohmic = current * overdriveFeedbackOhms;
+        const double diode =
+            diodeThermalVolts
+            * std::asinh(current / (2.0 * diodeSaturationAmps));
+        double volts = std::min(ohmic, diode);
+        for (int step = 0; step < 3; ++step)
+        {
+            const double scaled = volts / diodeThermalVolts;
+            const double error = volts / overdriveFeedbackOhms
+                               + 2.0 * diodeSaturationAmps * std::sinh(scaled)
+                               - current;
+            const double slope =
+                1.0 / overdriveFeedbackOhms
+                + 2.0 * diodeSaturationAmps / diodeThermalVolts
+                      * std::cosh(scaled);
+            volts = std::max(0.0, volts - error / slope);
+        }
+        const double magnitudeOut = volts / overdriveVoltsPerOutputUnit;
+        return value < 0.0 ? -magnitudeOut : magnitudeOut;
     }
 
     // Sub-1e-30 state decays cost real time as denormals on hosts without
@@ -125,13 +342,167 @@ namespace
         return std::abs(value) < 1.0e-30 ? 0.0 : value;
     }
 
-    // Resonance travel to the TPT damping k = 1/Q. Travel 0 = Q 0.5
-    // (the LOW switch value); full travel crosses into slight regeneration so
-    // the section truly self-oscillates against the node limiter, as the
-    // CEM3350's Q law reaches "oscillation".
-    [[nodiscard]] double dampingFromResonance(double travel) noexcept
+    // ------------------------------------------------- The resonance law
+    // Derived, not voiced: the CEM3350's Q control is exponential at
+    // −65 mV per decade of Q (datasheet © 1984; −62/−65/−68 mV window),
+    // and the Spirit's own network around it is legible in SM DWG 2. The
+    // RESONANCE pot is 100 kΩ linear with its top grounded and its bottom
+    // at −12 V; its wiper feeds each chip's Q pin through 18k2, and each Q
+    // pin carries a 221 Ω shunt to ground against a pull-up to +12 V —
+    // 91 kΩ at the Upper chip, 75 kΩ at the Lower, so the two filters do
+    // not share a travel-to-Q curve. The pot's own output impedance,
+    // 100 kΩ·t·(1−t), sits in series with the feed, and is what flattens
+    // the law through mid-travel.
+    //
+    // The absolute anchor the datasheet lacks comes from the panel: with
+    // the RESONANCE switch at LOW the pot is disconnected and the Upper Q
+    // pin rests at 12 V·221/(91 kΩ + 221 Ω) = +29.1 mV, where the manual
+    // says Q = 0.5. That one anchored point calibrates the whole law.
+    constexpr double resonancePotOhms = 100.0e3;
+    constexpr double resonanceFeedOhms = 18.2e3;
+    constexpr double resonanceShuntOhms = 221.0;
+    constexpr double upperPullupOhms = 91.0e3;
+    constexpr double lowerPullupOhms = 75.0e3;
+    constexpr double railVolts = 12.0;
+    constexpr double qVoltsPerDecade = 0.065;
+    constexpr double lowSwitchQ = 0.5;
+    constexpr double lowSwitchVolts =
+        railVolts * resonanceShuntOhms
+        / (upperPullupOhms + resonanceShuntOhms);
+
+    [[nodiscard]] double qPinVolts(double travel, double pullupOhms) noexcept
     {
-        return 2.0 * std::pow(0.01, clamp01(travel)) - 0.025;
+        const double t = clamp01(travel);
+        const double wiperOhms =
+            resonanceFeedOhms + resonancePotOhms * t * (1.0 - t);
+        const double conductance = 1.0 / wiperOhms + 1.0 / pullupOhms
+                                 + 1.0 / resonanceShuntOhms;
+        const double current =
+            -railVolts * t / wiperOhms + railVolts / pullupOhms;
+        return current / conductance;
+    }
+
+    [[nodiscard]] double resonanceQ(double travel, double pullupOhms) noexcept
+    {
+        return lowSwitchQ
+             * std::pow(10.0, -(qPinVolts(travel, pullupOhms)
+                                - lowSwitchVolts) / qVoltsPerDecade);
+    }
+
+    // Q to the TPT damping k = 1/Q. The network commands far more Q than
+    // the chip can hold — nominally 82 at full travel against the
+    // datasheet's 30 min / 50 typ "Maximum Q Without Enhancement" — while
+    // the manual anchors that resonance reaches self-oscillation at
+    // maximum. Reading that ceiling as the point where the chip's own loss
+    // is exactly cancelled reconciles the two: commanded Q beyond it is net
+    // negative damping, and the section sings against the BA130 limiter.
+    // The ceiling is the one number in this law still voiced (OQ-12).
+    constexpr double chipCeilingQ = 50.0;
+
+    [[nodiscard]] double dampingFromQ(double q) noexcept
+    {
+        return 1.0 / q - 1.0 / chipCeilingQ;
+    }
+
+    [[nodiscard]] double upperDamping(double travel) noexcept
+    {
+        return dampingFromQ(resonanceQ(travel, upperPullupOhms));
+    }
+
+    [[nodiscard]] double lowerDamping(double travel) noexcept
+    {
+        return dampingFromQ(resonanceQ(travel, lowerPullupOhms));
+    }
+
+    // Zeroth-order modified Bessel function, for the Kaiser windows the
+    // decimation kernels are designed with.
+    [[nodiscard]] double besselI0(double x) noexcept
+    {
+        double sum = 1.0;
+        double term = 1.0;
+        for (int k = 1; k < 64; ++k)
+        {
+            const double factor = x / (2.0 * k);
+            term *= factor * factor;
+            sum += term;
+            if (term < 1.0e-14 * sum)
+                break;
+        }
+        return sum;
+    }
+
+    // A Kaiser-windowed halfband lowpass: cutoff at a quarter of its input
+    // rate, unit DC gain. Length and beta set the transition width and
+    // stopband depth per stage. Only the nonzero taps are stored: a
+    // halfband's sinc vanishes at every even offset from the centre, so
+    // half the coefficients are structurally zero and skipping them halves
+    // the decimator's arithmetic rather than multiplying by nothing.
+    template <typename Kernel>
+    void designKaiserHalfband(Kernel& kernel, double beta) noexcept
+    {
+        const int taps = static_cast<int>(kernel.values.size());
+        const int center = taps / 2;
+        const double denominator = besselI0(beta);
+        std::vector<double> full(static_cast<std::size_t>(taps));
+        double sum = 0.0;
+        for (int index = 0; index < taps; ++index)
+        {
+            const int offset = index - center;
+            const double n = static_cast<double>(offset);
+            // The structural zeros are written as zero rather than computed.
+            // sin(pi * n / 2) at even n is a rounding residue around 1e-16,
+            // not 0, so evaluating it and then testing the result against
+            // zero would keep every tap — and the kernel would not be sparse
+            // at all.
+            const double sinc = offset == 0 ? 1.0
+                              : offset % 2 == 0
+                                  ? 0.0
+                                  : std::sin(pi * n / 2.0) / (pi * n / 2.0);
+            const double ratio = n / static_cast<double>(center);
+            const double window =
+                besselI0(beta
+                         * std::sqrt(std::max(0.0, 1.0 - ratio * ratio)))
+                / denominator;
+            full[static_cast<std::size_t>(index)] = sinc * window;
+            sum += sinc * window;
+        }
+        kernel.count = 0;
+        for (int index = 0; index < taps; ++index)
+        {
+            // Skipped by position, for the same reason: the tap that is
+            // structurally zero is known from where it sits, not from what
+            // its arithmetic came out as.
+            const int offset = index - center;
+            if (offset != 0 && offset % 2 == 0)
+                continue;
+            const double value = full[static_cast<std::size_t>(index)] / sum;
+            kernel.offsets[static_cast<std::size_t>(kernel.count)] =
+                taps - 1 - index;
+            kernel.values[static_cast<std::size_t>(kernel.count)] = value;
+            ++kernel.count;
+        }
+    }
+
+    // The ring holds the last `taps` inputs, oldest at oldestIndex. Kernel
+    // tap t multiplies the sample (taps-1-t) positions newer than the
+    // oldest, and that distance is what the design stored.
+    template <typename Kernel, std::size_t taps>
+    [[nodiscard]] double convolveRing(const Kernel& kernel,
+                                      const std::array<double, taps>& ring,
+                                      int oldestIndex) noexcept
+    {
+        double accumulator = 0.0;
+        for (int index = 0; index < kernel.count; ++index)
+        {
+            int ringIndex =
+                oldestIndex
+                + kernel.offsets[static_cast<std::size_t>(index)];
+            if (ringIndex >= static_cast<int>(taps))
+                ringIndex -= static_cast<int>(taps);
+            accumulator += kernel.values[static_cast<std::size_t>(index)]
+                         * ring[static_cast<std::size_t>(ringIndex)];
+        }
+        return accumulator;
     }
 
     [[nodiscard]] float sanitisedTravel(float value, float fallback) noexcept
@@ -164,26 +535,23 @@ void GhostarEngine::prepare(double sampleRate, int maxBlockSize)
         sampleRate = 44100.0;
     sampleRate_ = std::clamp(sampleRate, minimumSupportedSampleRate,
                              maximumSupportedSampleRate);
-    internalRate_ = 2.0 * sampleRate_;
+    internalRate_ = 4.0 * sampleRate_;
     // The travel smoother's one-pole: ~25 ms to target at any host rate.
     travelSmoothing_ = 1.0 - std::exp(-1.0 / (0.025 * sampleRate_));
+    // The diode sub-step's exact per-internal-sample decay factor.
+    diodeDecay_ = std::exp(-diodeLeakPerSecond / internalRate_);
 
-    // Windowed-sinc halfband decimation kernel for the 2x -> 1x boundary.
-    const int center = halfbandTaps / 2;
-    double sum = 0.0;
-    for (int index = 0; index < halfbandTaps; ++index)
-    {
-        const double n = static_cast<double>(index - center);
-        const double sinc =
-            n == 0.0 ? 1.0 : std::sin(pi * n / 2.0) / (pi * n / 2.0);
-        const double window =
-            0.42 - 0.5 * std::cos(2.0 * pi * index / (halfbandTaps - 1))
-            + 0.08 * std::cos(4.0 * pi * index / (halfbandTaps - 1));
-        halfbandKernel_[static_cast<std::size_t>(index)] = sinc * window;
-        sum += sinc * window;
-    }
-    for (auto& tap : halfbandKernel_)
-        tap /= sum;
+    // The decimation chain's two Kaiser halfbands (see the header for the
+    // division of labour). Betas chosen for ~126 dB (first stage, whose
+    // window is short because its transition is wide) and ~98 dB (second
+    // stage, 0.45–0.55 of the host rate transition).
+    designKaiserHalfband(stageAKernel_, 12.9);
+    designKaiserHalfband(stageBKernel_, 9.88);
+
+    // The audible-band noise density must not depend on the internal rate:
+    // the reference is the 88.2 kHz internal rate the mixer's noise levels
+    // were originally voiced at.
+    noiseAmplitude_ = std::sqrt(internalRate_ / 88200.0);
 
     // The pinking network's poles are physical frequencies, not per-sample
     // constants: the reference recurrence coefficients describe poles at a
@@ -207,6 +575,14 @@ void GhostarEngine::prepare(double sampleRate, int maxBlockSize)
     reset();
 }
 
+double GhostarEngine::longestReleaseTailSeconds() noexcept
+{
+    // A release from full level decays as exp(-t/tau), so it reaches the
+    // idle threshold after tau*ln(1/threshold) — 108 s at the slowest
+    // slider setting, which is what a host must be told to keep rendering.
+    return envelopeTau(1.0) * std::log(1.0 / envelopeIdleLevel);
+}
+
 void GhostarEngine::reset()
 {
     // The travel smoother snaps: whatever targets stand are what the
@@ -214,6 +590,7 @@ void GhostarEngine::reset()
     parameters_ = targetParameters_;
     keyStackSize_ = 0;
     keyGate_ = false;
+    envelopeGate_ = false;
     currentNote_ = -1;
     pendingTrigger_ = false;
     pendingShaperTrigger_ = false;
@@ -247,6 +624,12 @@ void GhostarEngine::reset()
 
     phaseA_ = 0.0;
     phaseB_ = 0.0;
+    heldWaveA_ = naiveWave(parameters_.oscAWaveform, 0.0, oscADuty_);
+    heldTriA_ = triangleWave(0.0);
+    heldWaveB_ = naiveWave(parameters_.oscBWaveform, 0.0, oscBDuty_);
+    heldTriB_ = triangleWave(0.0);
+    heldDutyA_ = oscADuty_;
+    heldDutyB_ = oscBDuty_;
     lastOscBWave_ = 0.0;
     pinkState_[0] = pinkState_[1] = pinkState_[2] = 0.0;
     brightnessState_ = 0.0;
@@ -255,9 +638,12 @@ void GhostarEngine::reset()
     upperFirst_ = SvfSection {};
     upperSecond_ = SvfSection {};
 
-    filterRing_.fill(0.0);
-    shaperRing_.fill(0.0);
-    decimatorIndex_ = 0;
+    filterStageARing_.fill(0.0);
+    shaperStageARing_.fill(0.0);
+    stageAIndex_ = 0;
+    filterStageBRing_.fill(0.0);
+    shaperStageBRing_.fill(0.0);
+    stageBIndex_ = 0;
 
     dcPreviousInLeft_ = 0.0;
     dcPreviousOutLeft_ = 0.0;
@@ -520,14 +906,23 @@ void GhostarEngine::setShaperWheel(float amount) noexcept
 
 GhostarEngine::SvfOutputs GhostarEngine::runSection(SvfSection& section,
                                                 double input, double g,
-                                                double k) noexcept
+                                                double k,
+                                                double diodeDecay) noexcept
 {
     const double a = 1.0 / (1.0 + g * (g + k));
     const double hp = (input - (g + k) * section.ic1 - section.ic2) * a;
     const double bp = g * hp + section.ic1;
     const double lp = g * bp + section.ic2;
-    section.ic1 = flushDenormal(resonantNodeLimit(2.0 * bp - section.ic1));
-    section.ic2 = flushDenormal(integratorBound(2.0 * lp - section.ic2));
+    section.ic1 =
+        flushDenormal(diodeShunt(2.0 * bp - section.ic1, diodeDecay));
+    // The lowpass integrator carries no bound of its own any more: the old
+    // 4·tanh(x/4) map was meant as a runaway stop but measured as the
+    // *actual* self-oscillation limiter — its always-on cubic compression,
+    // not the diode knee, set the amplitude, with a per-sample strength no
+    // two rates agreed on. With the diode shunt bounding the resonant node
+    // the loop energy is bounded, and the stress suite renders the
+    // regenerative extremes at several rates to hold that claim true.
+    section.ic2 = flushDenormal(2.0 * lp - section.ic2);
     return { lp, bp, hp };
 }
 
@@ -545,10 +940,14 @@ void GhostarEngine::advanceEnvelope(Adsr& envelope, bool gate, bool triggerPulse
     switch (envelope.stage)
     {
         case Adsr::Stage::Attack:
-            // A 556 timer charges toward its rail and switches at a
-            // threshold; aiming 1.5x past the peak reproduces that
-            // quasi-exponential punch.
-            envelope.level += (1.5 - envelope.level) * attackCoefficient;
+            // The 556 half charges the 4.7 µF cap from its OUTPUT pin
+            // through a series 1N4149 and the 2 MΩ attack slider, so it
+            // aims at V_OH − V_D ≈ 9.2–10.1 V against the envelope peak the
+            // service drawing labels +7.5 V at the control-voltage pin:
+            // a ratio of ≈1.3, not the 1.5 of a monostable charging toward
+            // its rail (SM DWG 3; derived, see OQ-04).
+            envelope.level +=
+                (attackAimRatio - envelope.level) * attackCoefficient;
             if (envelope.level >= 1.0)
             {
                 envelope.level = 1.0;
@@ -560,7 +959,7 @@ void GhostarEngine::advanceEnvelope(Adsr& envelope, bool gate, bool triggerPulse
             break;
         case Adsr::Stage::Release:
             envelope.level -= envelope.level * releaseCoefficient;
-            if (envelope.level < 1.0e-5)
+            if (envelope.level < envelopeIdleLevel)
             {
                 envelope.level = 0.0;
                 envelope.stage = Adsr::Stage::Idle;
@@ -828,6 +1227,7 @@ void GhostarEngine::advanceControls() noexcept
             break;
     }
     previousGateForShaper_ = combinedGateNow;
+    envelopeGate_ = combinedGateNow;
 
     // The Shaper's own gate (voiced comparator threshold, OQ-05).
     shaperGate_ = shaperLevel_ > 0.01;
@@ -841,32 +1241,36 @@ void GhostarEngine::advanceControls() noexcept
         && ((pendingTrigger_ && p.gateKbd) || gateRise);
     pendingTrigger_ = false;
 
-    // Decay and release are ordinary exponentials, read as ~95 % settled
-    // (three time constants) inside the labelled 5 ms–10 s. The attack aims
-    // past its peak at 1.5 and ends at 1.0, which takes ln(3) time
-    // constants, so its coefficient is derived from that threshold — the
-    // labelled time is the actual time-to-peak, not 2.7x shorter.
+    // Every segment is one RC charge on the same 4.7 µF cap through its own
+    // 2 MΩ log slider, so a travel maps to a *time constant*, and the
+    // segment shapes differ only in what each charges toward. The panel's
+    // labelled 5 ms–10 s is that time constant: 2 MΩ × 4.7 µF = 9.4 s is
+    // the manual's "10 seconds", and the same ~1 kΩ slider-plus-series
+    // residual puts the fast end at 4.7 ms — one assumption making both
+    // printed endpoints land, where the previous three-time-constants read
+    // fit neither (derived from SM DWG 3, OQ-04).
     const auto segmentCoefficient = [dt](double travel) {
-        const double seconds = exponentialTravel(travel, 0.005, 10.0);
-        return 1.0 - std::exp(-dt * 3.0 / seconds);
-    };
-    const auto attackCoefficient = [dt](double travel) {
-        constexpr double lnThree = 1.0986122886681098;
-        const double seconds = exponentialTravel(travel, 0.005, 10.0);
-        return 1.0 - std::exp(-dt * lnThree / seconds);
+        return 1.0 - std::exp(-dt / envelopeTau(travel));
     };
     advanceEnvelope(filterEnvelope_, combinedGateNow, triggerPulse,
-                    attackCoefficient(p.filterAttack),
+                    segmentCoefficient(p.filterAttack),
                     segmentCoefficient(p.filterDecay),
                     segmentCoefficient(p.filterRelease),
                     static_cast<double>(p.filterSustain));
     advanceEnvelope(loudnessEnvelope_, combinedGateNow, triggerPulse,
-                    attackCoefficient(p.loudnessAttack),
+                    segmentCoefficient(p.loudnessAttack),
                     segmentCoefficient(p.loudnessDecay),
                     segmentCoefficient(p.loudnessRelease),
                     static_cast<double>(p.loudnessSustain));
 
     // ---------------------------------------------------------- MOD X value
+    // MOD SOURCE = OSC B is the one source that is an *audio* signal: in
+    // WIDE it reaches 10 kHz, so reading it once per output sample both
+    // undersamples it and applies it as a staircase whose images fold. Its
+    // routing is therefore published to the voice, which reads the
+    // oscillator itself and applies the depth per internal sample; every
+    // other source is a control signal and is applied here as before.
+    const bool audioRateSource = p.modSource == ModSource::OscB;
     double modXSource = 0.0;
     switch (p.modSource)
     {
@@ -877,13 +1281,16 @@ void GhostarEngine::advanceControls() noexcept
         case ModSource::RedNoise:         modXSource = redNoise; break;
         case ModSource::OscB:
             // The schematic feeds the selected, buffered Osc B waveform to
-            // the mod board, not a hard-wired triangle.
-            modXSource = lastOscBWave_;
+            // the mod board, not a hard-wired triangle. Its value is read
+            // in the voice, so nothing is sampled here.
             break;
     }
-    double xSignal = modXSource * modWheel_;
+    // The wheel is an attenuator, and SHAPE X WITH Y is a VCA in the X
+    // path; both scale whatever the source is, at either rate.
+    double xGain = static_cast<double>(modWheel_);
     if (p.shapeXWithY)
-        xSignal *= clamp01(shaperLevel_);
+        xGain *= clamp01(shaperLevel_);
+    const double xSignal = audioRateSource ? 0.0 : modXSource * xGain;
     const double ySignal = shaperLevel_ * shaperWheel_;
 
     // Full-wheel modulation depths (voiced): one octave of pitch, three
@@ -898,28 +1305,65 @@ void GhostarEngine::advanceControls() noexcept
     double modLowerOctaves = 0.0;
     controlPwmA_ = 0.0;
     controlPwmB_ = 0.0;
+    controlAudioRateMod_ = AudioRateMod {};
+    controlAudioRateMod_.gain = audioRateSource ? xGain : 0.0;
 
+    // Where the X bus lands. An audio-rate source writes the same depths
+    // into the published routing instead of into this sample's sums, so
+    // exactly one of the two paths carries the modulation.
+    auto& audioMod = controlAudioRateMod_;
+    const auto routePitchA = [&](double depth) {
+        (audioRateSource ? audioMod.aOctaves : modAOctaves) += depth;
+    };
+    const auto routePitchB = [&](double depth) {
+        (audioRateSource ? audioMod.bOctaves : modBOctaves) += depth;
+    };
     switch (p.modXTo)
     {
         case ModXDestination::Off: break;
         case ModXDestination::OscAB:
-            modAOctaves += xSignal * pitchDepthOctaves;
-            modBOctaves += xSignal * pitchDepthOctaves;
+            routePitchA(audioRateSource ? pitchDepthOctaves
+                                        : xSignal * pitchDepthOctaves);
+            routePitchB(audioRateSource ? pitchDepthOctaves
+                                        : xSignal * pitchDepthOctaves);
             break;
         case ModXDestination::OscA:
-            modAOctaves += xSignal * pitchDepthOctaves;
+            routePitchA(audioRateSource ? pitchDepthOctaves
+                                        : xSignal * pitchDepthOctaves);
             break;
         case ModXDestination::OscARwm:
-            controlPwmA_ = xSignal * dutyDepth;
+            if (audioRateSource)
+                audioMod.duty = dutyDepth;
+            else
+                controlPwmA_ = xSignal * dutyDepth;
             break;
         case ModXDestination::FilterUL:
-            modUpperOctaves += xSignal * filterDepthOctaves;
-            modLowerOctaves += xSignal * filterDepthOctaves;
+            if (audioRateSource)
+            {
+                audioMod.upperOctaves += filterDepthOctaves;
+                audioMod.lowerOctaves += filterDepthOctaves;
+            }
+            else
+            {
+                modUpperOctaves += xSignal * filterDepthOctaves;
+                modLowerOctaves += xSignal * filterDepthOctaves;
+            }
             break;
         case ModXDestination::FilterU:
-            modUpperOctaves += xSignal * filterDepthOctaves;
+            if (audioRateSource)
+                audioMod.upperOctaves += filterDepthOctaves;
+            else
+                modUpperOctaves += xSignal * filterDepthOctaves;
             break;
     }
+    // FORMANT cuts the lower filter off the modulation buses, at either
+    // rate, exactly as it cuts the control-rate sum below.
+    if (p.tracking != TrackingMode::Dynamic)
+        audioMod.lowerOctaves = 0.0;
+    audioMod.active = audioRateSource && audioMod.gain != 0.0
+        && (audioMod.aOctaves != 0.0 || audioMod.bOctaves != 0.0
+            || audioMod.upperOctaves != 0.0 || audioMod.lowerOctaves != 0.0
+            || audioMod.duty != 0.0);
     switch (p.shaperYTo)
     {
         case ShaperYDestination::Off: break;
@@ -1009,14 +1453,26 @@ void GhostarEngine::advanceControls() noexcept
     }
 
     // ------------------------------------------------------------ Filter CVs
-    // The cutoff bus, in octaves. MASTER spans the audio range (voiced
-    // 20 Hz..16 kHz, OQ-02); tracking reaches ~110 % and pivots at middle C
-    // (voiced pivot); the envelope straddles the cutoff by up to
-    // ±2.5 octaves (anchored).
+    // The cutoff bus, in octaves. MASTER's *span* is derived — the panel
+    // summer drives the CEM3350's frequency pin through 12k1 against a
+    // 274 Ω shunt, delivering 21.2 mV per volt against the chip's
+    // −19.6 mV/octave, and the pot's ±10.5 V swing is ±11.4 octaves of
+    // authority over a chip window about ten octaves wide — but its
+    // absolute *placement* is set by a 100 kΩ trimmer whose factory
+    // setting no document records, so the 20 Hz–16 kHz mapping stays
+    // voiced inside a ±2.3-octave trim authority (OQ-02).
+    //
+    // Tracking's 108 % falls out of the same ladder: full KB AMOUNT puts
+    // the keyboard's 1 V/octave bus through 12k1, so 21.2 mV/V ÷
+    // 19.6 mV/oct = 1.083 octaves per octave — which independently
+    // reproduces the manual's "slightly over 100 %" from the resistors
+    // rather than taking it on trust. The pivot note stays voiced (OQ-13);
+    // the envelope's ±2.5 octaves are anchored.
+    constexpr double trackingOctavesPerOctave = 1.083;
     const double upperBaseHz =
         exponentialTravel(p.cutoff, 20.0, 16000.0);
-    const double trackingOctaves = static_cast<double>(p.kbAmount) * 1.1
-        * (glidedNote_ - 60.0) / 12.0;
+    const double trackingOctaves = static_cast<double>(p.kbAmount)
+        * trackingOctavesPerOctave * (glidedNote_ - 60.0) / 12.0;
     const double envelopeOctaves =
         (static_cast<double>(p.filterEnvAmount) - 0.5) * 2.0 * 2.5
         * filterEnvelope_.level;
@@ -1036,10 +1492,12 @@ void GhostarEngine::advanceControls() noexcept
                         : 0.0);
     controlLowerCutoffHz_ = upperBaseHz * std::exp2(lowerOctaves);
 
-    controlLowerK_ = dampingFromResonance(p.resonance);
+    controlLowerK_ = lowerDamping(p.resonance);
+    // LOW throws the pot off the Upper chip's Q pin, leaving it on its own
+    // bias — the anchored Q = 0.5 the whole law is calibrated against.
     controlUpperK_ = p.upperResonance == UpperResonanceMode::Low
-                         ? 2.0
-                         : dampingFromResonance(p.resonance);
+                         ? dampingFromQ(lowSwitchQ)
+                         : upperDamping(p.resonance);
 
     // -------------------------------------------------------------- Gains
     controlLoudnessGain_ =
@@ -1070,55 +1528,106 @@ void GhostarEngine::renderVoiceSample() noexcept
     const EngineParameters& p = parameters_;
     const double dt = 1.0 / internalRate_;
 
+    // ------------------------------------------------- Audio-rate MOD X bus
+    // With MOD SOURCE = OSC B the mod board carries an audio signal, so its
+    // depths are applied here, per internal sample, from the oscillator's
+    // own last value. The one-sample tap is what makes B modulating its own
+    // pitch a bounded feedback loop rather than an implicit equation — and
+    // that loop is the hardware's too, through the mod board's own delay.
+    const auto& audioMod = controlAudioRateMod_;
+    double audioModA = 0.0;
+    double audioModB = 0.0;
+    double audioModUpper = 0.0;
+    double audioModLower = 0.0;
+    double audioModDuty = 0.0;
+    if (audioMod.active)
+    {
+        const double source = lastOscBWave_ * audioMod.gain;
+        audioModA = source * audioMod.aOctaves;
+        audioModB = source * audioMod.bOctaves;
+        audioModUpper = source * audioMod.upperOctaves;
+        audioModLower = source * audioMod.lowerOctaves;
+        audioModDuty = source * audioMod.duty;
+    }
+
     // ----------------------------------------------------------- Oscillators
     const double frequencyA =
-        std::min(440.0 * std::exp2(controlOscAOctaves_), 0.45 * internalRate_);
+        std::min(440.0 * std::exp2(controlOscAOctaves_ + audioModA),
+                 0.45 * internalRate_);
     const double frequencyB = std::min(
-        controlOscBDrone_ ? controlOscBDroneHz_
-                          : 440.0 * std::exp2(controlOscBOctaves_),
+        controlOscBDrone_ ? controlOscBDroneHz_ * std::exp2(audioModB)
+                          : 440.0 * std::exp2(controlOscBOctaves_ + audioModB),
         0.45 * internalRate_);
 
     const double stepA = frequencyA * dt;
     const double stepB = frequencyB * dt;
 
-    phaseA_ += stepA;
-    const bool aWrapped = phaseA_ >= 1.0;
-    if (aWrapped)
-        phaseA_ -= std::floor(phaseA_);
-
-    phaseB_ += stepB;
-    if (phaseB_ >= 1.0)
-        phaseB_ -= std::floor(phaseB_);
-    // Hard sync, one-directional A -> B: A's reset restarts B's ramp at the
-    // corresponding fraction of B's own step. (Bandlimiting the sync edge is
-    // a refinement target; at 2x the residual aliasing is tolerable.)
-    if (p.sync && aWrapped && stepA > 0.0)
-        phaseB_ = (phaseA_ / stepA) * stepB;
-
     const double dutyA =
-        std::clamp(oscADuty_ + controlPwmA_, 0.03, 0.97);
+        std::clamp(oscADuty_ + controlPwmA_ + audioModDuty, 0.03, 0.97);
     const double dutyB =
         std::clamp(oscBDuty_ + controlPwmB_, 0.03, 0.97);
 
-    const double waveA =
-        oscillatorWave(p.oscAWaveform, phaseA_, stepA, dutyA);
-    const double waveB =
-        oscillatorWave(p.oscBWaveform, phaseB_, stepB, dutyB);
+    OscCorrections corrA {};
+    OscCorrections corrB {};
+
+    // A modulated duty boundary can cross the standing phase between two
+    // samples — a value jump no phase crossing sees — so the jump the duty
+    // move itself makes is registered as an event at this sample's start.
+    const auto dutyMoveEvent = [](Waveform waveform, double phase,
+                                  double previousDuty, double duty,
+                                  OscCorrections& c) noexcept {
+        if (waveform == Waveform::Triangle || waveform == Waveform::Sawtooth)
+            return;
+        const double jump = naiveWave(waveform, phase, duty)
+                          - naiveWave(waveform, phase, previousDuty);
+        if (jump != 0.0)
+            addStepEvent(c.selectedHeld, c.selectedNow, 0.0, jump);
+    };
+    dutyMoveEvent(p.oscAWaveform, phaseA_, heldDutyA_, dutyA, corrA);
+    dutyMoveEvent(p.oscBWaveform, phaseB_, heldDutyB_, dutyB, corrB);
+
+    // Hard sync, one-directional A -> B: A's wrap resets B at the wrap's own
+    // sub-sample instant, and the reset's value and slope discontinuities
+    // are bandlimited like every other event.
+    const bool aWillWrap = phaseA_ + stepA >= 1.0;
+    const double resetU = (p.sync && aWillWrap && stepA > 0.0)
+                              ? (1.0 - phaseA_) / stepA
+                              : -1.0;
+    phaseA_ = scanOscillatorSample(phaseA_, stepA, p.oscAWaveform, dutyA,
+                                   -1.0, corrA);
+    phaseB_ = scanOscillatorSample(phaseB_, stepB, p.oscBWaveform, dutyB,
+                                   resetU, corrB);
+
+    // Deferred emit: the sample leaving the oscillator is the previous one,
+    // now carrying the earlier half of any correction discovered since.
+    const double waveA = heldWaveA_ + corrA.selectedHeld;
+    const double waveB = heldWaveB_ + corrB.selectedHeld;
+    const double triA = heldTriA_ + corrA.triangleHeld;
+    const double triB = heldTriB_ + corrB.triangleHeld;
+    heldWaveA_ = naiveWave(p.oscAWaveform, phaseA_, dutyA)
+               + corrA.selectedNow;
+    heldTriA_ = triangleWave(phaseA_) + corrA.triangleNow;
+    heldWaveB_ = naiveWave(p.oscBWaveform, phaseB_, dutyB)
+               + corrB.selectedNow;
+    heldTriB_ = triangleWave(phaseB_) + corrB.triangleNow;
+    heldDutyA_ = dutyA;
+    heldDutyB_ = dutyB;
     lastOscBWave_ = waveB;
 
     // Ring modulator: A-triangle x B-triangle taken before the waveform
-    // switches, with the un-nulled carrier bleed the untrimmed OTA bias
-    // leaves in (voiced 3 %, OQ-06).
-    const double triA = triangleWave(phaseA_);
-    const double triB = triangleWave(phaseB_);
+    // switches (bandlimited like the selected waves — the corners and B's
+    // sync resets are events on the triangle channel too), with the
+    // un-nulled carrier bleed the untrimmed OTA bias leaves in (voiced 3 %,
+    // OQ-06).
     const double ring = triA * triB + 0.03 * (triA + triB);
 
     // Noise: one source, "a combination of white and pink" — MM5837 white
-    // through a partial pinking network.
+    // through a partial pinking network. The amplitude rescale keeps the
+    // audible-band density independent of the internal rate.
     noiseSeed_ = noiseSeed_ * 1664525u + 1013904223u;
     const double white =
         static_cast<double>(static_cast<std::int32_t>(noiseSeed_))
-        / 2147483648.0;
+        / 2147483648.0 * noiseAmplitude_;
     pinkState_[0] = pinkA_[0] * pinkState_[0] + white * pinkG_[0];
     pinkState_[1] = pinkA_[1] * pinkState_[1] + white * pinkG_[1];
     pinkState_[2] = pinkA_[2] * pinkState_[2] + white * pinkG_[2];
@@ -1135,19 +1644,23 @@ void GhostarEngine::renderVoiceSample() noexcept
            + static_cast<double>(p.filterPathB) * waveB
            + static_cast<double>(p.filterPathNoise) * noise);
 
+    const double upperHz = audioModUpper != 0.0
+        ? controlUpperCutoffHz_ * std::exp2(audioModUpper)
+        : controlUpperCutoffHz_;
+    const double lowerHz = audioModLower != 0.0
+        ? controlLowerCutoffHz_ * std::exp2(audioModLower)
+        : controlLowerCutoffHz_;
     const double upperG = std::tan(
-        pi * std::min(controlUpperCutoffHz_, 0.45 * internalRate_)
-        / internalRate_);
+        pi * std::min(upperHz, 0.45 * internalRate_) / internalRate_);
     const double lowerG = std::tan(
-        pi * std::min(controlLowerCutoffHz_, 0.45 * internalRate_)
-        / internalRate_);
+        pi * std::min(lowerHz, 0.45 * internalRate_) / internalRate_);
 
     // The lower section always processes the signal, as the hardware chip
     // does — the OUT position routes around it rather than halting it. That
     // keeps its state live, so a mode switched back in later carries the
     // current signal, not a stale charge from seconds ago.
-    const auto lower =
-        runSection(lowerSection_, filterPath, lowerG, controlLowerK_);
+    const auto lower = runSection(lowerSection_, filterPath, lowerG,
+                                  controlLowerK_, diodeDecay_);
     switch (p.lowerMode)
     {
         case LowerFilterMode::BandPass:
@@ -1157,11 +1670,12 @@ void GhostarEngine::renderVoiceSample() noexcept
             break;
         case LowerFilterMode::Overdrive:
         {
-            // The soft clipper sits between the filters, so the upper
-            // lowpass re-filters the distortion products. Knee and drive
-            // voiced (OQ-10).
+            // The clipper sits between the filters, so the upper lowpass
+            // re-filters the distortion products. Its knee is the BA130
+            // pair's own (derived); the level it works at is voiced
+            // (OQ-10).
             const double boosted = filterPath + lower.bp;
-            filterPath = 0.45 * std::tanh(6.0 * boosted);
+            filterPath = overdriveClip(boosted);
             break;
         }
         case LowerFilterMode::HighPass:
@@ -1176,11 +1690,12 @@ void GhostarEngine::renderVoiceSample() noexcept
     // controlled section alone. The first section always advances so its
     // state stays live across slope switches, like the lower section's.
     const double upperFirstLp =
-        runSection(upperFirst_, filterPath, upperG, 2.0).lp;
+        runSection(upperFirst_, filterPath, upperG,
+                   dampingFromQ(lowSwitchQ), diodeDecay_).lp;
     if (p.slope == UpperSlope::TwentyFourDb)
         filterPath = upperFirstLp;
-    filterPath =
-        runSection(upperSecond_, filterPath, upperG, controlUpperK_).lp;
+    filterPath = runSection(upperSecond_, filterPath, upperG, controlUpperK_,
+                            diodeDecay_).lp;
 
     filterPath *= controlLoudnessGain_;
 
@@ -1211,29 +1726,33 @@ void GhostarEngine::process(float* left, float* right, int numSamples)
             static_cast<double>(parameters_.masterVolume)
             * static_cast<double>(parameters_.masterVolume);
 
-        // Two internal steps per output sample, then the halfband picks the
-        // decimated value.
-        for (int step = 0; step < 2; ++step)
+        // Four internal steps per output sample; every second one feeds the
+        // first decimation stage's output into the second stage, and the
+        // second stage picks the output value.
+        for (int step = 0; step < 4; ++step)
         {
             renderVoiceSample();
-            filterRing_[static_cast<std::size_t>(decimatorIndex_)] =
+            filterStageARing_[static_cast<std::size_t>(stageAIndex_)] =
                 lastFilterPathSample_;
-            shaperRing_[static_cast<std::size_t>(decimatorIndex_)] =
+            shaperStageARing_[static_cast<std::size_t>(stageAIndex_)] =
                 lastShaperPathSample_;
-            decimatorIndex_ = (decimatorIndex_ + 1) % halfbandTaps;
+            stageAIndex_ = (stageAIndex_ + 1) % stageATaps;
+            if ((step & 1) == 1)
+            {
+                filterStageBRing_[static_cast<std::size_t>(stageBIndex_)] =
+                    convolveRing(stageAKernel_, filterStageARing_,
+                                 stageAIndex_);
+                shaperStageBRing_[static_cast<std::size_t>(stageBIndex_)] =
+                    convolveRing(stageAKernel_, shaperStageARing_,
+                                 stageAIndex_);
+                stageBIndex_ = (stageBIndex_ + 1) % stageBTaps;
+            }
         }
 
-        double filterOut = 0.0;
-        double shaperOut = 0.0;
-        int ringIndex = decimatorIndex_;
-        for (int tap = halfbandTaps - 1; tap >= 0; --tap)
-        {
-            filterOut += halfbandKernel_[static_cast<std::size_t>(tap)]
-                       * filterRing_[static_cast<std::size_t>(ringIndex)];
-            shaperOut += halfbandKernel_[static_cast<std::size_t>(tap)]
-                       * shaperRing_[static_cast<std::size_t>(ringIndex)];
-            ringIndex = (ringIndex + 1) % halfbandTaps;
-        }
+        const double filterOut =
+            convolveRing(stageBKernel_, filterStageBRing_, stageBIndex_);
+        const double shaperOut =
+            convolveRing(stageBKernel_, shaperStageBRing_, stageBIndex_);
 
         double outLeft;
         double outRight;

@@ -392,6 +392,53 @@ void testShaperResetSelfGateCompletesItsCycle()
           "its own threshold");
 }
 
+// The gate the envelopes answer to is the OR'ed bus, not the keyboard, and
+// the two genuinely disagree: with KBD deselected a held key articulates
+// nothing, and an X-gated patch articulates with no key down. The editor's
+// gate lamp reads this, so the distinction is pinned here.
+void testEnvelopeGateFollowsTheSelectedBus()
+{
+    // A key down with KBD deselected: the keyboard gate is open, the
+    // envelope gate is not.
+    {
+        GhostarEngine engine;
+        engine.prepare(44100.0, 256);
+        auto parameters = brightPanel();
+        parameters.gateKbd = false;
+        parameters.gateX = false;
+        parameters.gateYExt = false;
+        engine.setParameters(parameters);
+        engine.noteOn(60, 1.0f);
+        render(engine, 0.05, 44100.0);
+        check(engine.isGateOpen(),
+              "the keyboard gate is open while a key is down");
+        check(!engine.isEnvelopeGateOpen(),
+              "a held key with KBD deselected does not gate the envelopes");
+    }
+
+    // X gating with no key down: the envelope gate opens on the LFO square
+    // even though the keyboard never closes.
+    {
+        GhostarEngine engine;
+        engine.prepare(44100.0, 256);
+        auto parameters = brightPanel();
+        parameters.gateKbd = false;
+        parameters.gateX = true;
+        parameters.lfoRate = 0.6f;
+        engine.setParameters(parameters);
+        bool sawOpen = false;
+        for (int slice = 0; slice < 60 && !sawOpen; ++slice)
+        {
+            render(engine, 0.01, 44100.0);
+            sawOpen = engine.isEnvelopeGateOpen();
+        }
+        check(!engine.isGateOpen(),
+              "no key is down in the X-gated case");
+        check(sawOpen,
+              "the X gate opens the envelope bus with no key down");
+    }
+}
+
 void testFullResonanceStaysBounded()
 {
     GhostarEngine marginal;
@@ -406,6 +453,80 @@ void testFullResonanceStaysBounded()
     check(finite(late), "long marginal full-resonance render is finite");
     check(peak(late) < 4.0,
           "long marginal full-resonance render does not accumulate");
+}
+
+// The lowpass integrator carries no bound of its own since the diode shunt
+// became the resonant node's law, so the regenerative extremes — full
+// resonance across the cutoff span, driven and undriven, OVERDRIVE's boost
+// included, at more than one rate — are rendered here to hold the claim
+// that the shunt alone bounds the loop.
+void testRegenerativeExtremesStayBounded()
+{
+    for (const double rate : { 44100.0, 96000.0 })
+    {
+        for (const float cutoff : { 0.0f, 0.5f, 1.0f })
+        {
+            for (const bool driven : { false, true })
+            {
+                GhostarEngine engine;
+                engine.prepare(rate, 256);
+                auto hot = brightPanel();
+                hot.resonance = 1.0f;
+                hot.upperResonance = ghostar::UpperResonanceMode::Variable;
+                hot.cutoff = cutoff;
+                hot.lowerMode = ghostar::LowerFilterMode::Overdrive;
+                hot.filterPathA = driven ? 1.0f : 0.0f;
+                hot.filterPathNoise = driven ? 1.0f : 0.3f;
+                hot.vcaBypass = true;
+                engine.setParameters(hot);
+                engine.noteOn(96, 1.0f);
+                render(engine, 2.0, rate);
+                const auto late = render(engine, 0.5, rate);
+                check(finite(late),
+                      "regenerative extreme stays finite without an "
+                      "integrator bound");
+                check(peak(late) < 4.0,
+                      "regenerative extreme stays bounded without an "
+                      "integrator bound");
+            }
+        }
+    }
+}
+
+// The diode shunt is a term of the continuous system, so the same patch
+// must converge to the same filter at every rate: the self-oscillation
+// amplitude — set entirely by the nonlinearity — must agree between hosts.
+// The per-sample maps this law replaced failed exactly this (their
+// equilibrium scaled with the sample rate).
+void testSelfOscillationLevelIsRateInvariant()
+{
+    const auto steadyRms = [](double rate) {
+        GhostarEngine engine;
+        engine.prepare(rate, 256);
+        auto parameters = brightPanel();
+        parameters.filterPathA = 0.0f;
+        parameters.filterPathNoise = 0.6f;
+        parameters.resonance = 1.0f;
+        parameters.upperResonance = ghostar::UpperResonanceMode::Variable;
+        parameters.cutoff = 0.6f;
+        parameters.vcaBypass = true;
+        engine.setParameters(parameters);
+        render(engine, 0.2, rate);           // noise kick
+        parameters.filterPathNoise = 0.0f;
+        engine.setParameters(parameters);
+        render(engine, 1.5, rate);           // settle
+        return rms(render(engine, 1.0, rate));
+    };
+
+    const double at44 = steadyRms(44100.0);
+    const double at96 = steadyRms(96000.0);
+    check(at44 > 1.0e-3, "self-oscillation sustains at 44.1 kHz");
+    check(at96 > 1.0e-3, "self-oscillation sustains at 96 kHz");
+    const double ratioDb =
+        20.0 * std::log10(std::max(at44, at96)
+                          / std::max(1.0e-12, std::min(at44, at96)));
+    check(ratioDb < 0.5,
+          "self-oscillation level agrees across host rates within 0.5 dB");
 }
 
 // The arpeggiator steps the held keys; a held triad must produce a moving
@@ -539,9 +660,10 @@ void testArpFirstStepIsTheScanBottom()
           "the opening arpeggio step is the lowest held key");
 }
 
-// The factory bank is the manual's eleven Sound Charts. Every chart renders
-// finite audio with a key held; every chart but the first is audible. The
-// Preparatory Pattern is the documented exception: it "produces no sound".
+// The factory bank is Init, the manual's eleven Sound Charts and the
+// seventeen Ghostar Programs. Every one renders finite audio with keys held
+// and leaves headroom; the Preparatory Pattern is the documented exception,
+// since it "produces no sound".
 // MIDI All Sound Off must kill the voice without resetting controllers: a
 // bend held across it still applies to the next note, where the full
 // reset() would have re-centred it.
@@ -607,10 +729,11 @@ void testStopAllSoundKeepsControllers()
           "the held bend survives all sound off");
 }
 
-void testEveryFactorySoundChartRenders()
+void testEveryFactoryProgramRenders()
 {
-    check(ghostar::factoryPresetCount() == 12,
-          "the factory bank is Init plus the manual's eleven Sound Charts");
+    check(ghostar::factoryPresetCount() == 29,
+          "the factory bank is Init plus eleven Sound Charts plus the "
+          "seventeen Ghostar Programs");
     check(ghostar::factoryPresetName(0) != nullptr
               && std::string(ghostar::factoryPresetName(0)) == "Init",
           "the bank opens with the default voice");
@@ -618,25 +741,135 @@ void testEveryFactorySoundChartRenders()
               && std::string(ghostar::factoryPresetName(1))
                      == "Preparatory Pattern",
           "the charts start with the Preparatory Pattern");
-    check(ghostar::factoryPresetName(12) == nullptr,
+    check(ghostar::factoryPresetName(ghostar::factoryPresetCount())
+              == nullptr,
           "an out-of-range program has no name");
 
+    // Callers that name a program in source get a loud -1 rather than some
+    // other patch: the demo renderer's program tour selects its six by name,
+    // and a substituted default would still render finite, audible,
+    // in-headroom audio under every check that renderer runs.
+    for (int index = 0; index < ghostar::factoryPresetCount(); ++index)
+        check(ghostar::factoryPresetIndexByName(
+                  ghostar::factoryPresetName(index))
+                  == index,
+              "every program is found by its own name");
+    check(ghostar::factoryPresetIndexByName("Not A Program") < 0,
+          "a name the bank does not have is not found");
+    check(ghostar::factoryPresetIndexByName("init") < 0,
+          "the lookup is exact, not case-folded");
+    check(ghostar::factoryPresetIndexByName(nullptr) < 0,
+          "no name is not found");
+
+    // Every program carries a description, and the two banks are contiguous
+    // with the historical one first, which is what a browser groups on.
+    bool sawProgramsBank = false;
+    for (int index = 0; index < ghostar::factoryPresetCount(); ++index)
+    {
+        const bool isProgram =
+            ghostar::factoryPresetBank(index) == ghostar::PresetBank::Programs;
+        if (isProgram)
+            sawProgramsBank = true;
+        check(!(sawProgramsBank && !isProgram),
+              "the banks are contiguous, Sound Charts first");
+        check(ghostar::factoryPresetDescription(index) != nullptr
+                  && ghostar::factoryPresetDescription(index)[0] != '\0',
+              "every program has a description");
+    }
+    check(sawProgramsBank, "the performance bank is present");
+
+    // Both wheel positions a program is played at. Wheels back is the state
+    // selecting one actually leaves — testing only the raised case would let
+    // a program that says nothing until a hand moves pass unnoticed — and
+    // wheels up is where a program's modulation is doing its work.
+    struct WheelStance
+    {
+        const char* what;
+        float x;
+        float y;
+    };
+    for (const auto stance : { WheelStance { "with the wheels back, as "
+                                             "selecting it leaves them",
+                                             0.0f, 0.0f },
+                               WheelStance { "with the wheels raised", 0.5f,
+                                             0.6f } })
     for (int index = 0; index < ghostar::factoryPresetCount(); ++index)
     {
         GhostarEngine engine;
         engine.prepare(44100.0, 256);
         engine.setParameters(ghostar::factoryPresetParameters(index));
+        engine.setModWheel(stance.x);
+        engine.setShaperWheel(stance.y);
         engine.noteOn(48, 0.9f);
         engine.noteOn(55, 0.9f);
         const auto rendered = render(engine, 2.0, 44100.0);
-        const std::string name = ghostar::factoryPresetName(index);
+        const std::string name =
+            std::string(ghostar::factoryPresetName(index)) + " " + stance.what;
         check(finite(rendered), (name + " renders finite audio").c_str());
-        if (name == "Preparatory Pattern")
+        if (std::string(ghostar::factoryPresetName(index))
+            == "Preparatory Pattern")
+        {
             check(peak(rendered) == 0.0,
                   "the Preparatory Pattern produces no sound");
-        else
-            check(peak(rendered) > 1.0e-4, (name + " is audible").c_str());
+            continue;
+        }
+        check(peak(rendered) > 1.0e-4, (name + " is audible").c_str());
+        // A program that clips on an ordinary two-note phrase would be a
+        // delivery defect, not a voicing choice.
+        check(peak(rendered) < 1.0,
+              (name + " leaves headroom on an ordinary phrase").c_str());
     }
+}
+
+// Selecting a program pulls both performance wheels fully back, the way the
+// manual's charts are drawn and the way the plug-in is documented and tested.
+// That is correct — the wheels are attenuators the player rides, a chart
+// cannot store one, and a stored position would be wiped by the first CC1 a
+// controller at rest sends. But it means a program that routes either wheel's
+// bus makes none of that motion until a hand moves, and its one-line
+// description is the only place the player is told so.
+//
+// The rule is exact rather than measured. Every X destination is scaled by
+// modWheel_, at control rate through xSignal and at audio rate through
+// AudioRateMod::gain, which must be non-zero for the modulation to be applied
+// at all; every Y destination is scaled by shaperWheel_. So routing either bus
+// is precisely the condition, and it needs no threshold.
+void testWheelGatedProgramsNameTheirWheel()
+{
+    for (int index = 0; index < ghostar::factoryPresetCount(); ++index)
+    {
+        const auto parameters = ghostar::factoryPresetParameters(index);
+        const std::string name = ghostar::factoryPresetName(index);
+        const std::string description =
+            ghostar::factoryPresetDescription(index);
+
+        if (parameters.modXTo != ghostar::ModXDestination::Off)
+            check(description.find("X wheel") != std::string::npos,
+                  (name + " routes the X bus but its description does not "
+                          "tell the player to raise the X wheel")
+                      .c_str());
+        if (parameters.shaperYTo != ghostar::ShaperYDestination::Off)
+            check(description.find("Y wheel") != std::string::npos,
+                  (name + " routes the Y bus but its description does not "
+                          "tell the player to raise the Y wheel")
+                      .c_str());
+    }
+}
+
+// A halfband's sinc vanishes at every even offset from its centre, and the
+// decimator stores only the taps that survive. Nothing audible depends on
+// that — the discarded taps are zero — so if the sparsity is ever lost the
+// only symptom is the decimator quietly costing about twice as much. The
+// counts are therefore pinned directly.
+void testTheHalfbandKernelsAreSparse()
+{
+    GhostarEngine engine;
+    engine.prepare(44100.0, 256);
+    // 31 and 127 taps: the centre tap plus every odd offset either side.
+    check(engine.decimatorStageATaps() == 17,
+          "the first decimation stage is visiting its structural zeros");
+    check(engine.decimatorStageBTaps() == 65,
+          "the second decimation stage is visiting its structural zeros");
 }
 
 void testFasterThanRealtime()
@@ -678,7 +911,10 @@ int main()
     testOutOfRangeSwitchesAreSanitised();
     testShaperResetRetriggersOnLegatoPress();
     testShaperResetSelfGateCompletesItsCycle();
+    testEnvelopeGateFollowsTheSelectedBus();
     testFullResonanceStaysBounded();
+    testRegenerativeExtremesStayBounded();
+    testSelfOscillationLevelIsRateInvariant();
     testArpeggiatorStepsHeldKeys();
     testAttackReachesPeakAtItsLabelledTime();
     testArpOctaveStepsSurviveTheMidiCeiling();
@@ -686,7 +922,9 @@ int main()
     testArpFirstStepIsTheScanBottom();
     testTravelStepsGlideWhileSounding();
     testStopAllSoundKeepsControllers();
-    testEveryFactorySoundChartRenders();
+    testEveryFactoryProgramRenders();
+    testWheelGatedProgramsNameTheirWheel();
+    testTheHalfbandKernelsAreSparse();
     testFasterThanRealtime();
 
     if (failures != 0)

@@ -150,7 +150,13 @@ if(GHOSTAR_BUILD_TOOLS)
     target_link_libraries(GhostarZipperAudit PRIVATE GhostarDSP)
     target_compile_features(GhostarZipperAudit PRIVATE cxx_std_20)
 
-    foreach(target GhostarRenderDemos GhostarZipperAudit)
+    # Plan Step 1's measurement: worst-case aliasing strokes against a
+    # high-rate ground truth decimated to the shipping rate.
+    add_executable(GhostarAliasAudit Tools/AliasAudit.cpp)
+    target_link_libraries(GhostarAliasAudit PRIVATE GhostarDSP)
+    target_compile_features(GhostarAliasAudit PRIVATE cxx_std_20)
+
+    foreach(target GhostarRenderDemos GhostarZipperAudit GhostarAliasAudit)
         if(MSVC)
             target_compile_options(${target} PRIVATE /W4 /permissive-)
         else()
@@ -169,7 +175,17 @@ if(BUILD_TESTING)
     target_link_libraries(GhostarCircuitTests PRIVATE GhostarDSP)
     target_compile_features(GhostarCircuitTests PRIVATE cxx_std_20)
 
-    foreach(target GhostarEngineTests GhostarCircuitTests)
+    # The alias audit's measuring instrument, on signals whose alias content
+    # is known exactly. Links nothing, so it runs whether or not the tools
+    # are built: an instrument that cannot see what it claims to measure is
+    # worse than no instrument, and that failure is invisible from its output.
+    add_executable(GhostarAliasMetricTests Tests/GhostarAliasMetricTests.cpp)
+    target_include_directories(GhostarAliasMetricTests
+                               PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Tools)
+    target_compile_features(GhostarAliasMetricTests PRIVATE cxx_std_20)
+
+    foreach(target GhostarEngineTests GhostarCircuitTests
+                   GhostarAliasMetricTests)
         if(MSVC)
             target_compile_options(${target} PRIVATE /W4 /permissive-)
         else()
@@ -179,8 +195,10 @@ if(BUILD_TESTING)
 
     add_test(NAME Ghostar.Engine COMMAND GhostarEngineTests)
     add_test(NAME Ghostar.Circuit COMMAND GhostarCircuitTests)
+    add_test(NAME Ghostar.AliasMetric COMMAND GhostarAliasMetricTests)
     set_tests_properties(Ghostar.Engine PROPERTIES TIMEOUT 300)
     set_tests_properties(Ghostar.Circuit PROPERTIES TIMEOUT 300)
+    set_tests_properties(Ghostar.AliasMetric PROPERTIES TIMEOUT 300)
 
     if(GHOSTAR_BUILD_TOOLS)
         # Guards the renderer that produces the committed demonstration WAVs:
@@ -211,6 +229,11 @@ if(BUILD_TESTING)
         add_test(NAME Ghostar.ZipperAuditSmoke
                  COMMAND GhostarZipperAudit --smoke)
         set_tests_properties(Ghostar.ZipperAuditSmoke PROPERTIES TIMEOUT 120)
+
+        # Same guard for the alias-audit strokes and reference pipeline.
+        add_test(NAME Ghostar.AliasAuditSmoke
+                 COMMAND GhostarAliasAudit --smoke)
+        set_tests_properties(Ghostar.AliasAuditSmoke PROPERTIES TIMEOUT 300)
     endif()
 
     if(GHOSTAR_BUILD_PLUGIN)

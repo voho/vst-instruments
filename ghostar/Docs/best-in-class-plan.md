@@ -78,84 +78,91 @@ Reading the reviews of the modelling tier, four things recur.
    range where the panel drawing says it is.
 
 Ghostar holds point 3 in method (the research contract and the register;
-Step 4's sweep makes the register exhaustive) and point 4
-*structurally*: every control exists with the silkscreen's detents and
-labels, but several travel *tapers* behind them are voiced, not verified
-(cutoff span OQ-02, envelope timing OQ-04, glide OQ-08, Shaper shape
-OQ-18, volume OQ-19), so control behaviour stays open work alongside
-points 1 and 2 until Steps 4 and 6 close those tapers.
+Step 4's sweep makes the register exhaustive) and, since Steps 1–3
+landed, increasingly in substance: the character-defining laws that were
+voiced when this plan was written — the resonance curve, both filter
+nonlinearities, the envelope timing, the tracking amount — are now
+derived from the CEM3350 and BA130 datasheets and the service-manual
+scan. Point 2 is settled in the only direction the evidence allows:
+Step 2 closed as no drift, with the sensitivities anchored and the
+missing environmental record documented. Point 4 holds *structurally* —
+every control exists with the silkscreen's detents and labels — and its
+tapers are now mostly derived too; what remains voiced there is the
+cutoff span's absolute placement (OQ-02, a trimmer setting no document
+records), glide (OQ-08), the Shaper shape split (OQ-18) and the volume
+taper (OQ-19), which Step 4 works next. Point 1 — behaviour under stress
+— is where Steps 1 and 3 aimed, and the alias table and the rate-invariant
+limit cycle are its evidence.
 
 ## Where Ghostar actually stands
 
-**Anchored laws** (each traced to a primary source in
-`Docs/circuit-modelling-research.md`, implemented in
-`Source/DSP/GhostarEngine.cpp`):
+**Derived laws** (computed from a named primary source; the derivation is
+recorded in the register entry named against each):
 
-- Keyboard law and the ~110 % filter tracking amount (`trackingOctaves`,
-  factor 1.1; the middle-C *pivot* is voiced — see below).
-- The panel's printed pulse duty sets — A 50/30/15/6 %, B 40/20/10/3 %
-  (the silkscreen's numbers are anchored; whether a calibrated unit's
-  PW trimmer actually lands on the print is OQ-03's open half, so the
-  implemented percentages are the printed values taken as voiced) — and
-  Osc B's −1/UNISON/+1/+2/BASS (30–300 Hz)/WIDE (2 Hz–10 kHz) ranges with
-  the ± perfect-fifth INTERVAL.
-- The 556A envelopes' 5 ms–10 s segment span (the manual's own numbers; the
-  segment *curvature* law is voiced — see below).
+- The resonance travel-to-Q mapping, from the CEM3350's −65 mV/decade Q
+  scale and the Spirit's own pot network, anchored by the panel's LOW =
+  Q 0.5 — with the Upper and Lower chips on genuinely different curves
+  (OQ-12).
+- Both filter nonlinearities, from the BA130's forward curve: the
+  resonance limiter as a diode shunt in the integrator's equation, and
+  the OVERDRIVE stage as the diode-across-feedback circuit it is
+  (OQ-10, OQ-12).
+- The ADSR segment law: the panel's 5 ms–10 s is the RC time constant of
+  each 2 MΩ slider into the shared 4.7 µF cap, and the attack aims at
+  ≈1.3× peak because it charges from the timer's output pin through a
+  diode (OQ-04).
+- Keyboard tracking at 108 %, from the 12k1 ladder against the chip's
+  −19.6 mV/octave — which independently reproduces the manual's
+  "slightly over 100 %" (OQ-13).
+- The filter cutoff *span* (≈10 octaves of pot authority over a
+  ~10-octave chip window) and the 24 dB cascade's fixed-Q section, both
+  corroborated by the scan (OQ-02, OQ-09).
+
+**Anchored laws** (stated outright by a primary source):
+
+- Keyboard law; the panel's printed pulse duty sets — A 50/30/15/6 %,
+  B 40/20/10/3 % (whether a calibrated unit's PW trimmer lands on the
+  print is OQ-03's open half) — and Osc B's −1/UNISON/+1/+2/BASS
+  (30–300 Hz)/WIDE (2 Hz–10 kHz) ranges with the ± perfect-fifth
+  INTERVAL.
 - The Shaper Y integrator from US 3,943,456 with FREE/KBD HOLD/RESET/RUN,
   RESET retriggering on every key press regardless of TRIGGER mode.
-- The bipolar ±2.5-octave filter envelope, the OR'ed gate buses with
-  keyboard articulation only through KBD, last-note keying with
+- The bipolar ±2.5-octave filter envelope, linear sustain, the OR'ed gate
+  buses with keyboard articulation only through KBD, last-note keying with
   fallback-without-retrigger, AUTO glide, RIPPLE/ARPEGGIO/LEAP with the
   (0, +12, −12) pattern.
 - MM5837 white noise with a partial pinking stage, and series-capacitor AC
   coupling on the outputs — both anchored *in presence*; the pinking
-  transfer and the coupling corner are voiced numbers (see below).
+  transfer and the coupling corner are voiced numbers.
 
-**Voiced constants** (defensible but not anchored). The character-defining
-ones are listed here, each with its entry in the open-questions register
-`Docs/open-questions.md`. The register, not this list, is the authority —
-and Step 4 sweeps every remaining numeric voicing in the engine into it,
-so the register becomes exhaustive by construction rather than by
-enumeration here:
+**Voiced constants** that remain. The register, not this list, is the
+authority, and Step 4 sweeps every remaining numeric voicing into it:
 
-- Filter cutoff span 20 Hz–16 kHz (`exponentialTravel(p.cutoff, 20.0,
-  16000.0)`, OQ-02).
-- Envelope segment curvature: attack charges toward 1.5× and switches at
-  1.0 (coefficient ln 3, so the labelled time is the real time-to-peak),
-  decay/release read as three time constants — a 555-family reading, not a
-  sourced derivation (OQ-04).
-- Resonance law `k = 2·0.01^t − 0.025`, regenerative at full travel, and
-  the diode limiter that bounds each resonant node — linear below `knee =
-  1.2`, tanh-capped at `ceiling = 2.2` (OQ-12).
-- The inter-filter OVERDRIVE clipper `0.45·tanh(6·x)` (OQ-10), and the
-  24 dB cascade's Q split — first section fixed at Q = 0.5, second carries
-  the resonance control (OQ-09).
+- The cutoff span's absolute *placement* — the 100 kΩ trimmer's factory
+  setting, which no document records (OQ-02).
+- The level scalings inside both diode stages: what an engine unit is
+  worth in volts at the resonance node and at the OVERDRIVE stage, which
+  is the level trace neither entry has (OQ-10, OQ-12); and the chip's Q
+  ceiling read as the oscillation threshold (OQ-12).
 - Ring-modulator carrier bleed `0.03·(triA + triB)` (OQ-06).
-- Shaper gate comparator threshold `shaperLevel_ > 0.01` (OQ-05).
+- Shaper gate comparator threshold (OQ-05).
 - Glide lag `tau = 0.9·travel²` seconds, from the 2 MΩ pot into ~450 nF
   (OQ-08).
-- The filter-tracking pivot at middle C — the note where tracking
-  contributes zero offset (OQ-13).
-- Wheel modulation depths: 1 octave of pitch, 3 octaves of cutoff, ±0.42
-  duty, and the 60 Hz fastest LFO rate a full Y wheel reaches
-  (`pitchDepthOctaves`, `filterDepthOctaves`, `dutyDepth`, OQ-14).
-- The RED NOISE process — a 1.5 Hz one-pole over white noise, restored by
-  18× gain and clipped (OQ-17); the manual anchors only "continuous slow
-  random".
-- The Shaper SHAPE endpoint split (rise fraction `0.05 + 0.9·travel`,
-  OQ-18) and the master volume's square-of-travel taper (OQ-19).
-- The noise pinking blend — the Kellet reference poles re-derived to
-  physical frequencies, standing in for the unresolved network (OQ-15) —
-  and the ~5 Hz output coupling corner (OQ-16).
-- The per-section integrator stability bound `4·tanh(0.25·x)` riding
-  above the resonant-node limiter (tracked with it under OQ-12).
+- The filter-tracking pivot at middle C (OQ-13).
+- Wheel modulation depths, and the fastest LFO rate a full Y wheel
+  reaches (OQ-14).
+- The RED NOISE process (OQ-17), the Shaper SHAPE endpoint split (OQ-18),
+  the master volume taper (OQ-19), the noise pinking blend (OQ-15) and
+  the output coupling corner (OQ-16).
 
-**DSP quality today:** PolyBLEP sawtooth and pulses with naive triangles at
-2× oversampling, one 63-tap halfband decimator per audio path
-(`halfbandTaps = 63`), TPT state-variable filter sections, denormal
-flushing, and a bounded integrator everywhere state accumulates. The whole
-voice renders far faster than realtime (the engine suite bounds five
-seconds of audio inside four wall-clock seconds on a loaded CI worker).
+**DSP quality today:** every waveform discontinuity bandlimited as an
+event — BLEP for value jumps, BLAMP for the triangle's corners, both for
+the hard-sync reset — at 4× oversampling, decimated in two Kaiser
+halfband stages; TPT state-variable filter sections whose nonlinearity is
+a term of the continuous system rather than a per-sample map, so the same
+patch converges to the same filter at every host rate; audio-rate
+modulation applied at the internal rate; denormal flushing throughout.
+The whole voice renders about 10× faster than realtime on a hard patch.
 
 **The standing limitation (OQ-11):** no owned hardware, no calibration
 captures, and none available in the field. Every constant marked *voiced*
@@ -169,7 +176,9 @@ Each step names its verification. Audible, physics-ambiguous choices go
 through an A–Z listening test (A = shipping engine); measurable claims are
 settled by measurement and quoted.
 
-- [ ] **Step 1 — Alias audit at the extremes.** WIDE range takes Osc B to
+- [x] **Step 1 — Alias audit at the extremes.** Done — the strokes,
+  the metric the measurements forced, the fixes and the final table are in
+  the dated section below. Original specification: WIDE range takes Osc B to
   10 kHz; hard sync and the ring modulator multiply spectra; the triangle
   path relies on 2× oversampling plus mild spectral rolloff; and MOD
   SOURCE = OSC B in WIDE drives pitch, pulse width or cutoff at audio
@@ -190,7 +199,9 @@ settled by measurement and quoted.
   and pulses always; the reset triangle too, since an arbitrary-phase
   reset lands it away from where it was), BLAMP for the triangle's slope
   kink, or 4× on the triangle path alone — and a re-measure.
-- [ ] **Step 2 — CEM3340 temperament.** The 3340 is a famously stable VCO —
+- [x] **Step 2 — CEM3340 temperament.** Closed as no drift — the
+  derivation's two halves and the dead end are in the dated section below.
+  Original specification: The 3340 is a famously stable VCO —
   that stability is part of the Spirit's character (two of them against
   each other stay in tune, unlike discrete VCOs). But *stable* is not
   *static*: datasheet tempco and supply sensitivity translate to cents-scale
@@ -212,7 +223,9 @@ settled by measurement and quoted.
   derived and none — either would put an eared number where a derived
   one belongs. Verification: the derivation (or the dead end) quoted
   here.
-- [ ] **Step 3 — The resonance limiter's real characteristic.** What
+- [x] **Step 3 — The resonance limiter's real characteristic.** Done —
+  the BA130's curve, both re-derived nonlinearities and the removed
+  integrator bound are in the dated section below. Original specification: What
   bounds self-oscillation in the hardware is the *external* BA130
   anti-parallel "Hi-Q overload limiter" in the resonance path (anchored
   placement; `Docs/circuit-modelling-research.md`), which the engine
@@ -234,7 +247,9 @@ settled by measurement and quoted.
   recorded verdict — plus a re-run of Step 1's alias suite, since new
   nonlinearity makes new high partials and the completed audit must
   describe the final engine, not the one before it.
-- [ ] **Step 4 — Close the closable open questions.** OQ-02 (absolute
+- [x] **Step 4 — Close the closable open questions.** Done — the
+  derivations, the dead ends and the four register entries the sweep added
+  are in the dated section below. Original specification: OQ-02 (absolute
   cutoff span) and OQ-09 (cascade Q distribution) may be derivable from
   the CEM3350 datasheet's exponential-scale and mode figures; OQ-04's
   curvature read can be checked against the 556A application notes. Work
@@ -297,6 +312,404 @@ settled by measurement and quoted.
 - **MPE / poly-aftertouch.** The modelled keyboard is a switch matrix with
   no velocity; adding expressive dimensions the instrument never had would
   contradict the contract that keeps velocity ignored.
+
+## Step 1 executed — the alias audit — 2026-08-22
+
+The audit lives in `Tools/AliasAudit.cpp` (built as `GhostarAliasAudit`;
+CI keeps its strokes and reference pipeline valid through
+`Ghostar.AliasAuditSmoke`). Twelve strokes drive the plan's named
+mechanisms hard — WIDE at full (saw, 3 % pulse and triangle), hard sync at
+the keyboard's top both static and swept, ring at the top key, Osc B as an
+audio-rate modulator into pitch, pulse width and cutoff, OVERDRIVE at full
+resonance boost, and regenerative self-oscillation near the top of the
+cutoff span — plus one deliberate control: a mid-keyboard sawtooth, the
+easy case, whose figure is the floor every hard row is read against.
+
+**The measure.** The reference for each stroke is the same stroke rendered
+at 16x the shipping rate (768 kHz, the engine's supported ceiling),
+bandlimited by a −100 dB Kaiser lowpass flat to 21.6 kHz, and decimated
+back to 48 kHz with zero-phase alignment. Note events land at the same
+wall-clock instant at every rate and swept travels are written on a fixed
+1 ms grid, so the two renders describe the same performance rather than
+two different control trajectories. Strokes exclude the noise source by
+construction: its per-internal-sample generator draws a different
+realisation at each rate, so a noise stroke would measure two different
+noises.
+
+The reported figure is **excess**: energy the shipping render has *beyond*
+the reference, counted only where it exceeds the loudest reference bin
+within ±3 bins by more than a dB. Aliasing is by definition content that
+is not in the ground truth, so this is what the step's alias-to-signal
+gate means. The plain magnitude difference is reported alongside as
+context, because excess alone would not catch a render that is
+systematically quieter or detuned.
+
+**Why the metric had to be built that way.** Two naive readings failed
+first, and both failures shaped the engine, so they are recorded:
+
+1. *A plain magnitude difference* put the tonal strokes at the top of the
+   table — `selfosc-highcutoff` at +6.2 dB — when per-bin inspection
+   showed the shipping and reference partials agreeing to a tenth of a dB.
+   The residual was the analysis window's leakage skirt around a partial
+   whose frequency differed in its fifth decimal place. Hence excess, and
+   hence the ±3-bin neighbourhood.
+2. *The control row failed*, and finding out why was the audit's largest
+   result. The residual sat on the *low* harmonics with the shipping
+   render systematically louder near the cutoff — not an alias signature.
+   `resonantNodeLimit` and `integratorBound` were per-sample maps, so
+   their compression per second scaled with how many samples there were:
+   the engine at 2x-of-48 kHz and the 16x reference converged to
+   *different filters*. Worse, the `4·tanh(0.25·x)` bound — intended as a
+   runaway stop — turned out to be what actually set self-oscillation
+   amplitude, an accidental cubic law whose equilibrium moved with the
+   host rate.
+
+**Baseline** (the engine as it stood, excess ≤20 kHz, dB): control −23.5,
+WIDE saw −18.8, WIDE 3 % pulse −9.4, WIDE triangle −17.3, sync sweep
+−17.4, ring −22.7, Osc B → pitch −13.1, → PWM −15.2, → cutoff −8.6,
+OVERDRIVE −6.1, self-oscillation +6.2. (These are plain-difference
+figures; the excess metric did not exist yet, because the failures above
+had not been diagnosed.)
+
+**What the audit changed**, one commit each, re-measured after every one:
+
+- The resonance nonlinearity became a term of the continuous system — a
+  diode shunt current in the band-pass integrator's equation, solved as an
+  exact closed-form sub-step — instead of a per-sample map, and the
+  integrator bound was removed as the artifact it turned out to be.
+- Every waveform discontinuity became an *event* with a sub-sample time:
+  BLEP for value jumps (saw, pulses, and a moving duty boundary crossing
+  the standing phase), BLAMP for the triangle's corners, and both for the
+  hard-sync reset, which was previously uncorrected entirely. Each
+  oscillator emits with one internal sample of delay so an event found
+  mid-sample corrects the earlier sample exactly. The ring modulator's
+  triangle taps are corrected as their own channel.
+- The voice core moved from 2x to 4x, decimated in two Kaiser halfband
+  stages, with only the structurally nonzero taps visited.
+- MOD SOURCE = OSC B stopped being read once per output sample: its
+  routing is published to the voice and applied per internal sample.
+- The derived resonance law (Step 3) removed most of the remaining
+  cutoff-modulation residual as a side effect, mid-travel Q having fallen
+  from ≈5.7 to 1.48.
+
+**Final** — *superseded; see the correction below.* These were the figures
+this step closed on, measured with a ceiling that could hide a component
+almost as loud as its neighbouring partial. They are kept as history, not as
+evidence:
+
+| stroke | excess | resid ≤20k | resid full |
+|---|---:|---:|---:|
+| saw-midkey-control | −101.7 | −54.9 | −48.4 |
+| wide-saw-10k | −200.0 | −47.1 | −45.9 |
+| wide-pulse3-10k | −97.0 | −53.4 | −51.5 |
+| wide-tri-10k | −200.0 | −48.4 | −48.0 |
+| sync-static-topkey | −80.6 | −44.7 | −38.9 |
+| sync-sweep-topkey | −81.7 | −46.1 | −37.0 |
+| ring-topkey | −106.0 | −52.2 | −50.8 |
+| oscb-mod-pitch | −49.8 | −18.0 | −18.0 |
+| oscb-mod-pwm | −39.4 | −29.1 | −29.1 |
+| oscb-mod-cutoff | −113.5 | −37.0 | −37.0 |
+| overdrive-full | −197.2 | −31.6 | −31.6 |
+| selfosc-highcutoff | −90.1 | −26.2 | −26.2 |
+
+**On the two rows that sat above the gate.** Both are Osc B driving a
+destination at audio rate, and this step originally excused both on the
+grounds that their ground truth does not converge. That is true of the
+**pitch** row: rendering at 1x, 2x, 4x, 8x and 16x and comparing each
+against the next gives −22.2, −26.4, −28.6, −29.7 dB, so the steps halve and
+plateau instead of falling away, and successive references disagree with
+each other by about as much as the shipping render disagrees with any of
+them. Exponential FM of a bandlimited sawtooth by a bandlimited sawtooth has
+unbounded bandwidth; every finite rate is a different bandlimitation of it,
+and there is no "the truth" to converge on. A probe that de-delayed the
+modulation tap by half a sample made this row slightly worse, confirming the
+plateau is the signal's own bandwidth rather than the model's tap.
+
+It is **not** true of the PWM row, and saying so was an error review caught:
+the text applied the argument to both rows and then contradicted itself two
+sentences later by noting that the PWM row converges. A rate ladder settles
+it — `oscb-mod-pwm`'s consecutive-pair residual falls −31.7, −37.7, −43.8,
+−49.9 dB, a clean 6 dB per doubling with no plateau, against the pitch row's
+−22.2, −26.2, −28.7, −29.6. **The PWM row was a convergent quantity sitting
+above the gate**, and nothing excused it.
+
+Review proposed a cause: the duty-move discontinuity is registered at the
+sample boundary (`u = 0`) rather than at its true sub-sample crossing, which
+is a real inconsistency — every other discontinuity in the oscillator gets a
+real fraction. The code observation is correct. The causal claim is not:
+implementing the true crossing measures **2.8 dB worse**, and making the duty
+linear across the sample and solving the edge from the sign change measures
+**2.7 dB worse**, both against a common ground truth, with all eleven other
+strokes unchanged. The dominant error in that row is the audio-rate
+modulation tap's own one-sample lag, not the correction's placement —
+reading Osc B one internal sample fresher measures 6.5 dB better. That is
+not shipped: Osc A hard-syncs Osc B while Osc B modulates Osc A, so the loop
+needs a delay on one side, and which side carries it is a question about the
+mod board's own timing rather than something a number going down decides.
+Recorded as OQ-25.
+
+### The gate verdict is withdrawn — 2026-08-22, after review
+
+Review asked whether an alias landing on a partial could hide from the
+excess metric. It could, and the answer changes this step's conclusion.
+
+**What was wrong.** Each bin was compared against the largest reference bin
+within ±3 bins, times a +1 dB tolerance. That turns every partial into a
+70 Hz-wide plateau of permission: a bin whose own reference is empty
+inherits its neighbour's magnitude as its ceiling. The comment justifying it
+— that alias images land far from the partials that produce them — was an
+assumption, and it is false. A fold family sits at |k·f₀ − n·f_s|, which for
+any f₀ that is not a neat fraction of f_s lands tens of Hz from the harmonic
+grid; hard sync, ring modulation and a driven nonlinearity then make the
+grid dense enough that "tens of Hz away" means "on top of something else".
+
+**Measured, not argued.** Injecting one sinusoid of known level into the
+real strokes, through the real pipeline: a **−40 dB alias — twenty dB above
+the acceptance gate — reported the metric's −200 dB floor**, on
+`wide-saw-10k` at 500 Hz and at 5175 Hz, and on `sync-static-topkey` at
+2000 Hz and 5175 Hz, where the figure did not move at all. Sweeping a
+gate-level alias across the audible band, the reported figure was unmoved
+across 83.9 % of it for `wide-saw-10k` and 56.3 % for the control row.
+Synthetically, an alias at exactly the gate reported −200.0 anywhere within
+seven bins of a partial. Attribution: with the neighbourhood removed but the
+tolerance kept it still read −200.0; removing the tolerance recovered
+−64.4 dB. Both parts contribute and the tolerance alone is enough.
+
+**What the instrument is now.** `Tools/AliasMetric.h`, extracted so it can be
+exercised on signals whose alias content is known exactly. The disagreement
+being tolerated is a small difference in *pitch*, so it is applied as one:
+the ceiling spans what a **measured** relative frequency error could have
+moved into a bin, proportional to frequency rather than a fixed bin count,
+and never narrower than the analysis window's own main lobe. The drift is
+the median across matched peaks, not the worst — otherwise a loud alias
+inflates the very tolerance that then hides it. `Tests/GhostarAliasMetricTests.cpp`
+pins the behaviour, including the case the old metric floored.
+
+**Re-measured** (16384-point Blackman-Harris; the two new columns are the
+measurement's own detection floor and its verdict):
+
+| stroke | excess | blind floor | resid ≤20k | decided? |
+|---|---:|---:|---:|---|
+| saw-midkey-control | −88.5 | −15.5 | −55.2 | no |
+| wide-saw-10k | −80.2 | −16.4 | −48.6 | no |
+| wide-pulse3-10k | −73.8 | −15.7 | −56.3 | no |
+| wide-tri-10k | −96.4 | −16.8 | −49.3 | no |
+| sync-static-topkey | −79.5 | −15.5 | −44.7 | no |
+| sync-sweep-topkey | −80.4 | −13.7 | −45.8 | no |
+| ring-topkey | −104.8 | −17.4 | −52.2 | no |
+| oscb-mod-pitch | −23.5 | −15.9 | −6.4 | no |
+| oscb-mod-pwm | −34.6 | −18.2 | −28.3 | no |
+| oscb-mod-cutoff | −65.2 | −15.8 | −39.5 | no |
+| overdrive-full | −139.0 | −17.4 | −55.4 | no |
+| selfosc-highcutoff | −85.6 | −14.1 | −25.6 | no |
+
+The two −200.0 rows are gone: `wide-saw-10k` re-measures at −80.2 and
+`wide-tri-10k` at −96.4, so real added content was being floored. Every
+excess figure is worse than the superseded one.
+
+**And every row is undecidable.** The blind floor sits between −13.7 and
+−18.2 dB, because a +1 dB level tolerance on tonal material leaves that much
+room under a partial — and a component landing exactly on a partial is
+arithmetically indistinguishable from that partial being slightly louder, by
+this or any other magnitude comparison. So:
+
+> **This step's gate verdict is withdrawn.** The claim that every
+> convergent stroke sits at or below −80 dB of excess against a −60 dB gate
+> was a statement about where the old clamp fired, not about alias content.
+> Comparing two renders at different rates *cannot* certify a −60 dB
+> alias-to-signal gate on tonal material, and the audit no longer says it
+> can. What it now provides is a sound upper bound on how much the shipping
+> render differs from a 16× ground truth, published beside the floor below
+> which it cannot see.
+
+The DSP work this step drove is not impeached by any of it — the
+rate-independent filter formulation, the sub-sample BLEP/BLAMP events, the
+4× core and the hard-sync correction each stand on their own evidence, and
+the plain-difference column improved throughout. What fell is the
+certification, not the engine.
+
+**What would decide it** is a reference-free measure: for a stroke that
+holds a pitch, everything off the harmonic grid is alias and noise, with no
+second render to disagree with and no tolerance to hide behind. A first
+attempt is recorded in OQ-24 rather than shipped — it reported a stroke's own
+inharmonicity as though it were alias, and half a measurement is precisely
+what produced the defect corrected here.
+
+**Cost.** The engine renders 30 s of a hard patch (both oscillators, ring,
+OVERDRIVE, VARIABLE resonance) in 3.9 s — 7.7x realtime, down from 22.7x
+before this work and far above the suite's bound.
+
+*Corrected 2026-08-22, after review.* The two halfband kernels were not
+in fact sparse when that figure was taken. A halfband's sinc vanishes at
+every even offset from its centre, and the design skipped those taps by
+testing the computed coefficient against zero — but `sin(pi n / 2)` at even
+`n` evaluates to a rounding residue near 1e-16, not to zero, so every tap
+was kept: 31 and 127 rather than 17 and 65, and the decimator did close to
+twice the arithmetic the comment beside it claimed. The zeros are now
+identified by position instead. Measured on one machine in one session, the
+same 30 s hard patch goes from 3.21 s to 2.92 s — 9.4x to 10.3x realtime.
+All twelve committed demo WAVs render bit-identical across the change,
+which is the evidence that the discarded taps really were carrying nothing.
+The tap counts are now pinned by a test, because nothing audible depends on
+them and so nothing else would have noticed.
+
+## Step 2 closed as no drift — 2026-08-22
+
+The step's own gate required both halves before any wander could ship.
+
+**Half (a) exists and is now anchored.** The Curtis CEM3340/3345
+datasheet (© 1980) gives residual tempco after on-chip cancellation as
+−150/0/+150 ppm and whole-oscillator drift at the reference frequency as
+±50 typ / ±200 max ppm — ±0.087 to ±0.35 cents per °C. The 3340 needs no
+external tempco resistor (compensation is on-chip and "nearly perfect"),
+and SM confirms both of the Spirit's 3340s run the datasheet's own
+application circuit verbatim (470 Ω + 10 nF, RS 1k82, REE 620 Ω, 1 nF
+timing cap, 100 kΩ scale trims) from LM317/7912-regulated ±12 V rails. The
+supply path can be bounded without any excursion record: a ±10 % mains
+excursion through the LM317's line regulation moves the rail 2.4 mV
+typical, which is 0.35 cents worst-case through the un-cancelled f ∝
+1/VCC path, and first-order zero in the recommended reference-from-VCC
+hookup.
+
+**Half (b) does not exist.** No measured or published record of the
+temperature excursion inside a synthesizer enclosure was found, for the
+Spirit or for any comparable instrument. Every candidate fails the step's
+"measured record, not an assumed one" bar: the one published tuning-vs-time
+comparison of 3340-class instruments exists only as graphs inside a video,
+measures pitch rather than temperature, and is of a small desktop box that
+is not thermally comparable to a 1983 keyboard; forum measurements of
+unnamed (and in one case explicitly malfunctioning) modules log no
+temperature and are behind a blocked forum. The manufacturer's own
+successor datasheet states the driver plainly — "Any temperature changes
+are mainly due to the operating environment" — which is exactly the
+unrecorded quantity. A second, independent reason stands even if an
+excursion record appeared: the musically audible part is the *differential*
+drift between two oscillators sharing one board, one CV bus and one pair of
+rails, and no source quantifies that correlation at all; the datasheet
+specs are per-chip.
+
+**Verdict.** The step closes as no drift, as its own text requires when no
+defensible process can be established. Ghostar applies none, and that is
+now backed by the datasheet numbers rather than by the 3340's reputation.
+The reopening trigger is recorded with Step 6: one temperature logger
+inside any CEM3340 instrument's case closes half (b), after which the
+conversion to cents is fully anchored.
+
+## Step 3 executed — the BA130's real characteristic — 2026-08-22
+
+The step asked for the BA130 pair's knee and compression from the
+datasheet plus the node's operating level, for both the resonance limiter
+and OQ-10's inter-filter clipper, and for the integrator bound to end up
+justified, re-derived or removed.
+
+**The diode is identified and its curve is in hand.** The BA130 is a
+Fairchild diffused-silicon-planar general-purpose diode (DO-35, WIV 25 V),
+published on the combined BA128·BA130 sheet in the 1978 Fairchild Diode
+Data Book, printed p.3-12, with its family curves on p.4-6 — not the
+Philips/Valvo part the Pro Electron numbering suggests. Fairchild's own
+cross-reference lists it as the silicon replacement for a long row of
+germanium signal diodes, i.e. it was the low-knee selection of the family,
+which is exactly the character wanted in a soft limiter. Its forward
+specification runs down to 10 µA (0.34–0.47 V there, 0.56–0.71 V at 1 mA),
+and the digitised typical curve gives 99 mV per decade over 10 µA–1 mA:
+ideality n ≈ 1.68, saturation current ≈ 2.3 nA. So an anti-parallel pair
+obeys `I(V) = 2·Is·sinh(V/(n·V_T))` with `n·V_T ≈ 43 mV` — a knee
+markedly softer than an ideal junction's 59 mV/decade, whose ceiling rises
+about 0.10–0.12 V per decade of drive and never truly flattens.
+
+**What shipped.** Both nonlinearities are now that law rather than a tanh
+stand-in:
+
+- The resonance limiter is a diode shunt current in the band-pass
+  integrator's equation, solved as an exact sub-step (the equation is
+  separable). Its sharpness is the pair's own; what a node volt is worth
+  in engine units is the level trace still missing, so that scaling stays
+  voiced.
+- The inter-filter OVERDRIVE stage is solved as the circuit it is — an
+  inverting TL082 with the pair across its feedback resistor — by three
+  Newton steps from the smaller of the ohmic and diode-dominated
+  asymptotes, converging to within ten parts per million. Its two level
+  constants are pinned so the stage keeps the small-signal gain and
+  ceiling the previous voiced tanh had, which leaves the *shape* as the
+  whole of the modelled change and stops an untraced number from silently
+  rebalancing every program.
+
+**The integrator bound is removed**, which is the step's third
+requirement answered. Step 1's audit showed it was not a runaway stop at
+all but the actual amplitude-setting nonlinearity, with a per-sample
+strength no two rates agreed on. With the shunt bounding the resonant
+node the loop energy is bounded on its own: the engine suite renders the
+regenerative extremes — full resonance across the cutoff span, driven and
+undriven, OVERDRIVE engaged — at 44.1 and 96 kHz and finds them finite and
+bounded, and pins self-oscillation level agreement across hosts to within
+0.5 dB. Measured directly, the limit cycle now lands on the same frequency
+at 48, 96, 192 and 768 kHz with levels agreeing to 0.02 dB at mid cutoff
+and 0.17 dB near the top.
+
+**A fourth result arrived with the datasheet**: the CEM3350's Q-control
+law and the Spirit's own resonance network together *derive* the
+travel-to-Q mapping that OQ-12 had listed as voiced, which was the
+engine's most character-defining invented number. It is recorded in the
+register and in the commit that shipped it; the short version is that Q at
+half travel is 1.48 rather than the old law's 5.7, so the instrument is
+gentler through the middle of the control and steeper at the top.
+
+**Alias re-measure.** Step 1's suite was re-run after each of these
+changes, as that step requires: new nonlinearity makes new high partials,
+and the completed table above describes the final engine.
+
+**No listening test was run.** The step allows one if the derived and
+shipping laws both remain defensible and audibly differ — but the shipping
+laws were not defensible once the datasheet was in hand: a tanh is not
+what a diode pair does, and a per-sample map is not what a circuit does.
+The derivation decides.
+
+## Step 4 executed — the register made exhaustive — 2026-08-22
+
+**What was derived.** OQ-02's *span* and sensitivities (the 12k1 ladder
+against the CEM3350's −19.6 mV/octave: 21.2 mV/V at the pin, ±11.4
+octaves of pot authority over a ~10-octave chip window, a fixed +193 mV
+offset, ±2.3 octaves of trim authority), OQ-04's whole segment law (the
+panel's 5 ms–10 s is the RC time constant; the attack aims at ≈1.3×
+peak), OQ-12's travel-to-Q mapping in full, OQ-13's tracking *amount*
+(108 %, which reproduces the manual's "slightly over 100 %" from the
+resistors), and — with Step 3 — OQ-10's and OQ-12's diode laws. Each is
+recorded against its source in the register.
+
+**What was demonstrated not derivable, and left voiced with the reason.**
+OQ-02's absolute *placement*: the 100 kΩ trimmer's factory setting is not
+documented anywhere, and the service manual has no calibration text at
+all, so the window's position is a per-unit calibration rather than a
+constant. OQ-09's Q split: the datasheet says nothing about cascading —
+the only Curtis-published 4-pole figure is in a 1981 newsletter whose
+component digits are illegible — though the scan *does* corroborate the
+structure (the cascade section has its own fixed bias network on its Q
+pin), so the entry moved from "voiced guess" to "structure corroborated,
+one digit short". OQ-10's and OQ-12's level scalings: the diode curves
+are anchored, but nothing states what an internal signal volt is worth,
+which is a trace and not a document.
+
+**What the end-to-end sweep of `GhostarEngine.cpp` added.** Four entries
+that had never been registered, found by walking every numeric literal in
+the file against the register: the mixer summing gain (OQ-20), the LFO's
+slow endpoint (OQ-21), the BRIGHTNESS pot's log law and series residual
+(OQ-22), and the travel smoother (OQ-23) — the last recorded explicitly
+as a *product policy* with no hardware analogue, so a future reader
+cannot mistake its 25 ms for a modelled time constant. The sweep also
+caught a register entry that contradicted the code: OQ-08 described the
+glide taper as exponential where the engine has always used a quadratic
+one. The record is corrected in place, and the correction is noted inside
+the entry rather than made silently.
+
+**What this step did not reach.** OQ-14 through OQ-19 (wheel depths, the
+noise pinking blend, the output coupling corner, the red-noise process,
+the Shaper shape split, the volume taper) all needed board-level scans
+that the higher-resolution pass covered only for the filter and
+oscillator boards. Their closure paths are unchanged and their entries
+state what would close them; the mod, noise and output boards are the
+next targets for a scan-reading pass, and are called out here so that the
+step's "every documentary avenue walked or recorded" claim is not
+overstated.
 
 ## Step 5 executed — the zipper audit and the travel smoother — 2026-08-22
 

@@ -29,8 +29,17 @@ is what the circuit is. Its name and livery are Ghostar's own.
 - **RM** — 2023 reissue User Manual (verbatim re-typeset of OM plus a
   trimmers-and-adjustment chapter and MIDI addendum), linked from
   https://www.crumarspirit.com/.
-- **CEM3340 datasheet** (VCO), **CEM3350 datasheet** (dual state-variable
-  VCF), Curtis Electromusic.
+- **CEM3340/3345 datasheet** (VCO, CES © 1980) and **CEM3350 datasheet**
+  (dual state-variable VCF, CES © 1984), Curtis Electromusic. The 3350
+  edition that circulates is two pages; its figure numbering shows a longer
+  application edition existed, which is not findable anywhere (a recorded
+  dead end). Period corroboration: the E&MM CEM3350 design article
+  (Feb 1982) and the CES *Synthesource* newsletter (Winter 1981).
+- **Fairchild 1978 Diode Data Book**, printed pp.3-12 (BA128·BA130) and
+  4-6 (curve set D4) — the BA130's forward characteristic, which both
+  filter nonlinearities are derived from.
+- **Signetics 555/556 1973 databook** and **AN170**, for the 556A timer
+  behaviour the envelopes are built on.
 - **US 3,943,456** (Luce/Moog Music, 1976) — the variable-rate-integrator
   signal generator that is the Shaper Y core; attribution to the Spirit by
   J. D. Tillman (https://till.com/articles/moog/patents.html), corroborated
@@ -85,8 +94,14 @@ inside a range the sources bound but do not fix).
 | Ring modulator | Osc A triangle × Osc B triangle, taken before the waveform switches (WAVEFORM has no effect on RING); a small un-nulled carrier bleed is part of the sound — the vintage unit has **no** ring-mod trim (the reissue added one) | anchored, OM pp.6/26 + SM (½ CEM3360 IC7, 1M8/6k2 bias, no trimmer); bleed amount **voiced** |
 | Noise | one source, "a combination of white and pink random noise" (MM5837 → partial pinking) | anchored, OM p.26 + SM |
 
-VCO model: bandlimited (PolyBLEP/BLAMP) triangle, rectangular and sawtooth;
-CEM3340-class stability means Ghostar applies no drift by default. Both
+VCO model: every discontinuity bandlimited as a sub-sample event — BLEP
+for the value jumps of saw, pulse and a moving duty edge, BLAMP for the
+triangle's corners, and both for the hard-sync reset. Ghostar applies no
+oscillator drift: the CEM3340's on-chip compensation puts the chip's own
+contribution at ±0.09 to ±0.35 cents/°C and the regulated supply path
+below ≈0.35 cents even for a ±10 % mains excursion, while no measured
+record of the *environmental* excursion inside any synthesizer enclosure
+exists to derive a wander process from (best-in-class plan, Step 2). Both
 oscillators share one master CV bus (tune, octave, bend, glide are
 common-mode); B's interval is a constant CV offset — a constant musical
 interval across the keyboard, not constant Hz (SM DWG 2 topology).
@@ -95,29 +110,32 @@ interval across the keyboard, not constant Hz (SM DWG 2 topology).
 
 Both hardware filters are CEM3350 dual state-variable sections — not a
 transistor ladder, despite the Moog pedigree. Ghostar models each 2-pole
-section as a TPT state-variable filter with a soft limiter in the resonance
-path (the hardware's BA130 anti-parallel "Hi-Q overload limiter" is what
-bounds self-oscillation, not the rails).
+section as a TPT state-variable filter with the hardware's BA130
+anti-parallel "Hi-Q overload limiter" as a diode shunt current in the
+band-pass integrator's equation (an exponential-sinh law solved as an
+exact sub-step, so the limiting is a property of the modelled circuit, not
+of the sample rate) — that shunt, not the rails, is what bounds
+self-oscillation.
 
 | Control | Law | Provenance |
 |---|---|---|
-| MASTER (cutoff) | sets both filters' cutoff, always; exponential through the audio range (voiced 20 Hz–16 kHz at Upper; no primary Hz figure exists) | anchored routing OM p.31; range **voiced** |
+| MASTER (cutoff) | sets both filters' cutoff, always; exponential through the audio range. The pot's ±10.5 V through the 12k1 ladder is ±11.4 octaves of authority over a chip window ≈10 octaves wide, so the hardware sweeps closed to wide open; where that window *sits* is set by a 100 kΩ trimmer no document records, so the implemented 20 Hz–16 kHz is a voiced placement inside a ±2.3-octave authority | anchored routing OM p.31; span **derived** (CEM3350 datasheet + SM DWG 2); placement **voiced** |
 | LOWER ONLY | Lower cutoff relative to Upper; cutoffs coincide at 8 (circled on the panel); below 8 Lower sits below Upper | anchored, OM p.31 |
 | RESONANCE switch | LOW fixes Upper Q = 0.5; VARIABLE slaves Upper Q to the pot | anchored, OM p.30 |
-| RESONANCE pot | Lower Q always; Upper Q in VARIABLE; both reach self-oscillation at maximum (exponential Q law per CEM3350) | anchored, OM pp.30/32 + datasheet + SM divider math |
+| RESONANCE pot | Lower Q always; Upper Q in VARIABLE; both reach self-oscillation at maximum. The law is derived: the chip's Q control is exponential at −65 mV/decade, the pot is 100 kΩ linear (top ground, bottom −12 V) into 18k2, each Q pin has a 221 Ω shunt against a pull-up to +12 V (91 kΩ Upper, 75 kΩ Lower — so the two filters differ), and the pot's own output impedance flattens mid-travel. LOW disconnects the pot, resting the Upper pin at +29.1 mV where OM says Q = 0.5, which calibrates the whole law. Upper Q: 0.51 / 1.48 / 3.33 / 10.9 / 82 at travel 0 / .5 / .75 / .9 / 1 | **derived**, CEM3350 datasheet + SM DWG 2, anchored at LOW by OM p.30 |
 | SLOPE | Upper is 12 dB (one section) or 24 dB (two cascaded sections); resonance behaviour holds in both | anchored, OM pp.30/32; cascade Q distribution **voiced** (first section fixed low-Q, second carries the control) |
 | Lower mode | OUT / OVERDRIVE / BANDPASS / HIGHPASS. BANDPASS is **parametric boost** — dry + resonance-scaled BP, "a peak … without attenuation of frequencies far from this cutoff" — not a true band-pass. OVERDRIVE = the same boost plus a soft clipper *between* the filters. HIGHPASS = resonant HP → "double-peak, highpass-lowpass" | anchored, OM pp.30–32 |
-| KB AMOUNT | keyboard tracking of Upper always, Lower when DYNAMIC; 0 to slightly over 100 % (≈110 % at full) | anchored OM p.32, SOS |
+| KB AMOUNT | keyboard tracking of Upper always, Lower when DYNAMIC; 0 to 108 % at full — the 1 V/octave bus through the 12k1 ladder delivers 21.2 mV/V against the chip's −19.6 mV/octave, which reproduces the manual's "slightly over 100 %" from the resistors. The pivot note is voiced | anchored OM p.32; amount **derived** (CEM3350 datasheet + SM DWG 2) |
 | TRACKING | FORMANT disconnects Lower from keyboard CV, X and Y modulation, the filter envelope and the pedal — freezing its peak as a fixed formant (the starred brass/woodwind configuration); MASTER and LOWER ONLY still act | anchored, OM pp.31/33 |
 | FILTER ENVELOPE AMOUNT | bipolar, centre zero; unattenuated span ±2.5 octaves straddling the cutoff; INVERT mirrors it. Permanently wired to Upper; to Lower only in DYNAMIC | anchored, OM pp.27/33 |
-| OVERDRIVE clipper | soft diode knee (anti-parallel BA130 behind a gain stage and pad) between Lower and Upper, so the Upper filter re-filters the distortion products | anchored placement OM p.32 + SM; knee/drive **voiced** |
+| OVERDRIVE clipper | an inverting TL082 with an anti-parallel BA130 pair across its feedback resistor, between Lower and Upper, so the Upper filter re-filters the distortion products. Solved as the circuit: `i = V_out/R_f + 2·Is·sinh(V_out/(n·V_T))`. The BA130 is a Fairchild diffused-silicon-planar diode whose typical curve runs 99 mV/decade — n ≈ 1.68, Is ≈ 2.3 nA, `n·V_T ≈ 43 mV` — so the stage is linear at `R_f/R_in` until the diodes wake and then climbs ≈0.1 V per decade of drive rather than flattening | anchored placement OM p.32 + SM; knee **derived** (Fairchild 1978 Diode Data Book pp.3-12, 4-6); operating level **voiced** |
 | BRIGHTNESS | 6 dB/oct lowpass on the Shaper path (100k log pot + 27 nF: ≈59 Hz at full resistance, effectively open at zero) | anchored, OM p.29 + SM |
 
 ### Envelopes, gating, keyboard
 
 | Item | Law | Provenance |
 |---|---|---|
-| Two ADSRs | A/D/R 5 ms–10 s (2 MΩ log sliders into 4.7 µF around a 556A timer → exponential segments; attack aims past its peak, timer-style); S linear | anchored, OM p.33 + SM DWG 3 |
+| Two ADSRs | Each segment is one RC charge on the shared 4.7 µF cap through its own 2 MΩ log slider, so the panel's 5 ms–10 s is the *time constant*: 2 MΩ × 4.7 µF = 9.4 s is the printed "10 seconds", and one ~1 kΩ series-plus-end residual lands the fast endpoint at 4.7 ms. The attack charges from the 556's OUTPUT pin through a series 1N4149, aiming at V_OH − V_D against the +7.5 V the drawing labels at the control-voltage pin — a ratio of ≈1.3 (bounded 1.22–1.35), so time-to-peak is 1.47 τ, not a rail-charged monostable's ln 3. S is linear 0..peak, its sliders hanging from that same +7.5 V node. A retrigger resumes from the current level: the discharge pin is logic-only and no path exists to dump the cap | anchored span OM p.33; law **derived**, SM DWG 3 + Signetics 1973 databook / AN170 |
 | LOUDNESS VCA | BYPASS holds the path VCA fully open — un-articulated drone | anchored, OM pp.27/33 |
 | GATE SELECT | KBD, X (the LFO square — auto-repeat; one gate per arpeggio step), Y/EXT (the Shaper's own gate) — OR'ed; at least one must be on for the envelopes to run at all | anchored, OM p.33 |
 | TRIGGER | MULTIPLE re-gates on every new key; SINGLE holds the gate while ≥1 key is down and re-gates only after all keys are released | anchored, OM p.34 |
@@ -181,11 +199,22 @@ measured unit would become this project's ground truth.
 
 ## Engine status
 
-The current engine is **v0**: the complete architecture above — both paths,
-both filters with all four Lower modes and the 12/24 dB Upper, both ADSRs
-with gate logic, MOD X with all six sources, Shaper Y with all four modes,
-both wheel-destination buses, the arpeggiator, sync, ring mod, glide and the
-keying rules — implemented with bandlimited oscillators and TPT filter
-sections at 2× internal oversampling. Constants marked voiced above are
-first-pass choices inside the documented bounds and are the standing targets
-for refinement passes.
+The complete architecture above — both paths, both filters with all four
+Lower modes and the 12/24 dB Upper, both ADSRs with gate logic, MOD X with
+all six sources, Shaper Y with all four modes, both wheel-destination
+buses, the arpeggiator, sync, ring mod, glide and the keying rules — runs
+on bandlimited oscillators (BLEP and BLAMP events, including at the sync
+reset) and TPT filter sections at 4× internal oversampling, decimated in
+two Kaiser halfband stages.
+
+The filters' nonlinearities are terms of the continuous system rather than
+per-sample maps, so a patch converges to the same filter at every host
+rate — a property the alias audit measured, and one the previous
+formulation did not have. Audio-rate modulation (MOD SOURCE = OSC B) is
+applied at the internal rate rather than sampled once per output sample.
+
+The laws marked **derived** above were voiced when the engine was first
+written; the primary sources that closed them are named against each.
+Constants still marked voiced are first-pass choices inside the documented
+bounds, each carrying an entry in [open-questions.md](open-questions.md)
+with the evidence that would close it.

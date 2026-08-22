@@ -10,8 +10,8 @@ Start with the [user guide](Docs/USER_GUIDE.md), see
 [customer-facing changes](CHANGELOG.md) and
 [privacy information](PRIVACY.md); framework licensing is described in
 [third-party notices](THIRD_PARTY_NOTICES.md). Ghostar is at version 0.9.0: a
-complete instrument whose voiced constants are still open refinement targets
-before a 1.0.
+complete instrument whose remaining voiced constants are named, each with the
+evidence that would close it.
 
 Ghostar models the voice architecture of a 1983 monophonic analog synthesizer
 — the Crumar Spirit, designed by Jim Scott, Tom Rhea and Bob Moog — block by
@@ -30,22 +30,33 @@ original implementation, not affiliated with or licensed by Crumar or its
 successors, and contains no firmware, ROM data, samples or captured audio.
 
 The hardware shipped no presets: its manual taught eleven **Sound Charts**
-instead, drawn panel settings with a lesson attached. Those charts are
-Ghostar's factory program bank — from the deliberately silent Preparatory
-Pattern the lessons all start from, through Fat Filter, Sync and Sample &
-Hold, to the Inverted Guitar — behind an Init program that is the default
-voice itself. Selecting one writes the whole panel, so the bank reads as
-the tutorial it was ([user guide](Docs/USER_GUIDE.md)).
+instead, drawn panel settings with a lesson attached. Those charts are the
+first half of Ghostar's program bank — from the deliberately silent
+Preparatory Pattern the lessons all start from, through Fat Filter, Sync and
+Sample & Hold, to the Inverted Guitar — behind an Init program that is the
+default voice itself. The second half is **seventeen Ghostar Programs**:
+playable voicings that make no historical claim, each foregrounding one
+mechanism the instrument is known for, and level-matched so the bank can be
+stepped through without touching the volume. Selecting any program writes the
+whole panel, so every one is readable as well as playable
+([user guide](Docs/USER_GUIDE.md)).
 
-What is modelled from documentation and what remains a voiced choice is set
-out control by control in the
+What is modelled from documentation, what is *derived* from it, and what
+remains a voiced choice is set out control by control in the
 [circuit-modelling research and implementation contract](Docs/circuit-modelling-research.md).
-Every constant still voiced is listed as a standing research task with an
-explicit evidence gap in [open questions](Docs/open-questions.md), and the
-field Ghostar competes in, its audited standing and the ordered work that
-closes the gap live in the
-[best-in-class plan](Docs/best-in-class-plan.md). The
-committed demonstration audio in [Docs/audio](Docs/audio/README.md) is
+The character-defining laws are derived rather than invented: the resonance
+curve from the CEM3350's own Q scale and the panel's pot network, both filter
+nonlinearities from the BA130's forward characteristic, the envelope timing
+from the 556 timer circuit the service drawing shows, and keyboard tracking
+from the CV ladder's resistors. Every constant still voiced is listed as a
+standing research task with an explicit evidence gap in
+[open questions](Docs/open-questions.md), and the field Ghostar competes in,
+its audited standing and the ordered work that closes the gap live in the
+[best-in-class plan](Docs/best-in-class-plan.md) — where the alias audit's
+worst-case table, the zipper audit's per-travel table, and the reasoning
+behind each are quoted in full.
+
+The committed demonstration audio in [Docs/audio](Docs/audio/README.md) is
 rendered by `GhostarRenderDemos` from the same engine, so it cannot drift from
 what Ghostar actually sounds like.
 
@@ -60,6 +71,12 @@ cmake --build build-dsp --parallel
 ctest --test-dir build-dsp --output-on-failure
 ./build-dsp/GhostarRenderDemos Docs/audio
 ```
+
+The same build produces the two measurement tools whose tables the
+best-in-class plan quotes — `GhostarAliasAudit` (worst-case aliasing against
+a 16x ground truth) and `GhostarZipperAudit` (block-latching residual per
+published travel). Both take several minutes at full length; `--smoke` runs
+the short version CI uses.
 
 The full plug-in (JUCE 8.0.14 is fetched pinned to its release commit, or
 pass `-DGHOSTAR_JUCE_PATH=/path/to/JUCE`):

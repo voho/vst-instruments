@@ -105,7 +105,16 @@ public:
     // the labelled 10 s) and the engine idles the envelope at 1e-5, reached
     // after ln(1e5)/0.3 = 38.4 s; the advertised tail rounds that up so a
     // host honouring it never truncates an audible release.
-    double getTailLengthSeconds() const override { return 40.0; }
+    // The longest the instrument can still be ringing after the last note
+    // is released. Taken from the engine's own envelope law rather than
+    // written down here, so re-voicing the segment timing cannot leave a
+    // host truncating a release this figure no longer covers. (A drone —
+    // VCA BYPASS, or a raised Shaper-path slider — is not a tail and no
+    // finite figure covers it; the panel stops that, not the host.)
+    double getTailLengthSeconds() const override
+    {
+        return ghostar::GhostarEngine::longestReleaseTailSeconds();
+    }
 
     // Factory programs: the modelled instrument's manual teaches eleven
     // Sound Charts instead of shipping presets, and those charts are the

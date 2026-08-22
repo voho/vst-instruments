@@ -331,29 +331,88 @@ void testPanicDropsQueuedUiNotes()
 
 // The longest release decays at 3/10 per second down to the engine's 1e-5
 // idle floor; the advertised tail must cover that, or hosts truncate it.
+// The advertised tail must cover the slowest release the panel can dial.
+// This check previously carried the release law's arithmetic as a literal
+// (log(1e5)/0.3, the old three-time-constants read), so when the law was
+// re-derived the figure went stale while the test kept passing. It now asks
+// the engine, which is the only version of the question that cannot rot.
+// The decimation chain delays the voice, and a host can only compensate for
+// a delay it is told about. The figure is not restated here: the engine's
+// own derivation is checked against the delay the engine actually shows, so
+// neither can drift from the other.
+void testAdvertisedLatencyMatchesTheMeasuredDelay()
+{
+    GhostarAudioProcessor processor;
+    processor.prepareToPlay(sampleRate, blockSize);
+
+    const double derived = ghostar::GhostarEngine::outputLatencySamples();
+    expect(processor.getLatencySamples() == juce::roundToInt(derived),
+           "the plug-in does not publish the latency the engine derives");
+    expect(processor.getLatencySamples() > 0,
+           "the plug-in still claims to be latency-free");
+
+    // Measured, not assumed: a note struck at a known sample cannot produce
+    // its envelope onset before the chain's delay has elapsed. Everything
+    // before that is the linear-phase filter's pre-ring, orders of magnitude
+    // below the onset.
+    constexpr int strikeAt = 64;
+    juce::MidiBuffer midi;
+    midi.addEvent(
+        juce::MidiMessage::noteOn(1, 48, static_cast<juce::uint8>(110)),
+        strikeAt);
+    juce::AudioBuffer<float> buffer(2, blockSize);
+    buffer.clear();
+    processor.processBlock(buffer, midi);
+
+    int onset = -1;
+    const auto* samples = buffer.getReadPointer(0);
+    for (int sample = strikeAt; sample < blockSize; ++sample)
+        if (std::abs(samples[sample]) > 1.0e-4f)
+        {
+            onset = sample - strikeAt;
+            break;
+        }
+    expect(onset >= 0, "the struck note never sounded");
+    if (onset >= 0)
+    {
+        // Within a sample of the derived figure, either side: the published
+        // integer is a rounding of a half-sample delay.
+        expect(std::abs(static_cast<double>(onset) - derived) <= 1.5,
+               "the measured onset delay does not match the derived latency");
+    }
+    processor.releaseResources();
+}
+
 void testAdvertisedTailCoversTheLongestRelease()
 {
     GhostarAudioProcessor processor;
-    expect(processor.getTailLengthSeconds() >= std::log(1.0e5) / 0.3,
+    const double longest = ghostar::GhostarEngine::longestReleaseTailSeconds();
+    expect(longest > 1.0,
+           "the engine reports an implausible longest release");
+    expect(processor.getTailLengthSeconds() >= longest,
            "the advertised tail is shorter than the longest release");
 }
 
-// The factory bank is the manual's eleven Sound Charts. The host-facing
-// contract: the count and names are published, selecting a program writes
-// its chart into the host parameters, and a selected chart actually plays.
+// The factory bank is Init, the manual's eleven Sound Charts, and the
+// seventeen Ghostar Programs. The host-facing contract: the count and names
+// are published, selecting a program writes it into the host parameters,
+// and a selected program actually plays.
 void testFactoryProgramsAreTheSoundCharts()
 {
     namespace ids = ghostar::parameters;
     GhostarAudioProcessor processor;
 
-    expect(processor.getNumPrograms() == 12,
-           "the program bank is not Init plus the eleven Sound Charts");
+    expect(processor.getNumPrograms() == 29,
+           "the program bank is not Init plus eleven charts plus seventeen "
+           "programs");
     expect(processor.getProgramName(0) == "Init",
            "the bank does not open with the default voice");
     expect(processor.getProgramName(1) == "Preparatory Pattern",
            "the charts do not start with the Preparatory Pattern");
     expect(processor.getProgramName(3) == "Fat Filter",
            "program 3 is not the Fat Filter chart");
+    expect(processor.getProgramName(12) == "Spirit Bass",
+           "the performance bank does not begin where it should");
 
     processor.setCurrentProgram(3);
     expect(processor.getCurrentProgram() == 3,
@@ -373,9 +432,19 @@ void testFactoryProgramsAreTheSoundCharts()
            "selecting a chart did not pull the X wheel fully back");
 
     // An out-of-range selection must be ignored, not clamp or crash.
-    processor.setCurrentProgram(12);
+    processor.setCurrentProgram(processor.getNumPrograms());
     expect(processor.getCurrentProgram() == 3,
            "an out-of-range program selection was not ignored");
+
+    // A performance program must reach the host parameters exactly as a
+    // chart does — the two banks travel the same lane.
+    processor.setCurrentProgram(12);
+    expect(processor.getCurrentProgram() == 12,
+           "the performance program was not selected");
+    auto* slope = processor.parameters.getRawParameterValue(ids::slope);
+    expect(slope != nullptr && std::lround(slope->load()) == 1,
+           "Spirit Bass did not select the 24 dB slope");
+    processor.setCurrentProgram(3);
 
     // The selected program's name must survive a state round trip; the
     // values themselves already travel as parameters.
@@ -412,10 +481,16 @@ void testEditorRendering()
     if (editor == nullptr)
         return;
 
+    // The editor opens at whatever fits the display it is on, so the
+    // documentation image is pinned to the panel's design size here rather
+    // than taken from whatever the build machine happens to have.
+    editor->setSize(1460, 780);
     editor->resized();
     const auto snapshot = renderEditorSnapshot(*editor);
     expect(snapshotHasDetail(snapshot),
            "the editor rendered as a flat surface at its default size");
+    expect(snapshot.getWidth() == 1460 && snapshot.getHeight() == 780,
+           "the documentation screenshot is no longer the design size");
 
     // Committed documentation image, regenerated by the nightly build.
     const auto snapshotPath = juce::SystemStats::getEnvironmentVariable(
@@ -437,6 +512,105 @@ void testEditorRendering()
     editor.reset();
     processor.releaseResources();
 }
+
+// The panel is a fixed geometry, so the only question a small screen asks is
+// whether it scales or gets cut off. A 1366x768 laptop's work area is under
+// 768 points tall once the taskbar and the host's window frame are counted,
+// and the design panel is 780.
+void testEditorFitsASmallDisplay()
+{
+    // The fit rule itself, on screens no build machine has to have.
+    using Editor = GhostarAudioProcessorEditor;
+    const juce::Rectangle<int> design { 1460, 780 };
+    expect(Editor::panelSizeForWorkArea({}) == design,
+           "an unknown work area should open the panel at its design size");
+    expect(Editor::panelSizeForWorkArea({ 1920, 1080 }) == design,
+           "a display with room should open the panel at its design size");
+    for (const auto work : { juce::Rectangle<int> { 1366, 768 },
+                             juce::Rectangle<int> { 1280, 800 },
+                             juce::Rectangle<int> { 1280, 720 } })
+    {
+        const auto fitted = Editor::panelSizeForWorkArea(work);
+        expect(fitted.getWidth() <= work.getWidth()
+                   && fitted.getHeight() <= work.getHeight(),
+               "the panel does not fit the display it was fitted to");
+        const auto ratio = static_cast<double>(fitted.getWidth())
+                           / static_cast<double>(fitted.getHeight());
+        expect(std::abs(ratio - 1460.0 / 780.0) < 0.02,
+               "the fitted panel lost the design proportions");
+    }
+    // Smaller than the readable floor: a window the user can move beats type
+    // nobody can read, so the rule clamps rather than shrinking further.
+    expect(Editor::panelSizeForWorkArea({ 800, 600 }).getWidth() == 876,
+           "the fit rule went below the readable minimum");
+
+    GhostarAudioProcessor processor;
+    std::unique_ptr<juce::AudioProcessorEditor> editor(
+        processor.createEditor());
+    expect(editor != nullptr, "the processor produced no editor");
+    if (editor == nullptr)
+        return;
+
+    expect(editor->isResizable(),
+           "the editor cannot be resized, so a host cannot make it fit");
+
+    auto* constrainer = editor->getConstrainer();
+    expect(constrainer != nullptr, "the editor has no size constrainer");
+    if (constrainer == nullptr)
+        return;
+
+    // Room for the window frame, the menu bar and the taskbar around it.
+    constexpr int smallDisplayWidth = 1366;
+    constexpr int smallDisplayHeight = 768;
+    constexpr int chrome = 64;
+    expect(constrainer->getMinimumWidth() <= smallDisplayWidth - chrome,
+           "the editor cannot be narrowed onto a 1366-point display");
+    expect(constrainer->getMinimumHeight() <= smallDisplayHeight - chrome,
+           "the editor cannot be shortened onto a 768-point display");
+
+    const auto designRatio = static_cast<double>(editor->getWidth())
+                             / static_cast<double>(editor->getHeight());
+
+    // A host resizing the window to that display goes through the
+    // constrainer, which is what holds the panel's proportions.
+    juce::Rectangle<int> asked { 0, 0, smallDisplayWidth - chrome,
+                                 smallDisplayHeight - chrome };
+    constrainer->checkBounds(asked, editor->getBounds(),
+                             { 0, 0, 8192, 8192 }, false, false, false, true);
+    const auto ratio = static_cast<double>(asked.getWidth())
+                       / static_cast<double>(asked.getHeight());
+    expect(std::abs(ratio - designRatio) < 0.02,
+           "the panel lost its proportions when it was made to fit");
+    expect(asked.getWidth() <= smallDisplayWidth - chrome
+               && asked.getHeight() <= smallDisplayHeight - chrome,
+           "the constrained size still does not fit the display");
+
+    // And at that size the panel is still a panel: it draws, including the
+    // keys, which are the part a clipped window loses first.
+    editor->setSize(asked.getWidth(), asked.getHeight());
+    const auto small = renderEditorSnapshot(*editor);
+    expect(snapshotHasDetail(small),
+           "the editor rendered as a flat surface at a small size");
+
+    // The white keys are the brightest thing on a charcoal panel, and they
+    // are the bottom of the layout: finding them in the bottom eighth of the
+    // image is what says the panel scaled instead of being cut off.
+    bool sawKeys = false;
+    if (small.isValid())
+    {
+        const int floorStart = small.getHeight() * 7 / 8;
+        for (int y = floorStart; y < small.getHeight() && !sawKeys; ++y)
+            for (int x = 0; x < small.getWidth(); x += 2)
+                if (small.getPixelAt(x, y).getBrightness() > 0.85f)
+                {
+                    sawKeys = true;
+                    break;
+                }
+    }
+    expect(sawKeys, "the keyboard is not on screen once the panel is fitted");
+
+    editor.reset();
+}
 } // namespace
 
 int main()
@@ -451,7 +625,9 @@ int main()
     testMonoLayoutKeepsTheShaperPath();
     testPanicDropsQueuedUiNotes();
     testAdvertisedTailCoversTheLongestRelease();
+    testAdvertisedLatencyMatchesTheMeasuredDelay();
     testEditorRendering();
+    testEditorFitsASmallDisplay();
 
     if (failureCount != 0)
     {

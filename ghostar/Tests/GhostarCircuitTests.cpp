@@ -313,6 +313,151 @@ void testOverdriveCompresses()
           "the overdrive stage compresses instead of scaling linearly");
 }
 
+// The envelope segments are RC charges on the 4.7 uF cap through the 2 MOhm
+// log sliders, so the panel's labelled time is the time *constant*: at full
+// travel the decay must fall to 1/e of its span in ~9.4 s, not reach its
+// target in that time. Measured on the loudness VCA with the sustain at
+// zero, so the audible envelope is the decay itself (SM DWG 3, OQ-04).
+void testDecayIsTheLabelledTimeConstant()
+{
+    GhostarEngine engine;
+    engine.prepare(48000.0, 256);
+    auto parameters = brightPanel();
+    parameters.loudnessAttack = 0.0f;
+    parameters.loudnessDecay = 1.0f;      // 2 MOhm: tau = 9.4 s
+    parameters.loudnessSustain = 0.0f;
+    parameters.filterEnvAmount = 0.5f;
+    engine.setParameters(parameters);
+    engine.noteOn(57, 1.0f);
+
+    // Peak just after the attack, then the level one time constant later.
+    renderMono(engine, 0.05, 48000.0);
+    const double atPeak = peak(renderMono(engine, 0.05, 48000.0));
+    renderMono(engine, 9.4 - 0.1, 48000.0);
+    const double atTau = peak(renderMono(engine, 0.05, 48000.0));
+
+    const double ratio = atTau / std::max(1.0e-12, atPeak);
+    check(ratio > 0.30 && ratio < 0.43,
+          "the decay falls to 1/e of its span in the labelled time");
+}
+
+// The attack charges toward ~1.3x the peak, so it reaches the peak in
+// ln(1.3/0.3) = 1.47 time constants — flatter-topped than a segment aiming
+// at 1.5 (ln 3 = 1.10) and far from a linear ramp (SM DWG 3, OQ-04).
+void testAttackAimsPastItsPeak()
+{
+    const auto levelAfter = [](double seconds) {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 256);
+        auto parameters = brightPanel();
+        parameters.loudnessAttack = 0.75f;   // tau ~ 0.6 s
+        parameters.loudnessDecay = 1.0f;
+        parameters.loudnessSustain = 1.0f;
+        engine.setParameters(parameters);
+        engine.noteOn(57, 1.0f);
+        renderMono(engine, seconds, 48000.0);
+        return peak(renderMono(engine, 0.02, 48000.0));
+    };
+
+    // At travel 0.75 the slider stands at 1 kOhm * 2000^0.75 = 299 kOhm,
+    // so tau = 4.7 uF * 299 kOhm = 1.405 s.
+    constexpr double tau = 4.7e-6 * 299070.0;
+    // One time constant into an aim of 1.3 reaches 1.3*(1-1/e) = 0.822.
+    const double atTau = levelAfter(tau);
+    const double atPeak = levelAfter(4.0 * tau);
+    const double fraction = atTau / std::max(1.0e-12, atPeak);
+    check(fraction > 0.76 && fraction < 0.88,
+          "the attack reaches ~82 % of its peak in one time constant, as an "
+          "RC charge aiming 1.3x past it does");
+}
+
+// The travel-to-Q law is derived from the CEM3350's −65 mV/decade Q scale
+// and the Spirit's own pot network, anchored by the panel's LOW = Q 0.5.
+// Its signature is that resonance stays gentle through mid-travel and then
+// climbs steeply: Q ≈ 1.48 at half travel against ≈ 10.9 at nine tenths, a
+// ratio near 7.4. A resonant section's peak gain tracks its Q, so the
+// measured peak ratio is the law's fingerprint (OQ-12).
+void testResonanceFollowsTheDerivedQLaw()
+{
+    // Probe on the resonant peak itself: the filter is fed a note whose
+    // eighth harmonic sits at the cutoff, and that harmonic is measured.
+    const auto peakGain = [](float resonance) {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 256);
+        auto parameters = brightPanel();
+        parameters.oscAWaveform = ghostar::Waveform::Sawtooth;
+        parameters.upperResonance = ghostar::UpperResonanceMode::Variable;
+        parameters.slope = ghostar::UpperSlope::TwelveDb;
+        parameters.resonance = resonance;
+        parameters.cutoff = 0.5f;   // 20 Hz * 800^0.5 = 566 Hz
+        engine.setParameters(parameters);
+        engine.noteOn(46, 1.0f);    // ~93 Hz: sixth harmonic near 560 Hz
+        const auto samples = renderMono(engine, 0.9, 48000.0, 60);
+        return goertzelMagnitude(samples, 566.0, 48000.0);
+    };
+
+    const double atHalf = peakGain(0.5f);
+    const double atNineTenths = peakGain(0.9f);
+    const double ratio = atNineTenths / std::max(1.0e-12, atHalf);
+    check(ratio > 4.5 && ratio < 11.0,
+          "the resonant peak grows by the derived Q ratio between half and "
+          "nine-tenths travel");
+
+    // …and the law is gentle where the old voiced one was not: at half
+    // travel the section must still be close to critically damped, not
+    // ringing. Q = 1.48 puts the peak barely above 3 dB.
+    const auto flatness = [](float resonance) {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 256);
+        auto parameters = brightPanel();
+        parameters.upperResonance = ghostar::UpperResonanceMode::Variable;
+        parameters.slope = ghostar::UpperSlope::TwelveDb;
+        parameters.resonance = resonance;
+        parameters.cutoff = 0.5f;
+        parameters.filterPathA = 0.0f;
+        parameters.filterPathNoise = 0.8f;
+        engine.setParameters(parameters);
+        engine.noteOn(60, 1.0f);
+        const auto samples = renderMono(engine, 0.9, 48000.0, 60);
+        return goertzelMagnitude(samples, 566.0, 48000.0)
+             / std::max(1.0e-12,
+                        goertzelMagnitude(samples, 100.0, 48000.0));
+    };
+    check(flatness(0.5f) < 3.0,
+          "half travel is barely resonant, as Q = 1.5 requires");
+}
+
+// The OVERDRIVE stage is a diode pair across a feedback resistor, not a
+// saturator with a fixed ceiling: past the knee its output still climbs,
+// about a tenth of a volt per decade of drive, because the diode law is
+// exponential and never truly flattens. A tanh would be within a hair of
+// its ceiling over the same range, so this separates the two shapes
+// (BA130 curve, Fairchild 1978 databook; OQ-10).
+void testOverdriveCeilingKeepsClimbing()
+{
+    const auto level = [](float slider) {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 256);
+        auto parameters = brightPanel();
+        parameters.filterPathA = slider;
+        parameters.lowerMode = ghostar::LowerFilterMode::Overdrive;
+        parameters.resonance = 0.3f;
+        engine.setParameters(parameters);
+        engine.noteOn(45, 1.0f);
+        return meanAbs(renderMono(engine, 0.5, 48000.0, 30));
+    };
+
+    // Both settings are well past the knee, so a hard ceiling would put
+    // them within a percent of each other.
+    const double driven = level(0.35f);
+    const double harder = level(1.0f);
+    const double growth = harder / std::max(1.0e-12, driven);
+    check(growth > 1.02,
+          "past the knee the diode clipper still grows with drive");
+    check(growth < 1.6,
+          "past the knee the diode clipper grows only slowly with drive");
+}
+
 // At full resonance the filter self-oscillates: kicked once, it keeps
 // singing after the kick is gone.
 void testSelfOscillation()
@@ -407,6 +552,10 @@ int main()
     testSlopeSwitch();
     testLowerBandPassIsParametricBoost();
     testOverdriveCompresses();
+    testDecayIsTheLabelledTimeConstant();
+    testAttackAimsPastItsPeak();
+    testResonanceFollowsTheDerivedQLaw();
+    testOverdriveCeilingKeepsClimbing();
     testSelfOscillation();
     testBrightnessDarkensShaperPath();
     testShaperFreeModePulsesItsPath();
