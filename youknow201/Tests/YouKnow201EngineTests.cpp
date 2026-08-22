@@ -579,6 +579,75 @@ void testFactoryBankRendersEverywhere()
     }
 }
 
+void testAllSoundOffSilencesEffectTails()
+{
+    // All Sounds Off is a panic: the delay's buffered repeats and the reverb
+    // tail must stop with the voices, however high the feedback.
+    youknow201::Patch patch = plainSawPatch();
+    patch.delayOn = true;
+    patch.upper.delayDepth = 110;
+    patch.delay.time = 100;
+    patch.delay.feedback = 90;
+    patch.reverbOn = true;
+    patch.upper.reverbDepth = 110;
+    patch.reverb.time = 120;
+
+    youknow201::Engine engine;
+    engine.prepare (44100.0, 256);
+    engine.setPatch (patch);
+    engine.reset();
+    (void) renderScore (engine, { { 0.0, true, 60, 110 }, { 0.4, false, 60, 0 } },
+                        1.0);
+    engine.allSoundOff();
+    // The panic marks the effect histories stale rather than clearing them,
+    // so the silence must hold beyond the longest possible delay read — the
+    // window where wrongly-unmuted stale material would re-emerge.
+    std::vector<float> left (88200), right (88200);
+    engine.process (left.data(), right.data(), (int) left.size());
+    double peak = 0.0;
+    for (std::size_t i = 0; i < left.size(); ++i)
+        peak = std::max ({ peak, std::abs ((double) left[i]),
+                           std::abs ((double) right[i]) });
+    expect (peak < 1.0e-6, "all-sound-off silences the effect tails too");
+
+    // And the effects keep working: a note struck after the panic still gets
+    // its delay repeats once its own dry sound has died away.
+    auto echoes = renderScore (engine, { { 0.0, true, 60, 110 },
+                                         { 0.1, false, 60, 0 } },
+                               1.0);
+    double echoPeak = 0.0;
+    for (std::size_t i = 22050; i < echoes.left.size(); ++i)
+        echoPeak = std::max ({ echoPeak, std::abs ((double) echoes.left[i]),
+                               std::abs ((double) echoes.right[i]) });
+    expect (echoPeak > 1.0e-4, "post-panic notes still feed the effects");
+}
+
+void testSyncFollowsSpecialOsc2Waves()
+{
+    // SYNC must fire from OSC2's cycle even when OSC2 is a SUPER SAW (the
+    // center saw carries the cycle) or an FB OSC.
+    for (const auto wave :
+         { youknow201::Waveform::SuperSaw, youknow201::Waveform::FbOsc })
+    {
+        youknow201::Patch patch = plainSawPatch();
+        patch.upper.osc1.coarse = 7;
+        patch.upper.mixType = youknow201::MixModType::Sync;
+        patch.upper.balance = -63;
+        patch.upper.osc2.wave = wave;
+        patch.upper.osc2.pulseWidth = 0;  // collapsed spread / no feedback
+
+        youknow201::Engine engine;
+        engine.prepare (44100.0, 256);
+        engine.setPatch (patch);
+        engine.reset();
+        auto take = renderScore (engine, { { 0.0, true, 69, 100 } }, 1.0);
+        const double hz = estimateFundamental (take.left, 11025, 44100, 44100.0,
+                                               300.0, 700.0);
+        expectNear (hz, 440.0, 3.0,
+                    "sync tracks the OSC2 fundamental for special waves");
+    }
+}
+
 void testAllNotesOffAndReset()
 {
     youknow201::Engine engine;
@@ -622,6 +691,8 @@ int main()
     testEffectTails();
     testDcBlockedOutput();
     testFactoryBankRendersEverywhere();
+    testAllSoundOffSilencesEffectTails();
+    testSyncFollowsSpecialOsc2Waves();
     testAllNotesOffAndReset();
 
     if (failures == 0)

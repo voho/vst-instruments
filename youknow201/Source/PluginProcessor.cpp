@@ -1,7 +1,9 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include <bit>
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 namespace
@@ -529,6 +531,15 @@ double YouKnow201AudioProcessor::getTailLengthSeconds() const
 
 void YouKnow201AudioProcessor::triggerFromUi (int note, int velocity) noexcept
 {
+    // A release latched during an earlier overflow is now stale: this press
+    // supersedes it, and if it survived, the audio thread could apply it
+    // right after the new note-on and cut the note short. Clearing it before
+    // publishing the note-on makes that impossible — the audio thread drains
+    // the queue before the latches, so once it can see this note-on, the
+    // stale bit is already gone.
+    note = juce::jlimit (0, 127, note);
+    forcedRelease[(std::size_t) (note >> 6)].fetch_and (
+        ~(1ull << (note & 63)), std::memory_order_acq_rel);
     const auto write = uiWrite.load (std::memory_order_relaxed);
     const auto read = uiRead.load (std::memory_order_acquire);
     if (write - read >= uiQueueCapacity)
@@ -542,12 +553,19 @@ void YouKnow201AudioProcessor::releaseFromUi (int note) noexcept
     const auto write = uiWrite.load (std::memory_order_relaxed);
     const auto read = uiRead.load (std::memory_order_acquire);
     if (write - read >= uiQueueCapacity)
+    {
+        // A dropped note-off would leave the note stuck once processing
+        // resumes; latch the release instead of losing it.
+        note = juce::jlimit (0, 127, note);
+        forcedRelease[(std::size_t) (note >> 6)].fetch_or (
+            1ull << (note & 63), std::memory_order_release);
         return;
+    }
     uiQueue[write % uiQueueCapacity] = { note, 0 };
     uiWrite.store (write + 1, std::memory_order_release);
 }
 
-void YouKnow201AudioProcessor::handleController (int controller, int value)
+bool YouKnow201AudioProcessor::handleController (int controller, int value)
 {
     switch (controller)
     {
@@ -555,25 +573,25 @@ void YouKnow201AudioProcessor::handleController (int controller, int value)
         case 32:
             // Bank select is accepted (settled CCs) but there is only the one
             // built-in program bank to select.
-            return;
-        case 1:  engine.setModulation (value / 127.0); return;
-        case 7:  engine.setPartLevel (value / 127.0); return;
-        case 10: engine.setPartPan ((value - 64) / 63.0); return;
-        case 11: engine.setExpression (value / 127.0); return;
-        case 64: engine.setHold (value >= 64); return;
-        case 84: engine.setPortamentoControl (value); return;
-        case 120: engine.allSoundOff(); return;
+            return false;
+        case 1:  engine.setModulation (value / 127.0); return false;
+        case 7:  engine.setPartLevel (value / 127.0); return false;
+        case 10: engine.setPartPan ((value - 64) / 63.0); return false;
+        case 11: engine.setExpression (value / 127.0); return false;
+        case 64: engine.setHold (value >= 64); return false;
+        case 84: engine.setPortamentoControl (value); return false;
+        case 120: engine.allSoundOff(); return false;
         case 121:
             engine.setPitchBend (0.0);
             engine.setModulation (0.0);
             engine.setExpression (1.0);
             engine.setHold (false);
-            return;
+            return false;
         case 123:
         case 124:
         case 125:
             engine.allNotesOff();
-            return;
+            return false;
         default: break;
     }
 
@@ -592,11 +610,12 @@ void YouKnow201AudioProcessor::handleController (int controller, int value)
         cached.parameter->setValueNotifyingHost (
             range.convertTo0to1 (range.snapToLegalValue (natural)));
         cached.parameter->endChangeGesture();
-        return;
+        return true;
     }
+    return false;
 }
 
-void YouKnow201AudioProcessor::handleMidiMessage (const juce::MidiMessage& message)
+bool YouKnow201AudioProcessor::handleMidiMessage (const juce::MidiMessage& message)
 {
     if (message.isNoteOn())
         engine.noteOn (message.getNoteNumber(), message.getVelocity());
@@ -605,32 +624,109 @@ void YouKnow201AudioProcessor::handleMidiMessage (const juce::MidiMessage& messa
     else if (message.isPitchWheel())
         engine.setPitchBend ((message.getPitchWheelValue() - 8192) / 8192.0);
     else if (message.isController())
-        handleController (message.getControllerNumber(),
-                          message.getControllerValue());
+        return handleController (message.getControllerNumber(),
+                                 message.getControllerValue());
     else if (message.isProgramChange())
     {
         const int program = message.getProgramChangeNumber();
         if (program >= 0 && program < getNumPrograms())
         {
-            currentProgram.store (program, std::memory_order_relaxed);
+            // Land the program in the raw parameter values right here: notes
+            // later in this same block must already play it, later edits must
+            // compose on top of it, and none of that may depend on a message
+            // loop that an offline host might never pump. The queued spray
+            // only repeats these values with host/UI notification.
+            writeProgramToParameters (program);
             applyProgramAsync (program);
+            return true;
         }
     }
     else if (message.isAllNotesOff())
         engine.allNotesOff();
     else if (message.isAllSoundOff())
         engine.allSoundOff();
+    return false;
+}
+
+void YouKnow201AudioProcessor::writeProgramToParameters (int index) noexcept
+{
+    if (index < 0 || index >= getNumPrograms())
+        return;
+    const Patch& patch =
+        youknow201::factoryPatches()[(std::size_t) index].patch;
+
+    // Hold the generation odd across the burst, program index included, so a
+    // concurrent state save — which seqlocks its raw-value copy against the
+    // generation — can never serialize a half-written program or pair the
+    // new index with the old values.
+    patchGeneration.fetch_add (1, std::memory_order_acq_rel);
+    currentProgram.store (index, std::memory_order_relaxed);
+
+    const auto& bindings = toneBindings();
+    for (std::size_t i = 0; i < bindings.size(); ++i)
+    {
+        upperValues[i]->store (bindings[i].get (patch.upper),
+                               std::memory_order_relaxed);
+        lowerValues[i]->store (bindings[i].get (patch.lower),
+                               std::memory_order_relaxed);
+    }
+    const auto& shared = patchBindings();
+    for (std::size_t i = 0; i < shared.size(); ++i)
+        if (std::strcmp (shared[i].id, "master_level") != 0)
+            patchValues[i]->store (shared[i].get (patch),
+                                   std::memory_order_relaxed);
+
+    patchGeneration.fetch_add (1, std::memory_order_acq_rel);
+}
+
+void YouKnow201AudioProcessor::reconcileProgram (int index)
+{
+    if (index < 0 || index >= getNumPrograms())
+        return;
+    const Patch& patch =
+        youknow201::factoryPatches()[(std::size_t) index].patch;
+
+    const auto apply = [this] (const juce::String& id, float natural)
+    {
+        auto* parameter = parameters.getParameter (id);
+        auto* raw = parameters.getRawParameterValue (id);
+        if (parameter == nullptr || raw == nullptr)
+            return;
+        const auto& range = parameters.getParameterRange (id);
+        const float target = range.snapToLegalValue (natural);
+        // The audio path already wrote this exact value when the program
+        // change arrived. If it has moved since, the user edited it after
+        // the program change and the edit wins — replaying the factory
+        // value here would snap their edit back.
+        if (raw->load() != target)
+            return;
+        parameter->setValueNotifyingHost (range.convertTo0to1 (target));
+    };
+
+    for (const bool upper : { true, false })
+    {
+        const TonePatch& tone = upper ? patch.upper : patch.lower;
+        const juce::String prefix = upper ? "up_" : "lo_";
+        for (const auto& binding : toneBindings())
+            apply (prefix + binding.suffix, binding.get (tone));
+    }
+    for (const auto& binding : patchBindings())
+        if (juce::String (binding.id) != "master_level")
+            apply (binding.id, binding.get (patch));
 }
 
 void YouKnow201AudioProcessor::applyProgramAsync (int program)
 {
-    // Program changes arrive on the audio thread; loading a program touches
-    // every parameter, which belongs on the message thread.
+    // A MIDI program change already landed in the raw values on the audio
+    // path; the message thread only repeats those values with host and UI
+    // notification, skipping anything edited since. The writes are
+    // value-identical to the current raw values, so no staging or
+    // generation guard is needed around them.
     juce::MessageManager::callAsync (
         [weakThis = juce::WeakReference<YouKnow201AudioProcessor> (this), program]
         {
             if (auto* self = weakThis.get())
-                self->applyProgram (program);
+                self->reconcileProgram (program);
         });
 }
 
@@ -654,6 +750,19 @@ void YouKnow201AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     }
     uiRead.store (read, std::memory_order_release);
 
+    // Releases latched when the UI queue overflowed: apply them now so no
+    // on-screen key can stay stuck.
+    for (std::size_t word = 0; word < forcedRelease.size(); ++word)
+    {
+        auto bits = forcedRelease[word].exchange (0u, std::memory_order_acquire);
+        while (bits != 0u)
+        {
+            const int note = (int) (word * 64) + std::countr_zero (bits);
+            engine.noteOff (note);
+            bits &= bits - 1u;
+        }
+    }
+
     if (uiLeverDirty.exchange (false, std::memory_order_acquire))
     {
         engine.setPitchBend (uiBend.load (std::memory_order_relaxed));
@@ -662,7 +771,31 @@ void YouKnow201AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     engine.setMasterLevel ((int) std::lround (
         masterValue->load (std::memory_order_relaxed)));
-    engine.setPatch (snapshotPatch());
+
+    // The engine's patch never depends on the message loop: MIDI program
+    // changes write the raw values directly, and the snapshot is validated
+    // against the message thread's write bursts (program sprays, state
+    // restores) so a half-written mix is never rendered — the staged factory
+    // patch or the previous block's patch covers the gap instead.
+    const auto applyCurrentPatch = [this]
+    {
+        const int staged = stagedProgram.load (std::memory_order_acquire);
+        if (staged >= 0 && staged < (int) youknow201::factoryPatches().size())
+        {
+            engine.setPatch (
+                youknow201::factoryPatches()[(std::size_t) staged].patch);
+            return;
+        }
+        const auto generation = patchGeneration.load (std::memory_order_acquire);
+        const youknow201::Patch snapshot = snapshotPatch();
+        if ((generation & 1u) == 0u
+            && patchGeneration.load (std::memory_order_acquire) == generation)
+            engine.setPatch (snapshot);
+        // Otherwise a burst was in flight while the snapshot was read: keep
+        // the previous patch for this segment and pick up the completed
+        // values on the next one.
+    };
+    applyCurrentPatch();
 
     auto* left = buffer.getWritePointer (0);
     // The declared bus is stereo-only, but a defensive mono path must not
@@ -685,7 +818,8 @@ void YouKnow201AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                             eventPosition - position);
             position = eventPosition;
         }
-        handleMidiMessage (metadata.getMessage());
+        if (handleMidiMessage (metadata.getMessage()))
+            applyCurrentPatch();  // panel CC or program: next segment uses it
     }
     if (position < buffer.getNumSamples())
         engine.process (left + position, right + position,
@@ -723,6 +857,13 @@ void YouKnow201AudioProcessor::applyProgram (int index)
     const Patch& patch =
         youknow201::factoryPatches()[(std::size_t) index].patch;
 
+    // The audio path renders this factory patch directly until every
+    // parameter below has been written, so a block can never snapshot a
+    // half-loaded program. The generation goes odd behind it: a snapshot
+    // that overlapped this spray in any way is discarded.
+    stagedProgram.store (index, std::memory_order_release);
+    patchGeneration.fetch_add (1, std::memory_order_acq_rel);
+
     const auto apply = [this] (const juce::String& id, float natural)
     {
         if (auto* parameter = parameters.getParameter (id))
@@ -743,6 +884,11 @@ void YouKnow201AudioProcessor::applyProgram (int index)
     for (const auto& binding : patchBindings())
         if (juce::String (binding.id) != "master_level")
             apply (binding.id, binding.get (patch));
+
+    // Every parameter now matches the program; the audio path can go back to
+    // snapshotting the APVTS.
+    patchGeneration.fetch_add (1, std::memory_order_acq_rel);
+    stagedProgram.store (-1, std::memory_order_release);
 }
 
 const juce::String YouKnow201AudioProcessor::getProgramName (int index)
@@ -757,9 +903,36 @@ void YouKnow201AudioProcessor::getStateInformation (
 {
     if (auto state = parameters.copyState(); state.isValid())
     {
-        state.setProperty ("program",
-                           currentProgram.load (std::memory_order_relaxed),
-                           nullptr);
+        // The value tree lags an audio-path program write until the message
+        // thread reconciles it — which a headless host may never do.
+        // Serializing the raw values instead makes saved state always match
+        // what is audible. The tree copy is ours alone, so this is safe on
+        // any thread; the copy seqlocks against the generation so it can
+        // never interleave a program write's burst, pairing the program
+        // index with values it does not describe. The final attempt copies
+        // unconditionally as a best effort.
+        for (int attempt = 0; attempt < 64; ++attempt)
+        {
+            const auto generation =
+                patchGeneration.load (std::memory_order_acquire);
+            if ((generation & 1u) != 0u && attempt < 63)
+                continue;
+            for (int i = 0; i < state.getNumChildren(); ++i)
+            {
+                auto child = state.getChild (i);
+                if (auto* raw = parameters.getRawParameterValue (
+                        child.getProperty ("id").toString()))
+                    child.setProperty ("value",
+                                       raw->load (std::memory_order_relaxed),
+                                       nullptr);
+            }
+            state.setProperty ("program",
+                               currentProgram.load (std::memory_order_relaxed),
+                               nullptr);
+            if ((generation & 1u) == 0u
+                && patchGeneration.load (std::memory_order_acquire) == generation)
+                break;
+        }
         if (const auto xml = state.createXml())
             copyXmlToBinary (*xml, destinationData);
     }
@@ -775,7 +948,12 @@ void YouKnow201AudioProcessor::setStateInformation (const void* data,
         {
             currentProgram.store (state.getProperty ("program", 0),
                                   std::memory_order_relaxed);
+            // A state restore is a multi-parameter write burst like a
+            // program spray: keep the generation odd across it so the audio
+            // thread discards any snapshot that overlapped it.
+            patchGeneration.fetch_add (1, std::memory_order_acq_rel);
             parameters.replaceState (state);
+            patchGeneration.fetch_add (1, std::memory_order_acq_rel);
         }
     }
 }

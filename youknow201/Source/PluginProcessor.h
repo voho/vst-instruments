@@ -74,16 +74,30 @@ public:
     // audio thread and tests, so the two can never disagree.
     [[nodiscard]] youknow201::Patch snapshotPatch() const;
 
+    // The message-thread half of a MIDI program change: repeats the values
+    // the audio path already wrote, with host/UI notification, skipping any
+    // parameter edited since. Normally reached via the queued message-loop
+    // callback; public so the harness can stand in for that loop.
+    void reconcileProgram (int index);
+
     juce::AudioProcessorValueTreeState parameters;
 
     static juce::AudioProcessorValueTreeState::ParameterLayout
         createParameterLayout();
 
 private:
-    void handleMidiMessage (const juce::MidiMessage& message);
-    void handleController (int controller, int value);
+    // Both return true when the event edited a patch parameter, so the audio
+    // path can refresh the engine patch before rendering the next segment.
+    bool handleMidiMessage (const juce::MidiMessage& message);
+    bool handleController (int controller, int value);
     void applyProgram (int index);
     void applyProgramAsync (int index);
+    // Writes a factory program straight into the cached raw-value atomics.
+    // Allocation-free, so the audio thread can land a MIDI program change
+    // without depending on the message loop ever running; the queued
+    // reconcileProgram then repeats the untouched values with host/UI
+    // notification.
+    void writeProgramToParameters (int index) noexcept;
     void cacheParameterPointers();
 
     // Audio-thread lookups resolved once at construction: raw-value atomics
@@ -117,6 +131,20 @@ private:
     std::atomic<float> uiBend { 0.0f };
     std::atomic<float> uiMod { 0.0f };
     std::atomic<bool> uiLeverDirty { false };
+    // When the UI queue overflows, a note-off must still reach the engine
+    // eventually: the release is latched here and applied on the next block.
+    std::array<std::atomic<std::uint64_t>, 2> forcedRelease { 0u, 0u };
+    // Set only while applyProgram sprays a program into the APVTS on the
+    // message thread: the audio path then renders that factory patch
+    // atomically instead of a half-updated parameter snapshot. MIDI program
+    // changes do not stage — they write the raw values directly.
+    std::atomic<int> stagedProgram { -1 };
+    // Seqlock guard for multi-parameter write bursts — message-thread program
+    // sprays and state restores, and the audio path's own program writes:
+    // odd while a burst is in flight, bumped again when it completes. The
+    // audio thread discards a patch snapshot that saw a burst and keeps the
+    // previous block's patch; a state save retries its raw-value copy.
+    std::atomic<std::uint32_t> patchGeneration { 0 };
 
     JUCE_DECLARE_WEAK_REFERENCEABLE (YouKnow201AudioProcessor)
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (YouKnow201AudioProcessor)

@@ -276,6 +276,7 @@ void Engine::Reverb::clear()
     highStates.fill (0.0);
     preDelayWrite = 0;
     highCutStateL = highCutStateR = 0.0;
+    fresh = 1 << 30;
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +375,7 @@ void Engine::reset()
     std::fill (delayR_.buffer.begin(), delayR_.buffer.end(), 0.0f);
     delayL_.write = delayR_.write = 0;
     delayL_.dampState = delayR_.dampState = 0.0;
+    delayL_.fresh = delayR_.fresh = 1 << 30;
     delayModPhase_ = 0.0;
     reverb_.clear();
     delayTimeSmoothed_ = mapping::delaySeconds (patch_.delay.time) * sampleRate_;
@@ -841,6 +843,24 @@ void Engine::allSoundOff()
         tone.heldCount = 0;
         tone.anyKeyDown = false;
     }
+
+    // All Sounds Off is a panic: the buffered delay repeats and the reverb
+    // tail must stop with the voices, and the output stage must not keep
+    // discharging what it was carrying. This runs inside the audio callback,
+    // so the megabytes of effect history are not cleared here — marking them
+    // stale mutes every read of pre-panic material until it has been
+    // overwritten, at O(1) cost per sample.
+    delayL_.fresh = delayR_.fresh = 0;
+    delayL_.dampState = delayR_.dampState = 0.0;
+    reverb_.fresh = 0;
+    reverb_.lowStates.fill (0.0);
+    reverb_.highStates.fill (0.0);
+    reverb_.highCutStateL = reverb_.highCutStateR = 0.0;
+    for (int channel = 0; channel < 2; ++channel)
+    {
+        dcX1_[channel] = dcY1_[channel] = 0.0;
+        rcState1_[channel] = rcState2_[channel] = 0.0;
+    }
 }
 
 int Engine::activeVoiceCount() const noexcept
@@ -1210,12 +1230,32 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples)
         switch (wave2)
         {
             case Waveform::SuperSaw:
+            {
+                // The center saw carries the cycle SYNC follows: its detune
+                // offset is zero, so it advances by exactly inc2.
+                const double centerBefore = voice.osc2.superPhases[3];
                 sample2 = superSaw (voice.osc2, voice.inc2, voice.superAmount2,
                                     voice.superHpf2);
+                if (centerBefore + voice.inc2 >= 1.0)
+                {
+                    osc2Wrapped = true;
+                    osc2WrapOffset = (centerBefore + voice.inc2 - 1.0)
+                                     / std::max (1.0e-9, voice.inc2);
+                }
                 break;
+            }
             case Waveform::FbOsc:
+            {
+                const double phaseBefore = voice.osc2.phase;
                 sample2 = feedbackOsc (voice.osc2, voice.inc2, voice.fbGain2);
+                if (phaseBefore + voice.inc2 >= 1.0)
+                {
+                    osc2Wrapped = true;
+                    osc2WrapOffset = (phaseBefore + voice.inc2 - 1.0)
+                                     / std::max (1.0e-9, voice.inc2);
+                }
                 break;
+            }
             case Waveform::ExtIn:
                 sample2 = 0.0;  // no external bus in v1 (documented)
                 voice.osc2.phase = frac (voice.osc2.phase + voice.inc2);
@@ -1458,14 +1498,21 @@ void Engine::processEffects (const float* dryL, const float* dryR,
                 const int index0 = static_cast<int> (readPos) % delaySize;
                 const int index1 = (index0 + 1) % delaySize;
                 const double fracPos = readPos - std::floor (readPos);
+                // A tap reaching behind the panic point reads silence; echoes
+                // of post-panic input come through immediately.
                 const double tapped =
-                    line.buffer[static_cast<std::size_t> (index0)] * (1.0 - fracPos)
-                    + line.buffer[static_cast<std::size_t> (index1)] * fracPos;
+                    delaySamplesNow + 2.0 > static_cast<double> (line.fresh)
+                        ? 0.0
+                        : line.buffer[static_cast<std::size_t> (index0)]
+                                  * (1.0 - fracPos)
+                              + line.buffer[static_cast<std::size_t> (index1)]
+                                    * fracPos;
                 line.dampState += dampCoeff * (tapped - line.dampState);
                 const double damped = line.dampState;
                 line.buffer[static_cast<std::size_t> (line.write)] =
                     static_cast<float> (softClip (input + damped * feedback));
                 line.write = (line.write + 1) % delaySize;
+                line.fresh = std::min (line.fresh + 1, delaySize);
                 return damped;
             };
 
@@ -1481,13 +1528,18 @@ void Engine::processEffects (const float* dryL, const float* dryR,
             double input = 0.5 * (reverbSendL[i] + reverbSendR[i])
                            + 0.5 * (wetDelayL + wetDelayR);
 
-            // Pre-delay.
+            // Pre-delay. Reads behind the panic point are silence, here and
+            // in every buffer below — the network's write heads advance in
+            // lockstep, so one freshness count covers them all.
+            const int reverbFresh = reverb_.fresh;
             reverb_.preDelay[static_cast<std::size_t> (reverb_.preDelayWrite)] =
                 static_cast<float> (input);
             int readIndex = reverb_.preDelayWrite - preDelaySamples;
             if (readIndex < 0)
                 readIndex += static_cast<int> (reverb_.preDelay.size());
-            input = reverb_.preDelay[static_cast<std::size_t> (readIndex)];
+            input = preDelaySamples > reverbFresh
+                        ? 0.0
+                        : reverb_.preDelay[static_cast<std::size_t> (readIndex)];
             reverb_.preDelayWrite = (reverb_.preDelayWrite + 1)
                                     % static_cast<int> (reverb_.preDelay.size());
 
@@ -1497,7 +1549,10 @@ void Engine::processEffects (const float* dryL, const float* dryR,
                 auto& buffer = reverb_.diffusers[static_cast<std::size_t> (d)];
                 int& write = reverb_.diffuserWrites[static_cast<std::size_t> (d)];
                 const double gain = d < 2 ? diffusionGain : densityGain;
-                const double delayed = buffer[static_cast<std::size_t> (write)];
+                const double delayed =
+                    static_cast<int> (buffer.size()) > reverbFresh
+                        ? 0.0
+                        : buffer[static_cast<std::size_t> (write)];
                 const double next = input + delayed * gain;
                 buffer[static_cast<std::size_t> (write)] =
                     static_cast<float> (next);
@@ -1517,7 +1572,9 @@ void Engine::processEffects (const float* dryL, const float* dryR,
                 if (readPos < 0)
                     readPos += size;
                 taps[static_cast<std::size_t> (line)] =
-                    buffer[static_cast<std::size_t> (readPos)];
+                    reverb_.lengths[static_cast<std::size_t> (line)] > reverbFresh
+                        ? 0.0
+                        : buffer[static_cast<std::size_t> (readPos)];
                 tapSum += taps[static_cast<std::size_t> (line)];
             }
             const double householder = tapSum * (2.0 / Reverb::lineCount);
@@ -1551,6 +1608,7 @@ void Engine::processEffects (const float* dryL, const float* dryR,
             reverb_.highCutStateR += highCutCoeff * (wetReverbR - reverb_.highCutStateR);
             wetReverbL = reverb_.highCutStateL;
             wetReverbR = reverb_.highCutStateR;
+            reverb_.fresh = std::min (reverb_.fresh + 1, 1 << 30);
         }
 
         outL[i] = static_cast<float> (dryL[i] + wetDelayL + wetReverbL * 0.8);

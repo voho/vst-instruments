@@ -391,6 +391,10 @@ private:
         std::vector<float> buffer;
         int write { 0 };
         double dampState { 0.0 };
+        // Samples written since the last panic. A read reaching further back
+        // than this lands on pre-panic material and must return silence, so
+        // a panic never has to clear the whole buffer on the audio thread.
+        int fresh { 1 << 30 };
     };
 
     struct Reverb
@@ -406,6 +410,9 @@ private:
         std::vector<float> preDelay;
         int preDelayWrite { 0 };
         double highCutStateL { 0.0 }, highCutStateR { 0.0 };
+        // Same panic bookkeeping as DelayLine::fresh, shared by every buffer
+        // in the network: their write heads advance in lockstep.
+        int fresh { 1 << 30 };
         void clear();
     };
 
