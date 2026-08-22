@@ -517,6 +517,30 @@ void testEditorAndSnapshot()
     expect (editor->getWidth() >= 1000 && editor->getHeight() >= 500,
             "the editor opens at its panel size");
 
+    // Every control the panel puts on screen has to be given bounds. A
+    // section whose declared row counts do not cover its contents lays out
+    // all but the last control and leaves that one at (0, 0, 0, 0): visible,
+    // attached to its parameter, and invisible to the player. SPLIT ARPEGGIO
+    // was exactly that until the ARPEGGIO section's rows were corrected.
+    int placed = 0, unplaced = 0, escaped = 0;
+    for (int i = 0; i < editor->getNumChildComponents(); ++i)
+    {
+        auto* child = editor->getChildComponent (i);
+        if (child == nullptr || ! child->isVisible())
+            continue;
+        if (child->getBounds().isEmpty())
+        {
+            ++unplaced;
+            continue;
+        }
+        ++placed;
+        if (! editor->getLocalBounds().contains (child->getBounds()))
+            ++escaped;
+    }
+    expect (placed > 100, "the panel places its controls");
+    expect (unplaced == 0, "every visible control on the panel has bounds");
+    expect (escaped == 0, "no control is laid out past the panel's edge");
+
     juce::Image rendered { juce::Image::ARGB, editor->getWidth(),
                            editor->getHeight(), true };
     {

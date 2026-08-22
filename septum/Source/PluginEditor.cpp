@@ -97,8 +97,9 @@ void SeptumLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
                                               float sliderPos,
                                               float rotaryStartAngle,
                                               float rotaryEndAngle,
-                                              juce::Slider&)
+                                              juce::Slider& slider)
 {
+    const bool bipolar = static_cast<bool> (slider.getProperties()["bipolar"]);
     const auto bounds =
         juce::Rectangle<int> (x, y, width, height).toFloat().reduced (3.0f);
     const auto radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
@@ -106,17 +107,26 @@ void SeptumLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
     const auto angle =
         rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
-    // Travel arc.
+    // Travel arc. A control whose range straddles zero lights from the top of
+    // its travel, where its zero is, rather than from the left end: a BALANCE
+    // or a PAN at the centre is not half on, and an arc lit from the end says
+    // it is.
     juce::Path arc;
     arc.addCentredArc (centre.x, centre.y, radius, radius, 0.0f,
                        rotaryStartAngle, rotaryEndAngle, true);
     g.setColour (colours::sliderTrack);
     g.strokePath (arc, juce::PathStrokeType (2.0f));
-    juce::Path filled;
-    filled.addCentredArc (centre.x, centre.y, radius, radius, 0.0f,
-                          rotaryStartAngle, angle, true);
-    g.setColour (colours::accent);
-    g.strokePath (filled, juce::PathStrokeType (2.0f));
+    const float origin = bipolar ? (rotaryStartAngle + rotaryEndAngle) * 0.5f
+                                 : rotaryStartAngle;
+    if (std::abs (angle - origin) > 1.0e-3f)
+    {
+        juce::Path filled;
+        filled.addCentredArc (centre.x, centre.y, radius, radius, 0.0f,
+                              juce::jmin (origin, angle),
+                              juce::jmax (origin, angle), true);
+        g.setColour (colours::accent);
+        g.strokePath (filled, juce::PathStrokeType (2.0f));
+    }
 
     // Cap.
     const auto capRadius = radius * 0.78f;
@@ -515,18 +525,21 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
 
     // ---- band 3: the two ends of the instrument --------------------------
     auto* arpSection = section ("ARPEGGIO", Band::InputEffects);
-    arpSection->rowCounts = { 5, 5 };
+    // Row one is what the arpeggiator is and where it plays; row two is how
+    // it reads the keys. The counts have to cover every control the section
+    // holds — a row short and the last one is never given bounds.
+    arpSection->rowCounts = { 5, 6 };
     addControl (*arpSection, "arp_on", "ON", Style::Toggle, false);
     addControl (*arpSection, "arp_hold", "HOLD", Style::Toggle, false);
     addControl (*arpSection, "arp_style", "STYLE", Style::Combo, false);
-    addControl (*arpSection, "arp_end_step", "END STEP", Style::Knob, false);
     addControl (*arpSection, "arp_grid", "GRID", Style::Combo, false);
+    addControl (*arpSection, "arp_split", "SPLIT ARP", Style::Combo, false);
     addControl (*arpSection, "arp_motif", "MOTIF", Style::Combo, false);
     addControl (*arpSection, "arp_duration", "DURATION", Style::Combo, false);
+    addControl (*arpSection, "arp_end_step", "END STEP", Style::Knob, false);
     addControl (*arpSection, "arp_octave", "OCT RANGE", Style::Knob, false);
     addControl (*arpSection, "arp_accent", "ACCENT", Style::Knob, false, " %");
     addControl (*arpSection, "arp_velocity", "VELOCITY", Style::Knob, false);
-    addControl (*arpSection, "arp_split", "SPLIT ARP", Style::Combo, false);
 
     auto* externalSection = section ("EXT IN", Band::InputEffects);
     externalSection->rowCounts = { 4, 3 };
@@ -836,6 +849,12 @@ void SeptumAudioProcessorEditor::bindControls()
 
         if (auto* slider = dynamic_cast<juce::Slider*> (control->component.get()))
         {
+            // Read straight off the parameter's own range, so a control the
+            // manual prints with a sign can never disagree with the way its
+            // arc is lit.
+            const auto& range = processor.parameters.getParameterRange (id);
+            slider->getProperties().set (
+                "bipolar", range.start < 0.0f && range.end > 0.0f);
             control->sliderAttachment = std::make_unique<
                 juce::AudioProcessorValueTreeState::SliderAttachment> (
                 processor.parameters, id, *slider);

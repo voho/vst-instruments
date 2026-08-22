@@ -555,3 +555,38 @@ click; and moving the cutoff at the same moment as the switch left the filtered
 path still agreeing with the dry one just as the switch was thrown, so the step
 had nothing to show. Both were errors in the measurement, not the fix, and both
 were caught by insisting the test fail when the fix is reverted.
+
+#### Step 12 — the panel dropped a control, and lit half its knobs wrong
+
+Two defects an audit of the shipping panel found, both of them the panel
+saying something untrue about its own controls.
+
+**SPLIT ARPEGGIO was built, attached and never laid out.** `layoutSection`
+walks a section's declared row counts and stops; ARPEGGIO declared `{ 5, 5 }`
+and held eleven controls, so the eleventh — the selector that decides which
+tone the arpeggiator drives in SPLIT mode — was left at (0, 0, 0, 0). It was
+visible, it was bound to its parameter, and it was invisible to the player.
+This is the same class of defect as END STEP in Step 10: documented in the
+README and the contract, reachable from the host, absent from the instrument.
+The rows are now `{ 5, 6 }` — the switches and the three selectors above, the
+six controls that decide how the style is read below — and the section is
+44 px wider for it.
+
+The fix that matters more is the fence. A new plug-in check walks every
+visible child of the editor and fails if any of them has empty bounds or is
+laid out past the panel's edge. Reverting the row counts fails it:
+
+```
+FAIL: every visible control on the panel has bounds
+```
+
+**A bipolar knob lit its arc from the far left.** `drawRotarySlider` filled
+the travel arc from `rotaryStartAngle` to the pointer whatever the control
+was, so every parameter whose range straddles zero — BALANCE, PAN, PITCH,
+DETUNE, KEY FOLLOW, both VELOCITY sensitivities, FILTER ENV DEPTH, both
+P.ENV depths, ARPEGGIO OCT RANGE, TONE BAL and delay FEEDBACK — showed a
+half-lit arc at its zero, which reads as half on. They now light from the top
+of the travel, where their zero is. The flag is read straight off the
+parameter's own `NormalisableRange` in `bindControls` rather than from a list
+that could drift: a control is bipolar exactly when its range crosses zero,
+so the arc and the sign the manual prints can never disagree.
