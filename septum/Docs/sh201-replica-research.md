@@ -102,7 +102,8 @@ parameter surface. Every continuous parameter is 7-bit; signed displays use
   shift −3…+3, pedal/D-Beam configuration.
 
 The arpeggiator map (grid, duration, motif, 32-step × 16-note pattern) is
-settled by the same document but **not implemented in v1** — see scope.
+settled by the same document and implemented; see the arpeggiator section
+below.
 
 ### CC map (settled, OM p. 72)
 
@@ -367,6 +368,61 @@ network with per-line damping from the settled LF/HF damp parameters,
 input diffusion from DIFFUSION, and the settled HIGH CUT on the wet
 return.
 
+### Arpeggiator
+
+Settled (OM pp. 22–23, 66–67). The arpeggiator plays an **arpeggio style** —
+"a series of data for basic arpeggio patterns and chord styles recorded in the
+form of a grid consisting of a maximum of 32 steps × 16 pitches", each cell
+being note-on with a velocity, a tie holding the preceding note, or a rest —
+against the keys held down. The style "records the position of each key you
+play relative to the lowest-pitched key you played, and the order in which you
+play each key", and one style is saved per patch. Its parameters:
+
+- **GRID** — 1/4, 1/8, 1/8L, 1/8H, 1/12, 1/16, 1/16L, 1/16H, 1/24, where L and
+  H are light and heavy shuffle. The divisions are settled; the shuffle
+  *amounts* are named, not measured (voiced, OQ-15), and a shuffled pair keeps
+  its total length so the beat never drifts.
+- **DURATION** — 30…120 % of the final grid section of a tie chain, or FUL,
+  which "continues to sound until the point at which the next new sound is
+  specified".
+- **MOTIF** — twelve values, whose meanings the manual gives *by worked
+  example*: for the style `1-2-3-2` against the keys C-D-E-F-G,
+  `UP(-)` gives C-D-E-D → D-E-F-E → E-F-G-F, `UP(L)` gives C-D-E-D → C-E-F-E →
+  C-F-G-F, and `UP&DOWN(L&H)` gives C-D-G-D → C-E-G-E → C-F-G-F → C-E-G-E.
+  The replica's mapping reproduces all three exactly and a test holds it to
+  them: a window `span` rows wide slides over the sorted keys once per pass,
+  `(L)` pins the style's first row to the lowest key, `(L&H)` also pins its
+  last row to the highest, and the window walks up, down, up-and-down or at
+  random.
+- **OCTAVE RANGE** −3…+3, which "shifts arpeggios one cycle at a time in
+  octave units" (the cycle order is voiced, OQ-15).
+- **ARPEGGIO ACCENT** 0–100: at 100 "the arpeggiated notes will have the
+  velocities that are programmed by the arpeggio style", at 0 "all arpeggiated
+  notes will be sounded at a fixed velocity". The blend between the two, and
+  the flat value, are voiced (OQ-15).
+- **ARPEGGIO VELOCITY** REAL or 1–127: what "how hard you played" means.
+- **END STEP** 1–32, **HOLD**, and **SPLIT ARPEGGIO** (UPPER / LOWER / BOTH),
+  which tone(s) it drives in SPLIT mode.
+- The tempo is **PATCH TEMPO**, shared with the LFO sync. Two Roland
+  documents disagree on its range: the parameter list gives PATCH TEMPO
+  5–300 BPM, while the product page's specification block gives the
+  arpeggiator "Tempo: 20–250 B.P.M." The address map is the parameter
+  contract, so the replica keeps 5–300; a panel that refuses to leave
+  20–250 would be a display restriction on the same stored value.
+
+PHRASE is the one motif the manual describes without a worked example
+("pressing just one key plays a phrase based on the pitch of that key; if you
+press more than one key, the key you press last is used"), so how a style's
+rows become intervals is voiced: the replica reads row *r* as *r*−1 semitones
+above that key (OQ-15).
+
+**The 32 factory arpeggio styles are Roland's data and none of them ships
+here**, exactly as with the 64 factory patches. The styles supplied are
+original patterns written against the same settled grid. The hardware's own
+panel only *selects* a template — the manual says editing a style needs the
+SH-201 Editor — so a selector is the faithful panel surface, and the patch
+stores both the selector and the grid it names.
+
 ### Key assignment, solo/legato, portamento, pedals
 
 Settled: POLY / SOLO+LEGATO / SOLO per tone; solo = last-note priority;
@@ -407,10 +463,11 @@ with no input bus connected an EXT-IN oscillator renders silence, as the
 hardware does with nothing plugged in. MIX/SYNC/RING, the filter, all three envelopes, both LFOs
 with tempo sync, overdrive, delay→reverb with per-tone sends and the
 16 templates, SINGLE/DUAL/SPLIT with 10/5+5 voices, solo/legato,
-portamento, pitch bend with per-tone range, the settled CC map including both
-documented pedals and the audio filter's CC#2/CC#4, and the analog output
-stage. Deferred, documented: the arpeggiator and recorder, D-Beam, SysEx
-DT1/RQ1 I/O, and the USB audio topology.
+portamento, pitch bend with per-tone range, the arpeggiator with the settled
+grid/duration/motif/octave/accent/velocity/end-step/hold/split parameters, the
+settled CC map including both documented pedals and the audio filter's
+CC#2/CC#4, and the analog output stage. Deferred, documented: the step
+recorder, D-Beam, SysEx DT1/RQ1 I/O, and the USB audio topology.
 
 ## Open questions
 
@@ -457,6 +514,14 @@ Each is a standing research task; the measurement named would close it.
   applying each template), reverb RT60 per TIME/SIZE.
 - **OQ-13 — voice-steal policy.** Play 11 notes and observe which voice
   drops on hardware.
+- **OQ-15 — arpeggiator calibration.** The shuffle amounts behind 1/8L,
+  1/8H, 1/16L and 1/16H; the ACCENT blend and the flat velocity it collapses
+  onto; the order the OCTAVE RANGE cycle visits its octaves; how a PHRASE
+  style's rows become intervals. Close by recording the arpeggiator's MIDI
+  output (the manual documents that it can be played over MIDI) at a grid of
+  GRID, ACCENT and OCTAVE RANGE settings and reading the note times and
+  velocities straight off it — the one open question in this project that a
+  MIDI capture alone can close, with no audio analysis needed.
 - **OQ-14 — external-input calibration.** INPUT VOL taper; the audio
   filter's cutoff-to-Hz table and resonance curve, and whether it
   self-oscillates at all; whether CENTER CANCEL's output is the anti-phase

@@ -19,11 +19,12 @@ UPPER and LOWER — that partition every patch; and *septem*, seven, for the
 seven detuned sawtooth oscillators that give the instrument its signature
 voice.
 
-> **Listen first.** Ten [rendered demonstrations](Docs/audio/README.md) cover
-> the seven-saw SUPER SAW and its spread curve, FB OSC feedback, the −24 dB
-> filter into self-oscillation, oscillator sync, ring modulation, PWM strings
-> through the chorus delay template, S&H effects, and DUAL-mode pads — each
-> matched to an official real-unit recording for by-ear comparison.
+> **Listen first.** Eleven [rendered demonstrations](Docs/audio/README.md)
+> cover the seven-saw SUPER SAW and its spread curve, FB OSC feedback, the
+> −24 dB filter into self-oscillation, oscillator sync, ring modulation, PWM
+> strings through the chorus delay template, S&H effects, DUAL-mode pads and
+> the arpeggiator — each matched to an official real-unit recording for
+> by-ear comparison.
 
 ![Septum](Docs/screenshots/septum-standalone.png)
 
@@ -69,6 +70,13 @@ The engine's grounding, briefly:
 - **Analog output stage (settled).** The service-notes component values:
   22 µF/22 kΩ coupling (0.329 Hz), the 8.2 kΩ/820 pF and 4.7 kΩ/270 pF RC
   poles (23.7 kHz, 125.4 kHz), gain chain normalized to digital full scale.
+- **Arpeggiator (settled mechanism, original styles).** The settled 32 × 16
+  style grid with GRID (including the shuffled divisions), DURATION with tie
+  chains and FUL, all twelve MOTIF values, OCTAVE RANGE, ACCENT, ARPEGGIO
+  VELOCITY, END STEP, HOLD and SPLIT ARPEGGIO. The motif mapping reproduces
+  the three worked examples the manual prints, exactly; they are the test.
+  Roland's 32 factory styles are unpublished data and none ships here — the
+  16 styles supplied are original patterns.
 - **External input (settled).** The rear INPUT jacks, with INPUT VOL, CENTER
   CANCEL and the AUDIO FILTER — LPF/HPF/BPF/**NOTCH** at −12 or −24 dB, none
   of it stored in the patch, exactly as the manual says three times over. The
@@ -135,9 +143,8 @@ time, or pass `-DSEPTUM_JUCE_PATH=/path/to/JUCE`.
 
 ## Not yet modelled
 
-The arpeggiator and step recorder, D-Beam and SysEx DT1/RQ1 I/O are documented
-but deferred; the research contract lists them alongside the open calibration
-questions.
+The step recorder, D-Beam and SysEx DT1/RQ1 I/O are documented but deferred;
+the research contract lists them alongside the open calibration questions.
 
 ## Licensing
 

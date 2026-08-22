@@ -1,5 +1,7 @@
 #include "SeptumPresets.h"
 
+#include <initializer_list>
+
 namespace septum
 {
 namespace
@@ -442,6 +444,132 @@ const std::vector<NamedPatch>& factoryPatches()
         return patches;
     }();
     return bank;
+}
+
+// ---------------------------------------------------------------------------
+// Arpeggio styles
+//
+// Written against the settled 32 x 16 grid: `cells[step][row]` is a rest, a
+// tie, or a note-on carrying the style's programmed velocity. Roland's own 32
+// templates are unpublished data and none of them ships here; these are this
+// project's own patterns, laid out so the MOTIF, OCTAVE RANGE, ACCENT,
+// DURATION and GRID controls all have something to act on.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // A compact way to write a style: one string per note row, one character
+    // per step. '-' rest, '~' tie, and a digit 1-9 a note-on at that tenth of
+    // full velocity. Row 1 is the first string.
+    ArpeggioStyle makeStyle (std::initializer_list<const char*> rows)
+    {
+        ArpeggioStyle style;
+        int longest = 1;
+        int row = 0;
+        for (const char* text : rows)
+        {
+            if (row >= arpeggioMaxRows)
+                break;
+            int step = 0;
+            for (const char* c = text; *c != 0 && step < arpeggioMaxSteps; ++c, ++step)
+            {
+                signed char value = arpeggioRest;
+                if (*c == '~')
+                    value = arpeggioTie;
+                else if (*c >= '1' && *c <= '9')
+                    value = static_cast<signed char> ((*c - '0') * 127 / 9);
+                style.cells[static_cast<std::size_t> (step)]
+                           [static_cast<std::size_t> (row)] = value;
+            }
+            longest = std::max (longest, step);
+            ++row;
+        }
+        style.endStep = std::clamp (longest, 1, arpeggioMaxSteps);
+        return style;
+    }
+} // namespace
+
+const std::vector<NamedArpeggioStyle>& arpeggioStyles()
+{
+    static const std::vector<NamedArpeggioStyle> styles = []
+    {
+        std::vector<NamedArpeggioStyle> list;
+
+        // 1-4: the plain runs. One row per step, so the MOTIF decides
+        // everything about which key each step lands on.
+        list.push_back ({ "Straight 4", makeStyle ({ "9---", "-7--", "--7-", "---7" }) });
+        list.push_back ({ "Straight 8", makeStyle ({ "9-------", "-7------", "--7-----",
+                                                     "---7----", "----7---", "-----7--",
+                                                     "------7-", "-------7" }) });
+        // The manual's own worked example, "1-2-3-2".
+        list.push_back ({ "Up Down 4", makeStyle ({ "9---", "-7-7", "--7-" }) });
+        list.push_back ({ "Octave Run", makeStyle ({ "9-9-", "-7-7" }) });
+
+        // 5-8: rhythmic patterns with rests and ties, where DURATION and the
+        // shuffle grids show.
+        list.push_back ({ "Sixteenth Pulse",
+                          makeStyle ({ "9-9-9-9-9-9-9-9-" }) });
+        list.push_back ({ "Off Beat",
+                          makeStyle ({ "--9---9-", "-7---7--" }) });
+        list.push_back ({ "Long Short",
+                          makeStyle ({ "9~~-", "---7" }) });
+        list.push_back ({ "Gallop",
+                          makeStyle ({ "9-99-9--", "-7--7-7-" }) });
+
+        // 9-12: chord styles — several rows sounding on the same step.
+        list.push_back ({ "Chord Stab",
+                          makeStyle ({ "9---9---", "9---9---", "9---9---",
+                                       "9---9---" }) });
+        list.push_back ({ "Chord Roll",
+                          makeStyle ({ "9~~~~~~~", "-8~~~~~~", "--7~~~~~",
+                                       "---6~~~~" }) });
+        list.push_back ({ "Pad Swell",
+                          makeStyle ({ "5~~~~~~~~~~~~~~~", "5~~~~~~~~~~~~~~~",
+                                       "5~~~~~~~~~~~~~~~", "5~~~~~~~~~~~~~~~" }) });
+        list.push_back ({ "Bass And Top",
+                          makeStyle ({ "9-------", "----7---", "--------",
+                                       "------6-" }) });
+
+        // 13-16: phrases, meant for the PHRASE motif, where the rows read as
+        // semitone steps above the key you play.
+        list.push_back ({ "Phrase Minor",
+                          makeStyle ({ "9-------", "--------", "--------",
+                                       "-7------", "--------", "--7-----",
+                                       "--------", "---7----", "--------",
+                                       "--------", "----6---" }) });
+        list.push_back ({ "Phrase Fifths",
+                          makeStyle ({ "9---9---", "--------", "--------",
+                                       "--------", "--------", "--------",
+                                       "--------", "--7---7-" }) });
+        list.push_back ({ "Phrase Octave",
+                          makeStyle ({ "9-9-----", "--------", "--------",
+                                       "--------", "--------", "--------",
+                                       "--------", "--------", "--------",
+                                       "--------", "--------", "--------",
+                                       "----7-7-" }) });
+        list.push_back ({ "Phrase Riff",
+                          makeStyle ({ "9---9---", "--------", "--------",
+                                       "--7-----", "--------", "------7-",
+                                       "--------", "----6---" }) });
+        return list;
+    }();
+    return styles;
+}
+
+const char* arpeggioStyleName (int index)
+{
+    const auto& styles = arpeggioStyles();
+    if (index < 0 || index >= (int) styles.size())
+        return "";
+    return styles[(std::size_t) index].name;
+}
+
+void applyArpeggioStyle (Patch& patch, int index)
+{
+    const auto& styles = arpeggioStyles();
+    if (index < 0 || index >= (int) styles.size())
+        return;
+    patch.arpeggio.style = styles[(std::size_t) index].style;
 }
 
 } // namespace septum

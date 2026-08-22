@@ -483,6 +483,11 @@ void Engine::reset()
     {
         tone = ToneRuntime {};
     }
+    for (auto& runtime : arpeggios_)
+        runtime = ArpeggioRuntime {};
+    arpeggioRunning_ = false;
+    arpeggioStep_ = 0;
+    arpeggioStepRemaining_ = 0.0;
     std::fill (delayL_.buffer.begin(), delayL_.buffer.end(), 0.0f);
     std::fill (delayR_.buffer.begin(), delayR_.buffer.end(), 0.0f);
     delayL_.write = delayR_.write = 0;
@@ -609,21 +614,29 @@ void Engine::noteOn (int note, int velocity)
     note = clampRaw (note, 0, 127);
     velocity = clampRaw (velocity, 1, 127);
 
+    // The arpeggiator sits between the keyboard and the voice assigner: a key
+    // it owns joins its chord instead of starting a voice.
+    const auto route = [this, note, velocity] (Part part)
+    {
+        if (arpeggioDrives (part))
+            arpeggioAddKey (part, note, velocity);
+        else
+            startNoteForPart (part, note, velocity);
+    };
+
     switch (patch_.keyboardMode)
     {
         case KeyboardMode::Single:
-            startNoteForPart (patch_.keyboardPart == KeyboardPart::Upper
-                                  ? Part::Upper : Part::Lower,
-                              note, velocity);
+            route (patch_.keyboardPart == KeyboardPart::Upper ? Part::Upper
+                                                              : Part::Lower);
             break;
         case KeyboardMode::Dual:
-            startNoteForPart (Part::Upper, note, velocity);
-            startNoteForPart (Part::Lower, note, velocity);
+            route (Part::Upper);
+            route (Part::Lower);
             break;
         case KeyboardMode::Split:
             // Settled: keys at or right of the split point sound UPPER.
-            startNoteForPart (note >= patch_.splitPoint ? Part::Upper : Part::Lower,
-                              note, velocity);
+            route (note >= patch_.splitPoint ? Part::Upper : Part::Lower);
             break;
     }
 }
@@ -631,8 +644,14 @@ void Engine::noteOn (int note, int velocity)
 void Engine::noteOff (int note)
 {
     note = clampRaw (note, 0, 127);
-    releaseNoteForPart (Part::Upper, note);
-    releaseNoteForPart (Part::Lower, note);
+    for (int index = 0; index < partCount; ++index)
+    {
+        const Part part = index == 0 ? Part::Upper : Part::Lower;
+        if (arpeggioDrives (part))
+            arpeggioRemoveKey (part, note);
+        else
+            releaseNoteForPart (part, note);
+    }
 }
 
 void Engine::startNoteForPart (Part part, int note, int velocity)
@@ -990,6 +1009,8 @@ void Engine::allNotesOff()
         tone.heldCount = 0;
         tone.anyKeyDown = false;
     }
+    for (auto& runtime : arpeggios_)
+        runtime.clearKeys();
     sostenuto_ = false;
 }
 
@@ -1009,6 +1030,14 @@ void Engine::allSoundOff()
         tone.heldCount = 0;
         tone.anyKeyDown = false;
     }
+    for (auto& runtime : arpeggios_)
+    {
+        runtime.clearKeys();
+        runtime.rows.fill (ArpeggioRuntime::Row {});
+    }
+    arpeggioRunning_ = false;
+    arpeggioStep_ = 0;
+    arpeggioStepRemaining_ = 0.0;
     sostenuto_ = false;
 
     // All Sounds Off is a panic: the buffered delay repeats and the reverb
@@ -1620,6 +1649,312 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
 }
 
 // ---------------------------------------------------------------------------
+// Arpeggiator
+//
+// Settled (OM pp. 22-23, 66-67): the arpeggiator plays an arpeggio style — a
+// grid of up to 32 steps by 16 note rows whose cells are note-on (with a
+// velocity), tie or rest — against the keys held down, at the patch tempo,
+// through a GRID division with optional shuffle, a DURATION, a MOTIF, an
+// OCTAVE RANGE that shifts one cycle at a time, an ACCENT that blends the
+// style's programmed velocities toward a flat one, an ARPEGGIO VELOCITY that
+// is either what you played or a fixed value, an END STEP, HOLD, and a SPLIT
+// ARPEGGIO switch choosing which tone(s) it drives in SPLIT mode. The style
+// records "the position of each key you play relative to the lowest-pitched
+// key you played".
+//
+// The MOTIF mapping below is not inferred: the manual works three examples of
+// the style "1-2-3-2" against the keys C-D-E-F-G, and this implementation
+// reproduces all three exactly. A test holds it to them.
+// ---------------------------------------------------------------------------
+
+bool Engine::arpeggioDrives (Part part) const noexcept
+{
+    if (! patch_.arpeggio.on || ! partSounds (part))
+        return false;
+    if (patch_.keyboardMode != KeyboardMode::Split)
+        return true;
+    switch (patch_.arpeggio.splitArpeggio)
+    {
+        case SplitArpeggio::Upper: return part == Part::Upper;
+        case SplitArpeggio::Lower: return part == Part::Lower;
+        case SplitArpeggio::Both:  return true;
+    }
+    return true;
+}
+
+void Engine::arpeggioAddKey (Part part, int note, int velocity)
+{
+    auto& runtime = arpeggios_[part == Part::Upper ? 0 : 1];
+    // HOLD: once every key has been let go, the next key starts a new chord
+    // rather than joining the one still playing ("when you play a new chord,
+    // the arpeggio will also change").
+    if (runtime.latched)
+    {
+        runtime.keyCount = 0;
+        runtime.latched = false;
+    }
+    for (int i = 0; i < runtime.keyCount; ++i)
+        if (runtime.keys[static_cast<std::size_t> (i)] == note)
+            return;
+    if (runtime.keyCount >= static_cast<int> (runtime.keys.size()))
+        return;
+
+    int position = runtime.keyCount;
+    while (position > 0 && runtime.keys[static_cast<std::size_t> (position - 1)] > note)
+    {
+        runtime.keys[static_cast<std::size_t> (position)] =
+            runtime.keys[static_cast<std::size_t> (position - 1)];
+        runtime.velocities[static_cast<std::size_t> (position)] =
+            runtime.velocities[static_cast<std::size_t> (position - 1)];
+        --position;
+    }
+    runtime.keys[static_cast<std::size_t> (position)] = note;
+    runtime.velocities[static_cast<std::size_t> (position)] = velocity;
+    ++runtime.keyCount;
+    runtime.lastPressed = note;
+    runtime.lastVelocity = velocity;
+}
+
+void Engine::arpeggioRemoveKey (Part part, int note)
+{
+    auto& runtime = arpeggios_[part == Part::Upper ? 0 : 1];
+    if (patch_.arpeggio.hold)
+    {
+        // The chord stays, but the next key press replaces it.
+        if (runtime.keyCount > 0)
+            runtime.latched = true;
+        return;
+    }
+    for (int i = 0; i < runtime.keyCount; ++i)
+    {
+        if (runtime.keys[static_cast<std::size_t> (i)] != note)
+            continue;
+        for (int j = i; j + 1 < runtime.keyCount; ++j)
+        {
+            runtime.keys[static_cast<std::size_t> (j)] =
+                runtime.keys[static_cast<std::size_t> (j + 1)];
+            runtime.velocities[static_cast<std::size_t> (j)] =
+                runtime.velocities[static_cast<std::size_t> (j + 1)];
+        }
+        --runtime.keyCount;
+        break;
+    }
+}
+
+void Engine::arpeggioStopPart (Part part)
+{
+    auto& runtime = arpeggios_[part == Part::Upper ? 0 : 1];
+    for (auto& row : runtime.rows)
+    {
+        if (row.note >= 0)
+            releaseNoteForPart (part, row.note);
+        row = ArpeggioRuntime::Row {};
+    }
+    runtime.cycle = 0;
+}
+
+void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
+{
+    auto& runtime = arpeggios_[part == Part::Upper ? 0 : 1];
+    const ArpeggioParams& arp = patch_.arpeggio;
+    const ArpeggioStyle& style = arp.style;
+    const int endStep = std::clamp (style.endStep, 1, arpeggioMaxSteps);
+    const int span = style.rowSpan();
+
+    // OCTAVE RANGE "shifts arpeggios one cycle at a time in octave units":
+    // the shift walks 0..|range| and starts over (voiced cycle order, OQ-15).
+    const int range = std::abs (arp.octaveRange);
+    const int octave = range == 0
+                           ? 0
+                           : (arp.octaveRange < 0 ? -1 : 1)
+                                 * (runtime.cycle % (range + 1));
+
+    const double stepSamples = stepSeconds * sampleRate_;
+    const double durationFraction = mapping::arpeggioDurationFraction (arp.duration);
+    const bool sustained = arp.duration == ArpeggioDuration::Full;
+
+    for (int row = 0; row < arpeggioMaxRows; ++row)
+    {
+        const signed char cell = style.cell (arpeggioStep_, row);
+        auto& state = runtime.rows[static_cast<std::size_t> (row)];
+
+        if (cell == arpeggioTie)
+        {
+            // A tie holds the preceding note; the DURATION applies to the
+            // final grid of the chain, so the extension is a whole step and
+            // the trim happens when the chain ends.
+            if (state.note >= 0 && ! state.sustained)
+                state.remaining += static_cast<int> (stepSamples);
+            continue;
+        }
+        if (cell == arpeggioRest)
+            continue;
+
+        // A note-on: how long is the tie chain that starts here?
+        int chain = 1;
+        for (int ahead = 1; ahead < endStep; ++ahead)
+        {
+            const int step = (arpeggioStep_ + ahead) % endStep;
+            if (style.cell (step, row) != arpeggioTie)
+                break;
+            ++chain;
+        }
+
+        if (state.note >= 0)
+            releaseNoteForPart (part, state.note);
+
+        const int key = mapping::arpeggioKeyForRow (
+            arp.motif, runtime.keys.data(), runtime.keyCount, runtime.lastPressed,
+            row + 1, span, runtime.cycle);
+        if (key < 0)
+        {
+            state = ArpeggioRuntime::Row {};
+            continue;
+        }
+        const int note = clampRaw (key + 12 * octave, 0, 127);
+
+        // ARPEGGIO VELOCITY chooses what "how hard you played" means; ACCENT
+        // blends the style's programmed pattern in on top of it (voiced
+        // blend, OQ-15).
+        const double played = arp.velocity == 0
+                                  ? (double) runtime.lastVelocity
+                                  : (double) arp.velocity;
+        const double blend = arp.accent / 100.0;
+        const double patterned =
+            played * ((1.0 - blend)
+                      + blend * (cell / mapping::arpeggioFlatVelocity));
+        const int velocity = clampRaw ((int) std::lround (patterned), 1, 127);
+
+        startNoteForPart (part, note, velocity);
+        state.note = note;
+        state.sustained = sustained;
+        state.remaining =
+            sustained
+                ? 0
+                : static_cast<int> (stepSamples * ((chain - 1) + durationFraction));
+    }
+}
+
+void Engine::arpeggioFireStep()
+{
+    const double stepSeconds = mapping::arpeggioStepSeconds (
+        patch_.tempo, patch_.arpeggio.grid, arpeggioStep_);
+    for (int index = 0; index < partCount; ++index)
+    {
+        const Part part = index == 0 ? Part::Upper : Part::Lower;
+        if (! arpeggioDrives (part))
+            continue;
+        if (arpeggios_[static_cast<std::size_t> (index)].keyCount <= 0)
+            continue;
+        arpeggioFireStepForPart (part, stepSeconds);
+    }
+}
+
+void Engine::advanceArpeggiator (int samples)
+{
+    const ArpeggioParams& arp = patch_.arpeggio;
+
+    if (! arp.on)
+    {
+        if (arpeggioRunning_)
+        {
+            for (int index = 0; index < partCount; ++index)
+                arpeggioStopPart (index == 0 ? Part::Upper : Part::Lower);
+            for (auto& runtime : arpeggios_)
+                runtime.clearKeys();
+            arpeggioRunning_ = false;
+            arpeggioStep_ = 0;
+            arpeggioStepRemaining_ = 0.0;
+        }
+        return;
+    }
+    // HOLD switched off with nothing held: the latched chord stops.
+    if (! arp.hold)
+        for (auto& runtime : arpeggios_)
+            if (runtime.latched)
+            {
+                runtime.keyCount = 0;
+                runtime.latched = false;
+            }
+
+    // Scheduled note-offs, at control-tick resolution like everything else.
+    for (int index = 0; index < partCount; ++index)
+    {
+        const Part part = index == 0 ? Part::Upper : Part::Lower;
+        auto& runtime = arpeggios_[static_cast<std::size_t> (index)];
+        for (auto& row : runtime.rows)
+        {
+            if (row.note < 0 || row.sustained)
+                continue;
+            row.remaining -= samples;
+            if (row.remaining <= 0)
+            {
+                releaseNoteForPart (part, row.note);
+                row = ArpeggioRuntime::Row {};
+            }
+        }
+    }
+
+    bool anyKeys = false;
+    for (int index = 0; index < partCount; ++index)
+        if (arpeggioDrives (index == 0 ? Part::Upper : Part::Lower)
+            && arpeggios_[static_cast<std::size_t> (index)].keyCount > 0)
+            anyKeys = true;
+
+    if (! anyKeys)
+    {
+        // Nothing held: stop the sounding notes and re-arm so the next chord
+        // starts on its own first step rather than mid-pattern.
+        if (arpeggioRunning_)
+        {
+            for (int index = 0; index < partCount; ++index)
+                arpeggioStopPart (index == 0 ? Part::Upper : Part::Lower);
+            arpeggioRunning_ = false;
+        }
+        arpeggioStep_ = 0;
+        arpeggioStepRemaining_ = 0.0;
+        return;
+    }
+
+    if (! arpeggioRunning_)
+    {
+        arpeggioRunning_ = true;
+        arpeggioStep_ = 0;
+        arpeggioStepRemaining_ = 0.0;
+        for (auto& runtime : arpeggios_)
+            runtime.cycle = 0;
+    }
+
+    double left = samples;
+    while (left > 0.0)
+    {
+        if (arpeggioStepRemaining_ <= 0.0)
+        {
+            arpeggioFireStep();
+            arpeggioStepRemaining_ =
+                mapping::arpeggioStepSeconds (patch_.tempo, arp.grid, arpeggioStep_)
+                * sampleRate_;
+            const int endStep = std::clamp (arp.style.endStep, 1, arpeggioMaxSteps);
+            arpeggioStep_ = (arpeggioStep_ + 1) % endStep;
+            if (arpeggioStep_ == 0)
+                for (auto& runtime : arpeggios_)
+                {
+                    ++runtime.cycle;
+                    if (arp.motif == ArpeggioMotif::Random
+                        || arp.motif == ArpeggioMotif::RandomL)
+                    {
+                        arpeggioRng_ = arpeggioRng_ * 1664525u + 1013904223u;
+                        runtime.cycle = static_cast<int> (arpeggioRng_ >> 16);
+                    }
+                }
+        }
+        const double consumed = std::min (left, arpeggioStepRemaining_);
+        arpeggioStepRemaining_ -= consumed;
+        left -= consumed;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // External input: INPUT VOL -> CENTER CANCEL -> AUDIO FILTER
 //
 // Settled (OM pp. 49-53): the INPUT jacks are monitored through a dedicated
@@ -2014,6 +2349,7 @@ void Engine::process (float* left, float* right, int numSamples,
         const int guarded = std::min (tick, maxBlock_);
 
         advanceToneLfos (guarded);
+        advanceArpeggiator (guarded);
         prepareExternalTick (inputLeft, inputRight, offset, guarded);
 
         std::fill (dryL_.begin(), dryL_.begin() + guarded, 0.0f);
