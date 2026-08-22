@@ -77,7 +77,8 @@ Reading the reviews of the modelling tier, four things recur.
    has detents, the silkscreen's own labels, tapers that put the musical
    range where the panel drawing says it is.
 
-Ghost holds point 3 outright (the research contract) and point 4
+Ghost holds point 3 in method (the research contract and the register;
+Step 4's sweep makes the register exhaustive) and point 4
 *structurally*: every control exists with the silkscreen's detents and
 labels, but several travel *tapers* behind them are voiced, not verified
 (cutoff span OQ-02, envelope timing OQ-04, glide OQ-08, Shaper shape
@@ -174,8 +175,11 @@ settled by measurement and quoted.
   SOURCE = OSC B in WIDE drives pitch, pulse width or cutoff at audio
   rate — an aliasing mechanism of its own. Render worst-case strokes
   (WIDE at full, sync sweeps at the keyboard's top, ring with both
-  oscillators high, and Osc B audio-rate modulation into each of its
-  destinations) and measure the alias floor against a ground truth, not
+  oscillators high, Osc B audio-rate modulation into each of its
+  destinations, and the filter nonlinearities driven hard — OVERDRIVE at
+  full boost and self-oscillation at maximum resonance, since the
+  limiter, the integrator tanh and the clipper make high partials of
+  their own) and measure the alias floor against a ground truth, not
   by eyeballing bins: these strokes are nonstationary with dense
   legitimate sidebands, so the reference is a much-higher-rate render of
   the same stroke, bandlimited and downsampled to the shipping rate, and
@@ -235,12 +239,16 @@ settled by measurement and quoted.
   the CEM3350 datasheet's exponential-scale and mode figures; OQ-04's
   curvature read can be checked against the 556A application notes. Work
   each one: derive it, or demonstrate it is not derivable and leave it
-  voiced with the reason. This step also sweeps `GhostEngine.cpp` end to
-  end for numeric voicings not yet in the register — taper shapes, stage
-  gains, thresholds — and registers each with a closure path, so the
-  register ends the step exhaustive by construction. Verification: the
-  open-questions register updated with each derivation, dead end, or new
-  entry.
+  voiced with the reason. The same treatment goes to *every* register
+  entry whose closure path needs no hardware — the scan-legible and
+  network-derivable halves of OQ-08 and OQ-13 through OQ-19 included —
+  so that if the rare capture never materialises, every documentary
+  avenue has still been walked or recorded as a dead end. This step also
+  sweeps `GhostEngine.cpp` end to end for numeric voicings not yet in
+  the register — taper shapes, stage gains, thresholds — and registers
+  each with a closure path, so the register ends the step exhaustive by
+  construction. Verification: the open-questions register updated with
+  each derivation, dead end, or new entry.
 - [ ] **Step 5 — Zipper audit on the travels.** Panel travels apply at
   block boundaries (`setParameters` per block in
   `Source/PluginProcessor.cpp`), and every continuous travel is published
@@ -252,7 +260,11 @@ settled by measurement and quoted.
   host-automated full-range sweep of each at 48 kHz, at both 512-sample
   blocks and the largest block size a host realistically runs (2048 or
   above — the latching, and so the stepping, scales with the block), and
-  inspect for stepping sidebands. Verification: a per-travel table quoted
+  inspect for stepping sidebands. Each row's render uses a patch and
+  event sequence that makes that travel *audible while it moves* — gate
+  cycles for the envelope segment times, note changes for glide and
+  tune, an active destination for each wheel — since a sweep the signal
+  never expresses would pass vacuously. Verification: a per-travel table quoted
   here, one row per published continuous parameter at each block size, no
   omissions; one-pole smoothing on every travel the measurement flags,
   and a re-measure of those.
