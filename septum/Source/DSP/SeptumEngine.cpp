@@ -298,18 +298,18 @@ void OverdriveStage::clear() noexcept
 double OverdriveStage::process (double x, double preGain, double compensation,
                                 bool enabled) noexcept
 {
+    // The delay line runs whether the shaper does or not. Feeding it only
+    // while the switch is off would leave it holding pre-switch audio, and
+    // turning OVERDRIVE off would replay that burst before the current signal
+    // caught up.
+    const auto size = static_cast<int> (bypass.size());
+    bypass[static_cast<std::size_t> (bypassWrite)] = x;
+    const double delayed =
+        bypass[static_cast<std::size_t> ((bypassWrite - latency + size) % size)];
+    bypassWrite = (bypassWrite + 1) % size;
+
     if (! enabled)
-    {
-        // The matched pure delay: identical latency, bit-identical signal.
-        if (latency == 0)
-            return x;
-        const auto size = static_cast<int> (bypass.size());
-        bypass[static_cast<std::size_t> (bypassWrite)] = x;
-        const double out =
-            bypass[static_cast<std::size_t> ((bypassWrite - latency + size) % size)];
-        bypassWrite = (bypassWrite + 1) % size;
-        return out;
-    }
+        return latency == 0 ? x : delayed;
 
     // First-order antiderivative anti-aliasing of tanh.
     const auto shape = [this] (double input)
@@ -1540,12 +1540,22 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
                 break;
             }
             case Waveform::ExtIn:
+            {
                 // Settled: the input jacks' signal, in mono, in place of a
-                // generated wave. The phase still advances so SYNC keeps a
-                // cycle to fire from.
+                // generated wave. The oscillator keeps running underneath it
+                // so SYNC still has a cycle to fire from — the substitution
+                // is of the output, not of the oscillator.
+                const double phaseBefore = voice.osc2.phase;
                 sample2 = external[i];
                 voice.osc2.phase = frac (voice.osc2.phase + voice.inc2);
+                if (phaseBefore + voice.inc2 >= 1.0)
+                {
+                    osc2Wrapped = true;
+                    osc2WrapOffset = (phaseBefore + voice.inc2 - 1.0)
+                                     / std::max (1.0e-9, voice.inc2);
+                }
                 break;
+            }
             default:
             {
                 const auto out = renderClassicWave (wave2, voice.osc2.phase,

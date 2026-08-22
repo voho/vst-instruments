@@ -292,12 +292,17 @@ set to — the character of the port, not of the instrument. Measured before
 this was addressed: a full-DRIVE sine at note 93 folded inharmonic energy back
 at −18.7 dB relative to its own harmonics at 44.1 kHz and −48.9 dB at
 176.4 kHz, a 30 dB spread across host rates for one patch. The stage is
-therefore oversampled to land in a fixed 176.4–192 kHz band whatever the host
-does — 4× at 44.1/48 kHz, 2× at 88.2/96 kHz, none above — through two
-equiripple half-band polyphase stages (N = 33, stopband −43.1 dB, and N = 13,
-stopband −33.3 dB), with the `tanh` evaluated inside the loop under
-first-order antiderivative anti-aliasing (Parker, Zavalishin & Bozkurt,
-DAFx-16). The transfer curve is untouched — this is not an answer to OQ-11,
+therefore oversampled by the power-of-two factor whose internal rate lands
+closest to 176.4 kHz — 4× at 44.1/48 kHz, 2× at 88.2/96 kHz, none at
+176.4/192 kHz — through two equiripple half-band polyphase stages (N = 33,
+stopband −43.1 dB, and N = 13, stopband −33.3 dB), with the `tanh` evaluated
+inside the loop under first-order antiderivative anti-aliasing (Parker,
+Zavalishin & Bozkurt, DAFx-16). A power-of-two ladder cannot hit a fixed rate
+exactly from an arbitrary host rate, so what it guarantees is a bound rather
+than a number: across every rate a host can plausibly run at, 22.05 to
+192 kHz, the shaper stays within **±0.54 octaves** of the target, against the
+3.1 octaves those rates themselves span. At the four common rates it is inside
+176.4–192 kHz exactly. The transfer curve is untouched — this is not an answer to OQ-11,
 and a captured transfer would replace the curve without changing where it is
 evaluated.
 
