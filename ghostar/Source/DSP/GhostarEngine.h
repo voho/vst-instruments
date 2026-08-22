@@ -171,7 +171,24 @@ public:
     void process(float* left, float* right, int numSamples);
 
     [[nodiscard]] double getSampleRate() const noexcept { return sampleRate_; }
+    // The keyboard's own gate: whether a key is down.
     [[nodiscard]] bool isGateOpen() const noexcept { return keyGate_; }
+    // The gate the envelopes actually answer to — the OR of whichever of
+    // KBD, X and Y/EXT are selected. A patch gated from the LFO square or
+    // the Shaper articulates with no key down, and a key with KBD
+    // deselected articulates nothing, so a display that means "is this
+    // instrument sounding a note" must read this and not the keyboard.
+    [[nodiscard]] bool isEnvelopeGateOpen() const noexcept
+    {
+        return envelopeGate_;
+    }
+
+    // How long the loudness envelope's release can ring, worst case: the
+    // longest segment time constant carried down to the level at which the
+    // envelope idles. Derived from the same law the engine runs, so a
+    // change to the envelope timing cannot leave a stale figure behind in
+    // the plug-in's advertised tail.
+    [[nodiscard]] static double longestReleaseTailSeconds() noexcept;
     [[nodiscard]] int getCurrentNote() const noexcept { return currentNote_; }
 
 private:
@@ -242,6 +259,8 @@ private:
     std::array<std::int16_t, keyStackCapacity> keyStack_ {};
     int keyStackSize_ { 0 };
     bool keyGate_ { false };
+    // The OR'ed gate bus as advanceControls() last computed it.
+    bool envelopeGate_ { false };
     int currentNote_ { -1 };
     bool pendingTrigger_ { false };
     // RESET mode is always multiple-trigger regardless of the TRIGGER

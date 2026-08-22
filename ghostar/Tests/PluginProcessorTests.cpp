@@ -331,10 +331,18 @@ void testPanicDropsQueuedUiNotes()
 
 // The longest release decays at 3/10 per second down to the engine's 1e-5
 // idle floor; the advertised tail must cover that, or hosts truncate it.
+// The advertised tail must cover the slowest release the panel can dial.
+// This check previously carried the release law's arithmetic as a literal
+// (log(1e5)/0.3, the old three-time-constants read), so when the law was
+// re-derived the figure went stale while the test kept passing. It now asks
+// the engine, which is the only version of the question that cannot rot.
 void testAdvertisedTailCoversTheLongestRelease()
 {
     GhostarAudioProcessor processor;
-    expect(processor.getTailLengthSeconds() >= std::log(1.0e5) / 0.3,
+    const double longest = ghostar::GhostarEngine::longestReleaseTailSeconds();
+    expect(longest > 1.0,
+           "the engine reports an implausible longest release");
+    expect(processor.getTailLengthSeconds() >= longest,
            "the advertised tail is shorter than the longest release");
 }
 

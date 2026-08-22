@@ -91,6 +91,9 @@ namespace
                                  envelopeSliderOhms);
     }
 
+    // Below this the envelope is treated as finished and snaps to idle.
+    constexpr double envelopeIdleLevel = 1.0e-5;
+
     // What the attack charges toward, as a multiple of the envelope's peak:
     // the 556's output-high level less the series diode, against the +7.5 V
     // the drawing labels at the control-voltage pin. The documents bound it
@@ -560,6 +563,14 @@ void GhostarEngine::prepare(double sampleRate, int maxBlockSize)
     reset();
 }
 
+double GhostarEngine::longestReleaseTailSeconds() noexcept
+{
+    // A release from full level decays as exp(-t/tau), so it reaches the
+    // idle threshold after tau*ln(1/threshold) — 108 s at the slowest
+    // slider setting, which is what a host must be told to keep rendering.
+    return envelopeTau(1.0) * std::log(1.0 / envelopeIdleLevel);
+}
+
 void GhostarEngine::reset()
 {
     // The travel smoother snaps: whatever targets stand are what the
@@ -567,6 +578,7 @@ void GhostarEngine::reset()
     parameters_ = targetParameters_;
     keyStackSize_ = 0;
     keyGate_ = false;
+    envelopeGate_ = false;
     currentNote_ = -1;
     pendingTrigger_ = false;
     pendingShaperTrigger_ = false;
@@ -935,7 +947,7 @@ void GhostarEngine::advanceEnvelope(Adsr& envelope, bool gate, bool triggerPulse
             break;
         case Adsr::Stage::Release:
             envelope.level -= envelope.level * releaseCoefficient;
-            if (envelope.level < 1.0e-5)
+            if (envelope.level < envelopeIdleLevel)
             {
                 envelope.level = 0.0;
                 envelope.stage = Adsr::Stage::Idle;
@@ -1203,6 +1215,7 @@ void GhostarEngine::advanceControls() noexcept
             break;
     }
     previousGateForShaper_ = combinedGateNow;
+    envelopeGate_ = combinedGateNow;
 
     // The Shaper's own gate (voiced comparator threshold, OQ-05).
     shaperGate_ = shaperLevel_ > 0.01;

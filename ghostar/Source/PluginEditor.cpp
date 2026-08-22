@@ -672,15 +672,19 @@ void GhostarAudioProcessorEditor::showProgramMenu()
     menu.addSectionHeader("Ghostar Programs: the performance bank");
     menu.addSubMenu("Ghostar Programs", programs);
 
+    // The menu outlives the editor if the window is closed while it is
+    // open, and its completion callback still runs — so it holds a safe
+    // pointer rather than a raw one and does nothing if the editor is gone.
+    juce::Component::SafePointer<GhostarAudioProcessorEditor> safeThis { this };
     menu.showMenuAsync(
         juce::PopupMenu::Options {}
             .withTargetComponent(&programName)
             .withMinimumWidth(programName.getWidth()),
-        [this](int choice) {
-            if (choice <= 0)
+        [safeThis](int choice) {
+            if (choice <= 0 || safeThis == nullptr)
                 return;
-            processor.setCurrentProgram(choice - 1);
-            refreshProgramDisplay();
+            safeThis->processor.setCurrentProgram(choice - 1);
+            safeThis->refreshProgramDisplay();
         });
 }
 

@@ -392,6 +392,53 @@ void testShaperResetSelfGateCompletesItsCycle()
           "its own threshold");
 }
 
+// The gate the envelopes answer to is the OR'ed bus, not the keyboard, and
+// the two genuinely disagree: with KBD deselected a held key articulates
+// nothing, and an X-gated patch articulates with no key down. The editor's
+// gate lamp reads this, so the distinction is pinned here.
+void testEnvelopeGateFollowsTheSelectedBus()
+{
+    // A key down with KBD deselected: the keyboard gate is open, the
+    // envelope gate is not.
+    {
+        GhostarEngine engine;
+        engine.prepare(44100.0, 256);
+        auto parameters = brightPanel();
+        parameters.gateKbd = false;
+        parameters.gateX = false;
+        parameters.gateYExt = false;
+        engine.setParameters(parameters);
+        engine.noteOn(60, 1.0f);
+        render(engine, 0.05, 44100.0);
+        check(engine.isGateOpen(),
+              "the keyboard gate is open while a key is down");
+        check(!engine.isEnvelopeGateOpen(),
+              "a held key with KBD deselected does not gate the envelopes");
+    }
+
+    // X gating with no key down: the envelope gate opens on the LFO square
+    // even though the keyboard never closes.
+    {
+        GhostarEngine engine;
+        engine.prepare(44100.0, 256);
+        auto parameters = brightPanel();
+        parameters.gateKbd = false;
+        parameters.gateX = true;
+        parameters.lfoRate = 0.6f;
+        engine.setParameters(parameters);
+        bool sawOpen = false;
+        for (int slice = 0; slice < 60 && !sawOpen; ++slice)
+        {
+            render(engine, 0.01, 44100.0);
+            sawOpen = engine.isEnvelopeGateOpen();
+        }
+        check(!engine.isGateOpen(),
+              "no key is down in the X-gated case");
+        check(sawOpen,
+              "the X gate opens the envelope bus with no key down");
+    }
+}
+
 void testFullResonanceStaysBounded()
 {
     GhostarEngine marginal;
@@ -782,6 +829,7 @@ int main()
     testOutOfRangeSwitchesAreSanitised();
     testShaperResetRetriggersOnLegatoPress();
     testShaperResetSelfGateCompletesItsCycle();
+    testEnvelopeGateFollowsTheSelectedBus();
     testFullResonanceStaysBounded();
     testRegenerativeExtremesStayBounded();
     testSelfOscillationLevelIsRateInvariant();
