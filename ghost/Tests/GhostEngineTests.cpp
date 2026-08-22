@@ -545,6 +545,44 @@ void testArpFirstStepIsTheScanBottom()
 // MIDI All Sound Off must kill the voice without resetting controllers: a
 // bend held across it still applies to the next note, where the full
 // reset() would have re-centred it.
+// The travel smoother (plan Step 5): a hard parameter step while the voice
+// sounds must glide over ~25 ms instead of stepping the audio — and a
+// silent engine must snap, so configuring a patch before playing is exact.
+void testTravelStepsGlideWhileSounding()
+{
+    GhostEngine engine;
+    engine.prepare(48000.0, 256);
+    auto parameters = EngineParameters {};
+    parameters.filterPathA = 0.8f;
+    engine.setParameters(parameters); // silent: snaps exactly
+    engine.noteOn(48, 1.0f);
+    render(engine, 0.5, 48000.0);
+
+    // A brutal volume drop mid-note. Unsmoothed, the very next sample
+    // scales by ~1/100; smoothed, the envelope glides down over ~25 ms.
+    const auto before = render(engine, 0.05, 48000.0);
+    parameters.masterVolume = 0.08f;
+    engine.setParameters(parameters);
+    const auto just = render(engine, 0.002, 48000.0);
+    const auto later = render(engine, 0.3, 48000.0);
+
+    const double levelBefore = rms(before);
+    check(levelBefore > 1.0e-3, "the smoothing stroke sounds");
+    // Within 2 ms of the step the level must still be near the old one
+    // (the smoother has moved less than ~8 % of the way).
+    check(rms(just) > levelBefore * 0.6,
+          "a volume step must not land within a couple of milliseconds");
+    // And it must genuinely arrive: far below the old level once settled.
+    const std::vector<float> tail(later.left.end() - 4800,
+                                  later.left.end());
+    double tailSum = 0.0;
+    for (const float value : tail)
+        tailSum += static_cast<double>(value) * static_cast<double>(value);
+    const double tailRms = std::sqrt(tailSum / 4800.0);
+    check(tailRms < levelBefore * 0.05,
+          "the stepped volume target is reached after settling");
+}
+
 void testStopAllSoundKeepsControllers()
 {
     GhostEngine engine;
@@ -646,6 +684,7 @@ int main()
     testArpOctaveStepsSurviveTheMidiCeiling();
     testKeyPressDoesNotRetriggerWithoutKbdGate();
     testArpFirstStepIsTheScanBottom();
+    testTravelStepsGlideWhileSounding();
     testStopAllSoundKeepsControllers();
     testEveryFactorySoundChartRenders();
     testFasterThanRealtime();

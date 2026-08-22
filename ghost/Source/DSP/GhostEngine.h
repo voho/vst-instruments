@@ -201,6 +201,10 @@ private:
     static SvfOutputs runSection(SvfSection& section, double input, double g,
                                  double k) noexcept;
 
+    // True when nothing is sounding and nothing can sound (no keys, both
+    // envelopes' gate paths closed, no drone), so travel and wheel changes
+    // may snap instead of gliding — a state restore lands exactly.
+    [[nodiscard]] bool silentForSnap() const noexcept;
     void advanceControls() noexcept;
     void advanceEnvelope(Adsr& envelope, bool gate, bool triggerPulse,
                          double attackCoefficient, double decayCoefficient,
@@ -208,7 +212,16 @@ private:
     void renderVoiceSample() noexcept;
     void handleArpClock() noexcept;
 
+    // parameters_ carries what the voice actually runs on this sample;
+    // continuous travels glide toward targetParameters_ over ~25 ms so a
+    // block-latched host or a 7-bit CC never steps the audio (the
+    // best-in-class plan's Step 5). Switches apply immediately, and a
+    // fully silent engine snaps, so state restores land exactly.
     EngineParameters parameters_ {};
+    EngineParameters targetParameters_ {};
+    float targetModWheel_ { 0.0f };
+    float targetShaperWheel_ { 0.0f };
+    double travelSmoothing_ { 1.0 };
     double sampleRate_ { 44100.0 };
     double internalRate_ { 88200.0 };   // fixed 2x oversampling
 

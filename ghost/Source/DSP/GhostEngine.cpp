@@ -165,6 +165,8 @@ void GhostEngine::prepare(double sampleRate, int maxBlockSize)
     sampleRate_ = std::clamp(sampleRate, minimumSupportedSampleRate,
                              maximumSupportedSampleRate);
     internalRate_ = 2.0 * sampleRate_;
+    // The travel smoother's one-pole: ~25 ms to target at any host rate.
+    travelSmoothing_ = 1.0 - std::exp(-1.0 / (0.025 * sampleRate_));
 
     // Windowed-sinc halfband decimation kernel for the 2x -> 1x boundary.
     const int center = halfbandTaps / 2;
@@ -207,6 +209,9 @@ void GhostEngine::prepare(double sampleRate, int maxBlockSize)
 
 void GhostEngine::reset()
 {
+    // The travel smoother snaps: whatever targets stand are what the
+    // engine runs on from the first sample after a reset.
+    parameters_ = targetParameters_;
     keyStackSize_ = 0;
     keyGate_ = false;
     currentNote_ = -1;
@@ -215,6 +220,8 @@ void GhostEngine::reset()
     pitchBend_ = 0.0f;
     modWheel_ = 0.0f;
     shaperWheel_ = 0.0f;
+    targetModWheel_ = 0.0f;
+    targetShaperWheel_ = 0.0f;
 
     glidedNote_ = 60.0;
     glideInitialised_ = false;
@@ -261,14 +268,19 @@ void GhostEngine::reset()
 void GhostEngine::stopAllSound()
 {
     // Implemented over reset() so the voice-killing list can never drift
-    // out of step with it; only the controller positions survive.
+    // out of step with it; only the controller positions survive — both
+    // the smoothed wheel values and the targets they glide toward.
     const float pitchBend = pitchBend_;
     const float modWheel = modWheel_;
     const float shaperWheel = shaperWheel_;
+    const float modTarget = targetModWheel_;
+    const float shaperTarget = targetShaperWheel_;
     reset();
     pitchBend_ = pitchBend;
     modWheel_ = modWheel;
     shaperWheel_ = shaperWheel;
+    targetModWheel_ = modTarget;
+    targetShaperWheel_ = shaperTarget;
 }
 
 void GhostEngine::setParameters(const EngineParameters& parameters)
@@ -349,9 +361,56 @@ void GhostEngine::setParameters(const EngineParameters& parameters)
     sane.glideMode =
         sanitisedSwitch(parameters.glideMode, 3, defaults.glideMode);
 
-    parameters_ = sane;
-    oscADuty_ = dutyFor(sane.oscAWaveform, true);
-    oscBDuty_ = dutyFor(sane.oscBWaveform, false);
+    // Continuous travels glide toward the new values (~25 ms, advanced per
+    // sample in advanceControls) so block-latched automation and 7-bit CCs
+    // never step the audio; switches always apply immediately. A fully
+    // silent engine snaps instead, so a state restore before playing —
+    // and a test configuring a law — lands exactly.
+    const bool incomingQuiet =
+        !sane.vcaBypass && sane.shaperPathA < 1.0e-4f
+        && sane.shaperPathB < 1.0e-4f && sane.shaperPathRing < 1.0e-4f
+        && sane.shaperPathNoise < 1.0e-4f;
+
+    targetParameters_ = sane;
+    if (silentForSnap() && incomingQuiet)
+    {
+        parameters_ = sane;
+    }
+    else
+    {
+        EngineParameters blended = sane;
+        blended.tune = parameters_.tune;
+        blended.interval = parameters_.interval;
+        blended.masterVolume = parameters_.masterVolume;
+        blended.brightness = parameters_.brightness;
+        blended.shaperPathA = parameters_.shaperPathA;
+        blended.shaperPathB = parameters_.shaperPathB;
+        blended.shaperPathRing = parameters_.shaperPathRing;
+        blended.shaperPathNoise = parameters_.shaperPathNoise;
+        blended.filterPathA = parameters_.filterPathA;
+        blended.filterPathB = parameters_.filterPathB;
+        blended.filterPathNoise = parameters_.filterPathNoise;
+        blended.cutoff = parameters_.cutoff;
+        blended.lowerOnly = parameters_.lowerOnly;
+        blended.resonance = parameters_.resonance;
+        blended.kbAmount = parameters_.kbAmount;
+        blended.filterEnvAmount = parameters_.filterEnvAmount;
+        blended.filterAttack = parameters_.filterAttack;
+        blended.filterDecay = parameters_.filterDecay;
+        blended.filterSustain = parameters_.filterSustain;
+        blended.filterRelease = parameters_.filterRelease;
+        blended.loudnessAttack = parameters_.loudnessAttack;
+        blended.loudnessDecay = parameters_.loudnessDecay;
+        blended.loudnessSustain = parameters_.loudnessSustain;
+        blended.loudnessRelease = parameters_.loudnessRelease;
+        blended.lfoRate = parameters_.lfoRate;
+        blended.shaperShape = parameters_.shaperShape;
+        blended.shaperRate = parameters_.shaperRate;
+        blended.glide = parameters_.glide;
+        parameters_ = blended;
+    }
+    oscADuty_ = dutyFor(parameters_.oscAWaveform, true);
+    oscBDuty_ = dutyFor(parameters_.oscBWaveform, false);
 }
 
 void GhostEngine::noteOn(int midiNote, float velocity)
@@ -443,14 +502,20 @@ void GhostEngine::setModWheel(float amount) noexcept
 {
     if (!std::isfinite(amount))
         amount = 0.0f;
-    modWheel_ = std::clamp(amount, 0.0f, 1.0f);
+    targetModWheel_ = std::clamp(amount, 0.0f, 1.0f);
+    // A restored wheel position lands exactly while nothing sounds, like
+    // the panel travels; only a ridden wheel glides.
+    if (silentForSnap())
+        modWheel_ = targetModWheel_;
 }
 
 void GhostEngine::setShaperWheel(float amount) noexcept
 {
     if (!std::isfinite(amount))
         amount = 0.0f;
-    shaperWheel_ = std::clamp(amount, 0.0f, 1.0f);
+    targetShaperWheel_ = std::clamp(amount, 0.0f, 1.0f);
+    if (silentForSnap())
+        shaperWheel_ = targetShaperWheel_;
 }
 
 GhostEngine::SvfOutputs GhostEngine::runSection(SvfSection& section,
@@ -556,9 +621,68 @@ void GhostEngine::handleArpClock() noexcept
     ++arpStep_;
 }
 
+// The quiet threshold is audibility, not exact zero: a smoothed slider
+// decaying toward zero stalls at a float residue (and FTZ pins it there),
+// so an exact-zero test would lock the snap path out forever.
+bool GhostEngine::silentForSnap() const noexcept
+{
+    return loudnessEnvelope_.stage == Adsr::Stage::Idle
+        && keyStackSize_ == 0 && !parameters_.vcaBypass
+        && !targetParameters_.vcaBypass
+        && parameters_.shaperPathA < 1.0e-4f
+        && parameters_.shaperPathB < 1.0e-4f
+        && parameters_.shaperPathRing < 1.0e-4f
+        && parameters_.shaperPathNoise < 1.0e-4f;
+}
+
 void GhostEngine::advanceControls() noexcept
 {
     const double dt = 1.0 / sampleRate_;
+
+    // The travel smoother: every continuous panel value and both wheels
+    // glide to their latched targets (~25 ms), per the plan's Step 5. A
+    // value lands exactly once it is within hearing of its target, so the
+    // one-pole cannot stall on a float residue short of it.
+    {
+        const float k = static_cast<float>(travelSmoothing_);
+        const auto follow = [k](float& value, float target) noexcept {
+            value += k * (target - value);
+            if (std::fabs(target - value) < 1.0e-6f)
+                value = target;
+        };
+        const EngineParameters& t = targetParameters_;
+        follow(parameters_.tune, t.tune);
+        follow(parameters_.interval, t.interval);
+        follow(parameters_.masterVolume, t.masterVolume);
+        follow(parameters_.brightness, t.brightness);
+        follow(parameters_.shaperPathA, t.shaperPathA);
+        follow(parameters_.shaperPathB, t.shaperPathB);
+        follow(parameters_.shaperPathRing, t.shaperPathRing);
+        follow(parameters_.shaperPathNoise, t.shaperPathNoise);
+        follow(parameters_.filterPathA, t.filterPathA);
+        follow(parameters_.filterPathB, t.filterPathB);
+        follow(parameters_.filterPathNoise, t.filterPathNoise);
+        follow(parameters_.cutoff, t.cutoff);
+        follow(parameters_.lowerOnly, t.lowerOnly);
+        follow(parameters_.resonance, t.resonance);
+        follow(parameters_.kbAmount, t.kbAmount);
+        follow(parameters_.filterEnvAmount, t.filterEnvAmount);
+        follow(parameters_.filterAttack, t.filterAttack);
+        follow(parameters_.filterDecay, t.filterDecay);
+        follow(parameters_.filterSustain, t.filterSustain);
+        follow(parameters_.filterRelease, t.filterRelease);
+        follow(parameters_.loudnessAttack, t.loudnessAttack);
+        follow(parameters_.loudnessDecay, t.loudnessDecay);
+        follow(parameters_.loudnessSustain, t.loudnessSustain);
+        follow(parameters_.loudnessRelease, t.loudnessRelease);
+        follow(parameters_.lfoRate, t.lfoRate);
+        follow(parameters_.shaperShape, t.shaperShape);
+        follow(parameters_.shaperRate, t.shaperRate);
+        follow(parameters_.glide, t.glide);
+        follow(modWheel_, targetModWheel_);
+        follow(shaperWheel_, targetShaperWheel_);
+    }
+
     const EngineParameters& p = parameters_;
 
     // ---------------------------------------------------------------- Gate
@@ -1077,12 +1201,15 @@ void GhostEngine::renderVoiceSample() noexcept
 
 void GhostEngine::process(float* left, float* right, int numSamples)
 {
-    const double volume = static_cast<double>(parameters_.masterVolume)
-                        * static_cast<double>(parameters_.masterVolume);
-
     for (int sample = 0; sample < numSamples; ++sample)
     {
         advanceControls();
+        // Derived after the travel smoother has advanced, per sample —
+        // captured once per call it would hold a whole host block and
+        // reintroduce exactly the steps the smoother removes.
+        const double volume =
+            static_cast<double>(parameters_.masterVolume)
+            * static_cast<double>(parameters_.masterVolume);
 
         // Two internal steps per output sample, then the halfband picks the
         // decimated value.
