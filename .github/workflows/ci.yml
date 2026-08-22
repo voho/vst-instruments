@@ -56,7 +56,7 @@ jobs:
             directory: septum
             build_plugin_option: SEPTUM_BUILD_PLUGIN
             target_demo: SeptumRenderDemos
-            expected_demos: 10
+            expected_demos: 11
           - name: Ghostar
             directory: ghostar
             build_plugin_option: GHOSTAR_BUILD_PLUGIN

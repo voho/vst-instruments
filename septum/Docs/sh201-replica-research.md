@@ -102,7 +102,8 @@ parameter surface. Every continuous parameter is 7-bit; signed displays use
   shift −3…+3, pedal/D-Beam configuration.
 
 The arpeggiator map (grid, duration, motif, 32-step × 16-note pattern) is
-settled by the same document but **not implemented in v1** — see scope.
+settled by the same document and implemented; see the arpeggiator section
+below.
 
 ### CC map (settled, OM p. 72)
 
@@ -221,15 +222,37 @@ not a modelled analog ladder.
 
 Implemented as a TPT state-variable filter; −12 dB is one resonant 2-pole
 stage, −24 dB cascades a second, non-resonant 2-pole stage (voiced
-topology, OQ-08). Resonance maps linearly to the SVF damping
-`k = 2 − 2.04·(v/127)`: Q ≈ 0.5 at zero, oscillation onset at v ≈ 124,
-slightly negative damping at 127 so self-oscillation grows until a
-continuous soft-knee state limiter holds it — matching the manual's "may not
-stop at all".
-The onset point and curve are voiced (OQ-08). Cutoff 0–127 maps
+topology, OQ-08). Resonance maps to the SVF damping through a square-root
+taper, `k = 2 − 2.04·√(v/127)`: Q ≈ 0.5 at zero, slightly negative damping at
+127 so self-oscillation grows until a continuous soft-knee state limiter holds
+it — matching the manual's "may not stop at all".
+
+Both endpoints are settled; the shape between them is not. A linear taper put
+the entire audible range of the control in the top fifth of its travel — the
+filter peaked by 1.38 dB at the exact centre of the knob — and the square-root
+taper that replaced it was **chosen by ear**, in the 2026-08-22 listening test
+recorded in the [best-in-class plan](best-in-class-plan.md), against a linear
+and a quadratic candidate. The centre of the knob now peaks by 5.4 dB. That is
+a choice, not a measurement: **OQ-08 is still open**, and the swept response
+from a real unit it names is still what would close it. Cutoff 0–127 maps
 exponentially over 20 Hz → 20.48 kHz (10 octaves, voiced, OQ-08); envelope
 depth ±63 spans ±10 octaves linearly; cutoff velocity sensitivity ±63
 spans ±4 octaves at the velocity extremes (voiced, OQ-08).
+
+The cutoff sum is assembled in two parts, and the split is deliberate. The
+*panel* side — the cutoff knob, key follow, the velocity offset and the LFO —
+passes through a 2.5 ms one-pole slew (voiced; it models nothing the hardware
+does, and exists only so a patch edit or an S&H LFO edge cannot put a
+discontinuity into the filter coefficient). The *envelope* side does not: the
+filter and amp envelopes read the same slider through the same mapping, so
+smoothing one and not the other would make the reported "fast ADSR response
+times ensure bags of punch" true of the amp and false of the filter. The
+envelope's depth knob is slewed with the rest of the panel; its level is
+applied directly. Both stages' coefficients are then walked sample by sample
+across the control tick, so taking the envelope out of the slew did not put an
+eight-sample staircase back in. A test fences this: from A = 0 the filter
+envelope must open no slower than the amp envelope, and a fast S&H filter LFO
+must still produce no sample-level discontinuity.
 
 ### Envelopes
 
@@ -268,6 +291,81 @@ Voiced (OQ-11): drive maps to 0…32 dB of pre-gain into a tanh clipper,
 output-compensated (`pre^−0.4`) to keep loudness roughly constant; level
 knob is a squared amplitude law; pan is equal-power.
 
+**Where the shaper is evaluated is not the same question as what it
+evaluates.** The modelled engine runs at one fixed rate (OQ-01); a plug-in
+runs at the host's, so a shaper evaluated at the host rate folds a *different*
+amount of alias energy depending on what the user's interface happens to be
+set to — the character of the port, not of the instrument. Measured before
+this was addressed: a full-DRIVE sine at note 93 folded inharmonic energy back
+at −18.7 dB relative to its own harmonics at 44.1 kHz and −48.9 dB at
+176.4 kHz, a 30 dB spread across host rates for one patch. The stage is
+therefore oversampled by the power-of-two factor whose internal rate lands
+closest to 176.4 kHz — 4× at 44.1/48 kHz, 2× at 88.2/96 kHz, none at
+176.4/192 kHz — through two equiripple half-band polyphase stages (N = 33,
+stopband −43.1 dB, and N = 13, stopband −33.3 dB), with the `tanh` evaluated
+inside the loop under first-order antiderivative anti-aliasing (Parker,
+Zavalishin & Bozkurt, DAFx-16). A power-of-two ladder cannot hit a fixed rate
+exactly from an arbitrary host rate, so what it guarantees is a bound rather
+than a number: across every rate a host can plausibly run at, 22.05 to
+192 kHz, the shaper stays within **±1.0 octave** of the target, against the
+3.1 octaves those rates themselves span. At the four common rates it is inside
+176.4–192 kHz exactly, and only 22.05 kHz sits a full octave low — the ladder
+stops at 4× because the shaper does, and a third half-band stage would cost a
+fractional 1.5 host samples of group delay to buy two unusual rates. The transfer curve is untouched — this is not an answer to OQ-11,
+and a captured transfer would replace the curve without changing where it is
+evaluated.
+
+The chain has a fixed group delay (19 samples at 44.1 kHz, 16 at 88.2/96 kHz,
+none above), so **every voice carries that delay whether its OVERDRIVE is on
+or not**: an overdriven UPPER against a clean LOWER would otherwise sound the
+same note 19 samples apart and comb around 1 kHz. A voice with the switch off
+passes through a matched pure delay, bit-identical apart from the shift, and
+the plug-in reports the delay as its latency.
+
+### External input: EXT IN, CENTER CANCEL, AUDIO FILTER
+
+Settled (OM pp. 49–53). The rear INPUT jacks are monitored through their own
+signal path: an **INPUT VOL** knob ("if you turn the knob all the way to the
+left, you will hear no sound from the connected device"), a **CENTER CANCEL**
+switch that "removes sounds that are localized at the center of the sound
+field (such as vocals)" and, the manual warns, takes centred bass with them,
+and an **AUDIO FILTER** with a FILTER ON button, a TYPE button cycling
+**LPF → HPF → BPF → NOTCH → LPF** — one more type than the voice filter has —
+a −12/−24 dB SLOPE button, CUTOFF (printed CENTER FREQ for BPF and NOTCH) and
+RESONANCE. The manual says three separate times that none of it is stored in
+the patch, so it lives outside `Patch` in the replica exactly as it does on
+the instrument. CUTOFF answers on CC#2 and RESONANCE on CC#4 (OM p. 72).
+
+Selecting **EXT-IN** as an oscillator waveform "plays the sound from the audio
+source connected to the rear panel INPUT jacks" through the voice, and the
+manual settles two things about it that a block diagram would not: "the sound
+you hear will be mono even if the audio source connected to the INPUT jack is
+stereo", and "since the sound may distort if you press a larger number of
+keys, we recommend that you turn on the Solo function" — each voice adds
+another copy of the input.
+
+The **order** of the two paths is settled by the manual's own recipe for
+"producing sound from the external device only when you play the keyboard":
+turn the audio filter on, select LPF, and turn CUTOFF fully left, at which
+point "you won't hear any sound" until you play. That only works if the
+EXT-IN oscillator taps the input **before** the audio filter, and if the
+direct monitor is muted while an EXT-IN voice is sounding — which the manual
+confirms from the other side: with a long AMP ENV release, "the sound that's
+passing through the audio filter will not be heard when you take your hand off
+the keyboard until the release time has elapsed."
+
+Voiced (OQ-14): the INPUT VOL law (squared, matching the AMP LEVEL knob); the
+audio filter's cutoff-to-Hz and resonance curves (the voice filter's, with the
+resonance floored short of the oscillation threshold — the manual describes it
+as a boost and, unlike the voice filter's, never warns that it may not stop);
+NOTCH realized as the low-pass and high-pass sum; the mono reduction the
+EXT-IN oscillator takes after CENTER CANCEL (the channel difference rather
+than the sum, since the sum of a centre-cancelled pair is zero); the depth of
+the settled AUDIO-FILTER LFO and modulation-lever destinations; and the 5 ms
+fade with which the direct monitor hands the input over to a voice. The direct
+monitor is not patch audio, so the patch level and part controllers do not
+scale it; the panel VOLUME, which sits after the DAC on the hardware, does.
+
 ### Effects
 
 Settled: modulation delay → reverb in series, shared TIME and switches,
@@ -284,13 +382,84 @@ network with per-line damping from the settled LF/HF damp parameters,
 input diffusion from DIFFUSION, and the settled HIGH CUT on the wet
 return.
 
-### Key assignment, solo/legato, portamento
+### Arpeggiator
+
+Settled (OM pp. 22–23, 66–67). The arpeggiator plays an **arpeggio style** —
+"a series of data for basic arpeggio patterns and chord styles recorded in the
+form of a grid consisting of a maximum of 32 steps × 16 pitches", each cell
+being note-on with a velocity, a tie holding the preceding note, or a rest —
+against the keys held down. The style "records the position of each key you
+play relative to the lowest-pitched key you played, and the order in which you
+play each key", and one style is saved per patch. Its parameters:
+
+- **GRID** — 1/4, 1/8, 1/8L, 1/8H, 1/12, 1/16, 1/16L, 1/16H, 1/24, where L and
+  H are light and heavy shuffle. The divisions are settled; the shuffle
+  *amounts* are named, not measured (voiced, OQ-15), and a shuffled pair keeps
+  its total length so the beat never drifts.
+- **DURATION** — 30…120 % of the final grid section of a tie chain, or FUL,
+  which "continues to sound until the point at which the next new sound is
+  specified". On a shuffled grid the sections of a pair are different lengths,
+  so *which* section the percentage is measured against is not a detail: it is
+  the final one, the one the chain ends on, not the one it started from.
+  A percentage at or below 100 therefore never reaches into the next grid,
+  and only 120 % overlaps.
+- **MOTIF** — twelve values, whose meanings the manual gives *by worked
+  example*: for the style `1-2-3-2` against the keys C-D-E-F-G,
+  `UP(-)` gives C-D-E-D → D-E-F-E → E-F-G-F, `UP(L)` gives C-D-E-D → C-E-F-E →
+  C-F-G-F, and `UP&DOWN(L&H)` gives C-D-G-D → C-E-G-E → C-F-G-F → C-E-G-E.
+  The replica's mapping reproduces all three exactly and a test holds it to
+  them: a window `span` rows wide slides over the sorted keys once per pass,
+  `(L)` pins the style's first row to the lowest key, `(L&H)` also pins its
+  last row to the highest, and the window walks up, down, up-and-down or at
+  random.
+- **OCTAVE RANGE** −3…+3, which "shifts arpeggios one cycle at a time in
+  octave units" (the cycle order is voiced, OQ-15).
+- **ARPEGGIO ACCENT** 0–100: at 100 "the arpeggiated notes will have the
+  velocities that are programmed by the arpeggio style", at 0 "all arpeggiated
+  notes will be sounded at a fixed velocity". The blend between the two, and
+  the flat value, are voiced (OQ-15).
+- **ARPEGGIO VELOCITY** REAL or 1–127: what "how hard you played" means.
+- **END STEP** 1–32, its own control and independent of the selected template.
+  The replica adds a zero below the documented range (voiced): it means "as
+  long as the template is", so a patch that never touches END STEP keeps
+  whatever length the style defines, and the panel reads `STYLE` rather than a
+  step count. **HOLD**, and **SPLIT ARPEGGIO** (UPPER / LOWER / BOTH),
+  which tone(s) it drives in SPLIT mode.
+- The tempo is **PATCH TEMPO**, shared with the LFO sync. Two Roland
+  documents disagree on its range: the parameter list gives PATCH TEMPO
+  5–300 BPM, while the product page's specification block gives the
+  arpeggiator "Tempo: 20–250 B.P.M." The address map is the parameter
+  contract, so the replica keeps 5–300; a panel that refuses to leave
+  20–250 would be a display restriction on the same stored value.
+
+PHRASE is the one motif the manual describes without a worked example
+("pressing just one key plays a phrase based on the pitch of that key; if you
+press more than one key, the key you press last is used"), so how a style's
+rows become intervals is voiced: the replica reads row *r* as *r*−1 semitones
+above that key (OQ-15).
+
+**The 32 factory arpeggio styles are Roland's data and none of them ships
+here**, exactly as with the 64 factory patches. The styles supplied are
+original patterns written against the same settled grid. The hardware's own
+panel only *selects* a template — the manual says editing a style needs the
+SH-201 Editor — so a selector is the faithful panel surface, and the patch
+stores both the selector and the grid it names.
+
+### Key assignment, solo/legato, portamento, pedals
 
 Settled: POLY / SOLO+LEGATO / SOLO per tone; solo = last-note priority;
 legato suppresses retrigger on overlapped notes; portamento per tone with
 0–127 time, and with legato+portamento the glide applies only to legato
 playing. Voiced (OQ-13): voice stealing takes the longest-released voice,
 else the oldest sounding; portamento is constant-time, (v/127)² × 5 s.
+
+Both documented pedals are implemented. HOLD (CC#64) holds everything
+sounding for as long as it is down. SOSTENUTO (CC#66) latches the notes whose
+keys were down at the moment it went down and holds only those — a key pressed
+afterwards plays and releases normally, which is the whole point of the pedal.
+The two are independent: a note caught by both is released only when both are
+up, and a stolen voice loses its latch, since the latch belonged to the note
+the pedal caught and not to the physical voice.
 
 ### Analog output stage (settled, service notes)
 
@@ -310,15 +479,38 @@ is not separately modelled — the host's converters stand in for it.
 ## Scope of v1
 
 Implemented: both tones with every tone parameter above, all nine
-waveforms except EXT-IN (the external-input path — audio filter, center
-cancel, EXT-IN oscillators — needs a live input bus and is deferred; an
-EXT-IN oscillator renders silence, as the hardware does with nothing
-plugged in), MIX/SYNC/RING, the filter, all three envelopes, both LFOs
+waveforms including EXT-IN and the external-input path around it (INPUT VOL,
+CENTER CANCEL, the four-type AUDIO FILTER, and the monitor/voice changeover);
+with no input bus connected an EXT-IN oscillator renders silence, as the
+hardware does with nothing plugged in. MIX/SYNC/RING, the filter, all three envelopes, both LFOs
 with tempo sync, overdrive, delay→reverb with per-tone sends and the
 16 templates, SINGLE/DUAL/SPLIT with 10/5+5 voices, solo/legato,
-portamento, pitch bend with per-tone range, the settled CC map, and the
-analog output stage. Deferred, documented: the arpeggiator and recorder,
-D-Beam, SysEx DT1/RQ1 I/O, sostenuto, and the USB audio topology.
+portamento, pitch bend with per-tone range, the arpeggiator with the settled
+grid/duration/motif/octave/accent/velocity/end-step/hold/split parameters, the
+settled CC map including both documented pedals and the audio filter's
+CC#2/CC#4, and the analog output stage. Deferred, documented: the step
+recorder, D-Beam, SysEx DT1/RQ1 I/O, and the USB audio topology.
+
+## Every voiced constant lives in one place
+
+The contract's rule is that a voiced constant is a constant a measurement
+should one day replace, so it has to be findable. All of them are in the
+engine's `mapping` namespace, each tagged with its tier and the open question
+that owns it — there are no bare numbers in the render code. The ones that
+were still inline until this pass, and where they now sit:
+
+| Constant | Owned by |
+| --- | --- |
+| `balanceLegGain` — the BALANCE and TONE BALANCE crossfade law | OQ-07 |
+| `fbOscDelayRatio`, `fbOscLoopDamping`, `fbOscLoopTrim`, `fbOscOutputGain` | OQ-06 |
+| `superSawStackNormalisation` — the seven-saw sum's trim | OQ-05 |
+| `leverVibratoCents`, `leverPulseWidth`, `leverFilterOctaves`, `leverAmpDepth` — the modulation lever's reach into each settled destination | OQ-10 |
+| `delayModulationRateHz`, `delayModulationDepthSeconds` | OQ-12 |
+| `reverbLineSeconds`, `reverbDiffuserSeconds`, `reverbSizeScale`, `reverbDiffusionGain`, `reverbDensityGain`, `reverbInputInjection`, `reverbWetReturn` | OQ-12 |
+| `filterSecondStageDamping`, `filterStateLimit` | OQ-08 |
+| `voiceHeadroom`, `outputLimitKnee`, `outputLimitRange`, `partPanCentreGain`, `masterSlewSeconds`, `delayTimeSlewSeconds`, `controlSlewSeconds` | none — these are engineering choices about headroom, safety and zipper, not claims about the instrument, and no measurement of a real unit would settle them |
+
+Moving them changed no audio: the committed demos re-render bit-identically.
 
 ## Open questions
 
@@ -365,6 +557,21 @@ Each is a standing research task; the measurement named would close it.
   applying each template), reverb RT60 per TIME/SIZE.
 - **OQ-13 — voice-steal policy.** Play 11 notes and observe which voice
   drops on hardware.
+- **OQ-15 — arpeggiator calibration.** The shuffle amounts behind 1/8L,
+  1/8H, 1/16L and 1/16H; the ACCENT blend and the flat velocity it collapses
+  onto; the order the OCTAVE RANGE cycle visits its octaves; how a PHRASE
+  style's rows become intervals. Close by recording the arpeggiator's MIDI
+  output (the manual documents that it can be played over MIDI) at a grid of
+  GRID, ACCENT and OCTAVE RANGE settings and reading the note times and
+  velocities straight off it — the one open question in this project that a
+  MIDI capture alone can close, with no audio analysis needed.
+- **OQ-14 — external-input calibration.** INPUT VOL taper; the audio
+  filter's cutoff-to-Hz table and resonance curve, and whether it
+  self-oscillates at all; whether CENTER CANCEL's output is the anti-phase
+  side pair or a mono difference; what an EXT-IN oscillator hears with CENTER
+  CANCEL engaged; the AUDIO-FILTER modulation depths. Close by capturing the
+  INPUT-to-OUTPUT response at a grid of audio-filter settings, and by feeding
+  a known stereo signal with CENTER CANCEL on and off.
 
 ## What a SysEx dump of the factory bank would add
 

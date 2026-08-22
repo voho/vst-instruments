@@ -46,6 +46,28 @@ const juce::StringArray syncNoteChoices {
     "16", "12", "8", "4", "2", "1", "3/4", "2/3", "1/2", "3/8", "1/3", "1/4",
     "3/16", "1/6", "1/8", "3/32", "1/12", "1/16", "1/24", "1/32"
 };
+const juce::StringArray arpGridChoices { "1/4", "1/8", "1/8L", "1/8H", "1/12",
+                                         "1/16", "1/16L", "1/16H", "1/24" };
+const juce::StringArray arpDurationChoices { "30%", "40%", "50%", "60%", "70%",
+                                             "80%", "90%", "100%", "120%", "FUL" };
+const juce::StringArray arpMotifChoices {
+    "UP(L)", "UP(L&H)", "UP(-)", "DOWN(L)", "DOWN(L&H)", "DOWN(-)",
+    "UP&DN(L)", "UP&DN(L&H)", "UP&DN(-)", "RAND(L)", "RAND(-)", "PHRASE"
+};
+const juce::StringArray arpSplitChoices { "UPPER", "LOWER", "BOTH" };
+
+const juce::StringArray& arpStyleChoices()
+{
+    static const juce::StringArray names = []
+    {
+        juce::StringArray list;
+        for (const auto& entry : septum::arpeggioStyles())
+            list.add (entry.name);
+        return list;
+    }();
+    return names;
+}
+
 const juce::StringArray keyboardModeChoices { "SINGLE", "DUAL", "SPLIT" };
 const juce::StringArray keyboardPartChoices { "UPPER", "LOWER" };
 const juce::StringArray modAssignChoices { "OSC1&OSC2", "OSC1", "OSC2", "PW1",
@@ -228,6 +250,55 @@ struct PatchBinding
     void (*set) (Patch&, float);
 };
 
+// The external-input path is a system setting, not patch data (OM pp. 49-51),
+// so it gets its own binding table: these parameters live in the plug-in's
+// state and are automatable, but a program change must not touch them.
+struct ExternalBinding
+{
+    const char* id;
+    const char* label;
+    Kind kind;
+    int low, high;
+    const juce::StringArray* choices;
+    float (*get) (const septum::ExternalInput&);
+    void (*set) (septum::ExternalInput&, float);
+};
+
+const juce::StringArray audioFilterTypeChoices { "LPF", "HPF", "BPF", "NOTCH" };
+
+#define EXT_INT(field) \
+    [] (const septum::ExternalInput& e) { return (float) e.field; }, \
+    [] (septum::ExternalInput& e, float v) { e.field = (int) std::lround (v); }
+#define EXT_BOOL(field) \
+    [] (const septum::ExternalInput& e) { return e.field ? 1.0f : 0.0f; }, \
+    [] (septum::ExternalInput& e, float v) { e.field = v >= 0.5f; }
+#define EXT_ENUM(field, type) \
+    [] (const septum::ExternalInput& e) { return (float) (int) e.field; }, \
+    [] (septum::ExternalInput& e, float v) { e.field = (type) (int) std::lround (v); }
+
+const std::vector<ExternalBinding>& externalBindings()
+{
+    using septum::AudioFilterType;
+    using septum::FilterSlope;
+    static const std::vector<ExternalBinding> bindings {
+        { "ext_input_vol", "External Input Volume", Kind::Int, 0, 127, nullptr,
+          EXT_INT (inputVolume) },
+        { "ext_center_cancel", "Center Cancel", Kind::Bool, 0, 1, nullptr,
+          EXT_BOOL (centerCancel) },
+        { "audio_filter_on", "Audio Filter Switch", Kind::Bool, 0, 1, nullptr,
+          EXT_BOOL (filterOn) },
+        { "audio_filter_type", "Audio Filter Type", Kind::Choice, 0, 4,
+          &audioFilterTypeChoices, EXT_ENUM (type, AudioFilterType) },
+        { "audio_filter_slope", "Audio Filter Slope", Kind::Choice, 0, 2,
+          &slopeChoices, EXT_ENUM (slope, FilterSlope) },
+        { "audio_filter_cutoff", "Audio Filter Cutoff", Kind::Int, 0, 127,
+          nullptr, EXT_INT (cutoff) },
+        { "audio_filter_reso", "Audio Filter Resonance", Kind::Int, 0, 127,
+          nullptr, EXT_INT (resonance) },
+    };
+    return bindings;
+}
+
 #define PATCH_INT(field) \
     [] (const Patch& p) { return (float) p.field; }, \
     [] (Patch& p, float v) { p.field = (int) std::lround (v); }
@@ -263,6 +334,30 @@ const std::vector<PatchBinding>& patchBindings()
           PATCH_BOOL (reverbOn) },
         { "mod_assign", "Modulation Assign", Kind::Choice, 0, 8,
           &modAssignChoices, PATCH_ENUM (modulationAssign, ModulationAssign) },
+        { "arp_on", "Arpeggio Switch", Kind::Bool, 0, 1, nullptr,
+          PATCH_BOOL (arpeggio.on) },
+        { "arp_hold", "Arpeggio Hold", Kind::Bool, 0, 1, nullptr,
+          PATCH_BOOL (arpeggio.hold) },
+        { "arp_style", "Arpeggio Style", Kind::Choice, 0,
+          (int) septum::arpeggioStyles().size(), &arpStyleChoices(),
+          PATCH_INT (arpeggio.styleIndex) },
+        { "arp_end_step", "Arpeggio End Step", Kind::Int, 0, 32, nullptr,
+          PATCH_INT (arpeggio.endStep) },
+        { "arp_grid", "Arpeggio Grid", Kind::Choice, 0, 9, &arpGridChoices,
+          PATCH_ENUM (arpeggio.grid, septum::ArpeggioGrid) },
+        { "arp_duration", "Arpeggio Duration", Kind::Choice, 0, 10,
+          &arpDurationChoices,
+          PATCH_ENUM (arpeggio.duration, septum::ArpeggioDuration) },
+        { "arp_motif", "Arpeggio Motif", Kind::Choice, 0, 12, &arpMotifChoices,
+          PATCH_ENUM (arpeggio.motif, septum::ArpeggioMotif) },
+        { "arp_octave", "Arpeggio Octave Range", Kind::Int, -3, 3, nullptr,
+          PATCH_INT (arpeggio.octaveRange) },
+        { "arp_accent", "Arpeggio Accent", Kind::Int, 0, 100, nullptr,
+          PATCH_INT (arpeggio.accent) },
+        { "arp_velocity", "Arpeggio Velocity", Kind::Int, 0, 127, nullptr,
+          PATCH_INT (arpeggio.velocity) },
+        { "arp_split", "Split Arpeggio", Kind::Choice, 0, 3, &arpSplitChoices,
+          PATCH_ENUM (arpeggio.splitArpeggio, septum::SplitArpeggio) },
         { "delay_time", "Delay Time", Kind::Int, 0, 127, nullptr,
           PATCH_INT (delay.time) },
         { "delay_feedback", "Delay Feedback", Kind::Int, -98, 98, nullptr,
@@ -349,8 +444,16 @@ constexpr CcBinding ccBindings[] {
 // ---------------------------------------------------------------------------
 
 SeptumAudioProcessor::SeptumAudioProcessor()
-    : AudioProcessor (BusesProperties().withOutput (
-          "Output", juce::AudioChannelSet::stereo(), true)),
+    // The modelled instrument has stereo INPUT jacks feeding the AUDIO FILTER
+    // and the EXT-IN oscillator waveform, so the plug-in declares a stereo
+    // input bus. It is off by default: a host that gives a synthesizer no
+    // input still loads exactly as before, and the engine then behaves like
+    // the hardware with nothing plugged in.
+    : AudioProcessor (BusesProperties()
+                          .withOutput ("Output", juce::AudioChannelSet::stereo(),
+                                       true)
+                          .withInput ("External In",
+                                      juce::AudioChannelSet::stereo(), false)),
       parameters (*this, nullptr, "Septum", createParameterLayout())
 {
     cacheParameterPointers();
@@ -376,6 +479,12 @@ void SeptumAudioProcessor::cacheParameterPointers()
         patchValues.push_back (value);
     }
     masterValue = parameters.getRawParameterValue ("master_level");
+    for (const auto& binding : externalBindings())
+    {
+        auto* value = parameters.getRawParameterValue (binding.id);
+        jassert (value != nullptr);
+        externalValues.push_back (value);
+    }
 
     for (const auto& binding : ccBindings)
     {
@@ -386,11 +495,74 @@ void SeptumAudioProcessor::cacheParameterPointers()
                                  binding.signedValue,
                                  juce::String (binding.suffix) == "key_follow" });
     }
+    // Settled (OM p. 72): the audio filter answers on CC#2 and CC#4.
+    if (auto* parameter = parameters.getParameter ("audio_filter_cutoff"))
+        ccCache.push_back ({ 2, parameter, false, false });
+    if (auto* parameter = parameters.getParameter ("audio_filter_reso"))
+        ccCache.push_back ({ 4, parameter, false, false });
     if (auto* parameter = parameters.getParameter ("delay_time"))
         ccCache.push_back ({ 12, parameter, false, false });
     if (auto* parameter = parameters.getParameter ("reverb_time"))
         ccCache.push_back ({ 13, parameter, false, false });
 }
+
+namespace
+{
+// How a value is printed, on the panel and in the host's own parameter list.
+// The manual prints signed parameters with their sign and PAN as L64...63R,
+// so the plug-in does too.
+const std::vector<juce::String>& signedParameterSuffixes()
+{
+    static const std::vector<juce::String> suffixes {
+        "osc1_pitch", "osc1_detune", "osc1_penv_depth", "osc2_pitch",
+        "osc2_detune", "osc2_penv_depth", "balance", "key_follow",
+        "cutoff_vel", "fenv_depth", "level_vel",
+        "octave_shift", "tone_balance", "arp_octave", "delay_feedback",
+        "reverb_lf_damp_gain", "reverb_hf_damp_gain"
+    };
+    return suffixes;
+}
+
+[[nodiscard]] bool isSignedDisplay (const juce::String& id)
+{
+    for (const auto& suffix : signedParameterSuffixes())
+        if (id == suffix || id.endsWith ("_" + suffix)
+            || (id.startsWith ("up_") && id.substring (3) == suffix)
+            || (id.startsWith ("lo_") && id.substring (3) == suffix))
+            return true;
+    return false;
+}
+
+[[nodiscard]] juce::AudioParameterIntAttributes intAttributes (const juce::String& id)
+{
+    if (id == "pan" || id == "up_pan" || id == "lo_pan")
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                // L64 ... 0 ... 63R, the display the manual prints.
+                if (value < 0)
+                    return "L" + juce::String (-value);
+                if (value > 0)
+                    return juce::String (value) + "R";
+                return juce::String ("0");
+            });
+    if (id == "arp_end_step")
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                // Zero is not a step count, it is the absence of one.
+                return value <= 0 ? juce::String ("STYLE") : juce::String (value);
+            });
+    if (isSignedDisplay (id))
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                return value > 0 ? "+" + juce::String (value)
+                                 : juce::String (value);
+            });
+    return {};
+}
+} // namespace
 
 juce::AudioProcessorValueTreeState::ParameterLayout
 SeptumAudioProcessor::createParameterLayout()
@@ -415,7 +587,7 @@ SeptumAudioProcessor::createParameterLayout()
                 case Kind::Int:
                     layout.add (std::make_unique<AudioParameterInt> (
                         ParameterID { id, 1 }, name, binding.low, binding.high,
-                        (int) std::lround (defaultValue)));
+                        (int) std::lround (defaultValue), intAttributes (id)));
                     break;
                 case Kind::Bool:
                     layout.add (std::make_unique<AudioParameterBool> (
@@ -432,6 +604,31 @@ SeptumAudioProcessor::createParameterLayout()
     addTone (true);
     addTone (false);
 
+    const septum::ExternalInput externalDefaults {};
+    for (const auto& binding : externalBindings())
+    {
+        const auto defaultValue = binding.get (externalDefaults);
+        switch (binding.kind)
+        {
+            case Kind::Int:
+                layout.add (std::make_unique<juce::AudioParameterInt> (
+                    juce::ParameterID { binding.id, 1 }, binding.label,
+                    binding.low, binding.high, (int) std::lround (defaultValue),
+                    intAttributes (binding.id)));
+                break;
+            case Kind::Bool:
+                layout.add (std::make_unique<juce::AudioParameterBool> (
+                    juce::ParameterID { binding.id, 1 }, binding.label,
+                    defaultValue >= 0.5f));
+                break;
+            case Kind::Choice:
+                layout.add (std::make_unique<juce::AudioParameterChoice> (
+                    juce::ParameterID { binding.id, 1 }, binding.label,
+                    *binding.choices, (int) std::lround (defaultValue)));
+                break;
+        }
+    }
+
     for (const auto& binding : patchBindings())
     {
         const auto defaultValue =
@@ -443,7 +640,8 @@ SeptumAudioProcessor::createParameterLayout()
             case Kind::Int:
                 layout.add (std::make_unique<juce::AudioParameterInt> (
                     juce::ParameterID { binding.id, 1 }, binding.label,
-                    binding.low, binding.high, (int) std::lround (defaultValue)));
+                    binding.low, binding.high, (int) std::lround (defaultValue),
+                    intAttributes (binding.id)));
                 break;
             case Kind::Bool:
                 layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -459,6 +657,17 @@ SeptumAudioProcessor::createParameterLayout()
     }
 
     return layout;
+}
+
+septum::ExternalInput SeptumAudioProcessor::snapshotExternalInput() const
+{
+    septum::ExternalInput settings {};
+    const auto& bindings = externalBindings();
+    for (std::size_t i = 0; i < bindings.size(); ++i)
+        bindings[i].set (settings,
+                         externalValues[i]->load (std::memory_order_relaxed));
+    septum::clampToDocumentedRanges (settings);
+    return settings;
 }
 
 septum::Patch SeptumAudioProcessor::snapshotPatch() const
@@ -480,6 +689,9 @@ septum::Patch SeptumAudioProcessor::snapshotPatch() const
         shared[index].set (patch,
                            patchValues[index]->load (std::memory_order_relaxed));
 
+    // The style index is the panel's selector; the grid it names is what the
+    // engine actually plays.
+    septum::applyArpeggioStyle (patch, patch.arpeggio.styleIndex);
     septum::clampToDocumentedRanges (patch);
     return patch;
 }
@@ -490,8 +702,15 @@ void SeptumAudioProcessor::prepareToPlay (double sampleRate,
     engine.prepare (sampleRate, samplesPerBlock);
     engine.setMasterLevel ((int) std::lround (masterValue->load()));
     engine.setPatch (snapshotPatch());
+    engine.setExternalInput (snapshotExternalInput());
     engine.reset();
     monoScratch.assign ((std::size_t) juce::jmax (samplesPerBlock, 16), 0.0f);
+    externalInputL.assign ((std::size_t) juce::jmax (samplesPerBlock, 16), 0.0f);
+    externalInputR.assign ((std::size_t) juce::jmax (samplesPerBlock, 16), 0.0f);
+    // The AMP overdrive's oversampling chain has a fixed group delay, and
+    // every voice carries it whether it is shaping or not so layered tones
+    // stay in phase. Report it so the host can line the track back up.
+    setLatencySamples (engine.latencySamples());
 }
 
 void SeptumAudioProcessor::releaseResources() {}
@@ -499,8 +718,11 @@ void SeptumAudioProcessor::releaseResources() {}
 bool SeptumAudioProcessor::isBusesLayoutSupported (
     const BusesLayout& layouts) const
 {
-    return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
-           && layouts.getMainInputChannelSet().isDisabled();
+    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+        return false;
+    const auto input = layouts.getMainInputChannelSet();
+    return input.isDisabled() || input == juce::AudioChannelSet::mono()
+           || input == juce::AudioChannelSet::stereo();
 }
 
 double SeptumAudioProcessor::getTailLengthSeconds() const
@@ -579,6 +801,7 @@ bool SeptumAudioProcessor::handleController (int controller, int value)
         case 10: engine.setPartPan ((value - 64) / 63.0); return false;
         case 11: engine.setExpression (value / 127.0); return false;
         case 64: engine.setHold (value >= 64); return false;
+        case 66: engine.setSostenuto (value >= 64); return false;
         case 84: engine.setPortamentoControl (value); return false;
         case 120: engine.allSoundOff(); return false;
         case 121:
@@ -586,6 +809,7 @@ bool SeptumAudioProcessor::handleController (int controller, int value)
             engine.setModulation (0.0);
             engine.setExpression (1.0);
             engine.setHold (false);
+            engine.setSostenuto (false);
             return false;
         case 123:
         case 124:
@@ -730,10 +954,40 @@ void SeptumAudioProcessor::applyProgramAsync (int program)
         });
 }
 
+namespace
+{
+[[nodiscard]] const float* externalPointer (int position, bool present,
+                                            const std::vector<float>& buffer)
+{
+    return present ? buffer.data() + position : nullptr;
+}
+} // namespace
+
 void SeptumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                                              juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
+
+    // The input bus shares this buffer with the output, so the external audio
+    // has to be copied out before the buffer is cleared. With the bus
+    // disabled — the default, and what a synth normally gets — there is
+    // nothing to copy and the engine sees the hardware's empty INPUT jacks.
+    const auto samples = buffer.getNumSamples();
+    if ((int) externalInputL.size() < samples)
+    {
+        externalInputL.resize ((std::size_t) juce::jmax (samples, 16));
+        externalInputR.resize ((std::size_t) juce::jmax (samples, 16));
+    }
+    const auto inputBus = getBusBuffer (buffer, true, 0);
+    const int inputChannels = inputBus.getNumChannels();
+    const bool haveExternalInput = inputChannels > 0 && samples > 0;
+    if (haveExternalInput)
+    {
+        const float* sourceL = inputBus.getReadPointer (0);
+        const float* sourceR = inputBus.getReadPointer (inputChannels > 1 ? 1 : 0);
+        std::copy (sourceL, sourceL + samples, externalInputL.begin());
+        std::copy (sourceR, sourceR + samples, externalInputR.begin());
+    }
     buffer.clear();
 
     // UI keyboard events.
@@ -779,21 +1033,34 @@ void SeptumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // patch or the previous block's patch covers the gap instead.
     const auto applyCurrentPatch = [this]
     {
+        // The external-input block is not patch data, but CC#2 and CC#4 edit
+        // it and arrive mid-block like any other mapped panel CC, so it is
+        // refreshed on the same segment boundary rather than a block late —
+        // and it is read *inside* the same seqlock the patch snapshot uses,
+        // because a state restore writes both in one burst and a mixture of
+        // old and new external settings is as torn as a mixed patch.
+        const auto generation = patchGeneration.load (std::memory_order_acquire);
+        const septum::ExternalInput external = snapshotExternalInput();
+
         const int staged = stagedProgram.load (std::memory_order_acquire);
-        if (staged >= 0 && staged < (int) septum::factoryPatches().size())
-        {
+        const bool stagedProgramPending =
+            staged >= 0 && staged < (int) septum::factoryPatches().size();
+        const septum::Patch snapshot =
+            stagedProgramPending ? septum::Patch {} : snapshotPatch();
+
+        // Otherwise a burst was in flight while the snapshots were read: keep
+        // the previous values for this segment and pick up the completed ones
+        // on the next.
+        const bool stable =
+            (generation & 1u) == 0u
+            && patchGeneration.load (std::memory_order_acquire) == generation;
+        if (stable)
+            engine.setExternalInput (external);
+        if (stagedProgramPending)
             engine.setPatch (
                 septum::factoryPatches()[(std::size_t) staged].patch);
-            return;
-        }
-        const auto generation = patchGeneration.load (std::memory_order_acquire);
-        const septum::Patch snapshot = snapshotPatch();
-        if ((generation & 1u) == 0u
-            && patchGeneration.load (std::memory_order_acquire) == generation)
+        else if (stable)
             engine.setPatch (snapshot);
-        // Otherwise a burst was in flight while the snapshot was read: keep
-        // the previous patch for this segment and pick up the completed
-        // values on the next one.
     };
     applyCurrentPatch();
 
@@ -815,15 +1082,22 @@ void SeptumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         if (eventPosition > position)
         {
             engine.process (left + position, right + position,
-                            eventPosition - position);
+                            eventPosition - position,
+                            externalPointer (position, haveExternalInput,
+                                             externalInputL),
+                            externalPointer (position, haveExternalInput,
+                                             externalInputR));
             position = eventPosition;
         }
         if (handleMidiMessage (metadata.getMessage()))
             applyCurrentPatch();  // panel CC or program: next segment uses it
     }
-    if (position < buffer.getNumSamples())
-        engine.process (left + position, right + position,
-                        buffer.getNumSamples() - position);
+    if (position < samples)
+        engine.process (left + position, right + position, samples - position,
+                        externalPointer (position, haveExternalInput,
+                                         externalInputL),
+                        externalPointer (position, haveExternalInput,
+                                         externalInputR));
 
     if (buffer.getNumChannels() == 1)
         for (int i = 0; i < buffer.getNumSamples(); ++i)

@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <vector>
 
 namespace septum
@@ -44,9 +45,18 @@ namespace mapping
     // Q = 0.5; zero is the oscillation threshold; the top of the knob goes
     // slightly negative so self-oscillation grows until the stage limiter
     // holds it, matching the manual's "may not stop at all" warning.
+    //
+    // Both endpoints are settled. The shape between them is not, and a linear
+    // taper put the whole audible range of the control in the top fifth of
+    // its travel: the filter peaked by 1.38 dB at the exact centre of the
+    // knob. The square-root taper below was **chosen by ear** in the
+    // 2026-08-22 listening test recorded in Docs/best-in-class-plan.md; it
+    // brings the centre of the knob to about +5.5 dB. That is a choice, not a
+    // measurement — OQ-08 is still open, and a swept response from a real
+    // unit is still what would close it.
     [[nodiscard]] inline double resonanceDamping (double value) noexcept
     {
-        return 2.0 - 2.04 * (value / 127.0);
+        return 2.0 - 2.04 * std::sqrt (std::clamp (value / 127.0, 0.0, 1.0));
     }
 
     // [voiced, OQ-09] Envelope attack 0-127 -> seconds, 1 ms to 5 s.
@@ -170,6 +180,53 @@ namespace mapping
         return std::pow (10.0, (drive / 127.0) * (32.0 / 20.0));
     }
 
+    // [voiced] The rate the OVERDRIVE shaper is evaluated at. The modelled
+    // engine runs at one fixed rate (OQ-01); a plug-in runs at the host's, so
+    // a shaper evaluated at the host rate folds a *different* amount of alias
+    // energy depending on what the user's interface is set to — the character
+    // of the port, not of the instrument. The stage is oversampled to land
+    // inside this band whatever the host does, so its alias signature is a
+    // property of the model. Closing OQ-11 with a captured transfer would say
+    // what curve to evaluate; it would not change where.
+    inline constexpr double overdriveInternalRateHz = 176400.0;
+
+    // [voiced] The power-of-two factor whose internal rate lands closest to
+    // that target, in octaves: 4x at 44.1/48 kHz, 2x at 88.2/96 kHz, none at
+    // 176.4/192 kHz. A power-of-two ladder cannot hit a fixed rate exactly
+    // from an arbitrary host rate, so what it guarantees is a bound rather
+    // than a number: for every host rate from 22.05 to 192 kHz the shaper
+    // runs within ±1.0 octave of the target, against the 3.1 octaves those
+    // host rates themselves span. Choosing the *nearest* factor rather than
+    // the first one at or above the target is what makes that true of the
+    // in-between rates — 64 kHz would otherwise be pushed to 256 kHz while
+    // 88.2 kHz sat at 176.4.
+    //
+    // The ladder stops at 4 because the shaper stops at 4: `process` has an
+    // outer and an inner half-band stage and nothing beyond them. Offering 8
+    // bought nothing at 22.05 and 24 kHz - those rates ran at 4 regardless -
+    // while making this function claim a rate the signal path never reached.
+    // A third stage would cost 2p at 4x host, which is 1.5 host samples: a
+    // fractional group delay to report and to align the bypass path against,
+    // for two sample rates. The bound is stated at what the ladder delivers
+    // instead, and 22.05 kHz is the one rate that sits a whole octave low.
+    [[nodiscard]] inline int overdriveOversampling (double hostRateHz) noexcept
+    {
+        const double rate = std::max (1.0, hostRateHz);
+        int best = 1;
+        double bestDistance = std::abs (std::log2 (rate / overdriveInternalRateHz));
+        for (int factor : { 2, 4 })
+        {
+            const double distance =
+                std::abs (std::log2 (rate * factor / overdriveInternalRateHz));
+            if (distance < bestDistance - 1.0e-9)
+            {
+                bestDistance = distance;
+                best = factor;
+            }
+        }
+        return best;
+    }
+
     // [voiced, OQ-12] Delay TIME 0-127 -> seconds, 1 ms to 1.3 s.
     [[nodiscard]] inline double delaySeconds (double value) noexcept
     {
@@ -200,11 +257,410 @@ namespace mapping
     // [voiced, OQ-07] MIX/MOD LOW FREQ shelf: corner and gain.
     inline constexpr double lowShelfHz = 200.0;
     inline constexpr double lowShelfGainDb = 8.0;
+
+    // [voiced, OQ-07] BALANCE -63..+63. Settled only at the endpoints (fully
+    // left is OSC1 alone, fully right OSC2 alone); each leg sits at unity in
+    // the centre and the opposite leg fades linearly to silence. The same law
+    // sits between the two tones for TONE BALANCE.
+    [[nodiscard]] inline double balanceLegGain (int balance, bool firstLeg) noexcept
+    {
+        const double signed_ = firstLeg ? -balance : balance;
+        return std::min (1.0, (63.0 + signed_) / 63.0);
+    }
+
+    // [voiced, OQ-06] FB OSC loop shape: where the comb taps, how much the
+    // loop is damped per sample, the trim that keeps it from running away, and
+    // the output level that keeps a full-feedback oscillator in the same
+    // loudness range as the other waves.
+    inline constexpr double fbOscDelayRatio = 0.5;      // half the period
+    inline constexpr double fbOscLoopDamping = 0.55;
+    inline constexpr double fbOscLoopTrim = 0.995;
+    inline constexpr double fbOscOutputGain = 0.6;
+
+    // [reported + voiced, OQ-05] The seven-saw stack sums to roughly +/-2.5
+    // before the tracked high-pass; this brings it back to the range the other
+    // waves occupy.
+    inline constexpr double superSawStackNormalisation = 1.0 / 2.5;
+
+    // [voiced] The ten-voice sum needs fixed headroom before the output stage;
+    // the demos and tests treat full scale as the analog stage's clip point.
+    inline constexpr double voiceHeadroom = 0.22;
+
+    // [voiced, OQ-10] How far the modulation lever reaches into each of the
+    // settled MODULATION ASSIGN destinations at full travel.
+    inline constexpr double leverVibratoCents = 60.0;
+    inline constexpr double leverPulseWidth = 63.0;     // of the 0-127 span
+    inline constexpr double leverFilterOctaves = 2.0;
+    inline constexpr double leverAmpDepth = 1.0;        // full tremolo
+
+    // [voiced, OQ-12] Delay modulation: the rate the MOD RATE knob spans and
+    // how far MOD DEPTH sweeps the delay time.
+    [[nodiscard]] inline double delayModulationRateHz (int value) noexcept
+    {
+        return 0.02 * std::pow (400.0, value / 127.0);
+    }
+    inline constexpr double delayModulationDepthSeconds = 0.008;
+    // [voiced] Slew on the delay time itself, so a TIME move glides rather
+    // than jumping the read head.
+    inline constexpr double delayTimeSlewSeconds = 0.08;
+
+    // [voiced, OQ-12] Reverb geometry. Mutually prime line lengths spread over
+    // roughly 30-90 ms at SIZE 8, four series input allpasses, and the SIZE
+    // scaling that shrinks both.
+    inline constexpr std::array<double, 8> reverbLineSeconds {
+        0.0297, 0.0371, 0.0411, 0.0437, 0.0533, 0.0631, 0.0733, 0.0797
+    };
+    inline constexpr std::array<double, 4> reverbDiffuserSeconds {
+        0.0043, 0.0083, 0.0151, 0.0223
+    };
+    [[nodiscard]] inline double reverbSizeScale (int size) noexcept
+    {
+        return 0.35 + 0.65 * ((std::clamp (size, 0, 7) + 1) / 8.0);
+    }
+    // [voiced, OQ-12] DIFFUSION and DENSITY as allpass coefficients, the level
+    // the diffused input is injected into the network at, and the wet return.
+    [[nodiscard]] inline double reverbDiffusionGain (int value) noexcept
+    {
+        return 0.25 + 0.5 * (value / 127.0);
+    }
+    [[nodiscard]] inline double reverbDensityGain (int value) noexcept
+    {
+        return 0.2 + 0.55 * (value / 127.0);
+    }
+    inline constexpr double reverbInputInjection = 0.35;
+    inline constexpr double reverbWetReturn = 0.8;
+
+    // [voiced, OQ-08] The -24 dB path's second stage. The first stage carries
+    // the resonance; the second is a fixed, gentler 2-pole that adds the extra
+    // 12 dB/oct. Whether the hardware resonates on one stage or both is open.
+    inline constexpr double filterSecondStageDamping = 1.2;
+    // [voiced, OQ-08] Where the resonant stage's integrator states stop
+    // growing, so self-oscillation is bounded as the manual's "may not stop at
+    // all" implies rather than divergent.
+    inline constexpr double filterStateLimit = 1.5;
+
+    // [voiced] The output stage's final safety knee: transparent below this,
+    // saturating above, so a reasonably driven patch never touches it and an
+    // unreasonable one cannot hand the host a sample outside +/-1.05.
+    inline constexpr double outputLimitKnee = 0.9;
+    inline constexpr double outputLimitRange = 0.15;
+
+    // [voiced] Received CC#10 tilts the final pair with constant power, and is
+    // normalised to unity at the centre rather than to unity at an extreme.
+    inline constexpr double partPanCentreGain = 1.4142135623730951;
+
+    // [voiced] Slew on the master gain chain, so a level move does not step.
+    inline constexpr double masterSlewSeconds = 0.01;
+
+    // [voiced, OQ-14] INPUT VOL 0-127 -> amplitude. The knob is analog on the
+    // hardware, ahead of the codec; a squared law matches the AMP LEVEL knob's
+    // and is the same "silent at the far left" the manual describes.
+    [[nodiscard]] inline double externalInputGain (int value) noexcept
+    {
+        const double n = value / 127.0;
+        return n * n;
+    }
+
+    // [voiced, OQ-14] The AUDIO FILTER's RESONANCE. The manual describes it as
+    // a boost around the cutoff and, unlike the voice filter's, never warns
+    // that it may not stop: the curve is the voice filter's, floored short of
+    // the oscillation threshold so an input filter cannot run away.
+    [[nodiscard]] inline double audioFilterDamping (double value) noexcept
+    {
+        return std::max (0.05, resonanceDamping (value));
+    }
+
+    // [voiced, OQ-14] How far the AUDIO-FILTER LFO destination and the
+    // modulation lever move that cutoff.
+    [[nodiscard]] inline double audioFilterLfoOctaves (int depth) noexcept
+    {
+        return depth * (5.0 / 63.0);
+    }
+    inline constexpr double audioFilterLeverOctaves = 2.0;
+
+    // [voiced, OQ-14] How fast the direct monitor path is muted when an EXT-IN
+    // voice takes the input over, and unmuted when it stops.
+    inline constexpr double externalMonitorFadeSeconds = 0.005;
+
+    // [settled] One grid section's length in seconds. The manual gives the
+    // divisions; the shuffle *amounts* are voiced (OQ-15) — Light and Heavy
+    // are named, not measured. A shuffled pair keeps its total length and
+    // moves the boundary inside it, so the beat never drifts.
+    [[nodiscard]] inline double arpeggioShuffleRatio (ArpeggioGrid grid) noexcept
+    {
+        switch (grid)
+        {
+            case ArpeggioGrid::EighthLight:
+            case ArpeggioGrid::SixteenthLight:
+                return 0.58;
+            case ArpeggioGrid::EighthHeavy:
+            case ArpeggioGrid::SixteenthHeavy:
+                return 0.66;
+            case ArpeggioGrid::Quarter:
+            case ArpeggioGrid::Eighth:
+            case ArpeggioGrid::Twelfth:
+            case ArpeggioGrid::Sixteenth:
+            case ArpeggioGrid::TwentyFourth:
+                break;
+        }
+        return 0.5;   // an unshuffled grid splits its pair evenly
+    }
+
+    [[nodiscard]] inline double arpeggioStepSeconds (double bpm, ArpeggioGrid grid,
+                                                     int stepIndex) noexcept
+    {
+        const double beat = 60.0 / std::clamp (bpm, 5.0, 300.0);
+        const bool firstOfPair = (stepIndex & 1) == 0;
+        const double ratio = arpeggioShuffleRatio (grid);
+        switch (grid)
+        {
+            case ArpeggioGrid::Quarter:        return beat;
+            case ArpeggioGrid::Eighth:         return beat * 0.5;
+            case ArpeggioGrid::EighthLight:
+            case ArpeggioGrid::EighthHeavy:
+                return beat * (firstOfPair ? ratio : 1.0 - ratio);
+            case ArpeggioGrid::Twelfth:        return beat / 3.0;
+            case ArpeggioGrid::Sixteenth:      return beat * 0.25;
+            case ArpeggioGrid::SixteenthLight:
+            case ArpeggioGrid::SixteenthHeavy:
+                return beat * 0.5 * (firstOfPair ? ratio : 1.0 - ratio);
+            case ArpeggioGrid::TwentyFourth:   return beat / 6.0;
+        }
+        return beat * 0.25;
+    }
+
+    // [settled] DURATION as a fraction of the final grid section.
+    [[nodiscard]] inline double arpeggioDurationFraction (ArpeggioDuration d) noexcept
+    {
+        switch (d)
+        {
+            case ArpeggioDuration::P30:  return 0.30;
+            case ArpeggioDuration::P40:  return 0.40;
+            case ArpeggioDuration::P50:  return 0.50;
+            case ArpeggioDuration::P60:  return 0.60;
+            case ArpeggioDuration::P70:  return 0.70;
+            case ArpeggioDuration::P80:  return 0.80;
+            case ArpeggioDuration::P90:  return 0.90;
+            case ArpeggioDuration::P100: return 1.00;
+            case ArpeggioDuration::P120: return 1.20;
+            case ArpeggioDuration::Full: return 0.0;   // held, not timed
+        }
+        return 0.80;
+    }
+
+    // [voiced, OQ-15] The fixed velocity ACCENT 0 collapses the style's
+    // programmed pattern onto.
+    inline constexpr double arpeggioFlatVelocity = 100.0;
+
+    // [settled] Where a style's note row lands on the keys held down.
+    //
+    // `keys` is the held chord sorted ascending, `row` is the style's 1-based
+    // note row, `span` the highest row the style uses, and `cycle` counts
+    // completed passes through the style. The MOTIF suffixes are the manual's:
+    // (L) sounds the lowest key every time, (L&H) the lowest and the highest
+    // every time, (-) neither, and the window over the remaining keys walks up,
+    // down, up-and-down or at random once per pass.
+    //
+    // This is not inferred. The manual works three examples of the style
+    // "1-2-3-2" against the keys C-D-E-F-G (OM p. 67), and this function
+    // reproduces all three exactly:
+    //   UP(-)        C-D-E-D -> D-E-F-E -> E-F-G-F
+    //   UP(L)        C-D-E-D -> C-E-F-E -> C-F-G-F
+    //   UP&DOWN(L&H) C-D-G-D -> C-E-G-E -> C-F-G-F -> C-E-G-E
+    // PHRASE is the exception: it reads the rows as semitone steps above the
+    // last key pressed, which is voiced (OQ-15).
+    // Returns the index into the sorted chord, or -1 when the motif does not
+    // read the chord positionally (PHRASE).
+    [[nodiscard]] inline int arpeggioKeyIndexForRow (ArpeggioMotif motif, int count,
+                                                     int row, int span,
+                                                     int cycle) noexcept
+    {
+        if (count <= 0 || motif == ArpeggioMotif::Phrase)
+            return -1;
+
+        const bool descending = motif == ArpeggioMotif::DownL
+                                || motif == ArpeggioMotif::DownLowHigh
+                                || motif == ArpeggioMotif::Down;
+        const bool pinLow = motif == ArpeggioMotif::UpL
+                            || motif == ArpeggioMotif::UpLowHigh
+                            || motif == ArpeggioMotif::DownL
+                            || motif == ArpeggioMotif::DownLowHigh
+                            || motif == ArpeggioMotif::UpDownL
+                            || motif == ArpeggioMotif::UpDownLowHigh
+                            || motif == ArpeggioMotif::RandomL;
+        const bool pinHigh = motif == ArpeggioMotif::UpLowHigh
+                             || motif == ArpeggioMotif::DownLowHigh
+                             || motif == ArpeggioMotif::UpDownLowHigh;
+
+        const int positions = std::max (1, count - std::max (1, span) + 1);
+        int base = 0;
+        if (motif == ArpeggioMotif::UpDownL || motif == ArpeggioMotif::UpDownLowHigh
+            || motif == ArpeggioMotif::UpDown)
+        {
+            const int period = std::max (1, 2 * positions - 2);
+            const int phase = ((cycle % period) + period) % period;
+            base = phase < positions ? phase : period - phase;
+        }
+        else
+        {
+            base = ((cycle % positions) + positions) % positions;
+        }
+
+        // The window walks; DOWN reads it from the top of the chord. The pins
+        // are applied *after* that reversal, because "(L)" names the lowest key
+        // pressed and "(L&H)" the lowest and the highest — which key that is
+        // does not depend on which way the window is walking.
+        const int walked = std::clamp (base + row - 1, 0, count - 1);
+        int index = descending ? count - 1 - walked : walked;
+        if (pinLow && row == 1)
+            index = 0;
+        else if (pinHigh && row == span)
+            index = count - 1;
+        return std::clamp (index, 0, count - 1);
+    }
+
+    [[nodiscard]] inline int arpeggioKeyForRow (ArpeggioMotif motif,
+                                                const int* keys, int count,
+                                                int lastPressed, int row,
+                                                int span, int cycle) noexcept
+    {
+        if (count <= 0 || keys == nullptr)
+            return -1;
+        if (motif == ArpeggioMotif::Phrase)
+        {
+            const int reference = lastPressed >= 0 ? lastPressed : keys[0];
+            return std::clamp (reference + row - 1, 0, 127);
+        }
+        return keys[arpeggioKeyIndexForRow (motif, count, row, span, cycle)];
+    }
+
+    // [voiced] Parameter slew for the filter's panel-side controls. It is not
+    // a model of anything the hardware does — it exists so a patch edit or an
+    // S&H LFO edge cannot put a discontinuity into the filter coefficient —
+    // so it is applied to the panel side only and never to an envelope.
+    inline constexpr double controlSlewSeconds = 0.0025;
 }
 
 // --------------------------------------------------------------------------
 // Engine
 // --------------------------------------------------------------------------
+
+// --------------------------------------------------------------------------
+// Half-band polyphase resampling, used only around the AMP overdrive.
+//
+// A half-band FIR of length N = 4p+1 has its centre tap at exactly 0.5 and
+// every other even tap at zero, so both directions cost p folded multiplies
+// per slow-rate sample and the even phase is a pure delay. Both filters are
+// equiripple designs (Parks-McClellan, then used with their natural half-band
+// structure rather than a forced one); their measured responses are quoted at
+// the coefficient tables. Each direction delays by p slow-rate samples, so a
+// round trip through one stage costs 2p.
+// --------------------------------------------------------------------------
+struct HalfBandStage
+{
+    static constexpr int historySize = 32;   // power of two, >= 2 * maxPairs
+    static constexpr int historyMask = historySize - 1;
+
+    const double* taps { nullptr };  // the folded odd taps, `pairs` of them
+    int pairs { 0 };                 // p
+
+    std::array<double, historySize> upHistory {};
+    std::array<double, historySize> downEven {};
+    std::array<double, historySize> downOdd {};
+    int upWrite { 0 }, downWrite { 0 };
+
+    void configure (const double* coefficients, int pairCount) noexcept
+    {
+        taps = coefficients;
+        pairs = pairCount;
+        clear();
+    }
+
+    void clear() noexcept
+    {
+        upHistory.fill (0.0);
+        downEven.fill (0.0);
+        downOdd.fill (0.0);
+        upWrite = downWrite = 0;
+    }
+
+    // One slow-rate sample in, two fast-rate samples out.
+    void upsample (double x, double& even, double& odd) noexcept
+    {
+        upHistory[static_cast<std::size_t> (upWrite)] = x;
+        even = upHistory[static_cast<std::size_t> ((upWrite - pairs) & historyMask)];
+        double sum = 0.0;
+        const int span = 2 * pairs - 1;
+        for (int j = 0; j < pairs; ++j)
+            sum += taps[j]
+                   * (upHistory[static_cast<std::size_t> ((upWrite - j) & historyMask)]
+                      + upHistory[static_cast<std::size_t> ((upWrite - (span - j))
+                                                            & historyMask)]);
+        odd = 2.0 * sum;
+        upWrite = (upWrite + 1) & historyMask;
+    }
+
+    // Two fast-rate samples in, one slow-rate sample out.
+    [[nodiscard]] double downsample (double even, double odd) noexcept
+    {
+        downEven[static_cast<std::size_t> (downWrite)] = even;
+        downOdd[static_cast<std::size_t> (downWrite)] = odd;
+        double sum =
+            0.5 * downEven[static_cast<std::size_t> ((downWrite - pairs) & historyMask)];
+        const int span = 2 * pairs - 1;
+        for (int j = 0; j < pairs; ++j)
+            sum += taps[j]
+                   * (downOdd[static_cast<std::size_t> ((downWrite - 1 - j) & historyMask)]
+                      + downOdd[static_cast<std::size_t> ((downWrite - 1 - (span - j))
+                                                          & historyMask)]);
+        downWrite = (downWrite + 1) & historyMask;
+        return sum;
+    }
+};
+
+// Outer stage, host rate <-> 2x. N = 33, passband to 0.215, stopband from
+// 0.285: passband droop 0.06 dB, stopband -43.1 dB, delay 8 slow samples.
+inline constexpr std::array<double, 8> halfBandOuterTaps {
+    -0.0067193719785342918, 0.0086866417484826458, -0.014239894060670263,
+    0.022346726321779357, -0.034675518871777167, 0.055571891864522723,
+    -0.10108701398731906, 0.31661168588312411
+};
+
+// Inner stage, 2x <-> 4x, where the images sit an octave further out. N = 13,
+// passband to 0.180, stopband from 0.320: droop 0.19 dB, stopband -33.3 dB,
+// delay 3 slow samples.
+inline constexpr std::array<double, 3> halfBandInnerTaps {
+    0.03358705057227105, -0.08268763122280455, 0.30989245062299142
+};
+
+// The AMP section's OVERDRIVE, evaluated at a fixed internal rate.
+//
+// Inside the oversampled loop the `tanh` shaper is evaluated with first-order
+// antiderivative anti-aliasing (Parker, Zavalishin & Bozkurt, DAFx-16): the
+// sample's output is the transfer's average over the step just taken rather
+// than its value at the step's end, which is what a continuous-time
+// nonlinearity would produce. It costs one `log1p` in place of one `tanh` and
+// it composes with the oversampling rather than replacing it.
+//
+// The stage has a fixed group delay, so a voice whose OVERDRIVE is *off* is
+// pushed through a matched pure delay instead of the resampler. Without that
+// an overdriven UPPER and a clean LOWER would sound the same note 19 samples
+// apart and comb each other around 1 kHz.
+struct OverdriveStage
+{
+    int factor { 1 };
+    int latency { 0 };               // host-rate samples, both paths
+    HalfBandStage outer {}, inner {};
+    double previousInput { 0.0 };    // the ADAA step's left endpoint
+    double previousIntegral { 0.0 };
+    std::array<double, 32> bypass {};
+    int bypassWrite { 0 };
+
+    void prepare (double hostRateHz) noexcept;
+    void clear() noexcept;
+    [[nodiscard]] double process (double x, double preGain, double compensation,
+                                  bool enabled) noexcept;
+};
 
 class Engine
 {
@@ -220,6 +676,13 @@ public:
     [[nodiscard]] const Patch& currentPatch() const noexcept { return patch_; }
 
     // System-common controls (documented ranges).
+    // The external-input path is a system setting, not patch data (OM p. 49-51).
+    void setExternalInput (const ExternalInput& settings) noexcept;
+    [[nodiscard]] const ExternalInput& externalInput() const noexcept
+    {
+        return external_;
+    }
+
     void setMasterLevel (int level0to127) noexcept;
     void setMasterTuneHz (double a4Hz) noexcept;         // 415.30-466.20
     void setMasterKeyShift (int semitones) noexcept;     // -24..+24
@@ -230,6 +693,7 @@ public:
     void noteOn (int note, int velocity1to127);
     void noteOff (int note);
     void setHold (bool down);
+    void setSostenuto (bool down);
     void setPitchBend (double normalised);   // -1..+1 over the per-tone range
     void setModulation (double amount0to1);  // mod lever / CC#1
     void setExpression (double amount0to1);  // CC#11
@@ -239,7 +703,12 @@ public:
     void allNotesOff();
     void allSoundOff();
 
-    void process (float* left, float* right, int numSamples);
+    // `inputLeft`/`inputRight` carry the block's external audio, or null when
+    // the host gives the instrument no input bus (the hardware's INPUT jacks
+    // with nothing plugged in).
+    void process (float* left, float* right, int numSamples,
+                  const float* inputLeft = nullptr,
+                  const float* inputRight = nullptr);
 
     [[nodiscard]] int activeVoiceCount() const noexcept;
     [[nodiscard]] float getOutputLevel (int channel) const noexcept
@@ -253,6 +722,12 @@ public:
     // the documented ±98 % — ring longer on the hardware too; a finite report
     // is the practical bound, not a claim that ±98 % ever fully dies.
     [[nodiscard]] static double maximumTailSeconds() noexcept { return 30.0; }
+
+    // The AMP overdrive's oversampling chain has a fixed group delay, and
+    // every voice carries it whether its OVERDRIVE is on or off so layered
+    // tones stay aligned. That makes it the instrument's latency, and a host
+    // can compensate for it.
+    [[nodiscard]] int latencySamples() const noexcept { return latencySamples_; }
 
 private:
     enum class Part { Upper, Lower };
@@ -363,15 +838,76 @@ private:
         double duty1 { 0.5 }, duty2 { 0.5 };
         double superAmount1 { 0.0 }, superAmount2 { 0.0 };
         double fbGain1 { 0.0 }, fbGain2 { 0.0 };
+        // Filter coefficients at the start of the control tick, and where they
+        // must arrive by its end. The render loop walks between them one
+        // sample at a time, so a control tick never steps the coefficient.
         double filterG { 0.1 }, filterK { 2.0 };
+        double filterGTarget { 0.1 }, filterKTarget { 2.0 };
         double ampGainL { 0.0 }, ampGainR { 0.0 };
         BiquadCoeffs superHpf1 {}, superHpf2 {};
+        OverdriveStage overdrive {};
         std::uint32_t noiseRng { 0x1234567u };
-        // Control slew (voiced ~2.5 ms): stepped cutoff moves (S&H, patch
-        // edits) stay audibly steppy without sample-level discontinuities.
-        double cutoffOctSlewed { 8.0 };
+        // Control slew (voiced ~2.5 ms) on the *parameter* side of the cutoff
+        // sum only — the knob, key follow, velocity offset and the LFO, which
+        // are what step when a patch is edited or an S&H LFO fires. The
+        // filter envelope is deliberately outside it: the two envelopes read
+        // the same slider through the same mapping, so smoothing one of them
+        // and not the other would make the documented "fast ADSR response"
+        // true of the amp and false of the filter.
+        double cutoffParamOctSlewed { 8.0 };
+        double filterEnvOctSlewed { 0.0 };
         double resonanceSlewed { 0.0 };
         bool controlsPrimed { false };
+    };
+
+    // The arpeggiator's state for one tone. The keys it holds are the keys the
+    // keyboard routed to that tone; the rows are the style's note rows, each
+    // of which can have a note of its own sounding, so chord styles work.
+    struct ArpeggioRuntime
+    {
+        std::array<int, 16> keys {};          // sorted ascending
+        std::array<int, 16> velocities {};    // aligned with `keys`
+        int keyCount { 0 };
+        // The keys physically down, which is not the same list once HOLD is on:
+        // the chord is latched only when the last of them is released.
+        std::array<int, 16> physicalKeys {};
+        std::array<int, 16> physicalVelocities {};
+        // How many presses of that pitch are outstanding. Sequenced parts
+        // routinely overlap two notes of the same pitch by a few
+        // milliseconds; counting them keeps the first release from taking
+        // the chord entry the second press is still holding.
+        std::array<int, 16> physicalPresses {};
+        int physicalCount { 0 };
+        int lastPressed { -1 };               // PHRASE's reference key
+        int lastVelocity { 100 };
+        bool latched { false };               // HOLD is keeping this chord
+        int cycle { 0 };                      // completed passes through the style
+        // Where the motif's window sits. Normally the cycle count, but a
+        // RANDOM motif redraws it, and OCTAVE RANGE must keep counting cycles
+        // either way — the two controls are independent.
+        int windowCycle { 0 };
+
+        struct Row
+        {
+            int note { -1 };
+            int remaining { 0 };   // samples until the scheduled note-off
+            bool sustained { false };  // DURATION = FUL: no scheduled off
+            // DURATION 120 % means a gate outlives its grid, so the note it
+            // overlaps into has to start while the previous one is still
+            // running. One tail slot is enough: the overlap is a fifth of a
+            // step, so at most one predecessor is ever still sounding.
+            int tailNote { -1 };
+            int tailRemaining { 0 };
+        };
+        std::array<Row, arpeggioMaxRows> rows {};
+
+        void clearKeys() noexcept
+        {
+            keyCount = 0;
+            physicalCount = 0;
+            physicalPresses.fill (0);
+            latched = false;
+        }
     };
 
     struct ToneRuntime
@@ -384,6 +920,21 @@ private:
         int heldCount { 0 };
         double lastPitch { 60.0 };
         bool anyKeyDown { false };
+        // Settled (part controller CC#66): the sostenuto pedal latches the
+        // *notes* that were sounding when it went down, not the voices
+        // playing them. A mono tone hands its one voice from note to note by
+        // last-note priority, so a latch tied to the voice would be lost the
+        // moment another key borrowed it.
+        std::array<std::uint64_t, 2> sostenutoNotes {};
+
+        [[nodiscard]] bool sostenutoHolds (int note) const noexcept
+        {
+            if (note < 0 || note > 127)
+                return false;
+            return (sostenutoNotes[static_cast<std::size_t> (note >> 6)]
+                    & (1ull << (note & 63)))
+                   != 0ull;
+        }
     };
 
     struct DelayLine
@@ -426,6 +977,8 @@ private:
         return tones_[part == Part::Upper ? 0 : 1];
     }
     [[nodiscard]] bool partSounds (Part part) const noexcept;
+    [[nodiscard]] bool keyStillDown (const Voice& voice) noexcept;
+    void releaseIfNoPedalHolds (Voice& voice) noexcept;
     [[nodiscard]] int partVoiceLimit() const noexcept;
     void startNoteForPart (Part part, int note, int velocity);
     void releaseNoteForPart (Part part, int note);
@@ -433,8 +986,22 @@ private:
     void triggerVoice (Voice& voice, Part part, int note, double velocity,
                        bool legato);
     void updateVoiceControls (Voice& voice, int tickSamples);
-    void renderVoiceTick (Voice& voice, float* mono, int samples);
+    void renderVoiceTick (Voice& voice, float* mono, int samples,
+                          const float* external);
+    void prepareExternalTick (const float* inputLeft, const float* inputRight,
+                              int offset, int samples);
+    [[nodiscard]] bool anyVoiceUsesExternalInput() const noexcept;
     void advanceToneLfos (int samples);
+
+    // -- arpeggiator -------------------------------------------------------
+    [[nodiscard]] bool arpeggioDrives (Part part) const noexcept;
+    void arpeggioAddKey (Part part, int note, int velocity);
+    void arpeggioRemoveKey (Part part, int note);
+    void arpeggioStopPart (Part part);
+    void handleArpeggioRouting (Part part, bool nowDriven);
+    void advanceArpeggiator (int samples);
+    void arpeggioFireStep();
+    void arpeggioFireStepForPart (Part part, double stepSeconds);
     void processEffects (const float* dryL, const float* dryR,
                          const float* delaySendL, const float* delaySendR,
                          const float* reverbSendL, const float* reverbSendR,
@@ -447,6 +1014,7 @@ private:
     Patch patch_ {};
     double sampleRate_ { 44100.0 };
     int maxBlock_ { 512 };
+    int latencySamples_ { 0 };
 
     int masterLevel_ { 127 };
     double masterTuneHz_ { 440.0 };
@@ -460,9 +1028,21 @@ private:
     double partLevel_ { 1.0 };
     double partPan_ { 0.0 };
     bool hold_ { false };
+    bool sostenuto_ { false };
 
     std::array<Voice, maxPolyphony> voices_ {};
     std::array<ToneRuntime, partCount> tones_ {};
+    std::array<ArpeggioRuntime, partCount> arpeggios_ {};
+    double arpeggioStepRemaining_ { 0.0 };   // samples to the next boundary
+    int arpeggioStep_ { 0 };
+    bool arpeggioRunning_ { false };
+    bool arpeggioActive_ { false };   // what the ARPEGGIO switch last was
+    // Whether each part was arpeggiated last tick. The ARPEGGIO switch is not
+    // the only thing that decides it - SPLIT ARPEGGIO, the keyboard mode and
+    // the keyboard part all move a part in or out of the arpeggiator's hands,
+    // and all of them are automatable.
+    std::array<bool, partCount> arpeggioDriven_ {};
+    std::uint32_t arpeggioRng_ { 0x6d2b79f5u };
     std::uint32_t voiceClock_ { 0 };
     std::uint32_t rng_ { 0x2545f491u };
 
@@ -472,6 +1052,22 @@ private:
     Reverb reverb_ {};
     double delayTimeSmoothed_ { 0.0 };
     double reverbFeedback_ { 0.0 };
+
+    // External input: INPUT VOL -> CENTER CANCEL -> AUDIO FILTER on the direct
+    // monitor path, and the pre-filter mono sum feeding any EXT-IN oscillator.
+    ExternalInput external_ {};
+    std::vector<float> externalDirectL_, externalDirectR_, externalMono_;
+    SvfStage audioFilter1_[2] {}, audioFilter2_[2] {};
+    double audioFilterG_ { 0.1 }, audioFilterK_ { 2.0 };
+    bool audioFilterPrimed_ { false };
+    double monitorGain_ { 1.0 };
+    // The voices carry the overdrive stage's group delay whether they are
+    // shaping or not, and the plug-in reports it; the monitor path has to
+    // carry it too, or the input would arrive ahead of everything else.
+    std::array<std::array<float, 32>, 2> monitorDelay_ {};
+    int monitorDelayWrite_ { 0 };
+    double smoothedMonitorLevel_ { 1.0 };
+    double smoothedInputGain_ { 0.62 };
 
     // Analog output stage state (documented component values).
     double dcX1_[2] {}, dcY1_[2] {};

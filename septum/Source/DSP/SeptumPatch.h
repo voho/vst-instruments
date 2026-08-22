@@ -43,6 +43,11 @@ enum class FilterType { Bypass, Lpf, Hpf, Bpf };
 
 enum class FilterSlope { Db12, Db24 };
 
+// The AUDIO FILTER on the external-input path is a separate circuit from the
+// voice filter and has one type the voice filter does not: the panel cycles
+// LPF -> HPF -> BPF -> NOTCH -> LPF (OM p. 50).
+enum class AudioFilterType { Lpf, Hpf, Bpf, Notch };
+
 // SysEx enumeration order 0-6 (Patch Tone offsets 27/31).
 enum class LfoShape { Tri, Sin, Saw, Sqr, Trapezoid, SampleHold, Random };
 
@@ -56,6 +61,107 @@ enum class KeyboardPart { Upper, Lower };
 
 // Patch Tone offset 3F: POLY, SOLO+LEGATO, SOLO.
 enum class MonoMode { Poly, SoloLegato, Solo };
+
+// ARPEGGIO parameters (OM p. 66), saved with each patch.
+//
+// GRID: the note division of one grid section, and how much shuffle
+// syncopation is applied to it (none / light / heavy).
+enum class ArpeggioGrid
+{
+    Quarter,        // 1/4  — one grid section = one beat
+    Eighth,         // 1/8  — two grid sections = one beat
+    EighthLight,    // 1/8L — two sections, light shuffle
+    EighthHeavy,    // 1/8H — two sections, heavy shuffle
+    Twelfth,        // 1/12 — eighth triplet, three sections = one beat
+    Sixteenth,      // 1/16 — four sections = one beat
+    SixteenthLight, // 1/16L
+    SixteenthHeavy, // 1/16H
+    TwentyFourth    // 1/24 — sixteenth triplet, six sections = one beat
+};
+
+// DURATION: how much of the grid the note occupies. FUL sustains until the
+// next new sound is specified even without a tie.
+enum class ArpeggioDuration
+{
+    P30, P40, P50, P60, P70, P80, P90, P100, P120, Full
+};
+
+// MOTIF: how the style's note rows are mapped onto the keys held down. The
+// suffixes are the manual's: (L) sounds the lowest key every time, (L&H) the
+// lowest and the highest every time, (-) neither.
+enum class ArpeggioMotif
+{
+    UpL, UpLowHigh, Up,
+    DownL, DownLowHigh, Down,
+    UpDownL, UpDownLowHigh, UpDown,
+    RandomL, Random,
+    Phrase
+};
+
+// SPLIT ARPEGGIO: which tone(s) the arpeggiator drives in SPLIT mode.
+enum class SplitArpeggio { Upper, Lower, Both };
+
+inline constexpr int arpeggioMaxSteps = 32;
+inline constexpr int arpeggioMaxRows = 16;
+// Grid cell encodings: a rest, a tie holding the preceding note, or a note-on
+// carrying the style's programmed velocity.
+inline constexpr signed char arpeggioRest = 0;
+inline constexpr signed char arpeggioTie = -1;
+
+// "A series of data for basic arpeggio patterns and chord styles recorded in
+// the form of a grid consisting of a maximum of 32 steps x 16 pitches"
+// (OM p. 67). One style is saved per patch. Roland's own 32 templates are
+// unpublished data and none of them ships here; the styles this project
+// supplies are original patterns.
+struct ArpeggioStyle
+{
+    int endStep { 4 };   // 1-32
+    std::array<std::array<signed char, arpeggioMaxRows>, arpeggioMaxSteps> cells {};
+
+    [[nodiscard]] signed char cell (int step, int row) const noexcept
+    {
+        if (step < 0 || step >= arpeggioMaxSteps || row < 0
+            || row >= arpeggioMaxRows)
+            return arpeggioRest;
+        return cells[static_cast<std::size_t> (step)][static_cast<std::size_t> (row)];
+    }
+
+    // The highest row the style uses: the width of the window it slides over
+    // the keys held down.
+    [[nodiscard]] int rowSpan() const noexcept
+    {
+        int span = 1;
+        for (int step = 0; step < std::min (endStep, arpeggioMaxSteps); ++step)
+            for (int row = 0; row < arpeggioMaxRows; ++row)
+                if (cell (step, row) != arpeggioRest)
+                    span = std::max (span, row + 1);
+        return span;
+    }
+};
+
+struct ArpeggioParams
+{
+    // Which of the supplied styles is loaded. The hardware stores the grid
+    // itself in the patch and its panel only *selects* a template, so the
+    // index is the panel's surface and `style` below stays the authority on
+    // what actually plays.
+    int styleIndex { 0 };
+    // END STEP is its own front-panel control on the hardware, 1-32 and
+    // independent of the template. Zero is the replica's own addition
+    // (voiced): it means "however long the selected template is", so a patch
+    // that never touches END STEP keeps whatever the style defines.
+    int endStep { 0 };         // 0 = the template's own length, else 1-32
+    bool on { false };
+    bool hold { false };
+    SplitArpeggio splitArpeggio { SplitArpeggio::Both };
+    int octaveRange { 0 };     // -3..+3
+    int accent { 100 };        // 0-100
+    int velocity { 0 };        // 0 = REAL (the played velocity), else 1-127
+    ArpeggioGrid grid { ArpeggioGrid::Sixteenth };
+    ArpeggioDuration duration { ArpeggioDuration::P80 };
+    ArpeggioMotif motif { ArpeggioMotif::Up };
+    ArpeggioStyle style {};
+};
 
 // Patch Common offset 1E: what the modulation lever modulates.
 enum class ModulationAssign
@@ -167,6 +273,21 @@ struct ReverbParams
     int hfDampGain { -6 }; // -36..0 dB
 };
 
+// The external-input path: INPUT VOL, CENTER CANCEL and the AUDIO FILTER.
+// The manual states three times over that none of it is stored in the patch
+// (OM pp. 49-51), so it lives outside `Patch` exactly as it does on the
+// instrument — a system setting the panel owns, not patch data.
+struct ExternalInput
+{
+    int inputVolume { 100 };                     // 0-127, INPUT VOL knob
+    bool centerCancel { false };                 // CENTER CANCEL ON button
+    bool filterOn { false };                     // FILTER ON button
+    AudioFilterType type { AudioFilterType::Lpf };
+    FilterSlope slope { FilterSlope::Db12 };
+    int cutoff { 127 };                          // 0-127, CC#2
+    int resonance { 0 };                         // 0-127, CC#4
+};
+
 struct Patch
 {
     std::string name { "INIT PATCH" };  // up to 12 ASCII characters
@@ -179,6 +300,7 @@ struct Patch
     bool delayOn { false };
     bool reverbOn { false };
     ModulationAssign modulationAssign { ModulationAssign::Osc1AndOsc2 };
+    ArpeggioParams arpeggio {};
 
     TonePatch upper {};
     TonePatch lower {};
@@ -283,6 +405,13 @@ inline void clampToDocumentedRanges (TonePatch& tone) noexcept
     tone.portamentoTime = clampRaw (tone.portamentoTime, 0, 127);
 }
 
+inline void clampToDocumentedRanges (ExternalInput& input) noexcept
+{
+    input.inputVolume = clampRaw (input.inputVolume, 0, 127);
+    input.cutoff = clampRaw (input.cutoff, 0, 127);
+    input.resonance = clampRaw (input.resonance, 0, 127);
+}
+
 inline void clampToDocumentedRanges (Patch& patch) noexcept
 {
     clampToDocumentedRanges (patch.upper);
@@ -306,6 +435,13 @@ inline void clampToDocumentedRanges (Patch& patch) noexcept
     patch.reverb.lfDampGain = clampRaw (patch.reverb.lfDampGain, -36, 0);
     patch.reverb.hfDampFrequency = clampRaw (patch.reverb.hfDampFrequency, 0, 5);
     patch.reverb.hfDampGain = clampRaw (patch.reverb.hfDampGain, -36, 0);
+    patch.arpeggio.octaveRange = clampRaw (patch.arpeggio.octaveRange, -3, 3);
+    patch.arpeggio.accent = clampRaw (patch.arpeggio.accent, 0, 100);
+    patch.arpeggio.velocity = clampRaw (patch.arpeggio.velocity, 0, 127);
+    patch.arpeggio.style.endStep =
+        clampRaw (patch.arpeggio.style.endStep, 1, arpeggioMaxSteps);
+    patch.arpeggio.styleIndex = std::max (0, patch.arpeggio.styleIndex);
+    patch.arpeggio.endStep = clampRaw (patch.arpeggio.endStep, 0, arpeggioMaxSteps);
 }
 
 } // namespace septum

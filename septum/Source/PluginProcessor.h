@@ -74,6 +74,10 @@ public:
     // audio thread and tests, so the two can never disagree.
     [[nodiscard]] septum::Patch snapshotPatch() const;
 
+    // The external-input path's settings, read the same way. Kept out of the
+    // patch because the instrument keeps them out of it (OM pp. 49-51).
+    [[nodiscard]] septum::ExternalInput snapshotExternalInput() const;
+
     // The message-thread half of a MIDI program change: repeats the values
     // the audio path already wrote, with host/UI notification, skipping any
     // parameter edited since. Normally reached via the queued message-loop
@@ -105,6 +109,10 @@ private:
     // processBlock must never build a juce::String.
     std::vector<std::atomic<float>*> upperValues, lowerValues, patchValues;
     std::atomic<float>* masterValue { nullptr };
+    std::vector<std::atomic<float>*> externalValues;
+    // The input bus arrives in the same buffer the output is written to, so
+    // it is copied out before that buffer is cleared.
+    std::vector<float> externalInputL, externalInputR;
     struct CachedCc
     {
         int controller { -1 };
