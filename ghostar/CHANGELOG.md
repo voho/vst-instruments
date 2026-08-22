@@ -84,3 +84,16 @@ Notable customer-facing changes to Ghostar are recorded here.
   tooltip; knobs and faders show the silkscreen's 0–10 while they move.
   A program browser reaches both banks with each program's description, and
   a gate lamp shows when a gate source is holding the envelopes open.
+- The panel scales instead of being pinned to one window size. The whole
+  instrument is laid out once at its design geometry and the window scales
+  it, so the editor opens at the largest whole panel the display can show
+  and can be dragged between 60 % and 200 % with its proportions locked.
+  The keys and the GLIDE/lever sub-panel stay on screen on a 1366x768 or
+  1280x800 laptop and at 150 % desktop scaling, where a fixed 1460x780
+  window had been taller than the screen.
+- Programs whose motion runs through MOD X or SHAPER Y now say which wheel
+  they are waiting on. Selecting a program pulls both wheels fully back, as
+  the charts instruct, so those programs make none of their advertised
+  motion until a hand moves; eight of them described the motion as though it
+  happened by itself. A test now derives the requirement from each
+  program's own routing rather than leaving it to be remembered.

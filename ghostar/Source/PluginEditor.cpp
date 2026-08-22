@@ -29,8 +29,20 @@ const juce::Colour hairline { 0xff4c4c50 };
 const juce::Colour lampLit { 0xfff2f2f2 };
 const juce::Colour lampDark { 0xff2a2a2c };
 
+// The panel's design geometry. Everything is laid out and painted against
+// these numbers; the window scales the result.
 constexpr int editorWidth = 1460;
 constexpr int editorHeight = 780;
+// 60 % of the design size, where the smallest silkscreen is still about
+// 7 points. Below that the panel would be legible only by tooltip.
+constexpr int minimumWidth = 876;
+constexpr int minimumHeight = 468;
+// What a host or a desktop window puts around the editor: a frame either
+// side, a title bar and a frame above and below. An allowance rather than a
+// measurement — it only has to be generous enough that the panel is not the
+// thing that overflows.
+constexpr int windowChromeWidth = 32;
+constexpr int windowChromeHeight = 64;
 constexpr int margin = 12;
 constexpr int gap = 8;
 
@@ -465,17 +477,17 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
     pitchWheel.onDragEnd = [this] {
         pitchWheel.setValue(0.0, juce::sendNotificationSync);
     };
-    addAndMakeVisible(pitchWheel);
+    canvas.addAndMakeVisible(pitchWheel);
     pitchWheelLabel.setText("BEND", juce::dontSendNotification);
     pitchWheelLabel.setFont(juce::FontOptions { 11.0f });
     pitchWheelLabel.setJustificationType(juce::Justification::centred);
     pitchWheelLabel.setColour(juce::Label::textColourId, silkscreenDim);
-    addAndMakeVisible(pitchWheelLabel);
+    canvas.addAndMakeVisible(pitchWheelLabel);
 
     panicButton.setTooltip("Stops every sounding voice at once, including "
                            "drones held open by VCA BYPASS.");
     panicButton.onClick = [this] { processor.requestPanic(); };
-    addAndMakeVisible(panicButton);
+    canvas.addAndMakeVisible(panicButton);
 
     const auto addCaption = [this](juce::Label& label,
                                    const juce::String& text) {
@@ -484,7 +496,7 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
         label.setJustificationType(juce::Justification::centred);
         label.setColour(juce::Label::textColourId, silkscreenDim);
         label.setInterceptsMouseClicks(false, false);
-        addAndMakeVisible(label);
+        canvas.addAndMakeVisible(label);
     };
     addCaption(shaperPathCaption, "SHAPER Y PATH");
     addCaption(filterPathCaption, "FILTER PATH");
@@ -493,41 +505,83 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
     wordmark.setFont(juce::FontOptions { 30.0f, juce::Font::bold });
     wordmark.setColour(juce::Label::textColourId, silkscreen);
     wordmark.setJustificationType(juce::Justification::centredLeft);
-    addAndMakeVisible(wordmark);
+    canvas.addAndMakeVisible(wordmark);
 
     subtitle.setText("monophonic dual-filter synthesizer",
                      juce::dontSendNotification);
     subtitle.setFont(juce::FontOptions { 11.0f });
     subtitle.setColour(juce::Label::textColourId, silkscreenDim);
     subtitle.setJustificationType(juce::Justification::centredLeft);
-    addAndMakeVisible(subtitle);
+    canvas.addAndMakeVisible(subtitle);
 
     previousProgram.setTooltip("Previous program.");
     previousProgram.onClick = [this] { stepProgram(-1); };
-    addAndMakeVisible(previousProgram);
+    canvas.addAndMakeVisible(previousProgram);
     nextProgram.setTooltip("Next program.");
     nextProgram.onClick = [this] { stepProgram(1); };
-    addAndMakeVisible(nextProgram);
+    canvas.addAndMakeVisible(nextProgram);
     programName.setTooltip("The selected program. Click to browse the bank: "
                            "the manual's Sound Charts, then Ghostar's own "
                            "performance programs.");
     programName.onClick = [this] { showProgramMenu(); };
-    addAndMakeVisible(programName);
+    canvas.addAndMakeVisible(programName);
     programBank.setFont(juce::FontOptions { 11.0f });
     programBank.setJustificationType(juce::Justification::centred);
     programBank.setColour(juce::Label::textColourId, silkscreenDim);
-    addAndMakeVisible(programBank);
+    canvas.addAndMakeVisible(programBank);
 
     keyboard.setAvailableRange(48, 84); // the hardware's 37 keys, C to C
     keyboard.setOctaveForMiddleC(4);
-    addAndMakeVisible(keyboard);
+    canvas.addAndMakeVisible(keyboard);
+
+    addAndMakeVisible(canvas);
 
     refreshProgramDisplay();
     // Every attachment above fired its slider's callback as it took the
     // parameter's standing value; from here a callback means a human.
     wiringUp = false;
     startTimerHz(15);
-    setSize(editorWidth, editorHeight);
+
+    // The window may be any size; the panel inside it is always the design
+    // geometry, scaled. Limits stop the type shrinking past reading size at
+    // one end and the panel going soft at the other.
+    setResizable(true, false);
+    // setResizeLimits is what installs the default constrainer, so it has to
+    // come before the ratio is set on it.
+    setResizeLimits(minimumWidth, minimumHeight, editorWidth * 2,
+                    editorHeight * 2);
+    if (auto* constrainer = getConstrainer())
+        constrainer->setFixedAspectRatio(static_cast<double>(editorWidth)
+                                         / static_cast<double>(editorHeight));
+    // Open at the largest whole panel the display can actually show.
+    juce::Rectangle<int> workArea;
+    if (auto* display =
+            juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+        workArea = display->userArea;
+    const auto opening = panelSizeForWorkArea(workArea);
+    setSize(opening.getWidth(), opening.getHeight());
+}
+
+juce::Rectangle<int> GhostarAudioProcessorEditor::panelSizeForWorkArea(
+    juce::Rectangle<int> workArea)
+{
+    // Full size wherever it fits. Where it does not — a 1366x768 or 1280x800
+    // laptop, or a 1080p panel at 150 % — the whole panel is shrunk to fit
+    // rather than having its bottom edge cut off. Never below the size the
+    // silkscreen stays readable at: on a screen smaller than that, a window
+    // the user can move is a better failure than type nobody can read.
+    double scale = 1.0;
+    if (!workArea.isEmpty())
+        scale = juce::jmin(1.0,
+                           static_cast<double>(workArea.getWidth()
+                                               - windowChromeWidth)
+                               / editorWidth,
+                           static_cast<double>(workArea.getHeight()
+                                               - windowChromeHeight)
+                               / editorHeight);
+    scale = juce::jmax(scale, static_cast<double>(minimumWidth) / editorWidth);
+    return { juce::roundToInt(editorWidth * scale),
+             juce::roundToInt(editorHeight * scale) };
 }
 
 GhostarAudioProcessorEditor::~GhostarAudioProcessorEditor()
@@ -552,13 +606,13 @@ void GhostarAudioProcessorEditor::addKnob(Knob& knob, const char* parameterId,
                            juce::dontSendNotification);
         knob.label.setColour(juce::Label::textColourId, silkscreen);
     };
-    addAndMakeVisible(knob.slider);
+    canvas.addAndMakeVisible(knob.slider);
     knob.label.setText(text, juce::dontSendNotification);
     knob.label.setFont(juce::FontOptions { 12.0f });
     knob.label.setJustificationType(juce::Justification::centred);
     knob.label.setColour(juce::Label::textColourId, silkscreen);
     knob.label.setInterceptsMouseClicks(false, false);
-    addAndMakeVisible(knob.label);
+    canvas.addAndMakeVisible(knob.label);
     knob.attachment = std::make_unique<
         juce::AudioProcessorValueTreeState::SliderAttachment>(
         processor.parameters, parameterId, knob.slider);
@@ -581,13 +635,13 @@ void GhostarAudioProcessorEditor::addFader(Fader& fader,
                             juce::dontSendNotification);
         fader.label.setColour(juce::Label::textColourId, silkscreen);
     };
-    addAndMakeVisible(fader.slider);
+    canvas.addAndMakeVisible(fader.slider);
     fader.label.setText(text, juce::dontSendNotification);
     fader.label.setFont(juce::FontOptions { 11.0f });
     fader.label.setJustificationType(juce::Justification::centred);
     fader.label.setColour(juce::Label::textColourId, silkscreen);
     fader.label.setInterceptsMouseClicks(false, false);
-    addAndMakeVisible(fader.label);
+    canvas.addAndMakeVisible(fader.label);
     fader.attachment = std::make_unique<
         juce::AudioProcessorValueTreeState::SliderAttachment>(
         processor.parameters, parameterId, fader.slider);
@@ -599,13 +653,13 @@ void GhostarAudioProcessorEditor::addRocker(Rocker& rocker,
                                           const juce::String& tooltip)
 {
     rocker.button.setTooltip(tooltip);
-    addAndMakeVisible(rocker.button);
+    canvas.addAndMakeVisible(rocker.button);
     rocker.label.setText(text, juce::dontSendNotification);
     rocker.label.setFont(juce::FontOptions { 12.0f });
     rocker.label.setJustificationType(juce::Justification::centred);
     rocker.label.setColour(juce::Label::textColourId, silkscreen);
     rocker.label.setInterceptsMouseClicks(false, false);
-    addAndMakeVisible(rocker.label);
+    canvas.addAndMakeVisible(rocker.label);
     rocker.attachment = std::make_unique<
         juce::AudioProcessorValueTreeState::ButtonAttachment>(
         processor.parameters, parameterId, rocker.button);
@@ -617,13 +671,13 @@ void GhostarAudioProcessorEditor::addSelector(Selector& selector,
                                             const juce::String& tooltip)
 {
     selector.box.setTooltip(tooltip);
-    addAndMakeVisible(selector.box);
+    canvas.addAndMakeVisible(selector.box);
     selector.label.setText(text, juce::dontSendNotification);
     selector.label.setFont(juce::FontOptions { 12.0f });
     selector.label.setJustificationType(juce::Justification::centred);
     selector.label.setColour(juce::Label::textColourId, silkscreen);
     selector.label.setInterceptsMouseClicks(false, false);
-    addAndMakeVisible(selector.label);
+    canvas.addAndMakeVisible(selector.label);
     // The attachment populates the box from the parameter's choice labels.
     if (auto* parameter = dynamic_cast<juce::AudioParameterChoice*>(
             processor.parameters.getParameter(parameterId)))
@@ -667,7 +721,7 @@ void GhostarAudioProcessorEditor::timerCallback()
     if (processor.isGateOpenForDisplay() != gateLampLit)
     {
         gateLampLit = !gateLampLit;
-        repaint(gateLampBounds.expanded(4));
+        canvas.repaint(gateLampBounds.expanded(4));
     }
 }
 
@@ -768,6 +822,15 @@ void GhostarAudioProcessorEditor::layoutRocker(Rocker& rocker,
 
 void GhostarAudioProcessorEditor::paint(juce::Graphics& g)
 {
+    // Only ever seen if a host forces a size off the panel's aspect ratio;
+    // the panel itself is painted by the canvas.
+    g.fillAll(panelCharcoal);
+}
+
+void GhostarAudioProcessorEditor::PanelCanvas::paint(juce::Graphics& g)
+{
+    const auto& sections = owner.sections;
+
     g.fillAll(panelCharcoal);
 
     // The header plate, so the browser reads as chrome rather than as
@@ -783,8 +846,8 @@ void GhostarAudioProcessorEditor::paint(juce::Graphics& g)
     // The gate lamp: lit while a gate source is holding the envelopes open,
     // which is the difference between a silent patch and a silent host.
     {
-        const auto lamp = gateLampBounds.toFloat();
-        const bool open = processor.isGateOpenForDisplay();
+        const auto lamp = owner.gateLampBounds.toFloat();
+        const bool open = owner.processor.isGateOpenForDisplay();
         const auto dot = juce::Rectangle<float> { lamp.getX(),
                                                   lamp.getCentreY() - 4.0f,
                                                   8.0f, 8.0f };
@@ -817,8 +880,30 @@ void GhostarAudioProcessorEditor::paint(juce::Graphics& g)
 
 void GhostarAudioProcessorEditor::resized()
 {
+    // The panel is laid out once, at its design size, and the window scales
+    // it — so every window size shows the whole instrument, keys included,
+    // with the proportions the silkscreen was drawn to.
+    const double scale = juce::jmin(
+        static_cast<double>(getWidth()) / static_cast<double>(editorWidth),
+        static_cast<double>(getHeight()) / static_cast<double>(editorHeight));
+    const auto scaled =
+        juce::Rectangle<int> { juce::roundToInt(editorWidth * scale),
+                               juce::roundToInt(editorHeight * scale) }
+            .withCentre(getLocalBounds().getCentre());
+    canvas.setTransform(
+        juce::AffineTransform::scale(static_cast<float>(scale))
+            .translated(static_cast<float>(scaled.getX()),
+                        static_cast<float>(scaled.getY())));
+    canvas.setBounds(0, 0, editorWidth, editorHeight);
+
+    layoutPanel();
+}
+
+void GhostarAudioProcessorEditor::layoutPanel()
+{
     sections.clear();
-    auto area = getLocalBounds().reduced(margin);
+    auto area =
+        juce::Rectangle<int> { editorWidth, editorHeight }.reduced(margin);
 
     // ---- Header: identity, the program browser, the product switches -----
     // PANIC and SPLIT live up here rather than on the panel: neither is a

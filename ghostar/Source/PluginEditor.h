@@ -62,6 +62,14 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
 
+    // The largest whole panel that fits `workArea` — a display's usable
+    // bounds, empty when unknown — never larger than the design size and
+    // never smaller than the size the silkscreen stays readable at. Public
+    // and pure so the fit rule can be tested on screens no build machine has
+    // to actually have.
+    [[nodiscard]] static juce::Rectangle<int> panelSizeForWorkArea(
+        juce::Rectangle<int> workArea);
+
 private:
     void timerCallback() override;
 
@@ -70,6 +78,22 @@ private:
         juce::String title;
         juce::Rectangle<int> bounds;
         bool accent { false };
+    };
+
+    // Every control and every piece of silkscreen lives on this one child,
+    // which is always exactly the design size; the editor scales it to
+    // whatever the window is. The panel is a fixed geometry — a hardware
+    // instrument's controls do not reflow — so the alternative to scaling it
+    // is clipping it, and 780 points of panel do not fit the 768-point screen
+    // a 1366x768 laptop has.
+    class PanelCanvas final : public juce::Component
+    {
+    public:
+        explicit PanelCanvas(GhostarAudioProcessorEditor& o) : owner(o) {}
+        void paint(juce::Graphics&) override;
+
+    private:
+        GhostarAudioProcessorEditor& owner;
     };
 
     // One labelled panel control and its host-parameter attachment. A knob's
@@ -122,6 +146,10 @@ private:
     void layoutFader(Fader& fader, juce::Rectangle<int> area);
     void layoutSelector(Selector& selector, juce::Rectangle<int> area);
     void layoutRocker(Rocker& rocker, juce::Rectangle<int> area);
+    // Places every control inside the design-size rectangle. Called from
+    // resized(), but independent of the window: the window only sets the
+    // canvas transform.
+    void layoutPanel();
 
     void showProgramMenu();
     void stepProgram(int delta);
@@ -130,6 +158,8 @@ private:
     GhostarAudioProcessor& processor;
     GhostarLookAndFeel lookAndFeel;
     juce::TooltipWindow tooltips { this, 600 };
+
+    PanelCanvas canvas { *this };
 
     std::vector<Section> sections;
 
