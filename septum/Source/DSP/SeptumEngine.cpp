@@ -479,6 +479,12 @@ void Engine::reset()
         runtime = ArpeggioRuntime {};
     arpeggioRunning_ = false;
     arpeggioActive_ = patch_.arpeggio.on;
+    // Synced to the patch for the same reason the switch is: clearing the
+    // keyboard is not a routing change, and nothing is held across one, so
+    // the next tick must not read one as having happened.
+    for (int part = 0; part < partCount; ++part)
+        arpeggioDriven_[static_cast<std::size_t> (part)] =
+            arpeggioDrives (part == 0 ? Part::Upper : Part::Lower);
     arpeggioStep_ = 0;
     arpeggioStepRemaining_ = 0.0;
     std::fill (delayL_.buffer.begin(), delayL_.buffer.end(), 0.0f);
@@ -1098,6 +1104,12 @@ void Engine::allSoundOff()
     }
     arpeggioRunning_ = false;
     arpeggioActive_ = patch_.arpeggio.on;
+    // Synced to the patch for the same reason the switch is: clearing the
+    // keyboard is not a routing change, and nothing is held across one, so
+    // the next tick must not read one as having happened.
+    for (int part = 0; part < partCount; ++part)
+        arpeggioDriven_[static_cast<std::size_t> (part)] =
+            arpeggioDrives (part == 0 ? Part::Upper : Part::Lower);
     arpeggioStep_ = 0;
     arpeggioStepRemaining_ = 0.0;
     sostenuto_ = false;
