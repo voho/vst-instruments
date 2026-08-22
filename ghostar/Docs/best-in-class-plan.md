@@ -298,6 +298,78 @@ settled by measurement and quoted.
   no velocity; adding expressive dimensions the instrument never had would
   contradict the contract that keeps velocity ignored.
 
+## Step 1 in progress — the alias audit and what it actually found — 2026-08-22
+
+The audit lives in `Tools/AliasAudit.cpp` (built as `GhostarAliasAudit`; CI
+keeps its strokes and reference pipeline valid through
+`Ghostar.AliasAuditSmoke`). Eleven strokes drive the plan's named
+mechanisms hard — WIDE at full (saw, 3 % pulse and triangle), a sync sweep
+at the keyboard's top, ring at the top key, Osc B as audio-rate modulator
+into pitch, pulse width and cutoff, OVERDRIVE at full resonance boost, and
+regenerative self-oscillation near the top of the cutoff span — plus one
+deliberate control: a mid-keyboard sawtooth, the easy case, whose figure is
+the floor every hard row is read against.
+
+**The measure.** As specified: the reference for each stroke is the same
+stroke rendered at 16x the shipping rate (768 kHz, the engine's supported
+ceiling), bandlimited by a −100 dB Kaiser lowpass flat to 21.6 kHz, and
+decimated back to 48 kHz with zero-phase alignment. The figure is the
+short-time spectral-magnitude residual (2048-sample Hann, hop 1024, onset
+skipped) against that ground truth — magnitudes, for the zipper audit's
+reason: phase-accumulation differences sound identical and must not read
+as error. Two columns: energy in bins up to 20 kHz (the plan's audible-band
+gate) and the whole baseband. Strokes exclude the noise source by
+construction: its per-internal-sample generator draws a different
+realisation at each rate, so a noise stroke would measure two different
+noises, not aliasing.
+
+**Baseline** (shipping engine, dB relative to ground-truth energy):
+
+| stroke | ≤20 kHz | full band | stroke | ≤20 kHz | full band |
+|---|---|---|---|---|---|
+| saw-midkey-control | −23.5 | −23.5 | oscb-mod-pitch | −13.1 | −13.1 |
+| wide-saw-10k | −18.8 | −18.8 | oscb-mod-pwm | −15.2 | −15.2 |
+| wide-pulse3-10k | −9.4 | −9.4 | oscb-mod-cutoff | −8.6 | −8.6 |
+| wide-tri-10k | −17.3 | −17.3 | overdrive-full | −6.1 | −6.1 |
+| sync-sweep-topkey | −17.4 | −17.3 | selfosc-highcutoff | +6.2 | +6.2 |
+| ring-topkey | −22.7 | −22.7 | | | |
+
+**What the control row forced.** The control was supposed to pass and did
+not, and finding out why reshaped the step. Per-bin inspection showed the
+residual concentrated at the *low* harmonics, with the shipping render a
+systematic ~0.5 dB louder near the cutoff — not an alias signature. The
+cause is architectural: `resonantNodeLimit` and `integratorBound` are
+applied to the filter states as *per-sample maps*, so their total
+compression per second scales with how often they run — the engine at a
+2x-of-48 kHz internal rate and the 16x reference converge to *different
+filters*. A scratch build with the two maps made identity drops the
+control row from −11.7 dB (at cutoff travel 0.62) to −65.0 dB and the
+open-cutoff control from −23.5 dB to −42.5 dB. The same mechanism is why
+`selfosc-highcutoff` reads *positive*: the self-oscillation limit cycle's
+frequency and amplitude are set by those maps, so the shipping tone lands
+on different bins than the ground truth's. This routes straight into Step
+3's existing scope — the bound "justified, re-derived or removed" — as a
+requirement the audit adds: the resonance nonlinearity must be formulated
+as a term of the continuous system (a diode shunt current in the
+integrator's equation, scaled by the timestep), not as a per-sample map,
+or no measurement of the nonlinear voice is rate-stable. The remaining
+−42.5 dB of the open-cutoff control is polyBLEP image residue plus the
+bilinear warp near the band edge, both addressed below.
+
+The fix list this baseline justifies, worked one change per commit with a
+re-measure after each: the rate-convergent reformulation of the state
+nonlinearities (with constants re-fit so the voiced behaviour at the
+design rate is preserved until Step 3's derivation re-voices them); BLEP
+correction of the hard-sync reset discontinuity and BLAMP correction of
+the triangle's corners (the reset triangle gets both); a higher internal
+oversampling factor for the voice core, which attacks every row at once
+(polyBLEP image residue falls with the square of the rate margin, the
+warp halves, and the nonlinearities' discretisation error shrinks) —
+CPU-budgeted against the measured 22.7x-realtime engine; and
+internal-rate evaluation of Osc B as an audio-rate modulation source,
+whose control-rate sampling is its own alias mechanism. The completed
+table and the step's close-out follow those commits.
+
 ## Step 5 executed — the zipper audit and the travel smoother — 2026-08-22
 
 The audit lives in `Tools/ZipperAudit.cpp` (built as `GhostarZipperAudit`;

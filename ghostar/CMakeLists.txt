@@ -150,7 +150,13 @@ if(GHOSTAR_BUILD_TOOLS)
     target_link_libraries(GhostarZipperAudit PRIVATE GhostarDSP)
     target_compile_features(GhostarZipperAudit PRIVATE cxx_std_20)
 
-    foreach(target GhostarRenderDemos GhostarZipperAudit)
+    # Plan Step 1's measurement: worst-case aliasing strokes against a
+    # high-rate ground truth decimated to the shipping rate.
+    add_executable(GhostarAliasAudit Tools/AliasAudit.cpp)
+    target_link_libraries(GhostarAliasAudit PRIVATE GhostarDSP)
+    target_compile_features(GhostarAliasAudit PRIVATE cxx_std_20)
+
+    foreach(target GhostarRenderDemos GhostarZipperAudit GhostarAliasAudit)
         if(MSVC)
             target_compile_options(${target} PRIVATE /W4 /permissive-)
         else()
@@ -211,6 +217,11 @@ if(BUILD_TESTING)
         add_test(NAME Ghostar.ZipperAuditSmoke
                  COMMAND GhostarZipperAudit --smoke)
         set_tests_properties(Ghostar.ZipperAuditSmoke PROPERTIES TIMEOUT 120)
+
+        # Same guard for the alias-audit strokes and reference pipeline.
+        add_test(NAME Ghostar.AliasAuditSmoke
+                 COMMAND GhostarAliasAudit --smoke)
+        set_tests_properties(Ghostar.AliasAuditSmoke PROPERTIES TIMEOUT 300)
     endif()
 
     if(GHOSTAR_BUILD_PLUGIN)
