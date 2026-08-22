@@ -79,15 +79,15 @@ Circuit-modelled six-voice DCO polysynth: integer-divided note timers with true 
 
 ---
 
-## [YouKnow201](youknow201/)
+## [Septum](septum/)
 
-[![YouKnow201](youknow201/Docs/screenshots/youknow201-standalone.png)](youknow201/README.md)
+[![Septum](septum/Docs/screenshots/septum-standalone.png)](septum/README.md)
 
 - **Nightly builds**: download the 14-day `vst-instruments-nightly-all-platforms` artifact from the latest successful main-branch [Nightly workflow run](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml).
 
 Ten-voice virtual-analog synthesizer modelling the Roland SH-201's documented architecture: two complete tones of OSC1+OSC2 → MIX/MOD → FILTER → AMP with three envelopes and two LFOs each, a shared modulation-delay → reverb chain, and SINGLE/DUAL/SPLIT keyboard modes with 10 voices halved in DUAL. The seven-saw SUPER SAW implements Szabo's measured JP-8000 detune polynomial, offsets, free-running phases and pitch-tracked high-pass; FB OSC is a soft-clipped feedback comb; the multimode filter reaches bounded self-oscillation as the manual warns; and the analog output stage carries the service notes' component values. Every parameter and range is quoted from the MIDI implementation's address map, and the complete documented CC map is honoured for both tones.
 
-- **Documentation**: [YouKnow201 README](youknow201/README.md) · [Rendered Demos](youknow201/Docs/audio/README.md) · [Replica Research](youknow201/Docs/sh201-replica-research.md)
+- **Documentation**: [Septum README](septum/README.md) · [Rendered Demos](septum/Docs/audio/README.md) · [Replica Research](septum/Docs/sh201-replica-research.md)
 
 ---
 
