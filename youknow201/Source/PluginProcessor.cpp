@@ -631,7 +631,6 @@ bool YouKnow201AudioProcessor::handleMidiMessage (const juce::MidiMessage& messa
         const int program = message.getProgramChangeNumber();
         if (program >= 0 && program < getNumPrograms())
         {
-            currentProgram.store (program, std::memory_order_relaxed);
             // Land the program in the raw parameter values right here: notes
             // later in this same block must already play it, later edits must
             // compose on top of it, and none of that may depend on a message
@@ -656,6 +655,13 @@ void YouKnow201AudioProcessor::writeProgramToParameters (int index) noexcept
     const Patch& patch =
         youknow201::factoryPatches()[(std::size_t) index].patch;
 
+    // Hold the generation odd across the burst, program index included, so a
+    // concurrent state save — which seqlocks its raw-value copy against the
+    // generation — can never serialize a half-written program or pair the
+    // new index with the old values.
+    patchGeneration.fetch_add (1, std::memory_order_acq_rel);
+    currentProgram.store (index, std::memory_order_relaxed);
+
     const auto& bindings = toneBindings();
     for (std::size_t i = 0; i < bindings.size(); ++i)
     {
@@ -669,6 +675,8 @@ void YouKnow201AudioProcessor::writeProgramToParameters (int index) noexcept
         if (std::strcmp (shared[i].id, "master_level") != 0)
             patchValues[i]->store (shared[i].get (patch),
                                    std::memory_order_relaxed);
+
+    patchGeneration.fetch_add (1, std::memory_order_acq_rel);
 }
 
 void YouKnow201AudioProcessor::reconcileProgram (int index)
@@ -899,18 +907,32 @@ void YouKnow201AudioProcessor::getStateInformation (
         // thread reconciles it — which a headless host may never do.
         // Serializing the raw values instead makes saved state always match
         // what is audible. The tree copy is ours alone, so this is safe on
-        // any thread.
-        for (int i = 0; i < state.getNumChildren(); ++i)
+        // any thread; the copy seqlocks against the generation so it can
+        // never interleave a program write's burst, pairing the program
+        // index with values it does not describe. The final attempt copies
+        // unconditionally as a best effort.
+        for (int attempt = 0; attempt < 64; ++attempt)
         {
-            auto child = state.getChild (i);
-            if (auto* raw = parameters.getRawParameterValue (
-                    child.getProperty ("id").toString()))
-                child.setProperty ("value", raw->load (std::memory_order_relaxed),
-                                   nullptr);
+            const auto generation =
+                patchGeneration.load (std::memory_order_acquire);
+            if ((generation & 1u) != 0u && attempt < 63)
+                continue;
+            for (int i = 0; i < state.getNumChildren(); ++i)
+            {
+                auto child = state.getChild (i);
+                if (auto* raw = parameters.getRawParameterValue (
+                        child.getProperty ("id").toString()))
+                    child.setProperty ("value",
+                                       raw->load (std::memory_order_relaxed),
+                                       nullptr);
+            }
+            state.setProperty ("program",
+                               currentProgram.load (std::memory_order_relaxed),
+                               nullptr);
+            if ((generation & 1u) == 0u
+                && patchGeneration.load (std::memory_order_acquire) == generation)
+                break;
         }
-        state.setProperty ("program",
-                           currentProgram.load (std::memory_order_relaxed),
-                           nullptr);
         if (const auto xml = state.createXml())
             copyXmlToBinary (*xml, destinationData);
     }

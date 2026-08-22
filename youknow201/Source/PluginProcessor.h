@@ -139,10 +139,11 @@ private:
     // atomically instead of a half-updated parameter snapshot. MIDI program
     // changes do not stage — they write the raw values directly.
     std::atomic<int> stagedProgram { -1 };
-    // Seqlock guard for snapshotPatch against message-thread multi-parameter
-    // writes (program sprays, state restores): odd while a write burst is in
-    // flight, bumped again when it completes. A snapshot that saw a burst is
-    // discarded and the engine keeps the previous block's patch.
+    // Seqlock guard for multi-parameter write bursts — message-thread program
+    // sprays and state restores, and the audio path's own program writes:
+    // odd while a burst is in flight, bumped again when it completes. The
+    // audio thread discards a patch snapshot that saw a burst and keeps the
+    // previous block's patch; a state save retries its raw-value copy.
     std::atomic<std::uint32_t> patchGeneration { 0 };
 
     JUCE_DECLARE_WEAK_REFERENCEABLE (YouKnow201AudioProcessor)
