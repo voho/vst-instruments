@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include <bit>
 #include <cmath>
 #include <vector>
 
@@ -542,12 +543,19 @@ void YouKnow201AudioProcessor::releaseFromUi (int note) noexcept
     const auto write = uiWrite.load (std::memory_order_relaxed);
     const auto read = uiRead.load (std::memory_order_acquire);
     if (write - read >= uiQueueCapacity)
+    {
+        // A dropped note-off would leave the note stuck once processing
+        // resumes; latch the release instead of losing it.
+        note = juce::jlimit (0, 127, note);
+        forcedRelease[(std::size_t) (note >> 6)].fetch_or (
+            1ull << (note & 63), std::memory_order_release);
         return;
+    }
     uiQueue[write % uiQueueCapacity] = { note, 0 };
     uiWrite.store (write + 1, std::memory_order_release);
 }
 
-void YouKnow201AudioProcessor::handleController (int controller, int value)
+bool YouKnow201AudioProcessor::handleController (int controller, int value)
 {
     switch (controller)
     {
@@ -555,25 +563,25 @@ void YouKnow201AudioProcessor::handleController (int controller, int value)
         case 32:
             // Bank select is accepted (settled CCs) but there is only the one
             // built-in program bank to select.
-            return;
-        case 1:  engine.setModulation (value / 127.0); return;
-        case 7:  engine.setPartLevel (value / 127.0); return;
-        case 10: engine.setPartPan ((value - 64) / 63.0); return;
-        case 11: engine.setExpression (value / 127.0); return;
-        case 64: engine.setHold (value >= 64); return;
-        case 84: engine.setPortamentoControl (value); return;
-        case 120: engine.allSoundOff(); return;
+            return false;
+        case 1:  engine.setModulation (value / 127.0); return false;
+        case 7:  engine.setPartLevel (value / 127.0); return false;
+        case 10: engine.setPartPan ((value - 64) / 63.0); return false;
+        case 11: engine.setExpression (value / 127.0); return false;
+        case 64: engine.setHold (value >= 64); return false;
+        case 84: engine.setPortamentoControl (value); return false;
+        case 120: engine.allSoundOff(); return false;
         case 121:
             engine.setPitchBend (0.0);
             engine.setModulation (0.0);
             engine.setExpression (1.0);
             engine.setHold (false);
-            return;
+            return false;
         case 123:
         case 124:
         case 125:
             engine.allNotesOff();
-            return;
+            return false;
         default: break;
     }
 
@@ -592,11 +600,12 @@ void YouKnow201AudioProcessor::handleController (int controller, int value)
         cached.parameter->setValueNotifyingHost (
             range.convertTo0to1 (range.snapToLegalValue (natural)));
         cached.parameter->endChangeGesture();
-        return;
+        return true;
     }
+    return false;
 }
 
-void YouKnow201AudioProcessor::handleMidiMessage (const juce::MidiMessage& message)
+bool YouKnow201AudioProcessor::handleMidiMessage (const juce::MidiMessage& message)
 {
     if (message.isNoteOn())
         engine.noteOn (message.getNoteNumber(), message.getVelocity());
@@ -605,21 +614,27 @@ void YouKnow201AudioProcessor::handleMidiMessage (const juce::MidiMessage& messa
     else if (message.isPitchWheel())
         engine.setPitchBend ((message.getPitchWheelValue() - 8192) / 8192.0);
     else if (message.isController())
-        handleController (message.getControllerNumber(),
-                          message.getControllerValue());
+        return handleController (message.getControllerNumber(),
+                                 message.getControllerValue());
     else if (message.isProgramChange())
     {
         const int program = message.getProgramChangeNumber();
         if (program >= 0 && program < getNumPrograms())
         {
             currentProgram.store (program, std::memory_order_relaxed);
+            // Stage the factory patch for the audio path immediately — notes
+            // later in this same block must already play the new program —
+            // and let the message thread bring the parameters up behind it.
+            stagedProgram.store (program, std::memory_order_release);
             applyProgramAsync (program);
+            return true;
         }
     }
     else if (message.isAllNotesOff())
         engine.allNotesOff();
     else if (message.isAllSoundOff())
         engine.allSoundOff();
+    return false;
 }
 
 void YouKnow201AudioProcessor::applyProgramAsync (int program)
@@ -654,6 +669,19 @@ void YouKnow201AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     }
     uiRead.store (read, std::memory_order_release);
 
+    // Releases latched when the UI queue overflowed: apply them now so no
+    // on-screen key can stay stuck.
+    for (std::size_t word = 0; word < forcedRelease.size(); ++word)
+    {
+        auto bits = forcedRelease[word].exchange (0u, std::memory_order_acquire);
+        while (bits != 0u)
+        {
+            const int note = (int) (word * 64) + std::countr_zero (bits);
+            engine.noteOff (note);
+            bits &= bits - 1u;
+        }
+    }
+
     if (uiLeverDirty.exchange (false, std::memory_order_acquire))
     {
         engine.setPitchBend (uiBend.load (std::memory_order_relaxed));
@@ -662,7 +690,19 @@ void YouKnow201AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     engine.setMasterLevel ((int) std::lround (
         masterValue->load (std::memory_order_relaxed)));
-    engine.setPatch (snapshotPatch());
+
+    // While a program load is in flight, render the staged factory patch
+    // atomically rather than a half-updated parameter snapshot.
+    const auto applyCurrentPatch = [this]
+    {
+        const int staged = stagedProgram.load (std::memory_order_acquire);
+        if (staged >= 0 && staged < (int) youknow201::factoryPatches().size())
+            engine.setPatch (
+                youknow201::factoryPatches()[(std::size_t) staged].patch);
+        else
+            engine.setPatch (snapshotPatch());
+    };
+    applyCurrentPatch();
 
     auto* left = buffer.getWritePointer (0);
     // The declared bus is stereo-only, but a defensive mono path must not
@@ -685,7 +725,8 @@ void YouKnow201AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                             eventPosition - position);
             position = eventPosition;
         }
-        handleMidiMessage (metadata.getMessage());
+        if (handleMidiMessage (metadata.getMessage()))
+            applyCurrentPatch();  // panel CC or program: next segment uses it
     }
     if (position < buffer.getNumSamples())
         engine.process (left + position, right + position,
@@ -723,6 +764,11 @@ void YouKnow201AudioProcessor::applyProgram (int index)
     const Patch& patch =
         youknow201::factoryPatches()[(std::size_t) index].patch;
 
+    // The audio path renders this factory patch directly until every
+    // parameter below has been written, so a block can never snapshot a
+    // half-loaded program.
+    stagedProgram.store (index, std::memory_order_release);
+
     const auto apply = [this] (const juce::String& id, float natural)
     {
         if (auto* parameter = parameters.getParameter (id))
@@ -743,6 +789,10 @@ void YouKnow201AudioProcessor::applyProgram (int index)
     for (const auto& binding : patchBindings())
         if (juce::String (binding.id) != "master_level")
             apply (binding.id, binding.get (patch));
+
+    // Every parameter now matches the program; the audio path can go back to
+    // snapshotting the APVTS.
+    stagedProgram.store (-1, std::memory_order_release);
 }
 
 const juce::String YouKnow201AudioProcessor::getProgramName (int index)

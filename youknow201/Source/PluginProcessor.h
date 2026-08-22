@@ -80,8 +80,10 @@ public:
         createParameterLayout();
 
 private:
-    void handleMidiMessage (const juce::MidiMessage& message);
-    void handleController (int controller, int value);
+    // Both return true when the event edited a patch parameter, so the audio
+    // path can refresh the engine patch before rendering the next segment.
+    bool handleMidiMessage (const juce::MidiMessage& message);
+    bool handleController (int controller, int value);
     void applyProgram (int index);
     void applyProgramAsync (int index);
     void cacheParameterPointers();
@@ -117,6 +119,14 @@ private:
     std::atomic<float> uiBend { 0.0f };
     std::atomic<float> uiMod { 0.0f };
     std::atomic<bool> uiLeverDirty { false };
+    // When the UI queue overflows, a note-off must still reach the engine
+    // eventually: the release is latched here and applied on the next block.
+    std::array<std::atomic<std::uint64_t>, 2> forcedRelease { 0u, 0u };
+    // A program selected from the audio path (MIDI program change) or being
+    // sprayed into the APVTS on the message thread: while set, the audio
+    // path renders the staged factory patch atomically instead of a
+    // possibly half-updated parameter snapshot.
+    std::atomic<int> stagedProgram { -1 };
 
     JUCE_DECLARE_WEAK_REFERENCEABLE (YouKnow201AudioProcessor)
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (YouKnow201AudioProcessor)

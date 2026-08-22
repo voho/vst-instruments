@@ -185,6 +185,128 @@ void testDocumentedControlChanges()
             "CC#83 edits UPPER filter-env decay");
 }
 
+double goertzel (const juce::AudioBuffer<float>& buffer, double hz,
+                 double sampleRate)
+{
+    const double w = 2.0 * 3.14159265358979323846 * hz / sampleRate;
+    const double coeff = 2.0 * std::cos (w);
+    double s1 = 0.0, s2 = 0.0;
+    const auto* x = buffer.getReadPointer (0);
+    for (int i = 0; i < buffer.getNumSamples(); ++i)
+    {
+        const double s0 = x[i] + coeff * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    const double power = s1 * s1 + s2 * s2 - coeff * s1 * s2;
+    return std::sqrt (std::max (0.0, power)) / buffer.getNumSamples();
+}
+
+void testPanelCcAppliesWithinTheBlock()
+{
+    // A mapped panel CC must reach the engine before the next rendered
+    // segment: a note in the same block as CC#74 = 0 plays through a fully
+    // closed filter from its first sample.
+    YouKnow201AudioProcessor processor;
+    processor.prepareToPlay (44100.0, 512);
+
+    juce::MidiBuffer midi;
+    // Cutoff 30 leaves the fundamental clearly audible (~2 octaves above
+    // the corner) while the eighth harmonic sits ~5 octaves above it.
+    midi.addEvent (juce::MidiMessage::controllerEvent (1, 74, 30), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 120), 0);
+
+    juce::AudioBuffer<float> capture (2, 44100);
+    capture.clear();
+    juce::AudioBuffer<float> block (2, 512);
+    int written = 0;
+    for (int i = 0; i < 86; ++i)
+    {
+        juce::MidiBuffer events = i == 0 ? midi : juce::MidiBuffer();
+        processor.processBlock (block, events);
+        const int count = juce::jmin (512, capture.getNumSamples() - written);
+        for (int channel = 0; channel < 2; ++channel)
+            capture.copyFrom (channel, written, block, channel, 0, count);
+        written += count;
+        if (written >= capture.getNumSamples())
+            break;
+    }
+
+    // With the corner near 100 Hz the eighth harmonic must sit far below
+    // the fundamental; an open filter leaves them comparable on a saw.
+    const double fundamental = goertzel (capture, 440.0, 44100.0);
+    const double eighth = goertzel (capture, 3520.0, 44100.0);
+    expect (fundamental > 1.0e-7, "the darkened note still sounds");
+    expect (eighth < fundamental * 0.05,
+            "the same-block CC closed the filter before the note rendered");
+}
+
+void testProgramChangeStagesOnTheAudioPath()
+{
+    // A MIDI program change followed by a note in the same block must play
+    // the new program even when the message loop never runs (offline hosts).
+    YouKnow201AudioProcessor processor;
+    processor.prepareToPlay (44100.0, 512);
+
+    int superSawProgram = -1;
+    for (int index = 0; index < processor.getNumPrograms(); ++index)
+        if (processor.getProgramName (index) == "SuperLead201")
+            superSawProgram = index;
+    expect (superSawProgram > 0, "the supersaw program exists");
+
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::programChange (1, superSawProgram), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 120), 0);
+
+    juce::AudioBuffer<float> capture (2, 44100);
+    capture.clear();
+    juce::AudioBuffer<float> block (2, 512);
+    int written = 0;
+    for (int i = 0; written < capture.getNumSamples(); ++i)
+    {
+        juce::MidiBuffer events = i == 0 ? midi : juce::MidiBuffer();
+        processor.processBlock (block, events);
+        const int count = juce::jmin (512, capture.getNumSamples() - written);
+        for (int channel = 0; channel < 2; ++channel)
+            capture.copyFrom (channel, written, block, channel, 0, count);
+        written += count;
+    }
+
+    // SuperLead201's OSC1 spread puts a detuned partial well below 440 Hz
+    // that the INIT saw does not have; its presence proves the program
+    // reached the audio path without the message thread's help.
+    const double centre = goertzel (capture, 440.0, 44100.0);
+    const double detuned = goertzel (capture, 431.0, 44100.0);
+    expect (centre > 1.0e-6, "the note sounds");
+    expect (detuned > centre * 0.1,
+            "the staged program's supersaw spread is audible in-block");
+}
+
+void testUiQueueOverflowStillReleases()
+{
+    YouKnow201AudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+
+    // Fill the UI queue completely without processing, then release a note
+    // whose event no longer fits: the release must still reach the engine.
+    processor.triggerFromUi (60, 100);
+    for (int i = 0; i < 70; ++i)
+        processor.triggerFromUi (61, 100);
+    processor.releaseFromUi (60);  // queue is full here
+    processor.releaseFromUi (61);  // also latched
+
+    juce::AudioBuffer<float> block (2, 256);
+    juce::MidiBuffer empty;
+    processor.processBlock (block, empty);
+    for (int i = 0; i < 400; ++i)
+    {
+        juce::MidiBuffer none;
+        processor.processBlock (block, none);
+    }
+    expect (processor.getActiveVoiceCount() == 0,
+            "overflowed note-offs still release every voice");
+}
+
 void testProgramsLoad()
 {
     YouKnow201AudioProcessor processor;
@@ -291,6 +413,9 @@ int main()
     testBusLayoutAndTail();
     testRenderingAndVoices();
     testDocumentedControlChanges();
+    testPanelCcAppliesWithinTheBlock();
+    testProgramChangeStagesOnTheAudioPath();
+    testUiQueueOverflowStillReleases();
     testProgramsLoad();
     testStateRoundTrip();
     testEditorAndSnapshot();

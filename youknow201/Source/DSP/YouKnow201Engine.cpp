@@ -841,6 +841,19 @@ void Engine::allSoundOff()
         tone.heldCount = 0;
         tone.anyKeyDown = false;
     }
+
+    // All Sounds Off is a panic: the buffered delay repeats and the reverb
+    // tail must stop with the voices, and the output stage must not keep
+    // discharging what it was carrying.
+    std::fill (delayL_.buffer.begin(), delayL_.buffer.end(), 0.0f);
+    std::fill (delayR_.buffer.begin(), delayR_.buffer.end(), 0.0f);
+    delayL_.dampState = delayR_.dampState = 0.0;
+    reverb_.clear();
+    for (int channel = 0; channel < 2; ++channel)
+    {
+        dcX1_[channel] = dcY1_[channel] = 0.0;
+        rcState1_[channel] = rcState2_[channel] = 0.0;
+    }
 }
 
 int Engine::activeVoiceCount() const noexcept
@@ -1210,12 +1223,32 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples)
         switch (wave2)
         {
             case Waveform::SuperSaw:
+            {
+                // The center saw carries the cycle SYNC follows: its detune
+                // offset is zero, so it advances by exactly inc2.
+                const double centerBefore = voice.osc2.superPhases[3];
                 sample2 = superSaw (voice.osc2, voice.inc2, voice.superAmount2,
                                     voice.superHpf2);
+                if (centerBefore + voice.inc2 >= 1.0)
+                {
+                    osc2Wrapped = true;
+                    osc2WrapOffset = (centerBefore + voice.inc2 - 1.0)
+                                     / std::max (1.0e-9, voice.inc2);
+                }
                 break;
+            }
             case Waveform::FbOsc:
+            {
+                const double phaseBefore = voice.osc2.phase;
                 sample2 = feedbackOsc (voice.osc2, voice.inc2, voice.fbGain2);
+                if (phaseBefore + voice.inc2 >= 1.0)
+                {
+                    osc2Wrapped = true;
+                    osc2WrapOffset = (phaseBefore + voice.inc2 - 1.0)
+                                     / std::max (1.0e-9, voice.inc2);
+                }
                 break;
+            }
             case Waveform::ExtIn:
                 sample2 = 0.0;  // no external bus in v1 (documented)
                 voice.osc2.phase = frac (voice.osc2.phase + voice.inc2);
