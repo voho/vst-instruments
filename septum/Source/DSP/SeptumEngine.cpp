@@ -502,6 +502,10 @@ void Engine::reset()
     }
     audioFilterPrimed_ = false;
     monitorGain_ = 1.0;
+    for (auto& channel : monitorDelay_)
+        channel.fill (0.0f);
+    monitorDelayWrite_ = 0;
+    smoothedMonitorLevel_ = masterLevel_ / 127.0;
     pitchBend_ = 0.0;
     modulation_ = 0.0;
     hold_ = false;
@@ -2089,12 +2093,17 @@ void Engine::prepareExternalTick (const float* inputLeft, const float* inputRigh
     const bool haveInput = inputLeft != nullptr && inputRight != nullptr;
 
     // Direct-path mute while an EXT-IN voice owns the input, with a short fade
-    // so the changeover is not a step (voiced).
+    // so the changeover is not a step (voiced). The fade is walked sample by
+    // sample: applying one new gain to a whole control tick would replace the
+    // discontinuity it exists to prevent with a staircase of smaller ones.
     const double monitorTarget = anyVoiceUsesExternalInput() ? 0.0 : 1.0;
     const double fade =
         1.0 - std::exp (-samples
                         / (sampleRate_ * mapping::externalMonitorFadeSeconds));
+    const double monitorFrom = monitorGain_;
     monitorGain_ += (monitorTarget - monitorGain_) * fade;
+    const double monitorStep =
+        (monitorGain_ - monitorFrom) / std::max (1, samples);
 
     // The audio filter's cutoff, with the settled AUDIO-FILTER modulation
     // destinations that had nothing to move until now: LFO destination 1 on
@@ -2165,7 +2174,9 @@ void Engine::prepareExternalTick (const float* inputLeft, const float* inputRigh
         // source. It taps here, before the audio filter.
         externalMono_[static_cast<std::size_t> (i)] = static_cast<float> (mono);
 
-        if (external_.filterOn)
+        // The filter runs whether or not it is switched in. Freezing its
+        // states while bypassed would let an old resonant tail out of the
+        // integrators the moment the automatable switch came back on.
         {
             const auto stagePass = [&] (SvfStage& stage, double input,
                                         double damping, double stageA1,
@@ -2197,14 +2208,23 @@ void Engine::prepareExternalTick (const float* inputLeft, const float* inputRigh
                 value = stagePass (audioFilter1_[channel], value, k, a1, a2);
                 if (external_.slope == FilterSlope::Db24)
                     value = stagePass (audioFilter2_[channel], value, k, a1, a2);
-                *channels[channel] = value;
+                if (external_.filterOn)
+                    *channels[channel] = value;
             }
         }
 
-        externalDirectL_[static_cast<std::size_t> (i)] =
-            static_cast<float> (left * monitorGain_);
-        externalDirectR_[static_cast<std::size_t> (i)] =
-            static_cast<float> (right * monitorGain_);
+        const double gain = monitorFrom + monitorStep * (i + 1);
+        const auto size = static_cast<int> (monitorDelay_[0].size());
+        monitorDelay_[0][static_cast<std::size_t> (monitorDelayWrite_)] =
+            static_cast<float> (left * gain);
+        monitorDelay_[1][static_cast<std::size_t> (monitorDelayWrite_)] =
+            static_cast<float> (right * gain);
+        const auto read =
+            static_cast<std::size_t> ((monitorDelayWrite_ - latencySamples_ + size)
+                                      % size);
+        externalDirectL_[static_cast<std::size_t> (i)] = monitorDelay_[0][read];
+        externalDirectR_[static_cast<std::size_t> (i)] = monitorDelay_[1][read];
+        monitorDelayWrite_ = (monitorDelayWrite_ + 1) % size;
     }
 
     for (int channel = 0; channel < 2; ++channel)
@@ -2533,7 +2553,13 @@ void Engine::process (float* left, float* right, int numSamples,
         // is not patch audio, so the patch level and the part controllers do
         // not scale it, but the panel VOLUME sits after the DAC on the
         // hardware and therefore does.
-        const double monitorLevel = masterLevel_ / 127.0;
+        // Smoothed the same way the synth path's gain chain is, so automating
+        // the panel volume cannot step the monitored input.
+        smoothedMonitorLevel_ +=
+            ((masterLevel_ / 127.0) - smoothedMonitorLevel_)
+            * std::min (1.0, onePoleCoeff (sampleRate_, mapping::masterSlewSeconds)
+                                 * guarded);
+        const double monitorLevel = smoothedMonitorLevel_;
 
         for (int channel = 0; channel < 2; ++channel)
         {

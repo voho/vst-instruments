@@ -1126,6 +1126,98 @@ void testArpeggioOctaveRange()
                 "OCTAVE RANGE +1 shifts the next cycle an octave up");
 }
 
+// Three things the review found on the external-input path, each now fenced.
+void testExternalMonitorTiming()
+{
+    const double sampleRate = 44100.0;
+    septum::Patch patch = plainSawPatch();
+    patch.upper.level = 127;
+
+    septum::ExternalInput settings {};
+    settings.filterOn = false;
+
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    engine.setPatch (patch);
+    engine.setExternalInput (settings);
+    engine.reset();
+    const int latency = engine.latencySamples();
+    expect (latency > 0, "44.1 kHz carries the overdrive chain's group delay");
+
+    // A single impulse on the INPUT jacks must come out exactly `latency`
+    // samples late — the same delay every voice carries and the plug-in
+    // reports — or a monitored input would arrive ahead of the whole track.
+    const std::size_t total = 512;
+    std::vector<float> left (total, 0.0f), right (total, 0.0f);
+    std::vector<float> inL (total, 0.0f), inR (total, 0.0f);
+    inL[8] = 0.5f;
+    inR[8] = 0.5f;
+    engine.process (left.data(), right.data(), (int) total, inL.data(), inR.data());
+
+    std::size_t peakAt = 0;
+    double peak = 0.0;
+    for (std::size_t i = 0; i < total; ++i)
+        if (std::abs ((double) left[i]) > peak)
+        {
+            peak = std::abs ((double) left[i]);
+            peakAt = i;
+        }
+    expect (peak > 1.0e-3, "the impulse reaches the output");
+    expect ((int) peakAt == 8 + latency,
+            "the direct monitor carries the reported latency (peak at "
+                + std::to_string (peakAt) + ", expected "
+                + std::to_string (8 + latency) + ")");
+}
+
+void testExternalMonitorHandover()
+{
+    const double sampleRate = 44100.0;
+    septum::Patch patch = plainSawPatch();
+    patch.upper.osc1.wave = septum::Waveform::ExtIn;
+    patch.upper.balance = -63;
+    // AMP LEVEL 0: the EXT-IN voice still owns the input, so the monitor
+    // fades out, but the voice contributes nothing of its own. The only
+    // thing moving in the output is the fade, which is what is under test.
+    patch.upper.level = 0;
+
+    septum::ExternalInput settings {};
+    settings.filterOn = false;
+
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    engine.setPatch (patch);
+    engine.setExternalInput (settings);
+    engine.reset();
+
+    // DC on the input, so a step in the monitor's gain is a step in the
+    // output rather than something hiding inside a waveform.
+    const std::size_t total = (std::size_t) (sampleRate * 0.2);
+    std::vector<float> left (total, 0.0f), right (total, 0.0f);
+    std::vector<float> inL (total, 0.25f), inR (total, 0.25f);
+    const std::size_t block = 64;
+    const auto pressAt = (std::size_t) (sampleRate * 0.05);
+    for (std::size_t at = 0; at < total; at += block)
+    {
+        if (at >= pressAt && at < pressAt + block)
+            engine.noteOn (60, 100);
+        const auto n = std::min (block, total - at);
+        engine.process (left.data() + at, right.data() + at, (int) n,
+                        inL.data() + at, inR.data() + at);
+    }
+
+    // Walked sample by sample the fade's largest step is about an eighth of
+    // what a once-per-control-tick fade produces, which is the whole point:
+    // the mechanism that exists to avoid a discontinuity must not replace it
+    // with a staircase of smaller ones.
+    double worst = 0.0;
+    for (std::size_t i = pressAt; i + 1 < pressAt + (std::size_t) (sampleRate * 0.012);
+         ++i)
+        worst = std::max (worst, std::abs ((double) left[i + 1] - left[i]));
+    expect (worst < 0.0015,
+            "the monitor fades out sample by sample, not tick by tick (worst "
+                "step " + std::to_string (worst) + ")");
+}
+
 void testSelfOscillationBounded()
 {
     septum::Patch patch = plainSawPatch();
@@ -1613,6 +1705,8 @@ int main()
     testSoloAndHold();
     testSostenutoLatchesOnlyWhatWasSounding();
     testExternalInputAndAudioFilter();
+    testExternalMonitorTiming();
+    testExternalMonitorHandover();
     testArpeggioMotifsMatchTheManualsExamples();
     testArpeggioGridDivisions();
     testArpeggiatorPlaysAndHolds();

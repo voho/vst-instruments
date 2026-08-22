@@ -997,6 +997,12 @@ private:
     double audioFilterG_ { 0.1 }, audioFilterK_ { 2.0 };
     bool audioFilterPrimed_ { false };
     double monitorGain_ { 1.0 };
+    // The voices carry the overdrive stage's group delay whether they are
+    // shaping or not, and the plug-in reports it; the monitor path has to
+    // carry it too, or the input would arrive ahead of everything else.
+    std::array<std::array<float, 32>, 2> monitorDelay_ {};
+    int monitorDelayWrite_ { 0 };
+    double smoothedMonitorLevel_ { 1.0 };
 
     // Analog output stage state (documented component values).
     double dcX1_[2] {}, dcY1_[2] {};
