@@ -511,6 +511,31 @@ void testSostenutoLatchesOnlyWhatWasSounding()
     (void) rms();
     expect (rms() < 1.0e-3, "releasing the pedal releases the latched note");
 
+    // The latch belongs to the note, not to the voice playing it. In SOLO a
+    // tone hands its one voice from note to note by last-note priority, so a
+    // latch tied to the voice would be lost the moment another key borrowed
+    // it and the caught note would release with the pedal still down.
+    {
+        septum::Patch solo = patch;
+        solo.upper.mono = septum::MonoMode::Solo;
+        engine.setPatch (solo);
+        engine.reset();
+        engine.noteOn (60, 100);
+        (void) rms();
+        engine.setSostenuto (true);
+        engine.noteOn (64, 100);     // borrows the single voice
+        (void) rms();
+        engine.noteOff (64);         // priority returns to the caught note
+        (void) rms();
+        engine.noteOff (60);         // ...whose latch must have survived
+        (void) rms();
+        expect (rms() > 0.01,
+                "a sostenuto latch survives mono note priority");
+        engine.setSostenuto (false);
+        (void) rms();
+        expect (rms() < 1.0e-3, "and lets go when the pedal does");
+    }
+
     // The hold pedal and the sostenuto latch are independent: neither
     // releases a note the other is still holding.
     engine.reset();
@@ -1073,7 +1098,79 @@ void testArpeggiatorEdgeCases()
                     + std::to_string (sounding) + ")");
     }
 
-    // 4. ARPEGGIO VELOCITY = REAL follows the key each note came from, so a
+    // 4. DURATION 120 % means a gate outlives its grid, so consecutive
+    //    note-ons on one row must overlap rather than cut each other off.
+    {
+        septum::Patch gate = base;
+        gate.arpeggio.grid = septum::ArpeggioGrid::Quarter;
+        gate.arpeggio.duration = septum::ArpeggioDuration::P120;
+        gate.arpeggio.motif = septum::ArpeggioMotif::Up;
+        // One step, one row: every step is a new pass, so the window moves
+        // and consecutive note-ons on that row land on different keys.
+        gate.arpeggio.style = septum::ArpeggioStyle {};
+        gate.arpeggio.style.endStep = 1;
+        gate.arpeggio.style.cells[0][0] = 100;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (gate);
+        engine.reset();
+        // Two keys an octave apart, so the overlap is two pitches at once.
+        auto take = renderScore (engine,
+                                 { { 0.0, true, 45, 100 }, { 0.0, true, 57, 100 } },
+                                 1.4, sampleRate);
+        // At the second step's boundary (0.5 s) the first gate has 20 % of a
+        // step left, so both notes sound together just after it.
+        const double lowAtOverlap =
+            goertzel (take.left, (std::size_t) (sampleRate * 0.52),
+                      (std::size_t) (sampleRate * 0.58), 110.0, sampleRate);
+        const double lowBefore =
+            goertzel (take.left, (std::size_t) (sampleRate * 0.30),
+                      (std::size_t) (sampleRate * 0.45), 110.0, sampleRate);
+        expect (lowAtOverlap > 0.25 * lowBefore,
+                "a 120 % gate overlaps the note that follows it (" +
+                    std::to_string (lowAtOverlap) + " against "
+                    + std::to_string (lowBefore) + ")");
+    }
+
+    // 5. A FUL note on a row the next style never plays has nothing left to
+    //    end it, so changing style must retire it.
+    {
+        septum::Patch full = base;
+        full.arpeggio.grid = septum::ArpeggioGrid::Quarter;
+        full.arpeggio.duration = septum::ArpeggioDuration::Full;
+        // UP(L) pins row 1 to the lowest key, so once the style narrows to
+        // that row alone the orphan's pitch can never come round again and
+        // be released by coincidence.
+        full.arpeggio.motif = septum::ArpeggioMotif::UpL;
+        full.arpeggio.style = septum::ArpeggioStyle {};
+        full.arpeggio.style.endStep = 1;
+        full.arpeggio.style.cells[0][0] = 100;
+        full.arpeggio.style.cells[0][1] = 100;   // two rows sustain
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (full);
+        engine.reset();
+        engine.noteOn (45, 100);
+        engine.noteOn (57, 100);
+        engine.noteOn (69, 100);
+        std::vector<float> left (22050), right (22050);
+        engine.process (left.data(), right.data(), 22050);
+
+        // Switch to a style that only uses row 1. Row 2's sustained note has
+        // nothing left to end it and must be retired.
+        septum::Patch narrowed = full;
+        narrowed.arpeggio.style.cells[0][1] = septum::arpeggioRest;
+        engine.setPatch (narrowed);
+        engine.process (left.data(), right.data(), 22050);
+        engine.process (left.data(), right.data(), 22050);
+        expect (engine.activeVoiceCount() <= 1,
+                "a sustained row the new style never plays is retired (voices "
+                    + std::to_string (engine.activeVoiceCount()) + ")");
+    }
+
+    // 6. ARPEGGIO VELOCITY = REAL follows the key each note came from, so a
     //    chord played unevenly stays uneven.
     {
         septum::Patch real = base;

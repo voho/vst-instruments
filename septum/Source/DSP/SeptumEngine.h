@@ -804,9 +804,6 @@ private:
         int note { -1 };
         double velocity { 0.0 };
         bool held { false };          // key (or pedal) still down
-        // Settled (part controller CC#66): the sostenuto pedal latches the
-        // notes that were sounding when it went down and holds only those.
-        bool sostenuto { false };
         std::uint32_t age { 0 };
 
         OscState osc1 {}, osc2 {};
@@ -872,6 +869,12 @@ private:
             int note { -1 };
             int remaining { 0 };   // samples until the scheduled note-off
             bool sustained { false };  // DURATION = FUL: no scheduled off
+            // DURATION 120 % means a gate outlives its grid, so the note it
+            // overlaps into has to start while the previous one is still
+            // running. One tail slot is enough: the overlap is a fifth of a
+            // step, so at most one predecessor is ever still sounding.
+            int tailNote { -1 };
+            int tailRemaining { 0 };
         };
         std::array<Row, arpeggioMaxRows> rows {};
 
@@ -893,6 +896,21 @@ private:
         int heldCount { 0 };
         double lastPitch { 60.0 };
         bool anyKeyDown { false };
+        // Settled (part controller CC#66): the sostenuto pedal latches the
+        // *notes* that were sounding when it went down, not the voices
+        // playing them. A mono tone hands its one voice from note to note by
+        // last-note priority, so a latch tied to the voice would be lost the
+        // moment another key borrowed it.
+        std::array<std::uint64_t, 2> sostenutoNotes {};
+
+        [[nodiscard]] bool sostenutoHolds (int note) const noexcept
+        {
+            if (note < 0 || note > 127)
+                return false;
+            return (sostenutoNotes[static_cast<std::size_t> (note >> 6)]
+                    & (1ull << (note & 63)))
+                   != 0ull;
+        }
     };
 
     struct DelayLine
