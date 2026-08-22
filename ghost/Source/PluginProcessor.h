@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 
 #include "DSP/GhostEngine.h"
+#include "DSP/GhostPresets.h"
 
 #include <array>
 #include <atomic>
@@ -104,10 +105,21 @@ public:
     // beyond it, so the advertised tail has headroom.
     double getTailLengthSeconds() const override { return 12.0; }
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram(int) override {}
-    const juce::String getProgramName(int) override { return "Ghost"; }
+    // Factory programs: the modelled instrument's manual teaches eleven
+    // Sound Charts instead of shipping presets, and those charts are the
+    // bank, behind an Init program that is the default voice a fresh
+    // instance already carries. The table lives in the JUCE-free core so
+    // the DSP suite renders every one; this layer only writes those engine
+    // parameters into the host parameters that publish them.
+    int getNumPrograms() override { return ghost::factoryPresetCount(); }
+    int getCurrentProgram() override { return currentProgram; }
+    void setCurrentProgram(int index) override;
+    const juce::String getProgramName(int index) override
+    {
+        if (const auto* name = ghost::factoryPresetName(index))
+            return name;
+        return {};
+    }
     void changeProgramName(int, const juce::String&) override {}
 
     void getStateInformation(juce::MemoryBlock& destinationData) override;
@@ -163,6 +175,7 @@ private:
     std::atomic<bool> gateOpenForDisplay { false };
     std::atomic<float> uiPitchBend { 0.0f };
     float lastAppliedUiBend { 0.0f };  // audio thread only
+    int currentProgram = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GhostAudioProcessor)
 };

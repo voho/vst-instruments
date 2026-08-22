@@ -41,9 +41,11 @@ set(GHOST_JUCE_PATH "" CACHE PATH
 include(CTest)
 
 set(GHOST_DSP_SOURCES
-    Source/DSP/GhostEngine.cpp)
+    Source/DSP/GhostEngine.cpp
+    Source/DSP/GhostPresets.cpp)
 set(GHOST_DSP_HEADERS
-    Source/DSP/GhostEngine.h)
+    Source/DSP/GhostEngine.h
+    Source/DSP/GhostPresets.h)
 
 add_library(GhostDSP STATIC
     ${GHOST_DSP_SOURCES}

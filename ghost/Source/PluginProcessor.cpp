@@ -192,6 +192,86 @@ GhostAudioProcessor::createParameterLayout()
     return layout;
 }
 
+void GhostAudioProcessor::setCurrentProgram(int index)
+{
+    if (index < 0 || index >= ghost::factoryPresetCount())
+        return;
+    currentProgram = index;
+
+    const auto preset = ghost::factoryPresetParameters(index);
+    namespace ids = ghost::parameters;
+
+    const auto setTravel = [this](const char* id, float value) {
+        if (auto* parameter = parameters.getParameter(id))
+            parameter->setValueNotifyingHost(juce::jlimit(0.0f, 1.0f, value));
+    };
+    const auto setDetent = [this](const char* id, int position, int count) {
+        if (auto* parameter = parameters.getParameter(id))
+            parameter->setValueNotifyingHost(
+                count > 1 ? static_cast<float>(position)
+                                / static_cast<float>(count - 1)
+                          : 0.0f);
+    };
+    const auto setRocker = [this](const char* id, bool on) {
+        if (auto* parameter = parameters.getParameter(id))
+            parameter->setValueNotifyingHost(on ? 1.0f : 0.0f);
+    };
+
+    setTravel(ids::tune, preset.tune);
+    setDetent(ids::octave, static_cast<int>(preset.octave), 4);
+    setDetent(ids::oscAWaveform, static_cast<int>(preset.oscAWaveform), 6);
+    setRocker(ids::sync, preset.sync);
+    setDetent(ids::oscBWaveform, static_cast<int>(preset.oscBWaveform), 6);
+    setDetent(ids::oscBRange, static_cast<int>(preset.oscBRange), 6);
+    setTravel(ids::interval, preset.interval);
+    setDetent(ids::trigger, static_cast<int>(preset.trigger), 2);
+    setRocker(ids::gateKbd, preset.gateKbd);
+    setRocker(ids::gateX, preset.gateX);
+    setRocker(ids::gateYExt, preset.gateYExt);
+    setDetent(ids::arpeggiator, static_cast<int>(preset.arpeggiator), 4);
+    setDetent(ids::modSource, static_cast<int>(preset.modSource), 6);
+    setTravel(ids::lfoRate, preset.lfoRate);
+    setDetent(ids::shaperMode, static_cast<int>(preset.shaperMode), 4);
+    setTravel(ids::shaperShape, preset.shaperShape);
+    setTravel(ids::shaperRate, preset.shaperRate);
+    setDetent(ids::modXTo, static_cast<int>(preset.modXTo), 6);
+    setRocker(ids::shapeXWithY, preset.shapeXWithY);
+    setDetent(ids::shaperYTo, static_cast<int>(preset.shaperYTo), 6);
+    setTravel(ids::masterVolume, preset.masterVolume);
+    setTravel(ids::brightness, preset.brightness);
+    setTravel(ids::shaperPathA, preset.shaperPathA);
+    setTravel(ids::shaperPathB, preset.shaperPathB);
+    setTravel(ids::shaperPathRing, preset.shaperPathRing);
+    setTravel(ids::shaperPathNoise, preset.shaperPathNoise);
+    setTravel(ids::filterPathA, preset.filterPathA);
+    setTravel(ids::filterPathB, preset.filterPathB);
+    setTravel(ids::filterPathNoise, preset.filterPathNoise);
+    setTravel(ids::cutoff, preset.cutoff);
+    setTravel(ids::lowerOnly, preset.lowerOnly);
+    setDetent(ids::upperResonance, static_cast<int>(preset.upperResonance), 2);
+    setTravel(ids::resonance, preset.resonance);
+    setDetent(ids::slope, static_cast<int>(preset.slope), 2);
+    setTravel(ids::kbAmount, preset.kbAmount);
+    setDetent(ids::lowerMode, static_cast<int>(preset.lowerMode), 4);
+    setDetent(ids::tracking, static_cast<int>(preset.tracking), 2);
+    setTravel(ids::filterEnvAmount, preset.filterEnvAmount);
+    setTravel(ids::filterAttack, preset.filterAttack);
+    setTravel(ids::filterDecay, preset.filterDecay);
+    setTravel(ids::filterSustain, preset.filterSustain);
+    setTravel(ids::filterRelease, preset.filterRelease);
+    setRocker(ids::vcaBypass, preset.vcaBypass);
+    setTravel(ids::loudnessAttack, preset.loudnessAttack);
+    setTravel(ids::loudnessDecay, preset.loudnessDecay);
+    setTravel(ids::loudnessSustain, preset.loudnessSustain);
+    setTravel(ids::loudnessRelease, preset.loudnessRelease);
+    setTravel(ids::glide, preset.glide);
+    setDetent(ids::glideMode, static_cast<int>(preset.glideMode), 3);
+    setRocker(ids::splitPaths, preset.splitPaths);
+    // Every chart begins with the performance wheels fully back.
+    setTravel(ids::xWheel, 0.0f);
+    setTravel(ids::yWheel, 0.0f);
+}
+
 void GhostAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     engine.prepare(sampleRate, samplesPerBlock);
@@ -436,8 +516,13 @@ void GhostAudioProcessor::getStateInformation(
     juce::MemoryBlock& destinationData)
 {
     if (auto state = parameters.copyState(); state.isValid())
+    {
+        // The program index rides along so a restored session keeps its
+        // program name; the parameters themselves are the sound.
+        state.setProperty("program", currentProgram, nullptr);
         if (const auto xml = state.createXml())
             copyXmlToBinary(*xml, destinationData);
+    }
 }
 
 void GhostAudioProcessor::setStateInformation(const void* data,
@@ -445,7 +530,15 @@ void GhostAudioProcessor::setStateInformation(const void* data,
 {
     if (const auto xml = getXmlFromBinary(data, sizeInBytes))
         if (xml->hasTagName(parameters.state.getType()))
-            parameters.replaceState(juce::ValueTree::fromXml(*xml));
+        {
+            const auto restored = juce::ValueTree::fromXml(*xml);
+            // Restore the label only, not the preset's values: the saved
+            // parameters may have been edited after the program was picked.
+            const int program = restored.getProperty("program", 0);
+            if (program >= 0 && program < ghost::factoryPresetCount())
+                currentProgram = program;
+            parameters.replaceState(restored);
+        }
 }
 
 juce::AudioProcessorEditor* GhostAudioProcessor::createEditor()

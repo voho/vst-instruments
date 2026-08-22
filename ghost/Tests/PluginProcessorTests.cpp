@@ -205,6 +205,69 @@ void testStateRoundTrip()
            "a stored switch position did not survive the round trip");
 }
 
+// The factory bank is the manual's eleven Sound Charts. The host-facing
+// contract: the count and names are published, selecting a program writes
+// its chart into the host parameters, and a selected chart actually plays.
+void testFactoryProgramsAreTheSoundCharts()
+{
+    namespace ids = ghost::parameters;
+    GhostAudioProcessor processor;
+
+    expect(processor.getNumPrograms() == 12,
+           "the program bank is not Init plus the eleven Sound Charts");
+    expect(processor.getProgramName(0) == "Init",
+           "the bank does not open with the default voice");
+    expect(processor.getProgramName(1) == "Preparatory Pattern",
+           "the charts do not start with the Preparatory Pattern");
+    expect(processor.getProgramName(3) == "Fat Filter",
+           "program 3 is not the Fat Filter chart");
+
+    processor.setCurrentProgram(3);
+    expect(processor.getCurrentProgram() == 3,
+           "the selected program index was not retained");
+
+    auto* cutoff = processor.parameters.getRawParameterValue(ids::cutoff);
+    expect(cutoff != nullptr && std::abs(cutoff->load() - 0.45f) < 0.002f,
+           "Fat Filter did not write its cutoff travel");
+    auto* gateKbd = processor.parameters.getRawParameterValue(ids::gateKbd);
+    expect(gateKbd != nullptr && gateKbd->load() > 0.5f,
+           "Fat Filter did not switch the keyboard gate on");
+    auto* octave = processor.parameters.getRawParameterValue(ids::octave);
+    expect(octave != nullptr && std::lround(octave->load()) == 2,
+           "Fat Filter did not select the 8' octave");
+    auto* xWheel = processor.parameters.getRawParameterValue(ids::xWheel);
+    expect(xWheel != nullptr && xWheel->load() < 0.002f,
+           "selecting a chart did not pull the X wheel fully back");
+
+    // An out-of-range selection must be ignored, not clamp or crash.
+    processor.setCurrentProgram(12);
+    expect(processor.getCurrentProgram() == 3,
+           "an out-of-range program selection was not ignored");
+
+    // The selected program's name must survive a state round trip; the
+    // values themselves already travel as parameters.
+    juce::MemoryBlock state;
+    processor.getStateInformation(state);
+    GhostAudioProcessor restored;
+    restored.setStateInformation(state.getData(),
+                                 static_cast<int>(state.getSize()));
+    expect(restored.getCurrentProgram() == 3,
+           "the program index did not survive the state round trip");
+    auto* restoredCutoff =
+        restored.parameters.getRawParameterValue(ids::cutoff);
+    expect(restoredCutoff != nullptr
+               && std::abs(restoredCutoff->load() - 0.45f) < 0.002f,
+           "the restored state lost the chart's cutoff travel");
+
+    processor.prepareToPlay(sampleRate, blockSize);
+    juce::MidiBuffer midi;
+    midi.addEvent(
+        juce::MidiMessage::noteOn(1, 48, static_cast<juce::uint8>(100)), 0);
+    const double sounding = renderBlocks(processor, 24, midi);
+    expect(sounding > 1.0e-4, "the selected Sound Chart produced no audio");
+    processor.releaseResources();
+}
+
 void testEditorRendering()
 {
     GhostAudioProcessor processor;
@@ -250,6 +313,7 @@ int main()
     testMidiProducesAudio();
     testAllNotesOffReleasesEveryKey();
     testStateRoundTrip();
+    testFactoryProgramsAreTheSoundCharts();
     testEditorRendering();
 
     if (failureCount != 0)
