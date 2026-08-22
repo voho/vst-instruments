@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace ghostar
 {
@@ -23,25 +24,47 @@ namespace
         return std::clamp(value, 0.0, 1.0);
     }
 
-    // Two-sample polynomial bandlimited step correction.
-    [[nodiscard]] double polyBlep(double t, double dt) noexcept
+    // ---------------------------------------------------------------------
+    // Bandlimited oscillator core. Every waveform discontinuity — sawtooth
+    // and pulse value jumps, the triangle's slope corners, and the value
+    // *and* slope jumps a hard-sync reset makes at an arbitrary phase — is
+    // an event with a sub-sample time, corrected by a two-sample
+    // polynomial BLEP (value jumps) or its integral, the BLAMP (slope
+    // jumps). An event discovered mid-sample must also correct the sample
+    // *before* it; rather than predicting events one sample ahead (exact
+    // only while the frequency holds still), each oscillator emits with one
+    // internal sample of delay, so the earlier half of every correction is
+    // applied to a sample that has not left the oscillator yet.
+    //
+    // Conventions: an event at fraction u of the current internal sample
+    // corrects the held (previous) sample by r(-u) and the current one by
+    // r(1-u), where for a unit value step r is the C1 quadratic BLEP
+    // residual r(a) = (1+a)^2/2 for a in [-1,0), -(1-a)^2/2 for a in
+    // [0,1); the BLAMP residual is its integral, (1+a)^3/6 and (1-a)^3/6,
+    // scaled by the slope change per sample.
+
+    struct OscCorrections
     {
-        if (t < dt)
-        {
-            const double x = t / dt;
-            return x + x - x * x - 1.0;
-        }
-        if (t > 1.0 - dt)
-        {
-            const double x = (t - 1.0) / dt;
-            return x * x + x + x + 1.0;
-        }
-        return 0.0;
+        double selectedHeld { 0.0 };
+        double selectedNow { 0.0 };
+        double triangleHeld { 0.0 };
+        double triangleNow { 0.0 };
+    };
+
+    void addStepEvent(double& held, double& now, double u,
+                      double delta) noexcept
+    {
+        const double before = 1.0 - u;
+        held += delta * before * before * 0.5;
+        now -= delta * u * u * 0.5;
     }
 
-    [[nodiscard]] double wrapPhase(double phase) noexcept
+    void addRampEvent(double& held, double& now, double u,
+                      double slopeChangePerSample) noexcept
     {
-        return phase - std::floor(phase);
+        const double before = 1.0 - u;
+        held += slopeChangePerSample * before * before * before / 6.0;
+        now += slopeChangePerSample * u * u * u / 6.0;
     }
 
     // A slider or pot's 0..1 travel mapped exponentially across a stated
@@ -66,30 +89,138 @@ namespace
         }
     }
 
-    // Naive triangle: −1 at phase 0, +1 at phase 0.5. Its spectrum falls at
-    // 12 dB/oct, and the whole voice runs at 2x, so corner bandlimiting is
-    // deliberately omitted in v0.
+    // Naive waveforms: what the events above correct. Triangle is −1 at
+    // phase 0, +1 at phase 0.5.
     [[nodiscard]] double triangleWave(double phase) noexcept
     {
         return phase < 0.5 ? 4.0 * phase - 1.0 : 3.0 - 4.0 * phase;
     }
 
-    [[nodiscard]] double oscillatorWave(Waveform waveform, double phase,
-                                        double dt, double duty) noexcept
+    [[nodiscard]] double triangleSlope(double phase) noexcept
+    {
+        return phase < 0.5 ? 4.0 : -4.0;
+    }
+
+    [[nodiscard]] double naiveWave(Waveform waveform, double phase,
+                                   double duty) noexcept
     {
         switch (waveform)
         {
-            case Waveform::Triangle:
-                return triangleWave(phase);
-            case Waveform::Sawtooth:
-                return 2.0 * phase - 1.0 - polyBlep(phase, dt);
-            default:
-            {
-                const double raw = phase < duty ? 1.0 : -1.0;
-                return raw + polyBlep(phase, dt)
-                     - polyBlep(wrapPhase(phase - duty + 1.0), dt);
-            }
+            case Waveform::Triangle: return triangleWave(phase);
+            case Waveform::Sawtooth: return 2.0 * phase - 1.0;
+            default:                 return phase < duty ? 1.0 : -1.0;
         }
+    }
+
+    // Registers the discontinuity events one linear phase segment crosses:
+    // the pulse's falling edge at the duty boundary, the triangle's corner
+    // at 0.5, and the wrap at 1 (a saw or pulse value jump and a triangle
+    // corner at once). The frequency cap keeps a sample's advance under
+    // half a cycle, so each boundary is crossed at most once — except the
+    // duty and 0.5 boundaries, which can be crossed a second time after a
+    // wrap, and are re-checked there.
+    void scanLinearSegment(double startPhase, double uStart, double uEnd,
+                           double step, Waveform waveform, double duty,
+                           OscCorrections& c, double& endPhase) noexcept
+    {
+        const double advance = (uEnd - uStart) * step;
+        const double target = startPhase + advance;
+        const bool isPulse =
+            waveform != Waveform::Triangle && waveform != Waveform::Sawtooth;
+
+        const auto crossing = [&](double boundary) noexcept {
+            return uStart + (boundary - startPhase) / step;
+        };
+        const auto pulseEdge = [&](double u) noexcept {
+            addStepEvent(c.selectedHeld, c.selectedNow, u, -2.0);
+        };
+        const auto triangleCorner = [&](double u, double change) noexcept {
+            addRampEvent(c.triangleHeld, c.triangleNow, u, change * step);
+            if (waveform == Waveform::Triangle)
+                addRampEvent(c.selectedHeld, c.selectedNow, u,
+                             change * step);
+        };
+
+        // Boundaries below 1, in phase order. duty may sit on either side
+        // of the triangle corner, or exactly on it (the 50 % position), so
+        // each boundary fires its own events once and a coincident pair is
+        // visited once.
+        const double first = std::min(duty, 0.5);
+        const double second = std::max(duty, 0.5);
+        for (int index = 0; index < (second > first ? 2 : 1); ++index)
+        {
+            const double boundary = index == 0 ? first : second;
+            if (!(startPhase < boundary && boundary <= target))
+                continue;
+            const double u = crossing(boundary);
+            if (boundary == duty && isPulse)
+                pulseEdge(u);
+            if (boundary == 0.5)
+                triangleCorner(u, -8.0);
+        }
+
+        if (target >= 1.0)
+        {
+            const double u = crossing(1.0);
+            if (waveform == Waveform::Sawtooth)
+                addStepEvent(c.selectedHeld, c.selectedNow, u, -2.0);
+            else if (isPulse)
+                addStepEvent(c.selectedHeld, c.selectedNow, u, 2.0);
+            triangleCorner(u, 8.0);
+
+            const double wrapped = target - 1.0;
+            if (isPulse && duty <= wrapped)
+                pulseEdge(crossing(1.0 + duty));
+            if (0.5 <= wrapped)
+                triangleCorner(crossing(1.5), -8.0);
+            endPhase = wrapped;
+        }
+        else
+        {
+            endPhase = target;
+        }
+    }
+
+    // Advances one oscillator through one internal sample, registering every
+    // discontinuity it crosses — including a hard-sync reset at fraction
+    // resetU, which jumps the value to phase 0's and breaks the slope, both
+    // corrected against the phase the wave actually held at the reset
+    // instant. Returns the end-of-sample phase.
+    [[nodiscard]] double scanOscillatorSample(double oldPhase, double step,
+                                              Waveform waveform, double duty,
+                                              double resetU,
+                                              OscCorrections& c) noexcept
+    {
+        double endPhase = oldPhase;
+        if (resetU >= 0.0)
+        {
+            scanLinearSegment(oldPhase, 0.0, resetU, step, waveform, duty, c,
+                              endPhase);
+            const double preReset = endPhase;
+
+            const double selectedJump = naiveWave(waveform, 0.0, duty)
+                                      - naiveWave(waveform, preReset, duty);
+            if (selectedJump != 0.0)
+                addStepEvent(c.selectedHeld, c.selectedNow, resetU,
+                             selectedJump);
+            if (waveform == Waveform::Triangle)
+                addRampEvent(c.selectedHeld, c.selectedNow, resetU,
+                             (4.0 - triangleSlope(preReset)) * step);
+
+            addStepEvent(c.triangleHeld, c.triangleNow, resetU,
+                         -1.0 - triangleWave(preReset));
+            addRampEvent(c.triangleHeld, c.triangleNow, resetU,
+                         (4.0 - triangleSlope(preReset)) * step);
+
+            scanLinearSegment(0.0, resetU, 1.0, step, waveform, duty, c,
+                              endPhase);
+        }
+        else
+        {
+            scanLinearSegment(oldPhase, 0.0, 1.0, step, waveform, duty, c,
+                              endPhase);
+        }
+        return endPhase;
     }
 
     // The BA130 anti-parallel pair that bounds each filter's resonant node,
@@ -131,6 +262,85 @@ namespace
         return 2.0 * std::pow(0.01, clamp01(travel)) - 0.025;
     }
 
+    // Zeroth-order modified Bessel function, for the Kaiser windows the
+    // decimation kernels are designed with.
+    [[nodiscard]] double besselI0(double x) noexcept
+    {
+        double sum = 1.0;
+        double term = 1.0;
+        for (int k = 1; k < 64; ++k)
+        {
+            const double factor = x / (2.0 * k);
+            term *= factor * factor;
+            sum += term;
+            if (term < 1.0e-14 * sum)
+                break;
+        }
+        return sum;
+    }
+
+    // A Kaiser-windowed halfband lowpass: cutoff at a quarter of its input
+    // rate, unit DC gain. Length and beta set the transition width and
+    // stopband depth per stage. Only the nonzero taps are stored: a
+    // halfband's sinc vanishes at every even offset from the centre, so
+    // half the coefficients are structurally zero and skipping them halves
+    // the decimator's arithmetic rather than multiplying by nothing.
+    template <typename Kernel>
+    void designKaiserHalfband(Kernel& kernel, double beta) noexcept
+    {
+        const int taps = static_cast<int>(kernel.values.size());
+        const int center = taps / 2;
+        const double denominator = besselI0(beta);
+        std::vector<double> full(static_cast<std::size_t>(taps));
+        double sum = 0.0;
+        for (int index = 0; index < taps; ++index)
+        {
+            const double n = static_cast<double>(index - center);
+            const double sinc =
+                n == 0.0 ? 1.0 : std::sin(pi * n / 2.0) / (pi * n / 2.0);
+            const double ratio = n / static_cast<double>(center);
+            const double window =
+                besselI0(beta
+                         * std::sqrt(std::max(0.0, 1.0 - ratio * ratio)))
+                / denominator;
+            full[static_cast<std::size_t>(index)] = sinc * window;
+            sum += sinc * window;
+        }
+        kernel.count = 0;
+        for (int index = 0; index < taps; ++index)
+        {
+            const double value = full[static_cast<std::size_t>(index)] / sum;
+            if (value == 0.0)
+                continue;
+            kernel.offsets[static_cast<std::size_t>(kernel.count)] =
+                taps - 1 - index;
+            kernel.values[static_cast<std::size_t>(kernel.count)] = value;
+            ++kernel.count;
+        }
+    }
+
+    // The ring holds the last `taps` inputs, oldest at oldestIndex. Kernel
+    // tap t multiplies the sample (taps-1-t) positions newer than the
+    // oldest, and that distance is what the design stored.
+    template <typename Kernel, std::size_t taps>
+    [[nodiscard]] double convolveRing(const Kernel& kernel,
+                                      const std::array<double, taps>& ring,
+                                      int oldestIndex) noexcept
+    {
+        double accumulator = 0.0;
+        for (int index = 0; index < kernel.count; ++index)
+        {
+            int ringIndex =
+                oldestIndex
+                + kernel.offsets[static_cast<std::size_t>(index)];
+            if (ringIndex >= static_cast<int>(taps))
+                ringIndex -= static_cast<int>(taps);
+            accumulator += kernel.values[static_cast<std::size_t>(index)]
+                         * ring[static_cast<std::size_t>(ringIndex)];
+        }
+        return accumulator;
+    }
+
     [[nodiscard]] float sanitisedTravel(float value, float fallback) noexcept
     {
         if (!std::isfinite(value))
@@ -161,28 +371,23 @@ void GhostarEngine::prepare(double sampleRate, int maxBlockSize)
         sampleRate = 44100.0;
     sampleRate_ = std::clamp(sampleRate, minimumSupportedSampleRate,
                              maximumSupportedSampleRate);
-    internalRate_ = 2.0 * sampleRate_;
+    internalRate_ = 4.0 * sampleRate_;
     // The travel smoother's one-pole: ~25 ms to target at any host rate.
     travelSmoothing_ = 1.0 - std::exp(-1.0 / (0.025 * sampleRate_));
     // The diode sub-step's exact per-internal-sample decay factor.
     diodeDecay_ = std::exp(-diodeLeakPerSecond / internalRate_);
 
-    // Windowed-sinc halfband decimation kernel for the 2x -> 1x boundary.
-    const int center = halfbandTaps / 2;
-    double sum = 0.0;
-    for (int index = 0; index < halfbandTaps; ++index)
-    {
-        const double n = static_cast<double>(index - center);
-        const double sinc =
-            n == 0.0 ? 1.0 : std::sin(pi * n / 2.0) / (pi * n / 2.0);
-        const double window =
-            0.42 - 0.5 * std::cos(2.0 * pi * index / (halfbandTaps - 1))
-            + 0.08 * std::cos(4.0 * pi * index / (halfbandTaps - 1));
-        halfbandKernel_[static_cast<std::size_t>(index)] = sinc * window;
-        sum += sinc * window;
-    }
-    for (auto& tap : halfbandKernel_)
-        tap /= sum;
+    // The decimation chain's two Kaiser halfbands (see the header for the
+    // division of labour). Betas chosen for ~126 dB (first stage, whose
+    // window is short because its transition is wide) and ~98 dB (second
+    // stage, 0.45–0.55 of the host rate transition).
+    designKaiserHalfband(stageAKernel_, 12.9);
+    designKaiserHalfband(stageBKernel_, 9.88);
+
+    // The audible-band noise density must not depend on the internal rate:
+    // the reference is the 88.2 kHz internal rate the mixer's noise levels
+    // were originally voiced at.
+    noiseAmplitude_ = std::sqrt(internalRate_ / 88200.0);
 
     // The pinking network's poles are physical frequencies, not per-sample
     // constants: the reference recurrence coefficients describe poles at a
@@ -246,6 +451,12 @@ void GhostarEngine::reset()
 
     phaseA_ = 0.0;
     phaseB_ = 0.0;
+    heldWaveA_ = naiveWave(parameters_.oscAWaveform, 0.0, oscADuty_);
+    heldTriA_ = triangleWave(0.0);
+    heldWaveB_ = naiveWave(parameters_.oscBWaveform, 0.0, oscBDuty_);
+    heldTriB_ = triangleWave(0.0);
+    heldDutyA_ = oscADuty_;
+    heldDutyB_ = oscBDuty_;
     lastOscBWave_ = 0.0;
     pinkState_[0] = pinkState_[1] = pinkState_[2] = 0.0;
     brightnessState_ = 0.0;
@@ -254,9 +465,12 @@ void GhostarEngine::reset()
     upperFirst_ = SvfSection {};
     upperSecond_ = SvfSection {};
 
-    filterRing_.fill(0.0);
-    shaperRing_.fill(0.0);
-    decimatorIndex_ = 0;
+    filterStageARing_.fill(0.0);
+    shaperStageARing_.fill(0.0);
+    stageAIndex_ = 0;
+    filterStageBRing_.fill(0.0);
+    shaperStageBRing_.fill(0.0);
+    stageBIndex_ = 0;
 
     dcPreviousInLeft_ = 0.0;
     dcPreviousOutLeft_ = 0.0;
@@ -1089,44 +1303,72 @@ void GhostarEngine::renderVoiceSample() noexcept
     const double stepA = frequencyA * dt;
     const double stepB = frequencyB * dt;
 
-    phaseA_ += stepA;
-    const bool aWrapped = phaseA_ >= 1.0;
-    if (aWrapped)
-        phaseA_ -= std::floor(phaseA_);
-
-    phaseB_ += stepB;
-    if (phaseB_ >= 1.0)
-        phaseB_ -= std::floor(phaseB_);
-    // Hard sync, one-directional A -> B: A's reset restarts B's ramp at the
-    // corresponding fraction of B's own step. (Bandlimiting the sync edge is
-    // a refinement target; at 2x the residual aliasing is tolerable.)
-    if (p.sync && aWrapped && stepA > 0.0)
-        phaseB_ = (phaseA_ / stepA) * stepB;
-
     const double dutyA =
         std::clamp(oscADuty_ + controlPwmA_, 0.03, 0.97);
     const double dutyB =
         std::clamp(oscBDuty_ + controlPwmB_, 0.03, 0.97);
 
-    const double waveA =
-        oscillatorWave(p.oscAWaveform, phaseA_, stepA, dutyA);
-    const double waveB =
-        oscillatorWave(p.oscBWaveform, phaseB_, stepB, dutyB);
+    OscCorrections corrA {};
+    OscCorrections corrB {};
+
+    // A modulated duty boundary can cross the standing phase between two
+    // samples — a value jump no phase crossing sees — so the jump the duty
+    // move itself makes is registered as an event at this sample's start.
+    const auto dutyMoveEvent = [](Waveform waveform, double phase,
+                                  double previousDuty, double duty,
+                                  OscCorrections& c) noexcept {
+        if (waveform == Waveform::Triangle || waveform == Waveform::Sawtooth)
+            return;
+        const double jump = naiveWave(waveform, phase, duty)
+                          - naiveWave(waveform, phase, previousDuty);
+        if (jump != 0.0)
+            addStepEvent(c.selectedHeld, c.selectedNow, 0.0, jump);
+    };
+    dutyMoveEvent(p.oscAWaveform, phaseA_, heldDutyA_, dutyA, corrA);
+    dutyMoveEvent(p.oscBWaveform, phaseB_, heldDutyB_, dutyB, corrB);
+
+    // Hard sync, one-directional A -> B: A's wrap resets B at the wrap's own
+    // sub-sample instant, and the reset's value and slope discontinuities
+    // are bandlimited like every other event.
+    const bool aWillWrap = phaseA_ + stepA >= 1.0;
+    const double resetU = (p.sync && aWillWrap && stepA > 0.0)
+                              ? (1.0 - phaseA_) / stepA
+                              : -1.0;
+    phaseA_ = scanOscillatorSample(phaseA_, stepA, p.oscAWaveform, dutyA,
+                                   -1.0, corrA);
+    phaseB_ = scanOscillatorSample(phaseB_, stepB, p.oscBWaveform, dutyB,
+                                   resetU, corrB);
+
+    // Deferred emit: the sample leaving the oscillator is the previous one,
+    // now carrying the earlier half of any correction discovered since.
+    const double waveA = heldWaveA_ + corrA.selectedHeld;
+    const double waveB = heldWaveB_ + corrB.selectedHeld;
+    const double triA = heldTriA_ + corrA.triangleHeld;
+    const double triB = heldTriB_ + corrB.triangleHeld;
+    heldWaveA_ = naiveWave(p.oscAWaveform, phaseA_, dutyA)
+               + corrA.selectedNow;
+    heldTriA_ = triangleWave(phaseA_) + corrA.triangleNow;
+    heldWaveB_ = naiveWave(p.oscBWaveform, phaseB_, dutyB)
+               + corrB.selectedNow;
+    heldTriB_ = triangleWave(phaseB_) + corrB.triangleNow;
+    heldDutyA_ = dutyA;
+    heldDutyB_ = dutyB;
     lastOscBWave_ = waveB;
 
     // Ring modulator: A-triangle x B-triangle taken before the waveform
-    // switches, with the un-nulled carrier bleed the untrimmed OTA bias
-    // leaves in (voiced 3 %, OQ-06).
-    const double triA = triangleWave(phaseA_);
-    const double triB = triangleWave(phaseB_);
+    // switches (bandlimited like the selected waves — the corners and B's
+    // sync resets are events on the triangle channel too), with the
+    // un-nulled carrier bleed the untrimmed OTA bias leaves in (voiced 3 %,
+    // OQ-06).
     const double ring = triA * triB + 0.03 * (triA + triB);
 
     // Noise: one source, "a combination of white and pink" — MM5837 white
-    // through a partial pinking network.
+    // through a partial pinking network. The amplitude rescale keeps the
+    // audible-band density independent of the internal rate.
     noiseSeed_ = noiseSeed_ * 1664525u + 1013904223u;
     const double white =
         static_cast<double>(static_cast<std::int32_t>(noiseSeed_))
-        / 2147483648.0;
+        / 2147483648.0 * noiseAmplitude_;
     pinkState_[0] = pinkA_[0] * pinkState_[0] + white * pinkG_[0];
     pinkState_[1] = pinkA_[1] * pinkState_[1] + white * pinkG_[1];
     pinkState_[2] = pinkA_[2] * pinkState_[2] + white * pinkG_[2];
@@ -1219,29 +1461,33 @@ void GhostarEngine::process(float* left, float* right, int numSamples)
             static_cast<double>(parameters_.masterVolume)
             * static_cast<double>(parameters_.masterVolume);
 
-        // Two internal steps per output sample, then the halfband picks the
-        // decimated value.
-        for (int step = 0; step < 2; ++step)
+        // Four internal steps per output sample; every second one feeds the
+        // first decimation stage's output into the second stage, and the
+        // second stage picks the output value.
+        for (int step = 0; step < 4; ++step)
         {
             renderVoiceSample();
-            filterRing_[static_cast<std::size_t>(decimatorIndex_)] =
+            filterStageARing_[static_cast<std::size_t>(stageAIndex_)] =
                 lastFilterPathSample_;
-            shaperRing_[static_cast<std::size_t>(decimatorIndex_)] =
+            shaperStageARing_[static_cast<std::size_t>(stageAIndex_)] =
                 lastShaperPathSample_;
-            decimatorIndex_ = (decimatorIndex_ + 1) % halfbandTaps;
+            stageAIndex_ = (stageAIndex_ + 1) % stageATaps;
+            if ((step & 1) == 1)
+            {
+                filterStageBRing_[static_cast<std::size_t>(stageBIndex_)] =
+                    convolveRing(stageAKernel_, filterStageARing_,
+                                 stageAIndex_);
+                shaperStageBRing_[static_cast<std::size_t>(stageBIndex_)] =
+                    convolveRing(stageAKernel_, shaperStageARing_,
+                                 stageAIndex_);
+                stageBIndex_ = (stageBIndex_ + 1) % stageBTaps;
+            }
         }
 
-        double filterOut = 0.0;
-        double shaperOut = 0.0;
-        int ringIndex = decimatorIndex_;
-        for (int tap = halfbandTaps - 1; tap >= 0; --tap)
-        {
-            filterOut += halfbandKernel_[static_cast<std::size_t>(tap)]
-                       * filterRing_[static_cast<std::size_t>(ringIndex)];
-            shaperOut += halfbandKernel_[static_cast<std::size_t>(tap)]
-                       * shaperRing_[static_cast<std::size_t>(ringIndex)];
-            ringIndex = (ringIndex + 1) % halfbandTaps;
-        }
+        const double filterOut =
+            convolveRing(stageBKernel_, filterStageBRing_, stageBIndex_);
+        const double shaperOut =
+            convolveRing(stageBKernel_, shaperStageBRing_, stageBIndex_);
 
         double outLeft;
         double outRight;

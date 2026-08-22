@@ -225,7 +225,7 @@ private:
     float targetShaperWheel_ { 0.0f };
     double travelSmoothing_ { 1.0 };
     double sampleRate_ { 44100.0 };
-    double internalRate_ { 88200.0 };   // fixed 2x oversampling
+    double internalRate_ { 176400.0 };  // fixed 4x oversampling
     // exp(-lambda / internalRate_): the diode sub-step's per-internal-sample
     // decay, precomputed so the shunt's law is a rate, not a map.
     double diodeDecay_ { 1.0 };
@@ -295,6 +295,16 @@ private:
     // --- Audio state (advanced at the internal rate) ------------------------
     double phaseA_ { 0.0 };
     double phaseB_ { 0.0 };
+    // The bandlimited oscillator core emits with one internal sample of
+    // delay: an event found mid-sample corrects the held sample exactly
+    // instead of predicting the event a sample ahead. Selected wave and
+    // ring triangle are corrected as separate channels per oscillator.
+    double heldWaveA_ { 0.0 };
+    double heldTriA_ { 0.0 };
+    double heldWaveB_ { 0.0 };
+    double heldTriB_ { 0.0 };
+    double heldDutyA_ { 0.5 };
+    double heldDutyB_ { 0.5 };
     double lastOscBWave_ { 0.0 };
     double pinkState_[3] { 0.0, 0.0, 0.0 };
     // Pinking poles re-derived for the internal rate in prepare(), so the
@@ -307,13 +317,38 @@ private:
     SvfSection upperFirst_ {};
     SvfSection upperSecond_ {};
 
-    // Halfband decimator history for the 2x -> 1x output boundary, one ring
-    // per audio path so the split-path output decimates cleanly.
-    static constexpr int halfbandTaps = 63;
-    std::array<double, halfbandTaps> filterRing_ {};
-    std::array<double, halfbandTaps> shaperRing_ {};
-    int decimatorIndex_ { 0 };
-    std::array<double, halfbandTaps> halfbandKernel_ {};
+    // Two-stage decimation for the 4x -> 1x output boundary, one ring per
+    // stage per audio path so the split-path output decimates cleanly. The
+    // first stage's transition band is wide (nothing between 0.55 and 1.55
+    // of the host Nyquist can fold into the audio band before the second
+    // stage has its say), so it stays short; the second stage carries the
+    // sharp cut — flat to 0.45 of the host rate, ~98 dB down from 0.55 —
+    // that keeps near-Nyquist images out of the measured band.
+    static constexpr int stageATaps = 31;
+    static constexpr int stageBTaps = 127;
+    // A halfband kernel's even offsets from the centre are structurally
+    // zero, so only the nonzero taps are stored and visited.
+    template <std::size_t taps>
+    struct SparseHalfband
+    {
+        // How far newer than the ring's oldest sample each stored tap
+        // reaches, so the convolution needs no index arithmetic per tap.
+        std::array<int, taps> offsets {};
+        std::array<double, taps> values {};
+        int count { 0 };
+    };
+    SparseHalfband<stageATaps> stageAKernel_ {};
+    SparseHalfband<stageBTaps> stageBKernel_ {};
+    std::array<double, stageATaps> filterStageARing_ {};
+    std::array<double, stageATaps> shaperStageARing_ {};
+    int stageAIndex_ { 0 };
+    std::array<double, stageBTaps> filterStageBRing_ {};
+    std::array<double, stageBTaps> shaperStageBRing_ {};
+    int stageBIndex_ { 0 };
+    // The white generator draws once per internal sample, so its per-hertz
+    // density falls as the internal rate rises; this rescale keeps the
+    // audible-band density at the level the mixer laws were voiced at.
+    double noiseAmplitude_ { 1.0 };
 
     double lastFilterPathSample_ { 0.0 };
     double lastShaperPathSample_ { 0.0 };
