@@ -146,12 +146,16 @@ SM DWG 2/3, or a two-note cutoff measurement on hardware.
 
 **Gap.** The X and Y buses' full-wheel depths at each destination are set
 by the mod board's summing resistors, which were not resolved from the
-scan; the manual states no numbers.
+scan; the manual states no numbers. For Y→LFO RATE the manual anchors
+only the behaviour (the wheel sets the fastest rate, the knob the
+slowest), not the fastest rate itself.
 **Engine.** Full wheel gives 1 octave of pitch, 3 octaves of cutoff, and
 ±0.42 of pulse duty (`pitchDepthOctaves`, `filterDepthOctaves`,
-`dutyDepth` — all voiced).
+`dutyDepth`); full Y at the LFO RATE destination reaches 60 Hz (all
+voiced).
 **Closes with.** The mod-board summing network from a cleaner scan, or
-depth measurements at each destination on hardware.
+depth measurements at each destination on hardware, including the
+wheel-end LFO rate.
 
 ## OQ-15 — Noise pinking blend
 
@@ -173,3 +177,13 @@ scan.
 **Engine.** One-pole AC coupling at ~5 Hz per channel (voiced).
 **Closes with.** The output-stage RC values from a cleaner scan, or a
 low-frequency sweep of a hardware unit's outputs.
+
+## OQ-17 — Red-noise modulation process
+
+**Gap.** The manual anchors RED NOISE only qualitatively ("continuous
+slow random"); the filtering network and level on the mod board were not
+resolved.
+**Engine.** White noise through a one-pole lowpass at 1.5 Hz, restored by
+an 18× gain and clipped to ±1 (all voiced).
+**Closes with.** The mod-board network from a cleaner scan, or a capture
+of the RED NOISE control voltage's spectrum and level from hardware.

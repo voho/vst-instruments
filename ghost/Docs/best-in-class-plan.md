@@ -129,7 +129,11 @@ register `Docs/open-questions.md` tracks each):
 - The filter-tracking pivot at middle C — the note where tracking
   contributes zero offset (OQ-13).
 - Wheel modulation depths: 1 octave of pitch, 3 octaves of cutoff, ±0.42
-  duty (`pitchDepthOctaves`, `filterDepthOctaves`, `dutyDepth`, OQ-14).
+  duty, and the 60 Hz fastest LFO rate a full Y wheel reaches
+  (`pitchDepthOctaves`, `filterDepthOctaves`, `dutyDepth`, OQ-14).
+- The RED NOISE process — a 1.5 Hz one-pole over white noise, restored by
+  18× gain and clipped (OQ-17); the manual anchors only "continuous slow
+  random".
 - The noise pinking blend — the Kellet reference poles re-derived to
   physical frequencies, standing in for the unresolved network (OQ-15) —
   and the ~5 Hz output coupling corner (OQ-16).
@@ -157,15 +161,18 @@ settled by measurement and quoted.
 
 - [ ] **Step 1 — Alias audit at the extremes.** WIDE range takes Osc B to
   10 kHz; hard sync and the ring modulator multiply spectra; the triangle
-  path relies on 2× oversampling plus mild spectral rolloff. Render
-  worst-case strokes (WIDE at full, sync sweeps at the keyboard's top,
-  ring with both oscillators high) and measure the alias floor relative to
-  the intended partials. Verification: a table of worst-case
-  alias-to-signal ratios in this document; anything above −60 dB in the
-  audible band triggers a targeted fix matched to the discontinuity's
-  order — BLEP where the synced wave jumps in *value* (saw, pulses),
-  BLAMP where it kinks in *slope* (the reset triangle), or 4× on the
-  triangle path alone — and a re-measure.
+  path relies on 2× oversampling plus mild spectral rolloff; and MOD
+  SOURCE = OSC B in WIDE drives pitch, pulse width or cutoff at audio
+  rate — an aliasing mechanism of its own. Render worst-case strokes
+  (WIDE at full, sync sweeps at the keyboard's top, ring with both
+  oscillators high, and Osc B audio-rate modulation into each of its
+  destinations) and measure the alias floor relative to the intended
+  partials. Verification: a table of worst-case alias-to-signal ratios in
+  this document; anything above −60 dB in the audible band triggers a
+  targeted fix matched to the discontinuity — BLEP for value jumps (saw
+  and pulses always; the reset triangle too, since an arbitrary-phase
+  reset lands it away from where it was), BLAMP for the triangle's slope
+  kink, or 4× on the triangle path alone — and a re-measure.
 - [ ] **Step 2 — CEM3340 temperament.** The 3340 is a famously stable VCO —
   that stability is part of the Spirit's character (two of them against
   each other stay in tune, unlike discrete VCOs). But *stable* is not
@@ -232,12 +239,13 @@ settled by measurement and quoted.
   capture becomes available (a serviced unit, a museum recording session,
   a lent instrument), measure every hardware-closable entry the register
   then holds — today that is all of OQ-01 through OQ-10 and OQ-12
-  through OQ-16: the wheel's real bend span, the actual pulse duties,
+  through OQ-17: the wheel's real bend span, the actual pulse duties,
   the envelope curvature and Shaper timings, the gate threshold, the
   ring bleed, the glide capacitor, both filter spans, the cascade Q
-  split, both clipping stages, the tracking pivot, the wheel depths,
-  the noise blend and the output coupling corner — and re-voice against
-  the measurements. Until then
+  split, both clipping stages, the tracking pivot, every wheel depth
+  including the wheel-end LFO rate, the noise blend, the output coupling
+  corner and the red-noise process — and re-voice against the
+  measurements. Until then
   this step cannot start, and no constant is fitted to a YouTube demo's
   unknown signal chain.
 
