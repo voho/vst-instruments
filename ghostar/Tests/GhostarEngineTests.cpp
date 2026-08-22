@@ -681,10 +681,11 @@ void testStopAllSoundKeepsControllers()
           "the held bend survives all sound off");
 }
 
-void testEveryFactorySoundChartRenders()
+void testEveryFactoryProgramRenders()
 {
-    check(ghostar::factoryPresetCount() == 12,
-          "the factory bank is Init plus the manual's eleven Sound Charts");
+    check(ghostar::factoryPresetCount() == 29,
+          "the factory bank is Init plus eleven Sound Charts plus the "
+          "seventeen Ghostar Programs");
     check(ghostar::factoryPresetName(0) != nullptr
               && std::string(ghostar::factoryPresetName(0)) == "Init",
           "the bank opens with the default voice");
@@ -692,24 +693,52 @@ void testEveryFactorySoundChartRenders()
               && std::string(ghostar::factoryPresetName(1))
                      == "Preparatory Pattern",
           "the charts start with the Preparatory Pattern");
-    check(ghostar::factoryPresetName(12) == nullptr,
+    check(ghostar::factoryPresetName(ghostar::factoryPresetCount())
+              == nullptr,
           "an out-of-range program has no name");
+
+    // Every program carries a description, and the two banks are contiguous
+    // with the historical one first, which is what a browser groups on.
+    bool sawProgramsBank = false;
+    for (int index = 0; index < ghostar::factoryPresetCount(); ++index)
+    {
+        const bool isProgram =
+            ghostar::factoryPresetBank(index) == ghostar::PresetBank::Programs;
+        if (isProgram)
+            sawProgramsBank = true;
+        check(!(sawProgramsBank && !isProgram),
+              "the banks are contiguous, Sound Charts first");
+        check(ghostar::factoryPresetDescription(index) != nullptr
+                  && ghostar::factoryPresetDescription(index)[0] != '\0',
+              "every program has a description");
+    }
+    check(sawProgramsBank, "the performance bank is present");
 
     for (int index = 0; index < ghostar::factoryPresetCount(); ++index)
     {
         GhostarEngine engine;
         engine.prepare(44100.0, 256);
         engine.setParameters(ghostar::factoryPresetParameters(index));
+        // The wheels sit where a player's hand would rest, since several
+        // programs put their motion behind one.
+        engine.setModWheel(0.5f);
+        engine.setShaperWheel(0.6f);
         engine.noteOn(48, 0.9f);
         engine.noteOn(55, 0.9f);
         const auto rendered = render(engine, 2.0, 44100.0);
         const std::string name = ghostar::factoryPresetName(index);
         check(finite(rendered), (name + " renders finite audio").c_str());
         if (name == "Preparatory Pattern")
+        {
             check(peak(rendered) == 0.0,
                   "the Preparatory Pattern produces no sound");
-        else
-            check(peak(rendered) > 1.0e-4, (name + " is audible").c_str());
+            continue;
+        }
+        check(peak(rendered) > 1.0e-4, (name + " is audible").c_str());
+        // A program that clips on an ordinary two-note phrase would be a
+        // delivery defect, not a voicing choice.
+        check(peak(rendered) < 1.0,
+              (name + " leaves headroom on an ordinary phrase").c_str());
     }
 }
 
@@ -762,7 +791,7 @@ int main()
     testArpFirstStepIsTheScanBottom();
     testTravelStepsGlideWhileSounding();
     testStopAllSoundKeepsControllers();
-    testEveryFactorySoundChartRenders();
+    testEveryFactoryProgramRenders();
     testFasterThanRealtime();
 
     if (failures != 0)

@@ -176,10 +176,15 @@ own pitch, without retriggering.
 
 ## Factory programs
 
-The modelled instrument shipped no presets; its manual instead teaches
+The bank has two halves. Hosts see one flat list; the editor's browser
+groups them.
+
+### Sound Charts — the manual's own lessons
+
+The modelled instrument shipped no presets: its manual instead teaches
 eleven **Sound Charts**, each a drawn panel setting with a lesson attached.
-Ghostar's factory program bank is those charts, behind an **Init** program
-that is the default voice a fresh instance already carries:
+Those are programs 2–12, behind an **Init** program that is the default
+voice a fresh instance already carries.
 
 | # | Program | The lesson |
 |---|---|---|
@@ -196,9 +201,37 @@ that is the default voice a fresh instance already carries:
 | 11 | Noise Scale | Resonance at maximum turns noise into a keyed pitch. |
 | 12 | Inverted Guitar | The inverted filter envelope pluck. |
 
-Selecting a program writes its chart onto every panel control (and pulls
-the performance wheels fully back, as the charts instruct), so it is also a
-readable lesson: open the editor and see how the sound is made.
+### Ghostar Programs — the performance bank
+
+Programs 13–29 are Ghostar's own, for playing rather than for teaching.
+They make no historical claim — the hardware had no presets to copy — and
+each one puts a single mechanism in the foreground, so the bank doubles as
+a tour of what the panel can do. They are level-matched to each other, so
+you can step through them without reaching for the volume.
+
+| # | Program | What it foregrounds |
+|---|---|---|
+| 13 | Spirit Bass | The 24 dB lowpass under a fast filter envelope. |
+| 14 | Vocal Pair | The signature dual filter: a boost peak sliding under the lowpass. |
+| 15 | Formant Reed | FORMANT freezes the lower peak while the upper articulates. |
+| 16 | Growl Bass | The inter-filter clipper, re-filtered by the upper lowpass. |
+| 17 | Sync Lead | Hard sync torn open by the Shaper — ride the Y wheel. |
+| 18 | Ring Bell | The triangle-cross ring modulator, struck and left to fall. |
+| 19 | Two-Path Drift | An enveloped line left, a free-running ring drone right (SPLIT is on). |
+| 20 | Bypass Pad | VCA BYPASS holds the path open; red noise wanders the cutoff. Held keys drone. |
+| 21 | Leap Sequence | LEAP cycles each note through unison, up and down an octave. Hold a chord. |
+| 22 | Patterned Steps | S+H sampling the Shaper: a repeating figure, not a wander. |
+| 23 | Glide Lead | AUTO glide — legato only when two keys overlap. X wheel adds vibrato. |
+| 24 | Hollow Fifth | A fifth apart with independent PWM from the X and Y buses. |
+| 25 | Noise Flute | Noise rung at the cutoff, with the cutoff tracking the keys. |
+| 26 | Sub and Lead | Osc B parked in BASS as a fixed sub beneath a played lead. |
+| 27 | Shaper Pulse | RUN chops the second path into a rhythm keys cannot interrupt. |
+| 28 | Thunder | WIDE below the keyboard, noise through the overdrive stage. |
+| 29 | Hollow Ghost | The resonant highpass against the lowpass: the double peak. |
+
+Selecting any program writes it onto every panel control (and pulls the
+performance wheels fully back, as the charts instruct), so every one is
+also readable: open the editor and see how the sound is made.
 
 ## Hearing the instrument
 

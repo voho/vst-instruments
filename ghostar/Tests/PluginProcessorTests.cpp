@@ -338,22 +338,26 @@ void testAdvertisedTailCoversTheLongestRelease()
            "the advertised tail is shorter than the longest release");
 }
 
-// The factory bank is the manual's eleven Sound Charts. The host-facing
-// contract: the count and names are published, selecting a program writes
-// its chart into the host parameters, and a selected chart actually plays.
+// The factory bank is Init, the manual's eleven Sound Charts, and the
+// seventeen Ghostar Programs. The host-facing contract: the count and names
+// are published, selecting a program writes it into the host parameters,
+// and a selected program actually plays.
 void testFactoryProgramsAreTheSoundCharts()
 {
     namespace ids = ghostar::parameters;
     GhostarAudioProcessor processor;
 
-    expect(processor.getNumPrograms() == 12,
-           "the program bank is not Init plus the eleven Sound Charts");
+    expect(processor.getNumPrograms() == 29,
+           "the program bank is not Init plus eleven charts plus seventeen "
+           "programs");
     expect(processor.getProgramName(0) == "Init",
            "the bank does not open with the default voice");
     expect(processor.getProgramName(1) == "Preparatory Pattern",
            "the charts do not start with the Preparatory Pattern");
     expect(processor.getProgramName(3) == "Fat Filter",
            "program 3 is not the Fat Filter chart");
+    expect(processor.getProgramName(12) == "Spirit Bass",
+           "the performance bank does not begin where it should");
 
     processor.setCurrentProgram(3);
     expect(processor.getCurrentProgram() == 3,
@@ -373,9 +377,19 @@ void testFactoryProgramsAreTheSoundCharts()
            "selecting a chart did not pull the X wheel fully back");
 
     // An out-of-range selection must be ignored, not clamp or crash.
-    processor.setCurrentProgram(12);
+    processor.setCurrentProgram(processor.getNumPrograms());
     expect(processor.getCurrentProgram() == 3,
            "an out-of-range program selection was not ignored");
+
+    // A performance program must reach the host parameters exactly as a
+    // chart does — the two banks travel the same lane.
+    processor.setCurrentProgram(12);
+    expect(processor.getCurrentProgram() == 12,
+           "the performance program was not selected");
+    auto* slope = processor.parameters.getRawParameterValue(ids::slope);
+    expect(slope != nullptr && std::lround(slope->load()) == 1,
+           "Spirit Bass did not select the 24 dB slope");
+    processor.setCurrentProgram(3);
 
     // The selected program's name must survive a state round trip; the
     // values themselves already travel as parameters.
