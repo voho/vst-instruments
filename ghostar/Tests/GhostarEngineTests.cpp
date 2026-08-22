@@ -778,21 +778,36 @@ void testEveryFactoryProgramRenders()
     }
     check(sawProgramsBank, "the performance bank is present");
 
+    // Both wheel positions a program is played at. Wheels back is the state
+    // selecting one actually leaves — testing only the raised case would let
+    // a program that says nothing until a hand moves pass unnoticed — and
+    // wheels up is where a program's modulation is doing its work.
+    struct WheelStance
+    {
+        const char* what;
+        float x;
+        float y;
+    };
+    for (const auto stance : { WheelStance { "with the wheels back, as "
+                                             "selecting it leaves them",
+                                             0.0f, 0.0f },
+                               WheelStance { "with the wheels raised", 0.5f,
+                                             0.6f } })
     for (int index = 0; index < ghostar::factoryPresetCount(); ++index)
     {
         GhostarEngine engine;
         engine.prepare(44100.0, 256);
         engine.setParameters(ghostar::factoryPresetParameters(index));
-        // The wheels sit where a player's hand would rest, since several
-        // programs put their motion behind one.
-        engine.setModWheel(0.5f);
-        engine.setShaperWheel(0.6f);
+        engine.setModWheel(stance.x);
+        engine.setShaperWheel(stance.y);
         engine.noteOn(48, 0.9f);
         engine.noteOn(55, 0.9f);
         const auto rendered = render(engine, 2.0, 44100.0);
-        const std::string name = ghostar::factoryPresetName(index);
+        const std::string name =
+            std::string(ghostar::factoryPresetName(index)) + " " + stance.what;
         check(finite(rendered), (name + " renders finite audio").c_str());
-        if (name == "Preparatory Pattern")
+        if (std::string(ghostar::factoryPresetName(index))
+            == "Preparatory Pattern")
         {
             check(peak(rendered) == 0.0,
                   "the Preparatory Pattern produces no sound");
@@ -803,6 +818,41 @@ void testEveryFactoryProgramRenders()
         // delivery defect, not a voicing choice.
         check(peak(rendered) < 1.0,
               (name + " leaves headroom on an ordinary phrase").c_str());
+    }
+}
+
+// Selecting a program pulls both performance wheels fully back, the way the
+// manual's charts are drawn and the way the plug-in is documented and tested.
+// That is correct — the wheels are attenuators the player rides, a chart
+// cannot store one, and a stored position would be wiped by the first CC1 a
+// controller at rest sends. But it means a program that routes either wheel's
+// bus makes none of that motion until a hand moves, and its one-line
+// description is the only place the player is told so.
+//
+// The rule is exact rather than measured. Every X destination is scaled by
+// modWheel_, at control rate through xSignal and at audio rate through
+// AudioRateMod::gain, which must be non-zero for the modulation to be applied
+// at all; every Y destination is scaled by shaperWheel_. So routing either bus
+// is precisely the condition, and it needs no threshold.
+void testWheelGatedProgramsNameTheirWheel()
+{
+    for (int index = 0; index < ghostar::factoryPresetCount(); ++index)
+    {
+        const auto parameters = ghostar::factoryPresetParameters(index);
+        const std::string name = ghostar::factoryPresetName(index);
+        const std::string description =
+            ghostar::factoryPresetDescription(index);
+
+        if (parameters.modXTo != ghostar::ModXDestination::Off)
+            check(description.find("X wheel") != std::string::npos,
+                  (name + " routes the X bus but its description does not "
+                          "tell the player to raise the X wheel")
+                      .c_str());
+        if (parameters.shaperYTo != ghostar::ShaperYDestination::Off)
+            check(description.find("Y wheel") != std::string::npos,
+                  (name + " routes the Y bus but its description does not "
+                          "tell the player to raise the Y wheel")
+                      .c_str());
     }
 }
 
@@ -857,6 +907,7 @@ int main()
     testTravelStepsGlideWhileSounding();
     testStopAllSoundKeepsControllers();
     testEveryFactoryProgramRenders();
+    testWheelGatedProgramsNameTheirWheel();
     testFasterThanRealtime();
 
     if (failures != 0)
