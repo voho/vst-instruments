@@ -56,7 +56,7 @@ recorded in the [research contract](../sh201-replica-research.md).
 | `06-ring-bell.wav` | Ring modulation: equal-sine product bells | 9.2 s | −16.6 dBFS | +13.6 dB |
 | `07-pwm-strings.wav` | Pulse-width modulation strings through the chorus delay template | 15.8 s | −2.5 dBFS | −0.5 dB |
 | `08-sub-bass.wav` | Square plus sine an octave down with the LOW FREQ boost | 8.0 s | −21.1 dBFS | +18.1 dB |
-| `09-sample-hold-fx.wav` | Sample & hold LFO into the band-pass filter | 9.2 s | −31.7 dBFS | +28.7 dB |
+| `09-sample-hold-fx.wav` | Sample & hold LFO into the band-pass filter | 9.2 s | −20.5 dBFS | +17.5 dB |
 | `10-dual-pad.wav` | DUAL keyboard mode: two complete tones layered under one hall | 23.9 s | −8.5 dBFS | +5.5 dB |
 | `11-arpeggiator.wav` | One chord through the arpeggiator: UP, UP&DOWN(L&H) with a heavy shuffle, then OCTAVE RANGE +2 on HOLD | 15.1 s | −18.7 dBFS | +15.7 dB |
 <!-- peaks-table-end -->

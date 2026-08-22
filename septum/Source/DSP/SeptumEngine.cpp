@@ -1702,9 +1702,17 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
                 const double hp = input - damping * v1 - v2;
                 switch (tone.filterType)
                 {
+                    // Each response is the integrator tap itself. The
+                    // band-pass used to be scaled by the damping, which is the
+                    // usual way to hold its peak at unity — but this damping
+                    // is the one RESONANCE drives to zero and past it, so
+                    // scaling by it made the band-pass quieter as the knob
+                    // came up and inverted it at the top, where the manual
+                    // says the filter oscillates. Taken raw it gains with
+                    // resonance and self-oscillates like the other two.
                     case FilterType::Lpf: return lp;
                     case FilterType::Hpf: return hp;
-                    case FilterType::Bpf: return damping * bp;
+                    case FilterType::Bpf: return bp;
                     case FilterType::Bypass: break;
                 }
                 return input;
@@ -2464,7 +2472,11 @@ void Engine::prepareExternalTick (const float* inputLeft, const float* inputRigh
                     {
                         case AudioFilterType::Lpf: return lp;
                         case AudioFilterType::Hpf: return hp;
-                        case AudioFilterType::Bpf: return damping * bp;
+                        // Raw, as the voice filter takes it: the contract says
+                        // this filter's resonance curve is the voice filter's,
+                        // so its band-pass has to behave like the voice
+                        // filter's too.
+                        case AudioFilterType::Bpf: return bp;
                         // NOTCH is the low-pass and high-pass sum: everything
                         // but the band the resonance would have boosted.
                         case AudioFilterType::Notch: return lp + hp;

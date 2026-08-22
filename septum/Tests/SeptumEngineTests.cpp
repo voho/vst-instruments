@@ -1861,6 +1861,56 @@ void testSelfOscillationBounded()
             "full resonance sustains oscillation while the key is held");
 }
 
+// The manual's resonance warning is not written per filter type: far right,
+// the filter reaches sustained oscillation. Scaling the band-pass tap by the
+// SVF damping used to make that impossible on BPF — the damping is what
+// RESONANCE drives to zero — so the band-pass lost 21 dB across the top of
+// the knob where the low-pass gained 20.
+void testBandPassGainsWithResonance()
+{
+    const auto bandLevel = [] (septum::FilterType type, int resonance)
+    {
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Noise;
+        patch.upper.filterType = type;
+        patch.upper.filterSlope = septum::FilterSlope::Db12;
+        patch.upper.cutoff = 64;
+        patch.upper.resonance = resonance;
+        patch.upper.ampEnvSustain = 127;
+
+        septum::Engine engine;
+        engine.prepare (96000.0, 256);
+        engine.setPatch (patch);
+        engine.reset();
+        auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 1.5, 96000.0);
+        return take.rms (48000, 144000);
+    };
+
+    const double quiet = bandLevel (septum::FilterType::Bpf, 0);
+    const double loud = bandLevel (septum::FilterType::Bpf, 120);
+    expect (quiet > 1.0e-6, "the band-pass passes its band at resonance 0");
+    expect (loud > 6.0 * quiet,
+            "RESONANCE lifts the band-pass by at least 15 dB, as it does the "
+            "low-pass");
+
+    // And the top of the travel oscillates, exactly as it does on the other
+    // resonant types.
+    septum::Patch patch = plainSawPatch();
+    patch.upper.filterType = septum::FilterType::Bpf;
+    patch.upper.filterSlope = septum::FilterSlope::Db24;
+    patch.upper.cutoff = 64;
+    patch.upper.resonance = 127;
+    septum::Engine engine;
+    engine.prepare (44100.0, 256);
+    engine.setPatch (patch);
+    engine.reset();
+    auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 2.0);
+    expect (take.finite(), "the band-pass stays finite at full resonance");
+    expect (take.peak() <= 1.06, "the band-pass stays inside the limiter");
+    expect (take.rms (66150, 88200) > 0.005,
+            "full resonance sustains oscillation on the band-pass too");
+}
+
 void testEnvelopesShapeLoudness()
 {
     septum::Patch fast = plainSawPatch();
@@ -2339,6 +2389,7 @@ int main()
     testArpeggioOctaveRange();
     testArpeggiatorEdgeCases();
     testSelfOscillationBounded();
+    testBandPassGainsWithResonance();
     testEnvelopesShapeLoudness();
     testVelocitySensitivity();
     testEffectTails();

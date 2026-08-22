@@ -590,3 +590,48 @@ of the travel, where their zero is. The flag is read straight off the
 parameter's own `NormalisableRange` in `bindControls` rather than from a list
 that could drift: a control is bipolar exactly when its range crosses zero,
 so the arc and the sign the manual prints can never disagree.
+
+#### Step 13 — the band-pass lost level where the manual says it oscillates
+
+The voice filter took its band-pass tap as `damping * bp`. Scaling the
+band-pass by the SVF damping is the ordinary way to hold its peak at unity —
+but *this* damping is `k`, the quantity RESONANCE drives down: `k = 2 −
+2.04·√(v/127)` reaches zero at RESONANCE ≈ 122 and −0.04 at 127. So the top
+of the knob multiplied the band-pass by a factor shrinking to nothing and
+then inverting.
+
+Measured at 96 kHz, NOISE through a −12 dB filter at cutoff 64, whole-take
+RMS after 0.5 s, relative to the same filter at RESONANCE 0:
+
+| RESONANCE | BPF before | BPF after | LPF (unchanged) |
+|---|---|---|---|
+| 0 | 0.00 dB | 0.00 dB | 0.00 dB |
+| 32 | −2.93 dB | **+3.30 dB** | +3.19 dB |
+| 64 | −5.32 dB | **+5.87 dB** | +5.75 dB |
+| 96 | −9.14 dB | **+9.78 dB** | +9.67 dB |
+| 110 | −12.69 dB | **+13.20 dB** | +13.08 dB |
+| 120 | −21.16 dB | **+20.24 dB** | +20.09 dB |
+| 127 | −8.50 dB | **+25.48 dB** | +25.30 dB |
+
+The −8.50 dB at the end of the "before" column is the give-away: level
+*returns* past RESONANCE 122 because `k` has gone negative, so the band-pass
+came back inverted. The manual's warning that resonance far right "may not
+stop at all" is not written per filter type, and on BPF the shipping engine
+could not oscillate at all — it went quiet instead.
+
+The band-pass is now the raw integrator tap, as LPF and HPF already were. It
+tracks the low-pass to within 0.2 dB across the whole knob and self-oscillates
+at the top, and it costs 6 dB of level at RESONANCE 0, which is what `1/k`
+at `k = 2` is worth. No constant was added or moved: the fix is the removal of
+one factor.
+
+The AUDIO FILTER's band-pass changed with it. Its damping is floored at 0.05
+so it never collapsed, but the contract says its resonance curve *is* the
+voice filter's, and a band-pass that behaved differently would have made that
+false.
+
+Two checks fence it, both watched to fail with the factor put back: RESONANCE
+120 must lift the band-pass at least 15 dB above RESONANCE 0, and full
+resonance on a −24 dB band-pass must sustain a bounded oscillation. The one
+committed demo that uses the band-pass, `09-sample-hold-fx.wav`, re-rendered
+11.2 dB louder before normalisation; the other ten are bit-identical.

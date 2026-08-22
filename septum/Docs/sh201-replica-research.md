@@ -222,7 +222,12 @@ not a modelled analog ladder.
 
 Implemented as a TPT state-variable filter; −12 dB is one resonant 2-pole
 stage, −24 dB cascades a second, non-resonant 2-pole stage (voiced
-topology, OQ-08). Resonance maps to the SVF damping through a square-root
+topology, OQ-08). Each of the three responses is the raw integrator tap, so
+all three gain with RESONANCE and all three reach the oscillation the manual
+warns about. The band-pass was scaled by the damping until 2026-08-22 — the
+usual unity-peak normalisation, but the damping here is the quantity
+RESONANCE drives to zero, so the band-pass lost 21 dB across the top of the
+knob and came back inverted past the oscillation threshold. Resonance maps to the SVF damping through a square-root
 taper, `k = 2 − 2.04·√(v/127)`: Q ≈ 0.5 at zero, slightly negative damping at
 127 so self-oscillation grows until a continuous soft-knee state limiter holds
 it — matching the manual's "may not stop at all".
