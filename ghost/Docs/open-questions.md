@@ -123,11 +123,15 @@ compression depth are unknown.
 **Engine.** A piecewise law on each section's resonant node: linear below
 `knee = 1.2`, tanh-compressed toward `ceiling = 2.2` above it, with the
 resonance travel mapped `k = 2·0.01^t − 0.025` so full travel regenerates
-(all voiced). Whether the CEM3350's internal stages add their own
-saturation on top of the external limiter is a separate, unanswered
-question.
+(all voiced). Each section's lowpass integrator state additionally carries
+a stability bound `4·tanh(0.25·x)` — placed above the limiter's range so
+it only stops state runaway during regenerative self-oscillation, but a
+second nonlinearity in the path at extremes all the same (voiced). Whether
+the CEM3350's internal stages add their own saturation on top of the
+external limiter is a separate, unanswered question.
 **Closes with.** The BA130 datasheet plus a level trace of the resonance
-node, or resonance/self-oscillation captures of a hardware unit.
+node, or resonance/self-oscillation captures of a hardware unit; the same
+derivation must justify, re-derive or remove the integrator bound.
 
 ## OQ-13 — Filter-tracking pivot note
 
@@ -137,3 +141,35 @@ reference, which was not resolved from the drawings.
 **Engine.** The pivot sits at middle C (voiced).
 **Closes with.** A derivation of the tracking summer's reference from
 SM DWG 2/3, or a two-note cutoff measurement on hardware.
+
+## OQ-14 — Wheel modulation depths
+
+**Gap.** The X and Y buses' full-wheel depths at each destination are set
+by the mod board's summing resistors, which were not resolved from the
+scan; the manual states no numbers.
+**Engine.** Full wheel gives 1 octave of pitch, 3 octaves of cutoff, and
+±0.42 of pulse duty (`pitchDepthOctaves`, `filterDepthOctaves`,
+`dutyDepth` — all voiced).
+**Closes with.** The mod-board summing network from a cleaner scan, or
+depth measurements at each destination on hardware.
+
+## OQ-15 — Noise pinking blend
+
+**Gap.** The manual anchors "a combination of white and pink" from the
+MM5837, but the pinking network's component values — and so its transfer
+and the white/pink blend — were not resolved.
+**Engine.** The Kellet reference recurrence's three poles, re-derived from
+their 44.1 kHz design-rate coefficients to physical frequencies at the
+internal rate, as a partial pinking stage (the reference filter is a
+published choice standing in for the unresolved network — voiced).
+**Closes with.** The noise-board schematic values, or a long-window
+spectrum capture of the hardware's noise at the mixer.
+
+## OQ-16 — Output coupling corner
+
+**Gap.** The output stage's series capacitors are anchored in presence,
+but the RC values setting the highpass corner were not resolved from the
+scan.
+**Engine.** One-pole AC coupling at ~5 Hz per channel (voiced).
+**Closes with.** The output-stage RC values from a cleaner scan, or a
+low-frequency sweep of a hardware unit's outputs.

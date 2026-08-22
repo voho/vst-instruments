@@ -89,7 +89,10 @@ engineering lives.
 
 - Keyboard law and the ~110 % filter tracking amount (`trackingOctaves`,
   factor 1.1; the middle-C *pivot* is voiced — see below).
-- The panel's exact pulse duty sets — A 50/30/15/6 %, B 40/20/10/3 % — and
+- The panel's printed pulse duty sets — A 50/30/15/6 %, B 40/20/10/3 %
+  (the silkscreen's numbers are anchored; whether a calibrated unit's
+  PW trimmer actually lands on the print is OQ-03's open half, so the
+  implemented percentages are the printed values taken as voiced) — and
   Osc B's −1/UNISON/+1/+2/BASS (30–300 Hz)/WIDE (2 Hz–10 kHz) ranges with
   the ± perfect-fifth INTERVAL.
 - The 556A envelopes' 5 ms–10 s segment span (the manual's own numbers; the
@@ -100,8 +103,9 @@ engineering lives.
   keyboard articulation only through KBD, last-note keying with
   fallback-without-retrigger, AUTO glide, RIPPLE/ARPEGGIO/LEAP with the
   (0, +12, −12) pattern.
-- MM5837 white noise plus a rate-derived Kellet pinking stage; output AC
-  coupling at ~5 Hz as the series capacitors provide.
+- MM5837 white noise with a partial pinking stage, and series-capacitor AC
+  coupling on the outputs — both anchored *in presence*; the pinking
+  transfer and the coupling corner are voiced numbers (see below).
 
 **Voiced constants** (defensible but not anchored; the open-questions
 register `Docs/open-questions.md` tracks each):
@@ -125,7 +129,12 @@ register `Docs/open-questions.md` tracks each):
 - The filter-tracking pivot at middle C — the note where tracking
   contributes zero offset (OQ-13).
 - Wheel modulation depths: 1 octave of pitch, 3 octaves of cutoff, ±0.42
-  duty (`pitchDepthOctaves`, `filterDepthOctaves`, `dutyDepth`).
+  duty (`pitchDepthOctaves`, `filterDepthOctaves`, `dutyDepth`, OQ-14).
+- The noise pinking blend — the Kellet reference poles re-derived to
+  physical frequencies, standing in for the unresolved network (OQ-15) —
+  and the ~5 Hz output coupling corner (OQ-16).
+- The per-section integrator stability bound `4·tanh(0.25·x)` riding
+  above the resonant-node limiter (tracked with it under OQ-12).
 
 **DSP quality today:** PolyBLEP sawtooth and pulses with naive triangles at
 2× oversampling, one 63-tap halfband decimator per audio path
@@ -153,8 +162,10 @@ settled by measurement and quoted.
   ring with both oscillators high) and measure the alias floor relative to
   the intended partials. Verification: a table of worst-case
   alias-to-signal ratios in this document; anything above −60 dB in the
-  audible band triggers a targeted fix (BLEP on the sync edge's
-  discontinuity slope, or 4× on the triangle path alone) and a re-measure.
+  audible band triggers a targeted fix matched to the discontinuity's
+  order — BLEP where the synced wave jumps in *value* (saw, pulses),
+  BLAMP where it kinks in *slope* (the reset triangle), or 4× on the
+  triangle path alone — and a re-measure.
 - [ ] **Step 2 — CEM3340 temperament.** The 3340 is a famously stable VCO —
   that stability is part of the Spirit's character (two of them against
   each other stay in tune, unlike discrete VCOs). But *stable* is not
@@ -186,11 +197,16 @@ settled by measurement and quoted.
   on top of the external limiter is a separate question: pursue it only
   if the 3350's published topology supports a derivation, and track it
   apart from OQ-12. If the derived law and the current one both remain
-  defensible and audibly different, A–Z it. Verification: the harmonic
-  tables (Goertzel series under fixed drive) and, if run, the recorded
-  verdict — plus a re-run of Step 1's alias suite, since new nonlinearity
-  makes new high partials and the completed audit must describe the final
-  engine, not the one before it.
+  defensible and audibly different, A–Z it. The derivation's scope
+  includes the *second* nonlinearity already in every section — the
+  integrator stability bound `4·tanh(0.25·x)` on the lowpass state, which
+  shapes exactly the self-oscillation extremes under study — so the step
+  ends with that bound justified, re-derived or removed, never left as an
+  unexamined contributor to the measured harmonics. Verification: the
+  harmonic tables (Goertzel series under fixed drive) and, if run, the
+  recorded verdict — plus a re-run of Step 1's alias suite, since new
+  nonlinearity makes new high partials and the completed audit must
+  describe the final engine, not the one before it.
 - [ ] **Step 4 — Close the closable open questions.** OQ-02 (absolute
   cutoff span) and OQ-09 (cascade Q distribution) may be derivable from
   the CEM3350 datasheet's exponential-scale and mode figures; OQ-04's
@@ -215,11 +231,12 @@ settled by measurement and quoted.
   offer recorded so it is not forgotten: the moment a trustworthy Spirit
   capture becomes available (a serviced unit, a museum recording session,
   a lent instrument), measure every hardware-closable entry the register
-  then holds — today that is all of OQ-01 through OQ-10, OQ-12 and
-  OQ-13: the wheel's real bend span, the actual pulse duties, the
-  envelope curvature and Shaper timings, the gate threshold, the ring
-  bleed, the glide capacitor, both filter spans, the cascade Q split,
-  both clipping stages, and the tracking pivot — and re-voice against
+  then holds — today that is all of OQ-01 through OQ-10 and OQ-12
+  through OQ-16: the wheel's real bend span, the actual pulse duties,
+  the envelope curvature and Shaper timings, the gate threshold, the
+  ring bleed, the glide capacitor, both filter spans, the cascade Q
+  split, both clipping stages, the tracking pivot, the wheel depths,
+  the noise blend and the output coupling corner — and re-voice against
   the measurements. Until then
   this step cannot start, and no constant is fitted to a YouTube demo's
   unknown signal chain.
