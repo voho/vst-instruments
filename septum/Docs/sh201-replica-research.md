@@ -307,6 +307,50 @@ same note 19 samples apart and comb around 1 kHz. A voice with the switch off
 passes through a matched pure delay, bit-identical apart from the shift, and
 the plug-in reports the delay as its latency.
 
+### External input: EXT IN, CENTER CANCEL, AUDIO FILTER
+
+Settled (OM pp. 49–53). The rear INPUT jacks are monitored through their own
+signal path: an **INPUT VOL** knob ("if you turn the knob all the way to the
+left, you will hear no sound from the connected device"), a **CENTER CANCEL**
+switch that "removes sounds that are localized at the center of the sound
+field (such as vocals)" and, the manual warns, takes centred bass with them,
+and an **AUDIO FILTER** with a FILTER ON button, a TYPE button cycling
+**LPF → HPF → BPF → NOTCH → LPF** — one more type than the voice filter has —
+a −12/−24 dB SLOPE button, CUTOFF (printed CENTER FREQ for BPF and NOTCH) and
+RESONANCE. The manual says three separate times that none of it is stored in
+the patch, so it lives outside `Patch` in the replica exactly as it does on
+the instrument. CUTOFF answers on CC#2 and RESONANCE on CC#4 (OM p. 72).
+
+Selecting **EXT-IN** as an oscillator waveform "plays the sound from the audio
+source connected to the rear panel INPUT jacks" through the voice, and the
+manual settles two things about it that a block diagram would not: "the sound
+you hear will be mono even if the audio source connected to the INPUT jack is
+stereo", and "since the sound may distort if you press a larger number of
+keys, we recommend that you turn on the Solo function" — each voice adds
+another copy of the input.
+
+The **order** of the two paths is settled by the manual's own recipe for
+"producing sound from the external device only when you play the keyboard":
+turn the audio filter on, select LPF, and turn CUTOFF fully left, at which
+point "you won't hear any sound" until you play. That only works if the
+EXT-IN oscillator taps the input **before** the audio filter, and if the
+direct monitor is muted while an EXT-IN voice is sounding — which the manual
+confirms from the other side: with a long AMP ENV release, "the sound that's
+passing through the audio filter will not be heard when you take your hand off
+the keyboard until the release time has elapsed."
+
+Voiced (OQ-14): the INPUT VOL law (squared, matching the AMP LEVEL knob); the
+audio filter's cutoff-to-Hz and resonance curves (the voice filter's, with the
+resonance floored short of the oscillation threshold — the manual describes it
+as a boost and, unlike the voice filter's, never warns that it may not stop);
+NOTCH realized as the low-pass and high-pass sum; the mono reduction the
+EXT-IN oscillator takes after CENTER CANCEL (the channel difference rather
+than the sum, since the sum of a centre-cancelled pair is zero); the depth of
+the settled AUDIO-FILTER LFO and modulation-lever destinations; and the 5 ms
+fade with which the direct monitor hands the input over to a voice. The direct
+monitor is not patch audio, so the patch level and part controllers do not
+scale it; the panel VOLUME, which sits after the DAC on the hardware, does.
+
 ### Effects
 
 Settled: modulation delay → reverb in series, shared TIME and switches,
@@ -357,16 +401,16 @@ is not separately modelled — the host's converters stand in for it.
 ## Scope of v1
 
 Implemented: both tones with every tone parameter above, all nine
-waveforms except EXT-IN (the external-input path — audio filter, center
-cancel, EXT-IN oscillators — needs a live input bus and is deferred; an
-EXT-IN oscillator renders silence, as the hardware does with nothing
-plugged in), MIX/SYNC/RING, the filter, all three envelopes, both LFOs
+waveforms including EXT-IN and the external-input path around it (INPUT VOL,
+CENTER CANCEL, the four-type AUDIO FILTER, and the monitor/voice changeover);
+with no input bus connected an EXT-IN oscillator renders silence, as the
+hardware does with nothing plugged in. MIX/SYNC/RING, the filter, all three envelopes, both LFOs
 with tempo sync, overdrive, delay→reverb with per-tone sends and the
 16 templates, SINGLE/DUAL/SPLIT with 10/5+5 voices, solo/legato,
 portamento, pitch bend with per-tone range, the settled CC map including both
-documented pedals, and the analog output stage. Deferred, documented: the
-arpeggiator and recorder, D-Beam, SysEx DT1/RQ1 I/O, and the USB audio
-topology.
+documented pedals and the audio filter's CC#2/CC#4, and the analog output
+stage. Deferred, documented: the arpeggiator and recorder, D-Beam, SysEx
+DT1/RQ1 I/O, and the USB audio topology.
 
 ## Open questions
 
@@ -413,6 +457,13 @@ Each is a standing research task; the measurement named would close it.
   applying each template), reverb RT60 per TIME/SIZE.
 - **OQ-13 — voice-steal policy.** Play 11 notes and observe which voice
   drops on hardware.
+- **OQ-14 — external-input calibration.** INPUT VOL taper; the audio
+  filter's cutoff-to-Hz table and resonance curve, and whether it
+  self-oscillates at all; whether CENTER CANCEL's output is the anti-phase
+  side pair or a mono difference; what an EXT-IN oscillator hears with CENTER
+  CANCEL engaged; the AUDIO-FILTER modulation depths. Close by capturing the
+  INPUT-to-OUTPUT response at a grid of audio-filter settings, and by feeding
+  a known stereo signal with CENTER CANCEL on and off.
 
 ## What a SysEx dump of the factory bank would add
 

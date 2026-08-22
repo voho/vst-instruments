@@ -43,6 +43,11 @@ enum class FilterType { Bypass, Lpf, Hpf, Bpf };
 
 enum class FilterSlope { Db12, Db24 };
 
+// The AUDIO FILTER on the external-input path is a separate circuit from the
+// voice filter and has one type the voice filter does not: the panel cycles
+// LPF -> HPF -> BPF -> NOTCH -> LPF (OM p. 50).
+enum class AudioFilterType { Lpf, Hpf, Bpf, Notch };
+
 // SysEx enumeration order 0-6 (Patch Tone offsets 27/31).
 enum class LfoShape { Tri, Sin, Saw, Sqr, Trapezoid, SampleHold, Random };
 
@@ -167,6 +172,21 @@ struct ReverbParams
     int hfDampGain { -6 }; // -36..0 dB
 };
 
+// The external-input path: INPUT VOL, CENTER CANCEL and the AUDIO FILTER.
+// The manual states three times over that none of it is stored in the patch
+// (OM pp. 49-51), so it lives outside `Patch` exactly as it does on the
+// instrument — a system setting the panel owns, not patch data.
+struct ExternalInput
+{
+    int inputVolume { 100 };                     // 0-127, INPUT VOL knob
+    bool centerCancel { false };                 // CENTER CANCEL ON button
+    bool filterOn { false };                     // FILTER ON button
+    AudioFilterType type { AudioFilterType::Lpf };
+    FilterSlope slope { FilterSlope::Db12 };
+    int cutoff { 127 };                          // 0-127, CC#2
+    int resonance { 0 };                         // 0-127, CC#4
+};
+
 struct Patch
 {
     std::string name { "INIT PATCH" };  // up to 12 ASCII characters
@@ -281,6 +301,13 @@ inline void clampToDocumentedRanges (TonePatch& tone) noexcept
     tone.bendRange = clampRaw (tone.bendRange, 0, 24);
     tone.octaveShift = clampRaw (tone.octaveShift, -3, 3);
     tone.portamentoTime = clampRaw (tone.portamentoTime, 0, 127);
+}
+
+inline void clampToDocumentedRanges (ExternalInput& input) noexcept
+{
+    input.inputVolume = clampRaw (input.inputVolume, 0, 127);
+    input.cutoff = clampRaw (input.cutoff, 0, 127);
+    input.resonance = clampRaw (input.resonance, 0, 127);
 }
 
 inline void clampToDocumentedRanges (Patch& patch) noexcept

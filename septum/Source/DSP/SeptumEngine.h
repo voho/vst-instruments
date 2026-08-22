@@ -222,6 +222,36 @@ namespace mapping
     inline constexpr double lowShelfHz = 200.0;
     inline constexpr double lowShelfGainDb = 8.0;
 
+    // [voiced, OQ-14] INPUT VOL 0-127 -> amplitude. The knob is analog on the
+    // hardware, ahead of the codec; a squared law matches the AMP LEVEL knob's
+    // and is the same "silent at the far left" the manual describes.
+    [[nodiscard]] inline double externalInputGain (int value) noexcept
+    {
+        const double n = value / 127.0;
+        return n * n;
+    }
+
+    // [voiced, OQ-14] The AUDIO FILTER's RESONANCE. The manual describes it as
+    // a boost around the cutoff and, unlike the voice filter's, never warns
+    // that it may not stop: the curve is the voice filter's, floored short of
+    // the oscillation threshold so an input filter cannot run away.
+    [[nodiscard]] inline double audioFilterDamping (double value) noexcept
+    {
+        return std::max (0.05, resonanceDamping (value));
+    }
+
+    // [voiced, OQ-14] How far the AUDIO-FILTER LFO destination and the
+    // modulation lever move that cutoff.
+    [[nodiscard]] inline double audioFilterLfoOctaves (int depth) noexcept
+    {
+        return depth * (5.0 / 63.0);
+    }
+    inline constexpr double audioFilterLeverOctaves = 2.0;
+
+    // [voiced, OQ-14] How fast the direct monitor path is muted when an EXT-IN
+    // voice takes the input over, and unmuted when it stops.
+    inline constexpr double externalMonitorFadeSeconds = 0.005;
+
     // [voiced] Parameter slew for the filter's panel-side controls. It is not
     // a model of anything the hardware does — it exists so a patch edit or an
     // S&H LFO edge cannot put a discontinuity into the filter coefficient —
@@ -364,6 +394,13 @@ public:
     [[nodiscard]] const Patch& currentPatch() const noexcept { return patch_; }
 
     // System-common controls (documented ranges).
+    // The external-input path is a system setting, not patch data (OM p. 49-51).
+    void setExternalInput (const ExternalInput& settings) noexcept;
+    [[nodiscard]] const ExternalInput& externalInput() const noexcept
+    {
+        return external_;
+    }
+
     void setMasterLevel (int level0to127) noexcept;
     void setMasterTuneHz (double a4Hz) noexcept;         // 415.30-466.20
     void setMasterKeyShift (int semitones) noexcept;     // -24..+24
@@ -384,7 +421,12 @@ public:
     void allNotesOff();
     void allSoundOff();
 
-    void process (float* left, float* right, int numSamples);
+    // `inputLeft`/`inputRight` carry the block's external audio, or null when
+    // the host gives the instrument no input bus (the hardware's INPUT jacks
+    // with nothing plugged in).
+    void process (float* left, float* right, int numSamples,
+                  const float* inputLeft = nullptr,
+                  const float* inputRight = nullptr);
 
     [[nodiscard]] int activeVoiceCount() const noexcept;
     [[nodiscard]] float getOutputLevel (int channel) const noexcept
@@ -600,7 +642,11 @@ private:
     void triggerVoice (Voice& voice, Part part, int note, double velocity,
                        bool legato);
     void updateVoiceControls (Voice& voice, int tickSamples);
-    void renderVoiceTick (Voice& voice, float* mono, int samples);
+    void renderVoiceTick (Voice& voice, float* mono, int samples,
+                          const float* external);
+    void prepareExternalTick (const float* inputLeft, const float* inputRight,
+                              int offset, int samples);
+    [[nodiscard]] bool anyVoiceUsesExternalInput() const noexcept;
     void advanceToneLfos (int samples);
     void processEffects (const float* dryL, const float* dryR,
                          const float* delaySendL, const float* delaySendR,
@@ -641,6 +687,15 @@ private:
     Reverb reverb_ {};
     double delayTimeSmoothed_ { 0.0 };
     double reverbFeedback_ { 0.0 };
+
+    // External input: INPUT VOL -> CENTER CANCEL -> AUDIO FILTER on the direct
+    // monitor path, and the pre-filter mono sum feeding any EXT-IN oscillator.
+    ExternalInput external_ {};
+    std::vector<float> externalDirectL_, externalDirectR_, externalMono_;
+    SvfStage audioFilter1_[2] {}, audioFilter2_[2] {};
+    double audioFilterG_ { 0.1 }, audioFilterK_ { 2.0 };
+    bool audioFilterPrimed_ { false };
+    double monitorGain_ { 1.0 };
 
     // Analog output stage state (documented component values).
     double dcX1_[2] {}, dcY1_[2] {};

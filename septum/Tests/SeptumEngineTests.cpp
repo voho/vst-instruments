@@ -469,6 +469,206 @@ void testSostenutoLatchesOnlyWhatWasSounding()
     expect (rms() < 1.0e-3, "and the note releases once both pedals are up");
 }
 
+// The external-input path (OM pp. 49-53). Renders with a stereo test signal on
+// the INPUT jacks: a 300 Hz tone panned centre plus a 900 Hz tone only in the
+// left channel, so CENTER CANCEL has something to remove and something to keep.
+struct ExternalRender
+{
+    Render out;
+    std::vector<float> inputLeft, inputRight;
+};
+
+ExternalRender renderWithExternalInput (septum::Engine& engine,
+                                        const std::vector<Event>& events,
+                                        double seconds,
+                                        double sampleRate = 44100.0)
+{
+    const auto total = (std::size_t) std::llround (seconds * sampleRate);
+    ExternalRender result;
+    result.out.left.assign (total, 0.0f);
+    result.out.right.assign (total, 0.0f);
+    result.inputLeft.assign (total, 0.0f);
+    result.inputRight.assign (total, 0.0f);
+    for (std::size_t i = 0; i < total; ++i)
+    {
+        const double t = (double) i / sampleRate;
+        const double centre = 0.4 * std::sin (2.0 * M_PI * 300.0 * t);
+        const double side = 0.4 * std::sin (2.0 * M_PI * 900.0 * t);
+        result.inputLeft[i] = (float) (centre + side);
+        result.inputRight[i] = (float) centre;
+    }
+
+    std::vector<Event> sorted = events;
+    std::sort (sorted.begin(), sorted.end(),
+               [] (const Event& a, const Event& b) { return a.seconds < b.seconds; });
+    std::size_t eventIndex = 0, position = 0;
+    const std::size_t block = 256;
+    while (position < total)
+    {
+        while (eventIndex < sorted.size()
+               && (std::size_t) std::llround (sorted[eventIndex].seconds * sampleRate)
+                      <= position)
+        {
+            const auto& event = sorted[eventIndex];
+            if (event.on)
+                engine.noteOn (event.note, event.velocity);
+            else
+                engine.noteOff (event.note);
+            ++eventIndex;
+        }
+        const auto count = std::min (block, total - position);
+        engine.process (result.out.left.data() + position,
+                        result.out.right.data() + position, (int) count,
+                        result.inputLeft.data() + position,
+                        result.inputRight.data() + position);
+        position += count;
+    }
+    return result;
+}
+
+void testExternalInputAndAudioFilter()
+{
+    const double sampleRate = 44100.0;
+    septum::Patch patch = plainSawPatch();
+    patch.upper.level = 127;
+
+    const auto run = [&] (const septum::ExternalInput& settings,
+                          const septum::Patch& withPatch,
+                          const std::vector<Event>& events, double seconds)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (withPatch);
+        engine.setExternalInput (settings);
+        engine.reset();
+        return renderWithExternalInput (engine, events, seconds, sampleRate);
+    };
+
+    // 1. With nothing plugged in the engine is exactly what it was: the
+    //    default settings monitor an input, but there is none unless one is
+    //    passed, and the direct path is silent with no notes.
+    septum::ExternalInput monitor {};
+    monitor.filterOn = false;
+    {
+        auto take = run (monitor, patch, {}, 0.2);
+        const double centre = goertzel (take.out.left, 2205, 8820, 300.0, sampleRate);
+        expect (centre > 1.0e-3,
+                "the INPUT jacks are monitored with no note playing (value "
+                    + std::to_string (centre) + ")");
+    }
+
+    // 2. INPUT VOL fully left silences the connected device (settled, OM p.49).
+    {
+        septum::ExternalInput silent = monitor;
+        silent.inputVolume = 0;
+        auto take = run (silent, patch, {}, 0.2);
+        expect (take.out.peak() < 1.0e-4,
+                "INPUT VOL fully left mutes the external source");
+    }
+
+    // 3. CENTER CANCEL removes what is common to both channels and keeps what
+    //    is not (settled, OM p.49).
+    {
+        auto plain = run (monitor, patch, {}, 0.3);
+        septum::ExternalInput cancelled = monitor;
+        cancelled.centerCancel = true;
+        auto cancel = run (cancelled, patch, {}, 0.3);
+        const double centreBefore =
+            goertzel (plain.out.left, 4410, 13230, 300.0, sampleRate);
+        const double centreAfter =
+            goertzel (cancel.out.left, 4410, 13230, 300.0, sampleRate);
+        const double sideBefore =
+            goertzel (plain.out.left, 4410, 13230, 900.0, sampleRate);
+        const double sideAfter =
+            goertzel (cancel.out.left, 4410, 13230, 900.0, sampleRate);
+        expect (centreAfter < 0.02 * centreBefore,
+                "CENTER CANCEL removes the centred tone (" +
+                    std::to_string (20.0 * std::log10 (centreAfter
+                                                       / std::max (1.0e-30, centreBefore)))
+                    + " dB)");
+        expect (sideAfter > 0.4 * sideBefore,
+                "CENTER CANCEL keeps what is not centred");
+    }
+
+    // 4. The AUDIO FILTER's LPF closed removes the monitored signal; NOTCH
+    //    removes the band at its cutoff and keeps the rest.
+    {
+        septum::ExternalInput closed = monitor;
+        closed.filterOn = true;
+        closed.type = septum::AudioFilterType::Lpf;
+        closed.slope = septum::FilterSlope::Db24;
+        closed.cutoff = 0;
+        auto take = run (closed, patch, {}, 0.3);
+        auto open = run (monitor, patch, {}, 0.3);
+        const double closedLevel =
+            goertzel (take.out.left, 4410, 13230, 300.0, sampleRate);
+        const double openLevel =
+            goertzel (open.out.left, 4410, 13230, 300.0, sampleRate);
+        // The manual's wording is "essentially all of the component
+        // frequencies ... will be cut", not silence: a -24 dB LPF at the
+        // bottom of its range is about four octaves below 300 Hz.
+        expect (closedLevel < 0.003 * openLevel,
+                "a closed AUDIO FILTER LPF all but silences the monitor path ("
+                    + std::to_string (20.0 * std::log10 (
+                          closedLevel / std::max (1.0e-30, openLevel))) + " dB)");
+
+        septum::ExternalInput notch = monitor;
+        notch.filterOn = true;
+        notch.type = septum::AudioFilterType::Notch;
+        notch.resonance = 100;
+        // Cutoff mapped to the centred tone's own frequency.
+        notch.cutoff = (int) std::lround (127.0 * std::log2 (300.0 / 20.0) / 10.0);
+        auto notched = run (notch, patch, {}, 0.3);
+        auto through = run (monitor, patch, {}, 0.3);
+        const double atNotch =
+            goertzel (notched.out.left, 4410, 13230, 300.0, sampleRate);
+        const double reference =
+            goertzel (through.out.left, 4410, 13230, 300.0, sampleRate);
+        const double kept = goertzel (notched.out.left, 4410, 13230, 900.0, sampleRate);
+        const double keptReference =
+            goertzel (through.out.left, 4410, 13230, 900.0, sampleRate);
+        expect (atNotch < 0.25 * reference,
+                "NOTCH removes the band at its cutoff ("
+                    + std::to_string (20.0 * std::log10 (
+                          atNotch / std::max (1.0e-30, reference))) + " dB)");
+        expect (kept > 0.5 * keptReference,
+                "NOTCH keeps what is away from its cutoff");
+    }
+
+    // 5. EXT-IN as a waveform plays the input through the voice, in mono, and
+    //    the direct monitor goes quiet while it does (settled, OM pp.52-53).
+    {
+        septum::Patch extPatch = patch;
+        extPatch.upper.osc1.wave = septum::Waveform::ExtIn;
+        extPatch.upper.balance = -63;
+        septum::ExternalInput settings = monitor;
+        settings.filterOn = true;
+        settings.type = septum::AudioFilterType::Lpf;
+        settings.slope = septum::FilterSlope::Db24;
+        settings.cutoff = 0;   // the manual's "sound only when you play" recipe
+
+        auto take = run (settings, extPatch, { { 0.05, true, 60, 100 } }, 0.4);
+        const double released =
+            goertzel (take.out.left, 220, 1980, 300.0, sampleRate);
+        const double held = goertzel (take.out.left, 6615, 15435, 300.0, sampleRate);
+        expect (held > 100.0 * std::max (1.0e-12, released),
+                "the manual's recipe holds: closed audio filter, silent on "
+                "release, audible under a key (held " + std::to_string (held)
+                    + ", released " + std::to_string (released) + ")");
+
+        // ...which also settles that the EXT-IN oscillator taps the input
+        // before the audio filter: if it tapped after, the closed filter
+        // would silence the played note too.
+        septum::ExternalInput openFilter = settings;
+        openFilter.filterOn = false;
+        auto openTake = run (openFilter, extPatch, { { 0.05, true, 60, 100 } }, 0.4);
+        const double heldOpen =
+            goertzel (openTake.out.left, 6615, 15435, 300.0, sampleRate);
+        expect (held > 0.5 * heldOpen,
+                "the played note is unaffected by the audio filter's setting");
+    }
+}
+
 void testSelfOscillationBounded()
 {
     septum::Patch patch = plainSawPatch();
@@ -954,6 +1154,7 @@ int main()
     testSplitAndDualVoicing();
     testSoloAndHold();
     testSostenutoLatchesOnlyWhatWasSounding();
+    testExternalInputAndAudioFilter();
     testSelfOscillationBounded();
     testEnvelopesShapeLoudness();
     testVelocitySensitivity();

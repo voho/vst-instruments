@@ -269,3 +269,24 @@ independent of the hold pedal — a note caught by both releases only when both
 are up — and a stolen voice loses its latch, because the latch belonged to the
 note the pedal caught rather than to the physical voice. The contract's scope
 section no longer defers it.
+
+#### Step 4 — the external-input path and the AUDIO FILTER
+
+The plug-in declares a stereo input bus (off by default, so a host that gives
+a synthesizer no input still loads it unchanged) and the engine implements the
+path around it: INPUT VOL, CENTER CANCEL, and the AUDIO FILTER with its four
+settled types — LPF, HPF, BPF and the NOTCH the voice filter does not have —
+its −12/−24 dB slope, cutoff and resonance, answering on the settled CC#2 and
+CC#4. Selecting EXT-IN as an oscillator waveform plays the input through the
+voice in mono, and the direct monitor hands the input over while it does.
+
+Two settled parameters that had nothing to move now move something: LFO
+destination 1 = AUDIO-FILTER and MODULATION ASSIGN = AUDIO-FILTER modulate
+that cutoff.
+
+The manual's own recipe for "producing sound from the external device only
+when you play the keyboard" — audio filter on, LPF, cutoff fully left — is
+what settles the order of the two paths, and it is a test: the released state
+measures more than 100× below the held one, and the played note is unaffected
+by the audio filter's setting, which is only true if the oscillator taps the
+input ahead of that filter. Nine checks cover the path in all.
