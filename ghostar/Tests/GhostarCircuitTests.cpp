@@ -313,6 +313,64 @@ void testOverdriveCompresses()
           "the overdrive stage compresses instead of scaling linearly");
 }
 
+// The envelope segments are RC charges on the 4.7 uF cap through the 2 MOhm
+// log sliders, so the panel's labelled time is the time *constant*: at full
+// travel the decay must fall to 1/e of its span in ~9.4 s, not reach its
+// target in that time. Measured on the loudness VCA with the sustain at
+// zero, so the audible envelope is the decay itself (SM DWG 3, OQ-04).
+void testDecayIsTheLabelledTimeConstant()
+{
+    GhostarEngine engine;
+    engine.prepare(48000.0, 256);
+    auto parameters = brightPanel();
+    parameters.loudnessAttack = 0.0f;
+    parameters.loudnessDecay = 1.0f;      // 2 MOhm: tau = 9.4 s
+    parameters.loudnessSustain = 0.0f;
+    parameters.filterEnvAmount = 0.5f;
+    engine.setParameters(parameters);
+    engine.noteOn(57, 1.0f);
+
+    // Peak just after the attack, then the level one time constant later.
+    renderMono(engine, 0.05, 48000.0);
+    const double atPeak = peak(renderMono(engine, 0.05, 48000.0));
+    renderMono(engine, 9.4 - 0.1, 48000.0);
+    const double atTau = peak(renderMono(engine, 0.05, 48000.0));
+
+    const double ratio = atTau / std::max(1.0e-12, atPeak);
+    check(ratio > 0.30 && ratio < 0.43,
+          "the decay falls to 1/e of its span in the labelled time");
+}
+
+// The attack charges toward ~1.3x the peak, so it reaches the peak in
+// ln(1.3/0.3) = 1.47 time constants — flatter-topped than a segment aiming
+// at 1.5 (ln 3 = 1.10) and far from a linear ramp (SM DWG 3, OQ-04).
+void testAttackAimsPastItsPeak()
+{
+    const auto levelAfter = [](double seconds) {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 256);
+        auto parameters = brightPanel();
+        parameters.loudnessAttack = 0.75f;   // tau ~ 0.6 s
+        parameters.loudnessDecay = 1.0f;
+        parameters.loudnessSustain = 1.0f;
+        engine.setParameters(parameters);
+        engine.noteOn(57, 1.0f);
+        renderMono(engine, seconds, 48000.0);
+        return peak(renderMono(engine, 0.02, 48000.0));
+    };
+
+    // At travel 0.75 the slider stands at 1 kOhm * 2000^0.75 = 299 kOhm,
+    // so tau = 4.7 uF * 299 kOhm = 1.405 s.
+    constexpr double tau = 4.7e-6 * 299070.0;
+    // One time constant into an aim of 1.3 reaches 1.3*(1-1/e) = 0.822.
+    const double atTau = levelAfter(tau);
+    const double atPeak = levelAfter(4.0 * tau);
+    const double fraction = atTau / std::max(1.0e-12, atPeak);
+    check(fraction > 0.76 && fraction < 0.88,
+          "the attack reaches ~82 % of its peak in one time constant, as an "
+          "RC charge aiming 1.3x past it does");
+}
+
 // At full resonance the filter self-oscillates: kicked once, it keeps
 // singing after the kick is gone.
 void testSelfOscillation()
@@ -407,6 +465,8 @@ int main()
     testSlopeSwitch();
     testLowerBandPassIsParametricBoost();
     testOverdriveCompresses();
+    testDecayIsTheLabelledTimeConstant();
+    testAttackAimsPastItsPeak();
     testSelfOscillation();
     testBrightnessDarkensShaperPath();
     testShaperFreeModePulsesItsPath();

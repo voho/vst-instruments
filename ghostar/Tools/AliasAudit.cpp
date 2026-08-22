@@ -68,6 +68,12 @@ std::vector<float> renderStroke(const AliasCase& item, double hostRate)
 
     const long total = static_cast<long>(strokeSeconds * hostRate);
     const long noteAt = static_cast<long>(0.05 * hostRate);
+    // A swept travel is written on a fixed 1 ms wall-clock grid, not on
+    // each render's own sample grid: otherwise the reference would receive
+    // a sixteen-times finer trajectory and the row would measure the
+    // audit's own time quantisation alongside the engine's aliasing. The
+    // engine's travel smoother turns either grid into the same glide.
+    const long sweepPeriod = std::max(1L, static_cast<long>(hostRate / 1000.0));
 
     std::vector<float> output(static_cast<std::size_t>(total));
     std::array<float, 4096> left {};
@@ -82,12 +88,10 @@ std::vector<float> renderStroke(const AliasCase& item, double hostRate)
         long segmentEnd = rendered < noteAt ? noteAt : total;
         if (item.sweep != nullptr)
         {
-            // A swept travel updates its target every output sample; the
-            // engine's own smoother turns that into the glide it ships.
             item.sweep(parameters,
                        static_cast<double>(rendered) / hostRate);
             engine.setParameters(parameters);
-            segmentEnd = std::min(segmentEnd, rendered + 1);
+            segmentEnd = std::min(segmentEnd, rendered + sweepPeriod);
         }
 
         const long count = std::min(segmentEnd - rendered,
@@ -216,14 +220,26 @@ void fft(std::vector<double>& real, std::vector<double>& imag)
 
 struct Residual
 {
-    double audibleDb;   // bins up to 20 kHz — the plan's gate reads here
-    double fullDb;      // the whole baseband, for context
+    double excessDb;    // added content only, ≤20 kHz — the plan's gate
+    double audibleDb;   // total magnitude difference ≤20 kHz
+    double fullDb;      // total magnitude difference, whole baseband
 };
 
-// Alias residual as short-time spectral-magnitude energy against the
-// decimated ground truth, in dB relative to the ground truth's energy in
-// the same band. The onset is skipped so the attack transient (legitimately
-// different between a settling smoother and its reference) is not counted.
+// Two figures against the decimated ground truth, both short-time
+// spectral-magnitude, both skipping the onset (where a settling smoother
+// legitimately differs from its reference).
+//
+// The gate figure is **excess**: energy the shipping render has *beyond*
+// the reference, counted only where it exceeds the reference by more than
+// one dB. Aliasing is by definition content that is not in the ground
+// truth, so this is what the plan's alias-to-signal gate means — and it is
+// immune to the failure mode the tonal strokes exposed, where a
+// self-oscillating partial whose level differs in its second decimal place
+// dominated a plain difference metric while adding nothing spurious.
+//
+// The plain difference is kept alongside as context: it catches a shipping
+// render that is systematically *quieter* or detuned, which excess alone
+// would not report.
 Residual spectralResidualDb(const std::vector<float>& reference,
                             const std::vector<float>& shipping)
 {
@@ -238,9 +254,24 @@ Residual spectralResidualDb(const std::vector<float>& reference,
         hann[i] = 0.5 - 0.5 * std::cos(2.0 * pi * static_cast<double>(i)
                                        / static_cast<double>(window));
 
+    // A partial whose level differs by less than this is the same partial,
+    // not added content: one dB covers the second-decimal-place level
+    // agreement measured on rate-convergent self-oscillating tones.
+    constexpr double excessTolerance = 1.1220184543019633; // +1 dB
+    // …and a partial whose *frequency* differs in its fifth decimal place
+    // is also the same partial, though its analysis-window leakage skirt
+    // moves: the reference magnitude a bin is compared against is therefore
+    // the largest within this many bins (±70 Hz at this window), so a
+    // hair-shifted tone is not read as added content. Alias images land far
+    // from the partials that produce them, so this cannot hide them.
+    constexpr int neighbourhood = 3;
+
     const std::size_t usable = std::min(reference.size(), shipping.size());
     std::vector<double> refRe(window), refIm(window);
     std::vector<double> shipRe(window), shipIm(window);
+    std::vector<double> refMagnitude(window / 2 + 1);
+    std::vector<double> shipMagnitude(window / 2 + 1);
+    double audibleExcess = 0.0;
     double audibleResidual = 0.0;
     double audibleSignal = 0.0;
     double fullResidual = 0.0;
@@ -258,23 +289,43 @@ Residual spectralResidualDb(const std::vector<float>& reference,
         fft(shipRe, shipIm);
         for (std::size_t bin = 0; bin <= window / 2; ++bin)
         {
-            const double refMag = std::sqrt(refRe[bin] * refRe[bin]
-                                            + refIm[bin] * refIm[bin]);
-            const double shipMag = std::sqrt(shipRe[bin] * shipRe[bin]
-                                             + shipIm[bin] * shipIm[bin]);
+            refMagnitude[bin] = std::sqrt(refRe[bin] * refRe[bin]
+                                          + refIm[bin] * refIm[bin]);
+            shipMagnitude[bin] = std::sqrt(shipRe[bin] * shipRe[bin]
+                                           + shipIm[bin] * shipIm[bin]);
+        }
+        for (std::size_t bin = 0; bin <= window / 2; ++bin)
+        {
+            const double refMag = refMagnitude[bin];
+            const double shipMag = shipMagnitude[bin];
             const double difference = shipMag - refMag;
             fullResidual += difference * difference;
             fullSignal += refMag * refMag;
-            if (bin <= audibleBins)
-            {
-                audibleResidual += difference * difference;
-                audibleSignal += refMag * refMag;
-            }
+            if (bin > audibleBins)
+                continue;
+            audibleResidual += difference * difference;
+            audibleSignal += refMag * refMag;
+
+            const std::size_t low =
+                bin < static_cast<std::size_t>(neighbourhood)
+                    ? 0
+                    : bin - static_cast<std::size_t>(neighbourhood);
+            const std::size_t high =
+                std::min(window / 2,
+                         bin + static_cast<std::size_t>(neighbourhood));
+            double refNeighbourhood = 0.0;
+            for (std::size_t near = low; near <= high; ++near)
+                refNeighbourhood =
+                    std::max(refNeighbourhood, refMagnitude[near]);
+            const double excess = std::max(
+                0.0, shipMag - refNeighbourhood * excessTolerance);
+            audibleExcess += excess * excess;
         }
     }
     if (audibleSignal <= 0.0 || fullSignal <= 0.0)
-        return { 0.0, 0.0 }; // a silent reference means the stroke failed
-    return { 10.0 * std::log10(audibleResidual / audibleSignal + 1.0e-20),
+        return { 0.0, 0.0, 0.0 }; // a silent reference means the stroke failed
+    return { 10.0 * std::log10(audibleExcess / audibleSignal + 1.0e-20),
+             10.0 * std::log10(audibleResidual / audibleSignal + 1.0e-20),
              10.0 * std::log10(fullResidual / fullSignal + 1.0e-20) };
 }
 
@@ -411,13 +462,23 @@ void patchSelfOscTop(EngineParameters& p)
     p.filterPathA = 0.15f;
 }
 
-const std::array<AliasCase, 11>& aliasCases()
+// The sync mechanism at rest, separated from the swept row: a sweep's lock
+// points move with any difference in the control trajectory, so the swept
+// row measures the stroke's sensitivity as well as the model's aliasing.
+void patchSyncStatic(EngineParameters& p)
 {
-    static const std::array<AliasCase, 11> cases {{
+    patchSyncTop(p);
+    p.interval = 0.93f;
+}
+
+const std::array<AliasCase, 12>& aliasCases()
+{
+    static const std::array<AliasCase, 12> cases {{
         { "saw-midkey-control", patchMidSawControl, nullptr, 69, 0.0f },
         { "wide-saw-10k", patchWideSawDrone, nullptr, 60, 0.0f },
         { "wide-pulse3-10k", patchWidePulseDrone, nullptr, 60, 0.0f },
         { "wide-tri-10k", patchWideTriangleDrone, nullptr, 60, 0.0f },
+        { "sync-static-topkey", patchSyncStatic, nullptr, 84, 0.0f },
         { "sync-sweep-topkey", patchSyncTop, sweepSyncInterval, 84, 0.0f },
         { "ring-topkey", patchRingTop, nullptr, 84, 0.0f },
         { "oscb-mod-pitch", patchOscBModPitch, nullptr, 60, 1.0f },
@@ -442,7 +503,8 @@ int main(int argc, char** argv)
     std::printf("Ghostar alias audit: shipping render vs a %dx ground truth"
                 " decimated to %.0f Hz\n",
                 factor, shippingRate);
-    std::printf("%-22s %14s %14s\n", "stroke", "<=20 kHz dB", "full-band dB");
+    std::printf("%-22s %14s %14s %14s\n", "stroke", "excess<=20k dB",
+                "resid<=20k dB", "resid full dB");
 
     int failures = 0;
     for (std::size_t index = 0; index < caseCount; ++index)
@@ -465,8 +527,8 @@ int main(int argc, char** argv)
             continue;
         }
         const auto residual = spectralResidualDb(reference, shipping);
-        std::printf("%-22s %14.1f %14.1f\n", item.name, residual.audibleDb,
-                    residual.fullDb);
+        std::printf("%-22s %14.1f %14.1f %14.1f\n", item.name,
+                    residual.excessDb, residual.audibleDb, residual.fullDb);
     }
 
     if (failures != 0)

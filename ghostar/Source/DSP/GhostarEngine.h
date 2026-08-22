@@ -277,6 +277,23 @@ private:
     int arpStep_ { 0 };
     int arpSoundingNote_ { -1 };
 
+    // MOD SOURCE = OSC B is an audio signal, not a control signal: its
+    // routing is published here and read by the voice per internal sample,
+    // so a 10 kHz WIDE modulator is neither undersampled nor applied as a
+    // staircase. Depths are per unit of source; gain is the wheel (and the
+    // SHAPE X WITH Y VCA).
+    struct AudioRateMod
+    {
+        bool active { false };
+        double gain { 0.0 };
+        double aOctaves { 0.0 };
+        double bOctaves { 0.0 };
+        double upperOctaves { 0.0 };
+        double lowerOctaves { 0.0 };
+        double duty { 0.0 };
+    };
+    AudioRateMod controlAudioRateMod_ {};
+
     // Latest control-rate results consumed by the audio-rate voice.
     double controlOscAOctaves_ { 0.0 };
     double controlOscBOctaves_ { 0.0 };

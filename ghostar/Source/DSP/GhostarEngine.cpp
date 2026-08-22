@@ -75,6 +75,28 @@ namespace
         return low * std::pow(high / low, clamp01(travel));
     }
 
+    // The ADSR sliders' RC time constant. Each of the six A/D/R sliders is
+    // 2 MΩ log into the shared 4.7 µF cap, with ~1 kΩ of series resistance
+    // (the drawn 100 Ω plus the slider's own end resistance) at the fast
+    // end: τ therefore runs 4.7 ms to 9.4 s, which is what the manual
+    // prints as "5 milliseconds to 10 seconds" (SM DWG 3; OQ-04).
+    constexpr double envelopeCapacitance = 4.7e-6;
+    constexpr double envelopeSeriesOhms = 1.0e3;
+    constexpr double envelopeSliderOhms = 2.0e6;
+
+    [[nodiscard]] double envelopeTau(double travel) noexcept
+    {
+        return envelopeCapacitance
+             * exponentialTravel(travel, envelopeSeriesOhms,
+                                 envelopeSliderOhms);
+    }
+
+    // What the attack charges toward, as a multiple of the envelope's peak:
+    // the 556's output-high level less the series diode, against the +7.5 V
+    // the drawing labels at the control-voltage pin. The documents bound it
+    // to 1.22–1.35; the nominal ships (derived, OQ-04).
+    constexpr double attackAimRatio = 1.3;
+
     // The panel duty-cycle sets: A = 50/30/15/6 %, B = 40/20/10/3 %
     // (anchored: panel line-art and photos; see the research document).
     [[nodiscard]] double dutyFor(Waveform waveform, bool oscA) noexcept
@@ -767,10 +789,14 @@ void GhostarEngine::advanceEnvelope(Adsr& envelope, bool gate, bool triggerPulse
     switch (envelope.stage)
     {
         case Adsr::Stage::Attack:
-            // A 556 timer charges toward its rail and switches at a
-            // threshold; aiming 1.5x past the peak reproduces that
-            // quasi-exponential punch.
-            envelope.level += (1.5 - envelope.level) * attackCoefficient;
+            // The 556 half charges the 4.7 µF cap from its OUTPUT pin
+            // through a series 1N4149 and the 2 MΩ attack slider, so it
+            // aims at V_OH − V_D ≈ 9.2–10.1 V against the envelope peak the
+            // service drawing labels +7.5 V at the control-voltage pin:
+            // a ratio of ≈1.3, not the 1.5 of a monostable charging toward
+            // its rail (SM DWG 3; derived, see OQ-04).
+            envelope.level +=
+                (attackAimRatio - envelope.level) * attackCoefficient;
             if (envelope.level >= 1.0)
             {
                 envelope.level = 1.0;
@@ -1063,32 +1089,36 @@ void GhostarEngine::advanceControls() noexcept
         && ((pendingTrigger_ && p.gateKbd) || gateRise);
     pendingTrigger_ = false;
 
-    // Decay and release are ordinary exponentials, read as ~95 % settled
-    // (three time constants) inside the labelled 5 ms–10 s. The attack aims
-    // past its peak at 1.5 and ends at 1.0, which takes ln(3) time
-    // constants, so its coefficient is derived from that threshold — the
-    // labelled time is the actual time-to-peak, not 2.7x shorter.
+    // Every segment is one RC charge on the same 4.7 µF cap through its own
+    // 2 MΩ log slider, so a travel maps to a *time constant*, and the
+    // segment shapes differ only in what each charges toward. The panel's
+    // labelled 5 ms–10 s is that time constant: 2 MΩ × 4.7 µF = 9.4 s is
+    // the manual's "10 seconds", and the same ~1 kΩ slider-plus-series
+    // residual puts the fast end at 4.7 ms — one assumption making both
+    // printed endpoints land, where the previous three-time-constants read
+    // fit neither (derived from SM DWG 3, OQ-04).
     const auto segmentCoefficient = [dt](double travel) {
-        const double seconds = exponentialTravel(travel, 0.005, 10.0);
-        return 1.0 - std::exp(-dt * 3.0 / seconds);
-    };
-    const auto attackCoefficient = [dt](double travel) {
-        constexpr double lnThree = 1.0986122886681098;
-        const double seconds = exponentialTravel(travel, 0.005, 10.0);
-        return 1.0 - std::exp(-dt * lnThree / seconds);
+        return 1.0 - std::exp(-dt / envelopeTau(travel));
     };
     advanceEnvelope(filterEnvelope_, combinedGateNow, triggerPulse,
-                    attackCoefficient(p.filterAttack),
+                    segmentCoefficient(p.filterAttack),
                     segmentCoefficient(p.filterDecay),
                     segmentCoefficient(p.filterRelease),
                     static_cast<double>(p.filterSustain));
     advanceEnvelope(loudnessEnvelope_, combinedGateNow, triggerPulse,
-                    attackCoefficient(p.loudnessAttack),
+                    segmentCoefficient(p.loudnessAttack),
                     segmentCoefficient(p.loudnessDecay),
                     segmentCoefficient(p.loudnessRelease),
                     static_cast<double>(p.loudnessSustain));
 
     // ---------------------------------------------------------- MOD X value
+    // MOD SOURCE = OSC B is the one source that is an *audio* signal: in
+    // WIDE it reaches 10 kHz, so reading it once per output sample both
+    // undersamples it and applies it as a staircase whose images fold. Its
+    // routing is therefore published to the voice, which reads the
+    // oscillator itself and applies the depth per internal sample; every
+    // other source is a control signal and is applied here as before.
+    const bool audioRateSource = p.modSource == ModSource::OscB;
     double modXSource = 0.0;
     switch (p.modSource)
     {
@@ -1099,13 +1129,16 @@ void GhostarEngine::advanceControls() noexcept
         case ModSource::RedNoise:         modXSource = redNoise; break;
         case ModSource::OscB:
             // The schematic feeds the selected, buffered Osc B waveform to
-            // the mod board, not a hard-wired triangle.
-            modXSource = lastOscBWave_;
+            // the mod board, not a hard-wired triangle. Its value is read
+            // in the voice, so nothing is sampled here.
             break;
     }
-    double xSignal = modXSource * modWheel_;
+    // The wheel is an attenuator, and SHAPE X WITH Y is a VCA in the X
+    // path; both scale whatever the source is, at either rate.
+    double xGain = static_cast<double>(modWheel_);
     if (p.shapeXWithY)
-        xSignal *= clamp01(shaperLevel_);
+        xGain *= clamp01(shaperLevel_);
+    const double xSignal = audioRateSource ? 0.0 : modXSource * xGain;
     const double ySignal = shaperLevel_ * shaperWheel_;
 
     // Full-wheel modulation depths (voiced): one octave of pitch, three
@@ -1120,28 +1153,65 @@ void GhostarEngine::advanceControls() noexcept
     double modLowerOctaves = 0.0;
     controlPwmA_ = 0.0;
     controlPwmB_ = 0.0;
+    controlAudioRateMod_ = AudioRateMod {};
+    controlAudioRateMod_.gain = audioRateSource ? xGain : 0.0;
 
+    // Where the X bus lands. An audio-rate source writes the same depths
+    // into the published routing instead of into this sample's sums, so
+    // exactly one of the two paths carries the modulation.
+    auto& audioMod = controlAudioRateMod_;
+    const auto routePitchA = [&](double depth) {
+        (audioRateSource ? audioMod.aOctaves : modAOctaves) += depth;
+    };
+    const auto routePitchB = [&](double depth) {
+        (audioRateSource ? audioMod.bOctaves : modBOctaves) += depth;
+    };
     switch (p.modXTo)
     {
         case ModXDestination::Off: break;
         case ModXDestination::OscAB:
-            modAOctaves += xSignal * pitchDepthOctaves;
-            modBOctaves += xSignal * pitchDepthOctaves;
+            routePitchA(audioRateSource ? pitchDepthOctaves
+                                        : xSignal * pitchDepthOctaves);
+            routePitchB(audioRateSource ? pitchDepthOctaves
+                                        : xSignal * pitchDepthOctaves);
             break;
         case ModXDestination::OscA:
-            modAOctaves += xSignal * pitchDepthOctaves;
+            routePitchA(audioRateSource ? pitchDepthOctaves
+                                        : xSignal * pitchDepthOctaves);
             break;
         case ModXDestination::OscARwm:
-            controlPwmA_ = xSignal * dutyDepth;
+            if (audioRateSource)
+                audioMod.duty = dutyDepth;
+            else
+                controlPwmA_ = xSignal * dutyDepth;
             break;
         case ModXDestination::FilterUL:
-            modUpperOctaves += xSignal * filterDepthOctaves;
-            modLowerOctaves += xSignal * filterDepthOctaves;
+            if (audioRateSource)
+            {
+                audioMod.upperOctaves += filterDepthOctaves;
+                audioMod.lowerOctaves += filterDepthOctaves;
+            }
+            else
+            {
+                modUpperOctaves += xSignal * filterDepthOctaves;
+                modLowerOctaves += xSignal * filterDepthOctaves;
+            }
             break;
         case ModXDestination::FilterU:
-            modUpperOctaves += xSignal * filterDepthOctaves;
+            if (audioRateSource)
+                audioMod.upperOctaves += filterDepthOctaves;
+            else
+                modUpperOctaves += xSignal * filterDepthOctaves;
             break;
     }
+    // FORMANT cuts the lower filter off the modulation buses, at either
+    // rate, exactly as it cuts the control-rate sum below.
+    if (p.tracking != TrackingMode::Dynamic)
+        audioMod.lowerOctaves = 0.0;
+    audioMod.active = audioRateSource && audioMod.gain != 0.0
+        && (audioMod.aOctaves != 0.0 || audioMod.bOctaves != 0.0
+            || audioMod.upperOctaves != 0.0 || audioMod.lowerOctaves != 0.0
+            || audioMod.duty != 0.0);
     switch (p.shaperYTo)
     {
         case ShaperYDestination::Off: break;
@@ -1292,19 +1362,42 @@ void GhostarEngine::renderVoiceSample() noexcept
     const EngineParameters& p = parameters_;
     const double dt = 1.0 / internalRate_;
 
+    // ------------------------------------------------- Audio-rate MOD X bus
+    // With MOD SOURCE = OSC B the mod board carries an audio signal, so its
+    // depths are applied here, per internal sample, from the oscillator's
+    // own last value. The one-sample tap is what makes B modulating its own
+    // pitch a bounded feedback loop rather than an implicit equation — and
+    // that loop is the hardware's too, through the mod board's own delay.
+    const auto& audioMod = controlAudioRateMod_;
+    double audioModA = 0.0;
+    double audioModB = 0.0;
+    double audioModUpper = 0.0;
+    double audioModLower = 0.0;
+    double audioModDuty = 0.0;
+    if (audioMod.active)
+    {
+        const double source = lastOscBWave_ * audioMod.gain;
+        audioModA = source * audioMod.aOctaves;
+        audioModB = source * audioMod.bOctaves;
+        audioModUpper = source * audioMod.upperOctaves;
+        audioModLower = source * audioMod.lowerOctaves;
+        audioModDuty = source * audioMod.duty;
+    }
+
     // ----------------------------------------------------------- Oscillators
     const double frequencyA =
-        std::min(440.0 * std::exp2(controlOscAOctaves_), 0.45 * internalRate_);
+        std::min(440.0 * std::exp2(controlOscAOctaves_ + audioModA),
+                 0.45 * internalRate_);
     const double frequencyB = std::min(
-        controlOscBDrone_ ? controlOscBDroneHz_
-                          : 440.0 * std::exp2(controlOscBOctaves_),
+        controlOscBDrone_ ? controlOscBDroneHz_ * std::exp2(audioModB)
+                          : 440.0 * std::exp2(controlOscBOctaves_ + audioModB),
         0.45 * internalRate_);
 
     const double stepA = frequencyA * dt;
     const double stepB = frequencyB * dt;
 
     const double dutyA =
-        std::clamp(oscADuty_ + controlPwmA_, 0.03, 0.97);
+        std::clamp(oscADuty_ + controlPwmA_ + audioModDuty, 0.03, 0.97);
     const double dutyB =
         std::clamp(oscBDuty_ + controlPwmB_, 0.03, 0.97);
 
@@ -1385,12 +1478,16 @@ void GhostarEngine::renderVoiceSample() noexcept
            + static_cast<double>(p.filterPathB) * waveB
            + static_cast<double>(p.filterPathNoise) * noise);
 
+    const double upperHz = audioModUpper != 0.0
+        ? controlUpperCutoffHz_ * std::exp2(audioModUpper)
+        : controlUpperCutoffHz_;
+    const double lowerHz = audioModLower != 0.0
+        ? controlLowerCutoffHz_ * std::exp2(audioModLower)
+        : controlLowerCutoffHz_;
     const double upperG = std::tan(
-        pi * std::min(controlUpperCutoffHz_, 0.45 * internalRate_)
-        / internalRate_);
+        pi * std::min(upperHz, 0.45 * internalRate_) / internalRate_);
     const double lowerG = std::tan(
-        pi * std::min(controlLowerCutoffHz_, 0.45 * internalRate_)
-        / internalRate_);
+        pi * std::min(lowerHz, 0.45 * internalRate_) / internalRate_);
 
     // The lower section always processes the signal, as the hardware chip
     // does — the OUT position routes around it rather than halting it. That
