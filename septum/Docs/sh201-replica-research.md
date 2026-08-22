@@ -199,6 +199,16 @@ the soft clip). The half-period delay reinforces even harmonics — the
 octave-up emphasis of guitar feedback. The delay ratio and gain law are
 voiced (OQ-06); the comb mechanism itself is reported, not settled.
 
+**INTERVAL (settled, OM p. 30).** The two buttons above OSC 2 are defined
+against OSC 1, not against zero: "-OCT (minus octave) button — This button
+lowers the OSC 2 pitch one octave below that of OSC 1"; "5th button — ... the
+OSC 2 pitch will be seven semitones (a perfect fifth) higher than OSC 1"; and
+"if you press the -OCT button and the 5th button simultaneously, the OSC 2
+pitch will be the same as the OSC 1 pitch". The replica's panel has one button
+each, so the second press of either stands in for the hardware's simultaneous
+press and lands OSC 2 on OSC 1's pitch. Both buttons light while the interval
+they name is in force, as the hardware's indicators do.
+
 ### MIX/MOD
 
 Settled: TYPE cycles MIX → SYNC → RING. SYNC restarts OSC1's cycle at each

@@ -2633,7 +2633,8 @@ void Engine::processEffects (const float* dryL, const float* dryR,
     const double diffusionGain = mapping::reverbDiffusionGain (reverbParams.diffusion);
     const double densityGain = mapping::reverbDensityGain (reverbParams.density);
     const int preDelaySamples = std::min (
-        static_cast<int> ((reverbParams.preDelay * (100.0 / 125.0)) * 0.001 * sampleRate_),
+        static_cast<int> (mapping::reverbPreDelayMs (reverbParams.preDelay)
+                          * 0.001 * sampleRate_),
         static_cast<int> (reverb_.preDelay.size()) - 2);
 
     std::array<double, Reverb::lineCount> lineFeedback {};

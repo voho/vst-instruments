@@ -73,20 +73,24 @@ const juce::StringArray keyboardPartChoices { "UPPER", "LOWER" };
 const juce::StringArray modAssignChoices { "OSC1&OSC2", "OSC1", "OSC2", "PW1",
                                            "PW2", "FILTER", "AMP", "AUDIO-FIL" };
 const juce::StringArray delayHfDampChoices {
-    "200", "250", "315", "400", "500", "630", "800", "1000", "1250", "1600",
-    "2000", "2500", "3150", "4000", "5000", "6300", "8000", "BYPASS"
+    "200 Hz", "250 Hz", "315 Hz", "400 Hz", "500 Hz", "630 Hz", "800 Hz",
+    "1000 Hz", "1250 Hz", "1600 Hz", "2000 Hz", "2500 Hz", "3150 Hz",
+    "4000 Hz", "5000 Hz", "6300 Hz", "8000 Hz", "BYPASS"
 };
 const juce::StringArray reverbHighCutChoices {
-    "160", "200", "250", "320", "400", "500", "640", "800", "1000", "1250",
-    "1600", "2000", "2500", "3200", "4000", "5000", "6400", "8000", "10000",
-    "12500", "BYPASS"
+    "160 Hz", "200 Hz", "250 Hz", "320 Hz", "400 Hz", "500 Hz", "640 Hz",
+    "800 Hz", "1000 Hz", "1250 Hz", "1600 Hz", "2000 Hz", "2500 Hz",
+    "3200 Hz", "4000 Hz", "5000 Hz", "6400 Hz", "8000 Hz", "10000 Hz",
+    "12500 Hz", "BYPASS"
 };
 const juce::StringArray reverbLfDampChoices {
-    "50", "64", "80", "100", "125", "160", "200", "250", "320", "400", "500",
-    "640", "800", "1000", "1250", "1600", "2000", "2500", "3200", "4000"
+    "50 Hz", "64 Hz", "80 Hz", "100 Hz", "125 Hz", "160 Hz", "200 Hz",
+    "250 Hz", "320 Hz", "400 Hz", "500 Hz", "640 Hz", "800 Hz", "1000 Hz",
+    "1250 Hz", "1600 Hz", "2000 Hz", "2500 Hz", "3200 Hz", "4000 Hz"
 };
-const juce::StringArray reverbHfDampChoices { "4000", "5000", "6400", "8000",
-                                              "10000", "12500" };
+const juce::StringArray reverbHfDampChoices {
+    "4000 Hz", "5000 Hz", "6400 Hz", "8000 Hz", "10000 Hz", "12500 Hz"
+};
 
 // Shorthand for the field accessors.
 #define TONE_INT(field) \
@@ -558,6 +562,37 @@ const std::vector<juce::String>& signedParameterSuffixes()
             {
                 // Zero is not a step count, it is the absence of one.
                 return value <= 0 ? juce::String ("STYLE") : juce::String (value);
+            });
+    // The manual prints these four as something other than the byte the
+    // address map stores, so the panel and the host print that instead.
+    if (id == "arp_velocity")
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                // "REAL, 1-127" (OM p. 66): zero is not a velocity, it is the
+                // played one.
+                return value <= 0 ? juce::String ("REAL") : juce::String (value);
+            });
+    if (id == "reverb_size")
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                return juce::String (value + 1);   // "SIZE 1-8" (OM p. 65)
+            });
+    if (id == "reverb_pre_delay")
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                // "0.0-100.0 (ms)" (OM p. 65).
+                return juce::String (septum::mapping::reverbPreDelayMs (value), 1);
+            });
+    if (id == "split_point")
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                // "A0-C8" (OM p. 64) — a key, not a note number. Middle C is
+                // C4 here, as it is on the panel's own keyboard.
+                return juce::MidiMessage::getMidiNoteName (value, true, true, 4);
             });
     if (isSignedDisplay (id))
         return juce::AudioParameterIntAttributes().withStringFromValueFunction (

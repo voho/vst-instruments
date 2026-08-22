@@ -233,6 +233,14 @@ namespace mapping
         return 0.001 * std::pow (1300.0, value / 127.0);
     }
 
+    // [settled] Reverb PRE DELAY: the address map stores 0-125 and the
+    // manual prints 0.0-100.0 ms (OM p. 65). One place, so the panel and the
+    // reverb cannot disagree about what a raw value means.
+    [[nodiscard]] inline double reverbPreDelayMs (int raw) noexcept
+    {
+        return std::clamp (raw, 0, 125) * (100.0 / 125.0);
+    }
+
     // [voiced, OQ-12] Reverb TIME 0-127 with SIZE 0-7 -> RT60 seconds.
     [[nodiscard]] inline double reverbSeconds (int time, int size) noexcept
     {

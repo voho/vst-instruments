@@ -800,3 +800,43 @@ from the top on DOWN and still reaches the bottom of it. Reverting the change
 fails twelve of them. The manual's own three worked examples hold five keys
 under a three-row style, so they never reached this branch and still pass
 unchanged; the committed demos are unchanged for the same reason.
+
+#### Step 19 — the panel printed four values the manual does not use, and one
+pair of buttons set the wrong interval
+
+**INTERVAL was absolute where the manual defines it as an interval.** OM p. 30
+says all three outcomes against OSC 1: "-OCT ... lowers the OSC 2 pitch one
+octave below that of OSC 1", "the OSC 2 pitch will be seven semitones (a
+perfect fifth) higher than OSC 1", and "if you press the -OCT button and the
+5th button simultaneously, the OSC 2 pitch will be the same as the OSC 1
+pitch". Both handlers wrote −12 and +7 absolutely and returned to 0, so any
+patch whose OSC 1 was transposed got the wrong interval — the one thing these
+two buttons exist to get right. They read OSC 1's pitch now, and the second
+press lands OSC 2 on it. Both also light while the interval they name is in
+force: they were the only controls on the panel that wrote a parameter without
+reflecting it, so a patch loaded at OSC 2 = OSC 1 − 12 showed two dark buttons.
+
+**Four readouts printed the stored byte.** The manual prints SPLIT POINT as
+`A0–C8`, SIZE as `1–8`, PRE DELAY as `0.0–100.0 (ms)` and ARPEGGIO VELOCITY as
+`REAL, 1–127`; the panel printed 60, 4, 0 and 0. All four now print what the
+manual prints, in the same `intAttributes` function that already did it for
+PAN and END STEP, so the host's parameter list says the same thing. The
+pre-delay conversion moved into `mapping::reverbPreDelayMs` so the readout and
+the reverb cannot disagree about what a raw value means. The four frequency
+tables carry their `Hz` too, which is how the manual's own parameter list
+prints them.
+
+**Every toggle says which way it is thrown.** Eleven controls on the panel are
+switches and all of them read `ON` whatever their state — a button whose face
+says ON while the thing is off is the commonest misreading a synthesizer panel
+invites. The face is driven from the button's own state change, so it is right
+the moment a patch loads rather than at the next frame, and the three labels
+that read `ON` above a button that also read `ON` now read `SWITCH`.
+
+**Two layout defects.** Combos and buttons were centred in a cell that had not
+given up the value strip a knob gives up, so they sat 6.5 px below the knobs in
+their own row — on nearly every row of the panel. Every style reserves the
+strip now, whether or not it prints in it. And the second INTERVAL button
+carried an empty label, the panel's only orphaned text; a control with no
+caption of its own now shares the one to its left, so `INTERVAL` spans both
+buttons.

@@ -557,6 +557,111 @@ void testStateRoundTrip()
             "resonance survives the state round trip");
 }
 
+// Walks a component tree looking for a button whose face reads `text`.
+juce::Button* findButton (juce::Component& root, const juce::String& text)
+{
+    for (int i = 0; i < root.getNumChildComponents(); ++i)
+    {
+        auto* child = root.getChildComponent (i);
+        if (child == nullptr)
+            continue;
+        if (auto* button = dynamic_cast<juce::Button*> (child))
+            if (button->getButtonText() == text)
+                return button;
+        if (auto* found = findButton (*child, text))
+            return found;
+    }
+    return nullptr;
+}
+
+// Settled (OM p. 30): "-OCT ... lowers the OSC 2 pitch one octave below that
+// of OSC 1"; "the OSC 2 pitch will be seven semitones (a perfect fifth)
+// higher than OSC 1"; and both together "the OSC 2 pitch will be the same as
+// the OSC 1 pitch". All three are intervals, so a transposed OSC 1 moves them.
+void testIntervalButtonsAreRelativeToOscOne()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    expect (editor != nullptr, "the processor provides an editor");
+    if (editor == nullptr)
+        return;
+
+    const auto set = [&processor] (const char* id, float natural)
+    {
+        auto* parameter = processor.parameters.getParameter (id);
+        const auto& range = processor.parameters.getParameterRange (id);
+        parameter->setValueNotifyingHost (
+            range.convertTo0to1 (range.snapToLegalValue (natural)));
+    };
+    const auto get = [&processor] (const char* id)
+    {
+        return (int) processor.parameters.getRawParameterValue (id)->load();
+    };
+
+    auto* minusOctave = findButton (*editor, "-OCT");
+    auto* fifth = findButton (*editor, "5TH");
+    expect (minusOctave != nullptr && fifth != nullptr,
+            "the panel carries both INTERVAL buttons");
+    if (minusOctave == nullptr || fifth == nullptr)
+        return;
+
+    set ("up_osc1_wide", 1.0f);     // room for +/-36, so nothing clamps
+    set ("up_osc2_wide", 1.0f);
+    set ("up_osc1_pitch", 5.0f);
+    set ("up_osc2_pitch", 0.0f);
+
+    minusOctave->onClick();
+    expect (get ("up_osc2_pitch") == -7,
+            "-OCT puts OSC 2 an octave below OSC 1, not at -12 (got "
+                + std::to_string (get ("up_osc2_pitch")) + ")");
+    minusOctave->onClick();
+    expect (get ("up_osc2_pitch") == 5,
+            "pressing -OCT again returns OSC 2 to OSC 1's pitch (got "
+                + std::to_string (get ("up_osc2_pitch")) + ")");
+
+    fifth->onClick();
+    expect (get ("up_osc2_pitch") == 12,
+            "5TH puts OSC 2 a fifth above OSC 1 (got "
+                + std::to_string (get ("up_osc2_pitch")) + ")");
+}
+
+// A switch on the panel says which way it is thrown.
+void testTogglesShowTheirState()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    if (editor == nullptr)
+        return;
+
+    const auto set = [&processor] (const char* id, bool on)
+    {
+        auto* parameter = processor.parameters.getParameter (id);
+        parameter->setValueNotifyingHost (on ? 1.0f : 0.0f);
+    };
+
+    set ("delay_on", false);
+    expect (findButton (*editor, "OFF") != nullptr,
+            "a switch that is off says so on its face");
+    set ("delay_on", true);
+    set ("reverb_on", true);
+    set ("arp_on", true);
+    set ("up_overdrive", true);
+    set ("up_portamento", true);
+    set ("up_osc1_wide", true);
+    set ("up_osc2_wide", true);
+    set ("up_lfo1_sync", true);
+    set ("up_lfo2_sync", true);
+    set ("up_lfo1_key_trig", true);
+    set ("up_lfo2_key_trig", true);
+    set ("arp_hold", true);
+    set ("ext_center_cancel", true);
+    set ("audio_filter_on", true);
+    expect (findButton (*editor, "ON") != nullptr,
+            "a switch that is on says so on its face");
+}
+
 void testEditorAndSnapshot()
 {
     SeptumAudioProcessor processor;
@@ -646,6 +751,8 @@ int main()
     testStateSurvivesUnpumpedProgramChange();
     testProgramsLoad();
     testStateRoundTrip();
+    testIntervalButtonsAreRelativeToOscOne();
+    testTogglesShowTheirState();
     testEditorAndSnapshot();
 
     if (failures == 0)

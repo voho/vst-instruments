@@ -440,29 +440,34 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     addControl (*osc2, "osc2_wide", "WIDE", Style::Toggle);
     addControl (*osc2, "osc2_penv_depth", "P.ENV", Style::Knob);
 
-    if (auto* button = dynamic_cast<juce::TextButton*> (
-            intervalOctControl->component.get()))
+    // Settled (OM p. 30), and settled as *intervals*: "-OCT ... lowers the
+    // OSC 2 pitch one octave below that of OSC 1", "the OSC 2 pitch will be
+    // seven semitones (a perfect fifth) higher than OSC 1", and "if you press
+    // the -OCT button and the 5th button simultaneously, the OSC 2 pitch will
+    // be the same as the OSC 1 pitch". Both are measured against OSC 1, so a
+    // patch whose OSC 1 is transposed used to get the wrong interval; and the
+    // second press stands in for the hardware's simultaneous press, which is
+    // why it lands on OSC 1's pitch rather than on zero.
+    const auto interval = [this] (Control* control, const char* text,
+                                  int semitones)
     {
-        button->setButtonText ("-OCT");
-        button->onClick = [this]
+        auto* button =
+            dynamic_cast<juce::TextButton*> (control->component.get());
+        if (button == nullptr)
+            return;
+        button->setButtonText (text);
+        button->setClickingTogglesState (false);
+        button->onClick = [this, semitones]
         {
-            // Settled: -OCT puts OSC2 one octave below OSC1; pressing again
-            // (the hardware's both-buttons press) returns it to unison.
-            const float current = getToneParameter ("osc2_pitch");
-            setToneParameter ("osc2_pitch", current == -12.0f ? 0.0f : -12.0f);
+            const float root = getToneParameter ("osc1_pitch");
+            const float wanted = root + (float) semitones;
+            setToneParameter ("osc2_pitch",
+                              getToneParameter ("osc2_pitch") == wanted ? root
+                                                                        : wanted);
         };
-    }
-    if (auto* button = dynamic_cast<juce::TextButton*> (
-            intervalFifthControl->component.get()))
-    {
-        button->setButtonText ("5TH");
-        button->onClick = [this]
-        {
-            // Settled: 5th raises OSC2 a perfect fifth above OSC1.
-            const float current = getToneParameter ("osc2_pitch");
-            setToneParameter ("osc2_pitch", current == 7.0f ? 0.0f : 7.0f);
-        };
-    }
+    };
+    interval (intervalOctControl, "-OCT", -12);
+    interval (intervalFifthControl, "5TH", 7);
 
     auto* mixMod = section ("MIX/MOD", Band::Voice);
     mixMod->rowCounts = { 2, 1 };
@@ -529,7 +534,7 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     // it reads the keys. The counts have to cover every control the section
     // holds — a row short and the last one is never given bounds.
     arpSection->rowCounts = { 5, 6 };
-    addControl (*arpSection, "arp_on", "ON", Style::Toggle, false);
+    addControl (*arpSection, "arp_on", "SWITCH", Style::Toggle, false);
     addControl (*arpSection, "arp_hold", "HOLD", Style::Toggle, false);
     addControl (*arpSection, "arp_style", "STYLE", Style::Combo, false);
     addControl (*arpSection, "arp_grid", "GRID", Style::Combo, false);
@@ -557,7 +562,7 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
 
     auto* delay = section ("DELAY", Band::InputEffects);
     delay->rowCounts = { 4, 3 };
-    addControl (*delay, "delay_on", "ON", Style::Toggle, false);
+    addControl (*delay, "delay_on", "SWITCH", Style::Toggle, false);
     addControl (*delay, "delay_time", "TIME", Style::Knob, false);
     addControl (*delay, "delay_depth", "DEPTH", Style::Knob);
     addControl (*delay, "delay_feedback", "FEEDBACK", Style::Knob, false, " %");
@@ -567,11 +572,12 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
 
     auto* reverb = section ("REVERB", Band::InputEffects);
     reverb->rowCounts = { 4, 4 };
-    addControl (*reverb, "reverb_on", "ON", Style::Toggle, false);
+    addControl (*reverb, "reverb_on", "SWITCH", Style::Toggle, false);
     addControl (*reverb, "reverb_time", "TIME", Style::Knob, false);
     addControl (*reverb, "reverb_depth", "DEPTH", Style::Knob);
     addControl (*reverb, "reverb_size", "SIZE", Style::Knob, false);
-    addControl (*reverb, "reverb_pre_delay", "PRE DELAY", Style::Knob, false);
+    addControl (*reverb, "reverb_pre_delay", "PRE DELAY", Style::Knob, false,
+                " ms");
     addControl (*reverb, "reverb_high_cut", "HIGH CUT", Style::Combo, false);
     addControl (*reverb, "reverb_density", "DENSITY", Style::Knob, false);
     addControl (*reverb, "reverb_diffusion", "DIFFUSION", Style::Knob, false);
@@ -758,8 +764,18 @@ SeptumAudioProcessorEditor::Control* SeptumAudioProcessorEditor::addControl (
             break;
         case Style::Toggle:
         {
-            auto button = std::make_unique<juce::TextButton> ("ON");
+            auto button = std::make_unique<juce::TextButton> ("OFF");
             button->setClickingTogglesState (true);
+            // A switch says which way it is thrown. A button whose face reads
+            // ON while the thing is off is the commonest misreading a
+            // synthesizer panel invites, and eleven controls here are
+            // toggles. Driven from the button's own state rather than the
+            // frame timer, so it is right the moment a patch loads.
+            auto* raw = button.get();
+            raw->onStateChange = [raw]
+            {
+                raw->setButtonText (raw->getToggleState() ? "ON" : "OFF");
+            };
             control->component = std::move (button);
             break;
         }
@@ -818,6 +834,22 @@ void SeptumAudioProcessorEditor::refreshValues()
         if (auto* parameter = processor.parameters.getParameter ("master_level"))
             masterValueLabel.setText (parameter->getCurrentValueAsText(),
                                       juce::dontSendNotification);
+
+    // The INTERVAL buttons carry indicator lamps on the instrument, and they
+    // are the panel's only controls that write a parameter without reflecting
+    // it: a patch loaded at OSC 2 = OSC 1 - 12 used to show two dark buttons.
+    const float root = getToneParameter ("osc1_pitch");
+    const float second = getToneParameter ("osc2_pitch");
+    const auto lamp = [] (Control* control, bool on)
+    {
+        if (control == nullptr)
+            return;
+        if (auto* button = dynamic_cast<juce::Button*> (control->component.get()))
+            button->setToggleState (on, juce::dontSendNotification);
+    };
+    lamp (intervalOctControl, second == root - 12.0f);
+    lamp (intervalFifthControl, second == root + 7.0f);
+
 }
 
 void SeptumAudioProcessorEditor::bindControls()
@@ -941,6 +973,7 @@ void SeptumAudioProcessorEditor::layoutSection (Section& section,
             width += cellWidth (grid[index + (std::size_t) i]->style);
         int x = content.getX() + (content.getWidth() - width) / 2;
 
+        Control* previous = nullptr;
         for (int i = 0; i < count; ++i, ++index)
         {
             auto* control = grid[index];
@@ -950,12 +983,32 @@ void SeptumAudioProcessorEditor::layoutSection (Section& section,
             x += cell.getWidth();
 
             auto body = cell;
-            control->label->setBounds (body.removeFromTop (labelHeight));
+            auto captionRow = body.removeFromTop (labelHeight);
+            // A control with no caption of its own shares the one to its
+            // left — the INTERVAL pair is one caption over two buttons, and
+            // an empty label under the second is the only orphaned text the
+            // panel had.
+            if (control->label->getText().isEmpty() && previous != nullptr)
+            {
+                previous->label->setBounds (
+                    previous->label->getBounds().getUnion (captionRow));
+                control->label->setVisible (false);
+                control->label->setBounds ({});
+            }
+            else
+            {
+                control->label->setVisible (true);
+                control->label->setBounds (captionRow);
+            }
+            // Every style gives up the same strip at the foot of its cell,
+            // whether or not it prints a value there, so the controls in a
+            // row share one vertical centre instead of the knobs sitting
+            // 6 px above everything else.
+            auto valueRow = body.removeFromBottom (valueHeight);
             switch (control->style)
             {
                 case Style::Knob:
-                    control->value->setBounds (
-                        body.removeFromBottom (valueHeight));
+                    control->value->setBounds (valueRow);
                     control->component->setBounds (
                         body.withSizeKeepingCentre (knobDiameter, knobDiameter));
                     break;
@@ -973,6 +1026,7 @@ void SeptumAudioProcessorEditor::layoutSection (Section& section,
                 case Style::VSlider:
                     break;   // laid out in the strip above
             }
+            previous = control;
         }
         rowTop += gridRowHeight;
     }
