@@ -436,10 +436,14 @@ void GhostAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         // Notes queued from the on-screen keyboard before the panic click
         // must not replay after the reset. Only up to the click's own
         // snapshot: a key pressed after the click is a fresh note and
-        // stays queued. The snapshot can only be at or ahead of the read
-        // position, since dispatch runs after this branch.
-        uiReadIndex.store(panicDropBefore.load(std::memory_order_relaxed),
-                          std::memory_order_release);
+        // stays queued. Forward only — if the click raced the previous
+        // block's dispatch, the queue may already stand past the snapshot,
+        // and rewinding would replay consumed (possibly overwritten) slots.
+        const unsigned dropBefore =
+            panicDropBefore.load(std::memory_order_relaxed);
+        const unsigned readNow = uiReadIndex.load(std::memory_order_relaxed);
+        if (static_cast<int>(dropBefore - readNow) > 0)
+            uiReadIndex.store(dropBefore, std::memory_order_release);
         engine.reset();
         // The reset centred the engine's bend, so the tracker must agree —
         // a wheel still held off-centre then reapplies itself next block.

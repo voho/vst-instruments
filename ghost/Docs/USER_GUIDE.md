@@ -152,9 +152,12 @@ The signature series dual filter.
 - **SPLIT** — the two audio paths to left (Filter/ADSR) and right (Shaper),
   as the modelled hardware's two rear jacks. On a mono output bus the two
   paths stay summed — there is no right jack to split onto.
-- **PANIC** — the hard stop: silences everything and resets the engine's
-  voice state. The X/Y wheels are parameters and keep their positions; a
-  bend still held on a wheel reapplies itself.
+- **PANIC** — the hard stop: kills every sounding voice and resets the
+  engine's voice state. Panel settings are parameters and survive, so a
+  drone dialled in with VCA BYPASS or a raised Shaper path in a
+  self-running mode starts again immediately — pull those controls down
+  to stop it. The X/Y wheels likewise keep their positions, and a bend
+  still held on a wheel reapplies itself.
 
 The keyboard plays with **last-note priority and held-note memory**:
 releasing the newest key falls back to the newest key still held, at its
