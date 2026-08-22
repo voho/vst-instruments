@@ -29,6 +29,14 @@ performance wheels to the panel's destination sets. It is an independent
 original implementation, not affiliated with or licensed by Crumar or its
 successors, and contains no firmware, ROM data, samples or captured audio.
 
+The hardware shipped no presets: its manual taught eleven **Sound Charts**
+instead, drawn panel settings with a lesson attached. Those charts are
+Ghost's factory program bank — from the deliberately silent Preparatory
+Pattern the lessons all start from, through Fat Filter, Sync and Sample &
+Hold, to the Inverted Guitar — behind an Init program that is the default
+voice itself. Selecting one writes the whole panel, so the bank reads as
+the tutorial it was ([user guide](Docs/USER_GUIDE.md)).
+
 What is modelled from documentation and what remains a voiced choice is set
 out control by control in the
 [circuit-modelling research and implementation contract](Docs/circuit-modelling-research.md).

@@ -1,7 +1,7 @@
 # Ghost audio corpus
 
 Ten maintained demonstration takes, rendered by `GhostRenderDemos` from the
-same JUCE-free engine the eventual plug-in will run — no samples and no
+same JUCE-free `ghost::GhostEngine` the plug-in runs — no samples and no
 external processing anywhere. Each take exercises one of the modelled
 instrument's signature mechanisms: the relative-offset series dual filter,
 the frozen-formant tracking mode, the inter-filter overdrive, hard sync

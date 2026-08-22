@@ -698,7 +698,7 @@ jobs:
           printf 'Release asset: %s\n' "${assets[@]}"
 
       # Retained on the workflow run itself (downloadable by anyone with repo
-      # access), as one complete set rather than seven per-instrument artifacts.
+      # access), as one complete set rather than eight per-instrument artifacts.
       - name: Upload workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
