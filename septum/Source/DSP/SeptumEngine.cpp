@@ -1029,6 +1029,7 @@ void Engine::updateVoiceControls (Voice& voice, int tickSamples)
         voice.superHpf2 = trackedHighPass (noteToHz (note2));
 
     // -- filter ------------------------------------------------------------
+    const bool wasPrimed = voice.controlsPrimed;
     const double filterEnvLevel = voice.filterEnv.advance (tickSamples);
     double lfoFilterOct = 0.0;
     if (tone.lfo1.destination1 == LfoDest1::Filter)
@@ -1041,29 +1042,49 @@ void Engine::updateVoiceControls (Voice& voice, int tickSamples)
     const double cutoffBaseOct = std::log2 (mapping::cutoffHz (tone.cutoff));
     const double keyTrack = mapping::keyFollowOctavesPerOctave (tone.keyFollow)
                             * (voice.glidePitch - 60.0) / 12.0;
-    const double envOct = filterEnvLevel * mapping::filterEnvOctaves (tone.filterEnvDepth);
     const double velocityOct = mapping::cutoffVelocityOctaves (
         tone.cutoffVelocitySens, voice.velocity);
-    const double cutoffOctTarget =
-        cutoffBaseOct + keyTrack + envOct + velocityOct + lfoFilterOct;
+
+    // Everything the panel can step goes through the slew: the cutoff knob,
+    // key follow (which only moves at portamento speed), the velocity offset
+    // and the LFO — an S&H LFO's edge is meant to stay audible, and the slew
+    // is what keeps it from being a discontinuity in the coefficient.
+    const double cutoffParamOctTarget =
+        cutoffBaseOct + keyTrack + velocityOct + lfoFilterOct;
+    // The envelope's *depth* is a knob and is slewed with the rest; the
+    // envelope's own level is not, so the segment times the sliders ask for
+    // are the segment times the filter gets.
+    const double filterEnvOctTarget = mapping::filterEnvOctaves (tone.filterEnvDepth);
     const double resonanceTarget = mapping::resonanceDamping (tone.resonance);
     if (! voice.controlsPrimed)
     {
-        voice.cutoffOctSlewed = cutoffOctTarget;
+        voice.cutoffParamOctSlewed = cutoffParamOctTarget;
+        voice.filterEnvOctSlewed = filterEnvOctTarget;
         voice.resonanceSlewed = resonanceTarget;
         voice.controlsPrimed = true;
     }
     else
     {
         const double slew =
-            1.0 - std::exp (-tickSamples / (sampleRate_ * 0.0025));
-        voice.cutoffOctSlewed += (cutoffOctTarget - voice.cutoffOctSlewed) * slew;
+            1.0 - std::exp (-tickSamples / (sampleRate_ * mapping::controlSlewSeconds));
+        voice.cutoffParamOctSlewed +=
+            (cutoffParamOctTarget - voice.cutoffParamOctSlewed) * slew;
+        voice.filterEnvOctSlewed +=
+            (filterEnvOctTarget - voice.filterEnvOctSlewed) * slew;
         voice.resonanceSlewed += (resonanceTarget - voice.resonanceSlewed) * slew;
     }
-    const double fc = std::clamp (std::exp2 (voice.cutoffOctSlewed), 5.0,
-                                  0.45 * sampleRate_);
-    voice.filterG = std::tan (pi * fc / sampleRate_);
-    voice.filterK = voice.resonanceSlewed;
+    const double fc = std::clamp (
+        std::exp2 (voice.cutoffParamOctSlewed + filterEnvLevel * voice.filterEnvOctSlewed),
+        5.0, 0.45 * sampleRate_);
+    voice.filterGTarget = std::tan (pi * fc / sampleRate_);
+    voice.filterKTarget = voice.resonanceSlewed;
+    if (! wasPrimed)
+    {
+        // A fresh note starts *at* its coefficient rather than ramping to it
+        // from whatever the previous owner of this voice left behind.
+        voice.filterG = voice.filterGTarget;
+        voice.filterK = voice.filterKTarget;
+    }
 
     // -- amp ---------------------------------------------------------------
     const double levelNorm = tone.level / 127.0;
@@ -1221,6 +1242,12 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples)
         return out * 0.6;
     };
 
+    // Per-sample walk from this tick's starting coefficients to the ones the
+    // control update just computed.
+    const double inverseSamples = 1.0 / std::max (1, samples);
+    const double gStep = (voice.filterGTarget - voice.filterG) * inverseSamples;
+    const double kStep = (voice.filterKTarget - voice.filterK) * inverseSamples;
+
     for (int i = 0; i < samples; ++i)
     {
         // ---- OSC2 (rendered first so SYNC can slave OSC1 to it) ----------
@@ -1334,8 +1361,11 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples)
         double filtered = mixed;
         if (tone.filterType != FilterType::Bypass)
         {
-            const double g = voice.filterG;
-            const double k = voice.filterK;
+            // Walk the coefficients across the tick instead of stepping them
+            // at its edge: the filter envelope now moves at full speed, and a
+            // fast sweep must not arrive as an eight-sample staircase.
+            const double g = voice.filterG + gStep * (i + 1);
+            const double k = voice.filterK + kStep * (i + 1);
             const double a1 = 1.0 / (1.0 + g * (g + k));
             const double a2 = g * a1;
 
@@ -1396,6 +1426,9 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples)
         const double env = voice.ampEnv.advance (1);
         mono[i] = static_cast<float> (filtered * env);
     }
+
+    voice.filterG = voice.filterGTarget;
+    voice.filterK = voice.filterKTarget;
 
     // Once per tick: keep decayed states out of denormal territory.
     voice.filter1.ic1eq = flushDenormal (voice.filter1.ic1eq);

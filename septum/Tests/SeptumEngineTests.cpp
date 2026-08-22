@@ -648,6 +648,121 @@ void testSyncFollowsSpecialOsc2Waves()
     }
 }
 
+// The reported "fast ADSR response times ensure bags of punch" has to be true
+// of the filter envelope as well as the amp envelope: both read the same
+// slider through the same mapping, so from A = 0 they must open in the same
+// time. Measured on NOISE, which has no oscillator period to confound the
+// envelope trace, as RMS over 0.25 ms windows.
+double envelopeRiseMs (const Render& take, double sampleRate, double fraction)
+{
+    const auto window = (std::size_t) (sampleRate * 0.00025);
+    std::vector<double> trace;
+    double sum = 0.0;
+    std::size_t count = 0;
+    for (std::size_t i = 0; i < take.left.size(); ++i)
+    {
+        sum += take.left[i] * (double) take.left[i];
+        if (++count == window)
+        {
+            trace.push_back (std::sqrt (sum / (double) window));
+            sum = 0.0;
+            count = 0;
+        }
+    }
+    double peak = 0.0;
+    for (double value : trace)
+        peak = std::max (peak, value);
+    for (std::size_t i = 0; i < trace.size(); ++i)
+        if (trace[i] >= fraction * peak)
+            return (double) i * 0.25;
+    return 1.0e9;
+}
+
+void testFilterEnvelopeIsAsFastAsTheAmpEnvelope()
+{
+    const double sampleRate = 44100.0;
+    septum::Patch base = septum::initPatch();
+    base.upper.osc1.wave = septum::Waveform::Noise;
+    base.upper.balance = -63;
+    base.upper.level = 127;
+    base.upper.ampEnvAttack = 0;
+    base.upper.ampEnvDecay = 127;
+    base.upper.ampEnvSustain = 127;
+
+    septum::Patch amp = base;
+    amp.upper.filterType = septum::FilterType::Bypass;
+
+    septum::Patch filter = base;
+    filter.upper.filterType = septum::FilterType::Lpf;
+    filter.upper.filterSlope = septum::FilterSlope::Db24;
+    filter.upper.cutoff = 10;
+    filter.upper.resonance = 0;
+    filter.upper.filterEnvAttack = 0;
+    filter.upper.filterEnvDecay = 127;
+    filter.upper.filterEnvSustain = 127;
+    filter.upper.filterEnvDepth = 63;
+
+    const auto rise = [&] (const septum::Patch& patch, double fraction)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.reset();
+        return envelopeRiseMs (
+            renderScore (engine, { { 0.0, true, 60, 127 } }, 0.06, sampleRate),
+            sampleRate, fraction);
+    };
+
+    const double ampRise = rise (amp, 0.9);
+    const double filterRise = rise (filter, 0.9);
+    expect (ampRise <= 2.0,
+            "the amp envelope's fastest attack opens within 2 ms (value "
+                + std::to_string (ampRise) + " ms)");
+    expect (filterRise <= ampRise + 0.5,
+            "the filter envelope's fastest attack is no slower than the amp "
+            "envelope's (filter " + std::to_string (filterRise) + " ms, amp "
+                + std::to_string (ampRise) + " ms)");
+}
+
+// The slew the filter envelope was taken out of is still doing its job on the
+// panel side: a stepped S&H LFO must not arrive as a discontinuity, so the
+// per-sample coefficient change stays bounded even at the extremes.
+void testSampleHoldStepsStayContinuous()
+{
+    const double sampleRate = 44100.0;
+    septum::Patch patch = septum::initPatch();
+    patch.upper.osc1.wave = septum::Waveform::Saw;
+    patch.upper.balance = -63;
+    patch.upper.level = 127;
+    patch.upper.ampEnvAttack = 0;
+    patch.upper.ampEnvSustain = 127;
+    patch.upper.filterType = septum::FilterType::Lpf;
+    patch.upper.filterSlope = septum::FilterSlope::Db24;
+    patch.upper.cutoff = 64;
+    patch.upper.resonance = 100;
+    patch.upper.filterEnvDepth = 0;
+    patch.upper.lfo1.shape = septum::LfoShape::SampleHold;
+    patch.upper.lfo1.rate = 110;         // fast steps
+    patch.upper.lfo1.destination1 = septum::LfoDest1::Filter;
+    patch.upper.lfo1.depth1 = 63;
+
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    engine.setPatch (patch);
+    engine.reset();
+    auto take = renderScore (engine, { { 0.0, true, 45, 100 } }, 2.0, sampleRate);
+    expect (take.finite(), "an S&H filter LFO renders finite audio");
+    expect (take.peak() <= 1.06, "an S&H filter LFO stays inside the limiter");
+    // No sample-to-sample jump larger than the waveform itself can make.
+    double worstJump = 0.0;
+    for (std::size_t i = 1; i < take.left.size(); ++i)
+        worstJump = std::max (worstJump,
+                              std::abs ((double) take.left[i] - take.left[i - 1]));
+    expect (worstJump < 0.9,
+            "an S&H filter step never produces a sample-level discontinuity "
+            "(worst jump " + std::to_string (worstJump) + ")");
+}
+
 void testAllNotesOffAndReset()
 {
     septum::Engine engine;
@@ -693,6 +808,8 @@ int main()
     testFactoryBankRendersEverywhere();
     testAllSoundOffSilencesEffectTails();
     testSyncFollowsSpecialOsc2Waves();
+    testFilterEnvelopeIsAsFastAsTheAmpEnvelope();
+    testSampleHoldStepsStayContinuous();
     testAllNotesOffAndReset();
 
     if (failures == 0)

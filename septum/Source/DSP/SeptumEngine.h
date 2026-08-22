@@ -200,6 +200,12 @@ namespace mapping
     // [voiced, OQ-07] MIX/MOD LOW FREQ shelf: corner and gain.
     inline constexpr double lowShelfHz = 200.0;
     inline constexpr double lowShelfGainDb = 8.0;
+
+    // [voiced] Parameter slew for the filter's panel-side controls. It is not
+    // a model of anything the hardware does — it exists so a patch edit or an
+    // S&H LFO edge cannot put a discontinuity into the filter coefficient —
+    // so it is applied to the panel side only and never to an envelope.
+    inline constexpr double controlSlewSeconds = 0.0025;
 }
 
 // --------------------------------------------------------------------------
@@ -363,13 +369,23 @@ private:
         double duty1 { 0.5 }, duty2 { 0.5 };
         double superAmount1 { 0.0 }, superAmount2 { 0.0 };
         double fbGain1 { 0.0 }, fbGain2 { 0.0 };
+        // Filter coefficients at the start of the control tick, and where they
+        // must arrive by its end. The render loop walks between them one
+        // sample at a time, so a control tick never steps the coefficient.
         double filterG { 0.1 }, filterK { 2.0 };
+        double filterGTarget { 0.1 }, filterKTarget { 2.0 };
         double ampGainL { 0.0 }, ampGainR { 0.0 };
         BiquadCoeffs superHpf1 {}, superHpf2 {};
         std::uint32_t noiseRng { 0x1234567u };
-        // Control slew (voiced ~2.5 ms): stepped cutoff moves (S&H, patch
-        // edits) stay audibly steppy without sample-level discontinuities.
-        double cutoffOctSlewed { 8.0 };
+        // Control slew (voiced ~2.5 ms) on the *parameter* side of the cutoff
+        // sum only — the knob, key follow, velocity offset and the LFO, which
+        // are what step when a patch is edited or an S&H LFO fires. The
+        // filter envelope is deliberately outside it: the two envelopes read
+        // the same slider through the same mapping, so smoothing one of them
+        // and not the other would make the documented "fast ADSR response"
+        // true of the amp and false of the filter.
+        double cutoffParamOctSlewed { 8.0 };
+        double filterEnvOctSlewed { 0.0 };
         double resonanceSlewed { 0.0 };
         bool controlsPrimed { false };
     };
