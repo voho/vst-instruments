@@ -366,18 +366,13 @@ void GhostEngine::setParameters(const EngineParameters& parameters)
     // never step the audio; switches always apply immediately. A fully
     // silent engine snaps instead, so a state restore before playing —
     // and a test configuring a law — lands exactly.
-    const bool shaperPathQuiet =
-        parameters_.shaperPathA <= 0.0f && parameters_.shaperPathB <= 0.0f
-        && parameters_.shaperPathRing <= 0.0f
-        && parameters_.shaperPathNoise <= 0.0f
-        && sane.shaperPathA <= 0.0f && sane.shaperPathB <= 0.0f
-        && sane.shaperPathRing <= 0.0f && sane.shaperPathNoise <= 0.0f;
-    const bool fullySilent =
-        loudnessEnvelope_.stage == Adsr::Stage::Idle && keyStackSize_ == 0
-        && !parameters_.vcaBypass && !sane.vcaBypass && shaperPathQuiet;
+    const bool incomingQuiet =
+        !sane.vcaBypass && sane.shaperPathA < 1.0e-4f
+        && sane.shaperPathB < 1.0e-4f && sane.shaperPathRing < 1.0e-4f
+        && sane.shaperPathNoise < 1.0e-4f;
 
     targetParameters_ = sane;
-    if (fullySilent)
+    if (silentForSnap() && incomingQuiet)
     {
         parameters_ = sane;
     }
@@ -508,6 +503,10 @@ void GhostEngine::setModWheel(float amount) noexcept
     if (!std::isfinite(amount))
         amount = 0.0f;
     targetModWheel_ = std::clamp(amount, 0.0f, 1.0f);
+    // A restored wheel position lands exactly while nothing sounds, like
+    // the panel travels; only a ridden wheel glides.
+    if (silentForSnap())
+        modWheel_ = targetModWheel_;
 }
 
 void GhostEngine::setShaperWheel(float amount) noexcept
@@ -515,6 +514,8 @@ void GhostEngine::setShaperWheel(float amount) noexcept
     if (!std::isfinite(amount))
         amount = 0.0f;
     targetShaperWheel_ = std::clamp(amount, 0.0f, 1.0f);
+    if (silentForSnap())
+        shaperWheel_ = targetShaperWheel_;
 }
 
 GhostEngine::SvfOutputs GhostEngine::runSection(SvfSection& section,
@@ -620,16 +621,34 @@ void GhostEngine::handleArpClock() noexcept
     ++arpStep_;
 }
 
+// The quiet threshold is audibility, not exact zero: a smoothed slider
+// decaying toward zero stalls at a float residue (and FTZ pins it there),
+// so an exact-zero test would lock the snap path out forever.
+bool GhostEngine::silentForSnap() const noexcept
+{
+    return loudnessEnvelope_.stage == Adsr::Stage::Idle
+        && keyStackSize_ == 0 && !parameters_.vcaBypass
+        && !targetParameters_.vcaBypass
+        && parameters_.shaperPathA < 1.0e-4f
+        && parameters_.shaperPathB < 1.0e-4f
+        && parameters_.shaperPathRing < 1.0e-4f
+        && parameters_.shaperPathNoise < 1.0e-4f;
+}
+
 void GhostEngine::advanceControls() noexcept
 {
     const double dt = 1.0 / sampleRate_;
 
     // The travel smoother: every continuous panel value and both wheels
-    // glide to their latched targets (~25 ms), per the plan's Step 5.
+    // glide to their latched targets (~25 ms), per the plan's Step 5. A
+    // value lands exactly once it is within hearing of its target, so the
+    // one-pole cannot stall on a float residue short of it.
     {
         const float k = static_cast<float>(travelSmoothing_);
         const auto follow = [k](float& value, float target) noexcept {
             value += k * (target - value);
+            if (std::fabs(target - value) < 1.0e-6f)
+                value = target;
         };
         const EngineParameters& t = targetParameters_;
         follow(parameters_.tune, t.tune);
@@ -1182,12 +1201,15 @@ void GhostEngine::renderVoiceSample() noexcept
 
 void GhostEngine::process(float* left, float* right, int numSamples)
 {
-    const double volume = static_cast<double>(parameters_.masterVolume)
-                        * static_cast<double>(parameters_.masterVolume);
-
     for (int sample = 0; sample < numSamples; ++sample)
     {
         advanceControls();
+        // Derived after the travel smoother has advanced, per sample —
+        // captured once per call it would hold a whole host block and
+        // reintroduce exactly the steps the smoother removes.
+        const double volume =
+            static_cast<double>(parameters_.masterVolume)
+            * static_cast<double>(parameters_.masterVolume);
 
         // Two internal steps per output sample, then the halfband picks the
         // decimated value.

@@ -201,6 +201,10 @@ private:
     static SvfOutputs runSection(SvfSection& section, double input, double g,
                                  double k) noexcept;
 
+    // True when nothing is sounding and nothing can sound (no keys, both
+    // envelopes' gate paths closed, no drone), so travel and wheel changes
+    // may snap instead of gliding — a state restore lands exactly.
+    [[nodiscard]] bool silentForSnap() const noexcept;
     void advanceControls() noexcept;
     void advanceEnvelope(Adsr& envelope, bool gate, bool triggerPulse,
                          double attackCoefficient, double decayCoefficient,

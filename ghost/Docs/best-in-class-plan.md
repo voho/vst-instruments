@@ -341,7 +341,7 @@ case, not the typical one.
 |---|---|---|---|---|---|
 | tune | −62.6 | −45.5 | filterEnvAmount | −53.3 | −38.8 |
 | interval | −49.7 | −31.3 | filterAttack | −71.8 | −51.2 |
-| masterVolume | −34.7 | −22.9 | filterDecay | −80.9 | −57.9 |
+| masterVolume | −48.5 | −39.9 | filterDecay | −80.9 | −57.9 |
 | brightness | −52.5 | −39.7 | filterSustain | −86.2 | −63.8 |
 | shaperPathA | −52.3 | −43.5 | filterRelease | −82.4 | −64.9 |
 | shaperPathB | −59.4 | −50.6 | loudnessAttack | −69.4 | −49.3 |
@@ -364,7 +364,14 @@ engine — loudness envelope idle, no keys, no VCA bypass, no raised
 Shaper-path slider — snaps instead of gliding, so a state restore before
 playing, and every law-measuring test, lands exactly. `reset()` snaps to
 the standing targets; `stopAllSound()` preserves both the smoothed wheel
-values and their targets. The regression test
+values and their targets. Three defects the first review round caught
+are folded in: the output gain is derived per sample *after* the
+smoother advances (captured once per `process()` call it held a whole
+host block, which the audit's first master-volume row measured before
+the cause was found), the one-pole lands exactly once within 1e-6 of
+its target so a slider decaying to zero cannot stall on a float residue
+and lock out the silent-snap path, and a restored wheel position snaps
+while silent exactly as the panel travels do. The regression test
 (`testTravelStepsGlideWhileSounding`) steps master volume by a factor of
 a hundred mid-note and hears it glide, then settle.
 
@@ -374,7 +381,7 @@ a hundred mid-note and hears it glide, then settle.
 |---|---|---|---|---|---|
 | tune | −78.6 | −47.2 | filterEnvAmount | −65.5 | −50.4 |
 | interval | −47.4 | −33.2 | filterAttack | −57.2 | −44.8 |
-| masterVolume | −39.8 | −26.8 | filterDecay | −70.2 | −57.2 |
+| masterVolume | −72.0 | −47.1 | filterDecay | −70.2 | −57.2 |
 | brightness | −77.8 | −54.5 | filterSustain | −77.9 | −63.6 |
 | shaperPathA | −76.8 | −51.2 | filterRelease | −88.7 | −77.0 |
 | shaperPathB | −83.7 | −58.2 | loudnessAttack | −52.8 | −40.0 |
@@ -382,17 +389,17 @@ a hundred mid-note and hears it glide, then settle.
 | shaperPathNoise | −90.9 | −65.2 | loudnessSustain | −71.2 | −57.3 |
 | filterPathA | −76.1 | −50.9 | loudnessRelease | −96.7 | −69.8 |
 | filterPathB | −83.9 | −58.8 | lfoRate | −53.5 | −34.2 |
-| filterPathNoise | −77.0 | −50.7 | shaperShape | −47.2 | −24.3 |
-| cutoff | −69.0 | −45.7 | shaperRate | −27.0 | −15.5 |
+| filterPathNoise | −77.0 | −50.7 | shaperShape | −32.1 | −24.3 |
+| cutoff | −69.0 | −45.7 | shaperRate | −26.9 | −15.4 |
 | lowerOnly | −67.3 | −45.3 | glide | −80.7 | −51.3 |
 | resonance | −82.1 | −54.8 | xWheel | −82.0 | −60.0 |
-| kbAmount | −86.5 | −64.8 | yWheel | −48.6 | −44.8 |
+| kbAmount | −86.5 | −64.8 | yWheel | −52.9 | −32.0 |
 
 **Reading the tables.**
 
 - The smoother buys 15–26 dB exactly where zipper is notorious: cutoff
-  (−42.6 → −69.0 at 512), LOWER ONLY, resonance, brightness, every mixer
-  fader, glide and the X wheel. The step-discontinuity class — the
+  (−42.6 → −69.0 at 512), master volume (−48.5 → −72.0), LOWER ONLY,
+  resonance, brightness, every mixer fader, glide and the X wheel. The step-discontinuity class — the
   audible click — is gone; what remains is band-limited ripple at the
   block rate, falling with the one-pole's slope.
 - The envelope-segment rows moved a few dB the other way: a segment time
@@ -401,11 +408,14 @@ a hundred mid-note and hears it glide, then settle.
   stay at or below −40 dB even at 2048 for the stress gesture; this is
   bounded, not step-like, and is the cost of gliding those travels at
   all.
-- The rows that remain above −60 dB at 512 (master volume at −39.8 the
-  worst, then shaperRate, shaperShape, interval, lfoRate, yWheel) are
-  not step artifacts: their residual is smooth amplitude or
-  frequency-trajectory ripple that scales with gesture speed, and it is
-  block-size-dependent exactly as the half-block ripple theory predicts.
+- The rows that remain above −60 dB at 512 (shaperRate at −26.9 the
+  worst, then shaperShape, interval, lfoRate, yWheel, loudnessAttack and
+  filterAttack) are not step artifacts: their residual is smooth
+  amplitude or frequency-trajectory ripple that scales with gesture
+  speed — the Shaper travels integrate their rate into phase, so
+  trajectory ripple becomes cycle-position wobble against the beating
+  reference — and it is block-size-dependent exactly as the half-block
+  ripple theory predicts.
   Pushing them under −60 for a full-range 1.5-second gesture would need
   a ≥100 ms smoother — mushy controls traded for a stress case no
   finger reproduces. The −60 dB gate is therefore read as: *no step
