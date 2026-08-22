@@ -505,6 +505,7 @@ void Engine::reset()
         channel.fill (0.0f);
     monitorDelayWrite_ = 0;
     smoothedMonitorLevel_ = masterLevel_ / 127.0;
+    smoothedInputGain_ = mapping::externalInputGain (external_.inputVolume);
     pitchBend_ = 0.0;
     modulation_ = 0.0;
     hold_ = false;
@@ -644,9 +645,13 @@ void Engine::noteOff (int note)
     for (int index = 0; index < partCount; ++index)
     {
         const Part part = index == 0 ? Part::Upper : Part::Lower;
-        if (arpeggioDrives (part))
-            arpeggioRemoveKey (part, note);
-        else
+        // The arpeggiator's key list is cleared unconditionally, because the
+        // routing parameters — SPLIT ARPEGGIO, the keyboard mode, the
+        // keyboard part — are automatable too, and a key whose press went to
+        // one part must not leave an entry behind when its release is routed
+        // somewhere else. Removing a key the list never had is a no-op.
+        arpeggioRemoveKey (part, note);
+        if (! arpeggioDrives (part))
             releaseNoteForPart (part, note);
     }
 }
@@ -1759,14 +1764,28 @@ void Engine::arpeggioAddKey (Part part, int note, int velocity)
     // when the player has actually let go of everything.
     bool alreadyDown = false;
     for (int i = 0; i < runtime.physicalCount; ++i)
-        alreadyDown = alreadyDown
-                      || runtime.physicalKeys[static_cast<std::size_t> (i)] == note;
+        if (runtime.physicalKeys[static_cast<std::size_t> (i)] == note)
+        {
+            ++runtime.physicalPresses[static_cast<std::size_t> (i)];
+            runtime.physicalVelocities[static_cast<std::size_t> (i)] = velocity;
+            alreadyDown = true;
+            break;
+        }
     if (! alreadyDown
         && runtime.physicalCount < static_cast<int> (runtime.physicalKeys.size()))
     {
         const auto slot = static_cast<std::size_t> (runtime.physicalCount++);
         runtime.physicalKeys[slot] = note;
         runtime.physicalVelocities[slot] = velocity;
+        runtime.physicalPresses[slot] = 1;
+    }
+    else if (alreadyDown)
+    {
+        // A second press of a pitch already in the chord changes nothing
+        // about the chord itself.
+        runtime.lastPressed = note;
+        runtime.lastVelocity = velocity;
+        return;
     }
 
     // HOLD: once every key has been let go, the next key starts a new chord
@@ -1803,20 +1822,33 @@ void Engine::arpeggioRemoveKey (Part part, int note)
 {
     auto& runtime = arpeggios_[part == Part::Upper ? 0 : 1];
 
+    // Only the *last* release of a pitch lets go of it, so two overlapping
+    // notes of the same pitch cannot have the first one's note-off take what
+    // the second is still holding.
+    bool stillHeld = false;
     for (int i = 0; i < runtime.physicalCount; ++i)
     {
         if (runtime.physicalKeys[static_cast<std::size_t> (i)] != note)
             continue;
+        if (--runtime.physicalPresses[static_cast<std::size_t> (i)] > 0)
+        {
+            stillHeld = true;
+            break;
+        }
         for (int j = i; j + 1 < runtime.physicalCount; ++j)
         {
             runtime.physicalKeys[static_cast<std::size_t> (j)] =
                 runtime.physicalKeys[static_cast<std::size_t> (j + 1)];
             runtime.physicalVelocities[static_cast<std::size_t> (j)] =
                 runtime.physicalVelocities[static_cast<std::size_t> (j + 1)];
+            runtime.physicalPresses[static_cast<std::size_t> (j)] =
+                runtime.physicalPresses[static_cast<std::size_t> (j + 1)];
         }
         --runtime.physicalCount;
         break;
     }
+    if (stillHeld)
+        return;
 
     if (patch_.arpeggio.hold)
     {
@@ -2064,6 +2096,23 @@ void Engine::advanceArpeggiator (int samples)
         }
     }
 
+    // SPLIT ARPEGGIO, the keyboard mode and the keyboard part are all
+    // automatable, so a part can stop being one the arpeggiator drives while
+    // its notes are sounding. Those notes are the arpeggiator's and nothing
+    // else will end them.
+    for (int index = 0; index < partCount; ++index)
+    {
+        const Part part = index == 0 ? Part::Upper : Part::Lower;
+        if (arpeggioDrives (part))
+            continue;
+        auto& runtime = arpeggios_[static_cast<std::size_t> (index)];
+        bool sounding = false;
+        for (const auto& row : runtime.rows)
+            sounding = sounding || row.note >= 0 || row.tailNote >= 0;
+        if (sounding)
+            arpeggioStopPart (part);
+    }
+
     bool anyKeys = false;
     for (int index = 0; index < partCount; ++index)
         if (arpeggioDrives (index == 0 ? Part::Upper : Part::Lower)
@@ -2161,7 +2210,16 @@ bool Engine::anyVoiceUsesExternalInput() const noexcept
 void Engine::prepareExternalTick (const float* inputLeft, const float* inputRight,
                                   int offset, int samples)
 {
-    const double inputGain = mapping::externalInputGain (external_.inputVolume);
+    // INPUT VOL is automatable, so it is smoothed and walked across the tick
+    // exactly as the monitor fade is: an integer step straight onto live
+    // audio would click on the monitor and on any EXT-IN voice at once.
+    const double inputGainTarget = mapping::externalInputGain (external_.inputVolume);
+    const double inputFrom = smoothedInputGain_;
+    smoothedInputGain_ +=
+        (inputGainTarget - smoothedInputGain_)
+        * std::min (1.0, onePoleCoeff (sampleRate_, mapping::masterSlewSeconds)
+                             * samples);
+    const double inputStep = (smoothedInputGain_ - inputFrom) / std::max (1, samples);
     const bool haveInput = inputLeft != nullptr && inputRight != nullptr;
 
     // Direct-path mute while an EXT-IN voice owns the input, with a short fade
@@ -2226,6 +2284,7 @@ void Engine::prepareExternalTick (const float* inputLeft, const float* inputRigh
         double left = 0.0, right = 0.0;
         if (haveInput)
         {
+            const double inputGain = inputFrom + inputStep * (i + 1);
             left = inputLeft[offset + i] * inputGain;
             right = inputRight[offset + i] * inputGain;
         }
@@ -2276,12 +2335,17 @@ void Engine::prepareExternalTick (const float* inputLeft, const float* inputRigh
             double* channels[2] { &left, &right };
             for (int channel = 0; channel < 2; ++channel)
             {
-                double value = *channels[channel];
-                value = stagePass (audioFilter1_[channel], value, k, a1, a2);
-                if (external_.slope == FilterSlope::Db24)
-                    value = stagePass (audioFilter2_[channel], value, k, a1, a2);
+                // Both stages always run, for the same reason: a frozen
+                // integrator would let an arbitrarily old resonant tail out
+                // the moment an automated switch came back. Only which of
+                // their outputs is taken depends on the switches.
+                const double first =
+                    stagePass (audioFilter1_[channel], *channels[channel], k, a1, a2);
+                const double second =
+                    stagePass (audioFilter2_[channel], first, k, a1, a2);
                 if (external_.filterOn)
-                    *channels[channel] = value;
+                    *channels[channel] =
+                        external_.slope == FilterSlope::Db24 ? second : first;
             }
         }
 

@@ -1024,25 +1024,34 @@ void SeptumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // patch or the previous block's patch covers the gap instead.
     const auto applyCurrentPatch = [this]
     {
-        const int staged = stagedProgram.load (std::memory_order_acquire);
-        if (staged >= 0 && staged < (int) septum::factoryPatches().size())
-        {
-            engine.setPatch (
-                septum::factoryPatches()[(std::size_t) staged].patch);
-            return;
-        }
         // The external-input block is not patch data, but CC#2 and CC#4 edit
         // it and arrive mid-block like any other mapped panel CC, so it is
-        // refreshed on the same segment boundary rather than a block late.
-        engine.setExternalInput (snapshotExternalInput());
+        // refreshed on the same segment boundary rather than a block late —
+        // and it is read *inside* the same seqlock the patch snapshot uses,
+        // because a state restore writes both in one burst and a mixture of
+        // old and new external settings is as torn as a mixed patch.
         const auto generation = patchGeneration.load (std::memory_order_acquire);
-        const septum::Patch snapshot = snapshotPatch();
-        if ((generation & 1u) == 0u
-            && patchGeneration.load (std::memory_order_acquire) == generation)
+        const septum::ExternalInput external = snapshotExternalInput();
+
+        const int staged = stagedProgram.load (std::memory_order_acquire);
+        const bool stagedProgramPending =
+            staged >= 0 && staged < (int) septum::factoryPatches().size();
+        const septum::Patch snapshot =
+            stagedProgramPending ? septum::Patch {} : snapshotPatch();
+
+        // Otherwise a burst was in flight while the snapshots were read: keep
+        // the previous values for this segment and pick up the completed ones
+        // on the next.
+        const bool stable =
+            (generation & 1u) == 0u
+            && patchGeneration.load (std::memory_order_acquire) == generation;
+        if (stable)
+            engine.setExternalInput (external);
+        if (stagedProgramPending)
+            engine.setPatch (
+                septum::factoryPatches()[(std::size_t) staged].patch);
+        else if (stable)
             engine.setPatch (snapshot);
-        // Otherwise a burst was in flight while the snapshot was read: keep
-        // the previous patch for this segment and pick up the completed
-        // values on the next one.
     };
     applyCurrentPatch();
 
