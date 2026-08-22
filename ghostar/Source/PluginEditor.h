@@ -27,9 +27,18 @@ public:
     void drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                           bool shouldDrawButtonAsHighlighted,
                           bool shouldDrawButtonAsDown) override;
+    void drawComboBox(juce::Graphics& g, int width, int height, bool isDown,
+                      int buttonX, int buttonY, int buttonW, int buttonH,
+                      juce::ComboBox& box) override;
+    juce::Font getComboBoxFont(juce::ComboBox&) override;
+    void drawButtonBackground(juce::Graphics& g, juce::Button& button,
+                              const juce::Colour& backgroundColour,
+                              bool shouldDrawButtonAsHighlighted,
+                              bool shouldDrawButtonAsDown) override;
 };
 
-class GhostarAudioProcessorEditor final : public juce::AudioProcessorEditor
+class GhostarAudioProcessorEditor final : public juce::AudioProcessorEditor,
+                                          private juce::Timer
 {
 public:
     explicit GhostarAudioProcessorEditor(GhostarAudioProcessor&);
@@ -39,17 +48,26 @@ public:
     void resized() override;
 
 private:
+    void timerCallback() override;
+
     struct Section
     {
         juce::String title;
         juce::Rectangle<int> bounds;
+        bool accent { false };
     };
 
-    // One labelled panel control and its host-parameter attachment.
+    // One labelled panel control and its host-parameter attachment. A knob's
+    // caption doubles as its readout: it shows the silkscreen's own 0–10
+    // while the control is moving, and falls back to the control's name a
+    // moment after it stops, so the panel reads as a panel at rest and as a
+    // set of numbers while it is being dialled.
     struct Knob
     {
         juce::Slider slider;
         juce::Label label;
+        juce::String name;
+        int readoutTicks { 0 };
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
             attachment;
     };
@@ -57,6 +75,8 @@ private:
     {
         juce::Slider slider;
         juce::Label label;
+        juce::String name;
+        int readoutTicks { 0 };
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
             attachment;
     };
@@ -74,21 +94,42 @@ private:
             attachment;
     };
 
-    void addKnob(Knob& knob, const char* parameterId, const juce::String& text);
+    void addKnob(Knob& knob, const char* parameterId,
+                 const juce::String& text, const juce::String& tooltip);
     void addFader(Fader& fader, const char* parameterId,
-                  const juce::String& text);
+                  const juce::String& text, const juce::String& tooltip);
     void addRocker(Rocker& rocker, const char* parameterId,
-                   const juce::String& text);
+                   const juce::String& text, const juce::String& tooltip);
     void addSelector(Selector& selector, const char* parameterId,
-                     const juce::String& text);
+                     const juce::String& text, const juce::String& tooltip);
     void layoutKnob(Knob& knob, juce::Rectangle<int> area);
     void layoutFader(Fader& fader, juce::Rectangle<int> area);
     void layoutSelector(Selector& selector, juce::Rectangle<int> area);
 
+    void showProgramMenu();
+    void stepProgram(int delta);
+    void refreshProgramDisplay();
+
     GhostarAudioProcessor& processor;
     GhostarLookAndFeel lookAndFeel;
+    juce::TooltipWindow tooltips { this, 600 };
 
     std::vector<Section> sections;
+
+    // Header
+    juce::Label wordmark;
+    juce::Label subtitle;
+    juce::TextButton previousProgram { "<" };
+    juce::TextButton nextProgram { ">" };
+    juce::TextButton programName { "Init" };
+    juce::Label programBank;
+    juce::TextButton panicButton { "PANIC" };
+    juce::Rectangle<int> gateLampBounds;
+    bool gateLampLit { false };
+    int shownProgram { -1 };
+    // True until every attachment has taken its parameter's standing value,
+    // so the wiring-up callbacks do not leave the panel showing numbers.
+    bool wiringUp { true };
 
     // MASTER
     Knob tune;
@@ -117,6 +158,8 @@ private:
     Rocker shapeXWithY;
     Selector shaperYTo;
     // AUDIO MIXER
+    juce::Label shaperPathCaption;
+    juce::Label filterPathCaption;
     Knob masterVolume;
     Knob brightness;
     Fader shaperPathA;
@@ -150,11 +193,10 @@ private:
     Knob glide;
     Selector glideMode;
     juce::Slider pitchWheel;
+    juce::Label pitchWheelLabel;
     Knob xWheel;
     Knob yWheel;
     Rocker splitPaths;
-    juce::TextButton panicButton { "PANIC" };
-    juce::Label wordmark;
 
     juce::MidiKeyboardComponent keyboard;
 
