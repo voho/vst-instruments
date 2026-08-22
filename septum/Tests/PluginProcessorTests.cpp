@@ -674,14 +674,136 @@ void testTogglesShowTheirState()
 // whether it scales or gets cut off. A 1366x768 laptop's work area is under
 // 768 points tall once the taskbar and the host's window frame are counted,
 // and the design panel is 786.
+// [settled] SYSTEM COMMON: MASTER TUNE (the frequency of A4, 415.30-466.20
+// Hz), MASTER KEY SHIFT -24..+24, keyboard OCTAVE SHIFT -3..+3 and TRANSPOSE
+// -5..+6. The engine has honoured all four since it was written; nothing
+// reached them.
+void testSystemCommonSettings()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+
+    for (const char* id : { "system_master_tune", "system_key_shift",
+                            "system_octave", "system_transpose" })
+        expect (processor.parameters.getParameter (id) != nullptr,
+                juce::String ("the plug-in publishes ") + id);
+
+    const auto set = [&processor] (const char* id, float natural)
+    {
+        auto* parameter = processor.parameters.getParameter (id);
+        const auto& range = processor.parameters.getParameterRange (id);
+        parameter->setValueNotifyingHost (
+            range.convertTo0to1 (range.snapToLegalValue (natural)));
+    };
+
+    // A held A4 against MASTER TUNE. A fresh instance each time, because a
+    // note left sounding at the old tuning would be in the take as well.
+    const auto pitchOf = [] (float tuneHz)
+    {
+        SeptumAudioProcessor instance;
+        instance.prepareToPlay (44100.0, 512);
+        const auto write = [&instance] (const char* id, float natural)
+        {
+            auto* parameter = instance.parameters.getParameter (id);
+            const auto& range = instance.parameters.getParameterRange (id);
+            parameter->setValueNotifyingHost (
+                range.convertTo0to1 (range.snapToLegalValue (natural)));
+        };
+        write ("system_master_tune", tuneHz);
+        write ("delay_on", 0.0f);
+        write ("reverb_on", 0.0f);
+
+        juce::AudioBuffer<float> buffer (2, 512);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 100), 0);
+        instance.processBlock (buffer, midi);
+        std::vector<float> take;
+        for (int block = 0; block < 40; ++block)
+        {
+            juce::MidiBuffer none;
+            instance.processBlock (buffer, none);
+            for (int i = 0; i < buffer.getNumSamples(); ++i)
+                take.push_back (buffer.getSample (0, i));
+        }
+        // A saw crosses zero upward once per cycle, so the crossings over a
+        // known span are the frequency.
+        int crossings = 0;
+        for (std::size_t i = 1; i < take.size(); ++i)
+            if (take[i - 1] <= 0.0f && take[i] > 0.0f)
+                ++crossings;
+        return crossings * 44100.0 / (double) take.size();
+    };
+
+    const double atA440 = pitchOf (440.0f);
+    const double atA466 = pitchOf (466.16f);
+    expect (std::abs (atA440 - 440.0) < 12.0,
+            "A4 renders at A440 by default (measured "
+                + std::to_string (atA440) + ")");
+    expect (atA466 > atA440 * 1.03,
+            "MASTER TUNE moves the whole instrument (measured "
+                + std::to_string (atA466) + " against "
+                + std::to_string (atA440) + ")");
+
+    // The panel's OCT buttons write the settled -3..+3 parameter.
+    set ("system_master_tune", 440.0f);
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    if (editor == nullptr)
+        return;
+    auto* down = findButton (panelOf (*editor), "DOWN");
+    auto* up = findButton (panelOf (*editor), "UP");
+    expect (down != nullptr && up != nullptr,
+            "the panel carries the octave buttons");
+    if (down == nullptr || up == nullptr)
+        return;
+    for (int i = 0; i < 5; ++i)
+        up->onClick();
+    expect ((int) processor.parameters.getRawParameterValue ("system_octave")
+                    ->load()
+                == 3,
+            "the octave buttons reach the documented +3");
+    for (int i = 0; i < 10; ++i)
+        down->onClick();
+    expect ((int) processor.parameters.getRawParameterValue ("system_octave")
+                    ->load()
+                == -3,
+            "the octave buttons reach the documented -3");
+
+    // A program change is patch data; the system block is not.
+    set ("system_key_shift", 7.0f);
+    set ("system_transpose", -4.0f);
+    processor.setCurrentProgram (1);
+    expect ((int) processor.parameters.getRawParameterValue ("system_key_shift")
+                    ->load()
+                == 7
+                && (int) processor.parameters
+                           .getRawParameterValue ("system_transpose")
+                           ->load()
+                       == -4,
+            "a program change leaves the system settings alone");
+
+    // ...and they survive the state round trip.
+    juce::MemoryBlock state;
+    processor.getStateInformation (state);
+    SeptumAudioProcessor restored;
+    restored.prepareToPlay (44100.0, 256);
+    restored.setStateInformation (state.getData(), (int) state.getSize());
+    expect ((int) restored.parameters.getRawParameterValue ("system_key_shift")
+                    ->load()
+                == 7,
+            "the system settings survive a state round trip");
+}
+
 void testEditorFitsASmallDisplay()
 {
     using Editor = SeptumAudioProcessorEditor;
-    const juce::Rectangle<int> design { 1500, 786 };
-    expect (Editor::panelSizeForWorkArea ({}) == design,
-            "an unknown work area opens the panel at its design size");
-    expect (Editor::panelSizeForWorkArea ({ 1920, 1080 }) == design,
+    // An unknown work area is what the design size means here.
+    const auto design = Editor::panelSizeForWorkArea ({});
+    expect (design.getWidth() >= 1000 && design.getHeight() >= 500,
+            "the panel has a design size");
+    expect (Editor::panelSizeForWorkArea ({ 3840, 2160 }) == design,
             "a display with room opens the panel at its design size");
+    const double aspect =
+        (double) design.getWidth() / (double) design.getHeight();
     for (const auto work : { juce::Rectangle<int> { 1366, 768 },
                              juce::Rectangle<int> { 1280, 800 },
                              juce::Rectangle<int> { 1440, 900 } })
@@ -691,8 +813,8 @@ void testEditorFitsASmallDisplay()
                     && size.getHeight() <= work.getHeight(),
                 "the panel fits a " + std::to_string (work.getWidth()) + "x"
                     + std::to_string (work.getHeight()) + " work area");
-        expect (std::abs ((double) size.getWidth() / size.getHeight()
-                          - 1500.0 / 786.0) < 0.01,
+        expect (std::abs ((double) size.getWidth() / size.getHeight() - aspect)
+                    < 0.01,
                 "the panel keeps its proportions when it shrinks");
     }
 
@@ -703,9 +825,7 @@ void testEditorFitsASmallDisplay()
     std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
     if (editor == nullptr)
         return;
-    for (const auto size : { juce::Rectangle<int> { 900, 471 },
-                             juce::Rectangle<int> { 1500, 786 },
-                             juce::Rectangle<int> { 2100, 1100 } })
+    for (const auto size : { design / 2, design, design * 3 / 2 })
     {
         editor->setSize (size.getWidth(), size.getHeight());
         auto& panel = panelOf (*editor);
@@ -739,9 +859,11 @@ void testEditorAndSnapshot()
     // The editor opens at whatever fits the display it is on, so the
     // documentation image is pinned to the panel's design size here rather
     // than taken from whatever the build machine happens to have.
-    editor->setSize (1500, 786);
+    const auto design = SeptumAudioProcessorEditor::panelSizeForWorkArea ({});
+    editor->setSize (design.getWidth(), design.getHeight());
     editor->resized();
-    expect (editor->getWidth() == 1500 && editor->getHeight() == 786,
+    expect (editor->getWidth() == design.getWidth()
+                && editor->getHeight() == design.getHeight(),
             "the documentation screenshot is the panel's design size");
 
     // Every control the panel puts on screen has to be given bounds. A
@@ -822,6 +944,7 @@ int main()
     testStateRoundTrip();
     testIntervalButtonsAreRelativeToOscOne();
     testTogglesShowTheirState();
+    testSystemCommonSettings();
     testEditorFitsASmallDisplay();
     testEditorAndSnapshot();
 

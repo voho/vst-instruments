@@ -975,3 +975,30 @@ control placed, nothing past the panel's edge, because the layout never looks
 at the window. The committed screenshot is pinned to the design size in the
 suite rather than taken from whatever the build machine's display happens to
 be, so a small CI display cannot quietly shrink the documentation image.
+
+#### Step 24 — the System Common settings the engine already honoured
+
+`setMasterTuneHz`, `setMasterKeyShift`, `setKeyboardOctaveShift` and
+`setTranspose` have been in the engine since it was written, each clamped to
+its documented range and each folded into the pitch sum. Nothing called them.
+The only line in the whole tree that reached one was a test. Documented,
+settled, unreachable: the same class as END STEP two rounds ago and SPLIT
+ARPEGGIO one round ago, and the third instance in a row is the argument for
+the check that now walks the panel.
+
+All four are published as plug-in parameters, outside the patch exactly as the
+external-input block is, so a program change does not touch them: MASTER TUNE
+as a float over 415.30–466.20 Hz, which is the frequency of A4 the manual
+prints for the address map's 0.1-cent steps, and the three integers over
+−24…+24, −3…+3 and −5…+6. They take the right of the header, which is now a
+section of its own — settings that apply to the whole instrument, where the
+whole instrument's name is.
+
+The panel's OCT UP/DOWN buttons write the octave shift rather than a private
+field, so they reach the engine, reach the host, and reach the documented ±3
+instead of the ±2 they were limited to; the drawn keyboard still follows them.
+
+Ten checks fence it: A4 renders at 440 by default and sharper at 466.16
+(reverting the wiring measures 439.28 against 439.28 either way), the buttons
+reach ±3, a program change leaves the block alone, and it survives a state
+round trip.

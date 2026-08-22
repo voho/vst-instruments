@@ -46,7 +46,8 @@ constexpr int gridRowHeight = 68;      // label + control + value
 constexpr int sectionGap = 6;
 constexpr int chevronGap = 16;
 
-constexpr int headerHeight = 48;
+constexpr int headerHeight = sectionTitleHeight + gridRowHeight
+                             + 2 * sectionPadding + 10;
 constexpr int clusterWidth = 128;
 // Tall enough for a full-size control cell under the strip's own title,
 // so the patch strip's knobs are the same knobs as everywhere else.
@@ -410,16 +411,11 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     octValueLabel.setFont (juce::Font (juce::FontOptions (11.0f, juce::Font::bold)));
     octValueLabel.setJustificationType (juce::Justification::centred);
     canvas.addAndMakeVisible (octValueLabel);
-    octDownButton.onClick = [this]
-    {
-        keyboardOctaveShift = juce::jmax (-2, keyboardOctaveShift - 1);
-        applyKeyboardOctave();
-    };
-    octUpButton.onClick = [this]
-    {
-        keyboardOctaveShift = juce::jmin (2, keyboardOctaveShift + 1);
-        applyKeyboardOctave();
-    };
+    // Settled: SYSTEM COMMON Octave Shift is -3..+3 (address map 00 17), and
+    // the OCT UP/DOWN buttons are what set it on the instrument. They write
+    // the parameter, so a host can automate the same thing the buttons do.
+    octDownButton.onClick = [this] { stepKeyboardOctave (-1); };
+    octUpButton.onClick = [this] { stepKeyboardOctave (1); };
     canvas.addAndMakeVisible (octDownButton);
     canvas.addAndMakeVisible (octUpButton);
 
@@ -644,6 +640,19 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     addControl (*stripSection, "patch_level", "LEVEL", Style::Knob, false);
     addControl (*stripSection, "tone_balance", "TONE BAL", Style::Knob, false);
 
+    // ---- SYSTEM COMMON, in the header: settings that apply to the whole
+    // instrument rather than to the patch, and are not saved with one. Built
+    // last so the band index lists below keep the construction order they
+    // name.
+    systemSection = section ("SYSTEM", Band::Perform);
+    systemSection->rowCounts = { 3 };
+    addControl (*systemSection, "system_master_tune", "TUNE", Style::Knob,
+                false);
+    addControl (*systemSection, "system_key_shift", "KEY SHIFT", Style::Knob,
+                false, " st");
+    addControl (*systemSection, "system_transpose", "TRANSPOSE", Style::Knob,
+                false, " st");
+
     bindControls();
 
     keyboardState.addListener (this);
@@ -681,20 +690,35 @@ SeptumAudioProcessorEditor::~SeptumAudioProcessorEditor()
     setLookAndFeel (nullptr);
 }
 
+void SeptumAudioProcessorEditor::stepKeyboardOctave (int delta)
+{
+    auto* parameter = processor.parameters.getParameter ("system_octave");
+    if (parameter == nullptr)
+        return;
+    const auto& range = processor.parameters.getParameterRange ("system_octave");
+    const float wanted = range.snapToLegalValue (
+        processor.parameters.getRawParameterValue ("system_octave")->load()
+        + (float) delta);
+    parameter->beginChangeGesture();
+    parameter->setValueNotifyingHost (range.convertTo0to1 (wanted));
+    parameter->endChangeGesture();
+    applyKeyboardOctave();
+}
+
 void SeptumAudioProcessorEditor::applyKeyboardOctave()
 {
-    const int low = juce::jlimit (12, 72, 36 + keyboardOctaveShift * 12);
+    const auto* value =
+        processor.parameters.getRawParameterValue ("system_octave");
+    const int shift = value != nullptr ? (int) std::lround (value->load()) : 0;
+    // The drawn keyboard follows the shift the same way the instrument's does.
+    const int low = juce::jlimit (0, 67, 36 + shift * 12);
     keyboard.setAvailableRange (low, low + 60);
-    octValueLabel.setText (
-        keyboardOctaveShift == 0
-            ? juce::String ("0")
-            : (keyboardOctaveShift > 0 ? "+" : "")
-                  + juce::String (keyboardOctaveShift),
-        juce::dontSendNotification);
-    octDownButton.setToggleState (keyboardOctaveShift < 0,
-                                  juce::dontSendNotification);
-    octUpButton.setToggleState (keyboardOctaveShift > 0,
-                                juce::dontSendNotification);
+    octValueLabel.setText (shift == 0 ? juce::String ("0")
+                                      : (shift > 0 ? "+" : "")
+                                            + juce::String (shift),
+                           juce::dontSendNotification);
+    octDownButton.setToggleState (shift < 0, juce::dontSendNotification);
+    octUpButton.setToggleState (shift > 0, juce::dontSendNotification);
 }
 
 float SeptumAudioProcessorEditor::getToneParameter (const char* suffix) const
@@ -1149,9 +1173,19 @@ void SeptumAudioProcessorEditor::layoutPanel()
     auto bounds = juce::Rectangle<int> (0, 0, editorWidth, editorHeight);
     chevrons.clear();
 
-    auto header = bounds.removeFromTop (headerHeight).reduced (12, 6);
-    titleLabel.setBounds (header.removeFromLeft (130));
-    subtitleLabel.setBounds (header);
+    auto header = bounds.removeFromTop (headerHeight).reduced (10, 5);
+    {
+        // The system settings take the right of the header — they apply to
+        // the whole instrument, which is what the header is for — and the
+        // identity takes the left of what is left.
+        layoutSection (*systemSection,
+                       header.removeFromRight (systemSection->naturalWidth()));
+        header.removeFromRight (12);
+        auto identity =
+            header.withSizeKeepingCentre (header.getWidth(), 34).withTrimmedLeft (2);
+        titleLabel.setBounds (identity.removeFromLeft (130));
+        subtitleLabel.setBounds (identity);
+    }
 
     // Keyboard row: lever at the left of the keys, as on the unit.
     auto keyboardRow = bounds.removeFromBottom (keyboardHeight).reduced (12, 5);
@@ -1312,9 +1346,9 @@ void SeptumAudioProcessorEditor::paintPanel (juce::Graphics& g)
 
     // Header rule and accent stripe, echoing the hardware's banded fascia.
     g.setColour (colours::frame);
-    g.fillRect (0, headerHeight - 3, getWidth(), 2);
+    g.fillRect (0, headerHeight - 3, editorWidth, 2);
     g.setColour (colours::accent);
-    g.fillRect (0, headerHeight - 6, getWidth(), 2);
+    g.fillRect (0, headerHeight - 6, editorWidth, 2);
 
     const auto bandColour = [] (Band band)
     {
@@ -1402,6 +1436,7 @@ void SeptumAudioProcessorEditor::timerCallback()
     voiceLabel.setText (juce::String (processor.getActiveVoiceCount())
                             + " / 10 VOICES",
                         juce::dontSendNotification);
+    applyKeyboardOctave();
     programBox.setSelectedId (processor.getCurrentProgram() + 1,
                               juce::dontSendNotification);
     // juce::Label::setText only repaints when the text actually changes, so

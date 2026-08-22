@@ -119,9 +119,15 @@ EXPRESSION arrive with the D-Beam and stay deferred with it.
   high cut 160–12500 Hz in 20 steps or BYPASS; density 0–127; diffusion
   0–127; LF damp 50–4000 Hz in 20 steps, gain −36…0 dB; HF damp
   4000–12500 Hz in 6 steps, gain −36…0 dB.
-- **System Common**: master tune 415.30–466.20 Hz (0.1-cent steps around
-  A440), master key shift −24…+24, master level, transpose −5…+6, octave
-  shift −3…+3, pedal/D-Beam configuration.
+- **System Common**: master tune 415.30–466.20 Hz (raw 24–2024, 0.1-cent
+  steps around A440), master key shift −24…+24 (raw 40–88), master level,
+  transpose −5…+6 (raw 59–70), octave shift −3…+3 (raw 61–67), clock source
+  (PATCH/SYSTEM/MIDI/USB), system tempo 5–300, MIDI routing switches, pedal
+  polarity and assign, D-Beam sensitivity 1–8, recorder sync/metronome
+  settings. The first five are implemented and published as plug-in
+  parameters that a program change does not touch, exactly as the
+  external-input block is; the rest belong to features that are still
+  deferred or to a MIDI topology a plug-in does not have.
 
 The arpeggiator map (grid, duration, motif, 32-step × 16-note pattern) is
 settled by the same document and implemented; see the arpeggiator section

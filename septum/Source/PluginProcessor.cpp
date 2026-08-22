@@ -305,6 +305,19 @@ const std::vector<ExternalBinding>& externalBindings()
     return bindings;
 }
 
+// SYSTEM COMMON (settled, OM p. 68 and the address map's System Common
+// block): settings that apply to the whole instrument and, like the
+// external-input block, are not patch data — a program change must not touch
+// them. MASTER TUNE is the only float the plug-in publishes: the address map
+// stores it in 0.1-cent steps and the manual prints it as the frequency of
+// A4, 415.30-466.20 Hz.
+const juce::StringArray& systemParameterIds()
+{
+    static const juce::StringArray ids { "system_key_shift", "system_octave",
+                                         "system_transpose" };
+    return ids;
+}
+
 #define PATCH_INT(field) \
     [] (const Patch& p) { return (float) p.field; }, \
     [] (Patch& p, float v) { p.field = (int) std::lround (v); }
@@ -494,6 +507,9 @@ void SeptumAudioProcessor::cacheParameterPointers()
         patchValues.push_back (value);
     }
     masterValue = parameters.getRawParameterValue ("master_level");
+    systemTuneValue = parameters.getRawParameterValue ("system_master_tune");
+    for (const auto& id : systemParameterIds())
+        systemValues.push_back (parameters.getRawParameterValue (id));
     for (const auto& binding : externalBindings())
     {
         auto* value = parameters.getRawParameterValue (binding.id);
@@ -539,7 +555,8 @@ const std::vector<juce::String>& signedParameterSuffixes()
         "osc2_detune", "osc2_penv_depth", "balance", "key_follow",
         "cutoff_vel", "fenv_depth", "level_vel",
         "octave_shift", "tone_balance", "arp_octave", "delay_feedback",
-        "reverb_lf_damp_gain", "reverb_hf_damp_gain"
+        "reverb_lf_damp_gain", "reverb_hf_damp_gain",
+        "system_key_shift", "system_octave", "system_transpose"
     };
     return suffixes;
 }
@@ -679,6 +696,24 @@ SeptumAudioProcessor::createParameterLayout()
     addTone (true);
     addTone (false);
 
+    // SYSTEM COMMON, outside the patch exactly as the external-input block is.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "system_master_tune", 1 }, "Master Tune",
+        // 0.1-cent steps around A440, which is what the address map stores;
+        // the manual prints the endpoints as the frequency of A4.
+        juce::NormalisableRange<float> { 415.30f, 466.20f, 0.0f }, 440.0f,
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction (
+            [] (float value, int) { return juce::String (value, 2) + " Hz"; })));
+    layout.add (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "system_key_shift", 1 }, "Master Key Shift", -24, 24,
+        0, intAttributes ("system_key_shift")));
+    layout.add (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "system_octave", 1 }, "Keyboard Octave Shift", -3, 3,
+        0, intAttributes ("system_octave")));
+    layout.add (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "system_transpose", 1 }, "Transpose", -5, 6, 0,
+        intAttributes ("system_transpose")));
+
     const septum::ExternalInput externalDefaults {};
     for (const auto& binding : externalBindings())
     {
@@ -734,6 +769,19 @@ SeptumAudioProcessor::createParameterLayout()
     return layout;
 }
 
+void SeptumAudioProcessor::applySystemSettings() noexcept
+{
+    // Settled SYSTEM COMMON. Cached atomics only, so this costs the audio
+    // thread four loads a block.
+    engine.setMasterTuneHz (systemTuneValue->load (std::memory_order_relaxed));
+    engine.setMasterKeyShift ((int) std::lround (
+        systemValues[0]->load (std::memory_order_relaxed)));
+    engine.setKeyboardOctaveShift ((int) std::lround (
+        systemValues[1]->load (std::memory_order_relaxed)));
+    engine.setTranspose ((int) std::lround (
+        systemValues[2]->load (std::memory_order_relaxed)));
+}
+
 septum::ExternalInput SeptumAudioProcessor::snapshotExternalInput() const
 {
     septum::ExternalInput settings {};
@@ -776,6 +824,7 @@ void SeptumAudioProcessor::prepareToPlay (double sampleRate,
 {
     engine.prepare (sampleRate, samplesPerBlock);
     engine.setMasterLevel ((int) std::lround (masterValue->load()));
+    applySystemSettings();
     engine.setPatch (snapshotPatch());
     engine.setExternalInput (snapshotExternalInput());
     engine.reset();
@@ -1132,6 +1181,7 @@ void SeptumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     engine.setMasterLevel ((int) std::lround (
         masterValue->load (std::memory_order_relaxed)));
+    applySystemSettings();
 
     // The engine's patch never depends on the message loop: MIDI program
     // changes write the raw values directly, and the snapshot is validated

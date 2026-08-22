@@ -180,6 +180,7 @@ private:
     void setToneParameter (const char* suffix, float natural);
     [[nodiscard]] float getToneParameter (const char* suffix) const;
     void applyKeyboardOctave();
+    void stepKeyboardOctave (int delta);
     void timerCallback() override;
 
     void handleNoteOn (juce::MidiKeyboardState*, int channel, int note,
@@ -194,6 +195,7 @@ private:
     std::vector<std::unique_ptr<Section>> sections;
     std::vector<std::unique_ptr<Control>> controls;
     Section* performSection { nullptr };
+    Section* systemSection { nullptr };
     Section* stripSection { nullptr };
     // Where the voice chain's connectors go, filled in by resized().
     std::vector<ConnectorMark> chevrons;
@@ -228,7 +230,6 @@ private:
     juce::MidiKeyboardState keyboardState;
     juce::MidiKeyboardComponent keyboard { keyboardState,
                                            juce::MidiKeyboardComponent::horizontalKeyboard };
-    int keyboardOctaveShift { 0 };
 
     bool editingUpper { true };
     float meterLevel[2] { 0.0f, 0.0f };

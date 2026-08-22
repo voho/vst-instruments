@@ -108,12 +108,18 @@ private:
     // notification.
     void writeProgramToParameters (int index) noexcept;
     void cacheParameterPointers();
+    // Pushes the SYSTEM COMMON settings at the engine. Allocation-free.
+    void applySystemSettings() noexcept;
 
     // Audio-thread lookups resolved once at construction: raw-value atomics
     // aligned with the binding tables, and ranged parameters for the CC map.
     // processBlock must never build a juce::String.
     std::vector<std::atomic<float>*> upperValues, lowerValues, patchValues;
     std::atomic<float>* masterValue { nullptr };
+    // SYSTEM COMMON: master tune in Hz, then key shift, keyboard octave and
+    // transpose in the order systemParameterIds() lists them.
+    std::atomic<float>* systemTuneValue { nullptr };
+    std::vector<std::atomic<float>*> systemValues;
     std::vector<std::atomic<float>*> externalValues;
     // The input bus arrives in the same buffer the output is written to, so
     // it is copied out before that buffer is cleared.
