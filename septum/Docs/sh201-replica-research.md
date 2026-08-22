@@ -323,13 +323,21 @@ network with per-line damping from the settled LF/HF damp parameters,
 input diffusion from DIFFUSION, and the settled HIGH CUT on the wet
 return.
 
-### Key assignment, solo/legato, portamento
+### Key assignment, solo/legato, portamento, pedals
 
 Settled: POLY / SOLO+LEGATO / SOLO per tone; solo = last-note priority;
 legato suppresses retrigger on overlapped notes; portamento per tone with
 0–127 time, and with legato+portamento the glide applies only to legato
 playing. Voiced (OQ-13): voice stealing takes the longest-released voice,
 else the oldest sounding; portamento is constant-time, (v/127)² × 5 s.
+
+Both documented pedals are implemented. HOLD (CC#64) holds everything
+sounding for as long as it is down. SOSTENUTO (CC#66) latches the notes whose
+keys were down at the moment it went down and holds only those — a key pressed
+afterwards plays and releases normally, which is the whole point of the pedal.
+The two are independent: a note caught by both is released only when both are
+up, and a stolen voice loses its latch, since the latch belonged to the note
+the pedal caught and not to the physical voice.
 
 ### Analog output stage (settled, service notes)
 
@@ -355,9 +363,10 @@ EXT-IN oscillator renders silence, as the hardware does with nothing
 plugged in), MIX/SYNC/RING, the filter, all three envelopes, both LFOs
 with tempo sync, overdrive, delay→reverb with per-tone sends and the
 16 templates, SINGLE/DUAL/SPLIT with 10/5+5 voices, solo/legato,
-portamento, pitch bend with per-tone range, the settled CC map, and the
-analog output stage. Deferred, documented: the arpeggiator and recorder,
-D-Beam, SysEx DT1/RQ1 I/O, sostenuto, and the USB audio topology.
+portamento, pitch bend with per-tone range, the settled CC map including both
+documented pedals, and the analog output stage. Deferred, documented: the
+arpeggiator and recorder, D-Beam, SysEx DT1/RQ1 I/O, and the USB audio
+topology.
 
 ## Open questions
 

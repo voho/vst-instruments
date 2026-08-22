@@ -70,9 +70,9 @@ The engine's grounding, briefly:
   22 µF/22 kΩ coupling (0.329 Hz), the 8.2 kΩ/820 pF and 4.7 kΩ/270 pF RC
   poles (23.7 kHz, 125.4 kHz), gain chain normalized to digital full scale.
 - **MIDI (settled).** The control-change map from owner's manual p. 72 for
-  both tones and the part controllers (sostenuto excepted, deferred),
-  including the printed CC#88 collision resolved to CC#83 as documented in
-  the research contract.
+  both tones and the part controllers, including both documented pedals
+  (hold CC#64, sostenuto CC#66) and the printed CC#88 collision resolved to
+  CC#83 as documented in the research contract.
 
 The demos are rendered through this exact engine by a JUCE-free tool that CI
 rebuilds and verifies, so the committed audio cannot drift from the code.
@@ -123,9 +123,9 @@ time, or pass `-DSEPTUM_JUCE_PATH=/path/to/JUCE`.
 ## Not yet modelled
 
 The arpeggiator and step recorder, D-Beam, the external-input path (audio
-filter, center cancel, EXT-IN oscillators), SysEx DT1/RQ1 I/O, and sostenuto
-are documented but deferred; the research contract lists them alongside the
-open calibration questions.
+filter, center cancel, EXT-IN oscillators) and SysEx DT1/RQ1 I/O are
+documented but deferred; the research contract lists them alongside the open
+calibration questions.
 
 ## Licensing
 
