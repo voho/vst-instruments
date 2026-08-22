@@ -479,6 +479,7 @@ void Engine::reset()
     for (auto& runtime : arpeggios_)
         runtime = ArpeggioRuntime {};
     arpeggioRunning_ = false;
+    arpeggioActive_ = patch_.arpeggio.on;
     arpeggioStep_ = 0;
     arpeggioStepRemaining_ = 0.0;
     std::fill (delayL_.buffer.begin(), delayL_.buffer.end(), 0.0f);
@@ -644,6 +645,62 @@ void Engine::noteOff (int note)
             arpeggioRemoveKey (part, note);
         else
             releaseNoteForPart (part, note);
+    }
+}
+
+// The ARPEGGIO switch is a patch parameter, so it can be automated under a
+// held chord. Whichever way it moves, the keys under the player's fingers
+// have to move with it: a key whose note-on was routed one way and whose
+// note-off is routed the other would otherwise leave a voice sounding with
+// nothing left to release it.
+void Engine::handleArpeggioSwitch (bool nowOn)
+{
+    for (int index = 0; index < partCount; ++index)
+    {
+        const Part part = index == 0 ? Part::Upper : Part::Lower;
+        auto& runtime = toneRuntime (part);
+        auto& arpeggio = arpeggios_[static_cast<std::size_t> (index)];
+
+        std::array<int, 16> notes {}, velocities {};
+        int count = 0;
+
+        if (nowOn)
+        {
+            if (! arpeggioDrives (part))
+                continue;
+            // The keys already down become the chord, and the voices they
+            // started stop: one key cannot be playing both ways at once.
+            count = std::min (runtime.heldCount, static_cast<int> (notes.size()));
+            for (int i = 0; i < count; ++i)
+            {
+                notes[static_cast<std::size_t> (i)] =
+                    runtime.heldNotes[static_cast<std::size_t> (i)];
+                velocities[static_cast<std::size_t> (i)] =
+                    runtime.heldVelocities[static_cast<std::size_t> (i)];
+            }
+            for (int i = 0; i < count; ++i)
+                releaseNoteForPart (part, notes[static_cast<std::size_t> (i)]);
+            for (int i = 0; i < count; ++i)
+                arpeggioAddKey (part, notes[static_cast<std::size_t> (i)],
+                                velocities[static_cast<std::size_t> (i)]);
+            continue;
+        }
+
+        // Switched off: the arpeggiator's own notes stop, and the keys still
+        // held start sounding the way they would have without it.
+        count = std::min (arpeggio.physicalCount, static_cast<int> (notes.size()));
+        for (int i = 0; i < count; ++i)
+        {
+            notes[static_cast<std::size_t> (i)] =
+                arpeggio.physicalKeys[static_cast<std::size_t> (i)];
+            velocities[static_cast<std::size_t> (i)] =
+                arpeggio.physicalVelocities[static_cast<std::size_t> (i)];
+        }
+        arpeggioStopPart (part);
+        arpeggio.clearKeys();
+        for (int i = 0; i < count; ++i)
+            startNoteForPart (part, notes[static_cast<std::size_t> (i)],
+                              velocities[static_cast<std::size_t> (i)]);
     }
 }
 
@@ -1029,6 +1086,7 @@ void Engine::allSoundOff()
         runtime.rows.fill (ArpeggioRuntime::Row {});
     }
     arpeggioRunning_ = false;
+    arpeggioActive_ = patch_.arpeggio.on;
     arpeggioStep_ = 0;
     arpeggioStepRemaining_ = 0.0;
     sostenuto_ = false;
@@ -1678,6 +1736,21 @@ bool Engine::arpeggioDrives (Part part) const noexcept
 void Engine::arpeggioAddKey (Part part, int note, int velocity)
 {
     auto& runtime = arpeggios_[part == Part::Upper ? 0 : 1];
+
+    // The physical key list is kept whatever HOLD is doing: it is what says
+    // when the player has actually let go of everything.
+    bool alreadyDown = false;
+    for (int i = 0; i < runtime.physicalCount; ++i)
+        alreadyDown = alreadyDown
+                      || runtime.physicalKeys[static_cast<std::size_t> (i)] == note;
+    if (! alreadyDown
+        && runtime.physicalCount < static_cast<int> (runtime.physicalKeys.size()))
+    {
+        const auto slot = static_cast<std::size_t> (runtime.physicalCount++);
+        runtime.physicalKeys[slot] = note;
+        runtime.physicalVelocities[slot] = velocity;
+    }
+
     // HOLD: once every key has been let go, the next key starts a new chord
     // rather than joining the one still playing ("when you play a new chord,
     // the arpeggio will also change").
@@ -1711,10 +1784,28 @@ void Engine::arpeggioAddKey (Part part, int note, int velocity)
 void Engine::arpeggioRemoveKey (Part part, int note)
 {
     auto& runtime = arpeggios_[part == Part::Upper ? 0 : 1];
+
+    for (int i = 0; i < runtime.physicalCount; ++i)
+    {
+        if (runtime.physicalKeys[static_cast<std::size_t> (i)] != note)
+            continue;
+        for (int j = i; j + 1 < runtime.physicalCount; ++j)
+        {
+            runtime.physicalKeys[static_cast<std::size_t> (j)] =
+                runtime.physicalKeys[static_cast<std::size_t> (j + 1)];
+            runtime.physicalVelocities[static_cast<std::size_t> (j)] =
+                runtime.physicalVelocities[static_cast<std::size_t> (j + 1)];
+        }
+        --runtime.physicalCount;
+        break;
+    }
+
     if (patch_.arpeggio.hold)
     {
-        // The chord stays, but the next key press replaces it.
-        if (runtime.keyCount > 0)
+        // The chord stays until the *last* key comes up; only then does the
+        // next press start a new one. Latching on the first release would drop
+        // the keys still under the player's fingers.
+        if (runtime.keyCount > 0 && runtime.physicalCount == 0)
             runtime.latched = true;
         return;
     }
@@ -1744,6 +1835,7 @@ void Engine::arpeggioStopPart (Part part)
         row = ArpeggioRuntime::Row {};
     }
     runtime.cycle = 0;
+    runtime.windowCycle = 0;
 }
 
 void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
@@ -1761,8 +1853,10 @@ void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
                            ? 0
                            : (arp.octaveRange < 0 ? -1 : 1)
                                  * (runtime.cycle % (range + 1));
+    // The motif reads its own window, which a RANDOM motif redraws each pass
+    // while the octave keeps walking its documented 0..|range| sequence.
+    const int window = runtime.windowCycle;
 
-    const double stepSamples = stepSeconds * sampleRate_;
     const double durationFraction = mapping::arpeggioDurationFraction (arp.duration);
     const bool sustained = arp.duration == ArpeggioDuration::Full;
 
@@ -1773,32 +1867,34 @@ void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
 
         if (cell == arpeggioTie)
         {
-            // A tie holds the preceding note; the DURATION applies to the
-            // final grid of the chain, so the extension is a whole step and
-            // the trim happens when the chain ends.
-            if (state.note >= 0 && ! state.sustained)
-                state.remaining += static_cast<int> (stepSamples);
+            // Nothing to do: the note-on that started this chain already
+            // measured the whole chain, ties included. Adding a step here as
+            // well would count every tie twice.
             continue;
         }
         if (cell == arpeggioRest)
             continue;
 
-        // A note-on: how long is the tie chain that starts here?
-        int chain = 1;
+        // A note-on holds for the grids it is tied across plus DURATION of the
+        // final one. The chain is measured in real step lengths, so a shuffled
+        // grid's uneven pair does not stretch or shorten it.
+        double heldSeconds = 0.0;
         for (int ahead = 1; ahead < endStep; ++ahead)
         {
             const int step = (arpeggioStep_ + ahead) % endStep;
             if (style.cell (step, row) != arpeggioTie)
                 break;
-            ++chain;
+            heldSeconds += mapping::arpeggioStepSeconds (patch_.tempo, arp.grid, step);
         }
 
         if (state.note >= 0)
             releaseNoteForPart (part, state.note);
 
+        const int keyIndex = mapping::arpeggioKeyIndexForRow (
+            arp.motif, runtime.keyCount, row + 1, span, window);
         const int key = mapping::arpeggioKeyForRow (
             arp.motif, runtime.keys.data(), runtime.keyCount, runtime.lastPressed,
-            row + 1, span, runtime.cycle);
+            row + 1, span, window);
         if (key < 0)
         {
             state = ArpeggioRuntime::Row {};
@@ -1806,12 +1902,16 @@ void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
         }
         const int note = clampRaw (key + 12 * octave, 0, 127);
 
-        // ARPEGGIO VELOCITY chooses what "how hard you played" means; ACCENT
-        // blends the style's programmed pattern in on top of it (voiced
-        // blend, OQ-15).
-        const double played = arp.velocity == 0
-                                  ? (double) runtime.lastVelocity
-                                  : (double) arp.velocity;
+        // ARPEGGIO VELOCITY chooses what "how hard you played" means: REAL is
+        // the velocity of the key this note actually came from, so a chord
+        // played unevenly stays uneven. ACCENT then blends the style's
+        // programmed pattern in on top of it (voiced blend, OQ-15).
+        const double played =
+            arp.velocity != 0
+                ? (double) arp.velocity
+                : (double) (keyIndex >= 0
+                                ? runtime.velocities[static_cast<std::size_t> (keyIndex)]
+                                : runtime.lastVelocity);
         const double blend = arp.accent / 100.0;
         const double patterned =
             played * ((1.0 - blend)
@@ -1822,9 +1922,9 @@ void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
         state.note = note;
         state.sustained = sustained;
         state.remaining =
-            sustained
-                ? 0
-                : static_cast<int> (stepSamples * ((chain - 1) + durationFraction));
+            sustained ? 0
+                      : static_cast<int> ((heldSeconds + stepSeconds * durationFraction)
+                                          * sampleRate_);
     }
 }
 
@@ -1847,20 +1947,20 @@ void Engine::advanceArpeggiator (int samples)
 {
     const ArpeggioParams& arp = patch_.arpeggio;
 
-    if (! arp.on)
+    if (arp.on != arpeggioActive_)
     {
-        if (arpeggioRunning_)
+        handleArpeggioSwitch (arp.on);
+        arpeggioActive_ = arp.on;
+        if (! arp.on)
         {
-            for (int index = 0; index < partCount; ++index)
-                arpeggioStopPart (index == 0 ? Part::Upper : Part::Lower);
-            for (auto& runtime : arpeggios_)
-                runtime.clearKeys();
             arpeggioRunning_ = false;
             arpeggioStep_ = 0;
             arpeggioStepRemaining_ = 0.0;
         }
-        return;
     }
+
+    if (! arp.on)
+        return;
     // HOLD switched off with nothing held: the latched chord stops.
     if (! arp.hold)
         for (auto& runtime : arpeggios_)
@@ -1915,7 +2015,10 @@ void Engine::advanceArpeggiator (int samples)
         arpeggioStep_ = 0;
         arpeggioStepRemaining_ = 0.0;
         for (auto& runtime : arpeggios_)
+        {
             runtime.cycle = 0;
+            runtime.windowCycle = 0;
+        }
     }
 
     double left = samples;
@@ -1937,7 +2040,11 @@ void Engine::advanceArpeggiator (int samples)
                         || arp.motif == ArpeggioMotif::RandomL)
                     {
                         arpeggioRng_ = arpeggioRng_ * 1664525u + 1013904223u;
-                        runtime.cycle = static_cast<int> (arpeggioRng_ >> 16);
+                        runtime.windowCycle = static_cast<int> (arpeggioRng_ >> 16);
+                    }
+                    else
+                    {
+                        runtime.windowCycle = runtime.cycle;
                     }
                 }
         }

@@ -434,19 +434,14 @@ namespace mapping
     //   UP&DOWN(L&H) C-D-G-D -> C-E-G-E -> C-F-G-F -> C-E-G-E
     // PHRASE is the exception: it reads the rows as semitone steps above the
     // last key pressed, which is voiced (OQ-15).
-    [[nodiscard]] inline int arpeggioKeyForRow (ArpeggioMotif motif,
-                                                const int* keys, int count,
-                                                int lastPressed, int row,
-                                                int span, int cycle) noexcept
+    // Returns the index into the sorted chord, or -1 when the motif does not
+    // read the chord positionally (PHRASE).
+    [[nodiscard]] inline int arpeggioKeyIndexForRow (ArpeggioMotif motif, int count,
+                                                     int row, int span,
+                                                     int cycle) noexcept
     {
-        if (count <= 0 || keys == nullptr)
+        if (count <= 0 || motif == ArpeggioMotif::Phrase)
             return -1;
-
-        if (motif == ArpeggioMotif::Phrase)
-        {
-            const int reference = lastPressed >= 0 ? lastPressed : keys[0];
-            return std::clamp (reference + row - 1, 0, 127);
-        }
 
         const bool descending = motif == ArpeggioMotif::DownL
                                 || motif == ArpeggioMotif::DownLowHigh
@@ -476,15 +471,32 @@ namespace mapping
             base = ((cycle % positions) + positions) % positions;
         }
 
-        int index = base + row - 1;
+        // The window walks; DOWN reads it from the top of the chord. The pins
+        // are applied *after* that reversal, because "(L)" names the lowest key
+        // pressed and "(L&H)" the lowest and the highest — which key that is
+        // does not depend on which way the window is walking.
+        const int walked = std::clamp (base + row - 1, 0, count - 1);
+        int index = descending ? count - 1 - walked : walked;
         if (pinLow && row == 1)
             index = 0;
         else if (pinHigh && row == span)
             index = count - 1;
-        index = std::clamp (index, 0, count - 1);
+        return std::clamp (index, 0, count - 1);
+    }
 
-        const int ordered = descending ? count - 1 - index : index;
-        return keys[std::clamp (ordered, 0, count - 1)];
+    [[nodiscard]] inline int arpeggioKeyForRow (ArpeggioMotif motif,
+                                                const int* keys, int count,
+                                                int lastPressed, int row,
+                                                int span, int cycle) noexcept
+    {
+        if (count <= 0 || keys == nullptr)
+            return -1;
+        if (motif == ArpeggioMotif::Phrase)
+        {
+            const int reference = lastPressed >= 0 ? lastPressed : keys[0];
+            return std::clamp (reference + row - 1, 0, 127);
+        }
+        return keys[arpeggioKeyIndexForRow (motif, count, row, span, cycle)];
     }
 
     // [voiced] Parameter slew for the filter's panel-side controls. It is not
@@ -824,10 +836,19 @@ private:
         std::array<int, 16> keys {};          // sorted ascending
         std::array<int, 16> velocities {};    // aligned with `keys`
         int keyCount { 0 };
+        // The keys physically down, which is not the same list once HOLD is on:
+        // the chord is latched only when the last of them is released.
+        std::array<int, 16> physicalKeys {};
+        std::array<int, 16> physicalVelocities {};
+        int physicalCount { 0 };
         int lastPressed { -1 };               // PHRASE's reference key
         int lastVelocity { 100 };
         bool latched { false };               // HOLD is keeping this chord
         int cycle { 0 };                      // completed passes through the style
+        // Where the motif's window sits. Normally the cycle count, but a
+        // RANDOM motif redraws it, and OCTAVE RANGE must keep counting cycles
+        // either way — the two controls are independent.
+        int windowCycle { 0 };
 
         struct Row
         {
@@ -840,6 +861,7 @@ private:
         void clearKeys() noexcept
         {
             keyCount = 0;
+            physicalCount = 0;
             latched = false;
         }
     };
@@ -917,6 +939,7 @@ private:
     void arpeggioAddKey (Part part, int note, int velocity);
     void arpeggioRemoveKey (Part part, int note);
     void arpeggioStopPart (Part part);
+    void handleArpeggioSwitch (bool nowOn);
     void advanceArpeggiator (int samples);
     void arpeggioFireStep();
     void arpeggioFireStepForPart (Part part, double stepSeconds);
@@ -954,6 +977,7 @@ private:
     double arpeggioStepRemaining_ { 0.0 };   // samples to the next boundary
     int arpeggioStep_ { 0 };
     bool arpeggioRunning_ { false };
+    bool arpeggioActive_ { false };   // what the ARPEGGIO switch last was
     std::uint32_t arpeggioRng_ { 0x6d2b79f5u };
     std::uint32_t voiceClock_ { 0 };
     std::uint32_t rng_ { 0x2545f491u };
