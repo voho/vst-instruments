@@ -181,15 +181,32 @@ namespace mapping
     // what curve to evaluate; it would not change where.
     inline constexpr double overdriveInternalRateHz = 176400.0;
 
-    // [voiced] The oversampling factor that puts the shaper in that band:
-    // 4x at 44.1/48 kHz, 2x at 88.2/96 kHz, none above.
+    // [voiced] The power-of-two factor whose internal rate lands closest to
+    // that target, in octaves: 4x at 44.1/48 kHz, 2x at 88.2/96 kHz, none at
+    // 176.4/192 kHz. A power-of-two ladder cannot hit a fixed rate exactly
+    // from an arbitrary host rate, so what it guarantees is a bound rather
+    // than a number: for every host rate from 22.05 to 192 kHz the shaper
+    // runs within ±0.54 octaves of the target, against the 2.1 octaves the
+    // host rates alone span. Choosing the *nearest* factor rather than the
+    // first one at or above the target is what makes that true of the
+    // in-between rates — 64 kHz would otherwise be pushed to 256 kHz while
+    // 88.2 kHz sat at 176.4.
     [[nodiscard]] inline int overdriveOversampling (double hostRateHz) noexcept
     {
-        if (hostRateHz * 1.0 >= overdriveInternalRateHz * 0.98)
-            return 1;
-        if (hostRateHz * 2.0 >= overdriveInternalRateHz * 0.98)
-            return 2;
-        return 4;
+        const double rate = std::max (1.0, hostRateHz);
+        int best = 1;
+        double bestDistance = std::abs (std::log2 (rate / overdriveInternalRateHz));
+        for (int factor : { 2, 4, 8 })
+        {
+            const double distance =
+                std::abs (std::log2 (rate * factor / overdriveInternalRateHz));
+            if (distance < bestDistance - 1.0e-9)
+            {
+                bestDistance = distance;
+                best = factor;
+            }
+        }
+        return best;
     }
 
     // [voiced, OQ-12] Delay TIME 0-127 -> seconds, 1 ms to 1.3 s.

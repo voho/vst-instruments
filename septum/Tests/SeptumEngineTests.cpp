@@ -252,12 +252,23 @@ void testRegisteredConstants()
                 && overdriveOversampling (48000.0) == 4
                 && overdriveOversampling (88200.0) == 2
                 && overdriveOversampling (96000.0) == 2
+                && overdriveOversampling (176400.0) == 1
                 && overdriveOversampling (192000.0) == 1,
             "the overdrive's oversampling lands it in a fixed rate band");
-    expect (44100.0 * overdriveOversampling (44100.0) >= overdriveInternalRateHz
-                && 96000.0 * overdriveOversampling (96000.0)
-                       >= overdriveInternalRateHz,
-            "and every host rate reaches that band");
+    // A power-of-two ladder cannot hit a fixed rate exactly from an arbitrary
+    // host rate, so what it owes is a bound: every rate a host can plausibly
+    // run at must land within about half an octave of the target, against the
+    // 3.1 octaves those rates themselves span.
+    double worst = 0.0;
+    for (double rate : { 22050.0, 32000.0, 44100.0, 48000.0, 64000.0, 88200.0,
+                         96000.0, 128000.0, 176400.0, 192000.0 })
+    {
+        const double internal = rate * overdriveOversampling (rate);
+        worst = std::max (worst, std::abs (std::log2 (internal / overdriveInternalRateHz)));
+    }
+    expect (worst < 0.55,
+            "and no host rate puts the shaper more than half an octave from it "
+            "(worst " + std::to_string (worst) + " octaves)");
 }
 
 void testTuningAndMasterTune()
@@ -1433,9 +1444,10 @@ void testAllSoundOffSilencesEffectTails()
 void testSyncFollowsSpecialOsc2Waves()
 {
     // SYNC must fire from OSC2's cycle even when OSC2 is a SUPER SAW (the
-    // center saw carries the cycle) or an FB OSC.
-    for (const auto wave :
-         { septum::Waveform::SuperSaw, septum::Waveform::FbOsc })
+    // center saw carries the cycle), an FB OSC, or EXT-IN — where the
+    // oscillator keeps running underneath the substituted signal.
+    for (const auto wave : { septum::Waveform::SuperSaw, septum::Waveform::FbOsc,
+                             septum::Waveform::ExtIn })
     {
         septum::Patch patch = plainSawPatch();
         patch.upper.osc1.coarse = 7;

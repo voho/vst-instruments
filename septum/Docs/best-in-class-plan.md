@@ -223,10 +223,13 @@ LFO must still produce no sample-level discontinuity.
 
 #### Step 2 — the overdrive stops depending on the host rate
 
-The AMP overdrive is evaluated inside a fixed 176.4–192 kHz band whatever the
-host runs at: 4× oversampling at 44.1/48 kHz, 2× at 88.2/96 kHz, none above,
-through two equiripple half-band polyphase stages, with `tanh` under
-first-order antiderivative anti-aliasing inside the loop. The transfer curve
+The AMP overdrive is evaluated at the power-of-two multiple of the host rate
+that lands closest to 176.4 kHz: 4× at 44.1/48 kHz, 2× at 88.2/96 kHz, none at
+176.4/192 kHz, through two equiripple half-band polyphase stages, with `tanh`
+under first-order antiderivative anti-aliasing inside the loop. A power-of-two
+ladder cannot hit a fixed rate from an arbitrary host rate, so the guarantee is
+a bound: ±0.54 octaves of the target across 22.05–192 kHz, and exactly inside
+176.4–192 kHz at the four common rates. The transfer curve
 is untouched, so OQ-11 is exactly where it was.
 
 Measured after, same harness as §2.3, alias energy inside 20 Hz – 20 kHz
