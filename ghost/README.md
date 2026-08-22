@@ -33,7 +33,10 @@ What is modelled from documentation and what remains a voiced choice is set
 out control by control in the
 [circuit-modelling research and implementation contract](Docs/circuit-modelling-research.md).
 Every constant still voiced is listed as a standing research task with an
-explicit evidence gap in [open questions](Docs/open-questions.md). The
+explicit evidence gap in [open questions](Docs/open-questions.md), and the
+field Ghost competes in, its audited standing and the ordered work that
+closes the gap live in the
+[best-in-class plan](Docs/best-in-class-plan.md). The
 committed demonstration audio in [Docs/audio](Docs/audio/README.md) is
 rendered by `GhostRenderDemos` from the same engine, so it cannot drift from
 what Ghost actually sounds like.

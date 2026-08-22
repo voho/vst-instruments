@@ -112,3 +112,103 @@ data, or a hardware-vs-emulation comparison for any Spirit. The first
 measured unit becomes this project's ground truth; the Museo del Synth
 Marchigiano (which reverse-engineered the 2023 reissue) is the most likely
 living source of calibration data.
+
+## OQ-12 — Resonance-path BA130 limiter constants
+
+**Gap.** Self-oscillation is bounded by the external BA130 anti-parallel
+"Hi-Q overload limiter" in the resonance path — anchored in placement by
+the schematic, like OQ-10's inter-filter clipper — but the BA130's I-V
+curve and the node's operating level were not resolved, so the knee and
+compression depth are unknown.
+**Engine.** A piecewise law on each section's resonant node: linear below
+`knee = 1.2`, tanh-compressed toward `ceiling = 2.2` above it, with the
+resonance travel mapped `k = 2·0.01^t − 0.025` so full travel regenerates
+(all voiced). Each section's lowpass integrator state additionally passes
+through `4·tanh(0.25·x)` — intended as a runaway stop, but tanh compresses
+every nonzero state a little (≈3 % at 1.2), so it is a second, always-on
+nonlinearity (voiced). Whether the CEM3350's internal stages add their own
+saturation on top of the external limiter is a separate, unanswered
+question.
+**Closes with.** Two distinct pieces of evidence, because the entry holds
+two distinct laws: the BA130 datasheet plus a level trace of the resonance
+node closes the *limiter* (and must justify, re-derive or remove the
+integrator bound); the travel-to-damping mapping and its regenerative
+offset need the CEM3350's Q-control law with the surrounding divider
+network, or an explicit Q-versus-travel sweep of a hardware unit.
+
+## OQ-13 — Filter-tracking pivot note
+
+**Gap.** Keyboard tracking reaches ~110 % (anchored), but the note at
+which tracking contributes zero cutoff offset is set by the CV summer's
+reference, which was not resolved from the drawings.
+**Engine.** The pivot sits at middle C (voiced).
+**Closes with.** A derivation of the tracking summer's reference from
+SM DWG 2/3, or a two-note cutoff measurement on hardware.
+
+## OQ-14 — Wheel modulation depths
+
+**Gap.** The X and Y buses' full-wheel depths at each destination are set
+by the mod board's summing resistors, which were not resolved from the
+scan; the manual states no numbers. For Y→LFO RATE the manual anchors
+only the behaviour (the wheel sets the fastest rate, the knob the
+slowest), not the fastest rate itself.
+**Engine.** Full wheel gives 1 octave of pitch, 3 octaves of cutoff, and
+±0.42 of pulse duty (`pitchDepthOctaves`, `filterDepthOctaves`,
+`dutyDepth`); full Y at the LFO RATE destination reaches 60 Hz (all
+voiced).
+**Closes with.** The mod-board summing network from a cleaner scan, or
+depth measurements at each destination on hardware, including the
+wheel-end LFO rate.
+
+## OQ-15 — Noise pinking blend
+
+**Gap.** The manual anchors "a combination of white and pink" from the
+MM5837, but the pinking network's component values — and so its transfer
+and the white/pink blend — were not resolved.
+**Engine.** The Kellet reference recurrence's three poles, re-derived from
+their 44.1 kHz design-rate coefficients to physical frequencies at the
+internal rate, with the reference's direct term and normalisation
+(`(Σ poles + 0.1848·white) · 0.18`), blended `0.55·pink + 0.225·white`
+(the reference filter and every gain are choices standing in for the
+unresolved network — all voiced).
+**Closes with.** The noise-board schematic values, or a long-window
+spectrum capture of the hardware's noise at the mixer — the capture must
+pin the blend, not only the poles.
+
+## OQ-16 — Output coupling corner
+
+**Gap.** The output stage's series capacitors are anchored in presence,
+but the RC values setting the highpass corner were not resolved from the
+scan.
+**Engine.** One-pole AC coupling at ~5 Hz per channel (voiced).
+**Closes with.** The output-stage RC values from a cleaner scan, or a
+low-frequency sweep of a hardware unit's outputs.
+
+## OQ-17 — Red-noise modulation process
+
+**Gap.** The manual anchors RED NOISE only qualitatively ("continuous
+slow random"); the filtering network and level on the mod board were not
+resolved.
+**Engine.** White noise through a one-pole lowpass at 1.5 Hz, restored by
+an 18× gain and clipped to ±1 (all voiced).
+**Closes with.** The mod-board network from a cleaner scan, or a capture
+of the RED NOISE control voltage's spectrum and level from hardware.
+
+## OQ-18 — Shaper SHAPE endpoint split
+
+**Gap.** The manual anchors SHAPE qualitatively (fully left is fast-rise
+slow-fall, fully right the reverse); the extreme rise/fall split the pot
+actually reaches is not documented.
+**Engine.** Rise fraction `0.05 + 0.9·travel`: the extremes are 5/95 and
+95/5 of the period (voiced).
+**Closes with.** The Shaper board's pot network from a cleaner scan, or
+rise/fall timing of a hardware unit at both SHAPE extremes.
+
+## OQ-19 — Master volume taper
+
+**Gap.** The VOLUME pot's taper (linear, log, or loaded-linear) was not
+resolved from the scan, and the manual states nothing quantitative.
+**Engine.** Output gain follows the square of the travel (voiced — a
+loaded-linear-pot approximation).
+**Closes with.** The output-stage pot marking and load from a cleaner
+scan, or a level-versus-travel sweep of a hardware unit.
