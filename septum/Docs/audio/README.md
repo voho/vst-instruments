@@ -36,6 +36,7 @@ unknown mastering), so they are by-ear references, not measurement targets.
 | `08-sub-bass.wav` | [Fat Bass](https://static.roland.com/assets/media/mp3/sh_201_fat_bass.mp3) |
 | `09-sample-hold-fx.wav` | [S&H FX 2](https://static.roland.com/assets/media/mp3/sh_201_s_and_h_fx_2.mp3) |
 | `10-dual-pad.wav` | [JP-8SweepPad](https://static.roland.com/assets/media/mp3/sh_201_jp_8_sweep_pad.mp3) |
+| `11-arpeggiator.wav` | [Sweep Arp](https://static.roland.com/assets/media/mp3/sh_201_sweep_arp.mp3), [Electro Seq](https://static.roland.com/assets/media/mp3/sh_201_electro_seq.mp3) |
 
 The demos play this project's original presets, not Roland's factory patch
 data (which no public document publishes), so a comparison judges the
@@ -57,4 +58,5 @@ recorded in the [research contract](../sh201-replica-research.md).
 | `08-sub-bass.wav` | Square plus sine an octave down with the LOW FREQ boost | 8.0 s | −21.1 dBFS | +18.1 dB |
 | `09-sample-hold-fx.wav` | Sample & hold LFO into the band-pass filter | 9.2 s | −27.6 dBFS | +24.6 dB |
 | `10-dual-pad.wav` | DUAL keyboard mode: two complete tones layered under one hall | 23.9 s | −8.5 dBFS | +5.5 dB |
+| `11-arpeggiator.wav` | One chord through the arpeggiator: UP, UP&DOWN(L&H) with a heavy shuffle, then OCTAVE RANGE +2 on HOLD | 15.1 s | −17.7 dBFS | +14.7 dB |
 <!-- peaks-table-end -->

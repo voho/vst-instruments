@@ -46,6 +46,28 @@ const juce::StringArray syncNoteChoices {
     "16", "12", "8", "4", "2", "1", "3/4", "2/3", "1/2", "3/8", "1/3", "1/4",
     "3/16", "1/6", "1/8", "3/32", "1/12", "1/16", "1/24", "1/32"
 };
+const juce::StringArray arpGridChoices { "1/4", "1/8", "1/8L", "1/8H", "1/12",
+                                         "1/16", "1/16L", "1/16H", "1/24" };
+const juce::StringArray arpDurationChoices { "30%", "40%", "50%", "60%", "70%",
+                                             "80%", "90%", "100%", "120%", "FUL" };
+const juce::StringArray arpMotifChoices {
+    "UP(L)", "UP(L&H)", "UP(-)", "DOWN(L)", "DOWN(L&H)", "DOWN(-)",
+    "UP&DN(L)", "UP&DN(L&H)", "UP&DN(-)", "RAND(L)", "RAND(-)", "PHRASE"
+};
+const juce::StringArray arpSplitChoices { "UPPER", "LOWER", "BOTH" };
+
+const juce::StringArray& arpStyleChoices()
+{
+    static const juce::StringArray names = []
+    {
+        juce::StringArray list;
+        for (const auto& entry : septum::arpeggioStyles())
+            list.add (entry.name);
+        return list;
+    }();
+    return names;
+}
+
 const juce::StringArray keyboardModeChoices { "SINGLE", "DUAL", "SPLIT" };
 const juce::StringArray keyboardPartChoices { "UPPER", "LOWER" };
 const juce::StringArray modAssignChoices { "OSC1&OSC2", "OSC1", "OSC2", "PW1",
@@ -312,6 +334,28 @@ const std::vector<PatchBinding>& patchBindings()
           PATCH_BOOL (reverbOn) },
         { "mod_assign", "Modulation Assign", Kind::Choice, 0, 8,
           &modAssignChoices, PATCH_ENUM (modulationAssign, ModulationAssign) },
+        { "arp_on", "Arpeggio Switch", Kind::Bool, 0, 1, nullptr,
+          PATCH_BOOL (arpeggio.on) },
+        { "arp_hold", "Arpeggio Hold", Kind::Bool, 0, 1, nullptr,
+          PATCH_BOOL (arpeggio.hold) },
+        { "arp_style", "Arpeggio Style", Kind::Choice, 0,
+          (int) septum::arpeggioStyles().size(), &arpStyleChoices(),
+          PATCH_INT (arpeggio.styleIndex) },
+        { "arp_grid", "Arpeggio Grid", Kind::Choice, 0, 9, &arpGridChoices,
+          PATCH_ENUM (arpeggio.grid, septum::ArpeggioGrid) },
+        { "arp_duration", "Arpeggio Duration", Kind::Choice, 0, 10,
+          &arpDurationChoices,
+          PATCH_ENUM (arpeggio.duration, septum::ArpeggioDuration) },
+        { "arp_motif", "Arpeggio Motif", Kind::Choice, 0, 12, &arpMotifChoices,
+          PATCH_ENUM (arpeggio.motif, septum::ArpeggioMotif) },
+        { "arp_octave", "Arpeggio Octave Range", Kind::Int, -3, 3, nullptr,
+          PATCH_INT (arpeggio.octaveRange) },
+        { "arp_accent", "Arpeggio Accent", Kind::Int, 0, 100, nullptr,
+          PATCH_INT (arpeggio.accent) },
+        { "arp_velocity", "Arpeggio Velocity", Kind::Int, 0, 127, nullptr,
+          PATCH_INT (arpeggio.velocity) },
+        { "arp_split", "Split Arpeggio", Kind::Choice, 0, 3, &arpSplitChoices,
+          PATCH_ENUM (arpeggio.splitArpeggio, septum::SplitArpeggio) },
         { "delay_time", "Delay Time", Kind::Int, 0, 127, nullptr,
           PATCH_INT (delay.time) },
         { "delay_feedback", "Delay Feedback", Kind::Int, -98, 98, nullptr,
@@ -583,6 +627,9 @@ septum::Patch SeptumAudioProcessor::snapshotPatch() const
         shared[index].set (patch,
                            patchValues[index]->load (std::memory_order_relaxed));
 
+    // The style index is the panel's selector; the grid it names is what the
+    // engine actually plays.
+    septum::applyArpeggioStyle (patch, patch.arpeggio.styleIndex);
     septum::clampToDocumentedRanges (patch);
     return patch;
 }

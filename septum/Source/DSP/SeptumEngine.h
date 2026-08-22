@@ -252,6 +252,141 @@ namespace mapping
     // voice takes the input over, and unmuted when it stops.
     inline constexpr double externalMonitorFadeSeconds = 0.005;
 
+    // [settled] One grid section's length in seconds. The manual gives the
+    // divisions; the shuffle *amounts* are voiced (OQ-15) — Light and Heavy
+    // are named, not measured. A shuffled pair keeps its total length and
+    // moves the boundary inside it, so the beat never drifts.
+    [[nodiscard]] inline double arpeggioShuffleRatio (ArpeggioGrid grid) noexcept
+    {
+        switch (grid)
+        {
+            case ArpeggioGrid::EighthLight:
+            case ArpeggioGrid::SixteenthLight:
+                return 0.58;
+            case ArpeggioGrid::EighthHeavy:
+            case ArpeggioGrid::SixteenthHeavy:
+                return 0.66;
+            default:
+                return 0.5;
+        }
+    }
+
+    [[nodiscard]] inline double arpeggioStepSeconds (double bpm, ArpeggioGrid grid,
+                                                     int stepIndex) noexcept
+    {
+        const double beat = 60.0 / std::clamp (bpm, 5.0, 300.0);
+        const bool firstOfPair = (stepIndex & 1) == 0;
+        const double ratio = arpeggioShuffleRatio (grid);
+        switch (grid)
+        {
+            case ArpeggioGrid::Quarter:        return beat;
+            case ArpeggioGrid::Eighth:         return beat * 0.5;
+            case ArpeggioGrid::EighthLight:
+            case ArpeggioGrid::EighthHeavy:
+                return beat * (firstOfPair ? ratio : 1.0 - ratio);
+            case ArpeggioGrid::Twelfth:        return beat / 3.0;
+            case ArpeggioGrid::Sixteenth:      return beat * 0.25;
+            case ArpeggioGrid::SixteenthLight:
+            case ArpeggioGrid::SixteenthHeavy:
+                return beat * 0.5 * (firstOfPair ? ratio : 1.0 - ratio);
+            case ArpeggioGrid::TwentyFourth:   return beat / 6.0;
+        }
+        return beat * 0.25;
+    }
+
+    // [settled] DURATION as a fraction of the final grid section.
+    [[nodiscard]] inline double arpeggioDurationFraction (ArpeggioDuration d) noexcept
+    {
+        switch (d)
+        {
+            case ArpeggioDuration::P30:  return 0.30;
+            case ArpeggioDuration::P40:  return 0.40;
+            case ArpeggioDuration::P50:  return 0.50;
+            case ArpeggioDuration::P60:  return 0.60;
+            case ArpeggioDuration::P70:  return 0.70;
+            case ArpeggioDuration::P80:  return 0.80;
+            case ArpeggioDuration::P90:  return 0.90;
+            case ArpeggioDuration::P100: return 1.00;
+            case ArpeggioDuration::P120: return 1.20;
+            case ArpeggioDuration::Full: return 0.0;   // held, not timed
+        }
+        return 0.80;
+    }
+
+    // [voiced, OQ-15] The fixed velocity ACCENT 0 collapses the style's
+    // programmed pattern onto.
+    inline constexpr double arpeggioFlatVelocity = 100.0;
+
+    // [settled] Where a style's note row lands on the keys held down.
+    //
+    // `keys` is the held chord sorted ascending, `row` is the style's 1-based
+    // note row, `span` the highest row the style uses, and `cycle` counts
+    // completed passes through the style. The MOTIF suffixes are the manual's:
+    // (L) sounds the lowest key every time, (L&H) the lowest and the highest
+    // every time, (-) neither, and the window over the remaining keys walks up,
+    // down, up-and-down or at random once per pass.
+    //
+    // This is not inferred. The manual works three examples of the style
+    // "1-2-3-2" against the keys C-D-E-F-G (OM p. 67), and this function
+    // reproduces all three exactly:
+    //   UP(-)        C-D-E-D -> D-E-F-E -> E-F-G-F
+    //   UP(L)        C-D-E-D -> C-E-F-E -> C-F-G-F
+    //   UP&DOWN(L&H) C-D-G-D -> C-E-G-E -> C-F-G-F -> C-E-G-E
+    // PHRASE is the exception: it reads the rows as semitone steps above the
+    // last key pressed, which is voiced (OQ-15).
+    [[nodiscard]] inline int arpeggioKeyForRow (ArpeggioMotif motif,
+                                                const int* keys, int count,
+                                                int lastPressed, int row,
+                                                int span, int cycle) noexcept
+    {
+        if (count <= 0 || keys == nullptr)
+            return -1;
+
+        if (motif == ArpeggioMotif::Phrase)
+        {
+            const int reference = lastPressed >= 0 ? lastPressed : keys[0];
+            return std::clamp (reference + row - 1, 0, 127);
+        }
+
+        const bool descending = motif == ArpeggioMotif::DownL
+                                || motif == ArpeggioMotif::DownLowHigh
+                                || motif == ArpeggioMotif::Down;
+        const bool pinLow = motif == ArpeggioMotif::UpL
+                            || motif == ArpeggioMotif::UpLowHigh
+                            || motif == ArpeggioMotif::DownL
+                            || motif == ArpeggioMotif::DownLowHigh
+                            || motif == ArpeggioMotif::UpDownL
+                            || motif == ArpeggioMotif::UpDownLowHigh
+                            || motif == ArpeggioMotif::RandomL;
+        const bool pinHigh = motif == ArpeggioMotif::UpLowHigh
+                             || motif == ArpeggioMotif::DownLowHigh
+                             || motif == ArpeggioMotif::UpDownLowHigh;
+
+        const int positions = std::max (1, count - std::max (1, span) + 1);
+        int base = 0;
+        if (motif == ArpeggioMotif::UpDownL || motif == ArpeggioMotif::UpDownLowHigh
+            || motif == ArpeggioMotif::UpDown)
+        {
+            const int period = std::max (1, 2 * positions - 2);
+            const int phase = ((cycle % period) + period) % period;
+            base = phase < positions ? phase : period - phase;
+        }
+        else
+        {
+            base = ((cycle % positions) + positions) % positions;
+        }
+
+        int index = base + row - 1;
+        if (pinLow && row == 1)
+            index = 0;
+        else if (pinHigh && row == span)
+            index = count - 1;
+        index = std::clamp (index, 0, count - 1);
+
+        const int ordered = descending ? count - 1 - index : index;
+        return keys[std::clamp (ordered, 0, count - 1)];
+    }
+
     // [voiced] Parameter slew for the filter's panel-side controls. It is not
     // a model of anything the hardware does — it exists so a patch edit or an
     // S&H LFO edge cannot put a discontinuity into the filter coefficient —
@@ -581,6 +716,34 @@ private:
         bool controlsPrimed { false };
     };
 
+    // The arpeggiator's state for one tone. The keys it holds are the keys the
+    // keyboard routed to that tone; the rows are the style's note rows, each
+    // of which can have a note of its own sounding, so chord styles work.
+    struct ArpeggioRuntime
+    {
+        std::array<int, 16> keys {};          // sorted ascending
+        std::array<int, 16> velocities {};    // aligned with `keys`
+        int keyCount { 0 };
+        int lastPressed { -1 };               // PHRASE's reference key
+        int lastVelocity { 100 };
+        bool latched { false };               // HOLD is keeping this chord
+        int cycle { 0 };                      // completed passes through the style
+
+        struct Row
+        {
+            int note { -1 };
+            int remaining { 0 };   // samples until the scheduled note-off
+            bool sustained { false };  // DURATION = FUL: no scheduled off
+        };
+        std::array<Row, arpeggioMaxRows> rows {};
+
+        void clearKeys() noexcept
+        {
+            keyCount = 0;
+            latched = false;
+        }
+    };
+
     struct ToneRuntime
     {
         Lfo lfo1 {}, lfo2 {};
@@ -648,6 +811,15 @@ private:
                               int offset, int samples);
     [[nodiscard]] bool anyVoiceUsesExternalInput() const noexcept;
     void advanceToneLfos (int samples);
+
+    // -- arpeggiator -------------------------------------------------------
+    [[nodiscard]] bool arpeggioDrives (Part part) const noexcept;
+    void arpeggioAddKey (Part part, int note, int velocity);
+    void arpeggioRemoveKey (Part part, int note);
+    void arpeggioStopPart (Part part);
+    void advanceArpeggiator (int samples);
+    void arpeggioFireStep();
+    void arpeggioFireStepForPart (Part part, double stepSeconds);
     void processEffects (const float* dryL, const float* dryR,
                          const float* delaySendL, const float* delaySendR,
                          const float* reverbSendL, const float* reverbSendR,
@@ -678,6 +850,11 @@ private:
 
     std::array<Voice, maxPolyphony> voices_ {};
     std::array<ToneRuntime, partCount> tones_ {};
+    std::array<ArpeggioRuntime, partCount> arpeggios_ {};
+    double arpeggioStepRemaining_ { 0.0 };   // samples to the next boundary
+    int arpeggioStep_ { 0 };
+    bool arpeggioRunning_ { false };
+    std::uint32_t arpeggioRng_ { 0x6d2b79f5u };
     std::uint32_t voiceClock_ { 0 };
     std::uint32_t rng_ { 0x2545f491u };
 

@@ -669,6 +669,241 @@ void testExternalInputAndAudioFilter()
     }
 }
 
+// The manual works three examples of the arpeggio style "1-2-3-2" against the
+// keys C-D-E-F-G (OM p. 67). They are the only public statement of what the
+// MOTIF values actually do, so the mapping is held to them exactly.
+void testArpeggioMotifsMatchTheManualsExamples()
+{
+    const int keys[5] { 60, 62, 64, 65, 67 };   // C D E F G
+    const int rows[4] { 1, 2, 3, 2 };           // the style "1-2-3-2"
+    const int span = 3;
+
+    const auto cycleNotes = [&] (septum::ArpeggioMotif motif, int cycle)
+    {
+        std::vector<int> notes;
+        for (int row : rows)
+            notes.push_back (septum::mapping::arpeggioKeyForRow (
+                motif, keys, 5, -1, row, span, cycle));
+        return notes;
+    };
+    const auto expectCycle = [&] (septum::ArpeggioMotif motif, int cycle,
+                                  std::vector<int> expected,
+                                  const std::string& label)
+    {
+        const auto actual = cycleNotes (motif, cycle);
+        bool same = actual.size() == expected.size();
+        for (std::size_t i = 0; same && i < actual.size(); ++i)
+            same = actual[i] == expected[i];
+        std::string got;
+        for (int note : actual)
+            got += std::to_string (note) + " ";
+        expect (same, label + " (got " + got + ")");
+    };
+
+    // "When 'UP(-)' is selected as the MOTIF:
+    //  C-D-E-D -> D-E-F-E -> E-F-G-F (-> repeated)"
+    expectCycle (septum::ArpeggioMotif::Up, 0, { 60, 62, 64, 62 },
+                 "UP(-) cycle 1 is C-D-E-D");
+    expectCycle (septum::ArpeggioMotif::Up, 1, { 62, 64, 65, 64 },
+                 "UP(-) cycle 2 is D-E-F-E");
+    expectCycle (septum::ArpeggioMotif::Up, 2, { 64, 65, 67, 65 },
+                 "UP(-) cycle 3 is E-F-G-F");
+    expectCycle (septum::ArpeggioMotif::Up, 3, { 60, 62, 64, 62 },
+                 "UP(-) then repeats");
+
+    // "When 'UP(L)' is selected as the MOTIF:
+    //  C-D-E-D -> C-E-F-E -> C-F-G-F (-> repeated)"
+    expectCycle (septum::ArpeggioMotif::UpL, 0, { 60, 62, 64, 62 },
+                 "UP(L) cycle 1 is C-D-E-D");
+    expectCycle (septum::ArpeggioMotif::UpL, 1, { 60, 64, 65, 64 },
+                 "UP(L) cycle 2 is C-E-F-E");
+    expectCycle (septum::ArpeggioMotif::UpL, 2, { 60, 65, 67, 65 },
+                 "UP(L) cycle 3 is C-F-G-F");
+
+    // "When 'UP&DOWN(L&H)' is selected as the MOTIF:
+    //  C-D-G-D -> C-E-G-E -> C-F-G-F -> C-E-G-E (-> repeated)"
+    expectCycle (septum::ArpeggioMotif::UpDownLowHigh, 0, { 60, 62, 67, 62 },
+                 "UP&DOWN(L&H) cycle 1 is C-D-G-D");
+    expectCycle (septum::ArpeggioMotif::UpDownLowHigh, 1, { 60, 64, 67, 64 },
+                 "UP&DOWN(L&H) cycle 2 is C-E-G-E");
+    expectCycle (septum::ArpeggioMotif::UpDownLowHigh, 2, { 60, 65, 67, 65 },
+                 "UP&DOWN(L&H) cycle 3 is C-F-G-F");
+    expectCycle (septum::ArpeggioMotif::UpDownLowHigh, 3, { 60, 64, 67, 64 },
+                 "UP&DOWN(L&H) cycle 4 is C-E-G-E");
+    expectCycle (septum::ArpeggioMotif::UpDownLowHigh, 4, { 60, 62, 67, 62 },
+                 "UP&DOWN(L&H) then repeats");
+
+    // DOWN reads the same window from the top of the chord.
+    expectCycle (septum::ArpeggioMotif::Down, 0, { 67, 65, 64, 65 },
+                 "DOWN(-) cycle 1 runs from the highest key");
+
+    // PHRASE ignores the chord and reads the rows as steps above the last key.
+    expect (septum::mapping::arpeggioKeyForRow (septum::ArpeggioMotif::Phrase,
+                                                keys, 5, 72, 8, span, 0) == 79,
+            "PHRASE reads row 8 as seven semitones above the key played");
+}
+
+// The grid divisions are settled; a shuffled pair must keep the beat.
+void testArpeggioGridDivisions()
+{
+    using septum::ArpeggioGrid;
+    using septum::mapping::arpeggioStepSeconds;
+    const double beat = 0.5;   // 120 BPM
+    expectNear (arpeggioStepSeconds (120.0, ArpeggioGrid::Quarter, 0), beat,
+                1.0e-12, "1/4 is one beat");
+    expectNear (arpeggioStepSeconds (120.0, ArpeggioGrid::Eighth, 0), beat / 2,
+                1.0e-12, "two 1/8 sections are one beat");
+    expectNear (arpeggioStepSeconds (120.0, ArpeggioGrid::Twelfth, 0), beat / 3,
+                1.0e-12, "three 1/12 sections are one beat");
+    expectNear (arpeggioStepSeconds (120.0, ArpeggioGrid::Sixteenth, 0), beat / 4,
+                1.0e-12, "four 1/16 sections are one beat");
+    expectNear (arpeggioStepSeconds (120.0, ArpeggioGrid::TwentyFourth, 0),
+                beat / 6, 1.0e-12, "six 1/24 sections are one beat");
+    for (auto grid : { ArpeggioGrid::EighthLight, ArpeggioGrid::EighthHeavy })
+        expectNear (arpeggioStepSeconds (120.0, grid, 0)
+                        + arpeggioStepSeconds (120.0, grid, 1),
+                    beat, 1.0e-12, "a shuffled 1/8 pair still spans one beat");
+    for (auto grid : { ArpeggioGrid::SixteenthLight, ArpeggioGrid::SixteenthHeavy })
+        expectNear (arpeggioStepSeconds (120.0, grid, 0)
+                        + arpeggioStepSeconds (120.0, grid, 1),
+                    beat / 2, 1.0e-12,
+                    "a shuffled 1/16 pair still spans an eighth");
+    expect (arpeggioStepSeconds (120.0, ArpeggioGrid::EighthHeavy, 0)
+                > arpeggioStepSeconds (120.0, ArpeggioGrid::EighthLight, 0),
+            "a heavy shuffle leans further than a light one");
+}
+
+// End to end: the arpeggiator turns a held chord into a stream of separate
+// notes at the grid tempo, HOLD keeps it playing, and turning it off stops it.
+void testArpeggiatorPlaysAndHolds()
+{
+    const double sampleRate = 44100.0;
+    septum::Patch patch = plainSawPatch();
+    patch.upper.level = 127;
+    patch.upper.ampEnvRelease = 0;
+    patch.tempo = 120;
+    patch.arpeggio.on = true;
+    patch.arpeggio.grid = septum::ArpeggioGrid::Eighth;   // 4 Hz at 120 BPM
+    patch.arpeggio.duration = septum::ArpeggioDuration::P50;
+    patch.arpeggio.motif = septum::ArpeggioMotif::Up;
+    septum::applyArpeggioStyle (patch, 0);   // "Straight 4": one row per step
+
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    engine.setPatch (patch);
+    engine.reset();
+
+    // Silence before a key, then a chord that must produce a gapped stream.
+    auto take = renderScore (engine,
+                             { { 0.1, true, 60, 100 },
+                               { 0.1, true, 64, 100 },
+                               { 0.1, true, 67, 100 } },
+                             1.6, sampleRate);
+    expect (take.rms (0, 4000) < 1.0e-5, "the arpeggiator is silent before a key");
+    expect (take.finite() && take.peak() > 0.01, "the arpeggiator sounds");
+
+    // A 50 % duration at 4 steps a second means the output must go quiet
+    // between steps: count how many 5 ms windows are near-silent.
+    const auto window = (std::size_t) (sampleRate * 0.005);
+    int quiet = 0, loud = 0;
+    for (std::size_t i = (std::size_t) (sampleRate * 0.2);
+         i + window < take.left.size(); i += window)
+    {
+        const double level = take.rms (i, i + window);
+        if (level < 1.0e-4)
+            ++quiet;
+        else if (level > 1.0e-3)
+            ++loud;
+    }
+    expect (quiet > 10 && loud > 10,
+            "a 50 % duration leaves gaps between the steps (quiet "
+                + std::to_string (quiet) + ", loud " + std::to_string (loud) + ")");
+
+    // Without HOLD, letting go stops it. (A fresh engine: the take above left
+    // three keys down.)
+    engine.setPatch (patch);
+    engine.reset();
+    auto stopped = renderScore (engine,
+                                { { 0.0, true, 60, 100 }, { 0.5, false, 60, 100 } },
+                                1.5, sampleRate);
+    // What must vanish is the AC content: the documented 0.33 Hz output
+    // coupling keeps discharging a small DC offset for a while after the last
+    // note stops, exactly as it does after an all-sound-off.
+    const auto peakToPeak = [] (const Render& take, std::size_t from)
+    {
+        float low = 1.0f, high = -1.0f;
+        for (std::size_t i = from; i < take.left.size(); ++i)
+        {
+            low = std::min (low, take.left[i]);
+            high = std::max (high, take.left[i]);
+        }
+        return (double) (high - low);
+    };
+    expect (peakToPeak (stopped, (std::size_t) (sampleRate * 1.0)) < 1.0e-4,
+            "releasing the chord stops the arpeggio (peak-to-peak "
+                + std::to_string (peakToPeak (stopped,
+                                              (std::size_t) (sampleRate * 1.0)))
+                + ")");
+
+    // With HOLD, it keeps going.
+    patch.arpeggio.hold = true;
+    engine.setPatch (patch);
+    engine.reset();
+    auto held = renderScore (engine,
+                             { { 0.0, true, 60, 100 }, { 0.5, false, 60, 100 } },
+                             1.5, sampleRate);
+    expect (held.rms ((std::size_t) (sampleRate * 1.0), held.left.size()) > 1.0e-3,
+            "HOLD keeps the arpeggio playing after the keys are released");
+
+    // Turning the arpeggiator off silences it and gives the keyboard back.
+    patch.arpeggio.on = false;
+    engine.setPatch (patch);
+    std::vector<float> left (8820), right (8820);
+    engine.process (left.data(), right.data(), 8820);
+    engine.process (left.data(), right.data(), 8820);
+    double sum = 0.0;
+    for (auto sample : left)
+        sum += sample * (double) sample;
+    expect (std::sqrt (sum / 8820.0) < 1.0e-4,
+            "turning the arpeggiator off stops the notes it was holding (value "
+                + std::to_string (std::sqrt (sum / 8820.0)) + ")");
+}
+
+// OCTAVE RANGE shifts one cycle at a time, so a run of cycles must visit
+// pitches an octave apart.
+void testArpeggioOctaveRange()
+{
+    const double sampleRate = 44100.0;
+    septum::Patch patch = plainSawPatch();
+    patch.upper.level = 127;
+    patch.tempo = 240;
+    patch.arpeggio.on = true;
+    patch.arpeggio.grid = septum::ArpeggioGrid::Quarter;
+    patch.arpeggio.duration = septum::ArpeggioDuration::P100;
+    patch.arpeggio.motif = septum::ArpeggioMotif::Up;
+    patch.arpeggio.octaveRange = 1;
+    // A one-step, one-row style: every step is the same key, so only the
+    // octave shift can change the pitch.
+    patch.arpeggio.style = septum::ArpeggioStyle {};
+    patch.arpeggio.style.endStep = 1;
+    patch.arpeggio.style.cells[0][0] = 100;
+
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    engine.setPatch (patch);
+    engine.reset();
+    auto take = renderScore (engine, { { 0.0, true, 57, 100 } }, 1.2, sampleRate);
+
+    // Step 1 is A2 (220 Hz); step 2 is one octave up (440 Hz).
+    const double first = estimateFundamental (take.left, 2205, 8820, sampleRate,
+                                              150.0, 700.0);
+    const double second = estimateFundamental (take.left, 13230, 19845, sampleRate,
+                                               150.0, 700.0);
+    expectNear (first, 220.0, 6.0, "the first arpeggio cycle plays the key");
+    expectNear (second, 440.0, 12.0,
+                "OCTAVE RANGE +1 shifts the next cycle an octave up");
+}
+
 void testSelfOscillationBounded()
 {
     septum::Patch patch = plainSawPatch();
@@ -1155,6 +1390,10 @@ int main()
     testSoloAndHold();
     testSostenutoLatchesOnlyWhatWasSounding();
     testExternalInputAndAudioFilter();
+    testArpeggioMotifsMatchTheManualsExamples();
+    testArpeggioGridDivisions();
+    testArpeggiatorPlaysAndHolds();
+    testArpeggioOctaveRange();
     testSelfOscillationBounded();
     testEnvelopesShapeLoudness();
     testVelocitySensitivity();

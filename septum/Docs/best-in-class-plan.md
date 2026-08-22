@@ -290,3 +290,25 @@ what settles the order of the two paths, and it is a test: the released state
 measures more than 100× below the held one, and the played note is unaffected
 by the audio filter's setting, which is only true if the oscillator taps the
 input ahead of that filter. Nine checks cover the path in all.
+
+#### Step 5 — the arpeggiator
+
+The settled arpeggio block is implemented against the settled 32 × 16 grid:
+GRID with its shuffled divisions, DURATION with tie chains and FUL, MOTIF,
+OCTAVE RANGE, ACCENT, ARPEGGIO VELOCITY, END STEP, HOLD and SPLIT ARPEGGIO,
+running at the patch tempo. Notes it generates go through the same voice
+assigner the keyboard uses, so polyphony, solo/legato and the effect sends all
+behave as they do for played notes.
+
+The MOTIF mapping is not inferred. The manual works three examples of the
+style `1-2-3-2` against the keys C-D-E-F-G, and the mapping — a pure function,
+so it can be tested directly — reproduces all three exactly; **those examples
+are the test**. Twelve more checks cover the grid divisions (each one adding
+up to a beat, shuffled pairs included), the played-and-held behaviour, HOLD,
+and OCTAVE RANGE moving the next cycle an octave.
+
+Roland's 32 factory styles are unpublished data and none of them ships; 16
+original patterns do, and the panel selects among them exactly as the
+hardware's panel selects a template. A new committed demo,
+`11-arpeggiator.wav`, plays one chord through UP(-), then UP&DOWN(L&H) with a
+heavy shuffle, then OCTAVE RANGE +2 on HOLD.

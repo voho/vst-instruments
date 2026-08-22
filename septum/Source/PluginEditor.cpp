@@ -475,6 +475,20 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     addControl (*reverb, "reverb_density", "DENS", Style::Knob, false);
     addControl (*reverb, "reverb_diffusion", "DIFF", Style::Knob, false);
 
+    // ---- arpeggiator ----------------------------------------------------
+    auto* arpSection = section ("ARPEGGIO");
+    arpSection->firstRowCount = 5;
+    addControl (*arpSection, "arp_on", "ON", Style::Toggle, false);
+    addControl (*arpSection, "arp_hold", "HOLD", Style::Toggle, false);
+    addControl (*arpSection, "arp_style", "STYLE", Style::Combo, false);
+    addControl (*arpSection, "arp_grid", "GRID", Style::Combo, false);
+    addControl (*arpSection, "arp_duration", "DURATION", Style::Combo, false);
+    addControl (*arpSection, "arp_motif", "MOTIF", Style::Combo, false);
+    addControl (*arpSection, "arp_octave", "OCT RNG", Style::Knob, false);
+    addControl (*arpSection, "arp_accent", "ACCENT", Style::Knob, false);
+    addControl (*arpSection, "arp_velocity", "VELOCITY", Style::Knob, false);
+    addControl (*arpSection, "arp_split", "SPLIT ARP", Style::Combo, false);
+
     // ---- external input: the hardware's EXT IN / AUDIO FILTER block -----
     auto* externalSection = section ("EXT IN: AUDIO FILTER");
     externalSection->firstRowCount = 4;
@@ -903,9 +917,10 @@ void SeptumAudioProcessorEditor::resized()
         layoutSection (*sections[(std::size_t) index],
                        topRow.removeFromLeft ((int) (width * topScale)));
 
-    // Row 2: LFO1, LFO2, EFFECTS (delay, reverb), EXT IN
-    const std::array<std::pair<int, int>, 5> bottomPlan {
-        std::pair { 9, 250 }, { 10, 250 }, { 11, 300 }, { 12, 330 }, { 13, 230 },
+    // Row 2: LFO1, LFO2, EFFECTS (delay, reverb), ARPEGGIO, EXT IN
+    const std::array<std::pair<int, int>, 6> bottomPlan {
+        std::pair { 9, 230 }, { 10, 230 }, { 11, 270 }, { 12, 300 },
+        { 13, 260 }, { 14, 210 },
     };
     consumed = 0;
     for (const auto& [index, width] : bottomPlan)

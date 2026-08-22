@@ -414,6 +414,59 @@ Take renderDualPad()
     return take;
 }
 
+// The arpeggiator: one held chord, then the same chord through three motifs
+// and a widening octave range, at the patch tempo.
+Take renderArpeggio()
+{
+    Patch patch = bankPatch ("Trance Pluck");
+    patch.tempo = 124;
+    patch.arpeggio.on = true;
+    patch.arpeggio.styleIndex = 1;   // "Straight 8"
+    applyArpeggioStyle (patch, patch.arpeggio.styleIndex);
+    patch.arpeggio.grid = septum::ArpeggioGrid::Sixteenth;
+    patch.arpeggio.duration = septum::ArpeggioDuration::P60;
+    patch.arpeggio.motif = septum::ArpeggioMotif::Up;
+    patch.arpeggio.accent = 100;
+
+    Take take (patch);
+    take.rest (0.1);
+    const std::vector<int> chord { 45, 52, 57, 60, 64 };
+
+    // UP(-), straight.
+    for (int note : chord)
+        take.noteOn (note, 104);
+    take.rest (3.9);
+    for (int note : chord)
+        take.noteOff (note);
+
+    // UP&DOWN(L&H) with a heavy shuffle: the same chord, a different shape.
+    patch.arpeggio.motif = septum::ArpeggioMotif::UpDownLowHigh;
+    patch.arpeggio.grid = septum::ArpeggioGrid::SixteenthHeavy;
+    take.setPatch (patch);
+    for (int note : chord)
+        take.noteOn (note, 104);
+    take.rest (3.9);
+    for (int note : chord)
+        take.noteOff (note);
+
+    // OCTAVE RANGE +2 with HOLD: the pattern climbs on its own.
+    patch.arpeggio.motif = septum::ArpeggioMotif::Up;
+    patch.arpeggio.grid = septum::ArpeggioGrid::Sixteenth;
+    patch.arpeggio.octaveRange = 2;
+    patch.arpeggio.hold = true;
+    take.setPatch (patch);
+    for (int note : chord)
+        take.noteOn (note, 104);
+    take.rest (0.4);
+    for (int note : chord)
+        take.noteOff (note);
+    take.rest (5.2);
+    patch.arpeggio.on = false;
+    take.setPatch (patch);
+    take.rest (1.6);
+    return take;
+}
+
 // ---------------------------------------------------------------------------
 // The demo table
 // ---------------------------------------------------------------------------
@@ -425,9 +478,9 @@ struct Demo
     Take (*render)();
 };
 
-const std::array<Demo, 10>& demos()
+const std::array<Demo, 11>& demos()
 {
-    static const std::array<Demo, 10> table {{
+    static const std::array<Demo, 11> table {{
         { "01-supersaw-lead.wav",
           "Both oscillators SUPER SAW: a trance line into a held stack",
           renderSuperSawLead },
@@ -456,6 +509,10 @@ const std::array<Demo, 10>& demos()
         { "10-dual-pad.wav",
           "DUAL keyboard mode: two complete tones layered under one hall",
           renderDualPad },
+        { "11-arpeggiator.wav",
+          "One chord through the arpeggiator: UP, UP&DOWN(L&H) with a heavy "
+          "shuffle, then OCTAVE RANGE +2 on HOLD",
+          renderArpeggio },
     }};
     return table;
 }

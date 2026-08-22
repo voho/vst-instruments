@@ -39,4 +39,19 @@ void applyReverbTemplate (Patch& patch, int index);
 [[nodiscard]] const char* delayTemplateName (int index);
 [[nodiscard]] const char* reverbTemplateName (int index);
 
+// Arpeggio styles. The modelled instrument ships 32 templates in four banks;
+// their grids are Roland's data, unpublished and not shipped here, so these
+// are original patterns written against the same settled 32 x 16 grid. The
+// hardware's panel also only *selects* a template — the manual says editing a
+// style needs the SH-201 Editor — so a selector is the faithful surface.
+struct NamedArpeggioStyle
+{
+    const char* name;
+    ArpeggioStyle style;
+};
+
+[[nodiscard]] const std::vector<NamedArpeggioStyle>& arpeggioStyles();
+[[nodiscard]] const char* arpeggioStyleName (int index);
+void applyArpeggioStyle (Patch& patch, int index);
+
 } // namespace septum
