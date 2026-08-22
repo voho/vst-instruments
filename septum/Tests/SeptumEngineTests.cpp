@@ -995,6 +995,46 @@ void testArpeggioMotifsMatchTheManualsExamples()
 }
 
 // The grid divisions are settled; a shuffled pair must keep the beat.
+// [settled, OM p.66] "When the number of keys played is less than the number
+// of notes in the arpeggio style, the highest-pitched of the pressed keys is
+// played by default." The sentence carries no direction qualifier, so it holds
+// for the DOWN motifs too — they used to fall back on the lowest key.
+void testShortChordFallsBackOnTheHighestKey()
+{
+    using septum::ArpeggioMotif;
+    using septum::mapping::arpeggioKeyIndexForRow;
+
+    // Two keys held, a style four rows wide: rows 3 and 4 have no key of
+    // their own, whatever the motif.
+    const int count = 2, span = 4;
+    for (auto motif : { ArpeggioMotif::Up, ArpeggioMotif::UpL,
+                        ArpeggioMotif::UpLowHigh, ArpeggioMotif::Down,
+                        ArpeggioMotif::DownL, ArpeggioMotif::DownLowHigh,
+                        ArpeggioMotif::UpDown, ArpeggioMotif::UpDownL,
+                        ArpeggioMotif::UpDownLowHigh })
+    {
+        for (int cycle = 0; cycle < 4; ++cycle)
+        {
+            // Row 4 is the style's last, so an (L&H) motif pins it to the
+            // highest key for its own reason; row 3 is pinned by nothing.
+            const int third =
+                arpeggioKeyIndexForRow (motif, count, 3, span, cycle);
+            expect (third == count - 1,
+                    "a row the chord cannot fill plays the highest key held "
+                    "(motif " + std::to_string ((int) motif) + ", cycle "
+                        + std::to_string (cycle) + ", got "
+                        + std::to_string (third) + ")");
+        }
+    }
+
+    // And a chord wide enough for the style is untouched: three keys under a
+    // three-row style still walk their window.
+    expect (arpeggioKeyIndexForRow (ArpeggioMotif::Down, 3, 1, 3, 0) == 2,
+            "a full chord still reads the window from the top on DOWN");
+    expect (arpeggioKeyIndexForRow (ArpeggioMotif::Down, 3, 3, 3, 0) == 0,
+            "a full chord still reaches the bottom on DOWN");
+}
+
 void testArpeggioGridDivisions()
 {
     using septum::ArpeggioGrid;
@@ -2632,6 +2672,7 @@ int main()
     testExternalSwitchesAreCrossedNotThrown();
     testExternalMonitorHandover();
     testArpeggioMotifsMatchTheManualsExamples();
+    testShortChordFallsBackOnTheHighestKey();
     testArpeggioGridDivisions();
     testShuffleFollowsTheBeatNotThePattern();
     testArpeggiatorPlaysAndHolds();

@@ -427,6 +427,11 @@ play each key", and one style is saved per patch. Its parameters:
   `(L)` pins the style's first row to the lowest key, `(L&H)` also pins its
   last row to the highest, and the window walks up, down, up-and-down or at
   random.
+- **A chord narrower than the style** is settled too: "When the number of keys
+  played is less than the number of notes in the arpeggio style, the
+  highest-pitched of the pressed keys is played by default" (OM p. 66). The
+  sentence carries no direction qualifier, so it holds for the DOWN motifs as
+  well as the UP ones, and a test holds every motif to it.
 - **OCTAVE RANGE** −3…+3, which "shifts arpeggios one cycle at a time in
   octave units" (the cycle order is voiced, OQ-15).
 - **ARPEGGIO ACCENT** 0–100: at 100 "the arpeggiated notes will have the

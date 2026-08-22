@@ -778,3 +778,25 @@ The fence is a parameter listener attached in the suite: a CC delivered
 through `processBlock` must produce no value change and no gesture callback,
 and the reconciler must produce both. Reverting the three calls fails it with
 `values 1, gestures 2`.
+
+#### Step 18 — a short chord fell back on the wrong key under the DOWN motifs
+
+The manual says what an arpeggio style does when it asks for more note rows
+than the player is holding keys: "When the number of keys played is less than
+the number of notes in the arpeggio style, the highest-pitched of the pressed
+keys is played by default" (OM p. 66). The sentence is in the MOTIF row of the
+parameter list and carries no direction qualifier.
+
+`arpeggioKeyIndexForRow` clamped the *window position* into the chord and then
+reversed it for a descending motif, so the fallback came out at the far end:
+two keys held under any of the shipped four-row styles gave the highest key on
+UP and the **lowest** on DOWN, DOWN(L), DOWN(L&H) and every UP&DOWN. The
+position is now tested before the reversal, and a row the chord cannot fill
+takes the highest key whichever way the window is walking.
+
+Nine motifs × four cycles are checked against the rule, and the two cases that
+prove the walk is otherwise untouched — a full chord still reads its window
+from the top on DOWN and still reaches the bottom of it. Reverting the change
+fails twelve of them. The manual's own three worked examples hold five keys
+under a three-row style, so they never reached this branch and still pass
+unchanged; the committed demos are unchanged for the same reason.

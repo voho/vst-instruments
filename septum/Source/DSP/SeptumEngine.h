@@ -510,8 +510,18 @@ namespace mapping
         // are applied *after* that reversal, because "(L)" names the lowest key
         // pressed and "(L&H)" the lowest and the highest — which key that is
         // does not depend on which way the window is walking.
-        const int walked = std::clamp (base + row - 1, 0, count - 1);
-        int index = descending ? count - 1 - walked : walked;
+        //
+        // [settled] A style can ask for more rows than the chord has keys, and
+        // the manual says what happens then: "When the number of keys played
+        // is less than the number of notes in the arpeggio style, the
+        // highest-pitched of the pressed keys is played by default" (OM p.66).
+        // That is a statement about pitch, not about the window, so it holds
+        // whichever way the window is walking — a descending motif that ran
+        // off the end used to fall back on the *lowest* key instead.
+        const int position = base + row - 1;
+        int index = position >= count
+                        ? count - 1
+                        : (descending ? count - 1 - position : position);
         if (pinLow && row == 1)
             index = 0;
         else if (pinHigh && row == span)
