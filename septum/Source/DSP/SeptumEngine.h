@@ -195,17 +195,26 @@ namespace mapping
     // 176.4/192 kHz. A power-of-two ladder cannot hit a fixed rate exactly
     // from an arbitrary host rate, so what it guarantees is a bound rather
     // than a number: for every host rate from 22.05 to 192 kHz the shaper
-    // runs within ±0.54 octaves of the target, against the 2.1 octaves the
-    // host rates alone span. Choosing the *nearest* factor rather than the
-    // first one at or above the target is what makes that true of the
+    // runs within ±1.0 octave of the target, against the 3.1 octaves those
+    // host rates themselves span. Choosing the *nearest* factor rather than
+    // the first one at or above the target is what makes that true of the
     // in-between rates — 64 kHz would otherwise be pushed to 256 kHz while
     // 88.2 kHz sat at 176.4.
+    //
+    // The ladder stops at 4 because the shaper stops at 4: `process` has an
+    // outer and an inner half-band stage and nothing beyond them. Offering 8
+    // bought nothing at 22.05 and 24 kHz - those rates ran at 4 regardless -
+    // while making this function claim a rate the signal path never reached.
+    // A third stage would cost 2p at 4x host, which is 1.5 host samples: a
+    // fractional group delay to report and to align the bypass path against,
+    // for two sample rates. The bound is stated at what the ladder delivers
+    // instead, and 22.05 kHz is the one rate that sits a whole octave low.
     [[nodiscard]] inline int overdriveOversampling (double hostRateHz) noexcept
     {
         const double rate = std::max (1.0, hostRateHz);
         int best = 1;
         double bestDistance = std::abs (std::log2 (rate / overdriveInternalRateHz));
-        for (int factor : { 2, 4, 8 })
+        for (int factor : { 2, 4 })
         {
             const double distance =
                 std::abs (std::log2 (rate * factor / overdriveInternalRateHz));

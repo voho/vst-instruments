@@ -307,9 +307,11 @@ inside the loop under first-order antiderivative anti-aliasing (Parker,
 Zavalishin & Bozkurt, DAFx-16). A power-of-two ladder cannot hit a fixed rate
 exactly from an arbitrary host rate, so what it guarantees is a bound rather
 than a number: across every rate a host can plausibly run at, 22.05 to
-192 kHz, the shaper stays within **±0.54 octaves** of the target, against the
+192 kHz, the shaper stays within **±1.0 octave** of the target, against the
 3.1 octaves those rates themselves span. At the four common rates it is inside
-176.4–192 kHz exactly. The transfer curve is untouched — this is not an answer to OQ-11,
+176.4–192 kHz exactly, and only 22.05 kHz sits a full octave low — the ladder
+stops at 4× because the shaper does, and a third half-band stage would cost a
+fractional 1.5 host samples of group delay to buy two unusual rates. The transfer curve is untouched — this is not an answer to OQ-11,
 and a captured transfer would replace the curve without changing where it is
 evaluated.
 

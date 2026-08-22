@@ -256,18 +256,25 @@ void testRegisteredConstants()
                 && overdriveOversampling (192000.0) == 1,
             "the overdrive's oversampling lands it in a fixed rate band");
     // A power-of-two ladder cannot hit a fixed rate exactly from an arbitrary
-    // host rate, so what it owes is a bound: every rate a host can plausibly
-    // run at must land within about half an octave of the target, against the
-    // 3.1 octaves those rates themselves span.
+    // host rate, so what it owes is a bound. Two things have to hold, and only
+    // the second used to be checked: the factor has to be one the shaper
+    // actually implements, or the bound is measured against a rate the signal
+    // never ran at. `process` has an outer and an inner half-band stage and
+    // nothing beyond, so 4 is the most it can do.
     double worst = 0.0;
-    for (double rate : { 22050.0, 32000.0, 44100.0, 48000.0, 64000.0, 88200.0,
-                         96000.0, 128000.0, 176400.0, 192000.0 })
+    for (double rate : { 22050.0, 24000.0, 32000.0, 44100.0, 48000.0, 64000.0,
+                         88200.0, 96000.0, 128000.0, 176400.0, 192000.0 })
     {
-        const double internal = rate * overdriveOversampling (rate);
-        worst = std::max (worst, std::abs (std::log2 (internal / overdriveInternalRateHz)));
+        const int factor = overdriveOversampling (rate);
+        expect (factor == 1 || factor == 2 || factor == 4,
+                "the ladder only selects a factor the shaper implements ("
+                    + std::to_string (rate) + " Hz chose "
+                    + std::to_string (factor) + ")");
+        worst = std::max (worst,
+                          std::abs (std::log2 (rate * factor / overdriveInternalRateHz)));
     }
-    expect (worst < 0.55,
-            "and no host rate puts the shaper more than half an octave from it "
+    expect (worst <= 1.0 + 1.0e-9,
+            "and no host rate puts the shaper more than an octave from it "
             "(worst " + std::to_string (worst) + " octaves)");
 }
 
