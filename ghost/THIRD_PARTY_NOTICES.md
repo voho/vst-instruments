@@ -43,7 +43,7 @@ with the AGPLv3 for the complete combined work or an appropriate commercial
 JUCE licence. Review the JUCE 8 licence terms before distribution:
 <https://github.com/juce-framework/JUCE/blob/8.0.14/LICENSE.md>
 
-A copy of JUCE's licensing README is included at
-[`ThirdParty/JUCE-LICENSE.md`](ThirdParty/JUCE-LICENSE.md). JUCE itself is
-downloaded at build time (pinned to its 8.0.14 release commit) and is not
-vendored in this repository.
+A copy of JUCE's licensing README is included as `JUCE-LICENSE.md` — under
+`ThirdParty/` in the source tree, and alongside this notice in binary
+packages. JUCE itself is downloaded at build time (pinned to its 8.0.14
+release commit) and is not vendored in this repository.

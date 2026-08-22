@@ -152,7 +152,9 @@ The signature series dual filter.
 - **SPLIT** — the two audio paths to left (Filter/ADSR) and right (Shaper),
   as the modelled hardware's two rear jacks. On a mono output bus the two
   paths stay summed — there is no right jack to split onto.
-- **PANIC** — the hard stop: resets the whole engine, wheels included.
+- **PANIC** — the hard stop: silences everything and resets the engine's
+  voice state. The X/Y wheels are parameters and keep their positions; a
+  bend still held on a wheel reapplies itself.
 
 The keyboard plays with **last-note priority and held-note memory**:
 releasing the newest key falls back to the newest key still held, at its

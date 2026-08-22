@@ -62,6 +62,17 @@ ditto "${VST3}" "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/VST3/Ghost.vst3"
 ditto "${AU}" "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/Components/Ghost.component"
 ditto "${APP}" "${PACKAGE_ROOT}/Applications/Ghost.app"
 
+# Licence and notice files ride inside the package root at the standard
+# documentation path, so the drag-install zip and the installer package
+# both carry them (the MIT licence requires the notice to accompany
+# binaries; the installer lands them at /Library/Documentation/Ghost).
+DOC_DIR="${PACKAGE_ROOT}/Library/Documentation/Ghost"
+mkdir -p "${DOC_DIR}"
+cp "${PROJECT_DIR}/LICENSE" \
+   "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md" \
+   "${PROJECT_DIR}/ThirdParty/JUCE-LICENSE.md" \
+   "${DOC_DIR}/"
+
 sign_bundle() {
     local bundle="$1"
     if [[ "${APP_SIGN_IDENTITY}" == "-" ]]; then
@@ -82,22 +93,7 @@ PKG_UNSIGNED="${DIST_DIR}/Ghost-${VERSION}-unsigned.pkg"
 PKG_FINAL="${DIST_DIR}/Ghost-${VERSION}-macOS-universal.pkg"
 
 rm -f "${ZIP_PATH}" "${PKG_UNSIGNED}" "${PKG_FINAL}"
-
-# The distributable zip carries the licence and notice files next to the
-# bundles (the MIT licence requires the notice to accompany binaries); the
-# installer root stays bundles-only so nothing stray lands under /.
-ZIP_ROOT="${BUILD_DIR}/zip-root"
-case "${ZIP_ROOT}" in
-    "${BUILD_DIR}"/*) ;;
-    *) echo "error: unsafe zip staging path: ${ZIP_ROOT}" >&2; exit 1 ;;
-esac
-rm -rf "${ZIP_ROOT}"
-ditto "${PACKAGE_ROOT}" "${ZIP_ROOT}"
-cp "${PROJECT_DIR}/LICENSE" \
-   "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md" \
-   "${PROJECT_DIR}/ThirdParty/JUCE-LICENSE.md" \
-   "${ZIP_ROOT}/"
-ditto -c -k --sequesterRsrc "${ZIP_ROOT}" "${ZIP_PATH}"
+ditto -c -k --sequesterRsrc "${PACKAGE_ROOT}" "${ZIP_PATH}"
 
 pkgbuild \
     --root "${PACKAGE_ROOT}" \
