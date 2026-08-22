@@ -5,7 +5,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-${PROJECT_DIR}/build-macos}"
 CONFIG="${CONFIG:-Release}"
-VERSION="${VERSION:-1.1.0}"
+# The default rides the CMake project version so a manual run can never
+# label packages with a number the binaries do not carry.
+if [[ -z "${VERSION:-}" ]]; then
+    VERSION="$(sed -n 's/^project(Ghost VERSION \([0-9][0-9.]*\).*/\1/p' \
+        "${PROJECT_DIR}/CMakeLists.txt")"
+fi
+if [[ ! "${VERSION}" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+    echo "error: could not determine a valid version: '${VERSION}'" >&2
+    exit 1
+fi
 APP_SIGN_IDENTITY="${APP_SIGN_IDENTITY:--}"
 INSTALLER_SIGN_IDENTITY="${INSTALLER_SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
@@ -73,7 +82,22 @@ PKG_UNSIGNED="${DIST_DIR}/Ghost-${VERSION}-unsigned.pkg"
 PKG_FINAL="${DIST_DIR}/Ghost-${VERSION}-macOS-universal.pkg"
 
 rm -f "${ZIP_PATH}" "${PKG_UNSIGNED}" "${PKG_FINAL}"
-ditto -c -k --sequesterRsrc "${PACKAGE_ROOT}" "${ZIP_PATH}"
+
+# The distributable zip carries the licence and notice files next to the
+# bundles (the MIT licence requires the notice to accompany binaries); the
+# installer root stays bundles-only so nothing stray lands under /.
+ZIP_ROOT="${BUILD_DIR}/zip-root"
+case "${ZIP_ROOT}" in
+    "${BUILD_DIR}"/*) ;;
+    *) echo "error: unsafe zip staging path: ${ZIP_ROOT}" >&2; exit 1 ;;
+esac
+rm -rf "${ZIP_ROOT}"
+ditto "${PACKAGE_ROOT}" "${ZIP_ROOT}"
+cp "${PROJECT_DIR}/LICENSE" \
+   "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md" \
+   "${PROJECT_DIR}/ThirdParty/JUCE-LICENSE.md" \
+   "${ZIP_ROOT}/"
+ditto -c -k --sequesterRsrc "${ZIP_ROOT}" "${ZIP_PATH}"
 
 pkgbuild \
     --root "${PACKAGE_ROOT}" \

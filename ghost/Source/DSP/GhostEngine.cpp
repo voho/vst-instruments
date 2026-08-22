@@ -258,6 +258,19 @@ void GhostEngine::reset()
     dcPreviousOutRight_ = 0.0;
 }
 
+void GhostEngine::stopAllSound()
+{
+    // Implemented over reset() so the voice-killing list can never drift
+    // out of step with it; only the controller positions survive.
+    const float pitchBend = pitchBend_;
+    const float modWheel = modWheel_;
+    const float shaperWheel = shaperWheel_;
+    reset();
+    pitchBend_ = pitchBend;
+    modWheel_ = modWheel;
+    shaperWheel_ = shaperWheel;
+}
+
 void GhostEngine::setParameters(const EngineParameters& parameters)
 {
     // A NaN smuggled in through host automation must neither reach the

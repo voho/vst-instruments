@@ -101,9 +101,11 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    // The longest release travels ten seconds; self-oscillating filters ring
-    // beyond it, so the advertised tail has headroom.
-    double getTailLengthSeconds() const override { return 12.0; }
+    // The longest release decays at 3/10 s^-1 (three time constants across
+    // the labelled 10 s) and the engine idles the envelope at 1e-5, reached
+    // after ln(1e5)/0.3 = 38.4 s; the advertised tail rounds that up so a
+    // host honouring it never truncates an audible release.
+    double getTailLengthSeconds() const override { return 40.0; }
 
     // Factory programs: the modelled instrument's manual teaches eleven
     // Sound Charts instead of shipping presets, and those charts are the

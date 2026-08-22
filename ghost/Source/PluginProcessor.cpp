@@ -364,7 +364,11 @@ void GhostAudioProcessor::updateEngineParameters() noexcept
     engineParameters.glide = loadTravel(parameters, ids::glide);
     engineParameters.glideMode =
         static_cast<ghost::GlideMode>(loadIndex(parameters, ids::glideMode));
-    engineParameters.splitPaths = loadRocker(parameters, ids::splitPaths);
+    // A mono bus has no right jack to split onto, and splitting there
+    // would silently discard the whole Shaper path (the engine's right
+    // output is dropped): the two paths stay summed instead.
+    engineParameters.splitPaths = loadRocker(parameters, ids::splitPaths)
+                               && getMainBusNumOutputChannels() >= 2;
     engine.setParameters(engineParameters);
 
     // The wheels are attenuators the player rides; hosts automate them as
@@ -396,20 +400,24 @@ void GhostAudioProcessor::handleMidiMessage(
         const float normalised =
             static_cast<float>(message.getControllerValue()) / 127.0f;
         // CC1 rides the X wheel and CC2 the Y wheel, through the same host
-        // parameters the editor's wheels write.
+        // parameters the editor's wheels write — and straight into the
+        // engine as well, because the parameters were already latched for
+        // this block and the wheel must move at the event's own sample.
         if (controller == 1)
         {
             if (auto* parameter = parameters.getParameter(ids::xWheel))
                 parameter->setValueNotifyingHost(normalised);
+            engine.setModWheel(normalised);
         }
         else if (controller == 2)
         {
             if (auto* parameter = parameters.getParameter(ids::yWheel))
                 parameter->setValueNotifyingHost(normalised);
+            engine.setShaperWheel(normalised);
         }
-        else if (controller == 120) // all sound off: the hard stop
+        else if (controller == 120) // all sound off: stop, keep controllers
         {
-            engine.reset();
+            engine.stopAllSound();
         }
         else if (controller == 123) // all notes off: release through envelopes
         {
@@ -424,7 +432,16 @@ void GhostAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     juce::ScopedNoDenormals noDenormals;
 
     if (panicRequested.exchange(false, std::memory_order_acq_rel))
+    {
+        // Notes queued from the on-screen keyboard before the panic click
+        // must not replay after the reset: drop everything queued so far.
+        uiReadIndex.store(uiWriteIndex.load(std::memory_order_acquire),
+                          std::memory_order_release);
         engine.reset();
+        // The reset centred the engine's bend, so the tracker must agree —
+        // a wheel still held off-centre then reapplies itself next block.
+        lastAppliedUiBend = 0.0f;
+    }
 
     dispatchUiMidiEvents();
     updateEngineParameters();

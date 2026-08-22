@@ -542,6 +542,33 @@ void testArpFirstStepIsTheScanBottom()
 // The factory bank is the manual's eleven Sound Charts. Every chart renders
 // finite audio with a key held; every chart but the first is audible. The
 // Preparatory Pattern is the documented exception: it "produces no sound".
+// MIDI All Sound Off must kill the voice without resetting controllers: a
+// bend held across it still applies to the next note, where the full
+// reset() would have re-centred it.
+void testStopAllSoundKeepsControllers()
+{
+    GhostEngine engine;
+    engine.prepare(48000.0, 256);
+    engine.setParameters(EngineParameters {});
+
+    engine.noteOn(48, 1.0f);
+    render(engine, 0.3, 48000.0);
+    const double unbentHz =
+        zeroCrossingHz(render(engine, 0.5, 48000.0).left, 48000.0);
+
+    engine.setPitchBend(1.0f); // +8 semitones at full travel
+    engine.stopAllSound();
+    const auto stopped = render(engine, 0.3, 48000.0);
+    check(peak(stopped) < 1.0e-4, "all sound off silences the voice");
+
+    engine.noteOn(48, 1.0f);
+    render(engine, 0.3, 48000.0);
+    const double bentHz =
+        zeroCrossingHz(render(engine, 0.5, 48000.0).left, 48000.0);
+    check(bentHz > unbentHz * 1.35,
+          "the held bend survives all sound off");
+}
+
 void testEveryFactorySoundChartRenders()
 {
     check(ghost::factoryPresetCount() == 12,
@@ -619,6 +646,7 @@ int main()
     testArpOctaveStepsSurviveTheMidiCeiling();
     testKeyPressDoesNotRetriggerWithoutKbdGate();
     testArpFirstStepIsTheScanBottom();
+    testStopAllSoundKeepsControllers();
     testEveryFactorySoundChartRenders();
     testFasterThanRealtime();
 

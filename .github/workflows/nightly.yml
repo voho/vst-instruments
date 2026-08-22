@@ -398,9 +398,17 @@ jobs:
             exit 1
           fi
           archive="$dist/${{ matrix.name }}-${version}-Linux-x64.tar.gz"
-          tar -czf "$archive" -C "$artefacts" \
-            "VST3/${{ matrix.name }}.vst3" \
-            "Standalone/${{ matrix.name }}"
+          # Licence and notice files ship inside the binary archive when the
+          # instrument carries them (the MIT licence requires the notice to
+          # accompany binaries).
+          contents=("VST3/${{ matrix.name }}.vst3" "Standalone/${{ matrix.name }}")
+          for notice in LICENSE THIRD_PARTY_NOTICES.md ThirdParty/JUCE-LICENSE.md; do
+            if [[ -f "${{ matrix.directory }}/$notice" ]]; then
+              cp "${{ matrix.directory }}/$notice" "$artefacts/$(basename "$notice")"
+              contents+=("$(basename "$notice")")
+            fi
+          done
+          tar -czf "$archive" -C "$artefacts" "${contents[@]}"
           test -s "$archive"
           tar -tzf "$archive" >/dev/null
 
@@ -481,7 +489,17 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
           $zipName = "${{ matrix.name }}-$version-Windows-x64.zip"
           $zipPath = Join-Path $dist $zipName
-          Compress-Archive -LiteralPath (Join-Path $artefactDir "VST3"), (Join-Path $artefactDir "Standalone") -DestinationPath $zipPath
+          # Licence and notice files ship inside the binary archive when the
+          # instrument carries them (the MIT licence requires the notice to
+          # accompany binaries).
+          $contents = @((Join-Path $artefactDir "VST3"), (Join-Path $artefactDir "Standalone"))
+          foreach ($notice in @("LICENSE", "THIRD_PARTY_NOTICES.md", "ThirdParty/JUCE-LICENSE.md")) {
+            $source = Join-Path "${{ matrix.directory }}" $notice
+            if (Test-Path -LiteralPath $source -PathType Leaf) {
+              $contents += $source
+            }
+          }
+          Compress-Archive -LiteralPath $contents -DestinationPath $zipPath
           if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf) -or
               (Get-Item -LiteralPath $zipPath).Length -eq 0) {
             throw "expected non-empty package at $zipPath"

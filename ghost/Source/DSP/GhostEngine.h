@@ -152,6 +152,10 @@ public:
 
     void prepare(double sampleRate, int maxBlockSize);
     void reset();
+    // MIDI All Sound Off: kills every sounding voice like reset(), but
+    // keeps the controller state — bend and wheels are player positions,
+    // and CC120 is specified to stop sound without resetting controllers.
+    void stopAllSound();
     void setParameters(const EngineParameters& parameters);
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);

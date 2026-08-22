@@ -208,6 +208,9 @@ GhostAudioProcessorEditor::GhostAudioProcessorEditor(GhostAudioProcessor& p)
     pitchWheel.setRange(-1.0, 1.0, 0.0);
     pitchWheel.setValue(0.0, juce::dontSendNotification);
     pitchWheel.setDoubleClickReturnValue(true, 0.0);
+    // A scroll is not a drag, so onDragEnd would never spring the wheel
+    // back and the bend would latch; the spring only answers to dragging.
+    pitchWheel.setScrollWheelEnabled(false);
     pitchWheel.onValueChange = [this] {
         processor.setUiPitchBend(static_cast<float>(pitchWheel.getValue()));
     };
