@@ -371,6 +371,62 @@ void testAttackAimsPastItsPeak()
           "RC charge aiming 1.3x past it does");
 }
 
+// The travel-to-Q law is derived from the CEM3350's −65 mV/decade Q scale
+// and the Spirit's own pot network, anchored by the panel's LOW = Q 0.5.
+// Its signature is that resonance stays gentle through mid-travel and then
+// climbs steeply: Q ≈ 1.48 at half travel against ≈ 10.9 at nine tenths, a
+// ratio near 7.4. A resonant section's peak gain tracks its Q, so the
+// measured peak ratio is the law's fingerprint (OQ-12).
+void testResonanceFollowsTheDerivedQLaw()
+{
+    // Probe on the resonant peak itself: the filter is fed a note whose
+    // eighth harmonic sits at the cutoff, and that harmonic is measured.
+    const auto peakGain = [](float resonance) {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 256);
+        auto parameters = brightPanel();
+        parameters.oscAWaveform = ghostar::Waveform::Sawtooth;
+        parameters.upperResonance = ghostar::UpperResonanceMode::Variable;
+        parameters.slope = ghostar::UpperSlope::TwelveDb;
+        parameters.resonance = resonance;
+        parameters.cutoff = 0.5f;   // 20 Hz * 800^0.5 = 566 Hz
+        engine.setParameters(parameters);
+        engine.noteOn(46, 1.0f);    // ~93 Hz: sixth harmonic near 560 Hz
+        const auto samples = renderMono(engine, 0.9, 48000.0, 60);
+        return goertzelMagnitude(samples, 566.0, 48000.0);
+    };
+
+    const double atHalf = peakGain(0.5f);
+    const double atNineTenths = peakGain(0.9f);
+    const double ratio = atNineTenths / std::max(1.0e-12, atHalf);
+    check(ratio > 4.5 && ratio < 11.0,
+          "the resonant peak grows by the derived Q ratio between half and "
+          "nine-tenths travel");
+
+    // …and the law is gentle where the old voiced one was not: at half
+    // travel the section must still be close to critically damped, not
+    // ringing. Q = 1.48 puts the peak barely above 3 dB.
+    const auto flatness = [](float resonance) {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 256);
+        auto parameters = brightPanel();
+        parameters.upperResonance = ghostar::UpperResonanceMode::Variable;
+        parameters.slope = ghostar::UpperSlope::TwelveDb;
+        parameters.resonance = resonance;
+        parameters.cutoff = 0.5f;
+        parameters.filterPathA = 0.0f;
+        parameters.filterPathNoise = 0.8f;
+        engine.setParameters(parameters);
+        engine.noteOn(60, 1.0f);
+        const auto samples = renderMono(engine, 0.9, 48000.0, 60);
+        return goertzelMagnitude(samples, 566.0, 48000.0)
+             / std::max(1.0e-12,
+                        goertzelMagnitude(samples, 100.0, 48000.0));
+    };
+    check(flatness(0.5f) < 3.0,
+          "half travel is barely resonant, as Q = 1.5 requires");
+}
+
 // At full resonance the filter self-oscillates: kicked once, it keeps
 // singing after the kick is gone.
 void testSelfOscillation()
@@ -467,6 +523,7 @@ int main()
     testOverdriveCompresses();
     testDecayIsTheLabelledTimeConstant();
     testAttackAimsPastItsPeak();
+    testResonanceFollowsTheDerivedQLaw();
     testSelfOscillation();
     testBrightnessDarkensShaperPath();
     testShaperFreeModePulsesItsPath();

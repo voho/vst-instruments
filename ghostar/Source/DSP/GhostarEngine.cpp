@@ -275,13 +275,76 @@ namespace
         return std::abs(value) < 1.0e-30 ? 0.0 : value;
     }
 
-    // Resonance travel to the TPT damping k = 1/Q. Travel 0 = Q 0.5
-    // (the LOW switch value); full travel crosses into slight regeneration so
-    // the section truly self-oscillates against the node limiter, as the
-    // CEM3350's Q law reaches "oscillation".
-    [[nodiscard]] double dampingFromResonance(double travel) noexcept
+    // ------------------------------------------------- The resonance law
+    // Derived, not voiced: the CEM3350's Q control is exponential at
+    // −65 mV per decade of Q (datasheet © 1984; −62/−65/−68 mV window),
+    // and the Spirit's own network around it is legible in SM DWG 2. The
+    // RESONANCE pot is 100 kΩ linear with its top grounded and its bottom
+    // at −12 V; its wiper feeds each chip's Q pin through 18k2, and each Q
+    // pin carries a 221 Ω shunt to ground against a pull-up to +12 V —
+    // 91 kΩ at the Upper chip, 75 kΩ at the Lower, so the two filters do
+    // not share a travel-to-Q curve. The pot's own output impedance,
+    // 100 kΩ·t·(1−t), sits in series with the feed, and is what flattens
+    // the law through mid-travel.
+    //
+    // The absolute anchor the datasheet lacks comes from the panel: with
+    // the RESONANCE switch at LOW the pot is disconnected and the Upper Q
+    // pin rests at 12 V·221/(91 kΩ + 221 Ω) = +29.1 mV, where the manual
+    // says Q = 0.5. That one anchored point calibrates the whole law.
+    constexpr double resonancePotOhms = 100.0e3;
+    constexpr double resonanceFeedOhms = 18.2e3;
+    constexpr double resonanceShuntOhms = 221.0;
+    constexpr double upperPullupOhms = 91.0e3;
+    constexpr double lowerPullupOhms = 75.0e3;
+    constexpr double railVolts = 12.0;
+    constexpr double qVoltsPerDecade = 0.065;
+    constexpr double lowSwitchQ = 0.5;
+    constexpr double lowSwitchVolts =
+        railVolts * resonanceShuntOhms
+        / (upperPullupOhms + resonanceShuntOhms);
+
+    [[nodiscard]] double qPinVolts(double travel, double pullupOhms) noexcept
     {
-        return 2.0 * std::pow(0.01, clamp01(travel)) - 0.025;
+        const double t = clamp01(travel);
+        const double wiperOhms =
+            resonanceFeedOhms + resonancePotOhms * t * (1.0 - t);
+        const double conductance = 1.0 / wiperOhms + 1.0 / pullupOhms
+                                 + 1.0 / resonanceShuntOhms;
+        const double current =
+            -railVolts * t / wiperOhms + railVolts / pullupOhms;
+        return current / conductance;
+    }
+
+    [[nodiscard]] double resonanceQ(double travel, double pullupOhms) noexcept
+    {
+        return lowSwitchQ
+             * std::pow(10.0, -(qPinVolts(travel, pullupOhms)
+                                - lowSwitchVolts) / qVoltsPerDecade);
+    }
+
+    // Q to the TPT damping k = 1/Q. The network commands far more Q than
+    // the chip can hold — nominally 82 at full travel against the
+    // datasheet's 30 min / 50 typ "Maximum Q Without Enhancement" — while
+    // the manual anchors that resonance reaches self-oscillation at
+    // maximum. Reading that ceiling as the point where the chip's own loss
+    // is exactly cancelled reconciles the two: commanded Q beyond it is net
+    // negative damping, and the section sings against the BA130 limiter.
+    // The ceiling is the one number in this law still voiced (OQ-12).
+    constexpr double chipCeilingQ = 50.0;
+
+    [[nodiscard]] double dampingFromQ(double q) noexcept
+    {
+        return 1.0 / q - 1.0 / chipCeilingQ;
+    }
+
+    [[nodiscard]] double upperDamping(double travel) noexcept
+    {
+        return dampingFromQ(resonanceQ(travel, upperPullupOhms));
+    }
+
+    [[nodiscard]] double lowerDamping(double travel) noexcept
+    {
+        return dampingFromQ(resonanceQ(travel, lowerPullupOhms));
     }
 
     // Zeroth-order modified Bessel function, for the Kaiser windows the
@@ -1301,14 +1364,26 @@ void GhostarEngine::advanceControls() noexcept
     }
 
     // ------------------------------------------------------------ Filter CVs
-    // The cutoff bus, in octaves. MASTER spans the audio range (voiced
-    // 20 Hz..16 kHz, OQ-02); tracking reaches ~110 % and pivots at middle C
-    // (voiced pivot); the envelope straddles the cutoff by up to
-    // ±2.5 octaves (anchored).
+    // The cutoff bus, in octaves. MASTER's *span* is derived — the panel
+    // summer drives the CEM3350's frequency pin through 12k1 against a
+    // 274 Ω shunt, delivering 21.2 mV per volt against the chip's
+    // −19.6 mV/octave, and the pot's ±10.5 V swing is ±11.4 octaves of
+    // authority over a chip window about ten octaves wide — but its
+    // absolute *placement* is set by a 100 kΩ trimmer whose factory
+    // setting no document records, so the 20 Hz–16 kHz mapping stays
+    // voiced inside a ±2.3-octave trim authority (OQ-02).
+    //
+    // Tracking's 108 % falls out of the same ladder: full KB AMOUNT puts
+    // the keyboard's 1 V/octave bus through 12k1, so 21.2 mV/V ÷
+    // 19.6 mV/oct = 1.083 octaves per octave — which independently
+    // reproduces the manual's "slightly over 100 %" from the resistors
+    // rather than taking it on trust. The pivot note stays voiced (OQ-13);
+    // the envelope's ±2.5 octaves are anchored.
+    constexpr double trackingOctavesPerOctave = 1.083;
     const double upperBaseHz =
         exponentialTravel(p.cutoff, 20.0, 16000.0);
-    const double trackingOctaves = static_cast<double>(p.kbAmount) * 1.1
-        * (glidedNote_ - 60.0) / 12.0;
+    const double trackingOctaves = static_cast<double>(p.kbAmount)
+        * trackingOctavesPerOctave * (glidedNote_ - 60.0) / 12.0;
     const double envelopeOctaves =
         (static_cast<double>(p.filterEnvAmount) - 0.5) * 2.0 * 2.5
         * filterEnvelope_.level;
@@ -1328,10 +1403,12 @@ void GhostarEngine::advanceControls() noexcept
                         : 0.0);
     controlLowerCutoffHz_ = upperBaseHz * std::exp2(lowerOctaves);
 
-    controlLowerK_ = dampingFromResonance(p.resonance);
+    controlLowerK_ = lowerDamping(p.resonance);
+    // LOW throws the pot off the Upper chip's Q pin, leaving it on its own
+    // bias — the anchored Q = 0.5 the whole law is calibrated against.
     controlUpperK_ = p.upperResonance == UpperResonanceMode::Low
-                         ? 2.0
-                         : dampingFromResonance(p.resonance);
+                         ? dampingFromQ(lowSwitchQ)
+                         : upperDamping(p.resonance);
 
     // -------------------------------------------------------------- Gains
     controlLoudnessGain_ =
@@ -1523,7 +1600,8 @@ void GhostarEngine::renderVoiceSample() noexcept
     // controlled section alone. The first section always advances so its
     // state stays live across slope switches, like the lower section's.
     const double upperFirstLp =
-        runSection(upperFirst_, filterPath, upperG, 2.0, diodeDecay_).lp;
+        runSection(upperFirst_, filterPath, upperG,
+                   dampingFromQ(lowSwitchQ), diodeDecay_).lp;
     if (p.slope == UpperSlope::TwentyFourDb)
         filterPath = upperFirstLp;
     filterPath = runSection(upperSecond_, filterPath, upperG, controlUpperK_,
