@@ -307,6 +307,85 @@ void testUiQueueOverflowStillReleases()
             "overflowed note-offs still release every voice");
 }
 
+void testRetriggerAfterOverflowSurvives()
+{
+    // Re-pressing a key whose release was latched during a queue overflow
+    // supersedes that release: the stale latch must not cut the new note
+    // short once the queue drains.
+    YouKnow201AudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+
+    processor.triggerFromUi (60, 100);
+    juce::AudioBuffer<float> block (2, 256);
+    juce::MidiBuffer first;
+    processor.processBlock (block, first);  // note 60 is sounding and held
+
+    // Fill the queue with note-offs for a silent key, overflow the release
+    // of 60 so it latches, then re-press 60 while the queue is still full.
+    for (int i = 0; i < 64; ++i)
+        processor.releaseFromUi (61);
+    processor.releaseFromUi (60);       // queue full: latched instead
+    processor.triggerFromUi (60, 100);  // the press supersedes the latch
+
+    for (int i = 0; i < 400; ++i)
+    {
+        juce::MidiBuffer none;
+        processor.processBlock (block, none);
+    }
+    expect (processor.getActiveVoiceCount() >= 1,
+            "a re-pressed key outlives its overflowed release");
+}
+
+void testProgramStagingConsumedWithoutMessagePump()
+{
+    // A MIDI program change stages the factory patch and queues the
+    // parameter spray on the message thread. A host that drives processing
+    // from the message thread never pumps that queue, so the staging must be
+    // consumed in-process — otherwise it would pin the factory patch and eat
+    // every later parameter edit for the rest of the render.
+    YouKnow201AudioProcessor processor;
+    processor.prepareToPlay (44100.0, 512);
+
+    int superSawProgram = -1;
+    for (int index = 0; index < processor.getNumPrograms(); ++index)
+        if (processor.getProgramName (index) == "SuperLead201")
+            superSawProgram = index;
+
+    juce::AudioBuffer<float> block (2, 512);
+    juce::MidiBuffer programChange =
+        messageAt (juce::MidiMessage::programChange (1, superSawProgram));
+    processor.processBlock (block, programChange);
+    juce::MidiBuffer drain;
+    processor.processBlock (block, drain);
+
+    const int wave = (int) processor.parameters
+                         .getRawParameterValue ("up_osc1_wave")
+                         ->load();
+    expect (wave == 7, "the program's parameters landed without a message pump");
+
+    // With the staging consumed, parameter edits reach the render again:
+    // muting the tone must actually mute the note.
+    auto* level = processor.parameters.getParameter ("up_level");
+    level->setValueNotifyingHost (
+        processor.parameters.getParameterRange ("up_level").convertTo0to1 (0.0f));
+    juce::MidiBuffer note =
+        messageAt (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 120));
+    juce::AudioBuffer<float> capture (2, 44100);
+    capture.clear();
+    int written = 0;
+    for (int i = 0; written < capture.getNumSamples(); ++i)
+    {
+        juce::MidiBuffer events = i == 0 ? note : juce::MidiBuffer();
+        processor.processBlock (block, events);
+        const int count = juce::jmin (512, capture.getNumSamples() - written);
+        for (int channel = 0; channel < 2; ++channel)
+            capture.copyFrom (channel, written, block, channel, 0, count);
+        written += count;
+    }
+    expect (bufferRms (capture) < 1.0e-5,
+            "edits after the program change reach the audio path");
+}
+
 void testProgramsLoad()
 {
     YouKnow201AudioProcessor processor;
@@ -416,6 +495,8 @@ int main()
     testPanelCcAppliesWithinTheBlock();
     testProgramChangeStagesOnTheAudioPath();
     testUiQueueOverflowStillReleases();
+    testRetriggerAfterOverflowSurvives();
+    testProgramStagingConsumedWithoutMessagePump();
     testProgramsLoad();
     testStateRoundTrip();
     testEditorAndSnapshot();

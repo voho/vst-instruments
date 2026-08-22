@@ -599,13 +599,27 @@ void testAllSoundOffSilencesEffectTails()
     (void) renderScore (engine, { { 0.0, true, 60, 110 }, { 0.4, false, 60, 0 } },
                         1.0);
     engine.allSoundOff();
-    std::vector<float> left (4410), right (4410);
-    engine.process (left.data(), right.data(), 4410);
+    // The panic marks the effect histories stale rather than clearing them,
+    // so the silence must hold beyond the longest possible delay read — the
+    // window where wrongly-unmuted stale material would re-emerge.
+    std::vector<float> left (88200), right (88200);
+    engine.process (left.data(), right.data(), (int) left.size());
     double peak = 0.0;
     for (std::size_t i = 0; i < left.size(); ++i)
         peak = std::max ({ peak, std::abs ((double) left[i]),
                            std::abs ((double) right[i]) });
     expect (peak < 1.0e-6, "all-sound-off silences the effect tails too");
+
+    // And the effects keep working: a note struck after the panic still gets
+    // its delay repeats once its own dry sound has died away.
+    auto echoes = renderScore (engine, { { 0.0, true, 60, 110 },
+                                         { 0.1, false, 60, 0 } },
+                               1.0);
+    double echoPeak = 0.0;
+    for (std::size_t i = 22050; i < echoes.left.size(); ++i)
+        echoPeak = std::max ({ echoPeak, std::abs ((double) echoes.left[i]),
+                               std::abs ((double) echoes.right[i]) });
+    expect (echoPeak > 1.0e-4, "post-panic notes still feed the effects");
 }
 
 void testSyncFollowsSpecialOsc2Waves()

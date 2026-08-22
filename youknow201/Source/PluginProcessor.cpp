@@ -530,6 +530,15 @@ double YouKnow201AudioProcessor::getTailLengthSeconds() const
 
 void YouKnow201AudioProcessor::triggerFromUi (int note, int velocity) noexcept
 {
+    // A release latched during an earlier overflow is now stale: this press
+    // supersedes it, and if it survived, the audio thread could apply it
+    // right after the new note-on and cut the note short. Clearing it before
+    // publishing the note-on makes that impossible — the audio thread drains
+    // the queue before the latches, so once it can see this note-on, the
+    // stale bit is already gone.
+    note = juce::jlimit (0, 127, note);
+    forcedRelease[(std::size_t) (note >> 6)].fetch_and (
+        ~(1ull << (note & 63)), std::memory_order_acq_rel);
     const auto write = uiWrite.load (std::memory_order_relaxed);
     const auto read = uiRead.load (std::memory_order_acquire);
     if (write - read >= uiQueueCapacity)
@@ -690,6 +699,21 @@ void YouKnow201AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     engine.setMasterLevel ((int) std::lround (
         masterValue->load (std::memory_order_relaxed)));
+
+    // A MIDI program change queues its parameter spray on the message
+    // thread. When the host drives processing from the message thread itself
+    // (offline renders, headless harnesses), that queued call can never run
+    // before the next block, and the staging would pin the factory patch
+    // and eat every later parameter edit — so consume it here: on this
+    // thread, spraying the parameters is legal and cannot race the queued
+    // call, which also runs only on this thread.
+    if (const int pending = stagedProgram.load (std::memory_order_acquire);
+        pending >= 0)
+    {
+        auto* messageManager = juce::MessageManager::getInstanceWithoutCreating();
+        if (messageManager != nullptr && messageManager->isThisTheMessageThread())
+            applyProgram (pending);
+    }
 
     // While a program load is in flight, render the staged factory patch
     // atomically rather than a half-updated parameter snapshot.
