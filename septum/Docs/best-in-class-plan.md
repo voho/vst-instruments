@@ -409,3 +409,55 @@ The centre of the knob now does something audible, and the oscillation
 threshold has not moved: the top of the travel still crosses into the bounded
 self-oscillation the manual warns about, and the existing test that fences
 that still passes.
+
+#### Step 9 — three defects the review rounds found in the arpeggiator
+
+The automated review's fourth round raised two, and testing the second of them
+uncovered a third that was worse than either.
+
+**The tie chain measured DURATION against the wrong step.** A note-on tied
+across the grids that follow it holds for those grids plus DURATION of the
+final one. The gate summed the tied steps and then took the fraction from the
+step the chain *started* on, which is the same length on an even grid and a
+different one on a shuffled pair. A chain beginning on a Heavy sixteenth and
+tying into the following Light step lasted `short + ½·long` instead of
+`long + ½·short` — about a fifth of a beat early, and equally late for a chain
+starting on the Light step. The chain now carries its final step's length and
+the fraction is taken from that.
+
+**A shorter style fired a cell it does not have.** ARPEGGIO STYLE and END STEP
+are both automatable. The step counter is reduced modulo the pattern length
+*after* the step fires, so automating to a shorter pattern left it pointing
+past the new end: the switch spent one grid on an unused cell and then resumed
+from the wrong position. The counter is normalised before the step fires.
+
+**A plain run on a single held key went silent at DURATION 100 %.** This one
+was not reported; it turned up while building the test for the step counter,
+and it is the most serious of the three. Every plain run in the shipped set —
+`Straight 4`, `Straight 8` — puts each step on its own row, so one held key
+resolves to the *same pitch* on every step. Voices are released by pitch, and
+a row's gate is counted down in whole control ticks while the grid advances in
+samples, so a gate that should end exactly on a grid boundary was still a few
+samples alive when the next step fired. Its note-off then landed a tick later
+— on the note that had just started, at the same pitch. Measured on `Straight
+4` with one key held, whole-take RMS after the first grid:
+
+| DURATION | before | after |
+|---|---|---|
+| 50 % | 0.0490 | 0.0490 |
+| 100 % | **0.000119** | **0.0695** |
+| 120 % | 0.0310 | 0.0695 |
+
+At 100 % the pattern was inaudible; at 120 % every gate was cut back to its own
+grid, which is why it measured *shorter* than 50 %. A note-on now takes over
+any other claim on its pitch — another row's note, or a 120 % tail — since a
+claim that nothing downstream can tell apart from the new note is not a claim
+that can be kept. A repeated pitch retriggers, which is all a repeated pitch
+can do.
+
+Each of the three has a test that was checked by reverting its fix and watching
+it fail. Two further guards written along the way were removed again: with the
+pitch handover in place neither changed any measurement, and a fix that no test
+can distinguish from its absence is not a fix worth carrying. The committed
+demo audio is unchanged — `11-arpeggiator.wav` plays chords, so no row ever
+repeats a pitch in it.
