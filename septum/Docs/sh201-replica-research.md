@@ -222,12 +222,19 @@ not a modelled analog ladder.
 
 Implemented as a TPT state-variable filter; −12 dB is one resonant 2-pole
 stage, −24 dB cascades a second, non-resonant 2-pole stage (voiced
-topology, OQ-08). Resonance maps linearly to the SVF damping
-`k = 2 − 2.04·(v/127)`: Q ≈ 0.5 at zero, oscillation onset at v ≈ 124,
-slightly negative damping at 127 so self-oscillation grows until a
-continuous soft-knee state limiter holds it — matching the manual's "may not
-stop at all".
-The onset point and curve are voiced (OQ-08). Cutoff 0–127 maps
+topology, OQ-08). Resonance maps to the SVF damping through a square-root
+taper, `k = 2 − 2.04·√(v/127)`: Q ≈ 0.5 at zero, slightly negative damping at
+127 so self-oscillation grows until a continuous soft-knee state limiter holds
+it — matching the manual's "may not stop at all".
+
+Both endpoints are settled; the shape between them is not. A linear taper put
+the entire audible range of the control in the top fifth of its travel — the
+filter peaked by 1.38 dB at the exact centre of the knob — and the square-root
+taper that replaced it was **chosen by ear**, in the 2026-08-22 listening test
+recorded in the [best-in-class plan](best-in-class-plan.md), against a linear
+and a quadratic candidate. The centre of the knob now peaks by 5.4 dB. That is
+a choice, not a measurement: **OQ-08 is still open**, and the swept response
+from a real unit it names is still what would close it. Cutoff 0–127 maps
 exponentially over 20 Hz → 20.48 kHz (10 octaves, voiced, OQ-08); envelope
 depth ±63 spans ±10 octaves linearly; cutoff velocity sensitivity ±63
 spans ±4 octaves at the velocity extremes (voiced, OQ-08).

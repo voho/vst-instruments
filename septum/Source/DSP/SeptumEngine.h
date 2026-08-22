@@ -45,9 +45,18 @@ namespace mapping
     // Q = 0.5; zero is the oscillation threshold; the top of the knob goes
     // slightly negative so self-oscillation grows until the stage limiter
     // holds it, matching the manual's "may not stop at all" warning.
+    //
+    // Both endpoints are settled. The shape between them is not, and a linear
+    // taper put the whole audible range of the control in the top fifth of
+    // its travel: the filter peaked by 1.38 dB at the exact centre of the
+    // knob. The square-root taper below was **chosen by ear** in the
+    // 2026-08-22 listening test recorded in Docs/best-in-class-plan.md; it
+    // brings the centre of the knob to about +5.5 dB. That is a choice, not a
+    // measurement — OQ-08 is still open, and a swept response from a real
+    // unit is still what would close it.
     [[nodiscard]] inline double resonanceDamping (double value) noexcept
     {
-        return 2.0 - 2.04 * (value / 127.0);
+        return 2.0 - 2.04 * std::sqrt (std::clamp (value / 127.0, 0.0, 1.0));
     }
 
     // [voiced, OQ-09] Envelope attack 0-127 -> seconds, 1 ms to 5 s.
