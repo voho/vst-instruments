@@ -49,10 +49,10 @@ recorded in the [research contract](../sh201-replica-research.md).
 | --- | --- | ---: | ---: | ---: |
 | `01-supersaw-lead.wav` | Both oscillators SUPER SAW: a trance line into a held stack | 8.5 s | −9.3 dBFS | +6.3 dB |
 | `02-supersaw-spread-sweep.wav` | One chord while the spread knob sweeps the seven-saw detune curve | 7.8 s | −11.8 dBFS | +8.8 dB |
-| `03-fb-osc-lead.wav` | FB OSC from clean saw into feedback, then a legato solo phrase | 9.7 s | −23.7 dBFS | +20.7 dB |
-| `04-acid-filter-24db.wav` | The -24 dB low-pass at high resonance under a 16th-note line | 9.3 s | −30.0 dBFS | +27.0 dB |
-| `05-sync-sweeper.wav` | Oscillator sync swept by the pitch envelope and by hand | 8.8 s | −24.4 dBFS | +21.4 dB |
-| `06-ring-bell.wav` | Ring modulation: equal-sine product bells | 9.2 s | −16.5 dBFS | +13.5 dB |
+| `03-fb-osc-lead.wav` | FB OSC from clean saw into feedback, then a legato solo phrase | 9.7 s | −23.6 dBFS | +20.6 dB |
+| `04-acid-filter-24db.wav` | The -24 dB low-pass at high resonance under a 16th-note line | 9.3 s | −29.0 dBFS | +26.0 dB |
+| `05-sync-sweeper.wav` | Oscillator sync swept by the pitch envelope and by hand | 8.8 s | −24.3 dBFS | +21.3 dB |
+| `06-ring-bell.wav` | Ring modulation: equal-sine product bells | 9.2 s | −16.6 dBFS | +13.6 dB |
 | `07-pwm-strings.wav` | Pulse-width modulation strings through the chorus delay template | 15.8 s | −2.5 dBFS | −0.5 dB |
 | `08-sub-bass.wav` | Square plus sine an octave down with the LOW FREQ boost | 8.0 s | −21.1 dBFS | +18.1 dB |
 | `09-sample-hold-fx.wav` | Sample & hold LFO into the band-pass filter | 9.2 s | −27.6 dBFS | +24.6 dB |
