@@ -1269,6 +1269,132 @@ void testArpeggiatorEdgeCases()
                     + std::to_string (first) + ", hard " + std::to_string (second)
                     + ")");
     }
+
+    // 9. A tie chain across a shuffled pair takes DURATION from the step it
+    //    ends on, not the one it started on. On an even grid the two are the
+    //    same length and the distinction is invisible; on a shuffled pair it
+    //    is a fifth of a beat.
+    {
+        septum::Patch shuffled = base;
+        shuffled.arpeggio.grid = septum::ArpeggioGrid::EighthHeavy;
+        shuffled.arpeggio.duration = septum::ArpeggioDuration::P50;
+        shuffled.arpeggio.style = septum::ArpeggioStyle {};
+        shuffled.arpeggio.style.endStep = 2;
+        shuffled.arpeggio.style.cells[0][0] = 100;                 // the long step
+        shuffled.arpeggio.style.cells[1][0] = septum::arpeggioTie; // into the short one
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (shuffled);
+        engine.reset();
+        auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 1.0, sampleRate);
+        // At 120 BPM the Heavy pair is 0.33 s then 0.17 s. The chain covers
+        // both, so the gate is 0.33 + 50 % of 0.17 = 0.415 s. Taking the
+        // fraction from the step the chain started on instead gives
+        // 0.17 + 50 % of 0.33 = 0.335 s, silent well before 0.36 s.
+        const double sounding = take.rms ((std::size_t) (sampleRate * 0.10),
+                                          (std::size_t) (sampleRate * 0.30));
+        const double late = take.rms ((std::size_t) (sampleRate * 0.36),
+                                      (std::size_t) (sampleRate * 0.40));
+        expect (late > 0.2 * sounding,
+                "a tie chain across a shuffled pair ends DURATION into the "
+                "step it ends on (" + std::to_string (late) + " against "
+                    + std::to_string (sounding) + ")");
+    }
+
+    // 10. ARPEGGIO STYLE is automatable. Switching to a shorter pattern must
+    //     not spend a grid on a cell the new style does not use.
+    {
+        septum::Patch longStyle = base;
+        longStyle.arpeggio.grid = septum::ArpeggioGrid::Quarter;   // 0.5 s a step
+        longStyle.arpeggio.duration = septum::ArpeggioDuration::P100;
+        longStyle.arpeggio.style = septum::ArpeggioStyle {};
+        longStyle.arpeggio.style.endStep = 8;
+        for (int step = 0; step < 8; ++step)
+            longStyle.arpeggio.style.cells[step][0] = 100;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (longStyle);
+        engine.reset();
+        engine.noteOn (60, 100);
+
+        // Run to 2.7 s: step 5 fired at 2.5 s, so the counter stands at 6 -
+        // past the end of the four-step style selected next.
+        const std::size_t lead = (std::size_t) (sampleRate * 2.7);
+        std::vector<float> leadL (lead), leadR (lead);
+        engine.process (leadL.data(), leadR.data(), (int) lead);
+
+        septum::Patch shortStyle = longStyle;
+        shortStyle.arpeggio.style.endStep = 4;
+        for (int step = 4; step < 8; ++step)
+            shortStyle.arpeggio.style.cells[step][0] = septum::arpeggioRest;
+        engine.setPatch (shortStyle);
+
+        const std::size_t tail = (std::size_t) (sampleRate * 0.8);
+        std::vector<float> tailL (tail), tailR (tail);
+        engine.process (tailL.data(), tailR.data(), (int) tail);
+
+        const auto rmsOver = [] (const std::vector<float>& buffer,
+                                 std::size_t from, std::size_t to)
+        {
+            double sum = 0.0;
+            for (std::size_t i = from; i < to && i < buffer.size(); ++i)
+                sum += buffer[i] * (double) buffer[i];
+            return std::sqrt (sum / (double) (to - from));
+        };
+
+        // A grid known to sound, for scale, against the grid beginning at
+        // 3.0 s - which is 0.3 s into the tail buffer.
+        const double reference = rmsOver (leadL,
+                                          (std::size_t) (sampleRate * 2.05),
+                                          (std::size_t) (sampleRate * 2.45));
+        const double afterSwitch = rmsOver (tailL,
+                                            (std::size_t) (sampleRate * 0.35),
+                                            (std::size_t) (sampleRate * 0.75));
+        expect (afterSwitch > 0.25 * reference,
+                "a shorter style fires a step it actually has rather than an "
+                "unused cell (" + std::to_string (afterSwitch) + " against "
+                    + std::to_string (reference) + ")");
+    }
+
+    // 11. A plain run walks one held key across every one of its rows, so a
+    //     single key repeats the same pitch on every step. Voices are
+    //     released by pitch, so a gate allowed to outlive its own grid ends
+    //     the note that just started: at DURATION 100 % that silenced the
+    //     whole pattern, and at 120 % it cut every note short.
+    {
+        septum::Patch run = base;
+        run.arpeggio.grid = septum::ArpeggioGrid::Eighth;
+        run.arpeggio.duration = septum::ArpeggioDuration::P100;
+        septum::applyArpeggioStyle (run, 0);         // "Straight 4", one row a step
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (run);
+        engine.reset();
+        auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 2.0, sampleRate);
+        const double sounding = take.rms ((std::size_t) (sampleRate * 0.5),
+                                          take.left.size());
+        expect (sounding > 0.02,
+                "a plain run on one held key still sounds at DURATION 100 % ("
+                    + std::to_string (sounding) + ")");
+
+        septum::Patch longer = run;
+        longer.arpeggio.duration = septum::ArpeggioDuration::P120;
+        septum::Engine wide;
+        wide.prepare (sampleRate, 256);
+        wide.setPatch (longer);
+        wide.reset();
+        auto overlapped = renderScore (wide, { { 0.0, true, 60, 100 } }, 2.0,
+                                       sampleRate);
+        const double wider = overlapped.rms ((std::size_t) (sampleRate * 0.5),
+                                             overlapped.left.size());
+        expect (wider > 0.9 * sounding,
+                "and a 120 % gate on a repeated pitch is not cut shorter than "
+                "a 100 % one (" + std::to_string (wider) + " against "
+                    + std::to_string (sounding) + ")");
+    }
 }
 
 void testArpeggioOctaveRange()

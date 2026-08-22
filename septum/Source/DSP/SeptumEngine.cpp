@@ -1928,15 +1928,22 @@ void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
             continue;
 
         // A note-on holds for the grids it is tied across plus DURATION of the
-        // final one. The chain is measured in real step lengths, so a shuffled
-        // grid's uneven pair does not stretch or shorten it.
+        // final one. Which step the fraction is measured against matters on a
+        // shuffled grid, where the pair is uneven: every step of the chain but
+        // the last contributes its whole length, and DURATION is taken from
+        // the last step's length. Measuring it against the step the chain
+        // started on instead swaps the two, so a chain that begins on a Heavy
+        // sixteenth and ties into the following Light one ended a fifth of a
+        // beat early, and one starting on the Light step ended equally late.
         double heldSeconds = 0.0;
+        double lastStepSeconds = stepSeconds;
         for (int ahead = 1; ahead < endStep; ++ahead)
         {
             const int step = (arpeggioStep_ + ahead) % endStep;
             if (style.cell (step, row) != arpeggioTie)
                 break;
-            heldSeconds += mapping::arpeggioStepSeconds (patch_.tempo, arp.grid, step);
+            heldSeconds += lastStepSeconds;
+            lastStepSeconds = mapping::arpeggioStepSeconds (patch_.tempo, arp.grid, step);
         }
 
         if (state.note >= 0)
@@ -1971,6 +1978,33 @@ void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
         }
         const int note = clampRaw (key + 12 * octave, 0, 127);
 
+        // Any other claim on the pitch about to start - this row's own gate
+        // from the previous grid, or another row still sounding it - would end
+        // the note starting here when it expires, because voices are released
+        // by pitch and nothing downstream can tell the two apart. A plain run
+        // walks one held key across every row, so a single key repeats its
+        // pitch on every step and this is the ordinary case, not a corner:
+        // left alone it silenced a 100 % pattern outright and cut every
+        // 120 % gate back to its own grid. The pitch is handed over here
+        // instead, which is all a repeated pitch can do.
+        for (int other = 0; other < arpeggioMaxRows; ++other)
+        {
+            auto& claim = runtime.rows[static_cast<std::size_t> (other)];
+            if (other != row && claim.note == note)
+            {
+                releaseNoteForPart (part, claim.note);
+                claim.note = -1;
+                claim.remaining = 0;
+                claim.sustained = false;
+            }
+            if (claim.tailNote == note)
+            {
+                releaseNoteForPart (part, claim.tailNote);
+                claim.tailNote = -1;
+                claim.tailRemaining = 0;
+            }
+        }
+
         // ARPEGGIO VELOCITY chooses what "how hard you played" means: REAL is
         // the velocity of the key this note actually came from, so a chord
         // played unevenly stays uneven. ACCENT then blends the style's
@@ -1994,7 +2028,7 @@ void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
         state.sustained = sustained;
         state.remaining =
             sustained ? 0
-                      : static_cast<int> ((heldSeconds + stepSeconds * durationFraction)
+                      : static_cast<int> ((heldSeconds + lastStepSeconds * durationFraction)
                                           * sampleRate_);
     }
 }
@@ -2151,11 +2185,16 @@ void Engine::advanceArpeggiator (int samples)
     {
         if (arpeggioStepRemaining_ <= 0.0)
         {
+            const int endStep = std::clamp (arp.style.endStep, 1, arpeggioMaxSteps);
+            // ARPEGGIO STYLE and END STEP are both automatable, so the counter
+            // can be left past the end of a pattern that just got shorter.
+            // Normalise before firing, or the switch spends one grid on a cell
+            // the new style does not use and then resumes from the wrong place.
+            arpeggioStep_ %= endStep;
             arpeggioFireStep();
             arpeggioStepRemaining_ =
                 mapping::arpeggioStepSeconds (patch_.tempo, arp.grid, arpeggioStep_)
                 * sampleRate_;
-            const int endStep = std::clamp (arp.style.endStep, 1, arpeggioMaxSteps);
             arpeggioStep_ = (arpeggioStep_ + 1) % endStep;
             if (arpeggioStep_ == 0)
                 for (auto& runtime : arpeggios_)

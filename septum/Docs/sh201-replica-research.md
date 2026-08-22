@@ -396,7 +396,11 @@ play each key", and one style is saved per patch. Its parameters:
   its total length so the beat never drifts.
 - **DURATION** — 30…120 % of the final grid section of a tie chain, or FUL,
   which "continues to sound until the point at which the next new sound is
-  specified".
+  specified". On a shuffled grid the sections of a pair are different lengths,
+  so *which* section the percentage is measured against is not a detail: it is
+  the final one, the one the chain ends on, not the one it started from.
+  A percentage at or below 100 therefore never reaches into the next grid,
+  and only 120 % overlaps.
 - **MOTIF** — twelve values, whose meanings the manual gives *by worked
   example*: for the style `1-2-3-2` against the keys C-D-E-F-G,
   `UP(-)` gives C-D-E-D → D-E-F-E → E-F-G-F, `UP(L)` gives C-D-E-D → C-E-F-E →
