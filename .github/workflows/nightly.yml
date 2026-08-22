@@ -58,7 +58,7 @@ jobs:
             "taikor:TaikorRenderDemos:27"
             "youknow106:YouKnow106RenderDemos:10"
             "youknow201:YouKnow201RenderDemos:10"
-            "ghost:GhostRenderDemos:10"
+            "ghostar:GhostarRenderDemos:10"
           )
 
           # A failed instrument contributes nothing to the commit below. The
@@ -131,7 +131,7 @@ jobs:
           # which git diff alone would not see.
           git add -A vocalor/Docs/audio drumalor/Docs/audio \
             neuramar/Docs/audio electry/Docs/audio taikor/Docs/audio \
-            youknow106/Docs/audio youknow201/Docs/audio ghost/Docs/audio
+            youknow106/Docs/audio youknow201/Docs/audio ghostar/Docs/audio
           if git diff --cached --quiet; then
             echo "Demo audio is unchanged; nothing to commit."
             exit 0
@@ -147,11 +147,11 @@ jobs:
             # be wrong, and the next nightly will render the newer tree.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
                 vocalor drumalor neuramar electry taikor youknow106 \
-                youknow201 ghost \
+                youknow201 ghostar \
                 ':(exclude)vocalor/Docs' ':(exclude)drumalor/Docs' \
                 ':(exclude)neuramar/Docs' ':(exclude)electry/Docs' \
                 ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs' \
-                ':(exclude)youknow201/Docs' ':(exclude)ghost/Docs'; then
+                ':(exclude)youknow201/Docs' ':(exclude)ghostar/Docs'; then
               echo "An instrument changed upstream during the render; deferring to the next nightly."
               exit 0
             fi
@@ -213,9 +213,9 @@ jobs:
           - name: YouKnow201
             directory: youknow201
             snapshot_variable: YOUKNOW201_EDITOR_SNAPSHOT
-          - name: Ghost
-            directory: ghost
-            snapshot_variable: GHOST_EDITOR_SNAPSHOT
+          - name: Ghostar
+            directory: ghostar
+            snapshot_variable: GHOSTAR_EDITOR_SNAPSHOT
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -350,9 +350,9 @@ jobs:
           - name: YouKnow201
             directory: youknow201
             build_plugin_option: YOUKNOW201_BUILD_PLUGIN
-          - name: Ghost
-            directory: ghost
-            build_plugin_option: GHOST_BUILD_PLUGIN
+          - name: Ghostar
+            directory: ghostar
+            build_plugin_option: GHOSTAR_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -449,9 +449,9 @@ jobs:
           - name: YouKnow201
             directory: youknow201
             build_plugin_option: YOUKNOW201_BUILD_PLUGIN
-          - name: Ghost
-            directory: ghost
-            build_plugin_option: GHOST_BUILD_PLUGIN
+          - name: Ghostar
+            directory: ghostar
+            build_plugin_option: GHOSTAR_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -545,7 +545,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=()
-          for directory in vocalor drumalor neuramar electry taikor youknow106 youknow201 ghost; do
+          for directory in vocalor drumalor neuramar electry taikor youknow106 youknow201 ghostar; do
             rendered="rendered-screenshots/${directory}-standalone.png"
             if [[ -s "$rendered" ]]; then
               mkdir -p "${directory}/Docs/screenshots"
@@ -574,7 +574,7 @@ jobs:
           # brand-new instrument whose build failed cannot cost the others
           # their commit.
           paths=()
-          for directory in vocalor drumalor neuramar electry taikor youknow106 youknow201 ghost; do
+          for directory in vocalor drumalor neuramar electry taikor youknow106 youknow201 ghostar; do
             if [[ -d "${directory}/Docs/screenshots" ]]; then
               paths+=("${directory}/Docs/screenshots")
             fi
@@ -602,11 +602,11 @@ jobs:
             # render, so it does not defer the push.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
                 vocalor drumalor neuramar electry taikor youknow106 \
-                youknow201 ghost \
+                youknow201 ghostar \
                 ':(exclude)vocalor/Docs' ':(exclude)drumalor/Docs' \
                 ':(exclude)neuramar/Docs' ':(exclude)electry/Docs' \
                 ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs' \
-                ':(exclude)youknow201/Docs' ':(exclude)ghost/Docs'; then
+                ':(exclude)youknow201/Docs' ':(exclude)ghostar/Docs'; then
               echo "Instrument code changed upstream during the build; deferring the screenshot refresh to the next nightly."
               exit 0
             fi
@@ -660,7 +660,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for product in Vocalor Drumalor Neuramar Electry Taikor YouKnow106 YouKnow201 Ghost; do
+          for product in Vocalor Drumalor Neuramar Electry Taikor YouKnow106 YouKnow201 Ghostar; do
             # Deliberately expand this glob so the array contains every match.
             # shellcheck disable=SC2206
             mac_zips=(dist/${product}-*-macOS-universal.zip)
