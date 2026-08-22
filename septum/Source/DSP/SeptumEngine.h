@@ -682,9 +682,17 @@ struct OverdriveStage
     double previousIntegral { 0.0 };
     std::array<double, 32> bypass {};
     int bypassWrite { 0 };
+    // OVERDRIVE is automatable, and every state in the chain carries across
+    // samples. Rather than shape unconditionally, the stage notices the
+    // switch coming back and rebuilds itself from the history the bypass line
+    // is already keeping.
+    bool wasEnabled { false };
 
     void prepare (double hostRateHz) noexcept;
     void clear() noexcept;
+    // One host sample through the resampler and the shaper, ADAA state and
+    // all. The output is the shaped sample before output compensation.
+    [[nodiscard]] double shapeChain (double x, double preGain) noexcept;
     [[nodiscard]] double process (double x, double preGain, double compensation,
                                   bool enabled) noexcept;
 };

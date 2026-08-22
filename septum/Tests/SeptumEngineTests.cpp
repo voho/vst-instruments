@@ -466,6 +466,140 @@ void testSuperSawSpread()
             "full spread puts a partial on the outermost Szabo offset");
 }
 
+// The AMP overdrive stage carries the latency every voice pays, shaping or
+// not, so its state belongs with the filter's: kept when a voice is taken
+// over, cleared only when a fresh one starts. Clearing it emptied the delay
+// line the clean path reads from, and the voice went silent for the whole
+// reported latency. SOLO is where one voice can be watched on its own: a new
+// key takes the sounding voice over exactly as a steal does.
+void testTakingAVoiceOverDoesNotBlankIt()
+{
+    const double sampleRate = 44100.0;
+    septum::Patch patch = plainSawPatch();
+    patch.upper.osc1.wave = septum::Waveform::Sine;
+    patch.upper.balance = -63;
+    patch.upper.mono = septum::MonoMode::Solo;
+    patch.upper.ampEnvAttack = 0;
+    patch.upper.ampEnvSustain = 127;
+    patch.upper.level = 127;
+    patch.upper.overdrive = false;
+    patch.delayOn = false;
+    patch.reverbOn = false;
+
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    engine.setPatch (patch);
+    engine.reset();
+    const int latency = engine.latencySamples();
+    expect (latency > 0, "the overdrive chain reports a latency at 44.1 kHz");
+
+    auto take = renderScore (engine,
+                             { { 0.0, true, 60, 100 }, { 0.3, true, 67, 100 } },
+                             0.6, sampleRate);
+
+    const auto handover = (std::size_t) (sampleRate * 0.3);
+    double reference = 0.0;
+    for (std::size_t i = handover - 400; i < handover; ++i)
+        reference = std::max (reference, std::abs ((double) take.left[i]));
+    expect (reference > 0.01, "the solo voice is sounding into the handover");
+
+    // With the line emptied under it the voice reads silence for the whole
+    // latency; the output stage's own poles let that through in a sample or
+    // two, so what shows is a run of near-zero samples the sine cannot make
+    // this quickly.
+    int worstRun = 0, run = 0;
+    for (std::size_t i = handover; i < handover + 400; ++i)
+    {
+        if (std::abs ((double) take.left[i]) < 0.02 * reference)
+            worstRun = std::max (worstRun, ++run);
+        else
+            run = 0;
+    }
+    expect (worstRun < latency - 2,
+            "the voice keeps sounding through the handover (near-silent run "
+                + std::to_string (worstRun) + " samples, latency "
+                + std::to_string (latency) + ")");
+}
+
+// OVERDRIVE is an automatable switch, and the stage behind it carries a
+// resampler and an antiderivative reference. Left standing while the switch
+// was off, they answer it coming back with whatever was playing when it was
+// last on — a third of a second earlier here, which for a held sine is the
+// wrong phase entirely.
+//
+// The switch itself is a change of signal, so the take cannot be read against
+// its own slope. It is read against the same note with OVERDRIVE on
+// throughout: the voice state is identical in both, so once the stage has
+// been fed the same recent history the two must agree sample for sample.
+void testOverdriveSwitchesBackInFromLiveState()
+{
+    const double sampleRate = 44100.0;
+    const std::size_t block = 64;
+    const std::size_t total = (std::size_t) (sampleRate * 0.6);
+    // Block-aligned, so the samples compared below are the ones the switch
+    // has actually reached.
+    const std::size_t offAt = ((std::size_t) (sampleRate * 0.1) / block) * block;
+    const std::size_t onAt = ((std::size_t) (sampleRate * 0.4) / block) * block;
+
+    const auto render = [&] (bool cycleTheSwitch)
+    {
+        septum::Patch driven = plainSawPatch();
+        driven.upper.osc1.wave = septum::Waveform::Sine;
+        driven.upper.balance = -63;
+        driven.upper.ampEnvSustain = 127;
+        driven.upper.ampEnvAttack = 0;
+        driven.upper.level = 127;
+        driven.upper.overdrive = true;
+        driven.upper.drive = 100;
+        driven.delayOn = false;
+        driven.reverbOn = false;
+        septum::Patch clean = driven;
+        clean.upper.overdrive = false;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (driven);
+        engine.reset();
+        engine.noteOn (48, 100);
+
+        std::vector<float> left (total), right (total);
+        for (std::size_t pos = 0; pos < total; pos += block)
+        {
+            if (cycleTheSwitch && pos >= offAt && pos < offAt + block)
+                engine.setPatch (clean);
+            if (cycleTheSwitch && pos >= onAt && pos < onAt + block)
+                engine.setPatch (driven);
+            engine.process (left.data() + pos, right.data() + pos,
+                            (int) std::min (block, total - pos));
+        }
+        return left;
+    };
+
+    const auto always = render (false);
+    const auto cycled = render (true);
+
+    double peak = 0.0;
+    for (std::size_t i = onAt; i < total; ++i)
+        peak = std::max (peak, std::abs ((double) always[i]));
+    expect (peak > 0.01, "the overdriven sine sounds");
+
+    // The first block after the switch: the stage has to pick the signal up
+    // where it actually is, not where it left it.
+    double worst = 0.0;
+    for (std::size_t i = onAt; i < onAt + 128 && i < total; ++i)
+        worst = std::max (worst,
+                          std::abs ((double) cycled[i] - (double) always[i]));
+    // Not zero: the two takes ran different signals for a third of a second,
+    // so the output stage's own coupling capacitor is holding a different
+    // offset in each, and it discharges over half a second. What the check
+    // catches is the chain answering with old audio, which was twice the
+    // peak.
+    expect (worst < 0.2 * peak,
+            "OVERDRIVE comes back on the signal that is playing (worst "
+                + std::to_string (worst) + " against a peak of "
+                + std::to_string (peak) + ")");
+}
+
 void testSplitAndDualVoicing()
 {
     septum::Patch patch = plainSawPatch();
@@ -2830,6 +2964,8 @@ int main()
     testRingModulation();
     testOscillatorSync();
     testSuperSawSpread();
+    testTakingAVoiceOverDoesNotBlankIt();
+    testOverdriveSwitchesBackInFromLiveState();
     testSplitAndDualVoicing();
     testControllerDestinations();
     testSoloAndHold();

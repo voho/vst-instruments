@@ -910,3 +910,38 @@ than 34 dB while the other one is untouched.
 Seven checks fence the three destinations, all watched to fail when
 `destinationReaches` is made to return true unconditionally. No shipped preset
 sets a destination away from BOTH, so the committed demos are unchanged.
+
+#### Step 22 — two states behind the AMP stage, one cleared and one frozen
+
+**A voice taken over lost the delay line it reads from.** `triggerVoice`
+guards the filter and shelf states with `if (! wasActive)` — a stolen voice
+keeps them deliberately, because its envelope carries on from where it was —
+and cleared `voice.overdrive` outside that guard, on every non-legato trigger.
+The overdrive stage carries the group delay *every* voice pays, shaping or
+not, so emptying its line under a sounding voice reads silence for the whole
+of it. Measured in SOLO, where one voice can be watched on its own: a run of
+**18 near-silent samples** where the reported latency is 19. The `clear()`
+moved inside the guard, beside the filter's.
+
+**The chain stood still while OVERDRIVE was off.** Two half-band stages, up
+and down, plus the ADAA's antiderivative reference, all carrying across
+samples, all behind an automatable switch. Frozen while the switch was out,
+they answered it coming back with whatever was playing when it was last in.
+Measured against the same note with OVERDRIVE on throughout — identical voice
+state, so the two takes must agree once the chain has the same recent history
+— the first block after the switch differed by **0.078 against a peak of
+0.039**: twice the signal, from a third of a second earlier.
+
+The fix is not to shape unconditionally. Every state in the chain is linear or
+depends only on the last few samples, and the bypass delay line has been
+keeping that history all along for its own reasons, so the stage replays the
+ring on the switch's rising edge and rebuilds itself exactly. The same
+measurement after: **0.005**, which is the two takes' output-coupling
+capacitors holding different offsets rather than anything the chain did.
+Cost, ten supersaw voices with delay and reverb at 48 kHz: 0.066 → 0.068 ×
+realtime with OVERDRIVE off, unchanged at 0.115 with it on. Shaping
+unconditionally would have cost 0.113 with it off — correct, and 40 times the
+price of being correct this way.
+
+Two checks fence them, each watched to fail with its own change reverted. The
+committed demos are unchanged: no demo steals a voice or automates the switch.

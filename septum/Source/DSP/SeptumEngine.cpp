@@ -293,24 +293,11 @@ void OverdriveStage::clear() noexcept
     previousIntegral = logCosh (0.0);
     bypass.fill (0.0);
     bypassWrite = 0;
+    wasEnabled = false;
 }
 
-double OverdriveStage::process (double x, double preGain, double compensation,
-                                bool enabled) noexcept
+double OverdriveStage::shapeChain (double x, double preGain) noexcept
 {
-    // The delay line runs whether the shaper does or not. Feeding it only
-    // while the switch is off would leave it holding pre-switch audio, and
-    // turning OVERDRIVE off would replay that burst before the current signal
-    // caught up.
-    const auto size = static_cast<int> (bypass.size());
-    bypass[static_cast<std::size_t> (bypassWrite)] = x;
-    const double delayed =
-        bypass[static_cast<std::size_t> ((bypassWrite - latency + size) % size)];
-    bypassWrite = (bypassWrite + 1) % size;
-
-    if (! enabled)
-        return latency == 0 ? x : delayed;
-
     // First-order antiderivative anti-aliasing of tanh.
     const auto shape = [this] (double input)
     {
@@ -329,35 +316,72 @@ double OverdriveStage::process (double x, double preGain, double compensation,
     // to `shape` lands in a named local first: the order the shaper sees its
     // input in is the order time runs in, not whatever order the compiler
     // picks for a call's arguments.
-    double shaped = 0.0;
     if (factor == 1)
-    {
-        shaped = shape (preGain * x);
-    }
-    else if (factor == 2)
+        return shape (preGain * x);
+
+    if (factor == 2)
     {
         double a = 0.0, b = 0.0;
         outer.upsample (x, a, b);
         const double shapedA = shape (preGain * a);
         const double shapedB = shape (preGain * b);
-        shaped = outer.downsample (shapedA, shapedB);
+        return outer.downsample (shapedA, shapedB);
     }
-    else
+
+    double a = 0.0, b = 0.0;
+    outer.upsample (x, a, b);
+    double a0 = 0.0, a1 = 0.0, b0 = 0.0, b1 = 0.0;
+    inner.upsample (a, a0, a1);
+    inner.upsample (b, b0, b1);
+    const double shapedA0 = shape (preGain * a0);
+    const double shapedA1 = shape (preGain * a1);
+    const double down0 = inner.downsample (shapedA0, shapedA1);
+    const double shapedB0 = shape (preGain * b0);
+    const double shapedB1 = shape (preGain * b1);
+    const double down1 = inner.downsample (shapedB0, shapedB1);
+    return outer.downsample (down0, down1);
+}
+
+double OverdriveStage::process (double x, double preGain, double compensation,
+                                bool enabled) noexcept
+{
+    // The delay line runs whether the shaper does or not. Feeding it only
+    // while the switch is off would leave it holding pre-switch audio, and
+    // turning OVERDRIVE off would replay that burst before the current signal
+    // caught up.
+    const auto size = static_cast<int> (bypass.size());
+    const int written = bypassWrite;
+    bypass[static_cast<std::size_t> (written)] = x;
+    const double delayed =
+        bypass[static_cast<std::size_t> ((written - latency + size) % size)];
+    bypassWrite = (bypassWrite + 1) % size;
+
+    if (! enabled)
     {
-        double a = 0.0, b = 0.0;
-        outer.upsample (x, a, b);
-        double a0 = 0.0, a1 = 0.0, b0 = 0.0, b1 = 0.0;
-        inner.upsample (a, a0, a1);
-        inner.upsample (b, b0, b1);
-        const double shapedA0 = shape (preGain * a0);
-        const double shapedA1 = shape (preGain * a1);
-        const double down0 = inner.downsample (shapedA0, shapedA1);
-        const double shapedB0 = shape (preGain * b0);
-        const double shapedB1 = shape (preGain * b1);
-        const double down1 = inner.downsample (shapedB0, shapedB1);
-        shaped = outer.downsample (down0, down1);
+        wasEnabled = false;
+        return latency == 0 ? x : delayed;
     }
-    return shaped * compensation;
+
+    // OVERDRIVE has just come back in. Every state in this chain — the two
+    // half-band stages, up and down, and the ADAA's antiderivative reference
+    // — carries across samples, and standing still while the switch was out
+    // left them describing whatever was playing when it was last in, a third
+    // of a second ago or a minute. They are all linear or memoryless in the
+    // last few samples, so the history the bypass line has been keeping all
+    // along is enough to rebuild them exactly: replay it, throw the output
+    // away, and the first shaped sample lands on the signal that is actually
+    // playing. It costs one ring's worth of chain evaluations at the
+    // transition and nothing at all while the switch stays put.
+    if (! wasEnabled)
+    {
+        wasEnabled = true;
+        for (int i = size - 1; i >= 1; --i)
+            (void) shapeChain (
+                bypass[static_cast<std::size_t> ((written - i + size) % size)],
+                preGain);
+    }
+
+    return shapeChain (x, preGain) * compensation;
 }
 
 // ---------------------------------------------------------------------------
@@ -967,7 +991,6 @@ void Engine::triggerVoice (Voice& voice, Part part, int note, double velocity,
                 phase = nextRandom() * (1.0 / 4294967296.0);
             osc->clearRuntime();
         }
-        voice.overdrive.clear();
         voice.noiseRng = nextRandom() | 1u;
         voice.controlsPrimed = false;  // snap cutoff/resonance to this note
         if (! wasActive)
@@ -975,6 +998,13 @@ void Engine::triggerVoice (Voice& voice, Part part, int note, double velocity,
             voice.filter1.clear();
             voice.filter2.clear();
             voice.shelfState = 0.0;
+            // The overdrive stage belongs with them. A *stolen* voice keeps
+            // its filter and its envelope level deliberately, and clearing
+            // the stage's matched delay line under it emptied the line the
+            // clean path reads from: the note it was still sounding went
+            // silent for the whole of the reported latency before the new
+            // one arrived.
+            voice.overdrive.clear();
         }
     }
 }
