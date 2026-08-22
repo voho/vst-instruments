@@ -260,3 +260,12 @@ Three tests fence it: the 100 Hz fold line must stay 60 dB below the
 fundamental at 44.1, 48 and 88.2 kHz; the clean and overdriven paths must
 cross-correlate to a peak at lag zero; and the reported latency must match the
 chain at each rate.
+
+#### Step 3 — sostenuto
+
+CC#66 latches the notes whose keys are down at the moment it arrives and holds
+only those; a key pressed afterwards plays and releases normally. It is
+independent of the hold pedal — a note caught by both releases only when both
+are up — and a stolen voice loses its latch, because the latch belonged to the
+note the pedal caught rather than to the physical voice. The contract's scope
+section no longer defers it.

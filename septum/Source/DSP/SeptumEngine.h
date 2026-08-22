@@ -374,6 +374,7 @@ public:
     void noteOn (int note, int velocity1to127);
     void noteOff (int note);
     void setHold (bool down);
+    void setSostenuto (bool down);
     void setPitchBend (double normalised);   // -1..+1 over the per-tone range
     void setModulation (double amount0to1);  // mod lever / CC#1
     void setExpression (double amount0to1);  // CC#11
@@ -497,6 +498,9 @@ private:
         int note { -1 };
         double velocity { 0.0 };
         bool held { false };          // key (or pedal) still down
+        // Settled (part controller CC#66): the sostenuto pedal latches the
+        // notes that were sounding when it went down and holds only those.
+        bool sostenuto { false };
         std::uint32_t age { 0 };
 
         OscState osc1 {}, osc2 {};
@@ -587,6 +591,8 @@ private:
         return tones_[part == Part::Upper ? 0 : 1];
     }
     [[nodiscard]] bool partSounds (Part part) const noexcept;
+    [[nodiscard]] bool keyStillDown (const Voice& voice) noexcept;
+    void releaseIfNoPedalHolds (Voice& voice) noexcept;
     [[nodiscard]] int partVoiceLimit() const noexcept;
     void startNoteForPart (Part part, int note, int velocity);
     void releaseNoteForPart (Part part, int note);
@@ -622,6 +628,7 @@ private:
     double partLevel_ { 1.0 };
     double partPan_ { 0.0 };
     bool hold_ { false };
+    bool sostenuto_ { false };
 
     std::array<Voice, maxPolyphony> voices_ {};
     std::array<ToneRuntime, partCount> tones_ {};

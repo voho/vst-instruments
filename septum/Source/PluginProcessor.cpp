@@ -583,6 +583,7 @@ bool SeptumAudioProcessor::handleController (int controller, int value)
         case 10: engine.setPartPan ((value - 64) / 63.0); return false;
         case 11: engine.setExpression (value / 127.0); return false;
         case 64: engine.setHold (value >= 64); return false;
+        case 66: engine.setSostenuto (value >= 64); return false;
         case 84: engine.setPortamentoControl (value); return false;
         case 120: engine.allSoundOff(); return false;
         case 121:
@@ -590,6 +591,7 @@ bool SeptumAudioProcessor::handleController (int controller, int value)
             engine.setModulation (0.0);
             engine.setExpression (1.0);
             engine.setHold (false);
+            engine.setSostenuto (false);
             return false;
         case 123:
         case 124:

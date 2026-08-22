@@ -410,6 +410,65 @@ void testSoloAndHold()
             "releasing the pedal releases the note");
 }
 
+// Settled (OM p. 72): CC#66 latches the notes sounding when it goes down and
+// holds only those. A key pressed while the pedal is already down plays and
+// releases normally.
+void testSostenutoLatchesOnlyWhatWasSounding()
+{
+    septum::Patch patch = plainSawPatch();
+    patch.upper.ampEnvRelease = 0;
+
+    septum::Engine engine;
+    engine.prepare (44100.0, 256);
+    engine.setPatch (patch);
+    engine.reset();
+
+    std::vector<float> left (4410), right (4410);
+    const auto rms = [&]
+    {
+        engine.process (left.data(), right.data(), 4410);
+        double sum = 0.0;
+        for (auto sample : left)
+            sum += sample * (double) sample;
+        return std::sqrt (sum / 4410.0);
+    };
+
+    engine.noteOn (60, 100);
+    (void) rms();
+    engine.setSostenuto (true);
+    engine.noteOff (60);
+    expect (rms() > 0.01, "sostenuto sustains a key released after the pedal");
+
+    // A key pressed while the pedal is down is not latched by it.
+    engine.noteOn (67, 100);
+    (void) rms();
+    engine.noteOff (67);
+    (void) rms();
+    (void) rms();
+    expect (engine.activeVoiceCount() == 1,
+            "a key pressed after the pedal went down is not latched (voices "
+                + std::to_string (engine.activeVoiceCount()) + ")");
+    expect (rms() > 0.01, "the latched note is still sounding");
+
+    engine.setSostenuto (false);
+    (void) rms();
+    expect (rms() < 1.0e-3, "releasing the pedal releases the latched note");
+
+    // The hold pedal and the sostenuto latch are independent: neither
+    // releases a note the other is still holding.
+    engine.reset();
+    engine.noteOn (60, 100);
+    (void) rms();
+    engine.setSostenuto (true);
+    engine.setHold (true);
+    engine.noteOff (60);
+    engine.setSostenuto (false);
+    expect (rms() > 0.01, "the hold pedal still holds after sostenuto lets go");
+    engine.setHold (false);
+    (void) rms();
+    expect (rms() < 1.0e-3, "and the note releases once both pedals are up");
+}
+
 void testSelfOscillationBounded()
 {
     septum::Patch patch = plainSawPatch();
@@ -894,6 +953,7 @@ int main()
     testSuperSawSpread();
     testSplitAndDualVoicing();
     testSoloAndHold();
+    testSostenutoLatchesOnlyWhatWasSounding();
     testSelfOscillationBounded();
     testEnvelopesShapeLoudness();
     testVelocitySensitivity();

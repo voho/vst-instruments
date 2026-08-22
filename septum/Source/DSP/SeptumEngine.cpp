@@ -461,6 +461,7 @@ void Engine::reset()
         voice.active = false;
         voice.note = -1;
         voice.held = false;
+        voice.sostenuto = false;
         voice.ampEnv.kill();
         voice.filterEnv.kill();
         voice.pitchEnv.active = false;
@@ -495,6 +496,7 @@ void Engine::reset()
     pitchBend_ = 0.0;
     modulation_ = 0.0;
     hold_ = false;
+    sostenuto_ = false;
     smoothedMaster_ = masterLevel_ / 127.0;
     updateEffectCoefficients();
 }
@@ -713,7 +715,7 @@ void Engine::releaseNoteForPart (Part part, int note)
                 triggerVoice (voice, part, previousNote, previousVelocity / 127.0,
                               tone.mono == MonoMode::SoloLegato);
             }
-            else if (hold_)
+            else if (hold_ || voice.sostenuto)
             {
                 voice.held = true;
             }
@@ -731,7 +733,7 @@ void Engine::releaseNoteForPart (Part part, int note)
     {
         if (! voice.active || voice.part != part || voice.note != note)
             continue;
-        if (hold_)
+        if (hold_ || voice.sostenuto)
         {
             voice.held = true;
             continue;
@@ -813,6 +815,9 @@ void Engine::triggerVoice (Voice& voice, Part part, int note, double velocity,
     voice.note = note;
     voice.velocity = velocity;
     voice.held = true;
+    // Whatever this voice was before, it is a new note now: a sostenuto latch
+    // belonged to the note it caught, not to the physical voice.
+    voice.sostenuto = false;
     voice.age = ++voiceClock_;
 
     // Portamento: glide from the part's previous pitch. With legato mode the
@@ -861,6 +866,28 @@ void Engine::triggerVoice (Voice& voice, Part part, int note, double velocity,
     }
 }
 
+bool Engine::keyStillDown (const Voice& voice) noexcept
+{
+    const ToneRuntime& runtime = tones_[voice.part == Part::Upper ? 0 : 1];
+    for (int i = 0; i < runtime.heldCount; ++i)
+        if (runtime.heldNotes[static_cast<std::size_t> (i)] == voice.note)
+            return true;
+    return false;
+}
+
+// A voice lets go only when nothing is still holding it: not the key, not the
+// hold pedal, and not a sostenuto latch it was caught by.
+void Engine::releaseIfNoPedalHolds (Voice& voice) noexcept
+{
+    if (! voice.active)
+        return;
+    if (hold_ || voice.sostenuto || keyStillDown (voice))
+        return;
+    voice.held = false;
+    voice.ampEnv.release();
+    voice.filterEnv.release();
+}
+
 void Engine::setHold (bool down)
 {
     if (down == hold_)
@@ -869,21 +896,31 @@ void Engine::setHold (bool down)
     if (down)
         return;
     for (auto& voice : voices_)
+        if (voice.held)
+            releaseIfNoPedalHolds (voice);
+}
+
+// Settled (OM p. 72, part controller CC#66). The sostenuto pedal latches the
+// notes sounding at the moment it goes down and holds only those: keys pressed
+// afterwards play and release normally, which is the whole point of the pedal.
+void Engine::setSostenuto (bool down)
+{
+    if (down == sostenuto_)
+        return;
+    sostenuto_ = down;
+    if (down)
     {
-        if (voice.active && voice.held)
-        {
-            bool keyStillDown = false;
-            ToneRuntime& runtime = toneRuntime (voice.part);
-            for (int i = 0; i < runtime.heldCount; ++i)
-                if (runtime.heldNotes[static_cast<std::size_t> (i)] == voice.note)
-                    keyStillDown = true;
-            if (! keyStillDown)
-            {
-                voice.held = false;
-                voice.ampEnv.release();
-                voice.filterEnv.release();
-            }
-        }
+        for (auto& voice : voices_)
+            if (voice.active && voice.held && keyStillDown (voice))
+                voice.sostenuto = true;
+        return;
+    }
+    for (auto& voice : voices_)
+    {
+        if (! voice.sostenuto)
+            continue;
+        voice.sostenuto = false;
+        releaseIfNoPedalHolds (voice);
     }
 }
 
@@ -927,6 +964,7 @@ void Engine::allNotesOff()
         if (voice.active)
         {
             voice.held = false;
+            voice.sostenuto = false;
             voice.ampEnv.release();
             voice.filterEnv.release();
         }
@@ -936,6 +974,7 @@ void Engine::allNotesOff()
         tone.heldCount = 0;
         tone.anyKeyDown = false;
     }
+    sostenuto_ = false;
 }
 
 void Engine::allSoundOff()
@@ -943,6 +982,8 @@ void Engine::allSoundOff()
     for (auto& voice : voices_)
     {
         voice.active = false;
+        voice.held = false;
+        voice.sostenuto = false;
         voice.ampEnv.kill();
         voice.filterEnv.kill();
         voice.pitchEnv.active = false;
@@ -952,6 +993,7 @@ void Engine::allSoundOff()
         tone.heldCount = 0;
         tone.anyKeyDown = false;
     }
+    sostenuto_ = false;
 
     // All Sounds Off is a panic: the buffered delay repeats and the reverb
     // tail must stop with the voices, and the output stage must not keep
