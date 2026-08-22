@@ -28,6 +28,13 @@ voice.
 
 ![Septum](Docs/screenshots/septum-standalone.png)
 
+The panel is laid out so the signal path reads off it: the voice chain across
+the top (OSC 1 + OSC 2 → MIX/MOD → FILTER → AMP, with the connectors drawn in),
+the modulators beneath it, and the two ends of the instrument — arpeggiator,
+external input, delay, reverb — along the bottom. Every control is the same
+size wherever it appears and shows its value in the units the manual prints,
+so nothing has to be dragged to be read.
+
 ## What kind of replica this is
 
 The modelled instrument's sound engine is pure DSP: the service notes show

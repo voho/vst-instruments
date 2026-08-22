@@ -504,6 +504,57 @@ void SeptumAudioProcessor::cacheParameterPointers()
         ccCache.push_back ({ 13, parameter, false, false });
 }
 
+namespace
+{
+// How a value is printed, on the panel and in the host's own parameter list.
+// The manual prints signed parameters with their sign and PAN as L64...63R,
+// so the plug-in does too.
+const std::vector<juce::String>& signedParameterSuffixes()
+{
+    static const std::vector<juce::String> suffixes {
+        "osc1_pitch", "osc1_detune", "osc1_penv_depth", "osc2_pitch",
+        "osc2_detune", "osc2_penv_depth", "balance", "key_follow",
+        "cutoff_vel", "fenv_depth", "level_vel",
+        "octave_shift", "tone_balance", "arp_octave", "delay_feedback",
+        "reverb_lf_damp_gain", "reverb_hf_damp_gain"
+    };
+    return suffixes;
+}
+
+[[nodiscard]] bool isSignedDisplay (const juce::String& id)
+{
+    for (const auto& suffix : signedParameterSuffixes())
+        if (id == suffix || id.endsWith ("_" + suffix)
+            || (id.startsWith ("up_") && id.substring (3) == suffix)
+            || (id.startsWith ("lo_") && id.substring (3) == suffix))
+            return true;
+    return false;
+}
+
+[[nodiscard]] juce::AudioParameterIntAttributes intAttributes (const juce::String& id)
+{
+    if (id == "pan" || id == "up_pan" || id == "lo_pan")
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                // L64 ... 0 ... 63R, the display the manual prints.
+                if (value < 0)
+                    return "L" + juce::String (-value);
+                if (value > 0)
+                    return juce::String (value) + "R";
+                return juce::String ("0");
+            });
+    if (isSignedDisplay (id))
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                return value > 0 ? "+" + juce::String (value)
+                                 : juce::String (value);
+            });
+    return {};
+}
+} // namespace
+
 juce::AudioProcessorValueTreeState::ParameterLayout
 SeptumAudioProcessor::createParameterLayout()
 {
@@ -527,7 +578,7 @@ SeptumAudioProcessor::createParameterLayout()
                 case Kind::Int:
                     layout.add (std::make_unique<AudioParameterInt> (
                         ParameterID { id, 1 }, name, binding.low, binding.high,
-                        (int) std::lround (defaultValue)));
+                        (int) std::lround (defaultValue), intAttributes (id)));
                     break;
                 case Kind::Bool:
                     layout.add (std::make_unique<AudioParameterBool> (
@@ -553,7 +604,8 @@ SeptumAudioProcessor::createParameterLayout()
             case Kind::Int:
                 layout.add (std::make_unique<juce::AudioParameterInt> (
                     juce::ParameterID { binding.id, 1 }, binding.label,
-                    binding.low, binding.high, (int) std::lround (defaultValue)));
+                    binding.low, binding.high, (int) std::lround (defaultValue),
+                    intAttributes (binding.id)));
                 break;
             case Kind::Bool:
                 layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -579,7 +631,8 @@ SeptumAudioProcessor::createParameterLayout()
             case Kind::Int:
                 layout.add (std::make_unique<juce::AudioParameterInt> (
                     juce::ParameterID { binding.id, 1 }, binding.label,
-                    binding.low, binding.high, (int) std::lround (defaultValue)));
+                    binding.low, binding.high, (int) std::lround (defaultValue),
+                    intAttributes (binding.id)));
                 break;
             case Kind::Bool:
                 layout.add (std::make_unique<juce::AudioParameterBool> (
