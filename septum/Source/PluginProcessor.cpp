@@ -1016,7 +1016,6 @@ void SeptumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     engine.setMasterLevel ((int) std::lround (
         masterValue->load (std::memory_order_relaxed)));
-    engine.setExternalInput (snapshotExternalInput());
 
     // The engine's patch never depends on the message loop: MIDI program
     // changes write the raw values directly, and the snapshot is validated
@@ -1032,6 +1031,10 @@ void SeptumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 septum::factoryPatches()[(std::size_t) staged].patch);
             return;
         }
+        // The external-input block is not patch data, but CC#2 and CC#4 edit
+        // it and arrive mid-block like any other mapped panel CC, so it is
+        // refreshed on the same segment boundary rather than a block late.
+        engine.setExternalInput (snapshotExternalInput());
         const auto generation = patchGeneration.load (std::memory_order_acquire);
         const septum::Patch snapshot = snapshotPatch();
         if ((generation & 1u) == 0u
