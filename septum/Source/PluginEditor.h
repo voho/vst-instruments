@@ -68,14 +68,24 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+
+    [[nodiscard]] float getModulation() const noexcept { return mod; }
 
 private:
-    void applyFromPoint (juce::Point<float> position);
+    static constexpr int captionHeight = 12;
+
+    void applyFromEvent (const juce::MouseEvent&);
+    [[nodiscard]] juce::Rectangle<float> leverBounds() const;
     void push() noexcept;
 
     SeptumAudioProcessor& processor;
     float bend { 0.0f };  // -1..+1, springs back
     float mod { 0.0f };   // 0..1, latches
+    // Where the modulation axis was grabbed, so a drag moves it by the travel
+    // rather than jumping it to the click.
+    float grabY { 0.0f };
+    float grabMod { 0.0f };
 };
 
 class SeptumAudioProcessorEditor final : public juce::AudioProcessorEditor,
@@ -227,6 +237,12 @@ private:
     juce::TooltipWindow tooltips { this, 650 };
 
     SeptumLever lever;
+
+public:
+    // The suite drives the lever through the same path the mouse does.
+    [[nodiscard]] SeptumLever& getLever() noexcept { return lever; }
+
+private:
     juce::MidiKeyboardState keyboardState;
     juce::MidiKeyboardComponent keyboard { keyboardState,
                                            juce::MidiKeyboardComponent::horizontalKeyboard };

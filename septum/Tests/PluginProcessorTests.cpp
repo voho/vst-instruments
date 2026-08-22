@@ -678,6 +678,56 @@ void testTogglesShowTheirState()
 // Hz), MASTER KEY SHIFT -24..+24, keyboard OCTAVE SHIFT -3..+3 and TRANSPOSE
 // -5..+6. The engine has honoured all four since it was written; nothing
 // reached them.
+// The bend/mod lever's modulation axis holds its position, so a click that
+// set it absolutely could latch full vibrato from one tap on the top of the
+// travel — something the hardware lever cannot do. It moves by the drag now,
+// and a double click puts it back.
+void testLeverModulationMovesByTheDrag()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    auto* septum = dynamic_cast<SeptumAudioProcessorEditor*> (editor.get());
+    expect (septum != nullptr, "the processor provides the Septum editor");
+    if (septum == nullptr)
+        return;
+    editor->setSize (editor->getWidth(), editor->getHeight());
+
+    auto& lever = septum->getLever();
+    const auto press = [&lever] (juce::Point<float> at)
+    {
+        const juce::MouseEvent event (
+            juce::Desktop::getInstance().getMainMouseSource(), at,
+            juce::ModifierKeys::leftButtonModifier, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            &lever, &lever, juce::Time::getCurrentTime(), at,
+            juce::Time::getCurrentTime(), 1, false);
+        return event;
+    };
+
+    const auto top = juce::Point<float> ((float) lever.getWidth() * 0.5f, 4.0f);
+    const auto bottom =
+        juce::Point<float> ((float) lever.getWidth() * 0.5f,
+                            (float) lever.getHeight() - 16.0f);
+
+    lever.mouseDown (press (top));
+    lever.mouseUp (press (top));
+    expect (lever.getModulation() == 0.0f,
+            "a tap at the top of the travel does not latch modulation (value "
+                + std::to_string (lever.getModulation()) + ")");
+
+    // A drag from the bottom to the top does.
+    lever.mouseDown (press (bottom));
+    lever.mouseDrag (press (top));
+    expect (lever.getModulation() > 0.5f,
+            "a drag up the travel raises modulation (value "
+                + std::to_string (lever.getModulation()) + ")");
+    lever.mouseUp (press (top));
+
+    lever.mouseDoubleClick (press (top));
+    expect (lever.getModulation() == 0.0f,
+            "a double click puts the modulation back");
+}
+
 void testSystemCommonSettings()
 {
     SeptumAudioProcessor processor;
@@ -944,6 +994,7 @@ int main()
     testStateRoundTrip();
     testIntervalButtonsAreRelativeToOscOne();
     testTogglesShowTheirState();
+    testLeverModulationMovesByTheDrag();
     testSystemCommonSettings();
     testEditorFitsASmallDisplay();
     testEditorAndSnapshot();

@@ -3004,10 +3004,20 @@ void Engine::process (float* left, float* right, int numSamples,
         offset += guarded;
     }
 
-    const float decayedL = outputLevel_[0].load (std::memory_order_relaxed) * 0.85f;
-    const float decayedR = outputLevel_[1].load (std::memory_order_relaxed) * 0.85f;
-    outputLevel_[0].store (std::max (blockPeakL, decayedL), std::memory_order_relaxed);
-    outputLevel_[1].store (std::max (blockPeakR, decayedR), std::memory_order_relaxed);
+    // The meter's fall is a time, not a per-call factor. A fixed 0.85 per
+    // render call made the same patch release sixteen times faster at a
+    // 1024-sample buffer than at a 64-sample one, which is a property of the
+    // host rather than of the sound.
+    const double fall = std::exp (-numSamples
+                                  / (sampleRate_ * mapping::meterFallSeconds));
+    const auto decayed = [fall] (std::atomic<float>& level)
+    {
+        return static_cast<float> (level.load (std::memory_order_relaxed) * fall);
+    };
+    outputLevel_[0].store (std::max (blockPeakL, decayed (outputLevel_[0])),
+                           std::memory_order_relaxed);
+    outputLevel_[1].store (std::max (blockPeakR, decayed (outputLevel_[1])),
+                           std::memory_order_relaxed);
 }
 
 } // namespace septum

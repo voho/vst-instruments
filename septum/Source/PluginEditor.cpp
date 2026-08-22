@@ -54,6 +54,9 @@ constexpr int clusterWidth = 128;
 constexpr int stripHeight = sectionTitleHeight + gridRowHeight
                             + 2 * sectionPadding + 6;
 constexpr int keyboardHeight = 90;
+// The meter reads in decibels down to here, which is the range a player
+// actually mixes in.
+constexpr float meterFloorDb = -48.0f;
 constexpr int bandRows = 3;
 constexpr int bandHeight = sectionTitleHeight + 2 * gridRowHeight + 2 * sectionPadding;
 // A host window carries a frame and a title bar the panel does not get to
@@ -61,7 +64,10 @@ constexpr int bandHeight = sectionTitleHeight + 2 * gridRowHeight + 2 * sectionP
 // under one.
 constexpr int windowChromeWidth = 32;
 constexpr int windowChromeHeight = 64;
-constexpr int editorWidth = 1500;
+// Wide enough for the REVERB section's whole documented parameter set: the
+// effects band's four sections need 1474 points of content between them, and
+// the panel scales to the window anyway.
+constexpr int editorWidth = 1660;
 constexpr int editorHeight = headerHeight + bandRows * bandHeight
                              + (bandRows - 1) * sectionGap + stripHeight
                              + keyboardHeight + 18;
@@ -277,26 +283,44 @@ void SeptumLever::push() noexcept
     processor.setLeverFromUi (bend, mod);
 }
 
-void SeptumLever::applyFromPoint (juce::Point<float> position)
+void SeptumLever::applyFromEvent (const juce::MouseEvent& event)
 {
-    const auto bounds = getLocalBounds().toFloat().reduced (4.0f);
+    const auto bounds = leverBounds();
+    // Bend is absolute and spring-loaded, as the lever's horizontal axis is:
+    // where you take it is where it is, and it comes back when you let go.
     bend = juce::jlimit (-1.0f, 1.0f,
-                         (position.x - bounds.getCentreX())
+                         (event.position.x - bounds.getCentreX())
                              / (bounds.getWidth() * 0.5f));
-    mod = juce::jlimit (0.0f, 1.0f,
-                        (bounds.getBottom() - position.y) / bounds.getHeight());
+    // Modulation holds its position, so it moves by the drag rather than
+    // jumping to the click: the hardware lever cannot be *put* at full
+    // modulation by tapping the top of its travel, and a tap that latched
+    // full vibrato is not something a player can see or easily undo.
+    const float travel = (grabY - event.position.y) / bounds.getHeight();
+    mod = juce::jlimit (0.0f, 1.0f, grabMod + travel);
     push();
     repaint();
 }
 
+juce::Rectangle<float> SeptumLever::leverBounds() const
+{
+    // The caption gets its own band at the foot; the frame and the stick are
+    // drawn in what is left, so no text sits on top of a border.
+    return getLocalBounds()
+        .withTrimmedBottom (captionHeight)
+        .toFloat()
+        .reduced (2.0f);
+}
+
 void SeptumLever::mouseDown (const juce::MouseEvent& event)
 {
-    applyFromPoint (event.position);
+    grabY = event.position.y;
+    grabMod = mod;
+    applyFromEvent (event);
 }
 
 void SeptumLever::mouseDrag (const juce::MouseEvent& event)
 {
-    applyFromPoint (event.position);
+    applyFromEvent (event);
 }
 
 void SeptumLever::mouseUp (const juce::MouseEvent&)
@@ -306,9 +330,18 @@ void SeptumLever::mouseUp (const juce::MouseEvent&)
     repaint();
 }
 
+void SeptumLever::mouseDoubleClick (const juce::MouseEvent&)
+{
+    // Somewhere to put the modulation back, since it holds.
+    mod = 0.0f;
+    bend = 0.0f;
+    push();
+    repaint();
+}
+
 void SeptumLever::paint (juce::Graphics& g)
 {
-    const auto bounds = getLocalBounds().toFloat().reduced (2.0f);
+    const auto bounds = leverBounds();
     g.setColour (colours::sliderTrack);
     g.fillRoundedRectangle (bounds, 5.0f);
     g.setColour (colours::frame);
@@ -332,9 +365,9 @@ void SeptumLever::paint (juce::Graphics& g)
     g.setColour (colours::knobPointer);
     g.fillRoundedRectangle (stick.reduced (3.0f, 14.0f), 2.0f);
 
-    g.setColour (colours::frame);
+    g.setColour (colours::frame.withAlpha (0.72f));
     g.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
-    g.drawText ("BEND / MOD", getLocalBounds().removeFromBottom (12),
+    g.drawText ("BEND / MOD", getLocalBounds().removeFromBottom (captionHeight),
                 juce::Justification::centred);
 }
 
@@ -580,7 +613,7 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     addControl (*delay, "delay_mod_depth", "MOD DEPTH", Style::Knob, false);
 
     auto* reverb = section ("REVERB", Band::InputEffects);
-    reverb->rowCounts = { 4, 4 };
+    reverb->rowCounts = { 6, 6 };
     addControl (*reverb, "reverb_on", "SWITCH", Style::Toggle, false);
     addControl (*reverb, "reverb_time", "TIME", Style::Knob, false);
     addControl (*reverb, "reverb_depth", "DEPTH", Style::Knob);
@@ -590,6 +623,16 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     addControl (*reverb, "reverb_high_cut", "HIGH CUT", Style::Combo, false);
     addControl (*reverb, "reverb_density", "DENSITY", Style::Knob, false);
     addControl (*reverb, "reverb_diffusion", "DIFFUSION", Style::Knob, false);
+    // The four remaining settled Patch Reverb bytes. PRE DELAY, HIGH CUT,
+    // DENSITY and DIFFUSION above are equally editor-only on the instrument,
+    // so leaving exactly these four off was an inconsistency rather than a
+    // principle.
+    addControl (*reverb, "reverb_lf_damp_freq", "LF DAMP", Style::Combo, false);
+    addControl (*reverb, "reverb_lf_damp_gain", "LF GAIN", Style::Knob, false,
+                " dB");
+    addControl (*reverb, "reverb_hf_damp_freq", "HF DAMP", Style::Combo, false);
+    addControl (*reverb, "reverb_hf_damp_gain", "HF GAIN", Style::Knob, false,
+                " dB");
 
     // ---- the patch strip above the keys (the hardware's button row) ------
     stripSection = section ("PATCH", Band::Perform);
@@ -989,10 +1032,17 @@ void SeptumAudioProcessorEditor::layoutSection (Section& section,
         (control->style == Style::VSlider ? sliders : grid).push_back (control);
 
     // Vertical sliders take a left column strip at full content height: label
-    // on top, travel in the middle, value underneath.
+    // on top, travel in the middle, value underneath. A section whose width
+    // was set by its title rather than by its contents — PITCH ENV is two
+    // 34 px cells under a nine-character name — centres the strip in what it
+    // was given instead of hugging the left edge.
     if (! sliders.empty())
     {
-        auto strip = content.removeFromLeft ((int) sliders.size() * sliderCell);
+        const int stripWidth = (int) sliders.size() * sliderCell;
+        if (grid.empty())
+            content = content.withSizeKeepingCentre (stripWidth,
+                                                     content.getHeight());
+        auto strip = content.removeFromLeft (stripWidth);
         for (std::size_t i = 0; i < sliders.size(); ++i)
         {
             auto cell = strip.removeFromLeft (sliderCell);
@@ -1021,8 +1071,21 @@ void SeptumAudioProcessorEditor::layoutSection (Section& section,
     if (rows.empty())
         rows.push_back ((int) grid.size());
 
+    // Rows are centred in whatever height the band gave the section, so a
+    // section with fewer rows than the band's height allows — FILTER ENV's
+    // single DEPTH row beside four full-height sliders — does not leave all
+    // its spare room in one block underneath.
+    int usedRows = 0;
+    for (std::size_t r = 0, placed = 0; r < rows.size() && placed < grid.size();
+         ++r)
+    {
+        placed += (std::size_t) juce::jmax (0, rows[r]);
+        ++usedRows;
+    }
     std::size_t index = 0;
-    int rowTop = content.getY();
+    int rowTop = content.getY()
+                 + juce::jmax (0, (content.getHeight()
+                                   - usedRows * gridRowHeight) / 2);
     for (std::size_t r = 0; r < rows.size() && index < grid.size(); ++r)
     {
         const int count = juce::jmin (rows[r], (int) (grid.size() - index));
@@ -1300,8 +1363,11 @@ void SeptumAudioProcessorEditor::layoutPanel()
     {
         voiceLabel.setBounds (clusterContent.removeFromBottom (14));
         clusterContent.removeFromBottom (4);
+        // The meter takes what the cluster has left rather than a fixed
+        // 44 px: it is the one thing on the panel that reads better the
+        // taller it is, and the space was otherwise dead.
         meterBounds = clusterContent.removeFromBottom (
-            juce::jmin (44, clusterContent.getHeight() - 6));
+            juce::jmin (150, clusterContent.getHeight() - 6));
     }
     else
     {
@@ -1411,7 +1477,16 @@ void SeptumAudioProcessorEditor::paintPanel (juce::Graphics& g)
     // count sits: the one place on the panel that reports rather than edits.
     if (! meterBounds.isEmpty())
     {
+        // Decibels, not amplitude. On a linear scale a healthy −20 dBFS fills
+        // a tenth of the bar, so the meter sat near its floor for everything
+        // that was not about to clip.
         const int barWidth = 12;
+        const auto height = (float) meterBounds.getHeight();
+        const auto positionOf = [] (float dB)
+        {
+            return juce::jlimit (0.0f, 1.0f,
+                                 juce::jmap (dB, meterFloorDb, 0.0f, 0.0f, 1.0f));
+        };
         for (int channel = 0; channel < 2; ++channel)
         {
             auto bar = juce::Rectangle<int> (
@@ -1419,12 +1494,19 @@ void SeptumAudioProcessorEditor::paintPanel (juce::Graphics& g)
                 meterBounds.getY(), barWidth, meterBounds.getHeight());
             g.setColour (colours::sliderTrack);
             g.fillRoundedRectangle (bar.toFloat(), 2.0f);
-            const float level = juce::jlimit (0.0f, 1.0f, meterLevel[channel]);
-            g.setColour (colours::ledOn);
+
+            const float level = juce::jlimit (0.0f, 1.2f, meterLevel[channel]);
+            const float dB = juce::Decibels::gainToDecibels (level, meterFloorDb);
+            g.setColour (level >= 1.0f ? colours::accent : colours::ledOn);
             g.fillRoundedRectangle (
-                bar.removeFromBottom ((int) (level * (float) meterBounds.getHeight()))
-                    .toFloat(),
-                2.0f);
+                bar.toFloat().removeFromBottom (positionOf (dB) * height), 2.0f);
+
+            // A −6 dB mark, so the scale can be read rather than guessed.
+            g.setColour (colours::frame.withAlpha (0.45f));
+            const float mark =
+                (float) bar.getBottom() - positionOf (-6.0f) * height;
+            g.drawHorizontalLine ((int) mark, (float) bar.getX(),
+                                  (float) bar.getRight());
         }
     }
 }

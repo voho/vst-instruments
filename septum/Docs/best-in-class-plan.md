@@ -1002,3 +1002,47 @@ Ten checks fence it: A4 renders at 440 by default and sharper at 466.16
 (reverting the wiring measures 439.28 against 439.28 either way), the buttons
 reach ±3, a program change leaves the block alone, and it survives a state
 round trip.
+
+#### Step 25 — the lever, the meter, and the space the panel was not using
+
+**The lever latched modulation to wherever you clicked.** Its vertical axis
+holds its position, which the hardware's does too, but the value was taken
+absolutely from the click's y — so one tap near the top of the travel jumped
+modulation to full and left it there, with no obvious way back. The hardware
+lever cannot be *put* anywhere by tapping; it is pushed. The axis moves by the
+drag now, from wherever it was grabbed, a double click puts both axes back,
+and bend stays absolute and spring-loaded as it was. The caption also had its
+own band taken off the component before the frame and the stick are drawn, so
+`BEND / MOD` no longer sits on top of the border and the lever's foot.
+
+**The output meter had the host's buffer size in its ballistics.** It fell by
+a fixed factor once per render call, so the same patch released sixteen times
+faster at a 1024-sample buffer than at a 64-sample one. The fall is a time
+now — 0.30 s to 1/e, registered as a display choice rather than a claim about
+the instrument — and a check renders identical audio at both block sizes and
+requires the same fraction to survive a quarter-second of silence. Reverting
+the factor measures 0.000 against 0.197.
+
+The scale was linear amplitude over a 44-pixel bar, so a healthy −20 dBFS
+filled four pixels and the meter sat near its floor for everything that was
+not about to clip. It reads in decibels down to −48 now, carries a −6 dB mark,
+and turns to the panel's accent colour at full scale. It also takes the height
+the performance cluster had spare instead of a fixed 44 points: it is the one
+thing on the panel that reads better the taller it is, and that space was the
+largest dead area on the panel.
+
+**Two layout defects.** A section's grid rows sat at the top of whatever
+height the band gave it, so FILTER ENV's single DEPTH row left 70 points empty
+beneath it beside four full-height sliders; the rows are centred in the
+content now. And a section whose width was set by its *title* rather than its
+contents — PITCH ENV is two 34-point cells under a nine-character name — hugged
+the left edge; its strip is centred in what it was given.
+
+**The reverb's four remaining settled bytes have controls.** LF DAMP, LF GAIN,
+HF DAMP and HF GAIN are Patch Reverb parameters, are used by the engine's
+per-line damping, and were automatable with nothing on the panel naming them
+— while PRE DELAY, HIGH CUT, DENSITY and DIFFUSION, equally editor-only on the
+instrument, were all there. REVERB is a 6 × 6 section now and carries its
+whole documented parameter set. The panel is 1660 × 850 for it, up from
+1500 × 786: the effects band needs 1474 points of content, and since Step 23
+the window is no longer where the panel's size is decided.

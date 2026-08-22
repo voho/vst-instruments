@@ -2535,6 +2535,51 @@ void testEffectTails()
             "reverb TIME extends the tail");
 }
 
+// The output meter's fall is a time, so the same sound reads the same
+// whatever the host's buffer size is. A fixed factor per render call made a
+// 1024-sample host release sixteen times slower than a 64-sample one.
+void testMeterFallsAtTheSameRateAtEveryBlockSize()
+{
+    const double sampleRate = 44100.0;
+    const auto levelAfterSilence = [sampleRate] (int block)
+    {
+        septum::Patch patch = plainSawPatch();
+        patch.upper.ampEnvRelease = 0;
+        patch.upper.level = 127;
+        patch.delayOn = false;
+        patch.reverbOn = false;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, block);
+        engine.setPatch (patch);
+        engine.reset();
+        engine.noteOn (60, 100);
+        std::vector<float> left ((std::size_t) block), right ((std::size_t) block);
+        // A quarter of a second of note, then a quarter of a second of
+        // silence, in whole blocks.
+        const int held = (int) (sampleRate * 0.25) / block;
+        for (int i = 0; i < held; ++i)
+            engine.process (left.data(), right.data(), block);
+        const double sounding = engine.getOutputLevel (0);
+        engine.allSoundOff();
+        for (int i = 0; i < held; ++i)
+            engine.process (left.data(), right.data(), block);
+        return std::pair<double, double> { sounding, engine.getOutputLevel (0) };
+    };
+
+    const auto small = levelAfterSilence (64);
+    const auto large = levelAfterSilence (1024);
+    expect (small.first > 0.01 && large.first > 0.01,
+            "the meter reads a sounding note at either block size");
+    // Both fall the same way, so the ratio of what is left is the same.
+    const double smallRatio = small.second / small.first;
+    const double largeRatio = large.second / large.first;
+    expect (std::abs (smallRatio - largeRatio) < 0.1,
+            "the meter falls at the same rate at 64 and 1024 samples (ratios "
+                + std::to_string (smallRatio) + " and "
+                + std::to_string (largeRatio) + ")");
+}
+
 void testDcBlockedOutput()
 {
     // A 95 % pulse sustained: the raw wave has a large mean; the documented
@@ -2988,6 +3033,7 @@ int main()
     testEnvelopesShapeLoudness();
     testVelocitySensitivity();
     testEffectTails();
+    testMeterFallsAtTheSameRateAtEveryBlockSize();
     testDcBlockedOutput();
     testFactoryBankRendersEverywhere();
     testAllSoundOffSilencesEffectTails();

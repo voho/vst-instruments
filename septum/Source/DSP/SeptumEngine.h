@@ -360,6 +360,12 @@ namespace mapping
     // [voiced] Slew on the master gain chain, so a level move does not step.
     inline constexpr double masterSlewSeconds = 0.01;
 
+    // [voiced] How long the output meter takes to fall by 1/e. A display
+    // choice, not a claim about the instrument; what matters is that it is a
+    // time rather than a factor per render call, so the same sound reads the
+    // same at every host buffer size.
+    inline constexpr double meterFallSeconds = 0.30;
+
     // [voiced, OQ-14] INPUT VOL 0-127 -> amplitude. The knob is analog on the
     // hardware, ahead of the codec; a squared law matches the AMP LEVEL knob's
     // and is the same "silent at the far left" the manual describes.
