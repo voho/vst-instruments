@@ -1026,6 +1026,87 @@ void testArpeggioGridDivisions()
 
 // End to end: the arpeggiator turns a held chord into a stream of separate
 // notes at the grid tempo, HOLD keeps it playing, and turning it off stops it.
+// A shuffled pair keeps its total length, so the beat never drifts — the
+// contract says so, and the pure function honours it for step 0 against step
+// 1. But the parity used to come from the *pattern* step, which wraps at END
+// STEP: with an odd END STEP the same parity repeated and the pair stopped
+// summing to its division. END STEP 1 on 1/8L played every section as the
+// long half and ran 16 % slow, drifting for as long as the key was held.
+void testShuffleFollowsTheBeatNotThePattern()
+{
+    const double sampleRate = 44100.0;
+
+    const auto onsets = [sampleRate] (int endStep)
+    {
+        septum::Patch patch = plainSawPatch();
+        patch.upper.level = 127;
+        patch.upper.ampEnvRelease = 0;
+        patch.tempo = 120;                       // one beat = 0.5 s
+        patch.arpeggio.on = true;
+        patch.arpeggio.grid = septum::ArpeggioGrid::EighthLight;
+        patch.arpeggio.duration = septum::ArpeggioDuration::P50;
+        patch.arpeggio.motif = septum::ArpeggioMotif::Up;
+        patch.arpeggio.endStep = endStep;
+        septum::applyArpeggioStyle (patch, 0);   // "Straight 4"
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.reset();
+        auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 3.0,
+                                 sampleRate);
+
+        // Peak to peak, not RMS: the documented 0.33 Hz output coupling
+        // leaves a slowly discharging offset behind each note, and an RMS
+        // gate reads that as the note still sounding.
+        std::vector<double> times;
+        const auto window = (std::size_t) (sampleRate * 0.002);
+        bool sounding = false;
+        for (std::size_t i = 0; i + window < take.left.size(); i += window)
+        {
+            float low = 1.0f, high = -1.0f;
+            for (std::size_t k = i; k < i + window; ++k)
+            {
+                low = std::min (low, take.left[k]);
+                high = std::max (high, take.left[k]);
+            }
+            const double swing = (double) (high - low);
+            if (! sounding && swing > 2.0e-3)
+            {
+                sounding = true;
+                times.push_back ((double) i / sampleRate);
+            }
+            else if (sounding && swing < 2.0e-4)
+            {
+                sounding = false;
+            }
+        }
+        return times;
+    };
+
+    // Eight sections of a shuffled eighth are four beats, however long the
+    // pattern that rides them happens to be.
+    for (int endStep : { 1, 2, 3, 4 })
+    {
+        const auto times = onsets (endStep);
+        expect (times.size() >= 9,
+                "a shuffled grid fires its sections (END STEP "
+                    + std::to_string (endStep) + ", "
+                    + std::to_string (times.size()) + " onsets)");
+        if (times.size() < 9)
+            continue;
+        const double eightSections = times[8] - times[0];
+        expectNear (eightSections, 2.0, 0.02,
+                    "eight 1/8 sections span four beats at END STEP "
+                        + std::to_string (endStep));
+        // And the pair really is uneven, or the check above would pass on an
+        // unshuffled grid too.
+        expect (times[1] - times[0] > 1.15 * (times[2] - times[1]),
+                "the shuffled pair leans, at END STEP "
+                    + std::to_string (endStep));
+    }
+}
+
 void testArpeggiatorPlaysAndHolds()
 {
     const double sampleRate = 44100.0;
@@ -1751,6 +1832,65 @@ void testArpeggioOctaveRange()
 }
 
 // Three things the review found on the external-input path, each now fenced.
+// MODULATION ASSIGN is one patch-common setting, the lever is one lever, and
+// the AUDIO FILTER is one filter — so the lever's reach into it must not
+// depend on how many tones happen to be sounding. It was summed per sounding
+// tone, which doubled it in DUAL and SPLIT.
+void testModulationLeverReachesTheAudioFilterOnce()
+{
+    const double sampleRate = 44100.0;
+
+    const auto sideLevel = [sampleRate] (septum::KeyboardMode mode,
+                                         double lever)
+    {
+        septum::Patch patch = plainSawPatch();
+        patch.keyboardMode = mode;
+        patch.keyboardPart = septum::KeyboardPart::Upper;
+        patch.modulationAssign = septum::ModulationAssign::AudioFilter;
+        // A square LFO at the slowest rate holds +1 for the whole take, so
+        // the lever's reach is a fixed number of octaves rather than a sweep.
+        for (septum::TonePatch* tone : { &patch.upper, &patch.lower })
+        {
+            tone->lfo2.shape = septum::LfoShape::Sqr;
+            tone->lfo2.rate = 0;
+            tone->lfo2.fadeTime = 0;
+        }
+
+        septum::ExternalInput settings {};
+        settings.inputVolume = 127;
+        settings.filterOn = true;
+        settings.type = septum::AudioFilterType::Lpf;
+        settings.slope = septum::FilterSlope::Db12;
+        settings.cutoff = 30;      // about 103 Hz, well under both test tones
+        settings.resonance = 0;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.setExternalInput (settings);
+        engine.reset();
+        engine.setModulation (lever);
+        auto take = renderWithExternalInput (engine, {}, 0.3, sampleRate);
+        return goertzel (take.out.left, 4410, 13230, 900.0, sampleRate);
+    };
+
+    const double closed = sideLevel (septum::KeyboardMode::Single, 0.0);
+    const double single = sideLevel (septum::KeyboardMode::Single, 1.0);
+    const double dual = sideLevel (septum::KeyboardMode::Dual, 1.0);
+    const double split = sideLevel (septum::KeyboardMode::Split, 1.0);
+
+    expect (single > 4.0 * std::max (1.0e-9, closed),
+            "the modulation lever opens the audio filter at all");
+    expect (std::abs (dual - single) < 0.05 * single,
+            "DUAL reaches the audio filter exactly as far as SINGLE (single "
+                + std::to_string (single) + ", dual " + std::to_string (dual)
+                + ")");
+    expect (std::abs (split - single) < 0.05 * single,
+            "SPLIT reaches the audio filter exactly as far as SINGLE (single "
+                + std::to_string (single) + ", split " + std::to_string (split)
+                + ")");
+}
+
 void testExternalMonitorTiming()
 {
     const double sampleRate = 44100.0;
@@ -2427,11 +2567,13 @@ int main()
     testSoloAndHold();
     testSostenutoLatchesOnlyWhatWasSounding();
     testExternalInputAndAudioFilter();
+    testModulationLeverReachesTheAudioFilterOnce();
     testExternalMonitorTiming();
     testExternalSwitchesAreCrossedNotThrown();
     testExternalMonitorHandover();
     testArpeggioMotifsMatchTheManualsExamples();
     testArpeggioGridDivisions();
+    testShuffleFollowsTheBeatNotThePattern();
     testArpeggiatorPlaysAndHolds();
     testArpeggioOctaveRange();
     testArpeggiatorEdgeCases();

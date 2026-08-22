@@ -671,3 +671,50 @@ in frequency).
 Two checks fence it, both watched to fail with `8.0 * inc` put back. No
 committed demo changed, because no shipped preset selects TRI — which is its
 own gap, and is why this one survived a full pass.
+
+#### Step 15 — two settled quantities were indexed by the wrong thing
+
+**The modulation lever reached the AUDIO FILTER once per sounding tone.** In
+`prepareExternalTick` the whole modulation block — the two per-tone LFO
+destination-1 routings *and* the lever's MODULATION ASSIGN contribution — sat
+inside the loop over UPPER and LOWER. Two LFOs routed at one target genuinely
+sum; the lever does not. MODULATION ASSIGN is one patch-common setting, the
+lever is one lever and the audio filter is one filter, so in DUAL and SPLIT
+the cutoff moved twice as far as `audioFilterLeverOctaves` says it can.
+Measured with the lever at full travel and both LFO2s square at the slowest
+rate, on the 900 Hz side tone through a −12 dB audio-filter LPF at cutoff 30:
+
+| Keyboard mode | 900 Hz through the filter |
+|---|---|
+| SINGLE | 0.0345 |
+| DUAL, before | 0.1540 |
+| DUAL, after | **0.0345** |
+
+The lever now rides the keyboard part's LFO2 and is counted once, which is
+exactly what SINGLE already did — so SINGLE is untouched and DUAL and SPLIT
+join it.
+
+**A shuffled grid took its long/short parity from the pattern step.**
+`arpeggioStepSeconds` decides which half of a shuffled pair a section is by
+`stepIndex & 1`, and it was being given `arpeggioStep_`, which wraps at END
+STEP. END STEP is 1–32 and odd values are ordinary, so the parity repeated and
+the pair stopped summing to its division: at END STEP 1 on 1/8L every section
+was the long half, and the arpeggio ran 16 % slow and drifted for as long as
+the key was held. The shuffle belongs to the beat, not to the pattern, so the
+parity now comes from a monotonic count of grid sections that resets when the
+pattern re-arms. Eight sections of a shuffled eighth at 120 BPM, from the
+first onset to the ninth:
+
+| END STEP | before | after | owed |
+|---|---|---|---|
+| 1 | 2.319 s | **2.000 s** | 2.000 s |
+| 2 | 2.000 s | 2.000 s | 2.000 s |
+| 3 | 2.079 s | **2.000 s** | 2.000 s |
+| 4 | 2.000 s | 2.000 s | 2.000 s |
+
+The even lengths were already right, which is why a full pass over the
+arpeggiator missed this. The tie chain's look-ahead reads the same counter, so
+a chain that ties across a pair still takes DURATION from the section it ends
+on. Five checks fence the two fixes, all watched to fail when reverted; the
+committed demos are unchanged, because `11-arpeggiator.wav` runs an even-length
+style.

@@ -493,6 +493,7 @@ void Engine::reset()
         arpeggioDriven_[static_cast<std::size_t> (part)] =
             arpeggioDrives (part == 0 ? Part::Upper : Part::Lower);
     arpeggioStep_ = 0;
+    arpeggioGridSection_ = 0;
     arpeggioStepRemaining_ = 0.0;
     std::fill (delayL_.buffer.begin(), delayL_.buffer.end(), 0.0f);
     std::fill (delayR_.buffer.begin(), delayR_.buffer.end(), 0.0f);
@@ -1128,6 +1129,7 @@ void Engine::allSoundOff()
         arpeggioDriven_[static_cast<std::size_t> (part)] =
             arpeggioDrives (part == 0 ? Part::Upper : Part::Lower);
     arpeggioStep_ = 0;
+    arpeggioGridSection_ = 0;
     arpeggioStepRemaining_ = 0.0;
     sostenuto_ = false;
 
@@ -1933,6 +1935,7 @@ void Engine::arpeggioRemoveKey (Part part, int note)
             arpeggioStopPart (index == 0 ? Part::Upper : Part::Lower);
         arpeggioRunning_ = false;
         arpeggioStep_ = 0;
+        arpeggioGridSection_ = 0;
         arpeggioStepRemaining_ = 0.0;
     }
 }
@@ -2005,7 +2008,10 @@ void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
             if (style.cell (step, row) != arpeggioTie)
                 break;
             heldSeconds += lastStepSeconds;
-            lastStepSeconds = mapping::arpeggioStepSeconds (patch_.tempo, arp.grid, step);
+            // The grid section the chain reaches, not the pattern step: the
+            // shuffle's parity runs with the beat.
+            lastStepSeconds = mapping::arpeggioStepSeconds (
+                patch_.tempo, arp.grid, arpeggioGridSection_ + ahead);
         }
 
         if (state.note >= 0)
@@ -2106,7 +2112,7 @@ void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
 void Engine::arpeggioFireStep()
 {
     const double stepSeconds = mapping::arpeggioStepSeconds (
-        patch_.tempo, patch_.arpeggio.grid, arpeggioStep_);
+        patch_.tempo, patch_.arpeggio.grid, arpeggioGridSection_);
     for (int index = 0; index < partCount; ++index)
     {
         const Part part = index == 0 ? Part::Upper : Part::Lower;
@@ -2144,6 +2150,7 @@ void Engine::advanceArpeggiator (int samples)
         {
             arpeggioRunning_ = false;
             arpeggioStep_ = 0;
+            arpeggioGridSection_ = 0;
             arpeggioStepRemaining_ = 0.0;
         }
     }
@@ -2248,6 +2255,7 @@ void Engine::advanceArpeggiator (int samples)
             arpeggioRunning_ = false;
         }
         arpeggioStep_ = 0;
+        arpeggioGridSection_ = 0;
         arpeggioStepRemaining_ = 0.0;
         return;
     }
@@ -2256,6 +2264,7 @@ void Engine::advanceArpeggiator (int samples)
     {
         arpeggioRunning_ = true;
         arpeggioStep_ = 0;
+        arpeggioGridSection_ = 0;
         arpeggioStepRemaining_ = 0.0;
         for (auto& runtime : arpeggios_)
         {
@@ -2277,8 +2286,12 @@ void Engine::advanceArpeggiator (int samples)
             arpeggioStep_ %= endStep;
             arpeggioFireStep();
             arpeggioStepRemaining_ =
-                mapping::arpeggioStepSeconds (patch_.tempo, arp.grid, arpeggioStep_)
+                mapping::arpeggioStepSeconds (patch_.tempo, arp.grid,
+                                              arpeggioGridSection_)
                 * sampleRate_;
+            // Only its parity is ever read, and 0x10000 is even, so wrapping
+            // here keeps the shuffle correct and the counter bounded.
+            arpeggioGridSection_ = (arpeggioGridSection_ + 1) & 0xffff;
             arpeggioStep_ = (arpeggioStep_ + 1) % endStep;
             if (arpeggioStep_ == 0)
                 for (auto& runtime : arpeggios_)
@@ -2369,15 +2382,27 @@ void Engine::prepareExternalTick (const float* inputLeft, const float* inputRigh
             continue;
         const TonePatch& tone = tonePatch (part);
         const ToneRuntime& runtime = tones_[static_cast<std::size_t> (index)];
+        // Two LFOs routed at one target genuinely sum: they are two
+        // modulators, each with its own settled depth.
         if (tone.lfo1.destination1 == LfoDest1::AudioFilter)
             octaves += mapping::audioFilterLfoOctaves (tone.lfo1.depth1)
                        * runtime.lfo1Value;
         if (tone.lfo2.destination1 == LfoDest1::AudioFilter)
             octaves += mapping::audioFilterLfoOctaves (tone.lfo2.depth1)
                        * runtime.lfo2Value;
-        if (patch_.modulationAssign == ModulationAssign::AudioFilter)
-            octaves += modulation_ * mapping::audioFilterLeverOctaves
-                       * runtime.lfo2Value;
+    }
+    // The lever does not. MODULATION ASSIGN is one patch-common setting, the
+    // lever is one lever and the audio filter is one filter, so its reach is
+    // counted once — inside the loop it was counted per sounding tone, and a
+    // DUAL or SPLIT patch moved the cutoff twice as far as the registered
+    // constant says. It rides the keyboard part's LFO2, which is the only
+    // sounding tone in SINGLE and therefore leaves SINGLE exactly as it was.
+    if (patch_.modulationAssign == ModulationAssign::AudioFilter)
+    {
+        const std::size_t leverIndex =
+            patch_.keyboardPart == KeyboardPart::Upper ? 0u : 1u;
+        octaves += modulation_ * mapping::audioFilterLeverOctaves
+                   * tones_[leverIndex].lfo2Value;
     }
     const double fc =
         std::clamp (std::exp2 (octaves), 5.0, 0.45 * sampleRate_);

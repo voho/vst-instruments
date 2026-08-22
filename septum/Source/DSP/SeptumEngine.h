@@ -1044,6 +1044,12 @@ private:
     std::array<ArpeggioRuntime, partCount> arpeggios_ {};
     double arpeggioStepRemaining_ { 0.0 };   // samples to the next boundary
     int arpeggioStep_ { 0 };
+    // Grid sections since the pattern armed. A shuffled grid takes its
+    // long/short parity from this rather than from the pattern step, because
+    // the shuffle belongs to the beat and the pattern does not: with an odd
+    // END STEP the step index repeats its parity and the pair stops summing
+    // to its division.
+    int arpeggioGridSection_ { 0 };
     bool arpeggioRunning_ { false };
     bool arpeggioActive_ { false };   // what the ARPEGGIO switch last was
     // Whether each part was arpeggiated last tick. The ARPEGGIO switch is not
