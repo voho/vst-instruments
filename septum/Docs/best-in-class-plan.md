@@ -312,3 +312,23 @@ original patterns do, and the panel selects among them exactly as the
 hardware's panel selects a template. A new committed demo,
 `11-arpeggiator.wav`, plays one chord through UP(-), then UP&DOWN(L&H) with a
 heavy shuffle, then OCTAVE RANGE +2 on HOLD.
+
+#### Step 6 — every voiced constant is registered
+
+The constants §2.6 lists moved out of the render code and into the engine's
+`mapping` namespace, each tagged with its tier and the open question that owns
+it: the balance crossfade law, the FB-OSC loop's four constants, the supersaw
+stack's trim, the modulation lever's reach into each of its four settled
+destinations, the delay's modulation range, the reverb's line geometry and its
+density/diffusion/injection/return laws, the −24 dB path's second-stage
+damping and the resonant stage's state limit, and the headroom, output-limiter
+and pan-law constants. The research contract gained a table naming where each
+one now lives, and says plainly which of them no measurement would ever settle
+— headroom, safety and zipper are engineering choices, not claims about the
+instrument.
+
+There are now no bare numbers left in the render code. Twelve checks fence the
+endpoints that *are* settled (BALANCE fully left is OSC1 alone; the pan law is
+unity at the centre; every host rate reaches the overdrive's internal band),
+and the move changed no audio at all: the committed demos re-render
+bit-identically.
