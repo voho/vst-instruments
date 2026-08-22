@@ -316,6 +316,16 @@ void testPanicDropsQueuedUiNotes()
     expect(after < 1.0e-4, "a note queued before panic replayed after it");
     expect(!processor.isGateOpenForDisplay(),
            "panic left the keying gate open");
+
+    // Only what precedes the click dies: a key pressed after PANIC but
+    // before the next audio callback is a fresh note and must sound.
+    processor.keyboardState.noteOff(1, 60, 0.0f);
+    processor.keyboardState.noteOn(1, 64, 1.0f);
+    processor.requestPanic();
+    processor.keyboardState.noteOn(1, 60, 1.0f);
+    const double post = renderBlocks(processor, 24, quiet);
+    expect(post > 1.0e-4,
+           "a note pressed after panic was dropped with the stale queue");
     processor.releaseResources();
 }
 

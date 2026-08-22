@@ -129,6 +129,11 @@ public:
 
     void requestPanic() noexcept
     {
+        // Snapshot the UI queue at the click: the panic discards what
+        // preceded it, while a key pressed after the click still sounds.
+        // The release store on the flag publishes the snapshot with it.
+        panicDropBefore.store(uiWriteIndex.load(std::memory_order_acquire),
+                              std::memory_order_relaxed);
         panicRequested.store(true, std::memory_order_release);
     }
     // The editor's spring-loaded bend wheel; applied at the next block.
@@ -174,6 +179,9 @@ private:
 
     ghost::GhostEngine engine;
     std::atomic<bool> panicRequested { false };
+    // Where the UI queue stood when panic was last requested; events
+    // enqueued before this position are dropped by the panic handling.
+    std::atomic<unsigned> panicDropBefore { 0 };
     std::atomic<bool> gateOpenForDisplay { false };
     std::atomic<float> uiPitchBend { 0.0f };
     float lastAppliedUiBend { 0.0f };  // audio thread only
