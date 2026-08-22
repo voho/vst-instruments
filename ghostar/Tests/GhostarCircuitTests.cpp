@@ -427,6 +427,37 @@ void testResonanceFollowsTheDerivedQLaw()
           "half travel is barely resonant, as Q = 1.5 requires");
 }
 
+// The OVERDRIVE stage is a diode pair across a feedback resistor, not a
+// saturator with a fixed ceiling: past the knee its output still climbs,
+// about a tenth of a volt per decade of drive, because the diode law is
+// exponential and never truly flattens. A tanh would be within a hair of
+// its ceiling over the same range, so this separates the two shapes
+// (BA130 curve, Fairchild 1978 databook; OQ-10).
+void testOverdriveCeilingKeepsClimbing()
+{
+    const auto level = [](float slider) {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 256);
+        auto parameters = brightPanel();
+        parameters.filterPathA = slider;
+        parameters.lowerMode = ghostar::LowerFilterMode::Overdrive;
+        parameters.resonance = 0.3f;
+        engine.setParameters(parameters);
+        engine.noteOn(45, 1.0f);
+        return meanAbs(renderMono(engine, 0.5, 48000.0, 30));
+    };
+
+    // Both settings are well past the knee, so a hard ceiling would put
+    // them within a percent of each other.
+    const double driven = level(0.35f);
+    const double harder = level(1.0f);
+    const double growth = harder / std::max(1.0e-12, driven);
+    check(growth > 1.02,
+          "past the knee the diode clipper still grows with drive");
+    check(growth < 1.6,
+          "past the knee the diode clipper grows only slowly with drive");
+}
+
 // At full resonance the filter self-oscillates: kicked once, it keeps
 // singing after the kick is gone.
 void testSelfOscillation()
@@ -524,6 +555,7 @@ int main()
     testDecayIsTheLabelledTimeConstant();
     testAttackAimsPastItsPeak();
     testResonanceFollowsTheDerivedQLaw();
+    testOverdriveCeilingKeepsClimbing();
     testSelfOscillation();
     testBrightnessDarkensShaperPath();
     testShaperFreeModePulsesItsPath();

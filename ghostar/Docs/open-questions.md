@@ -18,14 +18,31 @@ test between defensible spans if none appears.
 
 ## OQ-02 — Absolute filter cutoff ranges
 
-**Gap.** The owner's manual says only "through the audio range"; the CEM3350
-CV ladders (12k1/16k/68k/274 Ω + 100 k trim) could be solved for Hz but the
-scan's digit legibility puts real error bars on the result.
-**Engine.** Upper MASTER spans 20 Hz–16 kHz exponentially (voiced); LOWER
-ONLY spans −5 octaves to +1 octave relative to Upper with coincidence at
-travel 0.8 (anchored coincidence point, voiced span).
-**Closes with.** A measured sweep of a hardware unit, or a cleaner schematic
-scan resolving the ladder values.
+**Gap (span derived, placement still open).** The owner's manual says only
+"through the audio range". The CEM3350 datasheet gives the frequency scale
+as -19.6 mV/octave (-18.5/-20.6 window) and SM DWG 2's ladder is now read:
+the panel summer reaches the chip's frequency pin through 12k1 (a second
+12k1 carries the modulation bus), 16 kOhm to +12 V sets a fixed offset,
+68 kOhm from a 100 kOhm trimmer's wiper places the window, and 274 Ohm
+shunts the node; the integrator caps are 22 nF and IREF comes from 47 kOhm.
+That gives 21.2 mV per volt at the pin, so the MASTER pot's plus/minus
+10.5 V swing is plus/minus 11.4 octaves of authority over a chip window
+about ten octaves wide - the hardware therefore sweeps from fully closed to
+effectively wide open. What is *not* derivable is where that window sits:
+the trimmer carries plus/minus 2.3 octaves of placement authority and no
+document records its factory setting (the service manual has no
+calibration text at all).
+
+**Engine.** Upper MASTER spans 20 Hz-16 kHz exponentially - 9.6 octaves,
+inside the derived ~10-octave span, and reachable at pin +226 mV to
++37 mV (voiced placement). LOWER ONLY spans -5 to +1 octaves relative to
+Upper with coincidence at travel 0.8 (anchored coincidence point, voiced
+span).
+
+**Closes with.** A measured sweep of a hardware unit, which is now the
+*only* thing missing: the span and the sensitivities are derived, and the
+trimmer's setting is a per-unit calibration rather than a documented
+constant.
 
 ## OQ-03 — Hardware pulse duty cycles
 
@@ -38,16 +55,42 @@ narrowest — possibly a measured unit, possibly a misprint.
 
 ## OQ-04 — 556A envelope segment curvature
 
-**Gap.** The ADSRs are halves of a 556A timer with 2 MΩ-log sliders into
-4.7 µF; timer attacks charge toward a rail and switch at a threshold
-(quasi-exponential with overshoot), decays discharge exponentially. No
-published analysis states the exact thresholds or the panel-travel-to-time
-taper.
-**Engine.** Exponential segments; attack aims 1.5× past its peak
-(555-family two-thirds threshold); A/D/R travel maps 5 ms–10 s
-exponentially.
-**Closes with.** A derivation from DWG 3 at better resolution, or envelope
-scope captures.
+**Gap (largely closed).** SM DWG 3 (P-1015), read at 600 dpi, gives the
+whole circuit: one 556 half per envelope in the classic monostable ADSR -
+OUTPUT pin through a series 1N4149 into the 2 MOhm log attack slider into
+the shared 4.7 uF cap, threshold sensing the cap through 100 Ohm, the
+discharge pin used purely as a phase-state logic output driving a 4066
+that switches the decay slider onto a buffered linear sustain voltage, and
+release through its own 2 MOhm slider and series diode. The timer runs on
+a BC172 emitter-follower rail of about 11.35 V with its control-voltage
+pin externally set and service-labelled +7.5 V, which is the envelope
+peak and the top of both sustain sliders. "556A" is the Signetics NE556 in
+the 14-pin "A package", not a different part.
+
+**Engine.** Each travel maps to an RC *time constant*: 4.7 uF into
+1 kOhm..2 MOhm gives 4.7 ms to 9.4 s, which is what the manual prints as
+"5 milliseconds to 10 seconds" - one ~1 kOhm series-plus-end residual
+lands both printed endpoints, where the previous three-time-constants read
+fit neither. The attack charges from the OUTPUT pin through a diode, so it
+aims at V_OH - V_D against the +7.5 V peak: a ratio of about 1.3 (the
+documents bound it to 1.22-1.35, and the engine ships the nominal), giving
+ln(1.3/0.3) = 1.47 time constants to peak rather than a rail-charged
+monostable's ln 3 = 1.10. Sustain is linear 0..peak (anchored, and the
+sliders hang from the same +7.5 V node). Retriggering resumes from the
+current level with no capacitor dump, which is what the circuit does - the
+discharge pin is not even connected to the cap.
+
+**Still voiced / not modelled.** The ~1 kOhm slider residual behind the
+fast endpoint; the aim ratio's 1.22-1.35 spread (no datasheet specifies a
+bipolar 556's output-high drop at microamp loads, and the aim itself
+varies across the travel); and the hardware's release *floor* - the series
+1N4149 parks the release around 0.3-0.6 V, about 5 % of peak, with an
+increasingly slow tail, and the sustain slider's bottom sits on a matching
+diode, where the engine releases to zero. Modelling that floor needs the
+downstream VCA and filter CV offsets, which this entry does not cover.
+
+**Closes with.** An envelope scope capture, which would pin the aim ratio,
+the slider residual and the release floor together.
 
 ## OQ-05 — Shaper Y gate behaviour
 
@@ -84,25 +127,50 @@ scan.
 
 ## OQ-09 — Upper-filter 24 dB cascade Q distribution
 
-**Gap.** The 24 dB mode cascades the chip's two 2-pole sections with a
-compensation pad (SW4/R183/R184) so resonance behaviour matches the 12 dB
-mode; the exact Q split between sections is not recoverable from the scan.
-**Engine.** First section fixed at Q = 0.5, second section carries the
-resonance control, in both an anchored-behaviour sense (one knob, both
-slopes) and a voiced-split sense.
-**Closes with.** Frequency-response measurements of a hardware unit in both
-slope positions at matched resonance settings.
+**Gap (structure corroborated, one digit short).** SM DWG 2 shows the
+Upper chip's cascade section carrying its *own* fixed bias network on its
+Q pin - a 220 Ohm shunt and a pull-up to +12 V - while the other section
+receives the variable resonance bus. That is hardware corroboration of the
+engine's fixed-Q/variable-Q split, which was previously a voiced guess.
+The pull-up's digits are unresolved in the scan; if it matches the
+neighbouring 91 kOhm, the fixed section sits at the same +29 mV as the
+LOW-switch position, i.e. Q = 0.5.
+
+**Engine.** The first section takes the LOW-switch Q of 0.5; the second
+carries the resonance control. The CEM3350 datasheet says nothing about
+cascading at all - its only cascade-adjacent material is the Synthesource
+Winter-1981 newsletter's "standard 4-pole low pass" figure, whose
+component digits are illegible - so the datasheet side of this entry is a
+documented dead end.
+
+**Closes with.** A cleaner scan resolving the cascade pull-up's digits, or
+frequency-response measurements of a hardware unit in both slope positions
+at matched resonance settings.
 
 ## OQ-10 — Overdrive knee and drive
 
-**Gap.** The clipper is anchored in placement (between the filters:
-TL082 gain stage with 330 k feedback, anti-parallel BA130 pair, 2k2/470 Ω
-pad) but the BA130's I-V curve and the stage's operating level were not
-resolved.
-**Engine.** tanh knee at ±0.65 V equivalent with ×6 drive and matched
-makeup (voiced).
-**Closes with.** The BA130 datasheet plus a level trace, or distortion
-captures of a hardware unit.
+**Gap (half closed).** The clipper is anchored in placement (an inverting
+TL082 between the filters with an anti-parallel BA130 pair across its
+feedback resistor, behind a 2k2 arm — the CEM3350 datasheet's own "Hi-Q
+overload limiter" figure with its 1N914s substituted). The BA130's curve
+is now **found**: the Fairchild 1978 Diode Data Book's BA128·BA130 sheet
+(printed p.3-12) with the D4 family curves (p.4-6) specifies it down to
+10 µA, and the digitised typical curve runs 99 mV/decade — ideality
+n ≈ 1.68, saturation current ≈ 2.3 nA, so an anti-parallel pair obeys
+`I(V) = 2·Is·sinh(V/(n·V_T))` with `n·V_T ≈ 43 mV`. What remains open is
+the stage's *operating level*: the feedback resistor reads 33 kΩ at
+600 dpi (the earlier record here said 330 kΩ), and either way nothing
+states what an internal signal volt is.
+**Engine.** The physical law, solved per sample (three Newton steps from
+the smaller of the ohmic and diode-dominated asymptotes converge to
+within ten parts per million): linear at `R_f/R_in` until the diodes
+wake, then climbing about 0.1 V per decade of drive rather than
+flattening onto a ceiling. The two level constants (volts per engine unit
+in and out) are voiced, pinned so the stage keeps the small-signal gain
+and ceiling the previous tanh had — so the *shape* is the whole of the
+modelled change.
+**Closes with.** A level trace of the stage, or distortion captures of a
+hardware unit. The diode curve itself no longer needs anything.
 
 ## OQ-11 — No hardware measurements exist anywhere
 
@@ -115,40 +183,70 @@ living source of calibration data.
 
 ## OQ-12 — Resonance-path BA130 limiter constants
 
-**Gap.** Self-oscillation is bounded by the external BA130 anti-parallel
-"Hi-Q overload limiter" in the resonance path — anchored in placement by
-the schematic, like OQ-10's inter-filter clipper — but the BA130's I-V
-curve and the node's operating level were not resolved, so the knee and
-compression depth are unknown.
-**Engine.** A diode shunt in each section's band-pass integrator equation:
-`v' = −lambda·V0·sinh(v/V0)` with sharpness `V0 = 0.12` and small-signal
-leak `lambda = 1 /s` (both voiced), solved as an exact sub-step so the law
-is a rate, not a per-sample map — the alias audit measured the previous
-per-sample formulation converging to a different filter at every sample
-rate, and its `4·tanh(0.25·x)` integrator bound turned out to be the
-*actual* self-oscillation limiter (its always-on cubic compression, not
-the diode knee, set the amplitude, scaling with the rate). That bound is
-removed; the regenerative extremes are rendered across rates by the
-engine suite to hold the boundedness claim. The resonance travel map
-`k = 2·0.01^t − 0.025` (regenerative at full travel) is unchanged and
-stays voiced. Whether the CEM3350's internal stages add their own
-saturation on top of the external limiter is a separate, unanswered
-question.
-**Closes with.** Two distinct pieces of evidence, because the entry holds
-two distinct laws: the BA130 datasheet plus a level trace of the resonance
-node pins `V0` and `lambda` (the sinh form is already the anti-parallel
-pair's own law, so the derivation is a re-pinning, not a re-shaping); the
-travel-to-damping mapping and its regenerative offset need the CEM3350's
-Q-control law with the surrounding divider network, or an explicit
-Q-versus-travel sweep of a hardware unit. The removed integrator bound is
-settled: measured as an artifact, not a modelled circuit.
+**Gap (mostly closed).** Self-oscillation is bounded by the external
+BA130 anti-parallel "Hi-Q overload limiter" in the resonance path —
+anchored in placement, and now known to be the CEM3350 datasheet's own
+recommended circuit (its Figures 5/6, 1N914s substituted for BA130s,
+33 kΩ feedback, 2k2, 470 Ω at the SLOPE switch). The BA130's curve is
+found (see OQ-10): `I(V) = 2·Is·sinh(V/(n·V_T))`, `n·V_T ≈ 43 mV`,
+`Is ≈ 2.3 nA`. **The travel-to-Q half of this entry is closed
+outright** — see below. What is still open is the node's operating
+level, which is what turns the diode's 43 mV into a number in the
+engine's own units.
+**Engine — the limiter.** A diode shunt in each section's band-pass
+integrator equation: `v' = -lambda*V0*sinh(v/V0)`, solved as an exact
+sub-step so the law is a rate, not a per-sample map. (The alias audit
+measured the previous per-sample formulation converging to a *different
+filter* at every sample rate, and its `4*tanh(0.25*x)` integrator bound
+turned out to be the actual self-oscillation limiter - its always-on
+cubic compression, not the diode knee, set the amplitude, with a strength
+that scaled with the rate. That bound is removed; the engine suite renders
+the regenerative extremes across rates to hold the boundedness claim, and
+pins self-oscillation level agreement between hosts to 0.5 dB.) The sinh
+form is now the pair's own anchored law; `V0 = 0.12` is `n*V_T` divided by
+the untraced node scaling (0.12 implies about 0.36 V per engine unit,
+where a buffered audio node sits), and `lambda = 1 /s` is voiced.
+
+**Engine — the travel-to-Q law (closed).** Derived end to end. The
+CEM3350's Q control is exponential at -65 mV per decade of Q (datasheet
+(c) 1984; -62/-65/-68 mV window). SM DWG 2 gives the network: RESONANCE
+is a 100 kOhm linear pot, top grounded, bottom at -12 V, feeding each
+chip's Q pin through 18k2; each Q pin carries a 221 Ohm shunt against a
+pull-up to +12 V - 91 kOhm at the Upper chip, 75 kOhm at the Lower, so the
+two filters have different curves. The pot's own output impedance
+`100 kOhm*t*(1-t)` sits in series and flattens the law through mid-travel.
+The absolute anchor the datasheet lacks comes from the panel: at LOW the
+pot is disconnected and the Upper Q pin rests at +29.1 mV, where OM says
+Q = 0.5. Upper Q by travel: 0.51 / 0.94 / 1.48 / 3.33 / 10.9 / 82 at
+0, .25, .5, .75, .9, 1; Lower: 0.41 / 0.76 / 1.19 / 2.68 / 8.78 / 66.
+Full travel commands more Q than the chip holds (datasheet ceiling 30 min
+/ 50 typ), and reading that ceiling as the point where the chip's own loss
+is exactly cancelled reconciles the datasheet with OM's anchored
+self-oscillation at maximum: `k = 1/Q - 1/Q_ceiling`. The ceiling value
+(50, the datasheet typ) is the one voiced number left in the law.
+
+**Closes with.** A level trace of the resonance node, which turns `n*V_T`
+into engine units and pins `lambda`. The travel-to-damping mapping no
+longer needs anything; a hardware Q-versus-travel sweep would now be a
+*check* on a derivation rather than the derivation itself. Whether the
+CEM3350's internal stages saturate on top of the external limiter, and how
+exactly the hardware crosses from the chip's no-enhancement Q ceiling into
+oscillation (no Figure-9-style enhancement path was spotted in the scan),
+remain separate open questions.
 
 ## OQ-13 — Filter-tracking pivot note
 
-**Gap.** Keyboard tracking reaches ~110 % (anchored), but the note at
-which tracking contributes zero cutoff offset is set by the CV summer's
-reference, which was not resolved from the drawings.
-**Engine.** The pivot sits at middle C (voiced).
+**Gap (amount derived, pivot still open).** Tracking's *amount* is no
+longer taken on trust: the keyboard's 1 V/octave bus reaches the chip's
+frequency pin through the same 12k1 ladder as the panel CV, delivering
+21.2 mV/V against the datasheet's -19.6 mV/octave, so full KB AMOUNT is
+108 % [103-115 % across the scale-factor window] - independently
+reproducing the manual's "slightly over 100 %" from the resistors. The
+*pivot* - the note at which tracking contributes zero offset - is set by
+the CV summer's reference, which was still not resolved from the drawings.
+
+**Engine.** 108 % at full travel (derived), pivoting at middle C (voiced).
+
 **Closes with.** A derivation of the tracking summer's reference from
 SM DWG 2/3, or a two-note cutoff measurement on hardware.
 

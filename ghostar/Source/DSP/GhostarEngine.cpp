@@ -259,6 +259,22 @@ namespace
     // — so the operator split is unconditionally stable and the sub-step
     // itself is exactly rate-invariant (solving over dt twice is solving
     // over 2·dt once).
+    // The BA130's own numbers, from the Fairchild 1978 Diode Data Book
+    // (BA128·BA130, printed p.3-12, with the D4 family curves on p.4-6):
+    // a diffused silicon planar diode specified down to 10 µA, whose
+    // digitised typical curve runs 99 mV per decade — ideality n ≈ 1.68,
+    // saturation current ≈ 2.3 nA — so an anti-parallel pair obeys
+    // I(V) = 2·Is·sinh(V/(n·V_T)) with n·V_T ≈ 43 mV. That is a markedly
+    // softer knee than an ideal junction's 59 mV/decade, and it is why the
+    // Spirit's limiter and clipper round rather than corner.
+    constexpr double diodeSaturationAmps = 2.3e-9;
+    constexpr double diodeThermalVolts = 0.043;
+
+    // The resonant node's sharpness in the node's own units. The diode law
+    // above fixes the *shape*; what a node volt is worth in engine units is
+    // the level trace OQ-12 still lacks, so this constant is n·V_T divided
+    // by that untraced scaling — 0.12 corresponds to ≈0.36 V per engine
+    // unit at the node, which is where a buffered audio node sits.
     constexpr double diodeV0 = 0.12;
     constexpr double diodeLeakPerSecond = 1.0;
 
@@ -266,6 +282,54 @@ namespace
     {
         const double u = std::tanh(value / (2.0 * diodeV0)) * decay;
         return 2.0 * diodeV0 * std::atanh(u);
+    }
+
+    // ------------------------------------------------- The OVERDRIVE stage
+    // Between the two filters sits an inverting TL082 with an anti-parallel
+    // BA130 pair across its feedback resistor (SM DWG 2: 2k2 in, 33k back —
+    // the CEM3350 datasheet's own "Hi-Q overload limiter" figure with its
+    // 1N914s substituted). Its transfer is therefore not a tanh but the
+    // solution of
+    //     i = V_out/R_f + 2·Is·sinh(V_out/(n·V_T)),   i = V_in/R_in
+    // which is linear at gain R_f/R_in until the diodes wake, then rises
+    // only about 0.1 V per decade of drive — a ceiling near ±0.5 V that
+    // never quite stops climbing, where a tanh flattens hard onto its own.
+    constexpr double overdriveInputOhms = 2.2e3;
+    constexpr double overdriveFeedbackOhms = 33.0e3;
+    // Volts per engine unit at the stage's input, and volts per unit at its
+    // output. These two are the level trace OQ-10 still lacks; they are
+    // pinned so the stage keeps the small-signal gain (2.7) and ceiling
+    // (0.45) the previous voiced tanh had, leaving the *shape* — the part
+    // the datasheet actually determines — as the whole of the change.
+    constexpr double overdriveVoltsPerUnit = 0.2;
+    constexpr double overdriveVoltsPerOutputUnit = 1.1111111111111112;
+
+    [[nodiscard]] double overdriveClip(double value) noexcept
+    {
+        const double magnitude = std::abs(value) * overdriveVoltsPerUnit;
+        const double current = magnitude / overdriveInputOhms;
+        // Newton from the smaller of the two asymptotes (ohmic below the
+        // knee, diode-dominated above it) converges to within ten parts per
+        // million in three steps across the whole audio range.
+        const double ohmic = current * overdriveFeedbackOhms;
+        const double diode =
+            diodeThermalVolts
+            * std::asinh(current / (2.0 * diodeSaturationAmps));
+        double volts = std::min(ohmic, diode);
+        for (int step = 0; step < 3; ++step)
+        {
+            const double scaled = volts / diodeThermalVolts;
+            const double error = volts / overdriveFeedbackOhms
+                               + 2.0 * diodeSaturationAmps * std::sinh(scaled)
+                               - current;
+            const double slope =
+                1.0 / overdriveFeedbackOhms
+                + 2.0 * diodeSaturationAmps / diodeThermalVolts
+                      * std::cosh(scaled);
+            volts = std::max(0.0, volts - error / slope);
+        }
+        const double magnitudeOut = volts / overdriveVoltsPerOutputUnit;
+        return value < 0.0 ? -magnitudeOut : magnitudeOut;
     }
 
     // Sub-1e-30 state decays cost real time as denormals on hosts without
@@ -1581,11 +1645,12 @@ void GhostarEngine::renderVoiceSample() noexcept
             break;
         case LowerFilterMode::Overdrive:
         {
-            // The soft clipper sits between the filters, so the upper
-            // lowpass re-filters the distortion products. Knee and drive
-            // voiced (OQ-10).
+            // The clipper sits between the filters, so the upper lowpass
+            // re-filters the distortion products. Its knee is the BA130
+            // pair's own (derived); the level it works at is voiced
+            // (OQ-10).
             const double boosted = filterPath + lower.bp;
-            filterPath = 0.45 * std::tanh(6.0 * boosted);
+            filterPath = overdriveClip(boosted);
             break;
         }
         case LowerFilterMode::HighPass:
