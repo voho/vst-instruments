@@ -112,3 +112,15 @@ data, or a hardware-vs-emulation comparison for any Spirit. The first
 measured unit becomes this project's ground truth; the Museo del Synth
 Marchigiano (which reverse-engineered the 2023 reissue) is the most likely
 living source of calibration data.
+
+## OQ-12 — Resonant-node diode limiter constants
+
+**Gap.** The CEM3350's resonance path is bounded by its internal stages
+before the supply rails, but the datasheet does not publish the limiting
+characteristic, and no analysis of the Spirit's resonant clipping exists.
+**Engine.** A piecewise law on each section's resonant node: linear below
+`knee = 1.2`, tanh-compressed toward `ceiling = 2.2` above it, with the
+resonance travel mapped `k = 2·0.01^t − 0.025` so full travel regenerates
+(all voiced).
+**Closes with.** A stage-level derivation from the CEM3350 topology, or
+resonance/self-oscillation captures of a hardware unit.

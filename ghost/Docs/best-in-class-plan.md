@@ -92,9 +92,8 @@ engineering lives.
 - The panel's exact pulse duty sets — A 50/30/15/6 %, B 40/20/10/3 % — and
   Osc B's −1/UNISON/+1/+2/BASS (30–300 Hz)/WIDE (2 Hz–10 kHz) ranges with
   the ± perfect-fifth INTERVAL.
-- 556A envelopes spanning 5 ms–10 s, attack modelled as a charge toward 1.5×
-  that switches at 1.0 (coefficient ln 3, so the labelled time is the real
-  time-to-peak), decay/release read as three time constants.
+- The 556A envelopes' 5 ms–10 s segment span (the manual's own numbers; the
+  segment *curvature* law is voiced — see below).
 - The Shaper Y integrator from US 3,943,456 with FREE/KBD HOLD/RESET/RUN,
   RESET retriggering on every key press regardless of TRIGGER mode.
 - The bipolar ±2.5-octave filter envelope, the OR'ed gate buses with
@@ -109,10 +108,16 @@ register `Docs/open-questions.md` tracks each):
 
 - Filter cutoff span 20 Hz–16 kHz (`exponentialTravel(p.cutoff, 20.0,
   16000.0)`, OQ-02).
+- Envelope segment curvature: attack charges toward 1.5× and switches at
+  1.0 (coefficient ln 3, so the labelled time is the real time-to-peak),
+  decay/release read as three time constants — a 555-family reading, not a
+  sourced derivation (OQ-04).
 - Resonance law `k = 2·0.01^t − 0.025`, regenerative at full travel, and
-  the diode limiter that bounds the resonant node — linear below `knee =
-  1.2`, tanh-capped at `ceiling = 2.2` (OQ-10 for the overdrive knee,
-  OQ-09 for the 24 dB cascade's Q split).
+  the diode limiter that bounds each resonant node — linear below `knee =
+  1.2`, tanh-capped at `ceiling = 2.2` (OQ-12).
+- The inter-filter OVERDRIVE clipper `0.45·tanh(6·x)` (OQ-10), and the
+  24 dB cascade's Q split — first section fixed at Q = 0.5, second carries
+  the resonance control (OQ-09).
 - Ring-modulator carrier bleed `0.03·(triA + triB)` (OQ-06).
 - Shaper gate comparator threshold `shaperLevel_ > 0.01` (OQ-05).
 - Glide lag `tau = 0.9·travel²` seconds, from the 2 MΩ pot into ~450 nF
@@ -153,20 +158,26 @@ settled by measurement and quoted.
   each other stay in tune, unlike discrete VCOs). But *stable* is not
   *static*: datasheet tempco and supply sensitivity translate to cents-scale
   wander over minutes. Derive the magnitude from the datasheet, implement
-  slow correlated drift per oscillator, and run an A–Z listening test for
-  depth (candidates: none, datasheet-derived, 2× datasheet). Verification:
-  the derivation quoted here; the chosen letter recorded per the
-  listening-test rules.
+  slow correlated drift per oscillator, and run an A–Z listening test
+  between the two defensible candidates: no drift (the 3340's specified
+  stability taken at face value) and the datasheet-derived wander (that
+  stability under real supply and ambient variation). No scaled variants —
+  a multiplied datasheet number would be fitting the depth by ear, which
+  the listening-test rules forbid. Verification: the derivation quoted
+  here; the chosen letter recorded per the listening-test rules.
 - [ ] **Step 3 — Per-integrator filter saturation.** The current model
   bounds the resonant node with one piecewise diode law
-  (`GhostEngine.cpp`, `knee = 1.2` / `ceiling = 2.2`). The CEM3350's OTA
-  stages saturate individually, which shifts *where* the compression
-  happens as drive rises and colours self-oscillation differently.
-  Derive the stage-level limiting from the 3350 datasheet topology,
-  implement per-integrator saturation in the TPT sections, and compare
-  harmonic signatures (Goertzel series under fixed drive) against the
-  current law. If both remain defensible and audibly different, A–Z it.
-  Verification: the harmonic tables and, if run, the recorded verdict.
+  (`GhostEngine.cpp`, `knee = 1.2` / `ceiling = 2.2`, OQ-12). The
+  CEM3350's OTA stages saturate individually, which shifts *where* the
+  compression happens as drive rises and colours self-oscillation
+  differently. Derive the stage-level limiting from the 3350 datasheet
+  topology, implement per-integrator saturation in the TPT sections, and
+  compare harmonic signatures (Goertzel series under fixed drive) against
+  the current law. If both remain defensible and audibly different, A–Z
+  it. Verification: the harmonic tables and, if run, the recorded
+  verdict — plus a re-run of Step 1's alias suite, since new nonlinearity
+  makes new high partials and the completed audit must describe the final
+  engine, not the one before it.
 - [ ] **Step 4 — Close the closable open questions.** OQ-02 (absolute
   cutoff span) and OQ-09 (cascade Q distribution) may be derivable from
   the CEM3350 datasheet's exponential-scale and mode figures; OQ-04's
@@ -176,17 +187,25 @@ settled by measurement and quoted.
   updated with the derivation or the dead end.
 - [ ] **Step 5 — Zipper audit on the travels.** Panel travels apply at
   block boundaries (`setParameters` per block in
-  `Source/PluginProcessor.cpp`). Render a host-automated full-range cutoff
-  sweep and a volume fade at 48 kHz/512-sample blocks; inspect for
-  stepping sidebands. Verification: the measurement quoted here; if steps
-  are audible, one-pole smoothing on the audible travels (cutoff,
-  resonance, mixer, volume) and a re-measure.
+  `Source/PluginProcessor.cpp`), and every continuous travel is published
+  for automation, so the audit must cover the published surface — cutoff,
+  LOWER ONLY, resonance, BRIGHTNESS, every mixer slider, envelope amount
+  and sustain, master volume, and both performance wheels. Render a
+  host-automated full-range sweep of each at 48 kHz/512-sample blocks and
+  inspect for stepping sidebands. Verification: a per-travel table quoted
+  here; one-pole smoothing on every travel the measurement flags, and a
+  re-measure of those.
 - [ ] **Step 6 — A calibration capture, if one ever exists.** The standing
   offer recorded so it is not forgotten: the moment a trustworthy Spirit
   capture becomes available (a serviced unit, a museum recording session,
-  a lent instrument), pin OQ-02/04/05/06/08/09/10 against it and re-voice.
-  Until then this step cannot start, and no constant is fitted to a
-  YouTube demo's unknown signal chain.
+  a lent instrument), measure every hardware-closable entry the register
+  then holds — today that is all of OQ-01 through OQ-10 and OQ-12: the
+  wheel's real bend span, the actual pulse duties, the envelope
+  curvature and Shaper timings, the gate threshold, the ring bleed, the
+  glide capacitor, both filter spans, the cascade Q split, and both
+  clipping stages — and re-voice against the measurements. Until then
+  this step cannot start, and no constant is fitted to a YouTube demo's
+  unknown signal chain.
 
 ## What was investigated and not done
 
