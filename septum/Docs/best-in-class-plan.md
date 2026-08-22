@@ -198,4 +198,25 @@ order the gaps above put them:
 
 ### Landed
 
-*(nothing yet — this section grows one entry per commit)*
+#### Step 1 — parameter smoothing and filter modulation are separated
+
+The voice keeps the 2.5 ms slew where it was needed — on the parameter-derived
+part of the cutoff (knob, key follow, velocity offset) and on the LFO, which is
+the contribution that actually steps — and applies the filter envelope's level
+directly, its depth knob being slewed with the rest of the panel. The filter
+coefficients are then walked sample by sample across the control tick, so
+taking the envelope out of the slew did not put a staircase back into them.
+
+Measured after, same harness as §2.2:
+
+| Envelope, slider A = 0 | before | after |
+|---|---|---|
+| AMP envelope, 90 % of final | 1.25 ms | 1.25 ms |
+| FILTER envelope, 90 % of final | 8.25 ms | **1.25 ms** |
+| FILTER envelope, 50 % of final | 4.00 ms | **1.00 ms** |
+
+Nothing else moved: the filter's −3 dB points and resonant peaks (§2.7) are
+unchanged to the resolution of the sweep, and the cost table (§2.4) is
+unchanged. Two tests fence the result — the filter envelope may not open
+slower than the amp envelope from the same slider value, and a fast S&H filter
+LFO must still produce no sample-level discontinuity.

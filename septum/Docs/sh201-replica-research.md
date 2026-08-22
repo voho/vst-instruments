@@ -231,6 +231,21 @@ exponentially over 20 Hz → 20.48 kHz (10 octaves, voiced, OQ-08); envelope
 depth ±63 spans ±10 octaves linearly; cutoff velocity sensitivity ±63
 spans ±4 octaves at the velocity extremes (voiced, OQ-08).
 
+The cutoff sum is assembled in two parts, and the split is deliberate. The
+*panel* side — the cutoff knob, key follow, the velocity offset and the LFO —
+passes through a 2.5 ms one-pole slew (voiced; it models nothing the hardware
+does, and exists only so a patch edit or an S&H LFO edge cannot put a
+discontinuity into the filter coefficient). The *envelope* side does not: the
+filter and amp envelopes read the same slider through the same mapping, so
+smoothing one and not the other would make the reported "fast ADSR response
+times ensure bags of punch" true of the amp and false of the filter. The
+envelope's depth knob is slewed with the rest of the panel; its level is
+applied directly. Both stages' coefficients are then walked sample by sample
+across the control tick, so taking the envelope out of the slew did not put an
+eight-sample staircase back in. A test fences this: from A = 0 the filter
+envelope must open no slower than the amp envelope, and a fast S&H filter LFO
+must still produce no sample-level discontinuity.
+
 ### Envelopes
 
 Settled: PITCH ENV is attack/decay only, shared A/D with per-oscillator
