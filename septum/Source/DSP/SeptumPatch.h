@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <string>
 
 namespace septum
@@ -356,8 +357,14 @@ inline constexpr std::array<double, 6> reverbHfDampHz {
 
 inline void clampToDocumentedRanges (OscParams& osc) noexcept
 {
-    const int coarseLimit = osc.pitchWide ? 36 : 12;
-    osc.coarse = clampRaw (osc.coarse, -coarseLimit, coarseLimit);
+    // [settled] Coarse Tune is raw 28-100, i.e. -36..+36 semitones, and the
+    // address map does not narrow it when PITCH WIDE is off: the switch is
+    // its own byte and the manual says what it gates — "This button expands
+    // the range of the PITCH knob by a multiple of three" (OM p. 29). It is
+    // the knob's travel, not the stored pitch, so a stored +24 with WIDE off
+    // sounds +24 on the instrument and does here. Clamping the sounding pitch
+    // by it made the panel and the host show a pitch the engine did not play.
+    osc.coarse = clampRaw (osc.coarse, -36, 36);
     osc.fine = clampRaw (osc.fine, -50, 50);
     osc.pulseWidth = clampRaw (osc.pulseWidth, 0, 127);
     osc.pitchEnvDepth = clampRaw (osc.pitchEnvDepth, -63, 63);
@@ -382,7 +389,12 @@ inline void clampToDocumentedRanges (TonePatch& tone) noexcept
     tone.pitchEnvDecay = clampRaw (tone.pitchEnvDecay, 0, 127);
     tone.balance = clampRaw (tone.balance, -63, 63);
     tone.cutoff = clampRaw (tone.cutoff, 0, 127);
-    tone.keyFollow = clampRaw (tone.keyFollow, -200, 200);
+    // [settled] FILTER Cutoff Keyfollow is raw 44-84 displayed -200..+200,
+    // so the instrument has 41 positions in steps of 10 and this parameter
+    // must have the same ones.
+    tone.keyFollow =
+        10 * clampRaw (static_cast<int> (std::lround (tone.keyFollow / 10.0)),
+                       -20, 20);
     tone.cutoffVelocitySens = clampRaw (tone.cutoffVelocitySens, -63, 63);
     tone.resonance = clampRaw (tone.resonance, 0, 127);
     tone.filterEnvAttack = clampRaw (tone.filterEnvAttack, 0, 127);
@@ -421,7 +433,12 @@ inline void clampToDocumentedRanges (Patch& patch) noexcept
     patch.tempo = clampRaw (patch.tempo, 5, 300);
     patch.splitPoint = clampRaw (patch.splitPoint, 21, 108);
     patch.delay.time = clampRaw (patch.delay.time, 0, 127);
-    patch.delay.feedback = clampRaw (patch.delay.feedback, -98, 98);
+    // [settled] Feedback is raw 0-98 displayed -98..+98 %, so the display
+    // moves in steps of two and raw 49 is 0 %. A host automating it finer
+    // than the instrument can store it would not round-trip through SysEx.
+    patch.delay.feedback =
+        2 * clampRaw (static_cast<int> (std::lround (patch.delay.feedback / 2.0)),
+                      -49, 49);
     patch.delay.hfDamp = clampRaw (patch.delay.hfDamp, 0, 17);
     patch.delay.modulationRate = clampRaw (patch.delay.modulationRate, 0, 127);
     patch.delay.modulationDepth = clampRaw (patch.delay.modulationDepth, 0, 127);

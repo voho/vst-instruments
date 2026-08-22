@@ -76,11 +76,16 @@ parameter surface. Every continuous parameter is 7-bit; signed displays use
   AMP / AUDIO-FILTER), D-Beam assign (37 destinations), D-Beam polarity.
 - **Patch Tone** ×2 (0x40 bytes each): per oscillator — waveform
   (0–8: SAW, SQU, PW-SQU, TRI, SINE, NOISE, FB-OSC, SUPER-SAW, EXT-IN),
-  pitch-wide switch, coarse −36…+36 st, fine −50…+50 cents, pulse width
+  pitch-wide switch (raw 28–100 for the coarse tune either way — the switch
+  "expands the range of the PITCH *knob* by a multiple of three", OM p. 29, so
+  it gates the panel control's travel and not the stored pitch; on a numeric
+  parameter there is no travel to gate, and the switch is stored patch data
+  that does not change what sounds), coarse −36…+36 st, fine −50…+50 cents, pulse width
   0–127, pitch-env depth −63…+63; pitch env A/D 0–127; mix/mod type
   (MIX/SYNC/RING), balance −63…+63, low freq (FLAT/BOOST/CUT); filter type
   (0–3: BYPASS, LPF, HPF, BPF), slope (−12/−24 dB), cutoff 0–127, key
-  follow −200…+200 (raw steps of 10), cutoff velocity sens −63…+63,
+  follow −200…+200 (raw 44–84, so 41 positions in steps of 10 — the engine
+  and the panel both quantise to them), cutoff velocity sens −63…+63,
   resonance 0–127; filter env A/D/S/R + depth; overdrive switch + drive
   0–127; amp level, level velocity sens, pan L64–63R; amp env A/D/S/R;
   delay depth, reverb depth; LFO1/LFO2 shape (0–6: TRI, SIN, SAW, SQR, TRP,
@@ -90,7 +95,8 @@ parameter surface. Every continuous parameter is 7-bit; signed displays use
   (PITCH1/PW1/FILTER/AUDIO-FILTER) + depth, destination 2 (PITCH2/PW2/AMP)
   + depth; bend range 0–24 st; octave shift −3…+3; portamento switch +
   time; mono/solo select (POLY, SOLO+LEGATO, SOLO).
-- **Patch Delay** (5 bytes): time 0–127; feedback −98…+98 % (negative
+- **Patch Delay** (5 bytes): time 0–127; feedback −98…+98 % (raw 0–98, so the
+  display moves in steps of 2 % and raw 49 is 0 %; negative
   inverts phase); HF damp 200–8000 Hz in 17 steps or BYPASS; modulation
   rate 0–127; modulation depth 0–127.
 - **Patch Reverb** (10 bytes): time 0–127; pre-delay 0–100 ms; size 1–8;

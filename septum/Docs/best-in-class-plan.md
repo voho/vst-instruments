@@ -840,3 +840,43 @@ strip now, whether or not it prints in it. And the second INTERVAL button
 carried an empty label, the panel's only orphaned text; a control with no
 caption of its own now shares the one to its left, so `INTERVAL` spans both
 buttons.
+
+#### Step 20 — three parameters did not have the instrument's own positions
+
+The contract's rule is that the address map is adopted verbatim. Three
+parameters were not.
+
+**KEY FOLLOW had 401 positions where the instrument has 41.** The MIDI
+Implementation stores `FILTER Cutoff Keyfollow (44 — 84)` displayed
+`−200 — +200`, so the control moves in steps of 10 and raw 64 is zero. The
+parameter was a plain integer over −200…+200, which meant a host automating it
+could set a value the instrument cannot store and a patch edited by knob could
+not round-trip through the documented SysEx. Both the engine's clamp and the
+panel's readout quantise to the grid now.
+
+**Delay FEEDBACK had 197 positions where the instrument has 99.** Same
+document, `Patch Delay 00 01: Feedback (0 — 98)` displayed `−98 — +98 [%]`:
+99 raw values across a 197-wide display, so the display advances in twos and
+raw 49 is 0 %. Every other signed field in the file honours its raw range;
+this was the one that did not.
+
+**PITCH WIDE gated the sounding pitch, and the manual says it gates the
+knob.** `clampToDocumentedRanges` narrowed the coarse tune to ±12 semitones
+when the switch was off. The address map keeps `OSC1 Coarse Tune (28 — 100)`
+— the full −36…+36 — in a byte of its own, with the wide switch in another,
+and the manual says what the switch does: "This button expands the range of
+the PITCH knob by a multiple of three. If you press the WIDE button so it's
+lit, the PITCH knob will have a range of ±3 octaves" (OM p. 29). It is the
+knob's travel. The consequence of clamping the stored value instead was that
+the panel and the host printed a pitch the engine did not play: a patch at
++24 with WIDE off showed +24 and sounded +12. Measured on a sine at note 36
+(65.41 Hz) with coarse +24 and the switch off: **130.86 Hz before, 261.63 Hz
+after** — one octave out, and 261.63 Hz is what +24 semitones owes.
+
+On a numeric parameter there is no knob travel to gate, so PITCH WIDE is now
+patch data that stores and round-trips and does not change what sounds. That
+is what the documents settle, and it is one invented behaviour fewer.
+
+Nine checks fence the three, all watched to fail when the changes are
+reverted. No shipped preset sat off either grid or outside ±12 with WIDE off,
+so the committed demos are unchanged.

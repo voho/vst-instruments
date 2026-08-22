@@ -300,6 +300,78 @@ void testTuningAndMasterTune()
     expectNear (sharpHz, 466.20, 1.6, "master tune ceiling retunes A4");
 }
 
+// [settled] Three parameter surfaces the address map stores more coarsely, or
+// less narrowly, than the engine did.
+void testDocumentedParameterGrids()
+{
+    // FILTER Cutoff Keyfollow is raw 44-84 displayed -200..+200: 41 positions
+    // in steps of 10.
+    {
+        septum::Patch patch = septum::initPatch();
+        patch.upper.keyFollow = 193;
+        septum::clampToDocumentedRanges (patch);
+        expect (patch.upper.keyFollow == 190,
+                "KEY FOLLOW snaps to the documented 10-unit grid (got "
+                    + std::to_string (patch.upper.keyFollow) + ")");
+        patch.upper.keyFollow = -3;
+        septum::clampToDocumentedRanges (patch);
+        expect (patch.upper.keyFollow == 0,
+                "KEY FOLLOW near zero snaps to zero");
+    }
+
+    // Delay Feedback is raw 0-98 displayed -98..+98 %: steps of two.
+    {
+        septum::Patch patch = septum::initPatch();
+        // Every odd value sits exactly between two grid points, so what the
+        // check holds is the grid itself: the result is even and no further
+        // than one step from what was asked for.
+        for (int asked : { -97, -31, -1, 0, 1, 31, 97 })
+        {
+            patch.delay.feedback = asked;
+            septum::clampToDocumentedRanges (patch);
+            expect (patch.delay.feedback % 2 == 0
+                        && std::abs (patch.delay.feedback - asked) <= 1,
+                    "delay FEEDBACK snaps to the documented 2 % grid (asked "
+                        + std::to_string (asked) + ", got "
+                        + std::to_string (patch.delay.feedback) + ")");
+        }
+        patch.delay.feedback = 30;
+        septum::clampToDocumentedRanges (patch);
+        expect (patch.delay.feedback == 30,
+                "a value already on the grid is left alone");
+        patch.delay.feedback = -98;
+        septum::clampToDocumentedRanges (patch);
+        expect (patch.delay.feedback == -98,
+                "delay FEEDBACK reaches its documented extreme");
+    }
+
+    // PITCH WIDE gates the panel knob's travel — "This button expands the
+    // range of the PITCH knob by a multiple of three" (OM p. 29) — and not
+    // the stored pitch, which the address map keeps at -36..+36 in its own
+    // byte. A coarse tune outside +/-12 with the switch off must sound.
+    {
+        const double sampleRate = 44100.0;
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Sine;
+        patch.upper.osc1.pitchWide = false;
+        patch.upper.osc1.coarse = 24;
+        patch.upper.balance = -63;
+        patch.upper.ampEnvSustain = 127;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.reset();
+        auto take = renderScore (engine, { { 0.0, true, 36, 100 } }, 0.6,
+                                 sampleRate);
+        const double hz = estimateFundamental (take.left, 4410, 22050,
+                                               sampleRate, 100.0, 400.0);
+        // Note 36 is 65.41 Hz; two octaves up is 261.63 Hz.
+        expectNear (hz, 261.63, 3.0,
+                    "PITCH sounds what it stores with WIDE off");
+    }
+}
+
 void testBalanceEndpoints()
 {
     // Documented: balance fully left silences OSC2 entirely. The two renders
@@ -2659,6 +2731,7 @@ int main()
     testMappingLaws();
     testRegisteredConstants();
     testTuningAndMasterTune();
+    testDocumentedParameterGrids();
     testBalanceEndpoints();
     testRingModulation();
     testOscillatorSync();

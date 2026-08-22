@@ -594,6 +594,29 @@ const std::vector<juce::String>& signedParameterSuffixes()
                 // C4 here, as it is on the panel's own keyboard.
                 return juce::MidiMessage::getMidiNoteName (value, true, true, 4);
             });
+    // Two parameters the address map stores more coarsely than one raw step
+    // per displayed unit: the panel prints the position the instrument can
+    // actually take, so the readout never disagrees with what is rendered.
+    if (id == "delay_feedback")
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                const int snapped =
+                    2 * juce::jlimit (-49, 49,
+                                      (int) std::lround (value / 2.0));
+                return snapped > 0 ? "+" + juce::String (snapped)
+                                   : juce::String (snapped);
+            });
+    if (id == "key_follow" || id == "up_key_follow" || id == "lo_key_follow")
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                const int snapped =
+                    10 * juce::jlimit (-20, 20,
+                                       (int) std::lround (value / 10.0));
+                return snapped > 0 ? "+" + juce::String (snapped)
+                                   : juce::String (snapped);
+            });
     if (isSignedDisplay (id))
         return juce::AudioParameterIntAttributes().withStringFromValueFunction (
             [] (int value, int)
