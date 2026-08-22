@@ -434,6 +434,9 @@ void Engine::prepare (double sampleRate, int maxBlockSize)
                                                * sampleRate_) + 8, 0.0f);
     reverb_.preDelay.assign (static_cast<std::size_t> (sampleRate_ * 0.105) + 8, 0.0f);
 
+    externalDirectL_.assign (static_cast<std::size_t> (maxBlock_), 0.0f);
+    externalDirectR_.assign (static_cast<std::size_t> (maxBlock_), 0.0f);
+    externalMono_.assign (static_cast<std::size_t> (maxBlock_), 0.0f);
     scratchMono_.assign (static_cast<std::size_t> (maxBlock_), 0.0f);
     dryL_.assign (static_cast<std::size_t> (maxBlock_), 0.0f);
     dryR_.assign (static_cast<std::size_t> (maxBlock_), 0.0f);
@@ -493,6 +496,13 @@ void Engine::reset()
         dcX1_[channel] = dcY1_[channel] = 0.0;
         rcState1_[channel] = rcState2_[channel] = 0.0;
     }
+    for (int channel = 0; channel < 2; ++channel)
+    {
+        audioFilter1_[channel].clear();
+        audioFilter2_[channel].clear();
+    }
+    audioFilterPrimed_ = false;
+    monitorGain_ = 1.0;
     pitchBend_ = 0.0;
     modulation_ = 0.0;
     hold_ = false;
@@ -538,6 +548,12 @@ void Engine::setPatch (const Patch& patch)
         voice.pitchEnv.configure (sampleRate_, tone.pitchEnvAttack,
                                   tone.pitchEnvDecay);
     }
+}
+
+void Engine::setExternalInput (const ExternalInput& settings) noexcept
+{
+    external_ = settings;
+    clampToDocumentedRanges (external_);
 }
 
 void Engine::setMasterLevel (int level) noexcept
@@ -1330,7 +1346,8 @@ namespace
     }
 } // namespace
 
-void Engine::renderVoiceTick (Voice& voice, float* mono, int samples)
+void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
+                              const float* external)
 {
     const TonePatch& tone = tonePatch (voice.part);
     const Waveform wave1 = tone.osc1.wave;
@@ -1439,7 +1456,10 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples)
                 break;
             }
             case Waveform::ExtIn:
-                sample2 = 0.0;  // no external bus in v1 (documented)
+                // Settled: the input jacks' signal, in mono, in place of a
+                // generated wave. The phase still advances so SYNC keeps a
+                // cycle to fire from.
+                sample2 = external[i];
                 voice.osc2.phase = frac (voice.osc2.phase + voice.inc2);
                 break;
             default:
@@ -1479,7 +1499,7 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples)
                 sample1 = feedbackOsc (voice.osc1, voice.inc1, voice.fbGain1);
                 break;
             case Waveform::ExtIn:
-                sample1 = 0.0;
+                sample1 = external[i];
                 voice.osc1.phase = frac (voice.osc1.phase + voice.inc1);
                 break;
             default:
@@ -1597,6 +1617,168 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples)
     voice.osc1.hpfY2 = flushDenormal (voice.osc1.hpfY2);
     voice.osc2.hpfY1 = flushDenormal (voice.osc2.hpfY1);
     voice.osc2.hpfY2 = flushDenormal (voice.osc2.hpfY2);
+}
+
+// ---------------------------------------------------------------------------
+// External input: INPUT VOL -> CENTER CANCEL -> AUDIO FILTER
+//
+// Settled (OM pp. 49-53): the INPUT jacks are monitored through a dedicated
+// filter with its own ON switch, four types (LPF/HPF/BPF/NOTCH — one more than
+// the voice filter has), a -12/-24 dB slope, cutoff and resonance; a CENTER
+// CANCEL switch removes what is panned to the centre; and none of it is stored
+// in the patch. Selecting EXT-IN as an oscillator waveform plays the input
+// through the voice instead, in mono, and the direct monitor goes quiet until
+// the amp envelope has finished — which is how the manual's "produce sound
+// only when you play the keyboard" recipe works, and which also settles that
+// the oscillator taps the input *before* the audio filter: with that filter's
+// LPF closed the recipe is silent on release and audible under a key.
+// ---------------------------------------------------------------------------
+
+bool Engine::anyVoiceUsesExternalInput() const noexcept
+{
+    for (const auto& voice : voices_)
+    {
+        if (! voice.active)
+            continue;
+        const TonePatch& tone = tonePatch (voice.part);
+        if (tone.osc1.wave == Waveform::ExtIn || tone.osc2.wave == Waveform::ExtIn)
+            return true;
+    }
+    return false;
+}
+
+void Engine::prepareExternalTick (const float* inputLeft, const float* inputRight,
+                                  int offset, int samples)
+{
+    const double inputGain = mapping::externalInputGain (external_.inputVolume);
+    const bool haveInput = inputLeft != nullptr && inputRight != nullptr;
+
+    // Direct-path mute while an EXT-IN voice owns the input, with a short fade
+    // so the changeover is not a step (voiced).
+    const double monitorTarget = anyVoiceUsesExternalInput() ? 0.0 : 1.0;
+    const double fade =
+        1.0 - std::exp (-samples
+                        / (sampleRate_ * mapping::externalMonitorFadeSeconds));
+    monitorGain_ += (monitorTarget - monitorGain_) * fade;
+
+    // The audio filter's cutoff, with the settled AUDIO-FILTER modulation
+    // destinations that had nothing to move until now: LFO destination 1 on
+    // either tone, and the modulation lever through MODULATION ASSIGN.
+    double octaves = std::log2 (mapping::cutoffHz (external_.cutoff));
+    for (int index = 0; index < partCount; ++index)
+    {
+        const Part part = index == 0 ? Part::Upper : Part::Lower;
+        if (! partSounds (part))
+            continue;
+        const TonePatch& tone = tonePatch (part);
+        const ToneRuntime& runtime = tones_[static_cast<std::size_t> (index)];
+        if (tone.lfo1.destination1 == LfoDest1::AudioFilter)
+            octaves += mapping::audioFilterLfoOctaves (tone.lfo1.depth1)
+                       * runtime.lfo1Value;
+        if (tone.lfo2.destination1 == LfoDest1::AudioFilter)
+            octaves += mapping::audioFilterLfoOctaves (tone.lfo2.depth1)
+                       * runtime.lfo2Value;
+        if (patch_.modulationAssign == ModulationAssign::AudioFilter)
+            octaves += modulation_ * mapping::audioFilterLeverOctaves
+                       * runtime.lfo2Value;
+    }
+    const double fc =
+        std::clamp (std::exp2 (octaves), 5.0, 0.45 * sampleRate_);
+    const double gTarget = std::tan (pi * fc / sampleRate_);
+    const double kTarget = mapping::audioFilterDamping (external_.resonance);
+    if (! audioFilterPrimed_)
+    {
+        audioFilterG_ = gTarget;
+        audioFilterK_ = kTarget;
+        audioFilterPrimed_ = true;
+    }
+    else
+    {
+        const double slew =
+            1.0 - std::exp (-samples / (sampleRate_ * mapping::controlSlewSeconds));
+        audioFilterG_ += (gTarget - audioFilterG_) * slew;
+        audioFilterK_ += (kTarget - audioFilterK_) * slew;
+    }
+
+    const double g = audioFilterG_;
+    const double k = audioFilterK_;
+    const double a1 = 1.0 / (1.0 + g * (g + k));
+    const double a2 = g * a1;
+
+    for (int i = 0; i < samples; ++i)
+    {
+        double left = 0.0, right = 0.0;
+        if (haveInput)
+        {
+            left = inputLeft[offset + i] * inputGain;
+            right = inputRight[offset + i] * inputGain;
+        }
+
+        // CENTER CANCEL: what is common to both channels is what sits at the
+        // centre, so removing the mid leaves the sides. The mono reduction the
+        // EXT-IN oscillator then takes is the difference rather than the sum,
+        // which is what is actually left of the signal (voiced, OQ-14).
+        double mono = 0.5 * (left + right);
+        if (external_.centerCancel)
+        {
+            const double mid = mono;
+            left -= mid;
+            right -= mid;
+            mono = 0.5 * (left - right);
+        }
+        // Settled (OM p. 52): an EXT-IN oscillator is mono even from a stereo
+        // source. It taps here, before the audio filter.
+        externalMono_[static_cast<std::size_t> (i)] = static_cast<float> (mono);
+
+        if (external_.filterOn)
+        {
+            const auto stagePass = [&] (SvfStage& stage, double input,
+                                        double damping, double stageA1,
+                                        double stageA2)
+            {
+                const double v3 = input - stage.ic2eq;
+                const double v1 = stageA1 * stage.ic1eq + stageA2 * v3;
+                const double v2 = stage.ic2eq + g * v1;
+                stage.ic1eq = 2.0 * v1 - stage.ic1eq;
+                stage.ic2eq = 2.0 * v2 - stage.ic2eq;
+                const double lp = v2;
+                const double bp = v1;
+                const double hp = input - damping * v1 - v2;
+                switch (external_.type)
+                {
+                    case AudioFilterType::Lpf: return lp;
+                    case AudioFilterType::Hpf: return hp;
+                    case AudioFilterType::Bpf: return damping * bp;
+                    // NOTCH is the low-pass and high-pass sum: everything but
+                    // the band the resonance would have boosted.
+                    case AudioFilterType::Notch: return lp + hp;
+                }
+                return input;
+            };
+            double* channels[2] { &left, &right };
+            for (int channel = 0; channel < 2; ++channel)
+            {
+                double value = *channels[channel];
+                value = stagePass (audioFilter1_[channel], value, k, a1, a2);
+                if (external_.slope == FilterSlope::Db24)
+                    value = stagePass (audioFilter2_[channel], value, k, a1, a2);
+                *channels[channel] = value;
+            }
+        }
+
+        externalDirectL_[static_cast<std::size_t> (i)] =
+            static_cast<float> (left * monitorGain_);
+        externalDirectR_[static_cast<std::size_t> (i)] =
+            static_cast<float> (right * monitorGain_);
+    }
+
+    for (int channel = 0; channel < 2; ++channel)
+    {
+        audioFilter1_[channel].ic1eq = flushDenormal (audioFilter1_[channel].ic1eq);
+        audioFilter1_[channel].ic2eq = flushDenormal (audioFilter1_[channel].ic2eq);
+        audioFilter2_[channel].ic1eq = flushDenormal (audioFilter2_[channel].ic1eq);
+        audioFilter2_[channel].ic2eq = flushDenormal (audioFilter2_[channel].ic2eq);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1820,7 +2002,8 @@ void Engine::processEffects (const float* dryL, const float* dryR,
 // Main render
 // ---------------------------------------------------------------------------
 
-void Engine::process (float* left, float* right, int numSamples)
+void Engine::process (float* left, float* right, int numSamples,
+                      const float* inputLeft, const float* inputRight)
 {
     int offset = 0;
     float blockPeakL = 0.0f, blockPeakR = 0.0f;
@@ -1831,6 +2014,7 @@ void Engine::process (float* left, float* right, int numSamples)
         const int guarded = std::min (tick, maxBlock_);
 
         advanceToneLfos (guarded);
+        prepareExternalTick (inputLeft, inputRight, offset, guarded);
 
         std::fill (dryL_.begin(), dryL_.begin() + guarded, 0.0f);
         std::fill (dryR_.begin(), dryR_.begin() + guarded, 0.0f);
@@ -1845,7 +2029,8 @@ void Engine::process (float* left, float* right, int numSamples)
                 continue;
 
             updateVoiceControls (voice, guarded);
-            renderVoiceTick (voice, scratchMono_.data(), guarded);
+            renderVoiceTick (voice, scratchMono_.data(), guarded,
+                             externalMono_.data());
 
             if (voice.ampEnv.idle())
                 voice.active = false;
@@ -1900,12 +2085,21 @@ void Engine::process (float* left, float* right, int numSamples)
         const double partPanGain[2] { std::cos (panAngle) * 1.4142135623730951,
                                       std::sin (panAngle) * 1.4142135623730951 };
 
+        // The direct monitor path joins here rather than in the voice sum: it
+        // is not patch audio, so the patch level and the part controllers do
+        // not scale it, but the panel VOLUME sits after the DAC on the
+        // hardware and therefore does.
+        const double monitorLevel = masterLevel_ / 127.0;
+
         for (int channel = 0; channel < 2; ++channel)
         {
             float* out = channel == 0 ? left + offset : right + offset;
+            const float* monitor = channel == 0 ? externalDirectL_.data()
+                                                : externalDirectR_.data();
             for (int i = 0; i < guarded; ++i)
             {
-                double x = out[i] * smoothedMaster_ * partPanGain[channel];
+                double x = out[i] * smoothedMaster_ * partPanGain[channel]
+                           + monitor[i] * monitorLevel;
                 // 22 uF / 22 k coupling (0.329 Hz).
                 const double dc = x - dcX1_[channel] + dcCoeff_ * dcY1_[channel];
                 dcX1_[channel] = x;

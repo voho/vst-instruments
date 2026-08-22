@@ -475,6 +475,21 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     addControl (*reverb, "reverb_density", "DENS", Style::Knob, false);
     addControl (*reverb, "reverb_diffusion", "DIFF", Style::Knob, false);
 
+    // ---- external input: the hardware's EXT IN / AUDIO FILTER block -----
+    auto* externalSection = section ("EXT IN: AUDIO FILTER");
+    externalSection->firstRowCount = 4;
+    addControl (*externalSection, "ext_input_vol", "INPUT VOL", Style::Knob, false);
+    addControl (*externalSection, "ext_center_cancel", "CENTER CNCL",
+                Style::Toggle, false);
+    addControl (*externalSection, "audio_filter_on", "FILTER ON", Style::Toggle,
+                false);
+    addControl (*externalSection, "audio_filter_type", "TYPE", Style::Combo, false);
+    addControl (*externalSection, "audio_filter_slope", "SLOPE", Style::Combo,
+                false);
+    addControl (*externalSection, "audio_filter_cutoff", "CUTOFF", Style::Knob,
+                false);
+    addControl (*externalSection, "audio_filter_reso", "RESO", Style::Knob, false);
+
     // ---- the patch strip above the keys (the hardware's button row) ------
     stripSection = section ("PATCH");
     stripSection->manualLayout = true;
@@ -888,9 +903,9 @@ void SeptumAudioProcessorEditor::resized()
         layoutSection (*sections[(std::size_t) index],
                        topRow.removeFromLeft ((int) (width * topScale)));
 
-    // Row 2: LFO1, LFO2, EFFECTS (delay, reverb)
-    const std::array<std::pair<int, int>, 4> bottomPlan {
-        std::pair { 9, 280 }, { 10, 280 }, { 11, 340 }, { 12, 378 },
+    // Row 2: LFO1, LFO2, EFFECTS (delay, reverb), EXT IN
+    const std::array<std::pair<int, int>, 5> bottomPlan {
+        std::pair { 9, 250 }, { 10, 250 }, { 11, 300 }, { 12, 330 }, { 13, 230 },
     };
     consumed = 0;
     for (const auto& [index, width] : bottomPlan)

@@ -69,10 +69,18 @@ The engine's grounding, briefly:
 - **Analog output stage (settled).** The service-notes component values:
   22 µF/22 kΩ coupling (0.329 Hz), the 8.2 kΩ/820 pF and 4.7 kΩ/270 pF RC
   poles (23.7 kHz, 125.4 kHz), gain chain normalized to digital full scale.
+- **External input (settled).** The rear INPUT jacks, with INPUT VOL, CENTER
+  CANCEL and the AUDIO FILTER — LPF/HPF/BPF/**NOTCH** at −12 or −24 dB, none
+  of it stored in the patch, exactly as the manual says three times over. The
+  EXT-IN waveform plays the input through the voice in mono, and the direct
+  monitor hands the input over while it does; the manual's own "sound only
+  when you play the keyboard" recipe is what settles that order, and it is a
+  test.
 - **MIDI (settled).** The control-change map from owner's manual p. 72 for
   both tones and the part controllers, including both documented pedals
-  (hold CC#64, sostenuto CC#66) and the printed CC#88 collision resolved to
-  CC#83 as documented in the research contract.
+  (hold CC#64, sostenuto CC#66), the audio filter's CC#2 and CC#4, and the
+  printed CC#88 collision resolved to CC#83 as documented in the research
+  contract.
 
 The demos are rendered through this exact engine by a JUCE-free tool that CI
 rebuilds and verifies, so the committed audio cannot drift from the code.
@@ -101,6 +109,11 @@ macOS (full plug-in set):
 ./scripts/build-macos.sh
 ```
 
+The plug-in declares a stereo input bus for the modelled instrument's INPUT
+jacks. It is disabled by default, so a host that gives a synthesizer no input
+loads Septum unchanged; enable it to feed the AUDIO FILTER and the EXT-IN
+waveform.
+
 The full plug-in also builds on Linux and Windows (VST3 + Standalone); CI
 exercises all three platforms. A pinned JUCE 8.0.14 is fetched at configure
 time, or pass `-DSEPTUM_JUCE_PATH=/path/to/JUCE`.
@@ -122,10 +135,9 @@ time, or pass `-DSEPTUM_JUCE_PATH=/path/to/JUCE`.
 
 ## Not yet modelled
 
-The arpeggiator and step recorder, D-Beam, the external-input path (audio
-filter, center cancel, EXT-IN oscillators) and SysEx DT1/RQ1 I/O are
-documented but deferred; the research contract lists them alongside the open
-calibration questions.
+The arpeggiator and step recorder, D-Beam and SysEx DT1/RQ1 I/O are documented
+but deferred; the research contract lists them alongside the open calibration
+questions.
 
 ## Licensing
 
