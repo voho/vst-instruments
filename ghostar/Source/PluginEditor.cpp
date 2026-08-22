@@ -6,21 +6,30 @@ namespace
 {
 namespace ids = ghostar::parameters;
 
-// Ghostar's livery: near-black panel, bone silkscreen, spectral cyan pointers.
-const juce::Colour panelBlack { 0xff121214 };
-const juce::Colour sectionBlack { 0xff1a1a1d };
-const juce::Colour accentBlack { 0xff1f1f24 };
-const juce::Colour headerBlack { 0xff0d0d0f };
-const juce::Colour silkscreen { 0xffe8e4da };
-const juce::Colour silkscreenDim { 0xff8f8c84 };
-const juce::Colour spectralCyan { 0xff7fd8d8 };
-const juce::Colour spectralDim { 0xff3f6d6d };
-const juce::Colour controlBody { 0xff2a2a2e };
-const juce::Colour controlRim { 0xff3c3c42 };
-const juce::Colour hairline { 0xff2e2e34 };
+// Ghostar's livery: a charcoal panel with grey knob caps, their markings
+// in black, and the silkscreen in white — the monochrome scheme a machined
+// front panel of the period actually wears. Nothing is coloured for its own
+// sake: value is shown by a black arc against a pale track, and the only
+// thing that lights is a state you need to see (a thrown rocker, the gate).
+const juce::Colour panelCharcoal { 0xff3a3a3c };
+const juce::Colour sectionCharcoal { 0xff333335 };
+const juce::Colour accentCharcoal { 0xff3f3f42 };
+const juce::Colour headerCharcoal { 0xff2b2b2d };
+const juce::Colour silkscreen { 0xffffffff };
+const juce::Colour silkscreenDim { 0xffbdbdbd };
+const juce::Colour knobFace { 0xff9c9c9e };
+const juce::Colour knobFaceTop { 0xffb0b0b2 };
+const juce::Colour knobRim { 0xff77777a };
+const juce::Colour markingBlack { 0xff141416 };
+const juce::Colour controlBody { 0xff4a4a4d };
+const juce::Colour controlRim { 0xff5c5c60 };
+const juce::Colour trackPale { 0xff8b8b8e };
+const juce::Colour hairline { 0xff4c4c50 };
+const juce::Colour lampLit { 0xfff2f2f2 };
+const juce::Colour lampDark { 0xff2a2a2c };
 
 constexpr int editorWidth = 1280;
-constexpr int editorHeight = 704;
+constexpr int editorHeight = 818;
 constexpr int margin = 12;
 constexpr int gap = 8;
 
@@ -40,7 +49,7 @@ juce::String travelText(double normalised)
 
 GhostarLookAndFeel::GhostarLookAndFeel()
 {
-    setColour(juce::ResizableWindow::backgroundColourId, panelBlack);
+    setColour(juce::ResizableWindow::backgroundColourId, panelCharcoal);
     setColour(juce::Label::textColourId, silkscreen);
     setColour(juce::Slider::textBoxTextColourId, silkscreen);
     setColour(juce::Slider::textBoxOutlineColourId,
@@ -48,30 +57,30 @@ GhostarLookAndFeel::GhostarLookAndFeel()
     setColour(juce::ComboBox::backgroundColourId, controlBody);
     setColour(juce::ComboBox::textColourId, silkscreen);
     setColour(juce::ComboBox::outlineColourId, controlRim);
-    setColour(juce::ComboBox::arrowColourId, spectralCyan);
-    setColour(juce::PopupMenu::backgroundColourId, sectionBlack);
+    setColour(juce::ComboBox::arrowColourId, silkscreen);
+    setColour(juce::PopupMenu::backgroundColourId, sectionCharcoal);
     setColour(juce::PopupMenu::textColourId, silkscreen);
-    setColour(juce::PopupMenu::headerTextColourId, spectralCyan);
+    setColour(juce::PopupMenu::headerTextColourId, silkscreenDim);
     setColour(juce::PopupMenu::highlightedBackgroundColourId,
-              spectralCyan.withAlpha(0.25f));
+              juce::Colour { 0xff5a5a5e });
     setColour(juce::PopupMenu::highlightedTextColourId, silkscreen);
     setColour(juce::TextButton::buttonColourId, controlBody);
     setColour(juce::TextButton::textColourOffId, silkscreen);
     setColour(juce::TextButton::textColourOnId, silkscreen);
     setColour(juce::TooltipWindow::backgroundColourId,
-              juce::Colour { 0xff26262c });
+              juce::Colour { 0xff2b2b2d });
     setColour(juce::TooltipWindow::textColourId, silkscreen);
     setColour(juce::TooltipWindow::outlineColourId, controlRim);
     setColour(juce::MidiKeyboardComponent::whiteNoteColourId,
-              juce::Colour { 0xffdedbd2 });
+              juce::Colour { 0xffe9e9e6 });
     setColour(juce::MidiKeyboardComponent::blackNoteColourId,
-              juce::Colour { 0xff1c1c20 });
+              juce::Colour { 0xff141416 });
     setColour(juce::MidiKeyboardComponent::keySeparatorLineColourId,
-              juce::Colour { 0xff3a3a3e });
+              juce::Colour { 0xff8a8a88 });
     setColour(juce::MidiKeyboardComponent::mouseOverKeyOverlayColourId,
-              spectralCyan.withAlpha(0.25f));
+              juce::Colour { 0x30000000 });
     setColour(juce::MidiKeyboardComponent::keyDownOverlayColourId,
-              spectralCyan.withAlpha(0.55f));
+              juce::Colour { 0x88000000 });
     setColour(juce::MidiKeyboardComponent::textLabelColourId,
               juce::Colour { 0xff55555c });
 }
@@ -99,7 +108,7 @@ void GhostarLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y,
     juce::Path track;
     track.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0.0f,
                         rotaryStartAngle, rotaryEndAngle, true);
-    g.setColour(hairline);
+    g.setColour(trackPale);
     g.strokePath(track, juce::PathStrokeType(arcThickness,
                                              juce::PathStrokeType::curved,
                                              juce::PathStrokeType::rounded));
@@ -114,7 +123,7 @@ void GhostarLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y,
         lit.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0.0f,
                           juce::jmin(originAngle, angle),
                           juce::jmax(originAngle, angle), true);
-        g.setColour(spectralCyan.withAlpha(0.85f));
+        g.setColour(markingBlack);
         g.strokePath(lit, juce::PathStrokeType(arcThickness,
                                                juce::PathStrokeType::curved,
                                                juce::PathStrokeType::rounded));
@@ -122,22 +131,22 @@ void GhostarLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y,
 
     // Conical black cap with a lighter top, as the hardware knobs wear.
     const float capOuter = radius * 0.80f;
-    g.setColour(controlRim);
+    g.setColour(knobRim);
     g.fillEllipse(centre.x - capOuter, centre.y - capOuter, capOuter * 2.0f,
                   capOuter * 2.0f);
     const float capRadius = radius * 0.70f;
-    g.setColour(controlBody);
+    g.setColour(knobFace);
     g.fillEllipse(centre.x - capRadius, centre.y - capRadius, capRadius * 2.0f,
                   capRadius * 2.0f);
-    g.setColour(juce::Colour { 0xff45454b });
+    g.setColour(knobFaceTop);
     const float topRadius = radius * 0.36f;
     g.fillEllipse(centre.x - topRadius, centre.y - topRadius, topRadius * 2.0f,
                   topRadius * 2.0f);
 
     juce::Path pointer;
-    pointer.addRoundedRectangle(-1.7f, -capRadius * 0.96f, 3.4f,
-                                capRadius * 0.62f, 1.6f);
-    g.setColour(silkscreen);
+    pointer.addRoundedRectangle(-1.8f, -capRadius * 0.96f, 3.6f,
+                                capRadius * 0.66f, 1.8f);
+    g.setColour(markingBlack);
     g.fillPath(pointer, juce::AffineTransform::rotation(angle).translated(
                             centre.x, centre.y));
 }
@@ -158,27 +167,27 @@ void GhostarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y,
     const auto track = juce::Rectangle<float>(
         static_cast<float>(x) + static_cast<float>(width) / 2.0f - 2.0f,
         static_cast<float>(y), 4.0f, static_cast<float>(height));
-    g.setColour(juce::Colour { 0xff0a0a0c });
+    g.setColour(trackPale);
     g.fillRoundedRectangle(track, 2.0f);
-    g.setColour(hairline);
+    g.setColour(knobRim);
     g.drawRoundedRectangle(track.reduced(0.5f), 2.0f, 1.0f);
 
     // The travelled part of the track lights, so a bank of faders reads as
     // a shape at a glance rather than as eight identical caps.
     auto lit = track;
     lit.setTop(sliderPos);
-    g.setColour(spectralCyan.withAlpha(0.75f));
+    g.setColour(markingBlack);
     g.fillRoundedRectangle(lit, 2.0f);
 
     // The black cap with its pale index stripe.
     const float capWidth = juce::jmin(24.0f, static_cast<float>(width));
     const juce::Rectangle<float> cap { track.getCentreX() - capWidth / 2.0f,
                                        sliderPos - 8.0f, capWidth, 16.0f };
-    g.setColour(controlBody);
+    g.setColour(knobFace);
     g.fillRoundedRectangle(cap, 3.0f);
-    g.setColour(controlRim);
+    g.setColour(knobRim);
     g.drawRoundedRectangle(cap.reduced(0.5f), 3.0f, 1.0f);
-    g.setColour(silkscreen);
+    g.setColour(markingBlack);
     g.fillRect(cap.getX() + 4.0f, cap.getCentreY() - 1.0f,
                cap.getWidth() - 8.0f, 2.0f);
 }
@@ -192,17 +201,19 @@ void GhostarLookAndFeel::drawToggleButton(juce::Graphics& g,
     const auto rocker =
         bounds.removeFromLeft(30.0f).withSizeKeepingCentre(24.0f, 15.0f);
 
-    g.setColour(juce::Colour { 0xff0a0a0c });
+    g.setColour(markingBlack);
     g.fillRoundedRectangle(rocker, 3.0f);
-    g.setColour(shouldDrawButtonAsHighlighted ? spectralDim : controlRim);
+    g.setColour(shouldDrawButtonAsHighlighted ? silkscreen : controlRim);
     g.drawRoundedRectangle(rocker.reduced(0.5f), 3.0f, 1.0f);
 
     // The large grey rocker: the lit half shows which way it is thrown.
     auto lit = rocker.reduced(2.5f);
     lit = button.getToggleState() ? lit.removeFromTop(lit.getHeight() / 2.0f)
                                   : lit.removeFromBottom(lit.getHeight() / 2.0f);
-    g.setColour(button.getToggleState() ? spectralCyan
-                                        : juce::Colour { 0xff4c4c53 });
+    // The thrown half is pale, the resting half dark: which way the rocker
+    // sits is legible without colour.
+    g.setColour(button.getToggleState() ? knobFaceTop
+                                        : juce::Colour { 0xff3d3d40 });
     g.fillRoundedRectangle(lit, 2.0f);
 
     g.setColour(button.getToggleState() ? silkscreen : silkscreenDim);
@@ -220,7 +231,7 @@ void GhostarLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height,
         juce::Rectangle<int>(0, 0, width, height).toFloat().reduced(0.5f);
     g.setColour(controlBody);
     g.fillRoundedRectangle(bounds, 3.0f);
-    g.setColour(box.isMouseOver() ? spectralDim : controlRim);
+    g.setColour(box.isMouseOver() ? silkscreen : controlRim);
     g.drawRoundedRectangle(bounds, 3.0f, 1.0f);
 
     juce::Path arrow;
@@ -229,7 +240,7 @@ void GhostarLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height,
     arrow.startNewSubPath(cx - 4.0f, cy - 2.0f);
     arrow.lineTo(cx, cy + 3.0f);
     arrow.lineTo(cx + 4.0f, cy - 2.0f);
-    g.setColour(spectralCyan);
+    g.setColour(silkscreen);
     g.strokePath(arrow, juce::PathStrokeType(1.6f));
 }
 
@@ -243,11 +254,29 @@ void GhostarLookAndFeel::drawButtonBackground(
     bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
 {
     const auto bounds = button.getLocalBounds().toFloat().reduced(0.5f);
-    g.setColour(shouldDrawButtonAsDown ? spectralCyan.withAlpha(0.3f)
-                                       : controlBody);
+    g.setColour(shouldDrawButtonAsDown ? knobRim : controlBody);
     g.fillRoundedRectangle(bounds, 3.0f);
-    g.setColour(shouldDrawButtonAsHighlighted ? spectralCyan : controlRim);
+    g.setColour(shouldDrawButtonAsHighlighted ? silkscreen : controlRim);
     g.drawRoundedRectangle(bounds, 3.0f, 1.0f);
+}
+
+void PanelKeyboard::drawBlackNote(int, juce::Graphics& g,
+                                  juce::Rectangle<float> area, bool isDown,
+                                  bool isOver, juce::Colour noteFillColour)
+{
+    auto colour = noteFillColour;
+    if (isDown)
+        colour = colour.overlaidWith(findColour(keyDownOverlayColourId));
+    else if (isOver)
+        colour = colour.overlaidWith(
+            findColour(mouseOverKeyOverlayColourId));
+
+    g.setColour(colour);
+    g.fillRect(area);
+    // A hairline down the sides only, so adjacent sharps stay separable
+    // without the face lifting off black.
+    g.setColour(juce::Colour { 0xff2e2e30 });
+    g.drawRect(area, 1.0f);
 }
 
 GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
@@ -450,7 +479,7 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
 
     wordmark.setText("ghostar", juce::dontSendNotification);
     wordmark.setFont(juce::FontOptions { 30.0f, juce::Font::bold });
-    wordmark.setColour(juce::Label::textColourId, spectralCyan);
+    wordmark.setColour(juce::Label::textColourId, silkscreen);
     wordmark.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(wordmark);
 
@@ -509,7 +538,7 @@ void GhostarAudioProcessorEditor::addKnob(Knob& knob, const char* parameterId,
         knob.readoutTicks = readoutHoldTicks;
         knob.label.setText(travelText(knob.slider.getValue()),
                            juce::dontSendNotification);
-        knob.label.setColour(juce::Label::textColourId, spectralCyan);
+        knob.label.setColour(juce::Label::textColourId, silkscreen);
     };
     addAndMakeVisible(knob.slider);
     knob.label.setText(text, juce::dontSendNotification);
@@ -538,7 +567,7 @@ void GhostarAudioProcessorEditor::addFader(Fader& fader,
         fader.readoutTicks = readoutHoldTicks;
         fader.label.setText(travelText(fader.slider.getValue()),
                             juce::dontSendNotification);
-        fader.label.setColour(juce::Label::textColourId, spectralCyan);
+        fader.label.setColour(juce::Label::textColourId, silkscreen);
     };
     addAndMakeVisible(fader.slider);
     fader.label.setText(text, juce::dontSendNotification);
@@ -711,13 +740,13 @@ void GhostarAudioProcessorEditor::layoutSelector(Selector& selector,
 
 void GhostarAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(panelBlack);
+    g.fillAll(panelCharcoal);
 
     // The header plate, so the browser reads as chrome rather than as
     // another panel section.
     const auto header =
         getLocalBounds().withHeight(margin + 48).toFloat();
-    g.setColour(headerBlack);
+    g.setColour(headerCharcoal);
     g.fillRect(header);
     g.setColour(hairline);
     g.drawLine(0.0f, header.getBottom() - 0.5f,
@@ -731,13 +760,10 @@ void GhostarAudioProcessorEditor::paint(juce::Graphics& g)
         const auto dot = juce::Rectangle<float> { lamp.getX(),
                                                   lamp.getCentreY() - 4.0f,
                                                   8.0f, 8.0f };
-        g.setColour(open ? spectralCyan : juce::Colour { 0xff2a2a30 });
+        g.setColour(open ? lampLit : lampDark);
         g.fillEllipse(dot);
-        if (open)
-        {
-            g.setColour(spectralCyan.withAlpha(0.25f));
-            g.fillEllipse(dot.expanded(3.0f));
-        }
+        g.setColour(open ? lampLit.withAlpha(0.28f) : hairline);
+        g.drawEllipse(dot.expanded(2.5f), 1.0f);
         g.setColour(open ? silkscreen : silkscreenDim);
         g.setFont(juce::FontOptions { 10.0f });
         g.drawText("GATE", lamp.withTrimmedLeft(14.0f),
@@ -747,14 +773,14 @@ void GhostarAudioProcessorEditor::paint(juce::Graphics& g)
     for (const auto& section : sections)
     {
         const auto frame = section.bounds.toFloat();
-        g.setColour(section.accent ? accentBlack : sectionBlack);
+        g.setColour(section.accent ? accentCharcoal : sectionCharcoal);
         g.fillRoundedRectangle(frame, 5.0f);
-        g.setColour(section.accent ? spectralDim.withAlpha(0.55f) : hairline);
+        g.setColour(section.accent ? silkscreenDim : hairline);
         g.drawRoundedRectangle(frame.reduced(0.5f), 5.0f, 1.0f);
 
         // The silkscreened section name, with a hairline running out from it
         // across the top of the frame.
-        g.setColour(section.accent ? spectralCyan : silkscreenDim);
+        g.setColour(section.accent ? silkscreen : silkscreenDim);
         g.setFont(juce::FontOptions { 10.5f, juce::Font::bold });
         const auto titleArea = section.bounds.withHeight(18).reduced(9, 3);
         g.drawText(section.title, titleArea, juce::Justification::centredLeft);
@@ -794,6 +820,30 @@ void GhostarAudioProcessorEditor::resized()
     }
     area.removeFromTop(10);
 
+    // The keyboard is its own strip along the bottom, with the performance
+    // wheels standing to its left where a player's hand reaches them — the
+    // arrangement the instrument itself has. It is claimed before the
+    // control rows so the controls own all the space above it.
+    {
+        auto keyboardStrip = area.removeFromBottom(190);
+        area.removeFromBottom(10);
+        sections.push_back({ "KEYBOARD  /  37 KEYS, C TO C", keyboardStrip,
+                             false });
+        auto keys = keyboardStrip.reduced(9, 5).withTrimmedTop(14);
+
+        auto wheels = keys.removeFromLeft(184);
+        keys.removeFromLeft(10);
+        auto bend = wheels.removeFromLeft(58);
+        pitchWheelLabel.setBounds(bend.removeFromBottom(14));
+        pitchWheel.setBounds(bend.reduced(8, 6));
+        auto xColumn = wheels.removeFromLeft(63);
+        layoutKnob(xWheel, xColumn.withSizeKeepingCentre(63, 96));
+        layoutKnob(yWheel, wheels.withSizeKeepingCentre(63, 96));
+
+        keyboard.setKeyWidth(static_cast<float>(keys.getWidth()) / 22.0f);
+        keyboard.setBounds(keys);
+    }
+
     const auto addSection = [this](juce::Rectangle<int>& row, int width,
                                    const juce::String& title,
                                    bool accent = false) {
@@ -806,49 +856,42 @@ void GhostarAudioProcessorEditor::resized()
     // ---- Row 1: sources and modulation ----------------------------------
     auto row1 = area.removeFromTop(160);
     {
-        auto master = addSection(row1, 110, "MASTER");
+        auto master = addSection(row1, 130, "MASTER");
         layoutKnob(tune, master.removeFromTop(84));
         master.removeFromTop(4);
         layoutSelector(octave, master.removeFromTop(42));
 
-        auto oscA = addSection(row1, 124, "OSCILLATOR A");
+        auto oscA = addSection(row1, 180, "OSCILLATOR A");
         layoutSelector(oscAWaveform, oscA.removeFromTop(42));
         oscA.removeFromTop(22);
         sync.button.setBounds(oscA.removeFromTop(28).withTrimmedLeft(4));
 
-        auto oscB = addSection(row1, 226, "OSCILLATOR B");
+        auto oscB = addSection(row1, 300, "OSCILLATOR B");
         auto oscBTop = oscB.removeFromTop(42);
         layoutSelector(oscBWaveform, oscBTop.removeFromLeft(104));
         oscBTop.removeFromLeft(8);
         layoutSelector(oscBRange, oscBTop);
-        layoutKnob(interval, oscB.removeFromTop(84).reduced(62, 0));
+        layoutKnob(interval, oscB.removeFromTop(84).reduced(100, 0));
 
-        auto modX = addSection(row1, 236, "MOD X");
+        auto modX = addSection(row1, 320, "MOD X");
         auto modXTop = modX.removeFromTop(42);
         layoutSelector(arpeggiator, modXTop.removeFromLeft(100));
         modXTop.removeFromLeft(8);
         layoutSelector(modSource, modXTop);
-        layoutKnob(lfoRate, modX.removeFromTop(84).reduced(67, 0));
+        layoutKnob(lfoRate, modX.removeFromTop(84).reduced(110, 0));
 
-        auto shaper = addSection(row1, 214, "SHAPER Y");
-        layoutSelector(shaperMode, shaper.removeFromTop(42).reduced(30, 0));
+        auto shaper = addSection(row1, 294, "SHAPER Y");
+        layoutSelector(shaperMode, shaper.removeFromTop(42).reduced(64, 0));
         auto shaperKnobs = shaper.removeFromTop(84);
         layoutKnob(shaperShape,
                    shaperKnobs.removeFromLeft(shaperKnobs.getWidth() / 2));
         layoutKnob(shaperRate, shaperKnobs);
 
-        auto destinations = addSection(row1, 306, "WHEEL DESTINATIONS");
-        layoutSelector(modXTo, destinations.removeFromTop(42));
-        destinations.removeFromTop(4);
-        shapeXWithY.button.setBounds(
-            destinations.removeFromTop(26).withTrimmedLeft(72));
-        destinations.removeFromTop(4);
-        layoutSelector(shaperYTo, destinations.removeFromTop(42));
     }
     area.removeFromTop(10);
 
     // ---- Row 2: mixer, the signature filters, envelopes -----------------
-    auto row2 = area.removeFromTop(250);
+    auto row2 = area.removeFromTop(248);
     {
         auto mixer = addSection(row2, 384, "AUDIO MIXER");
         auto mixerKnobs = mixer.removeFromLeft(98);
@@ -912,36 +955,38 @@ void GhostarAudioProcessorEditor::resized()
     }
     area.removeFromTop(10);
 
-    // ---- Row 3: gating, the performance controls, the keyboard ----------
+    // ---- Row 3: gating, the wheel routing, and the performance strip ----
+    // Everything here is laid out across rather than down: the row is one
+    // control deep, so the panel ends on a shallow band above the keys
+    // instead of three tall boxes with air under them.
     auto row3 = area;
     {
-        auto gating = addSection(row3, 190, "TRIGGER  /  GATE SELECT");
-        layoutSelector(trigger, gating.removeFromTop(42));
-        gating.removeFromTop(12);
-        gateKbd.button.setBounds(gating.removeFromTop(30));
-        gateX.button.setBounds(gating.removeFromTop(30));
-        gateYExt.button.setBounds(gating.removeFromTop(30));
+        auto gating = addSection(row3, 400, "TRIGGER  /  GATE SELECT");
+        layoutSelector(trigger, gating.removeFromLeft(160));
+        gating.removeFromLeft(20);
+        auto gateColumn = gating.removeFromLeft(110);
+        gateKbd.button.setBounds(gateColumn.removeFromTop(26));
+        gateX.button.setBounds(gateColumn.removeFromTop(26));
+        gateYExt.button.setBounds(gateColumn.removeFromTop(26));
 
-        auto performance = addSection(row3, 340, "PERFORMANCE");
-        auto bendColumn = performance.removeFromLeft(56);
-        pitchWheelLabel.setBounds(bendColumn.removeFromBottom(14));
-        pitchWheel.setBounds(bendColumn.reduced(13, 2));
-        performance.removeFromLeft(8);
-        auto glideColumn = performance.removeFromLeft(92);
-        layoutKnob(glide, glideColumn.removeFromTop(86));
-        glideColumn.removeFromTop(6);
+        // The destination switches sit beside the wheels they route, now
+        // that the wheels stand by the keyboard.
+        auto destinations = addSection(row3, 440, "WHEEL DESTINATIONS");
+        auto selectorRow = destinations.removeFromTop(42);
+        layoutSelector(modXTo, selectorRow.removeFromLeft(200));
+        selectorRow.removeFromLeft(16);
+        layoutSelector(shaperYTo, selectorRow.removeFromLeft(200));
+        destinations.removeFromTop(6);
+        shapeXWithY.button.setBounds(
+            destinations.removeFromTop(26).withTrimmedLeft(110));
+
+        auto performance = addSection(row3, row3.getWidth(), "PERFORMANCE");
+        layoutKnob(glide, performance.removeFromLeft(88));
+        performance.removeFromLeft(12);
+        auto glideColumn = performance.removeFromLeft(150);
         layoutSelector(glideMode, glideColumn.removeFromTop(42));
-        auto wheelColumn = performance;
-        auto wheelRow = wheelColumn.removeFromTop(86);
-        layoutKnob(xWheel, wheelRow.removeFromLeft(wheelRow.getWidth() / 2));
-        layoutKnob(yWheel, wheelRow);
-        wheelColumn.removeFromTop(10);
+        performance.removeFromLeft(20);
         splitPaths.button.setBounds(
-            wheelColumn.removeFromTop(28).withTrimmedLeft(26));
-
-        auto keys = addSection(row3, row3.getWidth(),
-                               "KEYBOARD  /  37 KEYS, C TO C");
-        keyboard.setKeyWidth(static_cast<float>(keys.getWidth()) / 22.0f);
-        keyboard.setBounds(keys);
+            performance.removeFromTop(42).withTrimmedTop(16).withWidth(130));
     }
 }

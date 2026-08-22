@@ -9,8 +9,10 @@
 
 // The panel follows the modelled instrument's functional geometry — which
 // controls exist, how they group into silkscreened sections, and which are
-// knobs, rockers, sliders or wheels — with Ghostar's own livery: near-black
-// panel, bone silkscreen, spectral cyan pointers.
+// knobs, rockers, sliders or wheels — in a charcoal livery with grey knob
+// caps, their markings in black and the silkscreen in white. The keys have
+// the bottom of the window to themselves, with the performance wheels
+// standing to their left, so the controls own everything above.
 class GhostarLookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
@@ -35,6 +37,19 @@ public:
                               const juce::Colour& backgroundColour,
                               bool shouldDrawButtonAsHighlighted,
                               bool shouldDrawButtonAsDown) override;
+};
+
+// JUCE paints a brightened inset over each black note, which against a
+// charcoal panel turns the sharps grey. The modelled instrument's sharps are
+// black, so they are painted flat with only a hairline to separate them.
+class PanelKeyboard final : public juce::MidiKeyboardComponent
+{
+public:
+    using juce::MidiKeyboardComponent::MidiKeyboardComponent;
+
+    void drawBlackNote(int midiNoteNumber, juce::Graphics& g,
+                       juce::Rectangle<float> area, bool isDown, bool isOver,
+                       juce::Colour noteFillColour) override;
 };
 
 class GhostarAudioProcessorEditor final : public juce::AudioProcessorEditor,
@@ -198,7 +213,7 @@ private:
     Knob yWheel;
     Rocker splitPaths;
 
-    juce::MidiKeyboardComponent keyboard;
+    PanelKeyboard keyboard;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GhostarAudioProcessorEditor)
 };
