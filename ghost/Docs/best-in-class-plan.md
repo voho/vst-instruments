@@ -87,8 +87,8 @@ engineering lives.
 `Docs/circuit-modelling-research.md`, implemented in
 `Source/DSP/GhostEngine.cpp`):
 
-- Keyboard law and ~110 % filter tracking pivoting at middle C
-  (`trackingOctaves`, factor 1.1).
+- Keyboard law and the ~110 % filter tracking amount (`trackingOctaves`,
+  factor 1.1; the middle-C *pivot* is voiced — see below).
 - The panel's exact pulse duty sets — A 50/30/15/6 %, B 40/20/10/3 % — and
   Osc B's −1/UNISON/+1/+2/BASS (30–300 Hz)/WIDE (2 Hz–10 kHz) ranges with
   the ± perfect-fifth INTERVAL.
@@ -122,6 +122,8 @@ register `Docs/open-questions.md` tracks each):
 - Shaper gate comparator threshold `shaperLevel_ > 0.01` (OQ-05).
 - Glide lag `tau = 0.9·travel²` seconds, from the 2 MΩ pot into ~450 nF
   (OQ-08).
+- The filter-tracking pivot at middle C — the note where tracking
+  contributes zero offset (OQ-13).
 - Wheel modulation depths: 1 octave of pitch, 3 octaves of cutoff, ±0.42
   duty (`pitchDepthOctaves`, `filterDepthOctaves`, `dutyDepth`).
 
@@ -157,24 +159,35 @@ settled by measurement and quoted.
   that stability is part of the Spirit's character (two of them against
   each other stay in tune, unlike discrete VCOs). But *stable* is not
   *static*: datasheet tempco and supply sensitivity translate to cents-scale
-  wander over minutes. Derive the magnitude from the datasheet, implement
-  slow correlated drift per oscillator, and run an A–Z listening test
-  between the two defensible candidates: no drift (the 3340's specified
-  stability taken at face value) and the datasheet-derived wander (that
-  stability under real supply and ambient variation). No scaled variants —
-  a multiplied datasheet number would be fitting the depth by ear, which
-  the listening-test rules forbid. Verification: the derivation quoted
-  here; the chosen letter recorded per the listening-test rules.
-- [ ] **Step 3 — Per-integrator filter saturation.** The current model
-  bounds the resonant node with one piecewise diode law
-  (`GhostEngine.cpp`, `knee = 1.2` / `ceiling = 2.2`, OQ-12). The
-  CEM3350's OTA stages saturate individually, which shifts *where* the
-  compression happens as drive rises and colours self-oscillation
-  differently. Derive the stage-level limiting from the 3350 datasheet
-  topology, implement per-integrator saturation in the TPT sections, and
-  compare harmonic signatures (Goertzel series under fixed drive) against
-  the current law. If both remain defensible and audibly different, A–Z
-  it. Verification: the harmonic tables and, if run, the recorded
+  wander over minutes — but only once the environmental excursion itself
+  is known. The datasheet sensitivities convert a temperature or rail
+  excursion into pitch error; they do not supply the excursion's
+  amplitude, spectrum or inter-oscillator correlation, and inventing that
+  process would smuggle the magnitude in through the back door. So the
+  gate: first pin the environmental process from an independent source —
+  the Spirit's own supply regulation from the service-manual drawings,
+  or published enclosure-temperature measurements for comparable
+  instruments. If a defensible process exists, implement the derived
+  wander and A–Z it against no-drift (the 3340's specified stability at
+  face value); if none does, the step closes as "no drift", recorded with
+  the dead end. No scaled variants in either case — a multiplied number
+  would be fitting the depth by ear, which the listening-test rules
+  forbid. Verification: the derivation (or the dead end) quoted here; any
+  chosen letter recorded per the listening-test rules.
+- [ ] **Step 3 — The resonance limiter's real characteristic.** What
+  bounds self-oscillation in the hardware is the *external* BA130
+  anti-parallel "Hi-Q overload limiter" in the resonance path (anchored
+  placement; `Docs/circuit-modelling-research.md`), which the engine
+  voices as one piecewise diode law (`knee = 1.2` / `ceiling = 2.2`,
+  OQ-12). Derive the BA130 pair's knee and compression from the BA130
+  datasheet plus the node's operating level — the same derivation OQ-10
+  needs for the inter-filter clipper's BA130s — and re-voice the law from
+  it. Whether the CEM3350's internal stages add saturation of their own
+  on top of the external limiter is a separate question: pursue it only
+  if the 3350's published topology supports a derivation, and track it
+  apart from OQ-12. If the derived law and the current one both remain
+  defensible and audibly different, A–Z it. Verification: the harmonic
+  tables (Goertzel series under fixed drive) and, if run, the recorded
   verdict — plus a re-run of Step 1's alias suite, since new nonlinearity
   makes new high partials and the completed audit must describe the final
   engine, not the one before it.
@@ -188,22 +201,26 @@ settled by measurement and quoted.
 - [ ] **Step 5 — Zipper audit on the travels.** Panel travels apply at
   block boundaries (`setParameters` per block in
   `Source/PluginProcessor.cpp`), and every continuous travel is published
-  for automation, so the audit must cover the published surface — cutoff,
-  LOWER ONLY, resonance, BRIGHTNESS, every mixer slider, envelope amount
-  and sustain, master volume, and both performance wheels. Render a
+  for automation, so the audit covers the *entire* published surface —
+  all of it: TUNE and INTERVAL, cutoff and LOWER ONLY, resonance and KB
+  AMOUNT, BRIGHTNESS, all seven mixer sliders and master volume, LFO
+  rate, Shaper shape and rate, filter-envelope amount and all eight
+  envelope segment travels, GLIDE, and both performance wheels. Render a
   host-automated full-range sweep of each at 48 kHz/512-sample blocks and
   inspect for stepping sidebands. Verification: a per-travel table quoted
-  here; one-pole smoothing on every travel the measurement flags, and a
+  here, one row per published continuous parameter, no omissions;
+  one-pole smoothing on every travel the measurement flags, and a
   re-measure of those.
 - [ ] **Step 6 — A calibration capture, if one ever exists.** The standing
   offer recorded so it is not forgotten: the moment a trustworthy Spirit
   capture becomes available (a serviced unit, a museum recording session,
   a lent instrument), measure every hardware-closable entry the register
-  then holds — today that is all of OQ-01 through OQ-10 and OQ-12: the
-  wheel's real bend span, the actual pulse duties, the envelope
-  curvature and Shaper timings, the gate threshold, the ring bleed, the
-  glide capacitor, both filter spans, the cascade Q split, and both
-  clipping stages — and re-voice against the measurements. Until then
+  then holds — today that is all of OQ-01 through OQ-10, OQ-12 and
+  OQ-13: the wheel's real bend span, the actual pulse duties, the
+  envelope curvature and Shaper timings, the gate threshold, the ring
+  bleed, the glide capacitor, both filter spans, the cascade Q split,
+  both clipping stages, and the tracking pivot — and re-voice against
+  the measurements. Until then
   this step cannot start, and no constant is fitted to a YouTube demo's
   unknown signal chain.
 

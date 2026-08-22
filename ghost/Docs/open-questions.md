@@ -113,14 +113,27 @@ measured unit becomes this project's ground truth; the Museo del Synth
 Marchigiano (which reverse-engineered the 2023 reissue) is the most likely
 living source of calibration data.
 
-## OQ-12 — Resonant-node diode limiter constants
+## OQ-12 — Resonance-path BA130 limiter constants
 
-**Gap.** The CEM3350's resonance path is bounded by its internal stages
-before the supply rails, but the datasheet does not publish the limiting
-characteristic, and no analysis of the Spirit's resonant clipping exists.
+**Gap.** Self-oscillation is bounded by the external BA130 anti-parallel
+"Hi-Q overload limiter" in the resonance path — anchored in placement by
+the schematic, like OQ-10's inter-filter clipper — but the BA130's I-V
+curve and the node's operating level were not resolved, so the knee and
+compression depth are unknown.
 **Engine.** A piecewise law on each section's resonant node: linear below
 `knee = 1.2`, tanh-compressed toward `ceiling = 2.2` above it, with the
 resonance travel mapped `k = 2·0.01^t − 0.025` so full travel regenerates
-(all voiced).
-**Closes with.** A stage-level derivation from the CEM3350 topology, or
-resonance/self-oscillation captures of a hardware unit.
+(all voiced). Whether the CEM3350's internal stages add their own
+saturation on top of the external limiter is a separate, unanswered
+question.
+**Closes with.** The BA130 datasheet plus a level trace of the resonance
+node, or resonance/self-oscillation captures of a hardware unit.
+
+## OQ-13 — Filter-tracking pivot note
+
+**Gap.** Keyboard tracking reaches ~110 % (anchored), but the note at
+which tracking contributes zero cutoff offset is set by the CV summer's
+reference, which was not resolved from the drawings.
+**Engine.** The pivot sits at middle C (voiced).
+**Closes with.** A derivation of the tracking summer's reference from
+SM DWG 2/3, or a two-note cutoff measurement on hardware.
