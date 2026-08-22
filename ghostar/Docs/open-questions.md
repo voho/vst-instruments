@@ -120,21 +120,28 @@ living source of calibration data.
 the schematic, like OQ-10's inter-filter clipper — but the BA130's I-V
 curve and the node's operating level were not resolved, so the knee and
 compression depth are unknown.
-**Engine.** A piecewise law on each section's resonant node: linear below
-`knee = 1.2`, tanh-compressed toward `ceiling = 2.2` above it, with the
-resonance travel mapped `k = 2·0.01^t − 0.025` so full travel regenerates
-(all voiced). Each section's lowpass integrator state additionally passes
-through `4·tanh(0.25·x)` — intended as a runaway stop, but tanh compresses
-every nonzero state a little (≈3 % at 1.2), so it is a second, always-on
-nonlinearity (voiced). Whether the CEM3350's internal stages add their own
+**Engine.** A diode shunt in each section's band-pass integrator equation:
+`v' = −lambda·V0·sinh(v/V0)` with sharpness `V0 = 0.12` and small-signal
+leak `lambda = 1 /s` (both voiced), solved as an exact sub-step so the law
+is a rate, not a per-sample map — the alias audit measured the previous
+per-sample formulation converging to a different filter at every sample
+rate, and its `4·tanh(0.25·x)` integrator bound turned out to be the
+*actual* self-oscillation limiter (its always-on cubic compression, not
+the diode knee, set the amplitude, scaling with the rate). That bound is
+removed; the regenerative extremes are rendered across rates by the
+engine suite to hold the boundedness claim. The resonance travel map
+`k = 2·0.01^t − 0.025` (regenerative at full travel) is unchanged and
+stays voiced. Whether the CEM3350's internal stages add their own
 saturation on top of the external limiter is a separate, unanswered
 question.
 **Closes with.** Two distinct pieces of evidence, because the entry holds
 two distinct laws: the BA130 datasheet plus a level trace of the resonance
-node closes the *limiter* (and must justify, re-derive or remove the
-integrator bound); the travel-to-damping mapping and its regenerative
-offset need the CEM3350's Q-control law with the surrounding divider
-network, or an explicit Q-versus-travel sweep of a hardware unit.
+node pins `V0` and `lambda` (the sinh form is already the anti-parallel
+pair's own law, so the derivation is a re-pinning, not a re-shaping); the
+travel-to-damping mapping and its regenerative offset need the CEM3350's
+Q-control law with the surrounding divider network, or an explicit
+Q-versus-travel sweep of a hardware unit. The removed integrator bound is
+settled: measured as an artifact, not a modelled circuit.
 
 ## OQ-13 — Filter-tracking pivot note
 

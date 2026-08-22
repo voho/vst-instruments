@@ -408,6 +408,80 @@ void testFullResonanceStaysBounded()
           "long marginal full-resonance render does not accumulate");
 }
 
+// The lowpass integrator carries no bound of its own since the diode shunt
+// became the resonant node's law, so the regenerative extremes — full
+// resonance across the cutoff span, driven and undriven, OVERDRIVE's boost
+// included, at more than one rate — are rendered here to hold the claim
+// that the shunt alone bounds the loop.
+void testRegenerativeExtremesStayBounded()
+{
+    for (const double rate : { 44100.0, 96000.0 })
+    {
+        for (const float cutoff : { 0.0f, 0.5f, 1.0f })
+        {
+            for (const bool driven : { false, true })
+            {
+                GhostarEngine engine;
+                engine.prepare(rate, 256);
+                auto hot = brightPanel();
+                hot.resonance = 1.0f;
+                hot.upperResonance = ghostar::UpperResonanceMode::Variable;
+                hot.cutoff = cutoff;
+                hot.lowerMode = ghostar::LowerFilterMode::Overdrive;
+                hot.filterPathA = driven ? 1.0f : 0.0f;
+                hot.filterPathNoise = driven ? 1.0f : 0.3f;
+                hot.vcaBypass = true;
+                engine.setParameters(hot);
+                engine.noteOn(96, 1.0f);
+                render(engine, 2.0, rate);
+                const auto late = render(engine, 0.5, rate);
+                check(finite(late),
+                      "regenerative extreme stays finite without an "
+                      "integrator bound");
+                check(peak(late) < 4.0,
+                      "regenerative extreme stays bounded without an "
+                      "integrator bound");
+            }
+        }
+    }
+}
+
+// The diode shunt is a term of the continuous system, so the same patch
+// must converge to the same filter at every rate: the self-oscillation
+// amplitude — set entirely by the nonlinearity — must agree between hosts.
+// The per-sample maps this law replaced failed exactly this (their
+// equilibrium scaled with the sample rate).
+void testSelfOscillationLevelIsRateInvariant()
+{
+    const auto steadyRms = [](double rate) {
+        GhostarEngine engine;
+        engine.prepare(rate, 256);
+        auto parameters = brightPanel();
+        parameters.filterPathA = 0.0f;
+        parameters.filterPathNoise = 0.6f;
+        parameters.resonance = 1.0f;
+        parameters.upperResonance = ghostar::UpperResonanceMode::Variable;
+        parameters.cutoff = 0.6f;
+        parameters.vcaBypass = true;
+        engine.setParameters(parameters);
+        render(engine, 0.2, rate);           // noise kick
+        parameters.filterPathNoise = 0.0f;
+        engine.setParameters(parameters);
+        render(engine, 1.5, rate);           // settle
+        return rms(render(engine, 1.0, rate));
+    };
+
+    const double at44 = steadyRms(44100.0);
+    const double at96 = steadyRms(96000.0);
+    check(at44 > 1.0e-3, "self-oscillation sustains at 44.1 kHz");
+    check(at96 > 1.0e-3, "self-oscillation sustains at 96 kHz");
+    const double ratioDb =
+        20.0 * std::log10(std::max(at44, at96)
+                          / std::max(1.0e-12, std::min(at44, at96)));
+    check(ratioDb < 0.5,
+          "self-oscillation level agrees across host rates within 0.5 dB");
+}
+
 // The arpeggiator steps the held keys; a held triad must produce a moving
 // pitch, not one steady note.
 void testArpeggiatorStepsHeldKeys()
@@ -679,6 +753,8 @@ int main()
     testShaperResetRetriggersOnLegatoPress();
     testShaperResetSelfGateCompletesItsCycle();
     testFullResonanceStaysBounded();
+    testRegenerativeExtremesStayBounded();
+    testSelfOscillationLevelIsRateInvariant();
     testArpeggiatorStepsHeldKeys();
     testAttackReachesPeakAtItsLabelledTime();
     testArpOctaveStepsSurviveTheMidiCeiling();

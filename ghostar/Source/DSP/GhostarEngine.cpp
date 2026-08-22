@@ -92,30 +92,27 @@ namespace
         }
     }
 
-    // The BA130 anti-parallel pair that bounds each filter's resonant node.
-    // Diodes conduct nothing below their knee, so the limiter must be exactly
-    // linear there — a plain tanh compresses from zero amplitude and
-    // collapses the resonance the CEM3350's Q control is supposed to reach.
-    // Knee and ceiling voiced (the node's own units).
-    [[nodiscard]] double resonantNodeLimit(double value) noexcept
-    {
-        constexpr double knee = 1.2;
-        constexpr double ceiling = 2.2;
-        const double magnitude = std::abs(value);
-        if (magnitude <= knee)
-            return value;
-        const double limited =
-            knee + (ceiling - knee) * std::tanh((magnitude - knee)
-                                                / (ceiling - knee));
-        return value < 0.0 ? -limited : limited;
-    }
+    // The BA130 anti-parallel pair that bounds each filter's resonant node,
+    // written as what the circuit actually is: a diode shunt current in the
+    // band-pass integrator's equation, not a per-sample map. The alias
+    // audit's control row proved the distinction is not pedantry — a map
+    // applied once per sample compresses more per second the more samples
+    // there are, so the same patch converged to a different filter at every
+    // rate. The shunt obeys v' = −lambda · V0 · sinh(v / V0) (the
+    // anti-parallel pair's exponential law; sharpness V0 and small-signal
+    // leak lambda voiced, OQ-12, until the BA130 derivation pins them), and
+    // the sub-step is solved exactly — the equation is separable, giving
+    //   tanh(v_new / 2·V0) = tanh(v / 2·V0) · exp(−lambda · dt)
+    // — so the operator split is unconditionally stable and the sub-step
+    // itself is exactly rate-invariant (solving over dt twice is solving
+    // over 2·dt once).
+    constexpr double diodeV0 = 0.12;
+    constexpr double diodeLeakPerSecond = 1.0;
 
-    // A wider bound for the lowpass integrator: negligible below the node
-    // limiter's range, it only stops the second state from drifting away
-    // during regenerative self-oscillation.
-    [[nodiscard]] double integratorBound(double value) noexcept
+    [[nodiscard]] double diodeShunt(double value, double decay) noexcept
     {
-        return 4.0 * std::tanh(value * 0.25);
+        const double u = std::tanh(value / (2.0 * diodeV0)) * decay;
+        return 2.0 * diodeV0 * std::atanh(u);
     }
 
     // Sub-1e-30 state decays cost real time as denormals on hosts without
@@ -167,6 +164,8 @@ void GhostarEngine::prepare(double sampleRate, int maxBlockSize)
     internalRate_ = 2.0 * sampleRate_;
     // The travel smoother's one-pole: ~25 ms to target at any host rate.
     travelSmoothing_ = 1.0 - std::exp(-1.0 / (0.025 * sampleRate_));
+    // The diode sub-step's exact per-internal-sample decay factor.
+    diodeDecay_ = std::exp(-diodeLeakPerSecond / internalRate_);
 
     // Windowed-sinc halfband decimation kernel for the 2x -> 1x boundary.
     const int center = halfbandTaps / 2;
@@ -520,14 +519,23 @@ void GhostarEngine::setShaperWheel(float amount) noexcept
 
 GhostarEngine::SvfOutputs GhostarEngine::runSection(SvfSection& section,
                                                 double input, double g,
-                                                double k) noexcept
+                                                double k,
+                                                double diodeDecay) noexcept
 {
     const double a = 1.0 / (1.0 + g * (g + k));
     const double hp = (input - (g + k) * section.ic1 - section.ic2) * a;
     const double bp = g * hp + section.ic1;
     const double lp = g * bp + section.ic2;
-    section.ic1 = flushDenormal(resonantNodeLimit(2.0 * bp - section.ic1));
-    section.ic2 = flushDenormal(integratorBound(2.0 * lp - section.ic2));
+    section.ic1 =
+        flushDenormal(diodeShunt(2.0 * bp - section.ic1, diodeDecay));
+    // The lowpass integrator carries no bound of its own any more: the old
+    // 4·tanh(x/4) map was meant as a runaway stop but measured as the
+    // *actual* self-oscillation limiter — its always-on cubic compression,
+    // not the diode knee, set the amplitude, with a per-sample strength no
+    // two rates agreed on. With the diode shunt bounding the resonant node
+    // the loop energy is bounded, and the stress suite renders the
+    // regenerative extremes at several rates to hold that claim true.
+    section.ic2 = flushDenormal(2.0 * lp - section.ic2);
     return { lp, bp, hp };
 }
 
@@ -1146,8 +1154,8 @@ void GhostarEngine::renderVoiceSample() noexcept
     // does — the OUT position routes around it rather than halting it. That
     // keeps its state live, so a mode switched back in later carries the
     // current signal, not a stale charge from seconds ago.
-    const auto lower =
-        runSection(lowerSection_, filterPath, lowerG, controlLowerK_);
+    const auto lower = runSection(lowerSection_, filterPath, lowerG,
+                                  controlLowerK_, diodeDecay_);
     switch (p.lowerMode)
     {
         case LowerFilterMode::BandPass:
@@ -1176,11 +1184,11 @@ void GhostarEngine::renderVoiceSample() noexcept
     // controlled section alone. The first section always advances so its
     // state stays live across slope switches, like the lower section's.
     const double upperFirstLp =
-        runSection(upperFirst_, filterPath, upperG, 2.0).lp;
+        runSection(upperFirst_, filterPath, upperG, 2.0, diodeDecay_).lp;
     if (p.slope == UpperSlope::TwentyFourDb)
         filterPath = upperFirstLp;
-    filterPath =
-        runSection(upperSecond_, filterPath, upperG, controlUpperK_).lp;
+    filterPath = runSection(upperSecond_, filterPath, upperG, controlUpperK_,
+                            diodeDecay_).lp;
 
     filterPath *= controlLoudnessGain_;
 

@@ -95,9 +95,12 @@ interval across the keyboard, not constant Hz (SM DWG 2 topology).
 
 Both hardware filters are CEM3350 dual state-variable sections — not a
 transistor ladder, despite the Moog pedigree. Ghostar models each 2-pole
-section as a TPT state-variable filter with a soft limiter in the resonance
-path (the hardware's BA130 anti-parallel "Hi-Q overload limiter" is what
-bounds self-oscillation, not the rails).
+section as a TPT state-variable filter with the hardware's BA130
+anti-parallel "Hi-Q overload limiter" as a diode shunt current in the
+band-pass integrator's equation (an exponential-sinh law solved as an
+exact sub-step, so the limiting is a property of the modelled circuit, not
+of the sample rate) — that shunt, not the rails, is what bounds
+self-oscillation.
 
 | Control | Law | Provenance |
 |---|---|---|

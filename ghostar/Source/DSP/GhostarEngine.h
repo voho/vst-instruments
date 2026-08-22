@@ -183,8 +183,10 @@ private:
         double level { 0.0 };
     };
 
-    // One 2-pole state-variable section (TPT), with the diode limiter that
-    // bounds the hardware's resonant node instead of the supply rails.
+    // One 2-pole state-variable section (TPT), with the diode shunt that
+    // bounds the hardware's resonant node instead of the supply rails —
+    // solved as an exact sub-step of the continuous equation, so the
+    // section converges to the same filter at every rate.
     struct SvfSection
     {
         double ic1 { 0.0 };
@@ -199,7 +201,7 @@ private:
     };
 
     static SvfOutputs runSection(SvfSection& section, double input, double g,
-                                 double k) noexcept;
+                                 double k, double diodeDecay) noexcept;
 
     // True when nothing is sounding and nothing can sound (no keys, both
     // envelopes' gate paths closed, no drone), so travel and wheel changes
@@ -224,6 +226,9 @@ private:
     double travelSmoothing_ { 1.0 };
     double sampleRate_ { 44100.0 };
     double internalRate_ { 88200.0 };   // fixed 2x oversampling
+    // exp(-lambda / internalRate_): the diode sub-step's per-internal-sample
+    // decay, precomputed so the shunt's law is a rate, not a map.
+    double diodeDecay_ { 1.0 };
 
     // Cached per-parameter-change values (updated in setParameters).
     double oscADuty_ { 0.5 };
