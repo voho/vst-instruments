@@ -17,7 +17,9 @@
 #include <fstream>
 #include <initializer_list>
 #include <memory>
+#include <optional>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -689,12 +691,18 @@ Take renderResonanceSweep()
 Take renderProgramTour()
 {
     // The bank's own parameters, by name, so a renamed or reordered program
-    // cannot silently turn this take into a different one.
+    // cannot silently turn this take into a different one. A name the bank
+    // no longer has throws: the take would still be finite, audible and
+    // in-headroom with a default patch substituted, so every check this
+    // renderer runs would pass while the committed WAV demonstrated
+    // something other than the program it is captioned with.
     const auto programNamed = [](const char* wanted) {
-        for (int index = 0; index < ghostar::factoryPresetCount(); ++index)
-            if (std::string(ghostar::factoryPresetName(index)) == wanted)
-                return ghostar::factoryPresetParameters(index);
-        return EngineParameters {};
+        const int index = ghostar::factoryPresetIndexByName(wanted);
+        if (index < 0)
+            throw std::runtime_error(
+                std::string("the program tour names \"") + wanted
+                + "\", which is not in the factory bank");
+        return ghostar::factoryPresetParameters(index);
     };
 
     Take take(programNamed("Spirit Bass"));
@@ -1145,7 +1153,21 @@ int main(int argc, char** argv)
     validatedTakes.reserve(demos().size());
     for (const auto& demo : demos())
     {
-        auto take = demo.render();
+        // A take that cannot be built at all — a tour naming a program the
+        // bank no longer has — stops the run here, before any WAV is
+        // replaced, exactly as a take that fails validation below does.
+        std::optional<Take> rendered;
+        try
+        {
+            rendered.emplace(demo.render());
+        }
+        catch (const std::exception& failure)
+        {
+            std::fprintf(stderr, "%s could not be rendered: %s\n",
+                         demo.fileName, failure.what());
+            return 1;
+        }
+        auto& take = *rendered;
 
         if (!take.finite())
         {

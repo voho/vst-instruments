@@ -40,5 +40,10 @@ enum class PresetBank
 // A one-line description of what the program is doing, for a browser's
 // detail line and for the user guide's table. Never nullptr.
 [[nodiscard]] const char* factoryPresetDescription(int index) noexcept;
+// The index of the program with this exact name, or -1 if the bank has no
+// such program. Callers that name a program in source — the demo renderer's
+// program tour, the tests — use this so a rename is a loud failure at the
+// point of use rather than a silent fall back to some other patch.
+[[nodiscard]] int factoryPresetIndexByName(const char* name) noexcept;
 
 } // namespace ghostar

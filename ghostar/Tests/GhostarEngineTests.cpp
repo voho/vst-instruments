@@ -745,6 +745,22 @@ void testEveryFactoryProgramRenders()
               == nullptr,
           "an out-of-range program has no name");
 
+    // Callers that name a program in source get a loud -1 rather than some
+    // other patch: the demo renderer's program tour selects its six by name,
+    // and a substituted default would still render finite, audible,
+    // in-headroom audio under every check that renderer runs.
+    for (int index = 0; index < ghostar::factoryPresetCount(); ++index)
+        check(ghostar::factoryPresetIndexByName(
+                  ghostar::factoryPresetName(index))
+                  == index,
+              "every program is found by its own name");
+    check(ghostar::factoryPresetIndexByName("Not A Program") < 0,
+          "a name the bank does not have is not found");
+    check(ghostar::factoryPresetIndexByName("init") < 0,
+          "the lookup is exact, not case-folded");
+    check(ghostar::factoryPresetIndexByName(nullptr) < 0,
+          "no name is not found");
+
     // Every program carries a description, and the two banks are contiguous
     // with the historical one first, which is what a browser groups on.
     bool sawProgramsBank = false;

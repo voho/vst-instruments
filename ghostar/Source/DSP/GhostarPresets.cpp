@@ -7,6 +7,7 @@
 #include "DSP/GhostarPresets.h"
 
 #include <array>
+#include <cstring>
 
 namespace ghostar
 {
@@ -813,6 +814,17 @@ EngineParameters factoryPresetParameters(int index) noexcept
     if (index < 0 || index >= factoryPresetCount())
         return EngineParameters {};
     return presets()[static_cast<std::size_t>(index)].parameters;
+}
+
+int factoryPresetIndexByName(const char* name) noexcept
+{
+    if (name == nullptr)
+        return -1;
+    for (int index = 0; index < factoryPresetCount(); ++index)
+        if (std::strcmp(presets()[static_cast<std::size_t>(index)].name, name)
+            == 0)
+            return index;
+    return -1;
 }
 
 } // namespace ghostar
