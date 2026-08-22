@@ -578,6 +578,127 @@ void testSostenutoLatchesOnlyWhatWasSounding()
             "and a pitch re-pressed under the pedal releases normally");
 }
 
+// Every switch on the external-input path chooses between signals whose
+// instantaneous samples differ, so throwing one on live audio steps the output
+// however warm the states on the unused side are kept. Each is crossed
+// instead. The measure is the largest sample-to-sample jump the output makes
+// across the switch, against the largest jump the same signal makes while
+// nothing is touched.
+void testExternalSwitchesAreCrossedNotThrown()
+{
+    const double sampleRate = 44100.0;
+    const std::size_t total = (std::size_t) (sampleRate * 0.40);
+    const std::size_t flipAt = total / 2;
+
+    const auto worstJump = [] (const std::vector<float>& x, std::size_t from,
+                               std::size_t to)
+    {
+        double worst = 0.0;
+        for (std::size_t i = std::max<std::size_t> (from, 1);
+             i < to && i < x.size(); ++i)
+            worst = std::max (worst,
+                              std::abs ((double) x[i] - (double) x[i - 1]));
+        return worst;
+    };
+
+    // Renders a steady centred tone through the monitor with no note playing,
+    // flipping one switch half way, and reports {steady jump, jump at the flip}.
+    const auto flip = [&] (const septum::ExternalInput& before,
+                           const septum::ExternalInput& after)
+    {
+        septum::Patch patch = plainSawPatch();
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.setExternalInput (before);
+        engine.reset();
+
+        std::vector<float> out (total), outR (total);
+        std::vector<float> inL (total), inR (total);
+        for (std::size_t i = 0; i < total; ++i)
+        {
+            const double t = (double) i / sampleRate;
+            const double centre = 0.4 * std::sin (twoPi * 300.0 * t);
+            const double side = 0.4 * std::sin (twoPi * 900.0 * t);
+            inL[i] = (float) (centre + side);
+            inR[i] = (float) centre;
+        }
+        const std::size_t block = 64;
+        for (std::size_t pos = 0; pos < total; pos += block)
+        {
+            if (pos >= flipAt && pos < flipAt + block)
+                engine.setExternalInput (after);
+            const auto count = (int) std::min (block, total - pos);
+            engine.process (out.data() + pos, outR.data() + pos, count,
+                            inL.data() + pos, inR.data() + pos);
+        }
+        // Both sides of the switch are measured, because the two signals
+        // genuinely move at different rates - a high-pass output travels
+        // further between samples than a low-pass one does, and comparing the
+        // new signal against the old one's slope would read that as a click.
+        // What a thrown switch produces is a jump far larger than either
+        // signal makes on its own.
+        const double earlySlope = worstJump (out, (std::size_t) (sampleRate * 0.06),
+                                             (std::size_t) (sampleRate * 0.16));
+        const double lateSlope = worstJump (out, (std::size_t) (sampleRate * 0.30),
+                                            (std::size_t) (sampleRate * 0.39));
+        const double atFlip = worstJump (out, flipAt - 8, flipAt + block * 3);
+        return std::pair<double, double> { std::max (earlySlope, lateSlope),
+                                           atFlip };
+    };
+
+    septum::ExternalInput plain {};
+    plain.inputVolume = 100;
+    plain.filterOn = false;
+    plain.centerCancel = false;
+    // The cutoff and resonance are set here rather than alongside the switch,
+    // because they are slewed in their own right: moving them at the same
+    // moment would leave the filtered path still agreeing with the dry one
+    // just as the switch was thrown, and the step would have nothing to show.
+    plain.cutoff = 60;
+    plain.resonance = 110;
+
+    const auto check = [&] (const septum::ExternalInput& after,
+                            const std::string& what)
+    {
+        const auto [steady, atFlip] = flip (plain, after);
+        expect (atFlip < 4.0 * steady + 1.0e-4,
+                what + " is crossed, not thrown (jump " + std::to_string (atFlip)
+                    + " against a steady " + std::to_string (steady) + ")");
+    };
+
+    septum::ExternalInput cancelled = plain;
+    cancelled.centerCancel = true;
+    check (cancelled, "CENTER CANCEL");
+
+    // Only the switch moves: the filtered path is already running, resonant
+    // and out of phase with the dry one.
+    septum::ExternalInput filtered = plain;
+    filtered.filterOn = true;
+    check (filtered, "FILTER ON");
+
+    septum::ExternalInput steep = plain;
+    steep.filterOn = true;
+    steep.slope = septum::FilterSlope::Db24;
+    septum::ExternalInput shallow = steep;
+    shallow.slope = septum::FilterSlope::Db12;
+    {
+        const auto [steady, atFlip] = flip (shallow, steep);
+        expect (atFlip < 4.0 * steady + 1.0e-4,
+                "SLOPE is crossed, not thrown (jump " + std::to_string (atFlip)
+                    + " against a steady " + std::to_string (steady) + ")");
+    }
+
+    septum::ExternalInput notched = shallow;
+    notched.type = septum::AudioFilterType::Hpf;
+    {
+        const auto [steady, atFlip] = flip (shallow, notched);
+        expect (atFlip < 4.0 * steady + 1.0e-4,
+                "TYPE is crossed, not thrown (jump " + std::to_string (atFlip)
+                    + " against a steady " + std::to_string (steady) + ")");
+    }
+}
+
 // The external-input path (OM pp. 49-53). Renders with a stereo test signal on
 // the INPUT jacks: a 300 Hz tone panned centre plus a 900 Hz tone only in the
 // left channel, so CENTER CANCEL has something to remove and something to keep.
@@ -2210,6 +2331,7 @@ int main()
     testSostenutoLatchesOnlyWhatWasSounding();
     testExternalInputAndAudioFilter();
     testExternalMonitorTiming();
+    testExternalSwitchesAreCrossedNotThrown();
     testExternalMonitorHandover();
     testArpeggioMotifsMatchTheManualsExamples();
     testArpeggioGridDivisions();

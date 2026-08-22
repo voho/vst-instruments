@@ -509,3 +509,49 @@ observed and the new chord continued mid-pattern — 604 Hz where step one owed
 Each has a test checked by reverting its fix. `11-arpeggiator.wav` re-rendered
 1.2 dB lower at the same length: chords now begin at step one, which is the
 point of the re-arm fix.
+
+#### Step 11 — the sixth review round, on code already merged
+
+Four more findings, all real, all in code that had already landed.
+
+**Sostenuto caught pitches played after the pedal went down.** The latch is a
+128-bit pitch mask, and the bit stayed set for the whole pedal hold: play C,
+depress the pedal, release C, then play and release C again, and the second
+one sustained too. Only the notes sounding at the transition are held. The mask
+stays per pitch — per voice would lose the latch the moment a mono voice was
+borrowed by another key, which is why it was written that way — so a genuinely
+new press clears its own bit.
+
+**The arpeggiator's octave cycle was clamped as though it were a MIDI note.**
+Note 108 with OCTAVE RANGE +2 played 108, 120, 127 where the pattern owes 108,
+120, 132: two cycles on one pitch, and the arpeggio stopped moving near the top
+of the keyboard. Pitch is a number of semitones in this engine and already
+leaves 0–127 through the octave shift and transpose; the oscillator increment
+is capped at Nyquist and nothing indexes an array by the value. The clamp is
+gone from the generated pitch and still applies to incoming MIDI.
+
+**Every switch on the external-input path was thrown rather than crossed.**
+Two were reported — CENTER CANCEL, and the filter's ON and SLOPE — and TYPE
+turned out to be the same defect, so it is fixed with them. Each chooses
+between signals whose instantaneous samples differ, so keeping both sides warm
+(which an earlier round already did) stops a stale burst but not a step. Each
+now crosses over 5 ms. Measured as the largest sample-to-sample jump the output
+makes across the switch, against the largest jump the same signals make while
+nothing is touched:
+
+| Switch | thrown | crossed | steady |
+|---|---|---|---|
+| CENTER CANCEL | 0.211 | — | 0.042 |
+| FILTER ON | 0.304 | — | 0.042 |
+| SLOPE | 0.220 | — | 0.031 |
+| TYPE | 0.292 | — | 0.051 |
+
+Each of the four is under four times its own steady figure once crossed, where
+thrown it was five to seven times it.
+
+Building that test taught its own lesson twice. Comparing the new signal
+against the *old* one's slope read a high-pass output's faster travel as a
+click; and moving the cutoff at the same moment as the switch left the filtered
+path still agreeing with the dry one just as the switch was thrown, so the step
+had nothing to show. Both were errors in the measurement, not the fix, and both
+were caught by insisting the test fail when the fix is reverted.

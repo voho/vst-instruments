@@ -361,8 +361,15 @@ as a boost and, unlike the voice filter's, never warns that it may not stop);
 NOTCH realized as the low-pass and high-pass sum; the mono reduction the
 EXT-IN oscillator takes after CENTER CANCEL (the channel difference rather
 than the sum, since the sum of a centre-cancelled pair is zero); the depth of
-the settled AUDIO-FILTER LFO and modulation-lever destinations; and the 5 ms
-fade with which the direct monitor hands the input over to a voice. The direct
+the settled AUDIO-FILTER LFO and modulation-lever destinations; the 5 ms
+fade with which the direct monitor hands the input over to a voice; and the
+5 ms over which every switch on this path is *crossed* rather than thrown.
+That last one matters because CENTER CANCEL and the filter's ON, SLOPE and
+TYPE each choose between signals whose instantaneous samples differ, so a
+change steps the output on live audio however warm the states on the unused
+side are kept — long enough that the step is inaudible, short enough that the
+control still reads as a switch. The hardware's own changeover is not
+documented and is what a capture would settle. The direct
 monitor is not patch audio, so the patch level and part controllers do not
 scale it; the panel VOLUME, which sits after the DAC on the hardware, does.
 

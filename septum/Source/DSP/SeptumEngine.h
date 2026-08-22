@@ -539,6 +539,15 @@ namespace mapping
     // S&H LFO edge cannot put a discontinuity into the filter coefficient —
     // so it is applied to the panel side only and never to an envelope.
     inline constexpr double controlSlewSeconds = 0.0025;
+
+    // [voiced, OQ-14] How long a switch on the external-input path takes to
+    // cross between the two signals it chooses between. CENTER CANCEL and the
+    // audio filter's ON, SLOPE and TYPE switches are all automatable and all
+    // select among paths whose instantaneous samples differ, so an instant
+    // change steps the output on live audio however warm the states are kept.
+    // Long enough that the step is inaudible, short enough that the control
+    // still reads as a switch rather than a fade.
+    inline constexpr double externalSwitchFadeSeconds = 0.005;
 }
 
 // --------------------------------------------------------------------------
@@ -1068,6 +1077,14 @@ private:
     int monitorDelayWrite_ { 0 };
     double smoothedMonitorLevel_ { 1.0 };
     double smoothedInputGain_ { 0.62 };
+    // Every switch on this path chooses between signals that differ sample by
+    // sample, so each one is crossed rather than thrown. 0 is the first named
+    // position in each pair, 1 the second.
+    double centerCancelFade_ { 0.0 };        // 0 through, 1 cancelled
+    double audioFilterOnFade_ { 0.0 };       // 0 dry, 1 filtered
+    double audioFilterSlopeFade_ { 0.0 };    // 0 = -12 dB, 1 = -24 dB
+    AudioFilterType audioFilterTypeFrom_ { AudioFilterType::Lpf };
+    double audioFilterTypeFade_ { 1.0 };     // 1 = fully on the current type
 
     // Analog output stage state (documented component values).
     double dcX1_[2] {}, dcY1_[2] {};

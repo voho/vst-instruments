@@ -477,6 +477,13 @@ void Engine::reset()
     }
     for (auto& runtime : arpeggios_)
         runtime = ArpeggioRuntime {};
+    // The external switches start settled wherever they are set: a reset is
+    // not somebody moving a switch, so nothing crosses on the first tick.
+    centerCancelFade_ = external_.centerCancel ? 1.0 : 0.0;
+    audioFilterOnFade_ = external_.filterOn ? 1.0 : 0.0;
+    audioFilterSlopeFade_ = external_.slope == FilterSlope::Db24 ? 1.0 : 0.0;
+    audioFilterTypeFrom_ = external_.type;
+    audioFilterTypeFade_ = 1.0;
     arpeggioRunning_ = false;
     arpeggioActive_ = patch_.arpeggio.on;
     // Synced to the patch for the same reason the switch is: clearing the
@@ -2375,6 +2382,8 @@ void Engine::prepareExternalTick (const float* inputLeft, const float* inputRigh
         audioFilterK_ += (kTarget - audioFilterK_) * slew;
     }
 
+    const double fadeStep =
+        1.0 / std::max (1.0, mapping::externalSwitchFadeSeconds * sampleRate_);
     const double g = audioFilterG_;
     const double k = audioFilterK_;
     const double a1 = 1.0 / (1.0 + g * (g + k));
@@ -2390,17 +2399,41 @@ void Engine::prepareExternalTick (const float* inputLeft, const float* inputRigh
             right = inputRight[offset + i] * inputGain;
         }
 
+        // Every switch on this path is crossed rather than thrown: each one
+        // chooses between signals whose instantaneous samples differ, so
+        // changing one on live audio steps the output however warm the states
+        // on the unused side are kept.
+        const auto walk = [fadeStep] (double& fade, double target)
+        {
+            fade += std::clamp (target - fade, -fadeStep, fadeStep);
+        };
+        walk (centerCancelFade_, external_.centerCancel ? 1.0 : 0.0);
+        walk (audioFilterOnFade_, external_.filterOn ? 1.0 : 0.0);
+        walk (audioFilterSlopeFade_,
+              external_.slope == FilterSlope::Db24 ? 1.0 : 0.0);
+        // TYPE has four positions rather than two, so instead of a single
+        // scalar it keeps the position it is crossing from and settles onto
+        // the new one when the cross finishes.
+        if (audioFilterTypeFade_ >= 1.0 && external_.type != audioFilterTypeFrom_)
+            audioFilterTypeFade_ = 0.0;
+        walk (audioFilterTypeFade_, 1.0);
+        if (audioFilterTypeFade_ >= 1.0)
+            audioFilterTypeFrom_ = external_.type;
+
         // CENTER CANCEL: what is common to both channels is what sits at the
         // centre, so removing the mid leaves the sides. The mono reduction the
         // EXT-IN oscillator then takes is the difference rather than the sum,
         // which is what is actually left of the signal (voiced, OQ-14).
         double mono = 0.5 * (left + right);
-        if (external_.centerCancel)
         {
             const double mid = mono;
-            left -= mid;
-            right -= mid;
-            mono = 0.5 * (left - right);
+            const double cancelledLeft = left - mid;
+            const double cancelledRight = right - mid;
+            const double cancelledMono = 0.5 * (left - right);
+            const double cross = centerCancelFade_;
+            left += (cancelledLeft - left) * cross;
+            right += (cancelledRight - right) * cross;
+            mono += (cancelledMono - mono) * cross;
         }
         // Settled (OM p. 52): an EXT-IN oscillator is mono even from a stereo
         // source. It taps here, before the audio filter.
@@ -2422,16 +2455,25 @@ void Engine::prepareExternalTick (const float* inputLeft, const float* inputRigh
                 const double lp = v2;
                 const double bp = v1;
                 const double hp = input - damping * v1 - v2;
-                switch (external_.type)
+                // All four responses come off the same two integrators, so
+                // crossing between the outgoing type and the incoming one
+                // costs a select rather than a second filter.
+                const auto response = [&] (AudioFilterType type)
                 {
-                    case AudioFilterType::Lpf: return lp;
-                    case AudioFilterType::Hpf: return hp;
-                    case AudioFilterType::Bpf: return damping * bp;
-                    // NOTCH is the low-pass and high-pass sum: everything but
-                    // the band the resonance would have boosted.
-                    case AudioFilterType::Notch: return lp + hp;
-                }
-                return input;
+                    switch (type)
+                    {
+                        case AudioFilterType::Lpf: return lp;
+                        case AudioFilterType::Hpf: return hp;
+                        case AudioFilterType::Bpf: return damping * bp;
+                        // NOTCH is the low-pass and high-pass sum: everything
+                        // but the band the resonance would have boosted.
+                        case AudioFilterType::Notch: return lp + hp;
+                    }
+                    return input;
+                };
+                const double from = response (audioFilterTypeFrom_);
+                const double to = response (external_.type);
+                return from + (to - from) * audioFilterTypeFade_;
             };
             double* channels[2] { &left, &right };
             for (int channel = 0; channel < 2; ++channel)
@@ -2440,13 +2482,14 @@ void Engine::prepareExternalTick (const float* inputLeft, const float* inputRigh
                 // integrator would let an arbitrarily old resonant tail out
                 // the moment an automated switch came back. Only which of
                 // their outputs is taken depends on the switches.
+                const double dry = *channels[channel];
                 const double first =
-                    stagePass (audioFilter1_[channel], *channels[channel], k, a1, a2);
+                    stagePass (audioFilter1_[channel], dry, k, a1, a2);
                 const double second =
                     stagePass (audioFilter2_[channel], first, k, a1, a2);
-                if (external_.filterOn)
-                    *channels[channel] =
-                        external_.slope == FilterSlope::Db24 ? second : first;
+                const double sloped =
+                    first + (second - first) * audioFilterSlopeFade_;
+                *channels[channel] = dry + (sloped - dry) * audioFilterOnFade_;
             }
         }
 
