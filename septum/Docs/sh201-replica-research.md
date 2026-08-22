@@ -469,6 +469,27 @@ settled CC map including both documented pedals and the audio filter's
 CC#2/CC#4, and the analog output stage. Deferred, documented: the step
 recorder, D-Beam, SysEx DT1/RQ1 I/O, and the USB audio topology.
 
+## Every voiced constant lives in one place
+
+The contract's rule is that a voiced constant is a constant a measurement
+should one day replace, so it has to be findable. All of them are in the
+engine's `mapping` namespace, each tagged with its tier and the open question
+that owns it — there are no bare numbers in the render code. The ones that
+were still inline until this pass, and where they now sit:
+
+| Constant | Owned by |
+| --- | --- |
+| `balanceLegGain` — the BALANCE and TONE BALANCE crossfade law | OQ-07 |
+| `fbOscDelayRatio`, `fbOscLoopDamping`, `fbOscLoopTrim`, `fbOscOutputGain` | OQ-06 |
+| `superSawStackNormalisation` — the seven-saw sum's trim | OQ-05 |
+| `leverVibratoCents`, `leverPulseWidth`, `leverFilterOctaves`, `leverAmpDepth` — the modulation lever's reach into each settled destination | OQ-10 |
+| `delayModulationRateHz`, `delayModulationDepthSeconds` | OQ-12 |
+| `reverbLineSeconds`, `reverbDiffuserSeconds`, `reverbSizeScale`, `reverbDiffusionGain`, `reverbDensityGain`, `reverbInputInjection`, `reverbWetReturn` | OQ-12 |
+| `filterSecondStageDamping`, `filterStateLimit` | OQ-08 |
+| `voiceHeadroom`, `outputLimitKnee`, `outputLimitRange`, `partPanCentreGain`, `masterSlewSeconds`, `delayTimeSlewSeconds`, `controlSlewSeconds` | none — these are engineering choices about headroom, safety and zipper, not claims about the instrument, and no measurement of a real unit would settle them |
+
+Moving them changed no audio: the committed demos re-render bit-identically.
+
 ## Open questions
 
 Each is a standing research task; the measurement named would close it.

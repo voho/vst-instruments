@@ -214,6 +214,48 @@ void testMappingLaws()
     expect (keyFollowOctavesPerOctave (100) == 1.0, "+100 key follow tracks 1:1");
 }
 
+// Every voiced constant is reachable from the mapping namespace, and the ones
+// whose endpoints are settled by a document sit where the document puts them.
+void testRegisteredConstants()
+{
+    using namespace septum::mapping;
+    // BALANCE is settled only at its endpoints: fully left is OSC1 alone.
+    expectNear (balanceLegGain (-63, true), 1.0, 1.0e-12,
+                "balance fully left keeps the OSC1 leg at unity");
+    expectNear (balanceLegGain (-63, false), 0.0, 1.0e-12,
+                "balance fully left silences the OSC2 leg");
+    expectNear (balanceLegGain (63, true), 0.0, 1.0e-12,
+                "balance fully right silences the OSC1 leg");
+    expectNear (balanceLegGain (0, true), 1.0, 1.0e-12,
+                "both legs are at unity in the centre");
+    expectNear (balanceLegGain (0, false), 1.0, 1.0e-12,
+                "both legs are at unity in the centre");
+    // The pan law is normalised to unity at the centre, not at an extreme.
+    expectNear (partPanCentreGain * std::cos (0.25 * 3.14159265358979323846), 1.0,
+                1.0e-12, "the part pan law is unity at the centre");
+    // The delay's modulation rate spans the range the contract records.
+    expectNear (delayModulationRateHz (0), 0.02, 1.0e-12,
+                "delay modulation starts at 0.02 Hz");
+    expectNear (delayModulationRateHz (127), 8.0, 1.0e-9,
+                "delay modulation reaches 8 Hz");
+    // The reverb's lines are mutually prime in length at SIZE 8 so the network
+    // does not develop a common period.
+    expectNear (reverbSizeScale (7), 1.0, 1.0e-12, "SIZE 8 is the full geometry");
+    expect (reverbSizeScale (0) < reverbSizeScale (7),
+            "a smaller SIZE shrinks the network");
+    // The overdrive's internal rate band, and the factors that reach it.
+    expect (overdriveOversampling (44100.0) == 4
+                && overdriveOversampling (48000.0) == 4
+                && overdriveOversampling (88200.0) == 2
+                && overdriveOversampling (96000.0) == 2
+                && overdriveOversampling (192000.0) == 1,
+            "the overdrive's oversampling lands it in a fixed rate band");
+    expect (44100.0 * overdriveOversampling (44100.0) >= overdriveInternalRateHz
+                && 96000.0 * overdriveOversampling (96000.0)
+                       >= overdriveInternalRateHz,
+            "and every host rate reaches that band");
+}
+
 void testTuningAndMasterTune()
 {
     septum::Engine engine;
@@ -1381,6 +1423,7 @@ void testAllNotesOffAndReset()
 int main()
 {
     testMappingLaws();
+    testRegisteredConstants();
     testTuningAndMasterTune();
     testBalanceEndpoints();
     testRingModulation();

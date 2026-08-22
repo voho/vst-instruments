@@ -222,6 +222,100 @@ namespace mapping
     inline constexpr double lowShelfHz = 200.0;
     inline constexpr double lowShelfGainDb = 8.0;
 
+    // [voiced, OQ-07] BALANCE -63..+63. Settled only at the endpoints (fully
+    // left is OSC1 alone, fully right OSC2 alone); each leg sits at unity in
+    // the centre and the opposite leg fades linearly to silence. The same law
+    // sits between the two tones for TONE BALANCE.
+    [[nodiscard]] inline double balanceLegGain (int balance, bool firstLeg) noexcept
+    {
+        const double signed_ = firstLeg ? -balance : balance;
+        return std::min (1.0, (63.0 + signed_) / 63.0);
+    }
+
+    // [voiced, OQ-06] FB OSC loop shape: where the comb taps, how much the
+    // loop is damped per sample, the trim that keeps it from running away, and
+    // the output level that keeps a full-feedback oscillator in the same
+    // loudness range as the other waves.
+    inline constexpr double fbOscDelayRatio = 0.5;      // half the period
+    inline constexpr double fbOscLoopDamping = 0.55;
+    inline constexpr double fbOscLoopTrim = 0.995;
+    inline constexpr double fbOscOutputGain = 0.6;
+
+    // [reported + voiced, OQ-05] The seven-saw stack sums to roughly +/-2.5
+    // before the tracked high-pass; this brings it back to the range the other
+    // waves occupy.
+    inline constexpr double superSawStackNormalisation = 1.0 / 2.5;
+
+    // [voiced] The ten-voice sum needs fixed headroom before the output stage;
+    // the demos and tests treat full scale as the analog stage's clip point.
+    inline constexpr double voiceHeadroom = 0.22;
+
+    // [voiced, OQ-10] How far the modulation lever reaches into each of the
+    // settled MODULATION ASSIGN destinations at full travel.
+    inline constexpr double leverVibratoCents = 60.0;
+    inline constexpr double leverPulseWidth = 63.0;     // of the 0-127 span
+    inline constexpr double leverFilterOctaves = 2.0;
+    inline constexpr double leverAmpDepth = 1.0;        // full tremolo
+
+    // [voiced, OQ-12] Delay modulation: the rate the MOD RATE knob spans and
+    // how far MOD DEPTH sweeps the delay time.
+    [[nodiscard]] inline double delayModulationRateHz (int value) noexcept
+    {
+        return 0.02 * std::pow (400.0, value / 127.0);
+    }
+    inline constexpr double delayModulationDepthSeconds = 0.008;
+    // [voiced] Slew on the delay time itself, so a TIME move glides rather
+    // than jumping the read head.
+    inline constexpr double delayTimeSlewSeconds = 0.08;
+
+    // [voiced, OQ-12] Reverb geometry. Mutually prime line lengths spread over
+    // roughly 30-90 ms at SIZE 8, four series input allpasses, and the SIZE
+    // scaling that shrinks both.
+    inline constexpr std::array<double, 8> reverbLineSeconds {
+        0.0297, 0.0371, 0.0411, 0.0437, 0.0533, 0.0631, 0.0733, 0.0797
+    };
+    inline constexpr std::array<double, 4> reverbDiffuserSeconds {
+        0.0043, 0.0083, 0.0151, 0.0223
+    };
+    [[nodiscard]] inline double reverbSizeScale (int size) noexcept
+    {
+        return 0.35 + 0.65 * ((std::clamp (size, 0, 7) + 1) / 8.0);
+    }
+    // [voiced, OQ-12] DIFFUSION and DENSITY as allpass coefficients, the level
+    // the diffused input is injected into the network at, and the wet return.
+    [[nodiscard]] inline double reverbDiffusionGain (int value) noexcept
+    {
+        return 0.25 + 0.5 * (value / 127.0);
+    }
+    [[nodiscard]] inline double reverbDensityGain (int value) noexcept
+    {
+        return 0.2 + 0.55 * (value / 127.0);
+    }
+    inline constexpr double reverbInputInjection = 0.35;
+    inline constexpr double reverbWetReturn = 0.8;
+
+    // [voiced, OQ-08] The -24 dB path's second stage. The first stage carries
+    // the resonance; the second is a fixed, gentler 2-pole that adds the extra
+    // 12 dB/oct. Whether the hardware resonates on one stage or both is open.
+    inline constexpr double filterSecondStageDamping = 1.2;
+    // [voiced, OQ-08] Where the resonant stage's integrator states stop
+    // growing, so self-oscillation is bounded as the manual's "may not stop at
+    // all" implies rather than divergent.
+    inline constexpr double filterStateLimit = 1.5;
+
+    // [voiced] The output stage's final safety knee: transparent below this,
+    // saturating above, so a reasonably driven patch never touches it and an
+    // unreasonable one cannot hand the host a sample outside +/-1.05.
+    inline constexpr double outputLimitKnee = 0.9;
+    inline constexpr double outputLimitRange = 0.15;
+
+    // [voiced] Received CC#10 tilts the final pair with constant power, and is
+    // normalised to unity at the centre rather than to unity at an extreme.
+    inline constexpr double partPanCentreGain = 1.4142135623730951;
+
+    // [voiced] Slew on the master gain chain, so a level move does not step.
+    inline constexpr double masterSlewSeconds = 0.01;
+
     // [voiced, OQ-14] INPUT VOL 0-127 -> amplitude. The knob is analog on the
     // hardware, ahead of the codec; a squared law matches the AMP LEVEL knob's
     // and is the same "silent at the far left" the manual describes.

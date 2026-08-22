@@ -7,10 +7,6 @@ namespace
     constexpr double pi = 3.14159265358979323846;
     constexpr double twoPi = 2.0 * pi;
 
-    // The ten-voice sum needs fixed headroom before the output stage; the
-    // demos and tests treat full scale as the analog stage's clip point.
-    constexpr double voiceHeadroom = 0.22;
-
     [[nodiscard]] inline double frac (double x) noexcept
     {
         return x - std::floor (x);
@@ -61,16 +57,16 @@ namespace
         return std::abs (x) < 1.0e-15 ? 0.0 : x;
     }
 
-    // The final safety stage: transparent below 0.9, saturating above, so a
-    // reasonably-driven patch never touches it and an unreasonable one cannot
-    // hand the host a sample outside +/-1.05.
     [[nodiscard]] inline double outputLimit (double x) noexcept
     {
         const double a = std::abs (x);
-        if (a <= 0.9)
+        if (a <= mapping::outputLimitKnee)
             return x;
-        const double over = a - 0.9;
-        const double limited = 0.9 + 0.15 * (1.0 - std::exp (-over * (1.0 / 0.15)));
+        const double over = a - mapping::outputLimitKnee;
+        const double limited =
+            mapping::outputLimitKnee
+            + mapping::outputLimitRange
+                  * (1.0 - std::exp (-over * (1.0 / mapping::outputLimitRange)));
         return x < 0.0 ? -limited : limited;
     }
 
@@ -411,27 +407,24 @@ void Engine::prepare (double sampleRate, int maxBlockSize)
     delayL_.buffer.assign (delaySamples, 0.0f);
     delayR_.buffer.assign (delaySamples, 0.0f);
 
-    // Reverb geometry: mutually prime base lengths (in seconds at size 8)
-    // spread over roughly 30-90 ms, scaled down for smaller sizes.
-    static constexpr std::array<double, Reverb::lineCount> baseSeconds {
-        0.0297, 0.0371, 0.0411, 0.0437, 0.0533, 0.0631, 0.0733, 0.0797
-    };
-    const double sizeScale = 0.35 + 0.65 * ((patch_.reverb.size + 1) / 8.0);
+    const double sizeScale = mapping::reverbSizeScale (patch_.reverb.size);
     for (int i = 0; i < Reverb::lineCount; ++i)
     {
-        const auto length = static_cast<int> (baseSeconds[static_cast<std::size_t> (i)]
-                                              * sizeScale * sampleRate_) | 1;
+        const auto length = static_cast<int> (
+                                mapping::reverbLineSeconds[static_cast<std::size_t> (i)]
+                                * sizeScale * sampleRate_)
+                            | 1;
         reverb_.lengths[static_cast<std::size_t> (i)] = std::max (32, length);
         reverb_.lines[static_cast<std::size_t> (i)]
             .assign (static_cast<std::size_t> (sampleRate_ * 0.1) + 16, 0.0f);
     }
-    static constexpr std::array<double, 4> diffuserSeconds {
-        0.0043, 0.0083, 0.0151, 0.0223
-    };
     for (int i = 0; i < 4; ++i)
         reverb_.diffusers[static_cast<std::size_t> (i)]
-            .assign (static_cast<std::size_t> (diffuserSeconds[static_cast<std::size_t> (i)]
-                                               * sampleRate_) + 8, 0.0f);
+            .assign (static_cast<std::size_t> (
+                         mapping::reverbDiffuserSeconds[static_cast<std::size_t> (i)]
+                         * sampleRate_)
+                         + 8,
+                     0.0f);
     reverb_.preDelay.assign (static_cast<std::size_t> (sampleRate_ * 0.105) + 8, 0.0f);
 
     externalDirectL_.assign (static_cast<std::size_t> (maxBlock_), 0.0f);
@@ -525,14 +518,14 @@ void Engine::setPatch (const Patch& patch)
     {
         // Line lengths follow SIZE; recompute them (states are kept — a size
         // change on hardware audibly disturbs the tail too).
-        static constexpr std::array<double, Reverb::lineCount> baseSeconds {
-            0.0297, 0.0371, 0.0411, 0.0437, 0.0533, 0.0631, 0.0733, 0.0797
-        };
-        const double sizeScale = 0.35 + 0.65 * ((patch_.reverb.size + 1) / 8.0);
+        const double sizeScale = mapping::reverbSizeScale (patch_.reverb.size);
         for (int i = 0; i < Reverb::lineCount; ++i)
         {
-            const auto length = static_cast<int> (
-                baseSeconds[static_cast<std::size_t> (i)] * sizeScale * sampleRate_) | 1;
+            const auto length =
+                static_cast<int> (
+                    mapping::reverbLineSeconds[static_cast<std::size_t> (i)]
+                    * sizeScale * sampleRate_)
+                | 1;
             reverb_.lengths[static_cast<std::size_t> (i)] = std::max (
                 32, std::min (length,
                               static_cast<int> (reverb_.lines[static_cast<std::size_t> (i)].size()) - 2));
@@ -1136,7 +1129,8 @@ void Engine::updateVoiceControls (Voice& voice, int tickSamples)
     const double bendSemitones = pitchBend_ * tone.bendRange;
 
     // Modulation-lever vibrato rides LFO2 (settled) into the assigned target.
-    const double leverVibratoCents = modulation_ * 60.0 * runtime.lfo2Value;
+    const double leverVibratoCents =
+        modulation_ * mapping::leverVibratoCents * runtime.lfo2Value;
     const bool leverToOsc1 =
         patch_.modulationAssign == ModulationAssign::Osc1AndOsc2
         || patch_.modulationAssign == ModulationAssign::Osc1;
@@ -1188,7 +1182,7 @@ void Engine::updateVoiceControls (Voice& voice, int tickSamples)
         contribution (tone.lfo2, runtime.lfo2Value);
         if ((oscIndex == 1 && patch_.modulationAssign == ModulationAssign::Pw1)
             || (oscIndex == 2 && patch_.modulationAssign == ModulationAssign::Pw2))
-            value += modulation_ * 63.0 * runtime.lfo2Value;
+            value += modulation_ * mapping::leverPulseWidth * runtime.lfo2Value;
         return std::clamp (value, 0.0, 127.0);
     };
 
@@ -1233,7 +1227,7 @@ void Engine::updateVoiceControls (Voice& voice, int tickSamples)
     if (tone.lfo2.destination1 == LfoDest1::Filter)
         lfoFilterOct += mapping::lfoFilterOctaves (tone.lfo2.depth1) * runtime.lfo2Value;
     if (patch_.modulationAssign == ModulationAssign::Filter)
-        lfoFilterOct += modulation_ * 2.0 * runtime.lfo2Value;
+        lfoFilterOct += modulation_ * mapping::leverFilterOctaves * runtime.lfo2Value;
 
     const double cutoffBaseOct = std::log2 (mapping::cutoffHz (tone.cutoff));
     const double keyTrack = mapping::keyFollowOctavesPerOctave (tone.keyFollow)
@@ -1297,7 +1291,7 @@ void Engine::updateVoiceControls (Voice& voice, int tickSamples)
     if (tone.lfo2.destination2 == LfoDest2::Amp)
         tremolo += depthScale (tone.lfo2.depth2) * runtime.lfo2Value;
     if (patch_.modulationAssign == ModulationAssign::Amp)
-        tremolo += modulation_ * runtime.lfo2Value;
+        tremolo += modulation_ * mapping::leverAmpDepth * runtime.lfo2Value;
     gain *= std::max (0.0, 1.0 + tremolo);
 
     // Equal-power pan from the -64..+63 patch value.
@@ -1382,10 +1376,8 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
     const Waveform wave1 = tone.osc1.wave;
     const Waveform wave2 = tone.osc2.wave;
 
-    // Balance: each leg at unity in the center, the opposite leg fading
-    // linearly to silence at the extremes (voiced law, settled endpoints).
-    const double legGain1 = std::min (1.0, (63.0 - tone.balance) / 63.0);
-    const double legGain2 = std::min (1.0, (63.0 + tone.balance) / 63.0);
+    const double legGain1 = mapping::balanceLegGain (tone.balance, true);
+    const double legGain2 = mapping::balanceLegGain (tone.balance, false);
 
     const double centerGain = mapping::superSawCenterGain();
     const double sideGain = mapping::superSawSideGain();
@@ -1402,7 +1394,7 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
             sum += (index == 3 ? centerGain : sideGain) * (2.0 * phase - 1.0);
         }
         // The reported pitch-tracked HPF on the summed stack.
-        const double x = sum * (1.0 / 2.5);
+        const double x = sum * mapping::superSawStackNormalisation;
         const double y = hpf.b0 * x + hpf.b1 * osc.hpfX1 + hpf.b2 * osc.hpfX2
                          - hpf.a1 * osc.hpfY1 - hpf.a2 * osc.hpfY2;
         osc.hpfX2 = osc.hpfX1;
@@ -1421,7 +1413,8 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
         const double periodSamples = 1.0 / std::max (1.0e-6, inc);
         const int size = static_cast<int> (osc.comb.size());
         const double delay =
-            std::clamp (periodSamples * 0.5, 2.0, static_cast<double> (size - 4));
+            std::clamp (periodSamples * mapping::fbOscDelayRatio, 2.0,
+                        static_cast<double> (size - 4));
         double readPos = osc.combWrite - delay;
         while (readPos < 0.0)
             readPos += size;
@@ -1432,11 +1425,11 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
             osc.comb[static_cast<std::size_t> (index0)] * (1.0 - fracPos)
             + osc.comb[static_cast<std::size_t> (index1)] * fracPos;
         const double out = saw + fbGain * softClip (fed);
-        osc.combState += 0.55 * (out - osc.combState);
+        osc.combState += mapping::fbOscLoopDamping * (out - osc.combState);
         osc.comb[static_cast<std::size_t> (osc.combWrite)] =
-            static_cast<float> (softClip (osc.combState) * 0.995);
+            static_cast<float> (softClip (osc.combState) * mapping::fbOscLoopTrim);
         osc.combWrite = (osc.combWrite + 1) % size;
-        return out * 0.6;
+        return out * mapping::fbOscOutputGain;
     };
 
     // [voiced, OQ-11] The drive curve, hoisted out of the sample loop.
@@ -1583,15 +1576,15 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
                 stage.ic2eq = 2.0 * v2 - stage.ic2eq;
                 // Stage limiter: bounds self-oscillation growth (the manual's
                 // "may not stop at all" is a bounded oscillation on hardware).
-                // Continuous soft knee — linear to 1.5, saturating toward 2.5
-                // — so limiting never steps the state.
+                // Continuous soft knee, so limiting never steps the state.
                 const auto limitState = [] (double state)
                 {
                     const double a = std::abs (state);
-                    if (a <= 1.5)
+                    if (a <= mapping::filterStateLimit)
                         return state;
-                    const double over = a - 1.5;
-                    const double limited = 1.5 + over / (1.0 + over);
+                    const double over = a - mapping::filterStateLimit;
+                    const double limited =
+                        mapping::filterStateLimit + over / (1.0 + over);
                     return state < 0.0 ? -limited : limited;
                 };
                 stage.ic1eq = limitState (stage.ic1eq);
@@ -1613,7 +1606,7 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
             if (tone.filterSlope == FilterSlope::Db24)
             {
                 // Second, non-resonant 2-pole stage (voiced topology).
-                const double k2 = 1.2;
+                const double k2 = mapping::filterSecondStageDamping;
                 const double b1 = 1.0 / (1.0 + g * (g + k2));
                 const double b2 = g * b1;
                 filtered = stagePass (voice.filter2, filtered, k2, b1, b2);
@@ -2139,15 +2132,18 @@ void Engine::processEffects (const float* dryL, const float* dryR,
     // -- delay coefficients ------------------------------------------------
     const double delayTargetSamples =
         mapping::delaySeconds (delayParams.time) * sampleRate_;
-    const double timeSmoothing = onePoleCoeff (sampleRate_, 0.08);
+    const double timeSmoothing =
+        onePoleCoeff (sampleRate_, mapping::delayTimeSlewSeconds);
     const double feedback = delayParams.feedback / 100.0;
     const double dampHz = delayHfDampHz[static_cast<std::size_t> (delayParams.hfDamp)];
     const double dampCoeff = dampHz <= 0.0
                                  ? 1.0
                                  : 1.0 - std::exp (-twoPi * dampHz / sampleRate_);
-    const double modRateHz = 0.02 * std::pow (400.0, delayParams.modulationRate / 127.0);
+    const double modRateHz =
+        mapping::delayModulationRateHz (delayParams.modulationRate);
     const double modDepthSamples =
-        (delayParams.modulationDepth / 127.0) * 0.008 * sampleRate_;
+        (delayParams.modulationDepth / 127.0)
+        * mapping::delayModulationDepthSeconds * sampleRate_;
     const double modInc = modRateHz / sampleRate_;
     const int delaySize = static_cast<int> (delayL_.buffer.size());
 
@@ -2166,8 +2162,8 @@ void Engine::processEffects (const float* dryL, const float* dryR,
     const double hfCoeff = 1.0 - std::exp (-twoPi * hfHz / sampleRate_);
     const double lfGain = std::pow (10.0, reverbParams.lfDampGain / 20.0);
     const double hfGain = std::pow (10.0, reverbParams.hfDampGain / 20.0);
-    const double diffusionGain = 0.25 + 0.5 * (reverbParams.diffusion / 127.0);
-    const double densityGain = 0.2 + 0.55 * (reverbParams.density / 127.0);
+    const double diffusionGain = mapping::reverbDiffusionGain (reverbParams.diffusion);
+    const double densityGain = mapping::reverbDensityGain (reverbParams.density);
     const int preDelaySamples = std::min (
         static_cast<int> ((reverbParams.preDelay * (100.0 / 125.0)) * 0.001 * sampleRate_),
         static_cast<int> (reverb_.preDelay.size()) - 2);
@@ -2301,7 +2297,7 @@ void Engine::processEffects (const float* dryL, const float* dryR,
 
                 buffer[static_cast<std::size_t> (
                     reverb_.writes[static_cast<std::size_t> (line)])] =
-                    static_cast<float> (value + input * 0.35);
+                    static_cast<float> (value + input * mapping::reverbInputInjection);
                 reverb_.writes[static_cast<std::size_t> (line)] =
                     (reverb_.writes[static_cast<std::size_t> (line)] + 1) % size;
             }
@@ -2316,8 +2312,10 @@ void Engine::processEffects (const float* dryL, const float* dryR,
             reverb_.fresh = std::min (reverb_.fresh + 1, 1 << 30);
         }
 
-        outL[i] = static_cast<float> (dryL[i] + wetDelayL + wetReverbL * 0.8);
-        outR[i] = static_cast<float> (dryR[i] + wetDelayR + wetReverbR * 0.8);
+        outL[i] = static_cast<float> (dryL[i] + wetDelayL
+                                      + wetReverbL * mapping::reverbWetReturn);
+        outR[i] = static_cast<float> (dryR[i] + wetDelayR
+                                      + wetReverbR * mapping::reverbWetReturn);
     }
 
     delayL_.dampState = flushDenormal (delayL_.dampState);
@@ -2374,15 +2372,15 @@ void Engine::process (float* left, float* right, int numSamples,
             const TonePatch& tone = tonePatch (voice.part);
             const double delaySend = tone.delayDepth / 127.0;
             const double reverbSend = tone.reverbDepth / 127.0;
-            const auto gainL = static_cast<float> (voice.ampGainL * voiceHeadroom);
-            const auto gainR = static_cast<float> (voice.ampGainR * voiceHeadroom);
+            const auto gainL = static_cast<float> (voice.ampGainL * mapping::voiceHeadroom);
+            const auto gainR = static_cast<float> (voice.ampGainR * mapping::voiceHeadroom);
 
             // Tone balance sits between the two tones (settled parameter,
             // voiced law shared with the oscillator balance).
             const double toneGain =
                 voice.part == Part::Upper
-                    ? std::min (1.0, (63.0 + patch_.toneBalance) / 63.0)
-                    : std::min (1.0, (63.0 - patch_.toneBalance) / 63.0);
+                    ? mapping::balanceLegGain (patch_.toneBalance, false)
+                    : mapping::balanceLegGain (patch_.toneBalance, true);
 
             for (int i = 0; i < guarded; ++i)
             {
@@ -2411,15 +2409,18 @@ void Engine::process (float* left, float* right, int numSamples,
         const double masterTarget = (masterLevel_ / 127.0)
                                     * (patch_.patchLevel / 127.0)
                                     * expression_ * partLevel_;
-        const double masterCoeff = onePoleCoeff (sampleRate_, 0.01) * guarded;
+        const double masterCoeff =
+            onePoleCoeff (sampleRate_, mapping::masterSlewSeconds) * guarded;
         smoothedMaster_ += (masterTarget - smoothedMaster_)
                            * std::min (1.0, masterCoeff);
 
         // Part pan (received CC#10): a constant-power tilt on the final pair,
         // unity at center.
         const double panAngle = (partPan_ + 1.0) * 0.25 * pi;
-        const double partPanGain[2] { std::cos (panAngle) * 1.4142135623730951,
-                                      std::sin (panAngle) * 1.4142135623730951 };
+        const double partPanGain[2] {
+            std::cos (panAngle) * mapping::partPanCentreGain,
+            std::sin (panAngle) * mapping::partPanCentreGain
+        };
 
         // The direct monitor path joins here rather than in the voice sum: it
         // is not patch audio, so the patch level and the part controllers do
