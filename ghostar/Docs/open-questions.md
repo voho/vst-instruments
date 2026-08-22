@@ -122,8 +122,14 @@ travel (matching FREE's stated extremes).
 
 **Gap.** 2 MΩ pot is legible; the lag capacitor reads 420–470 nF in the
 scan.
-**Engine.** 450 nF equivalent: τ max ≈ 0.9 s, exponential taper.
-**Closes with.** A cleaner scan or hardware measurement.
+**Engine.** 450 nF equivalent, so τ reaches ≈0.9 s at full travel, with a
+*quadratic* taper (`τ = 0.9·travel²`) — a linear pot's resistance would
+give a linear taper and a log pot an exponential one, and the scan does
+not say which the GLIDE pot is, so the square is a voiced middle. (An
+earlier revision of this entry described the taper as exponential, which
+the code never was; the record is corrected here rather than quietly.)
+**Closes with.** A cleaner scan — of the capacitor value *and* the pot's
+taper marking — or a hardware measurement of glide time versus travel.
 
 ## OQ-09 — Upper-filter 24 dB cascade Q distribution
 
@@ -317,3 +323,55 @@ resolved from the scan, and the manual states nothing quantitative.
 loaded-linear-pot approximation).
 **Closes with.** The output-stage pot marking and load from a cleaner
 scan, or a level-versus-travel sweep of a hardware unit.
+
+## OQ-20 — Mixer summing gain
+
+**Gap.** Each audio path's mixer sums its sources into a virtual-earth
+stage; the engine's comment traces its 0.45 to a 220 kΩ-into-100 kΩ
+hardware ratio, but that reading was never carried into this register and
+the resistor values were not re-verified in the higher-resolution pass
+that resolved the filter board.
+**Engine.** Both paths sum with a fixed gain of 0.45 before their filters.
+**Closes with.** The mixer board's summing resistors read from a clean
+scan. The consequence of getting it wrong is level, not character — it
+scales how hard the sources drive the filters and so where the OVERDRIVE
+stage's knee falls relative to a full slider, which ties it to OQ-10's
+open level trace.
+
+## OQ-21 — LFO rate span at the slow end
+
+**Gap.** The manual gives the MOD X rate as "less than 1 Hz to
+approximately 50 Hz". The fast end is a stated number; the slow end is
+only an inequality, and the network setting it was not resolved.
+**Engine.** 0.3 Hz to 50 Hz, exponential across the travel (the fast end
+anchored, the slow end voiced inside "less than 1 Hz").
+**Closes with.** The LFO board's timing network from a clean scan, or a
+measurement of the rate at the slow endpoint.
+
+## OQ-22 — BRIGHTNESS pot law
+
+**Gap.** The BRIGHTNESS control is anchored as a 100 kΩ log pot into
+27 nF (≈59 Hz at full resistance, effectively open at zero — OM p.29 and
+SM). What is not documented is the pot's actual log law, nor the residual
+series resistance that stops the corner running to infinity at the open
+end.
+**Engine.** The travel maps through a 2.5-decade log law
+(`10^(−2.5·travel)`, rescaled so the endpoints land exactly) into
+100 kΩ, plus a 330 Ω residual — so the corner runs ≈59 Hz to ≈17.9 kHz
+(both the decade count and the residual voiced).
+**Closes with.** The pot's taper marking and the series resistor from a
+clean scan, or a frequency-response sweep of the Shaper path at several
+BRIGHTNESS settings on hardware.
+
+## OQ-23 — The travel smoother is a product policy, not a hardware law
+
+Recorded here so the sweep is exhaustive rather than because it is a gap.
+Every continuous panel travel and both wheels glide to new values with a
+~25 ms one-pole (`travelSmoothing_`), and a fully silent engine snaps
+instead. No hardware analogue is claimed: a physical pot's wiper moves
+continuously and needs no smoothing, and the smoother exists because a
+host applies automation in block-sized steps and a MIDI CC in 7-bit
+ones. The measurements that justified it, and the metric they forced, are
+in the best-in-class plan's Step 5 section. It is listed as a standing
+item only so that a future reader does not mistake 25 ms for a modelled
+time constant.

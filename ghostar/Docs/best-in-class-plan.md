@@ -247,7 +247,9 @@ settled by measurement and quoted.
   recorded verdict — plus a re-run of Step 1's alias suite, since new
   nonlinearity makes new high partials and the completed audit must
   describe the final engine, not the one before it.
-- [ ] **Step 4 — Close the closable open questions.** OQ-02 (absolute
+- [x] **Step 4 — Close the closable open questions.** Done — the
+  derivations, the dead ends and the four register entries the sweep added
+  are in the dated section below. Original specification: OQ-02 (absolute
   cutoff span) and OQ-09 (cascade Q distribution) may be derivable from
   the CEM3350 datasheet's exponential-scale and mode figures; OQ-04's
   curvature read can be checked against the 556A application notes. Work
@@ -544,6 +546,53 @@ shipping laws both remain defensible and audibly differ — but the shipping
 laws were not defensible once the datasheet was in hand: a tanh is not
 what a diode pair does, and a per-sample map is not what a circuit does.
 The derivation decides.
+
+## Step 4 executed — the register made exhaustive — 2026-08-22
+
+**What was derived.** OQ-02's *span* and sensitivities (the 12k1 ladder
+against the CEM3350's −19.6 mV/octave: 21.2 mV/V at the pin, ±11.4
+octaves of pot authority over a ~10-octave chip window, a fixed +193 mV
+offset, ±2.3 octaves of trim authority), OQ-04's whole segment law (the
+panel's 5 ms–10 s is the RC time constant; the attack aims at ≈1.3×
+peak), OQ-12's travel-to-Q mapping in full, OQ-13's tracking *amount*
+(108 %, which reproduces the manual's "slightly over 100 %" from the
+resistors), and — with Step 3 — OQ-10's and OQ-12's diode laws. Each is
+recorded against its source in the register.
+
+**What was demonstrated not derivable, and left voiced with the reason.**
+OQ-02's absolute *placement*: the 100 kΩ trimmer's factory setting is not
+documented anywhere, and the service manual has no calibration text at
+all, so the window's position is a per-unit calibration rather than a
+constant. OQ-09's Q split: the datasheet says nothing about cascading —
+the only Curtis-published 4-pole figure is in a 1981 newsletter whose
+component digits are illegible — though the scan *does* corroborate the
+structure (the cascade section has its own fixed bias network on its Q
+pin), so the entry moved from "voiced guess" to "structure corroborated,
+one digit short". OQ-10's and OQ-12's level scalings: the diode curves
+are anchored, but nothing states what an internal signal volt is worth,
+which is a trace and not a document.
+
+**What the end-to-end sweep of `GhostarEngine.cpp` added.** Four entries
+that had never been registered, found by walking every numeric literal in
+the file against the register: the mixer summing gain (OQ-20), the LFO's
+slow endpoint (OQ-21), the BRIGHTNESS pot's log law and series residual
+(OQ-22), and the travel smoother (OQ-23) — the last recorded explicitly
+as a *product policy* with no hardware analogue, so a future reader
+cannot mistake its 25 ms for a modelled time constant. The sweep also
+caught a register entry that contradicted the code: OQ-08 described the
+glide taper as exponential where the engine has always used a quadratic
+one. The record is corrected in place, and the correction is noted inside
+the entry rather than made silently.
+
+**What this step did not reach.** OQ-14 through OQ-19 (wheel depths, the
+noise pinking blend, the output coupling corner, the red-noise process,
+the Shaper shape split, the volume taper) all needed board-level scans
+that the higher-resolution pass covered only for the filter and
+oscillator boards. Their closure paths are unchanged and their entries
+state what would close them; the mod, noise and output boards are the
+next targets for a scan-reading pass, and are called out here so that the
+step's "every documentary avenue walked or recorded" claim is not
+overstated.
 
 ## Step 5 executed — the zipper audit and the travel smoother — 2026-08-22
 
