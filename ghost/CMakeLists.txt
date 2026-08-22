@@ -144,12 +144,20 @@ if(GHOST_BUILD_TOOLS)
     target_link_libraries(GhostRenderDemos PRIVATE GhostDSP)
     target_compile_features(GhostRenderDemos PRIVATE cxx_std_20)
 
-    if(MSVC)
-        target_compile_options(GhostRenderDemos PRIVATE /W4 /permissive-)
-    else()
-        target_compile_options(GhostRenderDemos PRIVATE
-            -Wall -Wextra -Wpedantic)
-    endif()
+    # Plan Step 5's measurement: the block-latching (zipper) audit over the
+    # published continuous travels, against a sample-accurate reference.
+    add_executable(GhostZipperAudit Tools/ZipperAudit.cpp)
+    target_link_libraries(GhostZipperAudit PRIVATE GhostDSP)
+    target_compile_features(GhostZipperAudit PRIVATE cxx_std_20)
+
+    foreach(target GhostRenderDemos GhostZipperAudit)
+        if(MSVC)
+            target_compile_options(${target} PRIVATE /W4 /permissive-)
+        else()
+            target_compile_options(${target} PRIVATE
+                -Wall -Wextra -Wpedantic)
+        endif()
+    endforeach()
 endif()
 
 if(BUILD_TESTING)
@@ -197,6 +205,12 @@ if(BUILD_TESTING)
         set_tests_properties(Ghost.RenderDemosFullRender PROPERTIES TIMEOUT 60)
         set_tests_properties(Ghost.RenderDemosRerender PROPERTIES TIMEOUT 60
                              DEPENDS Ghost.RenderDemosFullRender)
+
+        # Keeps the zipper-audit strokes valid (finite, non-silent) on CI;
+        # the full audit is run by hand when its table is being updated.
+        add_test(NAME Ghost.ZipperAuditSmoke
+                 COMMAND GhostZipperAudit --smoke)
+        set_tests_properties(Ghost.ZipperAuditSmoke PROPERTIES TIMEOUT 120)
     endif()
 
     if(GHOST_BUILD_PLUGIN)

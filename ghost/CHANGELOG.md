@@ -37,5 +37,10 @@ Notable customer-facing changes to Ghost are recorded here.
   through Fat Filter, Sync and Sample & Hold, to the Inverted Guitar —
   behind an Init program that is the default voice itself. The selected
   program survives session save and restore.
+- Travel smoothing: every continuous panel control and both performance
+  wheels glide to new values over ~25 ms, so host automation at any block
+  size and 7-bit MIDI CCs never step the audio; switches stay immediate,
+  and a silent instrument adopts restored settings exactly. Justified and
+  measured by the zipper audit recorded in the best-in-class plan.
 - Ten committed demonstration renders under `Docs/audio`, regenerated
   nightly from the shipping engine.
