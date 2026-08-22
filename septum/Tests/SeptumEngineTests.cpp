@@ -509,6 +509,100 @@ void testSplitAndDualVoicing()
             "the eleventh key steals instead of growing the pool");
 }
 
+// [settled, OM p. 65] CONTROLLER DESTINATION names the tone or tones each
+// physical controller reaches: "Selects the tone(s) whose pitch will be
+// changed by the pitch bend lever ... If this is 'BOTH,' the pitch of both the
+// UPPER tone and LOWER tone will change", and the same sentence for the
+// modulation lever and the expression pedal.
+void testControllerDestinations()
+{
+    const double sampleRate = 44100.0;
+
+    // A DUAL patch whose two tones are a sine each, so a bend shows up as a
+    // pitch and nothing else moves.
+    const auto dualPatch = []
+    {
+        septum::Patch patch = plainSawPatch();
+        patch.keyboardMode = septum::KeyboardMode::Dual;
+        for (septum::TonePatch* tone : { &patch.upper, &patch.lower })
+        {
+            tone->osc1.wave = septum::Waveform::Sine;
+            tone->balance = -63;
+            tone->ampEnvSustain = 127;
+            tone->ampEnvAttack = 0;
+            tone->level = 127;
+            tone->bendRange = 12;
+            tone->lowFreq = septum::LowFreqMode::Flat;
+        }
+        // The two tones an octave apart, so each one's bend is visible on its
+        // own partial.
+        patch.lower.octaveShift = -1;
+        return patch;
+    };
+
+    const auto bentLevel = [&] (septum::ToneDestination destination, double hz)
+    {
+        septum::Patch patch = dualPatch();
+        patch.pitchBendDestination = destination;
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.reset();
+        engine.setPitchBend (1.0);      // a full octave up on both ranges
+        auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 0.6,
+                                 sampleRate);
+        return goertzel (take.left, 8820, 26460, hz, sampleRate);
+    };
+
+    // Note 60 is 261.63 Hz and the LOWER tone an octave below it is 130.81;
+    // a full bend with a range of 12 doubles each.
+    const double upperBent = 523.25, lowerBent = 261.63, lowerUnbent = 130.81;
+    expect (bentLevel (septum::ToneDestination::Upper, upperBent) > 1.0e-3,
+            "UPPER bends when the destination names it");
+    expect (bentLevel (septum::ToneDestination::Upper, lowerUnbent) > 1.0e-3,
+            "LOWER stays where it was when the destination does not name it");
+    expect (bentLevel (septum::ToneDestination::Lower, lowerBent) > 1.0e-3,
+            "LOWER bends when the destination names it");
+    expect (bentLevel (septum::ToneDestination::Both, upperBent) > 1.0e-3
+                && bentLevel (septum::ToneDestination::Both, lowerBent) > 1.0e-3,
+            "BOTH bends both tones");
+
+    // EXPRESSION reaches only the tone(s) it names, and BOTH is what the
+    // master chain used to do for everyone.
+    const auto expressed = [&] (septum::ToneDestination destination, double hz)
+    {
+        septum::Patch patch = dualPatch();
+        patch.expressionDestination = destination;
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.reset();
+        engine.setExpression (0.0);
+        auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 0.6,
+                                 sampleRate);
+        return goertzel (take.left, 13230, 26460, hz, sampleRate);
+    };
+    // The two tones are an octave apart and the surviving one is loud, so the
+    // silenced partial is read against the same partial when the destination
+    // does not name it rather than against an absolute floor.
+    const double upperTone = 261.63, lowerTone = 130.81;
+    const double upperNamed = expressed (septum::ToneDestination::Upper, upperTone);
+    const double upperSpared = expressed (septum::ToneDestination::Lower, upperTone);
+    const double lowerNamed = expressed (septum::ToneDestination::Lower, lowerTone);
+    const double lowerSpared = expressed (septum::ToneDestination::Upper, lowerTone);
+    expect (upperNamed < 0.02 * upperSpared,
+            "EXPRESSION at zero takes at least 34 dB off the tone it names "
+            "(named " + std::to_string (upperNamed) + ", spared "
+                + std::to_string (upperSpared) + ")");
+    expect (lowerNamed < 0.02 * lowerSpared,
+            "EXPRESSION at zero names LOWER as readily as UPPER");
+    expect (expressed (septum::ToneDestination::Both, upperTone)
+                    < 0.02 * upperSpared
+                && expressed (septum::ToneDestination::Both, lowerTone)
+                       < 0.02 * lowerSpared,
+            "EXPRESSION at zero with BOTH takes both tones down");
+}
+
 void testSoloAndHold()
 {
     septum::Patch patch = plainSawPatch();
@@ -2737,6 +2831,7 @@ int main()
     testOscillatorSync();
     testSuperSawSpread();
     testSplitAndDualVoicing();
+    testControllerDestinations();
     testSoloAndHold();
     testSostenutoLatchesOnlyWhatWasSounding();
     testExternalInputAndAudioFilter();

@@ -71,9 +71,25 @@ parameter surface. Every continuous parameter is 7-bit; signed displays use
 
 - **Patch Common** (0x21 bytes): name ×12, patch level 0–127, tone balance
   −63…+63, tempo 5–300, keyboard mode SINGLE/DUAL/SPLIT, keyboard part,
-  split point A0–C8, controller destinations, arpeggio/delay/reverb
+  split point A0–C8, arpeggio/delay/reverb
   switches, modulation assign (OSC1&OSC2 / OSC1 / OSC2 / PW1 / PW2 / FILTER /
-  AMP / AUDIO-FILTER), D-Beam assign (37 destinations), D-Beam polarity.
+  AMP / AUDIO-FILTER), the four **controller destinations** — MODULATION,
+  D BEAM, PITCH BEND and EXPRESSION, each UPPER / LOWER / BOTH — D-Beam assign
+  (37 destinations), D-Beam polarity, ACTIVE EXPRESSION switch.
+
+**CONTROLLER DESTINATION (settled, OM p. 65).** Each physical controller names
+the tone or tones it reaches: "Selects the tone(s) to be modulated by the
+modulation lever. If this is 'BOTH,' modulation will be applied to both the
+UPPER tone and LOWER tone", and the same sentence for the pitch bend lever and
+the expression pedal. The replica implements the three whose controller it
+has: a voice the bend lever does not reach does not bend, a voice the
+modulation lever does not reach takes none of the lever's four settled
+destinations, and EXPRESSION scales only the tone(s) it names — which is why
+it now sits in the per-tone gain rather than in the master chain, where with
+BOTH the product is identical. The AUDIO-FILTER lever destination is one
+filter fed by two tones' LFO2s, so a single destination picks that tone's and
+BOTH keeps the keyboard part's (voiced, OQ-14). D BEAM DESTINATION and ACTIVE
+EXPRESSION arrive with the D-Beam and stay deferred with it.
 - **Patch Tone** ×2 (0x40 bytes each): per oscillator — waveform
   (0–8: SAW, SQU, PW-SQU, TRI, SINE, NOISE, FB-OSC, SUPER-SAW, EXT-IN),
   pitch-wide switch (raw 28–100 for the coarse tune either way — the switch

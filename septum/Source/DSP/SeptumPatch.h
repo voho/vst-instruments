@@ -102,6 +102,20 @@ enum class ArpeggioMotif
 // SPLIT ARPEGGIO: which tone(s) the arpeggiator drives in SPLIT mode.
 enum class SplitArpeggio { Upper, Lower, Both };
 
+// CONTROLLER DESTINATION (Patch Common offsets 15, 16, 17, 18): which tone(s)
+// each of the four physical controllers reaches. "Selects the tone(s) to be
+// modulated by the modulation lever ... If this is 'BOTH,' modulation will be
+// applied to both the UPPER tone and LOWER tone" (OM p. 65), and the same
+// sentence for the D Beam, the pitch bend lever and the expression pedal.
+enum class ToneDestination { Upper, Lower, Both };
+
+[[nodiscard]] inline bool destinationReaches (ToneDestination destination,
+                                              bool upper) noexcept
+{
+    return destination == ToneDestination::Both
+           || (destination == ToneDestination::Upper) == upper;
+}
+
 inline constexpr int arpeggioMaxSteps = 32;
 inline constexpr int arpeggioMaxRows = 16;
 // Grid cell encodings: a rest, a tie holding the preceding note, or a note-on
@@ -301,6 +315,11 @@ struct Patch
     bool delayOn { false };
     bool reverbOn { false };
     ModulationAssign modulationAssign { ModulationAssign::Osc1AndOsc2 };
+    // Settled: which tone(s) each controller reaches (OM p. 65). The D Beam's
+    // destination arrives with the D Beam itself.
+    ToneDestination modulationDestination { ToneDestination::Both };
+    ToneDestination pitchBendDestination { ToneDestination::Both };
+    ToneDestination expressionDestination { ToneDestination::Both };
     ArpeggioParams arpeggio {};
 
     TonePatch upper {};

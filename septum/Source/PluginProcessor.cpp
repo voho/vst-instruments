@@ -55,6 +55,8 @@ const juce::StringArray arpMotifChoices {
     "UP&DN(L)", "UP&DN(L&H)", "UP&DN(-)", "RAND(L)", "RAND(-)", "PHRASE"
 };
 const juce::StringArray arpSplitChoices { "UPPER", "LOWER", "BOTH" };
+// CONTROLLER DESTINATION, the same three for every controller (OM p. 65).
+const juce::StringArray toneDestinationChoices { "UPPER", "LOWER", "BOTH" };
 
 const juce::StringArray& arpStyleChoices()
 {
@@ -338,6 +340,15 @@ const std::vector<PatchBinding>& patchBindings()
           PATCH_BOOL (reverbOn) },
         { "mod_assign", "Modulation Assign", Kind::Choice, 0, 8,
           &modAssignChoices, PATCH_ENUM (modulationAssign, ModulationAssign) },
+        { "mod_dest", "Modulation Destination", Kind::Choice, 0, 3,
+          &toneDestinationChoices,
+          PATCH_ENUM (modulationDestination, septum::ToneDestination) },
+        { "bend_dest", "Pitch Bend Destination", Kind::Choice, 0, 3,
+          &toneDestinationChoices,
+          PATCH_ENUM (pitchBendDestination, septum::ToneDestination) },
+        { "expr_dest", "Expression Destination", Kind::Choice, 0, 3,
+          &toneDestinationChoices,
+          PATCH_ENUM (expressionDestination, septum::ToneDestination) },
         { "arp_on", "Arpeggio Switch", Kind::Bool, 0, 1, nullptr,
           PATCH_BOOL (arpeggio.on) },
         { "arp_hold", "Arpeggio Hold", Kind::Bool, 0, 1, nullptr,

@@ -622,6 +622,10 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     addControl (*stripSection, "keyboard_part", "PART", Style::Combo, false);
     addControl (*stripSection, "split_point", "SPLIT", Style::Knob, false);
     addControl (*stripSection, "mod_assign", "MOD ASSIGN", Style::Combo, false);
+    // CONTROLLER DESTINATION: which tone each physical controller reaches.
+    addControl (*stripSection, "mod_dest", "MOD DEST", Style::Combo, false);
+    addControl (*stripSection, "bend_dest", "BEND DEST", Style::Combo, false);
+    addControl (*stripSection, "expr_dest", "EXPR DEST", Style::Combo, false);
     addControl (*stripSection, "bend_range", "BEND", Style::Knob, true, " st");
     addControl (*stripSection, "octave_shift", "TONE OCT", Style::Knob);
     addControl (*stripSection, "patch_level", "LEVEL", Style::Knob, false);

@@ -880,3 +880,33 @@ is what the documents settle, and it is one invented behaviour fewer.
 Nine checks fence the three, all watched to fail when the changes are
 reverted. No shipped preset sat off either grid or outside ±12 with WIDE off,
 so the committed demos are unchanged.
+
+#### Step 21 — the controller destinations, which every controller had ignored
+
+Patch Common carries four bytes the contract mentioned only as "controller
+destinations" and the engine did not read: MODULATION, D BEAM, PITCH BEND and
+EXPRESSION DESTINATION, each UPPER / LOWER / BOTH. The manual gives them one
+sentence apiece — "Selects the tone(s) whose pitch will be changed by the pitch
+bend lever ... If this is 'BOTH,' the pitch of both the UPPER tone and LOWER
+tone will change" (OM p. 65) — so in DUAL and SPLIT they decide which half of
+the patch a lever reaches. All three whose controller the replica has are
+implemented; the D Beam's arrives with the D Beam.
+
+Bending only UPPER, on a DUAL patch with the two tones an octave apart and a
+full-octave bend range on each, the surviving partials say which tone moved:
+
+| PITCH BEND DEST | 523 Hz (UPPER bent) | 131 Hz (LOWER unbent) | 262 Hz (LOWER bent) |
+|---|---|---|---|
+| UPPER | present | present | — |
+| LOWER | — | — | present |
+| BOTH | present | — | present |
+
+EXPRESSION had to move for this: it multiplied the master chain, so it could
+only ever reach both tones. It is a per-tone gain now, smoothed exactly as the
+chain it left was, and with BOTH — the default — the product is unchanged. At
+EXPRESSION 0 with the destination on one tone, that tone's partial drops more
+than 34 dB while the other one is untouched.
+
+Seven checks fence the three destinations, all watched to fail when
+`destinationReaches` is made to return true unconditionally. No shipped preset
+sets a destination away from BOTH, so the committed demos are unchanged.

@@ -1052,6 +1052,9 @@ private:
     double pitchBend_ { 0.0 };
     double modulation_ { 0.0 };
     double expression_ { 1.0 };
+    // EXPRESSION reaches the tone(s) EXPRESSION DESTINATION names, so it is
+    // carried per tone and smoothed there rather than in the master chain.
+    std::array<double, 2> smoothedExpression_ { 1.0, 1.0 };
     double partLevel_ { 1.0 };
     double partPan_ { 0.0 };
     bool hold_ { false };

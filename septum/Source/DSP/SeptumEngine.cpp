@@ -525,6 +525,7 @@ void Engine::reset()
     hold_ = false;
     sostenuto_ = false;
     smoothedMaster_ = masterLevel_ / 127.0;
+    smoothedExpression_.fill (1.0);
     updateEffectCoefficients();
 }
 
@@ -1226,11 +1227,23 @@ void Engine::updateVoiceControls (Voice& voice, int tickSamples)
     }
 
     const double pitchEnvLevel = voice.pitchEnv.advance (tickSamples);
-    const double bendSemitones = pitchBend_ * tone.bendRange;
+    // [settled] CONTROLLER DESTINATION: each physical controller names the
+    // tone or tones it reaches (OM p. 65). A voice the bend lever does not
+    // reach does not bend, and one the modulation lever does not reach is not
+    // modulated by it — the tone's own LFOs are untouched either way.
+    const bool upperVoice = voice.part == Part::Upper;
+    const double bendSemitones =
+        destinationReaches (patch_.pitchBendDestination, upperVoice)
+            ? pitchBend_ * tone.bendRange
+            : 0.0;
+    const double lever =
+        destinationReaches (patch_.modulationDestination, upperVoice)
+            ? modulation_
+            : 0.0;
 
     // Modulation-lever vibrato rides LFO2 (settled) into the assigned target.
     const double leverVibratoCents =
-        modulation_ * mapping::leverVibratoCents * runtime.lfo2Value;
+        lever * mapping::leverVibratoCents * runtime.lfo2Value;
     const bool leverToOsc1 =
         patch_.modulationAssign == ModulationAssign::Osc1AndOsc2
         || patch_.modulationAssign == ModulationAssign::Osc1;
@@ -1282,7 +1295,7 @@ void Engine::updateVoiceControls (Voice& voice, int tickSamples)
         contribution (tone.lfo2, runtime.lfo2Value);
         if ((oscIndex == 1 && patch_.modulationAssign == ModulationAssign::Pw1)
             || (oscIndex == 2 && patch_.modulationAssign == ModulationAssign::Pw2))
-            value += modulation_ * mapping::leverPulseWidth * runtime.lfo2Value;
+            value += lever * mapping::leverPulseWidth * runtime.lfo2Value;
         return std::clamp (value, 0.0, 127.0);
     };
 
@@ -1327,7 +1340,7 @@ void Engine::updateVoiceControls (Voice& voice, int tickSamples)
     if (tone.lfo2.destination1 == LfoDest1::Filter)
         lfoFilterOct += mapping::lfoFilterOctaves (tone.lfo2.depth1) * runtime.lfo2Value;
     if (patch_.modulationAssign == ModulationAssign::Filter)
-        lfoFilterOct += modulation_ * mapping::leverFilterOctaves * runtime.lfo2Value;
+        lfoFilterOct += lever * mapping::leverFilterOctaves * runtime.lfo2Value;
 
     const double cutoffBaseOct = std::log2 (mapping::cutoffHz (tone.cutoff));
     const double keyTrack = mapping::keyFollowOctavesPerOctave (tone.keyFollow)
@@ -1391,7 +1404,7 @@ void Engine::updateVoiceControls (Voice& voice, int tickSamples)
     if (tone.lfo2.destination2 == LfoDest2::Amp)
         tremolo += depthScale (tone.lfo2.depth2) * runtime.lfo2Value;
     if (patch_.modulationAssign == ModulationAssign::Amp)
-        tremolo += modulation_ * mapping::leverAmpDepth * runtime.lfo2Value;
+        tremolo += lever * mapping::leverAmpDepth * runtime.lfo2Value;
     gain *= std::max (0.0, 1.0 + tremolo);
 
     // Equal-power pan from the -64..+63 patch value.
@@ -2416,8 +2429,14 @@ void Engine::prepareExternalTick (const float* inputLeft, const float* inputRigh
     // sounding tone in SINGLE and therefore leaves SINGLE exactly as it was.
     if (patch_.modulationAssign == ModulationAssign::AudioFilter)
     {
+        // [voiced, OQ-14] The AUDIO FILTER is one filter and MODULATION
+        // DESTINATION names one tone or both, so a single destination picks
+        // that tone's LFO2 and BOTH keeps the keyboard part's — which is what
+        // SINGLE already gave and leaves it unchanged.
         const std::size_t leverIndex =
-            patch_.keyboardPart == KeyboardPart::Upper ? 0u : 1u;
+            patch_.modulationDestination == ToneDestination::Upper  ? 0u
+            : patch_.modulationDestination == ToneDestination::Lower ? 1u
+            : (patch_.keyboardPart == KeyboardPart::Upper ? 0u : 1u);
         octaves += modulation_ * mapping::audioFilterLeverOctaves
                    * tones_[leverIndex].lfo2Value;
     }
@@ -2815,6 +2834,24 @@ void Engine::process (float* left, float* right, int numSamples,
         const int tick = std::min (controlInterval, numSamples - offset);
         const int guarded = std::min (tick, maxBlock_);
 
+        // Per-tone EXPRESSION, smoothed the way the master chain it left is,
+        // so an expression pedal cannot step a voice's gain.
+        {
+            const double coeff = std::min (
+                1.0,
+                onePoleCoeff (sampleRate_, mapping::masterSlewSeconds) * guarded);
+            for (int index = 0; index < partCount; ++index)
+            {
+                const double target =
+                    destinationReaches (patch_.expressionDestination, index == 0)
+                        ? expression_
+                        : 1.0;
+                smoothedExpression_[static_cast<std::size_t> (index)] +=
+                    (target - smoothedExpression_[static_cast<std::size_t> (index)])
+                    * coeff;
+            }
+        }
+
         advanceToneLfos (guarded);
         advanceArpeggiator (guarded);
         prepareExternalTick (inputLeft, inputRight, offset, guarded);
@@ -2839,6 +2876,8 @@ void Engine::process (float* left, float* right, int numSamples,
                 voice.active = false;
 
             const TonePatch& tone = tonePatch (voice.part);
+            const double expression =
+                smoothedExpression_[voice.part == Part::Upper ? 0u : 1u];
             const double delaySend = tone.delayDepth / 127.0;
             const double reverbSend = tone.reverbDepth / 127.0;
             const auto gainL = static_cast<float> (voice.ampGainL * mapping::voiceHeadroom);
@@ -2847,9 +2886,10 @@ void Engine::process (float* left, float* right, int numSamples,
             // Tone balance sits between the two tones (settled parameter,
             // voiced law shared with the oscillator balance).
             const double toneGain =
-                voice.part == Part::Upper
-                    ? mapping::balanceLegGain (patch_.toneBalance, false)
-                    : mapping::balanceLegGain (patch_.toneBalance, true);
+                expression
+                * (voice.part == Part::Upper
+                       ? mapping::balanceLegGain (patch_.toneBalance, false)
+                       : mapping::balanceLegGain (patch_.toneBalance, true));
 
             for (int i = 0; i < guarded; ++i)
             {
@@ -2875,9 +2915,12 @@ void Engine::process (float* left, float* right, int numSamples,
                         guarded);
 
         // -- output stage: documented analog path + master gains -----------
+        // EXPRESSION left this chain for the per-tone gains above, because
+        // EXPRESSION DESTINATION names the tone or tones it controls; with
+        // BOTH, which is the default, the product is exactly what it was.
         const double masterTarget = (masterLevel_ / 127.0)
                                     * (patch_.patchLevel / 127.0)
-                                    * expression_ * partLevel_;
+                                    * partLevel_;
         const double masterCoeff =
             onePoleCoeff (sampleRate_, mapping::masterSlewSeconds) * guarded;
         smoothedMaster_ += (masterTarget - smoothedMaster_)
