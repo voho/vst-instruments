@@ -517,7 +517,14 @@ Take renderLeapArpeggio()
     take.off(45);
     take.off(52);
     take.off(57);
-    take.rest(0.8);
+    // Releasing the keys does not stop this take: with KBD deselected the
+    // envelopes answer to the X gate alone, which keeps clocking the last
+    // sounding note. The player ends the passage the way the panel does —
+    // by throwing the X gate rocker off — and only then does the take run
+    // out through the release.
+    parameters.gateX = false;
+    take.setParameters(parameters);
+    take.rest(1.2);
     return take;
 }
 
