@@ -386,6 +386,72 @@ void testProgramChangeLandsWithoutMessagePump()
             "edits after the program change reach the audio path");
 }
 
+void testReconcileKeepsEditsAfterProgramChange()
+{
+    // An edit that lands after a program change — even in the same MIDI
+    // block — must survive the message thread's queued reconciliation:
+    // only values untouched since the change are repeated with
+    // notification, so the edit can never snap back.
+    YouKnow201AudioProcessor processor;
+    processor.prepareToPlay (44100.0, 512);
+
+    int superSawProgram = -1;
+    for (int index = 0; index < processor.getNumPrograms(); ++index)
+        if (processor.getProgramName (index) == "SuperLead201")
+            superSawProgram = index;
+    const youknow201::Patch& factory =
+        youknow201::factoryPatches()[(std::size_t) superSawProgram].patch;
+    expect (factory.upper.cutoff != 30, "the edit differs from the factory value");
+
+    juce::MidiBuffer events;
+    events.addEvent (juce::MidiMessage::programChange (1, superSawProgram), 0);
+    events.addEvent (juce::MidiMessage::controllerEvent (1, 74, 30), 0);
+    juce::AudioBuffer<float> block (2, 512);
+    processor.processBlock (block, events);
+
+    // Stand in for the queued message-loop callback.
+    processor.reconcileProgram (superSawProgram);
+
+    expect ((int) processor.parameters.getRawParameterValue ("up_cutoff")->load()
+                == 30,
+            "the CC edit survives the reconciliation");
+    auto* wave = processor.parameters.getParameter ("up_osc1_wave");
+    const auto& range = processor.parameters.getParameterRange ("up_osc1_wave");
+    expect ((int) std::lround (range.convertFrom0to1 (wave->getValue())) == 7,
+            "untouched parameters reconcile through the parameter objects");
+}
+
+void testStateSurvivesUnpumpedProgramChange()
+{
+    // With the message loop never pumped, saved state must still carry what
+    // is audible — the raw values the program change wrote — not the value
+    // tree's stale pre-change copy.
+    YouKnow201AudioProcessor processor;
+    processor.prepareToPlay (44100.0, 512);
+
+    int superSawProgram = -1;
+    for (int index = 0; index < processor.getNumPrograms(); ++index)
+        if (processor.getProgramName (index) == "SuperLead201")
+            superSawProgram = index;
+
+    juce::MidiBuffer events =
+        messageAt (juce::MidiMessage::programChange (1, superSawProgram));
+    juce::AudioBuffer<float> block (2, 512);
+    processor.processBlock (block, events);
+
+    juce::MemoryBlock saved;
+    processor.getStateInformation (saved);
+
+    YouKnow201AudioProcessor restored;
+    restored.setStateInformation (saved.getData(), (int) saved.getSize());
+    expect ((int) restored.parameters.getRawParameterValue ("up_osc1_wave")
+                ->load()
+                == 7,
+            "saved state carries the audible program without a message pump");
+    expect (restored.getCurrentProgram() == superSawProgram,
+            "the program index round-trips with it");
+}
+
 void testProgramsLoad()
 {
     YouKnow201AudioProcessor processor;
@@ -497,6 +563,8 @@ int main()
     testUiQueueOverflowStillReleases();
     testRetriggerAfterOverflowSurvives();
     testProgramChangeLandsWithoutMessagePump();
+    testReconcileKeepsEditsAfterProgramChange();
+    testStateSurvivesUnpumpedProgramChange();
     testProgramsLoad();
     testStateRoundTrip();
     testEditorAndSnapshot();

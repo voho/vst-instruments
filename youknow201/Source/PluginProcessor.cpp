@@ -671,15 +671,54 @@ void YouKnow201AudioProcessor::writeProgramToParameters (int index) noexcept
                                    std::memory_order_relaxed);
 }
 
+void YouKnow201AudioProcessor::reconcileProgram (int index)
+{
+    if (index < 0 || index >= getNumPrograms())
+        return;
+    const Patch& patch =
+        youknow201::factoryPatches()[(std::size_t) index].patch;
+
+    const auto apply = [this] (const juce::String& id, float natural)
+    {
+        auto* parameter = parameters.getParameter (id);
+        auto* raw = parameters.getRawParameterValue (id);
+        if (parameter == nullptr || raw == nullptr)
+            return;
+        const auto& range = parameters.getParameterRange (id);
+        const float target = range.snapToLegalValue (natural);
+        // The audio path already wrote this exact value when the program
+        // change arrived. If it has moved since, the user edited it after
+        // the program change and the edit wins — replaying the factory
+        // value here would snap their edit back.
+        if (raw->load() != target)
+            return;
+        parameter->setValueNotifyingHost (range.convertTo0to1 (target));
+    };
+
+    for (const bool upper : { true, false })
+    {
+        const TonePatch& tone = upper ? patch.upper : patch.lower;
+        const juce::String prefix = upper ? "up_" : "lo_";
+        for (const auto& binding : toneBindings())
+            apply (prefix + binding.suffix, binding.get (tone));
+    }
+    for (const auto& binding : patchBindings())
+        if (juce::String (binding.id) != "master_level")
+            apply (binding.id, binding.get (patch));
+}
+
 void YouKnow201AudioProcessor::applyProgramAsync (int program)
 {
-    // Program changes arrive on the audio thread; loading a program touches
-    // every parameter, which belongs on the message thread.
+    // A MIDI program change already landed in the raw values on the audio
+    // path; the message thread only repeats those values with host and UI
+    // notification, skipping anything edited since. The writes are
+    // value-identical to the current raw values, so no staging or
+    // generation guard is needed around them.
     juce::MessageManager::callAsync (
         [weakThis = juce::WeakReference<YouKnow201AudioProcessor> (this), program]
         {
             if (auto* self = weakThis.get())
-                self->applyProgram (program);
+                self->reconcileProgram (program);
         });
 }
 
@@ -856,6 +895,19 @@ void YouKnow201AudioProcessor::getStateInformation (
 {
     if (auto state = parameters.copyState(); state.isValid())
     {
+        // The value tree lags an audio-path program write until the message
+        // thread reconciles it — which a headless host may never do.
+        // Serializing the raw values instead makes saved state always match
+        // what is audible. The tree copy is ours alone, so this is safe on
+        // any thread.
+        for (int i = 0; i < state.getNumChildren(); ++i)
+        {
+            auto child = state.getChild (i);
+            if (auto* raw = parameters.getRawParameterValue (
+                    child.getProperty ("id").toString()))
+                child.setProperty ("value", raw->load (std::memory_order_relaxed),
+                                   nullptr);
+        }
         state.setProperty ("program",
                            currentProgram.load (std::memory_order_relaxed),
                            nullptr);

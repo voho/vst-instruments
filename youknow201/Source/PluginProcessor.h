@@ -74,6 +74,12 @@ public:
     // audio thread and tests, so the two can never disagree.
     [[nodiscard]] youknow201::Patch snapshotPatch() const;
 
+    // The message-thread half of a MIDI program change: repeats the values
+    // the audio path already wrote, with host/UI notification, skipping any
+    // parameter edited since. Normally reached via the queued message-loop
+    // callback; public so the harness can stand in for that loop.
+    void reconcileProgram (int index);
+
     juce::AudioProcessorValueTreeState parameters;
 
     static juce::AudioProcessorValueTreeState::ParameterLayout
@@ -89,7 +95,8 @@ private:
     // Writes a factory program straight into the cached raw-value atomics.
     // Allocation-free, so the audio thread can land a MIDI program change
     // without depending on the message loop ever running; the queued
-    // applyProgram then re-sets the same values with host/UI notification.
+    // reconcileProgram then repeats the untouched values with host/UI
+    // notification.
     void writeProgramToParameters (int index) noexcept;
     void cacheParameterPointers();
 
