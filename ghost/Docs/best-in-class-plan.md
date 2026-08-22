@@ -77,9 +77,12 @@ Reading the reviews of the modelling tier, four things recur.
    has detents, the silkscreen's own labels, tapers that put the musical
    range where the panel drawing says it is.
 
-Ghost already holds points 3 and 4 structurally (the research contract and
-the 52-parameter panel mapping). Points 1 and 2 are where the remaining
-engineering lives.
+Ghost holds point 3 outright (the research contract) and point 4
+*structurally*: every control exists with the silkscreen's detents and
+labels, but several travel *tapers* behind them are voiced, not verified
+(cutoff span OQ-02, envelope timing OQ-04, glide OQ-08, Shaper shape
+OQ-18, volume OQ-19), so control behaviour stays open work alongside
+points 1 and 2 until Steps 4 and 6 close those tapers.
 
 ## Where Ghost actually stands
 
@@ -172,9 +175,13 @@ settled by measurement and quoted.
   rate — an aliasing mechanism of its own. Render worst-case strokes
   (WIDE at full, sync sweeps at the keyboard's top, ring with both
   oscillators high, and Osc B audio-rate modulation into each of its
-  destinations) and measure the alias floor relative to the intended
-  partials. Verification: a table of worst-case alias-to-signal ratios in
-  this document; anything above −60 dB in the audible band triggers a
+  destinations) and measure the alias floor against a ground truth, not
+  by eyeballing bins: these strokes are nonstationary with dense
+  legitimate sidebands, so the reference is a much-higher-rate render of
+  the same stroke, bandlimited and downsampled to the shipping rate, and
+  the aliasing figure is the residual energy against it. Verification: a
+  table of worst-case alias-to-signal ratios in this document, each
+  measured that way; anything above −60 dB in the audible band triggers a
   targeted fix matched to the discontinuity — BLEP for value jumps (saw
   and pulses always; the reset triangle too, since an arbitrary-phase
   reset lands it away from where it was), BLAMP for the triangle's slope
@@ -188,10 +195,12 @@ settled by measurement and quoted.
   excursion into pitch error; they do not supply the excursion's
   amplitude, spectrum or inter-oscillator correlation, and inventing that
   process would smuggle the magnitude in through the back door. So the
-  gate: first pin the environmental process from an independent source —
-  the Spirit's own supply regulation from the service-manual drawings,
-  or published enclosure-temperature measurements for comparable
-  instruments. If a defensible process exists, the derived wander *ships
+  gate: first pin the environmental process from independent evidence.
+  The service-manual drawings supply only the regulator's *transfer*; a
+  derivation additionally needs the input excursion itself — a measured
+  or published mains/ripple or enclosure-temperature record, not an
+  assumed one — before any wander counts as derived. If both halves
+  exist, the derived wander *ships
   as the model*, with its uncertainty stated — the derivation decides,
   and a listening preference may not overrule a measurable result; if no
   defensible process can be established, the step closes as "no drift",
@@ -240,11 +249,13 @@ settled by measurement and quoted.
   AMOUNT, BRIGHTNESS, all seven mixer sliders and master volume, LFO
   rate, Shaper shape and rate, filter-envelope amount and all eight
   envelope segment travels, GLIDE, and both performance wheels. Render a
-  host-automated full-range sweep of each at 48 kHz/512-sample blocks and
+  host-automated full-range sweep of each at 48 kHz, at both 512-sample
+  blocks and the largest block size a host realistically runs (2048 or
+  above — the latching, and so the stepping, scales with the block), and
   inspect for stepping sidebands. Verification: a per-travel table quoted
-  here, one row per published continuous parameter, no omissions;
-  one-pole smoothing on every travel the measurement flags, and a
-  re-measure of those.
+  here, one row per published continuous parameter at each block size, no
+  omissions; one-pole smoothing on every travel the measurement flags,
+  and a re-measure of those.
 - [ ] **Step 6 — A calibration capture, if one ever exists.** The standing
   offer recorded so it is not forgotten: the moment a trustworthy Spirit
   capture becomes available (a serviced unit, a museum recording session,
