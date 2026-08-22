@@ -363,3 +363,26 @@ What changed beyond the geometry:
 
 The window is 1500 × 784, up from 1284 × 716: the arpeggiator and the
 external-input path added two sections, and nothing is squeezed to fit.
+
+#### Step 7 — three calibration questions went to a listening test
+
+*Rendered, undecided.* Not committed — a set per decision would bloat the
+repository, and the working conventions say to hand them over instead. Each
+set was rendered through the shipping signal path with identical MIDI, seed,
+sample rate, block size, length and controls; only the mechanism under test
+differs. `A` is always the shipping engine. Each is level-matched on
+whole-file RMS against `A`, with one further set-wide gain so the files are
+comfortable to audition — the same factor on every letter, so the match is
+untouched. Each carries a `listen.md` that is safe to read and a `key.md`
+written at the same time and unread by design.
+
+| Set | Letters | Question |
+| --- | --- | --- |
+| `2026-08-22-resonance-curve` | A, B, C | The resonance-to-Q shape between two settled endpoints (§2.7, OQ-08). 10.5 s: a slow RESONANCE sweep under one held note, then a bass line with the knob at dead centre |
+| `2026-08-22-supersaw-hpf` | A, B | The tracked high-pass on the summed seven-saw stack: 1.0 × f₀ at Q = 0.707 against 2.5 × f₀ at Q = √2 (OQ-04) |
+| `2026-08-22-supersaw-mix` | A, B, C | Where to evaluate Szabo's measured mix laws, given the SH-201 has no MIX knob (OQ-05) |
+
+Nothing is re-pinned until the user chooses; if `A` wins a set, the shipping
+value stays and that is the verdict. A choice here is recorded in this
+document as chosen by ear and closes no open question — the captures the
+contract names for OQ-04, OQ-05 and OQ-08 would still be what closes them.
