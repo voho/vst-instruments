@@ -392,7 +392,10 @@ had not been diagnosed.)
   cutoff-modulation residual as a side effect, mid-travel Q having fallen
   from ≈5.7 to 1.48.
 
-**Final** (excess ≤20 kHz, then plain difference ≤20 kHz and full band):
+**Final** — *superseded; see the correction below.* These were the figures
+this step closed on, measured with a ceiling that could hide a component
+almost as loud as its neighbouring partial. They are kept as history, not as
+evidence:
 
 | stroke | excess | resid ≤20k | resid full |
 |---|---:|---:|---:|
@@ -409,28 +412,128 @@ had not been diagnosed.)
 | overdrive-full | −197.2 | −31.6 | −31.6 |
 | selfosc-highcutoff | −90.1 | −26.2 | −26.2 |
 
-(−200.0 is the metric's floor: those strokes have no excess bins at all.)
+**On the two rows that sat above the gate.** Both are Osc B driving a
+destination at audio rate, and this step originally excused both on the
+grounds that their ground truth does not converge. That is true of the
+**pitch** row: rendering at 1x, 2x, 4x, 8x and 16x and comparing each
+against the next gives −22.2, −26.4, −28.6, −29.7 dB, so the steps halve and
+plateau instead of falling away, and successive references disagree with
+each other by about as much as the shipping render disagrees with any of
+them. Exponential FM of a bandlimited sawtooth by a bandlimited sawtooth has
+unbounded bandwidth; every finite rate is a different bandlimitation of it,
+and there is no "the truth" to converge on. A probe that de-delayed the
+modulation tap by half a sample made this row slightly worse, confirming the
+plateau is the signal's own bandwidth rather than the model's tap.
 
-**The two rows left above the gate, and why they stay.** Both are Osc B
-driving a destination at audio rate, and the ground truth for those does
-not converge. Rendering the pitch stroke at 1x, 2x, 4x, 8x and 16x and
-comparing each against the next gives −22.2, −26.4, −28.6, −29.7 dB: the
-steps halve and plateau instead of falling away, so successive references
-keep disagreeing with each other by about as much as the shipping render
-disagrees with any of them. Exponential FM of a bandlimited sawtooth by a
-bandlimited sawtooth has unbounded bandwidth, and every finite rate is a
-different bandlimitation of it — there is no "the truth" to converge on.
-The PWM and cutoff rows *do* converge (≈6 dB per doubling, first-order as
-a sampled control should), and 4x is a measured point on that curve. A
-probe that de-delayed the modulation tap by half a sample was tried and
-made the pitch row slightly worse, confirming the plateau is the signal's
-own bandwidth rather than the model's tap. Chasing these rows further
-would be fitting to a reference that is not one.
+It is **not** true of the PWM row, and saying so was an error review caught:
+the text applied the argument to both rows and then contradicted itself two
+sentences later by noting that the PWM row converges. A rate ladder settles
+it — `oscb-mod-pwm`'s consecutive-pair residual falls −31.7, −37.7, −43.8,
+−49.9 dB, a clean 6 dB per doubling with no plateau, against the pitch row's
+−22.2, −26.2, −28.7, −29.6. **The PWM row was a convergent quantity sitting
+above the gate**, and nothing excused it.
 
-**The gate is read as met**: every stroke whose ground truth converges is
-at or below −80 dB of excess in the audible band, against a −60 dB gate,
-and the two that remain are documented as measurements of a non-convergent
-quantity rather than as defects.
+Review proposed a cause: the duty-move discontinuity is registered at the
+sample boundary (`u = 0`) rather than at its true sub-sample crossing, which
+is a real inconsistency — every other discontinuity in the oscillator gets a
+real fraction. The code observation is correct. The causal claim is not:
+implementing the true crossing measures **2.8 dB worse**, and making the duty
+linear across the sample and solving the edge from the sign change measures
+**2.7 dB worse**, both against a common ground truth, with all eleven other
+strokes unchanged. The dominant error in that row is the audio-rate
+modulation tap's own one-sample lag, not the correction's placement —
+reading Osc B one internal sample fresher measures 6.5 dB better. That is
+not shipped: Osc A hard-syncs Osc B while Osc B modulates Osc A, so the loop
+needs a delay on one side, and which side carries it is a question about the
+mod board's own timing rather than something a number going down decides.
+Recorded as OQ-25.
+
+### The gate verdict is withdrawn — 2026-08-22, after review
+
+Review asked whether an alias landing on a partial could hide from the
+excess metric. It could, and the answer changes this step's conclusion.
+
+**What was wrong.** Each bin was compared against the largest reference bin
+within ±3 bins, times a +1 dB tolerance. That turns every partial into a
+70 Hz-wide plateau of permission: a bin whose own reference is empty
+inherits its neighbour's magnitude as its ceiling. The comment justifying it
+— that alias images land far from the partials that produce them — was an
+assumption, and it is false. A fold family sits at |k·f₀ − n·f_s|, which for
+any f₀ that is not a neat fraction of f_s lands tens of Hz from the harmonic
+grid; hard sync, ring modulation and a driven nonlinearity then make the
+grid dense enough that "tens of Hz away" means "on top of something else".
+
+**Measured, not argued.** Injecting one sinusoid of known level into the
+real strokes, through the real pipeline: a **−40 dB alias — twenty dB above
+the acceptance gate — reported the metric's −200 dB floor**, on
+`wide-saw-10k` at 500 Hz and at 5175 Hz, and on `sync-static-topkey` at
+2000 Hz and 5175 Hz, where the figure did not move at all. Sweeping a
+gate-level alias across the audible band, the reported figure was unmoved
+across 83.9 % of it for `wide-saw-10k` and 56.3 % for the control row.
+Synthetically, an alias at exactly the gate reported −200.0 anywhere within
+seven bins of a partial. Attribution: with the neighbourhood removed but the
+tolerance kept it still read −200.0; removing the tolerance recovered
+−64.4 dB. Both parts contribute and the tolerance alone is enough.
+
+**What the instrument is now.** `Tools/AliasMetric.h`, extracted so it can be
+exercised on signals whose alias content is known exactly. The disagreement
+being tolerated is a small difference in *pitch*, so it is applied as one:
+the ceiling spans what a **measured** relative frequency error could have
+moved into a bin, proportional to frequency rather than a fixed bin count,
+and never narrower than the analysis window's own main lobe. The drift is
+the median across matched peaks, not the worst — otherwise a loud alias
+inflates the very tolerance that then hides it. `Tests/GhostarAliasMetricTests.cpp`
+pins the behaviour, including the case the old metric floored.
+
+**Re-measured** (16384-point Blackman-Harris; the two new columns are the
+measurement's own detection floor and its verdict):
+
+| stroke | excess | blind floor | resid ≤20k | decided? |
+|---|---:|---:|---:|---|
+| saw-midkey-control | −88.5 | −15.5 | −55.2 | no |
+| wide-saw-10k | −80.2 | −16.4 | −48.6 | no |
+| wide-pulse3-10k | −73.8 | −15.7 | −56.3 | no |
+| wide-tri-10k | −96.4 | −16.8 | −49.3 | no |
+| sync-static-topkey | −79.5 | −15.5 | −44.7 | no |
+| sync-sweep-topkey | −80.4 | −13.7 | −45.8 | no |
+| ring-topkey | −104.8 | −17.4 | −52.2 | no |
+| oscb-mod-pitch | −23.5 | −15.9 | −6.4 | no |
+| oscb-mod-pwm | −34.6 | −18.2 | −28.3 | no |
+| oscb-mod-cutoff | −65.2 | −15.8 | −39.5 | no |
+| overdrive-full | −139.0 | −17.4 | −55.4 | no |
+| selfosc-highcutoff | −85.6 | −14.1 | −25.6 | no |
+
+The two −200.0 rows are gone: `wide-saw-10k` re-measures at −80.2 and
+`wide-tri-10k` at −96.4, so real added content was being floored. Every
+excess figure is worse than the superseded one.
+
+**And every row is undecidable.** The blind floor sits between −13.7 and
+−18.2 dB, because a +1 dB level tolerance on tonal material leaves that much
+room under a partial — and a component landing exactly on a partial is
+arithmetically indistinguishable from that partial being slightly louder, by
+this or any other magnitude comparison. So:
+
+> **This step's gate verdict is withdrawn.** The claim that every
+> convergent stroke sits at or below −80 dB of excess against a −60 dB gate
+> was a statement about where the old clamp fired, not about alias content.
+> Comparing two renders at different rates *cannot* certify a −60 dB
+> alias-to-signal gate on tonal material, and the audit no longer says it
+> can. What it now provides is a sound upper bound on how much the shipping
+> render differs from a 16× ground truth, published beside the floor below
+> which it cannot see.
+
+The DSP work this step drove is not impeached by any of it — the
+rate-independent filter formulation, the sub-sample BLEP/BLAMP events, the
+4× core and the hard-sync correction each stand on their own evidence, and
+the plain-difference column improved throughout. What fell is the
+certification, not the engine.
+
+**What would decide it** is a reference-free measure: for a stroke that
+holds a pitch, everything off the harmonic grid is alias and noise, with no
+second render to disagree with and no tolerance to hide behind. A first
+attempt is recorded in OQ-24 rather than shipped — it reported a stroke's own
+inharmonicity as though it were alias, and half a measurement is precisely
+what produced the defect corrected here.
 
 **Cost.** The engine renders 30 s of a hard patch (both oscillators, ring,
 OVERDRIVE, VARIABLE resonance) in 3.9 s — 7.7x realtime, down from 22.7x

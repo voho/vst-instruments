@@ -15,6 +15,7 @@
 //   AliasAudit            full audit, prints the per-stroke table
 //   AliasAudit --smoke    two strokes, short, 8x reference (CI guard)
 
+#include "AliasMetric.h"
 #include "DSP/GhostarEngine.h"
 
 #include <algorithm>
@@ -31,6 +32,9 @@ using ghostar::EngineParameters;
 using ghostar::GhostarEngine;
 
 constexpr double shippingRate = 48000.0;
+// The plan's alias-to-signal acceptance gate. A row is only measured against
+// it when the measurement can see that far down; see AliasMetric.h.
+constexpr double gateDb = -60.0;
 constexpr double pi = 3.14159265358979323846;
 
 struct AliasCase
@@ -175,159 +179,11 @@ std::vector<float> decimateReference(const std::vector<float>& highRate,
     return output;
 }
 
-// In-place radix-2 complex FFT (size a power of two).
-void fft(std::vector<double>& real, std::vector<double>& imag)
-{
-    const std::size_t n = real.size();
-    for (std::size_t i = 1, j = 0; i < n; ++i)
-    {
-        std::size_t bit = n >> 1;
-        for (; j & bit; bit >>= 1)
-            j ^= bit;
-        j ^= bit;
-        if (i < j)
-        {
-            std::swap(real[i], real[j]);
-            std::swap(imag[i], imag[j]);
-        }
-    }
-    for (std::size_t length = 2; length <= n; length <<= 1)
-    {
-        const double angle = -2.0 * pi / static_cast<double>(length);
-        const double wRe = std::cos(angle);
-        const double wIm = std::sin(angle);
-        for (std::size_t start = 0; start < n; start += length)
-        {
-            double curRe = 1.0;
-            double curIm = 0.0;
-            for (std::size_t k = 0; k < length / 2; ++k)
-            {
-                const std::size_t even = start + k;
-                const std::size_t odd = start + k + length / 2;
-                const double tRe = real[odd] * curRe - imag[odd] * curIm;
-                const double tIm = real[odd] * curIm + imag[odd] * curRe;
-                real[odd] = real[even] - tRe;
-                imag[odd] = imag[even] - tIm;
-                real[even] += tRe;
-                imag[even] += tIm;
-                const double nextRe = curRe * wRe - curIm * wIm;
-                curIm = curRe * wIm + curIm * wRe;
-                curRe = nextRe;
-            }
-        }
-    }
-}
-
-struct Residual
-{
-    double excessDb;    // added content only, ≤20 kHz — the plan's gate
-    double audibleDb;   // total magnitude difference ≤20 kHz
-    double fullDb;      // total magnitude difference, whole baseband
-};
-
-// Two figures against the decimated ground truth, both short-time
-// spectral-magnitude, both skipping the onset (where a settling smoother
-// legitimately differs from its reference).
-//
-// The gate figure is **excess**: energy the shipping render has *beyond*
-// the reference, counted only where it exceeds the reference by more than
-// one dB. Aliasing is by definition content that is not in the ground
-// truth, so this is what the plan's alias-to-signal gate means — and it is
-// immune to the failure mode the tonal strokes exposed, where a
-// self-oscillating partial whose level differs in its second decimal place
-// dominated a plain difference metric while adding nothing spurious.
-//
-// The plain difference is kept alongside as context: it catches a shipping
-// render that is systematically *quieter* or detuned, which excess alone
-// would not report.
-Residual spectralResidualDb(const std::vector<float>& reference,
-                            const std::vector<float>& shipping)
-{
-    constexpr std::size_t window = 2048;
-    constexpr std::size_t hop = 1024;
-    const std::size_t skip = static_cast<std::size_t>(0.3 * shippingRate);
-    const std::size_t audibleBins = static_cast<std::size_t>(
-        20000.0 * static_cast<double>(window) / shippingRate);
-
-    std::vector<double> hann(window);
-    for (std::size_t i = 0; i < window; ++i)
-        hann[i] = 0.5 - 0.5 * std::cos(2.0 * pi * static_cast<double>(i)
-                                       / static_cast<double>(window));
-
-    // A partial whose level differs by less than this is the same partial,
-    // not added content: one dB covers the second-decimal-place level
-    // agreement measured on rate-convergent self-oscillating tones.
-    constexpr double excessTolerance = 1.1220184543019633; // +1 dB
-    // …and a partial whose *frequency* differs in its fifth decimal place
-    // is also the same partial, though its analysis-window leakage skirt
-    // moves: the reference magnitude a bin is compared against is therefore
-    // the largest within this many bins (±70 Hz at this window), so a
-    // hair-shifted tone is not read as added content. Alias images land far
-    // from the partials that produce them, so this cannot hide them.
-    constexpr int neighbourhood = 3;
-
-    const std::size_t usable = std::min(reference.size(), shipping.size());
-    std::vector<double> refRe(window), refIm(window);
-    std::vector<double> shipRe(window), shipIm(window);
-    std::vector<double> refMagnitude(window / 2 + 1);
-    std::vector<double> shipMagnitude(window / 2 + 1);
-    double audibleExcess = 0.0;
-    double audibleResidual = 0.0;
-    double audibleSignal = 0.0;
-    double fullResidual = 0.0;
-    double fullSignal = 0.0;
-    for (std::size_t start = skip; start + window <= usable; start += hop)
-    {
-        for (std::size_t i = 0; i < window; ++i)
-        {
-            refRe[i] = hann[i] * static_cast<double>(reference[start + i]);
-            shipRe[i] = hann[i] * static_cast<double>(shipping[start + i]);
-            refIm[i] = 0.0;
-            shipIm[i] = 0.0;
-        }
-        fft(refRe, refIm);
-        fft(shipRe, shipIm);
-        for (std::size_t bin = 0; bin <= window / 2; ++bin)
-        {
-            refMagnitude[bin] = std::sqrt(refRe[bin] * refRe[bin]
-                                          + refIm[bin] * refIm[bin]);
-            shipMagnitude[bin] = std::sqrt(shipRe[bin] * shipRe[bin]
-                                           + shipIm[bin] * shipIm[bin]);
-        }
-        for (std::size_t bin = 0; bin <= window / 2; ++bin)
-        {
-            const double refMag = refMagnitude[bin];
-            const double shipMag = shipMagnitude[bin];
-            const double difference = shipMag - refMag;
-            fullResidual += difference * difference;
-            fullSignal += refMag * refMag;
-            if (bin > audibleBins)
-                continue;
-            audibleResidual += difference * difference;
-            audibleSignal += refMag * refMag;
-
-            const std::size_t low =
-                bin < static_cast<std::size_t>(neighbourhood)
-                    ? 0
-                    : bin - static_cast<std::size_t>(neighbourhood);
-            const std::size_t high =
-                std::min(window / 2,
-                         bin + static_cast<std::size_t>(neighbourhood));
-            double refNeighbourhood = 0.0;
-            for (std::size_t near = low; near <= high; ++near)
-                refNeighbourhood =
-                    std::max(refNeighbourhood, refMagnitude[near]);
-            const double excess = std::max(
-                0.0, shipMag - refNeighbourhood * excessTolerance);
-            audibleExcess += excess * excess;
-        }
-    }
-    if (audibleSignal <= 0.0 || fullSignal <= 0.0)
-        return { 0.0, 0.0, 0.0 }; // a silent reference means the stroke failed
-    return { 10.0 * std::log10(audibleExcess / audibleSignal + 1.0e-20),
-             10.0 * std::log10(audibleResidual / audibleSignal + 1.0e-20),
-             10.0 * std::log10(fullResidual / fullSignal + 1.0e-20) };
-}
+// The metric lives in its own header so it can be exercised on signals whose
+// alias content is known exactly; see AliasMetric.h for what it measures and
+// for the way the first version of it got that wrong.
+using ghostar::aliasmetric::Residual;
+using ghostar::aliasmetric::spectralResidualDb;
 
 bool finite(const std::vector<float>& samples)
 {
@@ -503,8 +359,8 @@ int main(int argc, char** argv)
     std::printf("Ghostar alias audit: shipping render vs a %dx ground truth"
                 " decimated to %.0f Hz\n",
                 factor, shippingRate);
-    std::printf("%-22s %14s %14s %14s\n", "stroke", "excess<=20k dB",
-                "resid<=20k dB", "resid full dB");
+    std::printf("%-22s %11s %11s %11s %11s\n", "stroke", "excess<=20k",
+                "blind<=20k", "resid<=20k", "resid full");
 
     int failures = 0;
     for (std::size_t index = 0; index < caseCount; ++index)
@@ -526,9 +382,15 @@ int main(int argc, char** argv)
             ++failures;
             continue;
         }
-        const auto residual = spectralResidualDb(reference, shipping);
-        std::printf("%-22s %14.1f %14.1f %14.1f\n", item.name,
-                    residual.excessDb, residual.audibleDb, residual.fullDb);
+        const auto residual =
+            spectralResidualDb(reference, shipping, shippingRate);
+        // An excess figure is only worth as much as the measurement's own
+        // floor: a row whose blind floor sits above the gate has not passed
+        // it, it has failed to be decided by this method.
+        const bool decided = residual.blindDb < gateDb;
+        std::printf("%-22s %11.1f %11.1f %11.1f %11.1f  %s\n", item.name,
+                    residual.excessDb, residual.blindDb, residual.audibleDb,
+                    residual.fullDb, decided ? "" : "undecidable");
     }
 
     if (failures != 0)

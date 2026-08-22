@@ -375,3 +375,67 @@ ones. The measurements that justified it, and the metric they forced, are
 in the best-in-class plan's Step 5 section. It is listed as a standing
 item only so that a future reader does not mistake 25 ms for a modelled
 time constant.
+
+## OQ-24 — A reference-free alias measure for the pitched strokes
+
+The alias audit compares the shipping render against a 16× ground truth.
+Review established, and measurement confirmed, that this cannot certify a
+−60 dB alias-to-signal gate on tonal material: the two renders disagree
+slightly about partial *level*, so the comparison must carry a tolerance,
+and that tolerance leaves about 15 dB of room under every partial for
+something to hide in. A component landing exactly on a partial is
+indistinguishable from that partial being marginally louder, by this or any
+other magnitude comparison. The instrument now publishes that floor
+(`blindDb` in `Tools/AliasMetric.h`) and marks every row undecidable rather
+than passing, and the plan's Step 1 gate verdict is withdrawn accordingly.
+
+What would decide it needs no reference at all. A stroke that holds a pitch
+has a harmonic spectrum and nothing else, so everything off the grid is
+alias and noise — no second render to disagree with, no tolerance, no blind
+spot that matters, because a component landing on a harmonic *is* a
+harmonic and that is not what aliasing sounds like.
+
+A first attempt is not shipped, for two reasons found while building it.
+The fundamental has to be the **sparsest** grid that explains the spectrum,
+not the best-fitting one: a low enough fundamental covers every bin and
+"explains" any spectrum at all, which produced figures like −137 dB that
+were an artefact of the search rather than a measurement. And the measure
+has to be **differential** — several strokes carry off-grid energy of their
+own, from an envelope or a noise source, which both renders carry alike, so
+only the excess over the ground truth is alias. With both corrections the
+figures were still not stable enough to publish (`wide-pulse3-10k` and
+`selfosc-highcutoff` came back near −43 dB where the comparison bounds their
+whole difference from the reference at −56 and −26 dB).
+
+The requirement, when this is picked up: the grid estimate must be validated
+against strokes whose fundamental is known independently, and the periodicity
+test must reject a stroke whose spectrum a sparse grid cannot nearly account
+for, rather than falling back on a denser one. Half a measurement is what
+produced the defect this entry exists because of.
+
+## OQ-25 — Which side of the Osc A ↔ Osc B loop carries the delay
+
+With MOD SOURCE = OSC B the mod board carries an audio signal, and the
+engine taps it one internal sample old (`lastOscBWave_`). The comment
+beside it argues the delay is what makes Osc B modulating its own pitch a
+bounded feedback loop rather than an implicit equation, and that the mod
+board has its own delay too — both true.
+
+But Osc A hard-syncs Osc B while Osc B modulates Osc A, so the dependency
+is genuinely circular and *something* must carry a delay. Nothing yet
+establishes that it belongs on the B→A side rather than the A→B side, or
+that both destinations should carry it: Osc A's duty and pitch do not
+participate in the feedback at all, so a fresher tap for them is at least
+arguable.
+
+It is not an idle question. Measured on the `oscb-mod-pwm` stroke, reading
+Osc B one internal sample fresher for the A-destined modulation improves the
+row by 6.5 dB — much more than the sub-sample edge placement that was filed
+as its cause, which measures 2.8 dB *worse* when corrected. So the tap lag
+is the dominant error term in that row.
+
+It stays unshipped because it changes the sound and the justification would
+be a number falling rather than a document. What would close it: the
+service drawing's own routing for the mod board's buffer stage, which would
+say whether the board's delay sits before or after the point where the A
+and B destinations part company.

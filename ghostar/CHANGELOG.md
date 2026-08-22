@@ -65,12 +65,21 @@ Notable customer-facing changes to Ghostar are recorded here.
 - **Audio quality.** Every waveform discontinuity is bandlimited as a
   sub-sample event — including the hard-sync reset, which was uncorrected,
   and the triangle's corners, which had no correction at all — and the voice
-  core runs at 4x with a two-stage decimation chain. Measured against a
-  16x ground truth, the worst-case aliasing strokes improved by 40 to 90 dB
-  and every stroke whose reference converges now sits at or below −80 dB.
-  The filter's nonlinearity is a term of the continuous system rather than a
-  per-sample map, so a patch sounds the same at every host sample rate —
-  which it previously did not.
+  core runs at 4x with a two-stage decimation chain. The filter's
+  nonlinearity is a term of the continuous system rather than a per-sample
+  map, so a patch sounds the same at every host sample rate — which it
+  previously did not.
+- The alias audit's own metric was wrong, and its verdict is withdrawn
+  rather than restated. It compared each bin against the loudest reference
+  bin within ±3 bins, which turned every partial into a 70 Hz-wide plateau
+  a component could hide under: injecting a known alias twenty dB **above**
+  the acceptance gate produced the metric's −200 dB floor. The measure now
+  tolerates a measured pitch disagreement proportionally to frequency, and
+  publishes the floor below which it cannot see — which on tonal material
+  is about −15 dB, so a −60 dB alias gate cannot be certified by comparing
+  two renders at all. What the audit now gives is a sound upper bound on how
+  far the shipping render differs from a 16x ground truth. The DSP work is
+  unaffected; the certification is what fell.
 - Seventeen **Ghostar Programs** join the eleven Sound Charts: playable
   voicings, each foregrounding one mechanism, level-matched to each other.
 - The editor is rebuilt around the modelled instrument's own panel: MOD X
