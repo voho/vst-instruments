@@ -181,6 +181,13 @@ struct EngineParameters
     // (+3.5 dB). Voiced, single-unit lineage, qualitative pattern only;
     // OQ-10's population data owns any promotion.
     float aging { 0.0f };
+
+    // Hosts commonly present the same complete parameter snapshot on every
+    // block. Value equality is the right test for that public control image:
+    // equal switch/control positions have no new physical write for
+    // setParameters() to perform, while a NaN cannot compare equal and therefore
+    // still reaches sanitise().
+    [[nodiscard]] bool operator==(const EngineParameters&) const noexcept = default;
 };
 
 class YouKnow106Engine
@@ -1080,6 +1087,16 @@ private:
     // divide-by-two sub: one complete oscillator cell.
     struct Dco
     {
+        struct GeometryMemo
+        {
+            bool valid { false };
+            std::uint64_t periodKey { 0u };
+            std::uint32_t inverseRateKey { 0u };
+            double increment { 0.0 };
+            double reset { 0.0 };
+            double rise { 0.0 };
+        };
+
         std::uint32_t divider { 4545u };
         double periodSamples { 100.0 };
         double phase { 0.0 };
@@ -1099,6 +1116,11 @@ private:
         BandlimitedTrack saw {};
         BandlimitedTrack pulse {};
         BandlimitedTrack sub {};
+        // periodSamples is also written directly by focused audit probes, so
+        // this is a lazy exact-key memo rather than a setter-maintained cache.
+        // Including the inverse-rate bits makes a live quality change miss even
+        // when the physical oscillator period happens to keep the same bits.
+        GeometryMemo geometry {};
 
         void reset() noexcept;
     };
@@ -1225,6 +1247,28 @@ private:
     {
         double first { 0.0 };
         double second { 0.0 };
+    };
+
+    // Every member is derived solely from the negotiated host/internal rates.
+    // Keeping the original expression types here lets process() consume the
+    // exact same values without repeating exponentials and divisions for every
+    // host block.
+    struct ProcessingCoefficients
+    {
+        float vcfSlew { 0.0f };
+        float dcoSlew { 0.0f };
+        float resonanceSlew { 0.0f };
+        float noiseSlew { 0.0f };
+        double internalIntervalSeconds { 0.0 };
+        double voiceVcaDecay { 1.0 };
+        double commonVcaTime { 1.0 };
+        double commonVcaDecay { 1.0 };
+        double subDecay { 1.0 };
+        PwmHoldCoefficients pwmFullInterval {};
+        float outputGlide { 0.0f };
+        double scanPhasePerInternalSample { 0.0 };
+        float outputBoundaryGain { 1.0f };
+        float outputSlewMaxStep { 0.0f };
     };
     [[nodiscard]] static PwmHoldCoefficients pwmHoldCoefficients(
         double intervalSeconds) noexcept;
@@ -1669,6 +1713,7 @@ private:
     float inverseSampleRate_ { 1.0f / 48000.0f };
     double oversampledRate_ { 192000.0 };
     float inverseOversampledRate_ { 1.0f / 192000.0f };
+    ProcessingCoefficients processingCoefficients_ {};
     // Holds both discrete noise sources' power density constant with rate, so a
     // quality change does not move the level a listener hears. It deliberately
     // does NOT equalise their total power: a shallower grid carries less

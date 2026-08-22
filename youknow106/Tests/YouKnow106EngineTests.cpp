@@ -7511,6 +7511,58 @@ void testDeterminismAndSilence()
            "an idle engine is not exactly silent");
 }
 
+void testRepeatedSanitisedParameterSnapshotsAreInert()
+{
+    auto clean = plainPatch();
+    clean.cutoff = EngineParameters {}.cutoff;
+    auto hostileButEquivalent = clean;
+    hostileButEquivalent.cutoff = std::numeric_limits<float>::quiet_NaN();
+
+    YouKnow106Engine unchanged;
+    YouKnow106Engine repeated;
+    unchanged.prepare(48000.0, blockSize, true);
+    repeated.prepare(48000.0, blockSize, true);
+    unchanged.setParameters(clean);
+    repeated.setParameters(hostileButEquivalent);
+    unchanged.noteOn(60, 1.0f);
+    repeated.noteOn(60, 1.0f);
+
+    std::array<float, blockSize> unchangedLeft {};
+    std::array<float, blockSize> unchangedRight {};
+    std::array<float, blockSize> repeatedLeft {};
+    std::array<float, blockSize> repeatedRight {};
+    const auto renderAndCompare = [&] (const char* failure)
+    {
+        unchanged.process(unchangedLeft.data(), unchangedRight.data(), blockSize);
+        repeated.process(repeatedLeft.data(), repeatedRight.data(), blockSize);
+        expect(unchangedLeft == repeatedLeft && unchangedRight == repeatedRight,
+               failure);
+    };
+
+    // First cross the one-shot startup boundary, then keep presenting an input
+    // which sanitises to the already-active image. It must not create a panel
+    // write or refresh physical card state merely because the host repeats its
+    // complete snapshot each block.
+    renderAndCompare("equivalent sanitised startup snapshots rendered differently");
+    for (int block = 0; block < 8; ++block)
+    {
+        repeated.setParameters(hostileButEquivalent);
+        renderAndCompare("an unchanged sanitised snapshot altered running audio");
+    }
+
+    // reset() deliberately reopens startup priming. Repeating the same image
+    // on that side of the boundary must still be harmless rather than taking
+    // the running-state shortcut too early.
+    unchanged.reset();
+    repeated.reset();
+    unchanged.setParameters(clean);
+    repeated.setParameters(hostileButEquivalent);
+    repeated.setParameters(hostileButEquivalent);
+    unchanged.noteOn(60, 1.0f);
+    repeated.noteOn(60, 1.0f);
+    renderAndCompare("an equal snapshot after reset changed startup priming");
+}
+
 void testExtremeAutomationStaysFinite()
 {
     YouKnow106Engine engine;
@@ -8670,6 +8722,7 @@ int main()
     testVcfEarlyEffectBelongsToUnitCharacter();
     testSpatialThermalGradientBelongsToUnitCharacter();
     testDeterminismAndSilence();
+    testRepeatedSanitisedParameterSnapshotsAreInert();
     testResetLeavesNoHistoryInTheOutputPath();
     testExtremeAutomationStaysFinite();
     testParameterSanitisation();

@@ -29,6 +29,24 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# The DSP is split across static-library translation units, so the plug-in's
+# own LTO flags cannot optimise through that archive unless the library was
+# compiled for IPO too.  Release IPO keeps the equations unchanged while
+# allowing the linker to optimise the complete audio path.  Respect an
+# explicit caller choice, and fall back cleanly on toolchains without IPO.
+if(NOT DEFINED CMAKE_INTERPROCEDURAL_OPTIMIZATION
+   AND NOT DEFINED CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT YOUKNOW106_IPO_SUPPORTED
+                        OUTPUT YOUKNOW106_IPO_ERROR
+                        LANGUAGES C CXX)
+    if(YOUKNOW106_IPO_SUPPORTED)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+    else()
+        message(STATUS "Release IPO unavailable: ${YOUKNOW106_IPO_ERROR}")
+    endif()
+endif()
+
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build" FORCE)
 endif()

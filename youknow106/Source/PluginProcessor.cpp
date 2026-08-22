@@ -593,24 +593,65 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
       parameters (*this, nullptr, "YOUKNOW106_STATE", createParameterLayout())
 {
     using namespace youknow106::parameters;
-    // Size deduced, not restated: hard-coding it is what silently broke when
-    // the paired switches each turned into two parameters.
-    const auto ids = std::to_array<const char*> ({
-        volume, benderDco, benderVcf, benderLfo, portamento, legacyKeyMode,
-        lfoRate, lfoDelay, dcoLfo, pwm, pwmMode, range, saw, pulse, sub, noise,
-        highPass, cutoff, resonance, envPolarity, vcfEnv, vcfLfo, keyFollow,
-        vcaMode, vcaLevel, attack, decay, sustain, release, legacyChorus,
-        transpose, masterTune, velocity, calibration, chorusNoise, polyphony,
-        poly1, poly2, chorusI, chorusII, legacyHq, quality
+    // Bind by named index, not table position: reordering either side cannot
+    // silently make the audio snapshot read a different control.
+    constexpr auto bindings = std::to_array<std::pair<ParameterIndex, const char*>> ({
+        { ParameterIndex::volume, volume },
+        { ParameterIndex::benderDco, benderDco },
+        { ParameterIndex::benderVcf, benderVcf },
+        { ParameterIndex::benderLfo, benderLfo },
+        { ParameterIndex::portamento, portamento },
+        { ParameterIndex::legacyKeyMode, legacyKeyMode },
+        { ParameterIndex::lfoRate, lfoRate },
+        { ParameterIndex::lfoDelay, lfoDelay },
+        { ParameterIndex::dcoLfo, dcoLfo },
+        { ParameterIndex::pwm, pwm },
+        { ParameterIndex::pwmMode, pwmMode },
+        { ParameterIndex::range, range },
+        { ParameterIndex::saw, saw },
+        { ParameterIndex::pulse, pulse },
+        { ParameterIndex::sub, sub },
+        { ParameterIndex::noise, noise },
+        { ParameterIndex::highPass, highPass },
+        { ParameterIndex::cutoff, cutoff },
+        { ParameterIndex::resonance, resonance },
+        { ParameterIndex::envPolarity, envPolarity },
+        { ParameterIndex::vcfEnv, vcfEnv },
+        { ParameterIndex::vcfLfo, vcfLfo },
+        { ParameterIndex::keyFollow, keyFollow },
+        { ParameterIndex::vcaMode, vcaMode },
+        { ParameterIndex::vcaLevel, vcaLevel },
+        { ParameterIndex::attack, attack },
+        { ParameterIndex::decay, decay },
+        { ParameterIndex::sustain, sustain },
+        { ParameterIndex::release, release },
+        { ParameterIndex::legacyChorus, legacyChorus },
+        { ParameterIndex::transpose, transpose },
+        { ParameterIndex::masterTune, masterTune },
+        { ParameterIndex::velocity, velocity },
+        { ParameterIndex::calibration, calibration },
+        { ParameterIndex::chorusNoise, chorusNoise },
+        { ParameterIndex::polyphony, polyphony },
+        { ParameterIndex::poly1, poly1 },
+        { ParameterIndex::poly2, poly2 },
+        { ParameterIndex::chorusI, chorusI },
+        { ParameterIndex::chorusII, chorusII },
+        { ParameterIndex::legacyHq, legacyHq },
+        { ParameterIndex::quality, quality }
     });
 
-    // The pointer table has to be able to hold every id. Growing the list above
-    // without growing the table would otherwise write past its end.
-    jassert (ids.size() == parameterPointers.size());
-    const auto count = std::min (ids.size(), parameterPointers.size());
-    for (std::size_t index = 0; index < count; ++index)
-        parameterPointers[index] = { ids[index],
-                                     parameters.getRawParameterValue (ids[index]) };
+    static_assert (bindings.size() == parameterPointerCount);
+    for (const auto& [parameter, id] : bindings)
+    {
+        const auto index = static_cast<std::size_t> (parameter);
+        jassert (index < parameterPointers.size()
+                 && parameterPointers[index].id == nullptr);
+        parameterPointers[index] = { id, parameters.getRawParameterValue (id) };
+    }
+#if JUCE_DEBUG
+    for (const auto& pointer : parameterPointers)
+        jassert (pointer.id != nullptr && pointer.value != nullptr);
+#endif
 
     // Pair writes can come from the editor, direct modern host automation,
     // randomisation, recall or SysEx. Listening at the parameters is the only
@@ -661,6 +702,27 @@ float YouKnow106AudioProcessor::valueOf (const char* parameterId) const noexcept
 int YouKnow106AudioProcessor::choiceOf (const char* parameterId, int maximum) const noexcept
 {
     return juce::jlimit (0, maximum, juce::roundToInt (valueOf (parameterId)));
+}
+
+float YouKnow106AudioProcessor::valueOf (ParameterIndex parameter) const noexcept
+{
+    const auto index = static_cast<std::size_t> (parameter);
+    jassert (index < parameterPointers.size());
+    if (index < parameterPointers.size())
+        if (const auto* value = parameterPointers[index].value)
+            return value->load (std::memory_order_relaxed);
+    return 0.0f;
+}
+
+int YouKnow106AudioProcessor::choiceOf (ParameterIndex parameter,
+                                        int maximum) const noexcept
+{
+    return juce::jlimit (0, maximum, juce::roundToInt (valueOf (parameter)));
+}
+
+int YouKnow106AudioProcessor::getQualityChoice() const noexcept
+{
+    return choiceOf (ParameterIndex::quality, qualityChoiceCount - 1);
 }
 
 void YouKnow106AudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -756,7 +818,7 @@ bool YouKnow106AudioProcessor::isBusesLayoutSupported (const BusesLayout& layout
 bool YouKnow106AudioProcessor::updateEngineParameters() noexcept
 {
     using namespace youknow106;
-    using namespace youknow106::parameters;
+    using P = ParameterIndex;
 
     const unsigned parameterGeneration =
         parameterWriteGeneration.load (std::memory_order_acquire);
@@ -769,11 +831,11 @@ bool YouKnow106AudioProcessor::updateEngineParameters() noexcept
         reflectedMidiSequence.load (std::memory_order_acquire);
 
     EngineParameters engineParameters;
-    engineParameters.volume = valueOf (volume);
-    engineParameters.benderDcoDepth = valueOf (benderDco);
-    engineParameters.benderVcfDepth = valueOf (benderVcf);
-    engineParameters.benderLfoDepth = valueOf (benderLfo);
-    engineParameters.portamento = valueOf (portamento);
+    engineParameters.volume = valueOf (P::volume);
+    engineParameters.benderDcoDepth = valueOf (P::benderDco);
+    engineParameters.benderVcfDepth = valueOf (P::benderVcf);
+    engineParameters.benderLfoDepth = valueOf (P::benderLfo);
+    engineParameters.portamento = valueOf (P::portamento);
 
     // A restore replaces both the legacy ids and the pairs at once, so whatever
     // the bridges were holding is stale. Adopting the restored legacy values as
@@ -802,54 +864,57 @@ bool YouKnow106AudioProcessor::updateEngineParameters() noexcept
         forwardedLegacyKeyMode.load (std::memory_order_relaxed);
 
     engineParameters.keyMode = static_cast<KeyMode> (resolveLegacyMode (
-        choiceOf (legacyKeyMode, 2),
-        static_cast<int> (keyModeFor (valueOf (poly1) > 0.5f, valueOf (poly2) > 0.5f)),
+        choiceOf (P::legacyKeyMode, 2),
+        static_cast<int> (keyModeFor (valueOf (P::poly1) > 0.5f,
+                                      valueOf (P::poly2) > 0.5f)),
         keyForwardedValue, keyForwardGeneration, nextKeyModeBridge));
 
-    engineParameters.lfoRate = valueOf (lfoRate);
-    engineParameters.lfoDelay = valueOf (lfoDelay);
+    engineParameters.lfoRate = valueOf (P::lfoRate);
+    engineParameters.lfoDelay = valueOf (P::lfoDelay);
 
-    engineParameters.dcoLfoDepth = valueOf (dcoLfo);
-    engineParameters.pwmDepth = valueOf (pwm);
-    engineParameters.pwmSource = static_cast<PwmSource> (choiceOf (pwmMode, 1));
-    engineParameters.range = static_cast<DcoRange> (choiceOf (range, 2));
-    engineParameters.sawEnabled = valueOf (saw) > 0.5f;
-    engineParameters.pulseEnabled = valueOf (pulse) > 0.5f;
-    engineParameters.subLevel = valueOf (sub);
-    engineParameters.noiseLevel = valueOf (noise);
+    engineParameters.dcoLfoDepth = valueOf (P::dcoLfo);
+    engineParameters.pwmDepth = valueOf (P::pwm);
+    engineParameters.pwmSource = static_cast<PwmSource> (choiceOf (P::pwmMode, 1));
+    engineParameters.range = static_cast<DcoRange> (choiceOf (P::range, 2));
+    engineParameters.sawEnabled = valueOf (P::saw) > 0.5f;
+    engineParameters.pulseEnabled = valueOf (P::pulse) > 0.5f;
+    engineParameters.subLevel = valueOf (P::sub);
+    engineParameters.noiseLevel = valueOf (P::noise);
 
-    engineParameters.highPass = static_cast<HighPassMode> (choiceOf (highPass, 3));
+    engineParameters.highPass = static_cast<HighPassMode> (choiceOf (P::highPass, 3));
 
-    engineParameters.cutoff = valueOf (cutoff);
-    engineParameters.resonance = valueOf (resonance);
-    engineParameters.envPolarity = static_cast<EnvPolarity> (choiceOf (envPolarity, 1));
-    engineParameters.envDepth = valueOf (vcfEnv);
-    engineParameters.vcfLfoDepth = valueOf (vcfLfo);
-    engineParameters.keyFollow = valueOf (keyFollow);
+    engineParameters.cutoff = valueOf (P::cutoff);
+    engineParameters.resonance = valueOf (P::resonance);
+    engineParameters.envPolarity = static_cast<EnvPolarity> (
+        choiceOf (P::envPolarity, 1));
+    engineParameters.envDepth = valueOf (P::vcfEnv);
+    engineParameters.vcfLfoDepth = valueOf (P::vcfLfo);
+    engineParameters.keyFollow = valueOf (P::keyFollow);
 
-    engineParameters.vcaMode = static_cast<VcaMode> (choiceOf (vcaMode, 1));
-    engineParameters.vcaLevel = valueOf (vcaLevel);
+    engineParameters.vcaMode = static_cast<VcaMode> (choiceOf (P::vcaMode, 1));
+    engineParameters.vcaLevel = valueOf (P::vcaLevel);
 
-    engineParameters.attack = valueOf (attack);
-    engineParameters.decay = valueOf (decay);
-    engineParameters.sustain = valueOf (sustain);
-    engineParameters.release = valueOf (release);
+    engineParameters.attack = valueOf (P::attack);
+    engineParameters.decay = valueOf (P::decay);
+    engineParameters.sustain = valueOf (P::sustain);
+    engineParameters.release = valueOf (P::release);
 
     const int chorusGeneration =
         chorusForwardGeneration.load (std::memory_order_acquire);
     const int chorusForwardedValue =
         forwardedLegacyChorus.load (std::memory_order_relaxed);
     engineParameters.chorus = static_cast<ChorusMode> (resolveLegacyMode (
-        choiceOf (legacyChorus, 2),
-        static_cast<int> (chorusModeFor (valueOf (chorusI) > 0.5f, valueOf (chorusII) > 0.5f)),
+        choiceOf (P::legacyChorus, 2),
+        static_cast<int> (chorusModeFor (valueOf (P::chorusI) > 0.5f,
+                                        valueOf (P::chorusII) > 0.5f)),
         chorusForwardedValue, chorusGeneration, nextChorusBridge));
 
-    engineParameters.keyTranspose = juce::roundToInt (valueOf (transpose));
-    engineParameters.masterTuneCents = valueOf (masterTune);
-    engineParameters.velocityDepth = valueOf (velocity);
-    engineParameters.calibration = valueOf (calibration);
-    engineParameters.chorusNoise = valueOf (chorusNoise);
-    engineParameters.polyphony = juce::roundToInt (valueOf (polyphony));
+    engineParameters.keyTranspose = juce::roundToInt (valueOf (P::transpose));
+    engineParameters.masterTuneCents = valueOf (P::masterTune);
+    engineParameters.velocityDepth = valueOf (P::velocity);
+    engineParameters.calibration = valueOf (P::calibration);
+    engineParameters.chorusNoise = valueOf (P::chorusNoise);
+    engineParameters.polyphony = juce::roundToInt (valueOf (P::polyphony));
 
     // If a recall began while these atomics were being gathered, keep the
     // previous engine snapshot for this block. The next one will see the whole
@@ -922,16 +987,18 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     juce::ScopedNoDenormals noDenormals;
 
     const int numSamples = buffer.getNumSamples();
-    for (int channel = getTotalNumInputChannels(); channel < buffer.getNumChannels();
-         ++channel)
-        buffer.clear (channel, 0, numSamples);
-
     if (! engineReady.load (std::memory_order_acquire))
     {
         buffer.clear();
         midiMessages.clear();
         return;
     }
+
+    // process() overwrites every sample in both supported stereo channels,
+    // including all spans split around MIDI events. Only defensive extra host
+    // channels need clearing; pre-clearing left and right writes them twice.
+    for (int channel = 2; channel < buffer.getNumChannels(); ++channel)
+        buffer.clear (channel, 0, numSamples);
 
     // If a previous block overflowed the reflection-history FIFO, publish its
     // final tone before any newer events from this block. This preserves FIFO
@@ -1151,13 +1218,22 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // Push output audio into oscilloscope ring buffer
     const float* leftOut = buffer.getReadPointer (0);
     const float* rightOut = buffer.getNumChannels() > 1 ? buffer.getReadPointer (1) : leftOut;
-    std::size_t writeIdx = scopeWriteIndex.load (std::memory_order_relaxed);
-    for (int i = 0; i < numSamples; ++i)
+    const auto previousWrite = scopeWriteIndex.load (std::memory_order_relaxed);
+    const int retainedSamples = std::min (
+        numSamples, static_cast<int> (scopeBufferSize));
+    const int firstRetainedSample = numSamples - retainedSamples;
+    std::size_t writeIdx =
+        (previousWrite + static_cast<std::size_t> (firstRetainedSample))
+        % scopeBufferSize;
+    for (int i = firstRetainedSample; i < numSamples; ++i)
     {
         scopeBuffer[writeIdx].store (0.5f * (leftOut[i] + rightOut[i]),
                                      std::memory_order_relaxed);
         writeIdx = (writeIdx + 1) % scopeBufferSize;
     }
+    jassert (writeIdx
+             == (previousWrite + static_cast<std::size_t> (numSamples))
+                    % scopeBufferSize);
     scopeWriteIndex.store (writeIdx, std::memory_order_release);
 }
 

@@ -202,10 +202,7 @@ public:
                 choice = index;
         return choice;
     }
-    int getQualityChoice() const noexcept
-    {
-        return choiceOf (youknow106::parameters::quality, qualityChoiceCount - 1);
-    }
+    int getQualityChoice() const noexcept;
     bool isEngineReady() const noexcept
     {
         return engineReady.load (std::memory_order_acquire);
@@ -281,8 +278,60 @@ private:
         const char* id = nullptr;
         std::atomic<float>* value = nullptr;
     };
-    static constexpr std::size_t parameterPointerCount = 42;
+    // Direct indices for the audio-thread snapshot. The constructor binds each
+    // index explicitly; cold callers retain valueOf(id), while processBlock
+    // avoids searching that table forty-one times per callback.
+    enum class ParameterIndex : std::size_t
+    {
+        volume,
+        benderDco,
+        benderVcf,
+        benderLfo,
+        portamento,
+        legacyKeyMode,
+        lfoRate,
+        lfoDelay,
+        dcoLfo,
+        pwm,
+        pwmMode,
+        range,
+        saw,
+        pulse,
+        sub,
+        noise,
+        highPass,
+        cutoff,
+        resonance,
+        envPolarity,
+        vcfEnv,
+        vcfLfo,
+        keyFollow,
+        vcaMode,
+        vcaLevel,
+        attack,
+        decay,
+        sustain,
+        release,
+        legacyChorus,
+        transpose,
+        masterTune,
+        velocity,
+        calibration,
+        chorusNoise,
+        polyphony,
+        poly1,
+        poly2,
+        chorusI,
+        chorusII,
+        legacyHq,
+        quality,
+        count
+    };
+    static constexpr std::size_t parameterPointerCount =
+        static_cast<std::size_t> (ParameterIndex::count);
     std::array<ParameterPointer, parameterPointerCount> parameterPointers {};
+    float valueOf (ParameterIndex parameter) const noexcept;
+    int choiceOf (ParameterIndex parameter, int maximum) const noexcept;
 
     youknow106::YouKnow106Engine engine;
     // The last complete APVTS/performance snapshot accepted by the audio

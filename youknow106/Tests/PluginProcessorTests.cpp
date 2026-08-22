@@ -619,7 +619,13 @@ void testVariableHostBlockSizesPreserveTheTimeline()
                 if (event.sample >= rendered && event.sample < rendered + samples)
                     midi.addEvent (event.message, event.sample - rendered);
 
-            block.clear();
+            // A synth owns both output channels. Seed them with NaNs so this
+            // timeline test also proves every MIDI-split render span is
+            // overwritten without relying on a processor-side pre-clear.
+            if (samples > 0)
+                for (int channel = 0; channel < block.getNumChannels(); ++channel)
+                    std::fill_n (block.getWritePointer (channel), samples,
+                                 std::numeric_limits<float>::quiet_NaN());
             processor.processBlock (block, midi);
             expect (bufferIsFinite (block),
                     "a variable-size host block emitted a non-finite sample");
@@ -683,6 +689,47 @@ void testOscilloscopeCanBeReadWhileAudioWrites()
 
     expect (snapshots > 0, "the scope concurrency fixture read no snapshots");
     expect (allFinite, "a concurrent oscilloscope snapshot was non-finite");
+    processor.releaseResources();
+}
+
+void testOscilloscopeRetainsTheNewestSamplesFromLargeBlocks()
+{
+    constexpr int preludeSamples = 37;
+    constexpr int largeSamples = 513;
+    constexpr int scopeSamples = 256;
+
+    YouKnow106AudioProcessor processor;
+    setParameterValue (processor, parameters::quality, 0.0f);
+    processor.setPlayConfigDetails (0, 2, sampleRate, largeSamples);
+    processor.prepareToPlay (sampleRate, largeSamples);
+
+    // Start from a non-zero ring position so the large-block shortcut has to
+    // preserve both the retained samples and their published write index.
+    juce::AudioBuffer<float> prelude (2, preludeSamples);
+    juce::MidiBuffer note;
+    note.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+    processor.processBlock (prelude, note);
+
+    juce::AudioBuffer<float> block (2, largeSamples);
+    for (int channel = 0; channel < block.getNumChannels(); ++channel)
+        std::fill_n (block.getWritePointer (channel), largeSamples,
+                     std::numeric_limits<float>::quiet_NaN());
+    juce::MidiBuffer empty;
+    processor.processBlock (block, empty);
+
+    std::array<float, scopeSamples> scope {};
+    processor.getOscilloscopeBuffer (scope);
+    bool exact = true;
+    for (int index = 0; index < scopeSamples; ++index)
+    {
+        const int source = largeSamples - scopeSamples + index;
+        const float expected = 0.5f * (block.getSample (0, source)
+                                     + block.getSample (1, source));
+        const float actual = scope[static_cast<std::size_t> (index)];
+        exact = exact && std::memcmp (&actual, &expected, sizeof (expected)) == 0;
+    }
+    expect (exact,
+            "a host block larger than the scope ring lost or reordered its newest samples");
     processor.releaseResources();
 }
 
@@ -5862,6 +5909,7 @@ int main()
     testProcessingProducesSound();
     testVariableHostBlockSizesPreserveTheTimeline();
     testOscilloscopeCanBeReadWhileAudioWrites();
+    testOscilloscopeRetainsTheNewestSamplesFromLargeBlocks();
     testInitProgramHasHeadroomUnderASixKeyChord();
     testReportedDspLatencyIsForwardedForEveryNumericalPath();
     testShortNoteInsideOneBlockIsHeard();

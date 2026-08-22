@@ -1845,6 +1845,7 @@ float YouKnow106Engine::Envelope::tick(std::uint16_t attackIncrement,
 void YouKnow106Engine::Dco::reset() noexcept
 {
     phase = 0.0;
+    geometry.valid = false;
     renderScale = 1.0f;
     pulseState = -1.0f;
     subState = 1.0f;
@@ -2647,8 +2648,40 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
     inverseOversampledRate_ = static_cast<float>(1.0 / oversampledRate_);
     noiseRateScale_ = static_cast<float>(
         std::sqrt(oversampledRate_ / noiseReferenceRateHz));
-    voiceBusCouplingG_ = std::tan(
-        pi * voiceBusCouplingCornerHz() * inverseOversampledRate_);
+    const auto slewFor = [this](float seconds) {
+        return 1.0f - std::exp(-inverseOversampledRate_ / seconds);
+    };
+    processingCoefficients_.vcfSlew = slewFor(vcfHoldSlewSeconds);
+    processingCoefficients_.dcoSlew = slewFor(dcoHoldSlewSecondsVoiced);
+    processingCoefficients_.resonanceSlew =
+        slewFor(resonanceHoldSlewSecondsVoiced);
+    processingCoefficients_.noiseSlew = slewFor(noiseHoldSlewSecondsVoiced);
+    processingCoefficients_.internalIntervalSeconds = 1.0 / oversampledRate_;
+    processingCoefficients_.voiceVcaDecay = std::exp(
+        -processingCoefficients_.internalIntervalSeconds
+        / static_cast<double>(voiceVcaHoldSlewSeconds));
+    processingCoefficients_.commonVcaTime =
+        static_cast<double>(commonVcaHoldTimeConstantSeconds());
+    processingCoefficients_.commonVcaDecay = std::exp(
+        -processingCoefficients_.internalIntervalSeconds
+        / processingCoefficients_.commonVcaTime);
+    processingCoefficients_.subDecay = std::exp(
+        -processingCoefficients_.internalIntervalSeconds
+        / static_cast<double>(subHoldSlewSeconds));
+    processingCoefficients_.pwmFullInterval = pwmHoldCoefficients(
+        processingCoefficients_.internalIntervalSeconds);
+    voiceEnergyFollower_ = slewFor(voiceEnergyFollowerSeconds);
+    processingCoefficients_.outputGlide =
+        1.0f - std::exp(-inverseSampleRate_ / panelGlideSeconds);
+    processingCoefficients_.scanPhasePerInternalSample =
+        controlScanHz / oversampledRate_;
+    processingCoefficients_.outputBoundaryGain = outputBoundaryGain();
+    processingCoefficients_.outputSlewMaxStep =
+        static_cast<float>(653846.15 / oversampledRate_);
+
+    // C14's load and the following HPF are selected by one panel switch.  Their
+    // coefficients move only with that mode or this internal rate.
+    updateSharedHighPass(activeParameters_);
     moduleCouplingG_ = std::tan(
         pi * moduleCouplingCornerHz() * inverseOversampledRate_);
     vcaInputCouplingG_ = std::tan(
@@ -3105,19 +3138,37 @@ void YouKnow106Engine::updateSharedHighPass(const EngineParameters& parameters) 
 
 void YouKnow106Engine::setParameters(const EngineParameters& parameters)
 {
+    // Before the first valid prepared audio interval, even an equal snapshot has
+    // the one-shot responsibility of priming the physical holds below.  Once
+    // audio time has begun, an equal complete image has no ordered converter
+    // write or assignment side effect and can return exactly.
+    const bool startupSnapshot = !prepared_ || !panelGlidePrimed_;
+    if (!startupSnapshot && parameters == activeParameters_
+        && parameters == targetParameters_)
+        return;
+
     const auto next = sanitise(parameters);
+    if (!startupSnapshot && next == activeParameters_
+        && next == targetParameters_)
+        return;
+
     const bool assignModeChanged = next.keyMode != activeParameters_.keyMode;
     const bool unisonVoiceCountChanged = next.polyphony != activeParameters_.polyphony
                                       && (next.keyMode == KeyMode::Unison
                                           || activeParameters_.keyMode
                                                  == KeyMode::Unison);
+    const bool highPassChanged = next.highPass != activeParameters_.highPass;
+    const bool stageTrimsChanged =
+        next.calibration != activeParameters_.calibration
+        || next.enableVcfStageOffsets
+               != activeParameters_.enableVcfStageOffsets;
+    const bool agingChanged = next.aging != activeParameters_.aging;
     // Before the first valid prepared audio interval, a host snapshot is the
     // power-up image rather than a timed panel move. `panelGlidePrimed_` is
     // already the exact one-shot marker for that boundary: invalid/zero calls
     // return before setting it, and reset clears it. Do not use output-path
     // silence here. Once audio time has started, the hardware scanner keeps
     // running through ordinary silence and after panic.
-    const bool startupSnapshot = !prepared_ || !panelGlidePrimed_;
     targetParameters_ = next;
     // Switch positions land immediately. Main VOLUME is the only continuous
     // panel control applied outside the scanned converter path; it glides in
@@ -3125,8 +3176,12 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
     activeParameters_ = targetParameters_;
     // Unit Character scales the stage offsets, so they follow the panel; the
     // aged-unit precompute follows only panel edits and reset, not note-ons.
-    refreshVoiceCardStageTrims();
-    refreshAgedUnitState();
+    if (stageTrimsChanged)
+        refreshVoiceCardStageTrims();
+    if (agingChanged)
+        refreshAgedUnitState();
+    if (highPassChanged)
+        updateSharedHighPass(activeParameters_);
 
     // A host may deliver its saved snapshot before prepare(), after prepare(),
     // or more than once while restoring state. Until audio time begins, prime
@@ -3424,10 +3479,11 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
     const bool pitchChanged = !voice.hasVoicePitchHistory
                            || voice.lastVoiceMidi != voiceMidi;
 
+    // reset() permanently binds array slot N to card N. Every caller passes the
+    // voice from that same slot, so this defensive assignment is a no-op and the
+    // card trims already installed by reset()/setParameters() remain current.
+    // In particular, a note-on must not recompute all 16 cards' four stages.
     voice.cardIndex = slot;
-    // A no-op while slot and card index always agree, but written so a future
-    // assigner change cannot silently leave a voice on another card's offsets.
-    refreshVoiceCardStageTrims();
     voice.active = true;
     voice.keyDown = true;
     voice.sustained = false;
@@ -4511,11 +4567,27 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // over 13 cents and removed the one thing this architecture exists to
     // guarantee -- see the note on tuning stability in
     // Docs/circuit-modelling-research.md.
-    const double increment = dco.periodSamples > 1.0e-9
+    const auto periodKey = std::bit_cast<std::uint64_t>(dco.periodSamples);
+    const auto inverseRateKey =
+        std::bit_cast<std::uint32_t>(inverseOversampledRate_);
+    auto& geometry = dco.geometry;
+    if (!geometry.valid || geometry.periodKey != periodKey
+        || geometry.inverseRateKey != inverseRateKey)
+    {
+        // Keep the original expression types and evaluation order: increment
+        // first, then resetFraction(period * inverseRate), then rise.
+        geometry.increment = dco.periodSamples > 1.0e-9
                            ? 1.0 / dco.periodSamples : 0.0;
-    const auto resetAndRise = dcoResetAndRise(dco.periodSamples);
-    const double reset = resetAndRise[0];
-    const double rise = resetAndRise[1];
+        const auto resetAndRise = dcoResetAndRise(dco.periodSamples);
+        geometry.reset = resetAndRise[0];
+        geometry.rise = resetAndRise[1];
+        geometry.periodKey = periodKey;
+        geometry.inverseRateKey = inverseRateKey;
+        geometry.valid = true;
+    }
+    const double increment = geometry.increment;
+    const double reset = geometry.reset;
+    const double rise = geometry.rise;
 
     const double previousPhase = dco.phase;
     const double unwrapped = dco.phase + increment;
@@ -5068,12 +5140,6 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
     const auto& parameters = activeParameters_;
 
-    // One shared network, so its coefficients are settled once here rather than
-    // six times inside the voice loop. It has to come after the pending
-    // oversampling switch, which is what moves the rate they are prewarped
-    // against.
-    updateSharedHighPass(parameters);
-
     if (!panelGlidePrimed_)
     {
         glidedVolume_ = parameters.volume;
@@ -5085,39 +5151,19 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     // networks; resonance keeps Step 11's explicitly voiced 522 us companion
     // trajectory, while DCO and noise retain their isolated compatibility
     // policies until their RCs are established. Exact full-interval decays
-    // are precomputed once per call; only the rare interval that actually
-    // contains a fractional write needs an event-position exponential.
-    const auto slewFor = [this](float seconds) {
-        return 1.0f - std::exp(-inverseOversampledRate_ / seconds);
-    };
-    const float vcfSlew = slewFor(vcfHoldSlewSeconds);
-    const float dcoSlew = slewFor(dcoHoldSlewSecondsVoiced);
-    const float resonanceSlew = slewFor(resonanceHoldSlewSecondsVoiced);
-    const float noiseSlew = slewFor(noiseHoldSlewSecondsVoiced);
-    const double internalIntervalSeconds = 1.0 / oversampledRate_;
-    const double voiceVcaDecay = std::exp(
-        -internalIntervalSeconds
-        / static_cast<double>(voiceVcaHoldSlewSeconds));
-    const double commonVcaTime =
-        static_cast<double>(commonVcaHoldTimeConstantSeconds());
-    const double commonVcaDecay = std::exp(
-        -internalIntervalSeconds / commonVcaTime);
-    const double subDecay = std::exp(
-        -internalIntervalSeconds
-        / static_cast<double>(subHoldSlewSeconds));
-    const PwmHoldCoefficients pwmFullInterval =
-        pwmHoldCoefficients(internalIntervalSeconds);
-    voiceEnergyFollower_ = slewFor(voiceEnergyFollowerSeconds);
-    const float outputGlide =
-        1.0f - std::exp(-inverseSampleRate_ / panelGlideSeconds);
-    const double scanPhasePerInternalSample = controlScanHz / oversampledRate_;
-    const float outputBoundaryGain = YouKnow106Engine::outputBoundaryGain();
-    // TA75558S IC6 output slew limit, SR = 1.7 V/us (653846 engine units per
-    // second at 2.6 V per unit). Depends only on the internal rate, which is
-    // fixed for the whole call, so it belongs beside the other per-call slew
-    // constants above rather than being re-divided every internal sample.
-    const float outputSlewMaxStep =
-        static_cast<float>(653846.15 / oversampledRate_);
+    // are precomputed when the processing rate changes; only the rare interval
+    // that actually contains a fractional write needs an event-position
+    // exponential.
+    // Hold, scan and output coefficients are refreshed by updateProcessingRate;
+    // this reference keeps the sample equations below unchanged while avoiding
+    // per-host-block exponentials and divisions.
+    const auto& coefficients = processingCoefficients_;
+    bool patchLevelCacheValid = false;
+    std::uint32_t patchLevelCacheKey = 0u;
+    float patchLevelCacheValue = 0.0f;
+    bool outputCouplingCacheValid = false;
+    std::uint32_t outputCouplingCacheKey = 0u;
+    float outputCouplingCacheGain = 0.0f;
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
@@ -5177,8 +5223,6 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 return 0.0f;
             };
             const float resonanceIntervalStart = resonanceCv_;
-            exactVcfControlInterval_.fill(false);
-
             // One converter serves the whole instrument. The service chart
             // and the hash-matched B-2 code establish the complete ordinal
             // write order and show sequential activity across the pass. The
@@ -5271,7 +5315,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
             if (!physicalHoldEvent.active
                 && latchUpcomingPassiveHoldEvent(
-                    controlScanPhase_, scanPhasePerInternalSample,
+                    controlScanPhase_, coefficients.scanPhasePerInternalSample,
                     parameters))
             {
                 physicalHoldEvent.active = true;
@@ -5295,7 +5339,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     resonanceIntervalStart,
                     physicalHoldEvent.previousTarget, true,
                     physicalHoldEvent.position, physicalHoldEvent.target,
-                    internalIntervalSeconds);
+                    coefficients.internalIntervalSeconds);
                 resonanceCv_ = resonanceVcfHoldInterval_.endpoint;
             }
             else
@@ -5304,12 +5348,14 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 {
                     resonanceVcfHoldInterval_ = exactVcfHoldInterval(
                         resonanceIntervalStart, resonanceCvTarget_, false,
-                        1.0, resonanceCvTarget_, internalIntervalSeconds);
+                        1.0, resonanceCvTarget_,
+                        coefficients.internalIntervalSeconds);
                     resonanceCv_ = resonanceVcfHoldInterval_.endpoint;
                 }
                 else
                     resonanceCv_ +=
-                        (resonanceCvTarget_ - resonanceCv_) * resonanceSlew;
+                        (resonanceCvTarget_ - resonanceCv_)
+                            * coefficients.resonanceSlew;
             }
             const bool commonVcaEvent = physicalHoldEvent.active
                 && physicalHoldEvent.write.destination
@@ -5320,7 +5366,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                                : sharedVcaTarget_,
                 commonVcaEvent, physicalHoldEvent.position,
                 commonVcaEvent ? physicalHoldEvent.target : sharedVcaTarget_,
-                internalIntervalSeconds, commonVcaTime, commonVcaDecay);
+                coefficients.internalIntervalSeconds,
+                coefficients.commonVcaTime, coefficients.commonVcaDecay);
 
             const bool pwmEvent = physicalHoldEvent.active
                 && physicalHoldEvent.write.destination
@@ -5331,7 +5378,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 pwmEvent ? physicalHoldEvent.previousTarget : pwmVoltsTarget_,
                 pwmEvent, physicalHoldEvent.position,
                 pwmEvent ? physicalHoldEvent.target : pwmVoltsTarget_,
-                internalIntervalSeconds, pwmFullInterval);
+                coefficients.internalIntervalSeconds,
+                coefficients.pwmFullInterval);
             pwmVoltsFirstPole_ = pwmState.first;
             pwmVolts_ = pwmState.second;
 
@@ -5343,9 +5391,10 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                                  : subCvTarget_,
                 subEvent, physicalHoldEvent.position,
                 subEvent ? physicalHoldEvent.target : subCvTarget_,
-                internalIntervalSeconds,
-                static_cast<double>(subHoldSlewSeconds), subDecay);
-            noiseCv_ += (noiseCvTarget_ - noiseCv_) * noiseSlew;
+                coefficients.internalIntervalSeconds,
+                static_cast<double>(subHoldSlewSeconds),
+                coefficients.subDecay);
+            noiseCv_ += (noiseCvTarget_ - noiseCv_) * coefficients.noiseSlew;
             advanceThermalWarmup();
 
             if (--driftControlCountdown_ <= 0)
@@ -5427,7 +5476,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                             physicalHoldEvent.previousTarget, true,
                             physicalHoldEvent.position,
                             physicalHoldEvent.target,
-                            internalIntervalSeconds);
+                            coefficients.internalIntervalSeconds);
                     voice.cutoffCounts =
                         cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)]
                             .endpoint;
@@ -5438,7 +5487,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                         exactVcfHoldInterval(
                             cutoffIntervalStart, voice.cutoffCountsTarget,
                             false, 1.0, voice.cutoffCountsTarget,
-                            internalIntervalSeconds);
+                            coefficients.internalIntervalSeconds);
                     voice.cutoffCounts =
                         cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)]
                             .endpoint;
@@ -5447,12 +5496,15 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 {
                     voice.cutoffCounts +=
                         (voice.cutoffCountsTarget - voice.cutoffCounts)
-                            * vcfSlew;
+                            * coefficients.vcfSlew;
                 }
+                // Every slot reaches this store before renderVoice can read its
+                // entry, so clearing the whole array at the interval boundary
+                // would only write the same values twice.
                 exactVcfControlInterval_[static_cast<std::size_t>(slot)] =
                     resonanceEvent || cutoffEvent;
                 voice.dcoCv +=
-                    (voice.dcoCvTarget - voice.dcoCv) * dcoSlew;
+                    (voice.dcoCvTarget - voice.dcoCv) * coefficients.dcoSlew;
                 const bool voiceVcaEvent = physicalHoldEvent.active
                     && physicalHoldEvent.write.destination
                            == ConverterDestination::VoiceVca
@@ -5464,9 +5516,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     voiceVcaEvent, physicalHoldEvent.position,
                     voiceVcaEvent ? physicalHoldEvent.target
                                   : voice.vcaControlTarget,
-                    internalIntervalSeconds,
+                    coefficients.internalIntervalSeconds,
                     static_cast<double>(voiceVcaHoldSlewSeconds),
-                    voiceVcaDecay);
+                    coefficients.voiceVcaDecay);
                 // Both of these feed `renderVoice`, which returns before it
                 // reads any of their results for an inactive extension slot
                 // (`!voice.active && cardIndex >= hardwareVoices`, and
@@ -5481,8 +5533,11 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 if (!voice.active)
                 {
                     // The six physical DCO/filter cards remain powered behind
-                    // their closed VCAs; extension slots stop inside renderVoice.
-                    renderVoice(voice, parameters, noiseSample);
+                    // their closed VCAs. Extension slots have no card state to
+                    // advance, so avoid entering renderVoice only to take its
+                    // identical early return.
+                    if (voice.cardIndex < hardwareVoices)
+                        renderVoice(voice, parameters, noiseSample);
                     continue;
                 }
 
@@ -5511,7 +5566,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             if (converterPassCompleted && assignmentRescanPending_
                 && assignmentRescanPassArmed_)
                 completeVoiceAssignmentRescan();
-            controlScanPhase_ += scanPhasePerInternalSample;
+            controlScanPhase_ += coefficients.scanPhasePerInternalSample;
 
             // One high-pass, on the summed voices. The schematic carries a
             // single set of parts for it -- on the jack board, downstream of
@@ -5541,8 +5596,16 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // only by ENV/GATE (plus the optional velocity extension).
             const float vcaInput = commonVcaInputCoupling_.process(
                 shaped, commonVcaInputCouplingG_, 0.0f, 1.0f);
-            const float levelled = vcaInput * patchLevelGain(
-                static_cast<float>(sharedVca_));
+            const float patchLevelInput = static_cast<float>(sharedVca_);
+            const auto patchLevelKey =
+                std::bit_cast<std::uint32_t>(patchLevelInput);
+            if (!patchLevelCacheValid || patchLevelCacheKey != patchLevelKey)
+            {
+                patchLevelCacheValue = patchLevelGain(patchLevelInput);
+                patchLevelCacheKey = patchLevelKey;
+                patchLevelCacheValid = true;
+            }
+            const float levelled = vcaInput * patchLevelCacheValue;
 
             // The chorus input coupling capacitors sit in its two wet branches;
             // dry bypasses them. IC6 applies its component-derived dry/wet
@@ -5563,10 +5626,16 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // freshly calibrated instrument has exactly the same rails, and a
             // "pristine reference" whose output stage could swing to infinity
             // would be the less faithful model, not the more faithful one.
+            const auto wetLeftKey = std::bit_cast<std::uint32_t>(wetLeft);
+            const auto wetRightKey = std::bit_cast<std::uint32_t>(wetRight);
             wetLeft = outputSummerClip(wetLeft);
-            wetRight = outputSummerClip(wetRight);
+            // outputSummerClip's rail and exponent are fixed. Reuse only for an
+            // identical float representation, preserving signed zero and NaN
+            // payload distinctions as well as ordinary unequal stereo samples.
+            wetRight = wetLeftKey == wetRightKey
+                     ? wetLeft : outputSummerClip(wetRight);
 
-            // TA75558S IC6 output slew limit (outputSlewMaxStep above). A part
+            // TA75558S IC6 output slew limit. A part
             // property, so -- exactly like the rails above -- it is not
             // scaled by Unit Character: a previous revision divided it by
             // calibration, granting the pristine reference a 10x faster
@@ -5576,12 +5645,14 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             {
                 const float deltaL = wetLeft - outputSlewStateLeft_;
                 outputSlewStateLeft_ += std::clamp(
-                    deltaL, -outputSlewMaxStep, outputSlewMaxStep);
+                    deltaL, -coefficients.outputSlewMaxStep,
+                    coefficients.outputSlewMaxStep);
                 wetLeft = outputSlewStateLeft_;
 
                 const float deltaR = wetRight - outputSlewStateRight_;
                 outputSlewStateRight_ += std::clamp(
-                    deltaR, -outputSlewMaxStep, outputSlewMaxStep);
+                    deltaR, -coefficients.outputSlewMaxStep,
+                    coefficients.outputSlewMaxStep);
                 wetRight = outputSlewStateRight_;
             }
             else
@@ -5620,7 +5691,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
         applyLatencyPad(outputLeft, outputRight);
 
-        glidedVolume_ += (parameters.volume - glidedVolume_) * outputGlide;
+        glidedVolume_ +=
+            (parameters.volume - glidedVolume_) * coefficients.outputGlide;
 
         // C17/C20, R54/R57 and VR1 are one loaded network, not a fixed pole
         // followed by an unrelated gain. The 41.3 kOhm selector ladder and
@@ -5631,16 +5703,31 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
         // network independently -- fine for the two callers that only want one
         // of the two values, but this call site always wants both, so it is
         // solved once here and both results are read off the one network.
-        const auto outputCouplingNetwork =
-            outputCouplingWiperNetworkFor(glidedVolume_);
-        const float outputCouplingCorner = 1.0f
-            / (twoPi * outputCouplingCapacitanceF
-               * outputCouplingNetwork.resistance);
-        outputCouplingG_ = std::tan(
-            pi * outputCouplingCorner * inverseSampleRate_);
-        const float outputCouplingGain = outputCouplingNetwork.loadedLower > 0.0f
-            ? outputCouplingNetwork.loadedLower / outputCouplingNetwork.resistance
-            : 0.0f;
+        const auto outputCouplingKey =
+            std::bit_cast<std::uint32_t>(glidedVolume_);
+        float outputCouplingGain;
+        if (!outputCouplingCacheValid
+            || outputCouplingCacheKey != outputCouplingKey)
+        {
+            const auto outputCouplingNetwork =
+                outputCouplingWiperNetworkFor(glidedVolume_);
+            const float outputCouplingCorner = 1.0f
+                / (twoPi * outputCouplingCapacitanceF
+                   * outputCouplingNetwork.resistance);
+            outputCouplingG_ = std::tan(
+                pi * outputCouplingCorner * inverseSampleRate_);
+            outputCouplingGain = outputCouplingNetwork.loadedLower > 0.0f
+                ? outputCouplingNetwork.loadedLower
+                    / outputCouplingNetwork.resistance
+                : 0.0f;
+            outputCouplingCacheKey = outputCouplingKey;
+            outputCouplingCacheGain = outputCouplingGain;
+            outputCouplingCacheValid = true;
+        }
+        else
+        {
+            outputCouplingGain = outputCouplingCacheGain;
+        }
         outputLeft = outputCouplingLeft_.process(
             outputLeft, outputCouplingG_, 0.0f, outputCouplingGain);
         outputRight = outputCouplingRight_.process(
@@ -5655,10 +5742,12 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
         const float transitionGain = rateTransitionGain_;
         left[sample] = std::isfinite(outputLeft)
-                     ? outputLeft * outputBoundaryGain * transitionGain
+                     ? outputLeft * coefficients.outputBoundaryGain
+                           * transitionGain
                      : 0.0f;
         right[sample] = std::isfinite(outputRight)
-                      ? outputRight * outputBoundaryGain * transitionGain
+                      ? outputRight * coefficients.outputBoundaryGain
+                            * transitionGain
                       : 0.0f;
 
         if (rateTransition_ == RateTransition::FadingOut)
