@@ -724,6 +724,16 @@ void Engine::startNoteForPart (Part part, int note, int velocity)
     const TonePatch& tone = tonePatch (part);
     ToneRuntime& runtime = toneRuntime (part);
 
+    // A pitch played after the pedal went down was not sounding when it went
+    // down, so sostenuto does not hold it. The latch is kept per pitch rather
+    // than per voice, so that a mono voice borrowed by another key cannot
+    // lose it - which means a genuinely new press of a caught pitch has to
+    // clear it here, or the pedal would go on catching that pitch for as long
+    // as it stayed down.
+    if (sostenuto_ && note >= 0 && note <= 127)
+        runtime.sostenutoNotes[static_cast<std::size_t> (note >> 6)] &=
+            ~(1ull << (note & 63));
+
     // Track held keys for solo modes and legato/portamento decisions.
     if (runtime.heldCount < static_cast<int> (runtime.heldNotes.size()))
     {
@@ -2006,7 +2016,15 @@ void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
             state.sustained = false;
             continue;
         }
-        const int note = clampRaw (key + 12 * octave, 0, 127);
+        // The octave cycle is a pitch offset, not a MIDI note. Clamping it
+        // into the MIDI range collapses cycles onto each other at the ends of
+        // the keyboard - note 120 with OCTAVE RANGE +2 played 120, 127, 127
+        // where the pattern owes 120, 132, 144, so the arpeggio simply stopped
+        // moving. Pitch is carried through this engine as a number of
+        // semitones and already leaves 0-127 by way of the octave shift and
+        // transpose; the oscillator increment is capped at Nyquist, and the
+        // held key it is measured from is itself a real MIDI note.
+        const int note = key + 12 * octave;
 
         // Any other claim on the pitch about to start - this row's own gate
         // from the previous grid, or another row still sounding it - would end

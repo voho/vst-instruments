@@ -556,6 +556,26 @@ void testSostenutoLatchesOnlyWhatWasSounding()
     engine.setHold (false);
     (void) rms();
     expect (rms() < 1.0e-3, "and the note releases once both pedals are up");
+
+    // A fresh press of a pitch the pedal already caught was not sounding when
+    // the pedal went down, so it is not held either. The latch is kept per
+    // pitch rather than per voice - a mono voice borrowed by another key would
+    // otherwise lose it - so a new press has to clear it explicitly, or the
+    // pedal went on catching that pitch for as long as it stayed down.
+    engine.reset();
+    engine.noteOn (60, 100);
+    (void) rms();
+    engine.setSostenuto (true);
+    engine.noteOff (60);
+    expect (rms() > 0.01, "the caught note is sustaining");
+    engine.noteOn (60, 100);          // the same pitch again, pedal still down
+    (void) rms();
+    engine.noteOff (60);
+    (void) rms();
+    (void) rms();
+    (void) rms();
+    expect (rms() < 1.0e-3,
+            "and a pitch re-pressed under the pedal releases normally");
 }
 
 // The external-input path (OM pp. 49-53). Renders with a stereo test signal on
@@ -1582,6 +1602,31 @@ void testArpeggioOctaveRange()
     expectNear (first, 220.0, 6.0, "the first arpeggio cycle plays the key");
     expectNear (second, 440.0, 12.0,
                 "OCTAVE RANGE +1 shifts the next cycle an octave up");
+
+    // Near the top of the keyboard the octave cycle used to be clamped into
+    // the MIDI range, which collapsed cycles onto one pitch: note 108 with
+    // OCTAVE RANGE +2 played 108, 120, 127 where it owes 108, 120, 132.
+    // Pitch is a number of semitones here, not a MIDI note. Rendered at
+    // 96 kHz so the third cycle is nowhere near Nyquist and the estimate is
+    // not fighting the anti-aliasing.
+    const double fastRate = 96000.0;
+    septum::Patch high = patch;
+    high.arpeggio.octaveRange = 2;
+
+    septum::Engine tall;
+    tall.prepare (fastRate, 256);
+    tall.setPatch (high);
+    tall.reset();
+    auto top = renderScore (tall, { { 0.0, true, 108, 100 } }, 1.0, fastRate);
+    // Steps are 0.25 s at 240 BPM, so the third cycle runs 0.50-0.75 s. Note
+    // 132 is 16744 Hz; the clamp put it at 127, which is 12544 Hz.
+    const double third = estimateFundamental (top.left,
+                                              (std::size_t) (fastRate * 0.55),
+                                              (std::size_t) (fastRate * 0.72),
+                                              fastRate, 11000.0, 20000.0);
+    expectNear (third, 16744.0, 400.0,
+                "the octave cycle keeps its interval past the top of the "
+                "MIDI range");
 }
 
 // Three things the review found on the external-input path, each now fenced.
