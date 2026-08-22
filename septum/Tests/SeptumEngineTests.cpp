@@ -19,6 +19,10 @@ namespace
 int failures = 0;
 int checks = 0;
 
+// MSVC does not define M_PI without _USE_MATH_DEFINES, and the rest of this
+// suite already spells pi out.
+constexpr double twoPi = 2.0 * 3.14159265358979323846;
+
 void expect (bool condition, const std::string& message)
 {
     ++checks;
@@ -534,8 +538,8 @@ ExternalRender renderWithExternalInput (septum::Engine& engine,
     for (std::size_t i = 0; i < total; ++i)
     {
         const double t = (double) i / sampleRate;
-        const double centre = 0.4 * std::sin (2.0 * M_PI * 300.0 * t);
-        const double side = 0.4 * std::sin (2.0 * M_PI * 900.0 * t);
+        const double centre = 0.4 * std::sin (twoPi * 300.0 * t);
+        const double side = 0.4 * std::sin (twoPi * 900.0 * t);
         result.inputLeft[i] = (float) (centre + side);
         result.inputRight[i] = (float) centre;
     }
