@@ -98,6 +98,7 @@ private:
     struct Rocker
     {
         juce::ToggleButton button;
+        juce::Label label;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>
             attachment;
     };
@@ -120,6 +121,7 @@ private:
     void layoutKnob(Knob& knob, juce::Rectangle<int> area);
     void layoutFader(Fader& fader, juce::Rectangle<int> area);
     void layoutSelector(Selector& selector, juce::Rectangle<int> area);
+    void layoutRocker(Rocker& rocker, juce::Rectangle<int> area);
 
     void showProgramMenu();
     void stepProgram(int delta);
@@ -209,8 +211,8 @@ private:
     Selector glideMode;
     juce::Slider pitchWheel;
     juce::Label pitchWheelLabel;
-    Knob xWheel;
-    Knob yWheel;
+    Fader xWheel;
+    Fader yWheel;
     Rocker splitPaths;
 
     PanelKeyboard keyboard;

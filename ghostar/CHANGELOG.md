@@ -73,6 +73,14 @@ Notable customer-facing changes to Ghostar are recorded here.
   which it previously did not.
 - Seventeen **Ghostar Programs** join the eleven Sound Charts: playable
   voicings, each foregrounding one mechanism, level-matched to each other.
-- The editor gains a program browser with both banks and their descriptions,
-  a gate lamp, value readouts on every knob and fader, a tooltip on every
-  control, and a rebalanced panel.
+- The editor is rebuilt around the modelled instrument's own panel: MOD X
+  and SHAPER Y as full-height columns on the right, WHEEL DESTINATIONS
+  under MASTER, the two filters as one block and the two envelopes as
+  another, and GLIDE with the three levers on their own sub-panel beside
+  the keys — which now have the bottom of the window to themselves. The
+  livery is the panel's: charcoal, grey knob caps with black pointers and
+  travel arcs, white silkscreen, paddle switches whose thrown half stands
+  pale. Every control is captioned directly above itself and carries a
+  tooltip; knobs and faders show the silkscreen's 0–10 while they move.
+  A program browser reaches both banks with each program's description, and
+  a gate lamp shows when a gate source is holding the envelopes open.
