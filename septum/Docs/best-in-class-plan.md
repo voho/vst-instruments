@@ -365,7 +365,7 @@ What changed beyond the geometry:
 - The output meter and the voice count moved to the foot of the performance
   cluster — the one part of the panel that reports rather than edits.
 
-The window is 1500 × 784, up from 1284 × 716: the arpeggiator and the
+The window is 1500 × 786, up from 1284 × 716: the arpeggiator and the
 external-input path added two sections, and nothing is squeezed to fit.
 
 #### Step 7 — three calibration questions went to a listening test
@@ -539,15 +539,20 @@ now crosses over 5 ms. Measured as the largest sample-to-sample jump the output
 makes across the switch, against the largest jump the same signals make while
 nothing is touched:
 
-| Switch | thrown | crossed | steady |
-|---|---|---|---|
-| CENTER CANCEL | 0.211 | — | 0.042 |
-| FILTER ON | 0.304 | — | 0.042 |
-| SLOPE | 0.220 | — | 0.031 |
-| TYPE | 0.292 | — | 0.051 |
+| Switch | thrown | steady |
+|---|---|---|
+| CENTER CANCEL | 0.211 | 0.042 |
+| FILTER ON | 0.304 | 0.042 |
+| SLOPE | 0.220 | 0.031 |
+| TYPE | 0.292 | 0.051 |
 
-Each of the four is under four times its own steady figure once crossed, where
-thrown it was five to seven times it.
+Thrown, each of the four jumps five to seven times as far as the signal's own
+steady sample-to-sample travel. What the test bounds after the fix is the same
+ratio: the jump at the changeover must stay under four times the steady figure
+the same take measures, and it does for all four. (An earlier version of this
+table carried an empty third column headed "crossed"; the figures were never
+printed, only asserted, and the column is gone rather than filled with numbers
+this page cannot show.)
 
 Building that test taught its own lesson twice. Comparing the new signal
 against the *old* one's slope read a high-pass output's faster travel as a
@@ -750,3 +755,26 @@ made is not a discontinuity any of their residuals describe. Two checks fence
 it, both watched to fail with the flag removed: the take must contain one
 downward jump per slave cycle and no more, and every one of them must land at
 the bottom of the saw. `05-sync-sweeper.wav` re-rendered 0.1 dB louder.
+
+#### Step 17 — a received CC notified the host from inside the render callback
+
+`handleController` runs on the audio thread, and for every mapped panel CC it
+called `beginChangeGesture`, `setValueNotifyingHost` and `endChangeGesture`.
+All three take the processor's listener lock and walk its listener list, and
+an APVTS attachment's listener wakes the message thread; a controller sweep
+makes 128 of them a second. The comment above the loop claimed cached pointers
+kept it "allocation-free on the audio thread", which was true of the string
+building it had already removed and not of what remained.
+
+The idiom this project already uses for a MIDI program change applies exactly:
+the audio thread writes the parameter's raw value — which is what the engine
+snapshots and what `getStateInformation` serialises, so audio and saved state
+are correct immediately and without the message loop — and marks the entry in
+a dirty mask. A coalescing `AsyncUpdater` then republishes those values with
+host and UI notification on the message thread, so a 128-message sweep costs
+one pass per frame instead of 128 passes inside the render callback.
+
+The fence is a parameter listener attached in the suite: a CC delivered
+through `processBlock` must produce no value change and no gesture callback,
+and the reconciler must produce both. Reverting the three calls fails it with
+`values 1, gestures 2`.

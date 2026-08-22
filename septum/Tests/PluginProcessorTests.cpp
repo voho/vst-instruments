@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 namespace
 {
@@ -183,6 +184,59 @@ void testDocumentedControlChanges()
     expect ((int) processor.parameters.getRawParameterValue ("up_fenv_decay")->load()
                 == 25,
             "CC#83 edits UPPER filter-env decay");
+}
+
+// A received panel CC edits the parameter's raw value on the audio thread and
+// notifies nobody from there: a gesture or a host notification inside the
+// render callback takes the processor's listener lock and can wake the
+// message thread, and a controller sweep makes 128 of them a second. The
+// message-thread reconciler is what catches the parameter object and the host
+// up.
+struct CountingParameterListener final
+    : public juce::AudioProcessorParameter::Listener
+{
+    void parameterValueChanged (int, float) override { ++values; }
+    void parameterGestureChanged (int, bool) override { ++gestures; }
+    int values { 0 };
+    int gestures { 0 };
+};
+
+void testControlChangesDoNotNotifyFromTheAudioThread()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    juce::AudioBuffer<float> buffer (2, 256);
+
+    auto* parameter = processor.parameters.getParameter ("up_cutoff");
+    expect (parameter != nullptr, "the cutoff parameter exists");
+    if (parameter == nullptr)
+        return;
+
+    CountingParameterListener listener;
+    parameter->addListener (&listener);
+
+    auto cc = messageAt (juce::MidiMessage::controllerEvent (1, 74, 40));
+    processor.processBlock (buffer, cc);
+
+    expect (listener.values == 0 && listener.gestures == 0,
+            "a received CC notifies nothing from the render callback (values "
+                + std::to_string (listener.values) + ", gestures "
+                + std::to_string (listener.gestures) + ")");
+    expect ((int) processor.parameters.getRawParameterValue ("up_cutoff")->load()
+                == 40,
+            "the CC still lands in the value the engine renders from");
+
+    // The message-thread half. It runs from an AsyncUpdater in the plug-in;
+    // here it is called directly, as the harness stands in for the loop.
+    processor.reconcileControlChanges();
+    const auto& range = processor.parameters.getParameterRange ("up_cutoff");
+    expect (std::abs (parameter->getValue() - range.convertTo0to1 (40.0f))
+                < 1.0e-6,
+            "the reconciler catches the parameter object up");
+    expect (listener.values > 0 && listener.gestures > 0,
+            "the reconciler is what notifies the host");
+
+    parameter->removeListener (&listener);
 }
 
 double goertzel (const juce::AudioBuffer<float>& buffer, double hz,
@@ -582,6 +636,7 @@ int main()
     testBusLayoutAndTail();
     testRenderingAndVoices();
     testDocumentedControlChanges();
+    testControlChangesDoNotNotifyFromTheAudioThread();
     testPanelCcAppliesWithinTheBlock();
     testProgramChangeStagesOnTheAudioPath();
     testUiQueueOverflowStillReleases();

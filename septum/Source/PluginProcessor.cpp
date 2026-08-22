@@ -492,18 +492,24 @@ void SeptumAudioProcessor::cacheParameterPointers()
             juce::String (binding.upper ? "up_" : "lo_") + binding.suffix;
         if (auto* parameter = parameters.getParameter (id))
             ccCache.push_back ({ binding.controller, parameter,
+                                 parameters.getRawParameterValue (id),
                                  binding.signedValue,
                                  juce::String (binding.suffix) == "key_follow" });
     }
     // Settled (OM p. 72): the audio filter answers on CC#2 and CC#4.
-    if (auto* parameter = parameters.getParameter ("audio_filter_cutoff"))
-        ccCache.push_back ({ 2, parameter, false, false });
-    if (auto* parameter = parameters.getParameter ("audio_filter_reso"))
-        ccCache.push_back ({ 4, parameter, false, false });
-    if (auto* parameter = parameters.getParameter ("delay_time"))
-        ccCache.push_back ({ 12, parameter, false, false });
-    if (auto* parameter = parameters.getParameter ("reverb_time"))
-        ccCache.push_back ({ 13, parameter, false, false });
+    const auto cacheShared = [this] (int controller, const char* id)
+    {
+        if (auto* parameter = parameters.getParameter (id))
+            ccCache.push_back ({ controller, parameter,
+                                 parameters.getRawParameterValue (id), false,
+                                 false });
+    };
+    cacheShared (2, "audio_filter_cutoff");
+    cacheShared (4, "audio_filter_reso");
+    cacheShared (12, "delay_time");
+    cacheShared (13, "reverb_time");
+    // The dirty mask is a fixed pair of words, so the cache has to fit it.
+    jassert (ccCache.size() <= 128);
 }
 
 namespace
@@ -820,23 +826,55 @@ bool SeptumAudioProcessor::handleController (int controller, int value)
     }
 
     // Panel parameters per the documented CC map: received CCs edit the
-    // corresponding patch parameter, exactly as the hardware does. Cached
-    // pointers keep this allocation-free on the audio thread.
-    for (const auto& cached : ccCache)
+    // corresponding patch parameter, exactly as the hardware does.
+    //
+    // This runs on the audio thread, so it writes the parameter's raw value
+    // and nothing else — the idiom a MIDI program change already uses. The
+    // three gesture calls it used to make instead all take the processor's
+    // listener lock and can wake the message thread from inside the render
+    // callback, which is the one thing a render callback may not do; and a
+    // controller sweep makes 128 of them a second. The reconciler below
+    // republishes the value with host and UI notification, coalesced.
+    for (std::size_t index = 0; index < ccCache.size(); ++index)
     {
+        const auto& cached = ccCache[index];
         if (cached.controller != controller)
             continue;
         float natural = cached.signedValue ? (float) (value - 64) : (float) value;
         if (cached.keyFollow)
             natural = juce::jlimit (-200.0f, 200.0f, (float) ((value - 64) * 10));
         const auto& range = cached.parameter->getNormalisableRange();
-        cached.parameter->beginChangeGesture();
-        cached.parameter->setValueNotifyingHost (
-            range.convertTo0to1 (range.snapToLegalValue (natural)));
-        cached.parameter->endChangeGesture();
+        cached.raw->store (range.snapToLegalValue (natural),
+                           std::memory_order_relaxed);
+        ccDirty[index >> 6].fetch_or (1ull << (index & 63u),
+                                      std::memory_order_release);
+        ccReconciler.triggerAsyncUpdate();
         return true;
     }
     return false;
+}
+
+void SeptumAudioProcessor::reconcileControlChanges()
+{
+    for (std::size_t word = 0; word < ccDirty.size(); ++word)
+    {
+        auto bits = ccDirty[word].exchange (0u, std::memory_order_acquire);
+        while (bits != 0u)
+        {
+            const auto index = word * 64u
+                               + (std::size_t) std::countr_zero (bits);
+            bits &= bits - 1u;
+            if (index >= ccCache.size())
+                continue;
+            const auto& cached = ccCache[index];
+            const auto& range = cached.parameter->getNormalisableRange();
+            const float natural = cached.raw->load (std::memory_order_relaxed);
+            cached.parameter->beginChangeGesture();
+            cached.parameter->setValueNotifyingHost (
+                range.convertTo0to1 (range.snapToLegalValue (natural)));
+            cached.parameter->endChangeGesture();
+        }
+    }
 }
 
 bool SeptumAudioProcessor::handleMidiMessage (const juce::MidiMessage& message)

@@ -84,6 +84,11 @@ public:
     // callback; public so the harness can stand in for that loop.
     void reconcileProgram (int index);
 
+    // The message-thread half of a received panel CC: republishes the raw
+    // values the audio path wrote, with host and UI notification. Public so
+    // the harness can stand in for the message loop.
+    void reconcileControlChanges();
+
     juce::AudioProcessorValueTreeState parameters;
 
     static juce::AudioProcessorValueTreeState::ParameterLayout
@@ -117,10 +122,29 @@ private:
     {
         int controller { -1 };
         juce::RangedAudioParameter* parameter { nullptr };
+        // The parameter's own raw value, which is what the engine snapshots.
+        // The audio thread writes this and nothing else; the parameter object
+        // and the host are caught up on the message thread.
+        std::atomic<float>* raw { nullptr };
         bool signedValue { false };
         bool keyFollow { false };
     };
     std::vector<CachedCc> ccCache;
+    // Which cached CCs the audio thread has written since the message thread
+    // last looked. One bit per entry in ccCache.
+    std::array<std::atomic<std::uint64_t>, 2> ccDirty { 0u, 0u };
+    // Catches the parameter objects and the host up with the raw values a
+    // received CC wrote on the audio thread. Coalescing, so a knob sweep of
+    // 128 messages a second costs one message-thread pass per frame rather
+    // than 128.
+    struct CcReconciler final : public juce::AsyncUpdater
+    {
+        explicit CcReconciler (SeptumAudioProcessor& o) : owner (o) {}
+        ~CcReconciler() override { cancelPendingUpdate(); }
+        void handleAsyncUpdate() override { owner.reconcileControlChanges(); }
+        SeptumAudioProcessor& owner;
+    };
+    CcReconciler ccReconciler { *this };
     std::vector<float> monoScratch;
 
     septum::Engine engine;
