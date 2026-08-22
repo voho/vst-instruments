@@ -369,7 +369,7 @@ external-input path added two sections, and nothing is squeezed to fit.
 
 #### Step 7 — three calibration questions went to a listening test
 
-*Rendered, undecided.* Not committed — a set per decision would bloat the
+*Decided by ear, 2026-08-22.* Not committed — a set per decision would bloat the
 repository, and the working conventions say to hand them over instead. Each
 set was rendered through the shipping signal path with identical MIDI, seed,
 sample rate, block size, length and controls; only the mechanism under test
@@ -385,7 +385,27 @@ written at the same time and unread by design.
 | `2026-08-22-supersaw-hpf` | A, B | The tracked high-pass on the summed seven-saw stack: 1.0 × f₀ at Q = 0.707 against 2.5 × f₀ at Q = √2 (OQ-04) |
 | `2026-08-22-supersaw-mix` | A, B, C | Where to evaluate Szabo's measured mix laws, given the SH-201 has no MIX knob (OQ-05) |
 
-Nothing is re-pinned until the user chooses; if `A` wins a set, the shipping
-value stays and that is the verdict. A choice here is recorded in this
-document as chosen by ear and closes no open question — the captures the
-contract names for OQ-04, OQ-05 and OQ-08 would still be what closes them.
+**The verdicts.** Each was made by ear, on level-matched takes, with the key
+unread until after the choice. None of them closes an open question: the
+captures the contract names for OQ-04, OQ-05 and OQ-08 are still what would.
+
+| Set | Chosen | What that licensed |
+| --- | --- | --- |
+| resonance curve | **B** — the square-root taper, `k = 2 − 2.04·√(v/127)` | Re-pinned. Both settled endpoints are untouched; only the shape between them moved |
+| supersaw HPF | **A**, the shipping engine, with the listener unsure and calling it "probably a bit better" | Nothing. 1.0 × f₀ at Q = 0.707 stays, and OQ-04 keeps its standing-candidate status: an unsure preference for the incumbent is not evidence about the hardware |
+| supersaw mix | **A**, the shipping engine, "probably ok" | Nothing. m = 0.75 stays, OQ-05 unchanged |
+
+Measured after re-pinning the resonance curve, same harness as §2.7, gain
+referred to the filter's own passband at cutoff 64:
+
+| RESONANCE | −12 dB peak, before | after | −24 dB peak, before | after |
+|---|---|---|---|---|
+| 0 | +0.06 dB | +0.06 dB | +0.06 dB | +0.06 dB |
+| 64 | +1.38 dB | **+5.43 dB** | +1.58 dB | **+4.73 dB** |
+| 100 | +8.18 dB | +14.39 dB | +7.05 dB | +12.80 dB |
+| 120 | +22.70 dB | +33.32 dB | +21.12 dB | +31.73 dB |
+
+The centre of the knob now does something audible, and the oscillation
+threshold has not moved: the top of the travel still crosses into the bounded
+self-oscillation the manual warns about, and the existing test that fences
+that still passes.
