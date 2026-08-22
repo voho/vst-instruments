@@ -519,6 +519,7 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     addControl (*arpSection, "arp_on", "ON", Style::Toggle, false);
     addControl (*arpSection, "arp_hold", "HOLD", Style::Toggle, false);
     addControl (*arpSection, "arp_style", "STYLE", Style::Combo, false);
+    addControl (*arpSection, "arp_end_step", "END STEP", Style::Knob, false);
     addControl (*arpSection, "arp_grid", "GRID", Style::Combo, false);
     addControl (*arpSection, "arp_motif", "MOTIF", Style::Combo, false);
     addControl (*arpSection, "arp_duration", "DURATION", Style::Combo, false);

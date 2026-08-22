@@ -462,3 +462,50 @@ pitch handover in place neither changed any measurement, and a fix that no test
 can distinguish from its absence is not a fix worth carrying. The committed
 demo audio is unchanged — `11-arpeggiator.wav` plays chords, so no row ever
 repeats a pitch in it.
+
+#### Step 10 — the fifth review round, after the pass had already merged
+
+Four findings arrived on the merged pull request. All four were real, and the
+first two are the uncomfortable kind: each was a claim the project had already
+made in writing.
+
+**The overdrive selected an oversampling factor the shaper cannot run.**
+`overdriveOversampling` chose 8 at 22.05 and 24 kHz, but `OverdriveStage` has
+an outer and an inner half-band stage and nothing beyond — the factor-4 and
+factor-8 cases shared a branch. Those rates ran at 4× while the selector said
+8×. The test that guarded the documented ±0.54-octave bound measured the
+*selector*, so it agreed with the claim rather than with the audio, and the
+bound had been defended in a review reply on that basis. A third stage would
+cost 2p at 4× host — 1.5 host samples — a fractional group delay to report and
+to align the bypass path against, bought for two unusual sample rates. The
+ladder now stops where the shaper stops, the bound is restated at what it
+delivers (**±1.0 octave across 22.05–192 kHz**, with only 22.05 kHz a full
+octave low), and the test checks the factor is implementable before it measures
+anything.
+
+**END STEP was documented and unreachable.** The README and the contract both
+listed it, the engine treated `style.endStep` as automatable, and there was no
+parameter and no control: every snapshot reapplied the selected template's
+hard-coded length. It is now a bound patch parameter with its own panel knob,
+reading `STYLE` at zero — the replica's own addition, meaning "as long as the
+template is", so no existing patch changes.
+
+**Arpeggio routing changes stranded voices.** Four automatable controls decide
+whether a part is arpeggiated; only the ARPEGGIO switch was watched. Holding an
+Upper key and then selecting Upper left the plain voice unmigrated, and its
+note-off found a part the arpeggiator now drives and skipped the release —
+0.069 RMS still sounding a second and a half later. The transition is tracked
+per part now, against the predicate that already folds in all four controls.
+The other direction changed with it: deselecting a part hands its held key back
+as a plain voice instead of silencing it, which is what the ARPEGGIO switch
+already did.
+
+**The re-arm could not see a same-sample chord change.** It lived only in
+`advanceArpeggiator`, which needs audio rendered while the chord is empty.
+Adjacent chords in a sequence share one sample position, so the gap was never
+observed and the new chord continued mid-pattern — 604 Hz where step one owed
+293.66 Hz. The last key leaving is noticed where it happens now.
+
+Each has a test checked by reverting its fix. `11-arpeggiator.wav` re-rendered
+1.2 dB lower at the same length: chords now begin at step one, which is the
+point of the re-arm fix.

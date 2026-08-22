@@ -80,7 +80,8 @@ The engine's grounding, briefly:
 - **Arpeggiator (settled mechanism, original styles).** The settled 32 × 16
   style grid with GRID (including the shuffled divisions), DURATION with tie
   chains and FUL, all twelve MOTIF values, OCTAVE RANGE, ACCENT, ARPEGGIO
-  VELOCITY, END STEP, HOLD and SPLIT ARPEGGIO. The motif mapping reproduces
+  VELOCITY, END STEP (with a `STYLE` position that defers to the selected
+  template's own length), HOLD and SPLIT ARPEGGIO. The motif mapping reproduces
   the three worked examples the manual prints, exactly; they are the test.
   Roland's 32 factory styles are unpublished data and none ships here — the
   16 styles supplied are original patterns.

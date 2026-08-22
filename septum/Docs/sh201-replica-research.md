@@ -419,7 +419,11 @@ play each key", and one style is saved per patch. Its parameters:
   notes will be sounded at a fixed velocity". The blend between the two, and
   the flat value, are voiced (OQ-15).
 - **ARPEGGIO VELOCITY** REAL or 1–127: what "how hard you played" means.
-- **END STEP** 1–32, **HOLD**, and **SPLIT ARPEGGIO** (UPPER / LOWER / BOTH),
+- **END STEP** 1–32, its own control and independent of the selected template.
+  The replica adds a zero below the documented range (voiced): it means "as
+  long as the template is", so a patch that never touches END STEP keeps
+  whatever length the style defines, and the panel reads `STYLE` rather than a
+  step count. **HOLD**, and **SPLIT ARPEGGIO** (UPPER / LOWER / BOTH),
   which tone(s) it drives in SPLIT mode.
 - The tempo is **PATCH TEMPO**, shared with the LFO sync. Two Roland
   documents disagree on its range: the parameter list gives PATCH TEMPO

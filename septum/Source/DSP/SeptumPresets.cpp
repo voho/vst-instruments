@@ -1,5 +1,6 @@
 #include "SeptumPresets.h"
 
+#include <algorithm>
 #include <initializer_list>
 
 namespace septum
@@ -570,6 +571,11 @@ void applyArpeggioStyle (Patch& patch, int index)
     if (index < 0 || index >= (int) styles.size())
         return;
     patch.arpeggio.style = styles[(std::size_t) index].style;
+    // The template carries a length, but END STEP is a control of its own and
+    // outranks it when the player has set one.
+    if (patch.arpeggio.endStep > 0)
+        patch.arpeggio.style.endStep =
+            std::min (patch.arpeggio.endStep, arpeggioMaxSteps);
 }
 
 } // namespace septum

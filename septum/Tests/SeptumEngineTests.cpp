@@ -1462,6 +1462,56 @@ void testArpeggiatorEdgeCases()
                     "new one at step one");
     }
 
+    // 10c. END STEP is its own front-panel control, 1-32, independent of the
+    //      template. Zero leaves the template's own length alone; anything
+    //      else shortens or lengthens the pattern the style selected.
+    {
+        septum::Patch shortened = base;
+        shortened.arpeggio.grid = septum::ArpeggioGrid::Quarter;
+        shortened.arpeggio.duration = septum::ArpeggioDuration::P50;
+        shortened.arpeggio.motif = septum::ArpeggioMotif::Up;
+        shortened.arpeggio.styleIndex = 1;          // "Straight 8", eight steps
+        shortened.arpeggio.endStep = 0;
+        septum::applyArpeggioStyle (shortened, shortened.arpeggio.styleIndex);
+        expect (shortened.arpeggio.style.endStep == 8,
+                "END STEP zero leaves the template's own length ("
+                    + std::to_string (shortened.arpeggio.style.endStep) + ")");
+
+        shortened.arpeggio.endStep = 3;
+        septum::applyArpeggioStyle (shortened, shortened.arpeggio.styleIndex);
+        expect (shortened.arpeggio.style.endStep == 3,
+                "and a set END STEP outranks it ("
+                    + std::to_string (shortened.arpeggio.style.endStep) + ")");
+
+        // It has to reach the sound, not just the struct: with one key held
+        // and OCTAVE RANGE +1 the octave steps up once per completed pass, so
+        // a three-step pattern reaches the octave sooner than an eight-step
+        // one does.
+        const auto octaveArrivesBy = [&] (int endStep)
+        {
+            septum::Patch p = shortened;
+            p.arpeggio.endStep = endStep;
+            p.arpeggio.octaveRange = 1;
+            septum::applyArpeggioStyle (p, p.arpeggio.styleIndex);
+            septum::Engine engine;
+            engine.prepare (sampleRate, 256);
+            engine.setPatch (p);
+            engine.reset();
+            auto take = renderScore (engine, { { 0.0, true, 57, 100 } }, 5.0,
+                                     sampleRate);
+            // 1.6 s in: three steps of 0.5 s have completed a pass, eight have
+            // not, so only the short pattern is an octave up by now.
+            return estimateFundamental (take.left,
+                                        (std::size_t) (sampleRate * 1.60),
+                                        (std::size_t) (sampleRate * 1.72),
+                                        sampleRate, 150.0, 700.0);
+        };
+        expectNear (octaveArrivesBy (3), 440.0, 20.0,
+                    "a three-step END STEP completes its pass by 1.6 s");
+        expectNear (octaveArrivesBy (8), 220.0, 12.0,
+                    "an eight-step one has not");
+    }
+
     // 11. A plain run walks one held key across every one of its rows, so a
     //     single key repeats the same pitch on every step. Voices are
     //     released by pitch, so a gate allowed to outlive its own grid ends

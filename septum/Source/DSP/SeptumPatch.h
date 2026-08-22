@@ -146,6 +146,11 @@ struct ArpeggioParams
     // index is the panel's surface and `style` below stays the authority on
     // what actually plays.
     int styleIndex { 0 };
+    // END STEP is its own front-panel control on the hardware, 1-32 and
+    // independent of the template. Zero is the replica's own addition
+    // (voiced): it means "however long the selected template is", so a patch
+    // that never touches END STEP keeps whatever the style defines.
+    int endStep { 0 };         // 0 = the template's own length, else 1-32
     bool on { false };
     bool hold { false };
     SplitArpeggio splitArpeggio { SplitArpeggio::Both };
@@ -436,6 +441,7 @@ inline void clampToDocumentedRanges (Patch& patch) noexcept
     patch.arpeggio.style.endStep =
         clampRaw (patch.arpeggio.style.endStep, 1, arpeggioMaxSteps);
     patch.arpeggio.styleIndex = std::max (0, patch.arpeggio.styleIndex);
+    patch.arpeggio.endStep = clampRaw (patch.arpeggio.endStep, 0, arpeggioMaxSteps);
 }
 
 } // namespace septum

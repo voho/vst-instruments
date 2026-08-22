@@ -341,6 +341,8 @@ const std::vector<PatchBinding>& patchBindings()
         { "arp_style", "Arpeggio Style", Kind::Choice, 0,
           (int) septum::arpeggioStyles().size(), &arpStyleChoices(),
           PATCH_INT (arpeggio.styleIndex) },
+        { "arp_end_step", "Arpeggio End Step", Kind::Int, 0, 32, nullptr,
+          PATCH_INT (arpeggio.endStep) },
         { "arp_grid", "Arpeggio Grid", Kind::Choice, 0, 9, &arpGridChoices,
           PATCH_ENUM (arpeggio.grid, septum::ArpeggioGrid) },
         { "arp_duration", "Arpeggio Duration", Kind::Choice, 0, 10,
@@ -543,6 +545,13 @@ const std::vector<juce::String>& signedParameterSuffixes()
                 if (value > 0)
                     return juce::String (value) + "R";
                 return juce::String ("0");
+            });
+    if (id == "arp_end_step")
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                // Zero is not a step count, it is the absence of one.
+                return value <= 0 ? juce::String ("STYLE") : juce::String (value);
             });
     if (isSignedDisplay (id))
         return juce::AudioParameterIntAttributes().withStringFromValueFunction (
