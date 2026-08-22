@@ -42,5 +42,37 @@ Notable customer-facing changes to Ghostar are recorded here.
   size and 7-bit MIDI CCs never step the audio; switches stay immediate,
   and a silent instrument adopts restored settings exactly. Justified and
   measured by the zipper audit recorded in the best-in-class plan.
-- Ten committed demonstration renders under `Docs/audio`, regenerated
+- Twelve committed demonstration renders under `Docs/audio`, regenerated
   nightly from the shipping engine.
+- **Derived, not voiced.** The character-defining laws that were first-pass
+  choices are now computed from primary documents, and several of them
+  changed the instrument audibly:
+  - **Resonance** follows the filter chip's own exponential Q scale through
+    the panel's actual pot network, anchored by the manual's "LOW fixes
+    Q = 0.5". Resonance is now gentle through the middle of the travel and
+    steep at the top — Q at half travel is 1.5 where the old law gave 5.7 —
+    and the two filters have genuinely different curves, as their different
+    bias networks require.
+  - **Envelope times** read the panel's 5 ms–10 s as the RC time constant it
+    is, so long decays and releases last about 2.8 times longer than before;
+    the attack aims where the timer's output pin actually charges to, making
+    it longer and flatter-topped.
+  - **Both filter nonlinearities** are the BA130 diode pair's own law rather
+    than a tanh stand-in. The overdrive stage is solved as its circuit, so
+    past the knee it keeps climbing with drive instead of flattening.
+  - **Keyboard tracking** is 108 %, computed from the CV ladder's resistors,
+    which reproduces the manual's "slightly over 100 %" independently.
+- **Audio quality.** Every waveform discontinuity is bandlimited as a
+  sub-sample event — including the hard-sync reset, which was uncorrected,
+  and the triangle's corners, which had no correction at all — and the voice
+  core runs at 4x with a two-stage decimation chain. Measured against a
+  16x ground truth, the worst-case aliasing strokes improved by 40 to 90 dB
+  and every stroke whose reference converges now sits at or below −80 dB.
+  The filter's nonlinearity is a term of the continuous system rather than a
+  per-sample map, so a patch sounds the same at every host sample rate —
+  which it previously did not.
+- Seventeen **Ghostar Programs** join the eleven Sound Charts: playable
+  voicings, each foregrounding one mechanism, level-matched to each other.
+- The editor gains a program browser with both banks and their descriptions,
+  a gate lamp, value readouts on every knob and fader, a tooltip on every
+  control, and a rebalanced panel.

@@ -235,6 +235,7 @@ also readable: open the editor and see how the sound is made.
 
 ## Hearing the instrument
 
-The ten committed renders under [`Docs/audio`](audio/README.md) demonstrate
+The twelve committed renders under [`Docs/audio`](audio/README.md) demonstrate
 one signature mechanism each, rendered from the same engine the plug-in
-runs.
+runs — including a resonance sweep that lets you hear the derived resonance
+law's shape, and a tour of six of the Ghostar Programs.

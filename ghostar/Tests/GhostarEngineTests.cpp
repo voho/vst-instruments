@@ -613,9 +613,10 @@ void testArpFirstStepIsTheScanBottom()
           "the opening arpeggio step is the lowest held key");
 }
 
-// The factory bank is the manual's eleven Sound Charts. Every chart renders
-// finite audio with a key held; every chart but the first is audible. The
-// Preparatory Pattern is the documented exception: it "produces no sound".
+// The factory bank is Init, the manual's eleven Sound Charts and the
+// seventeen Ghostar Programs. Every one renders finite audio with keys held
+// and leaves headroom; the Preparatory Pattern is the documented exception,
+// since it "produces no sound".
 // MIDI All Sound Off must kill the voice without resetting controllers: a
 // bend held across it still applies to the next note, where the full
 // reset() would have re-centred it.

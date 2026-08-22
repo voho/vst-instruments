@@ -1,12 +1,10 @@
 // Renders the committed demonstration WAVs under Docs/audio from the same
-// JUCE-free engine the eventual plug-in will run, so a demonstration cannot
-// drift away from what Ghostar actually sounds like. No samples or external
-// processing are involved anywhere: every file here comes out of the model.
-//
-// While the voice is the pre-research skeleton the demo table holds a single
-// placeholder take; the real demo set lands with the researched circuit model.
+// JUCE-free engine the plug-in runs, so a demonstration cannot drift away
+// from what Ghostar actually sounds like. No samples or external processing
+// are involved anywhere: every file here comes out of the model.
 
 #include "DSP/GhostarEngine.h"
+#include "DSP/GhostarPresets.h"
 
 #include <algorithm>
 #include <array>
@@ -38,6 +36,7 @@ using ghostar::ShaperYDestination;
 using ghostar::TrackingMode;
 using ghostar::TriggerMode;
 using ghostar::UpperResonanceMode;
+using ghostar::UpperSlope;
 using ghostar::Waveform;
 
 // 44.1 kHz 16-bit is what a listener's browser, phone and DAW all handle
@@ -649,6 +648,98 @@ Take renderRedNoiseDrift()
     return take;
 }
 
+// The resonance control swept across its whole travel on one held note.
+// The law behind it is derived from the filter chip's own Q scale and the
+// panel's pot network, and its signature is audible here: barely anything
+// happens through the first half of the travel, the peak arrives through
+// the third quarter, and the last tenth runs away into self-oscillation.
+Take renderResonanceSweep()
+{
+    auto parameters = plainPanel();
+    parameters.oscAWaveform = Waveform::Sawtooth;
+    parameters.upperResonance = UpperResonanceMode::Variable;
+    parameters.slope = UpperSlope::TwelveDb;
+    parameters.cutoff = 0.5f;
+    parameters.kbAmount = 0.3f;
+    parameters.filterEnvAmount = 0.5f;
+    parameters.resonance = 0.0f;
+    parameters.loudnessAttack = 0.02f;
+    parameters.loudnessSustain = 1.0f;
+    parameters.loudnessRelease = 0.4f;
+    parameters.masterVolume = 0.55f;
+    Take take(parameters);
+
+    take.rest(0.1);
+    take.on(45);
+    constexpr int steps = 100;
+    for (int step = 0; step <= steps; ++step)
+    {
+        parameters.resonance =
+            static_cast<float>(step) / static_cast<float>(steps);
+        take.setParameters(parameters);
+        take.rest(0.09);
+    }
+    take.off(45);
+    take.rest(1.6);
+    return take;
+}
+
+// A tour of the performance bank: six programs, each given a phrase that
+// suits it, switched on the panel as a player would switch them.
+Take renderProgramTour()
+{
+    // The bank's own parameters, by name, so a renamed or reordered program
+    // cannot silently turn this take into a different one.
+    const auto programNamed = [](const char* wanted) {
+        for (int index = 0; index < ghostar::factoryPresetCount(); ++index)
+            if (std::string(ghostar::factoryPresetName(index)) == wanted)
+                return ghostar::factoryPresetParameters(index);
+        return EngineParameters {};
+    };
+
+    Take take(programNamed("Spirit Bass"));
+    take.rest(0.15);
+    const int bassRiff[] = { 33, 33, 40, 33, 36, 33 };
+    for (const int note : bassRiff)
+        take.hit(note, 1.0f, 0.24, 0.06);
+    take.rest(0.35);
+
+    take.setParameters(programNamed("Vocal Pair"));
+    take.rest(0.1);
+    take.hit(48, 1.0f, 0.9, 0.1);
+    take.hit(52, 1.0f, 0.9, 0.1);
+    take.hit(45, 1.0f, 1.4, 0.5);
+
+    take.setParameters(programNamed("Growl Bass"));
+    take.rest(0.1);
+    for (const int note : { 31, 31, 38, 36 })
+        take.hit(note, 1.0f, 0.3, 0.08);
+    take.rest(0.35);
+
+    take.setParameters(programNamed("Ring Bell"));
+    take.rest(0.1);
+    take.hit(64, 1.0f, 1.1, 0.15);
+    take.hit(59, 1.0f, 1.5, 0.5);
+
+    take.setParameters(programNamed("Hollow Ghost"));
+    take.rest(0.1);
+    take.hit(50, 1.0f, 0.8, 0.1);
+    take.hit(57, 1.0f, 1.5, 0.5);
+
+    take.setParameters(programNamed("Leap Sequence"));
+    take.rest(0.1);
+    take.chordOn({ 45, 52, 57 });
+    take.rest(4.0);
+    take.chordOff({ 45, 52, 57 });
+    // The X gate keeps clocking the last note after the keys are up, so the
+    // passage is ended the way the panel ends it.
+    auto silenced = programNamed("Leap Sequence");
+    silenced.gateX = false;
+    take.setParameters(silenced);
+    take.rest(1.4);
+    return take;
+}
+
 // ---------------------------------------------------------------------------
 // The demo table
 // ---------------------------------------------------------------------------
@@ -660,9 +751,9 @@ struct Demo
     Take (*render)();
 };
 
-const std::array<Demo, 10>& demos()
+const std::array<Demo, 12>& demos()
 {
-    static const std::array<Demo, 10> table {{
+    static const std::array<Demo, 12> table {{
         { "01-dual-filter-vocal.wav",
           "The signature dual filter: the lower parametric boost slid "
           "against the upper lowpass",
@@ -698,6 +789,14 @@ const std::array<Demo, 10>& demos()
         { "10-red-noise-drift.wav",
           "RED NOISE wander on both oscillators' pitch",
           renderRedNoiseDrift },
+        { "11-resonance-sweep.wav",
+          "The resonance travel end to end: gentle for half its journey, "
+          "then steep into self-oscillation",
+          renderResonanceSweep },
+        { "12-program-tour.wav",
+          "Six of the Ghostar Programs in turn, each with a phrase that "
+          "suits it",
+          renderProgramTour },
     }};
     return table;
 }
