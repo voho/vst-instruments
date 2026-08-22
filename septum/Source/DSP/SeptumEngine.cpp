@@ -1871,6 +1871,26 @@ void Engine::arpeggioRemoveKey (Part part, int note)
         --runtime.keyCount;
         break;
     }
+
+    // The re-arm that makes the next chord start on step one lives in
+    // advanceArpeggiator, which only sees the chord empty if audio is
+    // rendered while it is. One chord replaced by the next at the very same
+    // sample position - the ordinary layout for adjacent chords in a
+    // sequence - leaves no samples in between, so the gap was never
+    // observed and the new chord picked the pattern up wherever the old one
+    // had left it. The last key leaving is noticed here instead.
+    bool anyKeysLeft = false;
+    for (const auto& other : arpeggios_)
+        if (other.keyCount > 0)
+            anyKeysLeft = true;
+    if (! anyKeysLeft && arpeggioRunning_)
+    {
+        for (int index = 0; index < partCount; ++index)
+            arpeggioStopPart (index == 0 ? Part::Upper : Part::Lower);
+        arpeggioRunning_ = false;
+        arpeggioStep_ = 0;
+        arpeggioStepRemaining_ = 0.0;
+    }
 }
 
 void Engine::arpeggioStopPart (Part part)

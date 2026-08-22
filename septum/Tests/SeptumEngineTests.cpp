@@ -1405,6 +1405,56 @@ void testArpeggiatorEdgeCases()
                     + std::to_string (reference) + ")");
     }
 
+    // 10b. Adjacent chords in a sequence routinely share a sample position:
+    //      every note-off of the old chord and every note-on of the new one
+    //      land together. No audio is rendered in between, so the empty chord
+    //      the re-arm watches for is never visible to advanceArpeggiator, and
+    //      the new chord used to pick the pattern up wherever the old one had
+    //      left it instead of starting at step one.
+    {
+        septum::Patch seq = base;
+        seq.arpeggio.grid = septum::ArpeggioGrid::Quarter;   // 0.5 s a step
+        seq.arpeggio.duration = septum::ArpeggioDuration::P50;
+        seq.arpeggio.motif = septum::ArpeggioMotif::Up;
+        // Step one is the low row; every later step is the high row. So the
+        // first note of a chord is its lowest key, and any other step is not.
+        seq.arpeggio.style = septum::ArpeggioStyle {};
+        seq.arpeggio.style.endStep = 4;
+        seq.arpeggio.style.cells[0][0] = 100;
+        seq.arpeggio.style.cells[1][1] = 100;
+        seq.arpeggio.style.cells[2][1] = 100;
+        seq.arpeggio.style.cells[3][1] = 100;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (seq);
+        engine.reset();
+        engine.noteOn (60, 100);
+        engine.noteOn (67, 100);
+        // Run past step one so the counter is genuinely mid-pattern, and past
+        // the previous gate so nothing of the old chord is still sounding.
+        std::vector<float> lead ((std::size_t) (sampleRate * 0.8));
+        std::vector<float> leadR (lead.size());
+        engine.process (lead.data(), leadR.data(), (int) lead.size());
+
+        // The whole changeover at one sample position, as a sequencer sends it.
+        engine.noteOff (60);
+        engine.noteOff (67);
+        engine.noteOn (62, 100);
+        engine.noteOn (69, 100);
+
+        auto take = renderScore (engine, {}, 0.4, sampleRate);
+        // Step one of the new chord is its lowest key, D4. Continuing
+        // mid-pattern would sound the high row, A4, an instant later.
+        const double first = estimateFundamental (take.left,
+                                                  (std::size_t) (sampleRate * 0.02),
+                                                  (std::size_t) (sampleRate * 0.20),
+                                                  sampleRate, 200.0, 600.0);
+        expectNear (first, 293.66, 10.0,
+                    "a chord replaced at the same sample position starts the "
+                    "new one at step one");
+    }
+
     // 11. A plain run walks one held key across every one of its rows, so a
     //     single key repeats the same pitch on every step. Voices are
     //     released by pitch, so a gate allowed to outlive its own grid ends
