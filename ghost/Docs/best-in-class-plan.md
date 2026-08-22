@@ -107,8 +107,12 @@ engineering lives.
   coupling on the outputs — both anchored *in presence*; the pinking
   transfer and the coupling corner are voiced numbers (see below).
 
-**Voiced constants** (defensible but not anchored; the open-questions
-register `Docs/open-questions.md` tracks each):
+**Voiced constants** (defensible but not anchored). The character-defining
+ones are listed here, each with its entry in the open-questions register
+`Docs/open-questions.md`. The register, not this list, is the authority —
+and Step 4 sweeps every remaining numeric voicing in the engine into it,
+so the register becomes exhaustive by construction rather than by
+enumeration here:
 
 - Filter cutoff span 20 Hz–16 kHz (`exponentialTravel(p.cutoff, 20.0,
   16000.0)`, OQ-02).
@@ -134,6 +138,8 @@ register `Docs/open-questions.md` tracks each):
 - The RED NOISE process — a 1.5 Hz one-pole over white noise, restored by
   18× gain and clipped (OQ-17); the manual anchors only "continuous slow
   random".
+- The Shaper SHAPE endpoint split (rise fraction `0.05 + 0.9·travel`,
+  OQ-18) and the master volume's square-of-travel taper (OQ-19).
 - The noise pinking blend — the Kellet reference poles re-derived to
   physical frequencies, standing in for the unresolved network (OQ-15) —
   and the ~5 Hz output coupling corner (OQ-16).
@@ -185,13 +191,14 @@ settled by measurement and quoted.
   gate: first pin the environmental process from an independent source —
   the Spirit's own supply regulation from the service-manual drawings,
   or published enclosure-temperature measurements for comparable
-  instruments. If a defensible process exists, implement the derived
-  wander and A–Z it against no-drift (the 3340's specified stability at
-  face value); if none does, the step closes as "no drift", recorded with
-  the dead end. No scaled variants in either case — a multiplied number
-  would be fitting the depth by ear, which the listening-test rules
-  forbid. Verification: the derivation (or the dead end) quoted here; any
-  chosen letter recorded per the listening-test rules.
+  instruments. If a defensible process exists, the derived wander *ships
+  as the model*, with its uncertainty stated — the derivation decides,
+  and a listening preference may not overrule a measurable result; if no
+  defensible process can be established, the step closes as "no drift",
+  recorded with the dead end. No scaled variants and no A–Z between
+  derived and none — either would put an eared number where a derived
+  one belongs. Verification: the derivation (or the dead end) quoted
+  here.
 - [ ] **Step 3 — The resonance limiter's real characteristic.** What
   bounds self-oscillation in the hardware is the *external* BA130
   anti-parallel "Hi-Q overload limiter" in the resonance path (anchored
@@ -219,8 +226,12 @@ settled by measurement and quoted.
   the CEM3350 datasheet's exponential-scale and mode figures; OQ-04's
   curvature read can be checked against the 556A application notes. Work
   each one: derive it, or demonstrate it is not derivable and leave it
-  voiced with the reason. Verification: the open-questions register
-  updated with the derivation or the dead end.
+  voiced with the reason. This step also sweeps `GhostEngine.cpp` end to
+  end for numeric voicings not yet in the register — taper shapes, stage
+  gains, thresholds — and registers each with a closure path, so the
+  register ends the step exhaustive by construction. Verification: the
+  open-questions register updated with each derivation, dead end, or new
+  entry.
 - [ ] **Step 5 — Zipper audit on the travels.** Panel travels apply at
   block boundaries (`setParameters` per block in
   `Source/PluginProcessor.cpp`), and every continuous travel is published
@@ -238,14 +249,9 @@ settled by measurement and quoted.
   offer recorded so it is not forgotten: the moment a trustworthy Spirit
   capture becomes available (a serviced unit, a museum recording session,
   a lent instrument), measure every hardware-closable entry the register
-  then holds — today that is all of OQ-01 through OQ-10 and OQ-12
-  through OQ-17: the wheel's real bend span, the actual pulse duties,
-  the envelope curvature and Shaper timings, the gate threshold, the
-  ring bleed, the glide capacitor, both filter spans, the cascade Q
-  split, both clipping stages, the tracking pivot, every wheel depth
-  including the wheel-end LFO rate, the noise blend, the output coupling
-  corner and the red-noise process — and re-voice against the
-  measurements. Until then
+  then holds and re-voice against the measurements. The register itself
+  is the checklist — deliberately not re-enumerated here, so entries
+  added after this plan was written are in scope automatically. Until then
   this step cannot start, and no constant is fitted to a YouTube demo's
   unknown signal chain.
 
