@@ -209,6 +209,12 @@ if(YOUKNOW106_BUILD_TOOLS)
     target_link_libraries(YouKnow106RenderSota PRIVATE YouKnow106DSP)
     target_compile_features(YouKnow106RenderSota PRIVATE cxx_std_20)
 
+    add_executable(YouKnow106RenderTanhAuditions
+        Tools/RenderTanhAuditions.cpp
+        Tools/RealismComparisonSupport.h)
+    target_link_libraries(YouKnow106RenderTanhAuditions PRIVATE YouKnow106DSP)
+    target_compile_features(YouKnow106RenderTanhAuditions PRIVATE cxx_std_20)
+
     add_executable(YouKnow106RenderFidelityFixes Tools/RenderFidelityFixes.cpp)
     target_link_libraries(YouKnow106RenderFidelityFixes PRIVATE YouKnow106DSP)
     target_compile_features(YouKnow106RenderFidelityFixes PRIVATE cxx_std_20)
@@ -371,6 +377,8 @@ if(YOUKNOW106_BUILD_TOOLS)
     if(MSVC)
         target_compile_options(YouKnow106RenderDemos PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderSota PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnow106RenderTanhAuditions
+            PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderFidelityFixes PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderRealismFixes PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderRealismComparison
@@ -401,6 +409,8 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106RenderDemos PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106RenderSota PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnow106RenderTanhAuditions PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106RenderFidelityFixes PRIVATE
             -Wall -Wextra -Wpedantic)

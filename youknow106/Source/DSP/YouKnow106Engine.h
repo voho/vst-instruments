@@ -22,6 +22,7 @@ enum class HighPassMode { Boost, One, Two, Three };
 enum class EnvPolarity { Normal, Inverted };
 enum class VcaMode { Envelope, Gate };
 enum class KeyMode { Poly1, Poly2, Unison };
+enum class VcfTanhMode { Exact = 0, Hermite512 = 1 };
 
 // The assign mode latched by the two momentary POLY buttons. A single press
 // selects that mode; pressing both selects Solo Unison. Firmware never leaves
@@ -137,6 +138,9 @@ struct EngineParameters
     static constexpr float calibrationCeiling = 2.0f;
     float chorusNoise { 1.0f };    // 1.0 is the modelled BBD noise floor.
     int polyphony { 6 };           // 6 is the hardware voice count.
+    // Numerical kernel only: Exact preserves the established sound and state;
+    // Hermite512 trades a bounded interpolation error for lower VCF CPU use.
+    VcfTanhMode vcfTanhMode { VcfTanhMode::Exact };
 
     // --- Optional physical-circuit mechanisms --------------------------------
     // Each is a card dispersion or an inherent non-linearity that the
@@ -1193,12 +1197,14 @@ private:
                       float headroom = otaHeadroomVolts,
                       bool enableEarlyEffect = true,
                       float calibration = 0.70f,
-                      const ControlTrajectory* trajectory = nullptr) noexcept;
+                      const ControlTrajectory* trajectory = nullptr,
+                      VcfTanhMode tanhMode = VcfTanhMode::Exact) noexcept;
 
         [[nodiscard]] static double reconstructInput(
             double current, const std::array<double, 3>& history,
             double intervalPosition) noexcept;
         [[nodiscard]] static double clampOmegaStep(double value) noexcept;
+        [[nodiscard]] static double hermite512Tanh(double value) noexcept;
     };
 
     // Exact continuous trajectory of one 522 us VCF hold over an internal

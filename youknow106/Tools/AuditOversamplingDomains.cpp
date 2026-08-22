@@ -40,6 +40,7 @@ using youknow106::ChorusMode;
 using youknow106::EngineParameters;
 using youknow106::HighPassMode;
 using youknow106::YouKnow106Engine;
+using youknow106::VcfTanhMode;
 using youknow106::oversampling_audit::DomainWorkCounters;
 
 constexpr int blockSize = 256;
@@ -76,9 +77,11 @@ constexpr std::array scenarios {
                "six-voice-full-mixer-chorus-ii", true },
 };
 
-EngineParameters parametersFor(ScenarioKind kind)
+EngineParameters parametersFor(ScenarioKind kind,
+                               VcfTanhMode tanhMode = VcfTanhMode::Exact)
 {
     EngineParameters parameters;
+    parameters.vcfTanhMode = tanhMode;
     // Match the engine suite's long-lived plainPatch fixture, except that the
     // audit exercises the shipped Unit Character setting rather than its
     // deliberately pristine Character-zero reference.
@@ -170,12 +173,13 @@ struct PreparedSnapshot
 };
 
 PreparedSnapshot prepareSnapshot(const Scenario& scenario, int sampleRate,
-                                 int requestedFactor)
+                                 int requestedFactor,
+                                 VcfTanhMode tanhMode = VcfTanhMode::Exact)
 {
     PreparedSnapshot snapshot;
     snapshot.engine.prepare(static_cast<double>(sampleRate), blockSize,
                             requestedFactor);
-    snapshot.engine.setParameters(parametersFor(scenario.kind));
+    snapshot.engine.setParameters(parametersFor(scenario.kind, tanhMode));
     if (scenario.holdChord)
         for (const int note : chordNotes)
             snapshot.engine.noteOn(note, 1.0f);
@@ -511,6 +515,88 @@ int printFingerprints()
     return 0;
 }
 
+[[maybe_unused]] int printTanhTimingReport()
+{
+    const CpuClock clock;
+    const double renderedSeconds = static_cast<double>(timingBlocks * blockSize)
+                                 / 48000.0;
+    std::cout << "protocol host_rate=48000 quality=4x block_size=" << blockSize
+              << " preroll_seconds=" << preRollSeconds
+              << " timed_blocks=" << timingBlocks
+              << " repetitions=" << timingRepetitions
+              << " order=paired-alternating snapshot_copy=outside-timer"
+              << " clock=" << clock.name()
+              << " hash=fnv1a64-raw-interleaved-f32\n";
+    std::cout << "schema tanh_timing scenario mode fingerprint median_cpu_ms"
+                 " min_cpu_ms mad_cpu_ms median_cpu_x_realtime\n";
+    std::cout << "schema tanh_speedup scenario exact_over_fast median min mad\n";
+
+    constexpr std::array modes { VcfTanhMode::Exact,
+                                 VcfTanhMode::Hermite512 };
+    constexpr std::array<std::string_view, modes.size()> modeNames {
+        "exact", "hermite512"
+    };
+
+    for (const auto& scenario : scenarios)
+    {
+        std::array<PreparedSnapshot, modes.size()> snapshots {
+            prepareSnapshot(scenario, 48000, 4, modes[0]),
+            prepareSnapshot(scenario, 48000, 4, modes[1])
+        };
+        for (const auto& snapshot : snapshots)
+            if (snapshot.factor != 4)
+                throw std::runtime_error(
+                    "48 kHz tanh audit did not resolve to 4x");
+
+        std::array<std::vector<double>, modes.size()> times;
+        std::array<std::vector<std::uint64_t>, modes.size()> hashes;
+        std::vector<double> speedups;
+        speedups.reserve(timingRepetitions);
+        for (auto& values : times)
+            values.reserve(timingRepetitions);
+        for (auto& values : hashes)
+            values.reserve(timingRepetitions);
+
+        for (int repetition = 0; repetition < timingRepetitions; ++repetition)
+        {
+            std::array<TimedRun, modes.size()> runs;
+            for (std::size_t step = 0; step < modes.size(); ++step)
+            {
+                const std::size_t mode = repetition % 2 == 0
+                                       ? step : modes.size() - 1 - step;
+                runs[mode] = renderTimed(snapshots[mode], clock);
+            }
+            for (std::size_t mode = 0; mode < modes.size(); ++mode)
+            {
+                times[mode].push_back(runs[mode].cpuSeconds);
+                hashes[mode].push_back(runs[mode].fingerprint);
+            }
+            speedups.push_back(runs[0].cpuSeconds
+                               / std::max(runs[1].cpuSeconds, 1.0e-12));
+        }
+
+        for (std::size_t mode = 0; mode < modes.size(); ++mode)
+        {
+            requireStableHash(hashes[mode], scenario.name, modeNames[mode]);
+            const auto summary = summarize(times[mode]);
+            std::cout << "tanh_timing " << scenario.name << " "
+                      << modeNames[mode] << " "
+                      << hexHash(hashes[mode].front()) << " " << std::fixed
+                      << std::setprecision(3)
+                      << summary.median * 1000.0 << " "
+                      << summary.minimum * 1000.0 << " "
+                      << summary.mad * 1000.0 << " "
+                      << summary.median / renderedSeconds << "\n";
+        }
+        const auto speedup = summarize(speedups);
+        std::cout << "tanh_speedup " << scenario.name
+                  << " exact-over-hermite512 " << std::fixed
+                  << std::setprecision(3) << speedup.median << " "
+                  << speedup.minimum << " " << speedup.mad << "\n";
+    }
+    return 0;
+}
+
 #if defined(YOUKNOW106_WORK_AUDIT)
 
 struct CounterCase
@@ -840,7 +926,7 @@ int runCounterAudit(bool selfTestOnly)
 void printUsage(const char* executable)
 {
     std::cout << "usage: " << executable
-              << " [--fingerprint|--self-test|--help]\n";
+              << " [--fingerprint|--tanh-benchmark|--self-test|--help]\n";
 }
 
 } // namespace
@@ -856,6 +942,15 @@ int main(int argc, char** argv)
         }
         if (argc == 2 && std::string_view(argv[1]) == "--fingerprint")
             return printFingerprints();
+        if (argc == 2 && std::string_view(argv[1]) == "--tanh-benchmark")
+        {
+#if defined(YOUKNOW106_WORK_AUDIT)
+            std::cerr << "--tanh-benchmark requires YouKnow106OversamplingAudit\n";
+            return 2;
+#else
+            return printTanhTimingReport();
+#endif
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--self-test")
         {
 #if defined(YOUKNOW106_WORK_AUDIT)

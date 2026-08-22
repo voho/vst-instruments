@@ -2128,6 +2128,102 @@ YouKnow106Engine::PwmHoldState YouKnow106Engine::exactPwmHoldEndpoint(
         pwmHoldCoefficients((1.0 - event) * duration));
 }
 
+namespace
+{
+constexpr std::size_t vcfTanhHermiteIntervals = 512;
+constexpr double vcfTanhHermiteLimit = 19.0;
+constexpr double vcfTanhHermiteWidth = vcfTanhHermiteLimit
+                                     / vcfTanhHermiteIntervals;
+constexpr double vcfTanhHermiteScale = vcfTanhHermiteIntervals
+                                     / vcfTanhHermiteLimit;
+
+struct VcfTanhHermiteCoefficient
+{
+    double constant {};
+    double linear {};
+    double quadratic {};
+    double cubic {};
+};
+
+// The table is built once, off the audio path, from libm's exact-mode values
+// and analytic slopes. Runtime work is one lookup and a cubic Horner chain.
+const std::array<VcfTanhHermiteCoefficient, vcfTanhHermiteIntervals>
+    vcfTanhHermiteTable = [] {
+        struct Node
+        {
+            double value {};
+            double slope {};
+        };
+        std::array<Node, vcfTanhHermiteIntervals + 1u> nodes {};
+        for (std::size_t index = 0; index < nodes.size(); ++index)
+        {
+            const double value = std::tanh(
+                vcfTanhHermiteWidth * static_cast<double>(index));
+            nodes[index] = { value, 1.0 - value * value };
+        }
+        for (std::size_t index = 0; index < vcfTanhHermiteIntervals; ++index)
+            if (nodes[index + 1u].value == nodes[index].value)
+            {
+                nodes[index].slope = 0.0;
+                nodes[index + 1u].slope = 0.0;
+            }
+
+        std::array<VcfTanhHermiteCoefficient,
+                   vcfTanhHermiteIntervals> table {};
+        for (std::size_t index = 0; index < table.size(); ++index)
+        {
+            const Node left = nodes[index];
+            const Node right = nodes[index + 1u];
+            // Once adjacent exact-mode nodes round to the same double, the
+            // representable function is flat. Their shared node slopes were
+            // zeroed above so neighbouring intervals meet it continuously;
+            // make the plateau itself explicit too.
+            if (right.value == left.value)
+            {
+                table[index] = { left.value, 0.0, 0.0, 0.0 };
+                continue;
+            }
+            const double delta = right.value - left.value;
+            const double leftSlope = vcfTanhHermiteWidth * left.slope;
+            const double rightSlope = vcfTanhHermiteWidth * right.slope;
+            table[index] = {
+                left.value,
+                leftSlope,
+                3.0 * delta - 2.0 * leftSlope - rightSlope,
+                -2.0 * delta + leftSlope + rightSlope
+            };
+        }
+        return table;
+    }();
+} // namespace
+
+double YouKnow106Engine::OtaCascade::hermite512Tanh(double value) noexcept
+{
+    if (std::isnan(value))
+        return value;
+
+    const double magnitude = std::abs(value);
+    // Avoid a standalone-engine denormal slow path. The table polynomial is
+    // bit-identical to x at DBL_MIN, so this joins without the downward seam a
+    // wider exact-linear shortcut would create.
+    if (magnitude < std::numeric_limits<double>::min())
+        return value;
+    if (magnitude >= vcfTanhHermiteLimit)
+        return std::copysign(1.0, value);
+
+    const double position = magnitude * vcfTanhHermiteScale;
+    const std::size_t interval = std::min(
+        static_cast<std::size_t>(position),
+        vcfTanhHermiteIntervals - 1u);
+    const double fraction = position - static_cast<double>(interval);
+    const auto& coefficient = vcfTanhHermiteTable[interval];
+    const double result = ((coefficient.cubic * fraction
+                          + coefficient.quadratic) * fraction
+                          + coefficient.linear) * fraction
+                          + coefficient.constant;
+    return std::copysign(result, value);
+}
+
 // Advance the continuous four-stage OTA equations over one internal interval.
 // Two fixed half-interval Merson steps use five right-hand-side evaluations
 // each. The only circuit state is capacitor voltage, and the causal cubic
@@ -2139,7 +2235,8 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
                                             float headroom,
                                             bool enableEarlyEffect,
                                             float calibration,
-                                            const ControlTrajectory* trajectory) noexcept
+                                            const ControlTrajectory* trajectory,
+                                            VcfTanhMode tanhMode) noexcept
 {
 #if defined(YOUKNOW106_WORK_AUDIT)
     YOUKNOW106_COUNT_DOMAIN_WORK(vcfSteps, 1);
@@ -2251,40 +2348,6 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
         }
     }
 
-    const auto derivative = [&](const std::array<double, 4>& value,
-                                double drive, std::size_t point) {
-        std::array<double, 4> result {};
-        const double runningHeadroom = headroomAt[point];
-#if defined(YOUKNOW106_WORK_AUDIT)
-        YOUKNOW106_COUNT_DOMAIN_WORK(vcfRhsEvaluations, 1);
-        YOUKNOW106_COUNT_DOMAIN_WORK(vcfFeedbackEvaluations, 1);
-        if (enableEarlyEffect && currentCalibration > 0.0)
-            YOUKNOW106_COUNT_DOMAIN_WORK(vcfEarlyEvaluations,
-                                         result.size());
-#endif
-        double previous = drive - feedbackAt[point] * feedbackHeadroom
-            * std::tanh(value[3] / feedbackHeadroom);
-        for (std::size_t stage = 0; stage < result.size(); ++stage)
-        {
-#if defined(YOUKNOW106_WORK_AUDIT)
-            YOUKNOW106_COUNT_DOMAIN_WORK(vcfStageEvaluations, 1);
-#endif
-            const double early = enableEarlyEffect
-                    && currentCalibration > 0.0
-                ? 1.0 + static_cast<double>(otaEarlyEffectCoefficient)
-                    * currentCalibration
-                    * std::tanh(value[stage] / runningHeadroom)
-                : 1.0;
-            result[stage] = omegaAt[point]
-                * static_cast<double>(gScale[stage])
-                * early * runningHeadroom
-                * std::tanh((previous - value[stage]
-                             + static_cast<double>(offsetVoltage[stage]))
-                            / runningHeadroom);
-            previous = value[stage];
-        }
-        return result;
-    };
     const auto advanceOne = [](const std::array<double, 4>& origin,
                                const std::array<double, 4>& slope,
                                double distance) {
@@ -2315,30 +2378,82 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
         return result;
     };
 
-    for (int step = 0; step < integrationSubsteps; ++step)
-    {
+    const auto integrate = [&](const auto& nonlinear) {
+        const auto derivative = [&](const std::array<double, 4>& value,
+                                    double drive, std::size_t point) {
+            std::array<double, 4> result {};
+            const double runningHeadroom = headroomAt[point];
 #if defined(YOUKNOW106_WORK_AUDIT)
-        YOUKNOW106_COUNT_DOMAIN_WORK(vcfIntegrationSubsteps, 1);
+            YOUKNOW106_COUNT_DOMAIN_WORK(vcfRhsEvaluations, 1);
+            YOUKNOW106_COUNT_DOMAIN_WORK(vcfFeedbackEvaluations, 1);
+            if (enableEarlyEffect && currentCalibration > 0.0)
+                YOUKNOW106_COUNT_DOMAIN_WORK(vcfEarlyEvaluations,
+                                             result.size());
 #endif
-        const std::size_t origin = static_cast<std::size_t>(3 * step);
-        const auto k1 = derivative(state, inputAt[origin], origin);
-        const auto k2 = derivative(
-            advanceOne(state, k1, substep / 3.0),
-            inputAt[origin + 1u], origin + 1u);
-        const auto k3 = derivative(
-            advanceTwo(state, substep, k1, 1.0 / 6.0,
-                       k2, 1.0 / 6.0),
-            inputAt[origin + 1u], origin + 1u);
-        const auto k4 = derivative(
-            advanceTwo(state, substep, k1, 1.0 / 8.0,
-                       k3, 3.0 / 8.0),
-            inputAt[origin + 2u], origin + 2u);
-        const auto k5 = derivative(
-            advanceThree(state, substep, k1, 1.0 / 2.0,
-                         k3, -3.0 / 2.0, k4, 2.0),
-            inputAt[origin + 3u], origin + 3u);
-        state = advanceThree(state, substep, k1, 1.0 / 6.0,
-                             k4, 2.0 / 3.0, k5, 1.0 / 6.0);
+            double previous = drive - feedbackAt[point] * feedbackHeadroom
+                * nonlinear(value[3] / feedbackHeadroom);
+            for (std::size_t stage = 0; stage < result.size(); ++stage)
+            {
+#if defined(YOUKNOW106_WORK_AUDIT)
+                YOUKNOW106_COUNT_DOMAIN_WORK(vcfStageEvaluations, 1);
+#endif
+                const double early = enableEarlyEffect
+                        && currentCalibration > 0.0
+                    ? 1.0 + static_cast<double>(otaEarlyEffectCoefficient)
+                        * currentCalibration
+                        * nonlinear(value[stage] / runningHeadroom)
+                    : 1.0;
+                result[stage] = omegaAt[point]
+                    * static_cast<double>(gScale[stage])
+                    * early * runningHeadroom
+                    * nonlinear((previous - value[stage]
+                                 + static_cast<double>(offsetVoltage[stage]))
+                                / runningHeadroom);
+                previous = value[stage];
+            }
+            return result;
+        };
+
+        for (int step = 0; step < integrationSubsteps; ++step)
+        {
+#if defined(YOUKNOW106_WORK_AUDIT)
+            YOUKNOW106_COUNT_DOMAIN_WORK(vcfIntegrationSubsteps, 1);
+#endif
+            const std::size_t origin = static_cast<std::size_t>(3 * step);
+            const auto k1 = derivative(state, inputAt[origin], origin);
+            const auto k2 = derivative(
+                advanceOne(state, k1, substep / 3.0),
+                inputAt[origin + 1u], origin + 1u);
+            const auto k3 = derivative(
+                advanceTwo(state, substep, k1, 1.0 / 6.0,
+                           k2, 1.0 / 6.0),
+                inputAt[origin + 1u], origin + 1u);
+            const auto k4 = derivative(
+                advanceTwo(state, substep, k1, 1.0 / 8.0,
+                           k3, 3.0 / 8.0),
+                inputAt[origin + 2u], origin + 2u);
+            const auto k5 = derivative(
+                advanceThree(state, substep, k1, 1.0 / 2.0,
+                             k3, -3.0 / 2.0, k4, 2.0),
+                inputAt[origin + 3u], origin + 3u);
+            state = advanceThree(state, substep, k1, 1.0 / 6.0,
+                                 k4, 2.0 / 3.0, k5, 1.0 / 6.0);
+        }
+    };
+
+    switch (tanhMode)
+    {
+        case VcfTanhMode::Hermite512:
+            integrate([](double value) noexcept {
+                return OtaCascade::hermite512Tanh(value);
+            });
+            break;
+        case VcfTanhMode::Exact:
+        default:
+            integrate([](double value) noexcept {
+                return std::tanh(value);
+            });
+            break;
     }
 
     for (std::size_t point = inputHistory.size() - 1u; point > 0u; --point)
@@ -3117,6 +3232,9 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
                            : 0.0f;
     result.keyTranspose = std::clamp(result.keyTranspose, -12, 12);
     result.polyphony = std::clamp(result.polyphony, 1, maxVoices);
+    if (result.vcfTanhMode != VcfTanhMode::Exact
+        && result.vcfTanhMode != VcfTanhMode::Hermite512)
+        result.vcfTanhMode = VcfTanhMode::Exact;
     return result;
 }
 
@@ -5023,7 +5141,7 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     const float filtered = voice.filter.process(
         filterInput, effectiveFilterOmegaStep, voice.feedback,
         dynamicHeadroom, parameters.enableVcfEarlyEffect,
-        parameters.calibration, controlTrajectory);
+        parameters.calibration, controlTrajectory, parameters.vcfTanhMode);
 
     // C59 stands between pin 3 VCF OUT and pin 9 VCA IN, so the amplifier
     // never sees the filter's DC. The cascade makes DC of its own: the stage

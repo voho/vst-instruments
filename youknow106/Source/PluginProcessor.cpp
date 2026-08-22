@@ -13,7 +13,7 @@ namespace
 using namespace youknow106;
 
 constexpr auto stateSchemaVersionProperty = "stateSchemaVersion";
-constexpr int currentStateSchemaVersion = 3;
+constexpr int currentStateSchemaVersion = 4;
 constexpr int calibrationDefaultSchemaVersion = 1;
 constexpr int originalFactoryBankSchemaVersion = 3;
 constexpr float legacyCalibrationDefault = 0.35f;
@@ -584,6 +584,14 @@ YouKnow106AudioProcessor::createParameterLayout()
         choiceForOversamplingFactor (2),
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
+    // This is an engine policy, not a patch control. Exact is ordinal zero so
+    // older states filled from the layout default remain bit-compatible. Keep
+    // published ordinals stable: session state stores the choice index.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { vcfTanhMode, 4 }, "VCF Tanh",
+        juce::StringArray { "Exact", "Fast (Hermite 512)" }, 0,
+        juce::AudioParameterChoiceAttributes().withAutomatable (false)));
+
     return layout;
 }
 
@@ -637,7 +645,8 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
         { ParameterIndex::chorusI, chorusI },
         { ParameterIndex::chorusII, chorusII },
         { ParameterIndex::legacyHq, legacyHq },
-        { ParameterIndex::quality, quality }
+        { ParameterIndex::quality, quality },
+        { ParameterIndex::vcfTanhMode, vcfTanhMode }
     });
 
     static_assert (bindings.size() == parameterPointerCount);
@@ -915,6 +924,8 @@ bool YouKnow106AudioProcessor::updateEngineParameters() noexcept
     engineParameters.calibration = valueOf (P::calibration);
     engineParameters.chorusNoise = valueOf (P::chorusNoise);
     engineParameters.polyphony = juce::roundToInt (valueOf (P::polyphony));
+    engineParameters.vcfTanhMode = static_cast<VcfTanhMode> (
+        choiceOf (P::vcfTanhMode, vcfTanhChoiceCount - 1));
 
     // If a recall began while these atomics were being gathered, keep the
     // previous engine snapshot for this block. The next one will see the whole
@@ -1522,10 +1533,10 @@ void YouKnow106AudioProcessor::randomizeParameters (float amount)
 
     using namespace youknow106::parameters;
     // Deliberately sound-design controls only. Main volume, voice count,
-    // oversampling, and the two controls that describe the *instrument* rather
-    // than the patch — Unit Character and Chorus Noise — are excluded. Stored VCA
-    // LEVEL remains included because it is the hardware's per-patch balance
-    // trim, not the player's output-volume control.
+    // oversampling, the VCF numerical kernel, and the two controls that describe
+    // the *instrument* rather than the patch — Unit Character and Chorus Noise —
+    // are excluded. Stored VCA LEVEL remains included because it is the
+    // hardware's per-patch balance trim, not the player's output-volume control.
     static constexpr auto soundParameterIds = std::to_array<const char*> ({
         benderDco, benderVcf, benderLfo, portamento, poly1, poly2,
         lfoRate, lfoDelay,
@@ -1827,8 +1838,8 @@ bool YouKnow106AudioProcessor::currentProgramIsEdited() const
         || differs (valueOf (velocity), expected.velocity)
         || differs (valueOf (calibration), expected.calibration)
         || differs (valueOf (chorusNoise), expected.chorusNoise)
-        // Quality is deliberately absent: it is not part of a preset, so it
-        // cannot mark one as edited.
+        // Numerical quality settings are deliberately absent: they are not
+        // part of a preset, so they cannot mark one as edited.
         || juce::roundToInt (valueOf (polyphony)) != expected.polyphony;
 }
 
@@ -1934,7 +1945,8 @@ void YouKnow106AudioProcessor::applyProgramValues (
     set (calibration, controls.calibration);
     set (chorusNoise, controls.chorusNoise);
     set (polyphony, static_cast<float> (controls.polyphony));
-    // Quality is deliberately not recalled: see Preset::Controls.
+    // Numerical quality settings are deliberately not recalled: see
+    // Preset::Controls.
 
     applyPatchValues (patch);
 }

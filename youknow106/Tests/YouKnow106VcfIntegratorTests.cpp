@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -101,6 +102,11 @@ struct YouKnow106TestAccess
     static double clampOmegaStep(double value) noexcept
     {
         return Cascade::clampOmegaStep(value);
+    }
+
+    static double hermite512Tanh(double value) noexcept
+    {
+        return Cascade::hermite512Tanh(value);
     }
 
     static std::array<float, 4> maximumCharacterCardScales(
@@ -219,6 +225,147 @@ void expectNear(double actual, double expected, double tolerance,
     expect(std::isfinite(actual) && std::abs(actual - expected) <= tolerance,
            message + ": got " + std::to_string(actual)
                + ", expected " + std::to_string(expected));
+}
+
+void testHermite512TanhKernelAndDispatch()
+{
+    expect(youknow106::EngineParameters {}.vcfTanhMode
+               == youknow106::VcfTanhMode::Exact,
+           "EngineParameters no longer defaults the VCF tanh mode to exact");
+
+    const double positiveZero = Access::hermite512Tanh(0.0);
+    const double negativeZero = Access::hermite512Tanh(-0.0);
+    expect(positiveZero == 0.0 && !std::signbit(positiveZero)
+               && negativeZero == 0.0 && std::signbit(negativeZero),
+           "Hermite512 tanh does not preserve signed zero");
+
+    const double minimumNormal = std::numeric_limits<double>::min();
+    const double largestSubnormal = std::nextafter(minimumNormal, 0.0);
+    const double aboveMinimumNormal = std::nextafter(
+        minimumNormal, std::numeric_limits<double>::infinity());
+    for (const double magnitude : {
+             std::numeric_limits<double>::denorm_min(), largestSubnormal })
+        for (const double value : { magnitude, -magnitude })
+            expect(std::bit_cast<std::uint64_t>(Access::hermite512Tanh(value))
+                       == std::bit_cast<std::uint64_t>(value),
+                   "Hermite512 tanh does not preserve a subnormal input");
+    expect(Access::hermite512Tanh(largestSubnormal)
+               <= Access::hermite512Tanh(minimumNormal)
+               && Access::hermite512Tanh(minimumNormal)
+                      <= Access::hermite512Tanh(aboveMinimumNormal),
+           "Hermite512 tanh is not monotone at the subnormal bypass boundary");
+
+    constexpr double nearZero = 1.0e-8;
+    expect(std::abs(Access::hermite512Tanh(nearZero) / nearZero - 1.0)
+               <= 2.0e-12,
+           "Hermite512 tanh lost unit slope near zero");
+
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    expect(std::isnan(Access::hermite512Tanh(nan))
+               && std::isnan(Access::hermite512Tanh(-nan)),
+           "Hermite512 tanh does not propagate NaN");
+    for (double value : { 19.0, 20.0,
+                          std::numeric_limits<double>::infinity() })
+    {
+        expect(Access::hermite512Tanh(value) == 1.0
+                   && Access::hermite512Tanh(-value) == -1.0,
+               "Hermite512 tanh does not saturate explicitly at +/-19");
+    }
+
+    constexpr int divisions = 1000000;
+    constexpr double limit = 19.0;
+    double maximumError = 0.0;
+    double errorArgument = 0.0;
+    double previous = 0.0;
+    bool finiteAndBounded = true;
+    bool monotone = true;
+    bool odd = true;
+    for (int point = 0; point <= divisions; ++point)
+    {
+        const double argument = limit * static_cast<double>(point)
+                              / static_cast<double>(divisions);
+        const double actual = Access::hermite512Tanh(argument);
+        const double negative = Access::hermite512Tanh(-argument);
+        const double error = std::abs(actual - std::tanh(argument));
+        if (error > maximumError)
+        {
+            maximumError = error;
+            errorArgument = argument;
+        }
+        finiteAndBounded = finiteAndBounded
+            && std::isfinite(actual) && actual >= 0.0 && actual <= 1.0;
+        monotone = monotone && actual >= previous;
+        odd = odd && negative == -actual;
+        previous = actual;
+    }
+    expect(finiteAndBounded,
+           "Hermite512 tanh escaped its finite unit bounds");
+    expect(monotone, "Hermite512 tanh is not monotone on [0, 19]");
+    expect(odd, "Hermite512 tanh is not exactly odd");
+    expect(maximumError <= 2.1e-8,
+           "Hermite512 tanh exceeds its dense-grid error bound: "
+               + std::to_string(maximumError));
+    std::cout << "Hermite512 tanh dense maximum error: "
+              << maximumError << " at x=" << errorArgument << '\n';
+
+    for (int node = 0; node <= 512; ++node)
+    {
+        const double argument = limit * static_cast<double>(node) / 512.0;
+        expectNear(Access::hermite512Tanh(argument), std::tanh(argument),
+                   2.0e-15, "Hermite512 tanh misses an exact table node");
+        if (node > 0 && node < 512)
+        {
+            const double left = std::nextafter(argument, 0.0);
+            const double right = std::nextafter(
+                argument, std::numeric_limits<double>::infinity());
+            expect(Access::hermite512Tanh(left)
+                       <= Access::hermite512Tanh(argument)
+                       && Access::hermite512Tanh(argument)
+                              <= Access::hermite512Tanh(right),
+                   "Hermite512 tanh is not monotone across a table boundary");
+        }
+    }
+
+    // A former exact-linear shortcut ended immediately below this value and
+    // created a tiny downward step that the uniform dense grid did not sample.
+    // Keep an explicit neighbour check at the retired seam as a regression.
+    constexpr double retiredLinearSeam = 1.0e-4;
+    expect(Access::hermite512Tanh(std::nextafter(retiredLinearSeam, 0.0))
+               <= Access::hermite512Tanh(retiredLinearSeam)
+               && Access::hermite512Tanh(retiredLinearSeam)
+                      <= Access::hermite512Tanh(std::nextafter(
+                          retiredLinearSeam,
+                          std::numeric_limits<double>::infinity())),
+           "Hermite512 tanh is not monotone at the retired tiny-input seam");
+
+    Cascade exact;
+    Cascade approximate;
+    exact.reset();
+    approximate.reset();
+    Access::setState(exact, { 0.6, -0.4, 0.2, -0.1 });
+    Access::setState(approximate, { 0.6, -0.4, 0.2, -0.1 });
+    double maximumStateDifference = 0.0;
+    for (int sample = 0; sample < 2048; ++sample)
+    {
+        const float input = 2.8f
+            * std::sin(0.17f * static_cast<float>(sample));
+        exact.process(input, 1.7f, 4.5f,
+                      static_cast<float>(Access::headroom()), true, 1.0f,
+                      nullptr, youknow106::VcfTanhMode::Exact);
+        approximate.process(input, 1.7f, 4.5f,
+                            static_cast<float>(Access::headroom()), true,
+                            1.0f, nullptr,
+                            youknow106::VcfTanhMode::Hermite512);
+        for (std::size_t stage = 0; stage < Access::state(exact).size(); ++stage)
+        {
+            maximumStateDifference = std::max(
+                maximumStateDifference,
+                std::abs(Access::state(exact)[stage]
+                         - Access::state(approximate)[stage]));
+        }
+    }
+    expect(maximumStateDifference > 0.0,
+           "VCF tanh mode selector did not reach the nonlinear solver");
 }
 
 template <typename Function>
@@ -733,7 +880,8 @@ void testProductGridOmegaCapAndThermalContainment()
            "six-card thermal fixture no longer exercises cap containment");
 }
 
-void testHighGStabilityAndRecovery()
+void testHighGStabilityAndRecovery(youknow106::VcfTanhMode tanhMode,
+                                   const char* modeName)
 {
     const float maximumReachableOmega =
         static_cast<float>(Access::maximumOmegaStep());
@@ -763,7 +911,8 @@ void testHighGStabilityAndRecovery()
                     const double output = belowThreshold.process(
                         0.0f, maximumReachableOmega, feedback,
                         cardHeadroom, true,
-                        static_cast<float>(Access::calibrationCeiling()));
+                        static_cast<float>(Access::calibrationCeiling()),
+                        nullptr, tanhMode);
                     if (sample >= 22000)
                     {
                         tailMinimum = std::min(tailMinimum, output);
@@ -776,11 +925,13 @@ void testHighGStabilityAndRecovery()
                        "Merson creates a false cap-frequency limit cycle on card "
                            + std::to_string(card) + " at k="
                            + std::to_string(feedback) + " warmup="
-                           + std::to_string(warmupFraction));
+                           + std::to_string(warmupFraction) + " in "
+                           + modeName + " tanh mode");
             }
         }
     }
-    std::cout << "VCF Merson worst six-card cold/warm cap tail motion: "
+    std::cout << "VCF Merson " << modeName
+              << " worst six-card cold/warm cap tail motion: "
               << worstStableTail << " V\n";
 
     Cascade hostile;
@@ -797,13 +948,17 @@ void testHighGStabilityAndRecovery()
         }[static_cast<std::size_t>(sample) % 3u];
         const float input = 3.0f
             * std::sin(0.31f * static_cast<float>(sample));
-        const double output = hostile.process(input, omega, feedback);
+        const double output = hostile.process(
+            input, omega, feedback, static_cast<float>(Access::headroom()),
+            true, 0.70f, nullptr, tanhMode);
         peak = std::max(peak, std::abs(output));
         expect(std::isfinite(output),
-               "Merson emitted a non-finite hostile-control sample");
+               std::string("Merson emitted a non-finite hostile-control sample in ")
+                   + modeName + " tanh mode");
     }
     expect(peak < 16.0,
-           "Merson exceeded its circuit-scale hostile-control bound");
+           std::string("Merson exceeded its circuit-scale hostile-control bound in ")
+               + modeName + " tanh mode");
 
     Cascade sanitised;
     sanitised.reset();
@@ -811,17 +966,23 @@ void testHighGStabilityAndRecovery()
         std::numeric_limits<float>::quiet_NaN(),
         std::numeric_limits<float>::infinity(),
         std::numeric_limits<float>::quiet_NaN(),
-        std::numeric_limits<float>::quiet_NaN());
+        std::numeric_limits<float>::quiet_NaN(), true, 0.70f,
+        nullptr, tanhMode);
     expect(std::isfinite(nonFinite),
-           "Merson does not sanitise non-finite input and controls");
+           std::string("Merson does not sanitise non-finite input and controls in ")
+               + modeName + " tanh mode");
     Access::setState(sanitised, { 128.0, 0.0, 0.0, 0.0 });
-    const float recovered = sanitised.process(0.0f, 1.0f, 0.0f);
+    const float recovered = sanitised.process(
+        0.0f, 1.0f, 0.0f, static_cast<float>(Access::headroom()),
+        true, 0.70f, nullptr, tanhMode);
     expect(recovered == 0.0f,
-           "Merson does not recover an impossible capacitor state");
+           std::string("Merson does not recover an impossible capacitor state in ")
+               + modeName + " tanh mode");
     expect(std::all_of(Access::state(sanitised).begin(),
                        Access::state(sanitised).end(),
                        [](double state) { return state == 0.0; }),
-           "Merson recovery did not clear the whole coupled cascade");
+           std::string("Merson recovery did not clear the whole coupled cascade in ")
+               + modeName + " tanh mode");
 }
 
 void testCalibrationAndTrajectoryNonFiniteGuards()
@@ -996,6 +1157,7 @@ int main()
     expect(Access::integrationSubsteps() == 2
                && Access::rhsEvaluationsPerInterval() == 10,
            "production VCF work is no longer fixed Merson x2 / 10 RHS");
+    testHermite512TanhKernelAndDispatch();
     testCausalCubicContracts();
     testExactFractionalVcfHoldTrajectory();
     testExplicitControlTrajectoryVisitsEveryMersonNode();
@@ -1003,7 +1165,10 @@ int main()
     testIntegratorAgainstIndependentReference();
     testRapidControlAlternationAgainstIndependentReference();
     testProductGridOmegaCapAndThermalContainment();
-    testHighGStabilityAndRecovery();
+    testHighGStabilityAndRecovery(
+        youknow106::VcfTanhMode::Exact, "exact");
+    testHighGStabilityAndRecovery(
+        youknow106::VcfTanhMode::Hermite512, "Hermite512");
     testCalibrationAndTrajectoryNonFiniteGuards();
     testRetimePreservesPhysicalState();
 

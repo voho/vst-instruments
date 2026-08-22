@@ -70,6 +70,10 @@ inline constexpr auto polyphony    = "polyphony";
 // Internal-rate quality ladder: 1x, 2x, 4x. The earlier two-state `hq` id must
 // remain registered so Audio Unit parameter indices and old sessions survive.
 inline constexpr auto quality      = "quality";
+// Numerical kernel used only by the hot nonlinear VCF solver. Exact remains
+// the compatibility default; alternatives are persisted as a machine setting,
+// not stored in hardware patches or SysEx.
+inline constexpr auto vcfTanhMode  = "vcfTanhMode";
 inline constexpr auto legacyHq     = "hq";
 } // namespace parameters
 

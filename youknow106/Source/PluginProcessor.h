@@ -186,6 +186,7 @@ public:
     // restating it, so a rung added there appears on the panel by itself.
     static constexpr int qualityChoiceCount = static_cast<int> (
         youknow106::YouKnow106Engine::oversampleFactors.size());
+    static constexpr int vcfTanhChoiceCount = 2;
     static constexpr int oversamplingFactorForChoice (int choice) noexcept
     {
         return youknow106::YouKnow106Engine::oversampleFactors[
@@ -280,7 +281,7 @@ private:
     };
     // Direct indices for the audio-thread snapshot. The constructor binds each
     // index explicitly; cold callers retain valueOf(id), while processBlock
-    // avoids searching that table forty-one times per callback.
+    // avoids searching that table for every parameter on each callback.
     enum class ParameterIndex : std::size_t
     {
         volume,
@@ -325,6 +326,7 @@ private:
         chorusII,
         legacyHq,
         quality,
+        vcfTanhMode,
         count
     };
     static constexpr std::size_t parameterPointerCount =

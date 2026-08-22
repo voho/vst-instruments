@@ -129,6 +129,7 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::polyphony,   6.0f,   1.0e-5f },
     { parameters::legacyHq,    1.0f,   1.0e-5f },
     { parameters::quality,     1.0f,   1.0e-5f },
+    { parameters::vcfTanhMode, 0.0f,   1.0e-5f },
 });
 
 float parameterValue (const YouKnow106AudioProcessor& processor, const char* id)
@@ -486,7 +487,7 @@ void testParameterContract()
         return static_cast<juce::uint32> (a->paramID.hashCode())
              < static_cast<juce::uint32> (b->paramID.hashCode());
     });
-    expect (auParameters.size() == historicalAuOrder.size() + 1,
+    expect (auParameters.size() == historicalAuOrder.size() + 2,
             "the Audio Unit parameter contract has an unexpected size");
     for (std::size_t index = 0;
          index < historicalAuOrder.size() && index < auParameters.size(); ++index)
@@ -500,8 +501,19 @@ void testParameterContract()
     {
         expect (quality->getVersionHint() == 3,
                 "Quality was not appended after both historical AU layouts");
-        expect (! auParameters.empty() && auParameters.back() == quality,
-                "Quality is not the final Audio Unit parameter");
+        expect (auParameters.size() >= 2
+                    && auParameters[auParameters.size() - 2] == quality,
+                "Quality moved from its appended Audio Unit position");
+    }
+    if (const auto* vcfTanh = processor.parameters.getParameter (
+            parameters::vcfTanhMode))
+    {
+        expect (vcfTanh->getVersionHint() == 4,
+                "VCF Tanh was not appended after the quality ladder");
+        expect (! auParameters.empty() && auParameters.back() == vcfTanh,
+                "VCF Tanh is not the final Audio Unit parameter");
+        expect (! vcfTanh->isAutomatable(),
+                "VCF Tanh is offered to the host as automatable");
     }
 }
 
@@ -902,6 +914,59 @@ void testDeferredQualitySwitchIsNotAutomatable()
                 "the deferred quality switch is offered to the host as automatable");
 }
 
+void testVcfTanhSelectorDrivesTheEngine()
+{
+    YouKnow106AudioProcessor exact;
+    YouKnow106AudioProcessor hermite;
+    const auto configure = [] (YouKnow106AudioProcessor& processor,
+                               float tanhChoice)
+    {
+        setParameterValue (processor, parameters::quality, 0.0f);
+        setParameterValue (processor, parameters::vcfTanhMode, tanhChoice);
+        setParameterValue (processor, parameters::polyphony, 1.0f);
+        setParameterValue (processor, parameters::cutoff, 0.72f);
+        setParameterValue (processor, parameters::resonance, 1.0f);
+        setParameterValue (processor, parameters::calibration, 1.0f);
+        setParameterValue (processor, parameters::chorusI, 0.0f);
+        setParameterValue (processor, parameters::chorusII, 0.0f);
+        setParameterValue (processor, parameters::chorusNoise, 0.0f);
+        processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+        processor.prepareToPlay (sampleRate, blockSize);
+    };
+    configure (exact, 0.0f);
+    configure (hermite, 1.0f);
+
+    float peak = 0.0f;
+    float maximumDifference = 0.0f;
+    for (int block = 0; block < 48; ++block)
+    {
+        juce::AudioBuffer<float> exactAudio (2, blockSize);
+        juce::AudioBuffer<float> hermiteAudio (2, blockSize);
+        juce::MidiBuffer exactMidi;
+        juce::MidiBuffer hermiteMidi;
+        if (block == 0)
+        {
+            exactMidi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+            hermiteMidi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+        }
+        exact.processBlock (exactAudio, exactMidi);
+        hermite.processBlock (hermiteAudio, hermiteMidi);
+        expect (bufferIsFinite (exactAudio) && bufferIsFinite (hermiteAudio),
+                "a VCF tanh selector path emitted non-finite audio");
+        peak = std::max ({ peak, bufferPeak (exactAudio),
+                          bufferPeak (hermiteAudio) });
+        maximumDifference = std::max (
+            maximumDifference,
+            maximumBufferDifference (exactAudio, hermiteAudio));
+    }
+    expect (peak > 1.0e-4f,
+            "the VCF tanh selector fixture produced silence");
+    expect (maximumDifference > 0.0f,
+            "the VCF Tanh parameter did not reach the engine");
+    exact.releaseResources();
+    hermite.releaseResources();
+}
+
 void testAllNotesOffReleasesAndAllSoundOffCuts()
 {
     YouKnow106AudioProcessor processor;
@@ -1275,12 +1340,13 @@ void testStateRoundTripAndMigration()
     setParameterValue (source, parameters::chorusII, 1.0f);
     setParameterValue (source, parameters::range, 0.0f);
     setParameterValue (source, parameters::calibration, 0.17f);
+    setParameterValue (source, parameters::vcfTanhMode, 1.0f);
 
-    const auto removeCalibration = [] (juce::ValueTree& state)
+    const auto removeParameter = [] (juce::ValueTree& state, const char* id)
     {
         for (int index = state.getNumChildren(); --index >= 0;)
             if (state.getChild (index).getProperty ("id").toString()
-                    == parameters::calibration)
+                    == id)
                 state.removeChild (index, nullptr);
     };
 
@@ -1312,6 +1378,9 @@ void testStateRoundTripAndMigration()
     expect (std::abs (parameterValue (destination, parameters::volume) - 0.50f)
                 < 1.0e-4f,
             "a current loaded-law Volume value was incorrectly migrated");
+    expect (std::abs (parameterValue (destination, parameters::vcfTanhMode) - 1.0f)
+                < 1.0e-4f,
+            "the VCF tanh choice did not survive a state round trip");
 
     // A host may write any normalised float even to a switch. Keep the public
     // parameter value on a legal endpoint so saving and restoring an unchanged
@@ -1349,7 +1418,7 @@ void testStateRoundTripAndMigration()
     // A schema-less state written before Calibration existed keeps the legacy
     // 35% sound. This is deliberately not the new parameter's default.
     auto trimmed = legacyExplicit.createCopy();
-    removeCalibration (trimmed);
+    removeParameter (trimmed, parameters::calibration);
 
     juce::MemoryBlock legacy;
     if (serialise (trimmed, legacy))
@@ -1378,7 +1447,7 @@ void testStateRoundTripAndMigration()
     {
         auto currentMissing = juce::ValueTree::fromXml (*savedXml);
         expect (static_cast<int> (currentMissing.getProperty (
-                    "stateSchemaVersion", 0)) == 3,
+                    "stateSchemaVersion", 0)) == 4,
                 "a current saved state has no Unit Character schema marker");
 
         // Schema 1 used a squared Volume law after the old unloaded coupling
@@ -1409,7 +1478,29 @@ void testStateRoundTripAndMigration()
             expect (false, "could not serialise a schema-1 Volume state");
         }
 
-        removeCalibration (currentMissing);
+        // Schema 3 predates the selectable VCF kernel. Even if the receiving
+        // instance currently uses Fast, a missing choice must restore Exact so
+        // an old session cannot silently change sound.
+        auto preTanhChoice = currentMissing.createCopy();
+        preTanhChoice.setProperty ("stateSchemaVersion", 3, nullptr);
+        removeParameter (preTanhChoice, parameters::vcfTanhMode);
+        juce::MemoryBlock preTanhBytes;
+        if (serialise (preTanhChoice, preTanhBytes))
+        {
+            YouKnow106AudioProcessor migrated;
+            setParameterValue (migrated, parameters::vcfTanhMode, 1.0f);
+            migrated.setStateInformation (
+                preTanhBytes.getData(), static_cast<int> (preTanhBytes.getSize()));
+            expect (std::abs (parameterValue (migrated, parameters::vcfTanhMode))
+                        < 1.0e-4f,
+                    "a pre-VCF-tanh state did not restore the Exact default");
+        }
+        else
+        {
+            expect (false, "could not serialise a pre-VCF-tanh state");
+        }
+
+        removeParameter (currentMissing, parameters::calibration);
 
         juce::MemoryBlock currentMissingBytes;
         if (serialise (currentMissing, currentMissingBytes))
@@ -1662,6 +1753,7 @@ void testEveryStoredPatchFieldRecallsWithoutMovingPerformanceControls()
         { parameters::chorusNoise,  0.27f },
         { parameters::polyphony,    4.0f },
         { parameters::quality,      0.0f },
+        { parameters::vcfTanhMode,  1.0f },
     });
     for (const auto& [id, value] : performanceValues)
         setParameterValue (processor, id, value);
@@ -1739,6 +1831,7 @@ void testRandomizerPreservesQualityAndLevel()
     const float volume = parameterValue (processor, parameters::volume);
     const float voices = parameterValue (processor, parameters::polyphony);
     const float quality = parameterValue (processor, parameters::quality);
+    const float vcfTanh = parameterValue (processor, parameters::vcfTanhMode);
 
     processor.randomizeParameters (1.0f);
 
@@ -1748,6 +1841,9 @@ void testRandomizerPreservesQualityAndLevel()
             "the randomiser moved the voice count");
     expect (std::abs (parameterValue (processor, parameters::quality) - quality) < 1.0e-4f,
             "the randomiser moved a quality setting");
+    expect (std::abs (parameterValue (processor, parameters::vcfTanhMode) - vcfTanh)
+                < 1.0e-4f,
+            "the randomiser moved the VCF tanh setting");
 }
 
 void testBusLayoutsAndTail()
@@ -3718,7 +3814,8 @@ void testEditedFlagFollowsTheCompleteProgram()
         if (std::strcmp (expected.id, parameters::legacyKeyMode) == 0
             || std::strcmp (expected.id, parameters::legacyChorus) == 0
             || std::strcmp (expected.id, parameters::legacyHq) == 0
-            || std::strcmp (expected.id, parameters::quality) == 0)
+            || std::strcmp (expected.id, parameters::quality) == 0
+            || std::strcmp (expected.id, parameters::vcfTanhMode) == 0)
             continue;
 
         processor.setCurrentProgram (0);
@@ -3954,6 +4051,7 @@ void testDerivedOriginalPanelSwitchesDriveTheirExistingParameters()
 bool isProgramParameter (const char* id)
 {
     return std::strcmp (id, parameters::quality) != 0
+        && std::strcmp (id, parameters::vcfTanhMode) != 0
         && std::strcmp (id, parameters::legacyHq) != 0;
 }
 
@@ -3986,6 +4084,8 @@ void testEveryProductProgramRestoresEveryParameter()
             parameterValue (processor, parameters::quality);
         const float poisonedLegacyHq =
             parameterValue (processor, parameters::legacyHq);
+        const float poisonedVcfTanh =
+            parameterValue (processor, parameters::vcfTanhMode);
 
         expect (processor.currentProgramIsEdited(),
                 std::string ("program ") + std::to_string (program)
@@ -3998,13 +4098,17 @@ void testEveryProductProgramRestoresEveryParameter()
             if (! isProgramParameter (expected.id))
             {
                 // The opposite contract: a recall must leave the poisoned
-                // quality selection exactly where the player put it.
+                // engine-policy selection exactly where the player put it.
+                const float retained =
+                    std::strcmp (expected.id, parameters::quality) == 0
+                        ? poisonedQuality
+                        : (std::strcmp (expected.id, parameters::vcfTanhMode) == 0
+                               ? poisonedVcfTanh : poisonedLegacyHq);
                 expect (std::abs (parameterValue (processor, expected.id)
-                                 - (std::strcmp (expected.id, parameters::quality) == 0
-                                        ? poisonedQuality : poisonedLegacyHq))
+                                 - retained)
                             <= expected.tolerance,
                         std::string ("program ") + std::to_string (program)
-                            + " moved a non-program quality parameter");
+                            + " moved a non-program engine parameter");
                 continue;
             }
             expect (std::abs (parameterValue (processor, expected.id)
@@ -4949,6 +5053,8 @@ void testEditorRandomizeStrengthsAndReset()
         parameter->setValueNotifyingHost (parameter->getValue() < 0.5f ? 0.87f : 0.13f);
     const float poisonedQuality =
         parameterValue (processor, parameters::quality);
+    const float poisonedVcfTanh =
+        parameterValue (processor, parameters::vcfTanhMode);
 
     auto* reset = findDescendantButtonWithText (*editor, "INIT");
     expect (reset != nullptr, "the editor is missing INIT");
@@ -4965,11 +5071,13 @@ void testEditorRandomizeStrengthsAndReset()
     {
         const auto* parameter = processor.getParameters()[index];
         // The INIT key returns the panel to the initial patch, which is a patch
-        // operation. The quality ladder is not in a patch, so it stays where
-        // the player left it here for the same reason a program recall leaves
-        // it alone.
+        // operation. Engine-policy choices are not in a patch, so they stay
+        // where the player left them for the same reason program recall leaves
+        // them alone.
         if (parameter
                 == processor.parameters.getParameter (parameters::quality)
+            || parameter
+                == processor.parameters.getParameter (parameters::vcfTanhMode)
             || parameter
                 == processor.parameters.getParameter (parameters::legacyHq))
             continue;
@@ -4980,6 +5088,9 @@ void testEditorRandomizeStrengthsAndReset()
     expect (std::abs (parameterValue (processor, parameters::quality)
                      - poisonedQuality) < 1.0e-6f,
             "INIT overruled the player's quality selection");
+    expect (std::abs (parameterValue (processor, parameters::vcfTanhMode)
+                     - poisonedVcfTanh) < 1.0e-6f,
+            "INIT overruled the player's VCF tanh selection");
 
     if (auto* preset = findDescendantComboBox (*editor))
         expect (preset->getSelectedId() == 1,
@@ -5915,6 +6026,7 @@ int main()
     testShortNoteInsideOneBlockIsHeard();
     testUiKeyboardPressAndReleaseIsHeard();
     testDeferredQualitySwitchIsNotAutomatable();
+    testVcfTanhSelectorDrivesTheEngine();
     testAllNotesOffReleasesAndAllSoundOffCuts();
     testTransportOfControllers();
     testUiPerformanceLeverMatchesMidiAndCoalesces();
