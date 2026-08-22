@@ -32,8 +32,8 @@ cmake_args=(
     -B "${BUILD_DIR}"
     -G Xcode
     "-DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET}"
-    "-DGHOST_BUILD_UNIVERSAL=${BUILD_UNIVERSAL}"
-    -DGHOST_BUILD_PLUGIN=ON
+    "-DGHOSTAR_BUILD_UNIVERSAL=${BUILD_UNIVERSAL}"
+    -DGHOSTAR_BUILD_PLUGIN=ON
     -DBUILD_TESTING=ON
 )
 
@@ -44,7 +44,7 @@ else
 fi
 
 if [[ -n "${JUCE_PATH:-}" ]]; then
-    cmake_args+=("-DGHOST_JUCE_PATH=${JUCE_PATH}")
+    cmake_args+=("-DGHOSTAR_JUCE_PATH=${JUCE_PATH}")
 fi
 
 cmake "${cmake_args[@]}"

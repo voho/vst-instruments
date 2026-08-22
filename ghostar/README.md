@@ -55,14 +55,14 @@ The JUCE-free DSP core, tests and demo renderer:
 
 ```sh
 cmake -S . -B build-dsp -DCMAKE_BUILD_TYPE=Release \
-  -DGHOST_BUILD_PLUGIN=OFF -DBUILD_TESTING=ON
+  -DGHOSTAR_BUILD_PLUGIN=OFF -DBUILD_TESTING=ON
 cmake --build build-dsp --parallel
 ctest --test-dir build-dsp --output-on-failure
 ./build-dsp/GhostarRenderDemos Docs/audio
 ```
 
 The full plug-in (JUCE 8.0.14 is fetched pinned to its release commit, or
-pass `-DGHOST_JUCE_PATH=/path/to/JUCE`):
+pass `-DGHOSTAR_JUCE_PATH=/path/to/JUCE`):
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
