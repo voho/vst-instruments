@@ -1170,7 +1170,77 @@ void testArpeggiatorEdgeCases()
                     + std::to_string (engine.activeVoiceCount()) + ")");
     }
 
-    // 6. ARPEGGIO VELOCITY = REAL follows the key each note came from, so a
+    // 6. Two overlapping MIDI notes of the same pitch — routine in sequenced
+    //    parts — must not have the first release take what the second still
+    //    holds.
+    {
+        septum::Patch overlap = base;
+        overlap.arpeggio.grid = septum::ArpeggioGrid::Quarter;
+        overlap.arpeggio.duration = septum::ArpeggioDuration::P100;
+        overlap.arpeggio.style = septum::ArpeggioStyle {};
+        overlap.arpeggio.style.endStep = 1;
+        overlap.arpeggio.style.cells[0][0] = 100;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (overlap);
+        engine.reset();
+        engine.noteOn (60, 100);
+        (void) rmsOf (engine);
+        engine.noteOn (60, 100);     // the same pitch again, overlapping
+        engine.noteOff (60);         // the first release
+        auto take = renderScore (engine, {}, 1.2, sampleRate);
+        // Late in the take, so the tail of the note that was already
+        // sounding cannot stand in for an arpeggio that is still running.
+        expect (take.rms ((std::size_t) (sampleRate * 0.7), take.left.size())
+                    > 1.0e-3,
+                "an overlapping second press of one pitch outlives the first "
+                "release");
+        engine.noteOff (60);         // the last release
+        (void) rmsOf (engine);
+        (void) rmsOf (engine);
+        expect (rmsOf (engine) < 1.0e-4,
+                "and the last release does stop it");
+    }
+
+    // 7. SPLIT ARPEGGIO is automatable, so a key can be pressed while one
+    //    part is selected and released while another is. Neither the entry
+    //    nor the notes may be left behind.
+    {
+        septum::Patch split = base;
+        split.keyboardMode = septum::KeyboardMode::Split;
+        split.splitPoint = 60;
+        split.arpeggio.splitArpeggio = septum::SplitArpeggio::Lower;
+        split.arpeggio.grid = septum::ArpeggioGrid::Quarter;
+        split.lower = split.upper;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (split);
+        engine.reset();
+        engine.noteOn (48, 100);     // below the split: LOWER arpeggiates it
+        (void) rmsOf (engine);
+        expect (rmsOf (engine) > 1.0e-3, "the lower arpeggio is running");
+
+        septum::Patch flipped = split;
+        flipped.arpeggio.splitArpeggio = septum::SplitArpeggio::Upper;
+        engine.setPatch (flipped);   // the selector moves under the held key
+        (void) rmsOf (engine);
+        (void) rmsOf (engine);
+        expect (rmsOf (engine) < 1.0e-4,
+                "deselecting a part stops the notes its arpeggio started");
+
+        engine.noteOff (48);
+        // Selecting it again must not resurrect a chord with no keys down.
+        engine.setPatch (split);
+        (void) rmsOf (engine);
+        auto after = renderScore (engine, {}, 1.5, sampleRate);
+        expect (after.rms (0, after.left.size()) < 1.0e-4,
+                "and re-selecting it does not resurrect a chord nobody is "
+                "holding");
+    }
+
+    // 8. ARPEGGIO VELOCITY = REAL follows the key each note came from, so a
     //    chord played unevenly stays uneven.
     {
         septum::Patch real = base;

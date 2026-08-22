@@ -863,6 +863,11 @@ private:
         // the chord is latched only when the last of them is released.
         std::array<int, 16> physicalKeys {};
         std::array<int, 16> physicalVelocities {};
+        // How many presses of that pitch are outstanding. Sequenced parts
+        // routinely overlap two notes of the same pitch by a few
+        // milliseconds; counting them keeps the first release from taking
+        // the chord entry the second press is still holding.
+        std::array<int, 16> physicalPresses {};
         int physicalCount { 0 };
         int lastPressed { -1 };               // PHRASE's reference key
         int lastVelocity { 100 };
@@ -891,6 +896,7 @@ private:
         {
             keyCount = 0;
             physicalCount = 0;
+            physicalPresses.fill (0);
             latched = false;
         }
     };
@@ -1047,6 +1053,7 @@ private:
     std::array<std::array<float, 32>, 2> monitorDelay_ {};
     int monitorDelayWrite_ { 0 };
     double smoothedMonitorLevel_ { 1.0 };
+    double smoothedInputGain_ { 0.62 };
 
     // Analog output stage state (documented component values).
     double dcX1_[2] {}, dcY1_[2] {};
