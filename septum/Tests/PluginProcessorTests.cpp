@@ -557,6 +557,14 @@ void testStateRoundTrip()
             "resonance survives the state round trip");
 }
 
+// The panel lives on a canvas child of the editor, so the suite reaches it
+// through the editor's own accessor rather than walking children blind.
+juce::Component& panelOf (juce::AudioProcessorEditor& editor)
+{
+    auto* septum = dynamic_cast<SeptumAudioProcessorEditor*> (&editor);
+    return septum != nullptr ? septum->getPanel() : editor;
+}
+
 // Walks a component tree looking for a button whose face reads `text`.
 juce::Button* findButton (juce::Component& root, const juce::String& text)
 {
@@ -599,8 +607,8 @@ void testIntervalButtonsAreRelativeToOscOne()
         return (int) processor.parameters.getRawParameterValue (id)->load();
     };
 
-    auto* minusOctave = findButton (*editor, "-OCT");
-    auto* fifth = findButton (*editor, "5TH");
+    auto* minusOctave = findButton (panelOf (*editor), "-OCT");
+    auto* fifth = findButton (panelOf (*editor), "5TH");
     expect (minusOctave != nullptr && fifth != nullptr,
             "the panel carries both INTERVAL buttons");
     if (minusOctave == nullptr || fifth == nullptr)
@@ -642,7 +650,7 @@ void testTogglesShowTheirState()
     };
 
     set ("delay_on", false);
-    expect (findButton (*editor, "OFF") != nullptr,
+    expect (findButton (panelOf (*editor), "OFF") != nullptr,
             "a switch that is off says so on its face");
     set ("delay_on", true);
     set ("reverb_on", true);
@@ -658,8 +666,64 @@ void testTogglesShowTheirState()
     set ("arp_hold", true);
     set ("ext_center_cancel", true);
     set ("audio_filter_on", true);
-    expect (findButton (*editor, "ON") != nullptr,
+    expect (findButton (panelOf (*editor), "ON") != nullptr,
             "a switch that is on says so on its face");
+}
+
+// The panel is a fixed geometry, so the only question a small screen asks is
+// whether it scales or gets cut off. A 1366x768 laptop's work area is under
+// 768 points tall once the taskbar and the host's window frame are counted,
+// and the design panel is 786.
+void testEditorFitsASmallDisplay()
+{
+    using Editor = SeptumAudioProcessorEditor;
+    const juce::Rectangle<int> design { 1500, 786 };
+    expect (Editor::panelSizeForWorkArea ({}) == design,
+            "an unknown work area opens the panel at its design size");
+    expect (Editor::panelSizeForWorkArea ({ 1920, 1080 }) == design,
+            "a display with room opens the panel at its design size");
+    for (const auto work : { juce::Rectangle<int> { 1366, 768 },
+                             juce::Rectangle<int> { 1280, 800 },
+                             juce::Rectangle<int> { 1440, 900 } })
+    {
+        const auto size = Editor::panelSizeForWorkArea (work);
+        expect (size.getWidth() <= work.getWidth()
+                    && size.getHeight() <= work.getHeight(),
+                "the panel fits a " + std::to_string (work.getWidth()) + "x"
+                    + std::to_string (work.getHeight()) + " work area");
+        expect (std::abs ((double) size.getWidth() / size.getHeight()
+                          - 1500.0 / 786.0) < 0.01,
+                "the panel keeps its proportions when it shrinks");
+    }
+
+    // And the controls still land inside it at the smallest size the rule
+    // will produce, because the layout never depends on the window.
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    if (editor == nullptr)
+        return;
+    for (const auto size : { juce::Rectangle<int> { 900, 471 },
+                             juce::Rectangle<int> { 1500, 786 },
+                             juce::Rectangle<int> { 2100, 1100 } })
+    {
+        editor->setSize (size.getWidth(), size.getHeight());
+        auto& panel = panelOf (*editor);
+        int unplaced = 0, escaped = 0;
+        for (int i = 0; i < panel.getNumChildComponents(); ++i)
+        {
+            auto* child = panel.getChildComponent (i);
+            if (child == nullptr || ! child->isVisible())
+                continue;
+            if (child->getBounds().isEmpty())
+                ++unplaced;
+            else if (! panel.getLocalBounds().contains (child->getBounds()))
+                ++escaped;
+        }
+        expect (unplaced == 0 && escaped == 0,
+                "every control is placed at window width "
+                    + std::to_string (size.getWidth()));
+    }
 }
 
 void testEditorAndSnapshot()
@@ -672,9 +736,13 @@ void testEditorAndSnapshot()
     if (editor == nullptr)
         return;
 
-    editor->setSize (editor->getWidth(), editor->getHeight());
-    expect (editor->getWidth() >= 1000 && editor->getHeight() >= 500,
-            "the editor opens at its panel size");
+    // The editor opens at whatever fits the display it is on, so the
+    // documentation image is pinned to the panel's design size here rather
+    // than taken from whatever the build machine happens to have.
+    editor->setSize (1500, 786);
+    editor->resized();
+    expect (editor->getWidth() == 1500 && editor->getHeight() == 786,
+            "the documentation screenshot is the panel's design size");
 
     // Every control the panel puts on screen has to be given bounds. A
     // section whose declared row counts do not cover its contents lays out
@@ -682,9 +750,10 @@ void testEditorAndSnapshot()
     // attached to its parameter, and invisible to the player. SPLIT ARPEGGIO
     // was exactly that until the ARPEGGIO section's rows were corrected.
     int placed = 0, unplaced = 0, escaped = 0;
-    for (int i = 0; i < editor->getNumChildComponents(); ++i)
+    auto& panel = panelOf (*editor);
+    for (int i = 0; i < panel.getNumChildComponents(); ++i)
     {
-        auto* child = editor->getChildComponent (i);
+        auto* child = panel.getChildComponent (i);
         if (child == nullptr || ! child->isVisible())
             continue;
         if (child->getBounds().isEmpty())
@@ -693,7 +762,7 @@ void testEditorAndSnapshot()
             continue;
         }
         ++placed;
-        if (! editor->getLocalBounds().contains (child->getBounds()))
+        if (! panel.getLocalBounds().contains (child->getBounds()))
             ++escaped;
     }
     expect (placed > 100, "the panel places its controls");
@@ -753,6 +822,7 @@ int main()
     testStateRoundTrip();
     testIntervalButtonsAreRelativeToOscOne();
     testTogglesShowTheirState();
+    testEditorFitsASmallDisplay();
     testEditorAndSnapshot();
 
     if (failures == 0)

@@ -945,3 +945,33 @@ price of being correct this way.
 
 Two checks fence them, each watched to fail with its own change reverted. The
 committed demos are unchanged: no demo steals a voice or automates the switch.
+
+#### Step 23 — the panel scales to the window
+
+The editor was a fixed 1500 × 786 with no resizing, no constrainer and no
+transform, and hosts honour the size an editor asks for. A 1366 × 768 laptop's
+work area is under 768 points tall once the taskbar and the host's window
+frame are counted, so the keyboard, the patch strip and the whole bottom band
+were pushed off the edge with no way to get them back. The same happens on
+1280 × 800 and on a 1080p screen at 150 % scaling.
+
+A hardware instrument's controls do not reflow, and this panel is deliberately
+a fixed geometry, so the fix is not to make the layout responsive but to stop
+the window being fixed. Every control and every rule the panel draws now lives
+on one child component that is always exactly the design size and is laid out
+against a constant rectangle rather than against the window; `resized()` gives
+that child an `AffineTransform` that scales it to whatever the window is and
+centres it. This is the pattern Ghostar already carries in this repository.
+The editor opens at the largest whole panel the display can show, never below
+60 % of the design size — under that the 10-point captions stop being
+readable, and a window the player can move is a better failure than type
+nobody can read.
+
+Twelve checks fence it: the fit rule itself on screens no build machine has to
+have (1366 × 768, 1280 × 800, 1440 × 900 all fit, all keep the panel's
+proportions, an unknown or roomy display opens at the design size), and the
+existing placement check re-run at 900, 1500 and 2100 points wide — every
+control placed, nothing past the panel's edge, because the layout never looks
+at the window. The committed screenshot is pinned to the design size in the
+suite rather than taken from whatever the build machine's display happens to
+be, so a small CI display cannot quietly shrink the documentation image.

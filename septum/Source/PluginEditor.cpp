@@ -7,6 +7,7 @@ namespace
 namespace colours
 {
     const juce::Colour body { 0xfff2f0ea };        // warm panel white
+    const juce::Colour surround { 0xff1c1c1f };    // behind the scaled panel
     const juce::Colour recess { 0xffe9e6de };      // the section wells
     const juce::Colour frame { 0xff2b2b2e };       // charcoal frames and text
     const juce::Colour accent { 0xffc7472e };      // signal red-orange
@@ -54,10 +55,19 @@ constexpr int stripHeight = sectionTitleHeight + gridRowHeight
 constexpr int keyboardHeight = 90;
 constexpr int bandRows = 3;
 constexpr int bandHeight = sectionTitleHeight + 2 * gridRowHeight + 2 * sectionPadding;
+// A host window carries a frame and a title bar the panel does not get to
+// use; these are enough of both that the fit rule does not put the panel
+// under one.
+constexpr int windowChromeWidth = 32;
+constexpr int windowChromeHeight = 64;
 constexpr int editorWidth = 1500;
 constexpr int editorHeight = headerHeight + bandRows * bandHeight
                              + (bandRows - 1) * sectionGap + stripHeight
                              + keyboardHeight + 18;
+// Below about 60 % the 10-point captions stop being readable, so the panel
+// stops shrinking there and the window scrolls the difference instead.
+constexpr int minimumWidth = editorWidth * 3 / 5;
+constexpr int minimumHeight = editorHeight * 3 / 5;
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -336,11 +346,14 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     : AudioProcessorEditor (owner), processor (owner), lever (owner)
 {
     setLookAndFeel (&lookAndFeel);
+    // Everything the panel draws lives on the canvas; the editor holds only
+    // the canvas and the transform that maps it onto the window.
+    addAndMakeVisible (canvas);
 
     titleLabel.setText ("Septum", juce::dontSendNotification);
     titleLabel.setFont (juce::Font (juce::FontOptions (24.0f, juce::Font::bold)));
     titleLabel.setColour (juce::Label::textColourId, colours::frame);
-    addAndMakeVisible (titleLabel);
+    canvas.addAndMakeVisible (titleLabel);
 
     subtitleLabel.setText (
         juce::String::fromUTF8 ("ten-voice virtual analog synthesizer   \xc2\xb7   "
@@ -350,14 +363,14 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     subtitleLabel.setFont (juce::Font (juce::FontOptions (11.5f)));
     subtitleLabel.setColour (juce::Label::textColourId,
                              colours::frame.withAlpha (0.7f));
-    addAndMakeVisible (subtitleLabel);
+    canvas.addAndMakeVisible (subtitleLabel);
 
     voiceLabel.setFont (juce::Font (juce::FontOptions (10.0f)));
     voiceLabel.setJustificationType (juce::Justification::centred);
     voiceLabel.setColour (juce::Label::textColourId,
                           colours::frame.withAlpha (0.72f));
     voiceLabel.setText ("0 / 10 VOICES", juce::dontSendNotification);
-    addAndMakeVisible (voiceLabel);
+    canvas.addAndMakeVisible (voiceLabel);
 
     const auto section = [this] (const juce::String& title, Band band)
     {
@@ -373,7 +386,7 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
 
     masterSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     masterSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-    addAndMakeVisible (masterSlider);
+    canvas.addAndMakeVisible (masterSlider);
     masterAttachment = std::make_unique<
         juce::AudioProcessorValueTreeState::SliderAttachment> (
         processor.parameters, "master_level", masterSlider);
@@ -382,21 +395,21 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     masterLabel.setJustificationType (juce::Justification::centred);
     masterLabel.setColour (juce::Label::textColourId,
                            colours::frame.withAlpha (0.72f));
-    addAndMakeVisible (masterLabel);
+    canvas.addAndMakeVisible (masterLabel);
     masterValueLabel.setFont (
         juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
     masterValueLabel.setJustificationType (juce::Justification::centred);
-    addAndMakeVisible (masterValueLabel);
+    canvas.addAndMakeVisible (masterValueLabel);
 
     octLabel.setText ("KEYBOARD OCTAVE", juce::dontSendNotification);
     octLabel.setFont (juce::Font (juce::FontOptions (10.0f)));
     octLabel.setColour (juce::Label::textColourId,
                         colours::frame.withAlpha (0.72f));
     octLabel.setJustificationType (juce::Justification::centred);
-    addAndMakeVisible (octLabel);
+    canvas.addAndMakeVisible (octLabel);
     octValueLabel.setFont (juce::Font (juce::FontOptions (11.0f, juce::Font::bold)));
     octValueLabel.setJustificationType (juce::Justification::centred);
-    addAndMakeVisible (octValueLabel);
+    canvas.addAndMakeVisible (octValueLabel);
     octDownButton.onClick = [this]
     {
         keyboardOctaveShift = juce::jmax (-2, keyboardOctaveShift - 1);
@@ -407,8 +420,8 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
         keyboardOctaveShift = juce::jmin (2, keyboardOctaveShift + 1);
         applyKeyboardOctave();
     };
-    addAndMakeVisible (octDownButton);
-    addAndMakeVisible (octUpButton);
+    canvas.addAndMakeVisible (octDownButton);
+    canvas.addAndMakeVisible (octUpButton);
 
     portaControl = addControl (*performSection, "portamento", "PORTAMENTO",
                                Style::Toggle);
@@ -596,7 +609,7 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
         if (index >= 0 && index != processor.getCurrentProgram())
             processor.setCurrentProgram (index);
     };
-    addAndMakeVisible (programBox);
+    canvas.addAndMakeVisible (programBox);
 
     lowerButton.setClickingTogglesState (false);
     upperButton.setClickingTogglesState (false);
@@ -615,8 +628,8 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
         lowerButton.setToggleState (true, juce::dontSendNotification);
         bindControls();
     };
-    addAndMakeVisible (lowerButton);
-    addAndMakeVisible (upperButton);
+    canvas.addAndMakeVisible (lowerButton);
+    canvas.addAndMakeVisible (upperButton);
 
     addControl (*stripSection, "keyboard_mode", "KEYBOARD", Style::Combo, false);
     addControl (*stripSection, "keyboard_part", "PART", Style::Combo, false);
@@ -636,12 +649,29 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     keyboardState.addListener (this);
     keyboard.setOctaveForMiddleC (4);
     applyKeyboardOctave();
-    addAndMakeVisible (keyboard);
-    addAndMakeVisible (lever);
+    canvas.addAndMakeVisible (keyboard);
+    canvas.addAndMakeVisible (lever);
 
     refreshValues();
     setOpaque (true);
-    setSize (editorWidth, editorHeight);
+    canvas.setOpaque (true);
+    canvas.setInterceptsMouseClicks (false, true);
+
+    // Any window; the panel inside it is always the design geometry, scaled.
+    setResizable (true, false);
+    // setResizeLimits installs the default constrainer, so it has to come
+    // before the ratio is set on it.
+    setResizeLimits (minimumWidth, minimumHeight, editorWidth * 2,
+                     editorHeight * 2);
+    if (auto* constrainer = getConstrainer())
+        constrainer->setFixedAspectRatio ((double) editorWidth
+                                          / (double) editorHeight);
+    juce::Rectangle<int> workArea;
+    if (auto* display =
+            juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+        workArea = display->userArea;
+    const auto opening = panelSizeForWorkArea (workArea);
+    setSize (opening.getWidth(), opening.getHeight());
     startTimerHz (24);
 }
 
@@ -795,7 +825,7 @@ SeptumAudioProcessorEditor::Control* SeptumAudioProcessorEditor::addControl (
     control->label->setInterceptsMouseClicks (false, false);
     control->label->setColour (juce::Label::textColourId,
                                colours::frame.withAlpha (0.72f));
-    addAndMakeVisible (*control->label);
+    canvas.addAndMakeVisible (*control->label);
 
     // Every continuous control reads out its value, so nothing on the panel
     // has to be dragged to be understood.
@@ -806,10 +836,10 @@ SeptumAudioProcessorEditor::Control* SeptumAudioProcessorEditor::addControl (
             juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
         control->value->setJustificationType (juce::Justification::centred);
         control->value->setInterceptsMouseClicks (false, false);
-        addAndMakeVisible (*control->value);
+        canvas.addAndMakeVisible (*control->value);
     }
 
-    addAndMakeVisible (*control->component);
+    canvas.addAndMakeVisible (*control->component);
     section.controls.push_back (control);
     return control;
 }
@@ -1076,9 +1106,47 @@ void SeptumAudioProcessorEditor::layoutBand (const std::vector<int>& indices,
     }
 }
 
+juce::Rectangle<int> SeptumAudioProcessorEditor::panelSizeForWorkArea (
+    juce::Rectangle<int> workArea)
+{
+    // Full size wherever it fits. Where it does not - a 1366x768 or 1280x800
+    // laptop, or a 1080p screen at 150 % - the whole panel shrinks rather
+    // than losing its bottom edge. Never below the size the captions stay
+    // readable at: on a screen smaller than that, a window the player can
+    // move is a better failure than type nobody can read.
+    double scale = 1.0;
+    if (! workArea.isEmpty())
+        scale = juce::jmin (1.0,
+                            (double) (workArea.getWidth() - windowChromeWidth)
+                                / editorWidth,
+                            (double) (workArea.getHeight() - windowChromeHeight)
+                                / editorHeight);
+    scale = juce::jmax (scale, (double) minimumWidth / editorWidth);
+    return { juce::roundToInt (editorWidth * scale),
+             juce::roundToInt (editorHeight * scale) };
+}
+
 void SeptumAudioProcessorEditor::resized()
 {
-    auto bounds = getLocalBounds();
+    // The panel keeps its proportions whatever the window's are, and is
+    // centred in whatever is left over.
+    const double scale = juce::jmin ((double) getWidth() / editorWidth,
+                                     (double) getHeight() / editorHeight);
+    const auto placed =
+        juce::Rectangle<int> { juce::roundToInt (editorWidth * scale),
+                               juce::roundToInt (editorHeight * scale) }
+            .withCentre (getLocalBounds().getCentre());
+    canvas.setTransform (
+        juce::AffineTransform::scale ((float) scale)
+            .translated ((float) placed.getX(), (float) placed.getY()));
+    canvas.setBounds (0, 0, editorWidth, editorHeight);
+
+    layoutPanel();
+}
+
+void SeptumAudioProcessorEditor::layoutPanel()
+{
+    auto bounds = juce::Rectangle<int> (0, 0, editorWidth, editorHeight);
     chevrons.clear();
 
     auto header = bounds.removeFromTop (headerHeight).reduced (12, 6);
@@ -1229,6 +1297,17 @@ void SeptumAudioProcessorEditor::resized()
 
 void SeptumAudioProcessorEditor::paint (juce::Graphics& g)
 {
+    // Whatever the window has that the panel's proportions do not use.
+    g.fillAll (colours::surround);
+}
+
+void SeptumAudioProcessorEditor::PanelCanvas::paint (juce::Graphics& g)
+{
+    owner.paintPanel (g);
+}
+
+void SeptumAudioProcessorEditor::paintPanel (juce::Graphics& g)
+{
     g.fillAll (colours::body);
 
     // Header rule and accent stripe, echoing the hardware's banded fascia.
@@ -1329,7 +1408,7 @@ void SeptumAudioProcessorEditor::timerCallback()
     // this costs nothing on the frames where nothing moved.
     refreshValues();
     if (! meterBounds.isEmpty())
-        repaint (meterBounds.expanded (2));
+        canvas.repaint (meterBounds.expanded (2));
 }
 
 void SeptumAudioProcessorEditor::handleNoteOn (juce::MidiKeyboardState*, int,
