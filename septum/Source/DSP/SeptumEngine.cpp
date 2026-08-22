@@ -1446,7 +1446,14 @@ namespace
             case Waveform::Triangle:
             {
                 double value = phase < 0.5 ? 4.0 * phase - 1.0 : 3.0 - 4.0 * phase;
-                const double scale = 8.0 * inc;
+                // polyBlamp is the antiderivative of polyBlep with respect to
+                // sample time, and polyBlep already carries a step of two (it
+                // corrects the saw's -2 wrap on its own). So a corner whose
+                // slope changes by 8*inc per sample needs half of that as its
+                // coefficient, not all of it: at 8*inc the correction
+                // overshoots by exactly as much as it corrects and the
+                // triangle measures the same as no correction at all.
+                const double scale = 4.0 * inc;
                 value += scale * polyBlamp (phase, inc);
                 value -= scale * polyBlamp (frac (phase + 0.5), inc);
                 return { value, wrapped, wrapOffset };

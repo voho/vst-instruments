@@ -635,3 +635,39 @@ Two checks fence it, both watched to fail with the factor put back: RESONANCE
 resonance on a −24 dB band-pass must sustain a bounded oscillation. The one
 committed demo that uses the band-pass, `09-sample-hold-fx.wav`, re-rendered
 11.2 dB louder before normalisation; the other ten are bit-identical.
+
+#### Step 14 — the triangle was not band-limited at all
+
+`renderClassicWave` corrects the triangle's two corners with polyBLAMP and
+scaled the correction by `8.0 * inc`. That is the triangle's whole slope
+change per sample: the wave runs at ±4 per unit phase, so a corner changes
+its slope by 8·inc. The coefficient the residual wants is half of it, and the
+reason is in the two residual functions themselves. `polyBlamp` is exactly the
+antiderivative of `polyBlep` with respect to sample time, and `polyBlep` here
+is the canonical form that already carries a step of **two** — it corrects the
+saw's −2 wrap on its own, with no factor in front. So a slope change of 8·inc
+needs `4.0 * inc`.
+
+At 8·inc the correction overshoots by as much as it corrects. Measured at
+44.1 kHz, TRI through the shipping voice with the filter bypassed, alias
+energy relative to harmonic energy across a fine grid up to 20 kHz:
+
+| note | no correction | shipping (8·inc) | corrected (4·inc) |
+|---|---|---|---|
+| 69 (440 Hz) | −104.0 dB | −104.0 dB | **−124.1 dB** |
+| 81 (880 Hz) | −95.9 dB | −95.8 dB | **−139.6 dB** |
+| 93 (1760 Hz) | −87.4 dB | −87.3 dB | **−153.4 dB** |
+| 105 (3520 Hz) | −90.1 dB | −89.7 dB | **−162.1 dB** |
+
+The middle column is the finding: to within a tenth of a decibel the shipping
+triangle measured the same as the oscillator with its correction deleted. The
+contract states that the classic waveforms are polyBLEP/polyBLAMP band-limited
+at the host rate, and deliberate aliasing belongs to SUPER SAW and SYNC; for
+TRI that claim was false. The corrected floor holds across host rates —
+−124 to −162 dB at 44.1 kHz, −130 to −168 at 48 kHz, −102 to −156 at 96 kHz
+(the last column starts higher only because the same grid reaches further up
+in frequency).
+
+Two checks fence it, both watched to fail with `8.0 * inc` put back. No
+committed demo changed, because no shipped preset selects TRI — which is its
+own gap, and is why this one survived a full pass.

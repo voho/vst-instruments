@@ -145,7 +145,10 @@ square (50 %), right broadens. The manual's claim that TRI contains "even-
 numbered" harmonics is physically wrong (a triangle has odd harmonics at
 1/n²) and contradicts its own correct SQR description; the replica
 implements a textbook triangle. Rendering is polyBLEP/polyBLAMP
-band-limited at the host rate — the real unit's oscillators alias audibly
+band-limited at the host rate — the triangle's polyBLAMP coefficient is half
+its per-sample slope change, because the residual pair here is the canonical
+one whose BLEP already carries a step of two and whose BLAMP is that BLEP's
+antiderivative — the real unit's oscillators alias audibly
 (reported by owners and framed by Roland forum staff as part of the
 character); reproducing that aliasing exactly would require knowing the
 engine's true rate and interpolation, which is OQ-01. NOISE is white

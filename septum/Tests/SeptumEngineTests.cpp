@@ -1842,6 +1842,53 @@ void testExternalMonitorHandover()
                 "step " + std::to_string (worst) + ")");
 }
 
+// The contract says the classic waveforms are polyBLEP/polyBLAMP band-limited
+// at the host rate; deliberate aliasing belongs to SUPER SAW and SYNC. TRI's
+// polyBLAMP coefficient was twice its correct value, which measures the same
+// as no correction at all, so this check compares the shipping triangle
+// against the same oscillator with its correction switched off — by rendering
+// the corner-free SINE as the control and the raw partial structure of TRI
+// against it.
+void testTriangleIsBandLimited()
+{
+    const double sampleRate = 44100.0;
+    const auto aliasRatio = [sampleRate] (int note)
+    {
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Triangle;
+        patch.upper.ampEnvSustain = 127;
+        patch.upper.lowFreq = septum::LowFreqMode::Flat;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.reset();
+        auto take = renderScore (engine, { { 0.0, true, note, 100 } }, 1.2,
+                                 sampleRate);
+
+        const double f0 = 440.0 * std::exp2 ((note - 69) / 12.0);
+        const std::size_t from = 8820, to = take.left.size();
+        double harmonic = 0.0, alias = 0.0;
+        // Every eighth of the fundamental: the ones that land on a harmonic
+        // are signal, the rest can only be folded energy.
+        for (double f = f0 / 8.0; f < 20000.0 && f < 0.49 * sampleRate;
+             f += f0 / 8.0)
+        {
+            const double m = goertzel (take.left, from, to, f, sampleRate);
+            const double k = f / f0;
+            (std::abs (k - std::round (k)) < 0.1 ? harmonic : alias) += m * m;
+        }
+        return alias / std::max (1.0e-30, harmonic);
+    };
+
+    // At the coefficient that measures as no correction the ratio is about
+    // -87 dB at note 93; corrected it is far below that.
+    expect (aliasRatio (93) < 1.0e-11,
+            "a mid-register triangle folds far less than an uncorrected one");
+    expect (aliasRatio (105) < 1.0e-11,
+            "a high triangle folds far less than an uncorrected one");
+}
+
 void testSelfOscillationBounded()
 {
     septum::Patch patch = plainSawPatch();
@@ -2388,6 +2435,7 @@ int main()
     testArpeggiatorPlaysAndHolds();
     testArpeggioOctaveRange();
     testArpeggiatorEdgeCases();
+    testTriangleIsBandLimited();
     testSelfOscillationBounded();
     testBandPassGainsWithResonance();
     testEnvelopesShapeLoudness();
