@@ -57,7 +57,7 @@ jobs:
             "electry:ElectryRenderDemos:14"
             "taikor:TaikorRenderDemos:27"
             "youknow106:YouKnow106RenderDemos:10"
-            "septum:SeptumRenderDemos:10"
+            "septum:SeptumRenderDemos:11"
             "ghostar:GhostarRenderDemos:10"
           )
 
