@@ -656,60 +656,58 @@ void Engine::noteOff (int note)
     }
 }
 
-// The ARPEGGIO switch is a patch parameter, so it can be automated under a
-// held chord. Whichever way it moves, the keys under the player's fingers
-// have to move with it: a key whose note-on was routed one way and whose
-// note-off is routed the other would otherwise leave a voice sounding with
-// nothing left to release it.
-void Engine::handleArpeggioSwitch (bool nowOn)
+// Whether a part is arpeggiated is a patch decision, so it can be automated
+// under a held chord - and the ARPEGGIO switch is not the only control that
+// decides it. SPLIT ARPEGGIO, the keyboard mode and the keyboard part each
+// move a part in or out of the arpeggiator's hands on their own, and all of
+// them are automatable. Whichever way a part crosses, the keys under the
+// player's fingers have to cross with it: a key whose note-on was routed one
+// way and whose note-off is routed the other would otherwise leave a voice
+// sounding with nothing left to release it.
+void Engine::handleArpeggioRouting (Part part, bool nowDriven)
 {
-    for (int index = 0; index < partCount; ++index)
+    const int index = part == Part::Upper ? 0 : 1;
+    auto& runtime = toneRuntime (part);
+    auto& arpeggio = arpeggios_[static_cast<std::size_t> (index)];
+
+    std::array<int, 16> notes {}, velocities {};
+    int count = 0;
+
+    if (nowDriven)
     {
-        const Part part = index == 0 ? Part::Upper : Part::Lower;
-        auto& runtime = toneRuntime (part);
-        auto& arpeggio = arpeggios_[static_cast<std::size_t> (index)];
-
-        std::array<int, 16> notes {}, velocities {};
-        int count = 0;
-
-        if (nowOn)
-        {
-            if (! arpeggioDrives (part))
-                continue;
-            // The keys already down become the chord, and the voices they
-            // started stop: one key cannot be playing both ways at once.
-            count = std::min (runtime.heldCount, static_cast<int> (notes.size()));
-            for (int i = 0; i < count; ++i)
-            {
-                notes[static_cast<std::size_t> (i)] =
-                    runtime.heldNotes[static_cast<std::size_t> (i)];
-                velocities[static_cast<std::size_t> (i)] =
-                    runtime.heldVelocities[static_cast<std::size_t> (i)];
-            }
-            for (int i = 0; i < count; ++i)
-                releaseNoteForPart (part, notes[static_cast<std::size_t> (i)]);
-            for (int i = 0; i < count; ++i)
-                arpeggioAddKey (part, notes[static_cast<std::size_t> (i)],
-                                velocities[static_cast<std::size_t> (i)]);
-            continue;
-        }
-
-        // Switched off: the arpeggiator's own notes stop, and the keys still
-        // held start sounding the way they would have without it.
-        count = std::min (arpeggio.physicalCount, static_cast<int> (notes.size()));
+        // The keys already down become the chord, and the voices they
+        // started stop: one key cannot be playing both ways at once.
+        count = std::min (runtime.heldCount, static_cast<int> (notes.size()));
         for (int i = 0; i < count; ++i)
         {
             notes[static_cast<std::size_t> (i)] =
-                arpeggio.physicalKeys[static_cast<std::size_t> (i)];
+                runtime.heldNotes[static_cast<std::size_t> (i)];
             velocities[static_cast<std::size_t> (i)] =
-                arpeggio.physicalVelocities[static_cast<std::size_t> (i)];
+                runtime.heldVelocities[static_cast<std::size_t> (i)];
         }
-        arpeggioStopPart (part);
-        arpeggio.clearKeys();
         for (int i = 0; i < count; ++i)
-            startNoteForPart (part, notes[static_cast<std::size_t> (i)],
-                              velocities[static_cast<std::size_t> (i)]);
+            releaseNoteForPart (part, notes[static_cast<std::size_t> (i)]);
+        for (int i = 0; i < count; ++i)
+            arpeggioAddKey (part, notes[static_cast<std::size_t> (i)],
+                            velocities[static_cast<std::size_t> (i)]);
+        return;
     }
+
+    // No longer driven: the arpeggiator's own notes stop, and the keys still
+    // held start sounding the way they would have without it.
+    count = std::min (arpeggio.physicalCount, static_cast<int> (notes.size()));
+    for (int i = 0; i < count; ++i)
+    {
+        notes[static_cast<std::size_t> (i)] =
+            arpeggio.physicalKeys[static_cast<std::size_t> (i)];
+        velocities[static_cast<std::size_t> (i)] =
+            arpeggio.physicalVelocities[static_cast<std::size_t> (i)];
+    }
+    arpeggioStopPart (part);
+    arpeggio.clearKeys();
+    for (int i = 0; i < count; ++i)
+        startNoteForPart (part, notes[static_cast<std::size_t> (i)],
+                          velocities[static_cast<std::size_t> (i)]);
 }
 
 void Engine::startNoteForPart (Part part, int note, int velocity)
@@ -2052,9 +2050,23 @@ void Engine::advanceArpeggiator (int samples)
 {
     const ArpeggioParams& arp = patch_.arpeggio;
 
+    // Every control that can move a part across the boundary is watched, not
+    // just the ARPEGGIO switch: with SPLIT ARPEGGIO on Lower, holding an Upper
+    // key and then selecting Upper used to strand that key's normal voice,
+    // because its note-off saw a part the arpeggiator now drives and skipped
+    // the release. It sustained until a panic.
+    for (int index = 0; index < partCount; ++index)
+    {
+        const Part part = index == 0 ? Part::Upper : Part::Lower;
+        const bool driven = arpeggioDrives (part);
+        if (driven == arpeggioDriven_[static_cast<std::size_t> (index)])
+            continue;
+        handleArpeggioRouting (part, driven);
+        arpeggioDriven_[static_cast<std::size_t> (index)] = driven;
+    }
+
     if (arp.on != arpeggioActive_)
     {
-        handleArpeggioSwitch (arp.on);
         arpeggioActive_ = arp.on;
         if (! arp.on)
         {

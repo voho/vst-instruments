@@ -1224,13 +1224,26 @@ void testArpeggiatorEdgeCases()
 
         septum::Patch flipped = split;
         flipped.arpeggio.splitArpeggio = septum::SplitArpeggio::Upper;
-        engine.setPatch (flipped);   // the selector moves under the held key
-        (void) rmsOf (engine);
-        (void) rmsOf (engine);
-        expect (rmsOf (engine) < 1.0e-4,
-                "deselecting a part stops the notes its arpeggio started");
+        engine.setPatch (flipped);   // the selector moves off the held key
+        auto handedBack = renderScore (engine, {}, 1.2, sampleRate);
+        // The key is still down and the part still sounds, so it plays the
+        // way it would have without the arpeggiator - which is what turning
+        // the ARPEGGIO switch off under a held key already does. A 50 % gate
+        // would have left the back half of every 0.5 s grid silent; a plain
+        // voice does not.
+        const double handedBackLate =
+            handedBack.rms ((std::size_t) (sampleRate * 0.80),
+                            (std::size_t) (sampleRate * 0.95));
+        expect (handedBackLate > 1.0e-3,
+                "deselecting a part hands its held key back as a plain voice ("
+                    + std::to_string (handedBackLate) + ")");
 
         engine.noteOff (48);
+        auto released = renderScore (engine, {}, 1.2, sampleRate);
+        expect (released.rms ((std::size_t) (sampleRate * 0.4),
+                              released.left.size()) < 1.0e-4,
+                "and releasing it stops that voice");
+
         // Selecting it again must not resurrect a chord with no keys down.
         engine.setPatch (split);
         (void) rmsOf (engine);
@@ -1238,6 +1251,40 @@ void testArpeggiatorEdgeCases()
         expect (after.rms (0, after.left.size()) < 1.0e-4,
                 "and re-selecting it does not resurrect a chord nobody is "
                 "holding");
+    }
+
+    // 7b. The mirror. A part that *becomes* arpeggiator-driven under a held
+    //     key has to take that key with it: otherwise the later note-off sees
+    //     a part the arpeggiator now drives, skips the release, and the plain
+    //     voice sustains until a panic.
+    {
+        septum::Patch split = base;
+        split.keyboardMode = septum::KeyboardMode::Split;
+        split.splitPoint = 60;
+        split.arpeggio.splitArpeggio = septum::SplitArpeggio::Lower;
+        split.arpeggio.grid = septum::ArpeggioGrid::Quarter;
+        split.lower = split.upper;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (split);
+        engine.reset();
+        engine.noteOn (72, 100);     // above the split: UPPER, not arpeggiated
+        (void) rmsOf (engine);
+        expect (rmsOf (engine) > 1.0e-3, "the plain upper voice is sounding");
+
+        septum::Patch flipped = split;
+        flipped.arpeggio.splitArpeggio = septum::SplitArpeggio::Upper;
+        engine.setPatch (flipped);   // the arpeggiator takes the part over
+        (void) rmsOf (engine);
+        engine.noteOff (72);
+        auto after = renderScore (engine, {}, 1.5, sampleRate);
+        expect (after.rms ((std::size_t) (sampleRate * 0.5),
+                           after.left.size()) < 1.0e-4,
+                "a key held as the arpeggiator takes its part over is ended by "
+                "its own note-off, not stranded ("
+                    + std::to_string (after.rms ((std::size_t) (sampleRate * 0.5),
+                                                 after.left.size())) + ")");
     }
 
     // 8. ARPEGGIO VELOCITY = REAL follows the key each note came from, so a

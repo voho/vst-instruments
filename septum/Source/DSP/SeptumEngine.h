@@ -989,7 +989,7 @@ private:
     void arpeggioAddKey (Part part, int note, int velocity);
     void arpeggioRemoveKey (Part part, int note);
     void arpeggioStopPart (Part part);
-    void handleArpeggioSwitch (bool nowOn);
+    void handleArpeggioRouting (Part part, bool nowDriven);
     void advanceArpeggiator (int samples);
     void arpeggioFireStep();
     void arpeggioFireStepForPart (Part part, double stepSeconds);
@@ -1028,6 +1028,11 @@ private:
     int arpeggioStep_ { 0 };
     bool arpeggioRunning_ { false };
     bool arpeggioActive_ { false };   // what the ARPEGGIO switch last was
+    // Whether each part was arpeggiated last tick. The ARPEGGIO switch is not
+    // the only thing that decides it - SPLIT ARPEGGIO, the keyboard mode and
+    // the keyboard part all move a part in or out of the arpeggiator's hands,
+    // and all of them are automatable.
+    std::array<bool, partCount> arpeggioDriven_ {};
     std::uint32_t arpeggioRng_ { 0x6d2b79f5u };
     std::uint32_t voiceClock_ { 0 };
     std::uint32_t rng_ { 0x2545f491u };
