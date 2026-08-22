@@ -332,3 +332,34 @@ endpoints that *are* settled (BALANCE fully left is OSC1 alone; the pan law is
 unity at the centre; every host rate reaches the overdrive's internal band),
 and the move changed no audio at all: the committed demos re-render
 bit-identically.
+
+#### Step 8 — the panel
+
+The editor was rebuilt around a fixed control geometry instead of a
+proportional one. Every section is now sized to fit its contents rather than
+its contents scaled to fit it, so the knob diameters that ranged from 22 px to
+58 px are all 40 px, the sliders are all the same width, and the `DE..` that
+FILTER ENV's DEPTH label used to render as is simply `DEPTH`.
+
+What changed beyond the geometry:
+
+- **The panel reads as a signal path.** Three bands: the voice chain
+  (OSC 1 + OSC 2 → MIX/MOD → FILTER → AMP, with a plus where the oscillators
+  meet and a chevron at each stage boundary, because that is what actually
+  happens); the modulators (PITCH ENV, FILTER ENV, AMP ENV, LFO 1, LFO 2); and
+  the two ends of the instrument (ARPEGGIO, EXT IN, DELAY, REVERB). One muted
+  tint per band, appearing once as a short rule above each section title —
+  enough to group the panel, not enough to turn it into a chart.
+- **Every continuous control reads out its value**, in the units the manual
+  prints, taken from the parameter's own text so the panel and the host can
+  never disagree. Signed parameters print their sign and PAN prints
+  `L64 … 0 … 63R`, which is also what the host's parameter list now shows.
+- **The drag-time popup bubbles are gone**, since the value is always on the
+  panel, and hovering any control names the parameter it edits.
+- **The patch strip's knobs are the same knobs as everywhere else**, and its
+  title no longer collides with its labels.
+- The output meter and the voice count moved to the foot of the performance
+  cluster — the one part of the panel that reports rather than edits.
+
+The window is 1500 × 784, up from 1284 × 716: the arpeggiator and the
+external-input path added two sections, and nothing is squeezed to fit.

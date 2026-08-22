@@ -7,17 +7,27 @@
 #include <memory>
 #include <vector>
 
-// The panel follows the modelled instrument's physical arrangement while
-// keeping independent branding and project-drawn controls: the performance
-// cluster at the far left (master volume, octave, portamento, solo, tempo),
-// then the synthesis sections in the hardware's own left-to-right order —
-// OSC 1, OSC 2 (with the INTERVAL buttons), PITCH ENV, MIX/MOD, FILTER,
-// FILTER ENV, AMP, AMP ENV, LFO 1, LFO 2, EFFECTS — the patch/keyboard strip
-// above the keys where the hardware puts its patch buttons, and the
-// bend/modulation lever left of the keyboard. Controls that only exist as
-// physical hardware (D-Beam, recorder, tap tempo, EXT IN) are deliberately
-// not replicated; one set of tone controls edits the selected tone, exactly
-// as the hardware panel works.
+// The panel keeps the modelled instrument's arrangement and its own branding
+// and project-drawn controls, and is laid out so the signal path reads off it.
+//
+// The performance cluster sits at the far left (master volume, octave,
+// portamento, solo, tempo). To its right are three bands:
+//
+//   VOICE        OSC 1 -> OSC 2 -> MIX/MOD -> FILTER -> AMP, with a chevron
+//                drawn between each pair, because that is a real chain
+//   MODULATION   PITCH ENV, FILTER ENV, AMP ENV, LFO 1, LFO 2 — what moves
+//                the chain rather than what carries it
+//   INPUT & FX   ARPEGGIO, EXT IN, DELAY, REVERB — the two ends of the
+//                instrument
+//
+// Every control is the same size wherever it appears — a knob is a knob — and
+// every one of them reads out its value in the units the manual prints, so
+// nothing has to be dragged to be understood. The patch/keyboard strip sits
+// above the keys where the hardware puts its patch buttons, with the
+// bend/modulation lever to their left. Controls that exist only as physical
+// hardware (D-Beam, the recorder, tap tempo) are deliberately not replicated;
+// one set of tone controls edits the selected tone, exactly as the hardware
+// panel works.
 
 class SeptumLookAndFeel final : public juce::LookAndFeel_V4
 {
@@ -82,13 +92,29 @@ public:
 private:
     enum class Style { Knob, VSlider, Combo, Toggle, Action };
 
+    // Which band of the panel a section belongs to. The band decides the
+    // colour of the rule above its title, which is the only thing that
+    // distinguishes the sections from one another — enough to group them,
+    // not enough to turn the panel into a chart.
+    enum class Band { Voice, Modulation, InputEffects, Perform };
+
+    // What is drawn in the gap between two sections of the same band.
+    enum class Connector { None, Sum, Flow };
+    struct ConnectorMark
+    {
+        juce::Point<int> position;
+        Connector kind { Connector::Flow };
+    };
+
     struct Control
     {
         juce::String suffix;      // per-tone parameter suffix, or full ID
         bool perTone { true };
         Style style { Style::Knob };
+        juce::String unit;        // printed after the value, e.g. "st", "%"
         std::unique_ptr<juce::Component> component;
         std::unique_ptr<juce::Label> label;
+        std::unique_ptr<juce::Label> value;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
             sliderAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>
@@ -100,17 +126,26 @@ private:
     struct Section
     {
         juce::String title;
+        Band band { Band::Voice };
         juce::Rectangle<int> bounds;
         std::vector<Control*> controls;
-        int firstRowCount { 0 };  // 0 = split evenly across two rows
+        // How many of the section's grid controls go on each row. Sections
+        // are sized to fit their contents rather than their contents scaled
+        // to fit them, which is what keeps every knob the same size.
+        std::vector<int> rowCounts;
         bool manualLayout { false };
+
+        [[nodiscard]] int naturalWidth() const;
     };
 
     Control* addControl (Section& section, const juce::String& suffix,
                          const juce::String& label, Style style,
-                         bool perTone = true);
+                         bool perTone = true, const juce::String& unit = {});
     void bindControls();
     void layoutSection (Section& section, juce::Rectangle<int> bounds);
+    void layoutBand (const std::vector<int>& indices, juce::Rectangle<int> bounds,
+                     const std::vector<Connector>& connectors);
+    void refreshValues();
     void setToneParameter (const char* suffix, float natural);
     [[nodiscard]] float getToneParameter (const char* suffix) const;
     void applyKeyboardOctave();
@@ -128,12 +163,15 @@ private:
     std::vector<std::unique_ptr<Control>> controls;
     Section* performSection { nullptr };
     Section* stripSection { nullptr };
+    // Where the voice chain's connectors go, filled in by resized().
+    std::vector<ConnectorMark> chevrons;
+    juce::Rectangle<int> meterBounds;
 
     // Left performance cluster.
     juce::Slider masterSlider;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
         masterAttachment;
-    juce::Label masterLabel, octLabel, octValueLabel, voiceLabel;
+    juce::Label masterLabel, masterValueLabel, octLabel, octValueLabel, voiceLabel;
     juce::TextButton octDownButton { "DOWN" }, octUpButton { "UP" };
     Control* portaControl { nullptr };
     Control* portaTimeControl { nullptr };
@@ -149,6 +187,10 @@ private:
     // 5th seven semitones above; both together = unison).
     Control* intervalOctControl { nullptr };
     Control* intervalFifthControl { nullptr };
+
+    // Hovering any control names the parameter it edits, in the same words
+    // the host's own parameter list uses.
+    juce::TooltipWindow tooltips { this, 650 };
 
     SeptumLever lever;
     juce::MidiKeyboardState keyboardState;

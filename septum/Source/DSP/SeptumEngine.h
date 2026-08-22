@@ -360,9 +360,14 @@ namespace mapping
             case ArpeggioGrid::EighthHeavy:
             case ArpeggioGrid::SixteenthHeavy:
                 return 0.66;
-            default:
-                return 0.5;
+            case ArpeggioGrid::Quarter:
+            case ArpeggioGrid::Eighth:
+            case ArpeggioGrid::Twelfth:
+            case ArpeggioGrid::Sixteenth:
+            case ArpeggioGrid::TwentyFourth:
+                break;
         }
+        return 0.5;   // an unshuffled grid splits its pair evenly
     }
 
     [[nodiscard]] inline double arpeggioStepSeconds (double bpm, ArpeggioGrid grid,
