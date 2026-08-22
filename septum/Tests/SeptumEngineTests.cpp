@@ -2291,6 +2291,66 @@ void testAllSoundOffSilencesEffectTails()
     expect (echoPeak > 1.0e-4, "post-panic notes still feed the effects");
 }
 
+// The sync reset is documented as naive, and a naive reset drops the saw to
+// the bottom of its cycle. The band-limiting residual describes the
+// discontinuity a free-running oscillator makes — a whole cycle — so applying
+// it to a reset that jumped by whatever fraction of a cycle OSC1 had reached
+// put a spike where the reset belongs: post-reset values ran as high as
+// -0.09 of the peak, where the reset owes about -1.
+void testSyncResetLandsAtTheBottomOfTheCycle()
+{
+    const double sampleRate = 44100.0;
+    septum::Patch patch = plainSawPatch();
+    septum::TonePatch& tone = patch.upper;
+    tone.osc1.wave = septum::Waveform::Saw;
+    tone.osc2.wave = septum::Waveform::Saw;
+    // An octave below the slave clock, so OSC1 never completes a cycle of its
+    // own between resets and every downward jump in the take is a reset.
+    tone.osc1.coarse = -12;
+    tone.osc1.fine = 7;
+    tone.mixType = septum::MixModType::Sync;
+    tone.balance = -63;                 // OSC1 alone
+    tone.ampEnvSustain = 127;
+    tone.level = 127;
+    tone.lowFreq = septum::LowFreqMode::Flat;
+
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    engine.setPatch (patch);
+    engine.reset();
+    const double seconds = 0.5;
+    auto take = renderScore (engine, { { 0.0, true, 48, 100 } }, seconds,
+                             sampleRate);
+
+    const std::size_t from = (std::size_t) (sampleRate * 0.05);
+    double peak = 0.0;
+    for (std::size_t i = from; i < take.left.size(); ++i)
+        peak = std::max (peak, std::abs ((double) take.left[i]));
+    expect (peak > 0.01, "the synced oscillator sounds");
+
+    int resets = 0, shallow = 0;
+    for (std::size_t i = from + 1; i < take.left.size(); ++i)
+    {
+        if ((double) take.left[i] - take.left[i - 1] >= -0.35 * peak)
+            continue;
+        ++resets;
+        if ((double) take.left[i] > -0.5 * peak)
+            ++shallow;
+    }
+
+    // OSC2 is note 48; the reset rate is its fundamental.
+    const double expected = 440.0 * std::exp2 ((48 - 69) / 12.0)
+                            * (seconds - 0.05);
+    expect ((double) resets < 1.1 * expected,
+            "sync produces one downward jump per slave cycle, not more (saw "
+                + std::to_string (resets) + ", expected about "
+                + std::to_string ((int) expected) + ")");
+    expect (shallow == 0,
+            "every sync reset lands at the bottom of the cycle (" 
+                + std::to_string (shallow) + " of " + std::to_string (resets)
+                + " landed short)");
+}
+
 void testSyncFollowsSpecialOsc2Waves()
 {
     // SYNC must fire from OSC2's cycle even when OSC2 is a SUPER SAW (the
@@ -2586,6 +2646,7 @@ int main()
     testDcBlockedOutput();
     testFactoryBankRendersEverywhere();
     testAllSoundOffSilencesEffectTails();
+    testSyncResetLandsAtTheBottomOfTheCycle();
     testSyncFollowsSpecialOsc2Waves();
     testFilterEnvelopeIsAsFastAsTheAmpEnvelope();
     testSampleHoldStepsStayContinuous();

@@ -1415,8 +1415,16 @@ namespace
     };
 
     // One classic-waveform oscillator sample with polyBLEP/BLAMP correction.
+    //
+    // `corrected` is false on the sample a hard sync forced the phase on. The
+    // residuals describe the discontinuity a *free-running* oscillator makes
+    // — a whole cycle's worth — and a sync reset jumps by whatever fraction
+    // of a cycle the oscillator happened to have reached. Correcting that
+    // jump as though it were a full one puts a spike in where the reset
+    // belongs, and the reset is documented as naive anyway.
     inline OscOutput renderClassicWave (Waveform wave, double& phase, double inc,
-                                        double duty, std::uint32_t& noiseRng) noexcept
+                                        double duty, std::uint32_t& noiseRng,
+                                        bool corrected = true) noexcept
     {
         phase += inc;
         bool wrapped = false;
@@ -1433,7 +1441,8 @@ namespace
             case Waveform::Saw:
             {
                 double value = 2.0 * phase - 1.0;
-                value -= polyBlep (phase, inc);
+                if (corrected)
+                    value -= polyBlep (phase, inc);
                 return { value, wrapped, wrapOffset };
             }
             case Waveform::Square:
@@ -1441,13 +1450,18 @@ namespace
             {
                 const double width = wave == Waveform::Square ? 0.5 : duty;
                 double value = phase < width ? 1.0 : -1.0;
-                value += polyBlep (phase, inc);
-                value -= polyBlep (frac (phase - width + 1.0), inc);
+                if (corrected)
+                {
+                    value += polyBlep (phase, inc);
+                    value -= polyBlep (frac (phase - width + 1.0), inc);
+                }
                 return { value, wrapped, wrapOffset };
             }
             case Waveform::Triangle:
             {
                 double value = phase < 0.5 ? 4.0 * phase - 1.0 : 3.0 - 4.0 * phase;
+                if (! corrected)
+                    return { value, wrapped, wrapOffset };
                 // polyBlamp is the antiderivative of polyBlep with respect to
                 // sample time, and polyBlep already carries a step of two (it
                 // corrects the saw's -2 wrap on its own). So a corner whose
@@ -1617,6 +1631,7 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
         // Hard sync (settled behavior): OSC1 restarts its cycle at each OSC2
         // cycle start. The reset is naive — the modelled DSP's own sync
         // aliases audibly, and no source documents band-limiting there.
+        bool osc1SyncReset = false;
         if (tone.mixType == MixModType::Sync && osc2Wrapped
             && wave1 != Waveform::Noise && wave1 != Waveform::SuperSaw
             && wave1 != Waveform::FbOsc && wave1 != Waveform::ExtIn)
@@ -1625,6 +1640,7 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
             while (newPhase < 0.0)
                 newPhase += 1.0;
             voice.osc1.phase = newPhase;
+            osc1SyncReset = true;
         }
 
         double sample1 = 0.0;
@@ -1645,7 +1661,8 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
             {
                 const auto out = renderClassicWave (wave1, voice.osc1.phase,
                                                     voice.inc1, voice.duty1,
-                                                    voice.noiseRng);
+                                                    voice.noiseRng,
+                                                    ! osc1SyncReset);
                 sample1 = out.value;
                 break;
             }

@@ -718,3 +718,35 @@ a chain that ties across a pair still takes DURATION from the section it ends
 on. Five checks fence the two fixes, all watched to fail when reverted; the
 committed demos are unchanged, because `11-arpeggiator.wav` runs an even-length
 style.
+
+#### Step 16 — hard sync corrected a partial jump as though it were a whole one
+
+The sync reset is documented as naive: "the modelled DSP's own sync aliases
+audibly, and no source documents band-limiting there." What shipped was
+neither naive nor band-limited. The reset writes OSC1's phase so that the
+following increment inside `renderClassicWave` lands it at the right
+sub-sample position — which means the increment carries the phase past 1.0,
+`renderClassicWave` sees an ordinary wrap, and it applies the full polyBLEP
+residual. That residual describes a *whole cycle's* discontinuity; a sync
+reset jumps by whatever fraction of a cycle OSC1 happened to have reached.
+
+Measured with a saw an octave below its slave clock, so every downward jump in
+the take is a reset and the naive one owes about −1 × peak:
+
+| | before | after |
+|---|---|---|
+| post-reset value, median | −0.681 × peak | **−0.735 × peak** |
+| post-reset value, worst | **−0.089 × peak** | −0.628 × peak |
+| resets landing above −0.5 × peak | **17 of 74** | 0 of 59 |
+| downward jumps in 0.45 s | **74** | 59 |
+
+Fifty-nine is the number OSC2's fundamental owes; the extra fifteen were the
+spikes themselves. Against the same patch rendered without the residual, the
+shipping output differed by up to **73.6 % of its own peak**, at −32.8 dB RMS.
+
+`renderClassicWave` now takes a flag and skips the residual on the sample a
+sync forced the phase on — for every classic wave, since a jump the reset
+made is not a discontinuity any of their residuals describe. Two checks fence
+it, both watched to fail with the flag removed: the take must contain one
+downward jump per slave cycle and no more, and every one of them must land at
+the bottom of the saw. `05-sync-sweeper.wav` re-rendered 0.1 dB louder.
