@@ -92,6 +92,15 @@ The engine's grounding, briefly:
   monitor hands the input over while it does; the manual's own "sound only
   when you play the keyboard" recipe is what settles that order, and it is a
   test.
+- **D Beam (settled).** Three modes — PITCH on CC#69, EXPRESS with ACTIVE
+  EXPRESSION's two-tone combination, and FILTER/ASSIGN over the address map's
+  own 37-destination list — with the polarity that inverts the assign
+  direction and the UPPER/LOWER/BOTH destination, every one of them a
+  parameter a host can automate. The beam takes its target from where the
+  patch has it toward one end of that parameter's documented range, which is
+  the manual's own description of what holding FILTER/ASSIGN and turning a
+  knob does. D BEAM SENS is stored and inert: it compensates an infrared
+  sensor for sunlight, and there is no sensor here.
 - **MIDI (settled).** The control-change map from owner's manual p. 72 for
   both tones and the part controllers, including both documented pedals
   (hold CC#64, sostenuto CC#66), the audio filter's CC#2 and CC#4, and the
@@ -151,8 +160,8 @@ time, or pass `-DSEPTUM_JUCE_PATH=/path/to/JUCE`.
 
 ## Not yet modelled
 
-The step recorder, D-Beam and SysEx DT1/RQ1 I/O are documented but deferred;
-the research contract lists them alongside the open calibration questions.
+The recorder and SysEx DT1/RQ1 I/O are documented but deferred; the research
+contract lists them alongside the open calibration questions.
 
 ## Licensing
 

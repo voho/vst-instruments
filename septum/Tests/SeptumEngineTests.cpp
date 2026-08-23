@@ -300,6 +300,78 @@ void testTuningAndMasterTune()
     expectNear (sharpHz, 466.20, 1.6, "master tune ceiling retunes A4");
 }
 
+// [settled] Three parameter surfaces the address map stores more coarsely, or
+// less narrowly, than the engine did.
+void testDocumentedParameterGrids()
+{
+    // FILTER Cutoff Keyfollow is raw 44-84 displayed -200..+200: 41 positions
+    // in steps of 10.
+    {
+        septum::Patch patch = septum::initPatch();
+        patch.upper.keyFollow = 193;
+        septum::clampToDocumentedRanges (patch);
+        expect (patch.upper.keyFollow == 190,
+                "KEY FOLLOW snaps to the documented 10-unit grid (got "
+                    + std::to_string (patch.upper.keyFollow) + ")");
+        patch.upper.keyFollow = -3;
+        septum::clampToDocumentedRanges (patch);
+        expect (patch.upper.keyFollow == 0,
+                "KEY FOLLOW near zero snaps to zero");
+    }
+
+    // Delay Feedback is raw 0-98 displayed -98..+98 %: steps of two.
+    {
+        septum::Patch patch = septum::initPatch();
+        // Every odd value sits exactly between two grid points, so what the
+        // check holds is the grid itself: the result is even and no further
+        // than one step from what was asked for.
+        for (int asked : { -97, -31, -1, 0, 1, 31, 97 })
+        {
+            patch.delay.feedback = asked;
+            septum::clampToDocumentedRanges (patch);
+            expect (patch.delay.feedback % 2 == 0
+                        && std::abs (patch.delay.feedback - asked) <= 1,
+                    "delay FEEDBACK snaps to the documented 2 % grid (asked "
+                        + std::to_string (asked) + ", got "
+                        + std::to_string (patch.delay.feedback) + ")");
+        }
+        patch.delay.feedback = 30;
+        septum::clampToDocumentedRanges (patch);
+        expect (patch.delay.feedback == 30,
+                "a value already on the grid is left alone");
+        patch.delay.feedback = -98;
+        septum::clampToDocumentedRanges (patch);
+        expect (patch.delay.feedback == -98,
+                "delay FEEDBACK reaches its documented extreme");
+    }
+
+    // PITCH WIDE gates the panel knob's travel — "This button expands the
+    // range of the PITCH knob by a multiple of three" (OM p. 29) — and not
+    // the stored pitch, which the address map keeps at -36..+36 in its own
+    // byte. A coarse tune outside +/-12 with the switch off must sound.
+    {
+        const double sampleRate = 44100.0;
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Sine;
+        patch.upper.osc1.pitchWide = false;
+        patch.upper.osc1.coarse = 24;
+        patch.upper.balance = -63;
+        patch.upper.ampEnvSustain = 127;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.reset();
+        auto take = renderScore (engine, { { 0.0, true, 36, 100 } }, 0.6,
+                                 sampleRate);
+        const double hz = estimateFundamental (take.left, 4410, 22050,
+                                               sampleRate, 100.0, 400.0);
+        // Note 36 is 65.41 Hz; two octaves up is 261.63 Hz.
+        expectNear (hz, 261.63, 3.0,
+                    "PITCH sounds what it stores with WIDE off");
+    }
+}
+
 void testBalanceEndpoints()
 {
     // Documented: balance fully left silences OSC2 entirely. The two renders
@@ -394,6 +466,140 @@ void testSuperSawSpread()
             "full spread puts a partial on the outermost Szabo offset");
 }
 
+// The AMP overdrive stage carries the latency every voice pays, shaping or
+// not, so its state belongs with the filter's: kept when a voice is taken
+// over, cleared only when a fresh one starts. Clearing it emptied the delay
+// line the clean path reads from, and the voice went silent for the whole
+// reported latency. SOLO is where one voice can be watched on its own: a new
+// key takes the sounding voice over exactly as a steal does.
+void testTakingAVoiceOverDoesNotBlankIt()
+{
+    const double sampleRate = 44100.0;
+    septum::Patch patch = plainSawPatch();
+    patch.upper.osc1.wave = septum::Waveform::Sine;
+    patch.upper.balance = -63;
+    patch.upper.mono = septum::MonoMode::Solo;
+    patch.upper.ampEnvAttack = 0;
+    patch.upper.ampEnvSustain = 127;
+    patch.upper.level = 127;
+    patch.upper.overdrive = false;
+    patch.delayOn = false;
+    patch.reverbOn = false;
+
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    engine.setPatch (patch);
+    engine.reset();
+    const int latency = engine.latencySamples();
+    expect (latency > 0, "the overdrive chain reports a latency at 44.1 kHz");
+
+    auto take = renderScore (engine,
+                             { { 0.0, true, 60, 100 }, { 0.3, true, 67, 100 } },
+                             0.6, sampleRate);
+
+    const auto handover = (std::size_t) (sampleRate * 0.3);
+    double reference = 0.0;
+    for (std::size_t i = handover - 400; i < handover; ++i)
+        reference = std::max (reference, std::abs ((double) take.left[i]));
+    expect (reference > 0.01, "the solo voice is sounding into the handover");
+
+    // With the line emptied under it the voice reads silence for the whole
+    // latency; the output stage's own poles let that through in a sample or
+    // two, so what shows is a run of near-zero samples the sine cannot make
+    // this quickly.
+    int worstRun = 0, run = 0;
+    for (std::size_t i = handover; i < handover + 400; ++i)
+    {
+        if (std::abs ((double) take.left[i]) < 0.02 * reference)
+            worstRun = std::max (worstRun, ++run);
+        else
+            run = 0;
+    }
+    expect (worstRun < latency - 2,
+            "the voice keeps sounding through the handover (near-silent run "
+                + std::to_string (worstRun) + " samples, latency "
+                + std::to_string (latency) + ")");
+}
+
+// OVERDRIVE is an automatable switch, and the stage behind it carries a
+// resampler and an antiderivative reference. Left standing while the switch
+// was off, they answer it coming back with whatever was playing when it was
+// last on — a third of a second earlier here, which for a held sine is the
+// wrong phase entirely.
+//
+// The switch itself is a change of signal, so the take cannot be read against
+// its own slope. It is read against the same note with OVERDRIVE on
+// throughout: the voice state is identical in both, so once the stage has
+// been fed the same recent history the two must agree sample for sample.
+void testOverdriveSwitchesBackInFromLiveState()
+{
+    const double sampleRate = 44100.0;
+    const std::size_t block = 64;
+    const std::size_t total = (std::size_t) (sampleRate * 0.6);
+    // Block-aligned, so the samples compared below are the ones the switch
+    // has actually reached.
+    const std::size_t offAt = ((std::size_t) (sampleRate * 0.1) / block) * block;
+    const std::size_t onAt = ((std::size_t) (sampleRate * 0.4) / block) * block;
+
+    const auto render = [&] (bool cycleTheSwitch)
+    {
+        septum::Patch driven = plainSawPatch();
+        driven.upper.osc1.wave = septum::Waveform::Sine;
+        driven.upper.balance = -63;
+        driven.upper.ampEnvSustain = 127;
+        driven.upper.ampEnvAttack = 0;
+        driven.upper.level = 127;
+        driven.upper.overdrive = true;
+        driven.upper.drive = 100;
+        driven.delayOn = false;
+        driven.reverbOn = false;
+        septum::Patch clean = driven;
+        clean.upper.overdrive = false;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (driven);
+        engine.reset();
+        engine.noteOn (48, 100);
+
+        std::vector<float> left (total), right (total);
+        for (std::size_t pos = 0; pos < total; pos += block)
+        {
+            if (cycleTheSwitch && pos >= offAt && pos < offAt + block)
+                engine.setPatch (clean);
+            if (cycleTheSwitch && pos >= onAt && pos < onAt + block)
+                engine.setPatch (driven);
+            engine.process (left.data() + pos, right.data() + pos,
+                            (int) std::min (block, total - pos));
+        }
+        return left;
+    };
+
+    const auto always = render (false);
+    const auto cycled = render (true);
+
+    double peak = 0.0;
+    for (std::size_t i = onAt; i < total; ++i)
+        peak = std::max (peak, std::abs ((double) always[i]));
+    expect (peak > 0.01, "the overdriven sine sounds");
+
+    // The first block after the switch: the stage has to pick the signal up
+    // where it actually is, not where it left it.
+    double worst = 0.0;
+    for (std::size_t i = onAt; i < onAt + 128 && i < total; ++i)
+        worst = std::max (worst,
+                          std::abs ((double) cycled[i] - (double) always[i]));
+    // Not zero: the two takes ran different signals for a third of a second,
+    // so the output stage's own coupling capacitor is holding a different
+    // offset in each, and it discharges over half a second. What the check
+    // catches is the chain answering with old audio, which was twice the
+    // peak.
+    expect (worst < 0.2 * peak,
+            "OVERDRIVE comes back on the signal that is playing (worst "
+                + std::to_string (worst) + " against a peak of "
+                + std::to_string (peak) + ")");
+}
+
 void testSplitAndDualVoicing()
 {
     septum::Patch patch = plainSawPatch();
@@ -435,6 +641,237 @@ void testSplitAndDualVoicing()
     (void) renderScore (engine, events, 0.3);
     expect (engine.activeVoiceCount() == 10,
             "the eleventh key steals instead of growing the pool");
+}
+
+// [settled, OM p. 65] CONTROLLER DESTINATION names the tone or tones each
+// physical controller reaches: "Selects the tone(s) whose pitch will be
+// changed by the pitch bend lever ... If this is 'BOTH,' the pitch of both the
+// UPPER tone and LOWER tone will change", and the same sentence for the
+// modulation lever and the expression pedal.
+void testControllerDestinations()
+{
+    const double sampleRate = 44100.0;
+
+    // A DUAL patch whose two tones are a sine each, so a bend shows up as a
+    // pitch and nothing else moves.
+    const auto dualPatch = []
+    {
+        septum::Patch patch = plainSawPatch();
+        patch.keyboardMode = septum::KeyboardMode::Dual;
+        for (septum::TonePatch* tone : { &patch.upper, &patch.lower })
+        {
+            tone->osc1.wave = septum::Waveform::Sine;
+            tone->balance = -63;
+            tone->ampEnvSustain = 127;
+            tone->ampEnvAttack = 0;
+            tone->level = 127;
+            tone->bendRange = 12;
+            tone->lowFreq = septum::LowFreqMode::Flat;
+        }
+        // The two tones an octave apart, so each one's bend is visible on its
+        // own partial.
+        patch.lower.octaveShift = -1;
+        return patch;
+    };
+
+    const auto bentLevel = [&] (septum::ToneDestination destination, double hz)
+    {
+        septum::Patch patch = dualPatch();
+        patch.pitchBendDestination = destination;
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.reset();
+        engine.setPitchBend (1.0);      // a full octave up on both ranges
+        auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 0.6,
+                                 sampleRate);
+        return goertzel (take.left, 8820, 26460, hz, sampleRate);
+    };
+
+    // Note 60 is 261.63 Hz and the LOWER tone an octave below it is 130.81;
+    // a full bend with a range of 12 doubles each.
+    const double upperBent = 523.25, lowerBent = 261.63, lowerUnbent = 130.81;
+    expect (bentLevel (septum::ToneDestination::Upper, upperBent) > 1.0e-3,
+            "UPPER bends when the destination names it");
+    expect (bentLevel (septum::ToneDestination::Upper, lowerUnbent) > 1.0e-3,
+            "LOWER stays where it was when the destination does not name it");
+    expect (bentLevel (septum::ToneDestination::Lower, lowerBent) > 1.0e-3,
+            "LOWER bends when the destination names it");
+    expect (bentLevel (septum::ToneDestination::Both, upperBent) > 1.0e-3
+                && bentLevel (septum::ToneDestination::Both, lowerBent) > 1.0e-3,
+            "BOTH bends both tones");
+
+    // EXPRESSION reaches only the tone(s) it names, and BOTH is what the
+    // master chain used to do for everyone.
+    const auto expressed = [&] (septum::ToneDestination destination, double hz)
+    {
+        septum::Patch patch = dualPatch();
+        patch.expressionDestination = destination;
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.reset();
+        engine.setExpression (0.0);
+        auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 0.6,
+                                 sampleRate);
+        return goertzel (take.left, 13230, 26460, hz, sampleRate);
+    };
+    // The two tones are an octave apart and the surviving one is loud, so the
+    // silenced partial is read against the same partial when the destination
+    // does not name it rather than against an absolute floor.
+    const double upperTone = 261.63, lowerTone = 130.81;
+    const double upperNamed = expressed (septum::ToneDestination::Upper, upperTone);
+    const double upperSpared = expressed (septum::ToneDestination::Lower, upperTone);
+    const double lowerNamed = expressed (septum::ToneDestination::Lower, lowerTone);
+    const double lowerSpared = expressed (septum::ToneDestination::Upper, lowerTone);
+    expect (upperNamed < 0.02 * upperSpared,
+            "EXPRESSION at zero takes at least 34 dB off the tone it names "
+            "(named " + std::to_string (upperNamed) + ", spared "
+                + std::to_string (upperSpared) + ")");
+    expect (lowerNamed < 0.02 * lowerSpared,
+            "EXPRESSION at zero names LOWER as readily as UPPER");
+    expect (expressed (septum::ToneDestination::Both, upperTone)
+                    < 0.02 * upperSpared
+                && expressed (septum::ToneDestination::Both, lowerTone)
+                       < 0.02 * lowerSpared,
+            "EXPRESSION at zero with BOTH takes both tones down");
+}
+
+// The D Beam. Settled: three buttons choose what it does (OM p. 20-21), the
+// ASSIGN list and the polarity are Patch Common bytes, "you can also choose
+// the direction in which the knob will be moved", and "moving your hand
+// outside this range will produce no effect".
+void testDBeam()
+{
+    const double sampleRate = 44100.0;
+
+    const auto beamPatch = []
+    {
+        septum::Patch patch = plainSawPatch();
+        patch.upper.filterType = septum::FilterType::Lpf;
+        patch.upper.filterSlope = septum::FilterSlope::Db12;
+        patch.upper.cutoff = 40;
+        patch.upper.resonance = 0;
+        patch.upper.ampEnvSustain = 127;
+        patch.upper.ampEnvAttack = 0;
+        patch.upper.level = 127;
+        patch.upper.bendRange = 12;
+        patch.delayOn = false;
+        patch.reverbOn = false;
+        return patch;
+    };
+
+    // The fifth harmonic of note 48 (130.81 Hz) is 654 Hz, well above a
+    // cutoff of 40 and well inside one the beam has opened.
+    const auto brightness = [&] (const septum::Patch& patch,
+                                 const septum::DBeam& beam)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.setDBeam (beam);
+        engine.reset();
+        auto take = renderScore (engine, { { 0.0, true, 48, 100 } }, 0.5,
+                                 sampleRate);
+        return goertzel (take.left, 8820, 22050, 654.06, sampleRate);
+    };
+
+    septum::DBeam rest {};
+    septum::DBeam open {};
+    open.mode = septum::DBeamMode::Assign;
+    open.value = 127;
+
+    const double atRest = brightness (beamPatch(), rest);
+    const double withBeam = brightness (beamPatch(), open);
+    expect (withBeam > 4.0 * atRest,
+            "the beam opens the filter it is assigned to (rest "
+                + std::to_string (atRest) + ", beam "
+                + std::to_string (withBeam) + ")");
+
+    // The hand out of the range does nothing, whatever the mode says.
+    septum::DBeam armedButOut = open;
+    armedButOut.value = 0;
+    expect (std::abs (brightness (beamPatch(), armedButOut) - atRest)
+                < 0.05 * std::max (1.0e-9, atRest),
+            "a beam at rest changes nothing");
+
+    // "'+' and '-' will invert the direction of change" — with the cutoff
+    // knob already low, minus has almost nowhere left to go.
+    septum::Patch minus = beamPatch();
+    minus.dBeamPolarity = septum::DBeamPolarity::Minus;
+    expect (brightness (minus, open) < atRest,
+            "POLARITY inverts the direction the beam moves the knob");
+
+    // D BEAM DESTINATION names the tone it reaches.
+    septum::Patch lowerOnly = beamPatch();
+    lowerOnly.dBeamDestination = septum::ToneDestination::Lower;
+    expect (std::abs (brightness (lowerOnly, open) - atRest)
+                < 0.05 * std::max (1.0e-9, atRest),
+            "the beam leaves the tone its destination does not name alone");
+
+    // PITCH mode moves the pitch, over the bend range.
+    {
+        septum::Patch patch = beamPatch();
+        patch.upper.osc1.wave = septum::Waveform::Sine;
+        patch.upper.filterType = septum::FilterType::Bypass;
+        septum::DBeam pitch {};
+        pitch.mode = septum::DBeamMode::Pitch;
+        pitch.value = 127;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.setDBeam (pitch);
+        engine.reset();
+        auto take = renderScore (engine, { { 0.0, true, 48, 100 } }, 0.5,
+                                 sampleRate);
+        const double hz = estimateFundamental (take.left, 8820, 22050,
+                                               sampleRate, 100.0, 400.0);
+        // Note 48 is 130.81 Hz; a full beam over a 12-semitone range doubles
+        // it.
+        expectNear (hz, 261.63, 3.0,
+                    "PITCH mode carries the note over the bend range");
+    }
+
+    // EXPRESS mode is the volume, and ACTIVE EXPRESSION brings LOWER in as it
+    // rises.
+    {
+        const auto level = [&] (bool activeExpression, int value, double hz)
+        {
+            septum::Patch patch = beamPatch();
+            patch.keyboardMode = septum::KeyboardMode::Dual;
+            patch.lower = patch.upper;
+            patch.lower.octaveShift = -1;
+            patch.upper.osc1.wave = septum::Waveform::Sine;
+            patch.lower.osc1.wave = septum::Waveform::Sine;
+            patch.upper.filterType = septum::FilterType::Bypass;
+            patch.lower.filterType = septum::FilterType::Bypass;
+            patch.activeExpression = activeExpression;
+
+            septum::DBeam beam {};
+            beam.mode = septum::DBeamMode::Express;
+            beam.value = value;
+
+            septum::Engine engine;
+            engine.prepare (sampleRate, 256);
+            engine.setPatch (patch);
+            engine.setDBeam (beam);
+            engine.reset();
+            auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 0.5,
+                                     sampleRate);
+            return goertzel (take.left, 13230, 22050, hz, sampleRate);
+        };
+        const double upper = 261.63, lower = 130.81;
+        // A beam of 16 is an eighth of the travel, so the full beam is very
+        // nearly eight times it.
+        expect (level (false, 127, upper) > 6.0 * level (false, 16, upper),
+                "EXPRESS mode carries the volume");
+        // Only UPPER when the volume is low; LOWER added as it increases.
+        expect (level (true, 40, lower) < 0.05 * level (true, 40, upper),
+                "ACTIVE EXPRESSION holds LOWER back while the beam is low");
+        expect (level (true, 127, lower) > 0.3 * level (true, 127, upper),
+                "ACTIVE EXPRESSION brings LOWER in as the beam rises");
+    }
 }
 
 void testSoloAndHold()
@@ -995,6 +1432,46 @@ void testArpeggioMotifsMatchTheManualsExamples()
 }
 
 // The grid divisions are settled; a shuffled pair must keep the beat.
+// [settled, OM p.66] "When the number of keys played is less than the number
+// of notes in the arpeggio style, the highest-pitched of the pressed keys is
+// played by default." The sentence carries no direction qualifier, so it holds
+// for the DOWN motifs too — they used to fall back on the lowest key.
+void testShortChordFallsBackOnTheHighestKey()
+{
+    using septum::ArpeggioMotif;
+    using septum::mapping::arpeggioKeyIndexForRow;
+
+    // Two keys held, a style four rows wide: rows 3 and 4 have no key of
+    // their own, whatever the motif.
+    const int count = 2, span = 4;
+    for (auto motif : { ArpeggioMotif::Up, ArpeggioMotif::UpL,
+                        ArpeggioMotif::UpLowHigh, ArpeggioMotif::Down,
+                        ArpeggioMotif::DownL, ArpeggioMotif::DownLowHigh,
+                        ArpeggioMotif::UpDown, ArpeggioMotif::UpDownL,
+                        ArpeggioMotif::UpDownLowHigh })
+    {
+        for (int cycle = 0; cycle < 4; ++cycle)
+        {
+            // Row 4 is the style's last, so an (L&H) motif pins it to the
+            // highest key for its own reason; row 3 is pinned by nothing.
+            const int third =
+                arpeggioKeyIndexForRow (motif, count, 3, span, cycle);
+            expect (third == count - 1,
+                    "a row the chord cannot fill plays the highest key held "
+                    "(motif " + std::to_string ((int) motif) + ", cycle "
+                        + std::to_string (cycle) + ", got "
+                        + std::to_string (third) + ")");
+        }
+    }
+
+    // And a chord wide enough for the style is untouched: three keys under a
+    // three-row style still walk their window.
+    expect (arpeggioKeyIndexForRow (ArpeggioMotif::Down, 3, 1, 3, 0) == 2,
+            "a full chord still reads the window from the top on DOWN");
+    expect (arpeggioKeyIndexForRow (ArpeggioMotif::Down, 3, 3, 3, 0) == 0,
+            "a full chord still reaches the bottom on DOWN");
+}
+
 void testArpeggioGridDivisions()
 {
     using septum::ArpeggioGrid;
@@ -1026,6 +1503,87 @@ void testArpeggioGridDivisions()
 
 // End to end: the arpeggiator turns a held chord into a stream of separate
 // notes at the grid tempo, HOLD keeps it playing, and turning it off stops it.
+// A shuffled pair keeps its total length, so the beat never drifts — the
+// contract says so, and the pure function honours it for step 0 against step
+// 1. But the parity used to come from the *pattern* step, which wraps at END
+// STEP: with an odd END STEP the same parity repeated and the pair stopped
+// summing to its division. END STEP 1 on 1/8L played every section as the
+// long half and ran 16 % slow, drifting for as long as the key was held.
+void testShuffleFollowsTheBeatNotThePattern()
+{
+    const double sampleRate = 44100.0;
+
+    const auto onsets = [sampleRate] (int endStep)
+    {
+        septum::Patch patch = plainSawPatch();
+        patch.upper.level = 127;
+        patch.upper.ampEnvRelease = 0;
+        patch.tempo = 120;                       // one beat = 0.5 s
+        patch.arpeggio.on = true;
+        patch.arpeggio.grid = septum::ArpeggioGrid::EighthLight;
+        patch.arpeggio.duration = septum::ArpeggioDuration::P50;
+        patch.arpeggio.motif = septum::ArpeggioMotif::Up;
+        patch.arpeggio.endStep = endStep;
+        septum::applyArpeggioStyle (patch, 0);   // "Straight 4"
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.reset();
+        auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 3.0,
+                                 sampleRate);
+
+        // Peak to peak, not RMS: the documented 0.33 Hz output coupling
+        // leaves a slowly discharging offset behind each note, and an RMS
+        // gate reads that as the note still sounding.
+        std::vector<double> times;
+        const auto window = (std::size_t) (sampleRate * 0.002);
+        bool sounding = false;
+        for (std::size_t i = 0; i + window < take.left.size(); i += window)
+        {
+            float low = 1.0f, high = -1.0f;
+            for (std::size_t k = i; k < i + window; ++k)
+            {
+                low = std::min (low, take.left[k]);
+                high = std::max (high, take.left[k]);
+            }
+            const double swing = (double) (high - low);
+            if (! sounding && swing > 2.0e-3)
+            {
+                sounding = true;
+                times.push_back ((double) i / sampleRate);
+            }
+            else if (sounding && swing < 2.0e-4)
+            {
+                sounding = false;
+            }
+        }
+        return times;
+    };
+
+    // Eight sections of a shuffled eighth are four beats, however long the
+    // pattern that rides them happens to be.
+    for (int endStep : { 1, 2, 3, 4 })
+    {
+        const auto times = onsets (endStep);
+        expect (times.size() >= 9,
+                "a shuffled grid fires its sections (END STEP "
+                    + std::to_string (endStep) + ", "
+                    + std::to_string (times.size()) + " onsets)");
+        if (times.size() < 9)
+            continue;
+        const double eightSections = times[8] - times[0];
+        expectNear (eightSections, 2.0, 0.02,
+                    "eight 1/8 sections span four beats at END STEP "
+                        + std::to_string (endStep));
+        // And the pair really is uneven, or the check above would pass on an
+        // unshuffled grid too.
+        expect (times[1] - times[0] > 1.15 * (times[2] - times[1]),
+                "the shuffled pair leans, at END STEP "
+                    + std::to_string (endStep));
+    }
+}
+
 void testArpeggiatorPlaysAndHolds()
 {
     const double sampleRate = 44100.0;
@@ -1751,6 +2309,65 @@ void testArpeggioOctaveRange()
 }
 
 // Three things the review found on the external-input path, each now fenced.
+// MODULATION ASSIGN is one patch-common setting, the lever is one lever, and
+// the AUDIO FILTER is one filter — so the lever's reach into it must not
+// depend on how many tones happen to be sounding. It was summed per sounding
+// tone, which doubled it in DUAL and SPLIT.
+void testModulationLeverReachesTheAudioFilterOnce()
+{
+    const double sampleRate = 44100.0;
+
+    const auto sideLevel = [sampleRate] (septum::KeyboardMode mode,
+                                         double lever)
+    {
+        septum::Patch patch = plainSawPatch();
+        patch.keyboardMode = mode;
+        patch.keyboardPart = septum::KeyboardPart::Upper;
+        patch.modulationAssign = septum::ModulationAssign::AudioFilter;
+        // A square LFO at the slowest rate holds +1 for the whole take, so
+        // the lever's reach is a fixed number of octaves rather than a sweep.
+        for (septum::TonePatch* tone : { &patch.upper, &patch.lower })
+        {
+            tone->lfo2.shape = septum::LfoShape::Sqr;
+            tone->lfo2.rate = 0;
+            tone->lfo2.fadeTime = 0;
+        }
+
+        septum::ExternalInput settings {};
+        settings.inputVolume = 127;
+        settings.filterOn = true;
+        settings.type = septum::AudioFilterType::Lpf;
+        settings.slope = septum::FilterSlope::Db12;
+        settings.cutoff = 30;      // about 103 Hz, well under both test tones
+        settings.resonance = 0;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.setExternalInput (settings);
+        engine.reset();
+        engine.setModulation (lever);
+        auto take = renderWithExternalInput (engine, {}, 0.3, sampleRate);
+        return goertzel (take.out.left, 4410, 13230, 900.0, sampleRate);
+    };
+
+    const double closed = sideLevel (septum::KeyboardMode::Single, 0.0);
+    const double single = sideLevel (septum::KeyboardMode::Single, 1.0);
+    const double dual = sideLevel (septum::KeyboardMode::Dual, 1.0);
+    const double split = sideLevel (septum::KeyboardMode::Split, 1.0);
+
+    expect (single > 4.0 * std::max (1.0e-9, closed),
+            "the modulation lever opens the audio filter at all");
+    expect (std::abs (dual - single) < 0.05 * single,
+            "DUAL reaches the audio filter exactly as far as SINGLE (single "
+                + std::to_string (single) + ", dual " + std::to_string (dual)
+                + ")");
+    expect (std::abs (split - single) < 0.05 * single,
+            "SPLIT reaches the audio filter exactly as far as SINGLE (single "
+                + std::to_string (single) + ", split " + std::to_string (split)
+                + ")");
+}
+
 void testExternalMonitorTiming()
 {
     const double sampleRate = 44100.0;
@@ -2055,6 +2672,51 @@ void testEffectTails()
             "reverb TIME extends the tail");
 }
 
+// The output meter's fall is a time, so the same sound reads the same
+// whatever the host's buffer size is. A fixed factor per render call made a
+// 1024-sample host release sixteen times slower than a 64-sample one.
+void testMeterFallsAtTheSameRateAtEveryBlockSize()
+{
+    const double sampleRate = 44100.0;
+    const auto levelAfterSilence = [sampleRate] (int block)
+    {
+        septum::Patch patch = plainSawPatch();
+        patch.upper.ampEnvRelease = 0;
+        patch.upper.level = 127;
+        patch.delayOn = false;
+        patch.reverbOn = false;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, block);
+        engine.setPatch (patch);
+        engine.reset();
+        engine.noteOn (60, 100);
+        std::vector<float> left ((std::size_t) block), right ((std::size_t) block);
+        // A quarter of a second of note, then a quarter of a second of
+        // silence, in whole blocks.
+        const int held = (int) (sampleRate * 0.25) / block;
+        for (int i = 0; i < held; ++i)
+            engine.process (left.data(), right.data(), block);
+        const double sounding = engine.getOutputLevel (0);
+        engine.allSoundOff();
+        for (int i = 0; i < held; ++i)
+            engine.process (left.data(), right.data(), block);
+        return std::pair<double, double> { sounding, engine.getOutputLevel (0) };
+    };
+
+    const auto small = levelAfterSilence (64);
+    const auto large = levelAfterSilence (1024);
+    expect (small.first > 0.01 && large.first > 0.01,
+            "the meter reads a sounding note at either block size");
+    // Both fall the same way, so the ratio of what is left is the same.
+    const double smallRatio = small.second / small.first;
+    const double largeRatio = large.second / large.first;
+    expect (std::abs (smallRatio - largeRatio) < 0.1,
+            "the meter falls at the same rate at 64 and 1024 samples (ratios "
+                + std::to_string (smallRatio) + " and "
+                + std::to_string (largeRatio) + ")");
+}
+
 void testDcBlockedOutput()
 {
     // A 95 % pulse sustained: the raw wave has a large mean; the documented
@@ -2149,6 +2811,66 @@ void testAllSoundOffSilencesEffectTails()
         echoPeak = std::max ({ echoPeak, std::abs ((double) echoes.left[i]),
                                std::abs ((double) echoes.right[i]) });
     expect (echoPeak > 1.0e-4, "post-panic notes still feed the effects");
+}
+
+// The sync reset is documented as naive, and a naive reset drops the saw to
+// the bottom of its cycle. The band-limiting residual describes the
+// discontinuity a free-running oscillator makes — a whole cycle — so applying
+// it to a reset that jumped by whatever fraction of a cycle OSC1 had reached
+// put a spike where the reset belongs: post-reset values ran as high as
+// -0.09 of the peak, where the reset owes about -1.
+void testSyncResetLandsAtTheBottomOfTheCycle()
+{
+    const double sampleRate = 44100.0;
+    septum::Patch patch = plainSawPatch();
+    septum::TonePatch& tone = patch.upper;
+    tone.osc1.wave = septum::Waveform::Saw;
+    tone.osc2.wave = septum::Waveform::Saw;
+    // An octave below the slave clock, so OSC1 never completes a cycle of its
+    // own between resets and every downward jump in the take is a reset.
+    tone.osc1.coarse = -12;
+    tone.osc1.fine = 7;
+    tone.mixType = septum::MixModType::Sync;
+    tone.balance = -63;                 // OSC1 alone
+    tone.ampEnvSustain = 127;
+    tone.level = 127;
+    tone.lowFreq = septum::LowFreqMode::Flat;
+
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    engine.setPatch (patch);
+    engine.reset();
+    const double seconds = 0.5;
+    auto take = renderScore (engine, { { 0.0, true, 48, 100 } }, seconds,
+                             sampleRate);
+
+    const std::size_t from = (std::size_t) (sampleRate * 0.05);
+    double peak = 0.0;
+    for (std::size_t i = from; i < take.left.size(); ++i)
+        peak = std::max (peak, std::abs ((double) take.left[i]));
+    expect (peak > 0.01, "the synced oscillator sounds");
+
+    int resets = 0, shallow = 0;
+    for (std::size_t i = from + 1; i < take.left.size(); ++i)
+    {
+        if ((double) take.left[i] - take.left[i - 1] >= -0.35 * peak)
+            continue;
+        ++resets;
+        if ((double) take.left[i] > -0.5 * peak)
+            ++shallow;
+    }
+
+    // OSC2 is note 48; the reset rate is its fundamental.
+    const double expected = 440.0 * std::exp2 ((48 - 69) / 12.0)
+                            * (seconds - 0.05);
+    expect ((double) resets < 1.1 * expected,
+            "sync produces one downward jump per slave cycle, not more (saw "
+                + std::to_string (resets) + ", expected about "
+                + std::to_string ((int) expected) + ")");
+    expect (shallow == 0,
+            "every sync reset lands at the bottom of the cycle (" 
+                + std::to_string (shallow) + " of " + std::to_string (resets)
+                + " landed short)");
 }
 
 void testSyncFollowsSpecialOsc2Waves()
@@ -2419,19 +3141,27 @@ int main()
     testMappingLaws();
     testRegisteredConstants();
     testTuningAndMasterTune();
+    testDocumentedParameterGrids();
     testBalanceEndpoints();
     testRingModulation();
     testOscillatorSync();
     testSuperSawSpread();
+    testTakingAVoiceOverDoesNotBlankIt();
+    testOverdriveSwitchesBackInFromLiveState();
     testSplitAndDualVoicing();
+    testControllerDestinations();
+    testDBeam();
     testSoloAndHold();
     testSostenutoLatchesOnlyWhatWasSounding();
     testExternalInputAndAudioFilter();
+    testModulationLeverReachesTheAudioFilterOnce();
     testExternalMonitorTiming();
     testExternalSwitchesAreCrossedNotThrown();
     testExternalMonitorHandover();
     testArpeggioMotifsMatchTheManualsExamples();
+    testShortChordFallsBackOnTheHighestKey();
     testArpeggioGridDivisions();
+    testShuffleFollowsTheBeatNotThePattern();
     testArpeggiatorPlaysAndHolds();
     testArpeggioOctaveRange();
     testArpeggiatorEdgeCases();
@@ -2441,9 +3171,11 @@ int main()
     testEnvelopesShapeLoudness();
     testVelocitySensitivity();
     testEffectTails();
+    testMeterFallsAtTheSameRateAtEveryBlockSize();
     testDcBlockedOutput();
     testFactoryBankRendersEverywhere();
     testAllSoundOffSilencesEffectTails();
+    testSyncResetLandsAtTheBottomOfTheCycle();
     testSyncFollowsSpecialOsc2Waves();
     testFilterEnvelopeIsAsFastAsTheAmpEnvelope();
     testSampleHoldStepsStayContinuous();

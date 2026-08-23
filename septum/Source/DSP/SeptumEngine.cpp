@@ -293,24 +293,11 @@ void OverdriveStage::clear() noexcept
     previousIntegral = logCosh (0.0);
     bypass.fill (0.0);
     bypassWrite = 0;
+    wasEnabled = false;
 }
 
-double OverdriveStage::process (double x, double preGain, double compensation,
-                                bool enabled) noexcept
+double OverdriveStage::shapeChain (double x, double preGain) noexcept
 {
-    // The delay line runs whether the shaper does or not. Feeding it only
-    // while the switch is off would leave it holding pre-switch audio, and
-    // turning OVERDRIVE off would replay that burst before the current signal
-    // caught up.
-    const auto size = static_cast<int> (bypass.size());
-    bypass[static_cast<std::size_t> (bypassWrite)] = x;
-    const double delayed =
-        bypass[static_cast<std::size_t> ((bypassWrite - latency + size) % size)];
-    bypassWrite = (bypassWrite + 1) % size;
-
-    if (! enabled)
-        return latency == 0 ? x : delayed;
-
     // First-order antiderivative anti-aliasing of tanh.
     const auto shape = [this] (double input)
     {
@@ -329,35 +316,72 @@ double OverdriveStage::process (double x, double preGain, double compensation,
     // to `shape` lands in a named local first: the order the shaper sees its
     // input in is the order time runs in, not whatever order the compiler
     // picks for a call's arguments.
-    double shaped = 0.0;
     if (factor == 1)
-    {
-        shaped = shape (preGain * x);
-    }
-    else if (factor == 2)
+        return shape (preGain * x);
+
+    if (factor == 2)
     {
         double a = 0.0, b = 0.0;
         outer.upsample (x, a, b);
         const double shapedA = shape (preGain * a);
         const double shapedB = shape (preGain * b);
-        shaped = outer.downsample (shapedA, shapedB);
+        return outer.downsample (shapedA, shapedB);
     }
-    else
+
+    double a = 0.0, b = 0.0;
+    outer.upsample (x, a, b);
+    double a0 = 0.0, a1 = 0.0, b0 = 0.0, b1 = 0.0;
+    inner.upsample (a, a0, a1);
+    inner.upsample (b, b0, b1);
+    const double shapedA0 = shape (preGain * a0);
+    const double shapedA1 = shape (preGain * a1);
+    const double down0 = inner.downsample (shapedA0, shapedA1);
+    const double shapedB0 = shape (preGain * b0);
+    const double shapedB1 = shape (preGain * b1);
+    const double down1 = inner.downsample (shapedB0, shapedB1);
+    return outer.downsample (down0, down1);
+}
+
+double OverdriveStage::process (double x, double preGain, double compensation,
+                                bool enabled) noexcept
+{
+    // The delay line runs whether the shaper does or not. Feeding it only
+    // while the switch is off would leave it holding pre-switch audio, and
+    // turning OVERDRIVE off would replay that burst before the current signal
+    // caught up.
+    const auto size = static_cast<int> (bypass.size());
+    const int written = bypassWrite;
+    bypass[static_cast<std::size_t> (written)] = x;
+    const double delayed =
+        bypass[static_cast<std::size_t> ((written - latency + size) % size)];
+    bypassWrite = (bypassWrite + 1) % size;
+
+    if (! enabled)
     {
-        double a = 0.0, b = 0.0;
-        outer.upsample (x, a, b);
-        double a0 = 0.0, a1 = 0.0, b0 = 0.0, b1 = 0.0;
-        inner.upsample (a, a0, a1);
-        inner.upsample (b, b0, b1);
-        const double shapedA0 = shape (preGain * a0);
-        const double shapedA1 = shape (preGain * a1);
-        const double down0 = inner.downsample (shapedA0, shapedA1);
-        const double shapedB0 = shape (preGain * b0);
-        const double shapedB1 = shape (preGain * b1);
-        const double down1 = inner.downsample (shapedB0, shapedB1);
-        shaped = outer.downsample (down0, down1);
+        wasEnabled = false;
+        return latency == 0 ? x : delayed;
     }
-    return shaped * compensation;
+
+    // OVERDRIVE has just come back in. Every state in this chain — the two
+    // half-band stages, up and down, and the ADAA's antiderivative reference
+    // — carries across samples, and standing still while the switch was out
+    // left them describing whatever was playing when it was last in, a third
+    // of a second ago or a minute. They are all linear or memoryless in the
+    // last few samples, so the history the bypass line has been keeping all
+    // along is enough to rebuild them exactly: replay it, throw the output
+    // away, and the first shaped sample lands on the signal that is actually
+    // playing. It costs one ring's worth of chain evaluations at the
+    // transition and nothing at all while the switch stays put.
+    if (! wasEnabled)
+    {
+        wasEnabled = true;
+        for (int i = size - 1; i >= 1; --i)
+            (void) shapeChain (
+                bypass[static_cast<std::size_t> ((written - i + size) % size)],
+                preGain);
+    }
+
+    return shapeChain (x, preGain) * compensation;
 }
 
 // ---------------------------------------------------------------------------
@@ -493,6 +517,7 @@ void Engine::reset()
         arpeggioDriven_[static_cast<std::size_t> (part)] =
             arpeggioDrives (part == 0 ? Part::Upper : Part::Lower);
     arpeggioStep_ = 0;
+    arpeggioGridSection_ = 0;
     arpeggioStepRemaining_ = 0.0;
     std::fill (delayL_.buffer.begin(), delayL_.buffer.end(), 0.0f);
     std::fill (delayR_.buffer.begin(), delayR_.buffer.end(), 0.0f);
@@ -524,14 +549,249 @@ void Engine::reset()
     hold_ = false;
     sostenuto_ = false;
     smoothedMaster_ = masterLevel_ / 127.0;
+    smoothedExpression_.fill (1.0);
+    smoothedDBeamGain_.fill (1.0);
     updateEffectCoefficients();
+}
+
+void Engine::setDBeam (const DBeam& beam) noexcept
+{
+    dBeam_ = beam;
+    clampToDocumentedRanges (dBeam_);
+    applyDBeam();
+}
+
+// The beam's travel, and where it takes the assigned parameter.
+//
+// Settled (OM p. 21): "If you hold down the FILTER/ASSIGN button and move one
+// of the top panel knobs, the D Beam controller will have the same function
+// as that knob. At this time you can also choose the direction in which the
+// knob will be moved... when you move your hand closer to the D Beam
+// controller, the LFO speeds up, just as if you had moved the LFO RATE knob
+// toward the right." So the beam takes the parameter from the value the patch
+// holds toward one end of its own documented range, POLARITY picks which end,
+// and the hand's height says how far. [voiced, OQ-16] is only the shape of
+// that travel, which is linear here.
+namespace
+{
+    [[nodiscard]] int beamed (int patchValue, int low, int high,
+                              double travel) noexcept
+    {
+        const int end = travel >= 0.0 ? high : low;
+        return static_cast<int> (std::lround (
+            patchValue + std::abs (travel) * (end - patchValue)));
+    }
+}
+
+void Engine::applyDBeam()
+{
+    patch_ = rawPatch_;
+    external_ = rawExternal_;
+    dBeamTravel_ = 0.0;
+    if (dBeam_.mode != DBeamMode::Assign || dBeam_.value <= 0)
+        return;
+
+    const double travel = (dBeam_.value / 127.0)
+                          * (rawPatch_.dBeamPolarity == DBeamPolarity::Plus
+                                 ? 1.0
+                                 : -1.0);
+    dBeamTravel_ = travel;
+
+    // Every tone-scoped destination moves on the tone(s) D BEAM DESTINATION
+    // names; the shared ones - the two effect times and the audio filter -
+    // are not per tone and move whatever it says.
+    TonePatch* tones[2] { &patch_.upper, &patch_.lower };
+    for (int index = 0; index < partCount; ++index)
+    {
+        if (! destinationReaches (rawPatch_.dBeamDestination, index == 0))
+            continue;
+        TonePatch& tone = *tones[static_cast<std::size_t> (index)];
+        switch (rawPatch_.dBeamAssign)
+        {
+            case DBeamAssign::Osc1Pitch:
+                tone.osc1.coarse = beamed (tone.osc1.coarse, -36, 36, travel);
+                break;
+            case DBeamAssign::Osc1Detune:
+                tone.osc1.fine = beamed (tone.osc1.fine, -50, 50, travel);
+                break;
+            case DBeamAssign::Osc1Pw:
+                tone.osc1.pulseWidth =
+                    beamed (tone.osc1.pulseWidth, 0, 127, travel);
+                break;
+            case DBeamAssign::Osc2Pitch:
+                tone.osc2.coarse = beamed (tone.osc2.coarse, -36, 36, travel);
+                break;
+            case DBeamAssign::Osc2Detune:
+                tone.osc2.fine = beamed (tone.osc2.fine, -50, 50, travel);
+                break;
+            case DBeamAssign::Osc2Pw:
+                tone.osc2.pulseWidth =
+                    beamed (tone.osc2.pulseWidth, 0, 127, travel);
+                break;
+            case DBeamAssign::MixModBalance:
+                tone.balance = beamed (tone.balance, -63, 63, travel);
+                break;
+            case DBeamAssign::FilterCutoff:
+                tone.cutoff = beamed (tone.cutoff, 0, 127, travel);
+                break;
+            case DBeamAssign::FilterResonance:
+                tone.resonance = beamed (tone.resonance, 0, 127, travel);
+                break;
+            case DBeamAssign::FilterCutoffKeyFollow:
+                tone.keyFollow = beamed (tone.keyFollow, -200, 200, travel);
+                break;
+            case DBeamAssign::AmpLevel:
+                tone.level = beamed (tone.level, 0, 127, travel);
+                break;
+            case DBeamAssign::PitchEnvA:
+                tone.pitchEnvAttack =
+                    beamed (tone.pitchEnvAttack, 0, 127, travel);
+                break;
+            case DBeamAssign::PitchEnvD:
+                tone.pitchEnvDecay = beamed (tone.pitchEnvDecay, 0, 127, travel);
+                break;
+            case DBeamAssign::Osc1PitchEnvDepth:
+                tone.osc1.pitchEnvDepth =
+                    beamed (tone.osc1.pitchEnvDepth, -63, 63, travel);
+                break;
+            case DBeamAssign::Osc2PitchEnvDepth:
+                tone.osc2.pitchEnvDepth =
+                    beamed (tone.osc2.pitchEnvDepth, -63, 63, travel);
+                break;
+            case DBeamAssign::Lfo1Rate:
+                tone.lfo1.rate = beamed (tone.lfo1.rate, 0, 127, travel);
+                break;
+            case DBeamAssign::Lfo1Depth1:
+                tone.lfo1.depth1 = beamed (tone.lfo1.depth1, -63, 63, travel);
+                break;
+            case DBeamAssign::Lfo1Depth2:
+                tone.lfo1.depth2 = beamed (tone.lfo1.depth2, -63, 63, travel);
+                break;
+            case DBeamAssign::Lfo2Rate:
+                tone.lfo2.rate = beamed (tone.lfo2.rate, 0, 127, travel);
+                break;
+            case DBeamAssign::Lfo2Depth1:
+                tone.lfo2.depth1 = beamed (tone.lfo2.depth1, -63, 63, travel);
+                break;
+            case DBeamAssign::Lfo2Depth2:
+                tone.lfo2.depth2 = beamed (tone.lfo2.depth2, -63, 63, travel);
+                break;
+            case DBeamAssign::FilterEnvA:
+                tone.filterEnvAttack =
+                    beamed (tone.filterEnvAttack, 0, 127, travel);
+                break;
+            case DBeamAssign::FilterEnvD:
+                tone.filterEnvDecay =
+                    beamed (tone.filterEnvDecay, 0, 127, travel);
+                break;
+            case DBeamAssign::FilterEnvS:
+                tone.filterEnvSustain =
+                    beamed (tone.filterEnvSustain, 0, 127, travel);
+                break;
+            case DBeamAssign::FilterEnvR:
+                tone.filterEnvRelease =
+                    beamed (tone.filterEnvRelease, 0, 127, travel);
+                break;
+            case DBeamAssign::FilterEnvDepth:
+                tone.filterEnvDepth =
+                    beamed (tone.filterEnvDepth, -63, 63, travel);
+                break;
+            case DBeamAssign::AmpEnvA:
+                tone.ampEnvAttack = beamed (tone.ampEnvAttack, 0, 127, travel);
+                break;
+            case DBeamAssign::AmpEnvD:
+                tone.ampEnvDecay = beamed (tone.ampEnvDecay, 0, 127, travel);
+                break;
+            case DBeamAssign::AmpEnvS:
+                tone.ampEnvSustain =
+                    beamed (tone.ampEnvSustain, 0, 127, travel);
+                break;
+            case DBeamAssign::AmpEnvR:
+                tone.ampEnvRelease =
+                    beamed (tone.ampEnvRelease, 0, 127, travel);
+                break;
+            case DBeamAssign::DelayDepth:
+                tone.delayDepth = beamed (tone.delayDepth, 0, 127, travel);
+                break;
+            case DBeamAssign::ReverbDepth:
+                tone.reverbDepth = beamed (tone.reverbDepth, 0, 127, travel);
+                break;
+            // Not tone-scoped, or not a parameter at all.
+            case DBeamAssign::AudioFilterCutoff:
+            case DBeamAssign::AudioFilterResonance:
+            case DBeamAssign::DelayTime:
+            case DBeamAssign::ReverbTime:
+            case DBeamAssign::Bender:
+                break;
+        }
+    }
+
+    switch (rawPatch_.dBeamAssign)
+    {
+        case DBeamAssign::AudioFilterCutoff:
+            external_.cutoff = beamed (external_.cutoff, 0, 127, travel);
+            break;
+        case DBeamAssign::AudioFilterResonance:
+            external_.resonance = beamed (external_.resonance, 0, 127, travel);
+            break;
+        case DBeamAssign::DelayTime:
+            patch_.delay.time = beamed (patch_.delay.time, 0, 127, travel);
+            break;
+        case DBeamAssign::ReverbTime:
+            patch_.reverb.time = beamed (patch_.reverb.time, 0, 127, travel);
+            break;
+        default:
+            break;
+    }
+    clampToDocumentedRanges (patch_);
+    clampToDocumentedRanges (external_);
+}
+
+// [voiced, OQ-16] PITCH mode: "when you hold down a key and move your hand up
+// or down above the D Beam controller, the pitch will change" (OM p. 20). The
+// manual gives no direction and no interval, so the replica reads it as the
+// bend lever's own reach, upward — the one pitch span the instrument settles —
+// and BENDER, which is a separate entry in the ASSIGN list, is the same reach
+// with POLARITY able to invert it.
+double Engine::dBeamPitchSemitones (Part part) const noexcept
+{
+    if (dBeam_.value <= 0
+        || ! destinationReaches (rawPatch_.dBeamDestination,
+                                 part == Part::Upper))
+        return 0.0;
+    const TonePatch& tone = tonePatch (part);
+    if (dBeam_.mode == DBeamMode::Pitch)
+        return (dBeam_.value / 127.0) * tone.bendRange;
+    if (dBeam_.mode == DBeamMode::Assign
+        && rawPatch_.dBeamAssign == DBeamAssign::Bender)
+        return dBeamTravel_ * tone.bendRange;
+    return 0.0;
+}
+
+// [settled, OM pp. 20 and 65] EXPRESS mode: the beam "will change the volume",
+// or, with ACTIVE EXPRESSION on, combines the two tones — "Only the UPPER tone
+// will be heard when the volume is low, and the LOWER tone will be added as
+// the volume increases". [voiced, OQ-16] is the point LOWER enters, which is
+// half way here.
+double Engine::dBeamGain (Part part) const noexcept
+{
+    if (dBeam_.mode != DBeamMode::Express)
+        return 1.0;
+    const bool upper = part == Part::Upper;
+    if (! destinationReaches (rawPatch_.dBeamDestination, upper))
+        return 1.0;
+    const double v = dBeam_.value / 127.0;
+    if (! rawPatch_.activeExpression)
+        return v;
+    return upper ? v : std::max (0.0, 2.0 * v - 1.0);
 }
 
 void Engine::setPatch (const Patch& patch)
 {
     const int previousSize = patch_.reverb.size;
-    patch_ = patch;
-    clampToDocumentedRanges (patch_);
+    rawPatch_ = patch;
+    clampToDocumentedRanges (rawPatch_);
+    applyDBeam();
     if (patch_.reverb.size != previousSize)
     {
         // Line lengths follow SIZE; recompute them (states are kept — a size
@@ -568,8 +828,9 @@ void Engine::setPatch (const Patch& patch)
 
 void Engine::setExternalInput (const ExternalInput& settings) noexcept
 {
-    external_ = settings;
-    clampToDocumentedRanges (external_);
+    rawExternal_ = settings;
+    clampToDocumentedRanges (rawExternal_);
+    applyDBeam();
 }
 
 void Engine::setMasterLevel (int level) noexcept
@@ -965,7 +1226,6 @@ void Engine::triggerVoice (Voice& voice, Part part, int note, double velocity,
                 phase = nextRandom() * (1.0 / 4294967296.0);
             osc->clearRuntime();
         }
-        voice.overdrive.clear();
         voice.noiseRng = nextRandom() | 1u;
         voice.controlsPrimed = false;  // snap cutoff/resonance to this note
         if (! wasActive)
@@ -973,6 +1233,13 @@ void Engine::triggerVoice (Voice& voice, Part part, int note, double velocity,
             voice.filter1.clear();
             voice.filter2.clear();
             voice.shelfState = 0.0;
+            // The overdrive stage belongs with them. A *stolen* voice keeps
+            // its filter and its envelope level deliberately, and clearing
+            // the stage's matched delay line under it emptied the line the
+            // clean path reads from: the note it was still sounding went
+            // silent for the whole of the reported latency before the new
+            // one arrived.
+            voice.overdrive.clear();
         }
     }
 }
@@ -1128,6 +1395,7 @@ void Engine::allSoundOff()
         arpeggioDriven_[static_cast<std::size_t> (part)] =
             arpeggioDrives (part == 0 ? Part::Upper : Part::Lower);
     arpeggioStep_ = 0;
+    arpeggioGridSection_ = 0;
     arpeggioStepRemaining_ = 0.0;
     sostenuto_ = false;
 
@@ -1224,11 +1492,24 @@ void Engine::updateVoiceControls (Voice& voice, int tickSamples)
     }
 
     const double pitchEnvLevel = voice.pitchEnv.advance (tickSamples);
-    const double bendSemitones = pitchBend_ * tone.bendRange;
+    // [settled] CONTROLLER DESTINATION: each physical controller names the
+    // tone or tones it reaches (OM p. 65). A voice the bend lever does not
+    // reach does not bend, and one the modulation lever does not reach is not
+    // modulated by it — the tone's own LFOs are untouched either way.
+    const bool upperVoice = voice.part == Part::Upper;
+    const double bendSemitones =
+        (destinationReaches (patch_.pitchBendDestination, upperVoice)
+             ? pitchBend_ * tone.bendRange
+             : 0.0)
+        + dBeamPitchSemitones (voice.part);
+    const double lever =
+        destinationReaches (patch_.modulationDestination, upperVoice)
+            ? modulation_
+            : 0.0;
 
     // Modulation-lever vibrato rides LFO2 (settled) into the assigned target.
     const double leverVibratoCents =
-        modulation_ * mapping::leverVibratoCents * runtime.lfo2Value;
+        lever * mapping::leverVibratoCents * runtime.lfo2Value;
     const bool leverToOsc1 =
         patch_.modulationAssign == ModulationAssign::Osc1AndOsc2
         || patch_.modulationAssign == ModulationAssign::Osc1;
@@ -1280,7 +1561,7 @@ void Engine::updateVoiceControls (Voice& voice, int tickSamples)
         contribution (tone.lfo2, runtime.lfo2Value);
         if ((oscIndex == 1 && patch_.modulationAssign == ModulationAssign::Pw1)
             || (oscIndex == 2 && patch_.modulationAssign == ModulationAssign::Pw2))
-            value += modulation_ * mapping::leverPulseWidth * runtime.lfo2Value;
+            value += lever * mapping::leverPulseWidth * runtime.lfo2Value;
         return std::clamp (value, 0.0, 127.0);
     };
 
@@ -1325,7 +1606,7 @@ void Engine::updateVoiceControls (Voice& voice, int tickSamples)
     if (tone.lfo2.destination1 == LfoDest1::Filter)
         lfoFilterOct += mapping::lfoFilterOctaves (tone.lfo2.depth1) * runtime.lfo2Value;
     if (patch_.modulationAssign == ModulationAssign::Filter)
-        lfoFilterOct += modulation_ * mapping::leverFilterOctaves * runtime.lfo2Value;
+        lfoFilterOct += lever * mapping::leverFilterOctaves * runtime.lfo2Value;
 
     const double cutoffBaseOct = std::log2 (mapping::cutoffHz (tone.cutoff));
     const double keyTrack = mapping::keyFollowOctavesPerOctave (tone.keyFollow)
@@ -1389,7 +1670,7 @@ void Engine::updateVoiceControls (Voice& voice, int tickSamples)
     if (tone.lfo2.destination2 == LfoDest2::Amp)
         tremolo += depthScale (tone.lfo2.depth2) * runtime.lfo2Value;
     if (patch_.modulationAssign == ModulationAssign::Amp)
-        tremolo += modulation_ * mapping::leverAmpDepth * runtime.lfo2Value;
+        tremolo += lever * mapping::leverAmpDepth * runtime.lfo2Value;
     gain *= std::max (0.0, 1.0 + tremolo);
 
     // Equal-power pan from the -64..+63 patch value.
@@ -1413,8 +1694,16 @@ namespace
     };
 
     // One classic-waveform oscillator sample with polyBLEP/BLAMP correction.
+    //
+    // `corrected` is false on the sample a hard sync forced the phase on. The
+    // residuals describe the discontinuity a *free-running* oscillator makes
+    // — a whole cycle's worth — and a sync reset jumps by whatever fraction
+    // of a cycle the oscillator happened to have reached. Correcting that
+    // jump as though it were a full one puts a spike in where the reset
+    // belongs, and the reset is documented as naive anyway.
     inline OscOutput renderClassicWave (Waveform wave, double& phase, double inc,
-                                        double duty, std::uint32_t& noiseRng) noexcept
+                                        double duty, std::uint32_t& noiseRng,
+                                        bool corrected = true) noexcept
     {
         phase += inc;
         bool wrapped = false;
@@ -1431,7 +1720,8 @@ namespace
             case Waveform::Saw:
             {
                 double value = 2.0 * phase - 1.0;
-                value -= polyBlep (phase, inc);
+                if (corrected)
+                    value -= polyBlep (phase, inc);
                 return { value, wrapped, wrapOffset };
             }
             case Waveform::Square:
@@ -1439,13 +1729,18 @@ namespace
             {
                 const double width = wave == Waveform::Square ? 0.5 : duty;
                 double value = phase < width ? 1.0 : -1.0;
-                value += polyBlep (phase, inc);
-                value -= polyBlep (frac (phase - width + 1.0), inc);
+                if (corrected)
+                {
+                    value += polyBlep (phase, inc);
+                    value -= polyBlep (frac (phase - width + 1.0), inc);
+                }
                 return { value, wrapped, wrapOffset };
             }
             case Waveform::Triangle:
             {
                 double value = phase < 0.5 ? 4.0 * phase - 1.0 : 3.0 - 4.0 * phase;
+                if (! corrected)
+                    return { value, wrapped, wrapOffset };
                 // polyBlamp is the antiderivative of polyBlep with respect to
                 // sample time, and polyBlep already carries a step of two (it
                 // corrects the saw's -2 wrap on its own). So a corner whose
@@ -1615,6 +1910,7 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
         // Hard sync (settled behavior): OSC1 restarts its cycle at each OSC2
         // cycle start. The reset is naive — the modelled DSP's own sync
         // aliases audibly, and no source documents band-limiting there.
+        bool osc1SyncReset = false;
         if (tone.mixType == MixModType::Sync && osc2Wrapped
             && wave1 != Waveform::Noise && wave1 != Waveform::SuperSaw
             && wave1 != Waveform::FbOsc && wave1 != Waveform::ExtIn)
@@ -1623,6 +1919,7 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
             while (newPhase < 0.0)
                 newPhase += 1.0;
             voice.osc1.phase = newPhase;
+            osc1SyncReset = true;
         }
 
         double sample1 = 0.0;
@@ -1643,7 +1940,8 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
             {
                 const auto out = renderClassicWave (wave1, voice.osc1.phase,
                                                     voice.inc1, voice.duty1,
-                                                    voice.noiseRng);
+                                                    voice.noiseRng,
+                                                    ! osc1SyncReset);
                 sample1 = out.value;
                 break;
             }
@@ -1933,6 +2231,7 @@ void Engine::arpeggioRemoveKey (Part part, int note)
             arpeggioStopPart (index == 0 ? Part::Upper : Part::Lower);
         arpeggioRunning_ = false;
         arpeggioStep_ = 0;
+        arpeggioGridSection_ = 0;
         arpeggioStepRemaining_ = 0.0;
     }
 }
@@ -2005,7 +2304,10 @@ void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
             if (style.cell (step, row) != arpeggioTie)
                 break;
             heldSeconds += lastStepSeconds;
-            lastStepSeconds = mapping::arpeggioStepSeconds (patch_.tempo, arp.grid, step);
+            // The grid section the chain reaches, not the pattern step: the
+            // shuffle's parity runs with the beat.
+            lastStepSeconds = mapping::arpeggioStepSeconds (
+                patch_.tempo, arp.grid, arpeggioGridSection_ + ahead);
         }
 
         if (state.note >= 0)
@@ -2106,7 +2408,7 @@ void Engine::arpeggioFireStepForPart (Part part, double stepSeconds)
 void Engine::arpeggioFireStep()
 {
     const double stepSeconds = mapping::arpeggioStepSeconds (
-        patch_.tempo, patch_.arpeggio.grid, arpeggioStep_);
+        patch_.tempo, patch_.arpeggio.grid, arpeggioGridSection_);
     for (int index = 0; index < partCount; ++index)
     {
         const Part part = index == 0 ? Part::Upper : Part::Lower;
@@ -2144,6 +2446,7 @@ void Engine::advanceArpeggiator (int samples)
         {
             arpeggioRunning_ = false;
             arpeggioStep_ = 0;
+            arpeggioGridSection_ = 0;
             arpeggioStepRemaining_ = 0.0;
         }
     }
@@ -2248,6 +2551,7 @@ void Engine::advanceArpeggiator (int samples)
             arpeggioRunning_ = false;
         }
         arpeggioStep_ = 0;
+        arpeggioGridSection_ = 0;
         arpeggioStepRemaining_ = 0.0;
         return;
     }
@@ -2256,6 +2560,7 @@ void Engine::advanceArpeggiator (int samples)
     {
         arpeggioRunning_ = true;
         arpeggioStep_ = 0;
+        arpeggioGridSection_ = 0;
         arpeggioStepRemaining_ = 0.0;
         for (auto& runtime : arpeggios_)
         {
@@ -2277,8 +2582,12 @@ void Engine::advanceArpeggiator (int samples)
             arpeggioStep_ %= endStep;
             arpeggioFireStep();
             arpeggioStepRemaining_ =
-                mapping::arpeggioStepSeconds (patch_.tempo, arp.grid, arpeggioStep_)
+                mapping::arpeggioStepSeconds (patch_.tempo, arp.grid,
+                                              arpeggioGridSection_)
                 * sampleRate_;
+            // Only its parity is ever read, and 0x10000 is even, so wrapping
+            // here keeps the shuffle correct and the counter bounded.
+            arpeggioGridSection_ = (arpeggioGridSection_ + 1) & 0xffff;
             arpeggioStep_ = (arpeggioStep_ + 1) % endStep;
             if (arpeggioStep_ == 0)
                 for (auto& runtime : arpeggios_)
@@ -2369,15 +2678,33 @@ void Engine::prepareExternalTick (const float* inputLeft, const float* inputRigh
             continue;
         const TonePatch& tone = tonePatch (part);
         const ToneRuntime& runtime = tones_[static_cast<std::size_t> (index)];
+        // Two LFOs routed at one target genuinely sum: they are two
+        // modulators, each with its own settled depth.
         if (tone.lfo1.destination1 == LfoDest1::AudioFilter)
             octaves += mapping::audioFilterLfoOctaves (tone.lfo1.depth1)
                        * runtime.lfo1Value;
         if (tone.lfo2.destination1 == LfoDest1::AudioFilter)
             octaves += mapping::audioFilterLfoOctaves (tone.lfo2.depth1)
                        * runtime.lfo2Value;
-        if (patch_.modulationAssign == ModulationAssign::AudioFilter)
-            octaves += modulation_ * mapping::audioFilterLeverOctaves
-                       * runtime.lfo2Value;
+    }
+    // The lever does not. MODULATION ASSIGN is one patch-common setting, the
+    // lever is one lever and the audio filter is one filter, so its reach is
+    // counted once — inside the loop it was counted per sounding tone, and a
+    // DUAL or SPLIT patch moved the cutoff twice as far as the registered
+    // constant says. It rides the keyboard part's LFO2, which is the only
+    // sounding tone in SINGLE and therefore leaves SINGLE exactly as it was.
+    if (patch_.modulationAssign == ModulationAssign::AudioFilter)
+    {
+        // [voiced, OQ-14] The AUDIO FILTER is one filter and MODULATION
+        // DESTINATION names one tone or both, so a single destination picks
+        // that tone's LFO2 and BOTH keeps the keyboard part's — which is what
+        // SINGLE already gave and leaves it unchanged.
+        const std::size_t leverIndex =
+            patch_.modulationDestination == ToneDestination::Upper  ? 0u
+            : patch_.modulationDestination == ToneDestination::Lower ? 1u
+            : (patch_.keyboardPart == KeyboardPart::Upper ? 0u : 1u);
+        octaves += modulation_ * mapping::audioFilterLeverOctaves
+                   * tones_[leverIndex].lfo2Value;
     }
     const double fc =
         std::clamp (std::exp2 (octaves), 5.0, 0.45 * sampleRate_);
@@ -2591,7 +2918,8 @@ void Engine::processEffects (const float* dryL, const float* dryR,
     const double diffusionGain = mapping::reverbDiffusionGain (reverbParams.diffusion);
     const double densityGain = mapping::reverbDensityGain (reverbParams.density);
     const int preDelaySamples = std::min (
-        static_cast<int> ((reverbParams.preDelay * (100.0 / 125.0)) * 0.001 * sampleRate_),
+        static_cast<int> (mapping::reverbPreDelayMs (reverbParams.preDelay)
+                          * 0.001 * sampleRate_),
         static_cast<int> (reverb_.preDelay.size()) - 2);
 
     std::array<double, Reverb::lineCount> lineFeedback {};
@@ -2772,6 +3100,31 @@ void Engine::process (float* left, float* right, int numSamples,
         const int tick = std::min (controlInterval, numSamples - offset);
         const int guarded = std::min (tick, maxBlock_);
 
+        // Per-tone EXPRESSION, smoothed the way the master chain it left is,
+        // so an expression pedal cannot step a voice's gain.
+        {
+            const double coeff = std::min (
+                1.0,
+                onePoleCoeff (sampleRate_, mapping::masterSlewSeconds) * guarded);
+            for (int index = 0; index < partCount; ++index)
+            {
+                const double target =
+                    destinationReaches (patch_.expressionDestination, index == 0)
+                        ? expression_
+                        : 1.0;
+                smoothedExpression_[static_cast<std::size_t> (index)] +=
+                    (target - smoothedExpression_[static_cast<std::size_t> (index)])
+                    * coeff;
+                // The D Beam's EXPRESS button rides the same smoother: a
+                // beam is a gesture, and an automated one arrives in steps.
+                const double beamTarget =
+                    dBeamGain (index == 0 ? Part::Upper : Part::Lower);
+                smoothedDBeamGain_[static_cast<std::size_t> (index)] +=
+                    (beamTarget - smoothedDBeamGain_[static_cast<std::size_t> (index)])
+                    * coeff;
+            }
+        }
+
         advanceToneLfos (guarded);
         advanceArpeggiator (guarded);
         prepareExternalTick (inputLeft, inputRight, offset, guarded);
@@ -2796,6 +3149,9 @@ void Engine::process (float* left, float* right, int numSamples,
                 voice.active = false;
 
             const TonePatch& tone = tonePatch (voice.part);
+            const double expression =
+                smoothedExpression_[voice.part == Part::Upper ? 0u : 1u]
+                * smoothedDBeamGain_[voice.part == Part::Upper ? 0u : 1u];
             const double delaySend = tone.delayDepth / 127.0;
             const double reverbSend = tone.reverbDepth / 127.0;
             const auto gainL = static_cast<float> (voice.ampGainL * mapping::voiceHeadroom);
@@ -2804,9 +3160,10 @@ void Engine::process (float* left, float* right, int numSamples,
             // Tone balance sits between the two tones (settled parameter,
             // voiced law shared with the oscillator balance).
             const double toneGain =
-                voice.part == Part::Upper
-                    ? mapping::balanceLegGain (patch_.toneBalance, false)
-                    : mapping::balanceLegGain (patch_.toneBalance, true);
+                expression
+                * (voice.part == Part::Upper
+                       ? mapping::balanceLegGain (patch_.toneBalance, false)
+                       : mapping::balanceLegGain (patch_.toneBalance, true));
 
             for (int i = 0; i < guarded; ++i)
             {
@@ -2832,9 +3189,12 @@ void Engine::process (float* left, float* right, int numSamples,
                         guarded);
 
         // -- output stage: documented analog path + master gains -----------
+        // EXPRESSION left this chain for the per-tone gains above, because
+        // EXPRESSION DESTINATION names the tone or tones it controls; with
+        // BOTH, which is the default, the product is exactly what it was.
         const double masterTarget = (masterLevel_ / 127.0)
                                     * (patch_.patchLevel / 127.0)
-                                    * expression_ * partLevel_;
+                                    * partLevel_;
         const double masterCoeff =
             onePoleCoeff (sampleRate_, mapping::masterSlewSeconds) * guarded;
         smoothedMaster_ += (masterTarget - smoothedMaster_)
@@ -2888,10 +3248,20 @@ void Engine::process (float* left, float* right, int numSamples,
         offset += guarded;
     }
 
-    const float decayedL = outputLevel_[0].load (std::memory_order_relaxed) * 0.85f;
-    const float decayedR = outputLevel_[1].load (std::memory_order_relaxed) * 0.85f;
-    outputLevel_[0].store (std::max (blockPeakL, decayedL), std::memory_order_relaxed);
-    outputLevel_[1].store (std::max (blockPeakR, decayedR), std::memory_order_relaxed);
+    // The meter's fall is a time, not a per-call factor. A fixed 0.85 per
+    // render call made the same patch release sixteen times faster at a
+    // 1024-sample buffer than at a 64-sample one, which is a property of the
+    // host rather than of the sound.
+    const double fall = std::exp (-numSamples
+                                  / (sampleRate_ * mapping::meterFallSeconds));
+    const auto decayed = [fall] (std::atomic<float>& level)
+    {
+        return static_cast<float> (level.load (std::memory_order_relaxed) * fall);
+    };
+    outputLevel_[0].store (std::max (blockPeakL, decayed (outputLevel_[0])),
+                           std::memory_order_relaxed);
+    outputLevel_[1].store (std::max (blockPeakR, decayed (outputLevel_[1])),
+                           std::memory_order_relaxed);
 }
 
 } // namespace septum

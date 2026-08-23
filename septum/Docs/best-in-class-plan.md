@@ -365,7 +365,7 @@ What changed beyond the geometry:
 - The output meter and the voice count moved to the foot of the performance
   cluster — the one part of the panel that reports rather than edits.
 
-The window is 1500 × 784, up from 1284 × 716: the arpeggiator and the
+The window is 1500 × 786, up from 1284 × 716: the arpeggiator and the
 external-input path added two sections, and nothing is squeezed to fit.
 
 #### Step 7 — three calibration questions went to a listening test
@@ -539,15 +539,20 @@ now crosses over 5 ms. Measured as the largest sample-to-sample jump the output
 makes across the switch, against the largest jump the same signals make while
 nothing is touched:
 
-| Switch | thrown | crossed | steady |
-|---|---|---|---|
-| CENTER CANCEL | 0.211 | — | 0.042 |
-| FILTER ON | 0.304 | — | 0.042 |
-| SLOPE | 0.220 | — | 0.031 |
-| TYPE | 0.292 | — | 0.051 |
+| Switch | thrown | steady |
+|---|---|---|
+| CENTER CANCEL | 0.211 | 0.042 |
+| FILTER ON | 0.304 | 0.042 |
+| SLOPE | 0.220 | 0.031 |
+| TYPE | 0.292 | 0.051 |
 
-Each of the four is under four times its own steady figure once crossed, where
-thrown it was five to seven times it.
+Thrown, each of the four jumps five to seven times as far as the signal's own
+steady sample-to-sample travel. What the test bounds after the fix is the same
+ratio: the jump at the changeover must stay under four times the steady figure
+the same take measures, and it does for all four. (An earlier version of this
+table carried an empty third column headed "crossed"; the figures were never
+printed, only asserted, and the column is gone rather than filled with numbers
+this page cannot show.)
 
 Building that test taught its own lesson twice. Comparing the new signal
 against the *old* one's slope read a high-pass output's faster travel as a
@@ -671,3 +676,429 @@ in frequency).
 Two checks fence it, both watched to fail with `8.0 * inc` put back. No
 committed demo changed, because no shipped preset selects TRI — which is its
 own gap, and is why this one survived a full pass.
+
+#### Step 15 — two settled quantities were indexed by the wrong thing
+
+**The modulation lever reached the AUDIO FILTER once per sounding tone.** In
+`prepareExternalTick` the whole modulation block — the two per-tone LFO
+destination-1 routings *and* the lever's MODULATION ASSIGN contribution — sat
+inside the loop over UPPER and LOWER. Two LFOs routed at one target genuinely
+sum; the lever does not. MODULATION ASSIGN is one patch-common setting, the
+lever is one lever and the audio filter is one filter, so in DUAL and SPLIT
+the cutoff moved twice as far as `audioFilterLeverOctaves` says it can.
+Measured with the lever at full travel and both LFO2s square at the slowest
+rate, on the 900 Hz side tone through a −12 dB audio-filter LPF at cutoff 30:
+
+| Keyboard mode | 900 Hz through the filter |
+|---|---|
+| SINGLE | 0.0345 |
+| DUAL, before | 0.1540 |
+| DUAL, after | **0.0345** |
+
+The lever now rides the keyboard part's LFO2 and is counted once, which is
+exactly what SINGLE already did — so SINGLE is untouched and DUAL and SPLIT
+join it.
+
+**A shuffled grid took its long/short parity from the pattern step.**
+`arpeggioStepSeconds` decides which half of a shuffled pair a section is by
+`stepIndex & 1`, and it was being given `arpeggioStep_`, which wraps at END
+STEP. END STEP is 1–32 and odd values are ordinary, so the parity repeated and
+the pair stopped summing to its division: at END STEP 1 on 1/8L every section
+was the long half, and the arpeggio ran 16 % slow and drifted for as long as
+the key was held. The shuffle belongs to the beat, not to the pattern, so the
+parity now comes from a monotonic count of grid sections that resets when the
+pattern re-arms. Eight sections of a shuffled eighth at 120 BPM, from the
+first onset to the ninth:
+
+| END STEP | before | after | owed |
+|---|---|---|---|
+| 1 | 2.319 s | **2.000 s** | 2.000 s |
+| 2 | 2.000 s | 2.000 s | 2.000 s |
+| 3 | 2.079 s | **2.000 s** | 2.000 s |
+| 4 | 2.000 s | 2.000 s | 2.000 s |
+
+The even lengths were already right, which is why a full pass over the
+arpeggiator missed this. The tie chain's look-ahead reads the same counter, so
+a chain that ties across a pair still takes DURATION from the section it ends
+on. Five checks fence the two fixes, all watched to fail when reverted; the
+committed demos are unchanged, because `11-arpeggiator.wav` runs an even-length
+style.
+
+#### Step 16 — hard sync corrected a partial jump as though it were a whole one
+
+The sync reset is documented as naive: "the modelled DSP's own sync aliases
+audibly, and no source documents band-limiting there." What shipped was
+neither naive nor band-limited. The reset writes OSC1's phase so that the
+following increment inside `renderClassicWave` lands it at the right
+sub-sample position — which means the increment carries the phase past 1.0,
+`renderClassicWave` sees an ordinary wrap, and it applies the full polyBLEP
+residual. That residual describes a *whole cycle's* discontinuity; a sync
+reset jumps by whatever fraction of a cycle OSC1 happened to have reached.
+
+Measured with a saw an octave below its slave clock, so every downward jump in
+the take is a reset and the naive one owes about −1 × peak:
+
+| | before | after |
+|---|---|---|
+| post-reset value, median | −0.681 × peak | **−0.735 × peak** |
+| post-reset value, worst | **−0.089 × peak** | −0.628 × peak |
+| resets landing above −0.5 × peak | **17 of 74** | 0 of 59 |
+| downward jumps in 0.45 s | **74** | 59 |
+
+Fifty-nine is the number OSC2's fundamental owes; the extra fifteen were the
+spikes themselves. Against the same patch rendered without the residual, the
+shipping output differed by up to **73.6 % of its own peak**, at −32.8 dB RMS.
+
+`renderClassicWave` now takes a flag and skips the residual on the sample a
+sync forced the phase on — for every classic wave, since a jump the reset
+made is not a discontinuity any of their residuals describe. Two checks fence
+it, both watched to fail with the flag removed: the take must contain one
+downward jump per slave cycle and no more, and every one of them must land at
+the bottom of the saw. `05-sync-sweeper.wav` re-rendered 0.1 dB louder.
+
+#### Step 17 — a received CC notified the host from inside the render callback
+
+`handleController` runs on the audio thread, and for every mapped panel CC it
+called `beginChangeGesture`, `setValueNotifyingHost` and `endChangeGesture`.
+All three take the processor's listener lock and walk its listener list, and
+an APVTS attachment's listener wakes the message thread; a controller sweep
+makes 128 of them a second. The comment above the loop claimed cached pointers
+kept it "allocation-free on the audio thread", which was true of the string
+building it had already removed and not of what remained.
+
+The idiom this project already uses for a MIDI program change applies exactly:
+the audio thread writes the parameter's raw value — which is what the engine
+snapshots and what `getStateInformation` serialises, so audio and saved state
+are correct immediately and without the message loop — and marks the entry in
+a dirty mask. A coalescing `AsyncUpdater` then republishes those values with
+host and UI notification on the message thread, so a 128-message sweep costs
+one pass per frame instead of 128 passes inside the render callback.
+
+The fence is a parameter listener attached in the suite: a CC delivered
+through `processBlock` must produce no value change and no gesture callback,
+and the reconciler must produce both. Reverting the three calls fails it with
+`values 1, gestures 2`.
+
+#### Step 18 — a short chord fell back on the wrong key under the DOWN motifs
+
+The manual says what an arpeggio style does when it asks for more note rows
+than the player is holding keys: "When the number of keys played is less than
+the number of notes in the arpeggio style, the highest-pitched of the pressed
+keys is played by default" (OM p. 66). The sentence is in the MOTIF row of the
+parameter list and carries no direction qualifier.
+
+`arpeggioKeyIndexForRow` clamped the *window position* into the chord and then
+reversed it for a descending motif, so the fallback came out at the far end:
+two keys held under any of the shipped four-row styles gave the highest key on
+UP and the **lowest** on DOWN, DOWN(L), DOWN(L&H) and every UP&DOWN. The
+position is now tested before the reversal, and a row the chord cannot fill
+takes the highest key whichever way the window is walking.
+
+Nine motifs × four cycles are checked against the rule, and the two cases that
+prove the walk is otherwise untouched — a full chord still reads its window
+from the top on DOWN and still reaches the bottom of it. Reverting the change
+fails twelve of them. The manual's own three worked examples hold five keys
+under a three-row style, so they never reached this branch and still pass
+unchanged; the committed demos are unchanged for the same reason.
+
+#### Step 19 — the panel printed four values the manual does not use, and one
+pair of buttons set the wrong interval
+
+**INTERVAL was absolute where the manual defines it as an interval.** OM p. 30
+says all three outcomes against OSC 1: "-OCT ... lowers the OSC 2 pitch one
+octave below that of OSC 1", "the OSC 2 pitch will be seven semitones (a
+perfect fifth) higher than OSC 1", and "if you press the -OCT button and the
+5th button simultaneously, the OSC 2 pitch will be the same as the OSC 1
+pitch". Both handlers wrote −12 and +7 absolutely and returned to 0, so any
+patch whose OSC 1 was transposed got the wrong interval — the one thing these
+two buttons exist to get right. They read OSC 1's pitch now, and the second
+press lands OSC 2 on it. Both also light while the interval they name is in
+force: they were the only controls on the panel that wrote a parameter without
+reflecting it, so a patch loaded at OSC 2 = OSC 1 − 12 showed two dark buttons.
+
+**Four readouts printed the stored byte.** The manual prints SPLIT POINT as
+`A0–C8`, SIZE as `1–8`, PRE DELAY as `0.0–100.0 (ms)` and ARPEGGIO VELOCITY as
+`REAL, 1–127`; the panel printed 60, 4, 0 and 0. All four now print what the
+manual prints, in the same `intAttributes` function that already did it for
+PAN and END STEP, so the host's parameter list says the same thing. The
+pre-delay conversion moved into `mapping::reverbPreDelayMs` so the readout and
+the reverb cannot disagree about what a raw value means. The four frequency
+tables carry their `Hz` too, which is how the manual's own parameter list
+prints them.
+
+**Every toggle says which way it is thrown.** Eleven controls on the panel are
+switches and all of them read `ON` whatever their state — a button whose face
+says ON while the thing is off is the commonest misreading a synthesizer panel
+invites. The face is driven from the button's own state change, so it is right
+the moment a patch loads rather than at the next frame, and the three labels
+that read `ON` above a button that also read `ON` now read `SWITCH`.
+
+**Two layout defects.** Combos and buttons were centred in a cell that had not
+given up the value strip a knob gives up, so they sat 6.5 px below the knobs in
+their own row — on nearly every row of the panel. Every style reserves the
+strip now, whether or not it prints in it. And the second INTERVAL button
+carried an empty label, the panel's only orphaned text; a control with no
+caption of its own now shares the one to its left, so `INTERVAL` spans both
+buttons.
+
+#### Step 20 — three parameters did not have the instrument's own positions
+
+The contract's rule is that the address map is adopted verbatim. Three
+parameters were not.
+
+**KEY FOLLOW had 401 positions where the instrument has 41.** The MIDI
+Implementation stores `FILTER Cutoff Keyfollow (44 — 84)` displayed
+`−200 — +200`, so the control moves in steps of 10 and raw 64 is zero. The
+parameter was a plain integer over −200…+200, which meant a host automating it
+could set a value the instrument cannot store and a patch edited by knob could
+not round-trip through the documented SysEx. Both the engine's clamp and the
+panel's readout quantise to the grid now.
+
+**Delay FEEDBACK had 197 positions where the instrument has 99.** Same
+document, `Patch Delay 00 01: Feedback (0 — 98)` displayed `−98 — +98 [%]`:
+99 raw values across a 197-wide display, so the display advances in twos and
+raw 49 is 0 %. Every other signed field in the file honours its raw range;
+this was the one that did not.
+
+**PITCH WIDE gated the sounding pitch, and the manual says it gates the
+knob.** `clampToDocumentedRanges` narrowed the coarse tune to ±12 semitones
+when the switch was off. The address map keeps `OSC1 Coarse Tune (28 — 100)`
+— the full −36…+36 — in a byte of its own, with the wide switch in another,
+and the manual says what the switch does: "This button expands the range of
+the PITCH knob by a multiple of three. If you press the WIDE button so it's
+lit, the PITCH knob will have a range of ±3 octaves" (OM p. 29). It is the
+knob's travel. The consequence of clamping the stored value instead was that
+the panel and the host printed a pitch the engine did not play: a patch at
++24 with WIDE off showed +24 and sounded +12. Measured on a sine at note 36
+(65.41 Hz) with coarse +24 and the switch off: **130.86 Hz before, 261.63 Hz
+after** — one octave out, and 261.63 Hz is what +24 semitones owes.
+
+On a numeric parameter there is no knob travel to gate, so PITCH WIDE is now
+patch data that stores and round-trips and does not change what sounds. That
+is what the documents settle, and it is one invented behaviour fewer.
+
+Nine checks fence the three, all watched to fail when the changes are
+reverted. No shipped preset sat off either grid or outside ±12 with WIDE off,
+so the committed demos are unchanged.
+
+#### Step 21 — the controller destinations, which every controller had ignored
+
+Patch Common carries four bytes the contract mentioned only as "controller
+destinations" and the engine did not read: MODULATION, D BEAM, PITCH BEND and
+EXPRESSION DESTINATION, each UPPER / LOWER / BOTH. The manual gives them one
+sentence apiece — "Selects the tone(s) whose pitch will be changed by the pitch
+bend lever ... If this is 'BOTH,' the pitch of both the UPPER tone and LOWER
+tone will change" (OM p. 65) — so in DUAL and SPLIT they decide which half of
+the patch a lever reaches. All three whose controller the replica has are
+implemented; the D Beam's arrives with the D Beam.
+
+Bending only UPPER, on a DUAL patch with the two tones an octave apart and a
+full-octave bend range on each, the surviving partials say which tone moved:
+
+| PITCH BEND DEST | 523 Hz (UPPER bent) | 131 Hz (LOWER unbent) | 262 Hz (LOWER bent) |
+|---|---|---|---|
+| UPPER | present | present | — |
+| LOWER | — | — | present |
+| BOTH | present | — | present |
+
+EXPRESSION had to move for this: it multiplied the master chain, so it could
+only ever reach both tones. It is a per-tone gain now, smoothed exactly as the
+chain it left was, and with BOTH — the default — the product is unchanged. At
+EXPRESSION 0 with the destination on one tone, that tone's partial drops more
+than 34 dB while the other one is untouched.
+
+Seven checks fence the three destinations, all watched to fail when
+`destinationReaches` is made to return true unconditionally. No shipped preset
+sets a destination away from BOTH, so the committed demos are unchanged.
+
+#### Step 22 — two states behind the AMP stage, one cleared and one frozen
+
+**A voice taken over lost the delay line it reads from.** `triggerVoice`
+guards the filter and shelf states with `if (! wasActive)` — a stolen voice
+keeps them deliberately, because its envelope carries on from where it was —
+and cleared `voice.overdrive` outside that guard, on every non-legato trigger.
+The overdrive stage carries the group delay *every* voice pays, shaping or
+not, so emptying its line under a sounding voice reads silence for the whole
+of it. Measured in SOLO, where one voice can be watched on its own: a run of
+**18 near-silent samples** where the reported latency is 19. The `clear()`
+moved inside the guard, beside the filter's.
+
+**The chain stood still while OVERDRIVE was off.** Two half-band stages, up
+and down, plus the ADAA's antiderivative reference, all carrying across
+samples, all behind an automatable switch. Frozen while the switch was out,
+they answered it coming back with whatever was playing when it was last in.
+Measured against the same note with OVERDRIVE on throughout — identical voice
+state, so the two takes must agree once the chain has the same recent history
+— the first block after the switch differed by **0.078 against a peak of
+0.039**: twice the signal, from a third of a second earlier.
+
+The fix is not to shape unconditionally. Every state in the chain is linear or
+depends only on the last few samples, and the bypass delay line has been
+keeping that history all along for its own reasons, so the stage replays the
+ring on the switch's rising edge and rebuilds itself exactly. The same
+measurement after: **0.005**, which is the two takes' output-coupling
+capacitors holding different offsets rather than anything the chain did.
+Cost, ten supersaw voices with delay and reverb at 48 kHz: 0.066 → 0.068 ×
+realtime with OVERDRIVE off, unchanged at 0.115 with it on. Shaping
+unconditionally would have cost 0.113 with it off — correct, and 40 times the
+price of being correct this way.
+
+Two checks fence them, each watched to fail with its own change reverted. The
+committed demos are unchanged: no demo steals a voice or automates the switch.
+
+#### Step 23 — the panel scales to the window
+
+The editor was a fixed 1500 × 786 with no resizing, no constrainer and no
+transform, and hosts honour the size an editor asks for. A 1366 × 768 laptop's
+work area is under 768 points tall once the taskbar and the host's window
+frame are counted, so the keyboard, the patch strip and the whole bottom band
+were pushed off the edge with no way to get them back. The same happens on
+1280 × 800 and on a 1080p screen at 150 % scaling.
+
+A hardware instrument's controls do not reflow, and this panel is deliberately
+a fixed geometry, so the fix is not to make the layout responsive but to stop
+the window being fixed. Every control and every rule the panel draws now lives
+on one child component that is always exactly the design size and is laid out
+against a constant rectangle rather than against the window; `resized()` gives
+that child an `AffineTransform` that scales it to whatever the window is and
+centres it. This is the pattern Ghostar already carries in this repository.
+The editor opens at the largest whole panel the display can show, never below
+60 % of the design size — under that the 10-point captions stop being
+readable, and a window the player can move is a better failure than type
+nobody can read.
+
+Twelve checks fence it: the fit rule itself on screens no build machine has to
+have (1366 × 768, 1280 × 800, 1440 × 900 all fit, all keep the panel's
+proportions, an unknown or roomy display opens at the design size), and the
+existing placement check re-run at 900, 1500 and 2100 points wide — every
+control placed, nothing past the panel's edge, because the layout never looks
+at the window. The committed screenshot is pinned to the design size in the
+suite rather than taken from whatever the build machine's display happens to
+be, so a small CI display cannot quietly shrink the documentation image.
+
+#### Step 24 — the System Common settings the engine already honoured
+
+`setMasterTuneHz`, `setMasterKeyShift`, `setKeyboardOctaveShift` and
+`setTranspose` have been in the engine since it was written, each clamped to
+its documented range and each folded into the pitch sum. Nothing called them.
+The only line in the whole tree that reached one was a test. Documented,
+settled, unreachable: the same class as END STEP two rounds ago and SPLIT
+ARPEGGIO one round ago, and the third instance in a row is the argument for
+the check that now walks the panel.
+
+All four are published as plug-in parameters, outside the patch exactly as the
+external-input block is, so a program change does not touch them: MASTER TUNE
+as a float over 415.30–466.20 Hz, which is the frequency of A4 the manual
+prints for the address map's 0.1-cent steps, and the three integers over
+−24…+24, −3…+3 and −5…+6. They take the right of the header, which is now a
+section of its own — settings that apply to the whole instrument, where the
+whole instrument's name is.
+
+The panel's OCT UP/DOWN buttons write the octave shift rather than a private
+field, so they reach the engine, reach the host, and reach the documented ±3
+instead of the ±2 they were limited to; the drawn keyboard still follows them.
+
+Ten checks fence it: A4 renders at 440 by default and sharper at 466.16
+(reverting the wiring measures 439.28 against 439.28 either way), the buttons
+reach ±3, a program change leaves the block alone, and it survives a state
+round trip.
+
+#### Step 25 — the lever, the meter, and the space the panel was not using
+
+**The lever latched modulation to wherever you clicked.** Its vertical axis
+holds its position, which the hardware's does too, but the value was taken
+absolutely from the click's y — so one tap near the top of the travel jumped
+modulation to full and left it there, with no obvious way back. The hardware
+lever cannot be *put* anywhere by tapping; it is pushed. The axis moves by the
+drag now, from wherever it was grabbed, a double click puts both axes back,
+and bend stays absolute and spring-loaded as it was. The caption also had its
+own band taken off the component before the frame and the stick are drawn, so
+`BEND / MOD` no longer sits on top of the border and the lever's foot.
+
+**The output meter had the host's buffer size in its ballistics.** It fell by
+a fixed factor once per render call, so the same patch released sixteen times
+faster at a 1024-sample buffer than at a 64-sample one. The fall is a time
+now — 0.30 s to 1/e, registered as a display choice rather than a claim about
+the instrument — and a check renders identical audio at both block sizes and
+requires the same fraction to survive a quarter-second of silence. Reverting
+the factor measures 0.000 against 0.197.
+
+The scale was linear amplitude over a 44-pixel bar, so a healthy −20 dBFS
+filled four pixels and the meter sat near its floor for everything that was
+not about to clip. It reads in decibels down to −48 now, carries a −6 dB mark,
+and turns to the panel's accent colour at full scale. It also takes the height
+the performance cluster had spare instead of a fixed 44 points: it is the one
+thing on the panel that reads better the taller it is, and that space was the
+largest dead area on the panel.
+
+**Two layout defects.** A section's grid rows sat at the top of whatever
+height the band gave it, so FILTER ENV's single DEPTH row left 70 points empty
+beneath it beside four full-height sliders; the rows are centred in the
+content now. And a section whose width was set by its *title* rather than its
+contents — PITCH ENV is two 34-point cells under a nine-character name — hugged
+the left edge; its strip is centred in what it was given.
+
+**The reverb's four remaining settled bytes have controls.** LF DAMP, LF GAIN,
+HF DAMP and HF GAIN are Patch Reverb parameters, are used by the engine's
+per-line damping, and were automatable with nothing on the panel naming them
+— while PRE DELAY, HIGH CUT, DENSITY and DIFFUSION, equally editor-only on the
+instrument, were all there. REVERB is a 6 × 6 section now and carries its
+whole documented parameter set. The panel is 1660 × 850 for it, up from
+1500 × 786: the effects band needs 1474 points of content, and since Step 23
+the window is no longer where the panel's size is decided.
+
+#### Step 26 — the D Beam
+
+The last of the three front-panel features the contract deferred, and the one
+the plan's own §2.5 said needed "a design decision about what an infrared
+distance sensor means inside a plug-in". It means a group of automatable
+parameters, and the documents settle nearly all of them.
+
+Three buttons under the beam choose what it does, each a toggle (OM pp. 20–21).
+**PITCH** changes the pitch and answers on CC#69, which the control-change
+list names "Part Pitch (D Beam Pitch Mode)". **EXPRESS** changes the volume,
+or — with ACTIVE EXPRESSION on — combines the two tones: "Only the UPPER tone
+will be heard when the volume is low, and the LOWER tone will be added as the
+volume increases". **FILTER/ASSIGN** moves whichever of the 37 documented
+destinations D BEAM ASSIGN names, and the manual settles the *law* as well as
+the list: "the D Beam controller will have the same function as that knob… you
+can also choose the direction in which the knob will be moved… the LFO speeds
+up, just as if you had moved the LFO RATE knob toward the right." So the beam
+takes the parameter from where the patch has it toward one end of its own
+documented range, and POLARITY picks the end — for ASSIGN alone, since the
+manual says plainly that it "will not change the direction of the change that
+occurs when the PITCH button or EXPRESS button is lit".
+
+The engine renders a patch that is the player's patch with the beam's one
+assigned parameter moved, so no destination needed its own code path: the
+37 entries are 37 fields, and everything downstream reads the rendered patch
+it already read. D BEAM DESTINATION gates it per tone like the other three
+controller destinations, and "Moving your hand outside this range will produce
+no effect" is why the beam control is the hand's height with zero meaning the
+hand is out.
+
+**D BEAM SENS is settled in range and inert.** It compensates the infrared
+sensor for "strong direct sunlight or strong artificial illumination". There
+is no sensor here and no sunlight, so it is stored — a SysEx round trip has to
+be lossless — and changes nothing that sounds, exactly as PITCH WIDE does.
+Inventing a depth law for it would have been inventing the answer to a
+question the manual settles the other way.
+
+Fifteen checks fence it, watched to fail with the beam disabled: the beam
+opens the filter it is assigned to and a beam at rest does not, polarity
+inverts it, the destination gates it, PITCH mode carries note 48 to 261.63 Hz
+over a 12-semitone bend range, EXPRESS carries the volume, ACTIVE EXPRESSION
+holds LOWER back at a low beam and brings it in at a high one, the assign list
+runs all 37 entries from OSC1-PITCH to BENDER, CC#69 moves the beam, and a
+program change leaves the beam, the button and the sensitivity where the
+player left them.
+
+What is voiced is in OQ-16: that the three buttons are exclusive, PITCH mode's
+reach and direction, the linear shape of the ASSIGN travel, the point ACTIVE
+EXPRESSION starts adding LOWER, and whether the shared destinations follow
+D BEAM DESTINATION. A recording of the beam's own MIDI output at a grid of
+hand heights settles the first four.
+
+The panel puts it on the bottom row beside the lever and the keys, which is
+where the instrument keeps its performance controls; the row is a section tall
+now and the panel is 1660 × 930.

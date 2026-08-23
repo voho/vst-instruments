@@ -55,6 +55,29 @@ const juce::StringArray arpMotifChoices {
     "UP&DN(L)", "UP&DN(L&H)", "UP&DN(-)", "RAND(L)", "RAND(-)", "PHRASE"
 };
 const juce::StringArray arpSplitChoices { "UPPER", "LOWER", "BOTH" };
+// CONTROLLER DESTINATION, the same three for every controller (OM p. 65).
+const juce::StringArray toneDestinationChoices { "UPPER", "LOWER", "BOTH" };
+// D BEAM: the three buttons under the beam, the polarity, and the 37-entry
+// assign list in the address map's own order (Patch Common 00 1F).
+const juce::StringArray dBeamModeChoices { "OFF", "PITCH", "EXPRESS", "ASSIGN" };
+const juce::StringArray dBeamPolarityChoices { "+", "-" };
+const juce::StringArray dBeamAssignChoices {
+    "OSC1-PITCH", "OSC1-DETUNE", "OSC1-PW",
+    "OSC2-PITCH", "OSC2-DETUNE", "OSC2-PW",
+    "MIX/MOD-BALANCE",
+    "FILTER-CUTOFF", "FILTER-RESONANCE", "FILTER-CUTOFF-KEYFOLLOW", "AMP-LEVEL",
+    "AUDIO-FILTER-CUTOFF", "AUDIO-FILTER-RESONANCE",
+    "PITCH-ENV-A", "PITCH-ENV-D",
+    "OSC1-PITCH-ENV-DEPTH", "OSC2-PITCH-ENV-DEPTH",
+    "LFO1-RATE", "LFO1-DEPTH1", "LFO1-DEPTH2",
+    "LFO2-RATE", "LFO2-DEPTH1", "LFO2-DEPTH2",
+    "FILTER-ENV-A", "FILTER-ENV-D", "FILTER-ENV-S", "FILTER-ENV-R",
+    "FILTER-ENV-DEPTH",
+    "AMP-ENV-A", "AMP-ENV-D", "AMP-ENV-S", "AMP-ENV-R",
+    "EFFECTS-DELAY-TIME", "EFFECTS-DELAY-DEPTH",
+    "EFFECTS-REVERB-TIME", "EFFECTS-REVERB-DEPTH",
+    "BENDER"
+};
 
 const juce::StringArray& arpStyleChoices()
 {
@@ -73,20 +96,24 @@ const juce::StringArray keyboardPartChoices { "UPPER", "LOWER" };
 const juce::StringArray modAssignChoices { "OSC1&OSC2", "OSC1", "OSC2", "PW1",
                                            "PW2", "FILTER", "AMP", "AUDIO-FIL" };
 const juce::StringArray delayHfDampChoices {
-    "200", "250", "315", "400", "500", "630", "800", "1000", "1250", "1600",
-    "2000", "2500", "3150", "4000", "5000", "6300", "8000", "BYPASS"
+    "200 Hz", "250 Hz", "315 Hz", "400 Hz", "500 Hz", "630 Hz", "800 Hz",
+    "1000 Hz", "1250 Hz", "1600 Hz", "2000 Hz", "2500 Hz", "3150 Hz",
+    "4000 Hz", "5000 Hz", "6300 Hz", "8000 Hz", "BYPASS"
 };
 const juce::StringArray reverbHighCutChoices {
-    "160", "200", "250", "320", "400", "500", "640", "800", "1000", "1250",
-    "1600", "2000", "2500", "3200", "4000", "5000", "6400", "8000", "10000",
-    "12500", "BYPASS"
+    "160 Hz", "200 Hz", "250 Hz", "320 Hz", "400 Hz", "500 Hz", "640 Hz",
+    "800 Hz", "1000 Hz", "1250 Hz", "1600 Hz", "2000 Hz", "2500 Hz",
+    "3200 Hz", "4000 Hz", "5000 Hz", "6400 Hz", "8000 Hz", "10000 Hz",
+    "12500 Hz", "BYPASS"
 };
 const juce::StringArray reverbLfDampChoices {
-    "50", "64", "80", "100", "125", "160", "200", "250", "320", "400", "500",
-    "640", "800", "1000", "1250", "1600", "2000", "2500", "3200", "4000"
+    "50 Hz", "64 Hz", "80 Hz", "100 Hz", "125 Hz", "160 Hz", "200 Hz",
+    "250 Hz", "320 Hz", "400 Hz", "500 Hz", "640 Hz", "800 Hz", "1000 Hz",
+    "1250 Hz", "1600 Hz", "2000 Hz", "2500 Hz", "3200 Hz", "4000 Hz"
 };
-const juce::StringArray reverbHfDampChoices { "4000", "5000", "6400", "8000",
-                                              "10000", "12500" };
+const juce::StringArray reverbHfDampChoices {
+    "4000 Hz", "5000 Hz", "6400 Hz", "8000 Hz", "10000 Hz", "12500 Hz"
+};
 
 // Shorthand for the field accessors.
 #define TONE_INT(field) \
@@ -266,6 +293,38 @@ struct ExternalBinding
 
 const juce::StringArray audioFilterTypeChoices { "LPF", "HPF", "BPF", "NOTCH" };
 
+// The D Beam controller's own state: which button is lit, where the hand is,
+// and the sensor sensitivity. None of the three is patch data — the address
+// map has no byte for the first two, and the third is System Common — so a
+// program change must not touch them.
+struct DBeamBinding
+{
+    const char* id;
+    const char* label;
+    Kind kind;
+    int low, high;
+    const juce::StringArray* choices;
+    float (*get) (const septum::DBeam&);
+    void (*set) (septum::DBeam&, float);
+};
+
+const std::vector<DBeamBinding>& dBeamBindings()
+{
+    static const std::vector<DBeamBinding> bindings {
+        { "dbeam_mode", "D Beam Mode", Kind::Choice, 0, 4, &dBeamModeChoices,
+          [] (const septum::DBeam& b) { return (float) (int) b.mode; },
+          [] (septum::DBeam& b, float v)
+          { b.mode = (septum::DBeamMode) (int) std::lround (v); } },
+        { "dbeam_value", "D Beam", Kind::Int, 0, 127, nullptr,
+          [] (const septum::DBeam& b) { return (float) b.value; },
+          [] (septum::DBeam& b, float v) { b.value = (int) std::lround (v); } },
+        { "dbeam_sens", "D Beam Sensitivity", Kind::Int, 1, 8, nullptr,
+          [] (const septum::DBeam& b) { return (float) b.sens; },
+          [] (septum::DBeam& b, float v) { b.sens = (int) std::lround (v); } },
+    };
+    return bindings;
+}
+
 #define EXT_INT(field) \
     [] (const septum::ExternalInput& e) { return (float) e.field; }, \
     [] (septum::ExternalInput& e, float v) { e.field = (int) std::lround (v); }
@@ -297,6 +356,19 @@ const std::vector<ExternalBinding>& externalBindings()
           nullptr, EXT_INT (resonance) },
     };
     return bindings;
+}
+
+// SYSTEM COMMON (settled, OM p. 68 and the address map's System Common
+// block): settings that apply to the whole instrument and, like the
+// external-input block, are not patch data — a program change must not touch
+// them. MASTER TUNE is the only float the plug-in publishes: the address map
+// stores it in 0.1-cent steps and the manual prints it as the frequency of
+// A4, 415.30-466.20 Hz.
+const juce::StringArray& systemParameterIds()
+{
+    static const juce::StringArray ids { "system_key_shift", "system_octave",
+                                         "system_transpose" };
+    return ids;
 }
 
 #define PATCH_INT(field) \
@@ -334,6 +406,26 @@ const std::vector<PatchBinding>& patchBindings()
           PATCH_BOOL (reverbOn) },
         { "mod_assign", "Modulation Assign", Kind::Choice, 0, 8,
           &modAssignChoices, PATCH_ENUM (modulationAssign, ModulationAssign) },
+        { "mod_dest", "Modulation Destination", Kind::Choice, 0, 3,
+          &toneDestinationChoices,
+          PATCH_ENUM (modulationDestination, septum::ToneDestination) },
+        { "bend_dest", "Pitch Bend Destination", Kind::Choice, 0, 3,
+          &toneDestinationChoices,
+          PATCH_ENUM (pitchBendDestination, septum::ToneDestination) },
+        { "expr_dest", "Expression Destination", Kind::Choice, 0, 3,
+          &toneDestinationChoices,
+          PATCH_ENUM (expressionDestination, septum::ToneDestination) },
+        { "dbeam_dest", "D Beam Destination", Kind::Choice, 0, 3,
+          &toneDestinationChoices,
+          PATCH_ENUM (dBeamDestination, septum::ToneDestination) },
+        { "dbeam_assign", "D Beam Assign", Kind::Choice, 0,
+          septum::dBeamAssignCount, &dBeamAssignChoices,
+          PATCH_ENUM (dBeamAssign, septum::DBeamAssign) },
+        { "dbeam_polarity", "D Beam Polarity", Kind::Choice, 0, 2,
+          &dBeamPolarityChoices,
+          PATCH_ENUM (dBeamPolarity, septum::DBeamPolarity) },
+        { "active_expression", "Active Expression", Kind::Bool, 0, 1, nullptr,
+          PATCH_BOOL (activeExpression) },
         { "arp_on", "Arpeggio Switch", Kind::Bool, 0, 1, nullptr,
           PATCH_BOOL (arpeggio.on) },
         { "arp_hold", "Arpeggio Hold", Kind::Bool, 0, 1, nullptr,
@@ -479,11 +571,20 @@ void SeptumAudioProcessor::cacheParameterPointers()
         patchValues.push_back (value);
     }
     masterValue = parameters.getRawParameterValue ("master_level");
+    systemTuneValue = parameters.getRawParameterValue ("system_master_tune");
+    for (const auto& id : systemParameterIds())
+        systemValues.push_back (parameters.getRawParameterValue (id));
     for (const auto& binding : externalBindings())
     {
         auto* value = parameters.getRawParameterValue (binding.id);
         jassert (value != nullptr);
         externalValues.push_back (value);
+    }
+    for (const auto& binding : dBeamBindings())
+    {
+        auto* value = parameters.getRawParameterValue (binding.id);
+        jassert (value != nullptr);
+        dBeamValues.push_back (value);
     }
 
     for (const auto& binding : ccBindings)
@@ -492,18 +593,24 @@ void SeptumAudioProcessor::cacheParameterPointers()
             juce::String (binding.upper ? "up_" : "lo_") + binding.suffix;
         if (auto* parameter = parameters.getParameter (id))
             ccCache.push_back ({ binding.controller, parameter,
+                                 parameters.getRawParameterValue (id),
                                  binding.signedValue,
                                  juce::String (binding.suffix) == "key_follow" });
     }
     // Settled (OM p. 72): the audio filter answers on CC#2 and CC#4.
-    if (auto* parameter = parameters.getParameter ("audio_filter_cutoff"))
-        ccCache.push_back ({ 2, parameter, false, false });
-    if (auto* parameter = parameters.getParameter ("audio_filter_reso"))
-        ccCache.push_back ({ 4, parameter, false, false });
-    if (auto* parameter = parameters.getParameter ("delay_time"))
-        ccCache.push_back ({ 12, parameter, false, false });
-    if (auto* parameter = parameters.getParameter ("reverb_time"))
-        ccCache.push_back ({ 13, parameter, false, false });
+    const auto cacheShared = [this] (int controller, const char* id)
+    {
+        if (auto* parameter = parameters.getParameter (id))
+            ccCache.push_back ({ controller, parameter,
+                                 parameters.getRawParameterValue (id), false,
+                                 false });
+    };
+    cacheShared (2, "audio_filter_cutoff");
+    cacheShared (4, "audio_filter_reso");
+    cacheShared (12, "delay_time");
+    cacheShared (13, "reverb_time");
+    // The dirty mask is a fixed pair of words, so the cache has to fit it.
+    jassert (ccCache.size() <= 128);
 }
 
 namespace
@@ -518,7 +625,8 @@ const std::vector<juce::String>& signedParameterSuffixes()
         "osc2_detune", "osc2_penv_depth", "balance", "key_follow",
         "cutoff_vel", "fenv_depth", "level_vel",
         "octave_shift", "tone_balance", "arp_octave", "delay_feedback",
-        "reverb_lf_damp_gain", "reverb_hf_damp_gain"
+        "reverb_lf_damp_gain", "reverb_hf_damp_gain",
+        "system_key_shift", "system_octave", "system_transpose"
     };
     return suffixes;
 }
@@ -552,6 +660,60 @@ const std::vector<juce::String>& signedParameterSuffixes()
             {
                 // Zero is not a step count, it is the absence of one.
                 return value <= 0 ? juce::String ("STYLE") : juce::String (value);
+            });
+    // The manual prints these four as something other than the byte the
+    // address map stores, so the panel and the host print that instead.
+    if (id == "arp_velocity")
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                // "REAL, 1-127" (OM p. 66): zero is not a velocity, it is the
+                // played one.
+                return value <= 0 ? juce::String ("REAL") : juce::String (value);
+            });
+    if (id == "reverb_size")
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                return juce::String (value + 1);   // "SIZE 1-8" (OM p. 65)
+            });
+    if (id == "reverb_pre_delay")
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                // "0.0-100.0 (ms)" (OM p. 65).
+                return juce::String (septum::mapping::reverbPreDelayMs (value), 1);
+            });
+    if (id == "split_point")
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                // "A0-C8" (OM p. 64) — a key, not a note number. Middle C is
+                // C4 here, as it is on the panel's own keyboard.
+                return juce::MidiMessage::getMidiNoteName (value, true, true, 4);
+            });
+    // Two parameters the address map stores more coarsely than one raw step
+    // per displayed unit: the panel prints the position the instrument can
+    // actually take, so the readout never disagrees with what is rendered.
+    if (id == "delay_feedback")
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                const int snapped =
+                    2 * juce::jlimit (-49, 49,
+                                      (int) std::lround (value / 2.0));
+                return snapped > 0 ? "+" + juce::String (snapped)
+                                   : juce::String (snapped);
+            });
+    if (id == "key_follow" || id == "up_key_follow" || id == "lo_key_follow")
+        return juce::AudioParameterIntAttributes().withStringFromValueFunction (
+            [] (int value, int)
+            {
+                const int snapped =
+                    10 * juce::jlimit (-20, 20,
+                                       (int) std::lround (value / 10.0));
+                return snapped > 0 ? "+" + juce::String (snapped)
+                                   : juce::String (snapped);
             });
     if (isSignedDisplay (id))
         return juce::AudioParameterIntAttributes().withStringFromValueFunction (
@@ -603,6 +765,38 @@ SeptumAudioProcessor::createParameterLayout()
     };
     addTone (true);
     addTone (false);
+
+    // SYSTEM COMMON, outside the patch exactly as the external-input block is.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "system_master_tune", 1 }, "Master Tune",
+        // 0.1-cent steps around A440, which is what the address map stores;
+        // the manual prints the endpoints as the frequency of A4.
+        juce::NormalisableRange<float> { 415.30f, 466.20f, 0.0f }, 440.0f,
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction (
+            [] (float value, int) { return juce::String (value, 2) + " Hz"; })));
+    layout.add (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "system_key_shift", 1 }, "Master Key Shift", -24, 24,
+        0, intAttributes ("system_key_shift")));
+    layout.add (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "system_octave", 1 }, "Keyboard Octave Shift", -3, 3,
+        0, intAttributes ("system_octave")));
+    layout.add (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "system_transpose", 1 }, "Transpose", -5, 6, 0,
+        intAttributes ("system_transpose")));
+
+    const septum::DBeam beamDefaults {};
+    for (const auto& binding : dBeamBindings())
+    {
+        const auto defaultValue = binding.get (beamDefaults);
+        if (binding.kind == Kind::Choice)
+            layout.add (std::make_unique<juce::AudioParameterChoice> (
+                juce::ParameterID { binding.id, 1 }, binding.label,
+                *binding.choices, (int) std::lround (defaultValue)));
+        else
+            layout.add (std::make_unique<juce::AudioParameterInt> (
+                juce::ParameterID { binding.id, 1 }, binding.label,
+                binding.low, binding.high, (int) std::lround (defaultValue)));
+    }
 
     const septum::ExternalInput externalDefaults {};
     for (const auto& binding : externalBindings())
@@ -659,6 +853,29 @@ SeptumAudioProcessor::createParameterLayout()
     return layout;
 }
 
+void SeptumAudioProcessor::applySystemSettings() noexcept
+{
+    // Settled SYSTEM COMMON. Cached atomics only, so this costs the audio
+    // thread four loads a block.
+    engine.setMasterTuneHz (systemTuneValue->load (std::memory_order_relaxed));
+    engine.setMasterKeyShift ((int) std::lround (
+        systemValues[0]->load (std::memory_order_relaxed)));
+    engine.setKeyboardOctaveShift ((int) std::lround (
+        systemValues[1]->load (std::memory_order_relaxed)));
+    engine.setTranspose ((int) std::lround (
+        systemValues[2]->load (std::memory_order_relaxed)));
+}
+
+septum::DBeam SeptumAudioProcessor::snapshotDBeam() const
+{
+    septum::DBeam beam {};
+    const auto& bindings = dBeamBindings();
+    for (std::size_t i = 0; i < bindings.size(); ++i)
+        bindings[i].set (beam, dBeamValues[i]->load (std::memory_order_relaxed));
+    septum::clampToDocumentedRanges (beam);
+    return beam;
+}
+
 septum::ExternalInput SeptumAudioProcessor::snapshotExternalInput() const
 {
     septum::ExternalInput settings {};
@@ -701,8 +918,10 @@ void SeptumAudioProcessor::prepareToPlay (double sampleRate,
 {
     engine.prepare (sampleRate, samplesPerBlock);
     engine.setMasterLevel ((int) std::lround (masterValue->load()));
+    applySystemSettings();
     engine.setPatch (snapshotPatch());
     engine.setExternalInput (snapshotExternalInput());
+    engine.setDBeam (snapshotDBeam());
     engine.reset();
     monoScratch.assign ((std::size_t) juce::jmax (samplesPerBlock, 16), 0.0f);
     externalInputL.assign ((std::size_t) juce::jmax (samplesPerBlock, 16), 0.0f);
@@ -802,6 +1021,19 @@ bool SeptumAudioProcessor::handleController (int controller, int value)
         case 11: engine.setExpression (value / 127.0); return false;
         case 64: engine.setHold (value >= 64); return false;
         case 66: engine.setSostenuto (value >= 64); return false;
+        case 69:
+            // Settled (OM p. 72): "Part Pitch (D Beam Pitch Mode) CC#69".
+            // The controller *is* the beam's height, so it writes the beam's
+            // own parameter and the mode follows the message: a zero puts the
+            // hand back outside the range.
+            if (auto* parameter = parameters.getParameter ("dbeam_value"))
+            {
+                const auto& range = parameter->getNormalisableRange();
+                if (auto* raw = parameters.getRawParameterValue ("dbeam_value"))
+                    raw->store (range.snapToLegalValue ((float) value),
+                                std::memory_order_relaxed);
+            }
+            return true;
         case 84: engine.setPortamentoControl (value); return false;
         case 120: engine.allSoundOff(); return false;
         case 121:
@@ -820,23 +1052,55 @@ bool SeptumAudioProcessor::handleController (int controller, int value)
     }
 
     // Panel parameters per the documented CC map: received CCs edit the
-    // corresponding patch parameter, exactly as the hardware does. Cached
-    // pointers keep this allocation-free on the audio thread.
-    for (const auto& cached : ccCache)
+    // corresponding patch parameter, exactly as the hardware does.
+    //
+    // This runs on the audio thread, so it writes the parameter's raw value
+    // and nothing else — the idiom a MIDI program change already uses. The
+    // three gesture calls it used to make instead all take the processor's
+    // listener lock and can wake the message thread from inside the render
+    // callback, which is the one thing a render callback may not do; and a
+    // controller sweep makes 128 of them a second. The reconciler below
+    // republishes the value with host and UI notification, coalesced.
+    for (std::size_t index = 0; index < ccCache.size(); ++index)
     {
+        const auto& cached = ccCache[index];
         if (cached.controller != controller)
             continue;
         float natural = cached.signedValue ? (float) (value - 64) : (float) value;
         if (cached.keyFollow)
             natural = juce::jlimit (-200.0f, 200.0f, (float) ((value - 64) * 10));
         const auto& range = cached.parameter->getNormalisableRange();
-        cached.parameter->beginChangeGesture();
-        cached.parameter->setValueNotifyingHost (
-            range.convertTo0to1 (range.snapToLegalValue (natural)));
-        cached.parameter->endChangeGesture();
+        cached.raw->store (range.snapToLegalValue (natural),
+                           std::memory_order_relaxed);
+        ccDirty[index >> 6].fetch_or (1ull << (index & 63u),
+                                      std::memory_order_release);
+        ccReconciler.triggerAsyncUpdate();
         return true;
     }
     return false;
+}
+
+void SeptumAudioProcessor::reconcileControlChanges()
+{
+    for (std::size_t word = 0; word < ccDirty.size(); ++word)
+    {
+        auto bits = ccDirty[word].exchange (0u, std::memory_order_acquire);
+        while (bits != 0u)
+        {
+            const auto index = word * 64u
+                               + (std::size_t) std::countr_zero (bits);
+            bits &= bits - 1u;
+            if (index >= ccCache.size())
+                continue;
+            const auto& cached = ccCache[index];
+            const auto& range = cached.parameter->getNormalisableRange();
+            const float natural = cached.raw->load (std::memory_order_relaxed);
+            cached.parameter->beginChangeGesture();
+            cached.parameter->setValueNotifyingHost (
+                range.convertTo0to1 (range.snapToLegalValue (natural)));
+            cached.parameter->endChangeGesture();
+        }
+    }
 }
 
 bool SeptumAudioProcessor::handleMidiMessage (const juce::MidiMessage& message)
@@ -1025,6 +1289,7 @@ void SeptumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     engine.setMasterLevel ((int) std::lround (
         masterValue->load (std::memory_order_relaxed)));
+    applySystemSettings();
 
     // The engine's patch never depends on the message loop: MIDI program
     // changes write the raw values directly, and the snapshot is validated
@@ -1041,6 +1306,7 @@ void SeptumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         // old and new external settings is as torn as a mixed patch.
         const auto generation = patchGeneration.load (std::memory_order_acquire);
         const septum::ExternalInput external = snapshotExternalInput();
+        const septum::DBeam beam = snapshotDBeam();
 
         const int staged = stagedProgram.load (std::memory_order_acquire);
         const bool stagedProgramPending =
@@ -1055,7 +1321,12 @@ void SeptumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             (generation & 1u) == 0u
             && patchGeneration.load (std::memory_order_acquire) == generation;
         if (stable)
+        {
             engine.setExternalInput (external);
+            // After the external block, because setExternalInput re-applies
+            // the beam to whatever the beam last was.
+            engine.setDBeam (beam);
+        }
         if (stagedProgramPending)
             engine.setPatch (
                 septum::factoryPatches()[(std::size_t) staged].patch);

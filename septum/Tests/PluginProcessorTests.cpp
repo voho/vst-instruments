@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 namespace
 {
@@ -183,6 +184,59 @@ void testDocumentedControlChanges()
     expect ((int) processor.parameters.getRawParameterValue ("up_fenv_decay")->load()
                 == 25,
             "CC#83 edits UPPER filter-env decay");
+}
+
+// A received panel CC edits the parameter's raw value on the audio thread and
+// notifies nobody from there: a gesture or a host notification inside the
+// render callback takes the processor's listener lock and can wake the
+// message thread, and a controller sweep makes 128 of them a second. The
+// message-thread reconciler is what catches the parameter object and the host
+// up.
+struct CountingParameterListener final
+    : public juce::AudioProcessorParameter::Listener
+{
+    void parameterValueChanged (int, float) override { ++values; }
+    void parameterGestureChanged (int, bool) override { ++gestures; }
+    int values { 0 };
+    int gestures { 0 };
+};
+
+void testControlChangesDoNotNotifyFromTheAudioThread()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    juce::AudioBuffer<float> buffer (2, 256);
+
+    auto* parameter = processor.parameters.getParameter ("up_cutoff");
+    expect (parameter != nullptr, "the cutoff parameter exists");
+    if (parameter == nullptr)
+        return;
+
+    CountingParameterListener listener;
+    parameter->addListener (&listener);
+
+    auto cc = messageAt (juce::MidiMessage::controllerEvent (1, 74, 40));
+    processor.processBlock (buffer, cc);
+
+    expect (listener.values == 0 && listener.gestures == 0,
+            "a received CC notifies nothing from the render callback (values "
+                + std::to_string (listener.values) + ", gestures "
+                + std::to_string (listener.gestures) + ")");
+    expect ((int) processor.parameters.getRawParameterValue ("up_cutoff")->load()
+                == 40,
+            "the CC still lands in the value the engine renders from");
+
+    // The message-thread half. It runs from an AsyncUpdater in the plug-in;
+    // here it is called directly, as the harness stands in for the loop.
+    processor.reconcileControlChanges();
+    const auto& range = processor.parameters.getParameterRange ("up_cutoff");
+    expect (std::abs (parameter->getValue() - range.convertTo0to1 (40.0f))
+                < 1.0e-6,
+            "the reconciler catches the parameter object up");
+    expect (listener.values > 0 && listener.gestures > 0,
+            "the reconciler is what notifies the host");
+
+    parameter->removeListener (&listener);
 }
 
 double goertzel (const juce::AudioBuffer<float>& buffer, double hz,
@@ -503,6 +557,402 @@ void testStateRoundTrip()
             "resonance survives the state round trip");
 }
 
+// The panel lives on a canvas child of the editor, so the suite reaches it
+// through the editor's own accessor rather than walking children blind.
+juce::Component& panelOf (juce::AudioProcessorEditor& editor)
+{
+    auto* septum = dynamic_cast<SeptumAudioProcessorEditor*> (&editor);
+    return septum != nullptr ? septum->getPanel() : editor;
+}
+
+// Walks a component tree looking for a button whose face reads `text`.
+juce::Button* findButton (juce::Component& root, const juce::String& text)
+{
+    for (int i = 0; i < root.getNumChildComponents(); ++i)
+    {
+        auto* child = root.getChildComponent (i);
+        if (child == nullptr)
+            continue;
+        if (auto* button = dynamic_cast<juce::Button*> (child))
+            if (button->getButtonText() == text)
+                return button;
+        if (auto* found = findButton (*child, text))
+            return found;
+    }
+    return nullptr;
+}
+
+// Settled (OM p. 30): "-OCT ... lowers the OSC 2 pitch one octave below that
+// of OSC 1"; "the OSC 2 pitch will be seven semitones (a perfect fifth)
+// higher than OSC 1"; and both together "the OSC 2 pitch will be the same as
+// the OSC 1 pitch". All three are intervals, so a transposed OSC 1 moves them.
+void testIntervalButtonsAreRelativeToOscOne()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    expect (editor != nullptr, "the processor provides an editor");
+    if (editor == nullptr)
+        return;
+
+    const auto set = [&processor] (const char* id, float natural)
+    {
+        auto* parameter = processor.parameters.getParameter (id);
+        const auto& range = processor.parameters.getParameterRange (id);
+        parameter->setValueNotifyingHost (
+            range.convertTo0to1 (range.snapToLegalValue (natural)));
+    };
+    const auto get = [&processor] (const char* id)
+    {
+        return (int) processor.parameters.getRawParameterValue (id)->load();
+    };
+
+    auto* minusOctave = findButton (panelOf (*editor), "-OCT");
+    auto* fifth = findButton (panelOf (*editor), "5TH");
+    expect (minusOctave != nullptr && fifth != nullptr,
+            "the panel carries both INTERVAL buttons");
+    if (minusOctave == nullptr || fifth == nullptr)
+        return;
+
+    set ("up_osc1_wide", 1.0f);     // room for +/-36, so nothing clamps
+    set ("up_osc2_wide", 1.0f);
+    set ("up_osc1_pitch", 5.0f);
+    set ("up_osc2_pitch", 0.0f);
+
+    minusOctave->onClick();
+    expect (get ("up_osc2_pitch") == -7,
+            "-OCT puts OSC 2 an octave below OSC 1, not at -12 (got "
+                + std::to_string (get ("up_osc2_pitch")) + ")");
+    minusOctave->onClick();
+    expect (get ("up_osc2_pitch") == 5,
+            "pressing -OCT again returns OSC 2 to OSC 1's pitch (got "
+                + std::to_string (get ("up_osc2_pitch")) + ")");
+
+    fifth->onClick();
+    expect (get ("up_osc2_pitch") == 12,
+            "5TH puts OSC 2 a fifth above OSC 1 (got "
+                + std::to_string (get ("up_osc2_pitch")) + ")");
+}
+
+// A switch on the panel says which way it is thrown.
+void testTogglesShowTheirState()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    if (editor == nullptr)
+        return;
+
+    const auto set = [&processor] (const char* id, bool on)
+    {
+        auto* parameter = processor.parameters.getParameter (id);
+        parameter->setValueNotifyingHost (on ? 1.0f : 0.0f);
+    };
+
+    set ("delay_on", false);
+    expect (findButton (panelOf (*editor), "OFF") != nullptr,
+            "a switch that is off says so on its face");
+    set ("delay_on", true);
+    set ("reverb_on", true);
+    set ("arp_on", true);
+    set ("up_overdrive", true);
+    set ("up_portamento", true);
+    set ("up_osc1_wide", true);
+    set ("up_osc2_wide", true);
+    set ("up_lfo1_sync", true);
+    set ("up_lfo2_sync", true);
+    set ("up_lfo1_key_trig", true);
+    set ("up_lfo2_key_trig", true);
+    set ("arp_hold", true);
+    set ("ext_center_cancel", true);
+    set ("audio_filter_on", true);
+    expect (findButton (panelOf (*editor), "ON") != nullptr,
+            "a switch that is on says so on its face");
+}
+
+// The panel is a fixed geometry, so the only question a small screen asks is
+// whether it scales or gets cut off. A 1366x768 laptop's work area is under
+// 768 points tall once the taskbar and the host's window frame are counted,
+// and the design panel is 786.
+// [settled] SYSTEM COMMON: MASTER TUNE (the frequency of A4, 415.30-466.20
+// Hz), MASTER KEY SHIFT -24..+24, keyboard OCTAVE SHIFT -3..+3 and TRANSPOSE
+// -5..+6. The engine has honoured all four since it was written; nothing
+// reached them.
+// The bend/mod lever's modulation axis holds its position, so a click that
+// set it absolutely could latch full vibrato from one tap on the top of the
+// travel — something the hardware lever cannot do. It moves by the drag now,
+// and a double click puts it back.
+// The D Beam is a group of automatable parameters: which button is lit, where
+// the hand is, and every byte the address map keeps about it. Its settings
+// are patch data; the beam and the button are not, so a program change must
+// leave them where the player put them. CC#69 is the beam's own controller.
+void testDBeamParameters()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+
+    for (const char* id : { "dbeam_mode", "dbeam_value", "dbeam_sens",
+                            "dbeam_dest", "dbeam_assign", "dbeam_polarity",
+                            "active_expression" })
+        expect (processor.parameters.getParameter (id) != nullptr,
+                juce::String ("the plug-in publishes ") + id);
+
+    // The settled 37-entry assign list, in the address map's order.
+    if (auto* assign = dynamic_cast<juce::AudioParameterChoice*> (
+            processor.parameters.getParameter ("dbeam_assign")))
+    {
+        expect (assign->choices.size() == 37,
+                "D BEAM ASSIGN carries all 37 documented destinations (got "
+                    + std::to_string (assign->choices.size()) + ")");
+        expect (assign->choices[0] == "OSC1-PITCH"
+                    && assign->choices[36] == "BENDER",
+                "the assign list runs from OSC1-PITCH to BENDER");
+    }
+
+    const auto set = [&processor] (const char* id, float natural)
+    {
+        auto* parameter = processor.parameters.getParameter (id);
+        const auto& range = processor.parameters.getParameterRange (id);
+        parameter->setValueNotifyingHost (
+            range.convertTo0to1 (range.snapToLegalValue (natural)));
+    };
+    const auto get = [&processor] (const char* id)
+    {
+        return (int) processor.parameters.getRawParameterValue (id)->load();
+    };
+
+    // Settled (OM p. 72): "Part Pitch (D Beam Pitch Mode) CC#69".
+    juce::AudioBuffer<float> buffer (2, 256);
+    auto beamCc = messageAt (juce::MidiMessage::controllerEvent (1, 69, 96));
+    processor.processBlock (buffer, beamCc);
+    expect (get ("dbeam_value") == 96,
+            "CC#69 moves the beam (got " + std::to_string (get ("dbeam_value"))
+                + ")");
+
+    // The beam and the button are performance state, not patch data.
+    set ("dbeam_mode", 2.0f);      // EXPRESS
+    set ("dbeam_value", 64.0f);
+    set ("dbeam_sens", 3.0f);
+    processor.setCurrentProgram (2);
+    expect (get ("dbeam_mode") == 2 && get ("dbeam_value") == 64
+                && get ("dbeam_sens") == 3,
+            "a program change leaves the beam where the player put it");
+}
+
+void testLeverModulationMovesByTheDrag()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    auto* septum = dynamic_cast<SeptumAudioProcessorEditor*> (editor.get());
+    expect (septum != nullptr, "the processor provides the Septum editor");
+    if (septum == nullptr)
+        return;
+    editor->setSize (editor->getWidth(), editor->getHeight());
+
+    auto& lever = septum->getLever();
+    const auto press = [&lever] (juce::Point<float> at)
+    {
+        const juce::MouseEvent event (
+            juce::Desktop::getInstance().getMainMouseSource(), at,
+            juce::ModifierKeys::leftButtonModifier, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            &lever, &lever, juce::Time::getCurrentTime(), at,
+            juce::Time::getCurrentTime(), 1, false);
+        return event;
+    };
+
+    const auto top = juce::Point<float> ((float) lever.getWidth() * 0.5f, 4.0f);
+    const auto bottom =
+        juce::Point<float> ((float) lever.getWidth() * 0.5f,
+                            (float) lever.getHeight() - 16.0f);
+
+    lever.mouseDown (press (top));
+    lever.mouseUp (press (top));
+    expect (lever.getModulation() == 0.0f,
+            "a tap at the top of the travel does not latch modulation (value "
+                + std::to_string (lever.getModulation()) + ")");
+
+    // A drag from the bottom to the top does.
+    lever.mouseDown (press (bottom));
+    lever.mouseDrag (press (top));
+    expect (lever.getModulation() > 0.5f,
+            "a drag up the travel raises modulation (value "
+                + std::to_string (lever.getModulation()) + ")");
+    lever.mouseUp (press (top));
+
+    lever.mouseDoubleClick (press (top));
+    expect (lever.getModulation() == 0.0f,
+            "a double click puts the modulation back");
+}
+
+void testSystemCommonSettings()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+
+    for (const char* id : { "system_master_tune", "system_key_shift",
+                            "system_octave", "system_transpose" })
+        expect (processor.parameters.getParameter (id) != nullptr,
+                juce::String ("the plug-in publishes ") + id);
+
+    const auto set = [&processor] (const char* id, float natural)
+    {
+        auto* parameter = processor.parameters.getParameter (id);
+        const auto& range = processor.parameters.getParameterRange (id);
+        parameter->setValueNotifyingHost (
+            range.convertTo0to1 (range.snapToLegalValue (natural)));
+    };
+
+    // A held A4 against MASTER TUNE. A fresh instance each time, because a
+    // note left sounding at the old tuning would be in the take as well.
+    const auto pitchOf = [] (float tuneHz)
+    {
+        SeptumAudioProcessor instance;
+        instance.prepareToPlay (44100.0, 512);
+        const auto write = [&instance] (const char* id, float natural)
+        {
+            auto* parameter = instance.parameters.getParameter (id);
+            const auto& range = instance.parameters.getParameterRange (id);
+            parameter->setValueNotifyingHost (
+                range.convertTo0to1 (range.snapToLegalValue (natural)));
+        };
+        write ("system_master_tune", tuneHz);
+        write ("delay_on", 0.0f);
+        write ("reverb_on", 0.0f);
+
+        juce::AudioBuffer<float> buffer (2, 512);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 100), 0);
+        instance.processBlock (buffer, midi);
+        std::vector<float> take;
+        for (int block = 0; block < 40; ++block)
+        {
+            juce::MidiBuffer none;
+            instance.processBlock (buffer, none);
+            for (int i = 0; i < buffer.getNumSamples(); ++i)
+                take.push_back (buffer.getSample (0, i));
+        }
+        // A saw crosses zero upward once per cycle, so the crossings over a
+        // known span are the frequency.
+        int crossings = 0;
+        for (std::size_t i = 1; i < take.size(); ++i)
+            if (take[i - 1] <= 0.0f && take[i] > 0.0f)
+                ++crossings;
+        return crossings * 44100.0 / (double) take.size();
+    };
+
+    const double atA440 = pitchOf (440.0f);
+    const double atA466 = pitchOf (466.16f);
+    expect (std::abs (atA440 - 440.0) < 12.0,
+            "A4 renders at A440 by default (measured "
+                + std::to_string (atA440) + ")");
+    expect (atA466 > atA440 * 1.03,
+            "MASTER TUNE moves the whole instrument (measured "
+                + std::to_string (atA466) + " against "
+                + std::to_string (atA440) + ")");
+
+    // The panel's OCT buttons write the settled -3..+3 parameter.
+    set ("system_master_tune", 440.0f);
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    if (editor == nullptr)
+        return;
+    auto* down = findButton (panelOf (*editor), "DOWN");
+    auto* up = findButton (panelOf (*editor), "UP");
+    expect (down != nullptr && up != nullptr,
+            "the panel carries the octave buttons");
+    if (down == nullptr || up == nullptr)
+        return;
+    for (int i = 0; i < 5; ++i)
+        up->onClick();
+    expect ((int) processor.parameters.getRawParameterValue ("system_octave")
+                    ->load()
+                == 3,
+            "the octave buttons reach the documented +3");
+    for (int i = 0; i < 10; ++i)
+        down->onClick();
+    expect ((int) processor.parameters.getRawParameterValue ("system_octave")
+                    ->load()
+                == -3,
+            "the octave buttons reach the documented -3");
+
+    // A program change is patch data; the system block is not.
+    set ("system_key_shift", 7.0f);
+    set ("system_transpose", -4.0f);
+    processor.setCurrentProgram (1);
+    expect ((int) processor.parameters.getRawParameterValue ("system_key_shift")
+                    ->load()
+                == 7
+                && (int) processor.parameters
+                           .getRawParameterValue ("system_transpose")
+                           ->load()
+                       == -4,
+            "a program change leaves the system settings alone");
+
+    // ...and they survive the state round trip.
+    juce::MemoryBlock state;
+    processor.getStateInformation (state);
+    SeptumAudioProcessor restored;
+    restored.prepareToPlay (44100.0, 256);
+    restored.setStateInformation (state.getData(), (int) state.getSize());
+    expect ((int) restored.parameters.getRawParameterValue ("system_key_shift")
+                    ->load()
+                == 7,
+            "the system settings survive a state round trip");
+}
+
+void testEditorFitsASmallDisplay()
+{
+    using Editor = SeptumAudioProcessorEditor;
+    // An unknown work area is what the design size means here.
+    const auto design = Editor::panelSizeForWorkArea ({});
+    expect (design.getWidth() >= 1000 && design.getHeight() >= 500,
+            "the panel has a design size");
+    expect (Editor::panelSizeForWorkArea ({ 3840, 2160 }) == design,
+            "a display with room opens the panel at its design size");
+    const double aspect =
+        (double) design.getWidth() / (double) design.getHeight();
+    for (const auto work : { juce::Rectangle<int> { 1366, 768 },
+                             juce::Rectangle<int> { 1280, 800 },
+                             juce::Rectangle<int> { 1440, 900 } })
+    {
+        const auto size = Editor::panelSizeForWorkArea (work);
+        expect (size.getWidth() <= work.getWidth()
+                    && size.getHeight() <= work.getHeight(),
+                "the panel fits a " + std::to_string (work.getWidth()) + "x"
+                    + std::to_string (work.getHeight()) + " work area");
+        expect (std::abs ((double) size.getWidth() / size.getHeight() - aspect)
+                    < 0.01,
+                "the panel keeps its proportions when it shrinks");
+    }
+
+    // And the controls still land inside it at the smallest size the rule
+    // will produce, because the layout never depends on the window.
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    if (editor == nullptr)
+        return;
+    for (const auto size : { design / 2, design, design * 3 / 2 })
+    {
+        editor->setSize (size.getWidth(), size.getHeight());
+        auto& panel = panelOf (*editor);
+        int unplaced = 0, escaped = 0;
+        for (int i = 0; i < panel.getNumChildComponents(); ++i)
+        {
+            auto* child = panel.getChildComponent (i);
+            if (child == nullptr || ! child->isVisible())
+                continue;
+            if (child->getBounds().isEmpty())
+                ++unplaced;
+            else if (! panel.getLocalBounds().contains (child->getBounds()))
+                ++escaped;
+        }
+        expect (unplaced == 0 && escaped == 0,
+                "every control is placed at window width "
+                    + std::to_string (size.getWidth()));
+    }
+}
+
 void testEditorAndSnapshot()
 {
     SeptumAudioProcessor processor;
@@ -513,9 +963,15 @@ void testEditorAndSnapshot()
     if (editor == nullptr)
         return;
 
-    editor->setSize (editor->getWidth(), editor->getHeight());
-    expect (editor->getWidth() >= 1000 && editor->getHeight() >= 500,
-            "the editor opens at its panel size");
+    // The editor opens at whatever fits the display it is on, so the
+    // documentation image is pinned to the panel's design size here rather
+    // than taken from whatever the build machine happens to have.
+    const auto design = SeptumAudioProcessorEditor::panelSizeForWorkArea ({});
+    editor->setSize (design.getWidth(), design.getHeight());
+    editor->resized();
+    expect (editor->getWidth() == design.getWidth()
+                && editor->getHeight() == design.getHeight(),
+            "the documentation screenshot is the panel's design size");
 
     // Every control the panel puts on screen has to be given bounds. A
     // section whose declared row counts do not cover its contents lays out
@@ -523,9 +979,10 @@ void testEditorAndSnapshot()
     // attached to its parameter, and invisible to the player. SPLIT ARPEGGIO
     // was exactly that until the ARPEGGIO section's rows were corrected.
     int placed = 0, unplaced = 0, escaped = 0;
-    for (int i = 0; i < editor->getNumChildComponents(); ++i)
+    auto& panel = panelOf (*editor);
+    for (int i = 0; i < panel.getNumChildComponents(); ++i)
     {
-        auto* child = editor->getChildComponent (i);
+        auto* child = panel.getChildComponent (i);
         if (child == nullptr || ! child->isVisible())
             continue;
         if (child->getBounds().isEmpty())
@@ -534,7 +991,7 @@ void testEditorAndSnapshot()
             continue;
         }
         ++placed;
-        if (! editor->getLocalBounds().contains (child->getBounds()))
+        if (! panel.getLocalBounds().contains (child->getBounds()))
             ++escaped;
     }
     expect (placed > 100, "the panel places its controls");
@@ -582,6 +1039,7 @@ int main()
     testBusLayoutAndTail();
     testRenderingAndVoices();
     testDocumentedControlChanges();
+    testControlChangesDoNotNotifyFromTheAudioThread();
     testPanelCcAppliesWithinTheBlock();
     testProgramChangeStagesOnTheAudioPath();
     testUiQueueOverflowStillReleases();
@@ -591,6 +1049,12 @@ int main()
     testStateSurvivesUnpumpedProgramChange();
     testProgramsLoad();
     testStateRoundTrip();
+    testIntervalButtonsAreRelativeToOscOne();
+    testTogglesShowTheirState();
+    testDBeamParameters();
+    testLeverModulationMovesByTheDrag();
+    testSystemCommonSettings();
+    testEditorFitsASmallDisplay();
     testEditorAndSnapshot();
 
     if (failures == 0)

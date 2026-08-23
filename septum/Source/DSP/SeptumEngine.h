@@ -233,6 +233,14 @@ namespace mapping
         return 0.001 * std::pow (1300.0, value / 127.0);
     }
 
+    // [settled] Reverb PRE DELAY: the address map stores 0-125 and the
+    // manual prints 0.0-100.0 ms (OM p. 65). One place, so the panel and the
+    // reverb cannot disagree about what a raw value means.
+    [[nodiscard]] inline double reverbPreDelayMs (int raw) noexcept
+    {
+        return std::clamp (raw, 0, 125) * (100.0 / 125.0);
+    }
+
     // [voiced, OQ-12] Reverb TIME 0-127 with SIZE 0-7 -> RT60 seconds.
     [[nodiscard]] inline double reverbSeconds (int time, int size) noexcept
     {
@@ -351,6 +359,12 @@ namespace mapping
 
     // [voiced] Slew on the master gain chain, so a level move does not step.
     inline constexpr double masterSlewSeconds = 0.01;
+
+    // [voiced] How long the output meter takes to fall by 1/e. A display
+    // choice, not a claim about the instrument; what matters is that it is a
+    // time rather than a factor per render call, so the same sound reads the
+    // same at every host buffer size.
+    inline constexpr double meterFallSeconds = 0.30;
 
     // [voiced, OQ-14] INPUT VOL 0-127 -> amplitude. The knob is analog on the
     // hardware, ahead of the codec; a squared law matches the AMP LEVEL knob's
@@ -510,8 +524,18 @@ namespace mapping
         // are applied *after* that reversal, because "(L)" names the lowest key
         // pressed and "(L&H)" the lowest and the highest — which key that is
         // does not depend on which way the window is walking.
-        const int walked = std::clamp (base + row - 1, 0, count - 1);
-        int index = descending ? count - 1 - walked : walked;
+        //
+        // [settled] A style can ask for more rows than the chord has keys, and
+        // the manual says what happens then: "When the number of keys played
+        // is less than the number of notes in the arpeggio style, the
+        // highest-pitched of the pressed keys is played by default" (OM p.66).
+        // That is a statement about pitch, not about the window, so it holds
+        // whichever way the window is walking — a descending motif that ran
+        // off the end used to fall back on the *lowest* key instead.
+        const int position = base + row - 1;
+        int index = position >= count
+                        ? count - 1
+                        : (descending ? count - 1 - position : position);
         if (pinLow && row == 1)
             index = 0;
         else if (pinHigh && row == span)
@@ -664,9 +688,17 @@ struct OverdriveStage
     double previousIntegral { 0.0 };
     std::array<double, 32> bypass {};
     int bypassWrite { 0 };
+    // OVERDRIVE is automatable, and every state in the chain carries across
+    // samples. Rather than shape unconditionally, the stage notices the
+    // switch coming back and rebuilds itself from the history the bypass line
+    // is already keeping.
+    bool wasEnabled { false };
 
     void prepare (double hostRateHz) noexcept;
     void clear() noexcept;
+    // One host sample through the resampler and the shaper, ADAA state and
+    // all. The output is the shaped sample before output compensation.
+    [[nodiscard]] double shapeChain (double x, double preGain) noexcept;
     [[nodiscard]] double process (double x, double preGain, double compensation,
                                   bool enabled) noexcept;
 };
@@ -687,6 +719,10 @@ public:
     // System-common controls (documented ranges).
     // The external-input path is a system setting, not patch data (OM p. 49-51).
     void setExternalInput (const ExternalInput& settings) noexcept;
+    // The D Beam controller. Its settings are patch or system data; where the
+    // player's hand is, is neither, so it arrives here like the external
+    // input's panel block does.
+    void setDBeam (const DBeam& beam) noexcept;
     [[nodiscard]] const ExternalInput& externalInput() const noexcept
     {
         return external_;
@@ -981,6 +1017,14 @@ private:
     {
         return part == Part::Upper ? patch_.upper : patch_.lower;
     }
+    // Rebuilds `patch_` and `external_` from the raw pair plus the beam.
+    void applyDBeam();
+    // How far the beam bends the pitch of a part, in semitones, and how much
+    // it scales its gain — the PITCH and EXPRESS buttons, which polarity does
+    // not touch.
+    [[nodiscard]] double dBeamPitchSemitones (Part part) const noexcept;
+    [[nodiscard]] double dBeamGain (Part part) const noexcept;
+
     ToneRuntime& toneRuntime (Part part) noexcept
     {
         return tones_[part == Part::Upper ? 0 : 1];
@@ -1020,7 +1064,17 @@ private:
     [[nodiscard]] std::uint32_t nextRandom() noexcept;
 
     // -- state -------------------------------------------------------------
+    // The patch the player edited, and the patch the engine renders: the
+    // D Beam's ASSIGN mode moves one parameter of the second away from the
+    // first, "just as if you had moved the knob" (OM p. 21), so every read in
+    // the render code goes through `patch_` and only `setPatch` writes
+    // `rawPatch_`.
+    Patch rawPatch_ {};
     Patch patch_ {};
+    DBeam dBeam_ {};
+    // The beam's travel, 0 at rest, and its sign under D BEAM POLARITY. Held
+    // here so the render code does not re-derive it per voice.
+    double dBeamTravel_ { 0.0 };
     double sampleRate_ { 44100.0 };
     int maxBlock_ { 512 };
     int latencySamples_ { 0 };
@@ -1034,6 +1088,11 @@ private:
     double pitchBend_ { 0.0 };
     double modulation_ { 0.0 };
     double expression_ { 1.0 };
+    // EXPRESSION reaches the tone(s) EXPRESSION DESTINATION names, so it is
+    // carried per tone and smoothed there rather than in the master chain.
+    std::array<double, 2> smoothedExpression_ { 1.0, 1.0 };
+    // The D Beam's EXPRESS gain, per tone, on the same smoother.
+    std::array<double, 2> smoothedDBeamGain_ { 1.0, 1.0 };
     double partLevel_ { 1.0 };
     double partPan_ { 0.0 };
     bool hold_ { false };
@@ -1044,6 +1103,12 @@ private:
     std::array<ArpeggioRuntime, partCount> arpeggios_ {};
     double arpeggioStepRemaining_ { 0.0 };   // samples to the next boundary
     int arpeggioStep_ { 0 };
+    // Grid sections since the pattern armed. A shuffled grid takes its
+    // long/short parity from this rather than from the pattern step, because
+    // the shuffle belongs to the beat and the pattern does not: with an odd
+    // END STEP the step index repeats its parity and the pair stops summing
+    // to its division.
+    int arpeggioGridSection_ { 0 };
     bool arpeggioRunning_ { false };
     bool arpeggioActive_ { false };   // what the ARPEGGIO switch last was
     // Whether each part was arpeggiated last tick. The ARPEGGIO switch is not
@@ -1064,6 +1129,7 @@ private:
 
     // External input: INPUT VOL -> CENTER CANCEL -> AUDIO FILTER on the direct
     // monitor path, and the pre-filter mono sum feeding any EXT-IN oscillator.
+    ExternalInput rawExternal_ {};
     ExternalInput external_ {};
     std::vector<float> externalDirectL_, externalDirectR_, externalMono_;
     SvfStage audioFilter1_[2] {}, audioFilter2_[2] {};

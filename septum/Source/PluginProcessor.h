@@ -78,11 +78,20 @@ public:
     // patch because the instrument keeps them out of it (OM pp. 49-51).
     [[nodiscard]] septum::ExternalInput snapshotExternalInput() const;
 
+    // The D Beam controller's own state, read the same way and kept out of
+    // the patch for the same reason.
+    [[nodiscard]] septum::DBeam snapshotDBeam() const;
+
     // The message-thread half of a MIDI program change: repeats the values
     // the audio path already wrote, with host/UI notification, skipping any
     // parameter edited since. Normally reached via the queued message-loop
     // callback; public so the harness can stand in for that loop.
     void reconcileProgram (int index);
+
+    // The message-thread half of a received panel CC: republishes the raw
+    // values the audio path wrote, with host and UI notification. Public so
+    // the harness can stand in for the message loop.
+    void reconcileControlChanges();
 
     juce::AudioProcessorValueTreeState parameters;
 
@@ -103,13 +112,20 @@ private:
     // notification.
     void writeProgramToParameters (int index) noexcept;
     void cacheParameterPointers();
+    // Pushes the SYSTEM COMMON settings at the engine. Allocation-free.
+    void applySystemSettings() noexcept;
 
     // Audio-thread lookups resolved once at construction: raw-value atomics
     // aligned with the binding tables, and ranged parameters for the CC map.
     // processBlock must never build a juce::String.
     std::vector<std::atomic<float>*> upperValues, lowerValues, patchValues;
     std::atomic<float>* masterValue { nullptr };
+    // SYSTEM COMMON: master tune in Hz, then key shift, keyboard octave and
+    // transpose in the order systemParameterIds() lists them.
+    std::atomic<float>* systemTuneValue { nullptr };
+    std::vector<std::atomic<float>*> systemValues;
     std::vector<std::atomic<float>*> externalValues;
+    std::vector<std::atomic<float>*> dBeamValues;
     // The input bus arrives in the same buffer the output is written to, so
     // it is copied out before that buffer is cleared.
     std::vector<float> externalInputL, externalInputR;
@@ -117,10 +133,29 @@ private:
     {
         int controller { -1 };
         juce::RangedAudioParameter* parameter { nullptr };
+        // The parameter's own raw value, which is what the engine snapshots.
+        // The audio thread writes this and nothing else; the parameter object
+        // and the host are caught up on the message thread.
+        std::atomic<float>* raw { nullptr };
         bool signedValue { false };
         bool keyFollow { false };
     };
     std::vector<CachedCc> ccCache;
+    // Which cached CCs the audio thread has written since the message thread
+    // last looked. One bit per entry in ccCache.
+    std::array<std::atomic<std::uint64_t>, 2> ccDirty { 0u, 0u };
+    // Catches the parameter objects and the host up with the raw values a
+    // received CC wrote on the audio thread. Coalescing, so a knob sweep of
+    // 128 messages a second costs one message-thread pass per frame rather
+    // than 128.
+    struct CcReconciler final : public juce::AsyncUpdater
+    {
+        explicit CcReconciler (SeptumAudioProcessor& o) : owner (o) {}
+        ~CcReconciler() override { cancelPendingUpdate(); }
+        void handleAsyncUpdate() override { owner.reconcileControlChanges(); }
+        SeptumAudioProcessor& owner;
+    };
+    CcReconciler ccReconciler { *this };
     std::vector<float> monoScratch;
 
     septum::Engine engine;

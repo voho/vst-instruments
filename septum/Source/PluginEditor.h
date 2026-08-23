@@ -68,14 +68,24 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+
+    [[nodiscard]] float getModulation() const noexcept { return mod; }
 
 private:
-    void applyFromPoint (juce::Point<float> position);
+    static constexpr int captionHeight = 12;
+
+    void applyFromEvent (const juce::MouseEvent&);
+    [[nodiscard]] juce::Rectangle<float> leverBounds() const;
     void push() noexcept;
 
     SeptumAudioProcessor& processor;
     float bend { 0.0f };  // -1..+1, springs back
     float mod { 0.0f };   // 0..1, latches
+    // Where the modulation axis was grabbed, so a drag moves it by the travel
+    // rather than jumping it to the click.
+    float grabY { 0.0f };
+    float grabMod { 0.0f };
 };
 
 class SeptumAudioProcessorEditor final : public juce::AudioProcessorEditor,
@@ -89,8 +99,34 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    // The size to open at on a display with this much usable room. Public so
+    // the suite can check the fit rule on screens no build machine has to
+    // have.
+    [[nodiscard]] static juce::Rectangle<int> panelSizeForWorkArea (
+        juce::Rectangle<int> workArea);
+
+    // The panel itself, always laid out at its design size and scaled to
+    // whatever the window is. The suite walks it to prove every control the
+    // panel builds is actually placed.
+    [[nodiscard]] juce::Component& getPanel() noexcept { return canvas; }
+
 private:
-    enum class Style { Knob, VSlider, Combo, Toggle, Action };
+    // A hardware panel's controls do not reflow, so the alternative to
+    // scaling this one is clipping it — and 784 points of panel do not fit
+    // the 768-point screen a 1366x768 laptop has. Everything the panel draws
+    // lives on this canvas, which is always exactly the design size; the
+    // editor only chooses the transform that maps it onto the window.
+    class PanelCanvas final : public juce::Component
+    {
+    public:
+        explicit PanelCanvas (SeptumAudioProcessorEditor& o) : owner (o) {}
+        void paint (juce::Graphics&) override;
+
+    private:
+        SeptumAudioProcessorEditor& owner;
+    };
+
+    enum class Style { Knob, VSlider, Combo, WideCombo, Toggle, Action };
 
     // Which band of the panel a section belongs to. The band decides the
     // colour of the rule above its title, which is the only thing that
@@ -146,9 +182,15 @@ private:
     void layoutBand (const std::vector<int>& indices, juce::Rectangle<int> bounds,
                      const std::vector<Connector>& connectors);
     void refreshValues();
+    // Places every control inside the design-size rectangle. Called from
+    // resized(), but independent of the window: the window only sets the
+    // canvas transform.
+    void layoutPanel();
+    void paintPanel (juce::Graphics&);
     void setToneParameter (const char* suffix, float natural);
     [[nodiscard]] float getToneParameter (const char* suffix) const;
     void applyKeyboardOctave();
+    void stepKeyboardOctave (int delta);
     void timerCallback() override;
 
     void handleNoteOn (juce::MidiKeyboardState*, int channel, int note,
@@ -158,10 +200,13 @@ private:
 
     SeptumAudioProcessor& processor;
     SeptumLookAndFeel lookAndFeel;
+    PanelCanvas canvas { *this };
 
     std::vector<std::unique_ptr<Section>> sections;
     std::vector<std::unique_ptr<Control>> controls;
     Section* performSection { nullptr };
+    Section* systemSection { nullptr };
+    Section* dBeamSection { nullptr };
     Section* stripSection { nullptr };
     // Where the voice chain's connectors go, filled in by resized().
     std::vector<ConnectorMark> chevrons;
@@ -193,10 +238,15 @@ private:
     juce::TooltipWindow tooltips { this, 650 };
 
     SeptumLever lever;
+
+public:
+    // The suite drives the lever through the same path the mouse does.
+    [[nodiscard]] SeptumLever& getLever() noexcept { return lever; }
+
+private:
     juce::MidiKeyboardState keyboardState;
     juce::MidiKeyboardComponent keyboard { keyboardState,
                                            juce::MidiKeyboardComponent::horizontalKeyboard };
-    int keyboardOctaveShift { 0 };
 
     bool editingUpper { true };
     float meterLevel[2] { 0.0f, 0.0f };

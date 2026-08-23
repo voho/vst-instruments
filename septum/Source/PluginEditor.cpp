@@ -7,6 +7,7 @@ namespace
 namespace colours
 {
     const juce::Colour body { 0xfff2f0ea };        // warm panel white
+    const juce::Colour surround { 0xff1c1c1f };    // behind the scaled panel
     const juce::Colour recess { 0xffe9e6de };      // the section wells
     const juce::Colour frame { 0xff2b2b2e };       // charcoal frames and text
     const juce::Colour accent { 0xffc7472e };      // signal red-orange
@@ -29,6 +30,9 @@ namespace colours
 // same size wherever it appears.
 constexpr int knobCell = 58;
 constexpr int comboCell = 104;
+// One selector on the panel has entries as long as FILTER-CUTOFF-KEYFOLLOW,
+// and a 104-point cell clips them.
+constexpr int wideComboCell = 176;
 constexpr int toggleCell = 66;
 constexpr int actionCell = 60;
 constexpr int sliderCell = 34;
@@ -45,19 +49,38 @@ constexpr int gridRowHeight = 68;      // label + control + value
 constexpr int sectionGap = 6;
 constexpr int chevronGap = 16;
 
-constexpr int headerHeight = 48;
+constexpr int headerHeight = sectionTitleHeight + gridRowHeight
+                             + 2 * sectionPadding + 10;
 constexpr int clusterWidth = 128;
 // Tall enough for a full-size control cell under the strip's own title,
 // so the patch strip's knobs are the same knobs as everywhere else.
 constexpr int stripHeight = sectionTitleHeight + gridRowHeight
                             + 2 * sectionPadding + 6;
-constexpr int keyboardHeight = 90;
+// The bottom row is the instrument's performance surface: the lever, the
+// D Beam and the keys. Tall enough for the D Beam's own section.
+constexpr int keyboardHeight = sectionTitleHeight + 2 * gridRowHeight
+                               + 2 * sectionPadding;
+// The meter reads in decibels down to here, which is the range a player
+// actually mixes in.
+constexpr float meterFloorDb = -48.0f;
 constexpr int bandRows = 3;
 constexpr int bandHeight = sectionTitleHeight + 2 * gridRowHeight + 2 * sectionPadding;
-constexpr int editorWidth = 1500;
+// A host window carries a frame and a title bar the panel does not get to
+// use; these are enough of both that the fit rule does not put the panel
+// under one.
+constexpr int windowChromeWidth = 32;
+constexpr int windowChromeHeight = 64;
+// Wide enough for the REVERB section's whole documented parameter set: the
+// effects band's four sections need 1474 points of content between them, and
+// the panel scales to the window anyway.
+constexpr int editorWidth = 1660;
 constexpr int editorHeight = headerHeight + bandRows * bandHeight
                              + (bandRows - 1) * sectionGap + stripHeight
                              + keyboardHeight + 18;
+// Below about 60 % the 10-point captions stop being readable, so the panel
+// stops shrinking there and the window scrolls the difference instead.
+constexpr int minimumWidth = editorWidth * 3 / 5;
+constexpr int minimumHeight = editorHeight * 3 / 5;
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -266,26 +289,44 @@ void SeptumLever::push() noexcept
     processor.setLeverFromUi (bend, mod);
 }
 
-void SeptumLever::applyFromPoint (juce::Point<float> position)
+void SeptumLever::applyFromEvent (const juce::MouseEvent& event)
 {
-    const auto bounds = getLocalBounds().toFloat().reduced (4.0f);
+    const auto bounds = leverBounds();
+    // Bend is absolute and spring-loaded, as the lever's horizontal axis is:
+    // where you take it is where it is, and it comes back when you let go.
     bend = juce::jlimit (-1.0f, 1.0f,
-                         (position.x - bounds.getCentreX())
+                         (event.position.x - bounds.getCentreX())
                              / (bounds.getWidth() * 0.5f));
-    mod = juce::jlimit (0.0f, 1.0f,
-                        (bounds.getBottom() - position.y) / bounds.getHeight());
+    // Modulation holds its position, so it moves by the drag rather than
+    // jumping to the click: the hardware lever cannot be *put* at full
+    // modulation by tapping the top of its travel, and a tap that latched
+    // full vibrato is not something a player can see or easily undo.
+    const float travel = (grabY - event.position.y) / bounds.getHeight();
+    mod = juce::jlimit (0.0f, 1.0f, grabMod + travel);
     push();
     repaint();
 }
 
+juce::Rectangle<float> SeptumLever::leverBounds() const
+{
+    // The caption gets its own band at the foot; the frame and the stick are
+    // drawn in what is left, so no text sits on top of a border.
+    return getLocalBounds()
+        .withTrimmedBottom (captionHeight)
+        .toFloat()
+        .reduced (2.0f);
+}
+
 void SeptumLever::mouseDown (const juce::MouseEvent& event)
 {
-    applyFromPoint (event.position);
+    grabY = event.position.y;
+    grabMod = mod;
+    applyFromEvent (event);
 }
 
 void SeptumLever::mouseDrag (const juce::MouseEvent& event)
 {
-    applyFromPoint (event.position);
+    applyFromEvent (event);
 }
 
 void SeptumLever::mouseUp (const juce::MouseEvent&)
@@ -295,9 +336,18 @@ void SeptumLever::mouseUp (const juce::MouseEvent&)
     repaint();
 }
 
+void SeptumLever::mouseDoubleClick (const juce::MouseEvent&)
+{
+    // Somewhere to put the modulation back, since it holds.
+    mod = 0.0f;
+    bend = 0.0f;
+    push();
+    repaint();
+}
+
 void SeptumLever::paint (juce::Graphics& g)
 {
-    const auto bounds = getLocalBounds().toFloat().reduced (2.0f);
+    const auto bounds = leverBounds();
     g.setColour (colours::sliderTrack);
     g.fillRoundedRectangle (bounds, 5.0f);
     g.setColour (colours::frame);
@@ -321,9 +371,9 @@ void SeptumLever::paint (juce::Graphics& g)
     g.setColour (colours::knobPointer);
     g.fillRoundedRectangle (stick.reduced (3.0f, 14.0f), 2.0f);
 
-    g.setColour (colours::frame);
+    g.setColour (colours::frame.withAlpha (0.72f));
     g.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
-    g.drawText ("BEND / MOD", getLocalBounds().removeFromBottom (12),
+    g.drawText ("BEND / MOD", getLocalBounds().removeFromBottom (captionHeight),
                 juce::Justification::centred);
 }
 
@@ -336,11 +386,14 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     : AudioProcessorEditor (owner), processor (owner), lever (owner)
 {
     setLookAndFeel (&lookAndFeel);
+    // Everything the panel draws lives on the canvas; the editor holds only
+    // the canvas and the transform that maps it onto the window.
+    addAndMakeVisible (canvas);
 
     titleLabel.setText ("Septum", juce::dontSendNotification);
     titleLabel.setFont (juce::Font (juce::FontOptions (24.0f, juce::Font::bold)));
     titleLabel.setColour (juce::Label::textColourId, colours::frame);
-    addAndMakeVisible (titleLabel);
+    canvas.addAndMakeVisible (titleLabel);
 
     subtitleLabel.setText (
         juce::String::fromUTF8 ("ten-voice virtual analog synthesizer   \xc2\xb7   "
@@ -350,14 +403,14 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     subtitleLabel.setFont (juce::Font (juce::FontOptions (11.5f)));
     subtitleLabel.setColour (juce::Label::textColourId,
                              colours::frame.withAlpha (0.7f));
-    addAndMakeVisible (subtitleLabel);
+    canvas.addAndMakeVisible (subtitleLabel);
 
     voiceLabel.setFont (juce::Font (juce::FontOptions (10.0f)));
     voiceLabel.setJustificationType (juce::Justification::centred);
     voiceLabel.setColour (juce::Label::textColourId,
                           colours::frame.withAlpha (0.72f));
     voiceLabel.setText ("0 / 10 VOICES", juce::dontSendNotification);
-    addAndMakeVisible (voiceLabel);
+    canvas.addAndMakeVisible (voiceLabel);
 
     const auto section = [this] (const juce::String& title, Band band)
     {
@@ -373,7 +426,7 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
 
     masterSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     masterSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-    addAndMakeVisible (masterSlider);
+    canvas.addAndMakeVisible (masterSlider);
     masterAttachment = std::make_unique<
         juce::AudioProcessorValueTreeState::SliderAttachment> (
         processor.parameters, "master_level", masterSlider);
@@ -382,33 +435,28 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     masterLabel.setJustificationType (juce::Justification::centred);
     masterLabel.setColour (juce::Label::textColourId,
                            colours::frame.withAlpha (0.72f));
-    addAndMakeVisible (masterLabel);
+    canvas.addAndMakeVisible (masterLabel);
     masterValueLabel.setFont (
         juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
     masterValueLabel.setJustificationType (juce::Justification::centred);
-    addAndMakeVisible (masterValueLabel);
+    canvas.addAndMakeVisible (masterValueLabel);
 
     octLabel.setText ("KEYBOARD OCTAVE", juce::dontSendNotification);
     octLabel.setFont (juce::Font (juce::FontOptions (10.0f)));
     octLabel.setColour (juce::Label::textColourId,
                         colours::frame.withAlpha (0.72f));
     octLabel.setJustificationType (juce::Justification::centred);
-    addAndMakeVisible (octLabel);
+    canvas.addAndMakeVisible (octLabel);
     octValueLabel.setFont (juce::Font (juce::FontOptions (11.0f, juce::Font::bold)));
     octValueLabel.setJustificationType (juce::Justification::centred);
-    addAndMakeVisible (octValueLabel);
-    octDownButton.onClick = [this]
-    {
-        keyboardOctaveShift = juce::jmax (-2, keyboardOctaveShift - 1);
-        applyKeyboardOctave();
-    };
-    octUpButton.onClick = [this]
-    {
-        keyboardOctaveShift = juce::jmin (2, keyboardOctaveShift + 1);
-        applyKeyboardOctave();
-    };
-    addAndMakeVisible (octDownButton);
-    addAndMakeVisible (octUpButton);
+    canvas.addAndMakeVisible (octValueLabel);
+    // Settled: SYSTEM COMMON Octave Shift is -3..+3 (address map 00 17), and
+    // the OCT UP/DOWN buttons are what set it on the instrument. They write
+    // the parameter, so a host can automate the same thing the buttons do.
+    octDownButton.onClick = [this] { stepKeyboardOctave (-1); };
+    octUpButton.onClick = [this] { stepKeyboardOctave (1); };
+    canvas.addAndMakeVisible (octDownButton);
+    canvas.addAndMakeVisible (octUpButton);
 
     portaControl = addControl (*performSection, "portamento", "PORTAMENTO",
                                Style::Toggle);
@@ -440,29 +488,34 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     addControl (*osc2, "osc2_wide", "WIDE", Style::Toggle);
     addControl (*osc2, "osc2_penv_depth", "P.ENV", Style::Knob);
 
-    if (auto* button = dynamic_cast<juce::TextButton*> (
-            intervalOctControl->component.get()))
+    // Settled (OM p. 30), and settled as *intervals*: "-OCT ... lowers the
+    // OSC 2 pitch one octave below that of OSC 1", "the OSC 2 pitch will be
+    // seven semitones (a perfect fifth) higher than OSC 1", and "if you press
+    // the -OCT button and the 5th button simultaneously, the OSC 2 pitch will
+    // be the same as the OSC 1 pitch". Both are measured against OSC 1, so a
+    // patch whose OSC 1 is transposed used to get the wrong interval; and the
+    // second press stands in for the hardware's simultaneous press, which is
+    // why it lands on OSC 1's pitch rather than on zero.
+    const auto interval = [this] (Control* control, const char* text,
+                                  int semitones)
     {
-        button->setButtonText ("-OCT");
-        button->onClick = [this]
+        auto* button =
+            dynamic_cast<juce::TextButton*> (control->component.get());
+        if (button == nullptr)
+            return;
+        button->setButtonText (text);
+        button->setClickingTogglesState (false);
+        button->onClick = [this, semitones]
         {
-            // Settled: -OCT puts OSC2 one octave below OSC1; pressing again
-            // (the hardware's both-buttons press) returns it to unison.
-            const float current = getToneParameter ("osc2_pitch");
-            setToneParameter ("osc2_pitch", current == -12.0f ? 0.0f : -12.0f);
+            const float root = getToneParameter ("osc1_pitch");
+            const float wanted = root + (float) semitones;
+            setToneParameter ("osc2_pitch",
+                              getToneParameter ("osc2_pitch") == wanted ? root
+                                                                        : wanted);
         };
-    }
-    if (auto* button = dynamic_cast<juce::TextButton*> (
-            intervalFifthControl->component.get()))
-    {
-        button->setButtonText ("5TH");
-        button->onClick = [this]
-        {
-            // Settled: 5th raises OSC2 a perfect fifth above OSC1.
-            const float current = getToneParameter ("osc2_pitch");
-            setToneParameter ("osc2_pitch", current == 7.0f ? 0.0f : 7.0f);
-        };
-    }
+    };
+    interval (intervalOctControl, "-OCT", -12);
+    interval (intervalFifthControl, "5TH", 7);
 
     auto* mixMod = section ("MIX/MOD", Band::Voice);
     mixMod->rowCounts = { 2, 1 };
@@ -529,7 +582,7 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     // it reads the keys. The counts have to cover every control the section
     // holds — a row short and the last one is never given bounds.
     arpSection->rowCounts = { 5, 6 };
-    addControl (*arpSection, "arp_on", "ON", Style::Toggle, false);
+    addControl (*arpSection, "arp_on", "SWITCH", Style::Toggle, false);
     addControl (*arpSection, "arp_hold", "HOLD", Style::Toggle, false);
     addControl (*arpSection, "arp_style", "STYLE", Style::Combo, false);
     addControl (*arpSection, "arp_grid", "GRID", Style::Combo, false);
@@ -557,7 +610,7 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
 
     auto* delay = section ("DELAY", Band::InputEffects);
     delay->rowCounts = { 4, 3 };
-    addControl (*delay, "delay_on", "ON", Style::Toggle, false);
+    addControl (*delay, "delay_on", "SWITCH", Style::Toggle, false);
     addControl (*delay, "delay_time", "TIME", Style::Knob, false);
     addControl (*delay, "delay_depth", "DEPTH", Style::Knob);
     addControl (*delay, "delay_feedback", "FEEDBACK", Style::Knob, false, " %");
@@ -566,15 +619,26 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     addControl (*delay, "delay_mod_depth", "MOD DEPTH", Style::Knob, false);
 
     auto* reverb = section ("REVERB", Band::InputEffects);
-    reverb->rowCounts = { 4, 4 };
-    addControl (*reverb, "reverb_on", "ON", Style::Toggle, false);
+    reverb->rowCounts = { 6, 6 };
+    addControl (*reverb, "reverb_on", "SWITCH", Style::Toggle, false);
     addControl (*reverb, "reverb_time", "TIME", Style::Knob, false);
     addControl (*reverb, "reverb_depth", "DEPTH", Style::Knob);
     addControl (*reverb, "reverb_size", "SIZE", Style::Knob, false);
-    addControl (*reverb, "reverb_pre_delay", "PRE DELAY", Style::Knob, false);
+    addControl (*reverb, "reverb_pre_delay", "PRE DELAY", Style::Knob, false,
+                " ms");
     addControl (*reverb, "reverb_high_cut", "HIGH CUT", Style::Combo, false);
     addControl (*reverb, "reverb_density", "DENSITY", Style::Knob, false);
     addControl (*reverb, "reverb_diffusion", "DIFFUSION", Style::Knob, false);
+    // The four remaining settled Patch Reverb bytes. PRE DELAY, HIGH CUT,
+    // DENSITY and DIFFUSION above are equally editor-only on the instrument,
+    // so leaving exactly these four off was an inconsistency rather than a
+    // principle.
+    addControl (*reverb, "reverb_lf_damp_freq", "LF DAMP", Style::Combo, false);
+    addControl (*reverb, "reverb_lf_damp_gain", "LF GAIN", Style::Knob, false,
+                " dB");
+    addControl (*reverb, "reverb_hf_damp_freq", "HF DAMP", Style::Combo, false);
+    addControl (*reverb, "reverb_hf_damp_gain", "HF GAIN", Style::Knob, false,
+                " dB");
 
     // ---- the patch strip above the keys (the hardware's button row) ------
     stripSection = section ("PATCH", Band::Perform);
@@ -590,7 +654,7 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
         if (index >= 0 && index != processor.getCurrentProgram())
             processor.setCurrentProgram (index);
     };
-    addAndMakeVisible (programBox);
+    canvas.addAndMakeVisible (programBox);
 
     lowerButton.setClickingTogglesState (false);
     upperButton.setClickingTogglesState (false);
@@ -609,29 +673,79 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
         lowerButton.setToggleState (true, juce::dontSendNotification);
         bindControls();
     };
-    addAndMakeVisible (lowerButton);
-    addAndMakeVisible (upperButton);
+    canvas.addAndMakeVisible (lowerButton);
+    canvas.addAndMakeVisible (upperButton);
 
     addControl (*stripSection, "keyboard_mode", "KEYBOARD", Style::Combo, false);
     addControl (*stripSection, "keyboard_part", "PART", Style::Combo, false);
     addControl (*stripSection, "split_point", "SPLIT", Style::Knob, false);
     addControl (*stripSection, "mod_assign", "MOD ASSIGN", Style::Combo, false);
+    // CONTROLLER DESTINATION: which tone each physical controller reaches.
+    addControl (*stripSection, "mod_dest", "MOD DEST", Style::Combo, false);
+    addControl (*stripSection, "bend_dest", "BEND DEST", Style::Combo, false);
+    addControl (*stripSection, "expr_dest", "EXPR DEST", Style::Combo, false);
     addControl (*stripSection, "bend_range", "BEND", Style::Knob, true, " st");
     addControl (*stripSection, "octave_shift", "TONE OCT", Style::Knob);
     addControl (*stripSection, "patch_level", "LEVEL", Style::Knob, false);
     addControl (*stripSection, "tone_balance", "TONE BAL", Style::Knob, false);
+
+    // ---- the D Beam, beside the lever and the keys, which is the row the
+    // instrument keeps its performance controls on. Built after the bands so
+    // the index lists above keep the construction order they name.
+    dBeamSection = section ("D BEAM", Band::Perform);
+    dBeamSection->rowCounts = { 4, 3 };
+    addControl (*dBeamSection, "dbeam_mode", "MODE", Style::Combo, false);
+    addControl (*dBeamSection, "dbeam_value", "BEAM", Style::Knob, false);
+    addControl (*dBeamSection, "dbeam_dest", "DEST", Style::Combo, false);
+    addControl (*dBeamSection, "dbeam_polarity", "POLARITY", Style::Combo,
+                false);
+    addControl (*dBeamSection, "dbeam_assign", "ASSIGN", Style::WideCombo,
+                false);
+    addControl (*dBeamSection, "active_expression", "ACTIVE EXP",
+                Style::Toggle, false);
+    addControl (*dBeamSection, "dbeam_sens", "SENS", Style::Knob, false);
+
+    // ---- SYSTEM COMMON, in the header: settings that apply to the whole
+    // instrument rather than to the patch, and are not saved with one. Built
+    // last so the band index lists below keep the construction order they
+    // name.
+    systemSection = section ("SYSTEM", Band::Perform);
+    systemSection->rowCounts = { 3 };
+    addControl (*systemSection, "system_master_tune", "TUNE", Style::Knob,
+                false);
+    addControl (*systemSection, "system_key_shift", "KEY SHIFT", Style::Knob,
+                false, " st");
+    addControl (*systemSection, "system_transpose", "TRANSPOSE", Style::Knob,
+                false, " st");
 
     bindControls();
 
     keyboardState.addListener (this);
     keyboard.setOctaveForMiddleC (4);
     applyKeyboardOctave();
-    addAndMakeVisible (keyboard);
-    addAndMakeVisible (lever);
+    canvas.addAndMakeVisible (keyboard);
+    canvas.addAndMakeVisible (lever);
 
     refreshValues();
     setOpaque (true);
-    setSize (editorWidth, editorHeight);
+    canvas.setOpaque (true);
+    canvas.setInterceptsMouseClicks (false, true);
+
+    // Any window; the panel inside it is always the design geometry, scaled.
+    setResizable (true, false);
+    // setResizeLimits installs the default constrainer, so it has to come
+    // before the ratio is set on it.
+    setResizeLimits (minimumWidth, minimumHeight, editorWidth * 2,
+                     editorHeight * 2);
+    if (auto* constrainer = getConstrainer())
+        constrainer->setFixedAspectRatio ((double) editorWidth
+                                          / (double) editorHeight);
+    juce::Rectangle<int> workArea;
+    if (auto* display =
+            juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+        workArea = display->userArea;
+    const auto opening = panelSizeForWorkArea (workArea);
+    setSize (opening.getWidth(), opening.getHeight());
     startTimerHz (24);
 }
 
@@ -641,20 +755,35 @@ SeptumAudioProcessorEditor::~SeptumAudioProcessorEditor()
     setLookAndFeel (nullptr);
 }
 
+void SeptumAudioProcessorEditor::stepKeyboardOctave (int delta)
+{
+    auto* parameter = processor.parameters.getParameter ("system_octave");
+    if (parameter == nullptr)
+        return;
+    const auto& range = processor.parameters.getParameterRange ("system_octave");
+    const float wanted = range.snapToLegalValue (
+        processor.parameters.getRawParameterValue ("system_octave")->load()
+        + (float) delta);
+    parameter->beginChangeGesture();
+    parameter->setValueNotifyingHost (range.convertTo0to1 (wanted));
+    parameter->endChangeGesture();
+    applyKeyboardOctave();
+}
+
 void SeptumAudioProcessorEditor::applyKeyboardOctave()
 {
-    const int low = juce::jlimit (12, 72, 36 + keyboardOctaveShift * 12);
+    const auto* value =
+        processor.parameters.getRawParameterValue ("system_octave");
+    const int shift = value != nullptr ? (int) std::lround (value->load()) : 0;
+    // The drawn keyboard follows the shift the same way the instrument's does.
+    const int low = juce::jlimit (0, 67, 36 + shift * 12);
     keyboard.setAvailableRange (low, low + 60);
-    octValueLabel.setText (
-        keyboardOctaveShift == 0
-            ? juce::String ("0")
-            : (keyboardOctaveShift > 0 ? "+" : "")
-                  + juce::String (keyboardOctaveShift),
-        juce::dontSendNotification);
-    octDownButton.setToggleState (keyboardOctaveShift < 0,
-                                  juce::dontSendNotification);
-    octUpButton.setToggleState (keyboardOctaveShift > 0,
-                                juce::dontSendNotification);
+    octValueLabel.setText (shift == 0 ? juce::String ("0")
+                                      : (shift > 0 ? "+" : "")
+                                            + juce::String (shift),
+                           juce::dontSendNotification);
+    octDownButton.setToggleState (shift < 0, juce::dontSendNotification);
+    octUpButton.setToggleState (shift > 0, juce::dontSendNotification);
 }
 
 float SeptumAudioProcessorEditor::getToneParameter (const char* suffix) const
@@ -687,6 +816,7 @@ int SeptumAudioProcessorEditor::Section::naturalWidth() const
         {
             case Style::Knob:    return knobCell;
             case Style::Combo:   return comboCell;
+            case Style::WideCombo: return wideComboCell;
             case Style::Toggle:  return toggleCell;
             case Style::Action:  return actionCell;
             case Style::VSlider: return sliderCell;
@@ -754,12 +884,23 @@ SeptumAudioProcessorEditor::Control* SeptumAudioProcessorEditor::addControl (
             break;
         }
         case Style::Combo:
+        case Style::WideCombo:
             control->component = std::make_unique<juce::ComboBox>();
             break;
         case Style::Toggle:
         {
-            auto button = std::make_unique<juce::TextButton> ("ON");
+            auto button = std::make_unique<juce::TextButton> ("OFF");
             button->setClickingTogglesState (true);
+            // A switch says which way it is thrown. A button whose face reads
+            // ON while the thing is off is the commonest misreading a
+            // synthesizer panel invites, and eleven controls here are
+            // toggles. Driven from the button's own state rather than the
+            // frame timer, so it is right the moment a patch loads.
+            auto* raw = button.get();
+            raw->onStateChange = [raw]
+            {
+                raw->setButtonText (raw->getToggleState() ? "ON" : "OFF");
+            };
             control->component = std::move (button);
             break;
         }
@@ -775,7 +916,7 @@ SeptumAudioProcessorEditor::Control* SeptumAudioProcessorEditor::addControl (
     control->label->setInterceptsMouseClicks (false, false);
     control->label->setColour (juce::Label::textColourId,
                                colours::frame.withAlpha (0.72f));
-    addAndMakeVisible (*control->label);
+    canvas.addAndMakeVisible (*control->label);
 
     // Every continuous control reads out its value, so nothing on the panel
     // has to be dragged to be understood.
@@ -786,10 +927,10 @@ SeptumAudioProcessorEditor::Control* SeptumAudioProcessorEditor::addControl (
             juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
         control->value->setJustificationType (juce::Justification::centred);
         control->value->setInterceptsMouseClicks (false, false);
-        addAndMakeVisible (*control->value);
+        canvas.addAndMakeVisible (*control->value);
     }
 
-    addAndMakeVisible (*control->component);
+    canvas.addAndMakeVisible (*control->component);
     section.controls.push_back (control);
     return control;
 }
@@ -818,6 +959,22 @@ void SeptumAudioProcessorEditor::refreshValues()
         if (auto* parameter = processor.parameters.getParameter ("master_level"))
             masterValueLabel.setText (parameter->getCurrentValueAsText(),
                                       juce::dontSendNotification);
+
+    // The INTERVAL buttons carry indicator lamps on the instrument, and they
+    // are the panel's only controls that write a parameter without reflecting
+    // it: a patch loaded at OSC 2 = OSC 1 - 12 used to show two dark buttons.
+    const float root = getToneParameter ("osc1_pitch");
+    const float second = getToneParameter ("osc2_pitch");
+    const auto lamp = [] (Control* control, bool on)
+    {
+        if (control == nullptr)
+            return;
+        if (auto* button = dynamic_cast<juce::Button*> (control->component.get()))
+            button->setToggleState (on, juce::dontSendNotification);
+    };
+    lamp (intervalOctControl, second == root - 12.0f);
+    lamp (intervalFifthControl, second == root + 7.0f);
+
 }
 
 void SeptumAudioProcessorEditor::bindControls()
@@ -899,10 +1056,17 @@ void SeptumAudioProcessorEditor::layoutSection (Section& section,
         (control->style == Style::VSlider ? sliders : grid).push_back (control);
 
     // Vertical sliders take a left column strip at full content height: label
-    // on top, travel in the middle, value underneath.
+    // on top, travel in the middle, value underneath. A section whose width
+    // was set by its title rather than by its contents — PITCH ENV is two
+    // 34 px cells under a nine-character name — centres the strip in what it
+    // was given instead of hugging the left edge.
     if (! sliders.empty())
     {
-        auto strip = content.removeFromLeft ((int) sliders.size() * sliderCell);
+        const int stripWidth = (int) sliders.size() * sliderCell;
+        if (grid.empty())
+            content = content.withSizeKeepingCentre (stripWidth,
+                                                     content.getHeight());
+        auto strip = content.removeFromLeft (stripWidth);
         for (std::size_t i = 0; i < sliders.size(); ++i)
         {
             auto cell = strip.removeFromLeft (sliderCell);
@@ -918,6 +1082,7 @@ void SeptumAudioProcessorEditor::layoutSection (Section& section,
         {
             case Style::Knob:    return knobCell;
             case Style::Combo:   return comboCell;
+            case Style::WideCombo: return wideComboCell;
             case Style::Toggle:  return toggleCell;
             case Style::Action:  return actionCell;
             case Style::VSlider: return sliderCell;
@@ -931,8 +1096,21 @@ void SeptumAudioProcessorEditor::layoutSection (Section& section,
     if (rows.empty())
         rows.push_back ((int) grid.size());
 
+    // Rows are centred in whatever height the band gave the section, so a
+    // section with fewer rows than the band's height allows — FILTER ENV's
+    // single DEPTH row beside four full-height sliders — does not leave all
+    // its spare room in one block underneath.
+    int usedRows = 0;
+    for (std::size_t r = 0, placed = 0; r < rows.size() && placed < grid.size();
+         ++r)
+    {
+        placed += (std::size_t) juce::jmax (0, rows[r]);
+        ++usedRows;
+    }
     std::size_t index = 0;
-    int rowTop = content.getY();
+    int rowTop = content.getY()
+                 + juce::jmax (0, (content.getHeight()
+                                   - usedRows * gridRowHeight) / 2);
     for (std::size_t r = 0; r < rows.size() && index < grid.size(); ++r)
     {
         const int count = juce::jmin (rows[r], (int) (grid.size() - index));
@@ -941,6 +1119,7 @@ void SeptumAudioProcessorEditor::layoutSection (Section& section,
             width += cellWidth (grid[index + (std::size_t) i]->style);
         int x = content.getX() + (content.getWidth() - width) / 2;
 
+        Control* previous = nullptr;
         for (int i = 0; i < count; ++i, ++index)
         {
             auto* control = grid[index];
@@ -950,16 +1129,37 @@ void SeptumAudioProcessorEditor::layoutSection (Section& section,
             x += cell.getWidth();
 
             auto body = cell;
-            control->label->setBounds (body.removeFromTop (labelHeight));
+            auto captionRow = body.removeFromTop (labelHeight);
+            // A control with no caption of its own shares the one to its
+            // left — the INTERVAL pair is one caption over two buttons, and
+            // an empty label under the second is the only orphaned text the
+            // panel had.
+            if (control->label->getText().isEmpty() && previous != nullptr)
+            {
+                previous->label->setBounds (
+                    previous->label->getBounds().getUnion (captionRow));
+                control->label->setVisible (false);
+                control->label->setBounds ({});
+            }
+            else
+            {
+                control->label->setVisible (true);
+                control->label->setBounds (captionRow);
+            }
+            // Every style gives up the same strip at the foot of its cell,
+            // whether or not it prints a value there, so the controls in a
+            // row share one vertical centre instead of the knobs sitting
+            // 6 px above everything else.
+            auto valueRow = body.removeFromBottom (valueHeight);
             switch (control->style)
             {
                 case Style::Knob:
-                    control->value->setBounds (
-                        body.removeFromBottom (valueHeight));
+                    control->value->setBounds (valueRow);
                     control->component->setBounds (
                         body.withSizeKeepingCentre (knobDiameter, knobDiameter));
                     break;
                 case Style::Combo:
+                case Style::WideCombo:
                     control->component->setBounds (
                         body.withSizeKeepingCentre (cell.getWidth() - 8,
                                                     comboHeight));
@@ -973,6 +1173,7 @@ void SeptumAudioProcessorEditor::layoutSection (Section& section,
                 case Style::VSlider:
                     break;   // laid out in the strip above
             }
+            previous = control;
         }
         rowTop += gridRowHeight;
     }
@@ -1018,22 +1219,75 @@ void SeptumAudioProcessorEditor::layoutBand (const std::vector<int>& indices,
     }
 }
 
+juce::Rectangle<int> SeptumAudioProcessorEditor::panelSizeForWorkArea (
+    juce::Rectangle<int> workArea)
+{
+    // Full size wherever it fits. Where it does not - a 1366x768 or 1280x800
+    // laptop, or a 1080p screen at 150 % - the whole panel shrinks rather
+    // than losing its bottom edge. Never below the size the captions stay
+    // readable at: on a screen smaller than that, a window the player can
+    // move is a better failure than type nobody can read.
+    double scale = 1.0;
+    if (! workArea.isEmpty())
+        scale = juce::jmin (1.0,
+                            (double) (workArea.getWidth() - windowChromeWidth)
+                                / editorWidth,
+                            (double) (workArea.getHeight() - windowChromeHeight)
+                                / editorHeight);
+    scale = juce::jmax (scale, (double) minimumWidth / editorWidth);
+    return { juce::roundToInt (editorWidth * scale),
+             juce::roundToInt (editorHeight * scale) };
+}
+
 void SeptumAudioProcessorEditor::resized()
 {
-    auto bounds = getLocalBounds();
+    // The panel keeps its proportions whatever the window's are, and is
+    // centred in whatever is left over.
+    const double scale = juce::jmin ((double) getWidth() / editorWidth,
+                                     (double) getHeight() / editorHeight);
+    const auto placed =
+        juce::Rectangle<int> { juce::roundToInt (editorWidth * scale),
+                               juce::roundToInt (editorHeight * scale) }
+            .withCentre (getLocalBounds().getCentre());
+    canvas.setTransform (
+        juce::AffineTransform::scale ((float) scale)
+            .translated ((float) placed.getX(), (float) placed.getY()));
+    canvas.setBounds (0, 0, editorWidth, editorHeight);
+
+    layoutPanel();
+}
+
+void SeptumAudioProcessorEditor::layoutPanel()
+{
+    auto bounds = juce::Rectangle<int> (0, 0, editorWidth, editorHeight);
     chevrons.clear();
 
-    auto header = bounds.removeFromTop (headerHeight).reduced (12, 6);
-    titleLabel.setBounds (header.removeFromLeft (130));
-    subtitleLabel.setBounds (header);
+    auto header = bounds.removeFromTop (headerHeight).reduced (10, 5);
+    {
+        // The system settings take the right of the header — they apply to
+        // the whole instrument, which is what the header is for — and the
+        // identity takes the left of what is left.
+        layoutSection (*systemSection,
+                       header.removeFromRight (systemSection->naturalWidth()));
+        header.removeFromRight (12);
+        auto identity =
+            header.withSizeKeepingCentre (header.getWidth(), 34).withTrimmedLeft (2);
+        titleLabel.setBounds (identity.removeFromLeft (130));
+        subtitleLabel.setBounds (identity);
+    }
 
-    // Keyboard row: lever at the left of the keys, as on the unit.
-    auto keyboardRow = bounds.removeFromBottom (keyboardHeight).reduced (12, 5);
-    lever.setBounds (keyboardRow.removeFromLeft (66));
+    // Keyboard row: the lever at the left of the keys as on the unit, and the
+    // D Beam beside it — the instrument puts its beam above the left end of
+    // the keyboard, next to the lever.
+    auto keyboardRow = bounds.removeFromBottom (keyboardHeight).reduced (10, 4);
+    layoutSection (*dBeamSection,
+                   keyboardRow.removeFromLeft (dBeamSection->naturalWidth()));
+    keyboardRow.removeFromLeft (sectionGap);
+    lever.setBounds (keyboardRow.removeFromLeft (66).reduced (0, 6));
     keyboardRow.removeFromLeft (6);
     // The visible range spans 36 white keys (five octaves).
     keyboard.setKeyWidth ((float) keyboardRow.getWidth() / 36.0f);
-    keyboard.setBounds (keyboardRow);
+    keyboard.setBounds (keyboardRow.reduced (0, 6));
 
     // Patch strip directly above the keys (the hardware's button row). Its
     // controls are the same size as every other control on the panel.
@@ -1140,8 +1394,11 @@ void SeptumAudioProcessorEditor::resized()
     {
         voiceLabel.setBounds (clusterContent.removeFromBottom (14));
         clusterContent.removeFromBottom (4);
+        // The meter takes what the cluster has left rather than a fixed
+        // 44 px: it is the one thing on the panel that reads better the
+        // taller it is, and the space was otherwise dead.
         meterBounds = clusterContent.removeFromBottom (
-            juce::jmin (44, clusterContent.getHeight() - 6));
+            juce::jmin (150, clusterContent.getHeight() - 6));
     }
     else
     {
@@ -1171,13 +1428,24 @@ void SeptumAudioProcessorEditor::resized()
 
 void SeptumAudioProcessorEditor::paint (juce::Graphics& g)
 {
+    // Whatever the window has that the panel's proportions do not use.
+    g.fillAll (colours::surround);
+}
+
+void SeptumAudioProcessorEditor::PanelCanvas::paint (juce::Graphics& g)
+{
+    owner.paintPanel (g);
+}
+
+void SeptumAudioProcessorEditor::paintPanel (juce::Graphics& g)
+{
     g.fillAll (colours::body);
 
     // Header rule and accent stripe, echoing the hardware's banded fascia.
     g.setColour (colours::frame);
-    g.fillRect (0, headerHeight - 3, getWidth(), 2);
+    g.fillRect (0, headerHeight - 3, editorWidth, 2);
     g.setColour (colours::accent);
-    g.fillRect (0, headerHeight - 6, getWidth(), 2);
+    g.fillRect (0, headerHeight - 6, editorWidth, 2);
 
     const auto bandColour = [] (Band band)
     {
@@ -1240,7 +1508,16 @@ void SeptumAudioProcessorEditor::paint (juce::Graphics& g)
     // count sits: the one place on the panel that reports rather than edits.
     if (! meterBounds.isEmpty())
     {
+        // Decibels, not amplitude. On a linear scale a healthy −20 dBFS fills
+        // a tenth of the bar, so the meter sat near its floor for everything
+        // that was not about to clip.
         const int barWidth = 12;
+        const auto height = (float) meterBounds.getHeight();
+        const auto positionOf = [] (float dB)
+        {
+            return juce::jlimit (0.0f, 1.0f,
+                                 juce::jmap (dB, meterFloorDb, 0.0f, 0.0f, 1.0f));
+        };
         for (int channel = 0; channel < 2; ++channel)
         {
             auto bar = juce::Rectangle<int> (
@@ -1248,12 +1525,19 @@ void SeptumAudioProcessorEditor::paint (juce::Graphics& g)
                 meterBounds.getY(), barWidth, meterBounds.getHeight());
             g.setColour (colours::sliderTrack);
             g.fillRoundedRectangle (bar.toFloat(), 2.0f);
-            const float level = juce::jlimit (0.0f, 1.0f, meterLevel[channel]);
-            g.setColour (colours::ledOn);
+
+            const float level = juce::jlimit (0.0f, 1.2f, meterLevel[channel]);
+            const float dB = juce::Decibels::gainToDecibels (level, meterFloorDb);
+            g.setColour (level >= 1.0f ? colours::accent : colours::ledOn);
             g.fillRoundedRectangle (
-                bar.removeFromBottom ((int) (level * (float) meterBounds.getHeight()))
-                    .toFloat(),
-                2.0f);
+                bar.toFloat().removeFromBottom (positionOf (dB) * height), 2.0f);
+
+            // A −6 dB mark, so the scale can be read rather than guessed.
+            g.setColour (colours::frame.withAlpha (0.45f));
+            const float mark =
+                (float) bar.getBottom() - positionOf (-6.0f) * height;
+            g.drawHorizontalLine ((int) mark, (float) bar.getX(),
+                                  (float) bar.getRight());
         }
     }
 }
@@ -1265,13 +1549,14 @@ void SeptumAudioProcessorEditor::timerCallback()
     voiceLabel.setText (juce::String (processor.getActiveVoiceCount())
                             + " / 10 VOICES",
                         juce::dontSendNotification);
+    applyKeyboardOctave();
     programBox.setSelectedId (processor.getCurrentProgram() + 1,
                               juce::dontSendNotification);
     // juce::Label::setText only repaints when the text actually changes, so
     // this costs nothing on the frames where nothing moved.
     refreshValues();
     if (! meterBounds.isEmpty())
-        repaint (meterBounds.expanded (2));
+        canvas.repaint (meterBounds.expanded (2));
 }
 
 void SeptumAudioProcessorEditor::handleNoteOn (juce::MidiKeyboardState*, int,
