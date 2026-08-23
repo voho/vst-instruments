@@ -7,6 +7,7 @@
 
 #include <array>
 #include <atomic>
+#include <memory>
 
 namespace septum::parameters
 {
@@ -152,6 +153,16 @@ private:
         bool keyFollow { false };
     };
     std::vector<CachedCc> ccCache;
+    // The value the audio thread last wrote, kept where only it writes.
+    //
+    // `CachedCc::raw` is the parameter object's own storage, and
+    // setValueNotifyingHost writes it: publishing a value read a moment
+    // earlier put that older value back over anything a CC had stored in
+    // between, and the dirty bit the newer CC had set then made the next pass
+    // republish the stale value it had just been overwritten with. The
+    // controller's value was lost outright, not merely delayed. The shadow is
+    // what the message-thread pass reads, so the newest value always wins.
+    std::unique_ptr<std::atomic<float>[]> ccShadow;
     // Which cached CCs the audio thread has written since the message thread
     // last looked. One bit per entry in ccCache.
     std::array<std::atomic<std::uint64_t>, 2> ccDirty { 0u, 0u };

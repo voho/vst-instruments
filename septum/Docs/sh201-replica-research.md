@@ -272,6 +272,18 @@ the soft clip). The half-period delay reinforces even harmonics — the
 octave-up emphasis of guitar feedback. The delay ratio and gain law are
 voiced (OQ-06); the comb mechanism itself is reported, not settled.
 
+**Where the half-period delay stops holding.** The feedback line is 70 ms, so
+the delay pins at its end below about **7.14 Hz** and the comb's resonances
+then sit at a fixed ~14.3 Hz spacing whatever the note is. That is below the
+bottom of the keyboard — MIDI note 0 is 8.18 Hz — so every key reaches it at
+OCTAVE SHIFT 0 and COARSE 0; the pitch chain gets under it only when COARSE or
+the two OCTAVE SHIFTs push a low note further down, and COARSE −36 at note 0
+is 1.02 Hz. A line long enough for that is 0.49 s, which at 192 kHz is 94 k
+samples per oscillator and 7.5 MB across the pool, for a fundamental below
+hearing. The bound is recorded here rather than bought (OQ-06); what a real
+unit does at the bottom of that range is part of what the FB-OSC capture would
+settle.
+
 **INTERVAL (settled, OM p. 30).** The two buttons above OSC 2 are defined
 against OSC 1, not against zero: "-OCT (minus octave) button — This button
 lowers the OSC 2 pitch one octave below that of OSC 1"; "5th button — ... the

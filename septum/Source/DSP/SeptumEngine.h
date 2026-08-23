@@ -994,6 +994,13 @@ private:
         std::array<double, 7> superPhases {};
         std::vector<float> comb;      // FB-OSC feedback line
         int combWrite { 0 };
+        // How much of that line holds anything. Writes walk it from zero
+        // upward and wrap, so whatever is in it is always a prefix, and a
+        // voice that has never run an FB OSC has a prefix of nothing. Every
+        // non-legato note-on used to zero both oscillators' whole lines
+        // whatever waveform they were set to -- 2 x 3095 floats at 44.1 kHz
+        // and 2 x 13448 at 192 kHz, per voice, inside the render callback.
+        int combTouched { 0 };
         double combState { 0.0 };     // in-loop damping memory
         double hpfX1 { 0.0 }, hpfX2 { 0.0 }, hpfY1 { 0.0 }, hpfY2 { 0.0 };
 
@@ -1002,7 +1009,12 @@ private:
             combWrite = 0;
             combState = 0.0;
             hpfX1 = hpfX2 = hpfY1 = hpfY2 = 0.0;
-            std::fill (comb.begin(), comb.end(), 0.0f);
+            const auto touched =
+                std::min (static_cast<std::size_t> (std::max (0, combTouched)),
+                          comb.size());
+            std::fill (comb.begin(),
+                       comb.begin() + static_cast<std::ptrdiff_t> (touched), 0.0f);
+            combTouched = 0;
         }
     };
 

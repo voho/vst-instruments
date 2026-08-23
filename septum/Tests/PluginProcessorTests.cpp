@@ -240,6 +240,48 @@ void testControlChangesDoNotNotifyFromTheAudioThread()
     parameter->removeListener (&listener);
 }
 
+// The reconciler publishes a CC's value to the host and the UI, and
+// setValueNotifyingHost writes the parameter object's own storage — the very
+// atomic the audio thread stores a received CC into and the engine renders
+// from. Reading that storage to decide what to publish therefore raced with
+// the audio thread: a CC arriving after the read put its value there, the
+// publish wrote the older value back over it, and the newer CC's dirty bit
+// then made the next pass republish the stale value it had just been
+// overwritten with. The controller's move was lost outright.
+//
+// The reconciler reads a shadow only the audio thread writes now. Here the
+// clobber is staged directly: the parameter's storage is set to a stale value
+// behind the reconciler's back, which is exactly the state the race leaves.
+void testTheCcReconcilerCannotPublishAStaleValue()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    juce::AudioBuffer<float> buffer (2, 256);
+
+    auto* parameter = processor.parameters.getParameter ("up_cutoff");
+    auto* raw = processor.parameters.getRawParameterValue ("up_cutoff");
+    expect (parameter != nullptr && raw != nullptr, "the cutoff parameter exists");
+    if (parameter == nullptr || raw == nullptr)
+        return;
+
+    auto cc = messageAt (juce::MidiMessage::controllerEvent (1, 74, 90));
+    processor.processBlock (buffer, cc);
+    expect ((int) raw->load() == 90, "the CC lands in the rendered value");
+
+    raw->store (11.0f);              // what the race leaves behind
+    processor.reconcileControlChanges();
+
+    const auto& range = processor.parameters.getParameterRange ("up_cutoff");
+    expect (std::abs (parameter->getValue() - range.convertTo0to1 (90.0f)) < 1.0e-6,
+            "the reconciler publishes the CC's own value, not the parameter's"
+            " storage (published "
+                + juce::String (range.convertFrom0to1 (parameter->getValue())).toStdString()
+                + ")");
+    expect ((int) raw->load() == 90,
+            "and the value the engine renders from is the CC's too (got "
+                + juce::String (raw->load()).toStdString() + ")");
+}
+
 double goertzel (const juce::AudioBuffer<float>& buffer, double hz,
                  double sampleRate)
 {
@@ -1314,6 +1356,7 @@ int main()
     testRenderingAndVoices();
     testDocumentedControlChanges();
     testControlChangesDoNotNotifyFromTheAudioThread();
+    testTheCcReconcilerCannotPublishAStaleValue();
     testPanelCcAppliesWithinTheBlock();
     testProgramChangeStagesOnTheAudioPath();
     testUiQueueOverflowStillReleases();

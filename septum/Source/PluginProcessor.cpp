@@ -595,6 +595,13 @@ void SeptumAudioProcessor::cacheParameterPointers()
     cacheShared (13, "reverb_time");
     // The dirty mask is a fixed pair of words, so the cache has to fit it.
     jassert (ccCache.size() <= 128);
+
+    // One shadow slot per cached CC, seeded from the parameter so a pass that
+    // runs before any CC has arrived publishes what is already there.
+    ccShadow = std::make_unique<std::atomic<float>[]> (ccCache.size());
+    for (std::size_t i = 0; i < ccCache.size(); ++i)
+        ccShadow[i].store (ccCache[i].raw->load (std::memory_order_relaxed),
+                           std::memory_order_relaxed);
 }
 
 namespace
@@ -1027,8 +1034,12 @@ bool SeptumAudioProcessor::handleController (int controller, int value)
         if (cached.keyFollow)
             natural = juce::jlimit (-200.0f, 200.0f, (float) ((value - 64) * 10));
         const auto& range = cached.parameter->getNormalisableRange();
-        cached.raw->store (range.snapToLegalValue (natural),
-                           std::memory_order_relaxed);
+        const float snapped = range.snapToLegalValue (natural);
+        // The engine snapshots the parameter's own storage, so the value goes
+        // there to take effect on the next block, and into the shadow so the
+        // message-thread pass below cannot publish an older one over it.
+        cached.raw->store (snapped, std::memory_order_relaxed);
+        ccShadow[index].store (snapped, std::memory_order_relaxed);
         ccDirty[index >> 6].fetch_or (1ull << (index & 63u),
                                       std::memory_order_release);
         ccReconciler.triggerAsyncUpdate();
@@ -1051,11 +1062,19 @@ void SeptumAudioProcessor::reconcileControlChanges()
                 continue;
             const auto& cached = ccCache[index];
             const auto& range = cached.parameter->getNormalisableRange();
-            const float natural = cached.raw->load (std::memory_order_relaxed);
+            const float natural = ccShadow[index].load (std::memory_order_relaxed);
             cached.parameter->beginChangeGesture();
             cached.parameter->setValueNotifyingHost (
                 range.convertTo0to1 (range.snapToLegalValue (natural)));
             cached.parameter->endChangeGesture();
+            // setValueNotifyingHost has just written the parameter's own
+            // storage with the value read above. A CC that arrived while it
+            // ran is newer than that, and its dirty bit is already set for the
+            // next pass — but the engine reads this storage every block, so
+            // the newer value is put back now rather than a frame from now.
+            const float newest = ccShadow[index].load (std::memory_order_relaxed);
+            if (newest != natural)
+                cached.raw->store (newest, std::memory_order_relaxed);
         }
     }
 }

@@ -1651,6 +1651,37 @@ all; and the Active Sensing 420 ms timeout, which is a cable-failure watchdog �
 a plug-in has no cable, and a host that sends one `FE` and then goes quiet
 during a pause would have the sound cut out from under it.
 
+#### Step 43 — a lost controller value, and 25 KB of zeroing per note
+
+**A received CC could be lost outright, not just delayed.** Step 17 split a
+received control change into an audio-thread write and a message-thread
+publish, and the publish read the value back from the parameter object's own
+storage. That storage is the same atomic the audio thread writes and the
+engine renders from, and `setValueNotifyingHost` writes it: a CC arriving
+between the read and the publish had its value overwritten with the older one,
+and the dirty bit that CC had set then made the next pass republish the stale
+value it had just been clobbered with. The controller's move never reached
+either the host or the engine. The audio thread now writes a shadow only it
+writes, the publish reads that, and a value that arrives mid-publish is put
+straight back rather than a frame later. The test stages the clobber the race
+leaves behind and fails against the old read.
+
+**Every note-on zeroed both oscillators' feedback lines.** `clearRuntime()`
+filled the whole 70 ms comb for OSC 1 and OSC 2 on every non-legato trigger,
+whatever waveform either was set to: 2 × 3095 floats at 44.1 kHz and 2 × 13448
+at 192 kHz, per voice, inside the render callback — just over 1 MB for a
+ten-note chord at 192 kHz. Writes walk the line from zero and wrap, so
+whatever is in it is always a prefix; the prefix length is tracked and only
+that much is cleared. A voice that has never run an FB OSC clears nothing.
+
+Recorded rather than changed, from the same reading: the half-period delay
+stops tracking pitch below about 7.14 Hz, where the 70 ms line runs out. That
+is under the bottom of the keyboard (MIDI note 0 is 8.18 Hz), so it is only
+reachable by pushing a low note further down with COARSE or the octave shifts,
+and a line long enough for COARSE −36 at note 0 would be 7.5 MB across the
+pool at 192 kHz for a fundamental below hearing. The bound is now stated in
+the contract's FB OSC section under OQ-06 instead of being silent.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:

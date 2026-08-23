@@ -429,6 +429,7 @@ void Engine::prepare (double sampleRate, int maxBlockSize)
     {
         voice.osc1.comb.assign (combSamples, 0.0f);
         voice.osc2.comb.assign (combSamples, 0.0f);
+        voice.osc1.combTouched = voice.osc2.combTouched = 0;
         voice.overdrive.prepare (sampleRate_);
     }
     latencySamples_ = voices_.front().overdrive.latency;
@@ -1738,6 +1739,8 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
         osc.comb[static_cast<std::size_t> (osc.combWrite)] =
             static_cast<float> (softClip (osc.combState) * mapping::fbOscLoopTrim);
         osc.combWrite = (osc.combWrite + 1) % size;
+        if (osc.combTouched < size)
+            ++osc.combTouched;
         return out * mapping::fbOscOutputGain;
     };
 
