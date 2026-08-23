@@ -241,6 +241,12 @@ the plug-in's authoritative state is its parameter list, and neither of those
 has a parameter. The block codec round-trips both losslessly; it is the trip
 through the plug-in that drops them.
 
+**PATCH REMAIN is not implemented**, and what a program change does to a note
+already sounding is a known divergence rather than a choice: the hardware
+either cuts those notes or keeps them playing the old sound, depending on that
+switch, and this replica does a third thing — the sounding notes take the new
+patch's parameters immediately. `OQ-19` records it.
+
 The **64 shipped programs** mirror the instrument's bank layout: 32 original
 sounds in the PRESET A-1…D-8 positions and 32 initialised User slots. Roland's
 own 64 factory patches are data no public document publishes and none of it

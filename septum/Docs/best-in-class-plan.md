@@ -1682,6 +1682,26 @@ and a line long enough for COARSE −36 at note 0 would be 7.5 MB across the
 pool at 192 kHz for a fundamental below hearing. The bound is now stated in
 the contract's FB OSC section under OQ-06 instead of being silent.
 
+#### Step 44 — the two remaining Roland documents
+
+The SH-201 Q&A (2009) and the TurboStart leaflet are the last two Roland
+documents this project had not read. They confirm three things already
+settled — the 32 + 32 bank layout, the 32 arpeggio templates, and that
+TRANSPOSE composes with the octave buttons rather than replacing them ("press
+OCT UP once … then, while holding CANCEL, press OCT DOWN three times", which
+is what the engine's `octaveShift·12 + transpose` already does) — and turn up
+one divergence.
+
+**PATCH REMAIN.** It is a System Common switch (`00 04`) and Roland states
+what it does: "you can change from one patch to another without cutting off
+the notes of the first patch", so the default it implies cuts them. This
+replica does neither. A program change sprays the new patch over the
+parameters and the notes still sounding adopt it mid-flight — a third
+behaviour, arrived at by structure rather than chosen. Doing either documented
+one properly needs a per-voice snapshot of the patch a note was struck under,
+which one live `Patch` shared by every voice cannot give. Recorded as `OQ-19`
+and named in the README, not picked by taste.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:

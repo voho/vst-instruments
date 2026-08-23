@@ -32,13 +32,14 @@ sound programmed against the engine.
 | Source | What it settles |
 | --- | --- |
 | Roland SH-201 Owner's Manual, 84 pp., © 2006 (`SH-201_OM.pdf`, static.roland.com) | Complete architecture, panel controls, parameter list with ranges (pp. 60–70), CC map (p. 72), MIDI chart (p. 73), specifications (p. 74), block diagram (p. 75), factory patch names (p. 84) |
-| Roland SH-201 MIDI Implementation v1.00, 2006-03-01, 9 pp. | The definitive parameter contract: full SysEx address map with every parameter's raw range and display mapping, enumeration orders, LFO sync-note table, effect frequency tables |
+| Roland SH-201 MIDI Implementation v1.00, 2006-03-01, 9 pp. (`SH-201_MI.pdf`, deepsonic.ch mirror) | The definitive parameter contract: the full address map with every block's absolute address and Total Size, every parameter's raw range and display mapping, the nibbled fields, enumeration orders, LFO sync-note table, effect frequency tables; and the Receive Data section — which channel-mode and universal messages are received and what each does. Read in full and reconciled against the codec (OQ-17, OQ-18) |
 | Roland SH-201/SH-201C Service Notes, May 2006, doc 17058418E0 | Hardware: NEC V850E/ME2 CPU, WSP DSP + private SDRAM, AK4552 codec, TUSB3200 USB clock master (384fs), complete analog I/O component values, factory test levels |
 | SH-201 Leaflet addendum (`SH-201_AD.pdf`) | Effect template names, `-5` → `5th` INTERVAL spec change, factory reset |
 | Adam Szabo, *How to Emulate the Super Saw*, KTH thesis, 2010 | JP-8000 Super Saw measurements: 7-oscillator offsets, detune-curve polynomial, mix laws, pitch-tracked HPF, free-running phases |
 | Roland JP-8000 Owner's Manual + Supplemental Notes SN77 | The ancestor's supersaw/FB-OSC control semantics ("7 saw waves using only one voice of polyphony") |
 | Sound on Sound, *Roland SH-201* (Nick Magnus, April 2007) | V-Synth-derived engine, 5+5 dual/split voices, envelope snappiness, EXT-IN routing behavior, 24 dB filter "similar in character to that of the JP8000" |
 | AKM AK4552 datasheet | Codec conversion characteristics: 24-bit delta-sigma, digital-filter passband 0.454·fs, DAC output level |
+| Roland US, *SH-201 Q&A* (2009) and *SH-201 TurboStart* TBS272 | PATCH REMAIN's stated effect (OQ-19); that TRANSPOSE composes with the octave buttons rather than replacing them; the 32 + 32 bank layout and the 32 arpeggio templates, both already settled elsewhere |
 
 Real-unit references for by-ear comparison are catalogued in the
 [audio demos README](audio/README.md): 18 official Roland patch/song demo
@@ -669,6 +670,16 @@ state is its parameter list and neither of those has a parameter.
 - **The D Beam** — see its own section: a sensor a plug-in cannot have.
   Removed at the user's direction; its four Patch Common bytes stay stored.
 - **The step recorder**, and **tap tempo**.
+- **PATCH REMAIN**, and with it what a program change does to notes already
+  sounding. It is a System Common switch (`00 04`), and Roland's own knowledge
+  base states what turning it on does: "you can change from one patch to
+  another without cutting off the notes of the first patch" — so OFF, the
+  default the sentence implies, cuts them. This replica does neither: a
+  program change sprays the new patch over the parameters and the sounding
+  notes adopt it mid-flight, which is a third behaviour. Doing it properly
+  needs a per-voice snapshot of the patch a note was struck under, which the
+  engine's single live `Patch` does not have. Recorded here rather than picked
+  by taste — see OQ-19.
 - **CLOCK SOURCE**, and with it external MIDI clock and any host-transport
   sync: the arpeggiator and the LFOs' tempo sync run from PATCH TEMPO alone.
 - **The 16 effect templates as a runtime selector.** The settled names exist
@@ -844,6 +855,15 @@ Each is a standing research task; the measurement named would close it.
   grid of hand heights with each mode lit, which settles the first four
   directly, and by capturing the audio filter's response with the destination
   on one tone.
+- **OQ-19 — what a program change does to a note already sounding.** The
+  hardware has a documented switch for it, PATCH REMAIN (System Common
+  `00 04`), and two documented behaviours: off, the notes of the old patch are
+  cut; on, they keep sounding. The replica does a third thing — the sounding
+  notes take the new patch's parameters immediately — because the engine holds
+  one live `Patch` and every voice reads it. Two questions, and neither is a
+  measurement: which of the two the replica should do when it does one of
+  them, and whether a plug-in should publish the switch at all when a host
+  automates program changes. An A–Z decides it, with A the shipping engine.
 - **OQ-14 — external-input calibration.** INPUT VOL taper; the audio
   filter's cutoff-to-Hz table and resonance curve, and whether it
   self-oscillates at all; whether CENTER CANCEL's output is the anti-phase
