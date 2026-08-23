@@ -41,7 +41,8 @@ inline constexpr std::size_t sizePatchCommon = 0x21;
 inline constexpr std::size_t sizeTonePatch   = 0x40;
 inline constexpr std::size_t sizeDelay       = 0x05;
 inline constexpr std::size_t sizeReverb      = 0x0A;
-inline constexpr std::size_t sizeArpeggio    = 0x09 + (arpeggioMaxSteps * arpeggioMaxRows);
+// Nine header bytes, then END STEP, then the 32 x 16 grid.
+inline constexpr std::size_t sizeArpeggio    = 0x0A + (arpeggioMaxSteps * arpeggioMaxRows);
 inline constexpr std::size_t sizeSystemCommon = 0x1E;
 
 // --------------------------------------------------------------------------

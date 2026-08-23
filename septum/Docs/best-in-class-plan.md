@@ -196,6 +196,13 @@ order the gaps above put them:
    over, not a change to make.
 8. The panel (§2.8).
 
+A second pass on 2026-08-23, from the user's own report rather than from a
+competitive search, opened three more: the D Beam's removal, the panel's
+UPPER/LOWER clarity, and an audit of the engine against this project's own
+rules. Steps 27 onward are that pass. Its largest finding was not a gap in
+what the instrument does but three inventions in what the replica claimed —
+see Step 29.
+
 ### Landed
 
 #### Step 1 — parameter smoothing and filter modulation are separated
@@ -1102,3 +1109,429 @@ hand heights settles the first four.
 The panel puts it on the bottom row beside the lever and the keys, which is
 where the instrument keeps its performance controls; the row is a section tall
 now and the panel is 1660 × 930.
+
+#### Step 27 — the D Beam comes out
+
+*A scope decision by the user, not a measurement.* An infrared distance
+sensor reads how far a hand is above the panel; a plug-in has neither. Step 26
+had built it as a group of automatable parameters, which is the only reading a
+plug-in can give it, and the user's answer to that reading was that it is not
+worth having.
+
+What came out: the mode, the beam's own value and D BEAM SENS, the engine's
+whole beam path (`applyDBeam` and its 37-case switch, `dBeamPitchSemitones`,
+`dBeamGain`, the per-tone EXPRESS smoother), the panel section, and nineteen
+checks across two test functions.
+
+What stayed, and why. Four Patch Common bytes — 00 16 D BEAM DESTINATION,
+00 19 ACTIVE EXPRESSION, 00 1F D BEAM ASSIGN, 00 20 D BEAM POLARITY — are
+patch data, and the project's standing promise is that a SysEx round trip is
+lossless. Deleting them would have made every dump Septum writes assert
+D BEAM DESTINATION = UPPER and D BEAM ASSIGN = OSC1-PITCH to any real unit
+that loaded it, because `encodePatchCommon` zeroes the block first and two of
+the four defaults are not zero. They are stored, saved, program-changed with
+the patch, and published as **non-automatable**: a host has no business
+offering a lane that cannot change what the player hears. ACTIVE EXPRESSION is
+stranded by this and stays stranded — the manual defines it only as a modifier
+of the beam's EXPRESS button, and re-pointing it at the expression pedal would
+be inventing a mechanism. CC#69 is accepted and ignored.
+
+D BEAM SENS is gone outright, and the justification it used to carry was
+wrong: it is System Common 00 1D, and this replica implements no System Common
+SysEx block at all, so nothing ever encoded or decoded it. The round-trip
+argument was true of PITCH WIDE and of the four patch bytes and was never true
+of SENS.
+
+The removal collapsed the engine's `rawPatch_`/`patch_` and
+`rawExternal_`/`external_` pairs, which existed only so the beam could render
+a patch one parameter away from the player's — three full-`Patch` copies per
+block off the audio thread. Every beam entry point was an exact no-op at rest,
+so the check is that **the committed demos re-render bit-identically**, and
+they did. OQ-16 is withdrawn rather than deleted.
+
+#### Step 28 — the panel says which tone it is editing
+
+The user's report was that "the lower/upper thing is confusing". It was, and
+an audit found ten distinct meanings of UPPER/LOWER on one panel. The edit
+target was stated in exactly one place — two uncaptioned buttons in the patch
+strip, below every one of the fifty-seven per-tone controls they govern,
+drawn in the same lit-accent vocabulary as eleven parameter toggles — and
+nowhere else. Four sections mixed per-tone and shared controls with no visual
+difference between them.
+
+- **Every section is now wholly per-tone or wholly shared**, the line the
+  parameter contract already draws between the Patch Tone blocks and Patch
+  Common. Three controls moved to make that true: DELAY DEPTH and REVERB DEPTH
+  are Patch *Tone* bytes and are now DLY SEND and REV SEND in AMP, and
+  PORTAMENTO, GLIDE TIME, POLY/SOLO, BEND and TONE OCT — five more Patch Tone
+  bytes, previously scattered between the global performance cluster and the
+  patch strip — became a TONE PLAY section on the keyboard row, in the space
+  the D Beam vacated. An assertion fences it: a section with both kinds of
+  control is a build-time failure.
+- **Every per-tone section wears the tone's name on its title row**, in that
+  tone's colour, and the well behind it carries six per cent of the same
+  colour. Switching target repaints the whole per-tone half of the panel.
+  A hollow grey chip means the tone is being edited and the keyboard mode is
+  not letting it sound.
+- **EDIT TONE moved into the header**, above everything it governs, with a
+  caption, drawn as tabs rather than lamps, and a line beside it that states
+  the consequence of the current keyboard mode in words. The target persists
+  across closing the editor.
+- **The keys say which tone they reach**: one band in SINGLE, two stripes in
+  DUAL, and in SPLIT the two zones with the split point drawn where it falls
+  and named.
+- Controls the keyboard mode ignores — PART outside SINGLE, SPLIT POINT and
+  SPLIT ARPEGGIO outside SPLIT — are dimmed. The three controller
+  destinations read MOD/BEND/EXPR TO TONE. BALANCE, PAN and TONE BAL print the
+  number the manual prints and name the two ends of their travel underneath.
+  Switching target re-binds only the per-tone controls.
+
+**One bug, found while reading.** The drawn keyboard applied SYSTEM COMMON
+Octave Shift a second time: `applyKeyboardOctave` moved the drawn note range,
+and a clicked key goes to `engine.noteOn` unmodified, where the engine applies
+the shift itself. One press of OCT UP transposed the on-screen keys by two
+octaves while their printed names claimed one. The keys keep their notes now
+and the printed octave names move, which is what the shift does to the pitch
+they sound.
+
+The panel is 1660 × 862.
+
+#### Step 29 — three inventions, removed
+
+Commit e7d2967 landed three changes to the render code under the heading
+"faithful … DSP voicing". None of them is faithful to anything: each invents a
+constant or a mechanism, two of them assert a fact about the SH-201 that no
+source in the contract states, and none was recorded in this document. They
+are reverted, and the measurements are here so the record is not just an
+assertion in the other direction.
+
+**A "tube" stage in front of the overdrive.** `in * (1 + 0.08 * tanh(in))`,
+commented "introduces gentle 2nd harmonic warmth", applied inside the shaper
+chain. The instrument's overdrive is one algorithm on one Roland DSP; there is
+no tube. The coefficient is invented, the constant was in the render code
+rather than in `mapping`, and it broke the anti-aliasing: `shape()` divides by
+the step in `logCosh`, the antiderivative of `tanh`, and the function actually
+evaluated was `tanh ∘ tube`, whose antiderivative that is not. Measured on a
+440 Hz sine at DRIVE 90, 96 kHz, harmonics relative to the fundamental:
+
+| | h2 | h3 | h4 | h5 | h6 |
+|---|---|---|---|---|---|
+| with the tube stage | −50.6 dB | −9.75 | −51.5 | −14.5 | −52.8 |
+| after | **−66.9** | −9.75 | **−72.1** | −14.5 | **−73.9** |
+
+The odd harmonics — the ones a symmetric clipper makes — are unchanged to two
+decimal places; the even ones drop 16 to 21 dB to the measurement's own
+leakage floor. `testAsymmetricOverdriveHarmonics` went with it: it asserted
+only a peak ceiling, measured no asymmetry and no harmonics, and passed
+identically with the mechanism removed.
+
+**NOISE as a Galois LFSR's state.** The comment claimed "Roland VA 23-bit
+Galois LFSR with polynomial x^23 + x^18 + 1" — a statement about Roland's DSP
+that nothing in the primary-source list settles. The *bit* sequence of a
+Galois LFSR is white; its successive 23-bit *states* are not, because
+`new = old>>1 ^ mask` makes `v(n+1) = ½v(n) + ½b(n)`, a one-pole filter. The
+wave was a filtered bit stream whose colour depended on the host rate.
+Band-averaged power through the shipping voice, filter bypassed:
+
+| fs | 100–500 Hz | 1–4 kHz | 8–16 kHz | tilt |
+|---|---|---|---|---|
+| 44.1 kHz, before | −73.2 dB | −73.4 | −83.7 | **−10.9 dB** |
+| 96 kHz, before | −77.5 | −77.5 | −82.8 | −6.5 |
+| 192 kHz, before | −81.7 | −80.4 | −81.7 | −1.1 |
+| 44.1 kHz, after | −79.0 | −77.2 | −79.1 | **−0.7** |
+| 96 kHz, after | −81.5 | −81.2 | −81.9 | −1.3 |
+| 192 kHz, after | −85.1 | −85.0 | −84.4 | −0.6 |
+
+The contract's position is that NOISE is white until OQ-03 closes, and it is
+white now, at every rate. The test that guarded it checked bounds, mean and
+RMS and passed for any coloured source; it is replaced by one that measures
+the spectrum at three rates.
+
+**A coupled second stage in the −24 dB filter.** `max(0.12, 0.40·k₁ + 0.35)`
+replaced the registered constant 1.2, under a comment reading "In the Roland
+SH-201, resonance couples into the second stage" — while OQ-08 says in this
+document that whether the hardware resonates on one stage or both is open, and
+§2.7's own measurement table was left describing the old behaviour. Three
+fitted numbers, no measurement, no listening test, no step. Reverted. Measured
+on noise through the LPF at cutoff 64, resonant band referred to the filter's
+own passband, 96 kHz:
+
+| RESONANCE | −12 dB before | −24 dB before | −12 dB after | −24 dB after |
+|---|---|---|---|---|
+| 64 | +3.91 dB | +8.30 | +5.89 | +4.38 |
+| 100 | +11.30 | +18.18 | +13.75 | +12.20 |
+| 120 | +18.22 | +23.98 | +26.97 | +25.31 |
+
+The ordering is what matters: the −12 dB path is the resonant one, so it must
+peak at least as hard as the −24 dB path, and with the coupled stage it did
+not. A test pins that ordering at three resonance settings, so the next repin
+cannot be silent.
+
+#### Step 30 — the filter's limiter was a full-time waveshaper
+
+`filterStateLimit` exists to bound self-oscillation — "the manual's 'may not
+stop at all' is a bounded oscillation on hardware". It was applied at every
+resonance and in both stages. The TPT SVF's integrator states sit at roughly
+the signal's own magnitude at low frequency, and two oscillators at unity put
+more than ±1.5 into the filter, so an ordinary patch was soft-clipped in the
+filter's feedback path with the resonance knob at zero.
+
+Measured at 96 kHz, two sines at BALANCE 0 through the LPF at cutoff 127 and
+RESONANCE 0, harmonics 2–12 against the fundamental: **THD −27.3 dB before,
+−62.4 dB after**. The gate is `damping <= 0`, which is the stage's linear
+stability boundary and not a new constant; `filterStateLimit` keeps its value
+and its OQ-08 ownership, and the self-oscillation tests that fence the
+divergent case still pass.
+
+#### Step 31 — four control changes that stepped the output
+
+Step 11 established the measure — the largest sample-to-sample jump a change
+makes, against the same take's own steady travel — and the bound, four times
+that. It was applied to the external-input path only. Four more controls fail
+it, three of them louder. Measured at 44.1 kHz on a 65 Hz sine through a
+−12 dB LPF at cutoff 30, resonance 110:
+
+| Change | before | after |
+|---|---|---|
+| FILTER TYPE LPF → HPF | 116× | **0.9×** |
+| FILTER TYPE LPF → BPF | 77× | **1.2×** |
+| FILTER TYPE LPF → BYPASS | 31× | **0.8×** |
+| FILTER SLOPE −12 → −24 | 84× | **1.0×** |
+| S&H LFO → AMP | 206× | **3.7×** |
+| AMP LEVEL 20 → 127 | 3840× (0.108) | **40× (0.0011)** |
+
+The filter's TYPE and SLOPE are crossed with the same registered constant the
+external switches use, and both stages now run unconditionally — BYPASS
+included, because freezing the integrators while bypassed lets an old resonant
+tail out of them when the switch comes back, which is the reasoning the audio
+filter already carried. All four responses come off the same two integrators,
+so a cross costs a select rather than a second filter.
+
+The amp gain goes through the same two-stage treatment the cutoff has had
+since Step 1: the *panel* side — LEVEL, the velocity offset, PAN and an LFO on
+the AMP destination — is slewed by `controlSlewSeconds`, and the result is
+walked across the control tick sample by sample. The amp envelope is
+deliberately outside it, exactly as the filter envelope is, so the documented
+"fast ADSR response" is untouched. AMP LEVEL's ratio stays large because the
+reference is a quiet sine's own travel; the absolute jump falls from 0.108 to
+0.0011.
+
+LOW FREQ joins them: its shelf ran only in BOOST and CUT, so the state froze
+in FLAT and a stale one came back when a position returned, and its
+coefficients — `std::pow` included — were recomputed once per sample per
+voice. It runs at every position now, its contribution crossed rather than
+switched, and the constants are hoisted.
+
+#### Step 32 — three defects in the envelopes and the LFOs
+
+**A freed voice carried the previous note's filter-envelope level.** A voice
+is freed on the amp envelope alone; the filter envelope simply stopped being
+advanced and kept whatever its release had reached. Play the same key twice
+through a patch whose filter release outlasts its amp release — the ordinary
+plucked sound — and the second note skipped its whole sweep. Measured at
+44.1 kHz with a 0.9 s filter attack, RMS over the first 20 ms: note one
+0.0041, note two **0.0824**, twenty times as open. The envelope is re-armed
+for a voice that was not already sounding, inside the guard that already
+distinguishes that case; a *stolen* voice keeps its level, which is what this
+document says it should.
+
+**Raising SUSTAIN under a held note snapped the envelope.** The decay
+segment's convergence test was one-sided, so a sustain raised above the
+current level passed it on the first sample and the next one assigned the new
+sustain outright. SUSTAIN is automatable and `setPatch` reconfigures every
+sounding voice, so an ordinary control move or a program change put the whole
+difference into one sample: measured 0.0246 → 0.1268 in under a millisecond, a
+jump of 0.100 against the take's own steady 0.00034. The test is two-sided
+now; no constant changed.
+
+**All four LFOs drew the same random numbers.** One shared seed default, never
+re-seeded, so a patch's UPPER LFO 1, UPPER LFO 2, LOWER LFO 1 and LOWER LFO 2
+walked one sequence: two S&H modulators at the same rate produced
+bit-identical output, and in DUAL the two tones stepped together. Seeded per
+LFO from fixed constants, so a render stays reproducible.
+
+#### Step 33 — the analog output stage and the settled damping tables
+
+Two places where a published frequency was stored and then not delivered.
+
+The output stage clamped both RC poles to 0.49·fs, which put **both of them on
+one frequency** at every host rate at or below 48 kHz — 21.6 kHz twice at
+44.1 kHz — and used the time-constant one-pole, whose −3 dB point is not the
+frequency it is given. The stage measured up to 0.94 dB brighter at 20 kHz
+than the network the service notes describe, with the error largest at the
+commonest rates. The four settled damping tables went through the same
+conversion: at 44.1 kHz the 8000 Hz HF-DAMP entry turned over at 9055 Hz, the
+10000 Hz one at 12429 Hz, and the 12500 Hz HIGH CUT entry never reached −3 dB
+at all.
+
+`mapping::onePoleAtCorner` solves for the pole that puts the −3 dB point on
+the corner it is given — `p = c − √(c²−1)` with `c = 2 − cos ω` — which is
+exact at every rate, with no fitted number. A corner at or above Nyquist has
+no −3 dB point to hit, so there the coefficient matches the analog magnitude
+at Nyquist instead; both ends are then exact. Every table entry now turns over
+on its own frequency at 44.1, 48 and 96 kHz, and the output stage's worst
+in-band deviation from the component values falls from 0.94 dB to under 0.9 at
+every rate and to 0.27 dB at 22.05 kHz, where it used to be 0.87 dB the wrong
+way.
+
+That change is audible in one existing test. `testOverdriveSwitchesBackInFromLiveState`
+compares two takes that ran different signals for a third of a second, so what
+it measures after the switch is partly the output stage's own memory — and a
+more accurate stage is a slower one. The residual grew from 0.139 × peak to
+0.247, against 2.0 for the defect the test exists to catch; the bound is
+restated at 0.35 with the same margin it had before, and the reason is in the
+test.
+
+#### Step 34 — the reverb cancelled itself in mono
+
+`wetReverbL` and `wetReverbR` were two overlapping alternating-sign windows
+offset by one tap, so `L + R = taps[0] − taps[6]`: five of the seven lines
+they used cancelled exactly in a mono sum, and the eighth line the geometry
+pays for reached neither channel. Measured at 48 kHz on the tail from 0.8 s:
+
+| Template | correlation before | mono − side before | correlation after | after |
+|---|---|---|---|---|
+| Hall 2 | +0.19 | +1.7 dB | +0.90 | +12.8 dB |
+| Plate 1 | −0.81 | **−9.6 dB** | +0.51 | **+4.9 dB** |
+| Plate 2 | −0.83 | **−10.1 dB** | +0.50 | **+4.8 dB** |
+
+The two channels are disjoint halves of the network now — even lines left, odd
+lines right — which uses all eight and keeps the whole tail in a fold-down. It
+is not a defensible alternative formulation that was replaced; it was an
+accident of picking two overlapping windows.
+
+#### Step 35 — PAN's documented centre
+
+PAN is `L64…63R`, so the centre it prints is 0. The law mapped the raw range
+onto the pan angle as `(pan + 64) / 127`, whose midpoint is 0.504, so PAN 0
+sat 0.107 dB left of centre — on every INIT patch and every preset that leaves
+PAN alone. The received CC#10 pan in the same engine already put its own centre
+where the map says it is. The two halves are now mapped around the documented
+centre; both endpoints are unchanged.
+
+#### Step 36 — FB OSC was a different sound at every host rate
+
+`fbOscLoopDamping` was applied as a per-sample coefficient, so the one-pole
+inside the feedback loop had its −3 dB point at 0.134 × fs: 5.9 kHz at
+44.1 kHz, 25.8 kHz at 192 kHz. It sets the loop gain at every comb resonance,
+so the same patch was 3 dB louder and a quarter of an octave brighter at
+96 kHz. That is the character of the port rather than of the instrument — the
+thing plan Step 2 ruled out for the overdrive in the same words — and it also
+means a capture aimed at OQ-06 could not be matched against a model whose
+partial structure is not a fixed function of the patch.
+
+The constant is unchanged and is now quoted at a reference rate, so 44.1 kHz
+is bit-identical and every other rate matches it. Spectral centroid at
+FEEDBACK 127:
+
+| | 44.1 kHz | 96 kHz | 192 kHz |
+|---|---|---|---|
+| note 60, before | 545.3 Hz | 542.9 | 540.8 |
+| note 60, after | 545.3 | **545.9** | **545.8** |
+| note 48, before | 498.7 | 494.2 | 486.2 |
+| note 48, after | 498.7 | **501.9** | **503.0** |
+| RMS at note 84, before | 0.0479 | 0.0682 (+3.1 dB) | 0.0767 (+4.1 dB) |
+| RMS at note 84, after | 0.0479 | 0.0388 | 0.0355 |
+
+The level still moves by 2.6 dB across that span, in the other direction: the
+saw inside the loop is not band-limited, so how much alias energy folds back
+into it is still a function of the rate. Band-limiting it would change what
+FB OSC sounds like at 44.1 kHz too, on a mechanism OQ-06 owns, so it is an
+A–Z candidate and not a unilateral edit. The fence is on the mechanism as well
+as the audio: the loop filter's time constant in seconds must be the same at
+every rate.
+
+#### Step 37 — the SysEx codec, and three things it dropped
+
+**The tie shared a byte with velocity 127.** A grid cell is a rest, a tie, or
+a note-on carrying its velocity; the tie encoded as 0x7F and so did a velocity
+of 127. Every one of the sixteen shipped styles opens on a cell the style
+table built at exactly 127, so a dump and a reload turned the loudest step of
+every pattern into a hold on nothing. A cell's velocity now stops at 126 —
+clamped where every other documented range is clamped, so no value the engine
+can hold is a value a dump cannot carry — and the tie keeps 0x7F to itself.
+Nothing caught it: no factory patch loads a style, so every cell the existing
+round-trip test saw was a rest.
+
+**PATCH TEMPO above 255 did not round-trip.** Two nibbles carried eight bits
+of a documented 5–300 range: 300 came back as 44, and 256–300 that were not
+multiples of 16 silently kept whatever tempo was loaded. The arpeggiator and
+both LFOs' tempo sync run off that one number. It is Roland's own two-byte
+7-bit split now.
+
+**END STEP had no byte at all.** It is the replica's own front-panel control
+(0 meaning "as long as the template is"), separate from the length the
+template defines, and the block encoded only the template's. It has a byte of
+its own; the grid starts one later.
+
+The round-trip test now runs every shipped style through all 512 of its cells,
+checks END STEP, checks the tempo at 5/120/200/255/256/299/300, and checks a
+byte-for-byte identity over the whole Patch Common block — which is also what
+fences the four inert D Beam bytes Step 27 kept.
+
+#### Step 38 — a note the arpeggiator could not let go of
+
+A parameter change and a note-off can land at the same sample position, and
+then no audio is rendered between them. The arpeggiator's routing transition
+lived only in `advanceArpeggiator`, so in that case the note-off was consumed
+against the *new* routing — removing nothing from the plain voice's held list
+and releasing nothing — and the transition then copied the still-held key into
+the chord. The arpeggiator went on playing a key the player had let go of, and
+nothing short of a panic could end it: measured 0.043 RMS immediately, 0.039
+one second later, **0.039 ten seconds later**. Four automatable controls reach
+it. The transition is noticed in `noteOn` and `noteOff` as well now, which is
+the same move Step 10 made for the chord re-arm.
+
+Two more from the same reading. **Voice stealing took the oldest-triggered
+released voice**, not the longest-released one this document and the code's own
+comment both promise — the engine had no record of when a voice entered
+release, so hold a bass note, play and release a melody note over it, then
+release the bass, and the steal landed on the bass's fresh tail rather than the
+melody's stale one. Voices carry a release stamp now. And **re-pressing a key
+already in the arpeggio chord did not update the velocity the chord entry
+plays at**: with ARPEGGIO VELOCITY = REAL the second, harder press went on
+sounding at the first press's dynamics for as long as the chord was held.
+
+#### Step 39 — three defects the documentation audit turned up
+
+**Demo 06 had stopped rendering ring modulation.** `bankPatch` matched a
+preset by name and fell back to `initPatch()` when it found none; the ring
+preset was renamed from "Ring Bell" to "Glass Bell" in e7d2967, so the demo
+rendered a plain saw under the title "ring modulation" — and passed every
+guard the renderer has, because INIT is a perfectly good saw. The lookup
+aborts on an unresolved name now. A fallback that renders a *different
+instrument setting* is worse than a build failure, and the README's claim that
+the demos "cannot drift from the code" was resting on it.
+
+**Every User-bank program name was a dangling pointer.** `NamedPatch::name`
+was a `const char*` and the 32 User slots built theirs from a `std::string`
+local to the loop iteration. `getProgramName` handed those pointers to the
+host. `NamedPatch::name` owns its storage now.
+
+**A received SysEx dump notified the host from the render callback.** The
+audio path called `loadPatch`, which builds a `juce::String` per parameter and
+calls `setValueNotifyingHost` — an allocation and a host notification inside
+`processBlock`, the exact defect Step 17 removed for control changes. It is
+split the same way: the audio thread writes the raw values inside the seqlock,
+and a queued message-thread pass republishes them.
+
+#### What this pass did not do
+
+Recorded here so the next reader knows they were considered and left:
+
+- **Host-transport and MIDI-clock sync.** CLOCK SOURCE is a settled System
+  Common parameter with an external setting, and a plug-in's external clock is
+  its host — so following it would be a reading of a documented option rather
+  than an invention. It is a feature addition rather than a fidelity fix, and
+  it is the largest thing still missing for anyone using the arpeggiator in a
+  session.
+- **Whether SUPER SAW and FB OSC should respond to hard sync**, whether the
+  AMP envelope belongs ahead of the overdrive or behind it, and what the top
+  of the PW range should do when the narrow side of the pulse is shorter than
+  a sample. All three are audible, all three have more than one defensible
+  reading, and none is a measurement question — they are A–Z candidates, and
+  A is the shipping engine in each.
+- **The arpeggio grid and the patch name through a SysEx load.** The block
+  codec carries both; the plug-in does not, because its authoritative state is
+  its parameter list and neither has a parameter. Stated in the README rather
+  than papered over.

@@ -42,10 +42,13 @@ void encodePatchCommon (const Patch& patch, std::uint8_t* dest) noexcept
     dest[0x0C] = clampTo7Bit (patch.patchLevel);
     dest[0x0D] = signedTo7Bit (patch.toneBalance);
 
-    // 0E..0F: Patch Tempo 5..300, split into upper and lower 4-bit nibbles
+    // 0E..0F: Patch Tempo 5..300. Roland's own two-byte 7-bit split, not two
+    // nibbles: eight bits cannot carry a range whose top is 300, so 256..300
+    // wrapped — 300 came back as 44, and the arpeggiator and both LFOs' tempo
+    // sync run off this one number.
     const int tempo = std::clamp (patch.tempo, 5, 300);
-    dest[0x0E] = static_cast<std::uint8_t> ((tempo >> 4) & 0x0F);
-    dest[0x0F] = static_cast<std::uint8_t> (tempo & 0x0F);
+    dest[0x0E] = static_cast<std::uint8_t> ((tempo >> 7) & 0x7F);
+    dest[0x0F] = static_cast<std::uint8_t> (tempo & 0x7F);
 
     dest[0x10] = 0; // reserved
     dest[0x11] = static_cast<std::uint8_t> (patch.keyboardMode);
@@ -197,20 +200,32 @@ void encodeArpeggioParams (const ArpeggioParams& arp, std::uint8_t* dest) noexce
     dest[6] = clampTo7Bit (arp.velocity);
     dest[7] = clampTo7Bit (arp.style.endStep);
     dest[8] = static_cast<std::uint8_t> (arp.splitArpeggio);
+    // END STEP is the replica's own front-panel control (0 = "as long as the
+    // template is"), separate from the length the loaded template defines. It
+    // had no byte at all, so a dump and a reload silently put it back to
+    // STYLE. The grid starts one byte later for it.
+    dest[9] = clampTo7Bit (arp.endStep);
 
-    // 0x09..0x208: 32 steps x 16 rows pattern cells
-    std::size_t offset = 9;
+    // 0x09..0x208: 32 steps x 16 rows pattern cells.
+    //
+    // 0 is a rest, 0x7F is a tie, and a note-on carries its velocity, capped
+    // at 126 so it cannot land on the tie's byte. The two used to share
+    // 0x7F — and every one of the sixteen shipped styles opens on a cell the
+    // style table built at exactly 127, so a dump and a reload turned the
+    // loudest step of every pattern into a hold on nothing.
+    std::size_t offset = 10;
     for (int step = 0; step < arpeggioMaxSteps; ++step)
     {
         for (int row = 0; row < arpeggioMaxRows; ++row)
         {
             const signed char val = arp.style.cell (step, row);
             if (val == arpeggioTie)
-                dest[offset++] = 0x7F; // Tie encoded as 127 / 0x7F
+                dest[offset++] = arpeggioTieByte;
             else if (val <= 0)
                 dest[offset++] = 0x00; // Rest
             else
-                dest[offset++] = clampTo7Bit (val);
+                dest[offset++] =
+                    clampTo7Bit (std::min<int> (val, arpeggioMaxCellVelocity));
         }
     }
 }
@@ -244,7 +259,7 @@ void decodePatchCommon (const std::uint8_t* src, std::size_t size, Patch& patch)
 
     if (size > 0x0F)
     {
-        const int tempo = ((src[0x0E] & 0x0Fu) << 4) | (src[0x0F] & 0x0Fu);
+        const int tempo = ((src[0x0E] & 0x7Fu) << 7) | (src[0x0F] & 0x7Fu);
         if (tempo >= 5 && tempo <= 300)
             patch.tempo = tempo;
     }
@@ -419,21 +434,24 @@ void decodeArpeggioParams (const std::uint8_t* src, std::size_t size, ArpeggioPa
     if (size > 6) arp.velocity = src[6] & 0x7Fu;
     if (size > 7) arp.style.endStep = std::clamp<int> (src[7], 1, arpeggioMaxSteps);
     if (size > 8) arp.splitArpeggio = static_cast<SplitArpeggio> (std::clamp<int> (src[8], 0, 2));
+    if (size > 9) arp.endStep = std::clamp<int> (src[9], 0, arpeggioMaxSteps);
 
-    if (size > 9)
+    if (size > 10)
     {
-        std::size_t offset = 9;
+        std::size_t offset = 10;
         for (int step = 0; step < arpeggioMaxSteps && offset < size; ++step)
         {
             for (int row = 0; row < arpeggioMaxRows && offset < size; ++row)
             {
                 const std::uint8_t raw = src[offset++];
-                if (raw == 0x7F)
-                    arp.style.cells[static_cast<std::size_t> (step)][static_cast<std::size_t> (row)] = arpeggioTie;
+                auto& cell =
+                    arp.style.cells[static_cast<std::size_t> (step)][static_cast<std::size_t> (row)];
+                if (raw == arpeggioTieByte)
+                    cell = arpeggioTie;
                 else if (raw == 0)
-                    arp.style.cells[static_cast<std::size_t> (step)][static_cast<std::size_t> (row)] = arpeggioRest;
+                    cell = arpeggioRest;
                 else
-                    arp.style.cells[static_cast<std::size_t> (step)][static_cast<std::size_t> (row)] = static_cast<signed char> (raw & 0x7Fu);
+                    cell = static_cast<signed char> (raw & 0x7Fu);
             }
         }
     }

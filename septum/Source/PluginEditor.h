@@ -25,9 +25,11 @@
 // nothing has to be dragged to be understood. The patch/keyboard strip sits
 // above the keys where the hardware puts its patch buttons, with the
 // bend/modulation lever to their left. Controls that exist only as physical
-// hardware (D-Beam, the recorder, tap tempo) are deliberately not replicated;
-// one set of tone controls edits the selected tone, exactly as the hardware
-// panel works.
+// hardware — the D Beam's infrared distance sensor, the step recorder, tap
+// tempo — are deliberately not replicated; the four Patch Common bytes the
+// D Beam owns are still stored and round-tripped, they simply have no control
+// naming them. One set of tone controls edits the selected tone, exactly as
+// the hardware panel works.
 
 class SeptumLookAndFeel final : public juce::LookAndFeel_V4
 {
@@ -128,6 +130,14 @@ private:
 
     enum class Style { Knob, VSlider, Combo, WideCombo, Toggle, Action };
 
+    // Whether a section's controls edit one tone or the whole instrument.
+    // Derived from the controls themselves rather than declared, so a section
+    // cannot claim a scope its contents do not have. Every section on this
+    // panel is one or the other: the parameter contract keeps the per-tone
+    // values in the Patch Tone blocks and the shared ones in Patch Common,
+    // and the panel now follows that line exactly.
+    enum class Scope { Shared, PerTone };
+
     // Which band of the panel a section belongs to. The band decides the
     // colour of the rule above its title, which is the only thing that
     // distinguishes the sections from one another — enough to group them,
@@ -148,6 +158,13 @@ private:
         bool perTone { true };
         Style style { Style::Knob };
         juce::String unit;        // printed after the value, e.g. "st", "%"
+        // What a bipolar knob's two ends actually are. The manual prints
+        // BALANCE and TONE BALANCE as a signed number and the panel prints
+        // what the manual prints, so the direction is said beside the travel
+        // rather than inside the value: a reading of -63 does not say which
+        // of two things it favours, and these controls have no default the
+        // eye can fall back on.
+        juce::String leftEnd, rightEnd;
         std::unique_ptr<juce::Component> component;
         std::unique_ptr<juce::Label> label;
         std::unique_ptr<juce::Label> value;
@@ -163,6 +180,7 @@ private:
     {
         juce::String title;
         Band band { Band::Voice };
+        Scope scope { Scope::Shared };
         juce::Rectangle<int> bounds;
         std::vector<Control*> controls;
         // How many of the section's grid controls go on each row. Sections
@@ -177,7 +195,22 @@ private:
     Control* addControl (Section& section, const juce::String& suffix,
                          const juce::String& label, Style style,
                          bool perTone = true, const juce::String& unit = {});
-    void bindControls();
+    // Names the two ends of a bipolar knob's travel, drawn under the arc.
+    static void nameEnds (Control* control, const char* left, const char* right);
+    // `perToneOnly` re-attaches just the controls whose parameter changes with
+    // the edit target; the shared ones keep the attachment they already have.
+    void bindControls (bool perToneOnly = false);
+    // What the keyboard mode and part say about the two tones right now.
+    struct ToneAudibility
+    {
+        bool upperSounds { true };
+        bool lowerSounds { false };
+        juce::String summary;   // one line, printed beside the edit tabs
+    };
+    [[nodiscard]] ToneAudibility toneAudibility() const;
+    void refreshToneTarget();
+    void setEditingUpper (bool upper);
+    void paintKeyboardZones (juce::Graphics&);
     void layoutSection (Section& section, juce::Rectangle<int> bounds);
     void layoutBand (const std::vector<int>& indices, juce::Rectangle<int> bounds,
                      const std::vector<Connector>& connectors);
@@ -206,11 +239,18 @@ private:
     std::vector<std::unique_ptr<Control>> controls;
     Section* performSection { nullptr };
     Section* systemSection { nullptr };
-    Section* dBeamSection { nullptr };
     Section* stripSection { nullptr };
+    Section* tonePlaySection { nullptr };
+    Section* editToneSection { nullptr };
+    // Controls the current keyboard mode makes inert, dimmed while it does.
+    Control* partControl { nullptr };
+    Control* splitPointControl { nullptr };
+    Control* splitArpControl { nullptr };
     // Where the voice chain's connectors go, filled in by resized().
     std::vector<ConnectorMark> chevrons;
     juce::Rectangle<int> meterBounds;
+    // The band above the keys that says which tone each key reaches.
+    juce::Rectangle<int> keyZoneBounds;
 
     // Left performance cluster.
     juce::Slider masterSlider;
@@ -218,14 +258,14 @@ private:
         masterAttachment;
     juce::Label masterLabel, masterValueLabel, octLabel, octValueLabel, voiceLabel;
     juce::TextButton octDownButton { "DOWN" }, octUpButton { "UP" };
-    Control* portaControl { nullptr };
-    Control* portaTimeControl { nullptr };
-    Control* soloControl { nullptr };
     Control* tempoControl { nullptr };
 
     // Patch strip above the keyboard.
     juce::ComboBox programBox;
-    juce::TextButton lowerButton { "LOWER" }, upperButton { "UPPER" };
+    juce::Label programLabel;
+    // The edit-target tabs, in the header above everything they govern.
+    juce::TextButton upperButton { "UPPER" }, lowerButton { "LOWER" };
+    juce::Label toneStatusLabel;
     juce::Label titleLabel, subtitleLabel;
 
     // OSC 2 INTERVAL buttons (settled behavior: -OCT one octave below,
@@ -249,6 +289,9 @@ private:
                                            juce::MidiKeyboardComponent::horizontalKeyboard };
 
     bool editingUpper { true };
+    // The keyboard mode, part and split point the panel last drew, so the
+    // frame timer only repaints when one of them has actually moved.
+    juce::String lastKeyboardState;
     float meterLevel[2] { 0.0f, 0.0f };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SeptumAudioProcessorEditor)

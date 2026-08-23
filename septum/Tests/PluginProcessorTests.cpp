@@ -683,22 +683,36 @@ void testTogglesShowTheirState()
 // set it absolutely could latch full vibrato from one tap on the top of the
 // travel — something the hardware lever cannot do. It moves by the drag now,
 // and a double click puts it back.
-// The D Beam is a group of automatable parameters: which button is lit, where
-// the hand is, and every byte the address map keeps about it. Its settings
-// are patch data; the beam and the button are not, so a program change must
-// leave them where the player put them. CC#69 is the beam's own controller.
-void testDBeamParameters()
+// The D Beam is not implemented — an infrared distance sensor is a control
+// surface, and a plug-in has no hand above it. What survives is the four
+// Patch Common bytes the beam owns, stored so a SysEx round trip stays
+// lossless: published, saved, program-changed with the patch, and
+// non-automatable, because a host should not offer a lane that cannot change
+// what the player hears. CC#69, the beam's own controller, is accepted and
+// ignored.
+void testDBeamBytesAreStoredAndInert()
 {
     SeptumAudioProcessor processor;
     processor.prepareToPlay (44100.0, 256);
 
-    for (const char* id : { "dbeam_mode", "dbeam_value", "dbeam_sens",
-                            "dbeam_dest", "dbeam_assign", "dbeam_polarity",
-                            "active_expression" })
-        expect (processor.parameters.getParameter (id) != nullptr,
-                juce::String ("the plug-in publishes ") + id);
+    for (const char* id : { "dbeam_mode", "dbeam_value", "dbeam_sens" })
+        expect (processor.parameters.getParameter (id) == nullptr,
+                juce::String ("the plug-in no longer publishes ") + id);
 
-    // The settled 37-entry assign list, in the address map's order.
+    for (const char* id : { "dbeam_dest", "dbeam_assign", "dbeam_polarity",
+                            "active_expression" })
+    {
+        auto* parameter = processor.parameters.getParameter (id);
+        expect (parameter != nullptr,
+                juce::String ("the stored D Beam byte ") + id
+                    + " is still published");
+        if (parameter != nullptr)
+            expect (! parameter->isAutomatable(),
+                    juce::String (id) + " is published as non-automatable");
+    }
+
+    // The settled 37-entry assign list, in the address map's order: it bounds
+    // Patch Common 1F, so it has to stay complete even with no beam to move.
     if (auto* assign = dynamic_cast<juce::AudioParameterChoice*> (
             processor.parameters.getParameter ("dbeam_assign")))
     {
@@ -710,34 +724,33 @@ void testDBeamParameters()
                 "the assign list runs from OSC1-PITCH to BENDER");
     }
 
-    const auto set = [&processor] (const char* id, float natural)
-    {
-        auto* parameter = processor.parameters.getParameter (id);
-        const auto& range = processor.parameters.getParameterRange (id);
-        parameter->setValueNotifyingHost (
-            range.convertTo0to1 (range.snapToLegalValue (natural)));
-    };
+    // Settled (OM p. 72): CC#69 is "Part Pitch (D Beam Pitch Mode)". With no
+    // beam it must move nothing at all.
+    std::vector<float> before;
+    for (auto* parameter : processor.getParameters())
+        before.push_back (parameter->getValue());
+    juce::AudioBuffer<float> buffer (2, 256);
+    auto beamCc = messageAt (juce::MidiMessage::controllerEvent (1, 69, 96));
+    processor.processBlock (buffer, beamCc);
+    bool moved = false;
+    for (int i = 0; i < processor.getParameters().size(); ++i)
+        moved = moved
+                || processor.getParameters()[i]->getValue() != before[(std::size_t) i];
+    expect (! moved, "CC#69 is accepted and moves no parameter");
+
+    // They are patch data, so a program change carries them.
     const auto get = [&processor] (const char* id)
     {
         return (int) processor.parameters.getRawParameterValue (id)->load();
     };
-
-    // Settled (OM p. 72): "Part Pitch (D Beam Pitch Mode) CC#69".
-    juce::AudioBuffer<float> buffer (2, 256);
-    auto beamCc = messageAt (juce::MidiMessage::controllerEvent (1, 69, 96));
-    processor.processBlock (buffer, beamCc);
-    expect (get ("dbeam_value") == 96,
-            "CC#69 moves the beam (got " + std::to_string (get ("dbeam_value"))
-                + ")");
-
-    // The beam and the button are performance state, not patch data.
-    set ("dbeam_mode", 2.0f);      // EXPRESS
-    set ("dbeam_value", 64.0f);
-    set ("dbeam_sens", 3.0f);
+    auto* assign = processor.parameters.getParameter ("dbeam_assign");
+    const auto& range = processor.parameters.getParameterRange ("dbeam_assign");
+    assign->setValueNotifyingHost (range.convertTo0to1 (36.0f));  // BENDER
+    expect (get ("dbeam_assign") == 36, "the stored assign byte takes a value");
     processor.setCurrentProgram (2);
-    expect (get ("dbeam_mode") == 2 && get ("dbeam_value") == 64
-                && get ("dbeam_sens") == 3,
-            "a program change leaves the beam where the player put it");
+    expect (get ("dbeam_assign")
+                == (int) septum::factoryPatches()[2].patch.dBeamAssign,
+            "a program change carries the stored D Beam bytes with the patch");
 }
 
 void testLeverModulationMovesByTheDrag()
@@ -1069,6 +1082,162 @@ void testSysExBlockProcessing()
     expect (recipientSnap.upper.cutoff == 42, "loadSysExData restored cutoff");
     expect (recipientSnap.upper.resonance == 88, "loadSysExData restored resonance");
 }
+
+// A received SysEx patch dump lands on the audio thread, so it may not notify
+// the host from there — the split Step 17 established for control changes.
+void testSysExDoesNotNotifyFromTheAudioThread()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+
+    septum::Patch custom = septum::initPatch();
+    custom.upper.cutoff = 42;
+    custom.upper.resonance = 88;
+    const auto packets = septum::sysex::encodePatchToSysExPackets (custom);
+
+    auto* parameter = processor.parameters.getParameter ("up_cutoff");
+    expect (parameter != nullptr, "the cutoff parameter exists");
+    if (parameter == nullptr)
+        return;
+    CountingParameterListener listener;
+    parameter->addListener (&listener);
+
+    juce::AudioBuffer<float> block (2, 256);
+    for (const auto& packet : packets)
+    {
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage (packet.data(), (int) packet.size()), 0);
+        processor.processBlock (block, midi);
+    }
+    expect (listener.values == 0 && listener.gestures == 0,
+            "a received SysEx dump notifies nothing from the render callback"
+            " (values " + std::to_string (listener.values) + ", gestures "
+                + std::to_string (listener.gestures) + ")");
+    expect ((int) processor.parameters.getRawParameterValue ("up_cutoff")->load() == 42,
+            "the dump still lands in the value the engine renders from");
+
+    // The message-thread half, which the harness stands in for.
+    processor.republishPatchParameters();
+    const auto& range = processor.parameters.getParameterRange ("up_cutoff");
+    expect (std::abs (parameter->getValue() - range.convertTo0to1 (42.0f)) < 1.0e-6,
+            "the reconciler catches the parameter object up");
+    // Values, not gestures: a whole patch arriving over SysEx is not a
+    // player dragging a knob, and that is what loadPatch has always reported.
+    expect (listener.values > 0,
+            "the reconciler is what notifies the host");
+    parameter->removeListener (&listener);
+}
+
+// SYSTEM COMMON Octave Shift is applied once, by the engine. The drawn
+// keyboard shifts the octave *names* its keys are printed with, not the notes
+// they send: a click goes straight to engine.noteOn, which applies the shift
+// itself, so moving the drawn range as well applied it twice — one press of
+// OCT UP transposed the on-screen keys by two octaves while their printed
+// names claimed one.
+juce::MidiKeyboardComponent* findKeyboard (juce::Component& root)
+{
+    for (int i = 0; i < root.getNumChildComponents(); ++i)
+    {
+        auto* child = root.getChildComponent (i);
+        if (auto* keys = dynamic_cast<juce::MidiKeyboardComponent*> (child))
+            return keys;
+        if (child != nullptr)
+            if (auto* found = findKeyboard (*child))
+                return found;
+    }
+    return nullptr;
+}
+
+void testKeyboardOctaveIsAppliedOnce()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    auto* septumEditor = dynamic_cast<SeptumAudioProcessorEditor*> (editor.get());
+    expect (septumEditor != nullptr, "the processor provides the Septum editor");
+    if (septumEditor == nullptr)
+        return;
+    editor->setSize (editor->getWidth(), editor->getHeight());
+    auto* keys = findKeyboard (septumEditor->getPanel());
+    expect (keys != nullptr, "the panel draws a keyboard");
+    if (keys == nullptr)
+        return;
+
+    auto* parameter = processor.parameters.getParameter ("system_octave");
+    const auto& range = processor.parameters.getParameterRange ("system_octave");
+    for (int shift : { 0, 1, -2, 3 })
+    {
+        parameter->setValueNotifyingHost (range.convertTo0to1 ((float) shift));
+        septumEditor->resized();
+        expect (keys->getRangeStart() == 36 && keys->getRangeEnd() == 96,
+                "the drawn keys keep their note numbers at shift "
+                    + std::to_string (shift) + " (range "
+                    + std::to_string (keys->getRangeStart()) + ".."
+                    + std::to_string (keys->getRangeEnd()) + ")");
+        expect (keys->getOctaveForMiddleC() == 4 + shift,
+                "the printed octave names follow the shift at "
+                    + std::to_string (shift) + " (middle C octave "
+                    + std::to_string (keys->getOctaveForMiddleC()) + ")");
+    }
+}
+
+// Every section on the panel is wholly per-tone or wholly shared, and every
+// per-tone section says which tone it is showing.
+void testThePanelSaysWhichToneItIsEditing()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    auto* septumEditor = dynamic_cast<SeptumAudioProcessorEditor*> (editor.get());
+    if (septumEditor == nullptr)
+        return;
+    const auto design = SeptumAudioProcessorEditor::panelSizeForWorkArea ({});
+    editor->setSize (design.getWidth(), design.getHeight());
+    editor->resized();
+
+    auto& panel = septumEditor->getPanel();
+    auto* upper = findButton (panel, "UPPER");
+    auto* lower = findButton (panel, "LOWER");
+    expect (upper != nullptr && lower != nullptr,
+            "the panel carries an edit-target pair");
+    if (upper == nullptr || lower == nullptr)
+        return;
+    expect (upper->getToggleState() && ! lower->getToggleState(),
+            "the panel opens on UPPER");
+
+    // Switching the target re-points every per-tone control and leaves the
+    // shared ones where they were.
+    const auto cutoffOf = [&processor] (const char* id)
+    {
+        return (int) processor.parameters.getRawParameterValue (id)->load();
+    };
+    auto* upperCutoff = processor.parameters.getParameter ("up_cutoff");
+    auto* lowerCutoff = processor.parameters.getParameter ("lo_cutoff");
+    const auto& range = processor.parameters.getParameterRange ("up_cutoff");
+    upperCutoff->setValueNotifyingHost (range.convertTo0to1 (30.0f));
+    lowerCutoff->setValueNotifyingHost (range.convertTo0to1 (90.0f));
+
+    if (lower->onClick)
+        lower->onClick();
+    expect (! upper->getToggleState() && lower->getToggleState(),
+            "the target moves to LOWER");
+    // The panel is showing LOWER now, so nudging a per-tone control has to
+    // move the LOWER parameter and leave UPPER alone.
+    expect (cutoffOf ("up_cutoff") == 30 && cutoffOf ("lo_cutoff") == 90,
+            "switching the target edits neither tone by itself");
+
+    // The target survives closing and reopening the editor.
+    editor.reset();
+    std::unique_ptr<juce::AudioProcessorEditor> reopened (processor.createEditor());
+    auto* second = dynamic_cast<SeptumAudioProcessorEditor*> (reopened.get());
+    if (second == nullptr)
+        return;
+    reopened->setSize (design.getWidth(), design.getHeight());
+    auto* reopenedLower = findButton (second->getPanel(), "LOWER");
+    expect (reopenedLower != nullptr && reopenedLower->getToggleState(),
+            "reopening the editor keeps the tone the player was editing");
+}
+
 } // namespace
 
 int main()
@@ -1091,12 +1260,15 @@ int main()
     testStateRoundTrip();
     testIntervalButtonsAreRelativeToOscOne();
     testTogglesShowTheirState();
-    testDBeamParameters();
+    testDBeamBytesAreStoredAndInert();
     testLeverModulationMovesByTheDrag();
     testSystemCommonSettings();
     testEditorFitsASmallDisplay();
     testEditorAndSnapshot();
     testSysExBlockProcessing();
+    testSysExDoesNotNotifyFromTheAudioThread();
+    testKeyboardOctaveIsAppliedOnce();
+    testThePanelSaysWhichToneItIsEditing();
 
     if (failures == 0)
     {

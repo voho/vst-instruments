@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <string>
 
 namespace septum
@@ -103,10 +104,14 @@ enum class ArpeggioMotif
 enum class SplitArpeggio { Upper, Lower, Both };
 
 // D BEAM ASSIGN (Patch Common offset 1F, 0-36), in the address map's own
-// order. "If you hold down the FILTER/ASSIGN button and move one of the top
-// panel knobs, the D Beam controller will have the same function as that
-// knob" (OM p. 21) — so every entry names a panel control, and the beam moves
-// it toward the end the knob was turned toward.
+// order.
+//
+// [settled range, no effect] The replica does not implement the D Beam: an
+// infrared distance sensor is a control surface, and a plug-in has no hand
+// above it to read. The four bytes the beam owns in the patch are still
+// patch data, so they are stored and round-tripped and change nothing that
+// sounds, exactly as PITCH WIDE does. This enumeration survives because it
+// is what bounds offset 1F.
 enum class DBeamAssign
 {
     Osc1Pitch, Osc1Detune, Osc1Pw,
@@ -125,35 +130,9 @@ enum class DBeamAssign
 inline constexpr int dBeamAssignCount = 37;
 
 // D BEAM POLARITY (Patch Common offset 20). "'+' and '-' will invert the
-// direction of change. * This will not change the direction of the change
-// that occurs when the PITCH button or EXPRESS button is lit" (OM p. 65), so
-// it applies to the ASSIGN mode alone.
+// direction of change" (OM p. 65). [settled range, no effect] — stored for
+// the same reason DBeamAssign is.
 enum class DBeamPolarity { Plus, Minus };
-
-// Which of the three buttons under the beam is lit. There is no byte for this
-// in the address map — it is panel state, not patch data — and each button
-// toggles: "Press the PITCH button once again so its light goes off". One
-// beam produces one value, so the replica makes the three exclusive and adds
-// the OFF the hardware reaches by unlighting whichever is lit (voiced,
-// OQ-16).
-enum class DBeamMode { Off, Pitch, Express, Assign };
-
-// The D Beam controller itself. Its *settings* are patch data (assign,
-// polarity, destination) or system data (sensitivity); what the player's hand
-// is doing is neither, so it lives out here with the external-input block.
-struct DBeam
-{
-    DBeamMode mode { DBeamMode::Off };
-    // The hand's height inside the usable range, with 0 the hand out of it:
-    // "Moving your hand outside this range will produce no effect" (OM p. 20).
-    int value { 0 };            // 0-127
-    // [settled range, no effect] D BEAM SENS 1-8 compensates the infrared
-    // sensor for "strong direct sunlight or strong artificial illumination"
-    // (OM p. 21). There is no sensor here and no sunlight to compensate for,
-    // so the replica stores it — a SysEx round trip has to be lossless — and
-    // it changes nothing that sounds, exactly as PITCH WIDE does.
-    int sens { 8 };             // 1-8
-};
 
 // CONTROLLER DESTINATION (Patch Common offsets 15, 16, 17, 18): which tone(s)
 // each of the four physical controllers reaches. "Selects the tone(s) to be
@@ -175,6 +154,11 @@ inline constexpr int arpeggioMaxRows = 16;
 // carrying the style's programmed velocity.
 inline constexpr signed char arpeggioRest = 0;
 inline constexpr signed char arpeggioTie = -1;
+// How a cell travels through SysEx: 0 is a rest, 0x7F is a tie, and a
+// note-on carries its own velocity, capped just below the tie's byte so the
+// two cannot collide.
+inline constexpr std::uint8_t arpeggioTieByte = 0x7F;
+inline constexpr int arpeggioMaxCellVelocity = 126;
 
 // "A series of data for basic arpeggio patterns and chord styles recorded in
 // the form of a grid consisting of a maximum of 32 steps x 16 pitches"
@@ -368,20 +352,20 @@ struct Patch
     bool delayOn { false };
     bool reverbOn { false };
     ModulationAssign modulationAssign { ModulationAssign::Osc1AndOsc2 };
-    // Settled: which tone(s) each controller reaches (OM p. 65). The D Beam's
-    // destination arrives with the D Beam itself.
+    // Settled: which tone(s) each controller reaches (OM p. 65).
     ToneDestination modulationDestination { ToneDestination::Both };
     ToneDestination pitchBendDestination { ToneDestination::Both };
     ToneDestination expressionDestination { ToneDestination::Both };
+    // The four Patch Common bytes the D Beam owns: destination (offset 16),
+    // ACTIVE EXPRESSION (19), assign (1F) and polarity (20). The replica does
+    // not implement the beam — see DBeamAssign above — so all four are
+    // [settled range, no effect]: stored, saved and round-tripped through
+    // SysEx so a dump from a real unit survives the trip, and read by nothing
+    // that sounds. ACTIVE EXPRESSION is a modifier of the beam's EXPRESS
+    // button alone (OM p. 65) and no other controller on the instrument can
+    // drive it, so it is inert with the rest rather than re-pointed at one.
     ToneDestination dBeamDestination { ToneDestination::Both };
-    // Settled: what the D Beam's EXPRESS button does — "OFF: The D Beam
-    // controller will change the volume. ON: The D Beam controller will
-    // control Active Expression, which combines two tones" (OM p. 65).
     bool activeExpression { false };
-    // Settled: the beam's assigned target and the direction it moves it.
-    // FILTER-CUTOFF is where the manual's own description of the
-    // FILTER/ASSIGN button starts: "the brightness of the sound (cutoff
-    // frequency of the filter) will change".
     DBeamAssign dBeamAssign { DBeamAssign::FilterCutoff };
     DBeamPolarity dBeamPolarity { DBeamPolarity::Plus };
     ArpeggioParams arpeggio {};
@@ -500,12 +484,6 @@ inline void clampToDocumentedRanges (TonePatch& tone) noexcept
     tone.portamentoTime = clampRaw (tone.portamentoTime, 0, 127);
 }
 
-inline void clampToDocumentedRanges (DBeam& beam) noexcept
-{
-    beam.value = clampRaw (beam.value, 0, 127);
-    beam.sens = clampRaw (beam.sens, 1, 8);
-}
-
 inline void clampToDocumentedRanges (ExternalInput& input) noexcept
 {
     input.inputVolume = clampRaw (input.inputVolume, 0, 127);
@@ -547,6 +525,12 @@ inline void clampToDocumentedRanges (Patch& patch) noexcept
     patch.arpeggio.style.endStep =
         clampRaw (patch.arpeggio.style.endStep, 1, arpeggioMaxSteps);
     patch.arpeggio.styleIndex = std::max (0, patch.arpeggio.styleIndex);
+    // A cell's velocity stops one short of the tie's SysEx byte, so every
+    // value the engine can hold is a value a dump can carry back.
+    for (auto& step : patch.arpeggio.style.cells)
+        for (auto& cell : step)
+            if (cell > arpeggioMaxCellVelocity)
+                cell = static_cast<signed char> (arpeggioMaxCellVelocity);
     patch.arpeggio.endStep = clampRaw (patch.arpeggio.endStep, 0, arpeggioMaxSteps);
 }
 

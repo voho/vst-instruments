@@ -89,7 +89,7 @@ it now sits in the per-tone gain rather than in the master chain, where with
 BOTH the product is identical. The AUDIO-FILTER lever destination is one
 filter fed by two tones' LFO2s, so a single destination picks that tone's and
 BOTH keeps the keyboard part's (voiced, OQ-14). D BEAM DESTINATION and ACTIVE
-EXPRESSION arrive with the D-Beam and stay deferred with it.
+EXPRESSION are stored and inert — see the D Beam section.
 - **Patch Tone** ×2 (0x40 bytes each): per oscillator — waveform
   (0–8: SAW, SQU, PW-SQU, TRI, SINE, NOISE, FB-OSC, SUPER-SAW, EXT-IN),
   pitch-wide switch (raw 28–100 for the coarse tune either way — the switch
@@ -136,7 +136,8 @@ below.
 ### CC map (settled, OM p. 72)
 
 Part: Bank MSB 0, Modulation 1, Level 7, Pan 10, Expression 11, Bank LSB 32,
-Hold 64, Sostenuto 66, D-Beam pitch 69, Portamento control 84.
+Hold 64, Sostenuto 66, D-Beam pitch 69 (accepted and ignored — the replica
+has no D Beam), Portamento control 84.
 
 | Parameter | UPPER | LOWER |
 | --- | --- | --- |
@@ -503,59 +504,44 @@ panel only *selects* a template — the manual says editing a style needs the
 SH-201 Editor — so a selector is the faithful panel surface, and the patch
 stores both the selector and the grid it names.
 
-### D Beam
+### D Beam (not implemented; four bytes stored)
 
-Settled (OM pp. 20–21 and 65; Patch Common 00 16 / 00 19 / 00 1F / 00 20;
-System Common 00 1D). Three buttons under the beam choose what it does, each
-of them a toggle — "Press the PITCH button once again so its light goes off":
+**The controller is not modelled.** An infrared distance sensor is a control
+surface: it reads how far a hand is above the panel, and a plug-in has no
+panel and no hand above it. It was implemented once, as a group of automatable
+parameters, and removed at the user's direction — a scope decision, not a
+measurement, and recorded as such in the change log.
 
-- **PITCH** — "when you hold down a key and move your hand up or down above
-  the D Beam controller, the pitch will change". It answers on **CC#69**,
-  which the control-change list names "Part Pitch (D Beam Pitch Mode)".
-- **EXPRESS** — "the volume will change". With **ACTIVE EXPRESSION** on it
-  combines the two tones instead: "Only the UPPER tone will be heard when the
-  volume is low, and the LOWER tone will be added as the volume increases".
-- **FILTER/ASSIGN** — moves whichever of the 37 documented destinations
-  **D BEAM ASSIGN** names, and the manual settles the law as well as the list:
-  "If you hold down the FILTER/ASSIGN button and move one of the top panel
-  knobs, the D Beam controller will have the same function as that knob. At
-  this time you can also choose the direction in which the knob will be
-  moved… when you move your hand closer to the D Beam controller, the LFO
-  speeds up, just as if you had moved the LFO RATE knob toward the right." So
-  the beam takes the parameter from the value the patch holds toward one end
-  of its own documented range, and **D BEAM POLARITY** (`+` / `−`) picks which
-  end — "'+' and '-' will invert the direction of change. * This will not
-  change the direction of the change that occurs when the PITCH button or
-  EXPRESS button is lit", so polarity is the ASSIGN mode's alone.
+What the beam owns in the patch stays, because it is patch data and a SysEx
+round trip has to be lossless. Four Patch Common bytes (00 16 D BEAM
+DESTINATION, 00 19 ACTIVE EXPRESSION, 00 1F D BEAM ASSIGN with its settled
+37-entry list, 00 20 D BEAM POLARITY) are stored, saved, program-changed with
+the patch and round-tripped through the codec. They are published as
+non-automatable parameters and read by nothing that sounds — the same
+`[settled range, no effect]` position PITCH WIDE holds.
 
-**D BEAM DESTINATION** (UPPER / LOWER / BOTH) names the tone(s) it reaches,
-like the other three controller destinations. The hand leaving the beam is
-settled too — "Moving your hand outside this range will produce no effect" —
-so the replica's beam control is the hand's height with zero meaning the hand
-is out, and at zero nothing moves.
+**ACTIVE EXPRESSION goes inert with the beam, and must not be re-pointed.**
+The manual defines it only as a modifier of the beam's EXPRESS button ("OFF:
+The D Beam controller will change the volume. ON: The D Beam controller will
+control Active Expression, which combines two tones", OM p. 65). No other
+controller on the instrument drives it. Attaching it to the expression pedal
+or to CC#11 would be inventing a mechanism no Roland document describes.
 
-The replica publishes all of it: the mode, the beam, the assign, the polarity,
-the destination, ACTIVE EXPRESSION and the sensitivity, each a plug-in
-parameter a host can automate. The four Patch Common bytes travel with the
-patch; the mode and the beam are performance state and the sensitivity is
-System Common, so a program change leaves those three where the player left
-them.
+**CC#69** — "Part Pitch (D Beam Pitch Mode)" in the settled control-change
+list — is accepted and ignored, since the thing it moved is gone.
 
-Voiced (OQ-16): that the three buttons are exclusive (the address map has no
-byte for them, and one beam makes one value); PITCH mode's reach, read as the
-tone's own settled BEND RANGE and upward, with the ASSIGN list's separate
-BENDER entry the same reach under polarity; the linear shape of the beam's
-travel between the patch value and the end of the range; the half-way point at
-which ACTIVE EXPRESSION starts adding LOWER; and that the shared destinations
-— the two effect times and the audio filter — ignore D BEAM DESTINATION,
-because they are not per-tone.
+**D BEAM SENS** (System Common 00 1D) is gone outright. It compensated the
+sensor for "strong direct sunlight or strong artificial illumination" (OM
+p. 21), and unlike the four Patch Common bytes it carried no round-trip
+obligation: this replica implements no System Common SysEx block at all, so
+nothing ever encoded or decoded it. The earlier justification for storing it
+— "a SysEx round trip has to be lossless" — was true of PITCH WIDE and of the
+four patch bytes, and was never true of SENS.
 
-**D BEAM SENS** (1–8) is settled in range and inert here. It compensates the
-infrared sensor when "performing under strong direct sunlight or strong
-artificial illumination" (OM p. 21); there is no sensor in a plug-in and no
-sunlight to compensate for, so the replica stores it — a SysEx round trip has
-to be lossless — and it changes nothing that sounds, exactly as PITCH WIDE
-does.
+**OQ-16 is withdrawn**, not answered: with no beam rendered there is nothing
+left for a capture of the beam's MIDI output at a grid of hand heights to
+calibrate. Its entry stays in the open-question list, marked withdrawn, so the
+record of what was once open survives.
 
 ### Key assignment, solo/legato, portamento, pedals
 
@@ -590,21 +576,41 @@ is not separately modelled — the host's converters stand in for it.
 
 ## Scope of v1
 
-Implemented: both tones with every tone parameter above, all nine
+**Implemented.** Both tones with every tone parameter above; all nine
 waveforms including EXT-IN and the external-input path around it (INPUT VOL,
-CENTER CANCEL, the four-type AUDIO FILTER, and the monitor/voice changeover);
+CENTER CANCEL, the four-type AUDIO FILTER, and the monitor/voice changeover) —
 with no input bus connected an EXT-IN oscillator renders silence, as the
-hardware does with nothing plugged in. MIX/SYNC/RING, the filter, all three envelopes, both LFOs
-with tempo sync, overdrive, delay→reverb with per-tone sends and the
-16 templates, SINGLE/DUAL/SPLIT with 10/5+5 voices, solo/legato,
-portamento, pitch bend with per-tone range, the arpeggiator with the settled
+hardware does with nothing plugged in. MIX/SYNC/RING, the filter, all three
+envelopes, both LFOs with tempo sync, overdrive, delay→reverb with per-tone
+sends, SINGLE/DUAL/SPLIT with 10/5+5 voices, solo/legato, portamento, pitch
+bend with per-tone range, the arpeggiator with the settled
 grid/duration/motif/octave/accent/velocity/end-step/hold/split parameters, the
-settled CC map including both documented pedals, the audio filter's
-CC#2/CC#4 and the D Beam's CC#69, the D Beam itself with its three modes, its
-37-destination assign list, its polarity, its destination and ACTIVE
-EXPRESSION, the four controller destinations, the System Common tune, key
-shift, octave and transpose, and the analog output stage. Deferred,
-documented: the recorder, SysEx DT1/RQ1 I/O, and the USB audio topology.
+settled CC map including both documented pedals and the audio filter's
+CC#2/CC#4, the three remaining controller destinations, the System Common
+tune, key shift, octave and transpose, and the analog output stage.
+
+**SysEx DT1 receive and encode** are implemented (`Source/DSP/SeptumSysEx.*`):
+a dump sent to the plug-in loads the patch, and the current patch can be
+encoded through the processor's API. Three caveats belong here rather than in
+a footnote. RQ1 requests are rejected and the plug-in transmits no SysEx of
+its own. The block codec round-trips every documented field, the arpeggio grid
+and the full 5–300 tempo range included; the trip *through the plug-in* does
+not carry the grid or the patch name, because the plug-in's authoritative
+state is its parameter list and neither of those has a parameter.
+
+**Not implemented, with the reason.**
+
+- **The D Beam** — see its own section: a sensor a plug-in cannot have.
+  Removed at the user's direction; its four Patch Common bytes stay stored.
+- **The step recorder**, and **tap tempo**.
+- **CLOCK SOURCE**, and with it external MIDI clock and any host-transport
+  sync: the arpeggiator and the LFOs' tempo sync run from PATCH TEMPO alone.
+- **The 16 effect templates as a runtime selector.** The settled names exist
+  as voiced parameter sets used to build the shipped programs; the panel
+  exposes the underlying DELAY and REVERB parameters directly, where the
+  hardware's panel offers the templates.
+- **The USB audio topology**, and the codec's own digital reconstruction
+  filter — the host's converters stand in for it.
 
 ## Every voiced constant lives in one place
 
@@ -640,7 +646,16 @@ Each is a standing research task; the measurement named would close it.
   UPPER filter-env D and LOWER OSC2 pitch-env depth) to settle the
   misprint read as CC#83.
 - **OQ-03 — noise color; pulse-width endpoints.** Spectral capture of the
-  NOISE wave; scope capture of PW at 0/64/127.
+  NOISE wave; scope capture of PW at 0/64/127. The engine's position until
+  that capture is that NOISE is white, and it is measured white at every host
+  rate — a 23-bit Galois LFSR whose successive *states* were read as the
+  sample shipped briefly and was neither (10.9 dB of tilt at 44.1 kHz, 1.1 dB
+  at 192 kHz), under a comment naming a Roland polynomial no source in this
+  document settles. PW-SQU's polyBLEP residuals stop separating when the
+  narrow side of the pulse is shorter than a sample, which is reachable at the
+  top of the PW range high on the keyboard; the bound is recorded here rather
+  than worked around, because both ways of working around it change what the
+  top of the knob sounds like.
 - **OQ-04 — supersaw HPF.** Two defensible formulations (1.0×f0 Q=0.707 vs
   2.5×f0 Q=√2). A dry hardware capture of one supersaw note, FFT below and
   around the fundamental, decides. Until then: A–Z listening-test
@@ -664,23 +679,44 @@ Each is a standing research task; the measurement named would close it.
 - **OQ-10 — LFO rate table and depth scalings.** The panel LED blinks at
   the LFO rate: film the LED (or capture PWM audio) at rate 0/64/127; the
   trapezoid segment ratios and RND smoothing need a scope capture of
-  filter-cutoff modulation.
+  filter-cutoff modulation. The two LFOs' S&H and RANDOM sequences are seeded
+  apart — one shared seed made all four of a patch's LFOs draw the same
+  numbers, which is not a calibration question but was audible as two
+  "independent" modulators moving in lockstep.
 - **OQ-11 — overdrive transfer.** Capture a sine through OVERDRIVE at
-  drive 0/32/64/96/127 and fit the static curve.
+  drive 0/32/64/96/127 and fit the static curve. The curve is a symmetric
+  `tanh` under first-order antiderivative anti-aliasing; a quadratic "tube"
+  pre-conditioning stage with an invented coefficient shipped briefly ahead of
+  it, which also broke the ADAA (the antiderivative belongs to `tanh`, not to
+  the composite). Whether the instrument's shaper is asymmetric at all is part
+  of what the capture would settle. Also open: whether the AMP envelope sits
+  ahead of the shaper or behind it — both readings are derivable from "the
+  wave being boosted into limiting", they sound different, and it is an A-Z
+  question rather than a measurement one.
 - **OQ-12 — effect calibration.** Delay TIME-to-ms table (tap the repeats),
   the 16 template parameter sets (dump SysEx from a real unit after
   applying each template), reverb RT60 per TIME/SIZE.
 - **OQ-13 — voice-steal policy.** Play 11 notes and observe which voice
-  drops on hardware.
+  drops on hardware. The implemented policy is the one this document states —
+  the longest-*released* voice, else the oldest sounding — which needs a
+  release timestamp per voice; ordering the released candidates by their
+  trigger age instead took the freshest tail rather than the stalest.
 - **OQ-15 — arpeggiator calibration.** The shuffle amounts behind 1/8L,
-  1/8H, 1/16L and 1/16H; the ACCENT blend and the flat velocity it collapses
-  onto; the order the OCTAVE RANGE cycle visits its octaves; how a PHRASE
+  1/8H, 1/16L and 1/16H; the ACCENT blend, and how it interacts with ARPEGGIO
+  VELOCITY — the manual's two endpoint sentences (at 100 the style's
+  programmed velocities, at 0 "a fixed velocity") are reproduced only when
+  ARPEGGIO VELOCITY is a fixed value, and with REAL neither endpoint is
+  literal, so whether the hardware's ACCENT overrides REAL is part of what the
+  capture settles; the order the OCTAVE RANGE cycle visits its octaves; how a PHRASE
   style's rows become intervals. Close by recording the arpeggiator's MIDI
   output (the manual documents that it can be played over MIDI) at a grid of
   GRID, ACCENT and OCTAVE RANGE settings and reading the note times and
   velocities straight off it — the one open question in this project that a
   MIDI capture alone can close, with no audio analysis needed.
-- **OQ-16 — D Beam calibration.** Whether the three mode buttons are
+- **OQ-16 — D Beam calibration. WITHDRAWN 2026-08-23**, with the controller
+  it belonged to: an infrared distance sensor has no meaning in a plug-in, so
+  there is nothing left for the capture below to calibrate. Kept as a record
+  of what was open. Whether the three mode buttons are
   exclusive; PITCH mode's interval and direction; the shape of the ASSIGN
   travel between the patch value and the end of the range; the point at which
   ACTIVE EXPRESSION starts adding LOWER; and whether the shared destinations

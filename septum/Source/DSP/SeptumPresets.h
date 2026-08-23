@@ -10,6 +10,7 @@
 
 #include "SeptumPatch.h"
 
+#include <string>
 #include <vector>
 
 namespace septum
@@ -17,7 +18,11 @@ namespace septum
 
 struct NamedPatch
 {
-    const char* name;
+    // Owns its storage. It used to be a `const char*`, and the 32 User slots
+    // built theirs from a local std::string that died at the end of the loop
+    // iteration, so every one of those names was a dangling pointer by the
+    // time a host asked for it.
+    std::string name;
     Patch patch;
 };
 
@@ -25,7 +30,9 @@ struct NamedPatch
 // balance sits fully left.
 [[nodiscard]] Patch initPatch();
 
-// The original preset bank, INIT first.
+// The shipped bank: 32 original programs in the PRESET A-1..D-8 positions
+// followed by 32 initialised User slots, mirroring the instrument's own bank
+// layout. None of Roland's factory patch data ships here.
 [[nodiscard]] const std::vector<NamedPatch>& factoryPatches();
 
 // Apply one of the eight delay templates (0-7: Simple Delay, 1 Shot Delay,

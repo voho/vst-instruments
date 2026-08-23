@@ -78,10 +78,6 @@ public:
     // patch because the instrument keeps them out of it (OM pp. 49-51).
     [[nodiscard]] septum::ExternalInput snapshotExternalInput() const;
 
-    // The D Beam controller's own state, read the same way and kept out of
-    // the patch for the same reason.
-    [[nodiscard]] septum::DBeam snapshotDBeam() const;
-
     // The message-thread half of a MIDI program change: repeats the values
     // the audio path already wrote, with host/UI notification, skipping any
     // parameter edited since. Normally reached via the queued message-loop
@@ -95,6 +91,13 @@ public:
 
     // Loads an entire structured patch into the processor and APVTS.
     void loadPatch (const septum::Patch& patch);
+
+    // The two halves of that, split so a patch arriving on the audio thread
+    // (a received SysEx dump) writes only atomics there and is republished to
+    // the host and the UI from the message loop. Public so the harness can
+    // stand in for that loop.
+    void writePatchToParameters (const septum::Patch& patch) noexcept;
+    void republishPatchParameters();
 
     // Parses and loads SysEx .syx bytes into the active patch.
     void loadSysExData (const void* data, std::size_t sizeInBytes);
@@ -134,7 +137,6 @@ private:
     std::atomic<float>* systemTuneValue { nullptr };
     std::vector<std::atomic<float>*> systemValues;
     std::vector<std::atomic<float>*> externalValues;
-    std::vector<std::atomic<float>*> dBeamValues;
     // The input bus arrives in the same buffer the output is written to, so
     // it is copied out before that buffer is cleared.
     std::vector<float> externalInputL, externalInputR;
@@ -165,6 +167,16 @@ private:
         SeptumAudioProcessor& owner;
     };
     CcReconciler ccReconciler { *this };
+    // The same shape for a whole patch, after a SysEx dump lands on the audio
+    // path.
+    struct PatchReconciler final : public juce::AsyncUpdater
+    {
+        explicit PatchReconciler (SeptumAudioProcessor& o) : owner (o) {}
+        ~PatchReconciler() override { cancelPendingUpdate(); }
+        void handleAsyncUpdate() override { owner.republishPatchParameters(); }
+        SeptumAudioProcessor& owner;
+    };
+    PatchReconciler patchReconciler { *this };
     std::vector<float> monoScratch;
 
     septum::Engine engine;

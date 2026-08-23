@@ -58,9 +58,10 @@ const juce::StringArray arpMotifChoices {
 const juce::StringArray arpSplitChoices { "UPPER", "LOWER", "BOTH" };
 // CONTROLLER DESTINATION, the same three for every controller (OM p. 65).
 const juce::StringArray toneDestinationChoices { "UPPER", "LOWER", "BOTH" };
-// D BEAM: the three buttons under the beam, the polarity, and the 37-entry
-// assign list in the address map's own order (Patch Common 00 1F).
-const juce::StringArray dBeamModeChoices { "OFF", "PITCH", "EXPRESS", "ASSIGN" };
+// D BEAM: the polarity and the 37-entry assign list in the address map's own
+// order (Patch Common 00 20 and 00 1F). The replica does not implement the
+// beam; these name the values of two bytes it stores so a SysEx round trip
+// stays lossless.
 const juce::StringArray dBeamPolarityChoices { "+", "-" };
 const juce::StringArray dBeamAssignChoices {
     "OSC1-PITCH", "OSC1-DETUNE", "OSC1-PW",
@@ -276,6 +277,12 @@ struct PatchBinding
     const juce::StringArray* choices;
     float (*get) (const Patch&);
     void (*set) (Patch&, float);
+    // Settled patch data the replica stores but never reads: the four bytes
+    // the D Beam owns. They are saved, loaded and round-tripped through
+    // SysEx so a dump from a real unit survives the trip, and they are
+    // published as non-automatable so a host does not offer a player an
+    // automation lane that cannot change what they hear.
+    bool inert { false };
 };
 
 // The external-input path is a system setting, not patch data (OM pp. 49-51),
@@ -293,38 +300,6 @@ struct ExternalBinding
 };
 
 const juce::StringArray audioFilterTypeChoices { "LPF", "HPF", "BPF", "NOTCH" };
-
-// The D Beam controller's own state: which button is lit, where the hand is,
-// and the sensor sensitivity. None of the three is patch data — the address
-// map has no byte for the first two, and the third is System Common — so a
-// program change must not touch them.
-struct DBeamBinding
-{
-    const char* id;
-    const char* label;
-    Kind kind;
-    int low, high;
-    const juce::StringArray* choices;
-    float (*get) (const septum::DBeam&);
-    void (*set) (septum::DBeam&, float);
-};
-
-const std::vector<DBeamBinding>& dBeamBindings()
-{
-    static const std::vector<DBeamBinding> bindings {
-        { "dbeam_mode", "D Beam Mode", Kind::Choice, 0, 4, &dBeamModeChoices,
-          [] (const septum::DBeam& b) { return (float) (int) b.mode; },
-          [] (septum::DBeam& b, float v)
-          { b.mode = (septum::DBeamMode) (int) std::lround (v); } },
-        { "dbeam_value", "D Beam", Kind::Int, 0, 127, nullptr,
-          [] (const septum::DBeam& b) { return (float) b.value; },
-          [] (septum::DBeam& b, float v) { b.value = (int) std::lround (v); } },
-        { "dbeam_sens", "D Beam Sensitivity", Kind::Int, 1, 8, nullptr,
-          [] (const septum::DBeam& b) { return (float) b.sens; },
-          [] (septum::DBeam& b, float v) { b.sens = (int) std::lround (v); } },
-    };
-    return bindings;
-}
 
 #define EXT_INT(field) \
     [] (const septum::ExternalInput& e) { return (float) e.field; }, \
@@ -416,17 +391,18 @@ const std::vector<PatchBinding>& patchBindings()
         { "expr_dest", "Expression Destination", Kind::Choice, 0, 3,
           &toneDestinationChoices,
           PATCH_ENUM (expressionDestination, septum::ToneDestination) },
-        { "dbeam_dest", "D Beam Destination", Kind::Choice, 0, 3,
-          &toneDestinationChoices,
-          PATCH_ENUM (dBeamDestination, septum::ToneDestination) },
-        { "dbeam_assign", "D Beam Assign", Kind::Choice, 0,
-          septum::dBeamAssignCount, &dBeamAssignChoices,
-          PATCH_ENUM (dBeamAssign, septum::DBeamAssign) },
-        { "dbeam_polarity", "D Beam Polarity", Kind::Choice, 0, 2,
-          &dBeamPolarityChoices,
-          PATCH_ENUM (dBeamPolarity, septum::DBeamPolarity) },
-        { "active_expression", "Active Expression", Kind::Bool, 0, 1, nullptr,
-          PATCH_BOOL (activeExpression) },
+        // The four D Beam bytes. Stored and inert — see PatchBinding::inert.
+        { "dbeam_dest", "D Beam Destination (stored, no controller)",
+          Kind::Choice, 0, 3, &toneDestinationChoices,
+          PATCH_ENUM (dBeamDestination, septum::ToneDestination), true },
+        { "dbeam_assign", "D Beam Assign (stored, no controller)", Kind::Choice,
+          0, septum::dBeamAssignCount, &dBeamAssignChoices,
+          PATCH_ENUM (dBeamAssign, septum::DBeamAssign), true },
+        { "dbeam_polarity", "D Beam Polarity (stored, no controller)",
+          Kind::Choice, 0, 2, &dBeamPolarityChoices,
+          PATCH_ENUM (dBeamPolarity, septum::DBeamPolarity), true },
+        { "active_expression", "Active Expression (stored, no controller)",
+          Kind::Bool, 0, 1, nullptr, PATCH_BOOL (activeExpression), true },
         { "arp_on", "Arpeggio Switch", Kind::Bool, 0, 1, nullptr,
           PATCH_BOOL (arpeggio.on) },
         { "arp_hold", "Arpeggio Hold", Kind::Bool, 0, 1, nullptr,
@@ -581,13 +557,6 @@ void SeptumAudioProcessor::cacheParameterPointers()
         jassert (value != nullptr);
         externalValues.push_back (value);
     }
-    for (const auto& binding : dBeamBindings())
-    {
-        auto* value = parameters.getRawParameterValue (binding.id);
-        jassert (value != nullptr);
-        dBeamValues.push_back (value);
-    }
-
     for (const auto& binding : ccBindings)
     {
         const juce::String id =
@@ -785,20 +754,6 @@ SeptumAudioProcessor::createParameterLayout()
         juce::ParameterID { "system_transpose", 1 }, "Transpose", -5, 6, 0,
         intAttributes ("system_transpose")));
 
-    const septum::DBeam beamDefaults {};
-    for (const auto& binding : dBeamBindings())
-    {
-        const auto defaultValue = binding.get (beamDefaults);
-        if (binding.kind == Kind::Choice)
-            layout.add (std::make_unique<juce::AudioParameterChoice> (
-                juce::ParameterID { binding.id, 1 }, binding.label,
-                *binding.choices, (int) std::lround (defaultValue)));
-        else
-            layout.add (std::make_unique<juce::AudioParameterInt> (
-                juce::ParameterID { binding.id, 1 }, binding.label,
-                binding.low, binding.high, (int) std::lround (defaultValue)));
-    }
-
     const septum::ExternalInput externalDefaults {};
     for (const auto& binding : externalBindings())
     {
@@ -830,23 +785,28 @@ SeptumAudioProcessor::createParameterLayout()
             juce::String (binding.id) == "master_level"
                 ? 100.0f
                 : binding.get (defaults);
+        const bool automatable = ! binding.inert;
         switch (binding.kind)
         {
             case Kind::Int:
                 layout.add (std::make_unique<juce::AudioParameterInt> (
                     juce::ParameterID { binding.id, 1 }, binding.label,
                     binding.low, binding.high, (int) std::lround (defaultValue),
-                    intAttributes (binding.id)));
+                    intAttributes (binding.id).withAutomatable (automatable)));
                 break;
             case Kind::Bool:
                 layout.add (std::make_unique<juce::AudioParameterBool> (
                     juce::ParameterID { binding.id, 1 }, binding.label,
-                    defaultValue >= 0.5f));
+                    defaultValue >= 0.5f,
+                    juce::AudioParameterBoolAttributes().withAutomatable (
+                        automatable)));
                 break;
             case Kind::Choice:
                 layout.add (std::make_unique<juce::AudioParameterChoice> (
                     juce::ParameterID { binding.id, 1 }, binding.label,
-                    *binding.choices, (int) std::lround (defaultValue)));
+                    *binding.choices, (int) std::lround (defaultValue),
+                    juce::AudioParameterChoiceAttributes().withAutomatable (
+                        automatable)));
                 break;
         }
     }
@@ -865,16 +825,6 @@ void SeptumAudioProcessor::applySystemSettings() noexcept
         systemValues[1]->load (std::memory_order_relaxed)));
     engine.setTranspose ((int) std::lround (
         systemValues[2]->load (std::memory_order_relaxed)));
-}
-
-septum::DBeam SeptumAudioProcessor::snapshotDBeam() const
-{
-    septum::DBeam beam {};
-    const auto& bindings = dBeamBindings();
-    for (std::size_t i = 0; i < bindings.size(); ++i)
-        bindings[i].set (beam, dBeamValues[i]->load (std::memory_order_relaxed));
-    septum::clampToDocumentedRanges (beam);
-    return beam;
 }
 
 septum::ExternalInput SeptumAudioProcessor::snapshotExternalInput() const
@@ -922,7 +872,6 @@ void SeptumAudioProcessor::prepareToPlay (double sampleRate,
     applySystemSettings();
     engine.setPatch (snapshotPatch());
     engine.setExternalInput (snapshotExternalInput());
-    engine.setDBeam (snapshotDBeam());
     engine.reset();
     monoScratch.assign ((std::size_t) juce::jmax (samplesPerBlock, 16), 0.0f);
     externalInputL.assign ((std::size_t) juce::jmax (samplesPerBlock, 16), 0.0f);
@@ -1023,18 +972,11 @@ bool SeptumAudioProcessor::handleController (int controller, int value)
         case 64: engine.setHold (value >= 64); return false;
         case 66: engine.setSostenuto (value >= 64); return false;
         case 69:
-            // Settled (OM p. 72): "Part Pitch (D Beam Pitch Mode) CC#69".
-            // The controller *is* the beam's height, so it writes the beam's
-            // own parameter and the mode follows the message: a zero puts the
-            // hand back outside the range.
-            if (auto* parameter = parameters.getParameter ("dbeam_value"))
-            {
-                const auto& range = parameter->getNormalisableRange();
-                if (auto* raw = parameters.getRawParameterValue ("dbeam_value"))
-                    raw->store (range.snapToLegalValue ((float) value),
-                                std::memory_order_relaxed);
-            }
-            return true;
+            // Settled (OM p. 72): CC#69 is "Part Pitch (D Beam Pitch Mode)".
+            // The replica does not implement the D Beam, so the message is
+            // accepted and ignored — `false`, because nothing changed and
+            // re-reading the patch mid-block would be wasted work.
+            return false;
         case 84: engine.setPortamentoControl (value); return false;
         case 120: engine.allSoundOff(); return false;
         case 121:
@@ -1134,10 +1076,17 @@ bool SeptumAudioProcessor::handleMidiMessage (const juce::MidiMessage& message)
     {
         const auto* rawData = message.getSysExData();
         const auto rawSize = (std::size_t) message.getSysExDataSize();
+        // A dump arrives on the audio thread. It writes the raw values here —
+        // atomics only — and the message loop republishes them to the
+        // parameter objects and the host, the same split a received CC uses
+        // since Step 17. Calling loadPatch straight from here built a
+        // juce::String per parameter and notified the host from inside the
+        // render callback.
         Patch livePatch = snapshotPatch();
         if (septum::sysex::decodeSysExMessage (rawData, rawSize, livePatch))
         {
-            loadPatch (livePatch);
+            writePatchToParameters (livePatch);
+            patchReconciler.triggerAsyncUpdate();
             return true;
         }
     }
@@ -1318,7 +1267,6 @@ void SeptumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         // old and new external settings is as torn as a mixed patch.
         const auto generation = patchGeneration.load (std::memory_order_acquire);
         const septum::ExternalInput external = snapshotExternalInput();
-        const septum::DBeam beam = snapshotDBeam();
 
         const int staged = stagedProgram.load (std::memory_order_acquire);
         const bool stagedProgramPending =
@@ -1335,9 +1283,6 @@ void SeptumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         if (stable)
         {
             engine.setExternalInput (external);
-            // After the external block, because setExternalInput re-applies
-            // the beam to whatever the beam last was.
-            engine.setDBeam (beam);
         }
         if (stagedProgramPending)
             engine.setPatch (
@@ -1446,6 +1391,52 @@ void SeptumAudioProcessor::applyProgram (int index)
     // snapshotting the APVTS.
     patchGeneration.fetch_add (1, std::memory_order_acq_rel);
     stagedProgram.store (-1, std::memory_order_release);
+}
+
+// The raw half: atomics only, no juce::String, no host notification. Safe on
+// the audio thread, which is where a received SysEx patch dump arrives.
+void SeptumAudioProcessor::writePatchToParameters (const septum::Patch& patch) noexcept
+{
+    patchGeneration.fetch_add (1, std::memory_order_acq_rel);
+    const auto& bindings = toneBindings();
+    for (std::size_t i = 0; i < bindings.size(); ++i)
+    {
+        upperValues[i]->store (bindings[i].get (patch.upper),
+                               std::memory_order_relaxed);
+        lowerValues[i]->store (bindings[i].get (patch.lower),
+                               std::memory_order_relaxed);
+    }
+    const auto& shared = patchBindings();
+    for (std::size_t i = 0; i < shared.size(); ++i)
+        if (std::strcmp (shared[i].id, "master_level") != 0)
+            patchValues[i]->store (shared[i].get (patch), std::memory_order_relaxed);
+    patchGeneration.fetch_add (1, std::memory_order_acq_rel);
+}
+
+// The message-thread half: republishes whatever the raw values now hold, with
+// host and UI notification. Reached from the queued callback after a SysEx
+// dump landed on the audio path, and directly from loadPatch.
+void SeptumAudioProcessor::republishPatchParameters()
+{
+    const auto publish = [this] (const juce::String& id, std::atomic<float>* raw)
+    {
+        if (raw == nullptr)
+            return;
+        if (auto* parameter = parameters.getParameter (id))
+            parameter->setValueNotifyingHost (
+                parameters.getParameterRange (id).convertTo0to1 (
+                    raw->load (std::memory_order_relaxed)));
+    };
+    const auto& bindings = toneBindings();
+    for (std::size_t i = 0; i < bindings.size(); ++i)
+    {
+        publish ("up_" + juce::String (bindings[i].suffix), upperValues[i]);
+        publish ("lo_" + juce::String (bindings[i].suffix), lowerValues[i]);
+    }
+    const auto& shared = patchBindings();
+    for (std::size_t i = 0; i < shared.size(); ++i)
+        if (std::strcmp (shared[i].id, "master_level") != 0)
+            publish (shared[i].id, patchValues[i]);
 }
 
 void SeptumAudioProcessor::loadPatch (const septum::Patch& patch)
