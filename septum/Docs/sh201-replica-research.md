@@ -736,6 +736,22 @@ were still inline until this pass, and where they now sit:
 
 Moving them changed no audio: the committed demos re-render bit-identically.
 
+### INIT PATCH (settled)
+
+Roland's editor declares a `<default>` for every parameter, and that is the
+state a real unit is in after an initialise. The replica's `initPatch()` is
+those values byte for byte — it is also the default of every plug-in parameter,
+the content of the 32 initialised User slots, and the base the audio thread
+fills in from the parameter list, so it is the one patch that has to be the
+instrument's rather than a convenience. One divergence is deliberate and
+recorded: ARPEGGIO END STEP is 1–32 on the hardware with a default of 1, and the
+replica adds a zero below that range meaning "play the template to its own end",
+which is what a patch carrying no imported grid needs.
+
+The 32 original programs are written against a separate, private base that makes
+no claim about the instrument — they were voiced against it, and re-pointing them
+at Roland's values would have re-voiced all of them.
+
 ## Open questions
 
 Each is a standing research task; the measurement named would close it.

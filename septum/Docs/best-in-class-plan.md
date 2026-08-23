@@ -2147,6 +2147,75 @@ crosses the wire.
 Both code changes are fenced by checks watched to fail against the previous
 readings — 13 of them.
 
+#### Step 52 — INIT PATCH is Roland's INIT PATCH
+
+`initPatch()` is not a convenience in this plug-in. It is the default of every
+parameter in the APVTS layout, so it is what a fresh instance sounds like and
+what a host's "reset to default" gives; it is the content of all 32 initialised
+User slots; and it is the base `snapshotPatch()` fills in from the parameter
+list. It also carries the name INIT PATCH and documents one line of the manual
+("after selecting INIT PATCH only OSC 1 is heard", which is BALANCE at its raw
+minimum). It modelled that one line and took neutral values for the other
+sixty.
+
+Roland's editor supplies all of them. `BufferModel.xml` gives a `<default>` for
+every parameter, and that is the state a real unit is in after an initialise.
+Thirty of the sixty-odd were not Roland's:
+
+| | was | Roland |
+| --- | ---: | ---: |
+| PATCH LEVEL | 100 | 127 |
+| SPLIT POINT | C4 | F3 |
+| OSC 2 wave | SAW | SQR |
+| both PULSE WIDTH | 0 | 64 |
+| PITCH ENV D | 40 | 0 |
+| SLOPE | −24 dB | −12 dB |
+| FILTER ENV D / R | 60 / 20 | 0 / 0 |
+| OVERDRIVE depth | 64 | 100 |
+| TONE LEVEL | 100 | 127 |
+| LEVEL VELO SENS | 0 | +8 |
+| AMP ENV D / R | 60 / 10 | 0 / 0 |
+| DELAY / REVERB send | 0 / 0 | 20 / 20 |
+| both LFO RATE | 64, 80 | 92 |
+| both LFO SYNC NOTE | 1/4 | 1/16 |
+| both LFO DEST 1 / 2 | PITCH | FILTER / AMP |
+| DELAY time, feedback, mod rate, mod depth | 60, +64, 0, 0 | 64, +20, 5, 10 |
+| REVERB pre-delay, size, high cut, density, diffusion, LF damp, HF damp | 0, 5, BYPASS, 96, 96, 250 Hz, −6 dB | 1.0 ms, 8, 12.5 kHz, 127, 127, 4 kHz, 0 dB |
+
+It is Roland's now, and a test reads all 103 of Roland's declared defaults back
+out of the encoded patch — 59 of those checks fail against what shipped.
+
+One divergence is kept deliberately: ARPEGGIO END STEP. Roland's range is 1–32
+with a default of 1; the replica adds a zero below that range meaning "play the
+template to its own end", which is what a patch carrying no imported grid needs,
+and a default of 1 would make INIT PATCH's arpeggio a one-step pattern.
+
+**The 32 original programs were not re-voiced by this.** They were written
+against `initPatch()` as a neutral base and only override what they need, so
+adopting Roland's values would have moved every field they leave alone — every
+preset two decibels louder with its amp decay collapsed to zero. The base they
+were written against is now a private `presetBase()` in the presets file,
+documented as what it is: a design starting point that makes no claim about the
+instrument. All eleven demos are bit-identical.
+
+**Two tests moved with it, and one of them was fragile anyway.**
+
+`envelopeRiseMs` measured the time to reach 90 % of a NOISE take's *largest*
+0.25 ms RMS window. NOISE has no period to confound an envelope, which is why
+it was chosen, but its short-window RMS is itself random, so the largest window
+in a take is an outlier: INIT PATCH's two per cent of extra level reshuffled
+which window that was and moved the answer from 1.75 ms to 8.25 ms without the
+envelope moving at all. It measures against the median of the last third of the
+trace now — where the envelope has actually arrived, which is what a rise time
+is measured against.
+
+The Step 49 resonance sweep now pins PATCH LEVEL, TONE LEVEL and LEVEL VELO
+SENS at the values that measurement was made under. INIT PATCH's 127/127/+8
+puts two saws at unity into the output limiter on their own, which would have
+made that test's peak clause a reading of the patch's headroom rather than of
+the filter's behaviour. Its monotonicity clause — the defect it exists for —
+passes either way.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:

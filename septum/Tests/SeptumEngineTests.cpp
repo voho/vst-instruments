@@ -2410,6 +2410,15 @@ void testResonanceIsMonotoneAndNeverClips()
                 patch.upper.osc1.wave = septum::Waveform::Saw;
                 patch.upper.osc2.wave = septum::Waveform::Saw;
                 patch.upper.balance = 0;
+                // The gain conditions Step 49 measured the cliff under, pinned
+                // rather than inherited: INIT PATCH carries PATCH LEVEL 127,
+                // TONE LEVEL 127 and LEVEL VELO SENS +8, and two saws at unity
+                // through that reach the output limiter on their own — which
+                // would make the peak clause below a reading of the patch's
+                // headroom instead of the filter's behaviour.
+                patch.patchLevel = 100;
+                patch.upper.level = 100;
+                patch.upper.levelVelocitySens = 0;
                 patch.upper.filterType = type;
                 patch.upper.filterSlope = slope;
                 patch.upper.cutoff = 60;
@@ -2874,11 +2883,22 @@ double envelopeRiseMs (const Render& take, double sampleRate, double fraction)
             count = 0;
         }
     }
-    double peak = 0.0;
-    for (double value : trace)
-        peak = std::max (peak, value);
+    if (trace.empty())
+        return 1.0e9;
+    // Against the *settled* level, not the trace's own maximum. NOISE has no
+    // period to confound the envelope, but its 0.25 ms RMS is itself random, so
+    // the largest window in a take is an outlier: a 2 % change in overall level
+    // reshuffled which window that was and moved the answer from 1.75 ms to
+    // 8.25 ms without the envelope moving at all. The median of the last third
+    // is where the envelope has arrived, which is what a rise time is measured
+    // against.
+    std::vector<double> settled (trace.begin()
+                                     + (std::ptrdiff_t) (2 * trace.size() / 3),
+                                 trace.end());
+    std::sort (settled.begin(), settled.end());
+    const double target = fraction * settled[settled.size() / 2];
     for (std::size_t i = 0; i < trace.size(); ++i)
-        if (trace[i] >= fraction * peak)
+        if (trace[i] >= target)
             return (double) i * 0.25;
     return 1.0e9;
 }
@@ -4742,6 +4762,143 @@ void testPatchCommonMatchesTheAddressMap()
 // PATCH TEMPO 120: 8 whole notes at 120 BPM is 16.0 s, which is what the
 // recordings sweep in (15.91 s and 16.06 s by centroid autocorrelation), where
 // "1 is OFF" would leave the LFO free-running at RATE 124, tens of hertz.
+// [settled] INIT PATCH is Roland's, byte for byte. Every `<default>` in
+// `Script/BufferModel.xml` in the SH-201 Editor v1.10 — the state a real unit
+// is in after an initialise — read against what the codec encodes. Both tones
+// are checked against the same Patch Tone defaults, because Roland declares one
+// PatchTone structure and both instances take it.
+//
+// Excluded: the patch name and PATCH TEMPO, which are nibbled fields rather
+// than single bytes, and ARPEGGIO END STEP, the one place the replica knowingly
+// differs — Roland's range is 1-32 with a default of 1, and the replica adds a
+// zero below that range meaning "play the template to its own end", which is
+// what a patch carrying no imported grid needs.
+void testInitPatchIsRolandsInitPatch()
+{
+    const auto packets = septum::sysex::encodePatchToSysExPackets (septum::initPatch());
+    struct Default { int block; int offset; int value; };
+    static constexpr Default rolandDefaults[] {
+        { 0, 0x0C, 127 },   // patchLevel
+        { 0, 0x0D,  64 },   // toneBalance
+        { 0, 0x11,   0 },   // keyboardMode
+        { 0, 0x12,   0 },   // keyboardPart
+        { 0, 0x13,  53 },   // splitPoint
+        { 0, 0x14,   2 },   // splitArpeggio
+        { 0, 0x15,   2 },   // modulationDestination
+        { 0, 0x16,   2 },   // dBeamDestination
+        { 0, 0x17,   2 },   // pitchBendDestination
+        { 0, 0x18,   2 },   // expressionDestination
+        { 0, 0x19,   0 },   // activeExpressionSwitch
+        { 0, 0x1A,   0 },   // arpeggioSwitch
+        { 0, 0x1B,   0 },   // arpeggioHold
+        { 0, 0x1C,   0 },   // delaySwitch
+        { 0, 0x1D,   0 },   // reverbSwitch
+        { 0, 0x1E,   0 },   // modulationAssign
+        { 0, 0x1F,   7 },   // dBeamAssign
+        { 0, 0x20,   1 },   // dBeamPolarity
+        { 1, 0x00,   0 },   // oscType[0]
+        { 1, 0x01,   0 },   // oscPitchWideSwitch[0]
+        { 1, 0x02,  64 },   // oscCoarseTune[0]
+        { 1, 0x03,  64 },   // oscFineTune[0]
+        { 1, 0x04,  64 },   // oscPulseWidth[0]
+        { 1, 0x05,  64 },   // oscPitchEnvDepth[0]
+        { 1, 0x06,   1 },   // oscType[1]
+        { 1, 0x07,   0 },   // oscPitchWideSwitch[1]
+        { 1, 0x08,  64 },   // oscCoarseTune[1]
+        { 1, 0x09,  64 },   // oscFineTune[1]
+        { 1, 0x0A,  64 },   // oscPulseWidth[1]
+        { 1, 0x0B,  64 },   // oscPitchEnvDepth[1]
+        { 1, 0x0C,   0 },   // pitchEnvAttackTime
+        { 1, 0x0D,   0 },   // pitchEnvDecay
+        { 1, 0x0E,   0 },   // mixMODType
+        { 1, 0x0F,   1 },   // mixMODBalance
+        { 1, 0x10,   0 },   // mixMODLowFreq
+        { 1, 0x11,   1 },   // filterType
+        { 1, 0x12,   0 },   // filterSlope
+        { 1, 0x13, 127 },   // filterCutoffFrequency
+        { 1, 0x14,  64 },   // filterCutoffKeyfollow
+        { 1, 0x15,  64 },   // filterCutoffVelocitySens
+        { 1, 0x16,   0 },   // filterResonance
+        { 1, 0x17,   0 },   // filterEnvAttackTime
+        { 1, 0x18,   0 },   // filterDecayTime
+        { 1, 0x19, 127 },   // filterSustainLevel
+        { 1, 0x1A,   0 },   // filterReleaseTime
+        { 1, 0x1B,  64 },   // filterEnvDepth
+        { 1, 0x1C,   0 },   // ampOverdriveSwitch
+        { 1, 0x1D, 100 },   // ampOverdriveDepth
+        { 1, 0x1E, 127 },   // ampLevel
+        { 1, 0x1F,  72 },   // ampLevelVelocitySens
+        { 1, 0x20,  64 },   // ampPan
+        { 1, 0x21,   0 },   // ampEnvAttackTime
+        { 1, 0x22,   0 },   // ampEnvDecayTime
+        { 1, 0x23, 127 },   // ampEnvSustainLevel
+        { 1, 0x24,   0 },   // ampEnvReleaseTime
+        { 1, 0x25,  20 },   // delayDepth
+        { 1, 0x26,  20 },   // reverbDepth
+        { 1, 0x27,   0 },   // lfoType[0]
+        { 1, 0x28,  92 },   // lfoRate[0]
+        { 1, 0x29,   0 },   // lfoTempoSyncSwitch[0]
+        { 1, 0x2A,  17 },   // lfoTempoSyncNote[0]
+        { 1, 0x2B,   0 },   // lfoFadeTime[0]
+        { 1, 0x2C,   0 },   // lfoKeyTrigger[0]
+        { 1, 0x2D,   2 },   // lfoDestination1[0]
+        { 1, 0x2E,  64 },   // lfoDepth1[0]
+        { 1, 0x2F,   2 },   // lfoDestination2[0]
+        { 1, 0x30,  64 },   // lfoDepth2[0]
+        { 1, 0x31,   0 },   // lfoType[1]
+        { 1, 0x32,  92 },   // lfoRate[1]
+        { 1, 0x33,   0 },   // lfoTempoSyncSwitch[1]
+        { 1, 0x34,  17 },   // lfoTempoSyncNote[1]
+        { 1, 0x35,   0 },   // lfoFadeTime[1]
+        { 1, 0x36,   0 },   // lfoKeyTrigger[1]
+        { 1, 0x37,   2 },   // lfoDestination1[1]
+        { 1, 0x38,  64 },   // lfoDepth1[1]
+        { 1, 0x39,   2 },   // lfoDestination2[1]
+        { 1, 0x3A,  64 },   // lfoDepth2[1]
+        { 1, 0x3B,   2 },   // pitchBendRange
+        { 1, 0x3C,  64 },   // octaveShift
+        { 1, 0x3D,   0 },   // portamentoSwitch
+        { 1, 0x3E,  20 },   // portamentoTime
+        { 1, 0x3F,   0 },   // monoSoloSelect
+        { 3, 0x00,  64 },   // time
+        { 3, 0x01,  59 },   // feedback
+        { 3, 0x02,  17 },   // hfDamp
+        { 3, 0x03,   5 },   // modulationRate
+        { 3, 0x04,  10 },   // modulationDepth
+        { 4, 0x00,  64 },   // time
+        { 4, 0x01,  10 },   // preDelay
+        { 4, 0x02,   7 },   // size
+        { 4, 0x03,  19 },   // highCut
+        { 4, 0x04, 127 },   // density
+        { 4, 0x05, 127 },   // diffusion
+        { 4, 0x06,  19 },   // lfDampFrequency
+        { 4, 0x07,  36 },   // lfDampGain
+        { 4, 0x08,   0 },   // hfDampFrequency
+        { 4, 0x09,  36 },   // hfDampGain
+        { 5, 0x00,   5 },   // arpeggioGrid
+        { 5, 0x01,   5 },   // arpeggioDuration
+        { 5, 0x02,   2 },   // arpeggioMotif
+        { 5, 0x03,  64 },   // arpeggioOctaveRange
+        { 5, 0x04, 100 },   // arpeggioAccentRate
+        { 5, 0x05,   0 },   // arpeggioVelocity
+    };
+
+    for (const auto& entry : rolandDefaults)
+    {
+        // Tone defaults are declared once and apply to both Patch Tone blocks.
+        for (int block : entry.block == 1 ? std::vector<int> { 1, 2 }
+                                          : std::vector<int> { entry.block })
+        {
+            const int got = (int) packets[(std::size_t) block][11 + (std::size_t) entry.offset];
+            expect (got == entry.value,
+                    "INIT PATCH block " + std::to_string (block) + " offset "
+                        + std::to_string (entry.offset) + " is Roland's "
+                        + std::to_string (entry.value) + " (encoded "
+                        + std::to_string (got) + ")");
+        }
+    }
+}
+
 void testLfoTempoSyncSwitchReadsOffOnLikeEveryOtherSwitch()
 {
     septum::Patch patch = septum::initPatch();
@@ -4935,6 +5092,7 @@ int main()
     testSysExCarriesTheArpeggioGridAndTempo();
     testPatchCommonMatchesTheAddressMap();
     testSysExBlockAddressesMatchTheAddressMap();
+    testInitPatchIsRolandsInitPatch();
     testLfoTempoSyncSwitchReadsOffOnLikeEveryOtherSwitch();
     testReverbPreDelayFollowsTheEditorTable();
     testRepressingAChordToneUpdatesItsVelocity();

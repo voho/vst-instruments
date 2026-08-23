@@ -58,13 +58,85 @@ namespace
     };
 } // namespace
 
+namespace
+{
+    // The neutral starting point the 32 original programs below were written
+    // against. It is a design base and nothing more — it makes no claim about
+    // the instrument, and the thing that does is `initPatch()`. Kept separate
+    // so that pinning INIT PATCH to Roland's own values does not silently
+    // re-voice thirty-two patches that were built on these.
+    Patch presetBase()
+    {
+        Patch patch;
+        patch.name = "INIT PATCH";
+        patch.upper.balance = -63;
+        patch.lower.balance = -63;
+        clampToDocumentedRanges (patch);
+        return patch;
+    }
+} // namespace
+
 Patch initPatch()
 {
+    // Roland's own INIT PATCH, byte for byte, from the `<default>` of every
+    // parameter in `Script/BufferModel.xml` in the SH-201 Editor v1.10 — the
+    // state a real unit is in after an initialise. The manual documents one
+    // consequence of it ("after selecting INIT PATCH only OSC 1 is heard",
+    // which is BALANCE at its raw minimum) and this used to model that one
+    // line and take neutral values for the other sixty; thirty of those were
+    // not Roland's.
     Patch patch;
     patch.name = "INIT PATCH";
-    // Documented: after selecting INIT PATCH only OSC 1 is heard.
-    patch.upper.balance = -63;
-    patch.lower.balance = -63;
+    patch.patchLevel = 127;
+    patch.splitPoint = 53;             // F3
+    patch.dBeamPolarity = DBeamPolarity::Minus;   // inert, but round-trips
+
+    for (TonePatch* tone : { &patch.upper, &patch.lower })
+    {
+        tone->osc1.wave = Waveform::Saw;
+        tone->osc1.pulseWidth = 64;
+        tone->osc2.wave = Waveform::Square;
+        tone->osc2.pulseWidth = 64;
+        tone->pitchEnvDecay = 0;
+        tone->balance = -63;           // the documented "only OSC 1 is heard"
+        tone->filterType = FilterType::Lpf;
+        tone->filterSlope = FilterSlope::Db12;
+        tone->filterEnvDecay = 0;
+        tone->filterEnvRelease = 0;
+        tone->drive = 100;
+        tone->level = 127;
+        tone->levelVelocitySens = 8;   // raw 72
+        tone->ampEnvDecay = 0;
+        tone->ampEnvRelease = 0;
+        tone->delayDepth = 20;
+        tone->reverbDepth = 20;
+        for (LfoParams* lfo : { &tone->lfo1, &tone->lfo2 })
+        {
+            lfo->rate = 92;
+            lfo->tempoSyncNote = 17;   // 1/16
+            lfo->destination1 = LfoDest1::Filter;
+            lfo->destination2 = LfoDest2::Amp;
+        }
+    }
+
+    patch.delay.time = 64;
+    patch.delay.feedback = 20;         // raw 59, and the display is 2 % a step
+    patch.delay.modulationRate = 5;
+    patch.delay.modulationDepth = 10;
+
+    patch.reverb.preDelay = 10;        // 1.0 ms on Roland's own table
+    patch.reverb.size = 7;
+    patch.reverb.highCut = 19;
+    patch.reverb.density = 127;
+    patch.reverb.diffusion = 127;
+    patch.reverb.lfDampFrequency = 19;
+    patch.reverb.hfDampFrequency = 0;
+    patch.reverb.hfDampGain = 0;
+
+    // END STEP is the one place this deliberately differs. Roland's range is
+    // 1-32 and its default is 1; the replica adds a zero below that range
+    // meaning "play the template to its own end", which is what a patch with
+    // no imported grid needs. Recorded in the contract rather than matched.
     clampToDocumentedRanges (patch);
     return patch;
 }
@@ -114,7 +186,7 @@ namespace
 
     Patch presetA1_superSawLead()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "SuperLead201";
         p.upper.osc1.wave = Waveform::SuperSaw;
         p.upper.osc1.pulseWidth = 86;
@@ -144,7 +216,7 @@ namespace
 
     Patch presetA2_trancePluck()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Trance Pluck";
         p.upper.osc1.wave = Waveform::SuperSaw;
         p.upper.osc1.pulseWidth = 72;
@@ -173,7 +245,7 @@ namespace
 
     Patch presetA3_fbHowlLead()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "FB Howl Lead";
         p.upper.osc1.wave = Waveform::FbOsc;
         p.upper.osc1.pulseWidth = 92;
@@ -198,7 +270,7 @@ namespace
 
     Patch presetA4_syncSweeper()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Sync Sweeper";
         p.upper.osc1.wave = Waveform::Saw;
         p.upper.osc1.coarse = 7;
@@ -221,7 +293,7 @@ namespace
 
     Patch presetA5_jupiterLead()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Jupiter Lead";
         p.upper.osc1.wave = Waveform::PulseSquare;
         p.upper.osc1.pulseWidth = 50;
@@ -249,7 +321,7 @@ namespace
 
     Patch presetA6_sawReFi()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Saw Re-Fi";
         p.upper.osc1.wave = Waveform::Saw;
         p.upper.osc2.wave = Waveform::Saw;
@@ -273,7 +345,7 @@ namespace
 
     Patch presetA7_fifthLead()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "5th Anthem";
         p.upper.osc1.wave = Waveform::SuperSaw;
         p.upper.osc1.pulseWidth = 78;
@@ -299,7 +371,7 @@ namespace
 
     Patch presetA8_soloHero()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "SoloScreamer";
         p.upper.osc1.wave = Waveform::Saw;
         p.upper.osc2.wave = Waveform::Square;
@@ -329,7 +401,7 @@ namespace
 
     Patch presetB1_acid201()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Acid 201";
         p.upper.osc1.wave = Waveform::Saw;
         p.upper.osc2.wave = Waveform::Square;
@@ -352,7 +424,7 @@ namespace
 
     Patch presetB2_subBass201()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Sub Bass 201";
         p.upper.osc1.wave = Waveform::Square;
         p.upper.osc2.wave = Waveform::Sine;
@@ -371,7 +443,7 @@ namespace
 
     Patch presetB3_pwmSlapBass()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "PWM SlapBass";
         p.upper.osc1.wave = Waveform::PulseSquare;
         p.upper.osc1.pulseWidth = 35;
@@ -396,7 +468,7 @@ namespace
 
     Patch presetB4_overdriveBass()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Grit Bass";
         p.upper.osc1.wave = Waveform::Saw;
         p.upper.osc2.wave = Waveform::Square;
@@ -416,7 +488,7 @@ namespace
 
     Patch presetB5_solidPunch()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Solid Punch";
         p.upper.osc1.wave = Waveform::Triangle;
         p.upper.osc1.pitchEnvDepth = 28;
@@ -438,7 +510,7 @@ namespace
 
     Patch presetB6_resoStepBass()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Reso Squawk";
         p.upper.osc1.wave = Waveform::Saw;
         p.upper.osc2.wave = Waveform::PulseSquare;
@@ -458,7 +530,7 @@ namespace
 
     Patch presetB7_dubbySub()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Dub Sub 201";
         p.upper.osc1.wave = Waveform::Sine;
         p.upper.osc2.wave = Waveform::Triangle;
@@ -479,7 +551,7 @@ namespace
 
     Patch presetB8_fbHeavyBass()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "FB GrowlBass";
         p.upper.osc1.wave = Waveform::FbOsc;
         p.upper.osc1.pulseWidth = 75;
@@ -504,7 +576,7 @@ namespace
 
     Patch presetC1_alaskaDual()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Alaska Dual";
         p.keyboardMode = KeyboardMode::Dual;
         p.upper.osc1.wave = Waveform::SuperSaw;
@@ -539,7 +611,7 @@ namespace
 
     Patch presetC2_pwmStrings()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "PWM Strings";
         p.upper.osc1.wave = Waveform::PulseSquare;
         p.upper.osc1.pulseWidth = 40;
@@ -569,7 +641,7 @@ namespace
 
     Patch presetC3_superSawPad()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "SuperSaw Pad";
         p.upper.osc1.wave = Waveform::SuperSaw;
         p.upper.osc1.pulseWidth = 65;
@@ -597,7 +669,7 @@ namespace
 
     Patch presetC4_spaceChoir()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Space Choir";
         p.upper.osc1.wave = Waveform::Saw;
         p.upper.osc2.wave = Waveform::PulseSquare;
@@ -622,7 +694,7 @@ namespace
 
     Patch presetC5_ringBell()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Glass Bell";
         p.upper.osc1.wave = Waveform::Sine;
         p.upper.osc1.pitchWide = true;
@@ -648,7 +720,7 @@ namespace
 
     Patch presetC6_airPad()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Air Ethereal";
         p.upper.osc1.wave = Waveform::Saw;
         p.upper.osc2.wave = Waveform::Noise;
@@ -667,7 +739,7 @@ namespace
 
     Patch presetC7_retroBrass()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Retro Brass";
         p.upper.osc1.wave = Waveform::Saw;
         p.upper.osc2.wave = Waveform::Saw;
@@ -690,7 +762,7 @@ namespace
 
     Patch presetC8_sweepPad()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Sweep Aurora";
         p.upper.osc1.wave = Waveform::SuperSaw;
         p.upper.osc1.pulseWidth = 55;
@@ -721,7 +793,7 @@ namespace
 
     Patch presetD1_clubSplit()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Club Split";
         p.keyboardMode = KeyboardMode::Split;
         p.splitPoint = 60;
@@ -757,7 +829,7 @@ namespace
 
     Patch presetD2_sampleHoldRobot()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "S&H Robot";
         p.upper.osc1.wave = Waveform::Noise;
         p.upper.osc2.wave = Waveform::Square;
@@ -780,7 +852,7 @@ namespace
 
     Patch presetD3_ionWind()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Ion Wind";
         p.upper.osc1.wave = Waveform::Noise;
         p.upper.filterType = FilterType::Bpf;
@@ -801,7 +873,7 @@ namespace
 
     Patch presetD4_arpChime()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Arp Chime";
         p.upper.osc1.wave = Waveform::Triangle;
         p.upper.osc2.wave = Waveform::Sine;
@@ -827,7 +899,7 @@ namespace
 
     Patch presetD5_technoPulse()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Techno Pulse";
         p.upper.osc1.wave = Waveform::Saw;
         p.upper.osc2.wave = Waveform::PulseSquare;
@@ -851,7 +923,7 @@ namespace
 
     Patch presetD6_alienSignal()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Alien Signal";
         p.upper.osc1.wave = Waveform::Sine;
         p.upper.osc1.coarse = 19;
@@ -877,7 +949,7 @@ namespace
 
     Patch presetD7_laserSweep()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Laser Sweep";
         p.upper.osc1.wave = Waveform::Saw;
         p.upper.osc1.pitchEnvDepth = 63;
@@ -900,7 +972,7 @@ namespace
 
     Patch presetD8_spaceDrone()
     {
-        Patch p = initPatch();
+        Patch p = presetBase();
         p.name = "Space Drone";
         p.upper.osc1.wave = Waveform::FbOsc;
         p.upper.osc1.pulseWidth = 85;
