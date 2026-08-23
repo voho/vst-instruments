@@ -27,23 +27,50 @@ inline constexpr std::array<std::uint8_t, 3> sh201ModelId { 0x00, 0x00, 0x16 };
 inline constexpr std::uint8_t cmdRq1 = 0x11; // Request data 1
 inline constexpr std::uint8_t cmdDt1 = 0x12; // Data set 1
 
-// Base address blocks (MIDI Implementation section 4)
-inline constexpr std::uint32_t addrTempPatchCommon = 0x00000000;
-inline constexpr std::uint32_t addrTempUpperTone   = 0x00000100;
-inline constexpr std::uint32_t addrTempLowerTone   = 0x00000200;
-inline constexpr std::uint32_t addrTempDelay       = 0x00000300;
-inline constexpr std::uint32_t addrTempReverb      = 0x00000400;
-inline constexpr std::uint32_t addrTempArpeggio    = 0x00000500;
-inline constexpr std::uint32_t addrSystemCommon    = 0x01000000;
-inline constexpr std::uint32_t addrUserPatchBase   = 0x20000000;
+// --------------------------------------------------------------------------
+// Address map. Every address and size below is quoted from the MIDI
+// Implementation's "Parameter Address Map" (v1.00, 2006-03-01, pp. 4-5); the
+// top-level table there reads:
+//
+//     01 00 00 00  System
+//     10 00 00 00  Temporary Patch
+//     20 00 00 00  User Patch (001)  ...  20 1F 00 00  User Patch (032)
+//
+// and a Patch's own offsets read:
+//
+//     00 00 00  Patch Common                 00 04 00  Patch Reverb
+//     00 01 00  Patch Tone (1:Upper)         00 05 00  Patch Arpeggio Common
+//     00 02 00  Patch Tone (2:Lower)         00 06 00  Patch Arpeggio Pattern (Note 1)
+//     00 03 00  Patch Delay                       :    ... (Note 16) at 00 15 00
+// --------------------------------------------------------------------------
+inline constexpr std::uint32_t addrSystem         = 0x01000000;
+inline constexpr std::uint32_t addrTemporaryPatch = 0x10000000;
+inline constexpr std::uint32_t addrUserPatchBase  = 0x20000000;
+inline constexpr std::uint32_t userPatchStride    = 0x00010000;
+inline constexpr int userPatchCount = 32;
 
-inline constexpr std::size_t sizePatchCommon = 0x21;
-inline constexpr std::size_t sizeTonePatch   = 0x40;
-inline constexpr std::size_t sizeDelay       = 0x05;
-inline constexpr std::size_t sizeReverb      = 0x0A;
-// Nine header bytes, then END STEP, then the 32 x 16 grid.
-inline constexpr std::size_t sizeArpeggio    = 0x0A + (arpeggioMaxSteps * arpeggioMaxRows);
-inline constexpr std::size_t sizeSystemCommon = 0x1E;
+inline constexpr std::uint32_t offsetPatchCommon     = 0x000000;
+inline constexpr std::uint32_t offsetUpperTone       = 0x000100;
+inline constexpr std::uint32_t offsetLowerTone       = 0x000200;
+inline constexpr std::uint32_t offsetDelay           = 0x000300;
+inline constexpr std::uint32_t offsetReverb          = 0x000400;
+inline constexpr std::uint32_t offsetArpeggioCommon  = 0x000500;
+inline constexpr std::uint32_t offsetArpeggioPattern = 0x000600;
+inline constexpr std::uint32_t arpeggioPatternStride = 0x000100;
+
+// Each block's documented "Total Size".
+inline constexpr std::size_t sizePatchCommon     = 0x21;
+inline constexpr std::size_t sizeTonePatch       = 0x40;
+inline constexpr std::size_t sizeDelay           = 0x05;
+inline constexpr std::size_t sizeReverb          = 0x0A;
+inline constexpr std::size_t sizeArpeggioCommon  = 0x08;
+inline constexpr std::size_t sizeArpeggioPattern = 0x42;
+inline constexpr std::size_t sizeSystemCommon    = 0x21;
+
+// Common, both tones, delay, reverb, arpeggio common, and one pattern block
+// per grid row.
+inline constexpr std::size_t patchBlockCount =
+    6 + static_cast<std::size_t> (arpeggioMaxRows);
 
 // --------------------------------------------------------------------------
 // Checksum calculation (Roland 7-bit checksum rule):
@@ -73,7 +100,10 @@ void encodePatchCommon (const Patch& patch, std::uint8_t* dest) noexcept;
 void encodeTonePatch (const TonePatch& tone, std::uint8_t* dest) noexcept;
 void encodeDelayParams (const DelayParams& delay, std::uint8_t* dest) noexcept;
 void encodeReverbParams (const ReverbParams& reverb, std::uint8_t* dest) noexcept;
-void encodeArpeggioParams (const ArpeggioParams& arp, std::uint8_t* dest) noexcept;
+void encodeArpeggioCommon (const ArpeggioParams& arp, std::uint8_t* dest) noexcept;
+// One Patch Arpeggio Pattern block: the 32 steps of grid row `row` (0-15),
+// preceded by that row's Original Note.
+void encodeArpeggioPattern (const ArpeggioStyle& style, int row, std::uint8_t* dest) noexcept;
 
 // --------------------------------------------------------------------------
 // Block Deserializers (decode raw SysEx byte blocks into structured C++ patch)
@@ -82,7 +112,9 @@ void decodePatchCommon (const std::uint8_t* src, std::size_t size, Patch& patch)
 void decodeTonePatch (const std::uint8_t* src, std::size_t size, TonePatch& tone) noexcept;
 void decodeDelayParams (const std::uint8_t* src, std::size_t size, DelayParams& delay) noexcept;
 void decodeReverbParams (const std::uint8_t* src, std::size_t size, ReverbParams& reverb) noexcept;
-void decodeArpeggioParams (const std::uint8_t* src, std::size_t size, ArpeggioParams& arp) noexcept;
+void decodeArpeggioCommon (const std::uint8_t* src, std::size_t size, ArpeggioParams& arp) noexcept;
+void decodeArpeggioPattern (const std::uint8_t* src, std::size_t size, int row,
+                            ArpeggioStyle& style) noexcept;
 
 // --------------------------------------------------------------------------
 // Full Patch & Packet Codec
@@ -100,12 +132,12 @@ void decodeArpeggioParams (const std::uint8_t* src, std::size_t size, ArpeggioPa
 
 // Builds a full set of DT1 messages for an entire patch at a target base address.
 [[nodiscard]] std::vector<std::vector<std::uint8_t>> encodePatchToSysExPackets (
-    const Patch& patch, std::uint32_t baseAddress = addrTempPatchCommon,
+    const Patch& patch, std::uint32_t baseAddress = addrTemporaryPatch,
     std::uint8_t deviceId = defaultDeviceId);
 
 // Encodes a single monolithic .syx byte buffer containing all DT1 packets for a patch.
 [[nodiscard]] std::vector<std::uint8_t> encodePatchToSyxBuffer (
-    const Patch& patch, std::uint32_t baseAddress = addrTempPatchCommon,
+    const Patch& patch, std::uint32_t baseAddress = addrTemporaryPatch,
     std::uint8_t deviceId = defaultDeviceId);
 
 // Decodes an incoming MIDI SysEx message. Returns true if the message was an

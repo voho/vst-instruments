@@ -13,9 +13,11 @@ Host sessions store the full parameter state, so any edited sound saves with
 the project.
 
 A SysEx dump of a real-hardware patch can be loaded: send it to the plug-in as
-a MIDI System Exclusive message and it becomes the current patch. What comes
-back is the whole parameter surface — both tones, the patch common block, the
-delay and reverb, the arpeggio's settings and the full 5–300 BPM tempo — but
-not the arpeggio's 32 × 16 grid or the patch's name, neither of which has a
-plug-in parameter to live in. The plug-in transmits no SysEx of its own and
-rejects RQ1 data requests; see the README's inventory.
+a MIDI System Exclusive message and it becomes the current patch. The codec
+reads the address map's 22 blocks — the patch common block, both tones, the
+delay and reverb, the arpeggio's own block and the sixteen pattern blocks that
+hold its 32 × 16 grid. What survives the trip on into the plug-in is the whole
+parameter surface, including the full 5–300 BPM tempo, but not the grid itself
+or the patch's name: neither has a plug-in parameter to live in, though the
+block codec round-trips both losslessly. The plug-in transmits no SysEx of its
+own and rejects RQ1 data requests; see the README's inventory.

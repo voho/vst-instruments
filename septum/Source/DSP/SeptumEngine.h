@@ -176,10 +176,19 @@ namespace mapping
         return depth * (5.0 / 63.0);
     }
 
-    // [voiced, OQ-11] DRIVE 0-127 -> pre-gain, up to +32 dB.
+    // [voiced, OQ-11] DRIVE 0-127 -> pre-gain, up to +32 dB, and the output
+    // compensation that follows the clipper. The exponent was the last bare
+    // number left in the render code; the contract already named it
+    // ("output-compensated, pre^-0.4"), so it belongs here with the gain it
+    // compensates.
     [[nodiscard]] inline double overdrivePreGain (int drive) noexcept
     {
         return std::pow (10.0, (drive / 127.0) * (32.0 / 20.0));
+    }
+    inline constexpr double overdriveCompensationExponent = -0.4;
+    [[nodiscard]] inline double overdriveCompensation (double preGain) noexcept
+    {
+        return std::pow (preGain, overdriveCompensationExponent);
     }
 
     // [voiced] The rate the OVERDRIVE shaper is evaluated at. The modelled
@@ -456,20 +465,25 @@ namespace mapping
     // voice takes the input over, and unmuted when it stops.
     inline constexpr double externalMonitorFadeSeconds = 0.005;
 
-    // [settled] One grid section's length in seconds. The manual gives the
-    // divisions; the shuffle *amounts* are voiced (OQ-15) — Light and Heavy
-    // are named, not measured. A shuffled pair keeps its total length and
-    // moves the boundary inside it, so the beat never drifts.
+    // [settled divisions, voiced amounts, OQ-15] Where the boundary inside a
+    // shuffled pair falls. The manual gives the divisions and names Light and
+    // Heavy; it does not say how much either one is, so these two numbers are
+    // the project's own and were the last bare ones left inside a function
+    // this file tagged `[settled]` — a tag that overstated them. A shuffled
+    // pair keeps its total length and moves the boundary inside it, so the
+    // beat never drifts whatever the amounts turn out to be.
+    inline constexpr double arpeggioShuffleLight = 0.58;
+    inline constexpr double arpeggioShuffleHeavy = 0.66;
     [[nodiscard]] inline double arpeggioShuffleRatio (ArpeggioGrid grid) noexcept
     {
         switch (grid)
         {
             case ArpeggioGrid::EighthLight:
             case ArpeggioGrid::SixteenthLight:
-                return 0.58;
+                return arpeggioShuffleLight;
             case ArpeggioGrid::EighthHeavy:
             case ArpeggioGrid::SixteenthHeavy:
-                return 0.66;
+                return arpeggioShuffleHeavy;
             case ArpeggioGrid::Quarter:
             case ArpeggioGrid::Eighth:
             case ArpeggioGrid::Twelfth:

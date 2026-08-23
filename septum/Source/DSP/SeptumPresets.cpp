@@ -1014,10 +1014,7 @@ namespace
                 if (*c == '~')
                     value = arpeggioTie;
                 else if (*c >= '1' && *c <= '9')
-                    // Capped at the highest velocity a cell can carry through
-                // SysEx: 127 is the tie's byte.
-                value = static_cast<signed char> (
-                    std::min ((*c - '0') * 127 / 9, arpeggioMaxCellVelocity));
+                    value = static_cast<signed char> ((*c - '0') * 127 / 9);
                 style.cells[static_cast<std::size_t> (step)]
                            [static_cast<std::size_t> (row)] = value;
             }

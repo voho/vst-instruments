@@ -69,13 +69,16 @@ The MIDI Implementation's address map is adopted verbatim as the engine's
 parameter surface. Every continuous parameter is 7-bit; signed displays use
 `display = raw − 64` (e.g. depth −63…+63 is raw 1–127). The structures:
 
-- **Patch Common** (0x21 bytes): name ×12, patch level 0–127, tone balance
-  −63…+63, tempo 5–300, keyboard mode SINGLE/DUAL/SPLIT, keyboard part,
-  split point A0–C8, arpeggio/delay/reverb
-  switches, modulation assign (OSC1&OSC2 / OSC1 / OSC2 / PW1 / PW2 / FILTER /
-  AMP / AUDIO-FILTER), the four **controller destinations** — MODULATION,
-  D BEAM, PITCH BEND and EXPRESSION, each UPPER / LOWER / BOTH — D-Beam assign
-  (37 destinations), D-Beam polarity, ACTIVE EXPRESSION switch.
+- **Patch Common** (0x21 bytes), in the map's own order: name ×12 (`00`–`0B`),
+  patch level 0–127 (`0C`), tone balance −63…+63 (`0D`), tempo 5–300 as three
+  nibbles (`#0E/0F/10`), keyboard mode SINGLE/DUAL/SPLIT (`11`), keyboard part
+  (`12`), split point A0–C8 (`13`), SPLIT ARPEGGIO UPPER/LOWER/BOTH (`14`),
+  the four **controller destinations** — MODULATION, D BEAM, PITCH BEND and
+  EXPRESSION, each UPPER / LOWER / BOTH (`15`–`18`) — ACTIVE EXPRESSION switch
+  (`19`), arpeggio switch (`1A`) and hold (`1B`), delay switch (`1C`), reverb
+  switch (`1D`), modulation assign (OSC1&OSC2 / OSC1 / OSC2 / PW1 / PW2 /
+  FILTER / AMP / AUDIO-FILTER) (`1E`), D-Beam assign (37 destinations, `1F`),
+  D-Beam polarity (`20`).
 
 **CONTROLLER DESTINATION (settled, OM p. 65).** Each physical controller names
 the tone or tones it reaches: "Selects the tone(s) to be modulated by the
@@ -118,7 +121,16 @@ EXPRESSION are stored and inert — see the D Beam section.
 - **Patch Reverb** (10 bytes): time 0–127; pre-delay 0–100 ms; size 1–8;
   high cut 160–12500 Hz in 20 steps or BYPASS; density 0–127; diffusion
   0–127; LF damp 50–4000 Hz in 20 steps, gain −36…0 dB; HF damp
-  4000–12500 Hz in 6 steps, gain −36…0 dB.
+  4000–12500 Hz in 6 steps, gain −36…0 dB. Both damp gains are raw 0–36
+  counting up from −36 dB, not one of the ±64-biased fields (OQ-17).
+- **Patch Arpeggio Common** (8 bytes): grid (0–8), duration (0–9), motif
+  (0–11), octave range −3…+3 (raw 61–67), accent rate 0–100, velocity
+  (0 = REAL, else 1–127), END STEP 1–32 as two nibbles (`#06/07`).
+- **Patch Arpeggio Pattern** ×16 (0x42 bytes each): one block per grid row,
+  Note 1 at offset `00 06 00` through Note 16 at `00 15 00`. Each holds that
+  row's Original Note followed by its Step1…Step32 data, every field a
+  two-byte nibble with the range 0–128 — 129 values, exactly the number of
+  states a cell has (a rest, 127 velocities, a tie).
 - **System Common**: master tune 415.30–466.20 Hz (raw 24–2024, 0.1-cent
   steps around A440), master key shift −24…+24 (raw 40–88), master level,
   transpose −5…+6 (raw 59–70), octave shift −3…+3 (raw 61–67), clock source
@@ -129,9 +141,8 @@ EXPRESSION are stored and inert — see the D Beam section.
   external-input block is; the rest belong to features that are still
   deferred or to a MIDI topology a plug-in does not have.
 
-The arpeggiator map (grid, duration, motif, 32-step × 16-note pattern) is
-settled by the same document and implemented; see the arpeggiator section
-below.
+The whole map is implemented; the arpeggiator's own reading of it is in the
+arpeggiator section below.
 
 ### CC map (settled, OM p. 72)
 
@@ -489,13 +500,23 @@ play each key", and one style is saved per patch. Its parameters:
   5–300 BPM, while the product page's specification block gives the
   arpeggiator "Tempo: 20–250 B.P.M." The address map is the parameter
   contract, so the replica keeps 5–300; a panel that refuses to leave
-  20–250 would be a display restriction on the same stored value.
+  20–250 would be a display restriction on the same stored value. The map
+  also settles how the value travels: three nibbles at `#00 0E/0F/10`, which
+  is what makes the top of the range reachable at all (OQ-17).
 
 PHRASE is the one motif the manual describes without a worked example
 ("pressing just one key plays a phrase based on the pitch of that key; if you
 press more than one key, the key you press last is used"), so how a style's
 rows become intervals is voiced: the replica reads row *r* as *r*−1 semitones
 above that key (OQ-15).
+
+The address map narrows that question without closing it. Each of the sixteen
+Patch Arpeggio Pattern blocks opens with an **Original Note (0–128)** of its
+own (offset `00 00`), so a style's rows carry recorded pitches, not just
+positions — which is the shape a transposed phrase would need. What reads the
+field is not written down anywhere this project has, so the engine stores it
+(a hardware dump survives a load and a re-save intact) and PHRASE keeps the
+voiced reading above. None of the styles shipped here sets it.
 
 **The 32 factory arpeggio styles are Roland's data and none of them ships
 here**, exactly as with the 64 factory patches. The styles supplied are
@@ -629,6 +650,8 @@ were still inline until this pass, and where they now sit:
 | `delayModulationRateHz`, `delayModulationDepthSeconds` | OQ-12 |
 | `reverbLineSeconds`, `reverbDiffuserSeconds`, `reverbSizeScale`, `reverbDiffusionGain`, `reverbDensityGain`, `reverbInputInjection`, `reverbWetReturn` | OQ-12 |
 | `filterSecondStageDamping`, `filterStateLimit` | OQ-08 |
+| `arpeggioShuffleLight`, `arpeggioShuffleHeavy` — how far a shuffled pair's boundary moves. The manual names Light and Heavy and does not measure them | OQ-15 |
+| `overdriveCompensationExponent` — the output compensation that follows the clipper | OQ-11 |
 | `voiceHeadroom`, `outputLimitKnee`, `outputLimitRange`, `partPanCentreGain`, `masterSlewSeconds`, `delayTimeSlewSeconds`, `controlSlewSeconds` | none — these are engineering choices about headroom, safety and zipper, not claims about the instrument, and no measurement of a real unit would settle them |
 
 Moving them changed no audio: the committed demos re-render bit-identically.
@@ -713,6 +736,58 @@ Each is a standing research task; the measurement named would close it.
   GRID, ACCENT and OCTAVE RANGE settings and reading the note times and
   velocities straight off it — the one open question in this project that a
   MIDI capture alone can close, with no audio analysis needed.
+- **OQ-17 — the SysEx layout this project has not corroborated. ANSWERED
+  2026-08-23** by reading the MIDI Implementation's Parameter Address Map
+  directly (v1.00, 2006-03-01, pp. 4–5) rather than working from this
+  document's quotations of it. Both `[unverified]` bytes were wrong, and so
+  were four more the question had not suspected. Patch Common as printed:
+
+  | Offset | Parameter | What the codec had |
+  | --- | --- | --- |
+  | `#00 0E/0F/10` | Patch Tempo (5–300), **three** nibbles | a two-byte 7-bit split (and before that, two nibbles, which could not reach 300) |
+  | `00 14` | Split Arpeggio (0–2 UPPER/LOWER/BOTH) | a DELAY+REVERB bitmask |
+  | `00 1A` | Arpeggio Switch | nothing (the switch sat at `00 1C`) |
+  | `00 1B` | Arpeggio Hold | nothing (the switch sat at `00 1D`) |
+  | `00 1C` | Delay Switch | Arpeggio Switch |
+  | `00 1D` | Reverb Switch | Arpeggio Hold |
+
+  Every other Patch Common offset, all 64 Patch Tone offsets, Patch Delay
+  (`00 00 00 05`) and Patch Reverb (`00 00 00 0A`) with all four of their
+  damping and frequency tables were already right. Three further divergences
+  the map settled at the same time:
+
+  - The block base addresses are absolute. Temporary Patch is at
+    `10 00 00 00`, not `00 00 00 00`, and User Patch 001–**032** at
+    `20 00 00 00`…`20 1F 00 00` — 32 slots, one step of `00 01 00 00` apart.
+    The bank writer had been packing patches at `20 00 00 00 | bank<<16 |
+    (slot*8)<<8`, which is neither.
+  - The arpeggio grid is not one block. Patch Arpeggio Common is
+    `00 00 00 08` — grid, duration, motif, octave range, accent rate,
+    velocity, and End Step as two nibbles at `#00 06/07` — and the 32 × 16
+    grid lives in sixteen **Patch Arpeggio Pattern (Note 1…16)** blocks at
+    `00 06 00`…`00 15 00`, `00 00 00 42` each: an Original Note followed by
+    Step1…Step32, every field a two-byte nibble with the range 0–128. A patch
+    is therefore 22 DT1 blocks, not six, and ends at offset `00 15 42` —
+    which is exactly the size the document's own worked RQ1 example requests.
+    Both of the document's finished example messages are now test vectors.
+  - Reverb LF/HF Damp Gain (`00 07`, `00 09`) is a plain 0–36 counting up
+    from −36 dB, not one of the map's ±64-biased fields. Encoding it as one
+    put 0 dB at byte 64 and −36 dB at byte 28, neither inside the documented
+    range.
+
+  A dump from a real unit is still the thing that would *prove* the codec
+  round-trips — see below — but the layout is no longer this project's guess
+  anywhere.
+- **OQ-18 — the LFO tempo-sync bit order.** The address map lists Patch Tone
+  `00 29` and `00 33`, LFO1 and LFO2 Tempo Sync Switch, as `(0 — 1) / ON,
+  OFF`. Every other switch in the map — 26 of them — reads `OFF, ON`. The
+  reversal is printed twice, once per LFO, so it is not a slip in one line,
+  and the codec now writes it as printed: 0 is ON. The alternative is that
+  Roland's own document is wrong in the same way twice. Close by dumping one
+  patch from a real unit with LFO1 TEMPO SYNC on and reading byte `00 29`;
+  nothing else in this project turns on the answer, because both sides of the
+  codec agree with each other whichever way it goes — only a dump written by
+  the hardware can tell them apart.
 - **OQ-16 — D Beam calibration. WITHDRAWN 2026-08-23**, with the controller
   it belonged to: an infrared distance sensor has no meaning in a plug-in, so
   there is nothing left for the capture below to calibrate. Kept as a record
@@ -736,9 +811,11 @@ Each is a standing research task; the measurement named would close it.
 
 The 64 factory patches' parameter values exist in every real unit and are
 retrievable over documented RQ1 requests (`20 00 00 00`…, 0x1542 bytes per
-patch). A dump would provide: regression test vectors for the parameter
-codec, empirical resolution of the LFO tempo-sync bit order ("ON, OFF" as
-printed vs the standard "OFF, ON"), the bank-select LSB discrepancy
+patch — the size the MIDI Implementation's own worked example asks for). A
+dump would provide: regression test vectors for the parameter codec,
+empirical resolution of the LFO tempo-sync bit order (OQ-18: "ON, OFF" as
+printed, which is what the codec now writes, vs the standard "OFF, ON"),
+the bank-select LSB discrepancy
 (manual p. 84 says PRESET LSB 64; MIDI implementation p. 1 says LSB 0 for
 preset and 20H for user), and patch-matched settings for every official
 demo MP3. No dump ships in this repository — the data is Roland's — but a

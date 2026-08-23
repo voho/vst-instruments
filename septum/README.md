@@ -207,9 +207,23 @@ which voice a steal takes: the longest-released, else the oldest sounding.
 **settled** — the control-change map from owner's manual p. 72 for both tones
 and the part controllers, including the audio filter's CC#2 and CC#4 and the
 printed CC#88 collision resolved to CC#83 as the contract documents; program
-change and bank select; and the SH-201 DT1 System Exclusive format, which the
-plug-in **receives** (a dump sent to it loads the patch) and can **encode** for
-a host that asks for it through the API.
+change and bank select; and Roland's documented DT1 System Exclusive framing,
+which the plug-in **receives** (a dump sent to it loads the patch) and can
+**encode** for a host that asks for it through the API.
+
+**Where the codec is grounded.** Every address, size and range in it is the
+MIDI Implementation's Parameter Address Map (v1.00, 2006-03-01, pp. 4–5),
+read directly. A patch is the map's 22 blocks — common, the two tones, delay,
+reverb, arpeggio common, and one Patch Arpeggio Pattern block per grid row —
+at the map's own absolute addresses: Temporary Patch at `10 00 00 00`, User
+Patch 001–032 at `20 00 00 00`…`20 1F 00 00`. It ends at offset `00 15 42`,
+which is the size the document's own worked RQ1 example asks for, and both of
+the finished messages that document prints are test vectors here. `OQ-17`
+records what the read corrected, including a tempo encoding that could not
+reach the top of its own range and two effect switches that had been sharing
+an invented byte. One byte is still open: `OQ-18`, the LFO tempo-sync switch,
+which the map prints as `ON, OFF` where all 26 of its other switches read
+`OFF, ON`. The codec writes it as printed.
 
 **not modelled, and what that costs:** RQ1 data requests are rejected and the
 plug-in never transmits SysEx of its own. A received dump restores the whole

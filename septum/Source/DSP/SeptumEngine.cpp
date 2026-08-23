@@ -1723,7 +1723,7 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
 
     // [voiced, OQ-11] The drive curve, hoisted out of the sample loop.
     const double overdrivePreGain = mapping::overdrivePreGain (tone.drive);
-    const double overdriveCompensation = std::pow (overdrivePreGain, -0.4);
+    const double overdriveCompensation = mapping::overdriveCompensation (overdrivePreGain);
 
     // Per-sample walk from this tick's starting coefficients to the ones the
     // control update just computed.

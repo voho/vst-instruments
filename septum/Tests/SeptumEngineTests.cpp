@@ -3024,6 +3024,44 @@ void testSysExChecksumAndProtocol()
     const auto rq1 = septum::sysex::makeRq1Message (0x00000100, 0x00000040);
     expect (rq1.size() == 17, "RQ1 message length is 17 bytes");
     expect (rq1[6] == 0x11, "RQ1 command byte is 11H");
+
+    // The MIDI Implementation prints two finished messages of its own
+    // (Supplementary Material, p. 6). They are the only bytes in this project
+    // that a real SH-201 is known to have accepted, so the builders are
+    // checked against them literally.
+    const auto matches = [] (const std::vector<std::uint8_t>& actual,
+                             const std::vector<std::uint8_t>& expected)
+    {
+        return actual == expected;
+    };
+
+    // <Example1> Setting REVERB SIZE of PATCH (DT1), device ID 10H:
+    //     F0 41 10 00 00 16 12 10 00 04 02 00 6A F7
+    const std::uint8_t reverbSizeData[] = { 0x00 };
+    const auto docDt1 = septum::sysex::makeDt1Message (0x10000402, reverbSizeData, 1, 0x10);
+    expect (matches (docDt1, { 0xF0, 0x41, 0x10, 0x00, 0x00, 0x16, 0x12,
+                               0x10, 0x00, 0x04, 0x02, 0x00, 0x6A, 0xF7 }),
+            "the document's own DT1 example is reproduced byte for byte");
+
+    // <Example3> Getting Temporary Patch data (RQ1), device ID 10H:
+    //     F0 41 10 00 00 16 11 10 00 00 00 00 00 15 42 19 F7
+    // The size is the whole patch: through Arpeggio Pattern (Note 16) at
+    // 00 15 00 plus its 42H bytes.
+    const auto docRq1 = septum::sysex::makeRq1Message (0x10000000, 0x00001542, 0x10);
+    expect (matches (docRq1, { 0xF0, 0x41, 0x10, 0x00, 0x00, 0x16, 0x11,
+                               0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x15, 0x42,
+                               0x19, 0xF7 }),
+            "the document's own RQ1 example is reproduced byte for byte");
+
+    // That size is not a magic number: it is where this codec's own last
+    // block ends.
+    const std::uint32_t endOfPatch = septum::sysex::offsetArpeggioPattern
+                                     + (septum::arpeggioMaxRows - 1)
+                                           * septum::sysex::arpeggioPatternStride
+                                     + (std::uint32_t) septum::sysex::sizeArpeggioPattern;
+    expect (endOfPatch == 0x1542u,
+            "the codec's blocks end exactly where the document's request does (got 0x"
+                + std::to_string (endOfPatch) + ")");
 }
 
 void testSysExPatchSerializationRoundtrip()
@@ -3031,7 +3069,8 @@ void testSysExPatchSerializationRoundtrip()
     for (const auto& entry : septum::factoryPatches())
     {
         const auto packets = septum::sysex::encodePatchToSysExPackets (entry.patch);
-        expect (packets.size() == 6, "Every patch produces 6 DT1 blocks");
+        expect (packets.size() == septum::sysex::patchBlockCount,
+                "Every patch produces the address map's 22 DT1 blocks");
 
         septum::Patch restored = septum::initPatch();
         for (const auto& pkt : packets)
@@ -3091,12 +3130,23 @@ void testSysExPatchSerializationRoundtrip()
                 "the four stored-and-inert D Beam bytes round-trip");
     }
 
+    // The instrument has 32 user slots (20 00 00 00 .. 20 1F 00 00) and no
+    // address at all for its 32 PRESET positions, so a bank dump carries 32
+    // patches however long the vector handed to it is.
     const auto syxBuffer = septum::sysex::generateSyxBankFile (septum::factoryPatches());
     expect (syxBuffer.size() > 1000, "Bank .syx buffer is populated");
     std::vector<septum::NamedPatch> parsedBank;
     const bool parsedOk = septum::sysex::parseSyxBankFile (syxBuffer.data(), syxBuffer.size(), parsedBank);
     expect (parsedOk, "parseSyxBankFile parses whole bank successfully");
-    expect (parsedBank.size() == septum::factoryPatches().size(), "All patches recovered from .syx bank");
+    expect (parsedBank.size() == (std::size_t) septum::sysex::userPatchCount,
+            "one patch recovered per user slot from the .syx bank (got "
+                + std::to_string (parsedBank.size()) + ")");
+    bool bankPatchesMatch = true;
+    for (std::size_t i = 0; i < parsedBank.size(); ++i)
+        if (parsedBank[i].patch.name != septum::factoryPatches()[i].patch.name
+            || parsedBank[i].patch.upper.cutoff != septum::factoryPatches()[i].patch.upper.cutoff)
+            bankPatchesMatch = false;
+    expect (bankPatchesMatch, "each slot in the bank round-trips to its own patch");
 }
 
 void testCoupledDb24FilterResonanceStability()
@@ -3750,30 +3800,44 @@ void testStealingTakesTheLongestReleasedVoice()
 // arpeggio grid, END STEP, and the documented tempo range.
 void testSysExCarriesTheArpeggioGridAndTempo()
 {
-    // A style whose cells reach the top of the range and carry a tie: the two
-    // used to share one SysEx byte, so the loudest cell decoded as a hold.
+    const auto roundTripStyle = [] (const septum::ArpeggioParams& source,
+                                    septum::ArpeggioParams& restored)
+    {
+        std::vector<std::uint8_t> common (septum::sysex::sizeArpeggioCommon, 0u);
+        septum::sysex::encodeArpeggioCommon (source, common.data());
+        septum::sysex::decodeArpeggioCommon (common.data(), common.size(), restored);
+        for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+        {
+            std::vector<std::uint8_t> pattern (septum::sysex::sizeArpeggioPattern, 0u);
+            septum::sysex::encodeArpeggioPattern (source.style, row, pattern.data());
+            septum::sysex::decodeArpeggioPattern (pattern.data(), pattern.size(), row,
+                                                  restored.style);
+        }
+    };
+
+    // Step data is a two-byte nibble with a documented range of 0 - 128, so
+    // it holds a rest, all 127 velocities and a tie without any of them
+    // colliding. The codec used to squeeze all three into one 7-bit byte,
+    // which cost the loudest velocity a style could carry.
     {
         septum::ArpeggioParams loud {};
         loud.style.endStep = 4;
-        // 127 is the tie's byte, so the codec has to keep a note off it: the
-        // cell comes back as the loudest velocity a cell can carry, never as
-        // a tie.
         loud.style.cells[0][0] = 127;
         loud.style.cells[1][0] = septum::arpeggioTie;
         loud.style.cells[2][0] = 1;
-        loud.endStep = 4;
-        std::vector<std::uint8_t> block (septum::sysex::sizeArpeggio, 0u);
-        septum::sysex::encodeArpeggioParams (loud, block.data());
+        loud.style.originalNote[0] = 128;
+        loud.style.originalNote[3] = 60;
         septum::ArpeggioParams back {};
-        septum::sysex::decodeArpeggioParams (block.data(), block.size(), back);
-        expect (back.style.cell (0, 0) > 0
-                    && back.style.cell (0, 0) <= (signed char) septum::arpeggioMaxCellVelocity
+        roundTripStyle (loud, back);
+        expect (back.style.cell (0, 0) == 127
                     && back.style.cell (1, 0) == septum::arpeggioTie
                     && back.style.cell (2, 0) == 1,
-                "the loudest cell and the tie do not share a SysEx byte (got "
+                "the loudest cell, a tie and a quiet cell all survive (got "
                     + std::to_string ((int) back.style.cell (0, 0)) + ", "
                     + std::to_string ((int) back.style.cell (1, 0)) + ", "
                     + std::to_string ((int) back.style.cell (2, 0)) + ")");
+        expect (back.style.originalNote[0] == 128 && back.style.originalNote[3] == 60,
+                "each row's Original Note round-trips over its own pattern block");
     }
 
     for (int styleIndex = 0; styleIndex < (int) septum::arpeggioStyles().size();
@@ -3781,11 +3845,8 @@ void testSysExCarriesTheArpeggioGridAndTempo()
     {
         septum::Patch source = septum::initPatch();
         septum::applyArpeggioStyle (source, styleIndex);
-        source.arpeggio.endStep = 7;
-        std::vector<std::uint8_t> block (septum::sysex::sizeArpeggio, 0u);
-        septum::sysex::encodeArpeggioParams (source.arpeggio, block.data());
         septum::ArpeggioParams restored {};
-        septum::sysex::decodeArpeggioParams (block.data(), block.size(), restored);
+        roundTripStyle (source.arpeggio, restored);
 
         bool cellsMatch = true;
         for (int step = 0; step < septum::arpeggioMaxSteps && cellsMatch; ++step)
@@ -3798,10 +3859,13 @@ void testSysExCarriesTheArpeggioGridAndTempo()
         expect (cellsMatch,
                 "arpeggio style " + std::to_string (styleIndex)
                     + " round-trips every one of its 512 cells");
-        expect (restored.endStep == 7,
-                "END STEP round-trips (style " + std::to_string (styleIndex) + ")");
+        expect (restored.style.endStep == source.arpeggio.style.endStep,
+                "the style's own step count round-trips (style "
+                    + std::to_string (styleIndex) + ")");
     }
 
+    // PATCH TEMPO is three nibbles at 0x0E/0x0F/0x10, which is what makes the
+    // top of the documented range reachable: a two-nibble field stops at 255.
     for (int tempo : { 5, 120, 200, 255, 256, 299, 300 })
     {
         septum::Patch source = septum::initPatch();
@@ -3815,6 +3879,85 @@ void testSysExCarriesTheArpeggioGridAndTempo()
                 "PATCH TEMPO " + std::to_string (tempo) + " round-trips (got "
                     + std::to_string (restored.tempo) + ")");
     }
+}
+
+// Every byte this codec writes into Patch Common has to be the byte the
+// address map names, or a dump written by the hardware reads as a different
+// patch. Four of them were somewhere else before the map was consulted.
+void testPatchCommonMatchesTheAddressMap()
+{
+    septum::Patch patch = septum::initPatch();
+    patch.tempo = 300;                                        // 0x0E/0x0F/0x10
+    patch.splitPoint = 60;                                    // 0x13
+    patch.arpeggio.splitArpeggio = septum::SplitArpeggio::Lower;   // 0x14
+    patch.arpeggio.on = true;                                 // 0x1A
+    patch.arpeggio.hold = true;                               // 0x1B
+    patch.delayOn = true;                                     // 0x1C
+    patch.reverbOn = false;                                   // 0x1D
+
+    std::array<std::uint8_t, septum::sysex::sizePatchCommon> bytes {};
+    septum::sysex::encodePatchCommon (patch, bytes.data());
+
+    // 300 = 12CH, so the nibbles are 01 02 0C.
+    expect (bytes[0x0E] == 0x01 && bytes[0x0F] == 0x02 && bytes[0x10] == 0x0C,
+            "PATCH TEMPO 300 is nibbled across 0x0E/0x0F/0x10 (got "
+                + std::to_string ((int) bytes[0x0E]) + " "
+                + std::to_string ((int) bytes[0x0F]) + " "
+                + std::to_string ((int) bytes[0x10]) + ")");
+    expect (bytes[0x13] == 60, "SPLIT POINT is at 0x13");
+    expect (bytes[0x14] == 1, "SPLIT ARPEGGIO is at 0x14");
+    expect (bytes[0x1A] == 1, "ARPEGGIO SWITCH is at 0x1A");
+    expect (bytes[0x1B] == 1, "ARPEGGIO HOLD is at 0x1B");
+    expect (bytes[0x1C] == 1 && bytes[0x1D] == 0,
+            "DELAY and REVERB are separate switches at 0x1C and 0x1D");
+
+    // Every byte in the block is one parameter with its own documented range,
+    // so none of them may carry a second one as a bit.
+    for (std::size_t i = 0; i < bytes.size(); ++i)
+        expect (bytes[i] <= 127,
+                "Patch Common byte 0x" + std::to_string (i) + " stays 7-bit");
+
+    septum::Patch back = septum::initPatch();
+    septum::sysex::decodePatchCommon (bytes.data(), bytes.size(), back);
+    expect (back.tempo == 300 && back.splitPoint == 60
+                && back.arpeggio.splitArpeggio == septum::SplitArpeggio::Lower
+                && back.arpeggio.on && back.arpeggio.hold
+                && back.delayOn && ! back.reverbOn,
+            "the six relocated Patch Common fields decode from their own bytes");
+}
+
+// The map's block addresses are absolute, not offsets from zero: the
+// Temporary Patch lives at 10 00 00 00 and User Patch 001-032 at
+// 20 00 00 00 .. 20 1F 00 00.
+void testSysExBlockAddressesMatchTheAddressMap()
+{
+    const auto packets = septum::sysex::encodePatchToSysExPackets (septum::initPatch());
+    expect (packets.size() == septum::sysex::patchBlockCount,
+            "a patch is 22 blocks");
+
+    const auto addressOf = [] (const std::vector<std::uint8_t>& packet)
+    {
+        return ((std::uint32_t) packet[7] << 24) | ((std::uint32_t) packet[8] << 16)
+               | ((std::uint32_t) packet[9] << 8) | (std::uint32_t) packet[10];
+    };
+
+    expect (addressOf (packets[0]) == 0x10000000u, "Patch Common at 10 00 00 00");
+    expect (addressOf (packets[1]) == 0x10000100u, "Patch Tone (1:Upper) at 10 00 01 00");
+    expect (addressOf (packets[2]) == 0x10000200u, "Patch Tone (2:Lower) at 10 00 02 00");
+    expect (addressOf (packets[3]) == 0x10000300u, "Patch Delay at 10 00 03 00");
+    expect (addressOf (packets[4]) == 0x10000400u, "Patch Reverb at 10 00 04 00");
+    expect (addressOf (packets[5]) == 0x10000500u, "Patch Arpeggio Common at 10 00 05 00");
+    expect (addressOf (packets[6]) == 0x10000600u,
+            "Patch Arpeggio Pattern (Note 1) at 10 00 06 00");
+    expect (addressOf (packets[21]) == 0x10001500u,
+            "Patch Arpeggio Pattern (Note 16) at 10 00 15 00");
+
+    // The document's own worked RQ1 example ends a Temporary Patch request at
+    // 10 00 15 42, i.e. the last pattern block plus its 42H bytes.
+    const std::size_t lastBlockData = packets[21].size() - 13;
+    expect (lastBlockData == septum::sysex::sizeArpeggioPattern,
+            "the last block carries its documented 42H bytes (got "
+                + std::to_string (lastBlockData) + ")");
 }
 
 // ARPEGGIO VELOCITY = REAL means the velocity of the key the note came from,
@@ -3911,6 +4054,8 @@ int main()
     testArpeggioRoutingChangeAndNoteOffInOneBlock();
     testStealingTakesTheLongestReleasedVoice();
     testSysExCarriesTheArpeggioGridAndTempo();
+    testPatchCommonMatchesTheAddressMap();
+    testSysExBlockAddressesMatchTheAddressMap();
     testRepressingAChordToneUpdatesItsVelocity();
     testCoupledDb24FilterResonanceStability();
 

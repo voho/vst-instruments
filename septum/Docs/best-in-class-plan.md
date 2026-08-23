@@ -1469,6 +1469,11 @@ checks END STEP, checks the tempo at 5/120/200/255/256/299/300, and checks a
 byte-for-byte identity over the whole Patch Common block — which is also what
 fences the four inert D Beam bytes Step 27 kept.
 
+*Superseded in part by Step 40.* All three defects were real and the tests
+that caught them still run, but the repairs were reasoned out where the layout
+was written down: the tempo's byte split, the velocity cap and the byte chosen
+for END STEP all went when the address map was read.
+
 #### Step 38 — a note the arpeggiator could not let go of
 
 A parameter change and a note-off can land at the same sample position, and
@@ -1515,6 +1520,77 @@ calls `setValueNotifyingHost` — an allocation and a host notification inside
 split the same way: the audio thread writes the raw values inside the seqlock,
 and a queued message-thread pass republishes them.
 
+#### Step 40 — the address map, read
+
+Step 37 fixed three things the codec dropped and left two marks in the code
+saying *this byte is the project's own, not Roland's* (`OQ-17`): the DELAY and
+REVERB switches packed into one byte as a bitmask, and a tempo encoding chosen
+because it could carry 5–300 rather than because a document said so. The way
+to close that is not to reason harder about it. The **SH-201 MIDI
+Implementation v1.00 (2006-03-01)** publishes the Parameter Address Map; it is
+already listed as a primary source in the research contract. It was fetched
+and read.
+
+Both marked bytes were wrong, and so were four more.
+
+| Offset | The map | The codec |
+| --- | --- | --- |
+| `#00 0E/0F/10` | Patch Tempo, **three** nibbles | a two-byte 7-bit split |
+| `00 14` | Split Arpeggio (UPPER/LOWER/BOTH) | a DELAY+REVERB bitmask |
+| `00 1A` | Arpeggio Switch | — |
+| `00 1B` | Arpeggio Hold | — |
+| `00 1C` | Delay Switch | Arpeggio Switch |
+| `00 1D` | Reverb Switch | Arpeggio Hold |
+
+Three structural divergences came with them.
+
+**The block addresses are absolute.** Temporary Patch is at `10 00 00 00`, not
+zero, and User Patch 001–**032** at `20 00 00 00`…`20 1F 00 00`, one step of
+`00 01 00 00` apart. The bank writer had been computing
+`20 00 00 00 | bank<<16 | (slot*8)<<8`, which collides with the block offsets
+it then adds; a "bank file" it wrote addressed nothing on a real unit. It
+writes 32 slots at the map's addresses now, and the parser splits patches on a
+change of the two high address bytes rather than on seeing a particular block.
+
+**The arpeggio grid is sixteen blocks, not one.** Patch Arpeggio Common is
+eight bytes — grid, duration, motif, octave range, accent rate, velocity, and
+END STEP as two nibbles at `#00 06/07`, so Step 37's byte for it was in the
+right block by luck and the wrong place in it. The 32 × 16 grid lives in
+sixteen **Patch Arpeggio Pattern (Note 1…16)** blocks at `00 06 00`…`00 15 00`,
+`00 00 00 42` each: an Original Note, then Step1…Step32, every field a
+two-byte nibble ranged 0–128. A patch is 22 DT1 blocks.
+
+That range is also the end of Step 37's tie problem. 0–128 is 129 values and a
+cell has exactly 129 states — a rest, 127 velocities, a tie — so nothing has
+to be clamped away from anything: the velocity cap at 126 is gone and cells
+carry 127 again. And each row carrying an **Original Note** of its own is the
+first hard evidence about PHRASE, the one motif whose row-to-interval rule the
+manual never works through. What reads the field is not documented, so the
+engine stores it and PHRASE keeps its voiced reading (OQ-15) — but a style's
+rows are recorded pitches, not just positions, which is worth knowing.
+
+**Reverb LF/HF Damp Gain is not a ±64 field.** Raw 0–36 counts up from
+−36 dB. Encoded as a biased signed value it put 0 dB at byte 64 and −36 dB at
+byte 28, both outside the documented range, on a field whose two ends the
+delay templates actually use.
+
+One byte is deliberately left odd. The map prints LFO1/LFO2 Tempo Sync Switch
+as `ON, OFF` where all 26 of its other switches read `OFF, ON`. Printed twice,
+once per LFO — so either 0 really is ON, or Roland's document is wrong the same
+way twice. The codec writes it as printed and `OQ-18` records the one
+measurement that separates the two: a dump from a real unit.
+
+What fences all of it: the document prints two finished SysEx messages of its
+own, and both are now test vectors reproduced byte for byte — including the
+RQ1 that requests `00 00 15 42` of Temporary Patch, which is exactly where this
+codec's last block ends. Beyond those, a test asserts each relocated Patch
+Common field from its own offset, a test asserts all 22 block addresses, and
+the arpeggio round-trip runs per-row through the pattern blocks. 2799 engine
+checks and 174 plug-in checks pass.
+
+The README no longer says the codec's layout is the map's "where this document
+can show it and the project's own where it cannot". It is the map's.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:
@@ -1535,3 +1611,8 @@ Recorded here so the next reader knows they were considered and left:
   codec carries both; the plug-in does not, because its authoritative state is
   its parameter list and neither has a parameter. Stated in the README rather
   than papered over.
+- **Transmitting SysEx, and answering RQ1.** The map is read now and the
+  encoder writes every block at its documented address, so a plug-in that
+  dumps itself to a real unit is a small step from here. It is a feature
+  rather than a fidelity fix, and nothing in the plug-in currently has a
+  reason to send.

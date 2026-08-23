@@ -510,7 +510,10 @@ void testStateSurvivesUnpumpedProgramChange()
 void testProgramsLoad()
 {
     SeptumAudioProcessor processor;
-    expect (processor.getNumPrograms() == 64, "the full 64-patch Roland bank is exposed");
+    // 64 slots, laid out the way the instrument lays its own bank out. None of
+    // them is Roland's: the SH-201's factory patch data is published nowhere.
+    expect (processor.getNumPrograms() == 64,
+            "the bank exposes 64 program slots");
     expect (processor.getProgramName (0).contains ("SuperLead201"),
             "program 0 is SuperLead201");
 

@@ -154,11 +154,15 @@ inline constexpr int arpeggioMaxRows = 16;
 // carrying the style's programmed velocity.
 inline constexpr signed char arpeggioRest = 0;
 inline constexpr signed char arpeggioTie = -1;
-// How a cell travels through SysEx: 0 is a rest, 0x7F is a tie, and a
-// note-on carries its own velocity, capped just below the tie's byte so the
-// two cannot collide.
-inline constexpr std::uint8_t arpeggioTieByte = 0x7F;
-inline constexpr int arpeggioMaxCellVelocity = 126;
+// How a cell travels through SysEx. [settled] Patch Arpeggio Pattern gives
+// each step "Step<n> Data (0 - 128)" as a two-byte nibble (MIDI
+// Implementation v1.00 p. 5), so the wire field holds 129 values -- exactly
+// the number of states a cell has: a rest, 127 velocities and a tie.
+// [voiced] Which end of that range is the tie is not written down; 128 is
+// this project's choice, and because the counts match exactly nothing is
+// clipped either way.
+inline constexpr int arpeggioRestValue = 0;
+inline constexpr int arpeggioTieValue = 128;
 
 // "A series of data for basic arpeggio patterns and chord styles recorded in
 // the form of a grid consisting of a maximum of 32 steps x 16 pitches"
@@ -169,6 +173,14 @@ struct ArpeggioStyle
 {
     int endStep { 4 };   // 1-32
     std::array<std::array<signed char, arpeggioMaxRows>, arpeggioMaxSteps> cells {};
+    // [settled] Each of the sixteen rows carries an "Original Note (0 - 128)"
+    // of its own -- Patch Arpeggio Pattern (Note 1..16) offset 00, MIDI
+    // Implementation v1.00 p. 5. The document records the field but not what
+    // reads it, so this engine only stores it: a patch dumped from hardware
+    // survives a load and a re-save intact, and the PHRASE motif keeps the
+    // voiced reading recorded under OQ-15. Nothing in the shipped styles sets
+    // it.
+    std::array<int, arpeggioMaxRows> originalNote {};
 
     [[nodiscard]] signed char cell (int step, int row) const noexcept
     {
@@ -525,12 +537,8 @@ inline void clampToDocumentedRanges (Patch& patch) noexcept
     patch.arpeggio.style.endStep =
         clampRaw (patch.arpeggio.style.endStep, 1, arpeggioMaxSteps);
     patch.arpeggio.styleIndex = std::max (0, patch.arpeggio.styleIndex);
-    // A cell's velocity stops one short of the tie's SysEx byte, so every
-    // value the engine can hold is a value a dump can carry back.
-    for (auto& step : patch.arpeggio.style.cells)
-        for (auto& cell : step)
-            if (cell > arpeggioMaxCellVelocity)
-                cell = static_cast<signed char> (arpeggioMaxCellVelocity);
+    for (auto& note : patch.arpeggio.style.originalNote)
+        note = clampRaw (note, 0, 128);
     patch.arpeggio.endStep = clampRaw (patch.arpeggio.endStep, 0, arpeggioMaxSteps);
 }
 

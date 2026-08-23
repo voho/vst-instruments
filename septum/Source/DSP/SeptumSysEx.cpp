@@ -22,8 +22,37 @@ namespace
     {
         return static_cast<int> (raw & 0x7Fu) - 64;
     }
+
+    // Fields the address map marks with a leading "#" are nibbled:
+    // "Data marked '#' is expressed in hexadecimal in 4-bit units. A value
+    // expressed as a 2-byte nibble 0a 0bH has the value of a x 16+b."
+    // (MIDI Implementation v1.00, Supplementary Material, p. 6, whose worked
+    // example extends the rule to more than two: 0A 03 09 0D = 41885.)
+    // Most significant nibble first.
+    inline void writeNibbles (std::uint8_t* dest, int nibbleCount, int value) noexcept
+    {
+        for (int i = nibbleCount - 1; i >= 0; --i)
+        {
+            dest[i] = static_cast<std::uint8_t> (value & 0x0F);
+            value >>= 4;
+        }
+    }
+
+    [[nodiscard]] inline int readNibbles (const std::uint8_t* src, int nibbleCount) noexcept
+    {
+        int value = 0;
+        for (int i = 0; i < nibbleCount; ++i)
+            value = (value << 4) | (src[i] & 0x0F);
+        return value;
+    }
 } // namespace
 
+// Patch Common, offsets 00..20 exactly as the address map lists them. Four
+// of them used to be somewhere else in this codec: PATCH TEMPO was a 7-bit
+// split rather than the map's three nibbles (so 256..300 wrapped -- 300 came
+// back as 44), SPLIT ARPEGGIO was missing entirely, the DELAY and REVERB
+// switches shared 0x14 as an invented bitmask, and the arpeggio's own two
+// switches sat at 0x1C/0x1D on top of them.
 void encodePatchCommon (const Patch& patch, std::uint8_t* dest) noexcept
 {
     if (dest == nullptr)
@@ -42,32 +71,22 @@ void encodePatchCommon (const Patch& patch, std::uint8_t* dest) noexcept
     dest[0x0C] = clampTo7Bit (patch.patchLevel);
     dest[0x0D] = signedTo7Bit (patch.toneBalance);
 
-    // 0E..0F: Patch Tempo 5..300. Roland's own two-byte 7-bit split, not two
-    // nibbles: eight bits cannot carry a range whose top is 300, so 256..300
-    // wrapped — 300 came back as 44, and the arpeggiator and both LFOs' tempo
-    // sync run off this one number.
-    const int tempo = std::clamp (patch.tempo, 5, 300);
-    dest[0x0E] = static_cast<std::uint8_t> ((tempo >> 7) & 0x7F);
-    dest[0x0F] = static_cast<std::uint8_t> (tempo & 0x7F);
+    // #00 0E / 0F / 10: Patch Tempo (5 - 300), three nibbles.
+    writeNibbles (dest + 0x0E, 3, std::clamp (patch.tempo, 5, 300));
 
-    dest[0x10] = 0; // reserved
     dest[0x11] = static_cast<std::uint8_t> (patch.keyboardMode);
     dest[0x12] = static_cast<std::uint8_t> (patch.keyboardPart);
-    dest[0x13] = clampTo7Bit (patch.splitPoint);
-
-    // 0x14: Bitmask: bit 0 = Delay Switch, bit 1 = Reverb Switch
-    dest[0x14] = static_cast<std::uint8_t> ((patch.delayOn ? 1u : 0u)
-                                            | (patch.reverbOn ? 2u : 0u));
-
+    dest[0x13] = static_cast<std::uint8_t> (std::clamp (patch.splitPoint, 21, 108));
+    dest[0x14] = static_cast<std::uint8_t> (patch.arpeggio.splitArpeggio);
     dest[0x15] = static_cast<std::uint8_t> (patch.modulationDestination);
     dest[0x16] = static_cast<std::uint8_t> (patch.dBeamDestination);
     dest[0x17] = static_cast<std::uint8_t> (patch.pitchBendDestination);
     dest[0x18] = static_cast<std::uint8_t> (patch.expressionDestination);
     dest[0x19] = patch.activeExpression ? 1 : 0;
-    dest[0x1A] = 0;
-    dest[0x1B] = 0;
-    dest[0x1C] = patch.arpeggio.on ? 1 : 0;
-    dest[0x1D] = patch.arpeggio.hold ? 1 : 0;
+    dest[0x1A] = patch.arpeggio.on ? 1 : 0;
+    dest[0x1B] = patch.arpeggio.hold ? 1 : 0;
+    dest[0x1C] = patch.delayOn ? 1 : 0;
+    dest[0x1D] = patch.reverbOn ? 1 : 0;
     dest[0x1E] = static_cast<std::uint8_t> (patch.modulationAssign);
     dest[0x1F] = static_cast<std::uint8_t> (patch.dBeamAssign);
     dest[0x20] = static_cast<std::uint8_t> (patch.dBeamPolarity);
@@ -130,7 +149,13 @@ void encodeTonePatch (const TonePatch& tone, std::uint8_t* dest) noexcept
 
     dest[0x27] = static_cast<std::uint8_t> (tone.lfo1.shape);
     dest[0x28] = clampTo7Bit (tone.lfo1.rate);
-    dest[0x29] = tone.lfo1.tempoSync ? 1 : 0;
+    // 0x29 / 0x33: "LFO Tempo Sync Switch (0 - 1) / ON, OFF". Every other
+    // switch in the address map reads OFF, ON; these two are listed the other
+    // way round, once each for LFO1 and LFO2, so the reversal is the
+    // document's and not a slip in one line of it. Encoded as written --
+    // 0 is ON -- and flagged in the research contract as the one place where
+    // following the map contradicts the pattern of the map. (OQ-18)
+    dest[0x29] = tone.lfo1.tempoSync ? 0 : 1;
     dest[0x2A] = clampTo7Bit (tone.lfo1.tempoSyncNote);
     dest[0x2B] = clampTo7Bit (tone.lfo1.fadeTime);
     dest[0x2C] = tone.lfo1.keyTrigger ? 1 : 0;
@@ -141,7 +166,7 @@ void encodeTonePatch (const TonePatch& tone, std::uint8_t* dest) noexcept
 
     dest[0x31] = static_cast<std::uint8_t> (tone.lfo2.shape);
     dest[0x32] = clampTo7Bit (tone.lfo2.rate);
-    dest[0x33] = tone.lfo2.tempoSync ? 1 : 0;
+    dest[0x33] = tone.lfo2.tempoSync ? 0 : 1;   // 0 is ON; see 0x29 above
     dest[0x34] = clampTo7Bit (tone.lfo2.tempoSyncNote);
     dest[0x35] = clampTo7Bit (tone.lfo2.fadeTime);
     dest[0x36] = tone.lfo2.keyTrigger ? 1 : 0;
@@ -161,72 +186,75 @@ void encodeDelayParams (const DelayParams& delay, std::uint8_t* dest) noexcept
 {
     if (dest == nullptr)
         return;
-    dest[0] = clampTo7Bit (delay.time);
-    // Feedback: -98..+98% raw 0..98 (49 = 0%)
-    dest[1] = clampTo7Bit (static_cast<int> (std::lround (delay.feedback / 2.0)) + 49);
-    dest[2] = clampTo7Bit (delay.hfDamp);
-    dest[3] = clampTo7Bit (delay.modulationRate);
-    dest[4] = clampTo7Bit (delay.modulationDepth);
+    dest[0] = clampTo7Bit (delay.time);                             // 0-127
+    // Feedback (0 - 98) = -98 - +98 [%], so 49 is 0%.
+    dest[1] = static_cast<std::uint8_t> (
+        std::clamp (static_cast<int> (std::lround (delay.feedback / 2.0)) + 49, 0, 98));
+    dest[2] = static_cast<std::uint8_t> (std::clamp (delay.hfDamp, 0, 17));
+    dest[3] = clampTo7Bit (delay.modulationRate);                   // 0-127
+    dest[4] = clampTo7Bit (delay.modulationDepth);                  // 0-127
 }
 
 void encodeReverbParams (const ReverbParams& reverb, std::uint8_t* dest) noexcept
 {
     if (dest == nullptr)
         return;
-    dest[0] = clampTo7Bit (reverb.time);
-    dest[1] = clampTo7Bit (reverb.preDelay);
-    dest[2] = clampTo7Bit (reverb.size);
-    dest[3] = clampTo7Bit (reverb.highCut);
-    dest[4] = clampTo7Bit (reverb.density);
-    dest[5] = clampTo7Bit (reverb.diffusion);
-    dest[6] = clampTo7Bit (reverb.lfDampFrequency);
-    dest[7] = signedTo7Bit (reverb.lfDampGain);
-    dest[8] = clampTo7Bit (reverb.hfDampFrequency);
-    dest[9] = signedTo7Bit (reverb.hfDampGain);
+    dest[0] = clampTo7Bit (reverb.time);                                 // 0-127
+    dest[1] = static_cast<std::uint8_t> (std::clamp (reverb.preDelay, 0, 125));
+    dest[2] = static_cast<std::uint8_t> (std::clamp (reverb.size, 0, 7));
+    dest[3] = static_cast<std::uint8_t> (std::clamp (reverb.highCut, 0, 20));
+    dest[4] = clampTo7Bit (reverb.density);                              // 0-127
+    dest[5] = clampTo7Bit (reverb.diffusion);                            // 0-127
+    dest[6] = static_cast<std::uint8_t> (std::clamp (reverb.lfDampFrequency, 0, 19));
+    // LF/HF Damp Gain (0 - 36) = -36 - 0 [dB]: the raw byte counts up from
+    // -36 dB, it is not one of the map's +/-64-biased fields. Encoding it as
+    // one put 0 dB at byte 64 and -36 dB at byte 28, both outside the
+    // documented range.
+    dest[7] = static_cast<std::uint8_t> (std::clamp (reverb.lfDampGain, -36, 0) + 36);
+    dest[8] = static_cast<std::uint8_t> (std::clamp (reverb.hfDampFrequency, 0, 5));
+    dest[9] = static_cast<std::uint8_t> (std::clamp (reverb.hfDampGain, -36, 0) + 36);
 }
 
-void encodeArpeggioParams (const ArpeggioParams& arp, std::uint8_t* dest) noexcept
+void encodeArpeggioCommon (const ArpeggioParams& arp, std::uint8_t* dest) noexcept
 {
     if (dest == nullptr)
         return;
-    std::memset (dest, 0, sizeArpeggio);
+    std::memset (dest, 0, sizeArpeggioCommon);
 
-    dest[0] = clampTo7Bit (arp.styleIndex);
-    dest[1] = static_cast<std::uint8_t> (arp.grid);
-    dest[2] = static_cast<std::uint8_t> (arp.duration);
-    dest[3] = static_cast<std::uint8_t> (arp.motif);
-    dest[4] = signedTo7Bit (arp.octaveRange);
-    dest[5] = clampTo7Bit (arp.accent);
-    dest[6] = clampTo7Bit (arp.velocity);
-    dest[7] = clampTo7Bit (arp.style.endStep);
-    dest[8] = static_cast<std::uint8_t> (arp.splitArpeggio);
-    // END STEP is the replica's own front-panel control (0 = "as long as the
-    // template is"), separate from the length the loaded template defines. It
-    // had no byte at all, so a dump and a reload silently put it back to
-    // STYLE. The grid starts one byte later for it.
-    dest[9] = clampTo7Bit (arp.endStep);
+    dest[0x00] = static_cast<std::uint8_t> (arp.grid);          // 0-8
+    dest[0x01] = static_cast<std::uint8_t> (arp.duration);      // 0-9
+    dest[0x02] = static_cast<std::uint8_t> (arp.motif);         // 0-11
+    dest[0x03] = signedTo7Bit (arp.octaveRange);                // 61-67 = -3..+3
+    dest[0x04] = static_cast<std::uint8_t> (std::clamp (arp.accent, 0, 100));
+    dest[0x05] = clampTo7Bit (arp.velocity);                    // 0 = REAL
+    // #00 06 / 07: End Step (1 - 32), two nibbles.
+    writeNibbles (dest + 0x06, 2, std::clamp (arp.style.endStep, 1, arpeggioMaxSteps));
 
-    // 0x09..0x208: 32 steps x 16 rows pattern cells.
-    //
-    // 0 is a rest, 0x7F is a tie, and a note-on carries its velocity, capped
-    // at 126 so it cannot land on the tie's byte. The two used to share
-    // 0x7F — and every one of the sixteen shipped styles opens on a cell the
-    // style table built at exactly 127, so a dump and a reload turned the
-    // loudest step of every pattern into a hold on nothing.
-    std::size_t offset = 10;
+    // `styleIndex` has no home here on purpose. The hardware stores the grid
+    // itself in the patch and its panel only selects a template, so the
+    // address map has no style-number parameter: this block plus the sixteen
+    // pattern blocks *are* the style. The plug-in's selector index rides in
+    // the host's parameter state instead.
+}
+
+void encodeArpeggioPattern (const ArpeggioStyle& style, int row, std::uint8_t* dest) noexcept
+{
+    if (dest == nullptr || row < 0 || row >= arpeggioMaxRows)
+        return;
+    std::memset (dest, 0, sizeArpeggioPattern);
+
+    // #00 00: Original Note (0 - 128), then #00 02, 00 04 ... 00 40:
+    // Step1..Step32 Data (0 - 128). Every field is a two-byte nibble.
+    writeNibbles (dest, 2,
+                  std::clamp (style.originalNote[static_cast<std::size_t> (row)], 0, 128));
+
     for (int step = 0; step < arpeggioMaxSteps; ++step)
     {
-        for (int row = 0; row < arpeggioMaxRows; ++row)
-        {
-            const signed char val = arp.style.cell (step, row);
-            if (val == arpeggioTie)
-                dest[offset++] = arpeggioTieByte;
-            else if (val <= 0)
-                dest[offset++] = 0x00; // Rest
-            else
-                dest[offset++] =
-                    clampTo7Bit (std::min<int> (val, arpeggioMaxCellVelocity));
-        }
+        const signed char cell = style.cell (step, row);
+        const int wire = (cell == arpeggioTie)  ? arpeggioTieValue
+                       : (cell <= 0)            ? arpeggioRestValue
+                                                : static_cast<int> (cell);
+        writeNibbles (dest + 2 + 2 * step, 2, wire);
     }
 }
 
@@ -257,9 +285,9 @@ void decodePatchCommon (const std::uint8_t* src, std::size_t size, Patch& patch)
     if (size > 0x0C) patch.patchLevel = src[0x0C] & 0x7Fu;
     if (size > 0x0D) patch.toneBalance = from7BitSigned (src[0x0D]);
 
-    if (size > 0x0F)
+    if (size > 0x10)
     {
-        const int tempo = ((src[0x0E] & 0x7Fu) << 7) | (src[0x0F] & 0x7Fu);
+        const int tempo = readNibbles (src + 0x0E, 3);
         if (tempo >= 5 && tempo <= 300)
             patch.tempo = tempo;
     }
@@ -274,10 +302,8 @@ void decodePatchCommon (const std::uint8_t* src, std::size_t size, Patch& patch)
         patch.splitPoint = std::clamp<int> (src[0x13], 21, 108);
 
     if (size > 0x14)
-    {
-        patch.delayOn = (src[0x14] & 1u) != 0;
-        patch.reverbOn = (src[0x14] & 2u) != 0;
-    }
+        patch.arpeggio.splitArpeggio = static_cast<SplitArpeggio> (
+            std::clamp<int> (src[0x14], 0, 2));
 
     if (size > 0x15)
         patch.modulationDestination = static_cast<ToneDestination> (
@@ -294,8 +320,10 @@ void decodePatchCommon (const std::uint8_t* src, std::size_t size, Patch& patch)
     if (size > 0x19)
         patch.activeExpression = (src[0x19] & 1u) != 0;
 
-    if (size > 0x1C) patch.arpeggio.on = (src[0x1C] & 1u) != 0;
-    if (size > 0x1D) patch.arpeggio.hold = (src[0x1D] & 1u) != 0;
+    if (size > 0x1A) patch.arpeggio.on = (src[0x1A] & 1u) != 0;
+    if (size > 0x1B) patch.arpeggio.hold = (src[0x1B] & 1u) != 0;
+    if (size > 0x1C) patch.delayOn = (src[0x1C] & 1u) != 0;
+    if (size > 0x1D) patch.reverbOn = (src[0x1D] & 1u) != 0;
     if (size > 0x1E)
         patch.modulationAssign = static_cast<ModulationAssign> (
             std::clamp<int> (src[0x1E], 0, 7));
@@ -367,7 +395,7 @@ void decodeTonePatch (const std::uint8_t* src, std::size_t size, TonePatch& tone
 
     if (size > 0x27) tone.lfo1.shape = static_cast<LfoShape> (std::clamp<int> (get (0x27), 0, 6));
     if (size > 0x28) tone.lfo1.rate = get (0x28) & 0x7Fu;
-    if (size > 0x29) tone.lfo1.tempoSync = (get (0x29) & 1u) != 0;
+    if (size > 0x29) tone.lfo1.tempoSync = (get (0x29) & 1u) == 0;   // 0 is ON
     if (size > 0x2A) tone.lfo1.tempoSyncNote = std::clamp<int> (get (0x2A), 0, 19);
     if (size > 0x2B) tone.lfo1.fadeTime = get (0x2B) & 0x7Fu;
     if (size > 0x2C) tone.lfo1.keyTrigger = (get (0x2C) & 1u) != 0;
@@ -378,7 +406,7 @@ void decodeTonePatch (const std::uint8_t* src, std::size_t size, TonePatch& tone
 
     if (size > 0x31) tone.lfo2.shape = static_cast<LfoShape> (std::clamp<int> (get (0x31), 0, 6));
     if (size > 0x32) tone.lfo2.rate = get (0x32) & 0x7Fu;
-    if (size > 0x33) tone.lfo2.tempoSync = (get (0x33) & 1u) != 0;
+    if (size > 0x33) tone.lfo2.tempoSync = (get (0x33) & 1u) == 0;   // 0 is ON
     if (size > 0x34) tone.lfo2.tempoSyncNote = std::clamp<int> (get (0x34), 0, 19);
     if (size > 0x35) tone.lfo2.fadeTime = get (0x35) & 0x7Fu;
     if (size > 0x36) tone.lfo2.keyTrigger = (get (0x36) & 1u) != 0;
@@ -416,44 +444,44 @@ void decodeReverbParams (const std::uint8_t* src, std::size_t size, ReverbParams
     if (size > 4) reverb.density = src[4] & 0x7Fu;
     if (size > 5) reverb.diffusion = src[5] & 0x7Fu;
     if (size > 6) reverb.lfDampFrequency = std::clamp<int> (src[6], 0, 19);
-    if (size > 7) reverb.lfDampGain = std::clamp<int> (from7BitSigned (src[7]), -36, 0);
+    if (size > 7) reverb.lfDampGain = std::clamp<int> (src[7], 0, 36) - 36;
     if (size > 8) reverb.hfDampFrequency = std::clamp<int> (src[8], 0, 5);
-    if (size > 9) reverb.hfDampGain = std::clamp<int> (from7BitSigned (src[9]), -36, 0);
+    if (size > 9) reverb.hfDampGain = std::clamp<int> (src[9], 0, 36) - 36;
 }
 
-void decodeArpeggioParams (const std::uint8_t* src, std::size_t size, ArpeggioParams& arp) noexcept
+void decodeArpeggioCommon (const std::uint8_t* src, std::size_t size, ArpeggioParams& arp) noexcept
 {
     if (src == nullptr || size == 0)
         return;
-    if (size > 0) arp.styleIndex = src[0] & 0x7Fu;
-    if (size > 1) arp.grid = static_cast<ArpeggioGrid> (std::clamp<int> (src[1], 0, 8));
-    if (size > 2) arp.duration = static_cast<ArpeggioDuration> (std::clamp<int> (src[2], 0, 9));
-    if (size > 3) arp.motif = static_cast<ArpeggioMotif> (std::clamp<int> (src[3], 0, 11));
-    if (size > 4) arp.octaveRange = std::clamp<int> (from7BitSigned (src[4]), -3, 3);
-    if (size > 5) arp.accent = std::clamp<int> (src[5], 0, 100);
-    if (size > 6) arp.velocity = src[6] & 0x7Fu;
-    if (size > 7) arp.style.endStep = std::clamp<int> (src[7], 1, arpeggioMaxSteps);
-    if (size > 8) arp.splitArpeggio = static_cast<SplitArpeggio> (std::clamp<int> (src[8], 0, 2));
-    if (size > 9) arp.endStep = std::clamp<int> (src[9], 0, arpeggioMaxSteps);
+    if (size > 0x00) arp.grid = static_cast<ArpeggioGrid> (std::clamp<int> (src[0x00], 0, 8));
+    if (size > 0x01) arp.duration = static_cast<ArpeggioDuration> (std::clamp<int> (src[0x01], 0, 9));
+    if (size > 0x02) arp.motif = static_cast<ArpeggioMotif> (std::clamp<int> (src[0x02], 0, 11));
+    if (size > 0x03) arp.octaveRange = std::clamp<int> (from7BitSigned (src[0x03]), -3, 3);
+    if (size > 0x04) arp.accent = std::clamp<int> (src[0x04], 0, 100);
+    if (size > 0x05) arp.velocity = src[0x05] & 0x7Fu;
+    if (size > 0x07)
+        arp.style.endStep = std::clamp (readNibbles (src + 0x06, 2), 1, arpeggioMaxSteps);
+}
 
-    if (size > 10)
+void decodeArpeggioPattern (const std::uint8_t* src, std::size_t size, int row,
+                            ArpeggioStyle& style) noexcept
+{
+    if (src == nullptr || size < 2 || row < 0 || row >= arpeggioMaxRows)
+        return;
+
+    style.originalNote[static_cast<std::size_t> (row)] =
+        std::clamp (readNibbles (src, 2), 0, 128);
+
+    for (int step = 0; step < arpeggioMaxSteps; ++step)
     {
-        std::size_t offset = 10;
-        for (int step = 0; step < arpeggioMaxSteps && offset < size; ++step)
-        {
-            for (int row = 0; row < arpeggioMaxRows && offset < size; ++row)
-            {
-                const std::uint8_t raw = src[offset++];
-                auto& cell =
-                    arp.style.cells[static_cast<std::size_t> (step)][static_cast<std::size_t> (row)];
-                if (raw == arpeggioTieByte)
-                    cell = arpeggioTie;
-                else if (raw == 0)
-                    cell = arpeggioRest;
-                else
-                    cell = static_cast<signed char> (raw & 0x7Fu);
-            }
-        }
+        const std::size_t at = static_cast<std::size_t> (2 + 2 * step);
+        if (at + 1 >= size)
+            break;
+        const int wire = readNibbles (src + at, 2);
+        auto& cell = style.cells[static_cast<std::size_t> (step)][static_cast<std::size_t> (row)];
+        cell = (wire >= arpeggioTieValue) ? arpeggioTie
+             : (wire <= arpeggioRestValue) ? arpeggioRest
+                                           : static_cast<signed char> (wire);
     }
 }
 
@@ -558,37 +586,48 @@ std::vector<std::vector<std::uint8_t>> encodePatchToSysExPackets (
     const Patch& patch, std::uint32_t baseAddress, std::uint8_t deviceId)
 {
     std::vector<std::vector<std::uint8_t>> packets;
-    packets.reserve (6);
+    packets.reserve (patchBlockCount);
 
     std::array<std::uint8_t, sizePatchCommon> commonBytes {};
     encodePatchCommon (patch, commonBytes.data());
-    packets.push_back (makeDt1Message (baseAddress + 0x0000, commonBytes.data(),
+    packets.push_back (makeDt1Message (baseAddress + offsetPatchCommon, commonBytes.data(),
                                        commonBytes.size(), deviceId));
 
     std::array<std::uint8_t, sizeTonePatch> upperBytes {};
     encodeTonePatch (patch.upper, upperBytes.data());
-    packets.push_back (makeDt1Message (baseAddress + 0x0100, upperBytes.data(),
+    packets.push_back (makeDt1Message (baseAddress + offsetUpperTone, upperBytes.data(),
                                        upperBytes.size(), deviceId));
 
     std::array<std::uint8_t, sizeTonePatch> lowerBytes {};
     encodeTonePatch (patch.lower, lowerBytes.data());
-    packets.push_back (makeDt1Message (baseAddress + 0x0200, lowerBytes.data(),
+    packets.push_back (makeDt1Message (baseAddress + offsetLowerTone, lowerBytes.data(),
                                        lowerBytes.size(), deviceId));
 
     std::array<std::uint8_t, sizeDelay> delayBytes {};
     encodeDelayParams (patch.delay, delayBytes.data());
-    packets.push_back (makeDt1Message (baseAddress + 0x0300, delayBytes.data(),
+    packets.push_back (makeDt1Message (baseAddress + offsetDelay, delayBytes.data(),
                                        delayBytes.size(), deviceId));
 
     std::array<std::uint8_t, sizeReverb> reverbBytes {};
     encodeReverbParams (patch.reverb, reverbBytes.data());
-    packets.push_back (makeDt1Message (baseAddress + 0x0400, reverbBytes.data(),
+    packets.push_back (makeDt1Message (baseAddress + offsetReverb, reverbBytes.data(),
                                        reverbBytes.size(), deviceId));
 
-    std::array<std::uint8_t, sizeArpeggio> arpBytes {};
-    encodeArpeggioParams (patch.arpeggio, arpBytes.data());
-    packets.push_back (makeDt1Message (baseAddress + 0x0500, arpBytes.data(),
+    std::array<std::uint8_t, sizeArpeggioCommon> arpBytes {};
+    encodeArpeggioCommon (patch.arpeggio, arpBytes.data());
+    packets.push_back (makeDt1Message (baseAddress + offsetArpeggioCommon, arpBytes.data(),
                                        arpBytes.size(), deviceId));
+
+    // One block per grid row, Note 1 at 00 06 00 through Note 16 at 00 15 00.
+    for (int row = 0; row < arpeggioMaxRows; ++row)
+    {
+        std::array<std::uint8_t, sizeArpeggioPattern> patternBytes {};
+        encodeArpeggioPattern (patch.arpeggio.style, row, patternBytes.data());
+        const std::uint32_t address = baseAddress + offsetArpeggioPattern
+                                      + static_cast<std::uint32_t> (row) * arpeggioPatternStride;
+        packets.push_back (makeDt1Message (address, patternBytes.data(),
+                                           patternBytes.size(), deviceId));
+    }
 
     return packets;
 }
@@ -657,42 +696,47 @@ bool decodeSysExMessage (const std::uint8_t* msg, std::size_t msgLen,
 
     const std::uint8_t* dataPtr = p + dataOffset;
 
-    // Route by sub-block (0 = Common, 1 = Upper, 2 = Lower, 3 = Delay, 4 = Reverb, 5 = Arpeggio)
-    const unsigned subBlock = (addr >= 0x20000000) ? ((addr >> 8) & 0x07u) : ((addr >> 8) & 0xFFu);
+    // Route by the block offset inside the patch: 00 = Common, 01/02 = the
+    // two tones, 03 = Delay, 04 = Reverb, 05 = Arpeggio Common, 06..15 =
+    // Arpeggio Pattern (Note 1..16). The two high address bytes select the
+    // Temporary Patch or one of the 32 User Patches and do not change the
+    // layout, so the same switch serves both.
+    const unsigned block = (addr >> 8) & 0xFFu;
 
-    if (subBlock == 0)
+    switch (block)
     {
-        decodePatchCommon (dataPtr, dataLength, targetPatch);
-        clampToDocumentedRanges (targetPatch);
-        return true;
+        case 0x00:
+            decodePatchCommon (dataPtr, dataLength, targetPatch);
+            clampToDocumentedRanges (targetPatch);
+            return true;
+        case 0x01:
+            decodeTonePatch (dataPtr, dataLength, targetPatch.upper);
+            clampToDocumentedRanges (targetPatch.upper);
+            return true;
+        case 0x02:
+            decodeTonePatch (dataPtr, dataLength, targetPatch.lower);
+            clampToDocumentedRanges (targetPatch.lower);
+            return true;
+        case 0x03:
+            decodeDelayParams (dataPtr, dataLength, targetPatch.delay);
+            clampToDocumentedRanges (targetPatch);
+            return true;
+        case 0x04:
+            decodeReverbParams (dataPtr, dataLength, targetPatch.reverb);
+            clampToDocumentedRanges (targetPatch);
+            return true;
+        case 0x05:
+            decodeArpeggioCommon (dataPtr, dataLength, targetPatch.arpeggio);
+            clampToDocumentedRanges (targetPatch);
+            return true;
+        default:
+            break;
     }
-    if (subBlock == 1)
+
+    if (block >= 0x06 && block < 0x06 + static_cast<unsigned> (arpeggioMaxRows))
     {
-        decodeTonePatch (dataPtr, dataLength, targetPatch.upper);
-        clampToDocumentedRanges (targetPatch.upper);
-        return true;
-    }
-    if (subBlock == 2)
-    {
-        decodeTonePatch (dataPtr, dataLength, targetPatch.lower);
-        clampToDocumentedRanges (targetPatch.lower);
-        return true;
-    }
-    if (subBlock == 3)
-    {
-        decodeDelayParams (dataPtr, dataLength, targetPatch.delay);
-        clampToDocumentedRanges (targetPatch);
-        return true;
-    }
-    if (subBlock == 4)
-    {
-        decodeReverbParams (dataPtr, dataLength, targetPatch.reverb);
-        clampToDocumentedRanges (targetPatch);
-        return true;
-    }
-    if (subBlock == 5)
-    {
-        decodeArpeggioParams (dataPtr, dataLength, targetPatch.arpeggio);
+        decodeArpeggioPattern (dataPtr, dataLength, static_cast<int> (block - 0x06),
+                               targetPatch.arpeggio.style);
         clampToDocumentedRanges (targetPatch);
         return true;
     }
@@ -709,6 +753,12 @@ bool parseSyxBankFile (const std::uint8_t* fileBytes, std::size_t byteCount,
     std::size_t pos = 0;
     Patch currentPatch = initPatch();
     bool foundAny = false;
+    bool patchPending = false;
+    // Which patch the last decoded block belonged to: the two high address
+    // bytes pick the Temporary Patch (10 00) or one of the 32 User Patches
+    // (20 00 .. 20 1F), and everything below them is the block offset. A
+    // change there is a patch boundary, whatever order the blocks arrive in.
+    std::uint32_t currentPatchBase = 0;
 
     while (pos < byteCount)
     {
@@ -726,27 +776,31 @@ bool parseSyxBankFile (const std::uint8_t* fileBytes, std::size_t byteCount,
         const std::size_t end = pos;
         const std::size_t msgLen = end - start + 1;
 
-        if (decodeSysExMessage (fileBytes + start, msgLen, currentPatch))
+        if (msgLen >= 14)
         {
-            foundAny = true;
-            const std::uint32_t addr =
+            const std::uint32_t patchBase =
                 (static_cast<std::uint32_t> (fileBytes[start + 7] & 0x7Fu) << 24)
-                | (static_cast<std::uint32_t> (fileBytes[start + 8] & 0x7Fu) << 16)
-                | (static_cast<std::uint32_t> (fileBytes[start + 9] & 0x7Fu) << 8)
-                | static_cast<std::uint32_t> (fileBytes[start + 10] & 0x7Fu);
+                | (static_cast<std::uint32_t> (fileBytes[start + 8] & 0x7Fu) << 16);
 
-            const unsigned subBlock = (addr >= 0x20000000) ? ((addr >> 8) & 0x07u) : ((addr >> 8) & 0xFFu);
-            if (subBlock == 5)
+            if (patchPending && patchBase != currentPatchBase)
             {
-                outPatches.push_back ({ "", currentPatch });
+                outPatches.push_back ({ currentPatch.name, currentPatch });
                 currentPatch = initPatch();
+                patchPending = false;
+            }
+
+            if (decodeSysExMessage (fileBytes + start, msgLen, currentPatch))
+            {
+                foundAny = true;
+                patchPending = true;
+                currentPatchBase = patchBase;
             }
         }
         pos = end + 1;
     }
 
-    if (foundAny && outPatches.empty())
-        outPatches.push_back ({ "", currentPatch });
+    if (patchPending)
+        outPatches.push_back ({ currentPatch.name, currentPatch });
 
     return foundAny;
 }
@@ -755,14 +809,16 @@ std::vector<std::uint8_t> generateSyxBankFile (const std::vector<NamedPatch>& ba
                                                std::uint8_t deviceId)
 {
     std::vector<std::uint8_t> out;
-    for (std::size_t i = 0; i < bank.size(); ++i)
+    // User Patch (001) is at 20 00 00 00 and each further slot is one step of
+    // 00 01 00 00, up to User Patch (032) at 20 1F 00 00. A bank longer than
+    // the instrument's 32 user slots has nowhere on the hardware to land, so
+    // it stops there.
+    const std::size_t count =
+        std::min (bank.size(), static_cast<std::size_t> (userPatchCount));
+    for (std::size_t i = 0; i < count; ++i)
     {
-        const auto bankIdx = static_cast<std::uint32_t> ((i / 8) % 4);
-        const auto patchIdx = static_cast<std::uint32_t> (i % 8);
-        const std::uint32_t addr = addrUserPatchBase
-                                   | (bankIdx << 16)
-                                   | ((patchIdx * 8) << 8);
-
+        const std::uint32_t addr =
+            addrUserPatchBase + static_cast<std::uint32_t> (i) * userPatchStride;
         const auto patchBytes = encodePatchToSyxBuffer (bank[i].patch, addr, deviceId);
         out.insert (out.end(), patchBytes.begin(), patchBytes.end());
     }
