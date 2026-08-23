@@ -2041,6 +2041,166 @@ void testDuplicateAndUnmatchedKeyEdgesAreIgnored()
                "an unmatched Note Off changed a sounding assignment");
 }
 
+// OQ-12's ROM-resolved envelope recurrence makes SUSTAIN asymmetric mid-note:
+// "Decay is `S + Q(E-S,c)` when `E>S`, otherwise `S`". Pushing the slider *up*
+// takes the else branch and lands on the new level in one pass; pulling it
+// *down* leaves the level above the new target, so the same state re-enters
+// the multiplicative fall -- at the DECAY coefficient, not the release one,
+// because the two share a state but not a slider. Nothing else in the suite
+// moves SUSTAIN after note-on, so this is the only fence on that branch.
+void testMidNoteSustainSnapsUpAndDecaysDown()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int scanPeriod = static_cast<int>(sampleRate * 0.0042);
+    constexpr float sustainLow = 0.2f;
+    constexpr float sustainHigh = 0.9f;
+    // Widely separated coefficients, so a fall at the release rate could not
+    // be mistaken for a fall at the decay rate.
+    constexpr float decayPosition = 0.25f;
+    constexpr float releasePosition = 1.0f;
+    constexpr int fallPasses = 30;
+
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.keyMode = KeyMode::Poly1;
+    parameters.polyphony = 1;
+    parameters.attack = 0.0f;
+    parameters.decay = decayPosition;
+    parameters.sustain = sustainLow;
+    parameters.release = releasePosition;
+    engine.setParameters(parameters);
+    engine.noteOn(60, 1.0f);
+
+    const float lowLevel = YouKnow106Engine::envelopeDacFraction(
+        YouKnow106Engine::storedControlAlignedWord(sustainLow));
+    const float highLevel = YouKnow106Engine::envelopeDacFraction(
+        YouKnow106Engine::storedControlAlignedWord(sustainHigh));
+
+    renderExact(engine, scanPeriod * 400);
+    expectNear(engine.getDisplayEnvelope(), lowLevel, 1.0e-4,
+               "the held note did not settle on the low sustain level");
+
+    // Up: the else branch, one pass.
+    parameters.sustain = sustainHigh;
+    engine.setParameters(parameters);
+    renderExact(engine, scanPeriod * 2);
+    expectNear(engine.getDisplayEnvelope(), highLevel, 1.0e-4,
+               "raising SUSTAIN mid-note did not snap to the new level");
+
+    // Down: no snap. A snap would land on the new target immediately; the
+    // decay branch has barely moved after one pass, so anything above the
+    // midpoint of the two levels separates them without depending on how many
+    // passes the fractional schedule actually fitted into this render.
+    parameters.sustain = sustainLow;
+    engine.setParameters(parameters);
+    renderExact(engine, scanPeriod);
+    expect(engine.getDisplayEnvelope() > lowLevel + 0.5f * (highLevel - lowLevel),
+           "lowering SUSTAIN mid-note snapped down instead of decaying");
+
+    // ... and the fall that follows is the decay coefficient's, replayed here
+    // through the same exact-replica helpers the engine ticks.
+    const auto decayMultiplier =
+        YouKnow106Engine::envelopeDecayReleaseMultiplier(decayPosition);
+    const auto releaseMultiplier =
+        YouKnow106Engine::envelopeDecayReleaseMultiplier(releasePosition);
+    const auto sustainWord =
+        YouKnow106Engine::storedControlAlignedWord(sustainLow);
+    std::uint16_t decayed = YouKnow106Engine::storedControlAlignedWord(
+        sustainHigh);
+    std::uint16_t released = decayed;
+    float slowestDecayed = 0.0f;
+    float fastestDecayed = 0.0f;
+    for (int pass = 1; pass <= fallPasses + 2; ++pass)
+    {
+        decayed = YouKnow106Engine::envelopeDecayLevel(decayed, sustainWord,
+                                                       decayMultiplier);
+        released = YouKnow106Engine::envelopeReleaseLevel(released,
+                                                          releaseMultiplier);
+        // The converter schedule is fractional, so accept a two-pass window
+        // around the nominal count rather than assuming an exact landing.
+        if (pass == fallPasses - 2)
+            slowestDecayed = YouKnow106Engine::envelopeDacFraction(decayed);
+        if (pass == fallPasses + 2)
+            fastestDecayed = YouKnow106Engine::envelopeDacFraction(decayed);
+    }
+    const float releasedLevel = YouKnow106Engine::envelopeDacFraction(released);
+
+    renderExact(engine, scanPeriod * (fallPasses - 1));
+    const float observed = engine.getDisplayEnvelope();
+    expect(observed <= slowestDecayed && observed >= fastestDecayed,
+           "the mid-note sustain fall did not follow the decay coefficient");
+    // The two laws must be far enough apart that the assertion above could
+    // not have passed on a release-rate fall or on a snap.
+    expect(releasedLevel - slowestDecayed > 0.2f
+               && fastestDecayed - lowLevel > 0.2f,
+           "the fixture no longer separates the decay law from release/snap");
+
+    // Releasing the key now must switch coefficients: the same level falls at
+    // the release rate, which is far slower than the decay it was following.
+    engine.noteOff(60);
+    const float atRelease = engine.getDisplayEnvelope();
+    renderExact(engine, scanPeriod * fallPasses);
+    const float afterRelease = engine.getDisplayEnvelope();
+    expect(afterRelease < atRelease
+               && afterRelease > atRelease - (slowestDecayed - fastestDecayed),
+           "release did not take over from decay at the release coefficient");
+}
+
+// The portamento generator is one 8.8-semitone state per voice slot that
+// "advanc[es] by constant add/subtract and clamp, including while inactive",
+// so a reassigned card glides from whatever *it* last played -- not from the
+// pitch of the note the player last heard. Existing cover pins only the
+// fresh-CPU case; this pins the cross-assignment one that produces the wide
+// intervals on the instrument.
+void testReassignedVoiceGlidesFromItsOwnPreviousPitch()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int scanPeriod = static_cast<int>(sampleRate * 0.0042);
+
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.keyMode = KeyMode::Poly1;
+    parameters.polyphony = 2;
+    parameters.portamento = 0.55f;
+    parameters.sustain = 1.0f;
+    parameters.release = 0.0f;
+    engine.setParameters(parameters);
+
+    // Card 0 takes the low note and its glide state settles there.
+    engine.noteOn(36, 1.0f);
+    renderExact(engine, scanPeriod * 400);
+    expect(YouKnow106TestAccess::lastVoiceMidi(engine, 0) == 36,
+           "the first key did not land on card 0");
+    engine.noteOff(36);
+    renderExact(engine, scanPeriod * 40);
+
+    // Card 1 then takes and releases a note, so card 0 is the longest-released
+    // free slot when the distant pitch arrives.
+    engine.noteOn(72, 1.0f);
+    renderExact(engine, scanPeriod * 40);
+    engine.noteOff(72);
+    renderExact(engine, scanPeriod * 4);
+
+    engine.noteOn(84, 1.0f);
+    renderExact(engine, scanPeriod * 2);
+    expect(YouKnow106TestAccess::lastVoiceMidi(engine, 0) == 84,
+           "the distant key did not return to the longest-released card");
+
+    // The glide must start from card 0's own last pitch, four octaves below,
+    // not from 72 and not from the target.
+    const float departure = YouKnow106TestAccess::currentMidi(engine, 0);
+    expect(departure < 48.0f,
+           "the reassigned card did not glide from its own previous pitch");
+    expect(departure > 36.0f - 1.0f,
+           "the reassigned card started below the pitch it last played");
+
+    renderExact(engine, scanPeriod * 4000);
+    expectNear(YouKnow106TestAccess::currentMidi(engine, 0), 84.0, 1.0e-3,
+               "the reassigned card never arrived at its target");
+}
+
 void testIdleSnapshotPrimesEverySharedHold()
 {
     // Repeated restore snapshots before the first valid audio interval replace
@@ -8728,6 +8888,8 @@ int main()
     testPhysicalPitchWriteRestartIsBandlimited();
     testRescanGateOffReachesTheVoiceCpu();
     testDuplicateAndUnmatchedKeyEdgesAreIgnored();
+    testMidNoteSustainSnapsUpAndDecaysDown();
+    testReassignedVoiceGlidesFromItsOwnPreviousPitch();
     testIdleSnapshotPrimesEverySharedHold();
     testStartedIdleEditsUseTheOrderedConverterScan();
     testPhysicalFiltersKeepRunningBehindClosedVcas();

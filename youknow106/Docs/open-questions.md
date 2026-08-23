@@ -5735,11 +5735,308 @@ FetchContent archive host).
 - **P7** stays recorded, not adopted: `Vref_rms` = 0.775 V is a candidate,
   and OQ-06's calibration still routes through OQ-05/OQ-17 evidence.
 
+## 2026-08-23 — a 30-claim hardware-quirk proposal audited; the MIDI chart consumed
+
+Two batches of proposed improvements (six circuit quirks and six
+hardware/firmware features, then eighteen further quirks) were audited claim by
+claim against the code and this record. **Two behaviour changes ship**, both
+from the owner's MIDI implementation chart and neither actually proposed — they
+surfaced while checking a proposal that the chart itself refutes. Everything
+else was already modelled, already adjudicated here, or needs a measurement this
+project cannot make. The corrections and sharpenings the pass produced are below.
+
+The chart was read this pass from the **rendered page-35 scan** of the Roland
+JUNO-106 owner's manual
+(`https://cdn.roland.com/assets/media/pdf/JUNO-106_OM.pdf`, SHA-256
+`e9315efe58f26236ad26d1cd6d0359aab284741186ed31cf0bbadb1d08902efe`, 36 pages).
+**The PDF has no text layer on any page**, so every quotation below is a visual
+read of the raster, not an extraction — record that with the quotations.
+
+### The chart's receive rows, and the two changes they license
+
+Section 2.1 RECOGNIZED RECEIVE DATA, transcribed:
+
+- `1011 nnnn | 0100 0000 | 0` → `hold OFF`; `1011 nnnn | 0100 0000 | 0vvv vvvv`
+  → `hold ON   vvvvvvv = 1 - 127`. **The hold split is at zero, not at 64.**
+  The code applied the MIDI 1.0 `>= 64` convention; it now latches on any
+  non-zero value. Fenced by `testHoldLatchesOnAnyNonZeroValue`, which fails
+  against the old predicate.
+- The five channel-mode rows — `0111 1011` ALL NOTES OFF, `0111 1100` OMNI OFF,
+  `0111 1101` OMNI ON, `0111 1110 | 0mmm mmmm` MONO ON, `0111 1111` POLY ON —
+  followed by the note **"Mode messages (123 - 127) are also recognized as ALL
+  NOTES OFF."** Only 123 was handled; 124–127 fell through the controller
+  branch and were discarded. All five now release the keyboard through the
+  ordinary envelope path (release, not cut). Fenced by
+  `testChannelModeMessagesReleaseLikeAllNotesOff`, which also asserts an
+  unlisted controller still does nothing.
+
+Three further chart readings, recorded but licensing nothing:
+
+- **"The JUNO-106 does not respond to MONO ON message."** The printed
+  mode-resolution table agrees: OMNI OFF (`$7C`) and OMNI ON (`$7D`) resolve to
+  **POLY** in all three columns (POLY ON, MONO ON `m = 1`, MONO ON `m <> 1`),
+  the `m <> 1` case additionally forcing OMNI = ON. Power-up receiver mode is
+  printed as **"OMNI ON, POLY mode"**, and channel recognition as "OMNI OFF
+  mode: voice messages basic channel only / OMNI ON mode: all channels", mode
+  messages basic-channel-only in both.
+- **"velocity ignored"** on both Note Off and Note On (`vvvvvvv = 1 - 127`),
+  with the sounding range `kkkkkkk = 0 - 127 (24 - 108)` and the transmitted
+  range `kkkkkkk : 24 - 108`.
+- Section 2.2: `1110 nnnn | 0b00 0000 | 0bbb bbbb | Pitch Bender / LS 6 bits
+  are ignored`, and "Sensitivity of the pitch bender and modulation can be
+  adjusted by receiver".
+
+### New guardrail — MIDI Mode 4 and per-voice channels do not exist here
+
+A proposal to assign the six voices to consecutive MIDI channels (Mode 4,
+6-part multitimbral) is refuted by the chart's own note above: the instrument
+does not respond to MONO ON at all, and no mode combination leaves POLY. No
+channel-to-voice map appears in any source. The hardware forbids it
+independently — only three of the eight converter destinations are per-card
+(pitch, VCF and voice VCA, 18 of the 23 writes), while SUB LEVEL, VCA LEVEL,
+PWM, RESONANCE and NOISE are single shared holds serving all six cards from one
+global patch state. Five of the sixteen tone parameters therefore could not
+differ per channel even if the firmware tried. **Do not propose multitimbral or
+per-voice-channel behaviour again.**
+
+The plug-in is unconditionally omni, which *is* the chart's printed power-up
+receiver mode, so omni-always is defensible rather than a gap. **OMNI OFF /
+basic-channel filtering is a real printed receive behaviour this product does
+not implement**; it is recorded as declared scope, not silently absent, and
+would need a basic-channel parameter. CC 120 (All Sound Off) and CC 121 (Reset
+All Controllers) are host-hygiene extensions absent from this 1984 chart.
+
+### OQ-14 — the bender dead band named, and the LFO axis retired from it
+
+A proposal to model a dead band on the lever's **forward/LFO** axis is misplaced
+and that axis has none to model: the 2026-08-20 read records "the LFO TRIG
+switch idles at ≈ 4.55 V (10 k pull-up / 100 k divider) and reads 0 V pressed"
+— a two-state contact, with depth set by the separate LFO SENSE channel. The
+plug-in's continuous CC 1 axis is therefore an **extension over a binary
+contact**, recorded as such rather than left looking like a defect.
+
+The dead band that does exist is on the **bend** axis only — the AN7
+absolute-value network paired with the AN6 polarity comparator — and it stays
+unmodelled for a stated reason rather than by omission:
+
+- Its offset injects through R6 2.2 MΩ from what only **glyph-matches** the
+  +5.0 V arrow. At +5.0 V the band is ≈ ±0.82 V of wiper travel (±5.5 % of
+  deflection); at +15 V it is ≈ ±2.46 V (≈ ±16.4 %). **A three-fold spread in
+  dead lever throw means the constant would be chosen, not sourced.**
+- Even granting a rail, the transfer does not close: the recorded
+  0.4125 V-per-wiper-volt slope overruns a 5 V ADC span at full deflection, so
+  the magnitude channel's saturation point is equally undetermined.
+- The repo-determinable follow-up is a firmware question, not a measurement:
+  **whether a MIDI-received bend joins the same magnitude/polarity byte pair the
+  slave's AN6/AN7 write** decides whether the analogue dead band belongs on the
+  plug-in's MIDI path at all. Answerable against the hash-identified B-2 image.
+
+The chart's own bend row constrains a shipped behaviour without licensing a
+change. "LS 6 bits are ignored" means a MIDI-received bend is truncated to 8
+bits **over the full range** (≈128 steps per side), while the model quantises to
+an 8-bit magnitude **per side** (255 counts), which is the anchored analogue
+lever/ADC read and roughly twice as fine. The chart prints the retained word's
+width but not how firmware maps it onto the internal bend value, and the
+candidate mappings differ audibly — a signed `v − 128` mapping reaches only
+127/128 of full upward deflection, and it would additionally have to decide
+whether a full MIDI bend equals a full lever deflection at all. Firmware
+question or measurement; not a fit.
+
+### OQ-17 — the selector taps promoted, and the "selector changes loading" argument retired
+
+The 2026-08-20 tap arithmetic moves into the question's body. Before loading:
+**H** = the wiper node (unity); **M** = `8.3k/41.3k = 0.2009685` (−13.9384 dB);
+**L** = `1.5k/41.3k = 0.0363196` (−28.7977 dB) — 1.06 and 1.20 dB shy of the
+published −15/−30 dBm steps, the quantified consistency check the calibrated
+sweep should resolve.
+
+Two structural facts retire the argument that exposing the selector would bring
+loading or clipping behaviour with it:
+
+1. **Tap position does not change the 41.3 kΩ chain the wiper sees.** The
+   29.313 kΩ per-wiper internal load, and therefore the position-dependent
+   corner and gain, are invariant under selector position.
+2. **The modelled clip is IC6's rail (13.5 V), upstream of C17/C20, R54/R57,
+   VR1 and the ladder.** No selector position can change it.
+
+An exposed selector would therefore be a flat static trim removing 13.94 or
+28.80 dB of digital headroom and nothing else. **Adopting the published
+−15/−30 dB in code would be a fitted number contradicting the modelled
+network.** Added to the needed-output list: the three ladder resistors'
+designators (the tree records 33k/6.8k/1.5k as values only), and the p. 15 node
+order of R64/R65 2.2 kΩ with C21/C22 1 nF at the jacks — the tap-dependent
+source impedance into 1 nF is the one audible term, and a fresh original-page
+read could close the ordering **without hardware**, whereas the loaded transfer
+cannot.
+
+**Jack normaling** stays a measurement item, and the one qualitative sentence on
+file ("the empty jack's normal mixes both channels onto the used jack") must not
+be mistaken for a topology: it states no direction and no series element. A
+−6.02 dB passive sum would additionally assume a direct tip tie and equal
+per-channel source impedance, neither established, and it would land downstream
+of the declared pre-jack High-tap product boundary.
+
+**The headphone path is closed for the second time.** The derivable half — IC7's
+101 kΩ as a fixed load on every wiper — already ships. The causal claim that a
+32 Ω load rolls off the *main* jacks is wrong: IC7's input presents the same
+101 kΩ to the wiper either way. `R60` appears nowhere in this tree; IC7's part
+number is unrecorded (the TA75558 column belongs to IC6).
+
+### OQ-21 / OQ-11 — the HPF mode-change derivation boundary, stated precisely
+
+The current blanket phrasing understates what is derivable and invites the wrong
+rebuttal. The **settling tails are determinate with no invented constant**: the
+1.047 MΩ Thévenin (R21/R23 1 MΩ plus the leg's own 47 kΩ into IC4a's virtual
+ground) is exactly what reproduces the recorded 15.705 ms and 4.9209 ms decays;
+the discharge current necessarily flows through R26/R28 into the summing node;
+and the deselected cap's voltage at the switch instant is not an arbitrary
+projection but identically the low-frequency complement the cut section removes.
+
+What is **not** derivable is the click's leading edge or its audibility: no
+charge-injection coulomb spec exists in any 4000-series sheet consulted, and the
+closest anchor (control-to-output crosstalk, ≈ 9 pC class) is unusable without
+the YCOM node's parasitic capacitance, which no source gives. Break-before-make
+dead time is unsourced and sub-sample at 176–192 kHz anyway.
+
+Correcting the mode-to-capacitor map proposals keep getting wrong: **C14 10 µF
+is the common YCOM coupling cap and is not switched at all**; only C10 15 nF
+(mode 2) and C11 4.7 nF (mode 3) sit in switched legs; Boost switches the
+C9/C8/C6 branch plus the dry R25 leg; Flat switches a bare resistor with no
+capacitor. Guardrail for any future attempt: **the single C14 state must stay
+continuous across a mode change** — leg memory could only be added beside it,
+never by resetting it.
+
+The pulse-off half of OQ-11 is answered in the negative by the shipped topology
+rather than open: no mixer DC can reach the filter core or the VCA behind it,
+because C56/C50 couple the node in.
+
+### OQ-03 — the clock-bleed switch: spur range corrected, and a latent defect flagged
+
+Two corrections beside the already-declined `enableChorusClockBleed`:
+
+1. **The spur range is 20.0–91.43 kHz, not 20–80 kHz** — 128 cell pairs over the
+   promoted 1.4–6.4 ms delay sweep. The 10 k/200 k clock bounds are safety
+   clamps, not the sweep.
+2. **A latent defect, recorded next to the flag so it is found before anyone
+   flips it:** the bleed tone is generated by naive sine accumulators at the
+   modulated clock, so at non-HQ internal rates the 91.4 kHz end folds straight
+   into the audio band. Enabling the switch would be an alias generator
+   independently of its unvalidated 0.005 amplitude.
+
+The switch is also **not** the mechanism that produces genuine clock/signal
+heterodyning: its tone is added downstream of the line's nonlinearity into a
+linear summer, while the real `k·Fclock ± f` images come from the sampled hold
+and its reconstruction, as the research doc already says.
+
+### OQ-19 — the thump fence cross-referenced
+
+The residual voice-VCA thump is not merely unmodelled: it was **implemented once
+and reverted on 2026-08-06** as an unsupported heuristic, and
+`testSilentVoiceDoesNotInventUnmeasuredVcaFeedthrough` is the standing
+regression fence asserting the multiply adds no offset at control offsets −1, 0
+and +1. Separately, the audible duty-dependent note-on thump the plug-in *did*
+once have was a modelling artefact — the envelope multiplying filter-core DC —
+fixed at source by shipping C59 on 2026-08-08 and fenced by
+`testFilterToVcaCouplingRemovesTheDutyDependentThump`, so a synthetic thump
+added now would partly undo that fix. Only a calibrated TP8–TP13 gate-step
+capture could license a residual, and its protocol is already written here.
+
+Added to the needed-output list: **off-isolation** — the residual at the main
+output with a self-oscillating filter and no key down, relative to a played
+note, is the one capture that would put a number on voice-VCA gate-off bleed.
+
+### OQ-08 — cross-reference debt cleared
+
+The body still reads that "the datasheet itself could not be retrieved in the
+environment this note was written in, so it is recorded as a **lead**". The
+2026-08-20 addendum supersedes that: it quotes the 82C54 sheet directly and
+upgrades the mechanism from lead to determinable. Two things the datasheet still
+does not settle, both already on file: whether the pitch path writes counts only
+or rewrites control words (a firmware question against the B-2 image, blocked
+because the repository carries no firmware image by policy), and whether the
+8253 output edge resets the ramp integrator rather than merely clocking it. The
+2026-08-08 strike of the deferred-reload remedy is untouched.
+
+### Record corrections made this pass
+
+- **`Source/DSP/YouKnow106Engine.cpp`** carried the 2026-08-07 "R99/R102 33 kΩ
+  is a DC bridge across D5/D6" reading, which the 2026-08-20 junction read
+  retired three days later. Corrected to the collector-load role, with the
+  60 kΩ (27 k + 33 k) conducting-path series figure. No constant moved.
+- **`Docs/best-in-class-plan.md` gap 10** cited `Engine.cpp:3974-3980` and
+  `:3276-3277` for the droop assignment and its consumption; both had rotted
+  onto `silenceVoice` and `rebuildRateDependentVoiceState`. Re-anchored to
+  `:5902` and `:4784`. The measured numbers are unaffected.
+- **`Docs/circuit-modelling-research.md`** claimed the warm-up moves "the cutoff
+  reference and the onset of the OTA's compression". The code contradicts the
+  first half: `thermalWarmupFraction_` reaches audio through
+  `dynamicOtaHeadroomVolts` alone, and each card's cutoff tempco is built from
+  the time-invariant spatial gradient. **The modelled cutoff carries no warm-up
+  term**, deliberately — R111's 560 Ω positor exists to cancel the 0.33 %/°C
+  tempco and its residual is OQ-10's unmeasured quantity. Corrected, with
+  Roland's printed mandatory 10-minute VCF warm-up recorded as an observation
+  against the voiced τ = 900 s (48.7 % complete at 600 s) and **not** as a
+  licence to retune τ.
+- **Removal-log entry 22** still described the in-window hold-tracking texture as
+  "blocked on OQ-07". The 2026-08-20 acquisition-constant finding bounds it to
+  inertness instead. Amended.
+- **`Source/DSP/YouKnow106Panel.h`** asserted uncited that "the instrument's Key
+  Transpose function accounts for its wider transmitted range". The chart now
+  sources it: transmitted `kkkkkkk : 24 - 108` against the 36..96 keybed is
+  exactly one octave each way. The hardware function's reference key and
+  MIDI-OUT transposition rule remain undocumented in the evidence base, and are
+  moot while this product has no MIDI-output bus; the shipped continuous
+  ±12 semitones is product policy in *form*, not in reach.
+
+### Regression fences added for ROM-resolved behaviour that had none
+
+- `testMidNoteSustainSnapsUpAndDecaysDown` — OQ-12's recurrence makes SUSTAIN
+  asymmetric mid-note ("Decay is `S + Q(E−S,c)` when `E>S`, otherwise `S`"), so
+  raising the slider lands on the new level in one pass while lowering it
+  re-enters the multiplicative fall at the **decay** coefficient. Nothing in the
+  suite moved SUSTAIN after note-on.
+- `testReassignedVoiceGlidesFromItsOwnPreviousPitch` — the portamento state
+  advances "including for currently inactive slots", so a reassigned card glides
+  from whatever *it* last played. Existing cover pinned only the fresh-CPU case.
+
+### Audited and unchanged
+
+Sub-oscillator phase/polarity and its edge alignment; RANGE as a clock-divider
+change with no restart; pitch-bend count quantisation; OTA input overdrive and
+the resonance squash it produces; self-oscillation at the 4.8 Vpp / 248 Hz
+service anchors; key tracking and the upper converter knee; the 4.2 ms stepped
+cutoff and its 522 µs hold slew; Poly 1 note memory, Poly 2 linear scan and the
+dropped seventh note; rail droop into all six cards' cutoff; and the
+voice-activity display — **all already shipped**, most with fences. Mixer-leg
+Thévenin loading, sub diode conduction, BBD noise PSD, the VCA turn-on law, jack
+normaling, headphone loading, mechanical lever interaction and per-card warm-up
+trajectory all remain measurement-only. A "poly test mode" key combination has
+no meaning in a plug-in, and the information it conveys — which card is sounding
+— already ships continuously. Simultaneous Chorus I + II remains refuted by the
+guardrail below.
+
 ## Settled guardrails — do not reopen without contradictory primary evidence
 
 - **Chorus modes:** the JUNO-106 has Off, I and II. Its owner's manual says I
   and II cannot be used simultaneously, and the board has one enable line plus
   one binary mode line. Obsolete both-buttons session states canonicalise to II.
+  There is no fourth "I + II" mode to discover by holding both buttons: the
+  JUNO-6/60's fast-vibrato behaviour is a different instrument's switch wiring.
+- **MIDI Mode 4 and per-voice channels:** they do not exist on this instrument.
+  The owner's MIDI implementation chart prints "The JUNO-106 does not respond to
+  MONO ON message", and its mode-resolution table resolves every OMNI/MONO
+  combination to POLY. No channel-to-voice map appears in any source, and the
+  hardware forbids one independently — only three of the eight converter
+  destinations are per-card, while SUB LEVEL, VCA LEVEL, PWM, RESONANCE and
+  NOISE are single shared holds serving all six cards from one global patch
+  state. Do not propose multitimbral or per-voice-channel operation again.
+  The plug-in's
+  unconditional omni reception *is* the chart's printed power-up receiver mode;
+  what it does not implement, and what is recorded as declared scope rather than
+  a defect, is OMNI OFF basic-channel filtering.
+- **Hold (CC 64) threshold:** the chart's rows split at zero — `hold OFF` is a
+  third byte of 0, `hold ON` is `vvvvvvv = 1 - 127`. Do not restore the MIDI 1.0
+  `>= 64` convention as a fix.
 - **Chorus balance:** dry enters IC6 through 47 kΩ (R71/R73, off the shared
   IC2b bus), wet through 39 kΩ (R72/R74, from the Tr11/Tr12 mute sources),
   with 100 kΩ feedback (R70/R67). Thus dry gain is `100/47`, wet gain is

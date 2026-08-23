@@ -173,9 +173,11 @@ inline constexpr float editorHeight = extensionDeckTop + extensionDeckHeight
                                     + helpStripGap + helpStripHeight
                                     + editorBottomMargin;
 // The physical keyboard is 61 notes, C2 through C7. With the display's
-// middle-C convention those are MIDI notes 36..96; the instrument's Key
-// Transpose function accounts for its wider transmitted range. External MIDI
-// is a separate input path and must not be clamped to the visible keybed.
+// middle-C convention those are MIDI notes 36..96, while the owner's MIDI
+// implementation chart prints the transmitted note range as `kkkkkkk : 24 -
+// 108` -- exactly that keybed widened by one octave each way, which is the
+// reach the instrument's KEY TRANSPOSE function supplies. External MIDI is a
+// separate input path and must not be clamped to the visible keybed.
 inline constexpr int keyboardLowestMidiNote = 36;
 inline constexpr int keyboardHighestMidiNote = 96;
 inline constexpr int keyboardWhiteKeyCount = 5 * 7 + 1;

@@ -44,6 +44,13 @@ Notable customer-facing changes to YouKnow106 are recorded here.
   window was open.
 - Fixed the pitch-bend lever so holding one axis with the keyboard survives
   releasing the other.
+- Fixed sustain (CC 64) to latch on any non-zero value instead of only at 64
+  and above, matching the original's MIDI implementation chart, which prints
+  hold off at zero and hold on for 1–127. A half-pressed pedal now holds.
+- Fixed the channel-mode messages CC 124–127 so they release the keyboard like
+  all-notes-off, which the same chart says the instrument does with every mode
+  message from 123 up. They were previously ignored, leaving notes hanging in
+  hosts that end playback with an omni or poly message rather than CC 123.
 - Kept the modelled instrument warm across a transport stop, so the chassis
   warm-up runs as intended instead of restarting whenever playback stops.
 - Retired the voice lamps, meters and oscilloscope whenever the host bypasses

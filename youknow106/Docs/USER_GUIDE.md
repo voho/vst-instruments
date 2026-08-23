@@ -99,6 +99,17 @@ YouKnow106 responds to notes, pitch bend, modulation (CC 1), sustain (CC 64),
 all-notes-off, and Program Change 0–127. The synthesis panel is available to
 host automation but has no MIDI CC-learn mapping.
 
+Two details follow the original's MIDI implementation chart rather than the
+general MIDI convention. **Sustain latches on any non-zero value**, not only at
+64 and above — the chart's two rows are "hold OFF" at zero and "hold ON" for
+1–127, so a half-pressed pedal holds. And the **channel-mode messages CC 124–127
+(omni off, omni on, mono on, poly on) all release the keyboard**, because the
+chart notes that mode messages 123–127 are recognised as all-notes-off. Like
+all-notes-off itself, they release the keys into their normal envelope tails
+rather than cutting the sound; CC 120 is what cuts. Mono mode is not
+implemented, because the original does not respond to it — the chart says so in
+the same note.
+
 LOAD imports the first compatible patch dump from a `.syx` file; a file can
 also be dropped on the editor. SAVE writes the current tone as a compatible
 single-patch `.syx` dump. Performance and plug-in extension controls are not
