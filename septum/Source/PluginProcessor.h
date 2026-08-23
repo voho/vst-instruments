@@ -105,6 +105,10 @@ public:
     // republish is not undone by it: last writer wins.
     void syncPatchShadows() noexcept;
 
+    // The same half for the three Universal Realtime device-control messages.
+    // Public so the harness can stand in for the message loop.
+    void republishSystemParameters();
+
     // Parses and loads SysEx .syx bytes into the active patch.
     void loadSysExData (const void* data, std::size_t sizeInBytes);
 
@@ -247,13 +251,17 @@ private:
     // atomics here, host and UI notification from the queued pass.
     bool handleDeviceControlSysEx (const std::uint8_t* data,
                                    std::size_t size) noexcept;
-    void republishSystemParameters();
     // MASTER LEVEL, MASTER TUNE, MASTER KEY SHIFT, in that order.
     static constexpr std::size_t deviceControlCount = 3;
     std::array<juce::RangedAudioParameter*, deviceControlCount>
         deviceControlParameters { nullptr, nullptr, nullptr };
     std::array<std::atomic<float>*, deviceControlCount>
         deviceControlValues { nullptr, nullptr, nullptr };
+    // The audio thread's own copy, for the reason `ccShadow` exists: the
+    // pointers above are the parameter objects' storage and
+    // setValueNotifyingHost writes it, so publishing a value read a moment
+    // earlier put it back over a message that had arrived in between.
+    std::array<std::atomic<float>, deviceControlCount> deviceControlShadow {};
     std::atomic<unsigned> deviceControlDirty { 0u };
     struct SystemReconciler final : public juce::AsyncUpdater
     {

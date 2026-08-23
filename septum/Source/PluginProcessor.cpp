@@ -563,6 +563,10 @@ void SeptumAudioProcessor::cacheParameterPointers()
             deviceControlValues[i] = parameters.getRawParameterValue (ids[i]);
             jassert (deviceControlParameters[i] != nullptr);
             jassert (deviceControlValues[i] != nullptr);
+            if (deviceControlValues[i] != nullptr)
+                deviceControlShadow[i].store (
+                    deviceControlValues[i]->load (std::memory_order_relaxed),
+                    std::memory_order_relaxed);
         }
     }
     for (const auto& binding : externalBindings())
@@ -1219,8 +1223,10 @@ bool SeptumAudioProcessor::handleDeviceControlSysEx (const std::uint8_t* data,
         auto* raw = deviceControlValues[index];
         if (parameter == nullptr || raw == nullptr)
             return;
-        raw->store (parameter->getNormalisableRange().snapToLegalValue (natural),
-                    std::memory_order_relaxed);
+        const float snapped =
+            parameter->getNormalisableRange().snapToLegalValue (natural);
+        raw->store (snapped, std::memory_order_relaxed);
+        deviceControlShadow[index].store (snapped, std::memory_order_relaxed);
         deviceControlDirty.fetch_or (1u << index, std::memory_order_release);
         systemReconciler.triggerAsyncUpdate();
     };
@@ -1265,10 +1271,17 @@ void SeptumAudioProcessor::republishSystemParameters()
         if (parameter == nullptr || raw == nullptr)
             continue;
         const auto& range = parameter->getNormalisableRange();
+        const float natural = deviceControlShadow[i].load (std::memory_order_relaxed);
         parameter->beginChangeGesture();
-        parameter->setValueNotifyingHost (
-            range.convertTo0to1 (raw->load (std::memory_order_relaxed)));
+        parameter->setValueNotifyingHost (range.convertTo0to1 (natural));
         parameter->endChangeGesture();
+        // A second message for the same parameter that landed while
+        // setValueNotifyingHost ran is newer than the value it just wrote into
+        // the parameter's storage, and the engine reads that storage every
+        // block — so it goes back now, not a frame from now.
+        const float newest = deviceControlShadow[i].load (std::memory_order_relaxed);
+        if (newest != natural)
+            raw->store (newest, std::memory_order_relaxed);
     }
 }
 

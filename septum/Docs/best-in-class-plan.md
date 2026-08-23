@@ -1756,6 +1756,14 @@ selector moves. Five of its checks fail against the previous code.
 That closes the last of the three things the README said a SysEx load could not
 carry. Only the patch *name* is left, and it genuinely has no parameter.
 
+**And the same race once more, in the device-control path Step 42 added.** The
+three Universal Realtime messages take the same audio-thread split, and their
+republish read the parameter's own storage exactly as the other two did — so a
+second Master Volume arriving while the first was being published was lost.
+Same shadow, same restore. Three of these were found one round after another,
+which is what the shape deserves: every audio-thread-to-message-thread publish
+in this processor now reads a value the message thread cannot clobber.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:

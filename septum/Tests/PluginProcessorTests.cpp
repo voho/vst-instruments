@@ -1149,6 +1149,20 @@ void testUniversalRealtimeDeviceControl()
     send (0x02, 0x00, 0x00);
     expect (std::abs (valueOf ("master_level") - before) < 0.001f,
             "an unlisted device-control sub-ID changes nothing");
+
+    // The republish must not put an older value back over a message that
+    // arrived while it was running. setValueNotifyingHost writes the same
+    // atomic the audio thread stores into, so reading that atomic to decide
+    // what to publish lost the newer message outright. Staged here the way the
+    // race leaves it: the parameter's storage is set to a stale value behind
+    // the republish's back.
+    send (0x01, 0x00, 55);
+    processor.parameters.getRawParameterValue ("master_level")->store (9.0f);
+    processor.republishSystemParameters();
+    expect (std::abs (valueOf ("master_level") - 55.0f) < 0.5f,
+            "the system republish publishes the message's own value, not the"
+            " parameter's storage (got "
+                + juce::String (valueOf ("master_level")).toStdString() + ")");
 }
 
 // A patch dump is 22 DT1 packets and they arrive on the audio thread, one or
