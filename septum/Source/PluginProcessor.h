@@ -181,6 +181,11 @@ private:
 
     void publishImportedArpeggioStyle (const septum::ArpeggioStyle& style,
                                        int selector) noexcept;
+    // Drop it. A factory program carries its own style, and the selector is
+    // only a key: without this, a program whose style index happened to match
+    // the one an imported grid arrived under played the imported grid instead
+    // of its own template.
+    void invalidateImportedArpeggioStyle() noexcept;
     [[nodiscard]] bool readImportedArpeggioStyle (
         int selector, septum::ArpeggioStyle& out) const noexcept;
     void writeImportedArpeggioToState (juce::ValueTree& state) const;

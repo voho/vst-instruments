@@ -1375,6 +1375,55 @@ void testAnImportedArpeggioPatternSurvivesAndPlays()
                 "and so do the Original Notes");
     }
 
+    // A factory program carries its own style. The selector is only the key
+    // the imported grid is filed under, so a program whose style index
+    // happens to match the one a dump arrived under must still play its own
+    // template, not the imported grid.
+    {
+        SeptumAudioProcessor host;
+        host.prepareToPlay (44100.0, 256);
+        juce::AudioBuffer<float> b (2, 256);
+
+        // Find a factory program and file the imported grid under its own
+        // style index, which is the collision that has to be safe.
+        const int program = 12;
+        const int programStyle =
+            septum::factoryPatches()[(std::size_t) program].patch.arpeggio.styleIndex;
+        septum::Patch collide = dump;
+        collide.arpeggio.styleIndex = programStyle;
+        if (auto* selector = host.parameters.getParameter ("arp_style"))
+            selector->setValueNotifyingHost (
+                host.parameters.getParameterRange ("arp_style")
+                    .convertTo0to1 ((float) programStyle));
+        for (const auto& pkt : septum::sysex::encodePatchToSysExPackets (collide))
+        {
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage (pkt.data(), (int) pkt.size()), 0);
+            host.processBlock (b, midi);
+        }
+        expect (host.snapshotPatch().arpeggio.style.cell (0, 0)
+                    == dump.arpeggio.style.cell (0, 0),
+                "the imported grid is in place before the program change");
+
+        host.setCurrentProgram (program);
+        septum::Patch reference =
+            septum::factoryPatches()[(std::size_t) program].patch;
+        septum::applyArpeggioStyle (reference, programStyle);
+        const auto after = host.snapshotPatch();
+        bool matchesProgram = true;
+        for (int step = 0; step < septum::arpeggioMaxSteps && matchesProgram; ++step)
+            for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+                if (after.arpeggio.style.cell (step, row)
+                    != reference.arpeggio.style.cell (step, row))
+                {
+                    matchesProgram = false;
+                    break;
+                }
+        expect (matchesProgram,
+                "a program change drops the imported grid and plays the"
+                " program's own style");
+    }
+
     // Moving the style selector picks a template again, which is what the
     // hardware's panel does — the grid is not sticky across a selection.
     {

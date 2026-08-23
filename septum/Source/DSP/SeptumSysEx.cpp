@@ -717,6 +717,12 @@ bool decodeSysExMessage (const std::uint8_t* msg, std::size_t msgLen,
     // Arpeggio Pattern (Note 1..16). The two high address bytes select the
     // Temporary Patch or one of the 32 User Patches and do not change the
     // layout, so the same switch serves both.
+    // Only the Temporary Patch and the 32 User Patches carry this layout.
+    // The System block at 01 00 00 00 has the same Total Size as Patch
+    // Common and would otherwise be decoded as a patch name and controls.
+    if (! packet.patchBaseIsKnown())
+        return false;
+
     const unsigned block = packet.block();
 
     switch (block)

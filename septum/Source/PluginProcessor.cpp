@@ -943,6 +943,12 @@ void SeptumAudioProcessor::publishImportedArpeggioStyle (
     importedArpeggio.valid.store (true, std::memory_order_release);
 }
 
+void SeptumAudioProcessor::invalidateImportedArpeggioStyle() noexcept
+{
+    importedArpeggio.valid.store (false, std::memory_order_release);
+    importedArpeggio.selector.store (-1, std::memory_order_release);
+}
+
 bool SeptumAudioProcessor::readImportedArpeggioStyle (
     int selector, septum::ArpeggioStyle& out) const noexcept
 {
@@ -1371,6 +1377,10 @@ void SeptumAudioProcessor::writeProgramToParameters (int index) noexcept
             patchValues[i]->store (shared[i].get (patch),
                                    std::memory_order_relaxed);
 
+    // The program brings its own arpeggio style, named by its selector index,
+    // so any grid a dump left behind stops standing in for a template.
+    invalidateImportedArpeggioStyle();
+
     // A program change supersedes any dump republish still queued behind it,
     // and this runs on the audio thread, so the shadows are corrected here
     // rather than waiting for the message thread to notice.
@@ -1626,6 +1636,7 @@ void SeptumAudioProcessor::applyProgram (int index)
     // that overlapped this spray in any way is discarded.
     stagedProgram.store (index, std::memory_order_release);
     patchGeneration.fetch_add (1, std::memory_order_acq_rel);
+    invalidateImportedArpeggioStyle();
 
     const auto apply = [this] (const juce::String& id, float natural)
     {

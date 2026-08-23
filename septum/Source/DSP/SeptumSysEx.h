@@ -142,6 +142,18 @@ struct Dt1Packet
     // Arpeggio Pattern blocks.
     [[nodiscard]] unsigned block() const noexcept { return (address >> 8) & 0xFFu; }
 
+    // Whether those two bytes name a patch space this codec owns. The
+    // System block (01 00 00 00) is not one of them.
+    [[nodiscard]] bool patchBaseIsKnown() const noexcept
+    {
+        const auto base = patchBase();
+        return base == addrTemporaryPatch
+               || (base >= addrUserPatchBase
+                   && base <= addrUserPatchBase
+                                  + static_cast<std::uint32_t> (userPatchCount - 1)
+                                        * userPatchStride);
+    }
+
     [[nodiscard]] bool blockIsKnown() const noexcept
     {
         return block() < 0x06u + static_cast<unsigned> (arpeggioMaxRows);

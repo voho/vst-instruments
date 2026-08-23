@@ -1727,12 +1727,17 @@ moves only on a message that has proved it is a DT1 for this model with a good
 checksum and a block this codec owns. Three of the five intruders in the new
 test split a patch against the old code.
 
-**An imported arpeggio pattern was decoded and then thrown away.** This one was
-new with Step 40: the address map put the 32 × 16 grid in sixteen blocks, the
-codec started reading all of it, and nothing downstream could hold it.
-`snapshotPatch()` rebuilds the arpeggio style from the selector on every block,
-so each decoded row was discarded by the next packet, and a pattern imported
-from a real unit neither played nor survived a re-export. Two halves:
+**An imported arpeggio pattern was decoded and then thrown away.** Not new with
+Step 40, as this section first claimed and the commit message with it — the
+correction is worth stating plainly because provenance is what this document is
+for. On `origin/main` the single-block `decodeArpeggioParams` already wrote the
+whole grid into `arp.style.cells`, and `snapshotPatch()` already ended with an
+unconditional `applyArpeggioStyle (patch, styleIndex)`, so the grid was rebuilt
+from the selector and discarded there too. The README at `6bb2292` even said so
+in as many words. What Step 40 changed was the shape of the data, not its fate.
+Either way `snapshotPatch()` rebuilds the style on every block, so each decoded
+row was discarded by the next packet, and a pattern imported from a real unit
+neither played nor survived a re-export. Two halves:
 
 - **END STEP** now maps onto the `arp_end_step` parameter. It is one control on
   the hardware, 1–32, and the replica's panel is the same control with a zero
@@ -1755,6 +1760,13 @@ selector moves. Five of its checks fail against the previous code.
 
 That closes the last of the three things the README said a SysEx load could not
 carry. Only the patch *name* is left, and it genuinely has no parameter.
+
+**And the grid had two more doors it did not fit through.** A factory program
+carries its own style, named by its selector index, and the selector is only
+the key the imported grid is filed under — so a program whose style index
+happened to match the one a dump arrived under played the imported grid instead
+of its own template. A program change drops the imported grid now, on both the
+audio-thread and message-thread paths.
 
 **And the grid had a second door it did not fit through.** A dump arriving on
 the wire is decoded in the render callback; a `.syx` handed to the plug-in
