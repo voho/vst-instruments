@@ -936,10 +936,12 @@ void SeptumAudioProcessor::readImportedArpeggioFromState (const juce::ValueTree&
 void SeptumAudioProcessor::publishImportedArpeggioStyle (
     const septum::ArpeggioStyle& style, int selector) noexcept
 {
-    importedArpeggio.generation.fetch_add (1, std::memory_order_acq_rel);
-    importedArpeggio.style = style;
-    importedArpeggio.generation.fetch_add (1, std::memory_order_acq_rel);
+    // A slot of this writer's own, so two writers never share one.
+    const auto mine =
+        importedArpeggio.reserved.fetch_add (1, std::memory_order_acq_rel);
+    importedArpeggio.slots[mine % ImportedArpeggioStyle::slotCount] = style;
     importedArpeggio.selector.store (selector, std::memory_order_release);
+    importedArpeggio.published.store (mine + 1, std::memory_order_release);
     importedArpeggio.valid.store (true, std::memory_order_release);
 }
 
@@ -961,15 +963,18 @@ bool SeptumAudioProcessor::readImportedArpeggioStyle (
 
     for (int attempt = 0; attempt < 8; ++attempt)
     {
-        const auto generation =
-            importedArpeggio.generation.load (std::memory_order_acquire);
-        if ((generation & 1u) != 0u)
-            continue;
-        out = importedArpeggio.style;
-        if (importedArpeggio.generation.load (std::memory_order_acquire) == generation)
+        const auto published =
+            importedArpeggio.published.load (std::memory_order_acquire);
+        if (published == 0u)
+            return false;
+        out = importedArpeggio.slots[(published - 1u)
+                                     % ImportedArpeggioStyle::slotCount];
+        // Only a reader overtaken by a whole lap of publishes can have shared
+        // a slot with a writer, and this catches it.
+        if (importedArpeggio.published.load (std::memory_order_acquire) == published)
             return true;
     }
-    return false;   // a writer had it the whole time; the template stands in
+    return false;   // publishes kept overtaking; the template stands in
 }
 
 septum::Patch SeptumAudioProcessor::snapshotPatch() const
@@ -1718,6 +1723,25 @@ void SeptumAudioProcessor::syncPatchShadows() noexcept
     patchDirty.store (false, std::memory_order_release);
 }
 
+void SeptumAudioProcessor::cancelPendingRepublishes() noexcept
+{
+    syncPatchShadows();
+
+    for (std::size_t i = 0; i < ccCache.size(); ++i)
+        if (ccShadow != nullptr && ccCache[i].raw != nullptr)
+            ccShadow[i].store (ccCache[i].raw->load (std::memory_order_relaxed),
+                               std::memory_order_relaxed);
+    for (auto& word : ccDirty)
+        word.store (0u, std::memory_order_release);
+
+    for (std::size_t i = 0; i < deviceControlCount; ++i)
+        if (deviceControlValues[i] != nullptr)
+            deviceControlShadow[i].store (
+                deviceControlValues[i]->load (std::memory_order_relaxed),
+                std::memory_order_relaxed);
+    deviceControlDirty.store (0u, std::memory_order_release);
+}
+
 void SeptumAudioProcessor::republishPatchParameters()
 {
     // Nothing to do unless the audio thread has actually written a dump. The
@@ -1892,6 +1916,10 @@ void SeptumAudioProcessor::setStateInformation (const void* data,
             patchGeneration.fetch_add (1, std::memory_order_acq_rel);
             parameters.replaceState (state);
             readImportedArpeggioFromState (state);
+            // The restored session is the newest writer. A dump, a CC or a
+            // device-control message whose republish is still queued would
+            // otherwise run afterwards and put its own values back over it.
+            cancelPendingRepublishes();
             patchGeneration.fetch_add (1, std::memory_order_acq_rel);
         }
     }

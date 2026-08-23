@@ -1783,6 +1783,48 @@ Same shadow, same restore. Three of these were found one round after another,
 which is what the shape deserves: every audio-thread-to-message-thread publish
 in this processor now reads a value the message thread cannot clobber.
 
+#### Step 46 — a DT1 addresses a byte, not a block
+
+**The document's own worked example was applied to the wrong parameter.** A
+DT1's address names a byte; `<Example1>` on p. 6 writes one byte to
+`10 00 04 02`, which is REVERB SIZE two bytes into Patch Reverb, and every knob
+a real unit transmits has that shape. The dispatch read only the block number
+out of the address and handed the payload to the block's decoder as though it
+always began at offset zero — so that example set REVERB **TIME** and left SIZE
+alone. Rather than teach six decoders to index from an offset, the block is
+reconstituted: encode what the patch holds now, lay the received bytes over it
+at their address, decode the whole thing back. The encoders and decoders are
+already each other's inverse, which the round-trip tests are what fence, so a
+whole-block write is unchanged and a one-byte write moves one field. A write
+addressed past the end of its own block is refused rather than wrapped.
+
+**A System Common DT1 split a bank and was read as a patch.** `decodeSysExMessage`
+already refused a base outside the Temporary Patch and the 32 User slots, but
+the bank reader's gate checked only the *block* number — and System Common's is
+`00`, the same as Patch Common's. So it passed the gate, moved the patch
+boundary, flushed the half-read patch, and only then was refused. One predicate
+now answers both questions, and the intruder list in the bank test grew a
+System Common DT1 that splits the patch against the old gate.
+
+**A state restore did not supersede a queued republish.** `applyProgram` and
+`loadPatch` already re-pointed the shadows and dropped the pending flag;
+`setStateInformation` did not, so a dump, a CC or a device-control message whose
+republish had not run yet would land on top of the session that had just been
+loaded — potentially replacing the whole restored patch. All three shadow sets
+are re-seeded and all three dirty flags cleared on restore.
+
+**And the imported grid's publication was a data race, not just a detected
+one.** A seqlock over one buffer lets a reader's copy overlap a writer's: it
+notices the tear and retries, but the overlapping access is itself undefined.
+The grid is published into a ring of four slots now, so the slot being written
+is never the slot being published — a reader would have to be overtaken by a
+whole lap before it even shared memory with a writer, and the published counter
+is still checked afterwards so an overtaken reader retries. Writers take a slot
+by atomic increment, so two of them never pick the same one.
+
+All four are fenced, each by a check watched to fail with its fix reverted, and
+the 11 committed demos still re-render bit-identically.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:

@@ -3286,7 +3286,21 @@ void testAForeignSysExMessageDoesNotSplitAPatch()
             0x0C, 0x40, 0x00, 0xF7 } },
     };
 
-    for (const auto& intruder : intruders)
+    // A System Common DT1 is a well-framed SH-201 message with a good
+    // checksum whose block number (00) is a block this codec knows — so a
+    // gate that checks only the block admits it, moves the boundary, and
+    // splits the patch before the decode refuses it for its base.
+    const std::vector<Intruder> baseIntruders {
+        { "a System Common DT1",
+          [] {
+              const std::uint8_t data[] { 0x00, 0x00, 0x00, 0x05 };
+              return septum::sysex::makeDt1Message (0x01000000, data, 4, 0x10);
+          }() },
+    };
+    auto allIntruders = intruders;
+    allIntruders.insert (allIntruders.end(), baseIntruders.begin(), baseIntruders.end());
+
+    for (const auto& intruder : allIntruders)
     {
         std::vector<std::uint8_t> file;
         for (std::size_t i = 0; i < packets.size(); ++i)
@@ -3329,6 +3343,102 @@ void testAForeignSysExMessageDoesNotSplitAPatch()
                     && parsed[1].patch.upper.cutoff == 12,
                 "two patches in one file are still two (got "
                     + std::to_string (parsed.size()) + ")");
+    }
+}
+
+// [settled] A DT1 addresses a byte, not a block. The MIDI Implementation's own
+// worked example is a one-byte write to 10 00 04 02 — REVERB SIZE, two bytes
+// into Patch Reverb — and every panel knob a real unit transmits has that
+// shape. Reading the payload as though it always began at offset zero applied
+// that example to REVERB TIME instead, and left the field it named alone.
+void testADt1WritesAtTheAddressItNames()
+{
+    const auto write = [] (std::uint32_t address, std::vector<std::uint8_t> data,
+                           septum::Patch& target)
+    {
+        const auto msg = septum::sysex::makeDt1Message (address, data.data(),
+                                                        data.size(), 0x10);
+        return septum::sysex::decodeSysExMessage (msg.data(), msg.size(), target);
+    };
+
+    // <Example1> from the document, verbatim: setting REVERB SIZE of PATCH.
+    {
+        septum::Patch patch = septum::initPatch();
+        patch.reverb.time = 111;
+        patch.reverb.size = 5;
+        patch.reverb.preDelay = 40;
+        expect (write (0x10000402, { 0x01 }, patch), "the document's own write is accepted");
+        expect (patch.reverb.size == 1,
+                "REVERB SIZE takes the byte addressed to it (got "
+                    + std::to_string (patch.reverb.size) + ")");
+        expect (patch.reverb.time == 111 && patch.reverb.preDelay == 40,
+                "and its neighbours are untouched (time "
+                    + std::to_string (patch.reverb.time) + ", pre-delay "
+                    + std::to_string (patch.reverb.preDelay) + ")");
+    }
+
+    // A one-byte write into Patch Common, at an offset the block layout moved.
+    {
+        septum::Patch patch = septum::initPatch();
+        patch.delayOn = false;
+        patch.reverbOn = true;
+        patch.arpeggio.on = false;
+        expect (write (0x1000001C, { 0x01 }, patch), "a Patch Common byte write is accepted");
+        expect (patch.delayOn, "DELAY SWITCH is at 00 1C");
+        expect (patch.reverbOn && ! patch.arpeggio.on,
+                "and neither REVERB SWITCH nor ARPEGGIO SWITCH moved");
+    }
+
+    // A write inside one arpeggio pattern block: step 2 of row 0 is at
+    // offset 04 (Original Note is 00/01, Step1 is 02/03), two nibbles.
+    {
+        septum::Patch patch = septum::initPatch();
+        patch.arpeggio.style.originalNote[0] = 60;
+        patch.arpeggio.style.cells[0][0] = 90;
+        patch.arpeggio.style.cells[1][0] = 20;
+        expect (write (0x10000604, { 0x04, 0x0B }, patch),
+                "a write inside a pattern block is accepted");
+        expect (patch.arpeggio.style.cell (1, 0) == 75,
+                "step 2 takes the nibbled value 4B (got "
+                    + std::to_string ((int) patch.arpeggio.style.cell (1, 0)) + ")");
+        expect (patch.arpeggio.style.originalNote[0] == 60
+                    && patch.arpeggio.style.cell (0, 0) == 90,
+                "and the Original Note and step 1 are untouched (note "
+                    + std::to_string (patch.arpeggio.style.originalNote[0]) + ", step1 "
+                    + std::to_string ((int) patch.arpeggio.style.cell (0, 0)) + ")");
+    }
+
+    // A whole-block write still behaves exactly as it did.
+    {
+        septum::Patch source = septum::factoryPatches()[7].patch;
+        septum::Patch target = septum::initPatch();
+        std::array<std::uint8_t, septum::sysex::sizeTonePatch> block {};
+        septum::sysex::encodeTonePatch (source.upper, block.data());
+        expect (write (0x10000100,
+                       std::vector<std::uint8_t> (block.begin(), block.end()), target),
+                "a whole-block write is accepted");
+        expect (target.upper.cutoff == source.upper.cutoff
+                    && target.upper.resonance == source.upper.resonance
+                    && target.upper.osc1.wave == source.upper.osc1.wave,
+                "and lands every field, as before");
+    }
+
+    // Addressed past the end of its own block: refused, nothing touched.
+    {
+        septum::Patch patch = septum::initPatch();
+        const int before = patch.reverb.time;
+        expect (! write (0x100004FF, { 0x01 }, patch),
+                "a write past the end of its block is refused");
+        expect (patch.reverb.time == before, "and changes nothing");
+    }
+
+    // The System block shares Patch Common's size and must not be read as one.
+    {
+        septum::Patch patch = septum::initPatch();
+        patch.name = "KEEPME";
+        expect (! write (0x01000000, { 0x41, 0x42, 0x43 }, patch),
+                "a System Common write is not decoded as a patch");
+        expect (patch.name == "KEEPME", "and the patch name is untouched");
     }
 }
 
@@ -4416,6 +4526,7 @@ int main()
     testSysExChecksumAndProtocol();
     testSysExPatchSerializationRoundtrip();
     testAForeignSysExMessageDoesNotSplitAPatch();
+    testADt1WritesAtTheAddressItNames();
     testNoiseIsWhiteAtEveryHostRate();
     testFilterDoesNotDistortAtZeroResonance();
     testTwentyFourDbPeakIsPinned();

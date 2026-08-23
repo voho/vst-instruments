@@ -709,61 +709,102 @@ bool decodeSysExMessage (const std::uint8_t* msg, std::size_t msgLen,
     if (! parseDt1Packet (msg, msgLen, expectedDeviceId, packet))
         return false;
 
-    const std::uint8_t* dataPtr = packet.data;
-    const std::size_t dataLength = packet.dataLength;
-
-    // Route by the block offset inside the patch: 00 = Common, 01/02 = the
-    // two tones, 03 = Delay, 04 = Reverb, 05 = Arpeggio Common, 06..15 =
-    // Arpeggio Pattern (Note 1..16). The two high address bytes select the
-    // Temporary Patch or one of the 32 User Patches and do not change the
-    // layout, so the same switch serves both.
-    // Only the Temporary Patch and the 32 User Patches carry this layout.
-    // The System block at 01 00 00 00 has the same Total Size as Patch
-    // Common and would otherwise be decoded as a patch name and controls.
-    if (! packet.patchBaseIsKnown())
+    // Only the Temporary Patch and the 32 User Patches carry this layout. The
+    // System block at 01 00 00 00 has the same Total Size as Patch Common and
+    // would otherwise be decoded as a patch name and a set of controls.
+    if (! packet.isForThisInstrument())
         return false;
+
+    // A DT1 writes bytes at an address, not a whole block. The document's own
+    // worked example is a one-byte write to 10 00 04 02 — REVERB SIZE, two
+    // bytes into Patch Reverb — and every knob a real unit transmits has that
+    // shape. Reading the payload as though it always began at offset zero
+    // applied that example to REVERB TIME instead.
+    //
+    // Rather than teach six decoders to index from an offset, the block is
+    // reconstituted: encode what the patch holds now, lay the received bytes
+    // over it at their address, decode the whole thing back. The encoders and
+    // decoders are already each other's inverse — the round-trip tests are
+    // what fence that — so a write that covers the whole block is unchanged,
+    // and a write that covers one byte moves one field.
+    const auto applyOverlay = [&packet] (std::uint8_t* image, std::size_t blockSize)
+    {
+        const std::size_t at = packet.offsetInBlock();
+        if (at >= blockSize)
+            return false;   // addressed past the end of its own block
+        const std::size_t count = std::min (packet.dataLength, blockSize - at);
+        std::memcpy (image + at, packet.data, count);
+        return count > 0;
+    };
 
     const unsigned block = packet.block();
 
     switch (block)
     {
         case 0x00:
-            decodePatchCommon (dataPtr, dataLength, targetPatch);
+        {
+            std::array<std::uint8_t, sizePatchCommon> image {};
+            encodePatchCommon (targetPatch, image.data());
+            if (! applyOverlay (image.data(), image.size()))
+                return false;
+            decodePatchCommon (image.data(), image.size(), targetPatch);
             clampToDocumentedRanges (targetPatch);
             return true;
+        }
         case 0x01:
-            decodeTonePatch (dataPtr, dataLength, targetPatch.upper);
-            clampToDocumentedRanges (targetPatch.upper);
-            return true;
         case 0x02:
-            decodeTonePatch (dataPtr, dataLength, targetPatch.lower);
-            clampToDocumentedRanges (targetPatch.lower);
+        {
+            TonePatch& tone = block == 0x01 ? targetPatch.upper : targetPatch.lower;
+            std::array<std::uint8_t, sizeTonePatch> image {};
+            encodeTonePatch (tone, image.data());
+            if (! applyOverlay (image.data(), image.size()))
+                return false;
+            decodeTonePatch (image.data(), image.size(), tone);
+            clampToDocumentedRanges (tone);
             return true;
+        }
         case 0x03:
-            decodeDelayParams (dataPtr, dataLength, targetPatch.delay);
+        {
+            std::array<std::uint8_t, sizeDelay> image {};
+            encodeDelayParams (targetPatch.delay, image.data());
+            if (! applyOverlay (image.data(), image.size()))
+                return false;
+            decodeDelayParams (image.data(), image.size(), targetPatch.delay);
             clampToDocumentedRanges (targetPatch);
             return true;
+        }
         case 0x04:
-            decodeReverbParams (dataPtr, dataLength, targetPatch.reverb);
+        {
+            std::array<std::uint8_t, sizeReverb> image {};
+            encodeReverbParams (targetPatch.reverb, image.data());
+            if (! applyOverlay (image.data(), image.size()))
+                return false;
+            decodeReverbParams (image.data(), image.size(), targetPatch.reverb);
             clampToDocumentedRanges (targetPatch);
             return true;
+        }
         case 0x05:
-            decodeArpeggioCommon (dataPtr, dataLength, targetPatch.arpeggio);
+        {
+            std::array<std::uint8_t, sizeArpeggioCommon> image {};
+            encodeArpeggioCommon (targetPatch.arpeggio, image.data());
+            if (! applyOverlay (image.data(), image.size()))
+                return false;
+            decodeArpeggioCommon (image.data(), image.size(), targetPatch.arpeggio);
             clampToDocumentedRanges (targetPatch);
             return true;
+        }
         default:
             break;
     }
 
-    if (block >= 0x06 && block < 0x06 + static_cast<unsigned> (arpeggioMaxRows))
-    {
-        decodeArpeggioPattern (dataPtr, dataLength, static_cast<int> (block - 0x06),
-                               targetPatch.arpeggio.style);
-        clampToDocumentedRanges (targetPatch);
-        return true;
-    }
-
-    return false;
+    const int row = static_cast<int> (block - 0x06);
+    std::array<std::uint8_t, sizeArpeggioPattern> image {};
+    encodeArpeggioPattern (targetPatch.arpeggio.style, row, image.data());
+    if (! applyOverlay (image.data(), image.size()))
+        return false;
+    decodeArpeggioPattern (image.data(), image.size(), row, targetPatch.arpeggio.style);
+    clampToDocumentedRanges (targetPatch);
+    return true;
 }
 
 bool parseSyxBankFile (const std::uint8_t* fileBytes, std::size_t byteCount,
@@ -806,7 +847,7 @@ bool parseSyxBankFile (const std::uint8_t* fileBytes, std::size_t byteCount,
         // half that had been read so far.
         Dt1Packet packet;
         if (parseDt1Packet (fileBytes + start, msgLen, 0x7F, packet)
-            && packet.blockIsKnown())
+            && packet.isForThisInstrument())
         {
             if (patchPending && packet.patchBase() != currentPatchBase)
             {

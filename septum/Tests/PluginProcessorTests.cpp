@@ -1375,6 +1375,46 @@ void testAnImportedArpeggioPatternSurvivesAndPlays()
                 "and so do the Original Notes");
     }
 
+    // A state restore is the newest writer. A dump whose republish is still
+    // queued must not run afterwards and put its own values back over the
+    // session that was just loaded.
+    {
+        SeptumAudioProcessor host;
+        host.prepareToPlay (44100.0, 256);
+        juce::AudioBuffer<float> b (2, 256);
+
+        // A session with a distinctive cutoff, saved.
+        if (auto* cutoff = host.parameters.getParameter ("up_cutoff"))
+            cutoff->setValueNotifyingHost (
+                host.parameters.getParameterRange ("up_cutoff").convertTo0to1 (23.0f));
+        juce::MemoryBlock session;
+        host.getStateInformation (session);
+
+        // A dump lands on the audio path, leaving a republish queued.
+        septum::Patch other = septum::initPatch();
+        other.upper.cutoff = 101;
+        for (const auto& pkt : septum::sysex::encodePatchToSysExPackets (other))
+        {
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage (pkt.data(), (int) pkt.size()), 0);
+            host.processBlock (b, midi);
+        }
+        expect ((int) host.parameters.getRawParameterValue ("up_cutoff")->load() == 101,
+                "the dump landed before the restore");
+
+        // The host restores the session before the message loop gets there.
+        host.setStateInformation (session.getData(), (int) session.getSize());
+        const float restored =
+            host.parameters.getRawParameterValue ("up_cutoff")->load();
+        host.republishPatchParameters();
+        expect (std::abs (host.parameters.getRawParameterValue ("up_cutoff")->load()
+                          - restored) < 0.001f,
+                "a queued dump republish does not overwrite a restored session"
+                " (restored " + juce::String (restored).toStdString() + ", now "
+                    + juce::String (host.parameters.getRawParameterValue ("up_cutoff")->load()).toStdString()
+                    + ")");
+    }
+
     // A factory program carries its own style. The selector is only the key
     // the imported grid is filed under, so a program whose style index
     // happens to match the one a dump arrived under must still play its own

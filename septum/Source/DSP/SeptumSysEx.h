@@ -158,6 +158,21 @@ struct Dt1Packet
     {
         return block() < 0x06u + static_cast<unsigned> (arpeggioMaxRows);
     }
+
+    // Where inside that block the write starts. A DT1 addresses a byte, not a
+    // block: the MIDI Implementation's own worked example writes one byte to
+    // 10 00 04 02, which is REVERB SIZE two bytes into Patch Reverb, and a
+    // panel knob on a real unit transmits exactly that shape.
+    [[nodiscard]] std::size_t offsetInBlock() const noexcept
+    {
+        return static_cast<std::size_t> (address & 0xFFu);
+    }
+
+    // Everything this codec needs before it will touch a patch.
+    [[nodiscard]] bool isForThisInstrument() const noexcept
+    {
+        return patchBaseIsKnown() && blockIsKnown();
+    }
 };
 
 [[nodiscard]] bool parseDt1Packet (const std::uint8_t* msg, std::size_t msgLen,

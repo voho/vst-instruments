@@ -105,6 +105,12 @@ public:
     // republish is not undone by it: last writer wins.
     void syncPatchShadows() noexcept;
 
+    // Everything a queued republish could still put back, dropped. A state
+    // restore replaces the whole parameter tree, so a CC, a dump or a
+    // device-control message whose republish has not run yet must not land on
+    // top of the session that was just loaded.
+    void cancelPendingRepublishes() noexcept;
+
     // The same half for the three Universal Realtime device-control messages.
     // Public so the harness can stand in for the message loop.
     void republishSystemParameters();
@@ -167,15 +173,28 @@ private:
     // when the dump arrived; moving the selector picks a template, which is
     // what the hardware's panel does too.
     //
-    // Published under a seqlock: the audio thread writes it (a dump is
-    // decoded in the render callback) and reads it, and the message thread
-    // reads it to save the session and writes it to restore one.
+    // Published into a ring of slots, because the audio thread writes it (a
+    // dump is decoded in the render callback) and reads it, and the message
+    // thread reads it to save the session and writes it to restore one.
+    //
+    // A plain seqlock over one buffer would let a reader's copy overlap a
+    // writer's — it detects the tear and retries, but the overlapping access
+    // is a data race in its own right. A ring means the slot being written is
+    // never the slot being published, so a reader would have to be overtaken
+    // by `slotCount` further publishes before it even shared memory with a
+    // writer; the published counter is still checked afterwards, so a reader
+    // that was overtaken retries rather than returning a torn grid.
     struct ImportedArpeggioStyle
     {
-        std::atomic<std::uint32_t> generation { 0 };
+        static constexpr std::size_t slotCount = 4;
+        std::array<septum::ArpeggioStyle, slotCount> slots {};
+        // Handed out to writers, so two of them never pick the same slot.
+        std::atomic<std::uint32_t> reserved { 0 };
+        // How many publishes have completed; the newest is slot
+        // (published - 1) % slotCount, and zero means nothing is published.
+        std::atomic<std::uint32_t> published { 0 };
         std::atomic<bool> valid { false };
         std::atomic<int> selector { -1 };
-        septum::ArpeggioStyle style {};   // guarded by `generation`
     };
     ImportedArpeggioStyle importedArpeggio;
 
