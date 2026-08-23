@@ -2263,10 +2263,32 @@ double YouKnow106Engine::OtaCascade::cubicEarlyTanh(double value) noexcept
     return value * (1.0 - (4.0 / 27.0) * value * value);
 }
 
+double YouKnow106Engine::OtaCascade::closedLoopSpectralFactor(
+    double feedback) noexcept
+{
+    // Four identical one-poles closed through `feedback` put the loop roots at
+    // s/w = -1 + feedback^(1/4) * exp(i*(pi + 2*pi*m)/4). The farthest of the
+    // four from the origin is the one whose exponential lands in the third or
+    // fourth quadrant, at distance sqrt((1 + q)^2 + q^2) with
+    // q = feedback^(1/4) / sqrt(2). At the sanitized feedback ceiling of eight
+    // that is 2.494; with the loop open it is exactly one.
+    const double bounded = std::clamp(
+        std::isfinite(feedback) ? feedback : 0.0, 0.0, 8.0);
+    const double q = std::sqrt(std::sqrt(bounded)) * 0.70710678118654752440;
+    const double real = 1.0 + q;
+    const double factor = std::sqrt(real * real + q * q);
+    // `planTableau`'s short circuit trusts the declared ceiling, so hold the
+    // formula to it here rather than restating the constant in a comment. The
+    // clamp is the identity for every admissible feedback.
+    return std::min(factor, maximumClosedLoopSpectralFactor);
+}
+
 // Advance the continuous four-stage OTA equations over one internal interval.
-// Two fixed half-interval Merson steps use five right-hand-side evaluations
-// each. The only circuit state is capacitor voltage, and the causal cubic
-// supplies input between the two known sample endpoints.
+// The default rung's two fixed half-interval Merson steps use five
+// right-hand-side evaluations each; the two cheaper rungs run classic RK4 over
+// the same interval, and `planTableau` decides which of the three this
+// interval can take. The only circuit state is capacitor voltage, and the
+// causal cubic supplies input between the two known sample endpoints.
 // The compatibility profile closes a circuit-shaped nonlinear resonance
 // return, Hfb*tanh(V4/Hfb), so the loop remains bounded beyond oscillation.
 template <bool useCubicEarly>
@@ -2276,7 +2298,8 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
                                             bool enableEarlyEffect,
                                             float calibration,
                                             const ControlTrajectory* trajectory,
-                                            VcfTanhMode tanhMode) noexcept
+                                            VcfTanhMode tanhMode,
+                                            VcfSolverMode solverMode) noexcept
 {
 #if defined(YOUKNOW106_WORK_AUDIT)
     YOUKNOW106_COUNT_DOMAIN_WORK(vcfSteps, 1);
@@ -2363,12 +2386,58 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
     static constexpr auto nodes = makeNodes(controlNodePositions);
     constexpr std::size_t pointCount = nodes.size();
     constexpr double substep = 0.5;
+
+    // Which tableau this interval runs. `MersonHalfSteps` is unconditional and
+    // pays nothing for the bound; the two RK4 rungs each name the cheapest
+    // tableau they will accept and let `planTableau` decide from the largest
+    // stage pole and the largest loop gain the interval can present -- both
+    // can be escalated, and both fall back to Merson where classic RK4's
+    // stability region ends. The trajectory's interior nodes carry the hold's
+    // own curvature and can leave the endpoint interval, so they are scanned
+    // when one is supplied.
+    const Tableau plannedTableau = [&] {
+        if (solverMode == VcfSolverMode::MersonHalfSteps)
+            return Tableau::MersonHalf;
+        double planOmega = std::max(previousOmegaStep, currentOmega);
+        double planFeedback = std::max(previousFeedback, currentFeedback);
+        if (trajectory != nullptr)
+            for (std::size_t point = 0; point < pointCount; ++point)
+            {
+                planOmega = std::max(
+                    planOmega, clampOmegaStep(trajectory->omegaStep[point]));
+                const double candidate = trajectory->feedback[point];
+                if (std::isfinite(candidate))
+                    planFeedback = std::max(
+                        planFeedback, std::clamp(candidate, 0.0, 8.0));
+            }
+        // The stage capacitor spread scales each pole independently, and the
+        // Early effect scales every stage rate by at most 1 + earlyAmount.
+        double largestScale = 0.0;
+        for (const float scale : gScale)
+            largestScale = std::max(largestScale,
+                                    static_cast<double>(std::abs(scale)));
+        const double earlyCeiling = enableEarlyEffect
+            ? 1.0 + static_cast<double>(otaEarlyEffectCoefficient)
+                        * currentCalibration
+            : 1.0;
+        return planTableau(solverMode,
+                           planOmega * largestScale * earlyCeiling,
+                           planFeedback);
+    }();
+    // A full-interval rung reads three of the seven control nodes. Skipping
+    // the rest is not an approximation: the tableau never evaluates there, so
+    // the reconstruction, the control interpolation and the per-stage omega
+    // product at those ordinals have no reader.
+    const unsigned int nodeMask = tableauNodeMask(plannedTableau);
+
     std::array<double, pointCount> inputAt {};
     std::array<double, pointCount> omegaAt {};
     std::array<double, pointCount> feedbackAt {};
     std::array<double, pointCount> headroomAt {};
     for (std::size_t point = 0; point < pointCount; ++point)
     {
+        if ((nodeMask >> point & 1u) == 0u)
+            continue;
 #if defined(YOUKNOW106_WORK_AUDIT)
         YOUKNOW106_COUNT_DOMAIN_WORK(vcfInputReconstructions, 1);
 #endif
@@ -2440,6 +2509,19 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
                 * (wa * a[stage] + wb * b[stage] + wc * c[stage]);
         return result;
     };
+    const auto advanceFour = [](const std::array<double, 4>& origin,
+                                double step,
+                                const std::array<double, 4>& a, double wa,
+                                const std::array<double, 4>& b, double wb,
+                                const std::array<double, 4>& c, double wc,
+                                const std::array<double, 4>& d, double wd) {
+        std::array<double, 4> result {};
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+            result[stage] = origin[stage] + step
+                * (wa * a[stage] + wb * b[stage] + wc * c[stage]
+                   + wd * d[stage]);
+        return result;
+    };
 
     const bool applyEarlyEffect = enableEarlyEffect
                                && currentCalibration > 0.0;
@@ -2454,18 +2536,25 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
     }
     std::array<std::array<double, 4>, pointCount> stageOmegaAt {};
     for (std::size_t point = 0; point < pointCount; ++point)
+    {
+        if ((nodeMask >> point & 1u) == 0u)
+            continue;
         for (std::size_t stage = 0; stage < stageScale.size(); ++stage)
             stageOmegaAt[point][stage] = omegaAt[point] * stageScale[stage];
+    }
 
-    // Fast amortizes normalization over the seven shared Merson nodes. In the
-    // Character-on path, seven reciprocals replace 90 RHS divisions per card
-    // interval. Exact keeps the established division expressions and their
-    // frozen rounding behavior.
-    const auto integrate = [&]<bool useReciprocal>(const auto& nonlinear) {
+    // Fast amortizes normalization over the nodes this tableau actually reads
+    // -- seven on the default rung, five or three on the cheaper ones. In the
+    // Character-on path, those reciprocals replace 90 RHS divisions per card
+    // interval on the default rung. Exact keeps the established division
+    // expressions and their frozen rounding behavior.
+    const auto integrate = [&]<bool useReciprocal, Tableau tableau>(
+                               const auto& nonlinear) {
         std::array<double, pointCount> inverseHeadroomAt {};
         if constexpr (useReciprocal)
             for (std::size_t point = 0; point < pointCount; ++point)
-                inverseHeadroomAt[point] = 1.0 / headroomAt[point];
+                if ((tableauNodeMask(tableau) >> point & 1u) != 0u)
+                    inverseHeadroomAt[point] = 1.0 / headroomAt[point];
 
         // Four doubles are an arm64 HFA: by value keeps RK states in d0-d3;
         // a const reference forces every temporary through addressable memory.
@@ -2516,50 +2605,113 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
             return result;
         };
 
-        for (int step = 0; step < integrationSubsteps; ++step)
+        if constexpr (tableau == Tableau::MersonHalf)
         {
+            for (int step = 0; step < integrationSubsteps; ++step)
+            {
 #if defined(YOUKNOW106_WORK_AUDIT)
-            YOUKNOW106_COUNT_DOMAIN_WORK(vcfIntegrationSubsteps, 1);
+                YOUKNOW106_COUNT_DOMAIN_WORK(vcfIntegrationSubsteps, 1);
 #endif
-            const std::size_t origin = static_cast<std::size_t>(3 * step);
-            const auto k1 = derivative(state, inputAt[origin], origin);
-            const auto k2 = derivative(
-                advanceOne(state, k1, substep / 3.0),
-                inputAt[origin + 1u], origin + 1u);
-            const auto k3 = derivative(
-                advanceTwo(state, substep, k1, 1.0 / 6.0,
-                           k2, 1.0 / 6.0),
-                inputAt[origin + 1u], origin + 1u);
-            const auto k4 = derivative(
-                advanceTwo(state, substep, k1, 1.0 / 8.0,
-                           k3, 3.0 / 8.0),
-                inputAt[origin + 2u], origin + 2u);
-            const auto k5 = derivative(
-                advanceThree(state, substep, k1, 1.0 / 2.0,
-                             k3, -3.0 / 2.0, k4, 2.0),
-                inputAt[origin + 3u], origin + 3u);
-            state = advanceThree(state, substep, k1, 1.0 / 6.0,
-                                 k4, 2.0 / 3.0, k5, 1.0 / 6.0);
+                const std::size_t origin = static_cast<std::size_t>(3 * step);
+                const auto k1 = derivative(state, inputAt[origin], origin);
+                const auto k2 = derivative(
+                    advanceOne(state, k1, substep / 3.0),
+                    inputAt[origin + 1u], origin + 1u);
+                const auto k3 = derivative(
+                    advanceTwo(state, substep, k1, 1.0 / 6.0,
+                               k2, 1.0 / 6.0),
+                    inputAt[origin + 1u], origin + 1u);
+                const auto k4 = derivative(
+                    advanceTwo(state, substep, k1, 1.0 / 8.0,
+                               k3, 3.0 / 8.0),
+                    inputAt[origin + 2u], origin + 2u);
+                const auto k5 = derivative(
+                    advanceThree(state, substep, k1, 1.0 / 2.0,
+                                 k3, -3.0 / 2.0, k4, 2.0),
+                    inputAt[origin + 3u], origin + 3u);
+                state = advanceThree(state, substep, k1, 1.0 / 6.0,
+                                     k4, 2.0 / 3.0, k5, 1.0 / 6.0);
+            }
+        }
+        else
+        {
+            // Classic RK4: one node at the start of the sub-interval, two
+            // at its midpoint and one at its end. The half-step rung walks
+            // that shape twice over the established 0/1/4/1/2 and 1/2/3/4/1
+            // ordinals; the full-interval rung walks it once over 0/1/2/1.
+            constexpr bool halfSteps = tableau == Tableau::Rk4Half;
+            constexpr int steps = halfSteps ? 2 : 1;
+            constexpr double stepSize = halfSteps ? 0.5 : 1.0;
+            for (int step = 0; step < steps; ++step)
+            {
+#if defined(YOUKNOW106_WORK_AUDIT)
+                YOUKNOW106_COUNT_DOMAIN_WORK(vcfIntegrationSubsteps, 1);
+#endif
+                const std::size_t start = halfSteps
+                    ? static_cast<std::size_t>(3 * step) : 0u;
+                const std::size_t middle = halfSteps
+                    ? static_cast<std::size_t>(2 + 3 * step) : 3u;
+                const std::size_t end = halfSteps
+                    ? static_cast<std::size_t>(3 + 3 * step) : 6u;
+                const auto k1 = derivative(state, inputAt[start], start);
+                const auto k2 = derivative(
+                    advanceOne(state, k1, 0.5 * stepSize),
+                    inputAt[middle], middle);
+                const auto k3 = derivative(
+                    advanceOne(state, k2, 0.5 * stepSize),
+                    inputAt[middle], middle);
+                const auto k4 = derivative(
+                    advanceOne(state, k3, stepSize), inputAt[end], end);
+                state = advanceFour(state, stepSize,
+                                    k1, 1.0 / 6.0, k2, 1.0 / 3.0,
+                                    k3, 1.0 / 3.0, k4, 1.0 / 6.0);
+            }
         }
     };
 
+    // One switch per interval over a value that is constant for the whole
+    // parameter snapshot. Each arm instantiates only the integration shell;
+    // the derivative it calls is shared, so the ladder does not clone the hot
+    // right-hand side -- an experiment that did clone one measured 6% slower.
+    const auto integrateWithTableau = [&]<bool useReciprocal>(
+                                          const auto& nonlinear) {
+        switch (plannedTableau)
+        {
+            case Tableau::Rk4Half:
+                integrate.template operator()<useReciprocal, Tableau::Rk4Half>(
+                    nonlinear);
+                return;
+            case Tableau::Rk4Full:
+                integrate.template operator()<useReciprocal, Tableau::Rk4Full>(
+                    nonlinear);
+                return;
+            case Tableau::MersonHalf:
+                break;
+        }
+        integrate.template operator()<useReciprocal, Tableau::MersonHalf>(
+            nonlinear);
+    };
+
     if constexpr (useCubicEarly)
-        integrate.template operator()<true>([](double value) noexcept {
-            return OtaCascade::zonedHermiteTanhUnchecked(value);
-        });
+        integrateWithTableau.template operator()<true>(
+            [](double value) noexcept {
+                return OtaCascade::zonedHermiteTanhUnchecked(value);
+            });
     else
         switch (tanhMode)
         {
             case VcfTanhMode::ZonedHermite:
-                integrate.template operator()<true>([](double value) noexcept {
-                    return OtaCascade::zonedHermiteTanhUnchecked(value);
-                });
+                integrateWithTableau.template operator()<true>(
+                    [](double value) noexcept {
+                        return OtaCascade::zonedHermiteTanhUnchecked(value);
+                    });
                 break;
             case VcfTanhMode::Exact:
             default:
-                integrate.template operator()<false>([](double value) noexcept {
-                    return std::tanh(value);
-                });
+                integrateWithTableau.template operator()<false>(
+                    [](double value) noexcept {
+                        return std::tanh(value);
+                    });
                 break;
         }
 
@@ -3372,6 +3524,10 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
     if (result.vcfFastEarlyMode != VcfFastEarlyMode::Hermite
         && result.vcfFastEarlyMode != VcfFastEarlyMode::Cubic)
         result.vcfFastEarlyMode = VcfFastEarlyMode::Hermite;
+    if (result.vcfSolverMode != VcfSolverMode::MersonHalfSteps
+        && result.vcfSolverMode != VcfSolverMode::Rk4HalfSteps
+        && result.vcfSolverMode != VcfSolverMode::Rk4Single)
+        result.vcfSolverMode = VcfSolverMode::MersonHalfSteps;
     return result;
 }
 
@@ -5292,7 +5448,8 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     const float filtered = voice.filter.process<useCubicEarly>(
         filterInput, effectiveFilterOmegaStep, voice.feedback,
         dynamicHeadroom, parameters.enableVcfEarlyEffect,
-        parameters.calibration, controlTrajectory, parameters.vcfTanhMode);
+        parameters.calibration, controlTrajectory, parameters.vcfTanhMode,
+        parameters.vcfSolverMode);
 
     // C59 stands between pin 3 VCF OUT and pin 9 VCA IN, so the amplifier
     // never sees the filter's DC. The cascade makes DC of its own: the stage

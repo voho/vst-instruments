@@ -582,7 +582,14 @@ if(BUILD_TESTING)
         TIMEOUT ${YOUKNOW106_ENGINE_TEST_TIMEOUT})
     set_tests_properties(YouKnow106.Circuit PROPERTIES
         TIMEOUT ${YOUKNOW106_CIRCUIT_TEST_TIMEOUT})
-    set_tests_properties(YouKnow106.VcfIntegrator PROPERTIES TIMEOUT 60)
+    # The integrator bound was 60 s. The solver-ladder fixtures added in the
+    # 2026-08-23 pass run the independent 96-substep reference solve at two
+    # internal grids for three rungs, settle three self-oscillating limit
+    # cycles, and repeat the zero-input cap sweep for four more kernel
+    # combinations, which takes the suite to about 11 s run alone on the
+    # reference x86-64 part. Raised so the guard catches a hang rather than a
+    # slow or shared runner.
+    set_tests_properties(YouKnow106.VcfIntegrator PROPERTIES TIMEOUT 180)
 
     if(YOUKNOW106_BUILD_PLUGIN)
         add_executable(YouKnow106PluginProcessorTests Tests/PluginProcessorTests.cpp)

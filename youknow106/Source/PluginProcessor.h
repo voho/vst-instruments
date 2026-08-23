@@ -188,6 +188,18 @@ public:
         youknow106::YouKnow106Engine::oversampleFactors.size());
     static constexpr int vcfTanhChoiceCount = 2;
     static constexpr int vcfFastEarlyChoiceCount = 2;
+    static constexpr int vcfSolverChoiceCount = 3;
+    // Named once, so the layout, the editor and the tests cannot disagree
+    // about which rung an ordinal is.
+    static constexpr const char* vcfSolverChoiceName (int choice) noexcept
+    {
+        switch (choice)
+        {
+            case 1:  return "RK4 x2";
+            case 2:  return "RK4 x1";
+            default: return "Merson x2";
+        }
+    }
     static constexpr int oversamplingFactorForChoice (int choice) noexcept
     {
         return youknow106::YouKnow106Engine::oversampleFactors[
@@ -329,6 +341,7 @@ private:
         quality,
         vcfTanhMode,
         vcfFastEarlyMode,
+        vcfSolverMode,
         count
     };
     static constexpr std::size_t parameterPointerCount =

@@ -597,6 +597,19 @@ YouKnow106AudioProcessor::createParameterLayout()
         juce::StringArray { "Hermite", "Cubic" }, 0,
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
+    // The Runge-Kutta rung, cheapest last, so a larger index is always less
+    // numerical work -- the opposite ordering from Quality above, which is
+    // deliberate: this control descends a solver ladder while that one climbs
+    // an internal-rate one. Merson is ordinal zero so a state filled from the
+    // layout default stays bit-compatible with every earlier release.
+    juce::StringArray vcfSolverChoices;
+    for (int choice = 0; choice < vcfSolverChoiceCount; ++choice)
+        vcfSolverChoices.add (vcfSolverChoiceName (choice));
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { vcfSolverMode, 6 }, "VCF Solver",
+        vcfSolverChoices, 0,
+        juce::AudioParameterChoiceAttributes().withAutomatable (false)));
+
     return layout;
 }
 
@@ -652,7 +665,8 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
         { ParameterIndex::legacyHq, legacyHq },
         { ParameterIndex::quality, quality },
         { ParameterIndex::vcfTanhMode, vcfTanhMode },
-        { ParameterIndex::vcfFastEarlyMode, vcfFastEarlyMode }
+        { ParameterIndex::vcfFastEarlyMode, vcfFastEarlyMode },
+        { ParameterIndex::vcfSolverMode, vcfSolverMode }
     });
 
     static_assert (bindings.size() == parameterPointerCount);
@@ -934,6 +948,8 @@ bool YouKnow106AudioProcessor::updateEngineParameters() noexcept
         choiceOf (P::vcfTanhMode, vcfTanhChoiceCount - 1));
     engineParameters.vcfFastEarlyMode = static_cast<VcfFastEarlyMode> (
         choiceOf (P::vcfFastEarlyMode, vcfFastEarlyChoiceCount - 1));
+    engineParameters.vcfSolverMode = static_cast<VcfSolverMode> (
+        choiceOf (P::vcfSolverMode, vcfSolverChoiceCount - 1));
 
     // If a recall began while these atomics were being gathered, keep the
     // previous engine snapshot for this block. The next one will see the whole

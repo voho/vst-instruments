@@ -23,6 +23,12 @@ Notable customer-facing changes to YouKnow106 are recorded here.
   tick marks inside their controls at large editor sizes.
 - Hardened host operation across transport reset, standard bypass, variable
   block sizes, concurrent state saves, and synchronous state-save callbacks.
+- Added a VCF SOLVER control beside QUALITY, selecting which Runge-Kutta
+  tableau advances the filter. The default Merson x2 rung is unchanged; RK4 x2
+  is the same fourth-order accuracy for a fifth less work, and RK4 x1 roughly
+  halves whole-engine CPU. All three keep the same filter, resonance
+  calibration and self-oscillation, and the setting applies immediately without
+  waiting for an idle instrument or adding latency.
 - Preserved historical Audio Unit parameter ordering while adding QUALITY, and
   moved quality-dependent chorus coefficient work out of the audio callback.
 - Added a signed, notarized, stapled PKG release path with bundled licence and

@@ -55,6 +55,24 @@ render or a lightly loaded session, and 1x when a dense project needs more CPU
 headroom. A quality change waits until the instrument is idle; at high host
 sample rates the effective factor may be reduced automatically.
 
+The VCF SOLVER menu beneath it sets how much arithmetic the filter's own
+solver spends on each internal sample. It does not change the internal rate, so
+it costs no latency and takes effect immediately rather than waiting for an
+idle moment.
+
+- **Merson x2** is the reference, and is what every earlier release ran.
+- **RK4 x2** is the same fourth-order accuracy for a fifth less work.
+- **RK4 x1** is the cheapest: it takes one solver step per internal sample
+  wherever one step is numerically admissible, and automatically takes more
+  where it is not. On the measured x86-64 reference machine it uses about
+  half the CPU of Merson x2, and with the filter wide open and resonant it
+  falls back on its own rather than running a step it cannot take.
+
+All three run the same filter, keep the same resonance calibration and the
+same self-oscillation amplitude and pitch. QUALITY and VCF SOLVER are
+independent, so a dense session can lower either or both. Neither is part of a
+patch, neither is recalled by a program, and both persist with the session.
+
 The factory bank is read-only. Host sessions and host presets retain edited
 states. The PATCH FILE buttons load and save hardware-compatible `.syx` files.
 RELOAD discards edits to the selected program, INIT restores the initial patch,
@@ -86,7 +104,10 @@ part of that hardware-format tone data.
   host, and interface outputs are active. In the standalone app, check the
   selected audio device.
 - Stuck note: click PANIC or send MIDI all-notes-off.
-- High CPU: choose a lower QUALITY setting while the instrument is idle.
+- High CPU: choose a lower QUALITY setting while the instrument is idle, or a
+  cheaper VCF SOLVER rung, which applies immediately. Lowering VCF SOLVER first
+  costs the least sound: the filter's numerical solve changes, not the internal
+  rate the oscillators and chorus run at.
 - A problem persists: include the YouKnow106 version, macOS version, Mac model,
   host and host version, plug-in format, sample rate, and reproduction steps in
   a message to [protocodus@proton.me](mailto:protocodus@proton.me).

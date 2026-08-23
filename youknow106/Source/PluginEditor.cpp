@@ -2128,6 +2128,49 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     qualityLabel.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (qualityLabel);
 
+    // The numerical rung the four-pole filter's own solver runs at. Unlike
+    // QUALITY it does not change the internal rate, so it costs no latency and
+    // needs no idle window to take effect.
+    const juce::String vcfSolverTooltip =
+        "Sets how much arithmetic the nonlinear filter's solver spends on each "
+        "internal sample. Merson x2 is the reference and is what every earlier "
+        "release ran. RK4 x2 is the same fourth-order accuracy for a fifth "
+        "less work; RK4 x1 is the cheapest, taking one step per sample wherever "
+        "one step is numerically admissible and two where it is not. All three "
+        "keep the same filter, the same resonance calibration and the same "
+        "self-oscillation. Takes effect immediately, has no hardware "
+        "counterpart and is not part of a patch.";
+    for (int choice = 0;
+         choice < YouKnow106AudioProcessor::vcfSolverChoiceCount; ++choice)
+        vcfSolverBox.addItem (
+            YouKnow106AudioProcessor::vcfSolverChoiceName (choice),
+            choice + 1);
+    vcfSolverBox.setName ("VCF Solver");
+    vcfSolverBox.setTitle ("VCF Solver");
+    vcfSolverBox.setTooltip (vcfSolverTooltip);
+    vcfSolverBox.setColour (juce::ComboBox::backgroundColourId,
+                            fromPalette (panel::colour::slot));
+    vcfSolverBox.setColour (juce::ComboBox::textColourId,
+                            fromPalette (panel::colour::text));
+    vcfSolverBox.setColour (juce::ComboBox::outlineColourId,
+                            fromPalette (panel::colour::controlShadow));
+    vcfSolverBox.setColour (juce::ComboBox::arrowColourId,
+                            fromPalette (panel::colour::cyan));
+    addAndMakeVisible (vcfSolverBox);
+    comboBoxAttachments.push_back (std::make_unique<ComboBoxAttachment> (
+        audioProcessor.parameters, vcfSolverMode, vcfSolverBox));
+
+    vcfSolverLabel.setText ("VCF SOLVER", juce::dontSendNotification);
+    vcfSolverLabel.setFont (panelFont (11.0f));
+    vcfSolverLabel.setColour (
+        juce::Label::textColourId,
+        fromPalette (panel::colour::textDim).withAlpha (0.90f));
+    vcfSolverLabel.setJustificationType (juce::Justification::centred);
+    vcfSolverLabel.setName ("VCF Solver label");
+    vcfSolverLabel.setTooltip (vcfSolverTooltip);
+    vcfSolverLabel.setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (vcfSolverLabel);
+
     unisonButton.setClickingTogglesState (false);
     unisonButton.getProperties().set (hardwareStyleProperty, true);
     unisonButton.getProperties().set (hardwareKeyCentreProperty,
@@ -3076,6 +3119,7 @@ const char* YouKnow106AudioProcessorEditor::parameterIdFor (
         { &chorusNoiseSlider, chorusNoise },
         { &polyphonySlider,   polyphony },
         { &qualityBox,        quality },
+        { &vcfSolverBox,      vcfSolverMode },
         { &unisonButton,      legacyKeyMode },
         { &portamentoToggleButton, portamento },
         { &keyTransposeButton, transpose }
@@ -3277,6 +3321,8 @@ void YouKnow106AudioProcessorEditor::resized()
             juce::jmax (10.5f, 14.0f * scale), true));
     qualityLabel.setFont (panelFont (
         juce::jmax (10.5f, 14.0f * scale), true));
+    vcfSolverLabel.setFont (panelFont (
+        juce::jmax (10.5f, 14.0f * scale), true));
     utilityLabels[4].setFont (panelFont (
         juce::jmax (10.5f, panel::labelPointSize * scale), true));
     constexpr float labelTop = panel::extensionDeckTop + 32.0f;
@@ -3290,10 +3336,32 @@ void YouKnow106AudioProcessorEditor::resized()
         scaled (22.0f, labelTop, 80.0f, labelHeight).toNearestInt());
     calibrationSlider.setBounds (
         scaled (33.0f, knobTop, knobSize, knobSize).toNearestInt());
-    qualityLabel.setBounds (
-        scaled (110.0f, labelTop, 86.0f, labelHeight).toNearestInt());
-    qualityBox.setBounds (
-        scaled (114.0f, knobTop + 16.0f, 78.0f, 24.0f).toNearestInt());
+    // The two processing-cost selectors share the MODEL zone's right half and
+    // stack there. Their column starts below the painted MODEL heading and
+    // ends level with the Unit Character knob beside it, so neither the
+    // heading, the knob, nor the deck's lower edge is crowded, and the VOICE
+    // group's baseline does not move.
+    constexpr float selectorX = 110.0f;
+    constexpr float selectorWidth = 86.0f;
+    constexpr float selectorBoxInset = 4.0f;
+    constexpr float selectorLabelHeight = 15.0f;
+    constexpr float selectorBoxHeight = 23.0f;
+    constexpr float qualityLabelTop = panel::extensionDeckTop + 24.0f;
+    constexpr float vcfSolverLabelTop = panel::extensionDeckTop + 70.0f;
+    const auto selectorLabelBounds = [&] (float top) {
+        return scaled (selectorX, top, selectorWidth,
+                       selectorLabelHeight).toNearestInt();
+    };
+    const auto selectorBoxBounds = [&] (float labelTopY) {
+        return scaled (selectorX + selectorBoxInset,
+                       labelTopY + selectorLabelHeight + 2.0f,
+                       selectorWidth - 2.0f * selectorBoxInset,
+                       selectorBoxHeight).toNearestInt();
+    };
+    qualityLabel.setBounds (selectorLabelBounds (qualityLabelTop));
+    qualityBox.setBounds (selectorBoxBounds (qualityLabelTop));
+    vcfSolverLabel.setBounds (selectorLabelBounds (vcfSolverLabelTop));
+    vcfSolverBox.setBounds (selectorBoxBounds (vcfSolverLabelTop));
 
     // VOICE: the continuous voice-limit and response controls share a baseline.
     utilityLabels[5].setBounds (
