@@ -1756,6 +1756,13 @@ selector moves. Five of its checks fail against the previous code.
 That closes the last of the three things the README said a SysEx load could not
 carry. Only the patch *name* is left, and it genuinely has no parameter.
 
+**And the grid had a second door it did not fit through.** A dump arriving on
+the wire is decoded in the render callback; a `.syx` handed to the plug-in
+through the API goes through `loadSysExData` and `loadPatch`, which writes the
+parameter list — and the grid is not in the parameter list. The first entry
+point kept it and the second dropped it. `loadPatch` publishes it too now;
+both of its callers are SysEx loads, so there is nowhere else for it to leak.
+
 **And the same race once more, in the device-control path Step 42 added.** The
 three Universal Realtime messages take the same audio-thread split, and their
 republish read the parameter's own storage exactly as the other two did — so a

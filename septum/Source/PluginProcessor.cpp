@@ -1754,6 +1754,12 @@ void SeptumAudioProcessor::loadPatch (const septum::Patch& patch)
 {
     patchGeneration.fetch_add (1, std::memory_order_acq_rel);
 
+    // The arpeggio grid rides outside the parameter list, so writing the
+    // parameters below is not enough to carry it. Both callers of this are
+    // SysEx loads, and a `.syx` handed to the plug-in through the API has to
+    // keep its grid for the same reason a dump arriving on the wire does.
+    publishImportedArpeggioStyle (patch.arpeggio.style, patch.arpeggio.styleIndex);
+
     const auto& bindings = toneBindings();
     for (std::size_t i = 0; i < bindings.size(); ++i)
     {

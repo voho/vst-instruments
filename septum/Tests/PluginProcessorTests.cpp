@@ -1326,6 +1326,33 @@ void testAnImportedArpeggioPatternSurvivesAndPlays()
         }
     }
 
+    // The same grid handed to the plug-in as a .syx buffer through the API,
+    // which is a different entry point from a dump arriving on the wire:
+    // `loadSysExData` parses the file and goes through `loadPatch`, which
+    // writes the parameter list — and the grid is not in the parameter list.
+    {
+        const auto exported = processor.createSysExDataForCurrentPatch();
+        SeptumAudioProcessor recipient;
+        recipient.prepareToPlay (44100.0, 256);
+        recipient.loadSysExData (exported.data(), exported.size());
+        const auto after = recipient.snapshotPatch();
+        bool same = true;
+        for (int step = 0; step < septum::arpeggioMaxSteps && same; ++step)
+            for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+                if (after.arpeggio.style.cell (step, row)
+                    != dump.arpeggio.style.cell (step, row))
+                {
+                    same = false;
+                    break;
+                }
+        expect (same, "the grid survives a .syx loaded through loadSysExData");
+        expect (after.arpeggio.style.originalNote[7] == 55,
+                "and so do its Original Notes");
+        expect (after.arpeggio.style.endStep == 13,
+                "and its END STEP (got "
+                    + juce::String (after.arpeggio.style.endStep).toStdString() + ")");
+    }
+
     // And a session save/restore.
     {
         juce::MemoryBlock state;
