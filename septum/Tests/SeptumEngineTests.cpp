@@ -737,6 +737,143 @@ void testControllerDestinations()
             "EXPRESSION at zero with BOTH takes both tones down");
 }
 
+// The D Beam. Settled: three buttons choose what it does (OM p. 20-21), the
+// ASSIGN list and the polarity are Patch Common bytes, "you can also choose
+// the direction in which the knob will be moved", and "moving your hand
+// outside this range will produce no effect".
+void testDBeam()
+{
+    const double sampleRate = 44100.0;
+
+    const auto beamPatch = []
+    {
+        septum::Patch patch = plainSawPatch();
+        patch.upper.filterType = septum::FilterType::Lpf;
+        patch.upper.filterSlope = septum::FilterSlope::Db12;
+        patch.upper.cutoff = 40;
+        patch.upper.resonance = 0;
+        patch.upper.ampEnvSustain = 127;
+        patch.upper.ampEnvAttack = 0;
+        patch.upper.level = 127;
+        patch.upper.bendRange = 12;
+        patch.delayOn = false;
+        patch.reverbOn = false;
+        return patch;
+    };
+
+    // The fifth harmonic of note 48 (130.81 Hz) is 654 Hz, well above a
+    // cutoff of 40 and well inside one the beam has opened.
+    const auto brightness = [&] (const septum::Patch& patch,
+                                 const septum::DBeam& beam)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.setDBeam (beam);
+        engine.reset();
+        auto take = renderScore (engine, { { 0.0, true, 48, 100 } }, 0.5,
+                                 sampleRate);
+        return goertzel (take.left, 8820, 22050, 654.06, sampleRate);
+    };
+
+    septum::DBeam rest {};
+    septum::DBeam open {};
+    open.mode = septum::DBeamMode::Assign;
+    open.value = 127;
+
+    const double atRest = brightness (beamPatch(), rest);
+    const double withBeam = brightness (beamPatch(), open);
+    expect (withBeam > 4.0 * atRest,
+            "the beam opens the filter it is assigned to (rest "
+                + std::to_string (atRest) + ", beam "
+                + std::to_string (withBeam) + ")");
+
+    // The hand out of the range does nothing, whatever the mode says.
+    septum::DBeam armedButOut = open;
+    armedButOut.value = 0;
+    expect (std::abs (brightness (beamPatch(), armedButOut) - atRest)
+                < 0.05 * std::max (1.0e-9, atRest),
+            "a beam at rest changes nothing");
+
+    // "'+' and '-' will invert the direction of change" — with the cutoff
+    // knob already low, minus has almost nowhere left to go.
+    septum::Patch minus = beamPatch();
+    minus.dBeamPolarity = septum::DBeamPolarity::Minus;
+    expect (brightness (minus, open) < atRest,
+            "POLARITY inverts the direction the beam moves the knob");
+
+    // D BEAM DESTINATION names the tone it reaches.
+    septum::Patch lowerOnly = beamPatch();
+    lowerOnly.dBeamDestination = septum::ToneDestination::Lower;
+    expect (std::abs (brightness (lowerOnly, open) - atRest)
+                < 0.05 * std::max (1.0e-9, atRest),
+            "the beam leaves the tone its destination does not name alone");
+
+    // PITCH mode moves the pitch, over the bend range.
+    {
+        septum::Patch patch = beamPatch();
+        patch.upper.osc1.wave = septum::Waveform::Sine;
+        patch.upper.filterType = septum::FilterType::Bypass;
+        septum::DBeam pitch {};
+        pitch.mode = septum::DBeamMode::Pitch;
+        pitch.value = 127;
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        engine.setPatch (patch);
+        engine.setDBeam (pitch);
+        engine.reset();
+        auto take = renderScore (engine, { { 0.0, true, 48, 100 } }, 0.5,
+                                 sampleRate);
+        const double hz = estimateFundamental (take.left, 8820, 22050,
+                                               sampleRate, 100.0, 400.0);
+        // Note 48 is 130.81 Hz; a full beam over a 12-semitone range doubles
+        // it.
+        expectNear (hz, 261.63, 3.0,
+                    "PITCH mode carries the note over the bend range");
+    }
+
+    // EXPRESS mode is the volume, and ACTIVE EXPRESSION brings LOWER in as it
+    // rises.
+    {
+        const auto level = [&] (bool activeExpression, int value, double hz)
+        {
+            septum::Patch patch = beamPatch();
+            patch.keyboardMode = septum::KeyboardMode::Dual;
+            patch.lower = patch.upper;
+            patch.lower.octaveShift = -1;
+            patch.upper.osc1.wave = septum::Waveform::Sine;
+            patch.lower.osc1.wave = septum::Waveform::Sine;
+            patch.upper.filterType = septum::FilterType::Bypass;
+            patch.lower.filterType = septum::FilterType::Bypass;
+            patch.activeExpression = activeExpression;
+
+            septum::DBeam beam {};
+            beam.mode = septum::DBeamMode::Express;
+            beam.value = value;
+
+            septum::Engine engine;
+            engine.prepare (sampleRate, 256);
+            engine.setPatch (patch);
+            engine.setDBeam (beam);
+            engine.reset();
+            auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 0.5,
+                                     sampleRate);
+            return goertzel (take.left, 13230, 22050, hz, sampleRate);
+        };
+        const double upper = 261.63, lower = 130.81;
+        // A beam of 16 is an eighth of the travel, so the full beam is very
+        // nearly eight times it.
+        expect (level (false, 127, upper) > 6.0 * level (false, 16, upper),
+                "EXPRESS mode carries the volume");
+        // Only UPPER when the volume is low; LOWER added as it increases.
+        expect (level (true, 40, lower) < 0.05 * level (true, 40, upper),
+                "ACTIVE EXPRESSION holds LOWER back while the beam is low");
+        expect (level (true, 127, lower) > 0.3 * level (true, 127, upper),
+                "ACTIVE EXPRESSION brings LOWER in as the beam rises");
+    }
+}
+
 void testSoloAndHold()
 {
     septum::Patch patch = plainSawPatch();
@@ -3013,6 +3150,7 @@ int main()
     testOverdriveSwitchesBackInFromLiveState();
     testSplitAndDualVoicing();
     testControllerDestinations();
+    testDBeam();
     testSoloAndHold();
     testSostenutoLatchesOnlyWhatWasSounding();
     testExternalInputAndAudioFilter();

@@ -126,7 +126,7 @@ private:
         SeptumAudioProcessorEditor& owner;
     };
 
-    enum class Style { Knob, VSlider, Combo, Toggle, Action };
+    enum class Style { Knob, VSlider, Combo, WideCombo, Toggle, Action };
 
     // Which band of the panel a section belongs to. The band decides the
     // colour of the rule above its title, which is the only thing that
@@ -206,6 +206,7 @@ private:
     std::vector<std::unique_ptr<Control>> controls;
     Section* performSection { nullptr };
     Section* systemSection { nullptr };
+    Section* dBeamSection { nullptr };
     Section* stripSection { nullptr };
     // Where the voice chain's connectors go, filled in by resized().
     std::vector<ConnectorMark> chevrons;

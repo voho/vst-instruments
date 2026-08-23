@@ -102,6 +102,59 @@ enum class ArpeggioMotif
 // SPLIT ARPEGGIO: which tone(s) the arpeggiator drives in SPLIT mode.
 enum class SplitArpeggio { Upper, Lower, Both };
 
+// D BEAM ASSIGN (Patch Common offset 1F, 0-36), in the address map's own
+// order. "If you hold down the FILTER/ASSIGN button and move one of the top
+// panel knobs, the D Beam controller will have the same function as that
+// knob" (OM p. 21) — so every entry names a panel control, and the beam moves
+// it toward the end the knob was turned toward.
+enum class DBeamAssign
+{
+    Osc1Pitch, Osc1Detune, Osc1Pw,
+    Osc2Pitch, Osc2Detune, Osc2Pw,
+    MixModBalance,
+    FilterCutoff, FilterResonance, FilterCutoffKeyFollow, AmpLevel,
+    AudioFilterCutoff, AudioFilterResonance,
+    PitchEnvA, PitchEnvD, Osc1PitchEnvDepth, Osc2PitchEnvDepth,
+    Lfo1Rate, Lfo1Depth1, Lfo1Depth2,
+    Lfo2Rate, Lfo2Depth1, Lfo2Depth2,
+    FilterEnvA, FilterEnvD, FilterEnvS, FilterEnvR, FilterEnvDepth,
+    AmpEnvA, AmpEnvD, AmpEnvS, AmpEnvR,
+    DelayTime, DelayDepth, ReverbTime, ReverbDepth,
+    Bender
+};
+inline constexpr int dBeamAssignCount = 37;
+
+// D BEAM POLARITY (Patch Common offset 20). "'+' and '-' will invert the
+// direction of change. * This will not change the direction of the change
+// that occurs when the PITCH button or EXPRESS button is lit" (OM p. 65), so
+// it applies to the ASSIGN mode alone.
+enum class DBeamPolarity { Plus, Minus };
+
+// Which of the three buttons under the beam is lit. There is no byte for this
+// in the address map — it is panel state, not patch data — and each button
+// toggles: "Press the PITCH button once again so its light goes off". One
+// beam produces one value, so the replica makes the three exclusive and adds
+// the OFF the hardware reaches by unlighting whichever is lit (voiced,
+// OQ-16).
+enum class DBeamMode { Off, Pitch, Express, Assign };
+
+// The D Beam controller itself. Its *settings* are patch data (assign,
+// polarity, destination) or system data (sensitivity); what the player's hand
+// is doing is neither, so it lives out here with the external-input block.
+struct DBeam
+{
+    DBeamMode mode { DBeamMode::Off };
+    // The hand's height inside the usable range, with 0 the hand out of it:
+    // "Moving your hand outside this range will produce no effect" (OM p. 20).
+    int value { 0 };            // 0-127
+    // [settled range, no effect] D BEAM SENS 1-8 compensates the infrared
+    // sensor for "strong direct sunlight or strong artificial illumination"
+    // (OM p. 21). There is no sensor here and no sunlight to compensate for,
+    // so the replica stores it — a SysEx round trip has to be lossless — and
+    // it changes nothing that sounds, exactly as PITCH WIDE does.
+    int sens { 8 };             // 1-8
+};
+
 // CONTROLLER DESTINATION (Patch Common offsets 15, 16, 17, 18): which tone(s)
 // each of the four physical controllers reaches. "Selects the tone(s) to be
 // modulated by the modulation lever ... If this is 'BOTH,' modulation will be
@@ -320,6 +373,17 @@ struct Patch
     ToneDestination modulationDestination { ToneDestination::Both };
     ToneDestination pitchBendDestination { ToneDestination::Both };
     ToneDestination expressionDestination { ToneDestination::Both };
+    ToneDestination dBeamDestination { ToneDestination::Both };
+    // Settled: what the D Beam's EXPRESS button does — "OFF: The D Beam
+    // controller will change the volume. ON: The D Beam controller will
+    // control Active Expression, which combines two tones" (OM p. 65).
+    bool activeExpression { false };
+    // Settled: the beam's assigned target and the direction it moves it.
+    // FILTER-CUTOFF is where the manual's own description of the
+    // FILTER/ASSIGN button starts: "the brightness of the sound (cutoff
+    // frequency of the filter) will change".
+    DBeamAssign dBeamAssign { DBeamAssign::FilterCutoff };
+    DBeamPolarity dBeamPolarity { DBeamPolarity::Plus };
     ArpeggioParams arpeggio {};
 
     TonePatch upper {};
@@ -434,6 +498,12 @@ inline void clampToDocumentedRanges (TonePatch& tone) noexcept
     tone.bendRange = clampRaw (tone.bendRange, 0, 24);
     tone.octaveShift = clampRaw (tone.octaveShift, -3, 3);
     tone.portamentoTime = clampRaw (tone.portamentoTime, 0, 127);
+}
+
+inline void clampToDocumentedRanges (DBeam& beam) noexcept
+{
+    beam.value = clampRaw (beam.value, 0, 127);
+    beam.sens = clampRaw (beam.sens, 1, 8);
 }
 
 inline void clampToDocumentedRanges (ExternalInput& input) noexcept

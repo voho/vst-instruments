@@ -550,14 +550,248 @@ void Engine::reset()
     sostenuto_ = false;
     smoothedMaster_ = masterLevel_ / 127.0;
     smoothedExpression_.fill (1.0);
+    smoothedDBeamGain_.fill (1.0);
     updateEffectCoefficients();
+}
+
+void Engine::setDBeam (const DBeam& beam) noexcept
+{
+    dBeam_ = beam;
+    clampToDocumentedRanges (dBeam_);
+    applyDBeam();
+}
+
+// The beam's travel, and where it takes the assigned parameter.
+//
+// Settled (OM p. 21): "If you hold down the FILTER/ASSIGN button and move one
+// of the top panel knobs, the D Beam controller will have the same function
+// as that knob. At this time you can also choose the direction in which the
+// knob will be moved... when you move your hand closer to the D Beam
+// controller, the LFO speeds up, just as if you had moved the LFO RATE knob
+// toward the right." So the beam takes the parameter from the value the patch
+// holds toward one end of its own documented range, POLARITY picks which end,
+// and the hand's height says how far. [voiced, OQ-16] is only the shape of
+// that travel, which is linear here.
+namespace
+{
+    [[nodiscard]] int beamed (int patchValue, int low, int high,
+                              double travel) noexcept
+    {
+        const int end = travel >= 0.0 ? high : low;
+        return static_cast<int> (std::lround (
+            patchValue + std::abs (travel) * (end - patchValue)));
+    }
+}
+
+void Engine::applyDBeam()
+{
+    patch_ = rawPatch_;
+    external_ = rawExternal_;
+    dBeamTravel_ = 0.0;
+    if (dBeam_.mode != DBeamMode::Assign || dBeam_.value <= 0)
+        return;
+
+    const double travel = (dBeam_.value / 127.0)
+                          * (rawPatch_.dBeamPolarity == DBeamPolarity::Plus
+                                 ? 1.0
+                                 : -1.0);
+    dBeamTravel_ = travel;
+
+    // Every tone-scoped destination moves on the tone(s) D BEAM DESTINATION
+    // names; the shared ones - the two effect times and the audio filter -
+    // are not per tone and move whatever it says.
+    TonePatch* tones[2] { &patch_.upper, &patch_.lower };
+    for (int index = 0; index < partCount; ++index)
+    {
+        if (! destinationReaches (rawPatch_.dBeamDestination, index == 0))
+            continue;
+        TonePatch& tone = *tones[static_cast<std::size_t> (index)];
+        switch (rawPatch_.dBeamAssign)
+        {
+            case DBeamAssign::Osc1Pitch:
+                tone.osc1.coarse = beamed (tone.osc1.coarse, -36, 36, travel);
+                break;
+            case DBeamAssign::Osc1Detune:
+                tone.osc1.fine = beamed (tone.osc1.fine, -50, 50, travel);
+                break;
+            case DBeamAssign::Osc1Pw:
+                tone.osc1.pulseWidth =
+                    beamed (tone.osc1.pulseWidth, 0, 127, travel);
+                break;
+            case DBeamAssign::Osc2Pitch:
+                tone.osc2.coarse = beamed (tone.osc2.coarse, -36, 36, travel);
+                break;
+            case DBeamAssign::Osc2Detune:
+                tone.osc2.fine = beamed (tone.osc2.fine, -50, 50, travel);
+                break;
+            case DBeamAssign::Osc2Pw:
+                tone.osc2.pulseWidth =
+                    beamed (tone.osc2.pulseWidth, 0, 127, travel);
+                break;
+            case DBeamAssign::MixModBalance:
+                tone.balance = beamed (tone.balance, -63, 63, travel);
+                break;
+            case DBeamAssign::FilterCutoff:
+                tone.cutoff = beamed (tone.cutoff, 0, 127, travel);
+                break;
+            case DBeamAssign::FilterResonance:
+                tone.resonance = beamed (tone.resonance, 0, 127, travel);
+                break;
+            case DBeamAssign::FilterCutoffKeyFollow:
+                tone.keyFollow = beamed (tone.keyFollow, -200, 200, travel);
+                break;
+            case DBeamAssign::AmpLevel:
+                tone.level = beamed (tone.level, 0, 127, travel);
+                break;
+            case DBeamAssign::PitchEnvA:
+                tone.pitchEnvAttack =
+                    beamed (tone.pitchEnvAttack, 0, 127, travel);
+                break;
+            case DBeamAssign::PitchEnvD:
+                tone.pitchEnvDecay = beamed (tone.pitchEnvDecay, 0, 127, travel);
+                break;
+            case DBeamAssign::Osc1PitchEnvDepth:
+                tone.osc1.pitchEnvDepth =
+                    beamed (tone.osc1.pitchEnvDepth, -63, 63, travel);
+                break;
+            case DBeamAssign::Osc2PitchEnvDepth:
+                tone.osc2.pitchEnvDepth =
+                    beamed (tone.osc2.pitchEnvDepth, -63, 63, travel);
+                break;
+            case DBeamAssign::Lfo1Rate:
+                tone.lfo1.rate = beamed (tone.lfo1.rate, 0, 127, travel);
+                break;
+            case DBeamAssign::Lfo1Depth1:
+                tone.lfo1.depth1 = beamed (tone.lfo1.depth1, -63, 63, travel);
+                break;
+            case DBeamAssign::Lfo1Depth2:
+                tone.lfo1.depth2 = beamed (tone.lfo1.depth2, -63, 63, travel);
+                break;
+            case DBeamAssign::Lfo2Rate:
+                tone.lfo2.rate = beamed (tone.lfo2.rate, 0, 127, travel);
+                break;
+            case DBeamAssign::Lfo2Depth1:
+                tone.lfo2.depth1 = beamed (tone.lfo2.depth1, -63, 63, travel);
+                break;
+            case DBeamAssign::Lfo2Depth2:
+                tone.lfo2.depth2 = beamed (tone.lfo2.depth2, -63, 63, travel);
+                break;
+            case DBeamAssign::FilterEnvA:
+                tone.filterEnvAttack =
+                    beamed (tone.filterEnvAttack, 0, 127, travel);
+                break;
+            case DBeamAssign::FilterEnvD:
+                tone.filterEnvDecay =
+                    beamed (tone.filterEnvDecay, 0, 127, travel);
+                break;
+            case DBeamAssign::FilterEnvS:
+                tone.filterEnvSustain =
+                    beamed (tone.filterEnvSustain, 0, 127, travel);
+                break;
+            case DBeamAssign::FilterEnvR:
+                tone.filterEnvRelease =
+                    beamed (tone.filterEnvRelease, 0, 127, travel);
+                break;
+            case DBeamAssign::FilterEnvDepth:
+                tone.filterEnvDepth =
+                    beamed (tone.filterEnvDepth, -63, 63, travel);
+                break;
+            case DBeamAssign::AmpEnvA:
+                tone.ampEnvAttack = beamed (tone.ampEnvAttack, 0, 127, travel);
+                break;
+            case DBeamAssign::AmpEnvD:
+                tone.ampEnvDecay = beamed (tone.ampEnvDecay, 0, 127, travel);
+                break;
+            case DBeamAssign::AmpEnvS:
+                tone.ampEnvSustain =
+                    beamed (tone.ampEnvSustain, 0, 127, travel);
+                break;
+            case DBeamAssign::AmpEnvR:
+                tone.ampEnvRelease =
+                    beamed (tone.ampEnvRelease, 0, 127, travel);
+                break;
+            case DBeamAssign::DelayDepth:
+                tone.delayDepth = beamed (tone.delayDepth, 0, 127, travel);
+                break;
+            case DBeamAssign::ReverbDepth:
+                tone.reverbDepth = beamed (tone.reverbDepth, 0, 127, travel);
+                break;
+            // Not tone-scoped, or not a parameter at all.
+            case DBeamAssign::AudioFilterCutoff:
+            case DBeamAssign::AudioFilterResonance:
+            case DBeamAssign::DelayTime:
+            case DBeamAssign::ReverbTime:
+            case DBeamAssign::Bender:
+                break;
+        }
+    }
+
+    switch (rawPatch_.dBeamAssign)
+    {
+        case DBeamAssign::AudioFilterCutoff:
+            external_.cutoff = beamed (external_.cutoff, 0, 127, travel);
+            break;
+        case DBeamAssign::AudioFilterResonance:
+            external_.resonance = beamed (external_.resonance, 0, 127, travel);
+            break;
+        case DBeamAssign::DelayTime:
+            patch_.delay.time = beamed (patch_.delay.time, 0, 127, travel);
+            break;
+        case DBeamAssign::ReverbTime:
+            patch_.reverb.time = beamed (patch_.reverb.time, 0, 127, travel);
+            break;
+        default:
+            break;
+    }
+    clampToDocumentedRanges (patch_);
+    clampToDocumentedRanges (external_);
+}
+
+// [voiced, OQ-16] PITCH mode: "when you hold down a key and move your hand up
+// or down above the D Beam controller, the pitch will change" (OM p. 20). The
+// manual gives no direction and no interval, so the replica reads it as the
+// bend lever's own reach, upward — the one pitch span the instrument settles —
+// and BENDER, which is a separate entry in the ASSIGN list, is the same reach
+// with POLARITY able to invert it.
+double Engine::dBeamPitchSemitones (Part part) const noexcept
+{
+    if (dBeam_.value <= 0
+        || ! destinationReaches (rawPatch_.dBeamDestination,
+                                 part == Part::Upper))
+        return 0.0;
+    const TonePatch& tone = tonePatch (part);
+    if (dBeam_.mode == DBeamMode::Pitch)
+        return (dBeam_.value / 127.0) * tone.bendRange;
+    if (dBeam_.mode == DBeamMode::Assign
+        && rawPatch_.dBeamAssign == DBeamAssign::Bender)
+        return dBeamTravel_ * tone.bendRange;
+    return 0.0;
+}
+
+// [settled, OM pp. 20 and 65] EXPRESS mode: the beam "will change the volume",
+// or, with ACTIVE EXPRESSION on, combines the two tones — "Only the UPPER tone
+// will be heard when the volume is low, and the LOWER tone will be added as
+// the volume increases". [voiced, OQ-16] is the point LOWER enters, which is
+// half way here.
+double Engine::dBeamGain (Part part) const noexcept
+{
+    if (dBeam_.mode != DBeamMode::Express)
+        return 1.0;
+    const bool upper = part == Part::Upper;
+    if (! destinationReaches (rawPatch_.dBeamDestination, upper))
+        return 1.0;
+    const double v = dBeam_.value / 127.0;
+    if (! rawPatch_.activeExpression)
+        return v;
+    return upper ? v : std::max (0.0, 2.0 * v - 1.0);
 }
 
 void Engine::setPatch (const Patch& patch)
 {
     const int previousSize = patch_.reverb.size;
-    patch_ = patch;
-    clampToDocumentedRanges (patch_);
+    rawPatch_ = patch;
+    clampToDocumentedRanges (rawPatch_);
+    applyDBeam();
     if (patch_.reverb.size != previousSize)
     {
         // Line lengths follow SIZE; recompute them (states are kept — a size
@@ -594,8 +828,9 @@ void Engine::setPatch (const Patch& patch)
 
 void Engine::setExternalInput (const ExternalInput& settings) noexcept
 {
-    external_ = settings;
-    clampToDocumentedRanges (external_);
+    rawExternal_ = settings;
+    clampToDocumentedRanges (rawExternal_);
+    applyDBeam();
 }
 
 void Engine::setMasterLevel (int level) noexcept
@@ -1263,9 +1498,10 @@ void Engine::updateVoiceControls (Voice& voice, int tickSamples)
     // modulated by it — the tone's own LFOs are untouched either way.
     const bool upperVoice = voice.part == Part::Upper;
     const double bendSemitones =
-        destinationReaches (patch_.pitchBendDestination, upperVoice)
-            ? pitchBend_ * tone.bendRange
-            : 0.0;
+        (destinationReaches (patch_.pitchBendDestination, upperVoice)
+             ? pitchBend_ * tone.bendRange
+             : 0.0)
+        + dBeamPitchSemitones (voice.part);
     const double lever =
         destinationReaches (patch_.modulationDestination, upperVoice)
             ? modulation_
@@ -2879,6 +3115,13 @@ void Engine::process (float* left, float* right, int numSamples,
                 smoothedExpression_[static_cast<std::size_t> (index)] +=
                     (target - smoothedExpression_[static_cast<std::size_t> (index)])
                     * coeff;
+                // The D Beam's EXPRESS button rides the same smoother: a
+                // beam is a gesture, and an automated one arrives in steps.
+                const double beamTarget =
+                    dBeamGain (index == 0 ? Part::Upper : Part::Lower);
+                smoothedDBeamGain_[static_cast<std::size_t> (index)] +=
+                    (beamTarget - smoothedDBeamGain_[static_cast<std::size_t> (index)])
+                    * coeff;
             }
         }
 
@@ -2907,7 +3150,8 @@ void Engine::process (float* left, float* right, int numSamples,
 
             const TonePatch& tone = tonePatch (voice.part);
             const double expression =
-                smoothedExpression_[voice.part == Part::Upper ? 0u : 1u];
+                smoothedExpression_[voice.part == Part::Upper ? 0u : 1u]
+                * smoothedDBeamGain_[voice.part == Part::Upper ? 0u : 1u];
             const double delaySend = tone.delayDepth / 127.0;
             const double reverbSend = tone.reverbDepth / 127.0;
             const auto gainL = static_cast<float> (voice.ampGainL * mapping::voiceHeadroom);

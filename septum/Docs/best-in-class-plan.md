@@ -1046,3 +1046,59 @@ instrument, were all there. REVERB is a 6 × 6 section now and carries its
 whole documented parameter set. The panel is 1660 × 850 for it, up from
 1500 × 786: the effects band needs 1474 points of content, and since Step 23
 the window is no longer where the panel's size is decided.
+
+#### Step 26 — the D Beam
+
+The last of the three front-panel features the contract deferred, and the one
+the plan's own §2.5 said needed "a design decision about what an infrared
+distance sensor means inside a plug-in". It means a group of automatable
+parameters, and the documents settle nearly all of them.
+
+Three buttons under the beam choose what it does, each a toggle (OM pp. 20–21).
+**PITCH** changes the pitch and answers on CC#69, which the control-change
+list names "Part Pitch (D Beam Pitch Mode)". **EXPRESS** changes the volume,
+or — with ACTIVE EXPRESSION on — combines the two tones: "Only the UPPER tone
+will be heard when the volume is low, and the LOWER tone will be added as the
+volume increases". **FILTER/ASSIGN** moves whichever of the 37 documented
+destinations D BEAM ASSIGN names, and the manual settles the *law* as well as
+the list: "the D Beam controller will have the same function as that knob… you
+can also choose the direction in which the knob will be moved… the LFO speeds
+up, just as if you had moved the LFO RATE knob toward the right." So the beam
+takes the parameter from where the patch has it toward one end of its own
+documented range, and POLARITY picks the end — for ASSIGN alone, since the
+manual says plainly that it "will not change the direction of the change that
+occurs when the PITCH button or EXPRESS button is lit".
+
+The engine renders a patch that is the player's patch with the beam's one
+assigned parameter moved, so no destination needed its own code path: the
+37 entries are 37 fields, and everything downstream reads the rendered patch
+it already read. D BEAM DESTINATION gates it per tone like the other three
+controller destinations, and "Moving your hand outside this range will produce
+no effect" is why the beam control is the hand's height with zero meaning the
+hand is out.
+
+**D BEAM SENS is settled in range and inert.** It compensates the infrared
+sensor for "strong direct sunlight or strong artificial illumination". There
+is no sensor here and no sunlight, so it is stored — a SysEx round trip has to
+be lossless — and changes nothing that sounds, exactly as PITCH WIDE does.
+Inventing a depth law for it would have been inventing the answer to a
+question the manual settles the other way.
+
+Fifteen checks fence it, watched to fail with the beam disabled: the beam
+opens the filter it is assigned to and a beam at rest does not, polarity
+inverts it, the destination gates it, PITCH mode carries note 48 to 261.63 Hz
+over a 12-semitone bend range, EXPRESS carries the volume, ACTIVE EXPRESSION
+holds LOWER back at a low beam and brings it in at a high one, the assign list
+runs all 37 entries from OSC1-PITCH to BENDER, CC#69 moves the beam, and a
+program change leaves the beam, the button and the sensitivity where the
+player left them.
+
+What is voiced is in OQ-16: that the three buttons are exclusive, PITCH mode's
+reach and direction, the linear shape of the ASSIGN travel, the point ACTIVE
+EXPRESSION starts adding LOWER, and whether the shared destinations follow
+D BEAM DESTINATION. A recording of the beam's own MIDI output at a grid of
+hand heights settles the first four.
+
+The panel puts it on the bottom row beside the lever and the keys, which is
+where the instrument keeps its performance controls; the row is a section tall
+now and the panel is 1660 × 930.

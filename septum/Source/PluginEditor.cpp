@@ -30,6 +30,9 @@ namespace colours
 // same size wherever it appears.
 constexpr int knobCell = 58;
 constexpr int comboCell = 104;
+// One selector on the panel has entries as long as FILTER-CUTOFF-KEYFOLLOW,
+// and a 104-point cell clips them.
+constexpr int wideComboCell = 176;
 constexpr int toggleCell = 66;
 constexpr int actionCell = 60;
 constexpr int sliderCell = 34;
@@ -53,7 +56,10 @@ constexpr int clusterWidth = 128;
 // so the patch strip's knobs are the same knobs as everywhere else.
 constexpr int stripHeight = sectionTitleHeight + gridRowHeight
                             + 2 * sectionPadding + 6;
-constexpr int keyboardHeight = 90;
+// The bottom row is the instrument's performance surface: the lever, the
+// D Beam and the keys. Tall enough for the D Beam's own section.
+constexpr int keyboardHeight = sectionTitleHeight + 2 * gridRowHeight
+                               + 2 * sectionPadding;
 // The meter reads in decibels down to here, which is the range a player
 // actually mixes in.
 constexpr float meterFloorDb = -48.0f;
@@ -683,6 +689,22 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     addControl (*stripSection, "patch_level", "LEVEL", Style::Knob, false);
     addControl (*stripSection, "tone_balance", "TONE BAL", Style::Knob, false);
 
+    // ---- the D Beam, beside the lever and the keys, which is the row the
+    // instrument keeps its performance controls on. Built after the bands so
+    // the index lists above keep the construction order they name.
+    dBeamSection = section ("D BEAM", Band::Perform);
+    dBeamSection->rowCounts = { 4, 3 };
+    addControl (*dBeamSection, "dbeam_mode", "MODE", Style::Combo, false);
+    addControl (*dBeamSection, "dbeam_value", "BEAM", Style::Knob, false);
+    addControl (*dBeamSection, "dbeam_dest", "DEST", Style::Combo, false);
+    addControl (*dBeamSection, "dbeam_polarity", "POLARITY", Style::Combo,
+                false);
+    addControl (*dBeamSection, "dbeam_assign", "ASSIGN", Style::WideCombo,
+                false);
+    addControl (*dBeamSection, "active_expression", "ACTIVE EXP",
+                Style::Toggle, false);
+    addControl (*dBeamSection, "dbeam_sens", "SENS", Style::Knob, false);
+
     // ---- SYSTEM COMMON, in the header: settings that apply to the whole
     // instrument rather than to the patch, and are not saved with one. Built
     // last so the band index lists below keep the construction order they
@@ -794,6 +816,7 @@ int SeptumAudioProcessorEditor::Section::naturalWidth() const
         {
             case Style::Knob:    return knobCell;
             case Style::Combo:   return comboCell;
+            case Style::WideCombo: return wideComboCell;
             case Style::Toggle:  return toggleCell;
             case Style::Action:  return actionCell;
             case Style::VSlider: return sliderCell;
@@ -861,6 +884,7 @@ SeptumAudioProcessorEditor::Control* SeptumAudioProcessorEditor::addControl (
             break;
         }
         case Style::Combo:
+        case Style::WideCombo:
             control->component = std::make_unique<juce::ComboBox>();
             break;
         case Style::Toggle:
@@ -1058,6 +1082,7 @@ void SeptumAudioProcessorEditor::layoutSection (Section& section,
         {
             case Style::Knob:    return knobCell;
             case Style::Combo:   return comboCell;
+            case Style::WideCombo: return wideComboCell;
             case Style::Toggle:  return toggleCell;
             case Style::Action:  return actionCell;
             case Style::VSlider: return sliderCell;
@@ -1134,6 +1159,7 @@ void SeptumAudioProcessorEditor::layoutSection (Section& section,
                         body.withSizeKeepingCentre (knobDiameter, knobDiameter));
                     break;
                 case Style::Combo:
+                case Style::WideCombo:
                     control->component->setBounds (
                         body.withSizeKeepingCentre (cell.getWidth() - 8,
                                                     comboHeight));
@@ -1250,13 +1276,18 @@ void SeptumAudioProcessorEditor::layoutPanel()
         subtitleLabel.setBounds (identity);
     }
 
-    // Keyboard row: lever at the left of the keys, as on the unit.
-    auto keyboardRow = bounds.removeFromBottom (keyboardHeight).reduced (12, 5);
-    lever.setBounds (keyboardRow.removeFromLeft (66));
+    // Keyboard row: the lever at the left of the keys as on the unit, and the
+    // D Beam beside it — the instrument puts its beam above the left end of
+    // the keyboard, next to the lever.
+    auto keyboardRow = bounds.removeFromBottom (keyboardHeight).reduced (10, 4);
+    layoutSection (*dBeamSection,
+                   keyboardRow.removeFromLeft (dBeamSection->naturalWidth()));
+    keyboardRow.removeFromLeft (sectionGap);
+    lever.setBounds (keyboardRow.removeFromLeft (66).reduced (0, 6));
     keyboardRow.removeFromLeft (6);
     // The visible range spans 36 white keys (five octaves).
     keyboard.setKeyWidth ((float) keyboardRow.getWidth() / 36.0f);
-    keyboard.setBounds (keyboardRow);
+    keyboard.setBounds (keyboardRow.reduced (0, 6));
 
     // Patch strip directly above the keys (the hardware's button row). Its
     // controls are the same size as every other control on the panel.

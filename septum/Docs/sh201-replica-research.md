@@ -503,6 +503,60 @@ panel only *selects* a template — the manual says editing a style needs the
 SH-201 Editor — so a selector is the faithful panel surface, and the patch
 stores both the selector and the grid it names.
 
+### D Beam
+
+Settled (OM pp. 20–21 and 65; Patch Common 00 16 / 00 19 / 00 1F / 00 20;
+System Common 00 1D). Three buttons under the beam choose what it does, each
+of them a toggle — "Press the PITCH button once again so its light goes off":
+
+- **PITCH** — "when you hold down a key and move your hand up or down above
+  the D Beam controller, the pitch will change". It answers on **CC#69**,
+  which the control-change list names "Part Pitch (D Beam Pitch Mode)".
+- **EXPRESS** — "the volume will change". With **ACTIVE EXPRESSION** on it
+  combines the two tones instead: "Only the UPPER tone will be heard when the
+  volume is low, and the LOWER tone will be added as the volume increases".
+- **FILTER/ASSIGN** — moves whichever of the 37 documented destinations
+  **D BEAM ASSIGN** names, and the manual settles the law as well as the list:
+  "If you hold down the FILTER/ASSIGN button and move one of the top panel
+  knobs, the D Beam controller will have the same function as that knob. At
+  this time you can also choose the direction in which the knob will be
+  moved… when you move your hand closer to the D Beam controller, the LFO
+  speeds up, just as if you had moved the LFO RATE knob toward the right." So
+  the beam takes the parameter from the value the patch holds toward one end
+  of its own documented range, and **D BEAM POLARITY** (`+` / `−`) picks which
+  end — "'+' and '-' will invert the direction of change. * This will not
+  change the direction of the change that occurs when the PITCH button or
+  EXPRESS button is lit", so polarity is the ASSIGN mode's alone.
+
+**D BEAM DESTINATION** (UPPER / LOWER / BOTH) names the tone(s) it reaches,
+like the other three controller destinations. The hand leaving the beam is
+settled too — "Moving your hand outside this range will produce no effect" —
+so the replica's beam control is the hand's height with zero meaning the hand
+is out, and at zero nothing moves.
+
+The replica publishes all of it: the mode, the beam, the assign, the polarity,
+the destination, ACTIVE EXPRESSION and the sensitivity, each a plug-in
+parameter a host can automate. The four Patch Common bytes travel with the
+patch; the mode and the beam are performance state and the sensitivity is
+System Common, so a program change leaves those three where the player left
+them.
+
+Voiced (OQ-16): that the three buttons are exclusive (the address map has no
+byte for them, and one beam makes one value); PITCH mode's reach, read as the
+tone's own settled BEND RANGE and upward, with the ASSIGN list's separate
+BENDER entry the same reach under polarity; the linear shape of the beam's
+travel between the patch value and the end of the range; the half-way point at
+which ACTIVE EXPRESSION starts adding LOWER; and that the shared destinations
+— the two effect times and the audio filter — ignore D BEAM DESTINATION,
+because they are not per-tone.
+
+**D BEAM SENS** (1–8) is settled in range and inert here. It compensates the
+infrared sensor when "performing under strong direct sunlight or strong
+artificial illumination" (OM p. 21); there is no sensor in a plug-in and no
+sunlight to compensate for, so the replica stores it — a SysEx round trip has
+to be lossless — and it changes nothing that sounds, exactly as PITCH WIDE
+does.
+
 ### Key assignment, solo/legato, portamento, pedals
 
 Settled: POLY / SOLO+LEGATO / SOLO per tone; solo = last-note priority;
@@ -545,9 +599,12 @@ with tempo sync, overdrive, delay→reverb with per-tone sends and the
 16 templates, SINGLE/DUAL/SPLIT with 10/5+5 voices, solo/legato,
 portamento, pitch bend with per-tone range, the arpeggiator with the settled
 grid/duration/motif/octave/accent/velocity/end-step/hold/split parameters, the
-settled CC map including both documented pedals and the audio filter's
-CC#2/CC#4, and the analog output stage. Deferred, documented: the step
-recorder, D-Beam, SysEx DT1/RQ1 I/O, and the USB audio topology.
+settled CC map including both documented pedals, the audio filter's
+CC#2/CC#4 and the D Beam's CC#69, the D Beam itself with its three modes, its
+37-destination assign list, its polarity, its destination and ACTIVE
+EXPRESSION, the four controller destinations, the System Common tune, key
+shift, octave and transpose, and the analog output stage. Deferred,
+documented: the recorder, SysEx DT1/RQ1 I/O, and the USB audio topology.
 
 ## Every voiced constant lives in one place
 
@@ -623,6 +680,14 @@ Each is a standing research task; the measurement named would close it.
   GRID, ACCENT and OCTAVE RANGE settings and reading the note times and
   velocities straight off it — the one open question in this project that a
   MIDI capture alone can close, with no audio analysis needed.
+- **OQ-16 — D Beam calibration.** Whether the three mode buttons are
+  exclusive; PITCH mode's interval and direction; the shape of the ASSIGN
+  travel between the patch value and the end of the range; the point at which
+  ACTIVE EXPRESSION starts adding LOWER; and whether the shared destinations
+  follow D BEAM DESTINATION. Close by recording the beam's MIDI output at a
+  grid of hand heights with each mode lit, which settles the first four
+  directly, and by capturing the audio filter's response with the destination
+  on one tone.
 - **OQ-14 — external-input calibration.** INPUT VOL taper; the audio
   filter's cutoff-to-Hz table and resonance curve, and whether it
   self-oscillates at all; whether CENTER CANCEL's output is the anti-phase

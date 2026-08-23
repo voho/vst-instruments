@@ -78,6 +78,10 @@ public:
     // patch because the instrument keeps them out of it (OM pp. 49-51).
     [[nodiscard]] septum::ExternalInput snapshotExternalInput() const;
 
+    // The D Beam controller's own state, read the same way and kept out of
+    // the patch for the same reason.
+    [[nodiscard]] septum::DBeam snapshotDBeam() const;
+
     // The message-thread half of a MIDI program change: repeats the values
     // the audio path already wrote, with host/UI notification, skipping any
     // parameter edited since. Normally reached via the queued message-loop
@@ -121,6 +125,7 @@ private:
     std::atomic<float>* systemTuneValue { nullptr };
     std::vector<std::atomic<float>*> systemValues;
     std::vector<std::atomic<float>*> externalValues;
+    std::vector<std::atomic<float>*> dBeamValues;
     // The input bus arrives in the same buffer the output is written to, so
     // it is copied out before that buffer is cleared.
     std::vector<float> externalInputL, externalInputR;

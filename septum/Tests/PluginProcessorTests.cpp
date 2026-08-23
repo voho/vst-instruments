@@ -682,6 +682,63 @@ void testTogglesShowTheirState()
 // set it absolutely could latch full vibrato from one tap on the top of the
 // travel — something the hardware lever cannot do. It moves by the drag now,
 // and a double click puts it back.
+// The D Beam is a group of automatable parameters: which button is lit, where
+// the hand is, and every byte the address map keeps about it. Its settings
+// are patch data; the beam and the button are not, so a program change must
+// leave them where the player put them. CC#69 is the beam's own controller.
+void testDBeamParameters()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+
+    for (const char* id : { "dbeam_mode", "dbeam_value", "dbeam_sens",
+                            "dbeam_dest", "dbeam_assign", "dbeam_polarity",
+                            "active_expression" })
+        expect (processor.parameters.getParameter (id) != nullptr,
+                juce::String ("the plug-in publishes ") + id);
+
+    // The settled 37-entry assign list, in the address map's order.
+    if (auto* assign = dynamic_cast<juce::AudioParameterChoice*> (
+            processor.parameters.getParameter ("dbeam_assign")))
+    {
+        expect (assign->choices.size() == 37,
+                "D BEAM ASSIGN carries all 37 documented destinations (got "
+                    + std::to_string (assign->choices.size()) + ")");
+        expect (assign->choices[0] == "OSC1-PITCH"
+                    && assign->choices[36] == "BENDER",
+                "the assign list runs from OSC1-PITCH to BENDER");
+    }
+
+    const auto set = [&processor] (const char* id, float natural)
+    {
+        auto* parameter = processor.parameters.getParameter (id);
+        const auto& range = processor.parameters.getParameterRange (id);
+        parameter->setValueNotifyingHost (
+            range.convertTo0to1 (range.snapToLegalValue (natural)));
+    };
+    const auto get = [&processor] (const char* id)
+    {
+        return (int) processor.parameters.getRawParameterValue (id)->load();
+    };
+
+    // Settled (OM p. 72): "Part Pitch (D Beam Pitch Mode) CC#69".
+    juce::AudioBuffer<float> buffer (2, 256);
+    auto beamCc = messageAt (juce::MidiMessage::controllerEvent (1, 69, 96));
+    processor.processBlock (buffer, beamCc);
+    expect (get ("dbeam_value") == 96,
+            "CC#69 moves the beam (got " + std::to_string (get ("dbeam_value"))
+                + ")");
+
+    // The beam and the button are performance state, not patch data.
+    set ("dbeam_mode", 2.0f);      // EXPRESS
+    set ("dbeam_value", 64.0f);
+    set ("dbeam_sens", 3.0f);
+    processor.setCurrentProgram (2);
+    expect (get ("dbeam_mode") == 2 && get ("dbeam_value") == 64
+                && get ("dbeam_sens") == 3,
+            "a program change leaves the beam where the player put it");
+}
+
 void testLeverModulationMovesByTheDrag()
 {
     SeptumAudioProcessor processor;
@@ -994,6 +1051,7 @@ int main()
     testStateRoundTrip();
     testIntervalButtonsAreRelativeToOscOne();
     testTogglesShowTheirState();
+    testDBeamParameters();
     testLeverModulationMovesByTheDrag();
     testSystemCommonSettings();
     testEditorFitsASmallDisplay();

@@ -719,6 +719,10 @@ public:
     // System-common controls (documented ranges).
     // The external-input path is a system setting, not patch data (OM p. 49-51).
     void setExternalInput (const ExternalInput& settings) noexcept;
+    // The D Beam controller. Its settings are patch or system data; where the
+    // player's hand is, is neither, so it arrives here like the external
+    // input's panel block does.
+    void setDBeam (const DBeam& beam) noexcept;
     [[nodiscard]] const ExternalInput& externalInput() const noexcept
     {
         return external_;
@@ -1013,6 +1017,14 @@ private:
     {
         return part == Part::Upper ? patch_.upper : patch_.lower;
     }
+    // Rebuilds `patch_` and `external_` from the raw pair plus the beam.
+    void applyDBeam();
+    // How far the beam bends the pitch of a part, in semitones, and how much
+    // it scales its gain — the PITCH and EXPRESS buttons, which polarity does
+    // not touch.
+    [[nodiscard]] double dBeamPitchSemitones (Part part) const noexcept;
+    [[nodiscard]] double dBeamGain (Part part) const noexcept;
+
     ToneRuntime& toneRuntime (Part part) noexcept
     {
         return tones_[part == Part::Upper ? 0 : 1];
@@ -1052,7 +1064,17 @@ private:
     [[nodiscard]] std::uint32_t nextRandom() noexcept;
 
     // -- state -------------------------------------------------------------
+    // The patch the player edited, and the patch the engine renders: the
+    // D Beam's ASSIGN mode moves one parameter of the second away from the
+    // first, "just as if you had moved the knob" (OM p. 21), so every read in
+    // the render code goes through `patch_` and only `setPatch` writes
+    // `rawPatch_`.
+    Patch rawPatch_ {};
     Patch patch_ {};
+    DBeam dBeam_ {};
+    // The beam's travel, 0 at rest, and its sign under D BEAM POLARITY. Held
+    // here so the render code does not re-derive it per voice.
+    double dBeamTravel_ { 0.0 };
     double sampleRate_ { 44100.0 };
     int maxBlock_ { 512 };
     int latencySamples_ { 0 };
@@ -1069,6 +1091,8 @@ private:
     // EXPRESSION reaches the tone(s) EXPRESSION DESTINATION names, so it is
     // carried per tone and smoothed there rather than in the master chain.
     std::array<double, 2> smoothedExpression_ { 1.0, 1.0 };
+    // The D Beam's EXPRESS gain, per tone, on the same smoother.
+    std::array<double, 2> smoothedDBeamGain_ { 1.0, 1.0 };
     double partLevel_ { 1.0 };
     double partPan_ { 0.0 };
     bool hold_ { false };
@@ -1105,6 +1129,7 @@ private:
 
     // External input: INPUT VOL -> CENTER CANCEL -> AUDIO FILTER on the direct
     // monitor path, and the pre-filter mono sum feeding any EXT-IN oscillator.
+    ExternalInput rawExternal_ {};
     ExternalInput external_ {};
     std::vector<float> externalDirectL_, externalDirectR_, externalMono_;
     SvfStage audioFilter1_[2] {}, audioFilter2_[2] {};
