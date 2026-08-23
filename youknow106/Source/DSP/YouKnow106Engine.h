@@ -29,8 +29,12 @@ enum class VcfFastEarlyMode { Hermite = 0, Cubic = 1 };
 // same continuous circuit equations, with the same controls at the same
 // abscissae, and differs only in truncation error and cost.
 //
-// `MersonHalfSteps` is the established reference and the shipped default. The
-// two cheaper rungs exist because the fixed two-half-step Merson pair spends
+// `MersonHalfSteps` is the established reference and this struct's own default,
+// so the JUCE-free tools and every frozen fingerprint and work-counter contract
+// keep testing it. It is not what a plug-in instance starts on: after the blind
+// A/B set returned no audible difference between rungs, the host layer ships
+// `Rk4Single`. See PluginProcessor's `vcfSolverDefaultChoice`. The two cheaper
+// rungs exist because the fixed two-half-step Merson pair spends
 // ten right-hand-side evaluations per card per internal sample where the step
 // sizes musical settings actually produce need far fewer; see
 // Docs/vcf-solver-optimization.md for the measured error and CPU of each.

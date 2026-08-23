@@ -1,12 +1,14 @@
 # VCF solver-tableau research note
 
-Status: `Merson x2` remains the reference and the default, and is bit-identical
-to every earlier release. `RK4 x2` and `RK4 x1` are the two cheaper rungs behind
-the persisted `VCF Solver` choice. Measured error against an independent
-96-substep reference solve, the false-limit-cycle onset that bounds each rung,
-the self-oscillation service anchor and paired whole-engine CPU are recorded
-below, as is the blind A/B set's verdict: the player reported no audible
-difference between any rung. Cross-platform ranking remains pending. No project
+Status: `Merson x2` remains the **reference** — `EngineParameters` defaults to
+it, it is bit-identical to every earlier release, and every frozen fingerprint
+and work-counter contract still tests it. It is no longer the **shipped**
+default: after the blind A/B set below returned no audible difference between
+any rung, a plug-in instance now starts on the cheapest, `RK4 x1`, which the
+menu calls `Normal`. `RK4 x2` (`High`) sits between them. Measured error against
+an independent 96-substep reference solve, the false-limit-cycle onset that
+bounds each rung, the self-oscillation service anchor and paired whole-engine
+CPU are all recorded below. Cross-platform ranking remains pending. No project
 result is inferred from library papers.
 
 This note is the sibling of
