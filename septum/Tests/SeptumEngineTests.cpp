@@ -4731,6 +4731,74 @@ void testPatchCommonMatchesTheAddressMap()
 // The map's block addresses are absolute, not offsets from zero: the
 // Temporary Patch lives at 10 00 00 00 and User Patch 001-032 at
 // 20 00 00 00 .. 20 1F 00 00.
+// [OQ-18, answered] The address map prints LFO Tempo Sync Switch as
+// "(0 - 1) / ON, OFF" where all 26 other switches read OFF, ON, and this codec
+// followed it. Two Roland sources say the reversal is the misprint. Roland's
+// own SH-201 Editor (Script/BufferModel.xml) binds `lfoTempoSyncSwitch` to a
+// plain latch button with no entry in its `inverse0-1Table`, where every other
+// latch button — ARPEGGIO, DELAY, REVERB — lights on 1. And two of Roland's
+// published SH-201 demos, PAD 4 "Reso Sweep" and PAD 8 "Moving Str.", play
+// published patches whose LFO2 carries this byte as 1 with SYNC NOTE 2 and
+// PATCH TEMPO 120: 8 whole notes at 120 BPM is 16.0 s, which is what the
+// recordings sweep in (15.91 s and 16.06 s by centroid autocorrelation), where
+// "1 is OFF" would leave the LFO free-running at RATE 124, tens of hertz.
+void testLfoTempoSyncSwitchReadsOffOnLikeEveryOtherSwitch()
+{
+    septum::Patch patch = septum::initPatch();
+    patch.upper.lfo1.tempoSync = true;
+    patch.upper.lfo2.tempoSync = false;
+    patch.lower.lfo1.tempoSync = false;
+    patch.lower.lfo2.tempoSync = true;
+
+    const auto packets = septum::sysex::encodePatchToSysExPackets (patch);
+    // Patch Tone (1:Upper) is packet 1, (2:Lower) packet 2; the data begins at
+    // byte 11, after F0 41 dev 00 00 16 12 and the four address bytes.
+    const auto toneByte = [&packets] (std::size_t tone, std::size_t offset)
+    {
+        return (int) packets[tone][11 + offset];
+    };
+    expect (toneByte (1, 0x29) == 1, "UPPER LFO1 TEMPO SYNC on encodes 1 at 00 29");
+    expect (toneByte (1, 0x33) == 0, "UPPER LFO2 TEMPO SYNC off encodes 0 at 00 33");
+    expect (toneByte (2, 0x29) == 0, "LOWER LFO1 TEMPO SYNC off encodes 0 at 00 29");
+    expect (toneByte (2, 0x33) == 1, "LOWER LFO2 TEMPO SYNC on encodes 1 at 00 33");
+
+    septum::Patch decoded = septum::initPatch();
+    for (const auto& packet : packets)
+        septum::sysex::decodeSysExMessage (packet.data(), packet.size(), decoded);
+    expect (decoded.upper.lfo1.tempoSync && ! decoded.upper.lfo2.tempoSync
+                && ! decoded.lower.lfo1.tempoSync && decoded.lower.lfo2.tempoSync,
+            "a byte of 1 decodes as TEMPO SYNC on");
+
+    // The measurement that settled it, as arithmetic: SYNC NOTE 2 is 8 whole
+    // notes, a whole note is 4 beats, so at 120 BPM one cycle is 16.0 s.
+    expectNear (1.0 / septum::mapping::lfoSyncHz (120, 2), 16.0, 1.0e-9,
+                "SYNC NOTE 2 at PATCH TEMPO 120 is a 16.0 s cycle");
+}
+
+// [settled] Roland's own SH-201 Editor prints the reverb PRE DELAY table its
+// Resource.xml calls `delayTime0-100Table`: 126 entries in four regular runs
+// rather than the straight line 0-125 -> 0.0-100.0 ms implies. Read linearly
+// raw 50 is 40 ms; the unit puts it at 5.
+void testReverbPreDelayFollowsTheEditorTable()
+{
+    using septum::mapping::reverbPreDelayMs;
+    const std::array<std::pair<int, double>, 11> printed {
+        { { 0, 0.0 }, { 1, 0.1 }, { 25, 2.5 }, { 49, 4.9 }, { 50, 5.0 },
+          { 55, 7.5 }, { 59, 9.5 }, { 60, 10.0 }, { 99, 49.0 }, { 100, 50.0 },
+          { 125, 100.0 } }
+    };
+    for (const auto& entry : printed)
+        expectNear (reverbPreDelayMs (entry.first), entry.second, 1.0e-9,
+                    "PRE DELAY raw " + std::to_string (entry.first) + " is "
+                        + std::to_string (entry.second) + " ms");
+
+    // Monotone and inside the buffer the reverb allocates for it.
+    for (int raw = 1; raw <= 125; ++raw)
+        expect (reverbPreDelayMs (raw) > reverbPreDelayMs (raw - 1)
+                    && reverbPreDelayMs (raw) <= 100.0,
+                "PRE DELAY rises at raw " + std::to_string (raw));
+}
+
 void testSysExBlockAddressesMatchTheAddressMap()
 {
     const auto packets = septum::sysex::encodePatchToSysExPackets (septum::initPatch());
@@ -4867,6 +4935,8 @@ int main()
     testSysExCarriesTheArpeggioGridAndTempo();
     testPatchCommonMatchesTheAddressMap();
     testSysExBlockAddressesMatchTheAddressMap();
+    testLfoTempoSyncSwitchReadsOffOnLikeEveryOtherSwitch();
+    testReverbPreDelayFollowsTheEditorTable();
     testRepressingAChordToneUpdatesItsVelocity();
     testCoupledDb24FilterResonanceStability();
 

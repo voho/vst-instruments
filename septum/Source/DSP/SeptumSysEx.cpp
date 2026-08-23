@@ -149,13 +149,17 @@ void encodeTonePatch (const TonePatch& tone, std::uint8_t* dest) noexcept
 
     dest[0x27] = static_cast<std::uint8_t> (tone.lfo1.shape);
     dest[0x28] = clampTo7Bit (tone.lfo1.rate);
-    // 0x29 / 0x33: "LFO Tempo Sync Switch (0 - 1) / ON, OFF". Every other
-    // switch in the address map reads OFF, ON; these two are listed the other
-    // way round, once each for LFO1 and LFO2, so the reversal is the
-    // document's and not a slip in one line of it. Encoded as written --
-    // 0 is ON -- and flagged in the research contract as the one place where
-    // following the map contradicts the pattern of the map. (OQ-18)
-    dest[0x29] = tone.lfo1.tempoSync ? 0 : 1;
+    // 0x29 / 0x33: the address map prints "LFO Tempo Sync Switch (0 - 1) /
+    // ON, OFF" where all 26 other switches read OFF, ON, and this codec
+    // followed it. Two Roland sources say the reversal is the misprint (OQ-18,
+    // answered): Roland's own SH-201 Editor binds the switch to a plain latch
+    // button with no inversion in its value model, where every other latch
+    // button lights on 1; and two of Roland's published demos play published
+    // patches whose LFO2 carries this byte as 1 with SYNC NOTE 2 ("8" whole
+    // notes) at PATCH TEMPO 120, which predicts a 16.0 s cycle under "1 is ON"
+    // and tens of hertz under "1 is OFF" -- measured 15.91 s and 16.06 s. So
+    // it is OFF, ON like the rest of the map.
+    dest[0x29] = tone.lfo1.tempoSync ? 1 : 0;
     dest[0x2A] = clampTo7Bit (tone.lfo1.tempoSyncNote);
     dest[0x2B] = clampTo7Bit (tone.lfo1.fadeTime);
     dest[0x2C] = tone.lfo1.keyTrigger ? 1 : 0;
@@ -166,7 +170,7 @@ void encodeTonePatch (const TonePatch& tone, std::uint8_t* dest) noexcept
 
     dest[0x31] = static_cast<std::uint8_t> (tone.lfo2.shape);
     dest[0x32] = clampTo7Bit (tone.lfo2.rate);
-    dest[0x33] = tone.lfo2.tempoSync ? 0 : 1;   // 0 is ON; see 0x29 above
+    dest[0x33] = tone.lfo2.tempoSync ? 1 : 0;   // 1 is ON; see 0x29 above
     dest[0x34] = clampTo7Bit (tone.lfo2.tempoSyncNote);
     dest[0x35] = clampTo7Bit (tone.lfo2.fadeTime);
     dest[0x36] = tone.lfo2.keyTrigger ? 1 : 0;
@@ -395,7 +399,7 @@ void decodeTonePatch (const std::uint8_t* src, std::size_t size, TonePatch& tone
 
     if (size > 0x27) tone.lfo1.shape = static_cast<LfoShape> (std::clamp<int> (get (0x27), 0, 6));
     if (size > 0x28) tone.lfo1.rate = get (0x28) & 0x7Fu;
-    if (size > 0x29) tone.lfo1.tempoSync = (get (0x29) & 1u) == 0;   // 0 is ON
+    if (size > 0x29) tone.lfo1.tempoSync = (get (0x29) & 1u) != 0;   // 1 is ON
     if (size > 0x2A) tone.lfo1.tempoSyncNote = std::clamp<int> (get (0x2A), 0, 19);
     if (size > 0x2B) tone.lfo1.fadeTime = get (0x2B) & 0x7Fu;
     if (size > 0x2C) tone.lfo1.keyTrigger = (get (0x2C) & 1u) != 0;
@@ -406,7 +410,7 @@ void decodeTonePatch (const std::uint8_t* src, std::size_t size, TonePatch& tone
 
     if (size > 0x31) tone.lfo2.shape = static_cast<LfoShape> (std::clamp<int> (get (0x31), 0, 6));
     if (size > 0x32) tone.lfo2.rate = get (0x32) & 0x7Fu;
-    if (size > 0x33) tone.lfo2.tempoSync = (get (0x33) & 1u) == 0;   // 0 is ON
+    if (size > 0x33) tone.lfo2.tempoSync = (get (0x33) & 1u) != 0;   // 1 is ON
     if (size > 0x34) tone.lfo2.tempoSyncNote = std::clamp<int> (get (0x34), 0, 19);
     if (size > 0x35) tone.lfo2.fadeTime = get (0x35) & 0x7Fu;
     if (size > 0x36) tone.lfo2.keyTrigger = (get (0x36) & 1u) != 0;

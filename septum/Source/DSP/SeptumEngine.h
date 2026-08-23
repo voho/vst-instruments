@@ -260,19 +260,27 @@ namespace mapping
     // *and* the audio-band density, because it changes only where the same
     // continuous-time signal is sampled.
     //
-    // The floor is the lower of the two rates OQ-01 brackets, and it is a floor
-    // rather than a target on purpose: generating below the slowest rate the
-    // instrument could be running at would band-limit the noise harder than the
-    // hardware ever does, while a floor picks a factor at every host rate
-    // without picking between 44.1 and 48 kHz.
+    // The instrument's own rate. Roland's driver readmes name one CoreAudio
+    // device for the SH-201, "Roland SH-201 44.1kHz", twice over three years,
+    // from a driver whose table carries six rates and composes the name as
+    // <device> <rate> — so the number is the instrument's, and the clock tree
+    // puts the engine on it (OQ-01, rate answered).
+    //
+    // It is used as a floor rather than a target because a power-of-two ladder
+    // cannot reach 44.1 kHz from every host rate: generating *below* the rate
+    // the instrument runs at would band-limit the noise harder than the
+    // hardware ever does, so the ladder stops at the last factor that does not.
+    // A 48 kHz host therefore generates at 48 rather than 44.1, 9 % high, which
+    // is 0.37 dB of density — the size of the approximation, stated rather than
+    // hidden.
     inline constexpr double noiseInternalRateFloorHz = 44100.0;
 
     // The largest power-of-two decimation whose internal rate stays at or above
     // that floor: none at 44.1/48 kHz, 2x at 88.2/96 kHz, 4x at 176.4/192 kHz.
     // Like the OVERDRIVE's ladder this stops at 4 because the interpolator
     // stops at 4 — two half-band stages and nothing beyond them — so a host
-    // rate above 176.4 kHz that is not a multiple of one of the two base rates
-    // generates above the floor rather than at it.
+    // rate that is not a power of two above 44.1 kHz generates above the floor
+    // rather than at it.
     [[nodiscard]] inline int noiseDecimation (double hostRateHz) noexcept
     {
         int factor = 1;
@@ -323,12 +331,26 @@ namespace mapping
         return 2.0 * magnitude / (1.0 + magnitude);
     }
 
-    // [settled] Reverb PRE DELAY: the address map stores 0-125 and the
-    // manual prints 0.0-100.0 ms (OM p. 65). One place, so the panel and the
-    // reverb cannot disagree about what a raw value means.
+    // [settled] Reverb PRE DELAY: the address map stores 0-125 and the manual
+    // prints 0.0-100.0 ms (OM p. 65), which this read linearly - 0.8 ms per
+    // step. Roland's own SH-201 Editor prints the table, and it is not linear:
+    // `delayTime0-100Table` in its Resource.xml is 126 entries in four regular
+    // runs, 0.1 ms to 4.9, then 0.5 ms steps to 9.5, then 1 ms steps to 49,
+    // then 2 ms steps to 100. So the knob spends its first two fifths inside
+    // the first five milliseconds, where a pre-delay does its audible work,
+    // and the linear reading put raw 50 at 40 ms where the unit puts it at 5.
+    // Written as the four runs rather than as 126 literals: the table is
+    // regular and the arithmetic is the document.
     [[nodiscard]] inline double reverbPreDelayMs (int raw) noexcept
     {
-        return std::clamp (raw, 0, 125) * (100.0 / 125.0);
+        const int value = std::clamp (raw, 0, 125);
+        if (value < 50)
+            return 0.1 * value;
+        if (value < 60)
+            return 5.0 + 0.5 * (value - 50);
+        if (value < 100)
+            return 10.0 + 1.0 * (value - 60);
+        return 50.0 + 2.0 * (value - 100);
     }
 
     // [voiced, OQ-12] Reverb TIME 0-127 with SIZE 0-7 -> RT60 seconds.

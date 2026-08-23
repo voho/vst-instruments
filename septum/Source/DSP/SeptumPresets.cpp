@@ -37,15 +37,24 @@ namespace
         { "Chorus 2", 62, 14, 16, 58, 110 },
     };
 
+    // The PRE DELAY column is a raw value into Roland's own four-run table, not
+    // a linear 0.8 ms per step. These eight were voiced as *times* — 4, 6.4, 8,
+    // 9.6, 16, 20, 30.4, 40 ms, a room-to-hall progression — under the linear
+    // reading the MIDI Implementation's endpoints alone imply, so when the
+    // editor's table replaced that reading the raws were re-pinned to keep the
+    // same times rather than left to mean an eighth of them. Six land exactly;
+    // Room 1's 6.4 ms is not on Roland's grid at all (the 0.5 ms run makes 6.5
+    // the nearest) and Hall 1's 30.4 lands on 30.0. The voicing is unchanged
+    // and still voiced (OQ-12); only its spelling moved.
     constexpr ReverbTemplate reverbTemplates[8] {
-        { "Room 1", 44, 8, 1, 15, 100, 90, 5, -3, 2, -9 },
-        { "Room 2", 56, 12, 2, 14, 100, 96, 5, -2, 2, -6 },
-        { "Studio 1", 50, 20, 3, 16, 110, 100, 6, -2, 3, -4 },
-        { "Studio 2", 62, 25, 4, 16, 110, 104, 6, -2, 3, -3 },
-        { "Hall 1", 84, 38, 6, 17, 118, 112, 7, -1, 3, -6 },
-        { "Hall 2", 96, 50, 7, 17, 118, 116, 7, -1, 2, -8 },
-        { "Plate 1", 74, 5, 4, 19, 127, 120, 9, -4, 4, -2 },
-        { "Plate 2", 88, 10, 5, 19, 127, 124, 9, -4, 4, -1 },
+        { "Room 1", 44, 53, 1, 15, 100, 90, 5, -3, 2, -9 },
+        { "Room 2", 56, 59, 2, 14, 100, 96, 5, -2, 2, -6 },
+        { "Studio 1", 50, 66, 3, 16, 110, 100, 6, -2, 3, -4 },
+        { "Studio 2", 62, 70, 4, 16, 110, 104, 6, -2, 3, -3 },
+        { "Hall 1", 84, 80, 6, 17, 118, 112, 7, -1, 3, -6 },
+        { "Hall 2", 96, 90, 7, 17, 118, 116, 7, -1, 2, -8 },
+        { "Plate 1", 74, 40, 4, 19, 127, 120, 9, -4, 4, -2 },
+        { "Plate 2", 88, 56, 5, 19, 127, 124, 9, -4, 4, -1 },
     };
 } // namespace
 

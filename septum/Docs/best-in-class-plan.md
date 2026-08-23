@@ -2061,6 +2061,92 @@ generator.
 All three fixes are fenced by checks watched to fail with them reverted — 14 of
 them. The 11 committed demos still re-render bit-identically.
 
+#### Step 51 — Roland's own editor, and two of Roland's own recordings
+
+A source hunt across Roland's remaining SH-201 material turned up two things
+the project did not have, and both of them settle something.
+
+**Roland's SH-201 Editor ships its parameter model as readable XML.** The v1.10
+installer's `Script/` directory is uncompiled: `BufferModel.xml` gives every
+parameter's SysEx address, raw range and factory default, and `Resource.xml`
+gives 36 display tables. It is a Roland document in the strongest sense — it is
+the mapping Roland's own software uses to render raw bytes coming off a real
+unit.
+
+Read against this project, it corroborates almost everything and corrects one
+mapping. The LFO tempo-sync note table, the delay HF DAMP list, the reverb HIGH
+CUT, LF DAMP and HF DAMP lists, the damp-gain range and the oscillator, LFO,
+arpeggio grid and duration enumerations all match entry for entry, which turns
+a set of readings of one document into two independent witnesses.
+
+**Reverb PRE DELAY was not a straight line.** The MIDI Implementation prints
+"Pre Delay (0 — 125) / 0.0 — 100 [msec]" and this read it linearly, 0.8 ms per
+step. Roland's `delayTime0-100Table` prints the actual 126 entries, and they are
+four regular runs: 0.1 ms steps to 4.9, then 0.5 ms to 9.5, then 1 ms to 49,
+then 2 ms to 100. So the knob spends its first two fifths inside the first five
+milliseconds — where a pre-delay does its audible work — and the linear reading
+put raw 50 at 40 ms where the unit puts it at 5 ms, an eightfold error across
+most of the range. It is written as the four runs rather than 126 literals: the
+table is regular and the arithmetic is the document.
+
+**OQ-18 is answered, against what the codec wrote.** The address map lists the
+LFO Tempo Sync Switch as `(0 — 1) / ON, OFF` where all 26 of its other switches
+read `OFF, ON`; the reversal is printed twice, so Step 42 wrote it as printed
+and recorded the doubt. It is the misprint. Roland's editor declares
+`lfoTempoSyncSwitch` with no entry in the `inverse0-1Table` its three genuinely
+inverted parameters use, and binds it to the same `latchButton` control as
+ARPEGGIO, DELAY and REVERB — all off at 0.
+
+The measurement is better still, and needs no hardware. Roland's 2007 patch
+mini-site publishes four librarian banks and a demo recording per patch. PAD 4
+"Reso Sweep" and PAD 8 "Moving Str." both carry Tone-1 LFO2 as TRI, RATE 124,
+this byte = 1, SYNC NOTE 2 ("8" whole notes), destination FILTER at +40, PATCH
+TEMPO 120 — with FILTER ENV depth 0 and the arpeggiator off, so that LFO is the
+only thing moving the cutoff. Eight whole notes at 120 BPM is 16.0 s. The two
+recordings sweep at **15.91 s and 16.06 s** by centroid autocorrelation, three
+cycles each. Under "1 is OFF" the LFO would free-run at RATE 124, tens of
+hertz, which neither recording does. Across all 400 patches the field usage is
+the same signature: with the byte at 0 the SYNC NOTE field is dead and RATE
+spreads over 85 values; with it at 1, RATE collapses onto the factory default
+and SYNC NOTE spreads over 14 musical values.
+
+The same measurement confirms the unit `lfoSyncHz` already used — index 2 is
+eight *whole* notes of four beats, not eight beats.
+
+**OQ-01's rate half is answered too.** No Roland specification states a sampling
+frequency — not the brochure, not the product page, not OM p. 74. Roland's
+driver documentation does, in the device name the user is told to select:
+"Roland SH-201 44.1kHz", in two independently written readmes three years
+apart, with no rate selector in the panel and no other rate mentioned anywhere.
+The driver is not the constraint — its kext carries 32, 44.1, 48, 88.2, 96 and
+192 kHz in one table and composes the CoreAudio name as `<device> <rate>` — so
+the literal 44.1 is a statement about the instrument. With the service notes'
+clock chain, engine fs = 44.1 kHz at the documentary tier. Three constants were
+already pinned there on the assumption; they are grounded now rather than
+assumed, and the NOISE ladder's comment says which.
+
+**The eight reverb templates were re-pinned, not left to mean an eighth of
+themselves.** Their PRE DELAY column is voiced (OQ-12) and it was voiced as a
+progression of *times* — 4, 6.4, 8, 9.6, 16, 20, 30.4, 40 ms, room to hall —
+expressed as raws through the linear reading. Left alone under the corrected
+table those raws would have meant 0.5 to 5 ms, which is not a hall. The raws
+now spell the same times: six land exactly, Room 1's 6.4 ms is not on Roland's
+grid at all (the 0.5 ms run makes 6.5 the nearest) and Hall 1's 30.4 lands on
+30.0. The voicing is unchanged; only its spelling moved.
+
+Two demos are therefore no longer bit-identical: `01-supersaw-lead.wav` and
+`07-pwm-strings.wav` are built on factory patches that use Hall 1, whose
+pre-delay moved 0.4 ms — 18 samples at 44.1 kHz. A reverb tail is noise-like,
+so an 18-sample shift decorrelates it completely while changing nothing about
+what it sounds like: measured, the two takes differ by 0.16 and 0.48 dB in
+overall band level and by a median 0.2 and 0.6 dB per bin from 50 Hz to
+16 kHz. Both are re-rendered. The other nine are bit-identical, and the
+tempo-sync polarity changes no audio at all — it is invisible until a byte
+crosses the wire.
+
+Both code changes are fenced by checks watched to fail against the previous
+readings — 13 of them.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:

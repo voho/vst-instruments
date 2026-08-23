@@ -39,6 +39,9 @@ sound programmed against the engine.
 | Roland JP-8000 Owner's Manual + Supplemental Notes SN77 | The ancestor's supersaw/FB-OSC control semantics ("7 saw waves using only one voice of polyphony") |
 | Sound on Sound, *Roland SH-201* (Nick Magnus, April 2007) | V-Synth-derived engine, 5+5 dual/split voices, envelope snappiness, EXT-IN routing behavior, 24 dB filter "similar in character to that of the JP8000" |
 | AKM AK4552 datasheet | Codec conversion characteristics: 24-bit delta-sigma, digital-filter passband 0.454·fs, DAC output level |
+| Roland *SH-201 Editor/Librarian* v1.10 (2006), the `Script/` directory of its installer | Roland's own parameter model, shipped as readable XML rather than compiled: `BufferModel.xml` gives every parameter's SysEx address, raw range and factory default; `Resource.xml` gives 36 display tables, including the reverb PRE DELAY curve, the delay HF DAMP and reverb HIGH CUT/LF DAMP/HF DAMP frequency lists, key follow, the LFO tempo-sync note table and the oscillator, LFO, arpeggio grid and duration enumerations. A second Roland witness for most of the MIDI Implementation's tables, and the only source for the pre-delay curve |
+| Roland *SH-201 Driver* v1.1.1 for Mac OS X (2009) and v1.0.0 for OS X 10.8 (2012), English readmes | The device's sole CoreAudio device name: "Roland SH-201 44.1kHz". The kext is a generic Roland driver whose string table carries 32/44.1/48/88.2/96/192 kHz and composes the name as `<device> <rate>`, so the literal 44.1 is a statement about the instrument, not a driver limit. Its `Info.plist` fixes the USB identity 0x0582/0x00AD, which the Windows INF repeats (OQ-01) |
+| Roland US *SH-201 patch mini-site* (2007): four `.shl` librarian banks (400 Roland-authored patches) and the `TOP8_*` demo MP3s they play | Roland's own patch data in Roland's own container, parsing exactly against the MIDI Implementation's block sizes, paired with Roland's own recordings of named patches. Settled OQ-18 by measurement, and a decode corpus for the codec |
 | Roland US, *SH-201 Q&A* (2009) and *SH-201 TurboStart* TBS272 | PATCH REMAIN's stated effect (OQ-19); that TRANSPOSE composes with the octave buttons rather than replacing them; the 32 + 32 bank layout and the 32 arpeggio templates, both already settled elsewhere |
 
 Real-unit references for by-ear comparison are catalogued in the
@@ -58,11 +61,19 @@ delay and reverb send depth. Keyboard modes are SINGLE (one tone), DUAL
 DUAL halves it to 5. (OM pp. 27, 46–47, 74–75.)
 
 The engine runs on one clock domain rooted in the TUSB3200's PLL (the WSP is
-strapped `SYNC=SLAVE`, `SYSCKO=384fs`), so engine fs = USB streaming fs. No
-Roland document read states the numeric rate; 44.1 kHz is the common
-assumption and both codec and USB controller support 44.1 and 48 kHz.
-**Open: OQ-01.** The replica runs at the host rate and renders its committed
-demos at 44.1 kHz.
+strapped `SYNC=SLAVE`, `SYSCKO=384fs`), so engine fs = USB streaming fs — and
+that rate is **44.1 kHz**. No Roland *specification* states it: the brochure,
+the product page and OM p. 74 print no sampling frequency at all. Roland's own
+driver documentation does, in the device name the user is told to select:
+"Roland SH-201 44.1kHz", in two independently written readmes three years
+apart, with no rate selector in the driver's panel and no mention of any other
+rate. The driver is not the limit — its kext carries 32, 44.1, 48, 88.2, 96 and
+192 kHz in one table and composes the CoreAudio name as `<device> <rate>` — so
+the literal 44.1 is a statement about the instrument. The rate half of OQ-01 is
+settled at the documentary tier on that basis; what stays open is a descriptor
+capture as confirmation, and the oscillator interpolation behaviour OQ-01 also
+owns. The replica runs at the host rate and renders its committed demos at
+44.1 kHz.
 
 ## The parameter contract (settled)
 
@@ -119,7 +130,10 @@ EXPRESSION are stored and inert — see the D Beam section.
   display moves in steps of 2 % and raw 49 is 0 %; negative
   inverts phase); HF damp 200–8000 Hz in 17 steps or BYPASS; modulation
   rate 0–127; modulation depth 0–127.
-- **Patch Reverb** (10 bytes): time 0–127; pre-delay 0–100 ms; size 1–8;
+- **Patch Reverb** (10 bytes): time 0–127; pre-delay raw 0–125 → 0.0–100.0 ms
+  along Roland's own four-run table (0.1 ms steps to 4.9, 0.5 ms to 9.5, 1 ms
+  to 49, 2 ms to 100 — `delayTime0-100Table` in the editor's `Resource.xml`),
+  not the straight line the manual's endpoints alone imply; size 1–8;
   high cut 160–12500 Hz in 20 steps or BYPASS; density 0–127; diffusion
   0–127; LF damp 50–4000 Hz in 20 steps, gain −36…0 dB; HF damp
   4000–12500 Hz in 6 steps, gain −36…0 dB. Both damp gains are raw 0–36
@@ -483,7 +497,9 @@ Settled: modulation delay → reverb in series, shared TIME and switches,
 per-tone DEPTH sends; the delay's feedback can invert phase; chorus is a
 delay *template* (Chorus 1/2), not a separate block; the eight delay and
 eight reverb template names; all auxiliary parameter tables (HF damp, high
-cut, LF/HF damp gains, pre-delay 0–100 ms, size 1–8, density, diffusion).
+cut, LF/HF damp gains, size 1–8, density, diffusion) — all of them now with a
+second Roland witness in the editor's display tables, which also give the
+pre-delay's curve and not only its endpoints.
 The template *parameter values* are unpublished; the templates shipped here
 are original voicings under the settled names (OQ-12). Voiced (OQ-12):
 delay TIME 0–127 → 1…1300 ms exponential; modulation is a sine sweep of
@@ -724,14 +740,16 @@ Moving them changed no audio: the committed demos re-render bit-identically.
 
 Each is a standing research task; the measurement named would close it.
 
-- **OQ-01 — engine sample rate.** Clock tree fixes engine fs = USB fs;
-  44.1 vs 48 kHz undetermined. The NOISE ladder takes the lower of the two as a
-  floor rather than choosing between them, so it decides a decimation factor at
-  every host rate without deciding this; the 0.37 dB the two families differ by
-  is the size of what is still open. Close by: reading a real unit's USB
-  descriptors, or spectral analysis of a dry hardware capture's alias
-  lines. Also owns the true oscillator interpolation/aliasing behavior
-  (owners report supersaw content dying above ~15 kHz).
+- **OQ-01 — engine sample rate. RATE ANSWERED 2026-08-23; the rest stands.**
+  Clock tree fixes engine fs = USB fs, and Roland's driver readmes name one
+  CoreAudio device, "Roland SH-201 44.1kHz", twice over three years — from a
+  driver whose own table carries six rates, so the number is the instrument's.
+  Engine fs = 44.1 kHz, documentary tier. The NOISE ladder and the FB OSC
+  loop's reference rate are both pinned there, and the OVERDRIVE's ladder is
+  measured against it. Still open: a USB descriptor capture as confirmation,
+  and — the part this question always owned separately — the true oscillator
+  interpolation/aliasing behaviour (owners report supersaw content dying above
+  ~15 kHz), which a spectral analysis of a dry hardware capture would settle.
 - **OQ-02 — CC#88 collision.** Capture the panel's transmitted CCs (move
   UPPER filter-env D and LOWER OSC2 pitch-env depth) to settle the
   misprint read as CC#83.
@@ -860,16 +878,38 @@ Each is a standing research task; the measurement named would close it.
   A dump from a real unit is still the thing that would *prove* the codec
   round-trips — see below — but the layout is no longer this project's guess
   anywhere.
-- **OQ-18 — the LFO tempo-sync bit order.** The address map lists Patch Tone
-  `00 29` and `00 33`, LFO1 and LFO2 Tempo Sync Switch, as `(0 — 1) / ON,
-  OFF`. Every other switch in the map — 26 of them — reads `OFF, ON`. The
-  reversal is printed twice, once per LFO, so it is not a slip in one line,
-  and the codec now writes it as printed: 0 is ON. The alternative is that
-  Roland's own document is wrong in the same way twice. Close by dumping one
-  patch from a real unit with LFO1 TEMPO SYNC on and reading byte `00 29`;
-  nothing else in this project turns on the answer, because both sides of the
-  codec agree with each other whichever way it goes — only a dump written by
-  the hardware can tell them apart.
+- **OQ-18 — the LFO tempo-sync bit order. ANSWERED 2026-08-23.** The address
+  map lists Patch Tone `00 29` and `00 33`, LFO1 and LFO2 Tempo Sync Switch, as
+  `(0 — 1) / ON, OFF`, where all 26 other switches read `OFF, ON`. The reversal
+  is printed twice, so the codec wrote it as printed. It is the misprint, and
+  Roland's own document is wrong in the same way twice. Two witnesses, neither
+  needing hardware:
+
+  *Roland's editor.* `BufferModel.xml` declares `lfoTempoSyncSwitch[n]` at
+  `00 29`/`00 33`, range 0–1, default 0, with **no** `numberTableRef` — the
+  three parameters whose raw byte the editor inverts (`keyboardPart`,
+  `dBeamPolarity`, `filterSlope`) name `inverse0-1Table` and this one does not.
+  `PatchLfo.xml` binds it to a `latchButton`, the same control type as
+  ARPEGGIO, DELAY and REVERB, all of which are off at 0.
+
+  *Roland's own recordings.* PAD 4 "Reso Sweep" and PAD 8 "Moving Str." in
+  `100_PAD.shl` both carry Tone-1 LFO2 as TRI, RATE 124, this byte = 1, SYNC
+  NOTE 2 ("8" whole notes), destination FILTER at +40, PATCH TEMPO 120, and
+  FILTER ENV depth 0 with the arpeggiator off — so that LFO is the only thing
+  moving the cutoff. Eight whole notes at 120 BPM is 16.0 s. The two published
+  demos of those patches sweep at 15.91 s and 16.06 s by centroid
+  autocorrelation, three cycles each; "1 is OFF" would leave the LFO free-
+  running at RATE 124, tens of hertz, which neither recording does. Across all
+  400 patches in the four banks the field usage is the same signature: of the
+  LFOs with this byte 0, 95 % leave SYNC NOTE at its default while spreading
+  over 85 distinct RATE values, and of those with it 1, RATE collapses onto the
+  factory default while SYNC NOTE spreads over 14 musical values.
+
+  The same measurement confirms the note table's unit — index 2 is 8 *whole*
+  notes of four beats, which is what `lfoSyncHz` already computed — and the
+  table's own 20 entries are reprinted in the editor's `lfoTempoSyncNoteTable`.
+  A hardware dump would still be the thing that proves the whole codec round
+  trips; nothing here needs it.
 - **OQ-16 — D Beam calibration. WITHDRAWN 2026-08-23**, with the controller
   it belonged to: an infrared distance sensor has no meaning in a plug-in, so
   there is nothing left for the capture below to calibrate. Kept as a record

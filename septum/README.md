@@ -226,9 +226,13 @@ which is the size the document's own worked RQ1 example asks for, and both of
 the finished messages that document prints are test vectors here. `OQ-17`
 records what the read corrected, including a tempo encoding that could not
 reach the top of its own range and two effect switches that had been sharing
-an invented byte. One byte is still open: `OQ-18`, the LFO tempo-sync switch,
-which the map prints as `ON, OFF` where all 26 of its other switches read
-`OFF, ON`. The codec writes it as printed.
+an invented byte. `OQ-18` was the one byte left open — the LFO tempo-sync
+switch, which the map prints as `ON, OFF` where all 26 of its other switches
+read `OFF, ON` — and it is answered: the reversal is the misprint, and the
+switch reads `OFF, ON` like the rest. Roland's own SH-201 Editor binds it to a
+latch button that lights on 1, and two of Roland's published demos play
+published patches whose LFO carries that byte as 1 and sweeps at the tempo-
+synced period it implies.
 
 **not modelled, and what that costs:** RQ1 data requests are rejected and the
 plug-in never transmits SysEx of its own, so an Identity Request goes

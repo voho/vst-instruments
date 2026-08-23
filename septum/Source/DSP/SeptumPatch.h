@@ -389,7 +389,13 @@ struct Patch
 };
 
 // --------------------------------------------------------------------------
-// Settled value tables, quoted from the MIDI Implementation.
+// Settled value tables, quoted from the MIDI Implementation — and, since the
+// SH-201 Editor's `Resource.xml` was read, corroborated entry for entry by
+// Roland's own display tables: `lfoTempoSyncNoteTable`, `freq200-BypassTable`,
+// `hiCutTable`, `lfDampFreqTable`, `hfDampFreqTable` and `dampGainTable`. The
+// enumeration orders agree too — `oscWaveFormTable` (SAW, SQR, PW-SQR, TRI,
+// SIN, NOISE, FB-OSC, SUPER-SAW, EXT-IN), `lfoWaveFormTable` (TRI, SIN, SAW,
+// SQR, TRP, S&H, RANDOM), `arpeggioGridTable` and `arpeggioDurationTable`.
 // --------------------------------------------------------------------------
 
 // LFO TEMPO SYNC NOTE (0-19), in whole notes.
