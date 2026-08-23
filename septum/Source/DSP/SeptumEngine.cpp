@@ -1962,19 +1962,18 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
                         mapping::filterStateLimit + over / (1.0 + over);
                     return state < 0.0 ? -limited : limited;
                 };
-                // Only where the stage is linearly unstable. `damping` is the
-                // state-variable k, and k <= 0 is the oscillation threshold —
-                // the stability boundary itself, not a new constant. Applied
-                // at every resonance the limiter was a full-time waveshaper:
-                // two oscillators at unity put more than +/-1.5 into the
-                // filter, so an ordinary patch measured -27 dB THD at
-                // RESONANCE 0, which nothing about the instrument says it
-                // should do.
-                if (damping <= 0.0)
-                {
-                    stage.ic1eq = limitState (stage.ic1eq);
-                    stage.ic2eq = limitState (stage.ic2eq);
-                }
+                // Everywhere, not only past the stability boundary. Gating on
+                // `damping <= 0.0` looked like the stage's own threshold and
+                // no new constant, but `resonanceDamping` crosses zero at
+                // RESONANCE 122.07 — so the whole high-Q shoulder below it
+                // ran unbounded, and the knob was not monotone: the level ran
+                // away from about 118, pinned on the output limiter at
+                // 121-122, and fell 17.8 dB at 123. What made the limiter a
+                // waveshaper at RESONANCE 0 was not that it ran, but that its
+                // knee sat under the signal; `filterStateLimit` is pinned
+                // above every state an unresonant filter reaches now.
+                stage.ic1eq = limitState (stage.ic1eq);
+                stage.ic2eq = limitState (stage.ic2eq);
                 const double lp = v2;
                 const double bp = v1;
                 const double hp = input - damping * v1 - v2;

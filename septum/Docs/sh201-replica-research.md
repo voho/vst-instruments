@@ -756,7 +756,14 @@ Each is a standing research task; the measurement named would close it.
 - **OQ-07 — balance law; low-shelf corner/gain.** Capture BALANCE at
   −63/−32/0/+32/+63 with dissimilar waves; capture LOW FREQ
   CUT/FLAT/BOOST on a saw and fit the shelf.
-- **OQ-08 — filter calibration.** Cutoff-knob-to-Hz table, resonance-to-Q
+- **OQ-08 — filter calibration.** Also owns `filterStateLimit`, the knee where
+  the resonant stage's integrator states stop growing. It is pinned at 8.0
+  against a measurement rather than by ear: the largest state an *unresonant*
+  filter reaches, across all eight waveforms, three filter types, both slopes
+  and CUTOFF 0–127 at maximum level with LOW FREQ BOOST, is 6.15, and a knee
+  below that makes the limiter a waveshaper on the signal path instead of a
+  bound on runaway. What the hardware's own oscillation level is remains
+  unmeasured, which is why the constant is voiced and not settled. Cutoff-knob-to-Hz table, resonance-to-Q
   curve, self-oscillation onset value, −24 dB topology (resonance on one
   or both stages), envelope/velocity depth scalings. Close by measuring a
   real unit's swept responses at a grid of knob values.

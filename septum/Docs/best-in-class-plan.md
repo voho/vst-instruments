@@ -1906,6 +1906,62 @@ where the change actually lands.
 All five are fenced, each by a check watched to fail with its fix reverted, and
 the 11 committed demos still re-render bit-identically.
 
+#### Step 49 — the resonance knob was not monotone
+
+Step 30 found the filter's state limiter acting as a full-time waveshaper —
+**−27.3 dB THD at RESONANCE 0** on an ordinary two-oscillator patch — and
+gated it on `damping <= 0.0`, the stage's own stability boundary, on the
+grounds that it was a boundary rather than a new constant. The diagnosis was
+right and the repair was wrong.
+
+`mapping::resonanceDamping (v) = 2 − 2.04·√(v/127)` crosses zero at
+**RESONANCE 122.07**. So the gate did not limit "past the oscillation
+threshold" — it left the entire high-Q shoulder *below* the threshold running
+with no bound at all: k = 0.034 (Q 30) at RESONANCE 118, k = 0.0006 (Q 1783)
+at 122. Measured on a two-saw LPF −24 dB patch at CUTOFF 60, note 48, whole
+file:
+
+| RESONANCE | 0 | 110 | 118 | 120 | 121 | 122 | **123** | 127 |
+|---|---|---|---|---|---|---|---|---|
+| RMS | 0.073 | 0.174 | 0.381 | 0.549 | 0.648 | 0.701 | **0.090** | 0.092 |
+| peak | 0.143 | 0.429 | 0.742 | 0.992 | 1.043 | 1.050 | 0.182 | 0.183 |
+| % past the output limiter's knee | 0 | 0 | 0 | 3.1 | 14.1 | 27.7 | 0 | 0 |
+
+1.050 is exactly the output stage's own ceiling. So the last few degrees of
+the knob were sustained clipping rather than resonance, and one more step —
+122 to 123 — was a **17.8 dB fall**, on every filter type and both slopes
+(worst: BPF −24 dB, 26.4 dB).
+
+**What was actually wrong was the knee, not the fact that the limiter ran.**
+`filterStateLimit` was 1.5, and an ordinary patch puts far more than that into
+the filter. Measured at RESONANCE 0 with both oscillators at unity, LEVEL and
+velocity at maximum and LOW FREQ BOOST, across all eight waveforms, three
+filter types, both slopes and CUTOFF 0…127, the largest integrator state an
+*unresonant* filter reaches is **6.15** (NOISE at CUTOFF 127; SQU/PW-SQU 5.02,
+SINE 4.82, SAW 4.70, TRI 4.41, FB-OSC 2.83, SUPER-SAW 2.59). A knee under a
+third of that could only be a waveshaper.
+
+The gate is gone and the knee is re-pinned at **8.0** — above every measured
+unresonant state, with headroom — so the limiter is a bound on runaway rather
+than something in the signal path. It stays `[voiced, OQ-08]`, now with the
+measurement that chose it recorded beside it. The sweep is monotone at every
+filter type and slope, and never reaches the output limiter: LPF −24 dB now
+runs 0.073 → 0.363 RMS from RESONANCE 0 to 127 with a peak of 0.641.
+
+The RESONANCE-0 THD check that Step 30 added still passes, which is the point:
+both defects had the same cause and one knee fixes both.
+
+**This is the only change in this branch that alters shipped audio.**
+`04-acid-filter-24db.wav` sweeps RESONANCE `96 + pass·10` — 96, 106, 116,
+126 — straight through the unbounded shoulder and over the cliff, so it was
+audibly hitting the defect. It is re-rendered; the other ten demos are still
+bit-identical.
+
+A new test sweeps RESONANCE across 0…127 on all six type × slope combinations
+and requires the level never to fall by more than a tenth between steps and the
+peak never to reach the output limiter's knee. It fails 12 of 12 against the
+gated limiter.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:

@@ -2379,6 +2379,84 @@ void testTriangleIsBandLimited()
             "a high triangle folds far less than an uncorrected one");
 }
 
+// RESONANCE is a knob: turning it up must make the filter more resonant, not
+// louder-then-suddenly-quiet. The state limiter was gated on the stage's own
+// stability boundary (`damping <= 0`), which sounds like the right place —
+// but `resonanceDamping` crosses zero at RESONANCE 122.07, so 0-122 ran with
+// no bound at all. Measured on a two-saw LPF -24 dB patch at CUTOFF 60, the
+// level ran away from about 118, pinned on the output limiter at 121-122
+// (27.7 % of samples past its knee) and fell 17.8 dB at 123.
+void testResonanceIsMonotoneAndNeverClips()
+{
+    const double sampleRate = 44100.0;
+    const int resonances[] = { 0, 64, 100, 110, 115, 118, 120, 121, 122, 123, 127 };
+
+    for (const auto type : { septum::FilterType::Lpf, septum::FilterType::Hpf,
+                             septum::FilterType::Bpf })
+        for (const auto slope : { septum::FilterSlope::Db12,
+                                  septum::FilterSlope::Db24 })
+        {
+            double previous = -1.0;
+            double worstPeak = 0.0;
+            bool monotone = true;
+            int brokeAt = -1;
+            double brokeFrom = 0.0, brokeTo = 0.0;
+
+            for (const int resonance : resonances)
+            {
+                septum::Patch patch = plainSawPatch();
+                patch.upper.osc1.wave = septum::Waveform::Saw;
+                patch.upper.osc2.wave = septum::Waveform::Saw;
+                patch.upper.balance = 0;
+                patch.upper.filterType = type;
+                patch.upper.filterSlope = slope;
+                patch.upper.cutoff = 60;
+                patch.upper.resonance = resonance;
+                patch.delayOn = false;
+                patch.reverbOn = false;
+
+                septum::Engine engine;
+                engine.prepare (sampleRate, 256);
+                engine.setPatch (patch);
+                engine.reset();
+                const auto take =
+                    renderScore (engine, { { 0.0, true, 48, 100 } }, 2.0, sampleRate);
+                // Steady state: the first half second is the envelope arriving.
+                const auto from = (std::size_t) (sampleRate * 0.5);
+                const double level = take.rms (from, take.left.size());
+                worstPeak = std::max (worstPeak, take.peak());
+
+                // A knob step may not *lower* the level. The tolerance is
+                // generous — this is looking for the cliff, not measuring the
+                // resonance curve.
+                if (previous > 0.0 && level < previous * 0.9)
+                {
+                    monotone = false;
+                    brokeAt = resonance;
+                    brokeFrom = previous;
+                    brokeTo = level;
+                }
+                previous = level;
+            }
+
+            const std::string what =
+                std::string (type == septum::FilterType::Lpf   ? "LPF"
+                             : type == septum::FilterType::Hpf ? "HPF"
+                                                               : "BPF")
+                + (slope == septum::FilterSlope::Db24 ? " -24 dB" : " -12 dB");
+            expect (monotone,
+                    what + ": RESONANCE never drops the level (fell at "
+                        + std::to_string (brokeAt) + ", "
+                        + std::to_string (brokeFrom) + " -> "
+                        + std::to_string (brokeTo) + ")");
+            // The output stage's soft knee is 0.9. Reaching it across a plain
+            // two-oscillator patch means the filter is running away into it.
+            expect (worstPeak < 0.9,
+                    what + ": the sweep never reaches the output limiter (peak "
+                        + std::to_string (worstPeak) + ")");
+        }
+}
+
 void testSelfOscillationBounded()
 {
     septum::Patch patch = plainSawPatch();
@@ -4514,6 +4592,7 @@ int main()
     testArpeggioOctaveRange();
     testArpeggiatorEdgeCases();
     testTriangleIsBandLimited();
+    testResonanceIsMonotoneAndNeverClips();
     testSelfOscillationBounded();
     testBandPassGainsWithResonance();
     testEnvelopesShapeLoudness();

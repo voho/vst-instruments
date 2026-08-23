@@ -415,7 +415,24 @@ namespace mapping
     // [voiced, OQ-08] Where the resonant stage's integrator states stop
     // growing, so self-oscillation is bounded as the manual's "may not stop at
     // all" implies rather than divergent.
-    inline constexpr double filterStateLimit = 1.5;
+    //
+    // It has to sit above every state an *unresonant* filter reaches, or it
+    // stops being a bound on runaway and becomes a waveshaper on the signal
+    // path. Measured at RESONANCE 0 with both oscillators at unity, LEVEL and
+    // velocity at maximum and LOW FREQ BOOST, across all eight waveforms,
+    // three filter types, both slopes and CUTOFF 0..127, the largest state is
+    // 6.15 (NOISE at CUTOFF 127; SQU/PW-SQU 5.02, SAW 4.70, SINE 4.82, TRI
+    // 4.41, FB-OSC 2.83, SUPER-SAW 2.59). Eight is that with headroom.
+    //
+    // It was 1.5, which is under a third of what an ordinary patch produces —
+    // hence the -27 dB THD at RESONANCE 0 that Step 30 measured. The repair
+    // there was to run the limiter only where the stage's own damping has
+    // gone non-positive, but `resonanceDamping` crosses zero at RESONANCE
+    // 122.07, so 0-122 ran with no bound at all: the level ran away from
+    // about 118, pinned on the output limiter at 121-122, and fell 17.8 dB at
+    // 123. Raising the knee is what lets the limiter run everywhere, which is
+    // what makes the knob monotone.
+    inline constexpr double filterStateLimit = 8.0;
 
     // [voiced] The output stage's final safety knee: transparent below this,
     // saturating above, so a reasonably driven patch never touches it and an
