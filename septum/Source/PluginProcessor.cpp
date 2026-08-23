@@ -602,6 +602,19 @@ void SeptumAudioProcessor::cacheParameterPointers()
     for (std::size_t i = 0; i < ccCache.size(); ++i)
         ccShadow[i].store (ccCache[i].raw->load (std::memory_order_relaxed),
                            std::memory_order_relaxed);
+
+    // The same for the three tables a received patch dump writes.
+    const auto seed = [] (std::unique_ptr<std::atomic<float>[]>& shadow,
+                          const std::vector<std::atomic<float>*>& values)
+    {
+        shadow = std::make_unique<std::atomic<float>[]> (values.size());
+        for (std::size_t i = 0; i < values.size(); ++i)
+            shadow[i].store (values[i]->load (std::memory_order_relaxed),
+                             std::memory_order_relaxed);
+    };
+    seed (upperShadow, upperValues);
+    seed (lowerShadow, lowerValues);
+    seed (patchShadow, patchValues);
 }
 
 namespace
@@ -859,6 +872,96 @@ septum::ExternalInput SeptumAudioProcessor::snapshotExternalInput() const
     return settings;
 }
 
+// The imported grid is not a parameter, so the value tree does not carry it.
+// It is stored as the sixteen Patch Arpeggio Pattern blocks the address map
+// defines, base64'd — the same bytes a real unit would send, so the state file
+// and the wire agree and there is no second format to keep right.
+void SeptumAudioProcessor::writeImportedArpeggioToState (juce::ValueTree& state) const
+{
+    const int selector = importedArpeggio.selector.load (std::memory_order_acquire);
+    septum::ArpeggioStyle style;
+    if (! importedArpeggio.valid.load (std::memory_order_acquire)
+        || ! readImportedArpeggioStyle (selector, style))
+        return;
+
+    std::vector<std::uint8_t> bytes (
+        septum::sysex::sizeArpeggioPattern * (std::size_t) septum::arpeggioMaxRows);
+    for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+        septum::sysex::encodeArpeggioPattern (
+            style, row,
+            bytes.data() + (std::size_t) row * septum::sysex::sizeArpeggioPattern);
+
+    juce::MemoryOutputStream encoded;
+    juce::Base64::convertToBase64 (encoded, bytes.data(), bytes.size());
+    state.setProperty ("arpeggio_grid", encoded.toString(), nullptr);
+    state.setProperty ("arpeggio_grid_selector", selector, nullptr);
+    state.setProperty ("arpeggio_grid_end_step", style.endStep, nullptr);
+}
+
+void SeptumAudioProcessor::readImportedArpeggioFromState (const juce::ValueTree& state)
+{
+    const auto encoded = state.getProperty ("arpeggio_grid").toString();
+    if (encoded.isEmpty())
+    {
+        importedArpeggio.valid.store (false, std::memory_order_release);
+        return;
+    }
+
+    juce::MemoryOutputStream decoded;
+    if (! juce::Base64::convertFromBase64 (decoded, encoded))
+        return;
+    const auto expected =
+        septum::sysex::sizeArpeggioPattern * (std::size_t) septum::arpeggioMaxRows;
+    if (decoded.getDataSize() != expected)
+        return;
+
+    const auto* bytes = static_cast<const std::uint8_t*> (decoded.getData());
+    septum::ArpeggioStyle style;
+    for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+        septum::sysex::decodeArpeggioPattern (
+            bytes + (std::size_t) row * septum::sysex::sizeArpeggioPattern,
+            septum::sysex::sizeArpeggioPattern, row, style);
+    style.endStep = juce::jlimit (
+        1, septum::arpeggioMaxSteps,
+        (int) state.getProperty ("arpeggio_grid_end_step", style.endStep));
+
+    publishImportedArpeggioStyle (
+        style, (int) state.getProperty ("arpeggio_grid_selector", 0));
+}
+
+void SeptumAudioProcessor::publishImportedArpeggioStyle (
+    const septum::ArpeggioStyle& style, int selector) noexcept
+{
+    importedArpeggio.generation.fetch_add (1, std::memory_order_acq_rel);
+    importedArpeggio.style = style;
+    importedArpeggio.generation.fetch_add (1, std::memory_order_acq_rel);
+    importedArpeggio.selector.store (selector, std::memory_order_release);
+    importedArpeggio.valid.store (true, std::memory_order_release);
+}
+
+bool SeptumAudioProcessor::readImportedArpeggioStyle (
+    int selector, septum::ArpeggioStyle& out) const noexcept
+{
+    if (! importedArpeggio.valid.load (std::memory_order_acquire))
+        return false;
+    // The grid belongs to the selector position it arrived under. Moving the
+    // selector chooses a template, exactly as the hardware's panel does.
+    if (importedArpeggio.selector.load (std::memory_order_acquire) != selector)
+        return false;
+
+    for (int attempt = 0; attempt < 8; ++attempt)
+    {
+        const auto generation =
+            importedArpeggio.generation.load (std::memory_order_acquire);
+        if ((generation & 1u) != 0u)
+            continue;
+        out = importedArpeggio.style;
+        if (importedArpeggio.generation.load (std::memory_order_acquire) == generation)
+            return true;
+    }
+    return false;   // a writer had it the whole time; the template stands in
+}
+
 septum::Patch SeptumAudioProcessor::snapshotPatch() const
 {
     // Runs on the audio thread every block: only cached atomic loads, no
@@ -879,8 +982,19 @@ septum::Patch SeptumAudioProcessor::snapshotPatch() const
                            patchValues[index]->load (std::memory_order_relaxed));
 
     // The style index is the panel's selector; the grid it names is what the
-    // engine actually plays.
-    septum::applyArpeggioStyle (patch, patch.arpeggio.styleIndex);
+    // engine actually plays — unless a SysEx dump brought a grid of its own,
+    // which no parameter can hold and which the hardware stores in the patch.
+    if (readImportedArpeggioStyle (patch.arpeggio.styleIndex, patch.arpeggio.style))
+    {
+        // END STEP still overrides, exactly as it does over a template.
+        if (patch.arpeggio.endStep > 0)
+            patch.arpeggio.style.endStep =
+                std::min (patch.arpeggio.endStep, septum::arpeggioMaxSteps);
+    }
+    else
+    {
+        septum::applyArpeggioStyle (patch, patch.arpeggio.styleIndex);
+    }
     septum::clampToDocumentedRanges (patch);
     return patch;
 }
@@ -1199,6 +1313,11 @@ bool SeptumAudioProcessor::handleMidiMessage (const juce::MidiMessage& message)
         Patch livePatch = snapshotPatch();
         if (septum::sysex::decodeSysExMessage (rawData, rawSize, livePatch))
         {
+            // The grid rides outside the parameters, so it is kept before
+            // they are written: a dump is sixteen pattern packets and each one
+            // starts from the snapshot the previous one left behind.
+            publishImportedArpeggioStyle (livePatch.arpeggio.style,
+                                          livePatch.arpeggio.styleIndex);
             writePatchToParameters (livePatch);
             patchReconciler.triggerAsyncUpdate();
             return true;
@@ -1239,6 +1358,19 @@ void SeptumAudioProcessor::writeProgramToParameters (int index) noexcept
             patchValues[i]->store (shared[i].get (patch),
                                    std::memory_order_relaxed);
 
+    // A program change supersedes any dump republish still queued behind it,
+    // and this runs on the audio thread, so the shadows are corrected here
+    // rather than waiting for the message thread to notice.
+    for (std::size_t i = 0; i < bindings.size(); ++i)
+    {
+        upperShadow[i].store (bindings[i].get (patch.upper), std::memory_order_relaxed);
+        lowerShadow[i].store (bindings[i].get (patch.lower), std::memory_order_relaxed);
+    }
+    for (std::size_t i = 0; i < shared.size(); ++i)
+        if (std::strcmp (shared[i].id, "master_level") != 0)
+            patchShadow[i].store (shared[i].get (patch), std::memory_order_relaxed);
+    patchDirty.store (false, std::memory_order_release);
+
     patchGeneration.fetch_add (1, std::memory_order_acq_rel);
 }
 
@@ -1276,6 +1408,8 @@ void SeptumAudioProcessor::reconcileProgram (int index)
     for (const auto& binding : patchBindings())
         if (juce::String (binding.id) != "master_level")
             apply (binding.id, binding.get (patch));
+
+    syncPatchShadows();
 }
 
 void SeptumAudioProcessor::applyProgramAsync (int program)
@@ -1503,6 +1637,7 @@ void SeptumAudioProcessor::applyProgram (int index)
 
     // Every parameter now matches the program; the audio path can go back to
     // snapshotting the APVTS.
+    syncPatchShadows();
     patchGeneration.fetch_add (1, std::memory_order_acq_rel);
     stagedProgram.store (-1, std::memory_order_release);
 }
@@ -1515,42 +1650,91 @@ void SeptumAudioProcessor::writePatchToParameters (const septum::Patch& patch) n
     const auto& bindings = toneBindings();
     for (std::size_t i = 0; i < bindings.size(); ++i)
     {
-        upperValues[i]->store (bindings[i].get (patch.upper),
-                               std::memory_order_relaxed);
-        lowerValues[i]->store (bindings[i].get (patch.lower),
-                               std::memory_order_relaxed);
+        const float upperNatural = bindings[i].get (patch.upper);
+        const float lowerNatural = bindings[i].get (patch.lower);
+        // Into the parameter's own storage, which is what the engine
+        // snapshots, and into the shadow, which is what the message-thread
+        // republish reads. Publishing from the parameter's storage let a
+        // republish already in flight write an older value back over this one.
+        upperValues[i]->store (upperNatural, std::memory_order_relaxed);
+        lowerValues[i]->store (lowerNatural, std::memory_order_relaxed);
+        upperShadow[i].store (upperNatural, std::memory_order_relaxed);
+        lowerShadow[i].store (lowerNatural, std::memory_order_relaxed);
     }
     const auto& shared = patchBindings();
     for (std::size_t i = 0; i < shared.size(); ++i)
-        if (std::strcmp (shared[i].id, "master_level") != 0)
-            patchValues[i]->store (shared[i].get (patch), std::memory_order_relaxed);
+    {
+        if (std::strcmp (shared[i].id, "master_level") == 0)
+            continue;
+        const float natural = shared[i].get (patch);
+        patchValues[i]->store (natural, std::memory_order_relaxed);
+        patchShadow[i].store (natural, std::memory_order_relaxed);
+    }
+    patchDirty.store (true, std::memory_order_release);
     patchGeneration.fetch_add (1, std::memory_order_acq_rel);
 }
 
 // The message-thread half: republishes whatever the raw values now hold, with
 // host and UI notification. Reached from the queued callback after a SysEx
 // dump landed on the audio path, and directly from loadPatch.
+void SeptumAudioProcessor::syncPatchShadows() noexcept
+{
+    if (upperShadow == nullptr)
+        return;
+    for (std::size_t i = 0; i < upperValues.size(); ++i)
+    {
+        upperShadow[i].store (upperValues[i]->load (std::memory_order_relaxed),
+                              std::memory_order_relaxed);
+        lowerShadow[i].store (lowerValues[i]->load (std::memory_order_relaxed),
+                              std::memory_order_relaxed);
+    }
+    for (std::size_t i = 0; i < patchValues.size(); ++i)
+        patchShadow[i].store (patchValues[i]->load (std::memory_order_relaxed),
+                              std::memory_order_relaxed);
+    patchDirty.store (false, std::memory_order_release);
+}
+
 void SeptumAudioProcessor::republishPatchParameters()
 {
-    const auto publish = [this] (const juce::String& id, std::atomic<float>* raw)
+    // Nothing to do unless the audio thread has actually written a dump. The
+    // guard is what keeps a republish from putting the shadows back over a
+    // program change or a preset load, both of which write the parameters
+    // from this thread and never touch the shadows.
+    if (! patchDirty.exchange (false, std::memory_order_acquire))
+        return;
+
+    const auto publish = [this] (const juce::String& id, std::atomic<float>* raw,
+                                 std::atomic<float>& shadow)
     {
         if (raw == nullptr)
             return;
-        if (auto* parameter = parameters.getParameter (id))
-            parameter->setValueNotifyingHost (
-                parameters.getParameterRange (id).convertTo0to1 (
-                    raw->load (std::memory_order_relaxed)));
+        auto* parameter = parameters.getParameter (id);
+        if (parameter == nullptr)
+            return;
+        const float natural = shadow.load (std::memory_order_relaxed);
+        parameter->setValueNotifyingHost (
+            parameters.getParameterRange (id).convertTo0to1 (natural));
+        // setValueNotifyingHost has just written the parameter's own storage
+        // with the value read above. A packet that landed while it ran is
+        // newer than that, and `patchDirty` is set again for the next pass —
+        // but the engine reads this storage every block, so the newer value
+        // goes back now rather than a frame from now.
+        const float newest = shadow.load (std::memory_order_relaxed);
+        if (newest != natural)
+            raw->store (newest, std::memory_order_relaxed);
     };
     const auto& bindings = toneBindings();
     for (std::size_t i = 0; i < bindings.size(); ++i)
     {
-        publish ("up_" + juce::String (bindings[i].suffix), upperValues[i]);
-        publish ("lo_" + juce::String (bindings[i].suffix), lowerValues[i]);
+        publish ("up_" + juce::String (bindings[i].suffix), upperValues[i],
+                 upperShadow[i]);
+        publish ("lo_" + juce::String (bindings[i].suffix), lowerValues[i],
+                 lowerShadow[i]);
     }
     const auto& shared = patchBindings();
     for (std::size_t i = 0; i < shared.size(); ++i)
         if (std::strcmp (shared[i].id, "master_level") != 0)
-            publish (shared[i].id, patchValues[i]);
+            publish (shared[i].id, patchValues[i], patchShadow[i]);
 }
 
 void SeptumAudioProcessor::loadPatch (const septum::Patch& patch)
@@ -1584,6 +1768,7 @@ void SeptumAudioProcessor::loadPatch (const septum::Patch& patch)
         }
     }
 
+    syncPatchShadows();
     patchGeneration.fetch_add (1, std::memory_order_acq_rel);
 }
 
@@ -1651,6 +1836,7 @@ void SeptumAudioProcessor::getStateInformation (
             state.setProperty ("program",
                                currentProgram.load (std::memory_order_relaxed),
                                nullptr);
+            writeImportedArpeggioToState (state);
             if ((generation & 1u) == 0u
                 && patchGeneration.load (std::memory_order_acquire) == generation)
                 break;
@@ -1675,6 +1861,7 @@ void SeptumAudioProcessor::setStateInformation (const void* data,
             // thread discards any snapshot that overlapped it.
             patchGeneration.fetch_add (1, std::memory_order_acq_rel);
             parameters.replaceState (state);
+            readImportedArpeggioFromState (state);
             patchGeneration.fetch_add (1, std::memory_order_acq_rel);
         }
     }

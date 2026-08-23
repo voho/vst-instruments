@@ -16,8 +16,10 @@ A SysEx dump of a real-hardware patch can be loaded: send it to the plug-in as
 a MIDI System Exclusive message and it becomes the current patch. The codec
 reads the address map's 22 blocks — the patch common block, both tones, the
 delay and reverb, the arpeggio's own block and the sixteen pattern blocks that
-hold its 32 × 16 grid. What survives the trip on into the plug-in is the whole
-parameter surface, including the full 5–300 BPM tempo, but not the grid itself
-or the patch's name: neither has a plug-in parameter to live in, though the
-block codec round-trips both losslessly. The plug-in transmits no SysEx of its
-own and rejects RQ1 data requests; see the README's inventory.
+hold its 32 × 16 grid. All of it survives the trip on into the plug-in: the
+whole parameter surface including the full 5–300 BPM tempo, and the imported
+grid, which has no parameter to live in and is kept beside them. That grid
+plays in place of the selected style template until the selector is moved, is
+saved with the session, and comes back out of a re-export. Only the patch's
+**name** is dropped. The plug-in transmits no SysEx of its own and rejects RQ1
+data requests; see the README's inventory.

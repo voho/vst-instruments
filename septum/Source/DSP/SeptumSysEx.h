@@ -120,6 +120,39 @@ void decodeArpeggioPattern (const std::uint8_t* src, std::size_t size, int row,
 // Full Patch & Packet Codec
 // --------------------------------------------------------------------------
 
+// What a well-formed DT1 for this instrument carries, once the framing, the
+// manufacturer, the model, the command and the checksum have all been
+// checked. Parsing is separated from applying so a caller can ask "is this a
+// packet I own, and which patch is it for?" without mutating anything.
+struct Dt1Packet
+{
+    std::uint32_t address { 0 };
+    const std::uint8_t* data { nullptr };
+    std::size_t dataLength { 0 };
+
+    // The two high address bytes: which patch this block belongs to
+    // (10 00 for the Temporary Patch, 20 00..20 1F for the user slots).
+    [[nodiscard]] std::uint32_t patchBase() const noexcept
+    {
+        return address & 0xFFFF0000u;
+    }
+
+    // The block offset inside that patch: 00 = Common, 01/02 = the tones,
+    // 03 = Delay, 04 = Reverb, 05 = Arpeggio Common, 06..15 = the sixteen
+    // Arpeggio Pattern blocks.
+    [[nodiscard]] unsigned block() const noexcept { return (address >> 8) & 0xFFu; }
+
+    [[nodiscard]] bool blockIsKnown() const noexcept
+    {
+        return block() < 0x06u + static_cast<unsigned> (arpeggioMaxRows);
+    }
+};
+
+[[nodiscard]] bool parseDt1Packet (const std::uint8_t* msg, std::size_t msgLen,
+                                   std::uint8_t expectedDeviceId,
+                                   Dt1Packet& out) noexcept;
+
+
 // Builds a complete DT1 SysEx message containing a specific address and payload.
 [[nodiscard]] std::vector<std::uint8_t> makeDt1Message (
     std::uint32_t address, const std::uint8_t* data, std::size_t dataSize,

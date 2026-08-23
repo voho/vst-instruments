@@ -571,6 +571,14 @@ panel only *selects* a template — the manual says editing a style needs the
 SH-201 Editor — so a selector is the faithful panel surface, and the patch
 stores both the selector and the grid it names.
 
+A grid that arrives over SysEx is kept and played. The address map puts it in
+sixteen blocks and the codec reads all of them, but it is the one documented
+field with no plug-in parameter to live in, so it is held beside the parameters
+and stands in for the selected template while the selector stays where it was
+when the dump arrived. Moving the selector picks a template, which is what the
+hardware's panel does; the imported grid is saved with the session and comes
+back out of a re-export.
+
 ### D Beam (not implemented; four bytes stored)
 
 **The controller is not modelled.** An infrared distance sensor is a control
@@ -658,12 +666,12 @@ tune, key shift, octave and transpose, and the analog output stage.
 
 **SysEx DT1 receive and encode** are implemented (`Source/DSP/SeptumSysEx.*`):
 a dump sent to the plug-in loads the patch, and the current patch can be
-encoded through the processor's API. Three caveats belong here rather than in
-a footnote. RQ1 requests are rejected and the plug-in transmits no SysEx of
-its own. The block codec round-trips every documented field, the arpeggio grid
-and the full 5–300 tempo range included; the trip *through the plug-in* does
-not carry the grid or the patch name, because the plug-in's authoritative
-state is its parameter list and neither of those has a parameter.
+encoded through the processor's API. Two caveats belong here rather than in a
+footnote. RQ1 requests are rejected and the plug-in transmits no SysEx of its
+own. The block codec round-trips every documented field, the arpeggio grid and
+the full 5–300 tempo range included, and so does the trip *through the plug-in*
+— the grid has no parameter to live in and is carried beside them. The one
+thing a load drops is the patch name.
 
 **Not implemented, with the reason.**
 

@@ -460,7 +460,18 @@ void decodeArpeggioCommon (const std::uint8_t* src, std::size_t size, ArpeggioPa
     if (size > 0x04) arp.accent = std::clamp<int> (src[0x04], 0, 100);
     if (size > 0x05) arp.velocity = src[0x05] & 0x7Fu;
     if (size > 0x07)
-        arp.style.endStep = std::clamp (readNibbles (src + 0x06, 2), 1, arpeggioMaxSteps);
+    {
+        const int endStep =
+            std::clamp (readNibbles (src + 0x06, 2), 1, arpeggioMaxSteps);
+        arp.style.endStep = endStep;
+        // END STEP is one control on the hardware, 1-32, and the replica's
+        // panel is the same control with a zero added *below* the documented
+        // range meaning "as long as the loaded style is". A documented value
+        // therefore maps straight onto the panel's, which is also the only
+        // way it survives the trip through the plug-in: `style.endStep` has
+        // no parameter to live in, and `arp.endStep` does.
+        arp.endStep = endStep;
+    }
 }
 
 void decodeArpeggioPattern (const std::uint8_t* src, std::size_t size, int row,
@@ -643,8 +654,8 @@ std::vector<std::uint8_t> encodePatchToSyxBuffer (const Patch& patch,
     return buffer;
 }
 
-bool decodeSysExMessage (const std::uint8_t* msg, std::size_t msgLen,
-                         Patch& targetPatch, std::uint8_t expectedDeviceId)
+bool parseDt1Packet (const std::uint8_t* msg, std::size_t msgLen,
+                     std::uint8_t expectedDeviceId, Dt1Packet& out) noexcept
 {
     if (msg == nullptr || msgLen < 12)
         return false;
@@ -678,30 +689,35 @@ bool decodeSysExMessage (const std::uint8_t* msg, std::size_t msgLen,
         || p[4] != sh201ModelId[2])
         return false;
 
-    const std::uint8_t cmd = p[5];
-    if (cmd != cmdDt1)
-        return false; // Not a DT1 write
+    if (p[5] != cmdDt1)
+        return false; // an RQ1 or anything else is not a write
 
-    const std::uint32_t addr = (static_cast<std::uint32_t> (p[6] & 0x7Fu) << 24)
-                               | (static_cast<std::uint32_t> (p[7] & 0x7Fu) << 16)
-                               | (static_cast<std::uint32_t> (p[8] & 0x7Fu) << 8)
-                               | static_cast<std::uint32_t> (p[9] & 0x7Fu);
+    out.address = (static_cast<std::uint32_t> (p[6] & 0x7Fu) << 24)
+                  | (static_cast<std::uint32_t> (p[7] & 0x7Fu) << 16)
+                  | (static_cast<std::uint32_t> (p[8] & 0x7Fu) << 8)
+                  | static_cast<std::uint32_t> (p[9] & 0x7Fu);
+    out.dataLength = payloadLen - 11; // minus 41 dev 00 00 16 12 a0 a1 a2 a3 sum
+    out.data = p + 10;
 
-    const std::size_t dataOffset = 10;
-    const std::size_t dataLength = payloadLen - 11; // minus 41 dev 00 00 16 12 a0 a1 a2 a3 sum
-    const std::uint8_t receivedSum = p[payloadLen - 1];
+    return verifyChecksum (p + 6, out.dataLength + 4, p[payloadLen - 1]);
+}
 
-    if (! verifyChecksum (p + 6, dataLength + 4, receivedSum))
+bool decodeSysExMessage (const std::uint8_t* msg, std::size_t msgLen,
+                         Patch& targetPatch, std::uint8_t expectedDeviceId)
+{
+    Dt1Packet packet;
+    if (! parseDt1Packet (msg, msgLen, expectedDeviceId, packet))
         return false;
 
-    const std::uint8_t* dataPtr = p + dataOffset;
+    const std::uint8_t* dataPtr = packet.data;
+    const std::size_t dataLength = packet.dataLength;
 
     // Route by the block offset inside the patch: 00 = Common, 01/02 = the
     // two tones, 03 = Delay, 04 = Reverb, 05 = Arpeggio Common, 06..15 =
     // Arpeggio Pattern (Note 1..16). The two high address bytes select the
     // Temporary Patch or one of the 32 User Patches and do not change the
     // layout, so the same switch serves both.
-    const unsigned block = (addr >> 8) & 0xFFu;
+    const unsigned block = packet.block();
 
     switch (block)
     {
@@ -754,10 +770,10 @@ bool parseSyxBankFile (const std::uint8_t* fileBytes, std::size_t byteCount,
     Patch currentPatch = initPatch();
     bool foundAny = false;
     bool patchPending = false;
-    // Which patch the last decoded block belonged to: the two high address
+    // Which patch the last accepted block belonged to. The two high address
     // bytes pick the Temporary Patch (10 00) or one of the 32 User Patches
-    // (20 00 .. 20 1F), and everything below them is the block offset. A
-    // change there is a patch boundary, whatever order the blocks arrive in.
+    // (20 00 .. 20 1F), and everything below them is the block offset, so a
+    // change there is a patch boundary whatever order the blocks arrive in.
     std::uint32_t currentPatchBase = 0;
 
     while (pos < byteCount)
@@ -776,13 +792,17 @@ bool parseSyxBankFile (const std::uint8_t* fileBytes, std::size_t byteCount,
         const std::size_t end = pos;
         const std::size_t msgLen = end - start + 1;
 
-        if (msgLen >= 14)
+        // The message has to be a DT1 this codec owns *before* it is allowed
+        // to end the patch being accumulated. Deciding the boundary from raw
+        // address bytes first meant one foreign or corrupt System Exclusive
+        // message in the file — anyone else's manufacturer ID, a universal
+        // message, a bad checksum — split a patch in two and handed back the
+        // half that had been read so far.
+        Dt1Packet packet;
+        if (parseDt1Packet (fileBytes + start, msgLen, 0x7F, packet)
+            && packet.blockIsKnown())
         {
-            const std::uint32_t patchBase =
-                (static_cast<std::uint32_t> (fileBytes[start + 7] & 0x7Fu) << 24)
-                | (static_cast<std::uint32_t> (fileBytes[start + 8] & 0x7Fu) << 16);
-
-            if (patchPending && patchBase != currentPatchBase)
+            if (patchPending && packet.patchBase() != currentPatchBase)
             {
                 outPatches.push_back ({ currentPatch.name, currentPatch });
                 currentPatch = initPatch();
@@ -793,7 +813,7 @@ bool parseSyxBankFile (const std::uint8_t* fileBytes, std::size_t byteCount,
             {
                 foundAny = true;
                 patchPending = true;
-                currentPatchBase = patchBase;
+                currentPatchBase = packet.patchBase();
             }
         }
         pos = end + 1;

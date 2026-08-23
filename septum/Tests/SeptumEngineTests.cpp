@@ -3240,6 +3240,98 @@ void testSysExPatchSerializationRoundtrip()
     expect (bankPatchesMatch, "each slot in the bank round-trips to its own patch");
 }
 
+// A bank file is a stream of System Exclusive messages, and nothing says every
+// message in it belongs to this instrument. The patch boundary is the two high
+// address bytes changing — so it may only be read off a message that has
+// already proved it is a DT1 for this model with a good checksum. Deciding it
+// from raw bytes first meant one foreign message split a patch in two and
+// handed back the half read so far.
+void testAForeignSysExMessageDoesNotSplitAPatch()
+{
+    const auto& bank = septum::factoryPatches();
+    septum::Patch source = bank[3].patch;
+    source.name = "INTRUDER";
+    source.upper.cutoff = 77;
+    source.upper.resonance = 99;
+    source.lower.cutoff = 33;
+
+    const auto packets = septum::sysex::encodePatchToSysExPackets (
+        source, septum::sysex::addrUserPatchBase);
+    expect (packets.size() == septum::sysex::patchBlockCount,
+            "the source patch is the address map's 22 blocks");
+
+    // Every intruder is a complete, well-framed System Exclusive message whose
+    // bytes 7-8 differ from the patch's own, which is what used to move the
+    // boundary. None of them is a DT1 this codec owns.
+    struct Intruder { const char* what; std::vector<std::uint8_t> bytes; };
+    const std::vector<Intruder> intruders {
+        // Universal realtime device control (Master Volume).
+        { "a universal realtime message",
+          { 0xF0, 0x7F, 0x7F, 0x04, 0x01, 0x00, 0x64, 0xF7 } },
+        // Universal non-realtime identity request.
+        { "an identity request",
+          { 0xF0, 0x7E, 0x10, 0x06, 0x01, 0xF7 } },
+        // Another manufacturer, long enough to have bytes 7 and 8.
+        { "another manufacturer's dump",
+          { 0xF0, 0x43, 0x00, 0x7A, 0x4C, 0x4D, 0x20, 0x20, 0x38, 0x39,
+            0x37, 0x33, 0x50, 0x45, 0x00, 0xF7 } },
+        // A Roland SH-201 RQ1 rather than a DT1: right model, wrong command.
+        { "an RQ1 for a different patch",
+          { 0xF0, 0x41, 0x10, 0x00, 0x00, 0x16, 0x11, 0x20, 0x1F, 0x00,
+            0x00, 0x00, 0x00, 0x15, 0x42, 0x1A, 0xF7 } },
+        // A DT1 for this model at a different patch base, with a checksum
+        // that does not verify: the address alone must not be trusted.
+        { "a DT1 with a broken checksum",
+          { 0xF0, 0x41, 0x10, 0x00, 0x00, 0x16, 0x12, 0x20, 0x1F, 0x00,
+            0x0C, 0x40, 0x00, 0xF7 } },
+    };
+
+    for (const auto& intruder : intruders)
+    {
+        std::vector<std::uint8_t> file;
+        for (std::size_t i = 0; i < packets.size(); ++i)
+        {
+            // Drop it in the middle, after some of the patch has accumulated.
+            if (i == 3)
+                file.insert (file.end(), intruder.bytes.begin(), intruder.bytes.end());
+            file.insert (file.end(), packets[i].begin(), packets[i].end());
+        }
+
+        std::vector<septum::NamedPatch> parsed;
+        const bool ok = septum::sysex::parseSyxBankFile (file.data(), file.size(), parsed);
+        expect (ok && parsed.size() == 1,
+                std::string (intruder.what) + " does not split the patch (got "
+                    + std::to_string (parsed.size()) + " patches)");
+        if (parsed.size() != 1)
+            continue;
+        expect (parsed[0].patch.upper.cutoff == 77
+                    && parsed[0].patch.upper.resonance == 99
+                    && parsed[0].patch.lower.cutoff == 33
+                    && parsed[0].patch.name == source.name,
+                std::string ("the whole patch survives ") + intruder.what);
+    }
+
+    // Two real patches in one file still come back as two.
+    {
+        septum::Patch second = bank[9].patch;
+        second.name = "SECOND";
+        second.upper.cutoff = 12;
+        std::vector<std::uint8_t> file;
+        for (const auto& pkt : packets)
+            file.insert (file.end(), pkt.begin(), pkt.end());
+        for (const auto& pkt : septum::sysex::encodePatchToSysExPackets (
+                 second, septum::sysex::addrUserPatchBase + septum::sysex::userPatchStride))
+            file.insert (file.end(), pkt.begin(), pkt.end());
+
+        std::vector<septum::NamedPatch> parsed;
+        septum::sysex::parseSyxBankFile (file.data(), file.size(), parsed);
+        expect (parsed.size() == 2 && parsed[0].patch.upper.cutoff == 77
+                    && parsed[1].patch.upper.cutoff == 12,
+                "two patches in one file are still two (got "
+                    + std::to_string (parsed.size()) + ")");
+    }
+}
+
 void testCoupledDb24FilterResonanceStability()
 {
     for (double sr : { 44100.0, 48000.0, 96000.0 })
@@ -4323,6 +4415,7 @@ int main()
     testAllNotesOffLeavesThePedalsHolding();
     testSysExChecksumAndProtocol();
     testSysExPatchSerializationRoundtrip();
+    testAForeignSysExMessageDoesNotSplitAPatch();
     testNoiseIsWhiteAtEveryHostRate();
     testFilterDoesNotDistortAtZeroResonance();
     testTwentyFourDbPeakIsPinned();

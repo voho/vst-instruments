@@ -235,11 +235,12 @@ plug-in never transmits SysEx of its own, so an Identity Request goes
 unanswered. The Active Sensing timeout is deliberately absent: it is a
 cable-failure watchdog, and a host that sends one `FE` and then pauses would
 have the sound cut out from under it. A received dump restores the whole
-parameter surface, the tempo across its full documented 5–300 range and the
-arpeggio's settings, but **not** the 32 × 16 grid itself or the patch's name:
-the plug-in's authoritative state is its parameter list, and neither of those
-has a parameter. The block codec round-trips both losslessly; it is the trip
-through the plug-in that drops them.
+parameter surface, the tempo across its full documented 5–300 range, the
+arpeggio's settings **and its 32 × 16 grid** — the grid has no plug-in
+parameter to live in, so it is kept beside them, plays in place of the
+selected template until the style selector is moved, is saved with the
+session, and comes back out of a re-export. The one thing a load still drops
+is the patch's **name**.
 
 **PATCH REMAIN is not implemented**, and what a program change does to a note
 already sounding is a known divergence rather than a choice: the hardware

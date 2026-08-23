@@ -1702,6 +1702,60 @@ one properly needs a per-voice snapshot of the patch a note was struck under,
 which one live `Patch` shared by every voice cannot give. Recorded as `OQ-19`
 and named in the README, not picked by taste.
 
+#### Step 45 — three defects a second review round found, and the grid finally lands
+
+**A patch dump could lose whole blocks.** Step 43 fixed this for control
+changes; the patch republish had the same shape and was missed. It read each
+value back from the parameter object's own storage — the atomic the audio
+thread writes and the engine renders from — and `setValueNotifyingHost` writes
+that storage, so a packet arriving while the republish ran had its value put
+back to the older one. A dump is 22 packets and a whole block of it could go
+that way. The audio thread now keeps shadows of its own for the three binding
+tables, the republish reads those, and a value that lands mid-publish is
+restored immediately. A `patchDirty` flag delimits the window, and every
+message-thread writer (`loadPatch`, `applyProgram`, `reconcileProgram`) points
+the shadows back at the parameters and clears it, so last writer wins rather
+than a queued republish undoing a program change.
+
+**One foreign SysEx message split a patch in two.** `parseSyxBankFile` read the
+patch boundary — the two high address bytes — off the raw message before
+`decodeSysExMessage` had accepted it, so anyone else's manufacturer ID, a
+universal message, an RQ1, or a DT1 with a bad checksum ended the patch being
+accumulated and `loadSysExData` then loaded the half read so far. The DT1
+header parse is a function of its own now (`parseDt1Packet`), and the boundary
+moves only on a message that has proved it is a DT1 for this model with a good
+checksum and a block this codec owns. Three of the five intruders in the new
+test split a patch against the old code.
+
+**An imported arpeggio pattern was decoded and then thrown away.** This one was
+new with Step 40: the address map put the 32 × 16 grid in sixteen blocks, the
+codec started reading all of it, and nothing downstream could hold it.
+`snapshotPatch()` rebuilds the arpeggio style from the selector on every block,
+so each decoded row was discarded by the next packet, and a pattern imported
+from a real unit neither played nor survived a re-export. Two halves:
+
+- **END STEP** now maps onto the `arp_end_step` parameter. It is one control on
+  the hardware, 1–32, and the replica's panel is the same control with a zero
+  added *below* the documented range meaning "as long as the loaded style is" —
+  so a documented value maps straight onto it, and that is the only way it
+  survives the trip through the plug-in.
+- **The grid** is kept beside the parameters, published under a seqlock because
+  the audio thread both writes it (a dump is decoded in the render callback)
+  and reads it, and the message thread reads it to save the session. It stands
+  in for the selected template while the selector stays where it was when the
+  dump arrived; moving the selector picks a template, which is what the
+  hardware's panel does. It is saved in the plug-in state as the sixteen Patch
+  Arpeggio Pattern blocks the address map defines, base64'd — the same bytes a
+  real unit would send, so there is no second format to keep right.
+
+The test imports a grid matching none of the shipped styles, with an Original
+Note per row, and checks all 512 cells reach the engine, survive a re-export,
+survive a session save and restore, and give way to a template when the
+selector moves. Five of its checks fail against the previous code.
+
+That closes the last of the three things the README said a SysEx load could not
+carry. Only the patch *name* is left, and it genuinely has no parameter.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:
@@ -1718,10 +1772,11 @@ Recorded here so the next reader knows they were considered and left:
   a sample. All three are audible, all three have more than one defensible
   reading, and none is a measurement question — they are A–Z candidates, and
   A is the shipping engine in each.
-- **The arpeggio grid and the patch name through a SysEx load.** The block
-  codec carries both; the plug-in does not, because its authoritative state is
-  its parameter list and neither has a parameter. Stated in the README rather
-  than papered over.
+- **The patch name through a SysEx load.** The block codec carries it; the
+  plug-in does not, because its authoritative state is its parameter list and
+  a twelve-character name has no parameter. Stated in the README rather than
+  papered over. (The arpeggio grid was in this note until Step 45, which gave
+  it somewhere to live.)
 - **Transmitting SysEx, and answering RQ1.** The map is read now and the
   encoder writes every block at its documented address, so a plug-in that
   dumps itself to a real unit is a small step from here. It is a feature

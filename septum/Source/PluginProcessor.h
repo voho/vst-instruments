@@ -99,6 +99,11 @@ public:
     // stand in for that loop.
     void writePatchToParameters (const septum::Patch& patch) noexcept;
     void republishPatchParameters();
+    // Point the shadows back at whatever the parameters now hold and drop any
+    // pending republish. Called by the writers that run on the message thread,
+    // so a program change or a preset load that lands between a dump and its
+    // republish is not undone by it: last writer wins.
+    void syncPatchShadows() noexcept;
 
     // Parses and loads SysEx .syx bytes into the active patch.
     void loadSysExData (const void* data, std::size_t sizeInBytes);
@@ -132,6 +137,50 @@ private:
     // aligned with the binding tables, and ranged parameters for the CC map.
     // processBlock must never build a juce::String.
     std::vector<std::atomic<float>*> upperValues, lowerValues, patchValues;
+    // The audio thread's own copy of everything a received SysEx dump writes,
+    // and which of those it has written since the message thread last looked.
+    //
+    // The vectors above are the parameter objects' own storage, and
+    // setValueNotifyingHost writes it — so republishing a value read a moment
+    // earlier put that older value back over whatever a later packet of the
+    // same dump had stored in between. A dump is 22 packets and a whole block
+    // of them could be lost that way. The shadows are what the republish
+    // reads, and the mask keeps it from touching anything the audio thread has
+    // not written, so a program change or a preset load on the message thread
+    // is never republished over.
+    std::unique_ptr<std::atomic<float>[]> upperShadow, lowerShadow, patchShadow;
+    std::atomic<bool> patchDirty { false };
+
+    // The arpeggio grid a received patch dump carried.
+    //
+    // It is the one piece of documented patch data with no plug-in parameter
+    // to live in: a 32 x 16 grid of cells with one Original Note per row,
+    // sixteen SysEx blocks of it. Without somewhere to keep it, every decoded
+    // row was thrown away by the next `snapshotPatch()` — which rebuilds the
+    // style from the selector — so a pattern imported from real hardware
+    // neither played nor survived a re-export. It is kept here and used in
+    // place of the selected template while the selector stays where it was
+    // when the dump arrived; moving the selector picks a template, which is
+    // what the hardware's panel does too.
+    //
+    // Published under a seqlock: the audio thread writes it (a dump is
+    // decoded in the render callback) and reads it, and the message thread
+    // reads it to save the session and writes it to restore one.
+    struct ImportedArpeggioStyle
+    {
+        std::atomic<std::uint32_t> generation { 0 };
+        std::atomic<bool> valid { false };
+        std::atomic<int> selector { -1 };
+        septum::ArpeggioStyle style {};   // guarded by `generation`
+    };
+    ImportedArpeggioStyle importedArpeggio;
+
+    void publishImportedArpeggioStyle (const septum::ArpeggioStyle& style,
+                                       int selector) noexcept;
+    [[nodiscard]] bool readImportedArpeggioStyle (
+        int selector, septum::ArpeggioStyle& out) const noexcept;
+    void writeImportedArpeggioToState (juce::ValueTree& state) const;
+    void readImportedArpeggioFromState (const juce::ValueTree& state);
     std::atomic<float>* masterValue { nullptr };
     // SYSTEM COMMON: master tune in Hz, then key shift, keyboard octave and
     // transpose in the order systemParameterIds() lists them.

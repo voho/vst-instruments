@@ -1151,6 +1151,217 @@ void testUniversalRealtimeDeviceControl()
             "an unlisted device-control sub-ID changes nothing");
 }
 
+// A patch dump is 22 DT1 packets and they arrive on the audio thread, one or
+// more per block. The message-thread republish used to read each value back
+// from the parameter object's own storage — the very atomic the audio thread
+// writes — and setValueNotifyingHost writes it, so a packet landing while the
+// republish ran had its value overwritten with the older one. A whole block of
+// the dump could be lost that way.
+//
+// The republish reads a shadow only the audio thread writes now. Here the
+// clobber is staged directly: the parameters are set to stale values behind
+// the republish's back, which is exactly the state the race leaves.
+void testThePatchReconcilerCannotPublishAStaleDump()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    juce::AudioBuffer<float> block (2, 256);
+
+    septum::Patch dump = septum::initPatch();
+    dump.upper.cutoff = 31;
+    dump.upper.resonance = 96;
+    dump.lower.cutoff = 118;
+    dump.tempo = 205;
+
+    for (const auto& pkt : septum::sysex::encodePatchToSysExPackets (dump))
+    {
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage (pkt.data(), (int) pkt.size()), 0);
+        processor.processBlock (block, midi);
+    }
+
+    auto* upperCutoff = processor.parameters.getRawParameterValue ("up_cutoff");
+    auto* lowerCutoff = processor.parameters.getRawParameterValue ("lo_cutoff");
+    expect (upperCutoff != nullptr && lowerCutoff != nullptr, "the cutoffs exist");
+    if (upperCutoff == nullptr || lowerCutoff == nullptr)
+        return;
+    expect ((int) upperCutoff->load() == 31 && (int) lowerCutoff->load() == 118,
+            "the dump lands in the values the engine renders from");
+
+    // What a republish overtaken by a later packet leaves behind.
+    upperCutoff->store (7.0f);
+    lowerCutoff->store (7.0f);
+    processor.republishPatchParameters();
+
+    expect ((int) upperCutoff->load() == 31 && (int) lowerCutoff->load() == 118,
+            "the republish restores the dump's own values, not the parameter"
+            " storage (upper " + juce::String (upperCutoff->load()).toStdString()
+                + ", lower " + juce::String (lowerCutoff->load()).toStdString() + ")");
+
+    auto* parameter = processor.parameters.getParameter ("up_cutoff");
+    const auto& range = processor.parameters.getParameterRange ("up_cutoff");
+    expect (parameter != nullptr
+                && std::abs (parameter->getValue() - range.convertTo0to1 (31.0f)) < 1.0e-6,
+            "and the host is told the dump's value");
+
+    // A program change that lands after the dump but before its republish is
+    // the later writer, so the republish must not undo it.
+    {
+        SeptumAudioProcessor second;
+        second.prepareToPlay (44100.0, 256);
+        juce::AudioBuffer<float> b (2, 256);
+        for (const auto& pkt : septum::sysex::encodePatchToSysExPackets (dump))
+        {
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage (pkt.data(), (int) pkt.size()), 0);
+            second.processBlock (b, midi);
+        }
+        second.setCurrentProgram (5);
+        const float afterProgram =
+            second.parameters.getRawParameterValue ("up_cutoff")->load();
+        second.republishPatchParameters();
+        expect (std::abs (second.parameters.getRawParameterValue ("up_cutoff")->load()
+                          - afterProgram) < 1.0e-6,
+                "a program change after the dump survives the dump's republish"
+                " (was " + juce::String (afterProgram).toStdString() + ", now "
+                    + juce::String (second.parameters.getRawParameterValue ("up_cutoff")->load()).toStdString()
+                    + ")");
+    }
+}
+
+// The arpeggio grid is patch data on the hardware — sixteen SysEx blocks of
+// it — and it is the one documented field with no plug-in parameter to hold
+// it. `snapshotPatch()` rebuilds the style from the selector every block, so
+// every decoded row used to be thrown away by the next call: a pattern
+// imported from a real unit neither played nor survived a re-export.
+void testAnImportedArpeggioPatternSurvivesAndPlays()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    juce::AudioBuffer<float> block (2, 256);
+
+    // A grid that matches none of the shipped styles, with an Original Note
+    // per row and an END STEP the templates do not use.
+    septum::Patch dump = septum::initPatch();
+    dump.arpeggio.styleIndex = 0;
+    dump.arpeggio.endStep = 0;              // "as long as the style is"
+    dump.arpeggio.style = septum::ArpeggioStyle {};
+    dump.arpeggio.style.endStep = 13;
+    for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+    {
+        dump.arpeggio.style.originalNote[(std::size_t) row] = 48 + row;
+        for (int step = 0; step < 13; ++step)
+            dump.arpeggio.style.cells[(std::size_t) step][(std::size_t) row] =
+                (signed char) (((step * 7 + row * 5) % 3 == 0)
+                                   ? septum::arpeggioTie
+                                   : (signed char) (1 + ((step * 11 + row) % 127)));
+    }
+
+    const auto packets = septum::sysex::encodePatchToSysExPackets (dump);
+    for (const auto& pkt : packets)
+    {
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage (pkt.data(), (int) pkt.size()), 0);
+        processor.processBlock (block, midi);
+    }
+
+    const auto loaded = processor.snapshotPatch();
+    bool cellsMatch = true;
+    for (int step = 0; step < septum::arpeggioMaxSteps && cellsMatch; ++step)
+        for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+            if (loaded.arpeggio.style.cell (step, row)
+                != dump.arpeggio.style.cell (step, row))
+            {
+                cellsMatch = false;
+                break;
+            }
+    expect (cellsMatch, "every one of the imported grid's 512 cells reaches the engine");
+
+    bool notesMatch = true;
+    for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+        if (loaded.arpeggio.style.originalNote[(std::size_t) row] != 48 + row)
+            notesMatch = false;
+    expect (notesMatch, "each row's Original Note reaches the engine");
+
+    expect (loaded.arpeggio.style.endStep == 13,
+            "the imported END STEP reaches the engine (got "
+                + juce::String (loaded.arpeggio.style.endStep).toStdString() + ")");
+    expect ((int) processor.parameters.getRawParameterValue ("arp_end_step")->load() == 13,
+            "and lands on the END STEP parameter, which is the same control");
+
+    // It survives a re-export, which is what makes the plug-in a usable
+    // waypoint between two real units.
+    {
+        const auto exported = processor.createSysExDataForCurrentPatch();
+        std::vector<septum::NamedPatch> parsed;
+        expect (septum::sysex::parseSyxBankFile (exported.data(), exported.size(), parsed)
+                    && parsed.size() == 1,
+                "the re-export parses back to one patch");
+        if (parsed.size() == 1)
+        {
+            bool same = true;
+            for (int step = 0; step < septum::arpeggioMaxSteps && same; ++step)
+                for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+                    if (parsed[0].patch.arpeggio.style.cell (step, row)
+                        != dump.arpeggio.style.cell (step, row))
+                    {
+                        same = false;
+                        break;
+                    }
+            expect (same, "the imported grid survives a re-export unchanged");
+        }
+    }
+
+    // And a session save/restore.
+    {
+        juce::MemoryBlock state;
+        processor.getStateInformation (state);
+        SeptumAudioProcessor restored;
+        restored.prepareToPlay (44100.0, 256);
+        restored.setStateInformation (state.getData(), (int) state.getSize());
+        const auto after = restored.snapshotPatch();
+        bool same = true;
+        for (int step = 0; step < septum::arpeggioMaxSteps && same; ++step)
+            for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+                if (after.arpeggio.style.cell (step, row)
+                    != dump.arpeggio.style.cell (step, row))
+                {
+                    same = false;
+                    break;
+                }
+        expect (same, "the imported grid survives a session save and restore");
+        expect (after.arpeggio.style.originalNote[3] == 51,
+                "and so do the Original Notes");
+    }
+
+    // Moving the style selector picks a template again, which is what the
+    // hardware's panel does — the grid is not sticky across a selection.
+    {
+        auto* selector = processor.parameters.getParameter ("arp_style");
+        expect (selector != nullptr, "the style selector exists");
+        if (selector != nullptr)
+        {
+            const auto& range = processor.parameters.getParameterRange ("arp_style");
+            selector->setValueNotifyingHost (range.convertTo0to1 (3.0f));
+            const auto templated = processor.snapshotPatch();
+            septum::Patch reference = septum::initPatch();
+            reference.arpeggio.endStep = 0;
+            septum::applyArpeggioStyle (reference, 3);
+            bool matchesTemplate = true;
+            for (int step = 0; step < septum::arpeggioMaxSteps && matchesTemplate; ++step)
+                for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+                    if (templated.arpeggio.style.cell (step, row)
+                        != reference.arpeggio.style.cell (step, row))
+                    {
+                        matchesTemplate = false;
+                        break;
+                    }
+            expect (matchesTemplate,
+                    "moving the selector selects a template over the imported grid");
+        }
+    }
+}
+
 void testSysExBlockProcessing()
 {
     SeptumAudioProcessor processor;
@@ -1374,6 +1585,8 @@ int main()
     testEditorFitsASmallDisplay();
     testEditorAndSnapshot();
     testUniversalRealtimeDeviceControl();
+    testThePatchReconcilerCannotPublishAStaleDump();
+    testAnImportedArpeggioPatternSurvivesAndPlays();
     testSysExBlockProcessing();
     testSysExDoesNotNotifyFromTheAudioThread();
     testKeyboardOctaveIsAppliedOnce();
