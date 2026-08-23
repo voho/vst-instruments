@@ -1862,6 +1862,50 @@ slot while any reader may hold it, which for a real-time writer that must never
 block means a reader-registration scheme or an SPSC handoff to the message
 thread. Recorded here as the residual it is, rather than described as solved.
 
+#### Step 48 — the same five, one layer down
+
+A sixth round on the same surface, and every one of the five was real. Four are
+places where a fix from an earlier step was *nearly* right.
+
+**The bank gate and the decode disagreed about one thing.** Step 46 gave both
+`isForThisInstrument()`, but the decode also refused a packet addressed past
+the end of its own block and the gate did not — so a checksum-valid DT1 like
+`20 01 00 7F` moved the patch boundary and flushed a half-read patch before
+being refused. The offset test now lives in the predicate, which makes the two
+accept exactly the same messages by construction rather than by agreement.
+
+**A restore with an unreadable grid kept the old one.** `readImportedArpeggioFromState`
+returned early on a base64 failure or a wrong size without retiring what the
+processor was holding — and that grid belongs to the session that has just been
+replaced, so a restored patch whose selector happened to match played it
+instead of its own style. Every path out of that function now settles the
+question.
+
+**The selector was published apart from its grid.** It sat in an atomic of its
+own, so a reader could observe a new selector a moment ahead of its payload and
+copy the previous slot as though it belonged to it — and two concurrent writers
+could leave the pair inconsistent for good. The selector rides *in* the slot
+now, so the single `published` store publishes both together.
+
+**The grid was published outside the patch transaction.** It went in before
+`writePatchToParameters` made the generation odd, so a state save could copy
+the old parameter values, then see and serialise the new grid, and still pass
+its generation check — writing a session that pairs one patch revision's
+settings with another's grid. `writePatchToParameters` takes the grid now and
+publishes it inside its own odd window.
+
+**And a program's re-notification pass was clearing a newer dump's flag.**
+`reconcileProgram` writes nothing — it re-notifies values the audio thread
+already stored and skips any edited since — but Step 45 had it call
+`syncPatchShadows()`, which dropped the pending flag of a dump that arrived
+*after* the program change. The patch reconciler then returned silently and the
+host and panel sat on the program's values while the engine rendered the
+dump's. The call is gone; `writeProgramToParameters` already does that work
+where the change actually lands.
+
+All five are fenced, each by a check watched to fail with its fix reverted, and
+the 11 committed demos still re-render bit-identically.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:

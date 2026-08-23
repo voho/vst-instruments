@@ -1181,6 +1181,46 @@ void testUniversalRealtimeDeviceControl()
                     + juce::String (before).toStdString() + ")");
     }
 
+    // A dump that arrives after a program change but before the program's
+    // queued re-notification must still reach the host and the UI. That pass
+    // writes nothing new, so clearing the dump's pending flag left the host
+    // and the panel on the program's values while the engine rendered the
+    // dump's.
+    {
+        SeptumAudioProcessor host;
+        host.prepareToPlay (44100.0, 256);
+        juce::AudioBuffer<float> b (2, 256);
+
+        juce::MidiBuffer program;
+        program.addEvent (juce::MidiMessage::programChange (1, 6), 0);
+        host.processBlock (b, program);
+
+        septum::Patch dumped = septum::initPatch();
+        dumped.upper.cutoff = 19;
+        for (const auto& pkt : septum::sysex::encodePatchToSysExPackets (dumped))
+        {
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage (pkt.data(), (int) pkt.size()), 0);
+            host.processBlock (b, midi);
+        }
+
+        // The program's queued pass runs after the dump has landed.
+        host.reconcileProgram (6);
+        host.republishPatchParameters();
+
+        auto* parameter = host.parameters.getParameter ("up_cutoff");
+        const auto& range = host.parameters.getParameterRange ("up_cutoff");
+        expect (parameter != nullptr
+                    && std::abs (parameter->getValue() - range.convertTo0to1 (19.0f))
+                           < 1.0e-6,
+                "a dump landing after a program change still reaches the host"
+                " (host has "
+                    + juce::String (parameter != nullptr
+                                        ? range.convertFrom0to1 (parameter->getValue())
+                                        : -1.0f).toStdString()
+                    + ")");
+    }
+
     // The republish must not put an older value back over a message that
     // arrived while it was running. setValueNotifyingHost writes the same
     // atomic the audio thread stores into, so reading that atomic to decide
@@ -1444,6 +1484,60 @@ void testAnImportedArpeggioPatternSurvivesAndPlays()
                 " (restored " + juce::String (restored).toStdString() + ", now "
                     + juce::String (host.parameters.getRawParameterValue ("up_cutoff")->load()).toStdString()
                     + ")");
+    }
+
+    // A restore whose grid property is present but unreadable must retire the
+    // grid this processor was holding: it belongs to the session that has
+    // just been replaced. Leaving it valid meant a restored patch whose
+    // selector happened to match played the stale grid instead of its style.
+    {
+        SeptumAudioProcessor host;
+        host.prepareToPlay (44100.0, 256);
+        juce::AudioBuffer<float> b (2, 256);
+        septum::Patch atZero = dump;
+        atZero.arpeggio.styleIndex = 0;
+        for (const auto& pkt : septum::sysex::encodePatchToSysExPackets (atZero))
+        {
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage (pkt.data(), (int) pkt.size()), 0);
+            host.processBlock (b, midi);
+        }
+        expect (host.snapshotPatch().arpeggio.style.cell (0, 0)
+                    == dump.arpeggio.style.cell (0, 0),
+                "the grid is held before the malformed restore");
+
+        // A session of its own, with a grid property that is not decodable.
+        juce::MemoryBlock clean;
+        SeptumAudioProcessor donor;
+        donor.prepareToPlay (44100.0, 256);
+        donor.getStateInformation (clean);
+        if (const auto xml = juce::AudioProcessor::getXmlFromBinary (
+                clean.getData(), (int) clean.getSize()))
+        {
+            auto tree = juce::ValueTree::fromXml (*xml);
+            tree.setProperty ("arpeggio_grid", "not base64 at all!!", nullptr);
+            tree.setProperty ("arpeggio_grid_selector", 0, nullptr);
+            juce::MemoryBlock broken;
+            if (const auto out = tree.createXml())
+                juce::AudioProcessor::copyXmlToBinary (*out, broken);
+            host.setStateInformation (broken.getData(), (int) broken.getSize());
+        }
+
+        septum::Patch reference = septum::initPatch();
+        reference.arpeggio.endStep = 0;
+        septum::applyArpeggioStyle (reference, 0);
+        const auto after = host.snapshotPatch();
+        bool matchesTemplate = true;
+        for (int step = 0; step < septum::arpeggioMaxSteps && matchesTemplate; ++step)
+            for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+                if (after.arpeggio.style.cell (step, row)
+                    != reference.arpeggio.style.cell (step, row))
+                {
+                    matchesTemplate = false;
+                    break;
+                }
+        expect (matchesTemplate,
+                "a restore with an unreadable grid retires the one being held");
     }
 
     // A factory program carries its own style. The selector is only the key

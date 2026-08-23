@@ -97,7 +97,11 @@ public:
     // (a received SysEx dump) writes only atomics there and is republished to
     // the host and the UI from the message loop. Public so the harness can
     // stand in for that loop.
-    void writePatchToParameters (const septum::Patch& patch) noexcept;
+    // `publishGrid` puts the arpeggio grid into the same generation-odd
+    // window as the parameters, so a concurrent state save cannot pair one
+    // patch revision's parameters with another's grid.
+    void writePatchToParameters (const septum::Patch& patch,
+                                 bool publishGrid = false) noexcept;
     void republishPatchParameters();
     // Point the shadows back at whatever the parameters now hold and drop any
     // pending republish. Called by the writers that run on the message thread,
@@ -190,14 +194,23 @@ private:
         // a reader preempted across an entire dump is not lapped. It is a
         // bound rather than a proof — see the note on the reader below.
         static constexpr std::size_t slotCount = 32;
-        std::array<septum::ArpeggioStyle, slotCount> slots {};
+        struct Slot
+        {
+            septum::ArpeggioStyle style {};
+            // The selector this grid belongs to travels *in* the slot. Held
+            // in an atomic of its own it could be observed a moment ahead of
+            // its payload — a reader passing the selector check and then
+            // copying the previous slot as though it were the new one.
+            int selector { -1 };
+        };
+        std::array<Slot, slotCount> slots {};
         // Handed out to writers, so two of them never pick the same slot.
         std::atomic<std::uint32_t> reserved { 0 };
         // How many publishes have completed; the newest is slot
         // (published - 1) % slotCount, and zero means nothing is published.
+        // This one store publishes the grid and its selector together.
         std::atomic<std::uint32_t> published { 0 };
         std::atomic<bool> valid { false };
-        std::atomic<int> selector { -1 };
     };
     // Mutable because `snapshotPatch()` is const and retires the grid when it
     // finds the selector has moved: the store is two atomics, and the object

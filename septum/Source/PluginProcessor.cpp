@@ -882,7 +882,17 @@ septum::ExternalInput SeptumAudioProcessor::snapshotExternalInput() const
 // and the wire agree and there is no second format to keep right.
 void SeptumAudioProcessor::writeImportedArpeggioToState (juce::ValueTree& state) const
 {
-    const int selector = importedArpeggio.selector.load (std::memory_order_acquire);
+    // Read the selector out of the published slot, so the pair that is
+    // written to the session is the pair that was published together.
+    int selector = -1;
+    {
+        const auto published =
+            importedArpeggio.published.load (std::memory_order_acquire);
+        if (published != 0u)
+            selector = importedArpeggio
+                           .slots[(published - 1u) % ImportedArpeggioStyle::slotCount]
+                           .selector;
+    }
     septum::ArpeggioStyle style;
     if (! importedArpeggio.valid.load (std::memory_order_acquire)
         || ! readImportedArpeggioStyle (selector, style))
@@ -921,13 +931,20 @@ void SeptumAudioProcessor::readImportedArpeggioFromState (const juce::ValueTree&
         return;
     }
 
+    // Whatever happens below, the grid this processor was holding belongs to
+    // the session that has just been replaced. A restore whose grid property
+    // is present but unreadable used to leave the old one valid, and if the
+    // restored selector happened to match it, the stale grid played instead
+    // of the restored patch's own style.
     juce::MemoryOutputStream decoded;
-    if (! juce::Base64::convertFromBase64 (decoded, encoded))
-        return;
     const auto expected =
         septum::sysex::sizeArpeggioPattern * (std::size_t) septum::arpeggioMaxRows;
-    if (decoded.getDataSize() != expected)
+    if (! juce::Base64::convertFromBase64 (decoded, encoded)
+        || decoded.getDataSize() != expected)
+    {
+        importedArpeggio.valid.store (false, std::memory_order_release);
         return;
+    }
 
     const auto* bytes = static_cast<const std::uint8_t*> (decoded.getData());
     septum::ArpeggioStyle style;
@@ -949,16 +966,17 @@ void SeptumAudioProcessor::publishImportedArpeggioStyle (
     // A slot of this writer's own, so two writers never share one.
     const auto mine =
         importedArpeggio.reserved.fetch_add (1, std::memory_order_acq_rel);
-    importedArpeggio.slots[mine % ImportedArpeggioStyle::slotCount] = style;
-    importedArpeggio.selector.store (selector, std::memory_order_release);
-    importedArpeggio.published.store (mine + 1, std::memory_order_release);
+    auto& slot = importedArpeggio.slots[mine % ImportedArpeggioStyle::slotCount];
+    slot.style = style;
+    slot.selector = selector;
     importedArpeggio.valid.store (true, std::memory_order_release);
+    // One store publishes the grid and the selector it belongs to together.
+    importedArpeggio.published.store (mine + 1, std::memory_order_release);
 }
 
 void SeptumAudioProcessor::invalidateImportedArpeggioStyle() const noexcept
 {
     importedArpeggio.valid.store (false, std::memory_order_release);
-    importedArpeggio.selector.store (-1, std::memory_order_release);
 }
 
 bool SeptumAudioProcessor::readImportedArpeggioStyle (
@@ -966,17 +984,6 @@ bool SeptumAudioProcessor::readImportedArpeggioStyle (
 {
     if (! importedArpeggio.valid.load (std::memory_order_acquire))
         return false;
-    // The grid belongs to the selector position it arrived under, and moving
-    // the selector chooses a template — the manual says editing a style needs
-    // the SH-201 Editor, so the panel only ever selects, and a selection
-    // replaces what the patch held. Retiring the grid on that first move is
-    // what makes returning to the same index load the template rather than
-    // resurrect the import.
-    if (importedArpeggio.selector.load (std::memory_order_acquire) != selector)
-    {
-        invalidateImportedArpeggioStyle();
-        return false;
-    }
 
     for (int attempt = 0; attempt < 8; ++attempt)
     {
@@ -984,12 +991,27 @@ bool SeptumAudioProcessor::readImportedArpeggioStyle (
             importedArpeggio.published.load (std::memory_order_acquire);
         if (published == 0u)
             return false;
-        out = importedArpeggio.slots[(published - 1u)
-                                     % ImportedArpeggioStyle::slotCount];
+        const auto& slot =
+            importedArpeggio.slots[(published - 1u) % ImportedArpeggioStyle::slotCount];
+        const int slotSelector = slot.selector;
+        out = slot.style;
         // Only a reader overtaken by a whole lap of publishes can have shared
         // a slot with a writer, and this catches it.
-        if (importedArpeggio.published.load (std::memory_order_acquire) == published)
-            return true;
+        if (importedArpeggio.published.load (std::memory_order_acquire) != published)
+            continue;
+
+        // The grid belongs to the selector position it arrived under, and
+        // moving the selector chooses a template — the manual says editing a
+        // style needs the SH-201 Editor, so the panel only ever selects, and
+        // a selection replaces what the patch held. Retiring the grid on that
+        // first move is what makes returning to the same index load the
+        // template rather than resurrect the import.
+        if (slotSelector != selector)
+        {
+            invalidateImportedArpeggioStyle();
+            return false;
+        }
+        return true;
     }
     return false;   // publishes kept overtaking; the template stands in
 }
@@ -1354,12 +1376,13 @@ bool SeptumAudioProcessor::handleMidiMessage (const juce::MidiMessage& message)
         Patch livePatch = snapshotPatch();
         if (septum::sysex::decodeSysExMessage (rawData, rawSize, livePatch))
         {
-            // The grid rides outside the parameters, so it is kept before
-            // they are written: a dump is sixteen pattern packets and each one
-            // starts from the snapshot the previous one left behind.
-            publishImportedArpeggioStyle (livePatch.arpeggio.style,
-                                          livePatch.arpeggio.styleIndex);
-            writePatchToParameters (livePatch);
+            // The grid rides outside the parameters, so it goes in with them
+            // rather than before: a dump is sixteen pattern packets and each
+            // one starts from the snapshot the previous one left behind, and
+            // publishing it inside the same generation-odd window is what
+            // keeps a concurrent state save from pairing this grid with the
+            // previous packet's parameters.
+            writePatchToParameters (livePatch, true);
             patchReconciler.triggerAsyncUpdate();
             return true;
         }
@@ -1454,7 +1477,14 @@ void SeptumAudioProcessor::reconcileProgram (int index)
         if (juce::String (binding.id) != "master_level")
             apply (binding.id, binding.get (patch));
 
-    syncPatchShadows();
+    // No `syncPatchShadows()` here. This pass writes nothing new — it only
+    // re-notifies the values the audio thread already stored, and skips any
+    // the user has edited since. `writeProgramToParameters` already pointed
+    // the shadows at the program and cleared the pending flag when the change
+    // landed. Clearing it again here dropped the flag of a dump that arrived
+    // *after* the program change, so the patch reconciler returned without
+    // telling the host or the UI, and they sat on the program's values while
+    // the engine rendered the dump's.
 }
 
 void SeptumAudioProcessor::applyProgramAsync (int program)
@@ -1701,9 +1731,16 @@ void SeptumAudioProcessor::applyProgram (int index)
 
 // The raw half: atomics only, no juce::String, no host notification. Safe on
 // the audio thread, which is where a received SysEx patch dump arrives.
-void SeptumAudioProcessor::writePatchToParameters (const septum::Patch& patch) noexcept
+void SeptumAudioProcessor::writePatchToParameters (const septum::Patch& patch,
+                                                   bool publishGrid) noexcept
 {
     patchGeneration.fetch_add (1, std::memory_order_acq_rel);
+    // Inside the odd window with the parameters. Published outside it, a
+    // state save could copy the old parameter values, then see and serialise
+    // the new grid, and still pass its generation check — pairing one patch
+    // revision's settings with another's grid.
+    if (publishGrid)
+        publishImportedArpeggioStyle (patch.arpeggio.style, patch.arpeggio.styleIndex);
     const auto& bindings = toneBindings();
     for (std::size_t i = 0; i < bindings.size(); ++i)
     {

@@ -711,7 +711,10 @@ bool decodeSysExMessage (const std::uint8_t* msg, std::size_t msgLen,
 
     // Only the Temporary Patch and the 32 User Patches carry this layout. The
     // System block at 01 00 00 00 has the same Total Size as Patch Common and
-    // would otherwise be decoded as a patch name and a set of controls.
+    // would otherwise be decoded as a patch name and a set of controls. The
+    // same predicate also rejects a packet addressed past the end of its own
+    // block, so the bank reader's gate and this one accept exactly the same
+    // messages.
     if (! packet.isForThisInstrument())
         return false;
 
@@ -727,14 +730,13 @@ bool decodeSysExMessage (const std::uint8_t* msg, std::size_t msgLen,
     // decoders are already each other's inverse — the round-trip tests are
     // what fence that — so a write that covers the whole block is unchanged,
     // and a write that covers one byte moves one field.
+    // The offset is already known good — `isForThisInstrument()` checked it —
+    // so this only has to clip a payload that runs off the end.
     const auto applyOverlay = [&packet] (std::uint8_t* image, std::size_t blockSize)
     {
         const std::size_t at = packet.offsetInBlock();
-        if (at >= blockSize)
-            return false;   // addressed past the end of its own block
-        const std::size_t count = std::min (packet.dataLength, blockSize - at);
-        std::memcpy (image + at, packet.data, count);
-        return count > 0;
+        std::memcpy (image + at, packet.data,
+                     std::min (packet.dataLength, blockSize - at));
     };
 
     const unsigned block = packet.block();
@@ -745,8 +747,7 @@ bool decodeSysExMessage (const std::uint8_t* msg, std::size_t msgLen,
         {
             std::array<std::uint8_t, sizePatchCommon> image {};
             encodePatchCommon (targetPatch, image.data());
-            if (! applyOverlay (image.data(), image.size()))
-                return false;
+            applyOverlay (image.data(), image.size());
             decodePatchCommon (image.data(), image.size(), targetPatch);
             clampToDocumentedRanges (targetPatch);
             return true;
@@ -757,8 +758,7 @@ bool decodeSysExMessage (const std::uint8_t* msg, std::size_t msgLen,
             TonePatch& tone = block == 0x01 ? targetPatch.upper : targetPatch.lower;
             std::array<std::uint8_t, sizeTonePatch> image {};
             encodeTonePatch (tone, image.data());
-            if (! applyOverlay (image.data(), image.size()))
-                return false;
+            applyOverlay (image.data(), image.size());
             decodeTonePatch (image.data(), image.size(), tone);
             clampToDocumentedRanges (tone);
             return true;
@@ -767,8 +767,7 @@ bool decodeSysExMessage (const std::uint8_t* msg, std::size_t msgLen,
         {
             std::array<std::uint8_t, sizeDelay> image {};
             encodeDelayParams (targetPatch.delay, image.data());
-            if (! applyOverlay (image.data(), image.size()))
-                return false;
+            applyOverlay (image.data(), image.size());
             decodeDelayParams (image.data(), image.size(), targetPatch.delay);
             clampToDocumentedRanges (targetPatch);
             return true;
@@ -777,8 +776,7 @@ bool decodeSysExMessage (const std::uint8_t* msg, std::size_t msgLen,
         {
             std::array<std::uint8_t, sizeReverb> image {};
             encodeReverbParams (targetPatch.reverb, image.data());
-            if (! applyOverlay (image.data(), image.size()))
-                return false;
+            applyOverlay (image.data(), image.size());
             decodeReverbParams (image.data(), image.size(), targetPatch.reverb);
             clampToDocumentedRanges (targetPatch);
             return true;
@@ -787,8 +785,7 @@ bool decodeSysExMessage (const std::uint8_t* msg, std::size_t msgLen,
         {
             std::array<std::uint8_t, sizeArpeggioCommon> image {};
             encodeArpeggioCommon (targetPatch.arpeggio, image.data());
-            if (! applyOverlay (image.data(), image.size()))
-                return false;
+            applyOverlay (image.data(), image.size());
             decodeArpeggioCommon (image.data(), image.size(), targetPatch.arpeggio);
             clampToDocumentedRanges (targetPatch);
             return true;
@@ -800,8 +797,7 @@ bool decodeSysExMessage (const std::uint8_t* msg, std::size_t msgLen,
     const int row = static_cast<int> (block - 0x06);
     std::array<std::uint8_t, sizeArpeggioPattern> image {};
     encodeArpeggioPattern (targetPatch.arpeggio.style, row, image.data());
-    if (! applyOverlay (image.data(), image.size()))
-        return false;
+    applyOverlay (image.data(), image.size());
     decodeArpeggioPattern (image.data(), image.size(), row, targetPatch.arpeggio.style);
     clampToDocumentedRanges (targetPatch);
     return true;

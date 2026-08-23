@@ -3291,6 +3291,14 @@ void testAForeignSysExMessageDoesNotSplitAPatch()
     // gate that checks only the block admits it, moves the boundary, and
     // splits the patch before the decode refuses it for its base.
     const std::vector<Intruder> baseIntruders {
+        { "a DT1 addressed past the end of its block",
+          [] {
+              // A checksum-valid packet for another user slot, at a known
+              // block, whose low address byte lands beyond Patch Common. The
+              // gate has to refuse it for the same reason the decode does.
+              const std::uint8_t data[] { 0x01 };
+              return septum::sysex::makeDt1Message (0x2001007F, data, 1, 0x10);
+          }() },
         { "a System Common DT1",
           [] {
               const std::uint8_t data[] { 0x00, 0x00, 0x00, 0x05 };

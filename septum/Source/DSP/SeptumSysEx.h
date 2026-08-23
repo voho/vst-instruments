@@ -168,10 +168,31 @@ struct Dt1Packet
         return static_cast<std::size_t> (address & 0xFFu);
     }
 
-    // Everything this codec needs before it will touch a patch.
+    // The documented Total Size of the block this packet addresses.
+    [[nodiscard]] std::size_t blockSize() const noexcept
+    {
+        switch (block())
+        {
+            case 0x00: return sizePatchCommon;
+            case 0x01:
+            case 0x02: return sizeTonePatch;
+            case 0x03: return sizeDelay;
+            case 0x04: return sizeReverb;
+            case 0x05: return sizeArpeggioCommon;
+            default:   return sizeArpeggioPattern;
+        }
+    }
+
+    // Everything this codec needs before it will touch a patch — and exactly
+    // what the decode accepts, so a caller that gates on this can never be
+    // followed by a refusal. The offset belongs in here: a checksum-valid
+    // packet for a known base and block can still be addressed past the end
+    // of that block, and a bank reader that moved its patch boundary on the
+    // strength of base-and-block alone split a patch on one of those.
     [[nodiscard]] bool isForThisInstrument() const noexcept
     {
-        return patchBaseIsKnown() && blockIsKnown();
+        return patchBaseIsKnown() && blockIsKnown()
+               && offsetInBlock() < blockSize() && dataLength > 0;
     }
 };
 
