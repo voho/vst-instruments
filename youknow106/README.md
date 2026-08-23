@@ -951,7 +951,13 @@ That visual limit does not discard host MIDI notes outside the keybed.
 The adjacent on-screen bender lever feeds the instrument internally and springs
 back when released; it does not emit MIDI. YouKnow106 also receives external
 pitch bend, modulation (CC 1), hold (CC 64), all-notes-off and the reference
-instrument's Patch Selection Program Changes. CC 1 and the bender lever's
+instrument's Patch Selection Program Changes. Two of those follow the reference
+instrument's own MIDI implementation chart rather than the general convention:
+hold latches on any non-zero value, because the chart's rows are "hold OFF" at
+zero and "hold ON" for 1–127; and the channel-mode messages CC 124–127 release
+the keyboard alongside CC 123, because the chart notes that mode messages
+123–127 are all recognised as all-notes-off. Mono mode is absent because the
+chart says the instrument does not respond to it. CC 1 and the bender lever's
 upward axis drive the same LFO trigger path; BENDER LFO determines its depth.
 The modelled keybed is not velocity sensitive, so incoming note velocity
 reaches the engine through the VELOCITY extension and nowhere else: at its

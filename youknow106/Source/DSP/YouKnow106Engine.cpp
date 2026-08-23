@@ -98,9 +98,12 @@ constexpr float highPassCutBleedResistanceOhms = 1000000.0f; // R21 / R23
 // filter core or the voice VCA behind it.
 //
 // The capacitor is the read part; the resistance it works against is not.
-// R99/R102 33 kOhm is *not* this pole's load -- the same p. 13 pass re-roles
-// it as a DC bridge from the sub switch emitter to the WAVE line, in parallel
-// with D5/D6 -- and the node's termination, together with the WAVE output's
+// R99/R102 33 kOhm is *not* this pole's load -- the 2026-08-20 p. 13 junction
+// read re-roles it as the sub switch transistor's collector load returning to
+// the shared SUB LEVEL rail, retiring the 2026-08-07 "bridge across the diode"
+// reading, so the sub's conducting path reaches the WAVE line through 60 kOhm
+// (R101/R97 27 kOhm behind D6/D5, then this 33 kOhm) -- and the node's
+// termination, together with the WAVE output's
 // source impedance, is exactly OQ-15's remaining measurement. 33 kOhm is
 // therefore a voiced stand-in, taken by analogy with the two settled
 // 10 uF NP / 33 kOhm couplings downstream (C14/R39 and C12/R36), and what
@@ -5292,8 +5295,11 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // Module p. 13 (2026-08-07 designator read): saw and pulse leave the
     // waveshaper already summed on ONE per-voice WAVE output (IC12/IC8/IC4
     // pin 14 or 16), the sub joins that line through R101/R97 27k behind
-    // D6/D5 from its own switch transistor, the shared noise rail arrives on
-    // its own leg, and C56/C50 couple the node into the voice module's input.
+    // D6/D5 from its own switch transistor -- 60k of conducting-path series
+    // resistance back to the SUB LEVEL rail once R102/R99's 33k collector load
+    // is counted (2026-08-20 junction read) -- the shared noise rail arrives
+    // on its own leg, and C56/C50 couple the node into the voice module's
+    // input.
     // No panel switch reaches this node: SAW is gated by a control rail at
     // the generator ("0: saw ON" at Tr24/R148), PULSE by the -0.8 V hold that
     // pins the comparator (what the pinned state leaves on the node is

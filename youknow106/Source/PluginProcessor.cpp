@@ -322,6 +322,26 @@ void setStoredParameterValue (juce::ValueTree& state, const char* parameterId,
     added.setProperty (valueProperty, value, nullptr);
     state.appendChild (added, nullptr);
 }
+
+// The owner's MIDI implementation chart lists five channel-mode rows under
+// RECOGNIZED RECEIVE DATA -- ALL NOTES OFF, OMNI OFF, OMNI ON, MONO ON and
+// POLY ON -- and then prints, in the notes below them, "Mode messages
+// (123 - 127) are also recognized as ALL NOTES OFF." JUCE's isAllNotesOff()
+// matches controller 123 alone, so the four numbers above it are recognised
+// here. The mode *states* those messages also carry are deliberately not
+// implemented: the same notes print "The JUNO-106 does not respond to MONO ON
+// message", and every row of the chart's own mode table leaves the receiver in
+// POLY, so the only receive-side behaviour the four numbers have that this
+// plug-in can express is the all-notes-off the note itself grants them.
+[[nodiscard]] bool isModeMessageRecognisedAsAllNotesOff (
+    const juce::MidiMessage& message) noexcept
+{
+    if (! message.isController())
+        return false;
+
+    const int controller = message.getControllerNumber();
+    return controller >= 124 && controller <= 127;
+}
 } // namespace
 
 // Sessions saved before the paired switches were split carry a three-way
@@ -503,7 +523,16 @@ YouKnow106AudioProcessor::createParameterLayout()
         juce::ParameterID { legacyChorus, 1 }, "Chorus (legacy)",
         juce::StringArray { "Off", "I", "II" }, 0));
 
-    // --- Controls the modelled instrument does not have -------------------
+    // --- Controls the modelled instrument does not have as panel state ----
+    // Transpose is the nearest of these to a hardware function: the
+    // instrument has a KEY TRANSPOSE button, and the owner's MIDI chart's
+    // transmitted range `kkkkkkk : 24 - 108` against the 36..96 keybed
+    // corroborates its one-octave-each-way reach. What is product policy, and
+    // is what this header covers, is the *form*: a stored, automatable
+    // continuous semitone control instead of a momentary key-map shift. The
+    // hardware function's reference key and MIDI-OUT transposition rule are
+    // undocumented in the evidence base, and moot while this product has no
+    // MIDI output bus.
     layout.add (std::make_unique<juce::AudioParameterInt> (
         juce::ParameterID { transpose, 1 }, "Transpose", -12, 12, 0));
     layout.add (std::make_unique<juce::AudioParameterFloat> (
@@ -1187,7 +1216,8 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             engine.noteOff (message.getNoteNumber());
         else if (message.isAllSoundOff())
             engine.allNotesOff();
-        else if (message.isAllNotesOff())
+        else if (message.isAllNotesOff()
+                 || isModeMessageRecognisedAsAllNotesOff (message))
             // All notes off means release the keys, not cut the sound: the
             // exact B-2 release runs for up to 25.55 s -- and the output
             // coupling for another 28 s after it -- so truncating it would be
@@ -1221,7 +1251,12 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 engine.setModWheel (static_cast<float> (message.getControllerValue())
                                     / 127.0f);
             else if (message.getControllerNumber() == 64)
-                engine.setSustainPedal (message.getControllerValue() >= 64);
+                // The chart's two hold rows split at zero, not at the MIDI 1.0
+                // convention's 64: "hold OFF" carries a third byte of 0 and
+                // "hold ON" is spelled "vvvvvvv = 1 - 127". A half-pedal value
+                // therefore latches the hold on, exactly as it does on the
+                // instrument -- do not restore the >= 64 convention as a fix.
+                engine.setSustainPedal (message.getControllerValue() != 0);
             else if (message.getControllerNumber() == 121)
             {
                 // Reset All Controllers. Lifting the pedal matters most: with

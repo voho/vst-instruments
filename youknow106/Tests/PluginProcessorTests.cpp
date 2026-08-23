@@ -1243,6 +1243,117 @@ void testAllNotesOffReleasesAndAllSoundOffCuts()
     processor.releaseResources();
 }
 
+// "Mode messages (123 - 127) are also recognized as ALL NOTES OFF", printed
+// under RECOGNIZED RECEIVE DATA in the owner's MIDI implementation chart. The
+// chart's own note that the instrument "does not respond to MONO ON message"
+// is why only the release is asserted here and no mode state is: the four
+// numbers above 123 have no other receive-side behaviour to reproduce.
+void testChannelModeMessagesReleaseLikeAllNotesOff()
+{
+    for (const int controller : { 124, 125, 126, 127 })
+    {
+        YouKnow106AudioProcessor processor;
+        processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+        processor.prepareToPlay (sampleRate, blockSize);
+        setParameterValue (processor, parameters::release, 0.75f);
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+        buffer.clear();
+        processor.processBlock (buffer, midi);
+        renderBlocks (processor, buffer, 16);
+
+        juce::MidiBuffer mode;
+        // MONO ON carries a channel count in its third byte; the others send
+        // zero. Exercising the data byte proves the number alone decides.
+        mode.addEvent (juce::MidiMessage::controllerEvent (
+                           1, controller, controller == 126 ? 1 : 0), 0);
+        buffer.clear();
+        processor.processBlock (buffer, mode);
+        renderBlocks (processor, buffer, 8);
+        expect (bufferPeak (buffer) > 0.001f,
+                "controller " + std::to_string (controller)
+                    + " cut the release instead of letting it ring");
+        expect (processor.getActiveVoiceCount() == 1,
+                "controller " + std::to_string (controller)
+                    + " did not leave the released note ringing");
+
+        renderBlocks (processor, buffer, 900);
+        expect (processor.getActiveVoiceCount() == 0,
+                "controller " + std::to_string (controller)
+                    + " did not release the note at all");
+
+        processor.releaseResources();
+    }
+
+    // A controller the chart does not list must not move the keyboard, or the
+    // branch above has been widened past the five printed mode rows.
+    YouKnow106AudioProcessor untouched;
+    untouched.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+    untouched.prepareToPlay (sampleRate, blockSize);
+    setParameterValue (untouched, parameters::release, 0.75f);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+    buffer.clear();
+    untouched.processBlock (buffer, midi);
+    renderBlocks (untouched, buffer, 16);
+
+    juce::MidiBuffer unrelated;
+    unrelated.addEvent (juce::MidiMessage::controllerEvent (1, 100, 0), 0);
+    buffer.clear();
+    untouched.processBlock (buffer, unrelated);
+    renderBlocks (untouched, buffer, 900);
+    expect (untouched.getActiveVoiceCount() == 1,
+            "an unlisted controller released a held note");
+
+    untouched.releaseResources();
+}
+
+// The chart's two hold rows split at zero: "hold OFF" prints a third byte of
+// 0, "hold ON" prints "vvvvvvv = 1 - 127". That is not the MIDI 1.0 >= 64
+// convention, and this fixture is what stops the convention being restored.
+void testHoldLatchesOnAnyNonZeroValue()
+{
+    for (const int value : { 1, 63, 64, 127 })
+    {
+        YouKnow106AudioProcessor processor;
+        processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+        processor.prepareToPlay (sampleRate, blockSize);
+        setParameterValue (processor, parameters::release, 0.0f);
+
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, 64, value), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (1, 64, 1.0f), 1);
+        buffer.clear();
+        processor.processBlock (buffer, midi);
+        renderBlocks (processor, buffer, 8);
+
+        juce::MidiBuffer release;
+        release.addEvent (juce::MidiMessage::noteOff (1, 64), 0);
+        buffer.clear();
+        processor.processBlock (buffer, release);
+        renderBlocks (processor, buffer, 20);
+        expect (processor.getActiveVoiceCount() == 1,
+                "hold value " + std::to_string (value)
+                    + " did not hold the note");
+
+        juce::MidiBuffer lift;
+        lift.addEvent (juce::MidiMessage::controllerEvent (1, 64, 0), 0);
+        buffer.clear();
+        processor.processBlock (buffer, lift);
+        renderBlocks (processor, buffer, 200);
+        expect (processor.getActiveVoiceCount() == 0,
+                "the note did not release when hold value "
+                    + std::to_string (value) + " was lifted with a zero");
+
+        processor.releaseResources();
+    }
+}
+
 void testTransportOfControllers()
 {
     YouKnow106AudioProcessor processor;
@@ -6445,6 +6556,8 @@ int main()
     testVcfFastEarlySelectorDrivesTheEngine();
     testVcfSolverSelectorDrivesTheEngine();
     testAllNotesOffReleasesAndAllSoundOffCuts();
+    testChannelModeMessagesReleaseLikeAllNotesOff();
+    testHoldLatchesOnAnyNonZeroValue();
     testTransportOfControllers();
     testUiPerformanceLeverMatchesMidiAndCoalesces();
     testPerformanceLeverSpringsAndEditorCloseNeutralisesIt();

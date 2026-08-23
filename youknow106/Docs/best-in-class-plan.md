@@ -1160,10 +1160,14 @@ the sub-millisecond residual it would remove is likewise not assigned an
 audibility classification.
 
 **Gap 10 — two circuit mechanisms that are enabled by default are numerically
-inert.** `Source/DSP/YouKnow106Engine.cpp:3974-3980`
-(`powerSupplyDroop_ = totalVoiceEnergy * 0.0015f`, consumed at `:3276-3277`
-through `railToCutoffCountsPerVolt = 35.0f`) and `:4100-4110`
-(`enableOpAmpSlewLimiting`, `maxStep = 653846.15 / oversampledRate_`). The
+inert.** `Source/DSP/YouKnow106Engine.cpp:5902`
+(`powerSupplyDroop_ = totalVoiceEnergy * 0.0015f`, consumed at `:4784`
+through `railToCutoffCountsPerVolt = 35.0f`, reached from `:4836` and `:5381`)
+and `:3081`/`:6109`
+(`enableOpAmpSlewLimiting`, `maxStep = 653846.15 / oversampledRate_`).
+**[Anchors re-read 2026-08-23]** — the three line references above had rotted
+onto `silenceVoice` and `rebuildRateDependentVoiceState`; the measured numbers
+below are unaffected, only the anchors moved. The
 polyphonic rail-sag path measures, **[re-measured 2026-08-08]** on a held
 6-voice chord at CUTOFF 0.62 after 2 s, **0.000522 V at one voice → 0.003356 V
 at six**, i.e. **−0.0192 → −0.1233 cents of cutoff**: the entire
