@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
+#include "PublicParameterOrder.h"
 
 #include <algorithm>
 #include <array>
@@ -420,6 +421,46 @@ void renderBlocks (YouKnow106AudioProcessor& processor, juce::AudioBuffer<float>
 }
 
 // --------------------------------------------------------------------------
+
+// The macOS-only VST3 bundle test locates the standard Bypass and Program
+// parameters immediately after the public ones, so a parameter added to the
+// layout without being added to the shared order list pushes them out of
+// position and fails there -- and only there. That is how main went red when
+// `VCF Tanh` and `VCF Fast Early` were added, and stayed red. Check the same
+// list against the live processor here, where every platform runs it.
+void testPublicParameterOrderMatchesTheSharedList()
+{
+    YouKnow106AudioProcessor processor;
+    const auto& live = processor.getParameters();
+    const auto& shared = youknow106::tests::publicParameterOrder;
+
+    expect (live.size() == static_cast<int> (shared.size()),
+            "the processor exposes " + std::to_string (live.size())
+                + " public parameters but Tests/PublicParameterOrder.h lists "
+                + std::to_string (shared.size())
+                + "; append the new one there or the macOS VST3 bundle test "
+                  "will fail on Bypass/Program placement");
+    if (live.size() != static_cast<int> (shared.size()))
+        return;
+
+    for (std::size_t index = 0; index < shared.size(); ++index)
+    {
+        const auto* parameter = live[static_cast<int> (index)];
+        expect (parameter != nullptr
+                    && parameter->getName (128)
+                           == juce::String (shared[index].name),
+                "public parameter " + std::to_string (index)
+                    + " is not " + shared[index].name
+                    + "; Tests/PublicParameterOrder.h is out of order");
+        const auto* hosted =
+            dynamic_cast<const juce::HostedAudioProcessorParameter*> (parameter);
+        expect (hosted != nullptr
+                    && hosted->getParameterID()
+                           == juce::String (shared[index].id),
+                "public parameter " + std::to_string (index)
+                    + " does not carry the id " + shared[index].id);
+    }
+}
 
 void testParameterContract()
 {
@@ -6388,6 +6429,7 @@ int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
 
+    testPublicParameterOrderMatchesTheSharedList();
     testParameterContract();
     testParameterTextRoundTrips();
     testProcessingProducesSound();

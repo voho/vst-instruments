@@ -1,5 +1,7 @@
 #include <juce_audio_processors_headless/juce_audio_processors_headless.h>
 
+#include "PublicParameterOrder.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -13,56 +15,12 @@ namespace
 constexpr double sampleRate = 48000.0;
 constexpr int blockSize = 256;
 
-struct ExpectedParameter
-{
-    const char* id;
-    const char* name;
-};
-
-constexpr auto expectedParameters = std::to_array<ExpectedParameter> ({
-    { "volume", "Volume" },
-    { "benderDco", "Bender DCO" },
-    { "benderVcf", "Bender VCF" },
-    { "benderLfo", "Bender LFO" },
-    { "portamento", "Portamento" },
-    { "keyMode", "Key Mode (legacy)" },
-    { "lfoRate", "LFO Rate" },
-    { "lfoDelay", "LFO Delay" },
-    { "dcoLfo", "DCO LFO" },
-    { "pwm", "PWM" },
-    { "pwmMode", "PWM Mode" },
-    { "range", "Range" },
-    { "saw", "Saw" },
-    { "pulse", "Pulse" },
-    { "sub", "Sub" },
-    { "noise", "Noise" },
-    { "highPass", "HPF" },
-    { "cutoff", "VCF Freq" },
-    { "resonance", "VCF Res" },
-    { "envPolarity", "VCF Env Polarity" },
-    { "vcfEnv", "VCF Env" },
-    { "vcfLfo", "VCF LFO" },
-    { "keyFollow", "VCF Kybd" },
-    { "vcaMode", "VCA Mode" },
-    { "vcaLevel", "VCA Level" },
-    { "attack", "Attack" },
-    { "decay", "Decay" },
-    { "sustain", "Sustain" },
-    { "release", "Release" },
-    { "chorus", "Chorus (legacy)" },
-    { "transpose", "Transpose" },
-    { "masterTune", "Master Tune" },
-    { "velocity", "Velocity" },
-    { "calibration", "Unit Character" },
-    { "chorusNoise", "Chorus Noise" },
-    { "polyphony", "Polyphony" },
-    { "poly1", "Poly 1" },
-    { "poly2", "Poly 2" },
-    { "chorusI", "Chorus I" },
-    { "chorusII", "Chorus II" },
-    { "hq", "HQ" },
-    { "quality", "Quality" },
-});
+// The public parameter order is shared with PluginProcessorTests, which checks
+// the live processor against it on every platform. This test is macOS-only, so
+// without that companion check a parameter added to the layout but not to the
+// shared list would only be caught here -- which is how it went unnoticed
+// before. See the header.
+constexpr auto expectedParameters = youknow106::tests::publicParameterOrder;
 
 bool expect (bool condition, const juce::String& message)
 {
