@@ -104,9 +104,19 @@ struct YouKnow106TestAccess
         return Cascade::clampOmegaStep(value);
     }
 
-    static double hermite512Tanh(double value) noexcept
+    static double zonedHermiteTanh(double value) noexcept
     {
-        return Cascade::hermite512Tanh(value);
+        return Cascade::zonedHermiteTanh(value);
+    }
+
+    static double zonedHermiteTanhUnchecked(double value) noexcept
+    {
+        return Cascade::zonedHermiteTanhUnchecked(value);
+    }
+
+    static double cubicEarlyTanh(double value) noexcept
+    {
+        return Cascade::cubicEarlyTanh(value);
     }
 
     static std::array<float, 4> maximumCharacterCardScales(
@@ -210,6 +220,23 @@ using Cascade = Access::Cascade;
 
 int failures = 0;
 
+float processSelected(
+    Cascade& cascade, float input, float omegaStep, float feedback,
+    float headroom, bool enableEarlyEffect, float calibration,
+    const Access::ControlTrajectory* trajectory,
+    youknow106::VcfTanhMode tanhMode,
+    youknow106::VcfFastEarlyMode earlyMode) noexcept
+{
+    if (tanhMode == youknow106::VcfTanhMode::ZonedHermite
+        && earlyMode == youknow106::VcfFastEarlyMode::Cubic)
+        return cascade.process<true>(
+            input, omegaStep, feedback, headroom, enableEarlyEffect,
+            calibration, trajectory, tanhMode);
+    return cascade.process(
+        input, omegaStep, feedback, headroom, enableEarlyEffect,
+        calibration, trajectory, tanhMode);
+}
+
 void expect(bool condition, const std::string& message)
 {
     if (!condition)
@@ -227,54 +254,66 @@ void expectNear(double actual, double expected, double tolerance,
                + ", expected " + std::to_string(expected));
 }
 
-void testHermite512TanhKernelAndDispatch()
+void testZonedHermiteTanhKernelAndDispatch()
 {
     expect(youknow106::EngineParameters {}.vcfTanhMode
                == youknow106::VcfTanhMode::Exact,
            "EngineParameters no longer defaults the VCF tanh mode to exact");
+    expect(youknow106::EngineParameters {}.vcfFastEarlyMode
+               == youknow106::VcfFastEarlyMode::Hermite,
+           "EngineParameters no longer defaults Fast Early to Hermite");
 
-    const double positiveZero = Access::hermite512Tanh(0.0);
-    const double negativeZero = Access::hermite512Tanh(-0.0);
+    const double positiveZero = Access::zonedHermiteTanh(0.0);
+    const double negativeZero = Access::zonedHermiteTanh(-0.0);
     expect(positiveZero == 0.0 && !std::signbit(positiveZero)
                && negativeZero == 0.0 && std::signbit(negativeZero),
-           "Hermite512 tanh does not preserve signed zero");
+           "zoned Hermite tanh does not preserve signed zero");
 
     const double minimumNormal = std::numeric_limits<double>::min();
     const double largestSubnormal = std::nextafter(minimumNormal, 0.0);
     const double aboveMinimumNormal = std::nextafter(
         minimumNormal, std::numeric_limits<double>::infinity());
     for (const double magnitude : {
-             std::numeric_limits<double>::denorm_min(), largestSubnormal })
+             std::numeric_limits<double>::denorm_min(),
+             std::bit_cast<double>(std::uint64_t { 0x0008000000000000 }),
+             largestSubnormal })
         for (const double value : { magnitude, -magnitude })
-            expect(std::bit_cast<std::uint64_t>(Access::hermite512Tanh(value))
+        {
+            expect(std::bit_cast<std::uint64_t>(Access::zonedHermiteTanh(value))
                        == std::bit_cast<std::uint64_t>(value),
-                   "Hermite512 tanh does not preserve a subnormal input");
-    expect(Access::hermite512Tanh(largestSubnormal)
-               <= Access::hermite512Tanh(minimumNormal)
-               && Access::hermite512Tanh(minimumNormal)
-                      <= Access::hermite512Tanh(aboveMinimumNormal),
-           "Hermite512 tanh is not monotone at the subnormal bypass boundary");
+                   "zoned Hermite tanh does not preserve a subnormal input");
+            expect(std::bit_cast<std::uint64_t>(
+                       Access::zonedHermiteTanhUnchecked(value))
+                       == std::bit_cast<std::uint64_t>(value),
+                   "trusted zoned Hermite tanh changed a subnormal input");
+        }
+    expect(Access::zonedHermiteTanh(largestSubnormal)
+               <= Access::zonedHermiteTanh(minimumNormal)
+               && Access::zonedHermiteTanh(minimumNormal)
+                      <= Access::zonedHermiteTanh(aboveMinimumNormal),
+           "zoned Hermite tanh is not monotone at the subnormal bypass boundary");
 
     constexpr double nearZero = 1.0e-8;
-    expect(std::abs(Access::hermite512Tanh(nearZero) / nearZero - 1.0)
+    expect(std::abs(Access::zonedHermiteTanh(nearZero) / nearZero - 1.0)
                <= 2.0e-12,
-           "Hermite512 tanh lost unit slope near zero");
+           "zoned Hermite tanh lost unit slope near zero");
 
     const double nan = std::numeric_limits<double>::quiet_NaN();
-    expect(std::isnan(Access::hermite512Tanh(nan))
-               && std::isnan(Access::hermite512Tanh(-nan)),
-           "Hermite512 tanh does not propagate NaN");
-    for (double value : { 19.0, 20.0,
+    expect(std::isnan(Access::zonedHermiteTanh(nan))
+               && std::isnan(Access::zonedHermiteTanh(-nan)),
+           "zoned Hermite tanh does not propagate NaN");
+    for (double value : { 19.0, 20.0, std::numeric_limits<double>::max(),
                           std::numeric_limits<double>::infinity() })
     {
-        expect(Access::hermite512Tanh(value) == 1.0
-                   && Access::hermite512Tanh(-value) == -1.0,
-               "Hermite512 tanh does not saturate explicitly at +/-19");
+        expect(Access::zonedHermiteTanh(value) == 1.0
+                   && Access::zonedHermiteTanh(-value) == -1.0,
+               "zoned Hermite tanh does not saturate explicitly at +/-19");
     }
 
     constexpr int divisions = 1000000;
     constexpr double limit = 19.0;
     double maximumError = 0.0;
+    double maximumRelativeError = 0.0;
     double errorArgument = 0.0;
     double previous = 0.0;
     bool finiteAndBounded = true;
@@ -284,9 +323,12 @@ void testHermite512TanhKernelAndDispatch()
     {
         const double argument = limit * static_cast<double>(point)
                               / static_cast<double>(divisions);
-        const double actual = Access::hermite512Tanh(argument);
-        const double negative = Access::hermite512Tanh(-argument);
+        const double actual = Access::zonedHermiteTanh(argument);
+        const double negative = Access::zonedHermiteTanh(-argument);
         const double error = std::abs(actual - std::tanh(argument));
+        if (argument > 0.0)
+            maximumRelativeError = std::max(
+                maximumRelativeError, error / std::tanh(argument));
         if (error > maximumError)
         {
             maximumError = error;
@@ -299,44 +341,71 @@ void testHermite512TanhKernelAndDispatch()
         previous = actual;
     }
     expect(finiteAndBounded,
-           "Hermite512 tanh escaped its finite unit bounds");
-    expect(monotone, "Hermite512 tanh is not monotone on [0, 19]");
-    expect(odd, "Hermite512 tanh is not exactly odd");
-    expect(maximumError <= 2.1e-8,
-           "Hermite512 tanh exceeds its dense-grid error bound: "
+           "zoned Hermite tanh escaped its finite unit bounds");
+    expect(monotone, "zoned Hermite tanh is not monotone on [0, 19]");
+    expect(odd, "zoned Hermite tanh is not exactly odd");
+    expect(maximumError <= 1.3e-8,
+           "zoned Hermite tanh exceeds its dense-grid error bound: "
                + std::to_string(maximumError));
-    std::cout << "Hermite512 tanh dense maximum error: "
-              << maximumError << " at x=" << errorArgument << '\n';
+    expect(maximumRelativeError <= 1.0e-7,
+           "zoned Hermite tanh exceeds its relative-error bound: "
+               + std::to_string(maximumRelativeError));
+    std::cout << "Zoned Hermite tanh dense maximum error: "
+              << maximumError << " at x=" << errorArgument
+              << ", maximum relative error: " << maximumRelativeError
+              << '\n';
 
-    for (int node = 0; node <= 512; ++node)
-    {
-        const double argument = limit * static_cast<double>(node) / 512.0;
-        expectNear(Access::hermite512Tanh(argument), std::tanh(argument),
-                   2.0e-15, "Hermite512 tanh misses an exact table node");
-        if (node > 0 && node < 512)
+    const auto checkNode = [](double argument) {
+        expectNear(Access::zonedHermiteTanh(argument), std::tanh(argument),
+                   2.0e-15, "zoned Hermite tanh misses an exact table node");
+        if (argument > 0.0 && argument < 19.0)
         {
             const double left = std::nextafter(argument, 0.0);
             const double right = std::nextafter(
                 argument, std::numeric_limits<double>::infinity());
-            expect(Access::hermite512Tanh(left)
-                       <= Access::hermite512Tanh(argument)
-                       && Access::hermite512Tanh(argument)
-                              <= Access::hermite512Tanh(right),
-                   "Hermite512 tanh is not monotone across a table boundary");
+            expect(Access::zonedHermiteTanh(left)
+                       <= Access::zonedHermiteTanh(argument)
+                       && Access::zonedHermiteTanh(argument)
+                              <= Access::zonedHermiteTanh(right),
+                   "zoned Hermite tanh is not monotone at a table boundary");
         }
-    }
+    };
+    for (int node = 0; node <= 160; ++node)
+        checkNode(static_cast<double>(node) / 32.0);
+    for (int node = 1; node <= 56; ++node)
+        checkNode(5.0 + static_cast<double>(node) / 4.0);
+
+    const double beforeSaturation = Access::zonedHermiteTanh(
+        std::nextafter(19.0, 0.0));
+    expect(beforeSaturation <= Access::zonedHermiteTanh(19.0)
+               && beforeSaturation >= std::nextafter(1.0, 0.0),
+           "zoned Hermite tanh has more than a one-ULP saturation seam");
+
+    // The fine and tail tables share the exact value and analytic derivative
+    // at x=5. Check both one-sided numerical slopes so a future table change
+    // cannot introduce an otherwise-monotone kink at the hot/cold seam.
+    constexpr double zoneSeam = 5.0;
+    constexpr double derivativeStep = 1.0e-5;
+    const double seamValue = Access::zonedHermiteTanh(zoneSeam);
+    const double leftDerivative = (seamValue
+        - Access::zonedHermiteTanh(zoneSeam - derivativeStep))
+        / derivativeStep;
+    const double rightDerivative = (Access::zonedHermiteTanh(
+        zoneSeam + derivativeStep) - seamValue) / derivativeStep;
+    expect(std::abs(leftDerivative - rightDerivative) <= 5.0e-9,
+           "zoned Hermite tanh loses derivative continuity at x=5");
 
     // A former exact-linear shortcut ended immediately below this value and
     // created a tiny downward step that the uniform dense grid did not sample.
     // Keep an explicit neighbour check at the retired seam as a regression.
     constexpr double retiredLinearSeam = 1.0e-4;
-    expect(Access::hermite512Tanh(std::nextafter(retiredLinearSeam, 0.0))
-               <= Access::hermite512Tanh(retiredLinearSeam)
-               && Access::hermite512Tanh(retiredLinearSeam)
-                      <= Access::hermite512Tanh(std::nextafter(
+    expect(Access::zonedHermiteTanh(std::nextafter(retiredLinearSeam, 0.0))
+               <= Access::zonedHermiteTanh(retiredLinearSeam)
+               && Access::zonedHermiteTanh(retiredLinearSeam)
+                      <= Access::zonedHermiteTanh(std::nextafter(
                           retiredLinearSeam,
                           std::numeric_limits<double>::infinity())),
-           "Hermite512 tanh is not monotone at the retired tiny-input seam");
+           "zoned Hermite tanh is not monotone at the retired tiny-input seam");
 
     Cascade exact;
     Cascade approximate;
@@ -355,7 +424,7 @@ void testHermite512TanhKernelAndDispatch()
         approximate.process(input, 1.7f, 4.5f,
                             static_cast<float>(Access::headroom()), true,
                             1.0f, nullptr,
-                            youknow106::VcfTanhMode::Hermite512);
+                            youknow106::VcfTanhMode::ZonedHermite);
         for (std::size_t stage = 0; stage < Access::state(exact).size(); ++stage)
         {
             maximumStateDifference = std::max(
@@ -366,6 +435,212 @@ void testHermite512TanhKernelAndDispatch()
     }
     expect(maximumStateDifference > 0.0,
            "VCF tanh mode selector did not reach the nonlinear solver");
+}
+
+void testCubicEarlyTanhKernelAndDispatch()
+{
+    const double positiveZero = Access::cubicEarlyTanh(0.0);
+    const double negativeZero = Access::cubicEarlyTanh(-0.0);
+    expect(positiveZero == 0.0 && !std::signbit(positiveZero)
+               && negativeZero == 0.0 && std::signbit(negativeZero),
+           "cubic Early tanh does not preserve signed zero");
+
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    expect(std::isnan(Access::cubicEarlyTanh(nan)),
+           "cubic Early tanh does not propagate NaN");
+    expect(Access::cubicEarlyTanh(
+               std::numeric_limits<double>::infinity()) == 1.0
+               && Access::cubicEarlyTanh(
+                   -std::numeric_limits<double>::infinity()) == -1.0,
+           "cubic Early tanh does not saturate infinities");
+
+    constexpr int divisions = 1000000;
+    constexpr double limit = 3.0;
+    double maximumError = 0.0;
+    double previous = 0.0;
+    bool finiteAndBounded = true;
+    bool monotone = true;
+    bool odd = true;
+    for (int point = 0; point <= divisions; ++point)
+    {
+        const double argument = limit * static_cast<double>(point)
+                              / static_cast<double>(divisions);
+        const double actual = Access::cubicEarlyTanh(argument);
+        maximumError = std::max(
+            maximumError, std::abs(actual - std::tanh(argument)));
+        finiteAndBounded = finiteAndBounded
+            && std::isfinite(actual) && actual >= 0.0 && actual <= 1.0;
+        monotone = monotone && actual >= previous;
+        odd = odd && Access::cubicEarlyTanh(-argument) == -actual;
+        previous = actual;
+    }
+    expect(finiteAndBounded && monotone && odd,
+           "cubic Early tanh lost its odd, monotone unit bounds");
+    expect(maximumError <= 0.112848,
+           "cubic Early tanh exceeds its transfer-error bound");
+    const double maximumMultiplierError = maximumError
+        * Access::earlyCoefficient() * Access::calibrationCeiling();
+    expect(maximumMultiplierError <= 0.00113,
+           "cubic Early multiplier exceeds its Character-2 error bound");
+
+    constexpr double nearZero = 1.0e-8;
+    expect(std::abs(Access::cubicEarlyTanh(nearZero) / nearZero - 1.0)
+               <= 1.0e-15,
+           "cubic Early tanh lost unit slope near zero");
+    constexpr double seam = 1.5;
+    constexpr double step = 1.0e-5;
+    const double leftSlope = (Access::cubicEarlyTanh(seam)
+        - Access::cubicEarlyTanh(seam - step)) / step;
+    const double rightSlope = (Access::cubicEarlyTanh(seam + step)
+        - Access::cubicEarlyTanh(seam)) / step;
+    expect(Access::cubicEarlyTanh(seam) == 1.0
+               && std::abs(leftSlope - rightSlope) <= 1.0e-5,
+           "cubic Early tanh is not C1 at saturation");
+
+    const auto render = [](youknow106::VcfTanhMode tanhMode,
+                           youknow106::VcfFastEarlyMode earlyMode,
+                           bool enableEarly, float calibration) {
+        Cascade cascade;
+        cascade.reset();
+        Access::setState(cascade, { 0.6, -0.4, 0.2, -0.1 });
+        for (int sample = 0; sample < 512; ++sample)
+        {
+            const float input = 2.8f
+                * std::sin(0.17f * static_cast<float>(sample));
+            processSelected(
+                cascade, input, 1.7f, 4.5f,
+                static_cast<float>(Access::headroom()), enableEarly,
+                calibration, nullptr, tanhMode, earlyMode);
+        }
+        return Access::state(cascade);
+    };
+    const auto exactHermite = render(
+        youknow106::VcfTanhMode::Exact,
+        youknow106::VcfFastEarlyMode::Hermite, true, 1.0f);
+    const auto exactCubic = render(
+        youknow106::VcfTanhMode::Exact,
+        youknow106::VcfFastEarlyMode::Cubic, true, 1.0f);
+    expect(exactHermite == exactCubic,
+           "Fast Early selector changed the frozen Exact path");
+
+    const auto fastHermite = render(
+        youknow106::VcfTanhMode::ZonedHermite,
+        youknow106::VcfFastEarlyMode::Hermite, true, 1.0f);
+    const auto fastCubic = render(
+        youknow106::VcfTanhMode::ZonedHermite,
+        youknow106::VcfFastEarlyMode::Cubic, true, 1.0f);
+    expect(fastHermite != fastCubic,
+           "Fast Early selector did not reach the Character transfer");
+    expect(render(youknow106::VcfTanhMode::ZonedHermite,
+                  youknow106::VcfFastEarlyMode::Hermite, true, 0.0f)
+               == render(youknow106::VcfTanhMode::ZonedHermite,
+                         youknow106::VcfFastEarlyMode::Cubic, true, 0.0f)
+               && render(youknow106::VcfTanhMode::ZonedHermite,
+                         youknow106::VcfFastEarlyMode::Hermite, false, 1.0f)
+               == render(youknow106::VcfTanhMode::ZonedHermite,
+                         youknow106::VcfFastEarlyMode::Cubic, false, 1.0f),
+           "Fast Early selector changed a bypassed Early path");
+
+    const auto renderMovingBypass = [](youknow106::VcfFastEarlyMode earlyMode,
+                                       bool enableEarly,
+                                       float calibration) {
+        Cascade cascade;
+        cascade.reset();
+        Access::setState(cascade, { 0.6, -0.4, 0.2, -0.1 });
+        std::vector<float> output;
+        output.reserve(2048);
+        for (int sample = 0; sample < 2048; ++sample)
+        {
+            const float phase = static_cast<float>(sample);
+            output.push_back(processSelected(
+                cascade,
+                2.8f * std::sin(0.17f * phase),
+                0.05f + 2.70f * (0.5f + 0.5f * std::sin(0.0031f * phase)),
+                7.8f * (0.5f + 0.5f * std::sin(0.0053f * phase)),
+                0.01f + 0.08f * (0.5f + 0.5f * std::cos(0.0047f * phase)),
+                enableEarly, calibration, nullptr,
+                youknow106::VcfTanhMode::ZonedHermite, earlyMode));
+        }
+        return std::make_pair(output, Access::state(cascade));
+    };
+    for (const auto bypass : {
+             std::pair { false, 2.0f },
+             std::pair { true, 0.0f } })
+    {
+        const auto hermite = renderMovingBypass(
+            youknow106::VcfFastEarlyMode::Hermite,
+            bypass.first, bypass.second);
+        const auto cubic = renderMovingBypass(
+            youknow106::VcfFastEarlyMode::Cubic,
+            bypass.first, bypass.second);
+        expect(hermite == cubic,
+               "cubic integrator changed a moving-control Early bypass");
+    }
+
+    std::cout << "Cubic Early tanh maximum transfer error: "
+              << maximumError << ", Character-2 multiplier error: "
+              << maximumMultiplierError << '\n';
+}
+
+void testFastReciprocalNormalizationBound()
+{
+    std::vector<double> headrooms {
+        1.0e-5,
+        Access::headroom(),
+        Access::feedbackHeadroom()
+    };
+    for (int card = 0; card < 6; ++card)
+        for (double warmup : { 0.0, 1.0 })
+            headrooms.push_back(
+                Access::maximumCharacterHeadroom(card, warmup));
+    std::sort(headrooms.begin(), headrooms.end());
+    headrooms.erase(std::unique(headrooms.begin(), headrooms.end()),
+                    headrooms.end());
+
+    std::vector<double> boundaries;
+    for (int node = 0; node <= 160; ++node)
+        boundaries.push_back(static_cast<double>(node) / 32.0);
+    for (int node = 1; node <= 56; ++node)
+        boundaries.push_back(5.0 + static_cast<double>(node) / 4.0);
+
+    double maximumArgumentDelta = 0.0;
+    double maximumTransferDelta = 0.0;
+    bool tightlyBounded = true;
+    for (const double headroom : headrooms)
+        for (const double boundary : boundaries)
+            for (const double sign : { -1.0, 1.0 })
+            {
+                const double centre = sign * boundary * headroom;
+                for (const double input : {
+                         std::nextafter(centre,
+                                        -std::numeric_limits<double>::infinity()),
+                         centre,
+                         std::nextafter(centre,
+                                        std::numeric_limits<double>::infinity()) })
+                {
+                    const double divided = input / headroom;
+                    const double reciprocal = input * (1.0 / headroom);
+                    const double argumentDelta = std::abs(divided - reciprocal);
+                    const double transferDelta = std::abs(
+                        Access::zonedHermiteTanh(divided)
+                        - Access::zonedHermiteTanh(reciprocal));
+                    maximumArgumentDelta = std::max(
+                        maximumArgumentDelta, argumentDelta);
+                    maximumTransferDelta = std::max(
+                        maximumTransferDelta, transferDelta);
+                    tightlyBounded = tightlyBounded
+                        && argumentDelta <= 8.0
+                            * std::numeric_limits<double>::epsilon()
+                            * std::max(1.0, std::abs(divided))
+                        && transferDelta <= 4.0
+                            * std::numeric_limits<double>::epsilon();
+                }
+            }
+    expect(tightlyBounded,
+           "Fast reciprocal normalization exceeds its binary64 rounding bound");
+    std::cout << "Fast reciprocal normalization boundary maximums: argument "
+              << maximumArgumentDelta << ", transfer "
+              << maximumTransferDelta << '\n';
 }
 
 template <typename Function>
@@ -881,7 +1156,9 @@ void testProductGridOmegaCapAndThermalContainment()
 }
 
 void testHighGStabilityAndRecovery(youknow106::VcfTanhMode tanhMode,
-                                   const char* modeName)
+                                   const char* modeName,
+                                   youknow106::VcfFastEarlyMode earlyMode =
+                                       youknow106::VcfFastEarlyMode::Hermite)
 {
     const float maximumReachableOmega =
         static_cast<float>(Access::maximumOmegaStep());
@@ -908,11 +1185,11 @@ void testHighGStabilityAndRecovery(youknow106::VcfTanhMode tanhMode,
                     -std::numeric_limits<double>::infinity();
                 for (int sample = 0; sample < 24000; ++sample)
                 {
-                    const double output = belowThreshold.process(
-                        0.0f, maximumReachableOmega, feedback,
-                        cardHeadroom, true,
+                    const double output = processSelected(
+                        belowThreshold, 0.0f, maximumReachableOmega,
+                        feedback, cardHeadroom, true,
                         static_cast<float>(Access::calibrationCeiling()),
-                        nullptr, tanhMode);
+                        nullptr, tanhMode, earlyMode);
                     if (sample >= 22000)
                     {
                         tailMinimum = std::min(tailMinimum, output);
@@ -948,9 +1225,10 @@ void testHighGStabilityAndRecovery(youknow106::VcfTanhMode tanhMode,
         }[static_cast<std::size_t>(sample) % 3u];
         const float input = 3.0f
             * std::sin(0.31f * static_cast<float>(sample));
-        const double output = hostile.process(
-            input, omega, feedback, static_cast<float>(Access::headroom()),
-            true, 0.70f, nullptr, tanhMode);
+        const double output = processSelected(
+            hostile, input, omega, feedback,
+            static_cast<float>(Access::headroom()), true, 0.70f, nullptr,
+            tanhMode, earlyMode);
         peak = std::max(peak, std::abs(output));
         expect(std::isfinite(output),
                std::string("Merson emitted a non-finite hostile-control sample in ")
@@ -962,30 +1240,43 @@ void testHighGStabilityAndRecovery(youknow106::VcfTanhMode tanhMode,
 
     Cascade sanitised;
     sanitised.reset();
-    const float nonFinite = sanitised.process(
-        std::numeric_limits<float>::quiet_NaN(),
+    const float nonFinite = processSelected(
+        sanitised, std::numeric_limits<float>::quiet_NaN(),
         std::numeric_limits<float>::infinity(),
         std::numeric_limits<float>::quiet_NaN(),
         std::numeric_limits<float>::quiet_NaN(), true, 0.70f,
-        nullptr, tanhMode);
+        nullptr, tanhMode, earlyMode);
     expect(std::isfinite(nonFinite),
            std::string("Merson does not sanitise non-finite input and controls in ")
                + modeName + " tanh mode");
-    Access::setState(sanitised, { 128.0, 0.0, 0.0, 0.0 });
-    const float recovered = sanitised.process(
-        0.0f, 1.0f, 0.0f, static_cast<float>(Access::headroom()),
-        true, 0.70f, nullptr, tanhMode);
-    expect(recovered == 0.0f,
-           std::string("Merson does not recover an impossible capacitor state in ")
-               + modeName + " tanh mode");
-    expect(std::all_of(Access::state(sanitised).begin(),
-                       Access::state(sanitised).end(),
-                       [](double state) { return state == 0.0; }),
-           std::string("Merson recovery did not clear the whole coupled cascade in ")
-               + modeName + " tanh mode");
+    for (double poisonedState : {
+             128.0,
+             std::numeric_limits<double>::quiet_NaN(),
+             std::numeric_limits<double>::infinity(),
+             -std::numeric_limits<double>::infinity() })
+    {
+        Cascade recovering;
+        recovering.reset();
+        Access::setState(recovering, { poisonedState, 0.0, 0.0, 0.0 });
+        const float recovered = processSelected(
+            recovering, 0.0f, 1.0f, 0.0f,
+            static_cast<float>(Access::headroom()), true, 0.70f, nullptr,
+            tanhMode, earlyMode);
+        expect(recovered == 0.0f,
+               std::string("Merson does not recover an impossible capacitor state in ")
+                   + modeName + " tanh mode");
+        expect(std::all_of(Access::state(recovering).begin(),
+                           Access::state(recovering).end(),
+                           [](double state) { return state == 0.0; }),
+               std::string("Merson recovery did not clear the whole coupled cascade in ")
+                   + modeName + " tanh mode");
+    }
 }
 
-void testCalibrationAndTrajectoryNonFiniteGuards()
+void testCalibrationAndTrajectoryNonFiniteGuards(
+    youknow106::VcfTanhMode tanhMode,
+    youknow106::VcfFastEarlyMode earlyMode =
+        youknow106::VcfFastEarlyMode::Hermite)
 {
     // `OtaCascade::process`'s scalar `calibration` argument falls back to
     // 0.0 -- disabling the early-effect term exactly as an explicit 0.0f
@@ -1003,8 +1294,9 @@ void testCalibrationAndTrajectoryNonFiniteGuards()
         Cascade cascade;
         cascade.reset();
         Access::setState(cascade, seedState);
-        const float output = cascade.process(
-            input, omega, feedback, headroomVolts, true, calibration);
+        const float output = processSelected(
+            cascade, input, omega, feedback, headroomVolts, true,
+            calibration, nullptr, tanhMode, earlyMode);
         return std::make_pair(output, Access::state(cascade));
     };
 
@@ -1019,6 +1311,30 @@ void testCalibrationAndTrajectoryNonFiniteGuards()
                    && actual.second == calibrationFallback.second,
                "OtaCascade::process's non-finite calibration guard no "
                "longer matches its documented 0.0 fallback");
+    }
+
+    const auto renderWithHeadroom = [&](float headroom) {
+        Cascade cascade;
+        cascade.reset();
+        Access::setState(cascade, seedState);
+        const float output = processSelected(
+            cascade, input, omega, feedback, headroom, true, 0.70f,
+            nullptr, tanhMode, earlyMode);
+        return std::make_pair(output, Access::state(cascade));
+    };
+    const auto scalarHeadroomFallback = renderWithHeadroom(1.0e-5f);
+    for (float poisoned : {
+             0.0f,
+             -1.0f,
+             std::numeric_limits<float>::quiet_NaN(),
+             std::numeric_limits<float>::infinity(),
+             -std::numeric_limits<float>::infinity() })
+    {
+        const auto actual = renderWithHeadroom(poisoned);
+        expect(actual.first == scalarHeadroomFallback.first
+                   && actual.second == scalarHeadroomFallback.second,
+               "OtaCascade::process's scalar headroom guard no longer "
+               "matches its documented 1e-5 fallback");
     }
 
     // The explicit control trajectory used for VCF hold events feeds every
@@ -1043,9 +1359,9 @@ void testCalibrationAndTrajectoryNonFiniteGuards()
             Cascade cascade;
             cascade.reset();
             Access::setState(cascade, seedState);
-            const float output = cascade.process(
-                input, omega, feedback, headroomVolts, true, 0.70f,
-                &trajectory);
+            const float output = processSelected(
+                cascade, input, omega, feedback, headroomVolts, true,
+                0.70f, &trajectory, tanhMode, earlyMode);
             return std::make_pair(output, Access::state(cascade));
         };
 
@@ -1157,7 +1473,9 @@ int main()
     expect(Access::integrationSubsteps() == 2
                && Access::rhsEvaluationsPerInterval() == 10,
            "production VCF work is no longer fixed Merson x2 / 10 RHS");
-    testHermite512TanhKernelAndDispatch();
+    testZonedHermiteTanhKernelAndDispatch();
+    testCubicEarlyTanhKernelAndDispatch();
+    testFastReciprocalNormalizationBound();
     testCausalCubicContracts();
     testExactFractionalVcfHoldTrajectory();
     testExplicitControlTrajectoryVisitsEveryMersonNode();
@@ -1168,8 +1486,17 @@ int main()
     testHighGStabilityAndRecovery(
         youknow106::VcfTanhMode::Exact, "exact");
     testHighGStabilityAndRecovery(
-        youknow106::VcfTanhMode::Hermite512, "Hermite512");
-    testCalibrationAndTrajectoryNonFiniteGuards();
+        youknow106::VcfTanhMode::ZonedHermite, "zoned Hermite");
+    testHighGStabilityAndRecovery(
+        youknow106::VcfTanhMode::ZonedHermite, "zoned Hermite/cubic Early",
+        youknow106::VcfFastEarlyMode::Cubic);
+    testCalibrationAndTrajectoryNonFiniteGuards(
+        youknow106::VcfTanhMode::Exact);
+    testCalibrationAndTrajectoryNonFiniteGuards(
+        youknow106::VcfTanhMode::ZonedHermite);
+    testCalibrationAndTrajectoryNonFiniteGuards(
+        youknow106::VcfTanhMode::ZonedHermite,
+        youknow106::VcfFastEarlyMode::Cubic);
     testRetimePreservesPhysicalState();
 
     if (failures != 0)

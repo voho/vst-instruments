@@ -384,7 +384,7 @@ six-voice resonant fixture, a 2,048-host-frame window at 48 kHz gives:
 | Converter pass starts / writes | 10 / 234 | 10 / 233 | model's anchored nominal 4.2 ms pass, one numerical-window boundary write apart |
 | DCO cycle wraps / BBD shifts | 61 / 3,162 | 61 / 3,162 | oscillator and asynchronous BBD-clock events track elapsed time |
 | Past + future BLEP correction visits | 12,648 | 12,651 | edge/event driven, not four times larger at 4× |
-| Half-band calls / stereo nonzero-tap MACs | 6,144 / 602,112 | 0 / 0 | three decimations and 294 stereo MACs per 4× host frame |
+| Half-band calls / stereo nonzero-tap MACs | 6,144 / 307,200 | 0 / 0 | three decimations and 150 stereo MACs per 4× host frame |
 
 The support counter algebra is also fenced across every shipping 4×/2×/1×
 case. A two-line 2× window has 8,192 exact input and 8,192 exact output
@@ -394,9 +394,10 @@ low-rate 1× window instead has 4,096 legacy input frames and 4,096 exact output
 advances, 24,576 coordinate updates and 245,760 MACs. These are semantic
 operation counts, not cycle weights.
 
-The 95-tap half-band has 49 exact nonzero coefficients, so each decimator call
-performs 49 coefficient visits and 98 stereo MACs. The same regression covers
-96 kHz 2×/1× and 192 kHz 1×: one 2× decimator call and 98 stereo nonzero-tap
+The 95-tap half-band has 49 exact nonzero coefficients. Pairing its 24
+bit-equal mirrored coefficient pairs plus the centre means each decimator call
+performs 49 coefficient visits and 50 stereo MACs. The same regression covers
+96 kHz 2×/1× and 192 kHz 1×: one 2× decimator call and 50 stereo nonzero-tap
 MACs per host frame, none at 1×. It also proves the fixed Merson algebra above,
 the exact fractional-event counts across every shipping selector case, the
 expected 23-write boundary tolerance and raw-float identity between normal and
@@ -405,6 +406,146 @@ RES/VCF events to all 160 passive events in both the shown 4× and 1× windows;
 the 120 VCF affected intervals and every fixed VCF/BBD count remain unchanged.
 Shipping-target preprocessing plus symbol/string scans contain no audit
 instrumentation.
+
+### Current single-note versus chord profile (2026-08-23)
+
+This profile measures the accepted optimized engine rather than treating
+operation counts as cycle weights. The fixture is the JUCE-free native arm64
+`-O3`/ThinLTO engine on an Apple M1 Max under macOS 26.5.1, at a 48 kHz host
+rate, 4× internal quality, 256-frame blocks, Unit Character 1 and
+`VCF Tanh=Fast` (`ZonedHermite`). Every process received a two-second DSP
+preroll. The fixed note set is MIDI 36 for the single-note case and
+36/48/55/60/64/67 for the chord. These are engine-thread measurements, not
+DAW, plug-in-wrapper or UI cost, and they do not claim to represent every
+preset.
+
+The first admission cohort alternated frozen pre-BBD-table and post-BBD-table
+binaries independently for each rotated scenario over 15 repetitions; each
+measured window contained 256 blocks, or 1.365333 seconds of audio.
+
+| Scenario | Post-BBD CPU / audio | BBD-table saving | Paired wins |
+| --- | ---: | ---: | ---: |
+| One note, plain | **0.396354×** | **0.882118%** | 14/15 |
+| Six-note chord, plain | **0.391067×** | **0.690903%** | 12/15 |
+| One note, resonant | **0.396256×** | **0.639879%** | 14/15 |
+| Six-note chord, resonant | **0.391989×** | **0.604493%** | 13/15 |
+
+Across all 60 pairs, the BBD table saves **0.696225%** median thread CPU
+with **0.267472 percentage-point MAD** and 53/60 wins. Baseline-first and
+candidate-first medians agree at 0.746282% and 0.691932%; the median of each
+repetition's four scenario results is 0.717546% with 0.100710 pp MAD and
+14/15 wins. All eight per-binary scenario fingerprints are stable 15/15, and
+the dry baseline/candidate fingerprints match because Chorus Off mutes the
+continuously advancing wet return.
+
+A final matched-build cohort measured five sound-identical specializations
+together against the checkpoint before this profile-driven pass:
+
+- Fast validates its four bounded VCF states once before integration instead
+  of repeating the same recovery predicate in all 90 nonlinear evaluations per
+  card interval. Four up-front comparisons replace 90 checks, removing 99.072
+  million comparisons/s at 48 kHz/4× across the six powered cards.
+- The private Fast table evaluator relies on that production invariant and no
+  longer repeats the public helper's subnormal bypass in each of those 90
+  evaluations. The checked public entry point retains signed-subnormal and NaN
+  behavior; a 20,000,155-value signed-subnormal scan matched it bit for bit.
+- The four-double Merson derivative state is passed by value. On arm64 it is a
+  homogeneous floating-point aggregate carried in `d0`–`d3`, shrinking the
+  Fast Merson shell by 45 instructions and the linked text by 432 bytes while
+  avoiding roughly 40 state loads and 31 shell stores per interval.
+- Ordinary no-event VCA/sub/voice-VCA holds use their exact one-pole recurrence
+  directly. Only 1,904.762 of 3.456 million relevant calls/s carry an event, so
+  99.944885% take this exact specialization; the event path and checked helper
+  retain every original guard.
+- The chorus exact-support advance trusts the finite, bounded states already
+  established at both production ownership boundaries instead of sanitizing
+  all four again. Its final six-state recovery guard remains. The helper falls
+  from 117 to 80 arm64 instructions.
+
+Both binaries used the same compiler, flags and sources apart from those five
+changes. Fifteen rotated repetitions covered six scenarios and alternated
+executable order; each timed window contained 128 blocks, or 0.682667 seconds
+of audio.
+
+| Scenario | Final CPU / audio | Combined saving | Paired wins |
+| --- | ---: | ---: | ---: |
+| One note, plain | **0.363275×** | **8.947021%** | 15/15 |
+| Six-note chord, plain | **0.356117×** | **9.313515%** | 15/15 |
+| One note, resonant | **0.361359×** | **9.178389%** | 15/15 |
+| Six-note chord, resonant | **0.355058×** | **9.273539%** | 15/15 |
+| Six-note full mixer, Chorus II | **0.360305×** | **9.334592%** | 15/15 |
+| Six-note high-output stress | **0.370143×** | **9.040709%** | 15/15 |
+
+Across all 90 pairs, the combined reduction is **9.188726%** median thread
+CPU with **0.422565 pp MAD**, 90/90 wins and no fingerprint mismatch.
+Baseline-first and candidate-first medians agree at 9.169175% and 9.217106%.
+The median of each repetition's six results is 9.089566% with 0.131974 pp MAD
+and 15/15 wins. The final executable adds 564 bytes of text relative to the
+checkpoint. Isolated medians were 1.048168%, 1.125603%, 2.028914%, 4.935256%
+and 0.350987%; those attribution cohorts are not added to predict the measured
+combined result.
+
+An independent seven-repetition selector audit on the rebuilt final source,
+reproducible with `YouKnow106OversamplingAudit --tanh-benchmark`, gives the
+following absolute thread-CPU ratios. `Cubic Early` is an audition candidate,
+not the accepted Fast default.
+
+| Scenario | Exact `std::tanh` | Fast ZonedHermite | Fast + Cubic Early |
+| --- | ---: | ---: | ---: |
+| One note, plain | 0.602× | 0.361× | 0.339× |
+| Six-note chord, plain | 0.609× | 0.363× | 0.343× |
+| One note, resonant | 0.753× | 0.360× | 0.339× |
+| Six-note chord, resonant | 0.768× | 0.358× | 0.341× |
+
+Fresh final-build `/usr/bin/sample` captures ran each accepted-Fast scenario
+alone for six seconds at a requested 1 ms interval and yielded 4,939–5,007
+on-CPU samples. The categories below are exclusive top-of-stack counts; the
+omitted small leaves account for the unlisted remainder. A single capture is a
+hotspot estimate, so differences near one percentage point between scenarios
+should not be interpreted as a workload shift.
+
+| Scenario | VCF nonlinear derivative | `renderVoice` remainder, including VCF shell | Process glue | Voice-control update | Chorus subtotal |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| One note, plain | 59.256% | 25.688% | 5.910% | 4.161% | 3.558% |
+| Six-note chord, plain | 60.032% | 26.989% | 6.155% | 2.389% | 3.624% |
+| One note, resonant | 58.322% | 26.977% | 6.350% | 3.822% | 3.114% |
+| Six-note chord, resonant | 60.455% | 26.783% | 5.313% | 2.536% | 3.855% |
+
+The second column is the separately symbolized nonlinear derivative. The third
+is the flat count assigned to the outer `renderVoice` body, not a measurement
+of non-VCF oscillator/mixer work. Passing the four-double derivative state by
+value makes arm64 carry it in `d0`–`d3`; Merson candidate construction and
+combination remain in the inlined caller. Current-binary disassembly locates
+the ten derivative calls and attributes only the unambiguous regions between
+the first nine returns: they add 9.588%/10.650%/10.111%/10.405% in table order.
+The conservative derivative-plus-Merson VCF numerical-core lower bounds are
+therefore **68.844%**, **70.682%**, **68.433%** and **70.861%**. The region
+after the tenth call mixes final filter work with coupling/VCA code and is
+deliberately excluded. Conversely, derivative plus all of `renderVoice` is
+only an 84.945–87.238% upper bound because that body also contains the DCO,
+mixer and VCA; neither figure is presented as exact total VCF cost.
+
+The one-note/chord conclusion is structural as well as statistical. The work
+contract counts 49,152 DCO, voice-audio and VCF steps for 8,192 internal
+frames in either case: all six physical cards remain powered and advance even
+when five VCAs are closed. In the final matched medians, six notes are **1.970%
+cheaper** for plain and **1.744% cheaper** for resonant, not materially dearer.
+In the independent selector audit, moving from one note to six changes every
+accepted Fast or Exact ratio by at most 0.007×. That residual is
+branch/control/data
+behavior, not voice-count scaling. Skipping silent physical cards would
+therefore change future oscillator/filter state rather than supply a
+sound-identical polyphony optimization.
+
+The profile also keeps further work proportional. No `tanh` leaf exists in
+this Fast build because the zoned kernel is inlined. Every individual remaining
+libm leaf is below 0.33% in the four final captures.
+Precomputing seven fixed VCF node decays nevertheless removed 36,666.7 double
+`exp` calls/s exactly and still made the engine **0.198951% slower** over 75
+corrected pairs, with every scenario median negative. A double-precision
+thermal recurrence was numerically negligible but saved only 0.087097%
+against 0.271421 pp MAD. Both candidates are rejected: measured whole-engine
+cost, not a transcendental call count, decides admission.
 
 This is work attribution, not a selective-rate admission. Counters with
 different semantics are not cycle weights; the whole-engine 4×/1× ratios do

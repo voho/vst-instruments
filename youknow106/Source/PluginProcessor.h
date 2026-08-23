@@ -187,6 +187,7 @@ public:
     static constexpr int qualityChoiceCount = static_cast<int> (
         youknow106::YouKnow106Engine::oversampleFactors.size());
     static constexpr int vcfTanhChoiceCount = 2;
+    static constexpr int vcfFastEarlyChoiceCount = 2;
     static constexpr int oversamplingFactorForChoice (int choice) noexcept
     {
         return youknow106::YouKnow106Engine::oversampleFactors[
@@ -327,6 +328,7 @@ private:
         legacyHq,
         quality,
         vcfTanhMode,
+        vcfFastEarlyMode,
         count
     };
     static constexpr std::size_t parameterPointerCount =

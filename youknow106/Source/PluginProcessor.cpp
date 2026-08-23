@@ -13,7 +13,7 @@ namespace
 using namespace youknow106;
 
 constexpr auto stateSchemaVersionProperty = "stateSchemaVersion";
-constexpr int currentStateSchemaVersion = 4;
+constexpr int currentStateSchemaVersion = 5;
 constexpr int calibrationDefaultSchemaVersion = 1;
 constexpr int originalFactoryBankSchemaVersion = 3;
 constexpr float legacyCalibrationDefault = 0.35f;
@@ -589,7 +589,12 @@ YouKnow106AudioProcessor::createParameterLayout()
     // published ordinals stable: session state stores the choice index.
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { vcfTanhMode, 4 }, "VCF Tanh",
-        juce::StringArray { "Exact", "Fast (Hermite 512)" }, 0,
+        juce::StringArray { "Exact", "Fast" }, 0,
+        juce::AudioParameterChoiceAttributes().withAutomatable (false)));
+
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { vcfFastEarlyMode, 5 }, "VCF Fast Early",
+        juce::StringArray { "Hermite", "Cubic" }, 0,
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
     return layout;
@@ -646,7 +651,8 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
         { ParameterIndex::chorusII, chorusII },
         { ParameterIndex::legacyHq, legacyHq },
         { ParameterIndex::quality, quality },
-        { ParameterIndex::vcfTanhMode, vcfTanhMode }
+        { ParameterIndex::vcfTanhMode, vcfTanhMode },
+        { ParameterIndex::vcfFastEarlyMode, vcfFastEarlyMode }
     });
 
     static_assert (bindings.size() == parameterPointerCount);
@@ -926,6 +932,8 @@ bool YouKnow106AudioProcessor::updateEngineParameters() noexcept
     engineParameters.polyphony = juce::roundToInt (valueOf (P::polyphony));
     engineParameters.vcfTanhMode = static_cast<VcfTanhMode> (
         choiceOf (P::vcfTanhMode, vcfTanhChoiceCount - 1));
+    engineParameters.vcfFastEarlyMode = static_cast<VcfFastEarlyMode> (
+        choiceOf (P::vcfFastEarlyMode, vcfFastEarlyChoiceCount - 1));
 
     // If a recall began while these atomics were being gathered, keep the
     // previous engine snapshot for this block. The next one will see the whole

@@ -40,6 +40,7 @@ using youknow106::ChorusMode;
 using youknow106::EngineParameters;
 using youknow106::HighPassMode;
 using youknow106::YouKnow106Engine;
+using youknow106::VcfFastEarlyMode;
 using youknow106::VcfTanhMode;
 using youknow106::oversampling_audit::DomainWorkCounters;
 
@@ -56,7 +57,9 @@ constexpr std::array<int, 6> chordNotes { 36, 48, 55, 60, 64, 67 };
 enum class ScenarioKind
 {
     IdleDry,
+    SingleVoicePlainDry,
     SixVoicePlainDry,
+    SingleVoiceResonantDry,
     SixVoiceResonantDry,
     SixVoiceFullMixerChorusTwo
 };
@@ -65,23 +68,39 @@ struct Scenario
 {
     ScenarioKind kind;
     std::string_view name;
-    bool holdChord;
+    int heldNotes;
 };
 
 constexpr std::array scenarios {
-    Scenario { ScenarioKind::IdleDry, "idle-dry", false },
-    Scenario { ScenarioKind::SixVoicePlainDry, "six-voice-plain-dry", true },
+    Scenario { ScenarioKind::IdleDry, "idle-dry", 0 },
+    Scenario { ScenarioKind::SixVoicePlainDry, "six-voice-plain-dry", 6 },
     Scenario { ScenarioKind::SixVoiceResonantDry,
-               "six-voice-resonant-dry", true },
+               "six-voice-resonant-dry", 6 },
     Scenario { ScenarioKind::SixVoiceFullMixerChorusTwo,
-               "six-voice-full-mixer-chorus-ii", true },
+               "six-voice-full-mixer-chorus-ii", 6 },
+};
+
+constexpr std::array tanhScenarios {
+    Scenario { ScenarioKind::IdleDry, "idle-dry", 0 },
+    Scenario { ScenarioKind::SingleVoicePlainDry,
+               "single-voice-plain-dry", 1 },
+    Scenario { ScenarioKind::SixVoicePlainDry, "six-voice-plain-dry", 6 },
+    Scenario { ScenarioKind::SingleVoiceResonantDry,
+               "single-voice-resonant-dry", 1 },
+    Scenario { ScenarioKind::SixVoiceResonantDry,
+               "six-voice-resonant-dry", 6 },
+    Scenario { ScenarioKind::SixVoiceFullMixerChorusTwo,
+               "six-voice-full-mixer-chorus-ii", 6 },
 };
 
 EngineParameters parametersFor(ScenarioKind kind,
-                               VcfTanhMode tanhMode = VcfTanhMode::Exact)
+                               VcfTanhMode tanhMode = VcfTanhMode::Exact,
+                               VcfFastEarlyMode fastEarlyMode =
+                                   VcfFastEarlyMode::Hermite)
 {
     EngineParameters parameters;
     parameters.vcfTanhMode = tanhMode;
+    parameters.vcfFastEarlyMode = fastEarlyMode;
     // Match the engine suite's long-lived plainPatch fixture, except that the
     // audit exercises the shipped Unit Character setting rather than its
     // deliberately pristine Character-zero reference.
@@ -109,11 +128,13 @@ EngineParameters parametersFor(ScenarioKind kind,
             parameters.resonance = 0.10f;
             parameters.chorus = ChorusMode::Off;
             break;
+        case ScenarioKind::SingleVoicePlainDry:
         case ScenarioKind::SixVoicePlainDry:
             parameters.cutoff = 0.62f;
             parameters.resonance = 0.10f;
             parameters.chorus = ChorusMode::Off;
             break;
+        case ScenarioKind::SingleVoiceResonantDry:
         case ScenarioKind::SixVoiceResonantDry:
             parameters.cutoff = 0.62f;
             parameters.resonance = 0.95f;
@@ -174,15 +195,18 @@ struct PreparedSnapshot
 
 PreparedSnapshot prepareSnapshot(const Scenario& scenario, int sampleRate,
                                  int requestedFactor,
-                                 VcfTanhMode tanhMode = VcfTanhMode::Exact)
+                                 VcfTanhMode tanhMode = VcfTanhMode::Exact,
+                                 VcfFastEarlyMode fastEarlyMode =
+                                     VcfFastEarlyMode::Hermite)
 {
     PreparedSnapshot snapshot;
     snapshot.engine.prepare(static_cast<double>(sampleRate), blockSize,
                             requestedFactor);
-    snapshot.engine.setParameters(parametersFor(scenario.kind, tanhMode));
-    if (scenario.holdChord)
-        for (const int note : chordNotes)
-            snapshot.engine.noteOn(note, 1.0f);
+    snapshot.engine.setParameters(parametersFor(
+        scenario.kind, tanhMode, fastEarlyMode));
+    for (int note = 0; note < scenario.heldNotes; ++note)
+        snapshot.engine.noteOn(chordNotes[static_cast<std::size_t>(note)],
+                               1.0f);
 
     const int preRollFrames = sampleRate * preRollSeconds;
     renderBlocks(snapshot.engine, preRollFrames / blockSize);
@@ -195,8 +219,8 @@ PreparedSnapshot prepareSnapshot(const Scenario& scenario, int sampleRate,
     }
 
     snapshot.factor = snapshot.engine.getOversamplingFactor();
-    if (scenario.holdChord && snapshot.engine.getActiveVoiceCount() != 6)
-        throw std::runtime_error("six-voice audit chord was not fully assigned");
+    if (snapshot.engine.getActiveVoiceCount() != scenario.heldNotes)
+        throw std::runtime_error("audit notes were not fully assigned");
     return snapshot;
 }
 
@@ -529,19 +553,35 @@ int printFingerprints()
               << " hash=fnv1a64-raw-interleaved-f32\n";
     std::cout << "schema tanh_timing scenario mode fingerprint median_cpu_ms"
                  " min_cpu_ms mad_cpu_ms median_cpu_x_realtime\n";
-    std::cout << "schema tanh_speedup scenario exact_over_fast median min mad\n";
+    std::cout << "schema tanh_speedup scenario baseline_over_candidate"
+                 " median min mad\n";
 
-    constexpr std::array modes { VcfTanhMode::Exact,
-                                 VcfTanhMode::Hermite512 };
-    constexpr std::array<std::string_view, modes.size()> modeNames {
-        "exact", "hermite512"
+    struct KernelMode
+    {
+        VcfTanhMode tanh;
+        VcfFastEarlyMode early;
+        std::string_view name;
+    };
+    constexpr std::array modes {
+        KernelMode { VcfTanhMode::Exact, VcfFastEarlyMode::Hermite,
+                     "exact" },
+        KernelMode { VcfTanhMode::ZonedHermite,
+                     VcfFastEarlyMode::Hermite,
+                     "zoned-hermite-reciprocal" },
+        KernelMode { VcfTanhMode::ZonedHermite,
+                     VcfFastEarlyMode::Cubic,
+                     "zoned-hermite-reciprocal-cubic-early" }
     };
 
-    for (const auto& scenario : scenarios)
+    for (const auto& scenario : tanhScenarios)
     {
         std::array<PreparedSnapshot, modes.size()> snapshots {
-            prepareSnapshot(scenario, 48000, 4, modes[0]),
-            prepareSnapshot(scenario, 48000, 4, modes[1])
+            prepareSnapshot(scenario, 48000, 4,
+                            modes[0].tanh, modes[0].early),
+            prepareSnapshot(scenario, 48000, 4,
+                            modes[1].tanh, modes[1].early),
+            prepareSnapshot(scenario, 48000, 4,
+                            modes[2].tanh, modes[2].early)
         };
         for (const auto& snapshot : snapshots)
             if (snapshot.factor != 4)
@@ -550,8 +590,10 @@ int printFingerprints()
 
         std::array<std::vector<double>, modes.size()> times;
         std::array<std::vector<std::uint64_t>, modes.size()> hashes;
-        std::vector<double> speedups;
-        speedups.reserve(timingRepetitions);
+        std::vector<double> exactOverFast;
+        std::vector<double> fastOverCubicEarly;
+        exactOverFast.reserve(timingRepetitions);
+        fastOverCubicEarly.reserve(timingRepetitions);
         for (auto& values : times)
             values.reserve(timingRepetitions);
         for (auto& values : hashes)
@@ -571,16 +613,19 @@ int printFingerprints()
                 times[mode].push_back(runs[mode].cpuSeconds);
                 hashes[mode].push_back(runs[mode].fingerprint);
             }
-            speedups.push_back(runs[0].cpuSeconds
-                               / std::max(runs[1].cpuSeconds, 1.0e-12));
+            exactOverFast.push_back(runs[0].cpuSeconds
+                                    / std::max(runs[1].cpuSeconds, 1.0e-12));
+            fastOverCubicEarly.push_back(
+                runs[1].cpuSeconds
+                / std::max(runs[2].cpuSeconds, 1.0e-12));
         }
 
         for (std::size_t mode = 0; mode < modes.size(); ++mode)
         {
-            requireStableHash(hashes[mode], scenario.name, modeNames[mode]);
+            requireStableHash(hashes[mode], scenario.name, modes[mode].name);
             const auto summary = summarize(times[mode]);
             std::cout << "tanh_timing " << scenario.name << " "
-                      << modeNames[mode] << " "
+                      << modes[mode].name << " "
                       << hexHash(hashes[mode].front()) << " " << std::fixed
                       << std::setprecision(3)
                       << summary.median * 1000.0 << " "
@@ -588,11 +633,17 @@ int printFingerprints()
                       << summary.mad * 1000.0 << " "
                       << summary.median / renderedSeconds << "\n";
         }
-        const auto speedup = summarize(speedups);
+        const auto exactSpeedup = summarize(exactOverFast);
         std::cout << "tanh_speedup " << scenario.name
-                  << " exact-over-hermite512 " << std::fixed
-                  << std::setprecision(3) << speedup.median << " "
-                  << speedup.minimum << " " << speedup.mad << "\n";
+                  << " exact-over-zoned-hermite-reciprocal " << std::fixed
+                  << std::setprecision(3) << exactSpeedup.median << " "
+                  << exactSpeedup.minimum << " " << exactSpeedup.mad << "\n";
+        const auto earlySpeedup = summarize(fastOverCubicEarly);
+        std::cout << "tanh_speedup " << scenario.name
+                  << " zoned-hermite-reciprocal-over-cubic-early "
+                  << std::fixed << std::setprecision(3)
+                  << earlySpeedup.median << " " << earlySpeedup.minimum
+                  << " " << earlySpeedup.mad << "\n";
     }
     return 0;
 }
@@ -802,7 +853,7 @@ void validateCounterAlgebra(const CounterCase& testCase,
     expectEqual(errors, testCase.name, "decimatorNonzeroTapVisits",
                 counters.decimatorNonzeroTapVisits, 49u * decimatorCalls);
     expectEqual(errors, testCase.name, "decimatorStereoMacs",
-                counters.decimatorStereoMacs, 98u * decimatorCalls);
+                counters.decimatorStereoMacs, 50u * decimatorCalls);
 
     expectEqual(errors, testCase.name, "cutoff memo partition",
                 counters.cutoffMemoHits + counters.cutoffMemoMisses,

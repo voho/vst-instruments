@@ -22,7 +22,8 @@ enum class HighPassMode { Boost, One, Two, Three };
 enum class EnvPolarity { Normal, Inverted };
 enum class VcaMode { Envelope, Gate };
 enum class KeyMode { Poly1, Poly2, Unison };
-enum class VcfTanhMode { Exact = 0, Hermite512 = 1 };
+enum class VcfTanhMode { Exact = 0, ZonedHermite = 1 };
+enum class VcfFastEarlyMode { Hermite = 0, Cubic = 1 };
 
 // The assign mode latched by the two momentary POLY buttons. A single press
 // selects that mode; pressing both selects Solo Unison. Firmware never leaves
@@ -139,7 +140,7 @@ struct EngineParameters
     float chorusNoise { 1.0f };    // 1.0 is the modelled BBD noise floor.
     int polyphony { 6 };           // 6 is the hardware voice count.
     // Numerical kernel only: Exact preserves the established sound and state;
-    // Hermite512 trades a bounded interpolation error for lower VCF CPU use.
+    // ZonedHermite trades a bounded interpolation error for lower VCF CPU use.
     VcfTanhMode vcfTanhMode { VcfTanhMode::Exact };
 
     // --- Optional physical-circuit mechanisms --------------------------------
@@ -185,6 +186,9 @@ struct EngineParameters
     // (+3.5 dB). Voiced, single-unit lineage, qualitative pattern only;
     // OQ-10's population data owns any promotion.
     float aging { 0.0f };
+    // Ignored by Exact. The opt-in cubic replaces only the small
+    // Character/Early multiplier transfer in the Fast kernel.
+    VcfFastEarlyMode vcfFastEarlyMode { VcfFastEarlyMode::Hermite };
 
     // Hosts commonly present the same complete parameter snapshot on every
     // block. Value equality is the right test for that public control image:
@@ -443,14 +447,11 @@ public:
         // profile shares the voiced profile's functions for both.
     };
 
-    // The generalized algebraic soft clip the output summer and the VCF
-    // saturation below both fit -- along with the BBD write in
-    // `Chorus::bbdTransfer` -- is `algebraicSoftClipDenominator` in
-    // YouKnow106Chorus.h. It used to be reimplemented independently at each of
-    // the three sites (this class's own copy covered only the first two); it
-    // now lives in the one header both DSP files already include, so all
-    // three go through the same formula instead of two matching it by
-    // construction.
+    // The generalized algebraic soft clip used by VCF saturation, and as the
+    // reference/fallback for the BBD write, is
+    // `algebraicSoftClipDenominator` in YouKnow106Chorus.h. The output summer
+    // fits the same curve with a fixed exponent of eight; its hot path spells
+    // that case as multiplies and square roots instead of general pow.
 
     // Where the transconductor's own control current stops following the
     // anti-log converter. An AS3109 teardown reports the internal control
@@ -1193,6 +1194,7 @@ private:
         // previousOmegaStep in its body -- a same-named parameter would
         // shadow it there and silently change which value gets scaled.
         void retime(float previousStep, float nextStep) noexcept;
+        template <bool useCubicEarly = false>
         float process(float input, float omegaStep, float feedback,
                       float headroom = otaHeadroomVolts,
                       bool enableEarlyEffect = true,
@@ -1204,7 +1206,10 @@ private:
             double current, const std::array<double, 3>& history,
             double intervalPosition) noexcept;
         [[nodiscard]] static double clampOmegaStep(double value) noexcept;
-        [[nodiscard]] static double hermite512Tanh(double value) noexcept;
+        [[nodiscard]] static double zonedHermiteTanh(double value) noexcept;
+        [[nodiscard]] static double zonedHermiteTanhUnchecked(
+            double value) noexcept;
+        [[nodiscard]] static double cubicEarlyTanh(double value) noexcept;
     };
 
     // Exact continuous trajectory of one 522 us VCF hold over an internal
@@ -1331,6 +1336,11 @@ private:
         float vcaGainError { 0.0f };
         float subLevelError { 0.0f };
         float noiseLevelError { 0.0f };
+        // Fixed per-card cutoff-temperature factor. It is refreshed only when
+        // Unit Character or the spatial-gradient switch moves; renderVoice
+        // then applies it without rebuilding the same exponent-derived card
+        // coordinate every internal sample.
+        double thermalFilterOmegaScale { 1.0 };
         // How much of the aged-unit cutoff flattening this card takes: a
         // seeded uniform [0, 1] draw, so some cards drift little -- the
         // documented recalibration's qualitative pattern (most voices about a
@@ -1532,6 +1542,7 @@ private:
     // when the panel does, so this is called where those change, not from the
     // audio path.
     void refreshVoiceCardStageTrims() noexcept;
+    void refreshVoiceCardThermalScales() noexcept;
     void refreshAgedUnitState() noexcept;
     // One internal sample of chassis warm-up: the wall-clock timer and the
     // exponential the voices read. The render loop's only way to advance it,
@@ -1666,6 +1677,7 @@ private:
     [[nodiscard]] static bool pulseMixEnabled(bool requested,
                                               float duty) noexcept;
     void updateSharedHighPass(const EngineParameters& parameters) noexcept;
+    template <bool useCubicEarly = false>
     float renderVoice(Voice& voice, const EngineParameters& parameters,
                       float noiseSample) noexcept;
     void advanceLfo(const EngineParameters& parameters) noexcept;
@@ -1715,6 +1727,9 @@ private:
     // The historic name is retained because executable-local audit probes read
     // this private state as the Volume glide's first-render marker.
     bool panelGlidePrimed_ { false };
+    // Resolved when a sanitized snapshot is accepted. It occupies existing
+    // padding before sampleRate_, leaving all later member offsets unchanged.
+    bool useCubicEarly_ { false };
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };
     double oversampledRate_ { 192000.0 };
@@ -1870,11 +1885,10 @@ private:
     // compacted here once, at the same point the kernel is built, so the hot
     // loop visits only the 49 that matter.
     //
-    // This is a loop-shape change and nothing else. The retained taps keep
-    // their original ascending order, so the accumulation sequence -- and
-    // therefore the float result -- is bit-identical to walking the full
-    // kernel: the entries dropped are exactly the ones the old branch already
-    // declined to accumulate.
+    // The retained coefficients are exactly symmetric after float
+    // normalisation. downsamplePair therefore accumulates mirrored samples as
+    // pairs: the transfer and group delay are unchanged, while float addition
+    // is associated differently from the original ascending-tap loop.
     struct HalfbandActiveTap
     {
         float coefficient { 0.0f };

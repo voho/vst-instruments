@@ -74,6 +74,7 @@ inline constexpr auto quality      = "quality";
 // the compatibility default; alternatives are persisted as a machine setting,
 // not stored in hardware patches or SysEx.
 inline constexpr auto vcfTanhMode  = "vcfTanhMode";
+inline constexpr auto vcfFastEarlyMode = "vcfFastEarlyMode";
 inline constexpr auto legacyHq     = "hq";
 } // namespace parameters
 

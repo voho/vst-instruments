@@ -880,6 +880,20 @@ struct YouKnow106TestAccess
         return engine.thermalWarmupFraction_;
     }
 
+    static std::array<float, 2> thermalOmegaPair(
+        const YouKnow106Engine& engine, int cardIndex,
+        float baseOmegaStep) noexcept
+    {
+        const auto& card = engine.cards_[static_cast<std::size_t>(cardIndex)];
+        const float cached = static_cast<float>(
+            YouKnow106Engine::OtaCascade::clampOmegaStep(
+                static_cast<double>(baseOmegaStep)
+                    * card.thermalFilterOmegaScale));
+        const float direct = YouKnow106Engine::boundedThermalFilterOmegaStep(
+            baseOmegaStep, engine.activeParameters_, cardIndex);
+        return { cached, direct };
+    }
+
     static double internalRate(const YouKnow106Engine& engine) noexcept
     {
         return engine.oversampledRate_;
@@ -929,6 +943,11 @@ struct YouKnow106TestAccess
     static EngineParameters sanitise(const EngineParameters& parameters) noexcept
     {
         return YouKnow106Engine::sanitise(parameters);
+    }
+
+    static bool usesCubicEarly(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.useCubicEarly_;
     }
 };
 } // namespace youknow106
@@ -7482,6 +7501,51 @@ void testSpatialThermalGradientBelongsToUnitCharacter()
            "Character");
 }
 
+void testSpatialThermalScaleCacheTracksLiveDependencies()
+{
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.calibration = 0.8f;
+    parameters.enableSpatialThermalGradient = true;
+    engine.setParameters(parameters);
+
+    std::array<float, 1> left {};
+    std::array<float, 1> right {};
+    engine.process(left.data(), right.data(), 1);
+
+    const auto expectCacheMatchesDirectLaw = [&](const char* when) {
+        constexpr std::array<float, 4> baseSteps {
+            0.0f, 0.01f, 0.9f, 100.0f
+        };
+        for (int card = 0; card < YouKnow106Engine::maxVoices; ++card)
+            for (const float base : baseSteps)
+            {
+                const auto values = YouKnow106TestAccess::thermalOmegaPair(
+                    engine, card, base);
+                expect(values[0] == values[1],
+                       std::string("the cached thermal cutoff scale is stale ")
+                           + when + " on card " + std::to_string(card));
+            }
+    };
+
+    expectCacheMatchesDirectLaw("after startup");
+    parameters.calibration = 0.35f;
+    engine.setParameters(parameters);
+    expectCacheMatchesDirectLaw("after a live Unit Character edit");
+    parameters.enableSpatialThermalGradient = false;
+    engine.setParameters(parameters);
+    expectCacheMatchesDirectLaw("after disabling the gradient");
+    parameters.enableSpatialThermalGradient = true;
+    engine.setParameters(parameters);
+    expectCacheMatchesDirectLaw("after restoring the gradient");
+
+    engine.reset();
+    expectCacheMatchesDirectLaw("after reset");
+    engine.prepare(44100.0, blockSize, false);
+    expectCacheMatchesDirectLaw("after a processing-rate change");
+}
+
 void testDeterminismAndSilence()
 {
     const auto run = []() {
@@ -7795,6 +7859,33 @@ void testSanitiseFallbackDefaultsMatchDeclaredDefaults()
     polyphonyLow.polyphony = -5;
     expect(YouKnow106TestAccess::sanitise(polyphonyLow).polyphony == 1,
            "polyphony below range did not clamp to 1");
+
+    EngineParameters invalidTanhMode;
+    invalidTanhMode.vcfTanhMode = static_cast<VcfTanhMode>(99);
+    expect(YouKnow106TestAccess::sanitise(invalidTanhMode).vcfTanhMode
+               == declaredDefaults.vcfTanhMode,
+           "invalid VCF tanh mode did not fall back to its declared default");
+    EngineParameters invalidFastEarlyMode;
+    invalidFastEarlyMode.vcfFastEarlyMode =
+        static_cast<VcfFastEarlyMode>(99);
+    expect(YouKnow106TestAccess::sanitise(invalidFastEarlyMode)
+               .vcfFastEarlyMode == declaredDefaults.vcfFastEarlyMode,
+           "invalid Fast Early mode did not fall back to its declared default");
+
+    YouKnow106Engine dispatch;
+    EngineParameters selected;
+    selected.vcfTanhMode = VcfTanhMode::ZonedHermite;
+    dispatch.setParameters(selected);
+    expect(!YouKnow106TestAccess::usesCubicEarly(dispatch),
+           "Fast Hermite incorrectly enabled the cubic Early kernel");
+    selected.vcfFastEarlyMode = VcfFastEarlyMode::Cubic;
+    dispatch.setParameters(selected);
+    expect(YouKnow106TestAccess::usesCubicEarly(dispatch),
+           "Fast Cubic Early did not resolve outside the audio loop");
+    selected.vcfTanhMode = VcfTanhMode::Exact;
+    dispatch.setParameters(selected);
+    expect(!YouKnow106TestAccess::usesCubicEarly(dispatch),
+           "Fast Early selection changed Exact's resolved kernel");
 }
 
 // `exactOnePoleHoldEndpoint` backs every passive hold that is not the VCF's
@@ -8721,6 +8812,7 @@ int main()
     testVcfStageOffsetsAreLiveBeforeTheFirstSample();
     testVcfEarlyEffectBelongsToUnitCharacter();
     testSpatialThermalGradientBelongsToUnitCharacter();
+    testSpatialThermalScaleCacheTracksLiveDependencies();
     testDeterminismAndSilence();
     testRepeatedSanitisedParameterSnapshotsAreInert();
     testResetLeavesNoHistoryInTheOutputPath();

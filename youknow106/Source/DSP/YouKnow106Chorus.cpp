@@ -56,6 +56,59 @@ constexpr float transferSmear = 0.8654743f;
 constexpr float bbdSaturationLevel = 1.1246614f; // 2.924 V at the node
 constexpr float bbdSaturationExponent = 3.4541951f;
 
+// The fitted exponent is non-integral, so there is no multiply/root identity
+// analogous to the output summer's fixed eighth power. Sample the reference
+// normalized curve through four rails instead; beyond that already-saturated
+// range the defensive double-power path remains available for arbitrary finite
+// inputs. Analytic slopes make a compact 512-interval Hermite table agree with
+// the original float result to one ULP while remaining monotone.
+constexpr std::size_t bbdTransferHermiteIntervals = 512u;
+constexpr double bbdTransferHermiteLimit = 4.0;
+
+struct BbdTransferHermiteNode
+{
+    double value {};
+    double slope {};
+};
+
+const std::array<BbdTransferHermiteNode,
+                 bbdTransferHermiteIntervals + 1u> bbdTransferHermiteTable = [] {
+    std::array<BbdTransferHermiteNode,
+               bbdTransferHermiteIntervals + 1u> result {};
+    const double exponent = static_cast<double>(bbdSaturationExponent);
+    for (std::size_t index = 0; index < result.size(); ++index)
+    {
+        const double normalised = bbdTransferHermiteLimit
+            * static_cast<double>(index)
+            / static_cast<double>(bbdTransferHermiteIntervals);
+        const double powered = std::pow(normalised, exponent);
+        const double base = 1.0 + powered;
+        const double denominator = std::pow(base, 1.0 / exponent);
+        result[index].value = normalised / denominator;
+        result[index].slope = 1.0 / (base * denominator);
+    }
+    return result;
+}();
+
+double interpolatedBbdTransfer(double normalised) noexcept
+{
+    const double position = normalised
+        * static_cast<double>(bbdTransferHermiteIntervals)
+        / bbdTransferHermiteLimit;
+    const auto index = static_cast<std::size_t>(position);
+    const double fraction = position - static_cast<double>(index);
+    const double squared = fraction * fraction;
+    const double cubic = squared * fraction;
+    constexpr double width = bbdTransferHermiteLimit
+                           / static_cast<double>(bbdTransferHermiteIntervals);
+    const auto& first = bbdTransferHermiteTable[index];
+    const auto& second = bbdTransferHermiteTable[index + 1u];
+    return (2.0 * cubic - 3.0 * squared + 1.0) * first.value
+         + (cubic - 2.0 * squared + fraction) * width * first.slope
+         + (-2.0 * cubic + 3.0 * squared) * second.value
+         + (cubic - squared) * width * second.slope;
+}
+
 // There is no divider ahead of the line. A previous revision put one here --
 // 33 kOhm against 12 kOhm -- on a reading of the schematic that the schematic
 // does not support: the 100 kOhm at each line's input injects adjustable DC
@@ -316,23 +369,24 @@ Chorus::SupportChain::ExactTransition exactTransition(
     for (std::size_t row = 0; row < 6; ++row)
     {
         for (std::size_t column = 0; column < 6; ++column)
-            result.state[row][column] = exponential[row][column];
+            result.stateByColumn[column][row] = exponential[row][column];
         for (std::size_t sample = 0; sample < 4; ++sample)
             for (std::size_t derivative = 0; derivative < 4; ++derivative)
-                result.drive[row][sample] += exponential[row][6 + derivative]
-                                           * polynomial[derivative][sample];
+                result.driveBySample[sample][row] +=
+                    exponential[row][6 + derivative]
+                    * polynomial[derivative][sample];
 
         // Force the constant-input equilibrium identity exactly in stored
         // double arithmetic. This removes an otherwise tiny DC leak from
         // cancellation around the very slow coupling pole at 768 kHz.
         double target = constantInputEquilibrium[row];
         for (std::size_t column = 0; column < 6; ++column)
-            target -= result.state[row][column]
+            target -= result.stateByColumn[column][row]
                     * constantInputEquilibrium[column];
         double actual = 0.0;
         for (std::size_t sample = 0; sample < 4; ++sample)
-            actual += result.drive[row][sample];
-        result.drive[row][0] += target - actual;
+            actual += result.driveBySample[sample][row];
+        result.driveBySample[0][row] += target - actual;
     }
     return result;
 }
@@ -415,31 +469,24 @@ void advanceExactSupport(
 {
     constexpr double maximumState =
         static_cast<double>(std::numeric_limits<float>::max()) / 16.0;
-    if (!std::isfinite(current))
-        current = 0.0;
-    if (!std::isfinite(previous))
-        previous = 0.0;
-    if (!std::isfinite(previous2))
-        previous2 = 0.0;
-    if (!std::isfinite(previous3))
-        previous3 = 0.0;
+    // Both production callers sanitize the current sample before storing it
+    // in these histories. Keep the final state guard below as the recovery
+    // boundary instead of rechecking all four owned values on every advance.
     const std::array<double, 4> samples {
-        std::clamp(current, -maximumState, maximumState),
-        std::clamp(previous, -maximumState, maximumState),
-        std::clamp(previous2, -maximumState, maximumState),
-        std::clamp(previous3, -maximumState, maximumState)
+        current, previous, previous2, previous3
     };
     std::array<double, 6> next {};
-    for (std::size_t row = 0; row < 6; ++row)
-    {
-        for (std::size_t column = 0; column < 6; ++column)
-            next[row] += transition.state[row][column] * state[column];
-        for (std::size_t sample = 0; sample < 4; ++sample)
-            next[row] += transition.drive[row][sample] * samples[sample];
-    }
+    for (std::size_t column = 0; column < 6; ++column)
+        for (std::size_t row = 0; row < 6; ++row)
+            next[row] += transition.stateByColumn[column][row]
+                       * state[column];
+    for (std::size_t sample = 0; sample < 4; ++sample)
+        for (std::size_t row = 0; row < 6; ++row)
+            next[row] += transition.driveBySample[sample][row]
+                       * samples[sample];
     for (double value : next)
     {
-        if (!std::isfinite(value) || std::abs(value) > maximumState)
+        if (!(std::abs(value) <= maximumState))
         {
             state.fill(0.0);
             return;
@@ -564,12 +611,16 @@ float Chorus::bbdTransfer(float input) noexcept
     if (!std::isfinite(input))
         return 0.0f;
 
-    // Evaluate the fractional powers in double precision. Apart from keeping
-    // the fit stable at its two calibration points, this lets even an extreme
+    // Interpolate in double precision through the range reached by ordinary
+    // audio. The double-power fallback beyond four rails lets even an extreme
     // finite float approach the rail instead of overflowing an intermediate
     // power and folding back to zero.
     const double normalised = std::abs(static_cast<double>(input))
                             / static_cast<double>(bbdSaturationLevel);
+    if (normalised < bbdTransferHermiteLimit)
+        return std::copysign(static_cast<float>(
+            static_cast<double>(bbdSaturationLevel)
+                * interpolatedBbdTransfer(normalised)), input);
     const double denominator = algebraicSoftClipDenominator(
         normalised, static_cast<double>(bbdSaturationExponent));
     return static_cast<float>(static_cast<double>(input) / denominator);

@@ -9,11 +9,11 @@ namespace youknow106
 
 // Generalized algebraic soft clip: exactly linear as the normalised magnitude
 // approaches zero and bending only as it approaches 1. Three independent
-// sites fit this same shape -- the BBD write below, and the engine's output
-// summer and VCF saturation -- so the denominator lives here once rather than
-// at each site; the engine has no header of its own that this one could sit
-// in without the engine depending on this file twice over, and this file
-// already builds standalone, so the shared primitive sits here instead.
+// sites fit this same shape. The engine's VCF saturation uses this generalized
+// denominator directly; the BBD write tabulates the same reference through
+// four rails and falls back to this helper beyond them. The output summer's
+// fixed exponent-eight specialization uses equivalent multiplies and roots.
+// This file already builds standalone, so the shared primitive sits here.
 // Evaluated in double so an extreme finite float still approaches the bound
 // instead of overflowing an intermediate power and folding back to zero.
 [[nodiscard]] inline double algebraicSoftClipDenominator(
@@ -419,8 +419,8 @@ public:
     {
         struct ExactTransition
         {
-            std::array<std::array<double, 6>, 6> state {};
-            std::array<std::array<double, 4>, 6> drive {};
+            std::array<std::array<double, 6>, 6> stateByColumn {};
+            std::array<std::array<double, 6>, 4> driveBySample {};
         };
 
         float inputCouplingG { 0.001f };    // C44 / R120, wet path only

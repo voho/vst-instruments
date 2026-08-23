@@ -4189,6 +4189,65 @@ void testBbdTransferDefensiveGuards()
                "bbdTransfer's saturation rail is not sign-symmetric");
 }
 
+void testBbdTransferApproximationTracksItsReference()
+{
+    // The realtime path tabulates the fitted generalized clip through four
+    // rails. Pin its numerical contract independently against the original
+    // double-power expression: at most one float ULP, odd and monotone. The
+    // points immediately around every cell boundary make interpolation seams
+    // part of the regression rather than relying on a uniform scan to land on
+    // them by chance.
+    constexpr float level = 1.1246614f;
+    constexpr float exponent = 3.4541951f;
+    constexpr int intervals = 512;
+    const auto reference = [](float input) {
+        const double magnitude = std::abs(static_cast<double>(input));
+        const double normalised = magnitude / level;
+        return static_cast<float>(
+            static_cast<double>(input)
+            / algebraicSoftClipDenominator(normalised, exponent));
+    };
+    expect(!std::signbit(YouKnow106TestAccess::bbdTransfer(0.0f))
+               && std::signbit(YouKnow106TestAccess::bbdTransfer(-0.0f)),
+           "BBD Hermite transfer did not preserve signed zero");
+    const auto expectReferenceUlp = [&](float input) {
+        const float exact = reference(input);
+        const float actual = YouKnow106TestAccess::bbdTransfer(input);
+        expect(actual >= std::nextafter(
+                   exact, -std::numeric_limits<float>::infinity())
+                   && actual <= std::nextafter(
+                       exact, std::numeric_limits<float>::infinity()),
+               "BBD Hermite transfer differs from its reference by more than "
+               "one float ULP at " + std::to_string(input));
+    };
+
+    float previous = YouKnow106TestAccess::bbdTransfer(0.0f);
+    for (int index = 0; index <= 65536; ++index)
+    {
+        const float input = static_cast<float>(
+            4.0 * level * static_cast<double>(index) / 65536.0);
+        const float positive = YouKnow106TestAccess::bbdTransfer(input);
+        const float negative = YouKnow106TestAccess::bbdTransfer(-input);
+        expectReferenceUlp(input);
+        expectReferenceUlp(-input);
+        expect(positive >= previous,
+               "BBD Hermite transfer is not monotone at "
+                   + std::to_string(input));
+        expect(negative == -positive,
+               "BBD Hermite transfer is not odd at " + std::to_string(input));
+        previous = positive;
+    }
+    for (int boundary = 0; boundary <= intervals; ++boundary)
+    {
+        const float input = static_cast<float>(
+            4.0 * level * static_cast<double>(boundary) / intervals);
+        expectReferenceUlp(std::nextafter(input, 0.0f));
+        expectReferenceUlp(input);
+        expectReferenceUlp(std::nextafter(
+            input, std::numeric_limits<float>::infinity()));
+    }
+}
+
 void testBbdInputCubicInterpolation()
 {
     const auto interpolate = [](float current, float previous,
@@ -5181,12 +5240,12 @@ void testCombinedBbdSupportTransitionAndStateSafety()
     using State = std::array<double, 6>;
 
     const auto transitionFinite = [](const Transition& transition) {
-        for (const auto& row : transition.state)
-            for (double value : row)
+        for (const auto& column : transition.stateByColumn)
+            for (double value : column)
                 if (!std::isfinite(value))
                     return false;
-        for (const auto& row : transition.drive)
-            for (double value : row)
+        for (const auto& sample : transition.driveBySample)
+            for (double value : sample)
                 if (!std::isfinite(value))
                     return false;
         return true;
@@ -5198,9 +5257,10 @@ void testCombinedBbdSupportTransitionAndStateSafety()
         {
             double next = 0.0;
             for (std::size_t column = 0; column < 6; ++column)
-                next += transition.state[row][column] * equilibrium[column];
-            for (double weight : transition.drive[row])
-                next += weight;
+                next += transition.stateByColumn[column][row]
+                      * equilibrium[column];
+            for (std::size_t sample = 0; sample < 4; ++sample)
+                next += transition.driveBySample[sample][row];
             worst = std::max(worst, std::abs(next - equilibrium[row]));
         }
         return worst;
@@ -5209,13 +5269,14 @@ void testCombinedBbdSupportTransitionAndStateSafety()
                                    const State& state,
                                    const std::array<double, 4>& samples) {
         State next {};
-        for (std::size_t row = 0; row < 6; ++row)
-        {
-            for (std::size_t column = 0; column < 6; ++column)
-                next[row] += transition.state[row][column] * state[column];
-            for (std::size_t sample = 0; sample < 4; ++sample)
-                next[row] += transition.drive[row][sample] * samples[sample];
-        }
+        for (std::size_t column = 0; column < 6; ++column)
+            for (std::size_t row = 0; row < 6; ++row)
+                next[row] += transition.stateByColumn[column][row]
+                           * state[column];
+        for (std::size_t sample = 0; sample < 4; ++sample)
+            for (std::size_t row = 0; row < 6; ++row)
+                next[row] += transition.driveBySample[sample][row]
+                           * samples[sample];
         return next;
     };
     const auto cubic = [](const std::array<double, 4>& samples, double tau) {
@@ -5732,6 +5793,21 @@ void testOutputSummerIsLinearBelowItsRails()
     // It must still be a bound: no input may drive the stage past the rail.
     constexpr float rail = YouKnow106Engine::outputSummerRailVolts
                          / YouKnow106Engine::internalVoltsPerUnit;
+    for (const float drive : {
+             0.0f, std::numeric_limits<float>::denorm_min(),
+             -std::numeric_limits<float>::denorm_min(), 0.25f, -1.0f,
+             3.0f, -rail, 10.0f, std::numeric_limits<float>::max() })
+    {
+        const double normalised = std::abs(static_cast<double>(drive))
+                                / static_cast<double>(rail);
+        const float reference = static_cast<float>(
+            static_cast<double>(drive)
+            / algebraicSoftClipDenominator(normalised, 8.0));
+        expectNear(YouKnow106Engine::outputSummerClip(drive), reference,
+                   2.0e-6,
+                   "the fixed exponent-eight output clip left its reference "
+                   "curve");
+    }
     for (const float drive : { 10.0f, 100.0f, 1.0e6f })
     {
         expect(std::abs(YouKnow106Engine::outputSummerClip(drive)) <= rail,
@@ -5807,6 +5883,9 @@ void testDecimatorProtectsTheTopOfTheBand()
     // that folds onto it comes from just above.
     const auto kernel = YouKnow106TestAccess::halfbandKernel();
     expect(kernel.size() == 95, "the decimation kernel is not 95 taps");
+    for (std::size_t tap = 0; tap < kernel.size() / 2; ++tap)
+        expect(kernel[tap] == kernel[kernel.size() - 1 - tap],
+               "the paired decimator requires a bit-symmetric kernel");
 
     const auto response = [&kernel](double hertz, double stageRate) {
         std::complex<double> accumulator {};
@@ -5900,6 +5979,7 @@ int main()
     testChorusRateChangePreservesPhysicalState();
     testBucketBrigadeDatasheetAnchors();
     testBbdTransferDefensiveGuards();
+    testBbdTransferApproximationTracksItsReference();
     testBbdInputCubicInterpolation();
     testBbdOutputPolyBlepReferenceAndBounds();
     testBbdPolyBlepResidualDefensiveGuard();

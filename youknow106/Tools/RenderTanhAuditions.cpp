@@ -1,6 +1,8 @@
-// Renders a deterministic, blinded Exact-versus-Hermite512 VCF tanh audition.
+// Renders a deterministic Exact-versus-current-Fast VCF tanh audition, or an
+// independent Fast-Hermite-versus-Cubic-Early audition with `--early-cubic`.
 //
-//   YouKnow106RenderTanhAuditions [--quality 1|2|4] [output-directory]
+//   YouKnow106RenderTanhAuditions [--quality 1|2|4] [--early-cubic]
+//                                [output-directory]
 //
 // The blind files never identify the implementation.  Open reveal/key.csv
 // only after listening; the same directory then carries honest differences at
@@ -32,6 +34,7 @@ namespace
 using youknow106::ChorusMode;
 using youknow106::EngineParameters;
 using youknow106::KeyMode;
+using youknow106::VcfFastEarlyMode;
 using youknow106::VcfTanhMode;
 using youknow106::YouKnow106Engine;
 using youknow106::presets::Preset;
@@ -276,9 +279,19 @@ constexpr std::array<Fixture, 6> fixtures {{
 
 bool exactIsA(std::size_t fixture, int quality) noexcept
 {
-    // Three balanced deterministic permutations keep 1x/2x/4x independent:
-    // revealing one quality does not reveal either of the others.
-    constexpr std::array<unsigned, 3> masks { 0b011010u, 0b101100u, 0b110001u };
+    // Three distinct, non-complementary balanced mappings prevent one
+    // quality's complete A/B assignment from standing in for another. They
+    // are deterministic counterbalancing, not statistically independent draws.
+    constexpr std::array<unsigned, 3> masks { 0b000111u, 0b001011u, 0b010101u };
+    const std::size_t qualityIndex = quality == 1 ? 0u : (quality == 2 ? 1u : 2u);
+    return (masks[qualityIndex] & (1u << fixture)) != 0u;
+}
+
+bool hermiteIsA(std::size_t fixture, int quality) noexcept
+{
+    // Independent balanced assignments for the Fast-Hermite/Cubic-Early
+    // audition. Revealing either comparison must not reveal the other.
+    constexpr std::array<unsigned, 3> masks { 0b011100u, 0b100110u, 0b110001u };
     const std::size_t qualityIndex = quality == 1 ? 0u : (quality == 2 ? 1u : 2u);
     return (masks[qualityIndex] & (1u << fixture)) != 0u;
 }
@@ -291,7 +304,9 @@ struct Rendered
 };
 
 Rendered render(const Fixture& fixture, const Preset& preset,
-                VcfTanhMode mode, int quality)
+                VcfTanhMode mode, int quality,
+                VcfFastEarlyMode fastEarlyMode = VcfFastEarlyMode::Hermite,
+                bool maximumCharacter = false)
 {
     auto parameters = parametersFor(preset);
     // The comparison isolates the VCF.  None of the selected factory tones
@@ -301,6 +316,9 @@ Rendered render(const Fixture& fixture, const Preset& preset,
     parameters.chorus = ChorusMode::Off;
     parameters.chorusNoise = 0.0f;
     parameters.vcfTanhMode = mode;
+    parameters.vcfFastEarlyMode = fastEarlyMode;
+    if (maximumCharacter)
+        parameters.calibration = EngineParameters::calibrationCeiling;
     if (fixture.forceOneVoice)
     {
         parameters.polyphony = 1;
@@ -320,6 +338,7 @@ struct Options
 {
     std::filesystem::path outputDirectory;
     int quality { 4 };
+    bool earlyCubicComparison {};
 };
 
 bool parseQuality(std::string_view text, int& quality)
@@ -341,7 +360,8 @@ bool parseOptions(int argc, char** argv, Options& options)
         const std::string_view argument(argv[index]);
         if (argument == "--help" || argument == "-h")
         {
-            std::printf("usage: %s [--quality 1|2|4] [output-directory]\n", argv[0]);
+            std::printf("usage: %s [--quality 1|2|4] [--early-cubic]"
+                        " [output-directory]\n", argv[0]);
             return false;
         }
         if (argument == "--quality")
@@ -351,6 +371,11 @@ bool parseOptions(int argc, char** argv, Options& options)
                 std::fprintf(stderr, "--quality requires 1, 2, or 4\n");
                 return false;
             }
+            continue;
+        }
+        if (argument == "--early-cubic")
+        {
+            options.earlyCubicComparison = true;
             continue;
         }
         if (!argument.empty() && argument.front() == '-')
@@ -367,8 +392,11 @@ bool parseOptions(int argc, char** argv, Options& options)
         outputSeen = true;
     }
     if (!outputSeen)
-        options.outputDirectory = "tanh-auditions-"
-                                + std::to_string(options.quality) + "x";
+        options.outputDirectory = options.earlyCubicComparison
+            ? "tanh-auditions-cubic-early-"
+                + std::to_string(options.quality) + "x"
+            : "tanh-auditions-zoned-reciprocal-"
+                + std::to_string(options.quality) + "x";
     return true;
 }
 
@@ -383,6 +411,37 @@ int main(int argc, char** argv)
                     || std::string_view(argv[1]) == "-h") ? 0 : 1;
 
     std::error_code error;
+    const bool outputExists = std::filesystem::exists(
+        options.outputDirectory, error);
+    if (error)
+    {
+        std::fprintf(stderr, "could not inspect %s: %s\n",
+                     options.outputDirectory.string().c_str(),
+                     error.message().c_str());
+        return 1;
+    }
+    if (outputExists)
+    {
+        const bool emptyDirectory = std::filesystem::is_directory(
+                                        options.outputDirectory, error)
+                                 && std::filesystem::is_empty(
+                                        options.outputDirectory, error);
+        if (error)
+        {
+            std::fprintf(stderr, "could not inspect %s: %s\n",
+                         options.outputDirectory.string().c_str(),
+                         error.message().c_str());
+            return 1;
+        }
+        if (!emptyDirectory)
+        {
+            std::fprintf(stderr,
+                         "output root must be absent or an empty directory: %s\n",
+                         options.outputDirectory.string().c_str());
+            return 1;
+        }
+    }
+
     const auto blindDirectory = options.outputDirectory / "blind";
     const auto revealDirectory = options.outputDirectory / "reveal";
     std::filesystem::create_directories(blindDirectory, error);
@@ -404,19 +463,32 @@ int main(int argc, char** argv)
     key << "fixture,A,B\n";
     std::ostringstream metrics;
     metrics << "fixture,preset,requested_quality,applied_quality,frames,"
-               "latency_samples,shared_gain_db,exact_peak_dbfs,hermite_peak_dbfs,"
-               "exact_rms_dbfs,hermite_rms_dbfs,difference_peak_dbfs,"
-               "difference_rms_dbfs,difference_peak_dbc,difference_rms_dbc,"
-               "max_100ms_difference_vs_full_exact_rms_dbc\n"
+               "latency_samples,shared_gain_db,";
+    if (options.earlyCubicComparison)
+        metrics << "hermite_early_peak_dbfs,cubic_early_peak_dbfs,"
+                   "hermite_early_rms_dbfs,cubic_early_rms_dbfs,";
+    else
+        metrics << "exact_peak_dbfs,zoned_reciprocal_peak_dbfs,"
+                   "exact_rms_dbfs,zoned_reciprocal_rms_dbfs,";
+    metrics << "difference_peak_dbfs,difference_rms_dbfs,"
+               "difference_peak_dbc,difference_rms_dbc,"
+            << (options.earlyCubicComparison
+                    ? "max_100ms_difference_vs_full_hermite_rms_dbc\n"
+                    : "max_100ms_difference_vs_full_exact_rms_dbc\n")
             << std::fixed << std::setprecision(9);
 
-    std::printf("Rendering blinded VCF tanh auditions at 48 kHz / %dx\n",
-                options.quality);
+    std::printf("Rendering blinded VCF %s auditions at 48 kHz / %dx%s\n",
+                options.earlyCubicComparison
+                    ? "Fast-Hermite/Cubic-Early" : "Exact/Fast tanh",
+                options.quality,
+                options.earlyCubicComparison ? ", Character 2" : "");
     for (std::size_t fixtureIndex = 0; fixtureIndex < fixtures.size();
-         ++fixtureIndex)
+        ++fixtureIndex)
     {
         const auto& fixture = fixtures[fixtureIndex];
-        const bool exactFirst = exactIsA(fixtureIndex, options.quality);
+        const bool referenceFirst = options.earlyCubicComparison
+            ? hermiteIsA(fixtureIndex, options.quality)
+            : exactIsA(fixtureIndex, options.quality);
         const Preset* preset = youknow106::presets::findByNumber(fixture.presetNumber);
         if (preset == nullptr)
         {
@@ -425,39 +497,47 @@ int main(int argc, char** argv)
             return 1;
         }
 
-        auto exact = render(fixture, *preset, VcfTanhMode::Exact, options.quality);
-        auto hermite = render(fixture, *preset, VcfTanhMode::Hermite512,
-                              options.quality);
-        std::string exactError;
-        std::string hermiteError;
-        if (!realism::validate(exact.audio, exactError)
-            || !realism::validate(hermite.audio, hermiteError)
-            || exact.audio.left.size() != hermite.audio.left.size()
-            || exact.appliedQuality != hermite.appliedQuality
-            || exact.latencySamples != hermite.latencySamples)
+        auto reference = options.earlyCubicComparison
+            ? render(fixture, *preset, VcfTanhMode::ZonedHermite,
+                     options.quality, VcfFastEarlyMode::Hermite, true)
+            : render(fixture, *preset, VcfTanhMode::Exact, options.quality);
+        auto candidate = options.earlyCubicComparison
+            ? render(fixture, *preset, VcfTanhMode::ZonedHermite,
+                     options.quality, VcfFastEarlyMode::Cubic, true)
+            : render(fixture, *preset, VcfTanhMode::ZonedHermite,
+                     options.quality);
+        std::string referenceError;
+        std::string candidateError;
+        if (!realism::validate(reference.audio, referenceError)
+            || !realism::validate(candidate.audio, candidateError)
+            || reference.audio.left.size() != candidate.audio.left.size()
+            || reference.appliedQuality != candidate.appliedQuality
+            || reference.latencySamples != candidate.latencySamples)
         {
             std::fprintf(stderr,
                          "%s failed finite/alignment/latency checks: %s%s%s\n",
-                         fixture.slug, exactError.c_str(),
-                         !exactError.empty() && !hermiteError.empty() ? "; " : "",
-                         hermiteError.c_str());
+                         fixture.slug, referenceError.c_str(),
+                         !referenceError.empty() && !candidateError.empty()
+                             ? "; " : "",
+                         candidateError.c_str());
             return 1;
         }
 
-        const Level rawExact = realism::measure(exact.audio);
-        const Level rawHermite = realism::measure(hermite.audio);
-        const double maximumPeak = std::max(rawExact.peak, rawHermite.peak);
+        const Level rawReference = realism::measure(reference.audio);
+        const Level rawCandidate = realism::measure(candidate.audio);
+        const double maximumPeak = std::max(
+            rawReference.peak, rawCandidate.peak);
         if (!(maximumPeak > 1.0e-9))
         {
             std::fprintf(stderr, "%s rendered silence\n", fixture.slug);
             return 1;
         }
         const double sharedGain = listeningPeak / maximumPeak;
-        exact.audio = realism::applyGain(exact.audio, sharedGain);
-        hermite.audio = realism::applyGain(hermite.audio, sharedGain);
+        reference.audio = realism::applyGain(reference.audio, sharedGain);
+        candidate.audio = realism::applyGain(candidate.audio, sharedGain);
         Audio delta;
         std::string differenceError;
-        if (!realism::difference(exact.audio, hermite.audio,
+        if (!realism::difference(reference.audio, candidate.audio,
                                  delta, differenceError))
         {
             std::fprintf(stderr, "%s difference failed: %s\n",
@@ -467,8 +547,8 @@ int main(int argc, char** argv)
 
         const auto fixtureBlind = blindDirectory / fixture.slug;
         const auto fixtureReveal = revealDirectory / fixture.slug;
-        const Audio& a = exactFirst ? exact.audio : hermite.audio;
-        const Audio& b = exactFirst ? hermite.audio : exact.audio;
+        const Audio& a = referenceFirst ? reference.audio : candidate.audio;
+        const Audio& b = referenceFirst ? candidate.audio : reference.audio;
         std::string writeError;
         if (!realism::writeFloatWav(fixtureBlind / "A.wav", a, writeError)
             || !realism::writeFloatWav(fixtureBlind / "B.wav", b, writeError)
@@ -480,34 +560,40 @@ int main(int argc, char** argv)
             return 1;
         }
 
-        const Level exactLevel = realism::measure(exact.audio);
-        const Level hermiteLevel = realism::measure(hermite.audio);
+        const Level referenceLevel = realism::measure(reference.audio);
+        const Level candidateLevel = realism::measure(candidate.audio);
         const Level differenceLevel = realism::measure(delta);
+        const char* referenceName = options.earlyCubicComparison
+            ? "ZonedHermiteReciprocal" : "Exact";
+        const char* candidateName = options.earlyCubicComparison
+            ? "ZonedHermiteReciprocalCubicEarly"
+            : "ZonedHermiteReciprocal";
         key << fixture.slug << ','
-            << (exactFirst ? "Exact" : "Hermite512") << ','
-            << (exactFirst ? "Hermite512" : "Exact") << '\n';
+            << (referenceFirst ? referenceName : candidateName) << ','
+            << (referenceFirst ? candidateName : referenceName) << '\n';
         metrics << fixture.slug << ',' << fixture.presetNumber << ','
-                << options.quality << ',' << exact.appliedQuality << ','
-                << exact.audio.left.size() << ',' << exact.latencySamples << ','
+                << options.quality << ',' << reference.appliedQuality << ','
+                << reference.audio.left.size() << ','
+                << reference.latencySamples << ','
                 << decibels(sharedGain) << ','
-                << decibels(exactLevel.peak) << ','
-                << decibels(hermiteLevel.peak) << ','
-                << decibels(exactLevel.rms) << ','
-                << decibels(hermiteLevel.rms) << ','
+                << decibels(referenceLevel.peak) << ','
+                << decibels(candidateLevel.peak) << ','
+                << decibels(referenceLevel.rms) << ','
+                << decibels(candidateLevel.rms) << ','
                 << decibels(differenceLevel.peak) << ','
                 << decibels(differenceLevel.rms) << ','
                 << decibels(differenceLevel.peak
-                            / std::max(exactLevel.peak, 1.0e-18)) << ','
+                            / std::max(referenceLevel.peak, 1.0e-18)) << ','
                 << decibels(differenceLevel.rms
-                            / std::max(exactLevel.rms, 1.0e-18)) << ','
+                            / std::max(referenceLevel.rms, 1.0e-18)) << ','
                 << maximumWindowDifferenceVsFullRmsDbc(
-                       delta, exactLevel.rms) << '\n';
+                       delta, referenceLevel.rms) << '\n';
 
         std::printf("  %-38s %6.2f s  diff RMS %+7.1f dBc\n",
                     fixture.displayName,
-                    static_cast<double>(exact.audio.left.size()) / sampleRate,
+                    static_cast<double>(reference.audio.left.size()) / sampleRate,
                     decibels(differenceLevel.rms
-                             / std::max(exactLevel.rms, 1.0e-18)));
+                             / std::max(referenceLevel.rms, 1.0e-18)));
     }
 
     std::ofstream keyFile(revealDirectory / "key.csv", std::ios::binary);
