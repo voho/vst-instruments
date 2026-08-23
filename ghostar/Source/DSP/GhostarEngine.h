@@ -238,9 +238,21 @@ private:
         double level { 0.0 };
     };
 
-    // One canonical-input 2-pole TPT state-variable section. The Upper uses
-    // this directly. The Lower keeps the same two CEM state companions but
-    // solves its three moving mixer inputs around them in runLowerSection().
+    // R82/C72 and R118/C77 bypass the two CEM3340 multiplier outputs.  Each
+    // capacitor therefore remembers the complete pitch-current sum before
+    // the exponential converter, including audio-rate modulation.
+    struct PitchControlLag
+    {
+        double output { 0.0 };
+        double previousInput { 0.0 };
+        bool initialised { false };
+    };
+
+    // One 2-pole TPT state-variable section. The Lower keeps the same two
+    // CEM state companions but solves its three moving mixer inputs around
+    // them in runLowerSection(); the Upper couples two of these sections in
+    // runUpperCascade() because SW4 moves a live timing capacitor between
+    // them.
     struct SvfSection
     {
         double ic1 { 0.0 };
@@ -272,6 +284,7 @@ private:
 
     static double p1014SelectedWaveVolts(Waveform waveform,
                                          double bipolarSample) noexcept;
+    double runPitchControlLag(PitchControlLag& lag, double input) noexcept;
     static SvfOutputs runSection(SvfSection& section, double input, double g,
                                  double k, HighQBranch* highQ,
                                  double chargeStep) noexcept;
@@ -279,6 +292,10 @@ private:
         const std::array<double, 3>& sourceTops,
         const std::array<double, 3>& sliderTravels,
         double dryInput, double g, double k) noexcept;
+    double runUpperCascade(double input, double g, double controlledK,
+                           double controlledInputGain,
+                           UpperSlope slope) noexcept;
+    void selectUpperSlope(UpperSlope slope) noexcept;
     double processOverdrive(double lowerLowpass) noexcept;
     double processFilterCoupling(double input) noexcept;
     OutputWipers processOutputNetwork(double filterInput,
@@ -315,6 +332,9 @@ private:
     // h/(2*C*S) for the external limiter's trapezoidal charge companion.
     double highQChargeStep_ { 0.0 };
     double overdriveCouplingConductance_ { 0.0 };
+    double pitchLagPole_ { 0.0 };
+    double pitchLagNow_ { 1.0 };
+    double pitchLagPrevious_ { 0.0 };
 
     // Cached per-parameter-change values (updated in setParameters).
     double oscADuty_ { 0.5 };
@@ -402,6 +422,7 @@ private:
     double controlUpperCutoffHz_ { 1000.0 };
     double controlLowerCutoffHz_ { 1000.0 };
     double controlUpperK_ { 1.5 };
+    double controlUpperInputGain_ { 2.5 };
     double controlLowerK_ { 1.5 };
     double controlLoudnessGain_ { 0.0 };
     double controlShaperVcaGain_ { 0.0 };
@@ -429,8 +450,11 @@ private:
     double heldTriB_ { 0.0 };
     double heldDutyA_ { 0.5 };
     double heldDutyB_ { 0.5 };
-    // Previous post-P1014 selected B wave. Only routes containing B's own
-    // pitch need this causal tap; downstream and A-only routes read fresher.
+    PitchControlLag pitchLagA_ {};
+    PitchControlLag pitchLagB_ {};
+    // Previous post-P1014 selected B wave. The pitch capacitors make their
+    // feedback causal; hard sync still needs this tap to break the remaining
+    // B -> A-frequency -> A-reset -> B loop. Downstream routes read fresher.
     double lastOscBWave_ { 0.0 };
     SpiritNoise noise_ {};
     double brightnessG_ { 0.0 };
@@ -447,6 +471,11 @@ private:
     std::array<double, 3> lowerMixerCompanions_ {};
     SvfSection upperControlled_ {};
     SvfSection upperFixed_ {};
+    UpperSlope upperSlopeState_ { UpperSlope::TwentyFourDb };
+    // Last physical VLP endpoints. C40=1 nF always equals the selected one;
+    // SW4 transfers that voltage to the other 22 nF node by charge sharing.
+    double upperControlledLp_ { 0.0 };
+    double upperFixedLp_ { 0.0 };
     HighQBranch lowerHighQ_ {
         0.0,
         (1.0 + 33000.0 / 220.0) * 2200.0 / (22000.0 + 2200.0),

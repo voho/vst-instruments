@@ -368,6 +368,84 @@ void testShaperResetRetriggersOnLegatoPress()
           "a legato press under SINGLE restarts the RESET cycle");
 }
 
+// RUN ignores new gates during the rise but accepts them during the fall. In
+// MULTIPLE, a legato key supplies the keyboard KT pulse even though the
+// selected gate bus never went low (owner's manual pp. 33-36).
+void testShaperRunHonoursRiseLockoutAndAcceptsLegatoAfterRise()
+{
+    EngineParameters parameters;
+    parameters.filterPathA = 0.0f;
+    parameters.filterPathB = 0.0f;
+    parameters.filterPathNoise = 0.0f;
+    parameters.shaperPathA = 0.0f;
+    parameters.shaperPathB = 0.0f;
+    parameters.shaperPathRing = 0.0f;
+    parameters.shaperPathNoise = 0.8f;
+    parameters.gateKbd = true;
+    parameters.gateX = false;
+    parameters.gateYExt = false;
+    parameters.trigger = ghostar::TriggerMode::Multiple;
+    parameters.shaperMode = ghostar::ShaperMode::Run;
+    parameters.shaperRate = 0.75f;
+    parameters.shaperShape = 0.5f;
+
+    const auto prepareRun = [&parameters](GhostarEngine& engine,
+                                          ghostar::TriggerMode trigger) {
+        engine.prepare(44100.0, 256);
+        EngineParameters silent = parameters;
+        silent.trigger = trigger;
+        silent.shaperPathNoise = 0.0f;
+        engine.setParameters(silent); // snap RATE/SHAPE while fully silent
+        EngineParameters sounding = parameters;
+        sounding.trigger = trigger;
+        engine.setParameters(sounding);
+        engine.noteOn(48, 0.9f);
+    };
+
+    GhostarEngine risingPress;
+    GhostarEngine risingReference;
+    prepareRun(risingPress, ghostar::TriggerMode::Multiple);
+    prepareRun(risingReference, ghostar::TriggerMode::Multiple);
+    render(risingPress, 0.04, 44100.0);
+    render(risingReference, 0.04, 44100.0);
+    risingPress.noteOn(55, 0.9f);
+    const auto ignored = render(risingPress, 0.24, 44100.0);
+    const auto reference = render(risingReference, 0.24, 44100.0);
+    double maximumDifference = 0.0;
+    for (std::size_t index = 0; index < ignored.left.size(); ++index)
+        maximumDifference = std::max(
+            maximumDifference,
+            std::abs(static_cast<double>(ignored.left[index])
+                     - static_cast<double>(reference.left[index])));
+    check(maximumDifference < 1.0e-12,
+          "RUN ignores a MULTIPLE legato pulse during its rise");
+
+    GhostarEngine fallingPress;
+    GhostarEngine fallingReference;
+    prepareRun(fallingPress, ghostar::TriggerMode::Multiple);
+    prepareRun(fallingReference, ghostar::TriggerMode::Multiple);
+    render(fallingPress, 0.13, 44100.0);      // past the ~103 ms rise
+    render(fallingReference, 0.13, 44100.0);  // still on the falling leg
+    fallingPress.noteOn(55, 0.9f);
+    render(fallingPress, 0.11, 44100.0);
+    render(fallingReference, 0.11, 44100.0);
+    const auto restarted = render(fallingPress, 0.03, 44100.0);
+    const auto ended = render(fallingReference, 0.03, 44100.0);
+    check(peak(ended) < 1.0e-3 && peak(restarted) > 1.0e-3,
+          "RUN accepts a MULTIPLE legato pulse during its fall");
+
+    GhostarEngine single;
+    prepareRun(single, ghostar::TriggerMode::Single);
+    check(peak(render(single, 0.12, 44100.0)) > 1.0e-3,
+          "a genuine SINGLE gate rise starts the initial RUN cycle");
+    render(single, 0.12, 44100.0);
+    check(peak(render(single, 0.03, 44100.0)) < 1.0e-3,
+          "RUN reaches idle while its SINGLE keyboard gate stays high");
+    single.noteOn(55, 0.9f);
+    check(peak(render(single, 0.12, 44100.0)) < 1.0e-3,
+          "RUN ignores a SINGLE legato press without a new gate-bus rise");
+}
+
 // RESET with the Shaper's own gate as the only selected source must not
 // clamp itself at its own threshold: a key press has to yield one complete,
 // audible rise/fall cycle.
@@ -453,6 +531,43 @@ void testFullResonanceStaysBounded()
     check(finite(late), "long marginal full-resonance render is finite");
     check(peak(late) < 4.0,
           "long marginal full-resonance render does not accumulate");
+}
+
+// SW4 moves a charged 1 nF capacitor between the Upper VLP nodes. Hammer the
+// physical projection while the controlled section is regenerating: retained
+// charge may click, but it must never create a numerical energy source.
+void testUpperSlopeChargeTransferStaysBounded()
+{
+    for (const double rate : { 8000.0, 44100.0, 96000.0 })
+    {
+        GhostarEngine engine;
+        engine.prepare(rate, 64);
+        auto parameters = brightPanel();
+        parameters.resonance = 1.0f;
+        parameters.upperResonance = ghostar::UpperResonanceMode::Variable;
+        parameters.cutoff = 0.6f;
+        parameters.filterPathNoise = 0.4f;
+        parameters.vcaBypass = true;
+        engine.setParameters(parameters);
+        engine.noteOn(84, 1.0f);
+
+        double maximum = 0.0;
+        bool allFinite = true;
+        for (int toggle = 0; toggle < 128; ++toggle)
+        {
+            parameters.slope = (toggle & 1) == 0
+                ? ghostar::UpperSlope::TwelveDb
+                : ghostar::UpperSlope::TwentyFourDb;
+            engine.setParameters(parameters);
+            const auto slice = render(engine, 0.001, rate);
+            allFinite = allFinite && finite(slice);
+            maximum = std::max(maximum, peak(slice));
+        }
+        check(allFinite,
+              "rapid charged SLOPE switching stays finite at every rate");
+        check(maximum < 4.0,
+              "rapid charged SLOPE switching stays physically bounded");
+    }
 }
 
 // The lowpass integrator carries no emergency bound, so the regenerative
@@ -662,6 +777,36 @@ void testArpFirstStepIsTheScanBottom()
     const double hz = zeroCrossingHz(opening.left, 48000.0);
     check(std::abs(hz - 130.8) < 6.0,
           "the opening arpeggio step is the lowest held key");
+}
+
+// A no-key gap shorter than one LFO cycle is still a phrase boundary.  The
+// next held group starts at its lowest key; it must not inherit the prior
+// group's scan index merely because no clock edge observed the empty stack.
+void testFreshArpPhraseRestartsAtTheScanBottomBetweenClocks()
+{
+    constexpr double sampleRate = 48000.0;
+    GhostarEngine engine;
+    engine.prepare(sampleRate, 256);
+    auto parameters = brightPanel();
+    parameters.vcaBypass = true;
+    parameters.arpeggiator = ghostar::ArpeggiatorMode::Ripple;
+    parameters.lfoRate = 0.5f; // about 2.9 Hz: a compact, predictable test
+    engine.setParameters(parameters);
+
+    engine.noteOn(48, 0.9f);
+    engine.noteOn(55, 0.9f);
+    engine.noteOn(64, 0.9f);
+    render(engine, 0.37, sampleRate); // opening edge, then the second step
+
+    engine.releaseAllKeys();
+    engine.noteOn(60, 0.9f);
+    engine.noteOn(67, 0.9f);
+    engine.noteOn(72, 0.9f);
+    render(engine, 0.34, sampleRate); // next clock starts the fresh phrase
+    const auto opening = render(engine, 0.12, sampleRate);
+    const double hz = zeroCrossingHz(opening.left, sampleRate);
+    check(std::abs(hz - 261.6) < 10.0,
+          "a fresh between-clock arpeggio phrase opens on its lowest key");
 }
 
 // The factory bank is Init, the manual's eleven Sound Charts and the
@@ -878,6 +1023,10 @@ void testTheHalfbandKernelsAreSparse()
 
 void testFasterThanRealtime()
 {
+#ifndef NDEBUG
+    // Instrumented/debug builds measure diagnostics, not shipping speed.
+    return;
+#else
     GhostarEngine engine;
     engine.prepare(44100.0, 256);
     auto parameters = brightPanel();
@@ -895,6 +1044,7 @@ void testFasterThanRealtime()
     // Informational bound with a wide margin for loaded CI workers: a mono
     // voice must render far faster than realtime.
     check(elapsed < 4.0, "five seconds of audio render inside four seconds");
+#endif
 }
 } // namespace
 
@@ -914,9 +1064,11 @@ int main()
     testNonFinitePerformanceControlsAreSanitised();
     testOutOfRangeSwitchesAreSanitised();
     testShaperResetRetriggersOnLegatoPress();
+    testShaperRunHonoursRiseLockoutAndAcceptsLegatoAfterRise();
     testShaperResetSelfGateCompletesItsCycle();
     testEnvelopeGateFollowsTheSelectedBus();
     testFullResonanceStaysBounded();
+    testUpperSlopeChargeTransferStaysBounded();
     testRegenerativeExtremesStayBounded();
     testSelfOscillationLevelAgreesAcrossTestedRates();
     testArpeggiatorStepsHeldKeys();
@@ -924,6 +1076,7 @@ int main()
     testArpOctaveStepsSurviveTheMidiCeiling();
     testKeyPressDoesNotRetriggerWithoutKbdGate();
     testArpFirstStepIsTheScanBottom();
+    testFreshArpPhraseRestartsAtTheScanBottomBetweenClocks();
     testTravelStepsGlideWhileSounding();
     testStopAllSoundKeepsControllers();
     testEveryFactoryProgramRenders();

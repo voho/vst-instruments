@@ -51,15 +51,18 @@ invented: the resonance curve from the CEM3350's Q scale and panel network,
 envelope timing from the 556 circuit, and keyboard tracking from the CV
 ladder. The controlled-Upper high-Q limiter now solves its resolved
 BA130/TL082/1 nF feedback network implicitly; the fixed Upper stays linear.
+Both halves advance in one coupled solve so SLOPE moves the real 1 nF timing
+capacitor with retained charge, applies the 1 MΩ 12 dB state bleed and keeps
+the tied CEM-input and 101/201 output-gain laws.
 Lower now solves all three unbuffered mixer sliders, their 220 kΩ/68 pF arms,
 both moving CEM states and the traced C33/BA130 loop together. P1014's unequal
 CEM3340 waveform swings and DC offsets survive into both mixers and OSC-B
 modulation instead of being normalised away. The current-driven X wheel and
 voltage-fed Y wheel retain their opposing loaded travels and each selector
 position's distinct pitch/filter depth, at control and audio rate. OVERDRIVE
-solves its traced
-IC12A/BA130 throw and C34 output coupling from the Lower VLP state; the three
-remaining RS7 terminal assignments still await a hardware continuity table.
+solves the traced IC12A/BA130 scalar and an explicitly conditional
+A3+B7+C10 C34 network from the Lower VLP state; installed-switch continuity
+must still resolve that hypothesis and the other RS7 assignments.
 The output stage preserves the
 hardware's less-obvious details too: an asymmetric 2.56/97.44 Shaper extreme,
 the post-VCA passive BRIGHTNESS network, and the normalled rear jack's

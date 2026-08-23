@@ -14,12 +14,13 @@ Two oscillators, a triangle-cross ring modulator and one noise source feed
 **two parallel audio paths**. The Filter/ADSR path runs a mix of A, B and
 noise through the **Lower Filter** and **Upper Filter in series** into a VCA
 driven by the Loudness envelope. The Shaper path runs a mix of everything —
-ring mod included — into a VCA whose gain *is* the Shaper Y output, then the
-passive BRIGHTNESS shelf. The hardware's normalled main jack passively joins
-the two Master wipers, so BRIGHTNESS and both paths cross-load one another;
-SPLIT isolates them at full level left/right. Every
-knob and slider is a host parameter in 0..10 panel travel; every switch carries
-the modelled panel's own detent labels.
+ring mod included — into a VCA whose current behavioral gain follows the
+Shaper Y output, then the passive BRIGHTNESS shelf. The original two-BC173/
+CEM3360 control transfer remains measurement-owned. The hardware's normalled
+main jack passively joins the two Master wipers, so BRIGHTNESS and both paths
+cross-load one another; SPLIT isolates them at full level left/right. Every
+knob and slider is a host parameter in 0..10 panel travel; every switch
+carries the modelled panel's own detent labels.
 
 ## MASTER
 
@@ -69,12 +70,16 @@ the modelled panel's own detent labels.
 - **ARPEGGIATOR** — OFF · RIPPLE · ARPEGGIO · LEAP. All modes scan held keys
   bottom-to-top, wrapped, one note per LFO clock. RIPPLE plays the plain
   sequence; ARPEGGIO plays it at pitch, then an octave up, then an octave
-  down; LEAP cycles unison/+1/−1 octave per successive note. Engaging the
-  arpeggiator clock-slaves the Shaper's rate to the LFO (except in FREE).
+  down; LEAP cycles unison/+1/−1 octave per successive note. A newly held
+  group always starts a fresh scan at its lowest key, even when the no-key
+  gap falls between clock edges. Engaging the arpeggiator clock-slaves the
+  Shaper's rate to the LFO (except in FREE).
 - **MOD SOURCE** — LFO triangle; LFO square; S+H RANDOM (sampled red noise);
   S+H Y (the Shaper sampled — a regular, patterned staircase); RED NOISE
   (continuous slow wander); OSC B (its currently selected waveform, at audio
-  rate).
+  rate). Pitch destinations pass through each Spirit CEM3340 pin-14 network's
+  derived nominal 1.82 µs memory, a tiny but deliberate phase softening that
+  matters most under high-rate self-FM and sync.
 - **LFO/S+H RATE** — under 1 Hz to about 50 Hz; also the sample-and-hold and
   arpeggiator clock. The original control is circuit-loaded, so half knob
   travel is about 2.91 Hz rather than the 3.87 Hz midpoint of an unloaded
@@ -89,14 +94,18 @@ modulation generator).
   HOLD**: rises while gated and holds at maximum. **RESET**: one rise-fall
   cycle from zero, restarted by *every* key press regardless of the TRIGGER
   switch. **RUN**: the rising segment always completes; new gates are
-  ignored until it has.
+  ignored only until that rise has completed. With KBD selected, a MULTIPLE
+  legato press can therefore start RUN again without the combined gate bus
+  first going low; SINGLE still needs a new bus edge.
 - **SHAPE** — the rise/fall split of the period: 0 is a 2.5617/97.4383
   fast-rise/slow-fall split, 5 is symmetric, and 10 reverses the split.
   Total time never changes.
 - **RATE** — the total period: several cycles per minute up to about 20 Hz.
 
-The Shaper's output also drives the Shaper path's VCA directly, so that path
-pulses in FREE mode and articulates in the envelope modes.
+Functionally, the Shaper output controls the Shaper path's VCA, so that path
+pulses in FREE mode and articulates in the envelope modes. Ghostar currently
+uses normalized Y as its behavioral gain; the hardware's coupled transistor/
+CEM3360 control law remains measurement-owned.
 
 ## WHEEL DESTINATIONS
 
@@ -143,7 +152,10 @@ The signature series dual filter.
 - **RESONANCE pot** — the Lower Filter always, the Upper in VARIABLE; both
   reach self-oscillation at maximum, playable across the keyboard with KB
   AMOUNT up.
-- **SLOPE** — the Upper Filter at 12 or 24 dB/octave.
+- **SLOPE** — the Upper Filter at 12 or 24 dB/octave. This is a physical
+  switched network: the two positions have their original relative level,
+  and moving it transfers the small timing capacitor's retained charge, so a
+  state-dependent click or tiny pitch gesture is intentional.
 - **KB AMOUNT** — keyboard tracking, zero to slightly over 100 %. Ghostar
   follows the original DAC/reference cancellation: its pivot is the
   keyboard's second C plus 0.6015 cent (MIDI 60.006015). Both the amount and

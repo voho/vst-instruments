@@ -493,7 +493,25 @@ namespace
     constexpr double diodeSaturationAmps = 2.3e-9;
     constexpr double diodeThermalVolts = 0.043;
 
+    // Each CEM3340 multiplier current output (pin 14) returns through 1.82
+    // kOhm to ground, bypassed by 1 nF: A uses R82/C72 and B uses R118/C77.
+    // Curtis gives fLP=1/(2*pi*R*C); the normalized parallel-RC
+    // current-to-voltage reduction is H(s)=1/(1+sRC), before exponentiation.
+    constexpr double cemPitchMultiplierOhms = 1.82e3;
+    constexpr double cemPitchMultiplierFarads = 1.0e-9;
+    constexpr double cemPitchMultiplierTau =
+        cemPitchMultiplierOhms * cemPitchMultiplierFarads;
+
     constexpr double cemTimingCapacitance = 22.0e-9;
+    // SW4 carries C40 between the two Upper VLP timing nodes. In 12 dB it
+    // selects the controlled node and leaves R194 between the two nodes; in
+    // 24 dB it selects the fixed node and shorts R194 out of that path.
+    constexpr double upperSlopeMemoryCapacitance = 1.0e-9;
+    constexpr double upperSelectedLpCapacitance =
+        cemTimingCapacitance + upperSlopeMemoryCapacitance;
+    constexpr double upperLpCouplingOhms = 1.0e6;
+    constexpr double upperFixedInputGain = 3.0; // VIF + VIV at Q=0.5
+    constexpr double upperTwentyFourDbOutputGain = 101.0 / 201.0;
     constexpr double lowerMixerPotOhms = 100.0e3;
     constexpr double lowerMixerResistanceOhms = 220.0e3;
     constexpr double lowerMixerCapacitance = 68.0e-12;
@@ -561,11 +579,10 @@ namespace
     constexpr double overdriveDiodeSeriesOhms =
         0.5 * (overdriveFeedbackOhms + overdriveClampOhms);
 
-    // In the functionally identifiable OVERDRIVE combination, IC12A reaches
-    // C34 through R187=47 kΩ while Lower VLP reaches it through R167=33 kΩ.
-    // R173 is the dominant load on C34's other plate. The three-deck rotor
-    // phase remains open, but this parallel Thevenin network is fixed by the
-    // circuit function (OQ-10).
+    // Model of the hypothesised A3+B7+C10 network: IC12A reaches C34 through
+    // R187=47 kΩ while Lower VLP reaches it through R167=33 kΩ. The terminal
+    // values are traced, but assignment of this offset-wafer combination to
+    // the panel OVERDRIVE detent remains unresolved (OQ-10).
     constexpr double overdrivePickupOhms = 47.0e3;
     constexpr double overdriveShuntOhms = 33.0e3;
     constexpr double overdriveLoadOhms = 220.0;
@@ -643,11 +660,6 @@ namespace
     [[nodiscard]] double dampingFromQ(double q) noexcept
     {
         return 1.0 / q - 1.0 / chipCeilingQ;
-    }
-
-    [[nodiscard]] double upperDamping(double travel) noexcept
-    {
-        return dampingFromQ(resonanceQ(travel, upperPullupOhms));
     }
 
     [[nodiscard]] double lowerDamping(double travel) noexcept
@@ -781,6 +793,31 @@ double GhostarEngine::p1014SelectedWaveVolts(Waveform waveform,
                       -12.0, 12.0);
 }
 
+double GhostarEngine::runPitchControlLag(PitchControlLag& lag,
+                                         double input) noexcept
+{
+    if (!lag.initialised)
+    {
+        // Power-up has no invented pitch swoop: the capacitor starts at the
+        // present static sum. Ordinary pitch and routing changes retain the
+        // charge and expose the physical 1.82 us transition.
+        lag.output = input;
+        lag.previousInput = input;
+        lag.initialised = true;
+        return input;
+    }
+
+    // Exact first-order evolution for a linearly interpolated input. Unlike
+    // a TPT mapping it keeps a monotone step response even when the 4x grid
+    // is slower than 1/(2RC), while preserving the analog DC group delay.
+    lag.output = flushDenormal(std::fma(
+        pitchLagPole_, lag.output,
+        std::fma(pitchLagNow_, input,
+                 pitchLagPrevious_ * lag.previousInput)));
+    lag.previousInput = input;
+    return lag.output;
+}
+
 void GhostarEngine::prepare(double sampleRate, int maxBlockSize)
 {
     (void) maxBlockSize;
@@ -801,6 +838,13 @@ void GhostarEngine::prepare(double sampleRate, int maxBlockSize)
     brightnessG_ = 2.0 * internalRate_ * brightnessCapacitance;
     filterCouplingG_ = 2.0 * internalRate_ * filterCouplingCapacitance;
     ringCouplingG_ = 2.0 * internalRate_ * ringCouplingCapacitance;
+    const double pitchLagRatio = 1.0
+        / (internalRate_ * cemPitchMultiplierTau);
+    pitchLagPole_ = std::exp(-pitchLagRatio);
+    const double pitchLagAverage =
+        -std::expm1(-pitchLagRatio) / pitchLagRatio;
+    pitchLagNow_ = 1.0 - pitchLagAverage;
+    pitchLagPrevious_ = pitchLagAverage - pitchLagPole_;
 
     // The decimation chain's two Kaiser halfbands (see the header for the
     // division of labour). Betas chosen for ~126 dB (first stage, whose
@@ -880,7 +924,10 @@ void GhostarEngine::reset()
     heldTriB_ = triangleWave(0.0);
     heldDutyA_ = oscADuty_;
     heldDutyB_ = oscBDuty_;
-    lastOscBWave_ = 0.0;
+    pitchLagA_ = PitchControlLag {};
+    pitchLagB_ = PitchControlLag {};
+    lastOscBWave_ = p1014SelectedWaveVolts(heldWaveformB_, heldWaveB_)
+                  / selectedWaveVoltsPerEngineUnit;
     brightnessCompanion_ = 0.0;
     filterCouplingCompanion_ = 0.0;
     ringCouplingCompanion_ = 0.0;
@@ -890,6 +937,9 @@ void GhostarEngine::reset()
     lowerMixerCompanions_.fill(0.0);
     upperControlled_ = SvfSection {};
     upperFixed_ = SvfSection {};
+    upperSlopeState_ = parameters_.slope;
+    upperControlledLp_ = 0.0;
+    upperFixedLp_ = 0.0;
     lowerHighQ_.chargeCompanion = 0.0;
     upperHighQ_.chargeCompanion = 0.0;
 
@@ -1064,6 +1114,8 @@ void GhostarEngine::noteOn(int midiNote, float velocity)
         return;
     }
 
+    const bool startsFreshArpeggiatorPhrase = keyStackSize_ == 0;
+
     // Re-pressing a held key moves it to the top of the stack rather than
     // duplicating it. The stack spans the whole MIDI note domain, so after
     // deduplication it cannot be full.
@@ -1081,6 +1133,13 @@ void GhostarEngine::noteOn(int midiNote, float velocity)
     keyStack_[static_cast<std::size_t>(keyStackSize_)] =
         static_cast<std::int16_t>(midiNote);
     ++keyStackSize_;
+
+    // Every newly held group is a new bottom-to-top scan.  Do this at the
+    // zero-to-one key transition rather than waiting for an LFO edge to
+    // notice an empty stack: a short no-key gap between clocks must not let
+    // the next phrase inherit the preceding phrase's step.
+    if (startsFreshArpeggiatorPhrase)
+        arpStep_ = 0;
 
     keyGate_ = true;
     currentNote_ = midiNote;
@@ -1202,6 +1261,151 @@ GhostarEngine::SvfOutputs GhostarEngine::runSection(SvfSection& section,
     highQ->chargeCompanion = flushDenormal(
         2.0 * charge - highQ->chargeCompanion);
     return { lp, bp, hp };
+}
+
+void GhostarEngine::selectUpperSlope(UpperSlope slope) noexcept
+{
+    if (slope == upperSlopeState_)
+        return;
+
+    // C40 leaves the old VLP node holding its physical endpoint voltage,
+    // then meets the other section's 22 nF timing capacitor. With contact
+    // resistance negligible on an audio timescale, charge conservation fixes
+    // the new endpoint. The same instantaneous delta belongs in that node's
+    // trapezoidal companion; the old node and C37 state do not move.
+    const double c40Voltage = upperSlopeState_ == UpperSlope::TwelveDb
+        ? upperControlledLp_ : upperFixedLp_;
+    SvfSection& selectedSection = slope == UpperSlope::TwelveDb
+        ? upperControlled_ : upperFixed_;
+    double& selectedLp = slope == UpperSlope::TwelveDb
+        ? upperControlledLp_ : upperFixedLp_;
+    const double shared =
+        (cemTimingCapacitance * selectedLp
+         + upperSlopeMemoryCapacitance * c40Voltage)
+        / upperSelectedLpCapacitance;
+    selectedSection.ic2 = flushDenormal(
+        selectedSection.ic2 + shared - selectedLp);
+    selectedLp = flushDenormal(shared);
+    upperSlopeState_ = slope;
+}
+
+double GhostarEngine::runUpperCascade(double input, double g,
+                                      double controlledK,
+                                      double controlledInputGain,
+                                      UpperSlope slope) noexcept
+{
+    selectUpperSlope(slope);
+
+    const bool twelveDb = slope == UpperSlope::TwelveDb;
+    const double controlledLpCapacitance = twelveDb
+        ? upperSelectedLpCapacitance : cemTimingCapacitance;
+    const double fixedLpCapacitance = twelveDb
+        ? cemTimingCapacitance : upperSelectedLpCapacitance;
+    const double controlledLpG =
+        g * cemTimingCapacitance / controlledLpCapacitance;
+    const double fixedLpG =
+        g * cemTimingCapacitance / fixedLpCapacitance;
+    const double controlledCoupling = twelveDb
+        ? 1.0 / (2.0 * internalRate_ * upperLpCouplingOhms
+                 * controlledLpCapacitance)
+        : 0.0;
+    const double fixedCoupling = twelveDb
+        ? 1.0 / (2.0 * internalRate_ * upperLpCouplingOhms
+                 * fixedLpCapacitance)
+        : 0.0;
+
+    // Eliminate each BP node from its trapezoidal equation. The controlled
+    // VIF+VIV input is u*(1+1/Q_commanded); the fixed Q=0.5 half similarly
+    // receives 3*VLP1. What remains is the coupled 2x2 VLP solve created by
+    // R194. In 24 dB that resistor is shorted by SW4 and both off-diagonal
+    // terms vanish.
+    const double controlledBpDenominator = 1.0 + g * controlledK;
+    const double controlledBpBase =
+        (upperControlled_.ic1 + g * controlledInputGain * input)
+        / controlledBpDenominator;
+    const double controlledBpFromLp = g / controlledBpDenominator;
+
+    const double fixedBpDenominator = 1.0 + g * lowSwitchDamping;
+    const double fixedBpBase = upperFixed_.ic1 / fixedBpDenominator;
+    const double fixedBpFromControlledLp =
+        g * upperFixedInputGain / fixedBpDenominator;
+    const double fixedBpFromLp = g / fixedBpDenominator;
+
+    const double l11 = 1.0 + controlledCoupling
+        + controlledLpG * controlledBpFromLp;
+    const double l12 = -controlledCoupling;
+    const double l21 = -fixedCoupling
+        - fixedLpG * fixedBpFromControlledLp;
+    const double l22 = 1.0 + fixedCoupling
+        + fixedLpG * fixedBpFromLp;
+    const double rhsControlled = upperControlled_.ic2
+        + controlledLpG * controlledBpBase;
+    const double rhsFixed = upperFixed_.ic2
+        + fixedLpG * fixedBpBase;
+    const double determinant = l11 * l22 - l12 * l21;
+
+    const double baselineControlledLp =
+        (rhsControlled * l22 - l12 * rhsFixed) / determinant;
+    const double baselineFixedLp =
+        (l11 * rhsFixed - l21 * rhsControlled) / determinant;
+    const double baselineControlledBp = controlledBpBase
+        - controlledBpFromLp * baselineControlledLp;
+    const double baselineFixedBp = fixedBpBase
+        + fixedBpFromControlledLp * baselineControlledLp
+        - fixedBpFromLp * baselineFixedLp;
+
+    // C37 injects into the controlled VLP node. Its response includes the
+    // downstream section and, in 12 dB, R194's return path. C37's own charge
+    // companion remains normalised to the nominal 22 nF timing capacitor;
+    // only its deposit into the selected 23 nF node changes with SLOPE.
+    const double controlledChargeStep = highQChargeStep_
+        * cemTimingCapacitance / controlledLpCapacitance;
+    const double controlledLpPerAmp =
+        controlledChargeStep * l22 / determinant;
+    const double fixedLpPerAmp =
+        -controlledChargeStep * l21 / determinant;
+    const double controlledBpPerAmp =
+        -controlledBpFromLp * controlledLpPerAmp;
+    const double fixedBpPerAmp =
+        fixedBpFromControlledLp * controlledLpPerAmp
+        - fixedBpFromLp * fixedLpPerAmp;
+
+    const double driveVolts = filterNodeVoltsPerUnit
+        * (upperHighQ_.amplifierGain * baselineControlledBp
+           - baselineControlledLp
+           - highQCapacitanceRatio * upperHighQ_.chargeCompanion);
+    const double seriesOhms = upperHighQ_.sourceResistanceOhms
+        + filterNodeVoltsPerUnit
+            * (controlledLpPerAmp
+               + highQCapacitanceRatio * highQChargeStep_
+               - upperHighQ_.amplifierGain * controlledBpPerAmp);
+    const double current = diodePairCurrent(driveVolts, seriesOhms);
+
+    const double controlledLp = baselineControlledLp
+                              + controlledLpPerAmp * current;
+    const double fixedLp = baselineFixedLp + fixedLpPerAmp * current;
+    const double controlledBp = baselineControlledBp
+                              + controlledBpPerAmp * current;
+    const double fixedBp = baselineFixedBp + fixedBpPerAmp * current;
+    const double highQCharge = upperHighQ_.chargeCompanion
+                             + highQChargeStep_ * current;
+
+    upperControlled_.ic1 = flushDenormal(
+        2.0 * controlledBp - upperControlled_.ic1);
+    upperControlled_.ic2 = flushDenormal(
+        2.0 * controlledLp - upperControlled_.ic2);
+    upperFixed_.ic1 = flushDenormal(2.0 * fixedBp - upperFixed_.ic1);
+    upperFixed_.ic2 = flushDenormal(2.0 * fixedLp - upperFixed_.ic2);
+    upperHighQ_.chargeCompanion = flushDenormal(
+        2.0 * highQCharge - upperHighQ_.chargeCompanion);
+    upperControlledLp_ = controlledLp;
+    upperFixedLp_ = fixedLp;
+
+    // IC14B is normalised to its 12 dB gain of 201. SW4 opens one 470 ohm
+    // leg at 24 dB, changing that gain to 101; absolute CEM/output scaling
+    // cancels, leaving the exact source-closed ratio.
+    return twelveDb ? controlledLp
+                    : upperTwentyFourDbOutputGain * fixedLp;
 }
 
 GhostarEngine::SvfOutputs GhostarEngine::runLowerSection(
@@ -1707,8 +1911,16 @@ void GhostarEngine::advanceControls() noexcept
     // because with Y/EXT as the only selected source the Shaper's own gate
     // would clamp the Shaper back to zero the moment it crossed its own
     // threshold, and the single rise/fall cycle could never complete.
+    const bool newKeyForShaper = pendingShaperTrigger_;
     const bool shaperRetrigger =
-        p.shaperMode == ShaperMode::Reset && pendingShaperTrigger_;
+        p.shaperMode == ShaperMode::Reset && newKeyForShaper;
+    // RUN obeys the panel's ordinary keyboard-trigger mode.  MULTIPLE's KT
+    // pulse remains visible during legato, and RUN accepts it once its rise
+    // has completed; SINGLE still requires a genuine selected-bus edge.
+    const bool runKeyboardRetrigger =
+        p.shaperMode == ShaperMode::Run
+        && p.trigger == TriggerMode::Multiple && p.gateKbd
+        && newKeyForShaper;
     pendingShaperTrigger_ = false;
 
     switch (p.shaperMode)
@@ -1764,7 +1976,8 @@ void GhostarEngine::advanceControls() noexcept
             }
             [[fallthrough]];
         case ShaperMode::Run:
-            if (p.shaperMode == ShaperMode::Run && gateRise
+            if (p.shaperMode == ShaperMode::Run
+                && (gateRise || runKeyboardRetrigger)
                 && !(shaperCycleActive_ && shaperRising_))
             {
                 // RUN never abandons a rise in progress; a new gate is
@@ -2139,10 +2352,19 @@ void GhostarEngine::advanceControls() noexcept
 
     controlLowerK_ = lowerDamping(p.resonance);
     // LOW throws the pot off the Upper chip's Q pin, leaving it on its own
-    // bias — the anchored Q = 0.5 the whole law is calibrated against.
-    controlUpperK_ = p.upperResonance == UpperResonanceMode::Low
-                         ? lowSwitchDamping
-                         : upperDamping(p.resonance);
+    // bias — the anchored Q = 0.5 the whole law is calibrated against. Both
+    // CEM signal inputs are tied: VIF contributes unity while VIV contributes
+    // 1/Q_commanded. The latter must use the commanded Q before C37's
+    // external enhancement subtracts the chip's residual damping.
+    const bool upperLow =
+        p.upperResonance == UpperResonanceMode::Low;
+    const double commandedUpperDamping = upperLow
+        ? lowSwitchDamping
+        : 1.0 / resonanceQ(p.resonance, upperPullupOhms);
+    controlUpperInputGain_ = 1.0 + commandedUpperDamping;
+    controlUpperK_ = upperLow
+        ? commandedUpperDamping
+        : commandedUpperDamping - 1.0 / chipCeilingQ;
 
     // -------------------------------------------------------------- Gains
     // LC reaches the CEM3360 linear-control pin through 10k, with 3k3 to
@@ -2155,13 +2377,12 @@ void GhostarEngine::advanceControls() noexcept
         ? 1.0
         : clamp01((loudnessEnvelope_.level - loudnessZeroLevel)
                   / (1.0 - loudnessZeroLevel));
-    // Behavioral seam, not a closed resistor law: P1013 drives this CEM3360
-    // through R38/R40/R41 plus an always-biased BC173/R39 emitter branch.
-    // Its exact control voltage depends on transistor beta/Vbe and the
-    // original CEM input clamp, none documented. Retain the conventional
-    // half-wave response until simultaneous SHAPE/control-node captures
-    // close OQ-26; do not disguise a guessed transistor rail as a circuit
-    // solve.
+    // Outside FREE, with SHAPE X WITH Y open, RS3/R81 keep both BC173s out
+    // of forward conduction, but the R38/R40/R41 law still assumes negligible
+    // reverse E-B current; no source bounds it against the CEM's microamp pin bias.
+    // Near full control the chain reaches roughly two 5 V reverse ratings, so
+    // an avalanche knee is plausible. The switch and FREE add further loads.
+    // Retain the half-wave seam until coupled captures close OQ-26.
     controlShaperVcaGain_ = std::max(0.0, shaperLevel_);
 
     // P3 is marked 100k LOG but its manufacturer taper is not given. Keep
@@ -2181,25 +2402,31 @@ void GhostarEngine::renderVoiceSample() noexcept
 
     // ------------------------------------------------- Audio-rate MOD X bus
     // With MOD SOURCE = OSC B the mod board carries the post-switch, post-IC10
-    // selected wave. B's own pitch retains the prior emitted sample so its
-    // feedback is causal. With SYNC off, B is otherwise acyclic and can emit
-    // its fully BLEP/BLAMP-corrected sample before A reads it. SYNC closes the
-    // B -> A-frequency -> A-reset -> B loop, so A/PWM uses the causal sample
-    // in that one configuration. Filters are downstream and always read the
-    // current emitted sample.
+    // selected wave. R82/C72 and R118/C77 lag each CEM3340's complete pitch
+    // sum, making self-FM causal without replacing a physical 1.82 us memory
+    // with a sample-choice heuristic. With SYNC off, B can emit before A reads
+    // it. SYNC closes the remaining B -> A-frequency -> A-reset -> B loop, so
+    // A/PWM uses the causal sample there. PWM keeps that sync-dependent source
+    // choice; filters use fresh B. Neither gets an invented pole while their
+    // active-path delays remain unresolved (OQ-25).
     const auto& audioMod = controlAudioRateMod_;
-    double audioModA = 0.0;
-    double audioModB = 0.0;
     double audioModUpper = 0.0;
     double audioModLower = 0.0;
     double audioModDuty = 0.0;
-    if (audioMod.active)
-        audioModB = lastOscBWave_ * audioMod.gain * audioMod.bOctaves;
 
     // ----------------------------------------------------------- Oscillators
+    const double previousModSource = audioMod.active
+        ? lastOscBWave_ * audioMod.gain : 0.0;
+    const double basePitchB = controlOscBDrone_
+        ? std::log2(controlOscBDroneHz_ / 440.0)
+        : controlOscBOctaves_;
+    const double previousPitchInputB = basePitchB
+        + previousModSource * audioMod.bOctaves;
+    auto predictedPitchLagB = pitchLagB_;
+    const double pitchB =
+        runPitchControlLag(predictedPitchLagB, previousPitchInputB);
     const double frequencyB = std::min(
-        controlOscBDrone_ ? controlOscBDroneHz_ * std::exp2(audioModB)
-                          : 440.0 * std::exp2(controlOscBOctaves_ + audioModB),
+        440.0 * std::exp2(pitchB),
         0.45 * internalRate_);
     const double stepB = frequencyB * dt;
     // The selector's narrowest B pulse is 3%, but the CEM3340 PWM input is
@@ -2271,16 +2498,24 @@ void GhostarEngine::renderVoiceSample() noexcept
         emitB();
     }
 
-    if (audioMod.active)
+    const double sourceForA = audioMod.active
+        ? (p.sync ? lastOscBWave_ : waveB) * audioMod.gain : 0.0;
+    const double pitchInputA = controlOscAOctaves_
+        + sourceForA * audioMod.aOctaves;
+    double pitchA = 0.0;
+    if (p.sync)
     {
-        const double source = (p.sync ? lastOscBWave_ : waveB)
-                            * audioMod.gain;
-        audioModA = source * audioMod.aOctaves;
-        audioModDuty = source * audioMod.duty;
+        auto predictedPitchLagA = pitchLagA_;
+        pitchA = runPitchControlLag(predictedPitchLagA, pitchInputA);
     }
+    else
+    {
+        pitchA = runPitchControlLag(pitchLagA_, pitchInputA);
+    }
+    audioModDuty = sourceForA * audioMod.duty;
 
     const double frequencyA =
-        std::min(440.0 * std::exp2(controlOscAOctaves_ + audioModA),
+        std::min(440.0 * std::exp2(pitchA),
                  0.45 * internalRate_);
     const double stepA = frequencyA * dt;
     const double dutyA =
@@ -2313,6 +2548,19 @@ void GhostarEngine::renderVoiceSample() noexcept
         phaseA_ = scanOscillatorSample(
             phaseA_, stepA, p.oscAWaveform, dutyA, -1.0, corrA);
     }
+
+    // Cyclic routes predicted their phase step from causal prior B above.
+    // Commit the real capacitor endpoints once, against the newly emitted
+    // voltage, so base-CV changes do not acquire an extra internal-sample
+    // delay and the physical charge is current for the next interval.
+    const double currentModSource = audioMod.active
+        ? waveB * audioMod.gain : 0.0;
+    runPitchControlLag(
+        pitchLagB_, basePitchB + currentModSource * audioMod.bOctaves);
+    if (p.sync)
+        runPitchControlLag(
+            pitchLagA_, controlOscAOctaves_
+                + currentModSource * audioMod.aOctaves);
 
     // Deferred emit: each sample leaving the oscillator is the previous one,
     // now carrying the earlier half of every event discovered since.
@@ -2383,14 +2631,15 @@ void GhostarEngine::renderVoiceSample() noexcept
           static_cast<double>(p.filterPathB),
           static_cast<double>(p.filterPathNoise) },
         filterPath, lowerG, controlLowerK_);
-    // RS7's raw contacts are closed but its three-deck rotor phase is not.
+    // RS7's individual terminal nets are traced but its three-deck rotor
+    // phase is not.
     // C9/C11 ground Lower VLP, C10 feeds it to C34 through 33 kΩ and C12
     // feeds it directly; B6/B7 select IC12 pin 1 and B8 selects pin 7. The
-    // functional OVERDRIVE combination is A3+B7+C10, because the formerly
-    // assumed C11 would ground the very VLP signal IC12A distorts. The other
-    // three named detents still lack a safe OUT/BANDPASS/HIGHPASS mapping.
-    // Until that phase is measured, relax C34 through the known OVERDRIVE
-    // impedance instead of inventing a named-mode pre-charge path.
+    // named OVERDRIVE behavior below applies the A3+B7+C10 functional
+    // hypothesis; a standard same-index switch would instead pair A3/B7 with
+    // C11, so no panel detent is source-closed. Non-OD C34 routing is likewise
+    // unresolved. Relaxing it through the same hypothesis at zero excitation
+    // is an explicitly nonphysical interim approximation, not a traced path.
     const double overdriven = processOverdrive(
         p.lowerMode == LowerFilterMode::Overdrive ? lower.lp : 0.0);
     switch (p.lowerMode)
@@ -2420,20 +2669,11 @@ void GhostarEngine::renderVoiceSample() noexcept
             break;
     }
 
-    // DWG 2 routes the controlled-Q half first. Its LP pin 13 is both the
-    // 12 dB tap and the input to the fixed-Q half; SW4 selects that tap or
-    // the fixed half's downstream LP for 24 dB. Both halves always advance.
-    // P1013 gives the external BA130 overload loop only to the controlled
-    // half; decay=1 leaves the downstream fixed-Q half strictly linear.
-    const double controlledLp =
-        runSection(upperControlled_, filterPath, upperG, controlUpperK_,
-                   &upperHighQ_, highQChargeStep_).lp;
-    const double fixedLp =
-        runSection(upperFixed_, controlledLp, upperG,
-                   lowSwitchDamping, nullptr, highQChargeStep_).lp;
-    filterPath = p.slope == UpperSlope::TwentyFourDb
-                     ? fixedLp
-                     : controlledLp;
+    // The two Upper halves cannot be advanced independently: their tied CEM
+    // inputs, SW4's moving C40 timing capacitor, R194 cross-state path and
+    // linked IC14B gain pole form one stateful network (SM DWG 2, OQ-09).
+    filterPath = runUpperCascade(filterPath, upperG, controlUpperK_,
+                                 controlUpperInputGain_, p.slope);
 
     // C30=470n sees R132=24k in parallel with R133=100k before the loudness
     // CEM3360. Its state keeps advancing while that VCA is shut.

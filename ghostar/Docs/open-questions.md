@@ -169,10 +169,12 @@ level and makes SG high. The engine and focused circuit test now use this
 explicit phase/cycle/gate state in every mode; no interior level threshold
 remains.
 
-Still open is which edge from the selected keyboard, external or Y feedback
-source is accepted by the trigger path in each mode, especially with Y
-self-feedback. This closure deliberately preserves the engine's existing
-trigger-acceptance policy. Resolving that last part requires a complete
+The manual closes one more edge rule: RUN ignores new gates only through its
+rising segment. A selected KBD/MULTIPLE KT pulse therefore starts RUN again
+after that rise even while the held-key gate remains high; SINGLE still needs
+a genuine selected-bus rise. The engine and behavior suite now pin both
+cases. Still open is exact X/external/Y edge acceptance in each mode,
+especially self-Y feedback. Resolving that remainder requires a complete
 dynamic IC6A/RS3C/FET trace or simultaneous selected-gate, SHAPE and SG
 captures from the hardware.
 
@@ -227,7 +229,7 @@ uses the exact endpoint with its existing quadratic travel
 test pins the one-sample full-travel lag coefficient. The taper closes with a
 part marking or glide-time measurements at intermediate positions.
 
-## OQ-09 — Upper-filter cascade drive and SW4 memory
+## OQ-09 — Upper-filter cascade drive and SW4 memory — closed
 
 The Internet Archive's grayscale JP2 of SM DWG 2 resolves R181 as 91 kΩ,
 with the drawn 220 Ω shunt. That puts the cascade section at the same +29 mV
@@ -236,7 +238,7 @@ manual. The other section receives the selected LOW/VARIABLE resonance bus.
 LOW and the fixed half therefore use exact `k=1/Q=2`; the engine no longer
 subtracts its voiced VARIABLE/self-oscillation ceiling from this fixed bias.
 
-**Closed topology, engine work remaining.** The controlled-Q section comes
+**Closed and modelled.** The controlled-Q section comes
 first; its output is both the 12 dB tap and the input of the downstream
 fixed-Q=0.5 section selected at 24 dB. P1013 also ties each half's VIF and VIV
 inputs together. The CES final sheet identifies their transconductors, so the
@@ -248,54 +250,74 @@ to ground and selects either 22 nF LP timing node, giving the selected node
 23 nF and transferring C40's stored charge on a slope toggle. In 12 dB,
 R194=1 MΩ weakly couples the two LP nodes; in 24 dB the switch shorts that
 resistor. A linked pole changes IC14B's gain from 201 in 12 dB to 101 in
-24 dB, an exact relative `101/201`. Ghostar presently advances two 22 nF
-sections and selects their taps, so the tied-input drive, C40 charge sharing,
-1 MΩ coupling and 101/201 output ratio remain an implementation gap.
+24 dB, an exact relative `101/201`.
 
-**Closes with.** Implement those source-closed networks and pin their KCL,
-22:1 charge conservation and gain ratio; hardware sweeps then validate
-CEM3350 output impedance and original-unit tolerances rather than select the
-topology.
+Ghostar now advances the two halves in one coupled solve. The selected LP
+integrator uses 23 nF, 12 dB includes R194's equal-and-opposite node current,
+and the C37/BA130 scalar sees the coupled network's exact current sensitivity.
+On a slope toggle, the newly selected node is projected to
+`(22·Vnew + Vold)/23` before the next solve while the abandoned node and C37
+state remain untouched. Each half receives its tied-input drive, using
+commanded CEM Q before the declared external-enhancement term, and the 24 dB
+tap is scaled by `101/201`. The circuit suite independently pins all four
+state equations, C37 KVL, both switch projections and the gain ratio.
+
+Hardware sweeps can now validate CEM3350 output impedance, contact resistance
+and bounce, TL082 dynamics and original-unit tolerances; they no longer select
+the topology.
 
 ## OQ-10 — Overdrive knee and drive
 
 **Gap (local circuit and physical Lower drive implemented; RS7 panel phase,
 clean outputs and C34 pre-charge open).** The lossless P1013
-scan resolves the nonlinear RS7 configuration. IC12A is non-inverting;
+scan resolves the nonlinear branch and every terminal net, but not a named
+three-deck switch position. IC12A is non-inverting;
 R153=330 kΩ is feedback, R186=2.2 kΩ and R166=470 Ω meet its inverting
 node in the distortion throw, and R164=R165=2.2 kΩ plus D1/D2 form the
 BA130 return. A3 closes that nonlinear return and B7 selects IC12A pin 1.
-The C deck cannot be same-index C11 because C11 grounds the Lower VLP signal
-being distorted; functional OVERDRIVE requires C10, which feeds VLP to C34
-through R167=33 kΩ. A hardware continuity table is still required to make
-that functional A3+B7+C10 inference a literal panel-detent assignment.
+C10 connects Lower VLP to C34-left through R167=33 kΩ, whereas C11 clamps
+Lower VLP to ground. A3+B7+C10 is therefore a functional hypothesis, not a
+traced switch position. A standard same-index 3P4T interpretation pairs the
+panel OVERDRIVE phase with A3+B7+C11, contradicting the VLP-driven reduction;
+installed-switch continuity or an assembly legend must resolve that conflict.
 
 With ideal IC12A, the network reduces to one monotone scalar. For input node
 `x`, diode voltage `q` and pair current `i=2·Is·sinh(q/Vd)`, solve
 `q + 166100·i = 425.56383·x`; then
-`o = 853.12766·x - 330000·i`. At C34's left plate, `o` arrives through
-R187=47 kΩ and clean `x` through R167=33 kΩ, so
-`Vth=(33·o+47·x)/80` and `Rth=47k||33k`. C34=220 nF and R173=220 Ω then
-form the resolved output high-pass. The
-BA130 fit remains `Is≈2.3 nA`, `Vd≈43 mV` from its documented typical curve.
+`o = 853.12766·x - 330000·i`.
+
+Let `L` and `R` be C34's left and right nodes, `v=VLP`, `p=IC12 pin 1`,
+`b=IC12 pin 7`, and `j=C34·d(L−R)/dt`. The B throws contribute
+`B5: 0`, `B6: (L−p)/147k`, `B7: (L−p)/47k`, and
+`B8: (L−b)/47k`. C9 and C11 impose `v=0`; C10 contributes
+`(L−v)/33k`; C12 imposes `L=v`. For resistive selections,
+`I_B+I_C+j=0`, while the right node obeys `j=R/220Ω+i_upper(R)`.
+Neglecting the Upper input branch gives the current 220 Ω-dominant reduction.
+
+For the hypothetical A3+B7+C10 combination only,
+`(L−v)/33k + (L−o)/47k + j = 0`, hence
+`Vth=(47·v+33·o)/80` and `Rth=33k||47k=19.3875k`. Those equations do not
+prove that the combination is the panel OVERDRIVE detent. The BA130 fit
+remains `Is≈2.3 nA`, `Vd≈43 mV` from its documented typical curve.
 
 **Engine.** The traced scalar is driven from the production Lower MNA's VLP
 state, not `dry + BP`. The engine derives a shared selected-wave/state
 normalization of 5 V per unit from P1014's affine offset, replacing the
-arbitrary 24 mV value. Its distorted and clean-VLP Thevenin source passes
-through the resolved C34 high-pass before the Upper filter. While
-OVERDRIVE is disconnected, C34 now retains its physical left-minus-right
-plate-voltage companion, but zero is still applied through the OVERDRIVE
-source impedance as an explicit interim relaxation. A higher-resolution
-continuity pass corrects the earlier reading: RS7-C's common is Lower VLP,
+arbitrary 24 mV value. In the named OVERDRIVE mode it applies the
+A3+B7+C10 hypothesis and passes that conditional Thevenin source through
+C34 before the Upper filter. In every other named mode it still relaxes C34
+through the same hypothesis with zero excitation, an explicitly nonphysical
+interim approximation because the actual throw is unresolved. A
+higher-resolution schematic trace corrects the earlier reading: RS7-C's
+common is Lower VLP,
 not C34. C9/C11 ground VLP, C10 feeds it through R167=33 kΩ to C34's left
 node, and C12 connects it directly. RS7-B's common reaches C34 through
 R187=47 kΩ: B5 is open, B6 receives IC12 pin 1 through R168=100 kΩ, B7
 receives pin 1 directly, and B8 receives IC12 pin 7=`151·VBP`. A1/A2/A4 are
 open while A3 closes the nonlinear return. These raw networks are closed,
-but the schematic and PCB provide no three-deck rotor-to-panel phase that
-assigns OUT/BANDPASS/HIGHPASS or proves the inferred OVERDRIVE C contact.
-Encoding the remaining named modes now would guess.
+but the schematic and PCB provide no installed rotor phasing that reconciles
+the standard same-index reading with the functional C10 hypothesis or safely
+assigns the other named modes. Encoding those contacts now would guess.
 
 **Closes with.** A hardware shaft-to-contact continuity table or assembly
 legend, followed by continuous C34/VLP captures in all four positions;
@@ -708,56 +730,129 @@ test must reject a stroke whose spectrum a sparse grid cannot nearly account
 for, rather than falling back on a denser one. Half a measurement is what
 produced the defect this entry exists because of.
 
-## OQ-25 — Osc-B audio-rate causal split implemented; analog delay open
+## OQ-25 — CEM3340 pitch pole modelled; PWM/filter delay open
 
 MOD SOURCE = OSC B carries the selected post-IC10 audio waveform, not a
-host-rate control. Ghostar now emits B first when SYNC is off, so A pitch/PWM
-and both filters receive B's current fully BLEP-corrected sample; B's own
-frequency feedback retains the prior sample. With SYNC on, the dependency is
-`B → A frequency → A wrap/reset → B`, so A/PWM deliberately use prior B to
-break that loop while the downstream filters still receive current B.
+host-rate control. The former current/prior-sample split was only a causal
+numerical policy for its pitch destinations. P1014 and the Curtis datasheet
+now close the physical memory: each CEM3340 multiplier current output, pin 14,
+returns to ground through 1.82 kΩ with 1 nF in parallel (A R82/C72; B
+R118/C77). Curtis states that bypassing `R_s` limits the multiplier bandwidth
+and gives `f_LP=1/(2πR_sC)`; normalizing the elementary parallel-RC
+current-to-voltage transfer to its DC value gives
 
-The split is causal and removes the former unnecessary delay from acyclic
-destinations, but it is still a digital realization rather than a measured
-analog group-delay claim. Closing the remaining unit detail requires the
-service drawing's buffer/loading reduction or simultaneous post-IC10 and
-destination-node phase measurements under self-FM and sync.
+`H_pitch(s)=1/(1+s·R_s·C)`, `tau=1.82 µs`,
+`f_c=1/(2πtau)=87,447.7709 Hz`.
+
+Pin 15 is the chip's pitch-current summing node, so this pole acts on each
+oscillator's **complete** octave/CV sum before exponential conversion:
+keyboard, bend, tune/range/interval and X/Y modulation together. It is not an
+Osc-B-modulation-only delay. At 10 kHz its nominal response is −0.05642 dB,
+−6.5237°, with 1.79651 µs group delay.
+
+Ghostar realizes that capacitor exactly for a linearly interpolated input on
+the 4× internal grid. For `r=T/tau`:
+
+`a=exp(−r)`, `q=−expm1(−r)/r`, `b_now=1−q`, `b_prev=q−a`,
+
+`y[n]=a·y[n−1]+b_now·u[n]+b_prev·u[n−1]`.
+
+The coefficients are non-negative at every supported rate, DC gain is one,
+and `T·(a+b_prev)/(1−a)=tau`, so the model keeps the hardware's 1.82 µs
+low-frequency delay without an alternating low-rate step response. At a
+44.1 kHz host (`176.4 kHz` internal), the coefficients are
+`a=0.0443874`, `b_now=0.6932025`, `b_prev=0.2624101`; its 10 kHz phase is
+−6.490°, 0.034° from the analog pole.
+
+Unsynchronised A is acyclic, so fresh B advances its real capacitor before A
+steps. B self-FM and synchronised A are cyclic: each phase step is predicted
+from a temporary copy advanced with causal prior B, then the real capacitor is
+committed exactly once against fresh emitted B at the interval endpoint. That
+split breaks `B → A frequency → A reset → B` without imposing an extra whole
+internal-sample delay on newly known keyboard/tune/base CV. The capacitors
+retain charge through ordinary pitch/routing changes and initialize at the
+current static sum only after prepare/reset, avoiding a fictitious power-up
+swoop.
+
+What remains open is destination-specific, not a generic pitch delay. The A/B
+PWM branches contain their BC308 conditioner, PW trim and 10 nF network; the
+filter branches enter LM1458 summers and undocumented CEM3350 control
+dynamics. Their signed transfer and group delay still require simultaneous
+post-IC10/destination-node measurements. Ghostar therefore leaves PWM and
+filter modulation on the existing causal schedule rather than inventing
+extra poles.
 
 ## OQ-26 — Shaper audio-VCA control node
 
-**Topology/KCL closed; active-device transfer open.** P1013 does not connect
-normalized SHAPER Y directly to IC5. Physical SHAPE voltage `S` reaches the
-CEM3360 linear-control pin 5 through R38=10 kΩ. That node returns through
-R40=5.6 kΩ to ground and R41=1 MΩ to −12 V, and is driven through R39=3.6 kΩ
-by TR2, a BC173 emitter follower whose collector is at +12 V and whose base
-is pulled from +12 V through R29=100 kΩ. The lossless drawing and PCB overlay
-resolve the close line crossing: TR2 is separate from the FREE/TR1 branch and
-is biased in every Shaper mode and phase. SG and RS3 have no separate/direct
-conductor into R38–R41/TR2; they affect it only through upstream `S`.
+**Corrected topology; conditional divider KCL derived; the active transfer
+remains open.**
+Physical SHAPE voltage `S` reaches CEM3360 linear-control pin 5 through
+R38=10 kΩ; the node also has R40=5.6 kΩ to ground and R41=1 MΩ to −12 V.
+The extra drive is a two-emitter-follower chain, not an always-biased TR2:
+`J5/1 → R30=30k → TR1 → R31=3.6k → TR2 → R39=3.6k → V_C`.
+R29=100 kΩ and R32=36 kΩ bias TR1's base from ±12 V.
 
-For instantaneous TR2 emitter voltage `Q`, external KCL gives
+Outside FREE **with SHAPE X WITH Y open**, RS3-B8 is open and P1015's
+R81=100 kΩ pulls J5/1 toward −20 V. Together with R30/R29/R32 this is
+the nominal schematic reduction `V_T=−8.07518797 V` through
+`R_T=21.9924812 kΩ`. With the printed rails and resistor values it keeps both
+BC173s out of **forward** conduction. While their reverse base-emitter currents
+remain negligible, the switch-open envelope-mode law is
 
-`V_C = [S/10k + Q/3.6k − 12/1M] /
-       [1/10k + 1/3.6k + 1/5.6k + 1/1M]`
+`V_C=0.3576903424·S−0.0429228411−i_5/G`,
+`G=1/10k+1/5.6k+1/1M`.
 
-`=0.1794207274·S + 0.4983909094·Q − 0.0215304873 V`.
+No cited source locates a voltage interval where that reverse current is
+negligible against the CEM pin's typical −1.6 µA bias. The ITT sheet gives no
+sub-breakdown leakage curve, and its `>5 V at 1 µA` point cannot turn the
+conditional divider equation into a closed low/mid transfer.
 
-The diagnostic R39-open law would be
-`V_C=0.3576903424·S−0.0429228411 V`, but it is not a factory operating mode.
-Closing `Q` requires the coupled BC173 β/V_BE/base-current law and the real
-CEM3360 pin-5 input/clamp. The preliminary CEM sheet labels ground-referenced
-linear control over 0..+1.5 V but does not specify the vintage cell's exact
-knee, over-range clamp, top gain or feedthrough. On P1015, R65=R66=22 kΩ and
-R61=100 kΩ prove SHAPE reverses at half the SG op-amp rail: envelope modes
-map 0→`V_SG,OH/2`, while FREE maps `V_SG,OL/2`→`V_SG,OH/2`; the loaded TL082
-swings themselves are not printed.
+That condition does not hold safely across the entire top range. The cited
+ITT BC173 gives a 5 V emitter-base maximum and `V(BR)EBO>5 V` at 1 µA. With
+negligible chain current, `V_C=1.93 V` puts `1.93−(−8.07519)=10.0052 V`
+across the two reverse E-B junctions; 2.0 V control makes it 10.0752 V. The
+sharing is device-dependent, so one junction may avalanche before the ideal
+sum. The numerical coincidence with the CEM's typical maximum-gain point is a
+credible candidate for an original-unit top-end quirk, but the Spirit BOM
+gives neither BC173 maker nor gain grade, and the available curve does not
+define a predictive two-device avalanche law.
 
-**Engine.** Retains the behavioral `gain=max(0,Y)` seam. It gives the expected
-unipolar envelope and pulsed FREE response, but is not described as a
-component-derived law. Substituting ideal rails or `clamp(V_C/1.5,0,1)` would
-invent the most consequential active-device behavior in the network.
+The 1984 production CEM3360 sheet specifies 52 %/V typical, 1.93 V typical
+maximum-gain voltage, −1.6 µA typical linear-input bias and 80 dB typical
+attenuation at zero. With its conventional signed `i_5=−1.6 µA`, the law is
+`V_C=0.3576903424·S−0.0371997956`: zero at `S=0.104 V` and nominal full gain
+at approximately `S=5.50 V`. Those typical chip figures give strong
+design-consistency evidence for a normalized unipolar envelope gain, not an
+exact installed-unit transfer; the upstream loaded swing is not printed.
 
-**Closes with.** Simultaneous scope captures of `S` at J5/3, `V_C` at IC5/5
-and preferably TR2 emitter voltage in FREE and one envelope mode, across a
-full cycle; alternatively a verified original-CEM3360 macromodel plus BC173
-operating-point data and PCB continuity.
+Closing SHAPE X WITH Y connects R33 to the post-R31/TR2-base node. That load
+couples the follower chain to the X-VCA control path, so neither the
+divider-only law nor the forward-off reduction can be carried into the
+closed-switch case without solving its source and load.
+
+In FREE, B8 connects J5/1 to the other IC9/3240 half around
+R64=2.2 kΩ, C11=47 nF and D22—not directly to `S` or SG. If `F` is its actual
+connector voltage, the nominal-resistor TR1-base Thevenin source is
+`V_T(F)=0.46875·F−3 V`, `R_T=14.0625 kΩ`. Its coupled two-transistor KCL is
+topologically closed, but a predictive transfer still needs `F`'s loaded
+waveform, polarity and source impedance, a selected transistor characteristic
+and the CEM pin-current law. The CEM sheet likewise omits out-of-range
+control-pin behavior, including whether or where it clamps. The cited ITT
+data cover one BC173 manufacturer, while the Spirit BOM selects neither maker
+nor B/C gain group. Substituting `F=S`, `F=SG` or an ideal rail would invent
+a distinctive FREE-mode knee.
+
+**Engine.** Retains the practical normalized approximation `gain=max(0,Y)`
+for every mode. Even the conditional switch-open divider is not an exact
+sourced transfer: if the undocumented SHAPE swing is provisionally
+normalized to the nominal ≈5.50 V consistency point, the typical-sheet result
+is closer to `max(0,1.0193Y−0.0193)`, before the CEM's finite 70 dB minimum /
+80 dB typical zero-control attenuation. The simpler law stays explicitly
+behavioral; no guessed switch load, reverse-avalanche curve, transistor rail
+or CEM out-of-range law has entered DSP.
+
+**Closes with.** Simultaneous high-impedance captures of J5/1 (`F`), J5/3
+(`S`), J4/5 (SG), both transistor base/emitter nodes and IC5/5 (`V_C`) through
+a slow non-FREE sweep into maximum control and across both FREE ramp legs,
+with both SHAPE-X-WITH-Y states. That reveals any reverse-avalanche onset as
+well as the switch load and supplies the final coupled solve.

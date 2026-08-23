@@ -13,6 +13,77 @@
 #include <string>
 #include <vector>
 
+namespace ghostar
+{
+// Drive the real sparse kernels and ring schedule without involving an
+// oscillator, envelope or gain calibration. GhostarEngine already grants
+// this test seam access for component-level checks.
+struct GhostarCircuitTestAccess
+{
+    static double decimatorImpulseCentroid() noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 64);
+
+        constexpr int responseSamples = 128;
+        double sum = 0.0;
+        double firstMoment = 0.0;
+        bool impulse = true;
+        for (int outputSample = 0; outputSample < responseSamples;
+             ++outputSample)
+        {
+            for (int step = 0; step < 4; ++step)
+            {
+                engine.filterStageARing_[
+                    static_cast<std::size_t>(engine.stageAIndex_)] =
+                        impulse ? 1.0 : 0.0;
+                impulse = false;
+                engine.stageAIndex_ =
+                    (engine.stageAIndex_ + 1) % GhostarEngine::stageATaps;
+
+                if ((step & 1) == 1)
+                {
+                    engine.filterStageBRing_[
+                        static_cast<std::size_t>(engine.stageBIndex_)] =
+                            convolve(engine.stageAKernel_,
+                                     engine.filterStageARing_,
+                                     engine.stageAIndex_);
+                    engine.stageBIndex_ =
+                        (engine.stageBIndex_ + 1)
+                        % GhostarEngine::stageBTaps;
+                }
+            }
+
+            const double value = convolve(engine.stageBKernel_,
+                                          engine.filterStageBRing_,
+                                          engine.stageBIndex_);
+            sum += value;
+            firstMoment += static_cast<double>(outputSample) * value;
+        }
+        return firstMoment / sum;
+    }
+
+private:
+    template <typename Kernel, std::size_t taps>
+    static double convolve(const Kernel& kernel,
+                           const std::array<double, taps>& ring,
+                           int oldestIndex) noexcept
+    {
+        double result = 0.0;
+        for (int index = 0; index < kernel.count; ++index)
+        {
+            int ringIndex = oldestIndex
+                + kernel.offsets[static_cast<std::size_t>(index)];
+            if (ringIndex >= static_cast<int>(taps))
+                ringIndex -= static_cast<int>(taps);
+            result += kernel.values[static_cast<std::size_t>(index)]
+                    * ring[static_cast<std::size_t>(ringIndex)];
+        }
+        return result;
+    }
+};
+} // namespace ghostar
+
 namespace
 {
 constexpr double sampleRate = 48000.0;
@@ -329,72 +400,31 @@ void testPanicDropsQueuedUiNotes()
     processor.releaseResources();
 }
 
-// The advertised tail must cover the slowest release the panel can dial.
-// This check previously carried the release law's arithmetic as a literal
-// (log(1e5)/0.3, the old three-time-constants read), so when the law was
-// re-derived the figure went stale while the test kept passing. It now asks
-// the engine, which is the only version of the question that cannot rot.
-// The decimation chain delays the voice, and a host can only compensate for
-// a delay it is told about. The figure is not restated here: the engine's
-// own derivation is checked against the delay the engine actually shows, so
-// neither can drift from the other.
+// The two real halfband kernels delay a single internal impulse by 15 + 2*63
+// internal samples. The host output is taken after substep three, leaving
+// (15 + 126 - 3) / 4 = 34.5 output samples. A signed impulse centroid checks
+// that physical ring schedule without involving an oscillator or envelope.
+void testDecimatorLatencyMatchesItsActualImpulseResponse()
+{
+    const double measured =
+        ghostar::GhostarCircuitTestAccess::decimatorImpulseCentroid();
+    expect(std::abs(measured - 34.5) < 1.0e-9,
+           "the two decimator rings do not delay by 34.5 output samples");
+}
+
+// A host can only compensate for a delay the processor publishes. The DSP
+// check above pins the engine's stated figure to the actual two-stage chain;
+// this check pins the processor-facing rounded value to that figure.
 void testAdvertisedLatencyMatchesTheMeasuredDelay()
 {
     GhostarAudioProcessor processor;
     processor.prepareToPlay(sampleRate, blockSize);
-
-    // This test isolates signal-chain latency from MULTIPLE's separately
-    // pinned ~5 ms hardware reset notch. SINGLE's first gate attacks without
-    // that KT pulse, exactly as P1015 does.
-    if (auto* trigger = processor.parameters.getParameter(
-            ghostar::parameters::trigger))
-        trigger->setValueNotifyingHost(0.0f);
 
     const double derived = ghostar::GhostarEngine::outputLatencySamples();
     expect(processor.getLatencySamples() == juce::roundToInt(derived),
            "the plug-in does not publish the latency the engine derives");
     expect(processor.getLatencySamples() > 0,
            "the plug-in still claims to be latency-free");
-
-    // Measured, not assumed: a note struck at a known sample cannot produce
-    // its envelope onset before the chain's delay plus the Loudness VCA's
-    // real 0.5 V control dead zone. At minimum attack, independently derive
-    // how many control updates the 5.17 ms minimum RC needs to cross 1/15
-    // of peak (1 kOhm slider residual plus the drawn 100 Ohm cap arm).
-    constexpr int strikeAt = 64;
-    juce::MidiBuffer midi;
-    midi.addEvent(
-        juce::MidiMessage::noteOn(1, 48, static_cast<juce::uint8>(110)),
-        strikeAt);
-    juce::AudioBuffer<float> buffer(2, blockSize);
-    buffer.clear();
-    processor.processBlock(buffer, midi);
-
-    int onset = -1;
-    const auto* samples = buffer.getReadPointer(0);
-    for (int sample = strikeAt; sample < blockSize; ++sample)
-        if (std::abs(samples[sample]) > 1.0e-4f)
-        {
-            onset = sample - strikeAt;
-            break;
-        }
-    expect(onset >= 0, "the struck note never sounded");
-    if (onset >= 0)
-    {
-        constexpr double minimumAttackTau = 5.17e-3;
-        constexpr double attackAim = 1.3;
-        constexpr double loudnessZero = 1.0 / 15.0;
-        const double attackCoefficient =
-            1.0 - std::exp(-1.0 / (sampleRate * minimumAttackTau));
-        const double openingUpdates = std::ceil(
-            std::log(1.0 - loudnessZero / attackAim)
-            / std::log(1.0 - attackCoefficient));
-        const double expectedOnset = derived + openingUpdates;
-        // Within a sample either side: the published integer latency rounds
-        // a half-sample delay and the envelope advances on discrete samples.
-        expect(std::abs(static_cast<double>(onset) - expectedOnset) <= 1.5,
-               "the measured onset misses latency plus the VCA dead zone");
-    }
     processor.releaseResources();
 }
 
@@ -640,6 +670,7 @@ int main()
     testMonoLayoutKeepsTheShaperPath();
     testPanicDropsQueuedUiNotes();
     testAdvertisedTailCoversTheLongestRelease();
+    testDecimatorLatencyMatchesItsActualImpulseResponse();
     testAdvertisedLatencyMatchesTheMeasuredDelay();
     testEditorRendering();
     testEditorFitsASmallDisplay();

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -47,6 +48,27 @@ struct LowerMnaProbeResult
     double highQChargeStep;
 };
 
+struct UpperCascadeProbeResult
+{
+    double output;
+    double controlledLowpass;
+    double controlledBandpass;
+    double fixedLowpass;
+    double fixedBandpass;
+    std::array<double, 4> companions;
+    double highQCompanion;
+    double highQChargeStep;
+};
+
+struct UpperSlopeProjectionProbeResult
+{
+    double controlledLowpass;
+    double fixedLowpass;
+    double controlledLowpassCompanion;
+    double fixedLowpassCompanion;
+    double highQCompanion;
+};
+
 struct OverdriveProbeResult
 {
     double output;
@@ -80,6 +102,18 @@ struct OutputNetworkProbeResult
     double shaperWiper;
     double shaperTop;
     double companion;
+};
+
+struct PitchControlLagProbeResult
+{
+    double pole;
+    double nowWeight;
+    double previousWeight;
+    std::array<double, 64> step;
+    bool startedUninitialised;
+    bool resetClearedState;
+    double resetInitialOutput;
+    double resetSteadyOutput;
 };
 
 struct ModulationProbeResult
@@ -118,14 +152,86 @@ struct GhostarCircuitTestAccess
                                                      bipolarSample);
     }
 
-    static std::array<double, 3> oscillatorModTapAtSawWrap(
-        double previousConditionedB) noexcept
+    static PitchControlLagProbeResult pitchControlLagAt(
+        double hostRate) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(hostRate, 64);
+        const bool startedUninitialised = !engine.pitchLagA_.initialised;
+        engine.runPitchControlLag(engine.pitchLagA_, 0.0);
+
+        std::array<double, 64> step {};
+        for (double& output : step)
+            output = engine.runPitchControlLag(engine.pitchLagA_, 1.0);
+
+        engine.reset();
+        const bool resetClearedState = !engine.pitchLagA_.initialised
+            && !engine.pitchLagB_.initialised;
+        const double resetInitialOutput =
+            engine.runPitchControlLag(engine.pitchLagA_, 0.375);
+        const double resetSteadyOutput =
+            engine.runPitchControlLag(engine.pitchLagA_, 0.375);
+        return { engine.pitchLagPole_, engine.pitchLagNow_,
+                 engine.pitchLagPrevious_, step, startedUninitialised,
+                 resetClearedState, resetInitialOutput, resetSteadyOutput };
+    }
+
+    static std::array<double, 4> pitchControlBaseStep(
+        bool sync) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 64);
+        EngineParameters parameters;
+        parameters.sync = sync;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+        engine.phaseA_ = 0.0;
+        engine.phaseB_ = 0.0;
+        engine.controlOscAOctaves_ = 1.0;
+        engine.controlOscBOctaves_ = 1.0;
+        engine.controlOscBDrone_ = false;
+        engine.controlAudioRateMod_ = GhostarEngine::AudioRateMod {};
+        engine.pitchLagA_ = { 0.0, 0.0, true };
+        engine.pitchLagB_ = { 0.0, 0.0, true };
+        engine.renderVoiceSample();
+        return { engine.phaseA_, engine.phaseB_, engine.pitchLagA_.output,
+                 engine.pitchLagB_.output };
+    }
+
+    static std::array<double, 2> cyclicPitchControlHeldStep() noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 64);
+        EngineParameters parameters;
+        parameters.sync = true;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+        engine.phaseA_ = 0.0;
+        engine.phaseB_ = 0.0;
+        engine.controlOscAOctaves_ = 0.0;
+        engine.controlOscBOctaves_ = 0.0;
+        engine.controlOscBDrone_ = false;
+        engine.controlAudioRateMod_ = GhostarEngine::AudioRateMod {};
+        engine.controlAudioRateMod_.active = true;
+        engine.controlAudioRateMod_.gain = 1.0;
+        engine.controlAudioRateMod_.aOctaves = 1.0;
+        engine.controlAudioRateMod_.bOctaves = 1.0;
+        engine.lastOscBWave_ = 1.0;
+        engine.pitchLagA_ = { 0.0, 1.0, true };
+        engine.pitchLagB_ = { 0.0, 1.0, true };
+        engine.renderVoiceSample();
+        return { engine.phaseA_, engine.phaseB_ };
+    }
+
+    static std::array<double, 5> oscillatorModTapAtSawWrap(
+        double previousConditionedB, bool sync) noexcept
     {
         GhostarEngine engine;
         engine.prepare(48000.0, 64);
         EngineParameters parameters;
         parameters.oscAWaveform = Waveform::Triangle;
         parameters.oscBWaveform = Waveform::Sawtooth;
+        parameters.sync = sync;
         engine.parameters_ = parameters;
         engine.targetParameters_ = parameters;
         engine.phaseA_ = 0.0;
@@ -145,8 +251,14 @@ struct GhostarCircuitTestAccess
         engine.controlAudioRateMod_.gain = 1.0;
         engine.controlAudioRateMod_.aOctaves = 1.0;
         engine.controlAudioRateMod_.bOctaves = 1.0;
+        // Prime both physical multiplier capacitors at the preceding B
+        // voltage. Leaving them in their reset state would exercise only the
+        // intentional no-swoop initialization and conceal the RC transition.
+        engine.runPitchControlLag(engine.pitchLagA_, previousConditionedB);
+        engine.runPitchControlLag(engine.pitchLagB_, previousConditionedB);
         engine.renderVoiceSample();
-        return { engine.phaseA_, engine.phaseB_, engine.lastOscBWave_ };
+        return { engine.phaseA_, engine.phaseB_, engine.lastOscBWave_,
+                 engine.pitchLagA_.output, engine.pitchLagB_.output };
     }
 
     static double oscillatorWaveSwitchHeldVoltage() noexcept
@@ -320,6 +432,69 @@ struct GhostarCircuitTestAccess
                  engine.lowerSection_.ic2,
                  engine.lowerHighQ_.chargeCompanion,
                  engine.highQChargeStep_ };
+    }
+
+    static UpperCascadeProbeResult upperCascadeStep(
+        UpperSlope slope, const std::array<double, 4>& companions,
+        const std::array<double, 2>& lowpassEndpoints,
+        double highQCompanion, double input, double g,
+        double controlledK, double controlledInputGain,
+        double hostRate) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(hostRate, 64);
+        engine.upperControlled_ = { companions[0], companions[1] };
+        engine.upperFixed_ = { companions[2], companions[3] };
+        engine.upperControlledLp_ = lowpassEndpoints[0];
+        engine.upperFixedLp_ = lowpassEndpoints[1];
+        engine.upperSlopeState_ = slope;
+        engine.upperHighQ_.chargeCompanion = highQCompanion;
+        const double output = engine.runUpperCascade(
+            input, g, controlledK, controlledInputGain, slope);
+        return {
+            output,
+            engine.upperControlledLp_,
+            0.5 * (companions[0] + engine.upperControlled_.ic1),
+            engine.upperFixedLp_,
+            0.5 * (companions[2] + engine.upperFixed_.ic1),
+            { engine.upperControlled_.ic1, engine.upperControlled_.ic2,
+              engine.upperFixed_.ic1, engine.upperFixed_.ic2 },
+            engine.upperHighQ_.chargeCompanion,
+            engine.highQChargeStep_
+        };
+    }
+
+    static UpperSlopeProjectionProbeResult upperSlopeProjection(
+        UpperSlope oldSlope, UpperSlope newSlope,
+        double controlledLowpass, double fixedLowpass,
+        double controlledCompanion, double fixedCompanion,
+        double highQCompanion) noexcept
+    {
+        GhostarEngine engine;
+        engine.upperSlopeState_ = oldSlope;
+        engine.upperControlledLp_ = controlledLowpass;
+        engine.upperFixedLp_ = fixedLowpass;
+        engine.upperControlled_.ic2 = controlledCompanion;
+        engine.upperFixed_.ic2 = fixedCompanion;
+        engine.upperHighQ_.chargeCompanion = highQCompanion;
+        engine.selectUpperSlope(newSlope);
+        return { engine.upperControlledLp_, engine.upperFixedLp_,
+                 engine.upperControlled_.ic2, engine.upperFixed_.ic2,
+                 engine.upperHighQ_.chargeCompanion };
+    }
+
+    static std::array<double, 2> upperControl(
+        UpperResonanceMode mode, float resonance) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 64);
+        EngineParameters parameters;
+        parameters.upperResonance = mode;
+        parameters.resonance = resonance;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+        engine.advanceControls();
+        return { engine.controlUpperK_, engine.controlUpperInputGain_ };
     }
 
     static OverdriveProbeResult overdriveStep(double lowerLowpass,
@@ -796,7 +971,7 @@ void testP1014SelectedWaveConditioner()
     constexpr double previousConditionedB = 0.5;
     const auto phases =
         ghostar::GhostarCircuitTestAccess::oscillatorModTapAtSawWrap(
-            previousConditionedB);
+            previousConditionedB, false);
     constexpr double internalRate = 4.0 * 48000.0;
     const double bStep = 440.0 * std::exp2(previousConditionedB)
                        / internalRate;
@@ -806,10 +981,16 @@ void testP1014SelectedWaveConditioner()
     const double currentConditionedB = expected(
         0.5 * sawHigh
             * (heldRawB + sawWrapHeldCorrection + 1.0)) / 5.0;
+    constexpr double pitchTau = 1.82e-6;
+    const double pitchRatio = 1.0 / (internalRate * pitchTau);
+    const double pitchAverage = -std::expm1(-pitchRatio) / pitchRatio;
+    const double pitchNow = 1.0 - pitchAverage;
+    const double filteredPitch = previousConditionedB
+        + pitchNow * (currentConditionedB - previousConditionedB);
     check(std::abs(phases[0]
-                   - 440.0 * std::exp2(currentConditionedB) / internalRate)
+                   - 440.0 * std::exp2(filteredPitch) / internalRate)
               < 1.0e-14,
-          "Osc A modulation uses B's fresh BLEP-corrected emitted wave");
+          "Osc A pitch filters B's fresh BLEP-corrected emitted wave");
     check(std::abs(phases[1]
                    - 0.6 * bStep)
               < 1.0e-14,
@@ -820,6 +1001,17 @@ void testP1014SelectedWaveConditioner()
                                      * (heldRawB + 1.0)) / 5.0)
                      > 1.0e-3,
           "the fresh modulation tap includes the saw-wrap BLEP residual");
+    check(std::abs(phases[3] - filteredPitch) < 1.0e-14,
+          "fresh B advances Osc A's pitch capacitor before its step");
+    check(std::abs(phases[4] - filteredPitch) < 1.0e-14,
+          "Osc B commits its capacitor against the fresh emitted wave");
+
+    const auto synced =
+        ghostar::GhostarCircuitTestAccess::oscillatorModTapAtSawWrap(
+            previousConditionedB, true);
+    check(std::abs(synced[0] - bStep) < 1.0e-14
+              && std::abs(synced[3] - filteredPitch) < 1.0e-14,
+          "SYNC predicts from prior B then commits A against fresh B");
 
     const double switched = ghostar::GhostarCircuitTestAccess::
         oscillatorWaveSwitchHeldVoltage();
@@ -854,6 +1046,111 @@ void testP1014SelectedWaveConditioner()
                    - actual(ghostar::Waveform::Triangle, 0.0) / 5.0)
               < 1.0e-14,
           "switching to pulse never invents a stale PWM-boundary event");
+}
+
+// Curtis specifies the CEM3340 multiplier-output bypass corner. P1014 fits
+// Rs=1.82k to ground with C=1n in parallel on both oscillators; normalizing
+// that current-to-voltage network gives H(s)=1/(1+s*Rs*C), so the pitch sum
+// must retain 1.82 us without a rate-specific current/prior-sample choice.
+void testCem3340PitchMultiplierBypass()
+{
+    constexpr double resistance = 1.82e3;
+    constexpr double capacitance = 1.0e-9;
+    constexpr double tau = resistance * capacitance;
+    constexpr std::array<double, 6> hostRates {
+        8000.0, 44100.0, 48000.0, 96000.0, 192000.0, 768000.0
+    };
+
+    for (const double hostRate : hostRates)
+    {
+        const auto probe =
+            ghostar::GhostarCircuitTestAccess::pitchControlLagAt(hostRate);
+        const double internalRate = 4.0 * hostRate;
+        const double ratio = 1.0 / (internalRate * tau);
+        const double expectedPole = std::exp(-ratio);
+        const double average = -std::expm1(-ratio) / ratio;
+        const double expectedNow = 1.0 - average;
+        const double expectedPrevious = average - expectedPole;
+
+        check(std::abs(probe.pole - expectedPole) < 1.0e-14
+                  && std::abs(probe.nowWeight - expectedNow) < 1.0e-14
+                  && std::abs(probe.previousWeight - expectedPrevious)
+                         < 1.0e-14,
+              "the CEM3340 pitch pole uses the 1.82k/1nF linear-input law");
+        check(probe.pole >= 0.0 && probe.nowWeight >= 0.0
+                  && probe.previousWeight >= 0.0
+                  && std::abs(probe.pole + probe.nowWeight
+                              + probe.previousWeight - 1.0) < 1.0e-14,
+              "the pitch-pole weights are nonnegative and preserve DC");
+
+        const double dcDelay = (probe.pole + probe.previousWeight)
+            / (1.0 - probe.pole) / internalRate;
+        check(std::abs(dcDelay - tau) < 5.0e-15,
+              "the discrete pitch pole preserves the analog 1.82 us delay");
+
+        double previous = 0.0;
+        bool monotone = true;
+        for (const double output : probe.step)
+        {
+            monotone = monotone && output >= previous - 1.0e-15
+                && output <= 1.0 + 1.0e-15;
+            previous = output;
+        }
+        check(std::abs(probe.step.front() - probe.nowWeight) < 1.0e-14
+                  && monotone && probe.step.back() > 0.9999,
+              "the pitch capacitor step is monotone at every supported rate");
+        check(probe.startedUninitialised && probe.resetClearedState
+                  && probe.resetInitialOutput == 0.375
+                  && std::abs(probe.resetSteadyOutput - 0.375) < 1.0e-14,
+              "reset clears pitch memory without inventing a power-up swoop");
+    }
+
+    constexpr double hostRate = 44100.0;
+    constexpr double probeHz = 10000.0;
+    const auto probe =
+        ghostar::GhostarCircuitTestAccess::pitchControlLagAt(hostRate);
+    const double omega = 2.0 * std::acos(-1.0) * probeHz
+                       / (4.0 * hostRate);
+    const std::complex<double> zInverse = std::polar(1.0, -omega);
+    const std::complex<double> response =
+        (probe.nowWeight + probe.previousWeight * zInverse)
+        / (1.0 - probe.pole * zInverse);
+    const double analogPhase = -std::atan(
+        2.0 * std::acos(-1.0) * probeHz * tau);
+    const double analogGainDb = -10.0 * std::log10(
+        1.0 + std::pow(2.0 * std::acos(-1.0) * probeHz * tau, 2.0));
+    const double discreteGainDb = 20.0 * std::log10(std::abs(response));
+    check(std::abs(std::arg(response) - analogPhase)
+                  < 0.05 * std::acos(-1.0) / 180.0,
+          "the pitch pole retains the analog 10 kHz phase signature");
+    check(std::abs(discreteGainDb - analogGainDb) < 0.15,
+          "the pitch pole keeps 10 kHz gain close on the 4x grid");
+
+    constexpr double internalRate = 4.0 * 48000.0;
+    const double ratio = 1.0 / (internalRate * tau);
+    const double average = -std::expm1(-ratio) / ratio;
+    const double nowWeight = 1.0 - average;
+    const double expectedBaseStep =
+        440.0 * std::exp2(nowWeight) / internalRate;
+    for (const bool sync : { false, true })
+    {
+        const auto scheduled =
+            ghostar::GhostarCircuitTestAccess::pitchControlBaseStep(sync);
+        check(std::abs(scheduled[0] - expectedBaseStep) < 1.0e-14
+                  && std::abs(scheduled[1] - expectedBaseStep) < 1.0e-14
+                  && std::abs(scheduled[2] - nowWeight) < 1.0e-14
+                  && std::abs(scheduled[3] - nowWeight) < 1.0e-14,
+              "both oscillators consume a new base CV without a grid delay");
+    }
+
+    const auto cyclic =
+        ghostar::GhostarCircuitTestAccess::cyclicPitchControlHeldStep();
+    const double pole = std::exp(-ratio);
+    const double expectedHeldStep =
+        440.0 * std::exp2(1.0 - pole) / internalRate;
+    check(std::abs(cyclic[0] - expectedHeldStep) < 1.0e-14
+              && std::abs(cyclic[1] - expectedHeldStep) < 1.0e-14,
+          "self-FM and SYNC predict the capacitor under causal held B");
 }
 
 // The CEM3340 itself supports the complete 0..100% PWM range.  At either
@@ -955,6 +1252,213 @@ void testHighQCompanionsSatisfyTheirIntegratedEquations()
 
     verify(-0.09, 0.03, -0.002, -0.18, 0.35, -0.005,
            config.upperGain, config.upperResistance);
+}
+
+// P1013 makes the Upper filter one switched four-state network, not two
+// independent SVFs. Each CEM half has VIF and VIV tied, SW4 moves C40 between
+// their VLP caps, R194 couples those nodes only in 12 dB, and the linked
+// IC14B pole changes gain. Check the component equations directly (OQ-09).
+void testUpperCascadeMatchesP1013()
+{
+    constexpr double hostRate = 48000.0;
+    constexpr double internalRate = 4.0 * hostRate;
+    constexpr double timingCapacitance = 22.0e-9;
+    constexpr double memoryCapacitance = 1.0e-9;
+    constexpr double couplingOhms = 1.0e6;
+    constexpr double nodeVoltsPerUnit = 5.0;
+    constexpr double diodeVolts = 0.043;
+    constexpr double pairSaturationAmps = 4.6e-9;
+    constexpr double highQCapacitanceRatio = 22.0;
+    constexpr double highQGain = 16.0;
+    constexpr double outputGain24 = 101.0 / 201.0;
+
+    const auto low = ghostar::GhostarCircuitTestAccess::upperControl(
+        ghostar::UpperResonanceMode::Low, 0.91f);
+    check(low[0] == 2.0 && low[1] == 3.0,
+          "Upper LOW ties VIF+VIV for drive 3 while retaining Q=0.5");
+
+    // Independent Q-pin KCL: input drive uses 1/Qcommanded, while only the
+    // loop damping receives the declared 1/50 external-enhancement offset.
+    constexpr float resonanceTravel = 0.73f;
+    const double t = static_cast<double>(resonanceTravel);
+    const double wiperOhms = 18.2e3 + 100.0e3 * t * (1.0 - t);
+    const double qPinConductance = 1.0 / wiperOhms + 1.0 / 91.0e3
+                                 + 1.0 / 221.0;
+    const double qPinCurrent = -12.0 * t / wiperOhms + 12.0 / 91.0e3;
+    const double qPinVolts = qPinCurrent / qPinConductance;
+    const double lowPinVolts = 12.0 * 221.0 / (91.0e3 + 221.0);
+    const double commandedQ = 0.5 * std::pow(
+        10.0, -(qPinVolts - lowPinVolts) / 0.065);
+    const double commandedDamping = 1.0 / commandedQ;
+    const auto variable = ghostar::GhostarCircuitTestAccess::upperControl(
+        ghostar::UpperResonanceMode::Variable, resonanceTravel);
+    check(std::abs(variable[0] - (commandedDamping - 1.0 / 50.0))
+                  < 1.0e-13
+              && std::abs(variable[1] - (1.0 + commandedDamping))
+                  < 1.0e-13,
+          "Upper tied-input drive uses commanded Q before enhancement");
+
+    // Charge sharing on both switch directions: C40 retains the old selected
+    // endpoint, the new 22 nF node receives 1/23 of the voltage difference,
+    // and neither the abandoned node nor C37 moves in the ideal event.
+    constexpr double controlledLp = 0.31;
+    constexpr double fixedLp = -0.17;
+    constexpr double controlledCompanion = 0.29;
+    constexpr double fixedCompanion = -0.15;
+    constexpr double highQCompanion = 0.004;
+    const auto to24 = ghostar::GhostarCircuitTestAccess::upperSlopeProjection(
+        ghostar::UpperSlope::TwelveDb,
+        ghostar::UpperSlope::TwentyFourDb,
+        controlledLp, fixedLp, controlledCompanion, fixedCompanion,
+        highQCompanion);
+    const double sharedFixed =
+        (22.0 * fixedLp + controlledLp) / 23.0;
+    check(to24.controlledLowpass == controlledLp
+              && to24.controlledLowpassCompanion == controlledCompanion
+              && std::abs(to24.fixedLowpass - sharedFixed) < 1.0e-15
+              && std::abs(to24.fixedLowpassCompanion
+                          - (fixedCompanion + sharedFixed - fixedLp))
+                  < 1.0e-15
+              && to24.highQCompanion == highQCompanion,
+          "12-to-24 dB transfers C40 charge only into the fixed VLP node");
+
+    const auto to12 = ghostar::GhostarCircuitTestAccess::upperSlopeProjection(
+        ghostar::UpperSlope::TwentyFourDb,
+        ghostar::UpperSlope::TwelveDb,
+        to24.controlledLowpass, to24.fixedLowpass,
+        to24.controlledLowpassCompanion, to24.fixedLowpassCompanion,
+        to24.highQCompanion);
+    const double sharedControlled =
+        (22.0 * controlledLp + sharedFixed) / 23.0;
+    check(std::abs(to12.controlledLowpass - sharedControlled) < 1.0e-15
+              && std::abs(to12.controlledLowpassCompanion
+                          - (controlledCompanion
+                             + sharedControlled - controlledLp))
+                  < 1.0e-15
+              && to12.fixedLowpass == sharedFixed
+              && to12.fixedLowpassCompanion
+                     == to24.fixedLowpassCompanion
+              && to12.highQCompanion == highQCompanion,
+          "24-to-12 dB transfers C40 charge only into controlled VLP");
+
+    const auto verifyStep = [&](ghostar::UpperSlope slope,
+                                const std::array<double, 4>& old,
+                                const std::array<double, 2>& oldEndpoints,
+                                double oldHighQ, double input, double g,
+                                double controlledK,
+                                double controlledInputGain) {
+        const auto result =
+            ghostar::GhostarCircuitTestAccess::upperCascadeStep(
+                slope, old, oldEndpoints, oldHighQ, input, g,
+                controlledK, controlledInputGain, hostRate);
+        const double current =
+            (result.highQCompanion - oldHighQ)
+            / (2.0 * result.highQChargeStep);
+        const double controlledCap = timingCapacitance
+            + (slope == ghostar::UpperSlope::TwelveDb
+                   ? memoryCapacitance : 0.0);
+        const double fixedCap = timingCapacitance
+            + (slope == ghostar::UpperSlope::TwentyFourDb
+                   ? memoryCapacitance : 0.0);
+        const double controlledG = g * timingCapacitance / controlledCap;
+        const double fixedG = g * timingCapacitance / fixedCap;
+        const double controlledCoupling =
+            slope == ghostar::UpperSlope::TwelveDb
+                ? 1.0 / (2.0 * internalRate * couplingOhms * controlledCap)
+                : 0.0;
+        const double fixedCoupling =
+            slope == ghostar::UpperSlope::TwelveDb
+                ? 1.0 / (2.0 * internalRate * couplingOhms * fixedCap)
+                : 0.0;
+        const double currentStep =
+            1.0 / (2.0 * internalRate * controlledCap
+                   * nodeVoltsPerUnit);
+
+        check(std::abs(result.controlledBandpass
+                       - (old[0] + g * (controlledInputGain * input
+                                       - result.controlledLowpass
+                                       - controlledK
+                                           * result.controlledBandpass)))
+                  < 1.0e-12,
+              "controlled Upper BP satisfies tied-input CEM KCL");
+        check(std::abs(result.controlledLowpass
+                       - (old[1]
+                          + controlledG * result.controlledBandpass
+                          + controlledCoupling
+                              * (result.fixedLowpass
+                                 - result.controlledLowpass)
+                          + currentStep * current))
+                  < 1.0e-12,
+              "controlled Upper VLP satisfies selected-cap and R194 KCL");
+        check(std::abs(result.fixedBandpass
+                       - (old[2] + g * (3.0 * result.controlledLowpass
+                                       - result.fixedLowpass
+                                       - 2.0 * result.fixedBandpass)))
+                  < 1.0e-12,
+              "fixed Upper BP receives both tied inputs at Q=0.5");
+        check(std::abs(result.fixedLowpass
+                       - (old[3] + fixedG * result.fixedBandpass
+                          + fixedCoupling
+                              * (result.controlledLowpass
+                                 - result.fixedLowpass)))
+                  < 1.0e-12,
+              "fixed Upper VLP satisfies selected-cap and R194 KCL");
+
+        check(std::abs(result.controlledLowpass
+                       - 0.5 * (old[1] + result.companions[1]))
+                  < 1.0e-12
+              && std::abs(result.fixedLowpass
+                          - 0.5 * (old[3] + result.companions[3]))
+                  < 1.0e-12,
+              "Upper physical VLP endpoints match their TPT companions");
+
+        const double charge =
+            0.5 * (oldHighQ + result.highQCompanion);
+        const double diodeDrive = nodeVoltsPerUnit
+            * (highQGain * result.controlledBandpass
+               - result.controlledLowpass
+               - highQCapacitanceRatio * charge);
+        const double diodeResidual = -diodeDrive
+            + diodeVolts * std::asinh(current / pairSaturationAmps);
+        check(std::abs(diodeResidual)
+                  < 1.0e-8 * (1.0 + std::abs(diodeDrive)),
+              "Upper C37/BA130 endpoint satisfies physical KVL");
+
+        const double expectedOutput =
+            slope == ghostar::UpperSlope::TwelveDb
+                ? result.controlledLowpass
+                : outputGain24 * result.fixedLowpass;
+        check(std::abs(result.output - expectedOutput) < 1.0e-14,
+              "SW4 selects the traced VLP tap and linked IC14B gain");
+        return result;
+    };
+
+    verifyStep(ghostar::UpperSlope::TwelveDb,
+               { 0.011, -0.017, -0.013, 0.029 }, { -0.02, 0.03 },
+               0.003, 0.025, 0.08, 0.41, 1.63);
+    verifyStep(ghostar::UpperSlope::TwentyFourDb,
+               { -0.016, 0.021, 0.009, -0.027 }, { 0.02, -0.03 },
+               -0.002, -0.031, 0.11, 0.28, 1.42);
+
+    // Equal, static VLP nodes isolate the linked output pole: 12 dB is the
+    // normalisation reference and 24 dB is exactly 101/201 of it.
+    constexpr double staticLp = 0.2;
+    constexpr double balancingCharge = -staticLp / 22.0;
+    const std::array<double, 4> staticStates { 0.0, staticLp,
+                                               0.0, staticLp };
+    const std::array<double, 2> staticEndpoints { staticLp, staticLp };
+    const auto output12 =
+        ghostar::GhostarCircuitTestAccess::upperCascadeStep(
+            ghostar::UpperSlope::TwelveDb, staticStates, staticEndpoints,
+            balancingCharge, 0.0, 0.0, 2.0, 3.0, hostRate);
+    const auto output24 =
+        ghostar::GhostarCircuitTestAccess::upperCascadeStep(
+            ghostar::UpperSlope::TwentyFourDb, staticStates, staticEndpoints,
+            balancingCharge, 0.0, 0.0, 2.0, 3.0, hostRate);
+    check(std::abs(output12.output - staticLp) < 1.0e-15
+              && std::abs(output24.output / output12.output
+                          - outputGain24) < 1.0e-15,
+          "IC14B changes by the exact 101/201 gain ratio with SLOPE");
 }
 
 // P1013 does not sum the three Lower sources at virtual earth. Every 100k
@@ -1094,11 +1598,11 @@ void testLowerMixerMnaSatisfiesP1013()
           "a zeroed Lower slider still loads both moving state nodes");
 }
 
-// Independent scalar and one-pole reference for the functionally identified
-// A3+B7+C10 OVERDRIVE combination. Bisection deliberately shares no Newton
+// Independent scalar and one-pole reference for the hypothesised A3+B7+C10
+// network. Bisection deliberately shares no Newton
 // implementation with the engine, so resistor/sign errors cannot agree by
 // construction. C10 makes R167 a clean-VLP feed, not a ground shunt.
-void testOverdriveMatchesTheTracedCircuit()
+void testHypotheticalA3B7C10NetworkMatchesReference()
 {
     constexpr double nodeVoltsPerUnit = 5.0;
     constexpr double diodeVolts = 0.043;
@@ -1161,17 +1665,17 @@ void testOverdriveMatchesTheTracedCircuit()
         0.12, -0.015, hostRate);
     const auto expected = reference(0.12, -0.015, hostRate);
     check(std::abs(actual.output - expected.output) < 1.0e-11,
-          "OVERDRIVE output matches the traced IC12A/C34 circuit");
+          "A3+B7+C10 hypothesis matches its independent scalar/C34 oracle");
     check(std::abs(actual.couplingCompanion - expected.couplingCompanion)
               < 1.0e-11,
-          "OVERDRIVE C34 companion matches the traced output high-pass");
+          "A3+B7+C10 hypothesis preserves its C34 companion law");
 
     const auto negative = ghostar::GhostarCircuitTestAccess::overdriveStep(
         -0.12, 0.015, hostRate);
     check(std::abs(actual.output + negative.output) < 1.0e-12
               && std::abs(actual.couplingCompanion
                           + negative.couplingCompanion) < 1.0e-12,
-          "OVERDRIVE circuit is odd-symmetric");
+          "A3+B7+C10 hypothesis is odd-symmetric");
 }
 
 // P1013 puts C18/P3 across the Shaper VCA's 20k output load and C30 in
@@ -1976,9 +2480,9 @@ void testAttackAimsPastItsPeak()
 // The travel-to-Q law is derived from the CEM3350's −65 mV/decade Q scale
 // and the Spirit's own pot network, anchored by the panel's LOW = Q 0.5.
 // Its signature is that resonance stays gentle through mid-travel and then
-// climbs steeply: Q ≈ 1.48 at half travel against ≈ 10.9 at nine tenths, a
-// ratio near 7.4. A resonant section's peak gain tracks its Q, so the
-// measured peak ratio is the law's fingerprint (OQ-12).
+// climbs steeply: Q ≈ 1.48 at half travel against ≈ 10.9 at nine tenths.
+// Tied VIF+VIV drive falls as Q rises and the external C37 loop loads the
+// played response, but the near-peak harmonic must still grow strongly.
 void testResonanceFollowsTheDerivedQLaw()
 {
     check(ghostar::GhostarCircuitTestAccess::upperLowDamping() == 2.0,
@@ -2002,14 +2506,16 @@ void testResonanceFollowsTheDerivedQLaw()
         engine.setParameters(parameters);
         engine.noteOn(46, 1.0f);    // ~93 Hz: sixth harmonic near 560 Hz
         const auto samples = renderMono(engine, 0.9, 48000.0, 60);
-        return goertzelMagnitude(samples, 566.0, 48000.0);
+        // C40 makes the selected 23 nF LP integrator 22/23 as fast; the
+        // resulting resonant centre is ~555 Hz and matches note 46's sixth.
+        return goertzelMagnitude(samples, 555.0, 48000.0);
     };
 
     const double atHalf = peakGain(0.5f);
     const double atNineTenths = peakGain(0.9f);
     const double ratio = atNineTenths / std::max(1.0e-12, atHalf);
-    check(ratio > 4.5 && ratio < 11.0,
-          "the resonant peak grows by the derived Q ratio between half and "
+    check(ratio > 2.5 && ratio < 6.0,
+          "the loaded resonant peak grows strongly from half to "
           "nine-tenths travel");
 
     // …and the law is gentle where the old voiced one was not: at half
@@ -2028,7 +2534,7 @@ void testResonanceFollowsTheDerivedQLaw()
         engine.setParameters(parameters);
         engine.noteOn(60, 1.0f);
         const auto samples = renderMono(engine, 0.9, 48000.0, 60);
-        return goertzelMagnitude(samples, 566.0, 48000.0)
+        return goertzelMagnitude(samples, 555.0, 48000.0)
              / std::max(1.0e-12,
                         goertzelMagnitude(samples, 100.0, 48000.0));
     };
@@ -2036,8 +2542,9 @@ void testResonanceFollowsTheDerivedQLaw()
           "half travel is barely resonant, as Q = 1.5 requires");
 }
 
-// The traced BA130/IC12A OVERDRIVE keeps climbing past its knee rather than
-// becoming a hard tanh ceiling. OQ-10 still owns absolute state-node scale.
+// The traced BA130/IC12A scalar used by the interim OVERDRIVE hypothesis keeps
+// climbing past its knee rather than becoming a hard tanh ceiling. OQ-10
+// still owns the actual switch assignment and absolute state-node scale.
 void testOverdriveCeilingKeepsClimbing()
 {
     const auto level = [](float slider) {
@@ -2225,14 +2732,16 @@ void testOutputCouplingMatchesP1013AndP1017()
         return mean(renderMono(engine, 0.75, 48000.0));
     };
 
-    check(std::abs(dcMean(false)) < 1.0e-3,
-          "C30 rejects duty-cycle DC on the Filter path");
-    check(std::abs(dcMean(true)) > 1.0e-2,
+    const double filterDc = dcMean(false);
+    const double shaperDc = dcMean(true);
+    check(std::abs(shaperDc) > 1.0e-2,
           "the Shaper jack has no invented output high-pass");
+    check(std::abs(filterDc) < 0.03 * std::abs(shaperDc),
+          "C30 rejects at least 97% of duty-cycle DC on the Filter path");
 }
 
-// Pin the current behavioral Shaper-VCA seam until P1013's always-biased
-// TR2/CEM3360 control node is calibrated (OQ-26): FREE has loud and quiet
+// Pin the current behavioral Shaper-VCA seam until P1013's coupled two-BC173/
+// CEM3360 control node is calibrated (OQ-26): FREE has loud and quiet
 // stretches, but this is not presented as a component-level oracle.
 void testShaperFreeModePulsesItsPath()
 {
@@ -2645,10 +3154,12 @@ void testShaperEnvelopeModesExposeTheirRisingPhaseAsSg()
 int main()
 {
     testP1014SelectedWaveConditioner();
+    testCem3340PitchMultiplierBypass();
     testPulseWidthReachesTheCemEndpoints();
     testHighQCompanionsSatisfyTheirIntegratedEquations();
+    testUpperCascadeMatchesP1013();
     testLowerMixerMnaSatisfiesP1013();
-    testOverdriveMatchesTheTracedCircuit();
+    testHypotheticalA3B7C10NetworkMatchesReference();
     testOutputCapacitorCompanionsMatchP1013();
     testRingModulatorMatchesP1013();
     testKeyboardLaw();

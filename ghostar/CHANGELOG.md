@@ -20,6 +20,11 @@ Notable customer-facing changes to Ghostar are recorded here.
   RIPPLE/ARPEGGIO/LEAP arpeggiator; the Shaper Y variable-rate integrator
   with FREE/KBD HOLD/RESET/RUN modes and rise/fall symmetry; both
   wheel-destination buses including SHAPE X WITH Y and Y-to-LFO-rate.
+- RUN now accepts a selected keyboard's MULTIPLE legato pulse as soon as its
+  rising segment has completed, matching the manual even while the combined
+  gate bus remains high. A newly held arpeggiator group also always restarts
+  its bottom-to-top scan at the lowest key; a short between-clock release can
+  no longer inherit the preceding phrase's step.
 - Performance layer: last-note keying with held-note fallback that never
   retriggers, SINGLE/MULTIPLE triggering behind OR'ed gate sources
   (keyboard, LFO auto-repeat, the Shaper's own gate), including the shared
@@ -56,15 +61,16 @@ Notable customer-facing changes to Ghostar are recorded here.
     pink-noise recipe and unsupported 1.5 Hz branch are removed.
   - **Mixer travels** include each unbuffered 100 kΩ slider's Thevenin
     resistance and the Shaper's errata-corrected 6.8 kΩ Noise arm. The
-    Shaper law is derived; the Filter retains a labelled approximation until
-    its separate 220 kΩ-to-VLP and 68 pF-to-VBP buses are integrated.
+    Shaper law is derived; the Filter solves its separate 220 kΩ-to-VLP and
+    68 pF-to-VBP buses together with all three wipers and both Lower states.
   - **Master Volume** follows the dual-gang 20 kΩ linear control printed on
     DWG 2; half travel is half output, not the former unsupported square law.
   - **Upper-filter routing** follows DWG 2: its controlled-Q section feeds
     both the 12 dB tap and the downstream fixed-Q section selected at 24 dB.
     LOW and that fixed section now keep their anchored Q=0.5 (`k=2`) exactly;
-    the traced SW4/C40 state transfer, 1 MΩ coupling, tied-input drive and
-    101/201 output-gain ratio are recorded as the next source-closed work.
+    both CEM inputs contribute their Q-dependent gains. One coupled solve now
+    carries SW4/C40's 22:1 charge transfer, its selected 23 nF timing node,
+    R194's 12 dB state bleed and IC14B's exact 101/201 slope-gain change.
   - **Resonance** follows the filter chip's own exponential Q scale through
     the panel's actual pot network, anchored by the manual's "LOW fixes
     Q = 0.5". Resonance is now gentle through the middle of the travel and
@@ -92,6 +98,15 @@ Notable customer-facing changes to Ghostar are recorded here.
     KBD HOLD's top hold. A KBD HOLD release re-gate reverses upward/high from
     the current level. This removes the remaining interior level threshold;
     trigger-source edge acceptance remains an evidence gap.
+  - **Shaper audio-VCA evidence** now uses the 1984 production CEM3360 data
+    and the corrected two-BC173 auxiliary branch. Non-FREE modes with SHAPE X
+    WITH Y open keep both devices out of forward conduction, but the
+    R38/R40/R41 divider is only conditional on negligible reverse E-B current;
+    the source gives no leakage curve to close any range. Near maximum gain
+    the chain reaches the sum of the BC173s' reverse emitter-base ratings,
+    exposing a plausible per-unit avalanche knee. Closing that switch loads
+    the TR2-base node; FREE substitutes a loaded IC9/R64/C11/D22 drive. The
+    whole active transfer remains explicit rather than guessed.
   - **MOD RATE travel** includes the original 100 kΩ linear pot's loading
     through its 200 kΩ control arm. Half knob travel reaches `4/9` of the
     exponential control span, preserving the original's slower-than-generic
@@ -128,10 +143,18 @@ Notable customer-facing changes to Ghostar are recorded here.
     slider still loads both nodes. The fixed Upper has no limiter and remains
     linear. P1014's nominal selected-wave volts replace the former arbitrary
     24 mV state scale.
-    **OVERDRIVE** solves its traced IC12A/BA130 throw and the corrected
-    R187/R167/C34/R173 Thevenin source, including R167's clean Lower-VLP feed
-    rather than treating it as a ground shunt; the rest of
-    the shared RS7 output network and non-OVERDRIVE C34 pre-charge remain open.
+    **OVERDRIVE** solves the traced IC12A/BA130 scalar and the conditional
+    A3+B7+C10 R187/R167/C34/R173 network. That contact combination remains an
+    explicit functional hypothesis: standard same-index phasing selects C11,
+    not C10, so all RS7 assignments and non-OVERDRIVE C34 histories still
+    require installed-switch continuity.
+  - **CEM3340 pitch-control memory** now includes both documented
+    `1.82 kΩ || 1 nF` multiplier-output returns (A R82/C72, B R118/C77).
+    Each oscillator's whole keyboard/tune/bend/interval/X/Y pitch sum crosses
+    its own 87.45 kHz pole before exponential conversion. The discrete states
+    preserve the exact 1.82 µs low-frequency delay and monotone response at
+    every supported rate, replacing the former current/prior-sample pitch
+    heuristic while retaining the real self-FM and hard-sync causality.
   - **CEM3340 output character** now retains P1014's selected-wave stage:
     its saw and open-emitter pulse dividers deliberately equalise the three
     selector taps near 4 V before IC10, preserving their exact residual level
@@ -140,9 +163,9 @@ Notable customer-facing changes to Ghostar are recorded here.
     0/100 % constant endpoints instead of an invented 3/97 % guard band.
     SYNC is tied to A's raw saw fall through the traced pins-9/10 network,
     independent of A's selected waveform and duty edges. Acyclic Osc-B
-    destinations use the current conditioned sample;
-    B self-FM keeps the causal prior sample, as do A/PWM only when SYNC closes
-    the B→A→A-reset→B loop. Filters always receive current B.
+    destinations use the current conditioned sample. Pitch destinations use
+    their physical CEM3340 capacitor states; PWM uses causal prior B only when
+    SYNC closes the B→A→A-reset→B loop, and filters always receive current B.
   - **Keyboard tracking** is 108 %, computed from the CV ladder's resistors,
     which reproduces the manual's "slightly over 100 %" independently.
     P1016's signed DAC/reference currents put its nominal zero at MIDI
