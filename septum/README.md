@@ -207,9 +207,14 @@ which voice a steal takes: the longest-released, else the oldest sounding.
 **settled** — the control-change map from owner's manual p. 72 for both tones
 and the part controllers, including the audio filter's CC#2 and CC#4 and the
 printed CC#88 collision resolved to CC#83 as the contract documents; program
-change and bank select; and Roland's documented DT1 System Exclusive framing,
-which the plug-in **receives** (a dump sent to it loads the patch) and can
-**encode** for a host that asks for it through the API.
+change and bank select; the channel-mode messages as the MIDI implementation
+separates them (All Sounds Off is a panic, All Notes Off is every key coming
+up and leaves what a pedal is holding, Reset All Controllers resets the five
+controllers it names); the three Universal Realtime device-control messages,
+onto the SYSTEM COMMON parameters the document names for them; and Roland's
+documented DT1 System Exclusive framing, which the plug-in **receives** (a
+dump sent to it loads the patch) and can **encode** for a host that asks for
+it through the API.
 
 **Where the codec is grounded.** Every address, size and range in it is the
 MIDI Implementation's Parameter Address Map (v1.00, 2006-03-01, pp. 4–5),
@@ -226,7 +231,10 @@ which the map prints as `ON, OFF` where all 26 of its other switches read
 `OFF, ON`. The codec writes it as printed.
 
 **not modelled, and what that costs:** RQ1 data requests are rejected and the
-plug-in never transmits SysEx of its own. A received dump restores the whole
+plug-in never transmits SysEx of its own, so an Identity Request goes
+unanswered. The Active Sensing timeout is deliberately absent: it is a
+cable-failure watchdog, and a host that sends one `FE` and then pauses would
+have the sound cut out from under it. A received dump restores the whole
 parameter surface, the tempo across its full documented 5–300 range and the
 arpeggio's settings, but **not** the 32 × 16 grid itself or the patch's name:
 the plug-in's authoritative state is its parameter list, and neither of those

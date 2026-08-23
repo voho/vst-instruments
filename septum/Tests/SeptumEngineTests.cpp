@@ -2982,6 +2982,97 @@ void testOverdriveKeepsCleanVoicesAligned()
                 + std::to_string (engine.latencySamples()) + ")");
 }
 
+// [settled] "When All Notes Off is received, all notes on the corresponding
+// channel will be turned off. However, if Hold 1 or Sostenuto is ON, the sound
+// will be continued until these are turned off." (MIDI Implementation v1.00
+// p. 1.) That makes it every key coming up, not a panic — All Sounds Off is
+// the panic, and it has its own controller number.
+void testAllNotesOffLeavesThePedalsHolding()
+{
+    const double sampleRate = 44100.0;
+    const auto levelOf = [] (const std::vector<float>& x)
+    {
+        double peak = 0.0;
+        for (const auto sample : x)
+            peak = std::max (peak, (double) std::abs (sample));
+        return peak;
+    };
+
+    // Each pedal in turn: press a key, put the pedal down, lift the key, then
+    // send All Notes Off. The note must still be sounding, and must stop when
+    // the pedal comes up.
+    for (int pedal = 0; pedal < 2; ++pedal)
+    {
+        const bool sostenuto = pedal == 1;
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.ampEnvSustain = 127;
+        patch.upper.ampEnvRelease = 0;      // so the release is unmistakable
+        engine.setPatch (patch);
+        engine.reset();
+
+        std::vector<float> left (2205), right (2205);
+        const auto render = [&]
+        {
+            engine.process (left.data(), right.data(), 2205);
+            return levelOf (left);
+        };
+
+        engine.noteOn (60, 100);
+        render();
+        if (sostenuto)
+            engine.setSostenuto (true);     // latches the key that is down
+        else
+            engine.setHold (true);
+        engine.noteOff (60);
+        const double heldByPedal = render();
+        expect (heldByPedal > 1.0e-3,
+                std::string (sostenuto ? "sostenuto" : "the hold pedal")
+                    + " keeps the note after its key comes up (peak "
+                    + std::to_string (heldByPedal) + ")");
+
+        engine.allNotesOff();
+        render();                           // let any release run to the floor
+        const double afterAllNotesOff = render();
+        expect (afterAllNotesOff > 0.5 * heldByPedal,
+                "All Notes Off leaves a note "
+                    + std::string (sostenuto ? "the sostenuto latch" : "the hold pedal")
+                    + " is holding (peak " + std::to_string (afterAllNotesOff)
+                    + " against " + std::to_string (heldByPedal) + ")");
+
+        if (sostenuto)
+            engine.setSostenuto (false);
+        else
+            engine.setHold (false);
+        render();
+        const double afterPedalUp = render();
+        expect (afterPedalUp < 1.0e-3,
+                "the note stops when the pedal comes up after All Notes Off"
+                " (peak " + std::to_string (afterPedalUp) + ")");
+    }
+
+    // With no pedal down it does what its name says.
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.ampEnvSustain = 127;
+        patch.upper.ampEnvRelease = 0;
+        engine.setPatch (patch);
+        engine.reset();
+        std::vector<float> left (2205), right (2205);
+        engine.noteOn (60, 100);
+        engine.process (left.data(), right.data(), 2205);
+        engine.allNotesOff();
+        engine.process (left.data(), right.data(), 2205);
+        engine.process (left.data(), right.data(), 2205);
+        expect (levelOf (left) < 1.0e-3,
+                "All Notes Off with no pedal down stops the note (peak "
+                    + std::to_string (levelOf (left)) + ")");
+    }
+}
+
 void testAllNotesOffAndReset()
 {
     septum::Engine engine;
@@ -4229,6 +4320,7 @@ int main()
     testOverdriveDoesNotFoldAtTheHostRate();
     testOverdriveKeepsCleanVoicesAligned();
     testAllNotesOffAndReset();
+    testAllNotesOffLeavesThePedalsHolding();
     testSysExChecksumAndProtocol();
     testSysExPatchSerializationRoundtrip();
     testNoiseIsWhiteAtEveryHostRate();

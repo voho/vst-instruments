@@ -1047,6 +1047,68 @@ void testEditorAndSnapshot()
     processor.releaseResources();
 }
 
+// [settled] "Of the System Exclusive messages received by this device, the
+// Universal Non-realtime messages and the Universal Realtime messages and the
+// Data Request (RQ1) messages and the Data Set (DT1) messages will be set
+// automatically." Three Universal Realtime device-control messages name a
+// SYSTEM COMMON parameter apiece, and this replica publishes all three.
+void testUniversalRealtimeDeviceControl()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    juce::AudioBuffer<float> block (2, 256);
+
+    const auto send = [&] (std::uint8_t sub, int lsb, int msb)
+    {
+        const std::uint8_t body[] { 0x7F, 0x7F, 0x04, sub,
+                                    (std::uint8_t) (lsb & 0x7F),
+                                    (std::uint8_t) (msb & 0x7F) };
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::createSysExMessage (body, (int) sizeof (body)), 0);
+        processor.processBlock (block, midi);
+    };
+    const auto valueOf = [&] (const char* id)
+    {
+        return processor.parameters.getRawParameterValue (id)->load();
+    };
+
+    // Master Volume: "The lower byte (llH) ... will be handled as 00H".
+    const float levelBefore = valueOf ("master_level");
+    send (0x01, 0x7F, 40);
+    expect (std::abs (valueOf ("master_level") - 40.0f) < 0.5f
+                && std::abs (levelBefore - 40.0f) > 0.5f,
+            "Master Volume lands on MASTER LEVEL (got "
+                + juce::String (valueOf ("master_level")).toStdString() + ")");
+
+    // Master Fine Tuning: 40 00H is +/-0, so A4 stays at 440 Hz; 00 00H is
+    // -100 cents, which is the documented bottom of MASTER TUNE, 415.30 Hz.
+    send (0x03, 0x00, 0x40);
+    expect (std::abs (valueOf ("system_master_tune") - 440.0f) < 0.05f,
+            "Master Fine Tuning centre is A440 (got "
+                + juce::String (valueOf ("system_master_tune")).toStdString() + ")");
+    send (0x03, 0x00, 0x00);
+    expect (std::abs (valueOf ("system_master_tune") - 415.30f) < 0.05f,
+            "Master Fine Tuning at -100 cents is the range's own bottom (got "
+                + juce::String (valueOf ("system_master_tune")).toStdString() + ")");
+
+    // Master Coarse Tuning: "llH: ignored", mmH 28H - 40H - 58H = -24 - +24.
+    send (0x04, 0x7F, 0x28);
+    expect (std::abs (valueOf ("system_key_shift") + 24.0f) < 0.5f,
+            "Master Coarse Tuning 28H is -24 semitones (got "
+                + juce::String (valueOf ("system_key_shift")).toStdString() + ")");
+    send (0x04, 0x00, 0x58);
+    expect (std::abs (valueOf ("system_key_shift") - 24.0f) < 0.5f,
+            "Master Coarse Tuning 58H is +24 semitones (got "
+                + juce::String (valueOf ("system_key_shift")).toStdString() + ")");
+
+    // A universal message the instrument does not list is not swallowed as
+    // one it does.
+    const float before = valueOf ("master_level");
+    send (0x02, 0x00, 0x00);
+    expect (std::abs (valueOf ("master_level") - before) < 0.001f,
+            "an unlisted device-control sub-ID changes nothing");
+}
+
 void testSysExBlockProcessing()
 {
     SeptumAudioProcessor processor;
@@ -1268,6 +1330,7 @@ int main()
     testSystemCommonSettings();
     testEditorFitsASmallDisplay();
     testEditorAndSnapshot();
+    testUniversalRealtimeDeviceControl();
     testSysExBlockProcessing();
     testSysExDoesNotNotifyFromTheAudioThread();
     testKeyboardOctaveIsAppliedOnce();

@@ -551,6 +551,20 @@ void SeptumAudioProcessor::cacheParameterPointers()
     systemTuneValue = parameters.getRawParameterValue ("system_master_tune");
     for (const auto& id : systemParameterIds())
         systemValues.push_back (parameters.getRawParameterValue (id));
+    // The three parameters Universal Realtime device control names, resolved
+    // once so the audio thread never looks one up by string.
+    {
+        const char* const ids[deviceControlCount] { "master_level",
+                                                    "system_master_tune",
+                                                    "system_key_shift" };
+        for (std::size_t i = 0; i < deviceControlCount; ++i)
+        {
+            deviceControlParameters[i] = parameters.getParameter (ids[i]);
+            deviceControlValues[i] = parameters.getRawParameterValue (ids[i]);
+            jassert (deviceControlParameters[i] != nullptr);
+            jassert (deviceControlValues[i] != nullptr);
+        }
+    }
     for (const auto& binding : externalBindings())
     {
         auto* value = parameters.getRawParameterValue (binding.id);
@@ -1046,6 +1060,85 @@ void SeptumAudioProcessor::reconcileControlChanges()
     }
 }
 
+// [settled] The MIDI Implementation lists three Universal Realtime device
+// control messages among what the instrument receives, and names the SYSTEM
+// COMMON parameter each one changes (v1.00 p. 2):
+//
+//   F0 7F 7F 04 01 ll mm F7   Master Volume       -> MASTER LEVEL
+//   F0 7F 7F 04 03 ll mm F7   Master Fine Tuning  -> MASTER TUNE
+//   F0 7F 7F 04 04 ll mm F7   Master Coarse Tuning-> MASTER KEY SHIFT
+//
+// All three parameters are published here, so the messages land on them.
+bool SeptumAudioProcessor::handleDeviceControlSysEx (const std::uint8_t* data,
+                                                     std::size_t size) noexcept
+{
+    // JUCE hands over the body without the F0 and the F7.
+    if (data == nullptr || size < 6 || data[0] != 0x7F || data[1] != 0x7F
+        || data[2] != 0x04)
+        return false;
+
+    const int lsb = data[4] & 0x7F;
+    const int msb = data[5] & 0x7F;
+
+    const auto store = [this] (std::size_t index, float natural)
+    {
+        auto* parameter = deviceControlParameters[index];
+        auto* raw = deviceControlValues[index];
+        if (parameter == nullptr || raw == nullptr)
+            return;
+        raw->store (parameter->getNormalisableRange().snapToLegalValue (natural),
+                    std::memory_order_relaxed);
+        deviceControlDirty.fetch_or (1u << index, std::memory_order_release);
+        systemReconciler.triggerAsyncUpdate();
+    };
+
+    switch (data[3])
+    {
+        case 0x01:
+            // "The lower byte (llH) of Master Volume will be handled as 00H",
+            // so the upper byte alone is the 0-127 level.
+            store (0, static_cast<float> (msb));
+            return true;
+        case 0x03:
+        {
+            // 00 00H - 40 00H - 7F 7FH = -100 - 0 - +99.9 cents. MASTER TUNE
+            // is published as the frequency of A4, which is how the manual
+            // prints its endpoints.
+            const double cents =
+                (((msb << 7) | lsb) - 8192) * (100.0 / 8192.0);
+            store (1, static_cast<float> (440.0 * std::exp2 (cents / 1200.0)));
+            return true;
+        }
+        case 0x04:
+            // "llH: ignored (processed as 00H)"; mmH 28H - 40H - 58H =
+            // -24 - 0 - +24 semitones.
+            store (2, static_cast<float> (msb - 64));
+            return true;
+        default:
+            break;
+    }
+    return false;
+}
+
+void SeptumAudioProcessor::republishSystemParameters()
+{
+    auto bits = deviceControlDirty.exchange (0u, std::memory_order_acquire);
+    for (std::size_t i = 0; i < deviceControlCount; ++i)
+    {
+        if ((bits & (1u << i)) == 0u)
+            continue;
+        auto* parameter = deviceControlParameters[i];
+        auto* raw = deviceControlValues[i];
+        if (parameter == nullptr || raw == nullptr)
+            continue;
+        const auto& range = parameter->getNormalisableRange();
+        parameter->beginChangeGesture();
+        parameter->setValueNotifyingHost (
+            range.convertTo0to1 (raw->load (std::memory_order_relaxed)));
+        parameter->endChangeGesture();
+    }
+}
+
 bool SeptumAudioProcessor::handleMidiMessage (const juce::MidiMessage& message)
 {
     if (message.isNoteOn())
@@ -1076,6 +1169,8 @@ bool SeptumAudioProcessor::handleMidiMessage (const juce::MidiMessage& message)
     {
         const auto* rawData = message.getSysExData();
         const auto rawSize = (std::size_t) message.getSysExDataSize();
+        if (handleDeviceControlSysEx (rawData, rawSize))
+            return true;
         // A dump arrives on the audio thread. It writes the raw values here —
         // atomics only — and the message loop republishes them to the
         // parameter objects and the host, the same split a received CC uses

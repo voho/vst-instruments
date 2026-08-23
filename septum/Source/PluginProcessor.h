@@ -177,6 +177,32 @@ private:
         SeptumAudioProcessor& owner;
     };
     PatchReconciler patchReconciler { *this };
+
+    // [settled] Universal Realtime device control: "the Universal Realtime
+    // messages ... will be set automatically" (MIDI Implementation v1.00
+    // p. 2). Three of them name SYSTEM COMMON parameters this replica
+    // publishes -- Master Volume, Master Fine Tuning, Master Coarse Tuning --
+    // so they are received onto those parameters. They arrive on the audio
+    // thread and take the same split every other received message does: raw
+    // atomics here, host and UI notification from the queued pass.
+    bool handleDeviceControlSysEx (const std::uint8_t* data,
+                                   std::size_t size) noexcept;
+    void republishSystemParameters();
+    // MASTER LEVEL, MASTER TUNE, MASTER KEY SHIFT, in that order.
+    static constexpr std::size_t deviceControlCount = 3;
+    std::array<juce::RangedAudioParameter*, deviceControlCount>
+        deviceControlParameters { nullptr, nullptr, nullptr };
+    std::array<std::atomic<float>*, deviceControlCount>
+        deviceControlValues { nullptr, nullptr, nullptr };
+    std::atomic<unsigned> deviceControlDirty { 0u };
+    struct SystemReconciler final : public juce::AsyncUpdater
+    {
+        explicit SystemReconciler (SeptumAudioProcessor& o) : owner (o) {}
+        ~SystemReconciler() override { cancelPendingUpdate(); }
+        void handleAsyncUpdate() override { owner.republishSystemParameters(); }
+        SeptumAudioProcessor& owner;
+    };
+    SystemReconciler systemReconciler { *this };
     std::vector<float> monoScratch;
 
     septum::Engine engine;

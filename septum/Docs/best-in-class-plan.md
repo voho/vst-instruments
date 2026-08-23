@@ -1618,6 +1618,39 @@ decaying longest. Every release now goes through one function that stamps only
 a voice not already in release. Fenced by a steal after an All Notes Off where
 the stalest tail is deliberately *not* the one in the first slot.
 
+#### Step 42 — the Receive Data section, read
+
+Step 40 read the address map. The same document's **Receive Data** section
+(pp. 1–2) is the authority on the messages that are not parameter edits, and
+reading it turned up one defect and one gap.
+
+**All Notes Off was a second All Sounds Off.** The document gives the two
+different behaviour, and gives All Notes Off a proviso: "all notes on the
+corresponding channel will be turned off. *However, if Hold 1 or Sostenuto is
+ON, the sound will be continued until these are turned off.*" The replica
+released every voice unconditionally and cleared the sostenuto latch with
+them, so a sustain pedal that was still down had its notes taken away, and a
+sostenuto latch set before the message was gone even though its own pedal had
+not moved. All Notes Off is now every key coming up: the key lists and the
+arpeggiator's physical presses are cleared one at a time — so ARPEGGIO HOLD
+latches on the last one exactly as it does when the player lifts their hands —
+and then only the voices no pedal is holding are released. All Sounds Off,
+which is the panic, is untouched.
+
+**Three Universal Realtime messages were ignored.** The document lists them as
+received and names the SYSTEM COMMON parameter each one changes: Master Volume
+(`04 01`) → MASTER LEVEL, Master Fine Tuning (`04 03`, ±100 cents) → MASTER
+TUNE, Master Coarse Tuning (`04 04`, ±24 semitones) → MASTER KEY SHIFT. All
+three parameters are already published here, so all three messages now land on
+them, through the same audio-thread split every other received message uses:
+raw atomics in the callback, host and UI notification from a queued pass.
+
+Two things in that section stay unimplemented on purpose, and the contract now
+says why: the Identity Request reply, because the plug-in transmits no SysEx at
+all; and the Active Sensing 420 ms timeout, which is a cable-failure watchdog —
+a plug-in has no cable, and a host that sends one `FE` and then goes quiet
+during a pause would have the sound cut out from under it.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:

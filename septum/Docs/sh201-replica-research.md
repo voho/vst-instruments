@@ -166,6 +166,39 @@ has no D Beam), Portamento control 84.
 
 Effects: delay time 12, reverb time 13. Audio filter: cutoff 2, resonance 4.
 
+### Channel mode and universal messages (settled, MIDI Implementation pp. 1–2)
+
+The MIDI Implementation's own Receive Data section is the authority on the
+messages that are not parameter edits, and it separates two that the replica
+had treated alike:
+
+- **All Sounds Off (CC#120)** — "all notes currently sounding on the
+  corresponding channel will be turned off." A panic.
+- **All Notes Off (CC#123)**, and **OMNI OFF (124)** / **OMNI ON (125)**,
+  which do "the same processing" — "all notes on the corresponding channel
+  will be turned off. **However, if Hold 1 or Sostenuto is ON, the sound will
+  be continued until these are turned off.**" That makes it every key coming
+  up at once, not a panic; the replica used to release every voice and drop
+  the sostenuto latch with them, so a pedal that was still down had its notes
+  taken out from under it.
+- **Reset All Controllers (CC#121)** — pitch bend to centre, modulation 0,
+  expression **127**, hold and sostenuto off. Implemented as printed.
+- **Universal Realtime device control**, each naming the SYSTEM COMMON
+  parameter it changes: **Master Volume** (`04 01`, "the lower byte will be
+  handled as 00H") → MASTER LEVEL; **Master Fine Tuning** (`04 03`, `00 00H –
+  40 00H – 7F 7FH` = −100 – 0 – +99.9 cents) → MASTER TUNE; **Master Coarse
+  Tuning** (`04 04`, LSB ignored, MSB `28H – 40H – 58H` = −24 – 0 – +24
+  semitones) → MASTER KEY SHIFT. All three parameters are published here, so
+  all three messages are received onto them.
+
+Not implemented, with the reason: the **Identity Request** reply, because the
+plug-in transmits no SysEx at all; and the **Active Sensing** timeout — "if
+the interval between messages exceeds 420 ms, the same processing will be
+carried out as when All Sounds Off, All Notes Off and Reset All Controllers
+are received" — which is a cable-failure watchdog. A plug-in has no cable, and
+a host that sends one `FE` and then goes quiet during a pause would have the
+sound cut out from under it.
+
 \* The printed table assigns **CC#88 twice** — UPPER filter-env decay *and*
 LOWER OSC2 pitch-env depth — which one physical controller number cannot
 serve. CC#83 is the only number in the chart's declared transmit range

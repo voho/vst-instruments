@@ -1192,24 +1192,42 @@ void Engine::setPortamentoControl (int note)
         tone.lastPitch = pitch;
 }
 
+// [settled] All Notes Off is every key coming up at once, not a panic: "When
+// All Notes Off is received, all notes on the corresponding channel will be
+// turned off. However, if Hold 1 or Sostenuto is ON, the sound will be
+// continued until these are turned off" (MIDI Implementation v1.00 p. 1).
+// This used to release every voice unconditionally and drop the sostenuto
+// latch with them, which is All *Sounds* Off — a sustain pedal held down had
+// the notes taken out from under it, and a sostenuto latch set before the
+// message was gone even though its pedal was still down.
 void Engine::allNotesOff()
 {
-    for (auto& voice : voices_)
+    syncArpeggioRouting();
+
+    for (int index = 0; index < partCount; ++index)
     {
-        if (voice.active)
-        {
-            beginRelease (voice);
-        }
+        const Part part = index == 0 ? Part::Upper : Part::Lower;
+        auto& runtime = arpeggios_[static_cast<std::size_t> (index)];
+        // One press at a time, exactly as the keys coming up would: the last
+        // one leaving is what latches an ARPEGGIO HOLD chord and what stops
+        // the arpeggiator.
+        while (runtime.physicalCount > 0)
+            arpeggioRemoveKey (part, runtime.physicalKeys[0]);
     }
+
+    // The keys go first, so nothing below reads one as still down.
     for (auto& tone : tones_)
     {
         tone.heldCount = 0;
         tone.anyKeyDown = false;
-        tone.sostenutoNotes.fill (0ull);
     }
-    for (auto& runtime : arpeggios_)
-        runtime.clearKeys();
-    sostenuto_ = false;
+
+    // The sostenuto latch belongs to the pedal, not to the keys, and
+    // outliving the keys that set it is its entire job. It is cleared when
+    // the pedal comes up.
+    for (auto& voice : voices_)
+        if (voice.active)
+            releaseIfNoPedalHolds (voice);
 }
 
 void Engine::allSoundOff()
