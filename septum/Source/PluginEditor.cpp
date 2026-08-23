@@ -539,7 +539,12 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
         button->onClick = [this, semitones]
         {
             const float root = getToneParameter ("osc1_pitch");
-            const float wanted = root + (float) semitones;
+            // Snapped, because the write below snaps: with OSC 1 at +30 the
+            // fifth wants +37, lands on +36, and an unsnapped comparison then
+            // read "not there yet" forever — the second press, documented as
+            // the way back to unison, did nothing and the lamp stayed dark.
+            const float wanted =
+                snapToneParameter ("osc2_pitch", root + (float) semitones);
             setToneParameter ("osc2_pitch",
                               getToneParameter ("osc2_pitch") == wanted ? root
                                                                         : wanted);
@@ -715,8 +720,10 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
     // CONTROLLER DESTINATION: which tone each physical controller reaches.
     // These say UPPER/LOWER for a third reason again — not which tone is
     // edited, not which tone sounds, but which tone a lever or a pedal gets
-    // to move — so they are captioned with the arrow and grouped under one
-    // heading the panel paints above them.
+    // to move — so each one names its controller and says TO TONE, which is
+    // what tells them apart from PATCH LEVEL and TONE BAL beside them. There
+    // is no group heading over them: the strip is one flat row of cells and
+    // this comment used to claim one the panel never painted.
     addControl (*stripSection, "mod_dest", "MOD TO TONE", Style::Combo, false);
     addControl (*stripSection, "bend_dest", "BEND TO TONE", Style::Combo, false);
     addControl (*stripSection, "expr_dest", "EXPR TO TONE", Style::Combo, false);
@@ -771,16 +778,21 @@ SeptumAudioProcessorEditor::SeptumAudioProcessorEditor (
                 false, " st");
 
     // A section's scope is what its controls are, not what it declares. Every
-    // section on this panel is now wholly one or the other; the assertion
-    // fences that, because a mixed section is exactly the defect this pass
-    // set out to remove.
+    // section on this panel is wholly one or the other, because a mixed
+    // section is exactly the defect Step 28 set out to remove: it would be
+    // classified by its one per-tone control and wear the tone chip and wash
+    // over controls that are not per-tone. Recorded rather than asserted —
+    // `jassert` is compiled out of every build this project produces, so the
+    // suite reads this list and expects it empty.
+    mixedScopeSections.clear();
     for (auto& entry : sections)
     {
         int perTone = 0, shared = 0;
         for (const auto* control : entry->controls)
             (control->perTone ? perTone : shared) += 1;
         entry->scope = perTone > 0 ? Scope::PerTone : Scope::Shared;
-        jassert (perTone == 0 || shared == 0);   // no mixed sections
+        if (perTone > 0 && shared > 0)
+            mixedScopeSections.add (entry->title);
     }
 
     // The target the player last chose, so reopening the editor does not
@@ -854,7 +866,16 @@ void SeptumAudioProcessorEditor::applyKeyboardOctave()
     // one. The keys keep their notes; what moves is what they are called,
     // which is what the shift actually does to the pitch they sound.
     keyboard.setAvailableRange (36, 96);
-    keyboard.setOctaveForMiddleC (4 + shift);
+    // JUCE's setOctaveForMiddleC repaints unconditionally, and the frame timer
+    // calls this every tick, so an idle panel invalidated the whole keyboard
+    // 24 times a second — and through the scaled canvas re-ran the panel paint
+    // over that strip with it. setAvailableRange above is change-guarded
+    // inside JUCE; this one has to be guarded here.
+    if (shift != lastKeyboardOctave)
+    {
+        lastKeyboardOctave = shift;
+        keyboard.setOctaveForMiddleC (4 + shift);
+    }
     octValueLabel.setText (shift == 0 ? juce::String ("0")
                                       : (shift > 0 ? "+" : "")
                                             + juce::String (shift),
@@ -901,6 +922,18 @@ SeptumAudioProcessorEditor::toneAudibility() const
                         + " - LOWER below, UPPER above - 5 voices each";
     }
     return state;
+}
+
+void SeptumAudioProcessorEditor::reconcileEditTarget()
+{
+    // An editor left open across a session load kept showing UPPER while the
+    // restored state said LOWER, and re-saving from there wrote back what
+    // somebody else had been editing rather than what the player was.
+    const bool stored =
+        (bool) processor.parameters.state.getProperty ("editingUpperTone",
+                                                       editingUpper);
+    if (stored != editingUpper)
+        setEditingUpper (stored);
 }
 
 void SeptumAudioProcessorEditor::setEditingUpper (bool upper)
@@ -967,6 +1000,15 @@ float SeptumAudioProcessorEditor::getToneParameter (const char* suffix) const
     if (const auto* value = processor.parameters.getRawParameterValue (id))
         return value->load();
     return 0.0f;
+}
+
+float SeptumAudioProcessorEditor::snapToneParameter (const char* suffix,
+                                                     float natural) const
+{
+    const auto id = septum::parameters::toneId (editingUpper, suffix);
+    if (processor.parameters.getParameter (id) != nullptr)
+        return processor.parameters.getParameterRange (id).snapToLegalValue (natural);
+    return natural;
 }
 
 void SeptumAudioProcessorEditor::setToneParameter (const char* suffix,
@@ -1148,8 +1190,12 @@ void SeptumAudioProcessorEditor::refreshValues()
         if (auto* button = dynamic_cast<juce::Button*> (control->component.get()))
             button->setToggleState (on, juce::dontSendNotification);
     };
-    lamp (intervalOctControl, second == root - 12.0f);
-    lamp (intervalFifthControl, second == root + 7.0f);
+    // The same snapped targets the buttons write, so the lamp says where the
+    // press actually lands rather than where it aimed.
+    lamp (intervalOctControl,
+          second == snapToneParameter ("osc2_pitch", root - 12.0f));
+    lamp (intervalFifthControl,
+          second == snapToneParameter ("osc2_pitch", root + 7.0f));
 
 }
 
@@ -1187,9 +1233,14 @@ void SeptumAudioProcessorEditor::bindControls (bool perToneOnly)
         auto* parameter = processor.parameters.getParameter (id);
         if (parameter == nullptr)
         {
-            jassertfalse;  // a control names a parameter that does not exist
+            // A control naming a parameter that does not exist still draws,
+            // hovers and drags — it simply edits nothing — so this cannot stay
+            // a `jassert`, which no build here compiles in. The suite expects
+            // this list empty.
+            unresolvedParameterIds.addIfNotAlreadyThere (id);
             continue;
         }
+        unresolvedParameterIds.removeString (id);
         if (auto* tooltipClient =
                 dynamic_cast<juce::SettableTooltipClient*> (control->component.get()))
             tooltipClient->setTooltip (parameter->getName (64));
@@ -1485,10 +1536,18 @@ void SeptumAudioProcessorEditor::layoutPanel()
     // Keyboard row: the per-tone play controls, then the lever at the left of
     // the keys as on the unit, then the keys under the band that says which
     // tone each of them reaches.
-    auto keyboardRow = bounds.removeFromBottom (keyboardHeight).reduced (10, 4);
+    // TONE PLAY gets the row at its full height. The row used to be reduced by
+    // four vertically *before* the section was cut out of it, so the section
+    // had 94 points for the 102 `keyboardHeight` declares — its centring term
+    // went to zero and the GLIDE TIME, BEND and TONE OCT read-outs overflowed
+    // onto the well's bottom border, the only section on the panel with no
+    // bottom padding at all. The four points go to the lever and the keys,
+    // which is what they were for.
+    auto keyboardRow = bounds.removeFromBottom (keyboardHeight).reduced (10, 0);
     layoutSection (*tonePlaySection,
                    keyboardRow.removeFromLeft (tonePlaySection->naturalWidth()));
     keyboardRow.removeFromLeft (sectionGap);
+    keyboardRow.reduce (0, 4);
     lever.setBounds (keyboardRow.removeFromLeft (66).reduced (0, 2));
     keyboardRow.removeFromLeft (6);
     keyZoneBounds = keyboardRow.removeFromTop (keyZoneHeight);
@@ -1622,12 +1681,11 @@ void SeptumAudioProcessorEditor::layoutPanel()
     panel.removeFromTop (sectionGap);
     auto effectsRow = panel;
 
-    // Section indices follow the construction order in the constructor. They
-    // are checked rather than trusted, because inserting a section silently
-    // shifts every list below it.
-    jassert (sections[1]->title == "OSC 1" && sections[5]->title == "AMP"
-             && sections[6]->title == "PITCH ENV" && sections[10]->title == "LFO 2"
-             && sections[11]->title == "ARPEGGIO" && sections[14]->title == "REVERB");
+    // Section indices follow the construction order in the constructor, and
+    // inserting a section silently shifts every list below it. The titles at
+    // the indices these three calls address are published through
+    // getSectionTitles() and checked by the suite, because the `jassert` that
+    // used to stand here is compiled out of every build this project makes.
     layoutBand ({ 1, 2, 3, 4, 5 }, voiceRow,
                 { Connector::Sum, Connector::Flow, Connector::Flow,
                   Connector::Flow });
@@ -1637,6 +1695,7 @@ void SeptumAudioProcessorEditor::layoutPanel()
     // Laying the panel out also re-reads what the parameters say about the
     // tones and the keyboard, so a panel rendered without the frame timer
     // running — the suite's snapshot — shows the same thing a live one does.
+    reconcileEditTarget();
     refreshToneTarget();
     applyKeyboardOctave();
 }
@@ -1883,17 +1942,79 @@ void SeptumAudioProcessorEditor::paintKeyboardZones (juce::Graphics& g)
         auto upper = area.withLeft (cut);
         zone (lower, false, "LOWER");
         zone (upper, true, "UPPER");
-        juce::String point;
-        if (auto* parameter = processor.parameters.getParameter ("split_point"))
-            point = parameter->getCurrentValueAsText();
+        const auto caption = getSplitPointCaption();
         g.setColour (colours::frame);
         g.fillRect (cut - 1, keyZoneBounds.getY(), 2, keyZoneBounds.getHeight());
         g.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
-        g.drawText (point,
-                    juce::Rectangle<int> (cut + 3, keyZoneBounds.getY(), 34,
-                                          keyZoneBounds.getHeight()),
-                    juce::Justification::centredLeft);
+        g.drawText (caption.text, caption.bounds,
+                    caption.bounds.getX() < cut ? juce::Justification::centredRight
+                                                : juce::Justification::centredLeft);
     }
+}
+
+SeptumAudioProcessorEditor::SplitPointCaption
+SeptumAudioProcessorEditor::getSplitPointCaption() const
+{
+    SplitPointCaption caption;
+    if (keyZoneBounds.isEmpty())
+        return caption;
+    const auto* value = processor.parameters.getRawParameterValue ("split_point");
+    const int splitNote = value != nullptr ? (int) std::lround (value->load()) : 60;
+    // Named the way the keys under it are named. The parameter's own text is
+    // fixed at middle C = C4, but the drawn keys are renamed by the octave
+    // shift, so at OCT +1 the band said "C4" over the key the keyboard itself
+    // prints as C5 — one drawn key with two names fifteen points apart.
+    caption.text = juce::MidiMessage::getMidiNoteName (
+        splitNote, true, true, keyboard.getOctaveForMiddleC());
+
+    const int boundary = keyboard.getX()
+                         + juce::roundToInt (
+                             keyboard.getKeyStartPosition (splitNote));
+    const int cut =
+        juce::jlimit (keyZoneBounds.getX(), keyZoneBounds.getRight(), boundary);
+    // SPLIT POINT reaches C8 while the drawn keyboard stops at C7, so for the
+    // top twelve settings the boundary sits at the right edge of the band and a
+    // name drawn to its right left the panel entirely. It flips to the left of
+    // the line there, the way a tooltip does.
+    constexpr int nameWidth = 34;
+    const bool flip = cut + 3 + nameWidth > keyZoneBounds.getRight();
+    caption.bounds = juce::Rectangle<int> (flip ? cut - 3 - nameWidth : cut + 3,
+                                           keyZoneBounds.getY(), nameWidth,
+                                           keyZoneBounds.getHeight());
+    return caption;
+}
+
+juce::StringArray SeptumAudioProcessorEditor::getSectionsOverflowingTheirWell() const
+{
+    juce::StringArray overflowing;
+    for (const auto& entry : sections)
+    {
+        if (entry->bounds.isEmpty())
+            continue;
+        for (const auto* control : entry->controls)
+        {
+            const auto fits = [&entry] (const juce::Component* part)
+            {
+                return part == nullptr || part->getBounds().isEmpty()
+                       || entry->bounds.contains (part->getBounds());
+            };
+            if (! fits (control->component.get()) || ! fits (control->label.get())
+                || ! fits (control->value.get()))
+            {
+                overflowing.addIfNotAlreadyThere (entry->title);
+                break;
+            }
+        }
+    }
+    return overflowing;
+}
+
+juce::StringArray SeptumAudioProcessorEditor::getSectionTitles() const
+{
+    juce::StringArray titles;
+    for (const auto& entry : sections)
+        titles.add (entry->title);
+    return titles;
 }
 
 void SeptumAudioProcessorEditor::timerCallback()
@@ -1913,6 +2034,7 @@ void SeptumAudioProcessorEditor::timerCallback()
         const auto* value = processor.parameters.getRawParameterValue (id);
         return value != nullptr ? (int) std::lround (value->load()) : 0;
     };
+    reconcileEditTarget();
     const juce::String keyState =
         juce::String (reading ("keyboard_mode")) + "/"
         + juce::String (reading ("keyboard_part")) + "/"

@@ -678,6 +678,90 @@ void testIntervalButtonsAreRelativeToOscOne()
     expect (get ("up_osc2_pitch") == 12,
             "5TH puts OSC 2 a fifth above OSC 1 (got "
                 + std::to_string (get ("up_osc2_pitch")) + ")");
+
+    // Near the ends of the pitch range the interval the button aims at does
+    // not exist, so the write snaps — and comparing against the unsnapped
+    // target made the button a one-way trap: it landed on +36, read "not there
+    // yet", and the second press, documented as the way back to unison, did
+    // nothing at all.
+    set ("up_osc1_pitch", 30.0f);
+    set ("up_osc2_pitch", 0.0f);
+    fifth->onClick();
+    expect (get ("up_osc2_pitch") == 36,
+            "5TH from OSC 1 at +30 lands on the top of the range (got "
+                + std::to_string (get ("up_osc2_pitch")) + ")");
+    fifth->onClick();
+    expect (get ("up_osc2_pitch") == 30,
+            "and pressing it again still returns OSC 2 to OSC 1's pitch (got "
+                + std::to_string (get ("up_osc2_pitch")) + ")");
+
+    set ("up_osc1_pitch", -30.0f);
+    set ("up_osc2_pitch", 0.0f);
+    minusOctave->onClick();
+    expect (get ("up_osc2_pitch") == -36,
+            "-OCT from OSC 1 at -30 lands on the bottom of the range (got "
+                + std::to_string (get ("up_osc2_pitch")) + ")");
+    minusOctave->onClick();
+    expect (get ("up_osc2_pitch") == -30,
+            "and pressing it again returns OSC 2 to OSC 1's pitch (got "
+                + std::to_string (get ("up_osc2_pitch")) + ")");
+}
+
+// The three invariants the panel is built on were `jassert`s, and NDEBUG
+// removes those from every build this project produces — the plug-in, both
+// test binaries and CI's Release — so what the change log called "a build-time
+// failure" was present in no build and checked by nothing. They are state the
+// editor publishes now, and this is what enforces them.
+void testThePanelsInvariantsAreCheckedBySomethingThatRuns()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> base (processor.createEditor());
+    auto* editor = dynamic_cast<SeptumAudioProcessorEditor*> (base.get());
+    expect (editor != nullptr, "the processor provides its own editor");
+    if (editor == nullptr)
+        return;
+
+    expect (editor->getUnresolvedParameterIds().isEmpty(),
+            "every control on the panel names a parameter that exists (unresolved: "
+                + editor->getUnresolvedParameterIds().joinIntoString (", ").toStdString()
+                + ")");
+    expect (editor->getMixedScopeSections().isEmpty(),
+            "no section mixes per-tone and shared controls (mixed: "
+                + editor->getMixedScopeSections().joinIntoString (", ").toStdString()
+                + ")");
+
+    // A section is sized to its contents, so one handed less room than it asked
+    // for does not shrink — it overflows. TONE PLAY was handed 94 points for the
+    // 102 its single control row declares, because the keyboard row was reduced
+    // vertically before the section was cut out of it, and its GLIDE TIME, BEND
+    // and TONE OCT read-outs sat on the well's bottom border.
+    const auto design = SeptumAudioProcessorEditor::panelSizeForWorkArea ({});
+    editor->setSize (design.getWidth(), design.getHeight());
+    editor->resized();
+    expect (editor->getSectionsOverflowingTheirWell().isEmpty(),
+            "every section's contents fit inside its own well (overflowing: "
+                + editor->getSectionsOverflowingTheirWell()
+                      .joinIntoString (", ")
+                      .toStdString()
+                + ")");
+
+    // The titles `resized()` addresses by index. Inserting a section shifts
+    // every list below it, and the three layoutBand calls would then lay out
+    // the wrong sections into the wrong bands.
+    const auto titles = editor->getSectionTitles();
+    const std::pair<int, const char*> addressed[] {
+        { 1, "OSC 1" }, { 5, "AMP" },      { 6, "PITCH ENV" },
+        { 10, "LFO 2" }, { 11, "ARPEGGIO" }, { 14, "REVERB" }
+    };
+    for (const auto& entry : addressed)
+        expect (titles.size() > entry.first
+                    && titles[entry.first] == juce::String (entry.second),
+                std::string ("section ") + std::to_string (entry.first) + " is "
+                    + entry.second + " (found "
+                    + (titles.size() > entry.first ? titles[entry.first].toStdString()
+                                                   : std::string ("nothing"))
+                    + ")");
 }
 
 // A switch on the panel says which way it is thrown.
@@ -750,6 +834,23 @@ void testDBeamBytesAreStoredAndInert()
         auto* parameter = processor.parameters.getParameter (id);
         expect (parameter != nullptr,
                 juce::String ("the stored D Beam byte ") + id
+                    + " is still published");
+        if (parameter != nullptr)
+            expect (! parameter->isAutomatable(),
+                    juce::String (id) + " is published as non-automatable");
+    }
+
+    // One policy, not two. PITCH WIDE holds the same [settled range, no
+    // effect] position: the manual gives it as expanding the COARSE knob's
+    // *travel*, a numeric parameter that already reaches +/-36 has none to
+    // expand, and nothing in the engine reads the byte — so it must not be
+    // offered as an automation lane either. Four parameters, two per tone.
+    for (const char* id : { "up_osc1_wide", "up_osc2_wide", "lo_osc1_wide",
+                            "lo_osc2_wide" })
+    {
+        auto* parameter = processor.parameters.getParameter (id);
+        expect (parameter != nullptr,
+                juce::String ("the stored PITCH WIDE byte ") + id
                     + " is still published");
         if (parameter != nullptr)
             expect (! parameter->isAutomatable(),
@@ -1840,8 +1941,171 @@ void testKeyboardOctaveIsAppliedOnce()
     }
 }
 
+// The key-zone band's split-point caption has to stay on the panel and has to
+// name the key the way the keyboard under it names it.
+void testTheSplitPointCaptionStaysOnThePanelAndAgreesWithTheKeys()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> base (processor.createEditor());
+    auto* editor = dynamic_cast<SeptumAudioProcessorEditor*> (base.get());
+    if (editor == nullptr)
+        return;
+    const auto design = SeptumAudioProcessorEditor::panelSizeForWorkArea ({});
+    editor->setSize (design.getWidth(), design.getHeight());
+    editor->resized();
+
+    const auto set = [&processor] (const char* id, float natural)
+    {
+        auto* parameter = processor.parameters.getParameter (id);
+        const auto& range = processor.parameters.getParameterRange (id);
+        parameter->setValueNotifyingHost (
+            range.convertTo0to1 (range.snapToLegalValue (natural)));
+    };
+    set ("keyboard_mode", 2.0f);   // SPLIT
+
+    // SPLIT POINT reaches C8 (108); the drawn keyboard stops at C7 (96), so the
+    // top twelve settings put the boundary on the band's right edge. The name
+    // used to be drawn unconditionally to its right, off the panel.
+    for (int note : { 21, 36, 60, 84, 96, 97, 98, 103, 108 })
+    {
+        set ("split_point", (float) note);
+        editor->resized();
+        const auto caption = editor->getSplitPointCaption();
+        expect (editor->getPanel().getLocalBounds().contains (caption.bounds),
+                "the split-point caption for note " + std::to_string (note)
+                    + " is drawn on the panel (x "
+                    + std::to_string (caption.bounds.getX()) + ".."
+                    + std::to_string (caption.bounds.getRight()) + " of "
+                    + std::to_string (editor->getPanel().getWidth()) + ")");
+    }
+
+    // And it follows the octave shift, because the drawn keys' printed names do.
+    auto* keys = findKeyboard (editor->getPanel());
+    expect (keys != nullptr, "the panel draws a keyboard");
+    if (keys == nullptr)
+        return;
+    set ("split_point", 60.0f);
+    for (int shift : { 0, 1, -2 })
+    {
+        set ("system_octave", (float) shift);
+        editor->resized();
+        const auto expected = juce::MidiMessage::getMidiNoteName (
+            60, true, true, keys->getOctaveForMiddleC());
+        expect (editor->getSplitPointCaption().text == expected,
+                "the split point is named like the key under it at shift "
+                    + std::to_string (shift) + " (caption "
+                    + editor->getSplitPointCaption().text.toStdString()
+                    + ", key " + expected.toStdString() + ")");
+    }
+}
+
+// Nothing on the panel may repaint on a frame where nothing moved. JUCE's
+// setOctaveForMiddleC repaints unconditionally and the frame timer called it
+// every tick, so an idle editor invalidated the whole 1204x73 keyboard 24 times
+// a second — and through the scaled canvas re-ran the panel paint over that
+// strip with it.
+void testAnIdleLayoutDoesNotRepaintTheKeyboard()
+{
+    struct CountingImage final : juce::CachedComponentImage
+    {
+        int invalidations = 0;
+        void paint (juce::Graphics&) override {}
+        bool invalidate (const juce::Rectangle<int>&) override
+        {
+            ++invalidations;
+            return true;
+        }
+        bool invalidateAll() override
+        {
+            ++invalidations;
+            return true;
+        }
+        void releaseResources() override {}
+    };
+
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> base (processor.createEditor());
+    auto* editor = dynamic_cast<SeptumAudioProcessorEditor*> (base.get());
+    if (editor == nullptr)
+        return;
+    const auto design = SeptumAudioProcessorEditor::panelSizeForWorkArea ({});
+    editor->setSize (design.getWidth(), design.getHeight());
+    editor->resized();
+
+    auto* keys = findKeyboard (editor->getPanel());
+    expect (keys != nullptr, "the panel draws a keyboard");
+    if (keys == nullptr)
+        return;
+
+    auto counter = std::make_unique<CountingImage>();
+    auto* counting = counter.get();
+    keys->setCachedComponentImage (counter.release());
+    // One warm-up layout: attaching the image invalidates it once by itself.
+    editor->resized();
+    counting->invalidations = 0;
+    editor->resized();
+    expect (counting->invalidations == 0,
+            "a layout that changes nothing does not invalidate the keyboard ("
+                + std::to_string (counting->invalidations) + " invalidations)");
+
+    // And it does still follow a shift that actually moves.
+    auto* parameter = processor.parameters.getParameter ("system_octave");
+    const auto& range = processor.parameters.getParameterRange ("system_octave");
+    parameter->setValueNotifyingHost (range.convertTo0to1 (2.0f));
+    editor->resized();
+    expect (keys->getOctaveForMiddleC() == 6,
+            "and a shift that does move still renames the keys (middle C octave "
+                + std::to_string (keys->getOctaveForMiddleC()) + ")");
+    keys->setCachedComponentImage (nullptr);
+}
+
 // Every section on the panel is wholly per-tone or wholly shared, and every
 // per-tone section says which tone it is showing.
+// The edit target is not a parameter — it changes nothing that sounds, so a
+// host has no business automating it — and it rides in the state tree instead.
+// setStateInformation replaces that tree wholesale, so an editor left open
+// across a session load has to be told, or it keeps showing UPPER while the
+// restored state says LOWER and the next save writes back the wrong one.
+void testTheEditTargetFollowsARestoredState()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> base (processor.createEditor());
+    auto* editor = dynamic_cast<SeptumAudioProcessorEditor*> (base.get());
+    if (editor == nullptr)
+        return;
+    const auto design = SeptumAudioProcessorEditor::panelSizeForWorkArea ({});
+    editor->setSize (design.getWidth(), design.getHeight());
+    editor->resized();
+
+    auto& panel = editor->getPanel();
+    auto* upperTab = findButton (panel, "UPPER");
+    auto* lowerTab = findButton (panel, "LOWER");
+    if (upperTab == nullptr || lowerTab == nullptr)
+        return;
+
+    // A session saved while LOWER was the target.
+    lowerTab->onClick();
+    juce::MemoryBlock saved;
+    processor.getStateInformation (saved);
+    expect (lowerTab->getToggleState(), "the panel is on LOWER before saving");
+
+    // Back to UPPER, then that session is loaded under the open editor.
+    upperTab->onClick();
+    expect (upperTab->getToggleState(), "the panel is on UPPER before the load");
+    processor.setStateInformation (saved.getData(), (int) saved.getSize());
+    editor->resized();
+
+    expect (lowerTab->getToggleState() && ! upperTab->getToggleState(),
+            "the panel follows the restored state back to LOWER");
+    expect ((bool) processor.parameters.state.getProperty ("editingUpperTone", true)
+                == false,
+            "and the stored property still says LOWER rather than being "
+            "overwritten by the panel");
+}
+
 void testThePanelSaysWhichToneItIsEditing()
 {
     SeptumAudioProcessor processor;
@@ -1919,6 +2183,7 @@ int main()
     testProgramsLoad();
     testStateRoundTrip();
     testIntervalButtonsAreRelativeToOscOne();
+    testThePanelsInvariantsAreCheckedBySomethingThatRuns();
     testTogglesShowTheirState();
     testDBeamBytesAreStoredAndInert();
     testLeverModulationMovesByTheDrag();
@@ -1931,7 +2196,10 @@ int main()
     testSysExBlockProcessing();
     testSysExDoesNotNotifyFromTheAudioThread();
     testKeyboardOctaveIsAppliedOnce();
+    testTheSplitPointCaptionStaysOnThePanelAndAgreesWithTheKeys();
+    testAnIdleLayoutDoesNotRepaintTheKeyboard();
     testThePanelSaysWhichToneItIsEditing();
+    testTheEditTargetFollowsARestoredState();
 
     if (failures == 0)
     {

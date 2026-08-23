@@ -2216,6 +2216,86 @@ made that test's peak clause a reading of the patch's headroom rather than of
 the filter's behaviour. Its monotonicity clause — the defect it exists for —
 passes either way.
 
+#### Step 53 — the panel's own defects, and fences that actually run
+
+Ten findings against the editor, all reproduced before being touched.
+
+**Three invariants the panel is built on were checked by nothing.** The
+mixed-scope fence, the section-index check whose comment said the indices "are
+checked rather than trusted", and the guard against a control naming a
+parameter that does not exist were all `jassert`s — and NDEBUG removes those
+from every build this project produces: the plug-in, both test binaries and
+CI's Release. What this document called "a build-time failure" was present in no
+build. All three are state the editor publishes now and the suite reads:
+`getUnresolvedParameterIds()`, `getMixedScopeSections()`, `getSectionTitles()`.
+Watched: renaming one control's suffix from `cutoff` to `cutof` fails the first
+(the knob otherwise ships drawing, hovering and dragging while editing
+nothing), and adding a per-tone `delay_depth` to the shared DELAY section fails
+the second — which is exactly the change that would have relabelled the whole
+DELAY section with a tone name.
+
+**The OSC 2 INTERVAL buttons were a one-way trap near the ends of the range.**
+The handler compared the current pitch against an *unsnapped* target while the
+write snapped it, so with OSC 1 at +30 the fifth wanted +37, landed on +36, and
+the comparison then read "not there yet" forever: the second press — documented
+as the way back to unison — did nothing, and the lamp stayed dark on a press
+that had taken effect. Same for −OCT with OSC 1 at −25 or below. Both the write
+and the lamp use the snapped target now.
+
+**An idle panel repainted the keyboard 24 times a second.** `applyKeyboardOctave`
+ends in `setOctaveForMiddleC`, which JUCE repaints unconditionally, and the frame
+timer calls it every tick — so the whole 1204×73 keyboard was invalidated on
+every frame of a panel where nothing had moved, and through the scaled canvas
+that re-ran the panel paint over that strip with it. Everything else in the tick
+was already change-guarded. It is guarded on the shift now, and the suite counts
+invalidations through a `CachedComponentImage`: a layout that changes nothing
+invalidates the keyboard zero times.
+
+**TONE PLAY's read-outs sat on its own border.** The keyboard row was reduced by
+four vertically *before* the section was cut out of it, so TONE PLAY got 94
+points for the 102 its single control row declares. A section is sized to its
+contents rather than its contents scaled to it, so it did not shrink — it
+overflowed, and GLIDE TIME, BEND and TONE OCT ended two points past the well.
+The four points go to the lever and the keys instead, and
+`getSectionsOverflowingTheirWell()` is a panel-wide invariant now: it names
+TONE PLAY with the fix reverted.
+
+**The split-point caption lied about the key under it, and above C7 it was not
+on the panel at all.** It was printed from the parameter's own text, which is
+fixed at middle C = C4, while the drawn keys are renamed by the octave shift —
+so at OCT +1 the band said "C4" over the key the keyboard itself prints as C5.
+And SPLIT POINT reaches C8 while the drawn keyboard stops at C7, so for the top
+twelve settings the boundary pins to the band's right edge and a name drawn to
+its right ran off the panel: at C8 the rect was x 1653–1687 on a 1660-point
+panel. The caption is one accessor now — named with the keyboard's own octave,
+and flipped to the left of the line when it would not fit, the way a tooltip
+does. Six checks fail against the old behaviour.
+
+**A restored session left the panel and its own stored property disagreeing.**
+The edit target is not a parameter — it changes nothing that sounds — so it
+rides in the state tree, and `setStateInformation` replaces that tree wholesale.
+An editor left open across a session load kept showing UPPER while the restored
+state said LOWER, and re-saving from there wrote back what somebody else had
+been editing. It is reconciled on the frame tick and on a layout.
+
+**PITCH WIDE got the same rule as the D Beam.** The contract states one policy
+for settled-but-inert patch data: stored, saved and round-tripped so a dump from
+a real unit survives, and published as non-automatable so no host offers a lane
+that cannot change what you hear. It was applied to the four D Beam bytes and
+not to the four PITCH WIDE ones, which are inert for the same reason — the
+manual gives WIDE as expanding the COARSE knob's *travel*, and a numeric
+parameter that already reaches ±36 has none to expand. One policy now.
+
+**And one comment was cut back to what the panel does.** The controller
+destinations were documented as "grouped under one heading the panel paints
+above them"; the strip is one flat row of cells and there is no heading. What
+tells them apart from PATCH LEVEL and TONE BAL beside them is that each names
+its controller and says TO TONE, which is what the comment says now.
+
+Every one of these is fenced by a check watched to fail with its fix reverted.
+The panel is the same size, so the committed screenshot is regenerated rather
+than reshaped, and no audio changes at all.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:

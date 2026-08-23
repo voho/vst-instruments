@@ -28,6 +28,13 @@ struct ToneBinding
     const juce::StringArray* choices;
     float (*get) (const TonePatch&);
     void (*set) (TonePatch&, float);
+    // The same rule PatchBinding states for the D Beam's four bytes, applied
+    // to the two PITCH WIDE switches: settled patch data the replica stores,
+    // saves and round-trips but never reads, published as non-automatable so a
+    // host does not offer a player a lane that cannot change what they hear.
+    // The manual gives PITCH WIDE as expanding the COARSE *knob's travel*, and
+    // a numeric parameter that already reaches +/-36 has no travel to expand.
+    bool inert { false };
 };
 
 const juce::StringArray waveChoices {
@@ -144,7 +151,7 @@ const std::vector<ToneBinding>& toneBindings()
         { "osc1_wave", "OSC1 Wave", Kind::Choice, 0, 9, &waveChoices,
           TONE_ENUM (osc1.wave, Waveform) },
         { "osc1_wide", "OSC1 Pitch Wide", Kind::Bool, 0, 1, nullptr,
-          TONE_BOOL (osc1.pitchWide) },
+          TONE_BOOL (osc1.pitchWide), true },
         { "osc1_pitch", "OSC1 Pitch", Kind::Int, -36, 36, nullptr,
           TONE_INT (osc1.coarse) },
         { "osc1_detune", "OSC1 Detune", Kind::Int, -50, 50, nullptr,
@@ -156,7 +163,7 @@ const std::vector<ToneBinding>& toneBindings()
         { "osc2_wave", "OSC2 Wave", Kind::Choice, 0, 9, &waveChoices,
           TONE_ENUM (osc2.wave, Waveform) },
         { "osc2_wide", "OSC2 Pitch Wide", Kind::Bool, 0, 1, nullptr,
-          TONE_BOOL (osc2.pitchWide) },
+          TONE_BOOL (osc2.pitchWide), true },
         { "osc2_pitch", "OSC2 Pitch", Kind::Int, -36, 36, nullptr,
           TONE_INT (osc2.coarse) },
         { "osc2_detune", "OSC2 Detune", Kind::Int, -50, 50, nullptr,
@@ -761,7 +768,9 @@ SeptumAudioProcessor::createParameterLayout()
                     break;
                 case Kind::Bool:
                     layout.add (std::make_unique<AudioParameterBool> (
-                        ParameterID { id, 1 }, name, defaultValue >= 0.5f));
+                        ParameterID { id, 1 }, name, defaultValue >= 0.5f,
+                        juce::AudioParameterBoolAttributes().withAutomatable (
+                            ! binding.inert)));
                     break;
                 case Kind::Choice:
                     layout.add (std::make_unique<AudioParameterChoice> (

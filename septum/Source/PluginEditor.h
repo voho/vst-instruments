@@ -4,6 +4,7 @@
 
 #include "PluginProcessor.h"
 
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -112,6 +113,48 @@ public:
     // panel builds is actually placed.
     [[nodiscard]] juce::Component& getPanel() noexcept { return canvas; }
 
+    // Three invariants the panel is built on. They were `jassert`s, which
+    // NDEBUG removes from every build this project produces — the plug-in,
+    // both test binaries and CI's Release — so the thing the change log called
+    // "a build-time failure" was present in no build and no test. They are
+    // state the suite reads now, and a green suite is what enforces them.
+    //
+    // Every control's parameter id resolves; a control whose id stops
+    // resolving would otherwise ship drawing, hovering and dragging while
+    // editing nothing.
+    [[nodiscard]] const juce::StringArray& getUnresolvedParameterIds() const noexcept
+    {
+        return unresolvedParameterIds;
+    }
+    // No section mixes per-tone and shared controls. A mixed one is classified
+    // by its first per-tone control and wears the tone chip and wash over
+    // controls that are not per-tone, which is exactly the defect Step 28
+    // removed.
+    [[nodiscard]] const juce::StringArray& getMixedScopeSections() const noexcept
+    {
+        return mixedScopeSections;
+    }
+    // The section titles the layout addresses by index, in index order, so
+    // inserting a section cannot silently shift every list below it.
+    [[nodiscard]] juce::StringArray getSectionTitles() const;
+    // Sections whose laid-out contents do not fit inside their own well. A
+    // section is sized to its contents rather than its contents scaled to it,
+    // so one that is handed less room than it asked for does not shrink — it
+    // overflows, and its bottom row of value read-outs lands on the well's
+    // border. Read by the suite after a layout.
+    [[nodiscard]] juce::StringArray getSectionsOverflowingTheirWell() const;
+
+    // What the key-zone band prints beside the split boundary, and where. The
+    // paint uses this, and the suite reads it: the name has to stay inside the
+    // band (SPLIT POINT reaches C8 while the drawn keyboard stops at C7) and
+    // has to name the key the way the keyboard under it names it.
+    struct SplitPointCaption
+    {
+        juce::String text;
+        juce::Rectangle<int> bounds;
+    };
+    [[nodiscard]] SplitPointCaption getSplitPointCaption() const;
+
 private:
     // A hardware panel's controls do not reflow, so the alternative to
     // scaling this one is clipping it — and 784 points of panel do not fit
@@ -209,6 +252,10 @@ private:
     };
     [[nodiscard]] ToneAudibility toneAudibility() const;
     void refreshToneTarget();
+    // The edit target rides in the state tree rather than in a parameter, and
+    // setStateInformation replaces the whole tree, so an open editor has to be
+    // told. Called from the frame timer and from a layout.
+    void reconcileEditTarget();
     void setEditingUpper (bool upper);
     void paintKeyboardZones (juce::Graphics&);
     void layoutSection (Section& section, juce::Rectangle<int> bounds);
@@ -222,6 +269,11 @@ private:
     void paintPanel (juce::Graphics&);
     void setToneParameter (const char* suffix, float natural);
     [[nodiscard]] float getToneParameter (const char* suffix) const;
+    // What `setToneParameter` would actually store for this value. The OSC 2
+    // INTERVAL buttons and their lamps compare against a target, and the write
+    // snaps it to the parameter's range, so an unsnapped target near the ends
+    // of the pitch range makes the button a one-way trap with a dark lamp.
+    [[nodiscard]] float snapToneParameter (const char* suffix, float natural) const;
     void applyKeyboardOctave();
     void stepKeyboardOctave (int delta);
     void timerCallback() override;
@@ -292,6 +344,14 @@ private:
     // The keyboard mode, part and split point the panel last drew, so the
     // frame timer only repaints when one of them has actually moved.
     juce::String lastKeyboardState;
+    // And the octave shift the keys were last named for. JUCE's
+    // setOctaveForMiddleC repaints unconditionally, so calling it every frame
+    // invalidated the whole 1204x73 keyboard 24 times a second on an idle
+    // panel — and through the scaled canvas that re-ran the panel paint over
+    // that strip as well.
+    int lastKeyboardOctave { std::numeric_limits<int>::min() };
+    juce::StringArray unresolvedParameterIds;
+    juce::StringArray mixedScopeSections;
     float meterLevel[2] { 0.0f, 0.0f };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SeptumAudioProcessorEditor)

@@ -96,8 +96,11 @@ Three tiers appear throughout that document and in the inventory below:
   INTERVAL buttons are defined against OSC 1, and pressing one twice lands
   OSC 2 on OSC 1's pitch.
 - **settled, stored and inert.** PITCH WIDE. The manual says it expands the
-  *knob's travel*; a numeric parameter has no travel, so it is saved and
-  round-tripped and changes nothing that sounds.
+  *knob's travel*; a numeric parameter that already reaches ±36 has no travel
+  to expand, so it is saved and round-tripped and changes nothing that sounds.
+  Like the four D Beam bytes it is published as non-automatable — one rule for
+  inert data, not two — so the panel switch still shows and stores what the
+  patch holds while no host offers a lane that cannot change what you hear.
 - **reported.** SUPER SAW quotes Adam Szabo's JP-8000 measurements verbatim:
   the seven fixed detune offsets, the 11th-degree spread polynomial, phases
   randomised per note, and the pitch-tracked high-pass on the summed stack.
