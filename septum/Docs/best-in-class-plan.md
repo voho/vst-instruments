@@ -1591,6 +1591,33 @@ checks and 174 plug-in checks pass.
 The README no longer says the codec's layout is the map's "where this document
 can show it and the project's own where it cannot". It is the map's.
 
+#### Step 41 — two defects a review found in Step 38's repairs
+
+**A switch changed again mid-cross stepped the output.** FILTER TYPE and the
+audio filter's TYPE each have four positions, and Step 31 crossed them with the
+position they were coming from plus one fade scalar. That pair holds exactly
+one outgoing signal, so a second change part way through the first cross either
+re-aimed the destination while the fade was already non-zero, or — moving back
+to where it started — collapsed the whole expression onto the source in a
+single sample. Both step the output by however much had been mixed in, which
+is the discontinuity the cross exists to prevent. Measured with three changes
+inside one 5 ms cross: 0.045 against a steady 0.0012 on the voice filter and
+0.078 against 0.0057 on the audio filter. Both switches carry a weight per
+position now, no weight moves faster than the fade rate, and the mixture
+survives a change. The bound is Step 11's, under four times the take's own
+steady travel; the single-change cases are unchanged.
+
+**All Notes Off rewrote the age of tails already decaying.** Step 38 gave each
+voice a stamp for the moment it entered release, so the steal could take the
+stalest tail. All Notes Off and a hold-pedal lift both sweep the whole voice
+array, and both were stamping every active voice — including the ones already
+in release, whose stamps are precisely the ordering being kept. After an All
+Notes Off the ten tails were therefore ordered by their slot in the array, and
+the steal took whichever voice sat first rather than whichever had been
+decaying longest. Every release now goes through one function that stamps only
+a voice not already in release. Fenced by a steal after an All Notes Off where
+the stalest tail is deliberately *not* the one in the first slot.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:

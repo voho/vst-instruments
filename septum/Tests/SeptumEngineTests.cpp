@@ -3419,6 +3419,132 @@ void testTheTwoLfosDrawDifferentRandomValues()
                 + std::to_string (difference) + ")");
 }
 
+// A switch that moves again before its own crossfade has finished. FILTER TYPE
+// and the audio filter's TYPE both have four positions, and a cross that
+// remembers only the position it came from cannot hold a mixture of two: a
+// second change re-aims the destination under a non-zero fade, and a change
+// back to where it started collapses the whole expression onto the source in
+// one sample. Both step the output by however much had been mixed in. Same
+// bound as the single change above.
+void testASwitchChangedAgainMidCrossStaysContinuous()
+{
+    const double sampleRate = 44100.0;
+    // The cross takes 5 ms; each step here lands well inside it.
+    const double stepSeconds = 0.0015;
+
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 8);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Sine;
+        patch.upper.filterType = septum::FilterType::Lpf;
+        patch.upper.filterSlope = septum::FilterSlope::Db12;
+        patch.upper.cutoff = 30;
+        patch.upper.resonance = 110;
+        engine.setPatch (patch);
+        engine.noteOn (36, 100);
+
+        std::vector<float> left (8), right (8);
+        const auto run = [&] (double seconds)
+        {
+            std::vector<float> out;
+            const auto samples = (std::size_t) (seconds * sampleRate);
+            for (std::size_t done = 0; done < samples; done += 8)
+            {
+                engine.process (left.data(), right.data(), 8);
+                for (int i = 0; i < 8; ++i)
+                    out.push_back (left[(std::size_t) i]);
+            }
+            return out;
+        };
+        const auto setType = [&] (septum::FilterType type)
+        {
+            septum::Patch changed = patch;
+            changed.upper.filterType = type;
+            engine.setPatch (changed);
+        };
+
+        run (0.5);
+        const auto settled = run (0.2);
+        const double steady = worstJump (settled, 0, settled.size());
+
+        std::vector<float> crossed;
+        setType (septum::FilterType::Hpf);
+        for (const auto& s : run (stepSeconds)) crossed.push_back (s);
+        setType (septum::FilterType::Bpf);
+        for (const auto& s : run (stepSeconds)) crossed.push_back (s);
+        // Back to the position it started from, which is the case a
+        // from-plus-fade cross collapses on.
+        setType (septum::FilterType::Lpf);
+        for (const auto& s : run (0.05)) crossed.push_back (s);
+
+        const double thrown = worstJump (crossed, 0, crossed.size());
+        expect (thrown < 4.0 * steady,
+                "FILTER TYPE changed three times inside one cross stays "
+                "continuous (jump " + std::to_string (thrown)
+                    + " against a steady " + std::to_string (steady) + ")");
+    }
+
+    // The same switch on the external-input path, driven by live audio rather
+    // than by a note.
+    {
+        const std::size_t block = 32;
+        const auto stepBlocks = (std::size_t) (stepSeconds * sampleRate / block);
+        septum::Engine engine;
+        engine.prepare (sampleRate, (int) block);
+        engine.setPatch (plainSawPatch());
+        septum::ExternalInput settings {};
+        settings.inputVolume = 100;
+        settings.filterOn = true;
+        settings.type = septum::AudioFilterType::Lpf;
+        settings.cutoff = 40;
+        settings.resonance = 110;
+        engine.setExternalInput (settings);
+        engine.reset();
+
+        std::vector<float> out, inL (block), inR (block), l (block), r (block);
+        std::size_t sample = 0;
+        const auto run = [&] (std::size_t blocks)
+        {
+            for (std::size_t b = 0; b < blocks; ++b)
+            {
+                for (std::size_t i = 0; i < block; ++i, ++sample)
+                {
+                    const double t = (double) sample / sampleRate;
+                    inL[i] = inR[i] = (float) (0.4 * std::sin (twoPi * 300.0 * t));
+                }
+                engine.process (l.data(), r.data(), (int) block, inL.data(), inR.data());
+                for (std::size_t i = 0; i < block; ++i)
+                    out.push_back (l[i]);
+            }
+        };
+        const auto setType = [&] (septum::AudioFilterType type)
+        {
+            settings.type = type;
+            engine.setExternalInput (settings);
+        };
+
+        run ((std::size_t) (0.2 * sampleRate / block));
+        const std::size_t settledFrom = out.size();
+        run ((std::size_t) (0.1 * sampleRate / block));
+        const double steady = worstJump (out, settledFrom, out.size());
+
+        const std::size_t crossFrom = out.size();
+        setType (septum::AudioFilterType::Hpf);
+        run (stepBlocks);
+        setType (septum::AudioFilterType::Notch);
+        run (stepBlocks);
+        setType (septum::AudioFilterType::Lpf);
+        run ((std::size_t) (0.05 * sampleRate / block));
+
+        const double thrown = worstJump (out, crossFrom, out.size());
+        expect (thrown < 4.0 * steady,
+                "AUDIO FILTER TYPE changed three times inside one cross stays "
+                "continuous (jump " + std::to_string (thrown)
+                    + " against a steady " + std::to_string (steady) + ")");
+    }
+}
+
 // Every switch and modulator that lands on the amp gain or the filter's
 // response is crossed or walked, not thrown. The bound is Step 11's: under
 // four times the same take's own steady sample-to-sample travel.
@@ -3796,6 +3922,73 @@ void testStealingTakesTheLongestReleasedVoice()
             " (A " + std::to_string (a) + ", B " + std::to_string (b) + ")");
 }
 
+// All Notes Off releases every sounding voice at once, and it must not
+// re-stamp the ones that were already decaying: their stamps are what orders
+// the tails, and rewriting them replaces that order with the order the voices
+// happen to sit in the array.
+void testAllNotesOffKeepsTheOrderOfTailsAlreadyDecaying()
+{
+    const double sampleRate = 44100.0;
+    const auto hz = [] (int note)
+    { return 440.0 * std::pow (2.0, (note - 69) / 12.0); };
+
+    septum::Engine engine;
+    engine.prepare (sampleRate, 256);
+    septum::Patch patch = plainSawPatch();
+    patch.upper.osc1.wave = septum::Waveform::Sine;
+    patch.upper.ampEnvRelease = 120;      // long tails, so both survive
+    patch.upper.ampEnvSustain = 127;
+    engine.setPatch (patch);
+
+    std::vector<float> left (256), right (256), outL, outR;
+    const auto run = [&] (double seconds)
+    {
+        const auto samples = (std::size_t) (seconds * sampleRate);
+        for (std::size_t done = 0; done < samples; done += 256)
+        {
+            engine.process (left.data(), right.data(), 256);
+            for (int i = 0; i < 256; ++i)
+            {
+                outL.push_back (left[(std::size_t) i]);
+                outR.push_back (right[(std::size_t) i]);
+            }
+        }
+    };
+
+    // A takes the first slot in the pool and B the second, so under a stamp
+    // rewritten in array order the steal would land on A. B is the one whose
+    // tail has actually been decaying longest.
+    const int noteA = 40, noteB = 52;
+    engine.noteOn (noteA, 110);
+    run (0.02);
+    engine.noteOn (noteB, 110);
+    run (0.02);
+    for (int i = 0; i < 8; ++i)          // fill the ten-voice pool
+    {
+        engine.noteOn (60 + i, 110);
+        run (0.005);
+    }
+    engine.noteOff (noteB);              // B starts decaying here
+    run (0.70);
+    engine.allNotesOff();                // A and the eight fillers follow
+    run (0.20);
+    engine.noteOn (84, 110);             // has to steal one of the ten
+    run (0.80);
+
+    double worst = 0.0;
+    for (const auto sample : outL)
+        worst = std::max (worst, (double) std::abs (sample));
+    expect (std::isfinite (worst), "the all-notes-off stealing take is finite");
+
+    const auto from = outL.size() - (std::size_t) (sampleRate * 0.6);
+    const double a = goertzel (outL, from, outL.size(), hz (noteA), sampleRate);
+    const double b = goertzel (outL, from, outL.size(), hz (noteB), sampleRate);
+    expect (a > 4.0 * b,
+            "an All Notes Off does not restamp tails already in release, so the"
+            " steal still takes the stalest one (A " + std::to_string (a)
+                + ", B " + std::to_string (b) + ")");
+}
+
 // The SysEx codec is lossless over the parts that carry real data: the whole
 // arpeggio grid, END STEP, and the documented tempo range.
 void testSysExCarriesTheArpeggioGridAndTempo()
@@ -4045,6 +4238,7 @@ int main()
     testRaisingSustainDoesNotStep();
     testTheTwoLfosDrawDifferentRandomValues();
     testControlChangesDoNotStepTheOutput();
+    testASwitchChangedAgainMidCrossStaysContinuous();
     testSettledDampingTablesLandOnTheirFrequencies();
     testOutputStageMatchesItsComponentValues();
     testReverbTailSurvivesMono();
@@ -4053,6 +4247,7 @@ int main()
     testOverdriveIsTheDocumentedSymmetricClipper();
     testArpeggioRoutingChangeAndNoteOffInOneBlock();
     testStealingTakesTheLongestReleasedVoice();
+    testAllNotesOffKeepsTheOrderOfTailsAlreadyDecaying();
     testSysExCarriesTheArpeggioGridAndTempo();
     testPatchCommonMatchesTheAddressMap();
     testSysExBlockAddressesMatchTheAddressMap();

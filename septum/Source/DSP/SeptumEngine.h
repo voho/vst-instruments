@@ -13,6 +13,7 @@
 
 #include "SeptumPatch.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -858,6 +859,69 @@ private:
     enum class Part { Upper, Lower };
     static constexpr int partCount = 2;
 
+    // A crossfade across a switch's discrete positions that stays continuous
+    // when the switch moves again before the previous cross has finished.
+    //
+    // A single "position it came from" plus one fade scalar cannot: it holds
+    // exactly one outgoing signal, so a second change part way through either
+    // re-aims the destination while the fade is already non-zero, or — moving
+    // back to where it started — collapses the whole expression onto the
+    // source in one sample. Both step the output by however much had been
+    // mixed in, which is the discontinuity the cross exists to prevent.
+    // Keeping a weight per position holds the whole mixture instead, and no
+    // weight ever moves faster than the fade rate.
+    template <int positionCount>
+    struct SwitchCrossfade
+    {
+        std::array<double, static_cast<std::size_t> (positionCount)> weight {};
+
+        void snapTo (int position) noexcept
+        {
+            weight.fill (0.0);
+            weight[clampPosition (position)] = 1.0;
+        }
+
+        void advance (int position, double step) noexcept
+        {
+            const auto selected = clampPosition (position);
+            double total = 0.0;
+            for (std::size_t i = 0; i < weight.size(); ++i)
+            {
+                const double target = (i == selected) ? 1.0 : 0.0;
+                weight[i] += std::clamp (target - weight[i], -step, step);
+                total += weight[i];
+            }
+            // The steps are taken independently, so the weights drift off
+            // unity by at most one step; renormalising holds the mix at unit
+            // gain without changing how fast any one of them moves.
+            if (total > 1.0e-12)
+                for (auto& w : weight)
+                    w /= total;
+            else
+                snapTo (position);
+        }
+
+        // Sum a per-position signal against the weights. Every position but
+        // the one being crossed to and from carries a zero weight, so this
+        // costs one multiply-add per live position, not per position.
+        template <typename Response>
+        [[nodiscard]] double mix (Response&& response) const noexcept
+        {
+            double out = 0.0;
+            for (std::size_t i = 0; i < weight.size(); ++i)
+                if (weight[i] > 0.0)
+                    out += weight[i] * response (static_cast<int> (i));
+            return out;
+        }
+
+    private:
+        [[nodiscard]] static std::size_t clampPosition (int position) noexcept
+        {
+            return static_cast<std::size_t> (
+                std::clamp (position, 0, positionCount - 1));
+        }
+    };
+
     struct Envelope
     {
         enum class Stage { Idle, Attack, Decay, Sustain, Release };
@@ -982,11 +1046,10 @@ private:
         // sample at a time, so a control tick never steps the coefficient.
         double filterG { 0.1 }, filterK { 2.0 };
         double filterGTarget { 0.1 }, filterKTarget { 2.0 };
-        // TYPE and SLOPE are crossed, not thrown. `filterTypeFrom` is the
-        // position the cross is coming from and settles onto the new one when
-        // it finishes; the slope fade is 0 at -12 dB and 1 at -24 dB.
-        FilterType filterTypeFrom { FilterType::Lpf };
-        double filterTypeFade { 1.0 };
+        // TYPE and SLOPE are crossed, not thrown. TYPE has four positions and
+        // is automatable, so it carries a weight each; SLOPE has two, and a
+        // single scalar re-aimed mid-walk is continuous.
+        SwitchCrossfade<4> filterTypeMix {};
         double filterSlopeFade { 1.0 };
         // The amp gain at the start of the control tick, and where it must
         // arrive by its end. Walked one sample at a time exactly as the
@@ -1131,6 +1194,9 @@ private:
     [[nodiscard]] bool partSounds (Part part) const noexcept;
     [[nodiscard]] bool keyStillDown (const Voice& voice) noexcept;
     void releaseIfNoPedalHolds (Voice& voice) noexcept;
+    // The one place a voice enters release, so `releaseAge` is stamped once
+    // per release rather than once per sweep over the voice array.
+    void beginRelease (Voice& voice) noexcept;
     [[nodiscard]] int partVoiceLimit() const noexcept;
     void startNoteForPart (Part part, int note, int velocity);
     void releaseNoteForPart (Part part, int note);
@@ -1237,8 +1303,7 @@ private:
     double centerCancelFade_ { 0.0 };        // 0 through, 1 cancelled
     double audioFilterOnFade_ { 0.0 };       // 0 dry, 1 filtered
     double audioFilterSlopeFade_ { 0.0 };    // 0 = -12 dB, 1 = -24 dB
-    AudioFilterType audioFilterTypeFrom_ { AudioFilterType::Lpf };
-    double audioFilterTypeFade_ { 1.0 };     // 1 = fully on the current type
+    SwitchCrossfade<4> audioFilterTypeMix_ {};
 
     // Analog output stage state (documented component values).
     double dcX1_[2] {}, dcY1_[2] {};

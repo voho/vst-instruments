@@ -526,8 +526,7 @@ void Engine::reset()
     centerCancelFade_ = external_.centerCancel ? 1.0 : 0.0;
     audioFilterOnFade_ = external_.filterOn ? 1.0 : 0.0;
     audioFilterSlopeFade_ = external_.slope == FilterSlope::Db24 ? 1.0 : 0.0;
-    audioFilterTypeFrom_ = external_.type;
-    audioFilterTypeFade_ = 1.0;
+    audioFilterTypeMix_.snapTo (static_cast<int> (external_.type));
     arpeggioRunning_ = false;
     arpeggioActive_ = patch_.arpeggio.on;
     // Synced to the patch for the same reason the switch is: clearing the
@@ -906,10 +905,7 @@ void Engine::releaseNoteForPart (Part part, int note)
             }
             else
             {
-                voice.held = false;
-                voice.releaseAge = ++voiceClock_;
-                voice.ampEnv.release();
-                voice.filterEnv.release();
+                beginRelease (voice);
             }
         }
         return;
@@ -924,10 +920,7 @@ void Engine::releaseNoteForPart (Part part, int note)
             voice.held = true;
             continue;
         }
-        voice.held = false;
-        voice.releaseAge = ++voiceClock_;
-        voice.ampEnv.release();
-        voice.filterEnv.release();
+        beginRelease (voice);
     }
 }
 
@@ -1064,8 +1057,7 @@ void Engine::triggerVoice (Voice& voice, Part part, int note, double velocity,
             // into them from whatever the voice's previous owner used would
             // make a note's first five milliseconds depend on the note before
             // it. A stolen voice keeps its cross, like its filter states.
-            voice.filterTypeFrom = tone.filterType;
-            voice.filterTypeFade = 1.0;
+            voice.filterTypeMix.snapTo (static_cast<int> (tone.filterType));
             voice.filterSlopeFade = tone.filterSlope == FilterSlope::Db24 ? 1.0 : 0.0;
             voice.shelfDepth =
                 tone.lowFreq == LowFreqMode::Flat
@@ -1096,6 +1088,22 @@ bool Engine::keyStillDown (const Voice& voice) noexcept
     return false;
 }
 
+// `releaseAge` records the moment a voice entered release, which is what lets
+// the steal take the longest-decayed tail. A voice already in release keeps
+// the stamp it got then: All Notes Off and a hold-pedal lift both sweep the
+// whole voice array, and re-stamping the ones already decaying replaced their
+// order with the order they happen to sit in the array — so the steal after
+// an All Notes Off could take a fresh tail over a stale one, which is the
+// defect the stamp was added to fix.
+void Engine::beginRelease (Voice& voice) noexcept
+{
+    voice.held = false;
+    if (voice.ampEnv.stage != Envelope::Stage::Release)
+        voice.releaseAge = ++voiceClock_;
+    voice.ampEnv.release();
+    voice.filterEnv.release();
+}
+
 // A voice lets go only when nothing is still holding it: not the key, not the
 // hold pedal, and not a sostenuto latch on the note it is playing.
 void Engine::releaseIfNoPedalHolds (Voice& voice) noexcept
@@ -1105,10 +1113,7 @@ void Engine::releaseIfNoPedalHolds (Voice& voice) noexcept
     const ToneRuntime& runtime = tones_[voice.part == Part::Upper ? 0 : 1];
     if (hold_ || runtime.sostenutoHolds (voice.note) || keyStillDown (voice))
         return;
-    voice.held = false;
-    voice.releaseAge = ++voiceClock_;
-    voice.ampEnv.release();
-    voice.filterEnv.release();
+    beginRelease (voice);
 }
 
 void Engine::setHold (bool down)
@@ -1193,10 +1198,7 @@ void Engine::allNotesOff()
     {
         if (voice.active)
         {
-            voice.held = false;
-            voice.releaseAge = ++voiceClock_;
-            voice.ampEnv.release();
-            voice.filterEnv.release();
+            beginRelease (voice);
         }
     }
     for (auto& tone : tones_)
@@ -1908,14 +1910,11 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
             };
             walk (voice.filterSlopeFade,
                   tone.filterSlope == FilterSlope::Db24 ? 1.0 : 0.0);
-            // TYPE has four positions rather than two, so instead of a single
-            // scalar it keeps the position it is crossing from and settles
-            // onto the new one when the cross finishes.
-            if (voice.filterTypeFade >= 1.0 && tone.filterType != voice.filterTypeFrom)
-                voice.filterTypeFade = 0.0;
-            walk (voice.filterTypeFade, 1.0);
-            if (voice.filterTypeFade >= 1.0)
-                voice.filterTypeFrom = tone.filterType;
+            // TYPE has four positions rather than two, so it crosses over a
+            // weight per position: a second change part way through the first
+            // one has to stay continuous, and one outgoing signal cannot
+            // carry a mixture of two.
+            voice.filterTypeMix.advance (static_cast<int> (tone.filterType), fadeStep);
 
             // One stage, advanced once, with all four responses read off the
             // same two integrators, so crossing between the outgoing type and
@@ -1978,9 +1977,8 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
                     }
                     return input;
                 };
-                const double from = response (voice.filterTypeFrom);
-                return from
-                       + (response (tone.filterType) - from) * voice.filterTypeFade;
+                return voice.filterTypeMix.mix (
+                    [&] (int type) { return response (static_cast<FilterType> (type)); });
             };
 
             const double twoPole = stagePass (voice.filter1, mixed, k, a1, a2);
@@ -2704,14 +2702,10 @@ void Engine::prepareExternalTick (const float* inputLeft, const float* inputRigh
         walk (audioFilterOnFade_, external_.filterOn ? 1.0 : 0.0);
         walk (audioFilterSlopeFade_,
               external_.slope == FilterSlope::Db24 ? 1.0 : 0.0);
-        // TYPE has four positions rather than two, so instead of a single
-        // scalar it keeps the position it is crossing from and settles onto
-        // the new one when the cross finishes.
-        if (audioFilterTypeFade_ >= 1.0 && external_.type != audioFilterTypeFrom_)
-            audioFilterTypeFade_ = 0.0;
-        walk (audioFilterTypeFade_, 1.0);
-        if (audioFilterTypeFade_ >= 1.0)
-            audioFilterTypeFrom_ = external_.type;
+        // TYPE crosses over a weight per position, for the reason the voice
+        // filter's does: this switch is automatable, and a second change part
+        // way through the first one has to stay continuous.
+        audioFilterTypeMix_.advance (static_cast<int> (external_.type), fadeStep);
 
         // CENTER CANCEL: what is common to both channels is what sits at the
         // centre, so removing the mid leaves the sides. The mono reduction the
@@ -2768,9 +2762,8 @@ void Engine::prepareExternalTick (const float* inputLeft, const float* inputRigh
                     }
                     return input;
                 };
-                const double from = response (audioFilterTypeFrom_);
-                const double to = response (external_.type);
-                return from + (to - from) * audioFilterTypeFade_;
+                return audioFilterTypeMix_.mix (
+                    [&] (int type) { return response (static_cast<AudioFilterType> (type)); });
             };
             double* channels[2] { &left, &right };
             for (int channel = 0; channel < 2; ++channel)
