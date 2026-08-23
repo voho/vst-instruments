@@ -315,7 +315,7 @@ private:
                          double releaseResistanceOhms,
                          double sustain) noexcept;
     void renderVoiceSample() noexcept;
-    void handleArpClock() noexcept;
+    [[nodiscard]] bool handleArpClock() noexcept;
 
     // parameters_ carries what the voice actually runs on this sample;
     // continuous travels glide toward targetParameters_ over ~25 ms so a
@@ -378,11 +378,11 @@ private:
     bool previousGateForShaper_ { false };
 
     // P1015 does not feed accepted edges straight to the two attacks.
-    // MULTIPLE-key, X and Y/EXT edges pull their common GS/reset line low
-    // for the drawing's nominal ~5 ms first. Both caps release during that
-    // notch; the final GS rise then triggers both 556 halves. These are the
-    // selected source levels, not the OR'ed bus, because X/Y edges remain
-    // effective while another source already holds that bus high.
+    // X and Y/EXT edges pull their common GS/reset line low for the drawing's
+    // nominal ~5 ms; MULTIPLE-key KT and arpeggiator AA use a separate 10 ms
+    // lane. Both caps release during that notch and its final GS rise triggers
+    // both 556 halves. X/Y are tracked before the OR because their edges stay
+    // effective while another source already holds the selected bus high.
     bool previousEnvelopeXGate_ { false };
     bool previousEnvelopeYGate_ { false };
     bool previousEnvelopeGs_ { false };

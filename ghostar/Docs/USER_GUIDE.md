@@ -44,12 +44,12 @@ carries the modelled panel's own detent labels.
 
 ## TRIGGER and GATE SELECT
 
-- **TRIGGER** — with KBD selected, MULTIPLE re-articulates the envelopes
-  on every key press; each accepted press briefly follows the physical
-  release path before attacking again, producing the original's nominal
-  ~5 ms retrigger notch. SINGLE holds one keyboard gate while any key is
-  down and re-articulates only after all keys are released (legato phrasing).
-  With KBD off, key presses do not re-articulate at all.
+- **TRIGGER** — MULTIPLE routes every raw new-key KT pulse through the
+  original's nominal 10 ms reset/release lane before KBD gate selection.
+  Attack resumes only if a selected gate remains high; with KBD off, a key
+  can therefore still re-articulate an envelope held by X or Y. SINGLE has
+  no KT branch: it attacks only on a genuine selected-bus low-to-high rise,
+  so legato presses and a keyboard rise hidden beneath held X/Y do nothing.
 - **GATE SELECT** — the envelopes' gate sources, OR'ed: **KBD** (the
   keyboard), **X** (the LFO square — auto-repeat, one gate per clock),
   **Y/EXT** (the Shaper's own gate). In FREE that gate stays high for the
@@ -61,9 +61,9 @@ carries the modelled panel's own detent labels.
   exception: its VCA follows the Shaper contour itself, so raised Shaper-path
   sliders keep sounding (FREE mode cycles on its own, and RESET restarts on
   every key press) without any gate selected.
-  X and Y/EXT have their own edge branches: their rising edges still retrigger
-  through the same short release notch when KBD or another source is already
-  holding the combined gate high.
+  X and Y/EXT have their own nominal 5 ms edge branches, so their rises still
+  retrigger beneath a gate already held high by KBD or another source. They
+  cannot shorten a coincident 10 ms keyboard/arpeggiator notch.
 
 ## MOD X
 
@@ -80,9 +80,9 @@ carries the modelled panel's own detent labels.
   rate). Pitch destinations pass through each Spirit CEM3340 pin-14 network's
   derived nominal 1.82 µs memory, a tiny but deliberate phase softening that
   matters most under high-rate self-FM and sync.
-- **LFO/S+H RATE** — under 1 Hz to about 50 Hz; also the sample-and-hold and
+- **LFO/S+H RATE** — nominally 0.3154787–50 Hz; also the sample-and-hold and
   arpeggiator clock. The original control is circuit-loaded, so half knob
-  travel is about 2.91 Hz rather than the 3.87 Hz midpoint of an unloaded
+  travel is 2.9974213 Hz rather than the 3.9716412 Hz midpoint of an unloaded
   exponential sweep. It does not affect RED NOISE or OSC B.
 
 ## SHAPER Y
@@ -144,9 +144,13 @@ load-dependent differences are schematic-derived.
 
 The signature series dual filter.
 
-- **MASTER** — both filters' cutoff, always.
+- **MASTER** — both filters' cutoff, always. Its loaded analog pot covers
+  nearly twelve octaves, so the end stops are deliberately very closed and
+  effectively wide open rather than a polite digital cutoff range.
 - **LOWER ONLY** — the Lower Filter's cutoff relative to the Upper; the two
-  coincide at 8, below 8 the Lower sits below the Upper.
+  nominally coincide at 8, below 8 the Lower sits below the Upper. DYNAMIC
+  keeps that coincidence throughout MASTER travel; FORMANT preserves the
+  hardware's tiny moving mismatch instead of forcing mathematical identity.
 - **RESONANCE switch** — LOW fixes the Upper Filter at Q = 0.5; VARIABLE
   slaves it to the pot.
 - **RESONANCE pot** — the Lower Filter always, the Upper in VARIABLE; both
@@ -266,39 +270,36 @@ voice a fresh instance already carries.
 Programs 13–29 are Ghostar's own, for playing rather than for teaching.
 They make no historical claim — the hardware had no presets to copy — and
 each one puts a single mechanism in the foreground, so the bank doubles as
-a tour of what the panel can do. They are level-matched to each other, so
-you can step through them without reaching for the volume.
+a tour of what the panel can do. Each is gain-checked under the gesture that
+reveals it—held chord, legato overlap, free-running drone or release tail—and
+the bank is clip-checked as a whole.
 
-| # | Program | What it foregrounds |
-|---|---|---|
-| 13 | Spirit Bass | The 24 dB lowpass under a fast filter envelope. |
-| 14 | Vocal Pair | The signature dual filter: a boost peak sliding under the lowpass. |
-| 15 | Formant Reed | FORMANT freezes the lower peak while the upper articulates. |
-| 16 | Growl Bass | The inter-filter clipper, re-filtered by the upper lowpass. |
-| 17 | Sync Lead | Hard sync torn open by the Shaper — ride the Y wheel. |
-| 18 | Ring Bell | The triangle-cross ring modulator, struck and left to fall. |
-| 19 | Two-Path Drift | An enveloped line left, a free-running ring drone right (SPLIT is on). |
-| 20 | Bypass Pad | VCA BYPASS holds the path open; the X wheel wanders the cutoff with red noise. Held keys drone. |
-| 21 | Leap Sequence | LEAP cycles each note through unison, up and down an octave. Hold a chord. |
-| 22 | Patterned Steps | S+H sampling the Shaper: raise the X wheel for a repeating figure, not a wander. |
-| 23 | Glide Lead | AUTO glide — legato only when two keys overlap. X wheel adds vibrato. |
-| 24 | Hollow Fifth | A fifth apart: X wheel PWM on Osc A, Y wheel PWM on Osc B. |
-| 25 | Noise Flute | Noise rung at the cutoff, with the cutoff tracking the keys. |
-| 26 | Sub and Lead | Osc B parked in BASS as a fixed sub beneath a played lead. |
-| 27 | Shaper Pulse | RUN chops the second path into a rhythm keys cannot interrupt. |
-| 28 | Thunder | WIDE below the keyboard, noise through the overdrive stage. |
-| 29 | Hollow Ghost | The resonant highpass against the lowpass: the double peak. |
+| # | Program | What it foregrounds | Initial X / Y |
+|---|---|---|---:|
+| 13 | Spirit Bass | Fast 24 dB punch over a detuned rectangular undertone. | 0 / 0 |
+| 14 | Vowel Motion | Dynamic dual peaks; Y makes the lower vowel roam. | 0 / .45 |
+| 15 | Fixed Reed | FORMANT fixes the lower peak while X moves only the upper. | .22 / 0 |
+| 16 | Diode Growl | The lower-filter diode clipper feeding a dark 24 dB lowpass. | 0 / 0 |
+| 17 | Sync Razor | Hard-synced Osc B, an automatic Shaper sweep and AUTO glide. | 0 / .62 |
+| 18 | Crossmod Steel | KBD HOLD fades in genuine audio-rate Osc B cross-modulation. | .34 / 0 |
+| 19 | PWM Choir | A fifth apart, with independent X and Y pulse-width motion. | .34 / .38 |
+| 20 | Ring Temple | A fast RESET contour strikes the triangle-cross ring modulator. | 0 / 0 |
+| 21 | Split Seance | A keyed dual-filter voice left and free ring/noise apparition right. | 0 / 0 |
+| 22 | Motor Drone | VCA-bypass WIDE oscillator motor with red-noise filter drift. | .28 / 0 |
+| 23 | Ripple Pluck | RIPPLE scans held notes through short resonant plucks. | 0 / 0 |
+| 24 | Leap Machine | LEAP octave substitutions with ring-mod transients. | 0 / 0 |
+| 25 | Stepped Formant | S+H samples Shaper Y into repeating steps over a fixed peak. | .42 / 0 |
+| 26 | Run Chopper | X gates both ADSRs while RUN cuts the second audio path. | 0 / 0 |
+| 27 | Noise Glass | Keyboard-tracked resonant noise ringing between two peaks. | 0 / 0 |
+| 28 | Subharmonic Reed | A fixed BASS oscillator under a keyed rectangular formant voice. | 0 / 0 |
+| 29 | Double Edge | Lower highpass against upper lowpass; Y moves the lower edge. | 0 / .38 |
 
-Selecting any program writes it onto every panel control (and pulls the
-performance wheels fully back, as the charts instruct), so every one is
-also readable: open the editor and see how the sound is made.
-
-The wheels come back for a reason: they are attenuators the player rides,
-not settings a chart can store, and a stored position would be wiped by the
-first CC1 a controller sitting at rest sends. So a program whose motion runs
-through MOD X or SHAPER Y makes none of it until you raise that wheel —
-every such program says which wheel in its own description, above and in the
-browser.
+Selecting a program writes every panel control, so each sound remains
+readable in the editor. The historical Sound Charts also restore both wheels
+fully back, exactly as drawn. Ghostar's own performance programs can instead
+store the initial X/Y stance shown above, which makes their defining motion
+audible immediately; CC1/CC2 or the on-screen wheels take over normally as
+soon as you move them.
 
 ## Hearing the instrument
 

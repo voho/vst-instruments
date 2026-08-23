@@ -78,6 +78,16 @@ double rms(const Rendered& rendered)
     return std::sqrt(sum / static_cast<double>(rendered.left.size()));
 }
 
+double rms(const std::vector<float>& samples)
+{
+    if (samples.empty())
+        return 0.0;
+    double sum = 0.0;
+    for (const float value : samples)
+        sum += static_cast<double>(value) * static_cast<double>(value);
+    return std::sqrt(sum / static_cast<double>(samples.size()));
+}
+
 bool finite(const Rendered& rendered)
 {
     for (std::size_t index = 0; index < rendered.left.size(); ++index)
@@ -732,31 +742,41 @@ void testArpOctaveStepsSurviveTheMidiCeiling()
           "the up-octave step above MIDI 127 keeps its full octave");
 }
 
-// With X auto-repeat as the only gate source, a key press changes pitch but
-// must not articulate: the trigger chain derives from the selected bus, and
-// the keyboard is not on it.
-void testKeyPressDoesNotRetriggerWithoutKbdGate()
+// KT reaches P1015's reset stretcher before the KBD gate-selector deck.
+// Therefore a MULTIPLE key press retriggers beneath a held X gate even with
+// KBD deselected; SINGLE has no KT branch and remains legato.
+void testMultipleKeyRetriggersBeforeKbdGateSelect()
 {
-    GhostarEngine engine;
-    engine.prepare(44100.0, 256);
-    auto parameters = brightPanel();
-    parameters.gateKbd = false;
-    parameters.gateX = true;
-    parameters.lfoRate = 0.1f;        // ~0.5 Hz: a long high half-cycle
-    parameters.loudnessAttack = 0.0f;
-    parameters.loudnessDecay = 0.25f;
-    parameters.loudnessSustain = 0.25f;
-    engine.setParameters(parameters);
-    engine.noteOn(48, 0.9f);
+    const auto articulationRatio = [](ghostar::TriggerMode trigger) {
+        GhostarEngine engine;
+        engine.prepare(44100.0, 256);
+        auto parameters = brightPanel();
+        parameters.gateKbd = false;
+        parameters.gateX = true;
+        parameters.trigger = trigger;
+        parameters.lfoRate = 0.1f;    // ~0.5 Hz: a long high half-cycle
+        parameters.loudnessAttack = 0.0f;
+        parameters.loudnessDecay = 0.25f;
+        parameters.loudnessSustain = 0.25f;
+        engine.setParameters(parameters);
+        engine.noteOn(48, 0.9f);
 
-    // The X edge articulates at t=0; by 0.5 s the envelope sits at sustain.
-    render(engine, 0.5, 44100.0);
-    const auto before = render(engine, 0.15, 44100.0);
-    engine.noteOn(60, 0.9f);          // mid-high-cycle press: pitch only
-    const auto after = render(engine, 0.15, 44100.0);
-    check(rms(before) > 1.0e-4, "X auto-repeat articulates on its own clock");
-    check(rms(after) < 1.3 * rms(before),
-          "a key press with KBD deselected does not re-articulate");
+        // X articulates at t=0; by 0.5 s the envelope is at sustain.
+        render(engine, 0.5, 44100.0);
+        const double before = rms(render(engine, 0.15, 44100.0));
+        engine.noteOn(60, 0.9f);      // mid-high-cycle KT pulse
+        const double after = rms(render(engine, 0.15, 44100.0));
+        return std::array<double, 2> { before, after };
+    };
+
+    const auto multiple = articulationRatio(ghostar::TriggerMode::Multiple);
+    const auto single = articulationRatio(ghostar::TriggerMode::Single);
+    check(multiple[0] > 1.0e-4 && single[0] > 1.0e-4,
+          "X auto-repeat articulates on its own clock");
+    check(multiple[1] > 1.3 * multiple[0],
+          "MULTIPLE KT re-articulates with KBD gate deselected");
+    check(single[1] < 1.3 * single[0],
+          "SINGLE keeps the same hidden key press legato");
 }
 
 // The arpeggiator's first sounding note is the bottom of the scan, from the
@@ -927,33 +947,25 @@ void testEveryFactoryProgramRenders()
     }
     check(sawProgramsBank, "the performance bank is present");
 
-    // Both wheel positions a program is played at. Wheels back is the state
-    // selecting one actually leaves — testing only the raised case would let
-    // a program that says nothing until a hand moves pass unnoticed — and
-    // wheels up is where a program's modulation is doing its work.
-    struct WheelStance
-    {
-        const char* what;
-        float x;
-        float y;
-    };
-    for (const auto stance : { WheelStance { "with the wheels back, as "
-                                             "selecting it leaves them",
-                                             0.0f, 0.0f },
-                               WheelStance { "with the wheels raised", 0.5f,
-                                             0.6f } })
     for (int index = 0; index < ghostar::factoryPresetCount(); ++index)
+    for (int stance = 0; stance < 2; ++stance)
     {
         GhostarEngine engine;
         engine.prepare(44100.0, 256);
         engine.setParameters(ghostar::factoryPresetParameters(index));
-        engine.setModWheel(stance.x);
-        engine.setShaperWheel(stance.y);
+        const float x = stance == 0
+            ? ghostar::factoryPresetModWheel(index) : 0.5f;
+        const float y = stance == 0
+            ? ghostar::factoryPresetShaperWheel(index) : 0.6f;
+        engine.setModWheel(x);
+        engine.setShaperWheel(y);
         engine.noteOn(48, 0.9f);
         engine.noteOn(55, 0.9f);
         const auto rendered = render(engine, 2.0, 44100.0);
         const std::string name =
-            std::string(ghostar::factoryPresetName(index)) + " " + stance.what;
+            std::string(ghostar::factoryPresetName(index))
+            + (stance == 0 ? " at its stored wheel stance"
+                           : " with both wheels raised");
         check(finite(rendered), (name + " renders finite audio").c_str());
         if (std::string(ghostar::factoryPresetName(index))
             == "Preparatory Pattern")
@@ -962,46 +974,103 @@ void testEveryFactoryProgramRenders()
                   "the Preparatory Pattern produces no sound");
             continue;
         }
-        check(peak(rendered) > 1.0e-4, (name + " is audible").c_str());
+        const double renderedPeak = peak(rendered);
+        check(renderedPeak > 1.0e-4, (name + " is audible").c_str());
+        if (ghostar::factoryPresetParameters(index).lowerMode
+            == ghostar::LowerFilterMode::Overdrive)
+            check(renderedPeak > 0.05,
+                  (name + " keeps an audible OVERDRIVE output level").c_str());
         // A program that clips on an ordinary two-note phrase would be a
         // delivery defect, not a voicing choice.
-        check(peak(rendered) < 1.0,
+        check(renderedPeak < 1.0,
               (name + " leaves headroom on an ordinary phrase").c_str());
     }
 }
 
-// Selecting a program pulls both performance wheels fully back, the way the
-// manual's charts are drawn and the way the plug-in is documented and tested.
-// That is correct — the wheels are attenuators the player rides, a chart
-// cannot store one, and a stored position would be wiped by the first CC1 a
-// controller at rest sends. But it means a program that routes either wheel's
-// bus makes none of that motion until a hand moves, and its one-line
-// description is the only place the player is told so.
-//
-// The rule is exact rather than measured. Every X destination is scaled by
-// modWheel_, at control rate through xSignal and at audio rate through
-// AudioRateMod::gain, which must be non-zero for the modulation to be applied
-// at all; every Y destination is scaled by shaperWheel_. So routing either bus
-// is precisely the condition, and it needs no threshold.
+// Manual Sound Charts retain the drawn wheels-back state. Ghostar Programs
+// instead store a useful starting wheel stance: routing a bus at zero would
+// hide the very capability the program was written to demonstrate. The
+// description still names the live performance control so players know what
+// to ride after selection.
 void testWheelGatedProgramsNameTheirWheel()
 {
     for (int index = 0; index < ghostar::factoryPresetCount(); ++index)
     {
         const auto parameters = ghostar::factoryPresetParameters(index);
+        const float x = ghostar::factoryPresetModWheel(index);
+        const float y = ghostar::factoryPresetShaperWheel(index);
         const std::string name = ghostar::factoryPresetName(index);
         const std::string description =
             ghostar::factoryPresetDescription(index);
 
+        check(x >= 0.0f && x <= 1.0f && y >= 0.0f && y <= 1.0f,
+              (name + " stores valid wheel positions").c_str());
+        if (ghostar::factoryPresetBank(index)
+            == ghostar::PresetBank::SoundCharts)
+            check(x == 0.0f && y == 0.0f,
+                  (name + " preserves the historical wheels-back stance")
+                      .c_str());
+
         if (parameters.modXTo != ghostar::ModXDestination::Off)
+        {
             check(description.find("X wheel") != std::string::npos,
                   (name + " routes the X bus but its description does not "
                           "tell the player to raise the X wheel")
                       .c_str());
+            if (ghostar::factoryPresetBank(index)
+                == ghostar::PresetBank::Programs)
+                check(x > 0.0f,
+                      (name + " hides its X modulation at selection").c_str());
+        }
         if (parameters.shaperYTo != ghostar::ShaperYDestination::Off)
+        {
             check(description.find("Y wheel") != std::string::npos,
                   (name + " routes the Y bus but its description does not "
                           "tell the player to raise the Y wheel")
                       .c_str());
+            if (ghostar::factoryPresetBank(index)
+                == ghostar::PresetBank::Programs)
+                check(y > 0.0f,
+                      (name + " hides its Y modulation at selection").c_str());
+        }
+    }
+}
+
+// These were the first bank-level failures found by gesture-aware QA: one
+// split patch clipped while hiding its second output, and several character
+// patches were technically nonzero but unusably quiet. Keep broad headroom
+// around the final voicings while making those regressions loud in CI.
+void testPerformanceProgramsKeepUsableGainAndStereoBalance()
+{
+    const auto renderProgram = [](const char* name, int note) {
+        const int index = ghostar::factoryPresetIndexByName(name);
+        GhostarEngine engine;
+        engine.prepare(48000.0, 256);
+        engine.setParameters(ghostar::factoryPresetParameters(index));
+        engine.setModWheel(ghostar::factoryPresetModWheel(index));
+        engine.setShaperWheel(ghostar::factoryPresetShaperWheel(index));
+        render(engine, 0.2, 48000.0);
+        engine.noteOn(note, 0.9f);
+        return render(engine, 2.0, 48000.0);
+    };
+
+    const auto split = renderProgram("Split Seance", 36);
+    const double splitPeak = peak(split);
+    const double splitLeftRms = rms(split.left);
+    const double splitRightRms = rms(split.right);
+    check(splitPeak < 1.0,
+          "Split Seance leaves headroom on its low-note gesture");
+    check(splitRightRms > 0.01 && splitLeftRms / splitRightRms < 6.0,
+          "Split Seance keeps its right-hand ghost audible");
+
+    for (const char* name : { "Ring Temple", "Run Chopper", "Noise Glass",
+                              "Double Edge" })
+    {
+        const auto rendered = renderProgram(name, 48);
+        const std::string message = std::string(name)
+            + " keeps a usable factory output level";
+        check(peak(rendered) > 0.1 && peak(rendered) < 1.0,
+              message.c_str());
     }
 }
 
@@ -1074,13 +1143,14 @@ int main()
     testArpeggiatorStepsHeldKeys();
     testAttackPeakFollowsTheCircuitAim();
     testArpOctaveStepsSurviveTheMidiCeiling();
-    testKeyPressDoesNotRetriggerWithoutKbdGate();
+    testMultipleKeyRetriggersBeforeKbdGateSelect();
     testArpFirstStepIsTheScanBottom();
     testFreshArpPhraseRestartsAtTheScanBottomBetweenClocks();
     testTravelStepsGlideWhileSounding();
     testStopAllSoundKeepsControllers();
     testEveryFactoryProgramRenders();
     testWheelGatedProgramsNameTheirWheel();
+    testPerformanceProgramsKeepUsableGainAndStereoBalance();
     testTheHalfbandKernelsAreSparse();
     testFasterThanRealtime();
 

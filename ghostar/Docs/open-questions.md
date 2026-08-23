@@ -21,33 +21,54 @@ voicing rather than mislabelled as the circuit's electrical endpoint.
 **Closes with.** A hardware measurement of wheel-end pitch offset, or an A–Z
 test between defensible spans if none appears.
 
-## OQ-02 — Absolute filter cutoff ranges
+## OQ-02 — Filter cutoff placement and panel-CV headroom
 
-**Gap (span derived, placement still open).** The owner's manual says only
-"through the audio range". The CEM3350 datasheet gives the frequency scale
-as -19.6 mV/octave (-18.5/-20.6 window) and SM DWG 2's ladder is now read:
-the panel summer reaches the chip's frequency pin through 12k1 (a second
-12k1 carries the modulation bus), 16 kOhm to +12 V sets a fixed offset,
-68 kOhm from a 100 kOhm trimmer's wiper places the window, and 274 Ohm
-shunts the node; the integrator caps are 22 nF and IREF comes from 47 kOhm.
-That gives 21.2 mV per volt at the pin, so the MASTER pot's plus/minus
-10.5 V swing is plus/minus 11.4 octaves of authority over a chip window
-about ten octaves wide - the hardware therefore sweeps from fully closed to
-effectively wide open. What is *not* derivable is where that window sits:
-the trimmer carries plus/minus 2.3 octaves of placement authority and no
-document records its factory setting (the service manual has no
-calibration text at all).
+**Closed sub-part (span, tapers and relative law).** The owner's manual says
+MASTER moves both filters "through the audio range" and marks LOWER ONLY=8
+as their coincidence. SM DWG 2 closes the actual panel network. P6 MASTER is
+100 kOhm LIN across plus/minus 12 V, loaded by R50||R51=110.5 kOhm into the
+two IC15 virtual-earth summers; P5 LOWER ONLY is 100 kOhm LIN from 0 to
+-12 V, loaded by R48=150 kOhm into the Lower summer. Their wiper voltages are
 
-**Engine.** Upper MASTER spans 20 Hz-16 kHz exponentially - 9.6 octaves,
-inside the derived ~10-octave span, and reachable at pin +226 mV to
-+37 mV (voiced placement). LOWER ONLY spans -5 to +1 octaves relative to
-Upper with coincidence at travel 0.8 (anchored coincidence point, voiced
-span).
+`v6(m)=(24m-12)*110.5/(110.5+100m(1-m))`
 
-**Closes with.** A measured sweep of a hardware unit, which is now the
-*only* thing missing: the span and the sensitivities are derived, and the
-trimmer's setting is a per-unit calibration rather than a documented
-constant.
+and
+
+`v5(l)=-12(1-l)*150/(150+100l(1-l))`.
+
+R49/R52=100 kOhm set the summer gains, and R155/R189=12.1 kOhm feed the
+CEM3350 nodes. With the 16 kOhm bias, 274 Ohm shunt, 68 kOhm trim arm and
+second 12.1 kOhm Dynamic input, the panel-source node gain is
+0.021233778 V/V. Against the original CEM3350's nominal -19.6 mV/octave,
+MASTER therefore spans plus/minus 5.88248 octaves about panel 5 (11.76495
+octaves total), not the former plus/minus 11.4-octave calculation that had
+omitted IC15's 100/221 gain.
+
+LOWER ONLY is asymmetric about 8: Dynamic mode reaches -7.10055 octaves at
+panel 0 and +1.56630 at panel 10. In Formant, corrected R188=22 kOhm changes
+the Lower node gain to 0.021528704 V/V, widening those endpoints to
+-7.19917/+1.58805. That 1.389% gain difference is a real quirk: after
+coincidence is anchored at MASTER=5, LOWER ONLY=8 drifts by -0.08170 octave
+at MASTER=0 and +0.08170 at MASTER=10 in Formant; Dynamic remains coincident
+throughout MASTER travel.
+
+**Engine.** Ghostar implements those loaded-pot equations, both nominal
+spans and the Formant coincidence drift. The undocumented 100 kOhm trimmer
+still owns absolute placement, so the previous geometric centre of
+565.685 Hz at MASTER=5 is retained explicitly as voicing. The derived span
+then reaches nominally 9.589 Hz to 33.372 kHz before modulation, making the
+ends effectively closed/open as on the hardware.
+
+**Remaining gap.** The trim wiper has plus/minus 2.313 octaves of placement
+authority, but no document records its factory setting. Also, the ideal
+Lower IC15 demand exceeds the plus 12 V rail near simultaneous low MASTER
+and LOW LOWER ONLY. Saturation is therefore guaranteed in that corner, but
+the installed 1458 vendor, loaded output swing and recovery are not recorded;
+an arbitrary hard clip would be less faithful than leaving this named.
+
+**Closes with.** A calibrated-unit cutoff sweep for absolute placement, plus
+the installed op-amp identity or panel-CV scope captures for the saturation
+knee and recovery.
 
 ## OQ-03 — Hardware pulse duty cycles
 
@@ -100,19 +121,21 @@ monostable's ln 3 = 1.10. Because the 556 senses above R23/R24, the cap-side
 trip is `1-(100/R_slider)*(1.3-1)` of 7.5 V: 0.97 at the nominal fast end,
 approaching unity as the slider resistance rises.
 
-The trigger network adds a characteristic articulation notch. Selected X
-and Y/EXT rising edges, and every selected keyboard KT pulse in MULTIPLE,
-pull the common GS/reset line low for the drawing's nominal ~5 ms. Both caps
-traverse their ordinary release sliders and D11/D14 during that interval;
-the final GS rise creates TS and starts both attacks from their retained
-post-notch voltages. The independent X/Y edge branches remain effective
-while another source already holds the OR'ed gate high. SINGLE has no KT
-branch: its first keyboard gate attacks immediately, a legato press does
-nothing, and a press masked by an already-high X/Y gate cannot articulate.
-Overlapping accepted edges extend one notch rather than scheduling several
-attacks. The engine implements a nominal 5 ms width; the drawing's 4.7 ms
-X/Y RCs, 10 ms KT stretcher and CMOS thresholds do not support claiming
-5.000 ms for a real unit.
+The trigger network adds a characteristic articulation notch through two
+distinct lanes. Selected X and Y/EXT rising edges use their 10 nF/470 kOhm
+edge networks, modelled at the drawing's nominal 5 ms. Raw keyboard KT in
+MULTIPLE—tapped before KBD gate selection—and every accepted arpeggiator AA
+step meet at the separate R10=1 MOhm/C7=10 nF node annotated 10 ms. Either
+lane pulls the common GS/reset line low; both caps traverse their ordinary
+release sliders and D11/D14 during that interval, then the final GS rise
+creates TS and starts both attacks from the retained post-notch voltages.
+The independent X/Y branches remain effective while another source already
+holds the OR'ed gate high. SINGLE has no KT branch: its first keyboard gate
+attacks immediately, a legato press does nothing, and a press masked by an
+already-high X/Y gate cannot articulate. Coincident/overlapping edges extend
+one notch and a 5 ms edge cannot shorten an active 10 ms KT/AA pulse. CMOS
+thresholds and component tolerances mean neither nominal width claims
+sample-exact timing for a physical unit.
 
 For a nominal matched-diode model, Ghostar voices the common D15 rail at
 0.5 V—the independently derived Loudness-VCA zero—and uses an effective
@@ -258,9 +281,13 @@ and the C37/BA130 scalar sees the coupled network's exact current sensitivity.
 On a slope toggle, the newly selected node is projected to
 `(22·Vnew + Vold)/23` before the next solve while the abandoned node and C37
 state remain untouched. Each half receives its tied-input drive, using
-commanded CEM Q before the declared external-enhancement term, and the 24 dB
-tap is scaled by `101/201`. The circuit suite independently pins all four
-state equations, C37 KVL, both switch projections and the gain ratio.
+commanded CEM Q before the declared external-enhancement term. IC14B applies
+its absolute 201 gain at 12 dB or 101 at 24 dB. Output-referred unresolved
+RS7 seams are divided by 201 before these physical states, preserving their
+standing level while putting the high-Q loop at its actual voltage; C34's
+physical OVERDRIVE node is not divided. The circuit suite independently pins
+all four state equations, C37 KVL, both switch projections and both absolute
+output gains.
 
 Hardware sweeps can now validate CEM3350 output impedance, contact resistance
 and bounce, TL082 dynamics and original-unit tolerances; they no longer select
@@ -609,10 +636,15 @@ full coupled 2×2 solve with all three 100 kΩ Thevenins, 220 kΩ arms, 68 pF
 companions, 22 nF VLP/VBP states and C33's implicit BA130 current. P1014's
 conditioned A/B voltages enter directly in their shared derived 5 V/unit
 normalization;
-the MM5837 contribution retains one explicit 0.45 level calibration. The
+the MM5837 contribution retains one explicit 0.45 level calibration. OUT's
+dry seam keeps that same output-referred scalar. Pending RS7 continuity,
+BANDPASS uses the manual-anchored parametric form `dry + 11·VBP` and HIGHPASS
+uses the manual-anchored two-edge form `dry − 8·VLP`; 11 and 8 are explicit
+voiced bridges rather than claimed contact gains. The
 one-step circuit oracle checks branch KCL, both integrated state equations,
-C33 KVL, off-slider loading and pot-end charge projection. Only the dry/output
-scalar used by the unresolved RS7 modes remains a labelled 0.45 surrogate.
+C33 KVL, off-slider loading and pot-end charge projection. Audio regressions
+also require BANDPASS resonance lift and HIGHPASS bass rejection/inter-cutoff
+passage, so the unresolved mappings cannot silently collapse into OUT again.
 
 **Closes with.** A hardware RS7 continuity table or assembly drawing that
 identifies the three remaining throws and OUT's dry transfer. Same-unit
@@ -623,31 +655,25 @@ equalised.
 
 ## OQ-21 — LFO rate span at the slow end
 
-**Gap.** The manual gives the MOD X rate as "less than 1 Hz to
-approximately 50 Hz". The fast end is a stated number; the slow end is
-only an inequality. The lossless MOD-board drawing does resolve the control
-travel: P2=100 kΩ LIN is loaded through R33=200 kΩ into the CEM3360
-exponential-control node. If `x` is mechanical travel, its normalized
-electrical contribution is therefore
+**Closed (nominal silicon law; unit tolerance remains).** The manual gives
+the MOD X rate as "less than 1 Hz to approximately 50 Hz". The lossless
+MOD-board drawing resolves P2=100 kOhm LIN loaded through R33=200 kOhm into
+the CEM3360 exponential-control node. If `x` is mechanical travel, its
+normalized electrical contribution is therefore
 
 `w(x) = 200x / (200 + 100x(1−x))`,
 
-so half travel is `w=4/9`, not `1/2`. P2/R33 and R35=2.2 kΩ also give a
-132 mV full control swing. A modern compatible's nominal 3 mV/dB scale would
-*suggest* a 158.489:1 span, or 0.3155 Hz at the slow end when the documented
-fast end is 50 Hz; even that part's published 2.7–3.3 mV/dB range expands the
-inference to roughly 0.180–0.500 Hz. It is therefore useful corroboration, not
-evidence for the original CEM3360's exact scale or a particular calibrated
-Spirit.
+so half travel is `w=4/9`, not `1/2`. P2/R33 and R35=2.2 kOhm give 132 mV of
+full control swing. The original CES CEM3360 production sheet specifies an
+exponential-control scale of 3.0 mV/dB typical (2.7–3.3 limits). The nominal
+span is therefore 44 dB, or 158.489319:1. Anchoring the manual's approximate
+50 Hz fast end gives 0.3154787 Hz slow and 2.9974213 Hz at half knob travel;
+the silicon-limit range is about 0.1797–0.5000 Hz before Spirit component and
+trim tolerances.
 
-**Engine.** The derived loaded travel `w(x)` feeds a 0.3 Hz-to-50 Hz
-exponential law. Thus the deliberately voiced slow endpoint still satisfies
-"less than 1 Hz", while half travel is now the circuit-derived 2.9148 Hz
-rather than the unloaded geometric midpoint 3.8730 Hz.
-
-**Closes with.** An original-CEM3360 exponential-control scale or, preferably,
-timing measurements from a calibrated Spirit at the slow endpoint and one or
-more intermediate knob positions.
+**Engine.** The derived loaded travel feeds the nominal
+0.3154787–50 Hz law. A timing measurement from a calibrated Spirit would
+characterize one unit's tolerance, but no longer owns the nominal constant.
 
 ## OQ-22 — BRIGHTNESS topology closed, pot taper open
 

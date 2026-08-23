@@ -641,6 +641,24 @@ struct GhostarCircuitTestAccess
         return engine.controlUpperCutoffHz_;
     }
 
+    static std::array<double, 2> filterCutoffsForPanel(
+        float master, float lowerOnly, TrackingMode tracking) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 64);
+        EngineParameters parameters;
+        parameters.cutoff = master;
+        parameters.lowerOnly = lowerOnly;
+        parameters.kbAmount = 0.0f;
+        parameters.filterEnvAmount = 0.5f;
+        parameters.tracking = tracking;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+        engine.advanceControls();
+        return { engine.controlUpperCutoffHz_,
+                 engine.controlLowerCutoffHz_ };
+    }
+
     static double upperLowDamping() noexcept
     {
         GhostarEngine engine;
@@ -713,23 +731,27 @@ struct GhostarCircuitTestAccess
         engine.previousGateForShaper_ = true;
         engine.shaperLevel_ = 1.0;
         engine.shaperRising_ = false;
+        engine.modWheel_ = 0.0;
+        engine.targetModWheel_ = 0.0;
+        engine.shaperWheel_ = 0.0;
+        engine.targetShaperWheel_ = 0.0;
+        engine.lfoPhase_ = 0.0;
+
+        engine.advanceControls();
+        const double baseUpperCutoff = engine.controlUpperCutoffHz_;
+        const double baseLowerCutoff = engine.controlLowerCutoffHz_;
         engine.modWheel_ = xTravel;
         engine.targetModWheel_ = xTravel;
         engine.shaperWheel_ = yTravel;
         engine.targetShaperWheel_ = yTravel;
         engine.lfoPhase_ = 0.0;
-
         engine.advanceControls();
-        const double baseCutoff = std::sqrt(20.0 * 16000.0);
-        const double lowerBaseOctaves =
-            (static_cast<double>(parameters.lowerOnly) - 0.8) * 6.25;
         const auto& audio = engine.controlAudioRateMod_;
         return {
             engine.controlOscAOctaves_,
             engine.controlOscBOctaves_,
-            std::log2(engine.controlUpperCutoffHz_ / baseCutoff),
-            std::log2(engine.controlLowerCutoffHz_ / baseCutoff)
-                - lowerBaseOctaves,
+            std::log2(engine.controlUpperCutoffHz_ / baseUpperCutoff),
+            std::log2(engine.controlLowerCutoffHz_ / baseLowerCutoff),
             engine.controlPwmA_,
             engine.controlPwmB_,
             audio.gain,
@@ -850,7 +872,7 @@ struct GhostarCircuitTestAccess
         };
     }
 
-    static bool xEdgeResetsUnderHeldKeyboardGate() noexcept
+    static int xEdgeResetSamplesUnderHeldKeyboardGate() noexcept
     {
         GhostarEngine engine;
         engine.prepare(8000.0, 64);
@@ -870,10 +892,86 @@ struct GhostarCircuitTestAccess
         engine.previousLfoSquareHigh_ = false;
         engine.loudnessEnvelope_.stage = GhostarEngine::Adsr::Stage::Decay;
         engine.loudnessEnvelope_.level = 0.8;
-        engine.advanceControls();
-        return engine.envelopeResetSamplesRemaining_ != 0
-            && engine.loudnessEnvelope_.stage
-                == GhostarEngine::Adsr::Stage::Release;
+
+        int releaseSamples = 0;
+        do
+        {
+            engine.advanceControls();
+            if (engine.loudnessEnvelope_.stage
+                == GhostarEngine::Adsr::Stage::Release)
+                ++releaseSamples;
+        }
+        while (engine.envelopeResetSamplesRemaining_ != 0);
+        return releaseSamples;
+    }
+
+    static int multipleKeyResetSamplesWithKbdDeselected() noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(8000.0, 64);
+        EngineParameters parameters;
+        parameters.gateKbd = false;
+        parameters.gateX = true;
+        parameters.gateYExt = false;
+        parameters.trigger = TriggerMode::Multiple;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+
+        engine.keyGate_ = true;
+        engine.envelopeGate_ = true;
+        engine.previousEnvelopeGs_ = true;
+        engine.previousEnvelopeXGate_ = true;
+        engine.lfoPhase_ = 0.1;
+        engine.lfoSquareHigh_ = true;
+        engine.previousLfoSquareHigh_ = true;
+        engine.pendingTrigger_ = true;
+        engine.loudnessEnvelope_.stage = GhostarEngine::Adsr::Stage::Decay;
+        engine.loudnessEnvelope_.level = 0.8;
+
+        int releaseSamples = 0;
+        do
+        {
+            engine.advanceControls();
+            if (engine.loudnessEnvelope_.stage
+                == GhostarEngine::Adsr::Stage::Release)
+                ++releaseSamples;
+        }
+        while (engine.envelopeResetSamplesRemaining_ != 0);
+        return releaseSamples;
+    }
+
+    static int arpeggiatorResetSamples(bool simultaneousX) noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(8000.0, 64);
+        EngineParameters parameters;
+        parameters.gateKbd = true;
+        parameters.gateX = simultaneousX;
+        parameters.gateYExt = false;
+        parameters.trigger = TriggerMode::Single;
+        parameters.arpeggiator = ArpeggiatorMode::Ripple;
+        engine.parameters_ = parameters;
+        engine.targetParameters_ = parameters;
+        engine.noteOn(60, 1.0f);
+
+        engine.previousEnvelopeGs_ = true;
+        engine.previousEnvelopeXGate_ = false;
+        engine.lfoPhase_ = 0.0;
+        engine.lfoSquareHigh_ = false;
+        engine.previousLfoSquareHigh_ = false;
+        engine.loudnessEnvelope_.stage = GhostarEngine::Adsr::Stage::Decay;
+        engine.loudnessEnvelope_.level = 0.8;
+
+        int releaseSamples = 0;
+        do
+        {
+            engine.advanceControls();
+            if (engine.loudnessEnvelope_.stage
+                == GhostarEngine::Adsr::Stage::Release)
+                ++releaseSamples;
+        }
+        while (engine.envelopeResetSamplesRemaining_ != 0);
+        return releaseSamples;
     }
 
     static double minimumAttackCapPeak() noexcept
@@ -1270,7 +1368,8 @@ void testUpperCascadeMatchesP1013()
     constexpr double pairSaturationAmps = 4.6e-9;
     constexpr double highQCapacitanceRatio = 22.0;
     constexpr double highQGain = 16.0;
-    constexpr double outputGain24 = 101.0 / 201.0;
+    constexpr double outputGain12 = 201.0;
+    constexpr double outputGain24 = 101.0;
 
     const auto low = ghostar::GhostarCircuitTestAccess::upperControl(
         ghostar::UpperResonanceMode::Low, 0.91f);
@@ -1426,7 +1525,7 @@ void testUpperCascadeMatchesP1013()
 
         const double expectedOutput =
             slope == ghostar::UpperSlope::TwelveDb
-                ? result.controlledLowpass
+                ? outputGain12 * result.controlledLowpass
                 : outputGain24 * result.fixedLowpass;
         check(std::abs(result.output - expectedOutput) < 1.0e-14,
               "SW4 selects the traced VLP tap and linked IC14B gain");
@@ -1440,8 +1539,8 @@ void testUpperCascadeMatchesP1013()
                { -0.016, 0.021, 0.009, -0.027 }, { 0.02, -0.03 },
                -0.002, -0.031, 0.11, 0.28, 1.42);
 
-    // Equal, static VLP nodes isolate the linked output pole: 12 dB is the
-    // normalisation reference and 24 dB is exactly 101/201 of it.
+    // Equal, static VLP nodes isolate the linked output pole and its absolute
+    // 201/101 gains.
     constexpr double staticLp = 0.2;
     constexpr double balancingCharge = -staticLp / 22.0;
     const std::array<double, 4> staticStates { 0.0, staticLp,
@@ -1455,10 +1554,12 @@ void testUpperCascadeMatchesP1013()
         ghostar::GhostarCircuitTestAccess::upperCascadeStep(
             ghostar::UpperSlope::TwentyFourDb, staticStates, staticEndpoints,
             balancingCharge, 0.0, 0.0, 2.0, 3.0, hostRate);
-    check(std::abs(output12.output - staticLp) < 1.0e-15
+    check(std::abs(output12.output - outputGain12 * staticLp) < 1.0e-14
+              && std::abs(output24.output - outputGain24 * staticLp)
+                  < 1.0e-14
               && std::abs(output24.output / output12.output
-                          - outputGain24) < 1.0e-15,
-          "IC14B changes by the exact 101/201 gain ratio with SLOPE");
+                          - outputGain24 / outputGain12) < 1.0e-15,
+          "IC14B applies its absolute 201/101 gains with SLOPE");
 }
 
 // P1013 does not sum the three Lower sources at virtual earth. Every 100k
@@ -1579,7 +1680,7 @@ void testLowerMixerMnaSatisfiesP1013()
           "endpoint projection transfers equal discrete charge into VBP");
     check(std::abs(result.hp - (dry - k * result.bp - result.lp))
               < 1.0e-12,
-          "the open RS7 high-pass seam remains explicit and deterministic");
+          "the Lower solver exposes its canonical diagnostic HP identity");
 
     const double capacitorCharge = oldHighQ
                                  + result.highQChargeStep * highQCurrent;
@@ -1902,6 +2003,92 @@ void testKeyboardTrackingAmount()
           "the second C sits just below the nominal cancellation pitch");
 }
 
+// P1013 loads both linear cutoff pots at their wipers. This independently
+// rebuilds the two divider/summer/node equations from the labelled parts so
+// a convenient linear-in-octaves surrogate cannot pass the circuit suite.
+void testFilterCutoffsFollowTheLoadedP1013Pots()
+{
+    using ghostar::GhostarCircuitTestAccess;
+    using ghostar::TrackingMode;
+
+    constexpr double centreHz = 565.685424949238;
+    constexpr double voltsPerOctave = 0.0196;
+    constexpr double masterMixerGain = 100.0 / 221.0;
+    constexpr double lowerMixerGain = 100.0 / 150.0;
+    constexpr double dynamicNodeGain =
+        (1.0 / 12.1)
+        / (2.0 / 12.1 + 1.0 / 16.0 + 1.0 / 0.274 + 1.0 / 68.0);
+    constexpr double formantNodeGain =
+        (1.0 / 12.1)
+        / (1.0 / 12.1 + 1.0 / 34.1 + 1.0 / 16.0
+           + 1.0 / 0.274 + 1.0 / 68.0);
+    const auto masterVolts = [](double x) {
+        return (24.0 * x - 12.0) * 110.5
+             / (110.5 + 100.0 * x * (1.0 - x));
+    };
+    const auto lowerVolts = [](double x) {
+        return -12.0 * (1.0 - x) * 150.0
+             / (150.0 + 100.0 * x * (1.0 - x));
+    };
+    const double coincidenceVolts = lowerVolts(0.8);
+
+    for (const double master : { 0.0, 0.2, 0.5, 0.8, 1.0 })
+    {
+        for (const TrackingMode mode : { TrackingMode::Dynamic,
+                                         TrackingMode::Formant })
+        {
+            const double nodeGain = mode == TrackingMode::Dynamic
+                ? dynamicNodeGain : formantNodeGain;
+            for (const double lower : { 0.0, 0.4, 0.8, 1.0 })
+            {
+                const auto actual =
+                    GhostarCircuitTestAccess::filterCutoffsForPanel(
+                        static_cast<float>(master),
+                        static_cast<float>(lower), mode);
+                const double masterOctaves = dynamicNodeGain
+                    * masterMixerGain * masterVolts(master)
+                    / voltsPerOctave;
+                const double expectedUpper =
+                    centreHz * std::exp2(masterOctaves);
+                const double lowerOffset = nodeGain * lowerMixerGain
+                    * (lowerVolts(lower) - coincidenceVolts)
+                    / voltsPerOctave;
+                const double formantDrift = (nodeGain - dynamicNodeGain)
+                    * masterMixerGain * masterVolts(master)
+                    / voltsPerOctave;
+                const double expectedLower = expectedUpper
+                    * std::exp2(lowerOffset + formantDrift);
+                check(std::abs(actual[0] / expectedUpper - 1.0) < 1.0e-6
+                          && std::abs(actual[1] / expectedLower - 1.0)
+                                 < 1.0e-6,
+                      "MASTER and LOWER ONLY follow the loaded P1013 pots");
+            }
+        }
+    }
+
+    const auto dynamicLow = GhostarCircuitTestAccess::filterCutoffsForPanel(
+        0.5f, 0.0f, TrackingMode::Dynamic);
+    const auto dynamicHigh = GhostarCircuitTestAccess::filterCutoffsForPanel(
+        0.5f, 1.0f, TrackingMode::Dynamic);
+    check(std::abs(std::log2(dynamicLow[1] / dynamicLow[0]) + 7.1007)
+              < 5.0e-4
+              && std::abs(std::log2(dynamicHigh[1] / dynamicHigh[0])
+                              - 1.5661)
+                     < 5.0e-4,
+          "LOWER ONLY preserves its asymmetric nominal endpoint span");
+
+    const auto formantAtLowMaster =
+        GhostarCircuitTestAccess::filterCutoffsForPanel(
+            0.0f, 0.8f, TrackingMode::Formant);
+    const auto formantAtHighMaster =
+        GhostarCircuitTestAccess::filterCutoffsForPanel(
+            1.0f, 0.8f, TrackingMode::Formant);
+    check(std::log2(formantAtLowMaster[1] / formantAtLowMaster[0]) < 0.0
+              && std::log2(formantAtHighMaster[1]
+                           / formantAtHighMaster[0]) > 0.0,
+          "FORMANT exposes its small MASTER-dependent coincidence drift");
+}
+
 // R135/R136/R137 offset the Loudness CEM3360's linear-control pin so the
 // first 0.5 V of the 7.5 V envelope produces no nominal gain. Absolute cell
 // gain is normalised separately; the affine law itself is component-derived.
@@ -1994,27 +2181,36 @@ void testEnvelopeDiodeFloorAndReleaseKnee()
           "the diode solve remains bounded at 8 kHz and minimum release R");
 }
 
-// Every accepted MULTIPLE/X/Y edge first pulls the shared GS line low for
-// the factory-annotated ~5 ms. Both 4.7 uF caps follow their ordinary diode
-// release paths during that notch, then the final GS rise starts Attack from
-// the retained voltage. X/Y edge branches sit ahead of the gate OR, so they
-// remain effective under an already-high keyboard gate. R23/R24=100 ohms
-// also sit between the threshold node and each cap, giving a 0.97 cap-side
-// peak at the nominal 1 kOhm fast Attack endpoint.
+// P1015's selected X/Y edges use their 10 nF / 470 kOhm, ~5 ms reset lane.
+// MULTIPLE KT and arpeggiator AA instead meet at the distinct R10=1 MOhm,
+// C7=10 nF node annotated 10 ms. Both 4.7 uF caps follow their ordinary
+// diode-release paths during either notch, then the final GS rise starts
+// Attack from the retained voltage. KT is tapped before the KBD gate-select
+// deck, while X/Y edge branches remain effective under an already-high bus.
+// R23/R24=100 ohms also put the fast Attack cap peak below its threshold node.
 void testEnvelopeRetriggerUsesThePhysicalResetNotch()
 {
     const auto reset = ghostar::GhostarCircuitTestAccess::
         envelopeMultipleResetNotch();
-    check(reset.releaseSamples == 40 && reset.stayedInRelease,
-          "an 8 kHz MULTIPLE retrigger spends 40 samples in the nominal "
-          "5 ms GS-low release notch");
+    check(reset.releaseSamples == 80 && reset.stayedInRelease,
+          "an 8 kHz MULTIPLE KT retrigger spends 80 samples in its nominal "
+          "10 ms GS-low release notch");
     check(reset.afterNotch < reset.before && reset.afterNotch > 0.0,
           "the reset notch releases the cap without dumping its state");
     check(reset.restartedAttack && reset.afterRestart > reset.afterNotch,
           "the final GS rise attacks from the retained post-notch voltage");
     check(ghostar::GhostarCircuitTestAccess::
-              xEdgeResetsUnderHeldKeyboardGate(),
-          "a selected X rise retriggers beneath an already-high KBD gate");
+              xEdgeResetSamplesUnderHeldKeyboardGate() == 40,
+          "an X rise beneath a held KBD gate uses the separate 5 ms lane");
+    check(ghostar::GhostarCircuitTestAccess::
+              multipleKeyResetSamplesWithKbdDeselected() == 80,
+          "raw MULTIPLE KT reaches the 10 ms lane with KBD gate deselected");
+    check(ghostar::GhostarCircuitTestAccess::
+              arpeggiatorResetSamples(false) == 80,
+          "each active arpeggiator AA step drives the 10 ms reset lane");
+    check(ghostar::GhostarCircuitTestAccess::
+              arpeggiatorResetSamples(true) == 80,
+          "a coincident X edge cannot shorten AA's 10 ms reset notch");
 
     constexpr double expectedFastPeak =
         1.0 - 100.0 / 1000.0 * (1.3 - 1.0);
@@ -2025,8 +2221,9 @@ void testEnvelopeRetriggerUsesThePhysicalResetNotch()
 }
 
 // MOD RATE's 100k linear P2 is loaded by R33=200k before the exponential
-// CEM3360 converter. The endpoint ratio remains nominal, but electrical half
-// travel is 4/9 of the converter span rather than 1/2.
+// CEM3360 converter. P1015 gives it 132 mV of travel; the original production
+// sheet specifies 3.0 mV/dB typical, hence 44 dB. Electrical half travel is
+// 4/9 of that source-derived span rather than 1/2.
 void testLfoRateIncludesItsLoadedPot()
 {
     const double slow =
@@ -2035,11 +2232,19 @@ void testLfoRateIncludesItsLoadedPot()
         ghostar::GhostarCircuitTestAccess::lfoHzForTravel(0.5f);
     const double fast =
         ghostar::GhostarCircuitTestAccess::lfoHzForTravel(1.0f);
-    const double expectedMiddle = 0.3 * std::pow(50.0 / 0.3, 4.0 / 9.0);
+    constexpr double controlTravelMillivolts = 132.0;
+    constexpr double typicalMillivoltsPerDb = 3.0;
+    constexpr double fastHz = 50.0;
+    const double spanDb =
+        controlTravelMillivolts / typicalMillivoltsPerDb;
+    const double expectedSlow = fastHz * std::pow(10.0, -spanDb / 20.0);
+    const double expectedMiddle = expectedSlow
+        * std::pow(fastHz / expectedSlow, 4.0 / 9.0);
 
-    check(std::abs(slow - 0.3) < 1.0e-12,
-          "MOD RATE retains its nominal sub-1 Hz endpoint");
-    check(std::abs(fast - 50.0) < 1.0e-12,
+    check(std::abs(slow - expectedSlow) < 1.0e-12,
+          "MOD RATE derives its slow endpoint from the CEM3360's 3 mV/dB "
+          "scale and P1015's 132 mV span");
+    check(std::abs(fast - fastHz) < 1.0e-12,
           "MOD RATE retains the manual's 50 Hz endpoint");
     check(std::abs(middle - expectedMiddle) < 1.0e-12,
           "MOD RATE includes P2's R33-loaded linear travel");
@@ -2383,10 +2588,56 @@ void testLowerBandPassIsParametricBoost()
     check(lowBoost > 0.6 * lowOut,
           "BANDPASS does not attenuate far below its peak");
 
-    // The exact RS7 output net for this named detent still needs a hardware
-    // continuity table. Do not pin a made-up peak gain to the dry+BP
-    // behavioral seam; the live Lower state and limiter have independent
-    // component-level tests above.
+    // The owner's manual defines this detent by the audible peak, even while
+    // the exact RS7 output net remains open. The behavioral seam must not
+    // collapse into OUT merely because the switch gain awaits continuity.
+    const double gentle = response(
+        ghostar::LowerFilterMode::BandPass, 0.15f, 69, 0.8f);
+    const double sharp = response(
+        ghostar::LowerFilterMode::BandPass, 0.55f, 69, 0.8f);
+    check(sharp > 1.2 * gentle,
+          "resonance raises the BANDPASS parametric peak");
+}
+
+// The owner's manual describes HIGHPASS and the following Upper low-pass as
+// two independently movable resonant edges. The exact RS7 throw remains open,
+// but its behavioral seam must reject the bass, pass the interval between the
+// two cutoffs, then let the Upper section close the top again.
+void testLowerHighPassMakesTheDocumentedDoublePeak()
+{
+    const auto response = [](ghostar::LowerFilterMode mode, int note) {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 256);
+        auto parameters = brightPanel();
+        parameters.oscAWaveform = ghostar::Waveform::Triangle;
+        parameters.lowerMode = mode;
+        parameters.resonance = 0.55f;
+        parameters.filterPathA = 0.8f;
+        parameters.lowerOnly = 0.663f;
+        parameters.cutoff = 0.55f;
+        engine.setParameters(parameters);
+        engine.noteOn(note, 1.0f);
+        const auto samples = renderMono(engine, 0.9, 48000.0, 60);
+        const double hz = 440.0 * std::exp2((note - 69) / 12.0);
+        return goertzelMagnitude(samples, hz, 48000.0);
+    };
+
+    const double lowOut = response(ghostar::LowerFilterMode::Out, 45);
+    const double middleOut = response(ghostar::LowerFilterMode::Out, 81);
+    const double lowHighPass =
+        response(ghostar::LowerFilterMode::HighPass, 45);
+    const double middleHighPass =
+        response(ghostar::LowerFilterMode::HighPass, 81);
+    const double highHighPass =
+        response(ghostar::LowerFilterMode::HighPass, 93);
+
+    check(lowHighPass < 0.25 * lowOut,
+          "HIGHPASS rejects content below the Lower cutoff");
+    check(middleHighPass > 0.7 * middleOut,
+          "HIGHPASS passes the interval between the two cutoffs");
+    check(middleHighPass > 1.25 * lowHighPass
+              && middleHighPass > 1.5 * highHighPass,
+          "Lower high-pass and Upper low-pass form the documented two edges");
 }
 
 // OVERDRIVE is a saturator: doubling its input must yield clearly less than
@@ -2407,15 +2658,20 @@ void testOverdriveCompresses()
         return meanAbs(renderMono(engine, 0.5, 48000.0, 30));
     };
 
-    const double cleanRatio =
-        level(ghostar::LowerFilterMode::BandPass, 0.8f)
-        / std::max(1.0e-12, level(ghostar::LowerFilterMode::BandPass, 0.2f));
-    const double drivenRatio =
-        level(ghostar::LowerFilterMode::Overdrive, 0.8f)
-        / std::max(1.0e-12, level(ghostar::LowerFilterMode::Overdrive, 0.2f));
+    const double clean = level(ghostar::LowerFilterMode::BandPass, 0.8f);
+    const double driven = level(ghostar::LowerFilterMode::Overdrive, 0.8f);
+    const double out = level(ghostar::LowerFilterMode::Out, 0.8f);
+    const double cleanRatio = clean
+        / std::max(1.0e-12,
+                   level(ghostar::LowerFilterMode::BandPass, 0.2f));
+    const double drivenRatio = driven
+        / std::max(1.0e-12,
+                   level(ghostar::LowerFilterMode::Overdrive, 0.2f));
     check(cleanRatio > 3.2, "the clean boost scales linearly with its input");
     check(drivenRatio < 0.8 * cleanRatio,
           "the overdrive stage compresses instead of scaling linearly");
+    check(driven > 0.1 * out,
+          "OVERDRIVE retains an audible level through C34 and IC14B");
 }
 
 // The envelope segments are RC charges on the 4.7 uF cap through the 2 MOhm
@@ -3164,6 +3420,7 @@ int main()
     testRingModulatorMatchesP1013();
     testKeyboardLaw();
     testKeyboardTrackingAmount();
+    testFilterCutoffsFollowTheLoadedP1013Pots();
     testFullGlideUsesTheResolvedRcEndpoint();
     testLoudnessVcaUsesItsControlOffset();
     testEnvelopeDiodeFloorAndReleaseKnee();
@@ -3176,6 +3433,7 @@ int main()
     testLowpassAttenuationIsMonotonic();
     testSlopeSwitch();
     testLowerBandPassIsParametricBoost();
+    testLowerHighPassMakesTheDocumentedDoublePeak();
     testOverdriveCompresses();
     testDecayIsTheLabelledTimeConstant();
     testAttackAimsPastItsPeak();

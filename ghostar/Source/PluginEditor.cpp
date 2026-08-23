@@ -522,9 +522,6 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
     nextProgram.setTooltip("Next program.");
     nextProgram.onClick = [this] { stepProgram(1); };
     canvas.addAndMakeVisible(nextProgram);
-    programName.setTooltip("The selected program. Click to browse the bank: "
-                           "the manual's Sound Charts, then Ghostar's own "
-                           "performance programs.");
     programName.onClick = [this] { showProgramMenu(); };
     canvas.addAndMakeVisible(programName);
     programBank.setFont(juce::FontOptions { 11.0f });
@@ -731,10 +728,22 @@ void GhostarAudioProcessorEditor::refreshProgramDisplay()
 {
     shownProgram = processor.getCurrentProgram();
     programName.setButtonText(processor.getProgramName(shownProgram));
+    programName.setTooltip(
+        juce::String(ghostar::factoryPresetDescription(shownProgram))
+        + " Click to browse the bank.");
     const bool isProgram =
         ghostar::factoryPresetBank(shownProgram)
         == ghostar::PresetBank::Programs;
-    programBank.setText(isProgram ? "GHOSTAR PROGRAM" : "SOUND CHART",
+    const bool isInit =
+        shownProgram == ghostar::factoryPresetIndexByName("Init");
+    const bool isPreparatoryPattern =
+        shownProgram
+        == ghostar::factoryPresetIndexByName("Preparatory Pattern");
+    programBank.setText(isInit
+                            ? "INIT"
+                            : isPreparatoryPattern
+                            ? "SOUND CHART - INTENTIONALLY SILENT"
+                            : isProgram ? "GHOSTAR PROGRAM" : "SOUND CHART",
                         juce::dontSendNotification);
 }
 
@@ -754,9 +763,13 @@ void GhostarAudioProcessorEditor::showProgramMenu()
     juce::PopupMenu charts;
     juce::PopupMenu programs;
     const int current = processor.getCurrentProgram();
+    const int init = ghostar::factoryPresetIndexByName("Init");
 
     for (int index = 0; index < processor.getNumPrograms(); ++index)
     {
+        if (index == init)
+            continue;
+
         // The description rides in the item text, so the browser says what
         // each program does rather than only what it is called.
         const juce::String text =
@@ -769,6 +782,11 @@ void GhostarAudioProcessorEditor::showProgramMenu()
         target.addItem(index + 1, text, true, index == current);
     }
 
+    menu.addSectionHeader("Default");
+    menu.addItem(init + 1,
+                 processor.getProgramName(init) + "   ·   "
+                     + juce::String(ghostar::factoryPresetDescription(init)),
+                 true, init == current);
     menu.addSectionHeader("Sound Charts: the manual's lessons");
     menu.addSubMenu("Sound Charts", charts);
     menu.addSectionHeader("Ghostar Programs: the performance bank");

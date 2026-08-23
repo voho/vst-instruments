@@ -277,6 +277,57 @@ void testStateRoundTrip()
            "a stored switch position did not survive the round trip");
 }
 
+// JUCE's Standalone holder persists the last panel as `filterState` and
+// restores it before playback or the editor starts. Ghostar instead powers
+// up at Init, but explicit Load State must still work with no audio device.
+void testStandaloneStartsAtInitButStillLoadsStateExplicitly()
+{
+    namespace ids = ghostar::parameters;
+    GhostarAudioProcessor saved;
+    saved.setCurrentProgram(3); // Fat Filter: cutoff 0.45
+    juce::MemoryBlock state;
+    saved.getStateInformation(state);
+
+    juce::AudioProcessor::setTypeOfNextNewPlugin(
+        juce::AudioProcessor::wrapperType_Standalone);
+    GhostarAudioProcessor standalone;
+    juce::AudioProcessor::setTypeOfNextNewPlugin(
+        juce::AudioProcessor::wrapperType_Undefined);
+
+    standalone.setStateInformation(state.getData(),
+                                   static_cast<int>(state.getSize()));
+    auto* cutoff = standalone.parameters.getRawParameterValue(ids::cutoff);
+    expect(standalone.getCurrentProgram() == 0
+               && cutoff != nullptr
+               && std::abs(cutoff->load() - 0.62f) < 0.002f,
+           "Standalone restored its previous panel instead of starting at Init");
+
+    // StandaloneFilterWindow builds the editor even if device initialisation
+    // failed. Its Options -> Load State action must therefore end the startup
+    // phase independently of prepareToPlay().
+    std::unique_ptr<juce::AudioProcessorEditor> editor(
+        standalone.createEditorAndMakeActive());
+    expect(editor != nullptr, "Standalone did not create its editor");
+    standalone.setStateInformation(state.getData(),
+                                   static_cast<int>(state.getSize()));
+    expect(standalone.getCurrentProgram() == 3
+               && cutoff != nullptr
+               && std::abs(cutoff->load() - 0.45f) < 0.002f,
+           "Standalone rejected an explicit state load without an audio device");
+    standalone.editorBeingDeleted(editor.get());
+    editor.reset();
+
+    standalone.setCurrentProgram(0);
+    standalone.prepareToPlay(sampleRate, blockSize);
+    standalone.setStateInformation(state.getData(),
+                                   static_cast<int>(state.getSize()));
+    expect(standalone.getCurrentProgram() == 3
+               && cutoff != nullptr
+               && std::abs(cutoff->load() - 0.45f) < 0.002f,
+           "Standalone rejected an explicit state load after starting");
+    standalone.releaseResources();
+}
+
 // Zero-crossing pitch estimate over rendered blocks, for checks that need
 // to hear *which* note sounded rather than just that something did.
 double renderedZeroCrossingHz(GhostarAudioProcessor& processor, int blocks)
@@ -454,6 +505,9 @@ void testFactoryProgramsAreTheSoundCharts()
            "the bank does not open with the default voice");
     expect(processor.getProgramName(1) == "Preparatory Pattern",
            "the charts do not start with the Preparatory Pattern");
+    expect(juce::String(ghostar::factoryPresetDescription(1))
+               .startsWith("Intentionally silent"),
+           "the Preparatory Pattern does not warn that it is silent");
     expect(processor.getProgramName(3) == "Fat Filter",
            "program 3 is not the Fat Filter chart");
     expect(processor.getProgramName(12) == "Spirit Bass",
@@ -489,7 +543,16 @@ void testFactoryProgramsAreTheSoundCharts()
     auto* slope = processor.parameters.getRawParameterValue(ids::slope);
     expect(slope != nullptr && std::lround(slope->load()) == 1,
            "Spirit Bass did not select the 24 dB slope");
+
+    // Ghostar Programs can store a musically useful wheel stance, unlike the
+    // historical charts whose drawings always begin with both wheels back.
+    processor.setCurrentProgram(13); // Vowel Motion
+    auto* yWheel = processor.parameters.getRawParameterValue(ids::yWheel);
+    expect(yWheel != nullptr && std::abs(yWheel->load() - 0.45f) < 0.002f,
+           "Vowel Motion did not load its performance-ready Y-wheel stance");
     processor.setCurrentProgram(3);
+    expect(yWheel != nullptr && yWheel->load() < 0.002f,
+           "returning to a Sound Chart did not pull the Y wheel back");
 
     // The selected program's name must survive a state round trip; the
     // values themselves already travel as parameters.
@@ -665,6 +728,7 @@ int main()
     testMidiProducesAudio();
     testAllNotesOffReleasesEveryKey();
     testStateRoundTrip();
+    testStandaloneStartsAtInitButStillLoadsStateExplicitly();
     testFactoryProgramsAreTheSoundCharts();
     testAllSoundOffKeepsTheBend();
     testMonoLayoutKeepsTheShaperPath();

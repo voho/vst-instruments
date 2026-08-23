@@ -26,10 +26,12 @@ Notable customer-facing changes to Ghostar are recorded here.
   its bottom-to-top scan at the lowest key; a short between-clock release can
   no longer inherit the preceding phrase's step.
 - Performance layer: last-note keying with held-note fallback that never
-  retriggers, SINGLE/MULTIPLE triggering behind OR'ed gate sources
-  (keyboard, LFO auto-repeat, the Shaper's own gate), including the shared
-  nominal ~5 ms physical reset/release notch and independent X/Y edge
-  retriggers beneath an already-high gate, AUTO glide, VCA
+  retriggers. SINGLE attacks only on a genuine selected-bus rise, while
+  MULTIPLE's raw new-key KT is tapped before KBD gate selection. Independent
+  X/Y edges use the nominal 5 ms physical reset/release lane; raw MULTIPLE
+  keyboard KT and arpeggiator AA use the separate 10 ms lane, even with KBD
+  deselected.
+  Also included: retriggers beneath an already-high gate, AUTO glide, VCA
   bypass droning, a spring-loaded ±8-semitone bend wheel and assignable
   X/Y performance wheels.
 - Every modelled panel control is a host-automatable parameter with the
@@ -38,12 +40,15 @@ Notable customer-facing changes to Ghostar are recorded here.
   CC1/CC2 ride the X and Y wheels, CC120 stops all sound while keeping
   controller positions, and CC123 releases held keys through the
   envelopes.
-- Factory programs: the modelled instrument's manual teaches eleven Sound
-  Charts instead of shipping presets, and those charts are Ghostar's program
-  bank — from the silent Preparatory Pattern the lessons all start from,
-  through Fat Filter, Sync and Sample & Hold, to the Inverted Guitar —
-  behind an Init program that is the default voice itself. The selected
+- Factory programs begin with Init, followed by the modelled instrument's
+  eleven manual Sound Charts (programs 2–12, Preparatory Pattern through
+  Inverted Guitar) and seventeen Ghostar Programs (13–29). The selected
   program survives session save and restore.
+- Standalone now always powers up at Init instead of letting JUCE's automatic
+  last-state restore put an edited panel behind the Init name; explicit state
+  loads after startup and plug-in host restores still work. The original
+  Preparatory Pattern remains exactly silent, but the browser and selected
+  program header now identify that documented behaviour deliberately.
 - Travel smoothing: every continuous panel control and both performance
   wheels glide to new values over ~25 ms, so host automation at any block
   size and 7-bit MIDI CCs never step the audio; switches stay immediate,
@@ -70,13 +75,23 @@ Notable customer-facing changes to Ghostar are recorded here.
     LOW and that fixed section now keep their anchored Q=0.5 (`k=2`) exactly;
     both CEM inputs contribute their Q-dependent gains. One coupled solve now
     carries SW4/C40's 22:1 charge transfer, its selected 23 nF timing node,
-    R194's 12 dB state bleed and IC14B's exact 101/201 slope-gain change.
+    R194's 12 dB state bleed and IC14B's absolute gains of 201/101. Keeping
+    those gains at the physical output restores the C34 OVERDRIVE path's
+    missing downstream level; the other unresolved RS7 modes are referred
+    into the physical state domain without changing their standing level.
   - **Resonance** follows the filter chip's own exponential Q scale through
     the panel's actual pot network, anchored by the manual's "LOW fixes
     Q = 0.5". Resonance is now gentle through the middle of the travel and
     steep at the top — Q at half travel is 1.5 where the old law gave 5.7 —
     and the two filters have genuinely different curves, as their different
     bias networks require.
+  - **Filter cutoff controls** now solve the loading of both linear pots and
+    IC15 summers shown on P1013. MASTER has the derived 11.76495-octave total
+    span about its still-voiced trim placement. LOWER ONLY is an asymmetric
+    −7.10055/+1.56630-octave Dynamic law around the marked panel-8
+    coincidence; FORMANT's alternate node load widens it 1.389% and retains
+    the original ±0.08170-octave MASTER-dependent coincidence drift. The
+    former linear −5/+1.25-octave shortcut is removed.
   - **Envelope times** read the panel's 5 ms–10 s as the RC time constant it
     is, so long decays and releases last about 2.8 times longer than before;
     the nominal attack aim follows the bounded timer-output/diode voltage,
@@ -84,9 +99,11 @@ Notable customer-facing changes to Ghostar are recorded here.
     the traced D15-biased floor, nominally aligned with the Loudness VCA's
     0.5 V shutoff, while D11/D14 produce the original nonlinear release knee
     into their common GS line. R23/R24's 100 Ω is present in every segment,
-    including the fast-Attack threshold undershoot. Accepted MULTIPLE, X and
-    Y/EXT edges pull GS low for a nominal ~5 ms, release both caps, then
-    attack from their retained voltages; overlapping edges extend the notch.
+    including the fast-Attack threshold undershoot. X and Y/EXT edges pull
+    GS low for their nominal 5 ms; raw MULTIPLE KT and every accepted
+    arpeggiator AA step use the separately drawn 10 ms node. Either releases
+    both caps before attacking from their retained voltages; overlapping
+    edges extend the notch and a 5 ms event cannot shorten a 10 ms one.
     Maximum audible release is 31.3 s rather than
     the former pure-RC 25.5 s; the unlisted diode type and real GS coupling
     remain explicit hardware-calibration seams.
@@ -109,8 +126,9 @@ Notable customer-facing changes to Ghostar are recorded here.
     whole active transfer remains explicit rather than guessed.
   - **MOD RATE travel** includes the original 100 kΩ linear pot's loading
     through its 200 kΩ control arm. Half knob travel reaches `4/9` of the
-    exponential control span, preserving the original's slower-than-generic
-    midpoint; only the undocumented slow endpoint remains voiced.
+    exponential control span. P1015's 132 mV swing and the original CEM3360
+    production sheet's 3.0 mV/dB typical scale close the nominal
+    0.3154787–50 Hz range and 2.9974213 Hz midpoint.
   - **X/Y modulation loading** now follows the two genuinely different wheel
     circuits and every selected destination load. Current-driven X bites
     early (86.75% of X→A depth at half assumed-linear resistance travel),
@@ -147,7 +165,9 @@ Notable customer-facing changes to Ghostar are recorded here.
     A3+B7+C10 R187/R167/C34/R173 network. That contact combination remains an
     explicit functional hypothesis: standard same-index phasing selects C11,
     not C10, so all RS7 assignments and non-OVERDRIVE C34 histories still
-    require installed-switch continuity.
+    require installed-switch continuity. Until then, explicit voiced bridges
+    preserve the manual's audible BANDPASS resonance peak and HIGHPASS
+    two-edge response; regression tests stop either mode collapsing into OUT.
   - **CEM3340 pitch-control memory** now includes both documented
     `1.82 kΩ || 1 nF` multiplier-output returns (A R82/C72, B R118/C77).
     Each oscillator's whole keyboard/tune/bend/interval/X/Y pitch sum crosses
@@ -189,8 +209,13 @@ Notable customer-facing changes to Ghostar are recorded here.
   two renders at all. What the audit now gives is a sound upper bound on how
   far the shipping render differs from a 16x ground truth. The DSP work is
   unaffected; the certification is what fell.
-- Seventeen **Ghostar Programs** join the eleven Sound Charts: playable
-  voicings, each foregrounding one mechanism, level-matched to each other.
+- Seventeen rebuilt **Ghostar Programs** join the eleven Sound Charts. The
+  bank now ranges from diode bass, hard sync and genuine audio-rate crossmod
+  through independent PWM, fixed/dynamic dual-filter formants, ring
+  percussion, split-path ghosts, WIDE/BASS drones, resonant noise and all
+  three arpeggiator behaviours. Each has a gesture-aware audibility,
+  clipping, wheel-action and near-duplicate check rather than only a
+  nonzero-sample test.
 - The editor is rebuilt around the modelled instrument's own panel: MOD X
   and SHAPER Y as full-height columns on the right, WHEEL DESTINATIONS
   under MASTER, the two filters as one block and the two envelopes as
@@ -209,9 +234,9 @@ Notable customer-facing changes to Ghostar are recorded here.
   The keys and the GLIDE/lever sub-panel stay on screen on a 1366x768 or
   1280x800 laptop and at 150 % desktop scaling, where a fixed 1460x780
   window had been taller than the screen.
-- Programs whose motion runs through MOD X or SHAPER Y now say which wheel
-  they are waiting on. Selecting a program pulls both wheels fully back, as
-  the charts instruct, so those programs make none of their advertised
-  motion until a hand moves; eight of them described the motion as though it
-  happened by itself. A test now derives the requirement from each
-  program's own routing rather than leaving it to be remembered.
+- Programs whose motion runs through MOD X or SHAPER Y say which wheel is in
+  play and store a useful initial wheel stance, so their defining movement
+  is audible on selection. The historical Sound Charts still restore both
+  wheels fully back exactly as drawn; CC1/CC2 and the on-screen wheels take
+  over normally. Tests derive the requirement from each program's routing
+  and protect the historical bank's zero-wheel state.

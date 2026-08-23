@@ -112,12 +112,10 @@ public:
         return ghostar::GhostarEngine::longestReleaseTailSeconds();
     }
 
-    // Factory programs: the modelled instrument's manual teaches eleven
-    // Sound Charts instead of shipping presets, and those charts are the
-    // bank, behind an Init program that is the default voice a fresh
-    // instance already carries. The table lives in the JUCE-free core so
-    // the DSP suite renders every one; this layer only writes those engine
-    // parameters into the host parameters that publish them.
+    // Factory programs: Init, the manual's eleven Sound Charts, and seventeen
+    // Ghostar performance programs. The table lives in the JUCE-free core so
+    // the DSP suite renders every entry; this layer only writes those engine
+    // values into the host parameters that publish them.
     int getNumPrograms() override { return ghostar::factoryPresetCount(); }
     int getCurrentProgram() override { return currentProgram; }
     void setCurrentProgram(int index) override;
@@ -190,6 +188,11 @@ private:
     std::atomic<bool> gateOpenForDisplay { false };
     std::atomic<float> uiPitchBend { 0.0f };
     float lastAppliedUiBend { 0.0f };  // audio thread only
+    // JUCE's Standalone holder silently restores filterState before either
+    // playback or the editor starts. That is the only interval in which a
+    // state load is an automatic previous-session replay rather than a user
+    // action. Atomic because prepareToPlay may arrive on the device thread.
+    std::atomic<bool> standaloneStarting { true };
     int currentProgram = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GhostarAudioProcessor)
