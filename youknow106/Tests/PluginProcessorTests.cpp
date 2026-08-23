@@ -128,10 +128,15 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::chorusNoise, 1.0f,   1.0e-5f },
     { parameters::polyphony,   6.0f,   1.0e-5f },
     { parameters::legacyHq,    1.0f,   1.0e-5f },
-    { parameters::quality,     1.0f,   1.0e-5f },
+    { parameters::quality,
+      static_cast<float> (
+          YouKnow106AudioProcessor::choiceForOversamplingFactor (1)),
+      1.0e-5f },
     { parameters::vcfTanhMode, 0.0f,   1.0e-5f },
     { parameters::vcfFastEarlyMode, 0.0f, 1.0e-5f },
-    { parameters::vcfSolverMode, 0.0f, 1.0e-5f },
+    { parameters::vcfSolverMode,
+      static_cast<float> (YouKnow106AudioProcessor::vcfSolverDefaultChoice),
+      1.0e-5f },
 });
 
 float parameterValue (const YouKnow106AudioProcessor& processor, const char* id)
@@ -546,6 +551,43 @@ void testParameterContract()
     {
         expect (vcfSolver->getVersionHint() == 6,
                 "VCF Solver was not appended after VCF Fast Early");
+        // The one control on the deck whose default is not the conservative
+        // end of its own ladder. It was put there deliberately, by ear, so
+        // pin it: drifting back to Merson would silently double the filter's
+        // CPU, and drifting further is not possible without a new rung.
+        expect (YouKnow106AudioProcessor::vcfSolverDefaultChoice
+                    == YouKnow106AudioProcessor::vcfSolverChoiceCount - 1,
+                "the shipped VCF Solver default is no longer the cheapest rung");
+        expect (std::strcmp (YouKnow106AudioProcessor::vcfSolverChoiceName (
+                                 YouKnow106AudioProcessor::
+                                     vcfSolverDefaultChoice),
+                             "Normal") == 0,
+                "the shipped VCF Solver default is not the Normal rung");
+        // The player's names carry no method, and the tooltip carries the
+        // method. Neither half may quietly become the other.
+        for (int rung = 0;
+             rung < YouKnow106AudioProcessor::vcfSolverChoiceCount; ++rung)
+        {
+            const juce::String name (
+                YouKnow106AudioProcessor::vcfSolverChoiceName (rung));
+            const juce::String technique (
+                YouKnow106AudioProcessor::vcfSolverChoiceTechnique (rung));
+            expect (! name.containsIgnoreCase ("RK4")
+                        && ! name.containsIgnoreCase ("Merson")
+                        && ! name.contains ("x1") && ! name.contains ("x2"),
+                    "a VCF Solver menu name leaks the numerical method");
+            expect (technique.containsIgnoreCase ("evaluations")
+                        && (technique.containsIgnoreCase ("RK4")
+                            || technique.containsIgnoreCase ("Merson")),
+                    "a VCF Solver technique string does not name its tableau");
+        }
+        // The engine's own default stays the reference kernel, whatever the
+        // plug-in ships. Every frozen fingerprint and work-counter contract
+        // depends on that separation.
+        expect (youknow106::EngineParameters {}.vcfSolverMode
+                    == youknow106::VcfSolverMode::MersonHalfSteps,
+                "the engine's own solver default is no longer the reference "
+                "Merson kernel");
         expect (! auParameters.empty() && auParameters.back() == vcfSolver,
                 "VCF Solver is not the final Audio Unit parameter");
         expect (! vcfSolver->isAutomatable(),
@@ -553,9 +595,9 @@ void testParameterContract()
         const auto* choice = dynamic_cast<const juce::AudioParameterChoice*> (
             vcfSolver);
         expect (choice != nullptr && choice->choices.size() == 3
-                    && choice->choices[0] == "Merson x2"
-                    && choice->choices[1] == "RK4 x2"
-                    && choice->choices[2] == "RK4 x1",
+                    && choice->choices[0] == "Max"
+                    && choice->choices[1] == "High"
+                    && choice->choices[2] == "Normal",
                 "the VCF Solver three-choice ordinal contract changed");
     }
 }
@@ -5691,6 +5733,25 @@ void checkProcessingSelectorLayout (juce::AudioProcessorEditor& editor,
         expect (labelTextFitsAtItsDeclaredSize (*caption),
                 context + selector.boxName
                     + " caption relies on ellipsis or compressed lettering");
+
+        // The selected entry has to be legible in the closed box, not just in
+        // the dropped list. JUCE lays a ComboBox's text out in
+        // `width + 3 - height` -- the arrow steals a square -- so measure the
+        // widest entry against exactly that, with the look and feel's own
+        // font. A too-narrow box shows "Sta..." and says nothing.
+        const auto& lookAndFeel = box->getLookAndFeel();
+        const auto boxFont = const_cast<juce::LookAndFeel&> (lookAndFeel)
+                                 .getComboBoxFont (*box);
+        const float textWidth = static_cast<float> (
+            box->getWidth() + 3 - box->getHeight());
+        for (int item = 0; item < box->getNumItems(); ++item)
+        {
+            const auto entry = box->getItemText (item);
+            expect (realTextWidth (boxFont, entry) <= textWidth,
+                    context + selector.boxName + " entry \"" 
+                        + entry.toStdString()
+                        + "\" does not fit its closed selector");
+        }
     }
 }
 

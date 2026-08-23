@@ -5,8 +5,9 @@ to every earlier release. `RK4 x2` and `RK4 x1` are the two cheaper rungs behind
 the persisted `VCF Solver` choice. Measured error against an independent
 96-substep reference solve, the false-limit-cycle onset that bounds each rung,
 the self-oscillation service anchor and paired whole-engine CPU are recorded
-below. Cross-platform ranking and the player's hearing judgment remain pending.
-No project result is inferred from library papers.
+below, as is the blind A/B set's verdict: the player reported no audible
+difference between any rung. Cross-platform ranking remains pending. No project
+result is inferred from library papers.
 
 This note is the sibling of
 [`vcf-tanh-optimization.md`](vcf-tanh-optimization.md), which owns the
@@ -262,6 +263,12 @@ rules it is a decision artefact, so it is not committed: it was rendered to a
 working directory and sent to the player, with its key written at the same time
 and unread by design.
 
+**Verdict, 2026-08-23: the user reported no audible difference between any of
+the four letters, on any of the three fixtures.** Decided by ear; no letter was
+preferred and none was rejected. That is a listener's report on this material,
+not a measurement of transparency and not a claim about any mechanism — the
+measured figures below are the separate, objective half.
+
 Its whole-file nulls against the shipping engine are the objective half of that
 test, and they bound what the test can show:
 
@@ -293,6 +300,38 @@ it.
 | Single-tier escalation (RK4 only) | `Rk4Single` escalating to `Rk4Half` and stopping there. | Rejected by measurement: it left `Rk4Half` running past classic RK4's stability radius at the product grid cap and produced the false limit cycle tabulated above. The Merson fallback tier exists because of this result. |
 
 ## Configuration
+
+The menu names are the player's, not the method's — `Max`, `High`, `Normal`, in
+the ladder's own ordinal order, so `Max` is `Merson x2` and `Normal` is
+`RK4 x1`. The tableau behind each is in the control's help text rather than its
+label. `vcfSolverChoiceName` and `vcfSolverChoiceTechnique` keep that split in
+one place, and a test asserts neither half becomes the other: no menu name may
+contain `RK4` or `Merson`, and every technique string must name its tableau and
+its evaluation count. The names are also short because they have to be — JUCE
+lays a ComboBox's text out in `width + 3 - height`, the Model zone's padding
+caps the selector near 92 px, and at the minimum editor size that leaves room
+for about six characters. A separate test measures every entry against exactly
+that width at all three editor sizes, because a too-narrow box silently draws
+`Sta...` and says nothing.
+
+**The shipped default is `Normal`, the cheapest rung.** That is the one place
+this ladder is not conservative, so the reasoning is recorded rather than
+implied: it was decided by ear on 2026-08-23, on the blind set above, beside
+the measured nulls and the unmoved self-oscillation anchor. The engine's own
+`EngineParameters` default stays `Merson x2`, so the JUCE-free suites and every
+frozen fingerprint and work-counter contract keep testing the reference kernel;
+only the rung a plug-in instance *starts* on changed. The cost is stated
+plainly: a session saved before this parameter existed carries no entry for it
+and therefore renders through `Normal` rather than reproducing its old output
+bit for bit.
+
+`QUALITY`'s own default moved to 1x in the same pass, on request. That one is
+not covered by the listening test above, and the project's own
+numerical-quality audits argue against it: the common-host matrices admit the
+DCO at every tested factor but record the BBD and VCF domains as passing at 4x
+and rejecting their lower common-host factors, and HQ-off wet-line noise reads
+about +0.30...+0.38 dB high at 44.1/48 kHz. It is recorded here as a product
+decision taken with that on the table, not as a numerical result.
 
 `QUALITY` and `VCF SOLVER` are independent. QUALITY moves the internal rate,
 which every domain shares and which carries latency and an idle-window

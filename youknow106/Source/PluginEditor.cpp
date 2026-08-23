@@ -2090,12 +2090,15 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     // The internal-rate ladder. The tooltip names the cost as well as the
     // benefit, because this is the one control a player reaches for when a
     // session runs out of CPU rather than when it needs a different sound.
+    // The help strip has a fixed line budget, so both processing tooltips are
+    // written to fit it rather than to say everything; the full reasoning
+    // lives in Docs/USER_GUIDE.md and Docs/vcf-solver-optimization.md.
     const juce::String qualityTooltip =
-        "Sets how far above the host's sample rate the oscillators, nonlinear "
-        "filter, amplifiers and chorus run. 4x aliases least and costs the "
-        "most; 1x is the cheapest. A change waits until the instrument is "
-        "idle, and at high host rates a lower factor is used automatically. "
-        "This has no hardware counterpart and is not part of a patch.";
+        "Sets how far above the host's sample rate the whole engine runs. "
+        "1x is the shipped setting and the cheapest; 2x and 4x alias less and "
+        "cost proportionally more. It changes the internal rate, so a change "
+        "waits until the instrument is idle, and at high host rates a lower "
+        "factor is used automatically. Not part of a patch.";
     for (int choice = 0; choice < YouKnow106AudioProcessor::qualityChoiceCount;
          ++choice)
         qualityBox.addItem (
@@ -2132,14 +2135,16 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     // QUALITY it does not change the internal rate, so it costs no latency and
     // needs no idle window to take effect.
     const juce::String vcfSolverTooltip =
-        "Sets how much arithmetic the nonlinear filter's solver spends on each "
-        "internal sample. Merson x2 is the reference and is what every earlier "
-        "release ran. RK4 x2 is the same fourth-order accuracy for a fifth "
-        "less work; RK4 x1 is the cheapest, taking one step per sample wherever "
-        "one step is numerically admissible and two where it is not. All three "
-        "keep the same filter, the same resonance calibration and the same "
-        "self-oscillation. Takes effect immediately, has no hardware "
-        "counterpart and is not part of a patch.";
+        "Sets how much arithmetic the filter's solver spends per internal "
+        "sample. Normal is shipped and about halves filter CPU; High and Max "
+        "cost more without sounding different. Normal is "
+        + juce::String (
+            YouKnow106AudioProcessor::vcfSolverChoiceTechnique (2))
+        + "; High " + juce::String (
+            YouKnow106AudioProcessor::vcfSolverChoiceTechnique (1))
+        + "; Max " + juce::String (
+            YouKnow106AudioProcessor::vcfSolverChoiceTechnique (0))
+        + ", as every earlier release ran. Not part of a patch.";
     for (int choice = 0;
          choice < YouKnow106AudioProcessor::vcfSolverChoiceCount; ++choice)
         vcfSolverBox.addItem (
@@ -3341,9 +3346,12 @@ void YouKnow106AudioProcessorEditor::resized()
     // ends level with the Unit Character knob beside it, so neither the
     // heading, the knob, nor the deck's lower edge is crowded, and the VOICE
     // group's baseline does not move.
-    constexpr float selectorX = 110.0f;
-    constexpr float selectorWidth = 86.0f;
-    constexpr float selectorBoxInset = 4.0f;
+    // Wide enough for the longest menu entry. JUCE lays a ComboBox's text out
+    // in `width + 3 - height`, so the arrow steals a square: the widest legend
+    // here is VCF SOLVER's "Standard", and at 78 px it drew as "Sta...".
+    constexpr float selectorX = 104.0f;
+    constexpr float selectorWidth = 90.0f;
+    constexpr float selectorBoxInset = 0.0f;
     constexpr float selectorLabelHeight = 15.0f;
     constexpr float selectorBoxHeight = 23.0f;
     constexpr float qualityLabelTop = panel::extensionDeckTop + 24.0f;

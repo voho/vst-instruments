@@ -621,11 +621,20 @@ and blind-audition protocol are recorded in
 The persisted, non-automatable host parameter `VCF Solver` selects which
 Runge-Kutta tableau advances the four OTA capacitor states. It is independent
 of `VCF Tanh` and of `QUALITY`: it changes neither the nonlinearity nor the
-internal rate, so it adds no latency and needs no idle window. `Merson x2` is
-ordinal zero and is bit-identical to every earlier release; `RK4 x2` is the
-same fourth order for a fifth less work, and `RK4 x1` is the cheapest rung.
-Like the two properties above it is outside patches, Program Change, SysEx and
-randomization, and old states restore `Merson x2`.
+internal rate, so it adds no latency and needs no idle window. Its menu names
+are the player's — `Max` at ordinal zero, then `High`, then the shipped
+`Normal` — and the tableau behind each is in the control's own help text: `Max`
+is the two half-interval five-stage Merson steps every earlier release ran,
+`High` two half-interval classic RK4 steps, `Normal` one full-interval classic
+RK4 step. `EngineParameters` still defaults to the Merson kernel, so the
+JUCE-free suites and every frozen fingerprint and work-counter contract keep
+testing the reference; only the rung a plug-in instance *starts* on is
+`Normal`. That default was decided by ear (2026-08-23) beside measured
+whole-file nulls of `-88...-110 dBc`, and its cost is that a session saved
+before this parameter existed carries no entry for it and therefore renders
+through `Normal` rather than reproducing its old output bit for bit. Like the
+two properties above it is outside patches, Program Change, SysEx and
+randomization.
 
 The separately persisted, non-automatable `VCF Fast Early` property applies
 only when `VCF Tanh=Fast`. Its default `Hermite` setting preserves every
