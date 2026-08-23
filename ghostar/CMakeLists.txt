@@ -42,10 +42,12 @@ include(CTest)
 
 set(GHOSTAR_DSP_SOURCES
     Source/DSP/GhostarEngine.cpp
-    Source/DSP/GhostarPresets.cpp)
+    Source/DSP/GhostarPresets.cpp
+    Source/DSP/SpiritNoise.cpp)
 set(GHOSTAR_DSP_HEADERS
     Source/DSP/GhostarEngine.h
-    Source/DSP/GhostarPresets.h)
+    Source/DSP/GhostarPresets.h
+    Source/DSP/SpiritNoise.h)
 
 add_library(GhostarDSP STATIC
     ${GHOSTAR_DSP_SOURCES}
@@ -220,8 +222,10 @@ if(BUILD_TESTING)
         add_test(NAME Ghostar.RenderDemosRerender
                  COMMAND GhostarRenderDemos
                          "${CMAKE_CURRENT_BINARY_DIR}/demo-full")
-        set_tests_properties(Ghostar.RenderDemosFullRender PROPERTIES TIMEOUT 60)
-        set_tests_properties(Ghostar.RenderDemosRerender PROPERTIES TIMEOUT 60
+        # ASan/UBSan makes the complete deterministic corpus roughly six
+        # times slower than Release; leave headroom for instrumented CI.
+        set_tests_properties(Ghostar.RenderDemosFullRender PROPERTIES TIMEOUT 180)
+        set_tests_properties(Ghostar.RenderDemosRerender PROPERTIES TIMEOUT 180
                              DEPENDS Ghostar.RenderDemosFullRender)
 
         # Keeps the zipper-audit strokes valid (finite, non-silent) on CI;

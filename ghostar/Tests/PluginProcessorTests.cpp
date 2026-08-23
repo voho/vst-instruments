@@ -329,8 +329,6 @@ void testPanicDropsQueuedUiNotes()
     processor.releaseResources();
 }
 
-// The longest release decays at 3/10 per second down to the engine's 1e-5
-// idle floor; the advertised tail must cover that, or hosts truncate it.
 // The advertised tail must cover the slowest release the panel can dial.
 // This check previously carried the release law's arithmetic as a literal
 // (log(1e5)/0.3, the old three-time-constants read), so when the law was
@@ -345,6 +343,13 @@ void testAdvertisedLatencyMatchesTheMeasuredDelay()
     GhostarAudioProcessor processor;
     processor.prepareToPlay(sampleRate, blockSize);
 
+    // This test isolates signal-chain latency from MULTIPLE's separately
+    // pinned ~5 ms hardware reset notch. SINGLE's first gate attacks without
+    // that KT pulse, exactly as P1015 does.
+    if (auto* trigger = processor.parameters.getParameter(
+            ghostar::parameters::trigger))
+        trigger->setValueNotifyingHost(0.0f);
+
     const double derived = ghostar::GhostarEngine::outputLatencySamples();
     expect(processor.getLatencySamples() == juce::roundToInt(derived),
            "the plug-in does not publish the latency the engine derives");
@@ -352,9 +357,10 @@ void testAdvertisedLatencyMatchesTheMeasuredDelay()
            "the plug-in still claims to be latency-free");
 
     // Measured, not assumed: a note struck at a known sample cannot produce
-    // its envelope onset before the chain's delay has elapsed. Everything
-    // before that is the linear-phase filter's pre-ring, orders of magnitude
-    // below the onset.
+    // its envelope onset before the chain's delay plus the Loudness VCA's
+    // real 0.5 V control dead zone. At minimum attack, independently derive
+    // how many control updates the 5.17 ms minimum RC needs to cross 1/15
+    // of peak (1 kOhm slider residual plus the drawn 100 Ohm cap arm).
     constexpr int strikeAt = 64;
     juce::MidiBuffer midi;
     midi.addEvent(
@@ -375,10 +381,19 @@ void testAdvertisedLatencyMatchesTheMeasuredDelay()
     expect(onset >= 0, "the struck note never sounded");
     if (onset >= 0)
     {
-        // Within a sample of the derived figure, either side: the published
-        // integer is a rounding of a half-sample delay.
-        expect(std::abs(static_cast<double>(onset) - derived) <= 1.5,
-               "the measured onset delay does not match the derived latency");
+        constexpr double minimumAttackTau = 5.17e-3;
+        constexpr double attackAim = 1.3;
+        constexpr double loudnessZero = 1.0 / 15.0;
+        const double attackCoefficient =
+            1.0 - std::exp(-1.0 / (sampleRate * minimumAttackTau));
+        const double openingUpdates = std::ceil(
+            std::log(1.0 - loudnessZero / attackAim)
+            / std::log(1.0 - attackCoefficient));
+        const double expectedOnset = derived + openingUpdates;
+        // Within a sample either side: the published integer latency rounds
+        // a half-sample delay and the envelope advances on discrete samples.
+        expect(std::abs(static_cast<double>(onset) - expectedOnset) <= 1.5,
+               "the measured onset misses latency plus the VCA dead zone");
     }
     processor.releaseResources();
 }

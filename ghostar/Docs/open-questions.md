@@ -1,18 +1,23 @@
 # Ghostar open questions
 
-Standing, research-ready tasks. Each entry names the evidence gap, what the
-engine currently does, and what output would close it. Conventions follow the
-repository's A–Z rules: a listening test may choose between defensible
-candidates; it may not fit a number a measurement owns.
+Status register for the circuit model. Open entries name the evidence gap,
+what the engine currently does, and what output would close it; closed entries
+retain the derivation and its evidence. Conventions follow the repository's
+A–Z rules: a listening test may choose between defensible candidates; it may
+not fit a number a measurement owns.
 
 ## OQ-01 — Pitch-bend wheel musical range
 
-**Gap.** The bend network is anchored (100 kΩ pot across ±12 V, 680 kΩ into
-the 100 kΩ-feedback CV summer; TUNE = 1 MΩ8 at ± a minor third), giving
-≈ ±8 semitones at full *electrical* travel — but no source documents the
-wheel's mechanical travel fraction of the pot. The 2023 reissue's MIDI kit
-uses ±2 st, which is the converter's choice, not the wheel's.
-**Engine.** Full wheel = ±8 st.
+**Gap (electrical authority derived, mechanical endpoint open).** The bend
+pot is 100 kΩ across ±12 V and reaches the CV summer through 680 kΩ. TUNE's
+100 kΩ pot spans 0–12 V and reaches the same node through 1.8 MΩ; its ±6 V
+about centre is anchored at ± a minor third. Their current ratio is therefore
+`(12/680k)/(6/1.8M)=5.2941`, giving ±15.88 semitones at full *electrical* bend
+travel. No source documents how much of that pot the spring-loaded wheel can
+actually turn. The 2023 reissue's MIDI kit uses ±2 st, which is the
+converter's choice, not evidence for the original wheel.
+**Engine.** Full wheel = ±8 st, retained explicitly as a mechanical-travel
+voicing rather than mislabelled as the circuit's electrical endpoint.
 **Closes with.** A hardware measurement of wheel-end pitch offset, or an A–Z
 test between defensible spans if none appears.
 
@@ -50,135 +55,254 @@ constant.
 duties depend on ~100k/150k/250–270k divider chains plus a 100 k PW trimmer
 whose factory setting is undocumented. Cherry Audio ships 8 % for A's
 narrowest — possibly a measured unit, possibly a misprint.
-**Engine.** The printed percentages, exactly.
+**Closed sub-part.** CES specifies the CEM3340 PWM input over the complete
+0–100 % interval. The panel's 3 % is a selector detent, not a silicon limit.
+Ghostar uses the printed unmodulated percentages, but X/Y/audio PWM can now
+reach true constant-low and constant-high endpoint plateaus; the coincident
+BLEP events cancel there instead of being clipped to an invented 3–97 %.
 **Closes with.** Scope captures from a calibrated unit.
 
 ## OQ-04 — 556A envelope segment curvature
 
-**Gap (largely closed).** SM DWG 3 (P-1015), read at 600 dpi, gives the
-whole circuit: one 556 half per envelope in the classic monostable ADSR -
-OUTPUT pin through a series 1N4149 into the 2 MOhm log attack slider into
-the shared 4.7 uF cap, threshold sensing the cap through 100 Ohm, the
-discharge pin used purely as a phase-state logic output driving a 4066
-that switches the decay slider onto a buffered linear sustain voltage, and
-release through its own 2 MOhm slider and series diode. The timer runs on
-a BC172 emitter-follower rail of about 11.35 V with its control-voltage
-pin externally set and service-labelled +7.5 V, which is the envelope
-peak and the top of both sustain sliders. "556A" is the Signetics NE556 in
-the 14-pin "A package", not a different part.
+**Gap (topology closed; diode/unit calibration open).** SM DWG 3 (P-1015),
+read losslessly, gives the whole circuit. Each 556 half has its own 4.7 uF
+timing cap (C10/C11), OUTPUT-to-cap attack path, 2 MOhm log A/D/R sliders,
+and R23/R24=100 Ohm between each common A/D/R + threshold node and its
+actual cap/buffer node. Every attack, decay and release current crosses that
+resistor; `V_threshold=V_cap+100*C*dV_cap/dt`. The discharge pins do not touch either cap;
+they drive the 40106/4066 phase logic. The 4066 connects each decay slider to
+its high-impedance buffered sustain wiper. The timer runs on a BC172
+emitter-follower rail around 11.35 V; the shared control-voltage/sustain-top
+node is factory-labelled +7.5 V. "556A" is the Signetics NE556 in its
+14-pin A package, not a different part.
 
-**Engine.** Each travel maps to an RC *time constant*: 4.7 uF into
-1 kOhm..2 MOhm gives 4.7 ms to 9.4 s, which is what the manual prints as
-"5 milliseconds to 10 seconds" - one ~1 kOhm series-plus-end residual
-lands both printed endpoints, where the previous three-time-constants read
-fit neither. The attack charges from the OUTPUT pin through a diode, so it
+The subtle shared parts are now traced. SL3 and SL7 are two complete 100 kOhm
+tracks from +7.5 V to one D15-biased bottom rail. Neglecting buffer bias,
+`2·(7.5−V_f)/100k=I_D15(V_f)` and each target is
+`V_s=V_f+s·(7.5−V_f)`. Release runs cap → SL4/SL8 → D11/D14 → the common GS
+line, which is IC1/4075 pin 10 and both active-low 556 RESET pins—not ground.
+Fast simultaneous releases can therefore couple through the real GS output
+resistance. P1015's parts list does **not** identify D9–D15; the errata names
+only D18/D22 as 1N4149, so applying that part number to the envelope diodes
+would overstate the factory evidence.
+
+**Engine.** Each travel maps to an RC *time constant*: 4.7 uF into the
+voiced 1 kOhm..2 MOhm slider residual plus the drawn 100 Ohm gives 5.17 ms
+to 9.40047 s, which is what the manual prints as
+"5 milliseconds to 10 seconds" - one voiced ~1 kOhm effective slider-end
+residual lands both printed endpoints, where the previous
+three-time-constants read fit neither. The attack charges from
+OUTPUT through its steering diode, so it
 aims at V_OH - V_D against the +7.5 V peak: a ratio of about 1.3 (the
 documents bound it to 1.22-1.35, and the engine ships the nominal), giving
 ln(1.3/0.3) = 1.47 time constants to peak rather than a rail-charged
-monostable's ln 3 = 1.10. Sustain is linear 0..peak (anchored, and the
-sliders hang from the same +7.5 V node). Retriggering resumes from the
-current level with no capacitor dump, which is what the circuit does - the
-discharge pin is not even connected to the cap.
+monostable's ln 3 = 1.10. Because the 556 senses above R23/R24, the cap-side
+trip is `1-(100/R_slider)*(1.3-1)` of 7.5 V: 0.97 at the nominal fast end,
+approaching unity as the slider resistance rises.
 
-**Still voiced / not modelled.** The ~1 kOhm slider residual behind the
-fast endpoint; the aim ratio's 1.22-1.35 spread (no datasheet specifies a
-bipolar 556's output-high drop at microamp loads, and the aim itself
-varies across the travel); and the hardware's release *floor* - the series
-1N4149 parks the release around 0.3-0.6 V, about 5 % of peak, with an
-increasingly slow tail, and the sustain slider's bottom sits on a matching
-diode, where the engine releases to zero. Modelling that floor needs the
-downstream VCA and filter CV offsets, which this entry does not cover.
+The trigger network adds a characteristic articulation notch. Selected X
+and Y/EXT rising edges, and every selected keyboard KT pulse in MULTIPLE,
+pull the common GS/reset line low for the drawing's nominal ~5 ms. Both caps
+traverse their ordinary release sliders and D11/D14 during that interval;
+the final GS rise creates TS and starts both attacks from their retained
+post-notch voltages. The independent X/Y edge branches remain effective
+while another source already holds the OR'ed gate high. SINGLE has no KT
+branch: its first keyboard gate attacks immediately, a legato press does
+nothing, and a press masked by an already-high X/Y gate cannot articulate.
+Overlapping accepted edges extend one notch rather than scheduling several
+attacks. The engine implements a nominal 5 ms width; the drawing's 4.7 ms
+X/Y RCs, 10 ms KT stretcher and CMOS thresholds do not support claiming
+5.000 ms for a real unit.
 
-**Closes with.** An envelope scope capture, which would pin the aim ratio,
-the slider residual and the release floor together.
+For a nominal matched-diode model, Ghostar voices the common D15 rail at
+0.5 V—the independently derived Loudness-VCA zero—and uses an effective
+43 mV diode slope. The two-track KCL then fixes `Is=1.2479468 nA` and
+`f=1/15`, making settled Loudness gain equal panel sustain travel. D11/D14
+use the same declared nominal law:
+`V=R·I+a·ln(1+I/Is)`. A backward-Euler step reduces exactly to this monotone
+scalar with `R+h/C`; release therefore has the original slow nonlinear knee
+rather than a fixed 0.6 V floor. At maximum R the nominal 7.5→0.5 V audible
+tail is 31.302 s, versus 25.456 s for the former pure exponential. A real
+diode ultimately tends toward the finite GS low as current vanishes; it does
+not park permanently at one constant forward voltage.
 
-## OQ-05 — Shaper Y gate behaviour
+The downstream Loudness VCA offset is now derived too. LC reaches the
+CEM3360 linear-control pin through R135=10 kΩ, with R136=3.3 kΩ to ground
+and R137=240 kΩ to −12 V. KCL puts zero control at LC=0.5 V, exactly `1/15`
+of the 7.5 V envelope peak. The engine therefore uses the nominal normalized
+law `gain=max(0,(15·e−1)/14)`: the low-voltage release region is silent by
+circuit design rather than by an arbitrary engine gate.
 
-**Gap.** The Shaper produces its own gate via a comparator (SM DWG 3, net
-"SG"), but the threshold and its behaviour per mode are not documented.
-**Engine.** Gate is high while the Shaper output exceeds 1 % of full scale.
-**Closes with.** A hardware trace of the SG net, or the Museo del Synth
-Marchigiano's knowledge of the reissue.
+**Still voiced / not modelled.** The exact D9–D15 I-V/temperature law, the
+per-source reset-pulse widths/CMOS thresholds, GS
+`V_OL` and output resistance, inter-envelope release coupling, leakage and
+the ~1 kOhm fast-end residual; also the attack aim's 1.22–1.35 spread because
+no source fixes the bipolar 556 output-high drop at these currents. The
+Loudness zero crossing is closed, but the preliminary original CEM3360 sheet
+does not characterize exact top gain, saturation or per-device feedthrough;
+unity at full envelope remains an engine normalization.
 
-## OQ-06 — Ring-modulator carrier bleed
+**Closes with.** Simultaneous Loudness/Filter cap and GS captures at several
+S/R settings and temperatures, plus the fitted diode/CMOS output law.
 
-**Gap.** The vintage unit has no ring-mod null trim (the reissue added one),
-so carrier bleed is real, un-nulled and unit-dependent; the 1M8/6k2 OTA bias
-sets it but no one has measured it.
-**Engine.** 3 % of each input leaks into the product (voiced).
-**Closes with.** A spectrum capture of RING with one oscillator silenced; the
-bleed level is A–Z-able as a character choice until then.
+## OQ-05 — Shaper Y SG phase law closed; trigger-edge acceptance open
+
+The lossless SM DWG 3 scan shows that IC6 is the Shaper's hysteretic reversal
+comparator, not a separate mid-level detector. SHAPE reaches pin 6 through
+R61=100 kΩ; pin 5 receives half the SG output through equal R65/R66=22 kΩ.
+Those half-rail crossings define the ramp's own extrema. RS3's aligned throws
+are A4/B8/C12 FREE, A3/B7/C11 KBD HOLD, A2/B6/C10 RESET and A1/B5/C9 RUN.
+Gang A closes only in FREE; B7 is the HOLD path while B6/B5 share the
+RESET/RUN path; C11 selects through D25, C10 directly and C9 through D26.
+Together with the 2N4856 clamp, that connectivity resolves SG as the IC6
+phase state:
+
+| Mode | Idle / before cycle | Rising leg | Apex / top hold | Falling or release | End |
+|---|---|---|---|---|---|
+| FREE | continuous cycle | high | high→low at the upper reversal | low | low→high at the lower reversal |
+| KBD HOLD | low | high while the gate drives the rise | low while held at the top | low | low |
+| RESET | low | high after an accepted reset | high→low at the apex | low | low |
+| RUN | low | high after an accepted trigger | high→low at the apex | low | low |
+
+A KBD HOLD re-gate during release reverses the ramp upward from its current
+level and makes SG high. The engine and focused circuit test now use this
+explicit phase/cycle/gate state in every mode; no interior level threshold
+remains.
+
+Still open is which edge from the selected keyboard, external or Y feedback
+source is accepted by the trigger path in each mode, especially with Y
+self-feedback. This closure deliberately preserves the engine's existing
+trigger-acceptance policy. Resolving that last part requires a complete
+dynamic IC6A/RS3C/FET trace or simultaneous selected-gate, SHAPE and SG
+captures from the hardware.
+
+## OQ-06 — Ring modulator — topology closed, unit residual open
+
+The lossless P1013 scan overturns the earlier no-trim reading. Osc A's fixed
+triangle passes through C15=1 µF into R26=39 kΩ || R27=100 kΩ
+(`f_c=5.67245 Hz`), and that node drives both IC7's signal input and IC6's
+non-inverting dry-A reference. Osc B drives IC7's control node through
+R23=220 kΩ against R24=1.8 MΩ to +12 V and R25=62 kΩ to ground. IC6's
+68 kΩ + P2=25 kΩ feedback adjusts A-carrier cancellation and product level:
+P2 is the vintage unit's internal null trim.
+
+With the CEM3340's nominal 0–4 V triangle and P2 at null, the resistor bias
+reduces exactly to `ring = -(15/13)·HP(A_triangle)·B_triangle` in the engine's
+bipolar triangle units. There is no ideal B-carrier term. The engine models
+that transfer with a trapezoidal C15 companion and removes the invented
+`0.03·(A+B)` leak. The circuit suite checks C15's KVL/charge equations and
+zero carrier with either input absent.
+
+Still open are the factory P2 setting, original-CEM3360 gain/feedthrough,
+component tolerance and hence a particular unit's residual A or B carrier.
+Those close only with the trimmer setting or a same-unit one-carrier spectrum.
 
 ## OQ-07 — Envelope-mode Shaper RATE span
 
 **Gap.** OM gives the FREE-mode span (several cycles per minute to >20 Hz)
 and says the same knob sets total rise+fall time in envelope modes, but
-states no envelope-mode extremes.
+states no envelope-mode extremes. Lossless SM DWG 3 adds an important quirk:
+P3 is 100 kΩ LIN, but its wiper is not an unloaded exponential-rate command.
+It reaches the CEM3360 exponential-control node through R55=110 kΩ, with
+R56=20 kΩ to ground and R60=2.2 kΩ coupling the wider rate network. For a
+panel fraction `p`, even the isolated pot arm is
+`Rp=110k+100k·p(1−p)`, so the electrical travel cannot be exactly log-linear.
+The switched FREE and zero-clamped envelope paths around C19=15 nF also do
+not prove that identical control current gives identical complete-cycle time.
 **Engine.** One law for both: total period 20 s down to 45 ms across the
-travel (matching FREE's stated extremes).
-**Closes with.** Hardware timing of KBD HOLD rise at travel extremes.
+travel (matching FREE's stated verbal extremes). This remains explicitly
+behavioral; the source does not supply CEM gain versus control voltage, the
+loaded R60 node, or the mode-dependent current needed to replace it safely.
+**Closes with.** With arpeggiator off, fixed LFO/S+H RATE and SHAPE=5, time a
+FREE period and a RESET rise+fall at P3=0/.25/.5/.75/1 while probing IC7 pin
+12 relative to pin 8. Endpoints close the span; all five points close the
+loaded travel and expose any FREE/envelope duration ratio.
 
-## OQ-08 — Glide time constant
+## OQ-08 — Glide time constant — endpoint closed, taper open
 
-**Gap.** 2 MΩ pot is legible; the lag capacitor reads 420–470 nF in the
-scan.
-**Engine.** 450 nF equivalent, so τ reaches ≈0.9 s at full travel, with a
-*quadratic* taper (`τ = 0.9·travel²`) — a linear pot's resistance would
-give a linear taper and a log pot an exponential one, and the scan does
-not say which the GLIDE pot is, so the square is a voiced middle. (An
-earlier revision of this entry described the taper as exponential, which
-the code never was; the record is corrected here rather than quietly.)
-**Closes with.** A cleaner scan — of the capacitor value *and* the pot's
-taper marking — or a hardware measurement of glide time versus travel.
+Lossless SM DWG 1 resolves C6 as 470 nF and P1 as 2 MΩ, fixing the full-
+resistance time constant at `0.94 s`. P1 has no taper marking. The engine now
+uses the exact endpoint with its existing quadratic travel
+(`τ = 0.94·travel²`); only that curve remains a deliberate voicing. A circuit
+test pins the one-sample full-travel lag coefficient. The taper closes with a
+part marking or glide-time measurements at intermediate positions.
 
-## OQ-09 — Upper-filter 24 dB cascade Q distribution
+## OQ-09 — Upper-filter cascade drive and SW4 memory
 
-**Gap (structure corroborated, one digit short).** SM DWG 2 shows the
-Upper chip's cascade section carrying its *own* fixed bias network on its
-Q pin - a 220 Ohm shunt and a pull-up to +12 V - while the other section
-receives the variable resonance bus. That is hardware corroboration of the
-engine's fixed-Q/variable-Q split, which was previously a voiced guess.
-The pull-up's digits are unresolved in the scan; if it matches the
-neighbouring 91 kOhm, the fixed section sits at the same +29 mV as the
-LOW-switch position, i.e. Q = 0.5.
+The Internet Archive's grayscale JP2 of SM DWG 2 resolves R181 as 91 kΩ,
+with the drawn 220 Ω shunt. That puts the cascade section at the same +29 mV
+bias as the Upper filter's LOW switch, whose Q=0.5 is anchored by the owner's
+manual. The other section receives the selected LOW/VARIABLE resonance bus.
+LOW and the fixed half therefore use exact `k=1/Q=2`; the engine no longer
+subtracts its voiced VARIABLE/self-oscillation ceiling from this fixed bias.
 
-**Engine.** The first section takes the LOW-switch Q of 0.5; the second
-carries the resonance control. The CEM3350 datasheet says nothing about
-cascading at all - its only cascade-adjacent material is the Synthesource
-Winter-1981 newsletter's "standard 4-pole low pass" figure, whose
-component digits are illegible - so the datasheet side of this entry is a
-documented dead end.
+**Closed topology, engine work remaining.** The controlled-Q section comes
+first; its output is both the 12 dB tap and the input of the downstream
+fixed-Q=0.5 section selected at 24 dB. P1013 also ties each half's VIF and VIV
+inputs together. The CES final sheet identifies their transconductors, so the
+normalized tied-input drive is `u*(1+1/Q_commanded)`, not one canonical SVF
+input; use commanded CEM Q before the external enhancement extension.
 
-**Closes with.** A cleaner scan resolving the cascade pull-up's digits, or
-frequency-response measurements of a hardware unit in both slope positions
-at matched resonance settings.
+SW4 is stateful rather than a passive tap choice. Its common carries C40=1 nF
+to ground and selects either 22 nF LP timing node, giving the selected node
+23 nF and transferring C40's stored charge on a slope toggle. In 12 dB,
+R194=1 MΩ weakly couples the two LP nodes; in 24 dB the switch shorts that
+resistor. A linked pole changes IC14B's gain from 201 in 12 dB to 101 in
+24 dB, an exact relative `101/201`. Ghostar presently advances two 22 nF
+sections and selects their taps, so the tied-input drive, C40 charge sharing,
+1 MΩ coupling and 101/201 output ratio remain an implementation gap.
+
+**Closes with.** Implement those source-closed networks and pin their KCL,
+22:1 charge conservation and gain ratio; hardware sweeps then validate
+CEM3350 output impedance and original-unit tolerances rather than select the
+topology.
 
 ## OQ-10 — Overdrive knee and drive
 
-**Gap (half closed).** The clipper is anchored in placement (an inverting
-TL082 between the filters with an anti-parallel BA130 pair across its
-feedback resistor, behind a 2k2 arm — the CEM3350 datasheet's own "Hi-Q
-overload limiter" figure with its 1N914s substituted). The BA130's curve
-is now **found**: the Fairchild 1978 Diode Data Book's BA128·BA130 sheet
-(printed p.3-12) with the D4 family curves (p.4-6) specifies it down to
-10 µA, and the digitised typical curve runs 99 mV/decade — ideality
-n ≈ 1.68, saturation current ≈ 2.3 nA, so an anti-parallel pair obeys
-`I(V) = 2·Is·sinh(V/(n·V_T))` with `n·V_T ≈ 43 mV`. What remains open is
-the stage's *operating level*: the feedback resistor reads 33 kΩ at
-600 dpi (the earlier record here said 330 kΩ), and either way nothing
-states what an internal signal volt is.
-**Engine.** The physical law, solved per sample (three Newton steps from
-the smaller of the ohmic and diode-dominated asymptotes converge to
-within ten parts per million): linear at `R_f/R_in` until the diodes
-wake, then climbing about 0.1 V per decade of drive rather than
-flattening onto a ceiling. The two level constants (volts per engine unit
-in and out) are voiced, pinned so the stage keeps the small-signal gain
-and ceiling the previous tanh had — so the *shape* is the whole of the
-modelled change.
-**Closes with.** A level trace of the stage, or distortion captures of a
-hardware unit. The diode curve itself no longer needs anything.
+**Gap (local circuit and physical Lower drive implemented; RS7 panel phase,
+clean outputs and C34 pre-charge open).** The lossless P1013
+scan resolves the nonlinear RS7 configuration. IC12A is non-inverting;
+R153=330 kΩ is feedback, R186=2.2 kΩ and R166=470 Ω meet its inverting
+node in the distortion throw, and R164=R165=2.2 kΩ plus D1/D2 form the
+BA130 return. A3 closes that nonlinear return and B7 selects IC12A pin 1.
+The C deck cannot be same-index C11 because C11 grounds the Lower VLP signal
+being distorted; functional OVERDRIVE requires C10, which feeds VLP to C34
+through R167=33 kΩ. A hardware continuity table is still required to make
+that functional A3+B7+C10 inference a literal panel-detent assignment.
 
-## OQ-11 — No hardware measurements exist anywhere
+With ideal IC12A, the network reduces to one monotone scalar. For input node
+`x`, diode voltage `q` and pair current `i=2·Is·sinh(q/Vd)`, solve
+`q + 166100·i = 425.56383·x`; then
+`o = 853.12766·x - 330000·i`. At C34's left plate, `o` arrives through
+R187=47 kΩ and clean `x` through R167=33 kΩ, so
+`Vth=(33·o+47·x)/80` and `Rth=47k||33k`. C34=220 nF and R173=220 Ω then
+form the resolved output high-pass. The
+BA130 fit remains `Is≈2.3 nA`, `Vd≈43 mV` from its documented typical curve.
+
+**Engine.** The traced scalar is driven from the production Lower MNA's VLP
+state, not `dry + BP`. The engine derives a shared selected-wave/state
+normalization of 5 V per unit from P1014's affine offset, replacing the
+arbitrary 24 mV value. Its distorted and clean-VLP Thevenin source passes
+through the resolved C34 high-pass before the Upper filter. While
+OVERDRIVE is disconnected, C34 now retains its physical left-minus-right
+plate-voltage companion, but zero is still applied through the OVERDRIVE
+source impedance as an explicit interim relaxation. A higher-resolution
+continuity pass corrects the earlier reading: RS7-C's common is Lower VLP,
+not C34. C9/C11 ground VLP, C10 feeds it through R167=33 kΩ to C34's left
+node, and C12 connects it directly. RS7-B's common reaches C34 through
+R187=47 kΩ: B5 is open, B6 receives IC12 pin 1 through R168=100 kΩ, B7
+receives pin 1 directly, and B8 receives IC12 pin 7=`151·VBP`. A1/A2/A4 are
+open while A3 closes the nonlinear return. These raw networks are closed,
+but the schematic and PCB provide no three-deck rotor-to-panel phase that
+assigns OUT/BANDPASS/HIGHPASS or proves the inferred OVERDRIVE C contact.
+Encoding the remaining named modes now would guess.
+
+**Closes with.** A hardware shaft-to-contact continuity table or assembly
+legend, followed by continuous C34/VLP captures in all four positions;
+hardware distortion and mode-switch captures then validate the ideal-op-amp
+and switching reductions.
+
+## OQ-11 — No calibration-grade hardware data set
 
 Every quantitative behaviour beyond the manual's stated ranges rests on
 schematic math. Nobody has published filter curves, envelope timings, drift
@@ -189,29 +313,27 @@ living source of calibration data.
 
 ## OQ-12 — Resonance-path BA130 limiter constants
 
-**Gap (mostly closed).** Self-oscillation is bounded by the external
-BA130 anti-parallel "Hi-Q overload limiter" in the resonance path —
-anchored in placement, and now known to be the CEM3350 datasheet's own
-recommended circuit (its Figures 5/6, 1N914s substituted for BA130s,
-33 kΩ feedback, 2k2, 470 Ω at the SLOPE switch). The BA130's curve is
-found (see OQ-10): `I(V) = 2·Is·sinh(V/(n·V_T))`, `n·V_T ≈ 43 mV`,
-`Is ≈ 2.3 nA`. **The travel-to-Q half of this entry is closed
-outright** — see below. What is still open is the node's operating
-level, which is what turns the diode's 43 mV into a number in the
-engine's own units.
-**Engine — the limiter.** A diode shunt in each section's band-pass
-integrator equation: `v' = -lambda*V0*sinh(v/V0)`, solved as an exact
-sub-step so the law is a rate, not a per-sample map. (The alias audit
-measured the previous per-sample formulation converging to a *different
-filter* at every sample rate, and its `4*tanh(0.25*x)` integrator bound
-turned out to be the actual self-oscillation limiter - its always-on
-cubic compression, not the diode knee, set the amplitude, with a strength
-that scaled with the rate. That bound is removed; the engine suite renders
-the regenerative extremes across rates to hold the boundedness claim, and
-pins self-oscillation level agreement between hosts to 0.5 dB.) The sinh
-form is now the pair's own anchored law; `V0 = 0.12` is `n*V_T` divided by
-the untraced node scaling (0.12 implies about 0.36 V per engine unit,
-where a buffered audio node sits), and `lambda = 1 /s` is voiced.
+**Gap (both external loops modelled; original-chip dynamics/headroom open).** P1013 contains two Figure-5-style
+AC-coupled high-Q feedback loops. The Lower loop senses BP through IC12B:
+R169/R170 gives gain 151, then R171/R172 divides by 11, for effective gain
+≈13.73 before D5/D6 and C33=1 nF return the signal. The controlled Upper
+loop uses IC14A with R178/R175 for gain 16 and returns through D3/D4 and
+C37=1 nF. Curtis Figure 5's corresponding gain is ≈15.24 with the same
+1 nF coupling value. The fixed-Q Upper half has no limiter pair. The BA130
+curve is found (OQ-10). **The travel-to-Q half of this entry is closed
+outright** — see below.
+
+**Engine — the external loops.** Controlled Upper's real 1 nF capacitor adds
+one trapezoidal companion to its resolved CEM section; its gain is 16 and the
+ideal op-amp source is zero ohms. Lower uses the traced gain 13.7273, 2 kΩ
+source resistance, BA130 pair and C33 companion inside the production
+three-wiper VLP/VBP MNA; the diode endpoint sensitivities come from that 2×2
+solve rather than a canonical-input surrogate. Fixed Upper remains linear
+because P1013 gives it no branch. P1014 supplies a common derived 5 V/unit
+normalization
+for selected oscillators and CEM states. TL082 bandwidth/output swing,
+CEM3350 internal saturation, component tolerances and absolute MM5837 volts
+remain deferred rather than invented.
 
 **Engine — the travel-to-Q law (closed).** Derived end to end. The
 CEM3350's Q control is exponential at -65 mV per decade of Q (datasheet
@@ -231,137 +353,310 @@ is exactly cancelled reconciles the datasheet with OM's anchored
 self-oscillation at maximum: `k = 1/Q - 1/Q_ceiling`. The ceiling value
 (50, the datasheet typ) is the one voiced number left in the law.
 
-**Closes with.** A level trace of the resonance node, which turns `n*V_T`
-into engine units and pins `lambda`. The travel-to-damping mapping no
-longer needs anything; a hardware Q-versus-travel sweep would now be a
-*check* on a derivation rather than the derivation itself. Whether the
-CEM3350's internal stages saturate on top of the external limiter, and how
-exactly the hardware crosses from the chip's no-enhancement Q ceiling into
-oscillation (no Figure-9-style enhancement path was spotted in the scan),
-remain separate open questions.
+**Closes with.** Resonance-node and output traces from one unit to validate
+TL082 dynamics/output impedance, CEM3350 internal headroom and the nominal
+source/state scaling against a hardware high-Q sweep. The travel-to-damping
+network no longer needs a choice, but reading the chip's typical Q=50
+"without enhancement" point as exact negative damping remains a voiced
+extension to validate. Internal CEM3350 saturation is a separate open term.
 
-## OQ-13 — Filter-tracking pivot note
+## OQ-13 — Filter-tracking amount and pivot — closed
 
-**Gap (amount derived, pivot still open).** Tracking's *amount* is no
-longer taken on trust: the keyboard's 1 V/octave bus reaches the chip's
-frequency pin through the same 12k1 ladder as the panel CV, delivering
-21.2 mV/V against the datasheet's -19.6 mV/octave, so full KB AMOUNT is
-108 % [103-115 % across the scale-factor window] - independently
-reproducing the manual's "slightly over 100 %" from the resistors. The
-*pivot* - the note at which tracking contributes zero offset - is set by
-the CV summer's reference, which was still not resolved from the drawings.
+Tracking's amount is 108.3%: the 1 V/octave keyboard bus enters the same
+12k1 ladder as the panel CV, giving 21.2 mV/V against the CEM3350's
+−19.6 mV/octave. The absolute pivot is closed by P1016's signed DAC
+reduction. Six key-address bits drive DAC0800 B1–B6 while B7/B8 are grounded,
+so semitone index `q` above the lowest C produces word `N=4q`. R31=`4k99`
+feeds the positive reference; R30=`5k1` only balances reference-input bias.
+IC8 pin 4 sinks
 
-**Engine.** 108 % at full travel (derived), pivoting at middle C (voiced).
+`I_DAC = (+12A/4.99k)·4q/256`
 
-**Closes with.** A derivation of the tracking summer's reference from
-SM DWG 2/3, or a two-note cutoff measurement on hardware.
+from IC16A's virtual earth, opposing the current sourced into that node by
+R39=`26k6`. With R40=`2k43`, its output is
+
+`V_D(q) = +12A·2.43k·[q/(64·4.99k) − 1/26.6k]`.
+
+That is −1.0962406 V at the lowest C and rises 91.3076 mV/semitone, or
+1.095691 V/octave, matching DWG 1's `1.1 V/OCTAVE`. The two currents cancel
+at `q=64·4.99/26.6=12.006015` semitones. IC16B and the normalled glide path
+add no fixed reference, so with the original lowest C mapped to MIDI 48 the
+nominal tracking pivot is MIDI `60.006015`—0.6015 cent above the second C.
+Because both currents use +12A, rail voltage and R40 cancel out of the pivot;
+downstream gain cannot move it either.
+
+**Engine.** Uses the component expression
+`48 + 64·4.99/26.6`, not rounded MIDI 60. The circuit suite pins both its
+signed sub-cent offset and the independently derived `2^1.083` adjacent-
+octave ratio.
+
+**Closed by.** Factory SM DWG 1 P1016 plus the DAC0800 positive-reference
+current law. Real resistor tolerance, DAC error and 1458 offset can move a
+particular unit by a small amount; that is calibration scatter, not a missing
+nominal law.
 
 ## OQ-14 — Wheel modulation depths
 
-**Gap.** The X and Y buses' full-wheel depths at each destination are set
-by the mod board's summing resistors, which were not resolved from the
-scan; the manual states no numbers. For Y→LFO RATE the manual anchors
-only the behaviour (the wheel sets the fastest rate, the knob the
-slowest), not the fastest rate itself.
-**Engine.** Full wheel gives 1 octave of pitch, 3 octaves of cutoff, and
-±0.42 of pulse duty (`pitchDepthOctaves`, `filterDepthOctaves`,
-`dutyDepth`); full Y at the LFO RATE destination reaches 60 Hz (all
-voiced).
-**Closes with.** The mod-board summing network from a cleaner scan, or
-depth measurements at each destination on hardware, including the
-wheel-end LFO rate.
+**Partially closed — destination loading.** DWG 2 resolves two importantly
+different controls. X is a CEM3360 current output into its 100 kΩ wheel as a
+rheostat; Y is the SHAPE voltage through R60=15 kΩ into a conventional
+100 kΩ divider. RS1/RS2 then change the wheel load. One oscillator presents
+`22k||100k=18.032787k`, two present `22k||100k||100k=15.277778k`; one filter
+presents 100 kΩ and two present 50 kΩ. For electrical resistance fraction
+`t`, Ghostar therefore uses
 
-## OQ-15 — Noise pinking blend
+`X(t,L)=(100t||L)/(100||18.032787)`
 
-**Gap.** The manual anchors "a combination of white and pink" from the
-MM5837, but the pinking network's component values — and so its transfer
-and the white/pink blend — were not resolved.
-**Engine.** The Kellet reference recurrence's three poles, re-derived from
-their 44.1 kHz design-rate coefficients to physical frequencies at the
-internal rate, with the reference's direct term and normalisation
-(`(Σ poles + 0.1848·white) · 0.18`), blended `0.55·pink + 0.225·white`
-(the reference filter and every gain are choices standing in for the
-unresolved network — all voiced).
-**Closes with.** The noise-board schematic values, or a long-window
-spectrum capture of the hardware's noise at the mixer — the capture must
-pin the blend, not only the poles.
+and, with `z=100t||L`,
 
-## OQ-16 — Output coupling corner
+`Y(t,L)=[z/(15+100(1−t)+z)]/[15.277778/(15+15.277778)]`.
 
-**Gap.** The output stage's series capacitors are anchored in presence,
-but the RC values setting the highpass corner were not resolved from the
-scan.
-**Engine.** One-pole AC coupling at ~5 Hz per channel (voiced).
-**Closes with.** The output-stage RC values from a cleaner scan, or a
-low-frequency sweep of a hardware unit's outputs.
+The filter routes additionally carry the derived CEM3350/CEM3340 sensitivity
+ratio `21.2/19.6`. With the separate voiced full-wheel pitch anchors retained
+at one octave for X→A and Y→B, the resulting full depths are X→A+B
+0.867470 octave each, X→U 3.539889 octaves, X→U+L 2.359926 octaves each,
+Y→A+B 0.929638 octave each and Y→L 1.648923 octaves. The loading is a real
+playability quirk: at half resistance travel X→A is already at 0.867470 of
+its full depth, while Y→B is only at 0.335643. Both control-rate and
+audio-rate X paths use the same network; FORMANT still disconnects L.
 
-## OQ-17 — Red-noise modulation process
+**Still open.** The drawings do not mark either wheel's taper, so mapping
+panel travel directly to electrical resistance fraction remains an explicit
+linear-taper assumption. Absolute X depth depends on selected-source level and
+CEM3360 gain; absolute Y depth depends on the loaded SHAPE swing. The RWM
+branches visibly load through 200 kΩ/620 kΩ and their BC308 networks, but the
+active duty conversion, PW trims and CEM3340 PWM input prevent an exact
+transfer; ±0.42 duty remains voiced. Y→LFO RATE is positive, but its
+CEM3360 law and fastest full-wheel rate remain unresolved, so 60 Hz remains
+voiced.
 
-**Gap.** The manual anchors RED NOISE only qualitatively ("continuous
-slow random"); the filtering network and level on the mod board were not
-resolved.
-**Engine.** White noise through a one-pole lowpass at 1.5 Hz, restored by
-an 18× gain and clipped to ±1 (all voiced).
-**Closes with.** The mod-board network from a cleaner scan, or a capture
-of the RED NOISE control voltage's spectrum and level from hardware.
+**Closes with.** Wheel-pot taper identification plus same-unit measurements
+of X→A and Y→B full depth, RWM duty versus wheel voltage, and Y-wheel-end LFO
+rate; or complete original-CEM3360/BC308 transfer data and calibrated source
+swings.
 
-## OQ-18 — Shaper SHAPE endpoint split
+## OQ-15 — Noise source clock and absolute level
 
-**Gap.** The manual anchors SHAPE qualitatively (fully left is fast-rise
-slow-fall, fully right the reverse); the extreme rise/fall split the pot
-actually reaches is not documented.
-**Engine.** Rise fraction `0.05 + 0.9·travel`: the extremes are 5/95 and
-95/5 of the period (voiced).
-**Closes with.** The Shaper board's pot network from a cleaner scan, or
-rise/fall timing of a hardware unit at both SHAPE extremes.
+**Gap (colouring transfer closed).** The grayscale SM DWG 2 scan resolves
+the entire P1013 network: C17=1 µF, R4=200 kΩ, R5=10 kΩ; R6=18 kΩ with
+C8=220 nF; R7=3 kΩ with C9=100 nF; C10=10 nF; then IC4A with R8=27 kΩ
+and feedback `R11=1 MΩ || (R12=100 kΩ + C11=15 nF)`. Its passive transfer
+is
 
-## OQ-19 — Master volume taper
+`P(s) = R4*C17*s / [1 + (R4+R5)Y(s) + R4*C17*s*(1+R5*Y(s))]`,
 
-**Gap.** The VOLUME pot's taper (linear, log, or loaded-linear) was not
-resolved from the scan, and the manual states nothing quantitative.
-**Engine.** Output gain follows the square of the travel (voiced — a
-loaded-linear-pot approximation).
-**Closes with.** The output-stage pot marking and load from a cleaner
-scan, or a level-versus-travel sweep of a hardware unit.
+where `Y(s)=s*C10+s*C8/(1+s*R6*C8)+s*C9/(1+s*R7*C9)`. The active stage is
+`A(s)=(3891s+2054000)/(27(33s+2000))`. Thus `H=P*A` has zeros at DC,
+40.1906, 84.0155 and 530.5165 Hz and poles at 0.5949, 9.6458, 31.0388,
+179.2754 and 8157.42 Hz. Checks: `|H(20 Hz)|=11.8523`,
+`|H(1 kHz)|=0.945892`, `|H(10 kHz)|=0.539258`.
 
-## OQ-20 — Mixer summing gain
+The MM5837 is a self-clocked, sample-held binary 17-stage maximal PRBS
+(taps 17/14; 131071-bit period). Its datasheet bounds cycle time to
+1.1--2.4 s and half-power to 24--56 kHz, but gives no typical part; nor is
+the chip's swing calibrated against the same unit's CEM3340 waveform swing.
 
-**Gap.** Each audio path's mixer sums its sources into a virtual-earth
-stage; the engine's comment traces its 0.45 to a 220 kΩ-into-100 kΩ
-hardware ratio, but that reading was never carried into this register and
-the resistor values were not re-verified in the higher-resolution pass
-that resolved the filter board.
-**Engine.** Both paths sum with a fixed gain of 0.45 before their filters.
-**Closes with.** The mixer board's summing resistors read from a clean
-scan. The consequence of getting it wrong is level, not character — it
-scales how hard the sources drive the filters and so where the OVERDRIVE
-stage's knee falls relative to a full slider, which ties it to OQ-10's
-open level trace.
+**Engine.** Five numerically stable bilinear first-order sections implement
+the derived transfer, driven by the maximal PRBS at 75 kHz (the midpoint of
+the datasheet cycle range). One visible `0.35` source-level constant preserves
+the preceding engine's filter-path noise RMS; clock and absolute level are
+voiced. The former Kellet filter, floating LCG and arbitrary white/pink blend
+are gone. The circuit suite pins the three magnitudes above at 44.1, 48 and
+96 kHz hosts and pins the exact 131071-bit repeat.
+
+**Closes with.** A same-unit capture of MM5837 repeat time/output swing,
+CEM3340 waveform swing, and the coloured-noise mixer level. The network
+transfer itself is closed.
+
+## OQ-16 — Audio-path coupling — closed
+
+P1017 draws no series capacitor on either rear output, so the former global
+5 Hz high-pass was unsupported. The actual path capacitor is C30=470 nF
+*before* the Filter path's loudness CEM3360. It sees R132=24 kΩ in parallel
+with R133=100 kΩ (`R_L=19.3548 kΩ`, `τ=9.09677 ms`, `f_c=17.4958 Hz`) and
+continues charging while the VCA is closed. The Shaper output is DC-coupled.
+
+The engine now solves C30 as a trapezoidal capacitor companion and removes
+the global output block. P1017's normal contact joins the two P4 wipers
+through R49+R50=20 kΩ; inserting the SHAPED plug opens that link. This is
+more than an unconditional half-sum because C18/P3 loads the Shaper's full
+20 kΩ track and the joined wipers cross-load both paths.
+
+For isolated full-track voltages `X_s` and `X_f`, Master travel `m`,
+`r=20k·m(1−m)`, `λ=20k·m²/(20k+2r)`, and
+`β(s)=20k·s·C18/(1+s·C18·R_b)`, the normalled high-impedance main output is
+
+`O/X_s = (m/2)·(1+2λ) / [1+2λ+(1+λ)β]`,
+
+`O/X_f = (m/2)·(1+2λ+β) / [1+2λ+(1+λ)β]`.
+
+At DC, `β=0` and this reduces to `m·(X_f+X_s)/2`. At audio frequencies the
+BRIGHTNESS branch also colours the Filter contribution. SPLIT sets the
+cross-link to zero and exposes the isolated wipers `m·X_f` and the separately
+BRIGHTNESS-coloured `m·X_s`.
+
+The engine solves the endpoint-safe coupled MNA and C18 companion at the 4×
+internal rate before decimation. Circuit tests pin its wiper/top-node KCL,
+C18 KVL/charge, both Master endpoints, split isolation, the DC half-sum limit,
+and the characteristic dark/high-frequency case where a Filter-only main
+signal is one quarter of its isolated level rather than one half.
+
+## OQ-17 — Red-noise modulation bus scale
+
+**Gap (circuit transfer closed, bus scale open).** SM DWG 2 routes the
+R6/C8 junction of OQ-15's passive network to IC4B's non-inverting input.
+R9=2.2 kΩ and R10=100 kΩ set an AC gain of
+`1+R10/R9 = 511/11 = 46.4545`, and J1/6 carries that output directly to
+P1015's MOD SOURCE switch. If `P(s)` is OQ-15's passive audio-node
+transfer, the red-noise output is
+
+`H_red(s) = (511/11) * P(s) / (1+s*R6*C8)`.
+
+The R6/C8 pole cancels `P`'s 40.1906 Hz zero, leaving zeros at DC and
+530.5165 Hz and poles at 0.5949, 31.0388, 179.2754 and 8157.42 Hz. No
+separate 1.5 Hz filter is present. Its derived magnitudes are 29.8308 at
+1 Hz, 29.0212 at 20 Hz and 9.14834 at 100 Hz. What remains unknown is the
+voltage at J1/6 that corresponds to full useful travel on the engine's X bus.
+
+**Engine.** `SpiritNoise` implements the derived R6/C8-to-IC4B branch from
+the same fixed-clock MM5837 that drives the audio output. A visible `0.26`
+bus gain, followed by the engine's ±1 modulation bound, preserves the prior
+patch depth and remains voiced. The circuit suite spot-checks the transfer
+at 1, 20 and 100 Hz on the common 44.1, 48 and 96 kHz host grids.
+
+**Closes with.** A same-unit voltage capture at J1/6 and on the X bus, or
+destination-depth measurements from a hardware unit. The red-branch topology
+and transfer need no further voicing.
+
+## OQ-18 — Shaper SHAPE endpoint split — closed
+
+The lossless grayscale SM DWG 3 scan resolves P4 as `1M LIN`, with D19/D20
+steering its opposite ends through the same 27 kΩ R62 on successive
+half-cycles. The patent establishes that half-cycle time is proportional to
+the selected resistance. Thus, for panel travel `t`,
+
+`rise fraction = (27k + t·1M) / (1M + 2·27k)`.
+
+The endpoints are 2.5617/97.4383 and 97.4383/2.5617, with 50/50 at centre;
+the two resistances always sum to 1.054 MΩ, so SHAPE cannot alter the period.
+The engine uses this component law. The circuit suite times complete FREE
+cycles at five pot positions against an independent P4/R62 oracle and also
+checks the constant-period invariant.
+
+## OQ-19 — Master volume taper — closed
+
+SM DWG 2 explicitly marks both gangs `20k LIN`, one after each audio path.
+The engine therefore applies travel directly as output gain; the unsupported
+square law is removed. The circuit suite pins half travel to half output.
+
+## OQ-20 — Mixer transfer and absolute gain
+
+**Gap (Lower MNA implemented; RS7 dry transfer and remaining absolute levels open).** Every
+audio mixer control is an unbuffered 100 kΩ linear slider. At travel `t`, its
+Thevenin source is `t*V_in` in series with `100k*t*(1-t)`. For a resistive arm
+`R_s` ending in the Shaper's virtual-earth summer this gives the exact
+full-travel-normalised law
+
+`g(t, R_s) = t*R_s / [R_s + 100k*t*(1-t)]`.
+
+The Shaper arms are 47 kΩ for A/B/Ring and, after the service erratum,
+6.8 kΩ for Noise. Consequently `47/6.8 = 6.9118` is their ratio only at
+full travel; at equal half travel it is `72/31.8 = 2.2642`.
+
+The Filter is different. Each wiper has a 220 kΩ arm to Lower CEM pin 3
+(VLP, C31=22 nF) and a separate 68 pF arm to pin 5 (VBP, C32=22 nF); pins 2
+and 4 are grounded. The destination voltages move, the three sources interact,
+and even an off slider continues to load both state nodes. Therefore neither
+the grounded-bus slider law nor a `220 kΩ || 68 pF` shelf is its transfer;
+10.64 kHz is merely where those two component admittances would be equal if
+their destination voltages matched, not a circuit zero.
+
+The production network reduces to three wiper-cap companions plus
+the VLP/VBP timing states and C33 collapse each sample to a 2×2 linear solve
+followed by the same monotone BA130-current scalar used by OQ-12. Exact slider
+endpoints need a charge-preserving state projection to remove trapezoidal's
+hidden alternating mode, not an invented series resistor. This derivation is
+implemented, but `OUT`, `BANDPASS` and `HIGHPASS` cannot yet be assigned to the
+remaining RS7 throws from P1013 alone. The owner's manual proves OUT preserves
+a dry transfer into Upper; the production net and throw implementing it remain
+unresolved, so guessing by terminal number would be wrong.
+
+**Engine.** The Shaper applies the derived loaded-slider law with its 47 kΩ
+arms and 6.8 kΩ Noise arm behind one voiced 0.45 scale. The Filter runs the
+full coupled 2×2 solve with all three 100 kΩ Thevenins, 220 kΩ arms, 68 pF
+companions, 22 nF VLP/VBP states and C33's implicit BA130 current. P1014's
+conditioned A/B voltages enter directly in their shared derived 5 V/unit
+normalization;
+the MM5837 contribution retains one explicit 0.45 level calibration. The
+one-step circuit oracle checks branch KCL, both integrated state equations,
+C33 KVL, off-slider loading and pot-end charge projection. Only the dry/output
+scalar used by the unresolved RS7 modes remains a labelled 0.45 surrogate.
+
+**Closes with.** A hardware RS7 continuity table or assembly drawing that
+identifies the three remaining throws and OUT's dry transfer. Same-unit
+MM5837, Shaper-summer and mixer-output captures are still required to pin the
+noise level, CEM3360 top gain and dry scalar; selected CEM3340 relative and
+nominal pre-1458 swings are now source-derived from P1014 rather than
+equalised.
 
 ## OQ-21 — LFO rate span at the slow end
 
 **Gap.** The manual gives the MOD X rate as "less than 1 Hz to
 approximately 50 Hz". The fast end is a stated number; the slow end is
-only an inequality, and the network setting it was not resolved.
-**Engine.** 0.3 Hz to 50 Hz, exponential across the travel (the fast end
-anchored, the slow end voiced inside "less than 1 Hz").
-**Closes with.** The LFO board's timing network from a clean scan, or a
-measurement of the rate at the slow endpoint.
+only an inequality. The lossless MOD-board drawing does resolve the control
+travel: P2=100 kΩ LIN is loaded through R33=200 kΩ into the CEM3360
+exponential-control node. If `x` is mechanical travel, its normalized
+electrical contribution is therefore
 
-## OQ-22 — BRIGHTNESS pot law
+`w(x) = 200x / (200 + 100x(1−x))`,
 
-**Gap.** The BRIGHTNESS control is anchored as a 100 kΩ log pot into
-27 nF (≈59 Hz at full resistance, effectively open at zero — OM p.29 and
-SM). What is not documented is the pot's actual log law, nor the residual
-series resistance that stops the corner running to infinity at the open
-end.
-**Engine.** The travel maps through a 2.5-decade log law
-(`10^(−2.5·travel)`, rescaled so the endpoints land exactly) into
-100 kΩ, plus a 330 Ω residual — so the corner runs ≈59 Hz to ≈17.9 kHz
-(both the decade count and the residual voiced).
-**Closes with.** The pot's taper marking and the series resistor from a
-clean scan, or a frequency-response sweep of the Shaper path at several
-BRIGHTNESS settings on hardware.
+so half travel is `w=4/9`, not `1/2`. P2/R33 and R35=2.2 kΩ also give a
+132 mV full control swing. A modern compatible's nominal 3 mV/dB scale would
+*suggest* a 158.489:1 span, or 0.3155 Hz at the slow end when the documented
+fast end is 50 Hz; even that part's published 2.7–3.3 mV/dB range expands the
+inference to roughly 0.180–0.500 Hz. It is therefore useful corroboration, not
+evidence for the original CEM3360's exact scale or a particular calibrated
+Spirit.
+
+**Engine.** The derived loaded travel `w(x)` feeds a 0.3 Hz-to-50 Hz
+exponential law. Thus the deliberately voiced slow endpoint still satisfies
+"less than 1 Hz", while half travel is now the circuit-derived 2.9148 Hz
+rather than the unloaded geometric midpoint 3.8730 Hz.
+
+**Closes with.** An original-CEM3360 exponential-control scale or, preferably,
+timing measurements from a calibrated Spirit at the slow endpoint and one or
+more intermediate knob positions.
+
+## OQ-22 — BRIGHTNESS topology closed, pot taper open
+
+P1013 resolves the topology. After the Shaper CEM3360 VCA, C18=27 nF in
+series with P3=100 kΩ LOG forms a shunt across the fixed 20 kΩ full-track
+load of the Master Volume gang. For rheostat resistance `R`, normalized to
+the branch-open DC output,
+
+`H(s) = (1 + s·C18·R) / (1 + s·C18·(R + 20k))`.
+
+That expression is the isolated/SPLIT Shaper transfer. At dark `R=0`, it is
+a low-pass at 294.731 Hz. At bright `R=100 kΩ`, its pole is 49.1219 Hz, zero
+58.9463 Hz and high shelf 5/6 (−1.5836 dB). It is neither the former
+variable-cutoff RC nor fully open, and no 330 Ω residual exists.
+
+With P1017 normalled, OQ-16's coupled MNA changes the effective capacitor
+load with Master travel. At full Master, the effective resistance is
+13.333 kΩ: dark's main-output pole is 442.097 Hz and bright's pole is
+52.0114 Hz. At high frequency, the Shaper and Filter contributions retain
+15/17 (−1.087 dB) and 16/17 (−0.527 dB) of their respective DC gains. Thus a
+Shaper-labelled tone control subtly colours the Filter through the original
+jack normaling — a hardware interaction the engine now preserves.
+
+The engine solves C18/P3 inside the endpoint-safe output MNA at the 4×
+internal rate, so both its capacitor history and changes of Master,
+BRIGHTNESS or SPLIT follow the physical network.
+
+Only the word `LOG`, not the manufacturer's taper curve, is printed. The
+engine retains a visible 2.5-decade voicing between the exact 0 and 100 kΩ
+endpoints: `R=100k·(316.228^travel−1)/(316.228−1)`. The curve closes with a
+P3 part marking or a multi-position hardware sweep.
 
 ## OQ-23 — The travel smoother is a product policy, not a hardware law
 
@@ -413,29 +708,56 @@ test must reject a stroke whose spectrum a sparse grid cannot nearly account
 for, rather than falling back on a denser one. Half a measurement is what
 produced the defect this entry exists because of.
 
-## OQ-25 — Which side of the Osc A ↔ Osc B loop carries the delay
+## OQ-25 — Osc-B audio-rate causal split implemented; analog delay open
 
-With MOD SOURCE = OSC B the mod board carries an audio signal, and the
-engine taps it one internal sample old (`lastOscBWave_`). The comment
-beside it argues the delay is what makes Osc B modulating its own pitch a
-bounded feedback loop rather than an implicit equation, and that the mod
-board has its own delay too — both true.
+MOD SOURCE = OSC B carries the selected post-IC10 audio waveform, not a
+host-rate control. Ghostar now emits B first when SYNC is off, so A pitch/PWM
+and both filters receive B's current fully BLEP-corrected sample; B's own
+frequency feedback retains the prior sample. With SYNC on, the dependency is
+`B → A frequency → A wrap/reset → B`, so A/PWM deliberately use prior B to
+break that loop while the downstream filters still receive current B.
 
-But Osc A hard-syncs Osc B while Osc B modulates Osc A, so the dependency
-is genuinely circular and *something* must carry a delay. Nothing yet
-establishes that it belongs on the B→A side rather than the A→B side, or
-that both destinations should carry it: Osc A's duty and pitch do not
-participate in the feedback at all, so a fresher tap for them is at least
-arguable.
+The split is causal and removes the former unnecessary delay from acyclic
+destinations, but it is still a digital realization rather than a measured
+analog group-delay claim. Closing the remaining unit detail requires the
+service drawing's buffer/loading reduction or simultaneous post-IC10 and
+destination-node phase measurements under self-FM and sync.
 
-It is not an idle question. Measured on the `oscb-mod-pwm` stroke, reading
-Osc B one internal sample fresher for the A-destined modulation improves the
-row by 6.5 dB — much more than the sub-sample edge placement that was filed
-as its cause, which measures 2.8 dB *worse* when corrected. So the tap lag
-is the dominant error term in that row.
+## OQ-26 — Shaper audio-VCA control node
 
-It stays unshipped because it changes the sound and the justification would
-be a number falling rather than a document. What would close it: the
-service drawing's own routing for the mod board's buffer stage, which would
-say whether the board's delay sits before or after the point where the A
-and B destinations part company.
+**Topology/KCL closed; active-device transfer open.** P1013 does not connect
+normalized SHAPER Y directly to IC5. Physical SHAPE voltage `S` reaches the
+CEM3360 linear-control pin 5 through R38=10 kΩ. That node returns through
+R40=5.6 kΩ to ground and R41=1 MΩ to −12 V, and is driven through R39=3.6 kΩ
+by TR2, a BC173 emitter follower whose collector is at +12 V and whose base
+is pulled from +12 V through R29=100 kΩ. The lossless drawing and PCB overlay
+resolve the close line crossing: TR2 is separate from the FREE/TR1 branch and
+is biased in every Shaper mode and phase. SG and RS3 have no separate/direct
+conductor into R38–R41/TR2; they affect it only through upstream `S`.
+
+For instantaneous TR2 emitter voltage `Q`, external KCL gives
+
+`V_C = [S/10k + Q/3.6k − 12/1M] /
+       [1/10k + 1/3.6k + 1/5.6k + 1/1M]`
+
+`=0.1794207274·S + 0.4983909094·Q − 0.0215304873 V`.
+
+The diagnostic R39-open law would be
+`V_C=0.3576903424·S−0.0429228411 V`, but it is not a factory operating mode.
+Closing `Q` requires the coupled BC173 β/V_BE/base-current law and the real
+CEM3360 pin-5 input/clamp. The preliminary CEM sheet labels ground-referenced
+linear control over 0..+1.5 V but does not specify the vintage cell's exact
+knee, over-range clamp, top gain or feedthrough. On P1015, R65=R66=22 kΩ and
+R61=100 kΩ prove SHAPE reverses at half the SG op-amp rail: envelope modes
+map 0→`V_SG,OH/2`, while FREE maps `V_SG,OL/2`→`V_SG,OH/2`; the loaded TL082
+swings themselves are not printed.
+
+**Engine.** Retains the behavioral `gain=max(0,Y)` seam. It gives the expected
+unipolar envelope and pulsed FREE response, but is not described as a
+component-derived law. Substituting ideal rails or `clamp(V_C/1.5,0,1)` would
+invent the most consequential active-device behavior in the network.
+
+**Closes with.** Simultaneous scope captures of `S` at J5/3, `V_C` at IC5/5
+and preferably TR2 emitter voltage in FREE and one envelope mode, across a
+full cycle; alternatively a verified original-CEM3360 macromodel plus BC173
+operating-point data and PCB continuity.

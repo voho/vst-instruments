@@ -101,10 +101,6 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    // The longest release decays at 3/10 s^-1 (three time constants across
-    // the labelled 10 s) and the engine idles the envelope at 1e-5, reached
-    // after ln(1e5)/0.3 = 38.4 s; the advertised tail rounds that up so a
-    // host honouring it never truncates an audible release.
     // The longest the instrument can still be ringing after the last note
     // is released. Taken from the engine's own envelope law rather than
     // written down here, so re-voicing the segment timing cannot leave a

@@ -14,11 +14,12 @@ Two oscillators, a triangle-cross ring modulator and one noise source feed
 **two parallel audio paths**. The Filter/ADSR path runs a mix of A, B and
 noise through the **Lower Filter** and **Upper Filter in series** into a VCA
 driven by the Loudness envelope. The Shaper path runs a mix of everything —
-ring mod included — through the one-pole BRIGHTNESS tone control into a VCA
-whose gain *is* the Shaper Y output. Both paths mix to the output, or split
-left/right with the SPLIT switch. Every knob and slider is a host parameter
-in 0..10 panel travel; every switch carries the modelled panel's own detent
-labels.
+ring mod included — into a VCA whose gain *is* the Shaper Y output, then the
+passive BRIGHTNESS shelf. The hardware's normalled main jack passively joins
+the two Master wipers, so BRIGHTNESS and both paths cross-load one another;
+SPLIT isolates them at full level left/right. Every
+knob and slider is a host parameter in 0..10 panel travel; every switch carries
+the modelled panel's own detent labels.
 
 ## MASTER
 
@@ -43,19 +44,25 @@ labels.
 ## TRIGGER and GATE SELECT
 
 - **TRIGGER** — with KBD selected, MULTIPLE re-articulates the envelopes
-  on every key press; SINGLE holds one gate while any key is down and
-  re-articulates only after all keys are released (legato phrasing). With
-  KBD off, key presses do not re-articulate at all: X and Y/EXT patches
-  articulate on their own gate edges, as the hardware's selected-bus
-  trigger derivation does.
+  on every key press; each accepted press briefly follows the physical
+  release path before attacking again, producing the original's nominal
+  ~5 ms retrigger notch. SINGLE holds one keyboard gate while any key is
+  down and re-articulates only after all keys are released (legato phrasing).
+  With KBD off, key presses do not re-articulate at all.
 - **GATE SELECT** — the envelopes' gate sources, OR'ed: **KBD** (the
   keyboard), **X** (the LFO square — auto-repeat, one gate per clock),
-  **Y/EXT** (the Shaper's own gate). *At least one must be on for the
-  envelopes to run at all* — with none selected, the Filter/ADSR path is
-  silent unless VCA BYPASS drones it open. The Shaper path is the
-  exception: its VCA follows the Shaper contour itself, so raised
-  Shaper-path sliders keep sounding (FREE mode cycles on its own, and
-  RESET restarts on every key press) without any gate selected.
+  **Y/EXT** (the Shaper's own gate). In FREE that gate stays high for the
+  whole rising leg and low for the whole falling leg. In KBD HOLD it rises only
+  on a new cycle and falls at hold/release; in RESET and RUN it rises only with
+  the active rising leg. Exact self-Y feedback edge acceptance remains open.
+  *At least one must be on for the envelopes to run at all* — with none selected, the Filter/ADSR
+  path is silent unless VCA BYPASS drones it open. The Shaper path is the
+  exception: its VCA follows the Shaper contour itself, so raised Shaper-path
+  sliders keep sounding (FREE mode cycles on its own, and RESET restarts on
+  every key press) without any gate selected.
+  X and Y/EXT have their own edge branches: their rising edges still retrigger
+  through the same short release notch when KBD or another source is already
+  holding the combined gate high.
 
 ## MOD X
 
@@ -69,7 +76,9 @@ labels.
   (continuous slow wander); OSC B (its currently selected waveform, at audio
   rate).
 - **LFO/S+H RATE** — under 1 Hz to about 50 Hz; also the sample-and-hold and
-  arpeggiator clock. It does not affect RED NOISE or OSC B.
+  arpeggiator clock. The original control is circuit-loaded, so half knob
+  travel is about 2.91 Hz rather than the 3.87 Hz midpoint of an unloaded
+  exponential sweep. It does not affect RED NOISE or OSC B.
 
 ## SHAPER Y
 
@@ -81,8 +90,9 @@ modulation generator).
   cycle from zero, restarted by *every* key press regardless of the TRIGGER
   switch. **RUN**: the rising segment always completes; new gates are
   ignored until it has.
-- **SHAPE** — the rise/fall split of the period: 0 is fast-rise, 5
-  symmetric, 10 slow-rise/quick-fall. Total time never changes.
+- **SHAPE** — the rise/fall split of the period: 0 is a 2.5617/97.4383
+  fast-rise/slow-fall split, 5 is symmetric, and 10 reverses the split.
+  Total time never changes.
 - **RATE** — the total period: several cycles per minute up to about 20 Hz.
 
 The Shaper's output also drives the Shaper path's VCA directly, so that path
@@ -97,13 +107,28 @@ pulses in FREE mode and articulates in the envelope modes.
 - **SHAPER Y TO:** — OFF · OSC A+B · OSC B · OSC B RWM · LFO RATE (the Y
   wheel sets the fastest rate, the panel knob the slowest) · FILT L.
 
+The destination switch changes the electrical load, not just the label. As on
+the original circuit, A+B is a little shallower per oscillator than a single
+oscillator, FILT U is deeper than FILT U+L, and the X and Y wheels have
+opposite-feeling curves: at half assumed-linear resistance travel X→A already
+has 86.75% of its full depth, while Y→B has 33.56%. The wheel pot tapers and
+absolute full-depth calibration remain hardware-measurement items; the
+load-dependent differences are schematic-derived.
+
 ## AUDIO MIXER
 
-- **MASTER VOLUME** — the final attenuator for both paths.
-- **BRIGHTNESS** — the Shaper path's 6 dB/octave lowpass; fully open at
-  maximum.
+- **MASTER VOLUME** — one linear 20 kΩ gang per path. With SPLIT off, the
+  linked wipers interact; their DC limit is a half-sum, but their audio
+  transfer also depends on BRIGHTNESS and the knob position.
+- **BRIGHTNESS** — a passive shelf after the Shaper VCA. At 0 it is a
+  294.7 Hz low-pass in SPLIT; at 10 it leaves a gentle −1.58 dB high shelf.
+  The normalled jack shifts that response and subtly colours the Filter path
+  too — a consequence of the original passive wiring, not stereo crosstalk.
 - **Shaper path sliders** — A, B, RING, NOISE. The ring modulator is always
-  Osc A's triangle × Osc B's triangle, unaffected by the WAVEFORM switches.
+  Osc A's fixed internal triangle × Osc B's fixed internal triangle,
+  unaffected by the WAVEFORM switches. Its internal P2 trim cancels carrier
+  in the nominal circuit; real-device feedthrough is unit-dependent, not a
+  fixed added bleed.
 - **Filter path sliders** — A, B, NOISE (no ring in this path).
 
 ## UPPER FILTER U / LOWER FILTER L
@@ -119,7 +144,10 @@ The signature series dual filter.
   reach self-oscillation at maximum, playable across the keyboard with KB
   AMOUNT up.
 - **SLOPE** — the Upper Filter at 12 or 24 dB/octave.
-- **KB AMOUNT** — keyboard tracking, zero to slightly over 100 %.
+- **KB AMOUNT** — keyboard tracking, zero to slightly over 100 %. Ghostar
+  follows the original DAC/reference cancellation: its pivot is the
+  keyboard's second C plus 0.6015 cent (MIDI 60.006015). Both the amount and
+  that tiny offset are circuit-derived.
 - **Lower mode** — **OUT** (a plain 2- or 4-pole lowpass remains);
   **OVERDRIVE** (a soft clipper between the filters, re-filtered by the
   Upper — the fuzz register); **BAND-PASS** (a parametric boost: a peak
@@ -136,22 +164,42 @@ The signature series dual filter.
   contours to the right, inverted to the left; full travel spans ±2.5
   octaves straddling the cutoff. Permanently wired to the Upper Filter, to
   the Lower only in DYNAMIC.
-- **A D S R** — attack, decay and release each travel 5 ms to 10 s; sustain
-  is a level. The attack genuinely takes its labelled time to peak.
+- **A D S R** — attack, decay and release each set a 5 ms to 10 s RC time
+  constant. The original 100 Ω threshold/cap arm is retained in all three
+  segments; at fastest Attack this makes the cap turn around slightly below
+  the nominal 7.5 V threshold, one of the unit's small articulation quirks.
+  The two sustain controls share the original diode-biased bottom
+  rail; nominally, zero sustain lands at the Loudness VCA's 0.5 V shutoff and
+  the remaining travel is affine above it. Release slows into the original
+  series-diode knee (31.3 s from peak to audible silence at maximum), rather
+  than remaining a pure exponential. At Ghostar's nominal 1.3× charging aim
+  attack reaches threshold after about 1.47 time constants; real-part spread
+  bounds that figure until a hardware envelope capture exists.
+- **Loudness response** — the traced control network gives the 7.5 V envelope
+  a 0.5 V dead zone, then Ghostar follows its nominal linear rise to full
+  gain. An original CEM3360's exact top gain, saturation and feedthrough vary
+  by device and remain unresolved.
 - **VCA BYPASS** — holds the Filter path's VCA fully open: an
   un-articulated drone.
 
 ## PERFORMANCE
 
 - **GLIDE / GLIDE MODE** — portamento amount; OFF, AUTO (only while more
-  than one key is held — fingered portamento), ON.
-- **Bend wheel** — spring-loaded, ± 8 semitones at full travel.
+  than one key is held — fingered portamento), ON. The traced 470 nF capacitor
+  and 2 MΩ pot give a 0.94 s maximum RC time constant; the travel curve remains
+  voiced.
+- **Bend wheel** — Ghostar uses ±8 semitones at full travel. The vintage
+  circuit's raw pot has ±15.88 semitones of electrical authority, but no source
+  records how much of it the spring-loaded mechanism reaches.
 - **MOD X / SHAPER Y wheels** — attenuators for the two modulation signals,
   "toward zero volts": a bipolar source keeps its symmetry, a unipolar one
-  scales toward silence.
-- **SPLIT** — the two audio paths to left (Filter/ADSR) and right (Shaper),
-  as the modelled hardware's two rear jacks. On a mono output bus the two
-  paths stay summed — there is no right jack to split onto.
+  scales toward silence. X is a current-driven rheostat and feels immediate;
+  Y is a voltage divider behind 15 kΩ and blooms later in its travel. Their
+  destination-dependent loading is retained at control and audio rate.
+- **SPLIT** — off sends the hardware-normalled, passively cross-loaded mix to
+  both channels. On isolates the Filter/ADSR path at full level on the left and the
+  Shaper path at full level on the right, like inserting a plug into the
+  hardware's SHAPED rear jack. A mono plug-in bus keeps the normalled mix.
 - **PANIC** — the hard stop: kills every sounding voice and resets the
   engine's voice state. Panel settings are parameters and survive, so a
   drone dialled in with VCA BYPASS or a raised Shaper path in a

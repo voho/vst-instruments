@@ -6,6 +6,8 @@
 // in Docs/open-questions.md.
 #pragma once
 
+#include "DSP/SpiritNoise.h"
+
 #include <array>
 #include <cstdint>
 
@@ -70,7 +72,7 @@ struct EngineParameters
 
     // --- AUDIO MIXER ------------------------------------------------------
     float masterVolume { 0.8f };
-    float brightness { 1.0f };                 // Shaper path 6 dB/oct lowpass
+    float brightness { 1.0f };                 // post-Shaper-VCA passive shelf
     float shaperPathA { 0.0f };
     float shaperPathB { 0.0f };
     float shaperPathRing { 0.0f };
@@ -183,9 +185,10 @@ public:
         return envelopeGate_;
     }
 
-    // How long the loudness envelope's release can ring, worst case: the
-    // longest segment time constant carried down to the level at which the
-    // envelope idles. Derived from the same law the engine runs, so a
+    // How long the loudness path's release can remain audible, worst case:
+    // the longest segment time constant carried down to the CEM3360 control
+    // network's derived 1/15 zero-gain threshold. Derived from the same law
+    // the engine runs, so a
     // change to the envelope timing cannot leave a stale figure behind in
     // the plug-in's advertised tail.
     [[nodiscard]] static double longestReleaseTailSeconds() noexcept;
@@ -225,6 +228,8 @@ public:
     }
 
 private:
+    friend struct GhostarCircuitTestAccess;
+
     // ------------------------------------------------------------------ DSP
     struct Adsr
     {
@@ -233,14 +238,22 @@ private:
         double level { 0.0 };
     };
 
-    // One 2-pole state-variable section (TPT), with the diode shunt that
-    // bounds the hardware's resonant node instead of the supply rails —
-    // solved as an exact sub-step of the continuous equation, so the
-    // section converges to the same filter at every rate.
+    // One canonical-input 2-pole TPT state-variable section. The Upper uses
+    // this directly. The Lower keeps the same two CEM state companions but
+    // solves its three moving mixer inputs around them in runLowerSection().
     struct SvfSection
     {
         double ic1 { 0.0 };
         double ic2 { 0.0 };
+    };
+
+    struct HighQBranch
+    {
+        // Trapezoidal companion for charge transferred through C33/C37,
+        // normalised to the CEM's 22 nF timing capacitor and engine units.
+        double chargeCompanion { 0.0 };
+        double amplifierGain { 0.0 };
+        double sourceResistanceOhms { 0.0 };
     };
 
     struct SvfOutputs
@@ -250,8 +263,29 @@ private:
         double hp;
     };
 
+    struct OutputWipers
+    {
+        double filter;
+        double shaper;
+        double shaperTop;
+    };
+
+    static double p1014SelectedWaveVolts(Waveform waveform,
+                                         double bipolarSample) noexcept;
     static SvfOutputs runSection(SvfSection& section, double input, double g,
-                                 double k, double diodeDecay) noexcept;
+                                 double k, HighQBranch* highQ,
+                                 double chargeStep) noexcept;
+    SvfOutputs runLowerSection(
+        const std::array<double, 3>& sourceTops,
+        const std::array<double, 3>& sliderTravels,
+        double dryInput, double g, double k) noexcept;
+    double processOverdrive(double lowerLowpass) noexcept;
+    double processFilterCoupling(double input) noexcept;
+    OutputWipers processOutputNetwork(double filterInput,
+                                      double shaperInput,
+                                      double masterTravel,
+                                      bool split) noexcept;
+    double processRingModulator(double triangleA, double triangleB) noexcept;
 
     // True when nothing is sounding and nothing can sound (no keys, both
     // envelopes' gate paths closed, no drone), so travel and wheel changes
@@ -259,8 +293,10 @@ private:
     [[nodiscard]] bool silentForSnap() const noexcept;
     void advanceControls() noexcept;
     void advanceEnvelope(Adsr& envelope, bool gate, bool triggerPulse,
-                         double attackCoefficient, double decayCoefficient,
-                         double releaseCoefficient, double sustain) noexcept;
+                         double attackCoefficient, double attackPeak,
+                         double decayCoefficient,
+                         double releaseResistanceOhms,
+                         double sustain) noexcept;
     void renderVoiceSample() noexcept;
     void handleArpClock() noexcept;
 
@@ -276,9 +312,9 @@ private:
     double travelSmoothing_ { 1.0 };
     double sampleRate_ { 44100.0 };
     double internalRate_ { 176400.0 };  // fixed 4x oversampling
-    // exp(-lambda / internalRate_): the diode sub-step's per-internal-sample
-    // decay, precomputed so the shunt's law is a rate, not a map.
-    double diodeDecay_ { 1.0 };
+    // h/(2*C*S) for the external limiter's trapezoidal charge companion.
+    double highQChargeStep_ { 0.0 };
+    double overdriveCouplingConductance_ { 0.0 };
 
     // Cached per-parameter-change values (updated in setParameters).
     double oscADuty_ { 0.5 };
@@ -298,7 +334,8 @@ private:
     bool pendingTrigger_ { false };
     // RESET mode is always multiple-trigger regardless of the TRIGGER
     // switch, so the Shaper needs its own record of every key press —
-    // pendingTrigger_ above answers to SINGLE/MULTIPLE and cannot serve.
+    // pendingTrigger_ above carries only the envelope's selected MULTIPLE
+    // KT pulse and cannot serve.
     bool pendingShaperTrigger_ { false };
 
     float pitchBend_ { 0.0f };
@@ -312,15 +349,24 @@ private:
     double lfoPhase_ { 0.0 };
     bool lfoSquareHigh_ { false };
     bool previousLfoSquareHigh_ { false };
-    double redNoiseState_ { 0.0 };
     double sampleHoldValue_ { 0.0 };
-    std::uint32_t noiseSeed_ { 0x9e3779b9u };
 
     double shaperLevel_ { 0.0 };
     bool shaperRising_ { true };
     bool shaperCycleActive_ { false };
     bool shaperGate_ { false };
     bool previousGateForShaper_ { false };
+
+    // P1015 does not feed accepted edges straight to the two attacks.
+    // MULTIPLE-key, X and Y/EXT edges pull their common GS/reset line low
+    // for the drawing's nominal ~5 ms first. Both caps release during that
+    // notch; the final GS rise then triggers both 556 halves. These are the
+    // selected source levels, not the OR'ed bus, because X/Y edges remain
+    // effective while another source already holds that bus high.
+    bool previousEnvelopeXGate_ { false };
+    bool previousEnvelopeYGate_ { false };
+    bool previousEnvelopeGs_ { false };
+    std::uint32_t envelopeResetSamplesRemaining_ { 0 };
 
     Adsr filterEnvelope_ {};
     Adsr loudnessEnvelope_ {};
@@ -359,7 +405,14 @@ private:
     double controlLowerK_ { 1.5 };
     double controlLoudnessGain_ { 0.0 };
     double controlShaperVcaGain_ { 0.0 };
-    double controlBrightnessCoefficient_ { 1.0 };
+    double controlBrightnessResistanceOhms_ { 0.0 };
+    double controlFilterMixA_ { 0.0 };
+    double controlFilterMixB_ { 0.0 };
+    double controlFilterMixNoise_ { 0.0 };
+    double controlShaperMixA_ { 0.0 };
+    double controlShaperMixB_ { 0.0 };
+    double controlShaperMixRing_ { 0.0 };
+    double controlShaperMixNoise_ { 0.0 };
 
     // --- Audio state (advanced at the internal rate) ------------------------
     double phaseA_ { 0.0 };
@@ -369,22 +422,37 @@ private:
     // instead of predicting the event a sample ahead. Selected wave and
     // ring triangle are corrected as separate channels per oscillator.
     double heldWaveA_ { 0.0 };
+    Waveform heldWaveformA_ { Waveform::Sawtooth };
     double heldTriA_ { 0.0 };
     double heldWaveB_ { 0.0 };
+    Waveform heldWaveformB_ { Waveform::Sawtooth };
     double heldTriB_ { 0.0 };
     double heldDutyA_ { 0.5 };
     double heldDutyB_ { 0.5 };
+    // Previous post-P1014 selected B wave. Only routes containing B's own
+    // pitch need this causal tap; downstream and A-only routes read fresher.
     double lastOscBWave_ { 0.0 };
-    double pinkState_[3] { 0.0, 0.0, 0.0 };
-    // Pinking poles re-derived for the internal rate in prepare(), so the
-    // noise colour does not move with the host rate.
-    std::array<double, 3> pinkA_ { 0.99765, 0.96300, 0.57000 };
-    std::array<double, 3> pinkG_ { 0.0990460, 0.2965164, 1.0526913 };
-    double brightnessState_ { 0.0 };
+    SpiritNoise noise_ {};
+    double brightnessG_ { 0.0 };
+    double brightnessCompanion_ { 0.0 };
+    double filterCouplingG_ { 0.0 };
+    double filterCouplingCompanion_ { 0.0 };
+    double ringCouplingG_ { 0.0 };
+    double ringCouplingCompanion_ { 0.0 };
+    // C34's trapezoidal voltage companion, left plate minus right plate.
+    double overdriveCouplingCompanion_ { 0.0 };
 
     SvfSection lowerSection_ {};
-    SvfSection upperFirst_ {};
-    SvfSection upperSecond_ {};
+    // Trapezoidal voltage companions for the three 68 pF wiper-to-VBP arms.
+    std::array<double, 3> lowerMixerCompanions_ {};
+    SvfSection upperControlled_ {};
+    SvfSection upperFixed_ {};
+    HighQBranch lowerHighQ_ {
+        0.0,
+        (1.0 + 33000.0 / 220.0) * 2200.0 / (22000.0 + 2200.0),
+        22000.0 * 2200.0 / (22000.0 + 2200.0)
+    };
+    HighQBranch upperHighQ_ { 0.0, 1.0 + 33000.0 / 2200.0, 0.0 };
 
     // Two-stage decimation for the 4x -> 1x output boundary, one ring per
     // stage per audio path so the split-path output decimates cleanly. The
@@ -414,20 +482,9 @@ private:
     std::array<double, stageBTaps> filterStageBRing_ {};
     std::array<double, stageBTaps> shaperStageBRing_ {};
     int stageBIndex_ { 0 };
-    // The white generator draws once per internal sample, so its per-hertz
-    // density falls as the internal rate rises; this rescale keeps the
-    // audible-band density at the level the mixer laws were voiced at.
-    double noiseAmplitude_ { 1.0 };
-
     double lastFilterPathSample_ { 0.0 };
     double lastShaperPathSample_ { 0.0 };
 
-    // Output AC coupling, as the hardware's series capacitors provide: a
-    // rectangular waveform must not carry its duty-cycle DC to the jack.
-    double dcPreviousInLeft_ { 0.0 };
-    double dcPreviousOutLeft_ { 0.0 };
-    double dcPreviousInRight_ { 0.0 };
-    double dcPreviousOutRight_ { 0.0 };
 };
 
 } // namespace ghostar

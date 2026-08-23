@@ -51,7 +51,9 @@ constexpr double normalisedPeak = 0.7079457843841379;
 // These are file-delivery guards rather than synthesizer transfer values. A
 // demo with more DC can waste headroom or thump downstream equipment, while a
 // large non-zero endpoint can click when a player starts or stops the file.
-constexpr double maximumAbsoluteDcMean = 0.005;
+// Leave the small margin the Spirit's genuinely DC-coupled Shaper output needs
+// with P1014's asymmetric selected-wave bias; this remains a delivery guard.
+constexpr double maximumAbsoluteDcMean = 0.006;
 constexpr double maximumEdgeMagnitude = 0.01;
 
 // ---------------------------------------------------------------------------
@@ -473,7 +475,6 @@ Take renderRingBells()
 {
     EngineParameters parameters;
     parameters.shaperPathRing = 0.85f;
-    parameters.shaperPathA = 0.15f;
     parameters.brightness = 0.8f;
     parameters.oscBRange = OscBRange::PlusOne;
     parameters.interval = 0.68f;
@@ -541,7 +542,6 @@ Take renderTwoPathDrone()
     parameters.resonance = 0.35f;
     parameters.shaperPathRing = 0.5f;
     parameters.shaperPathNoise = 0.25f;
-    parameters.shaperPathB = 0.3f;
     parameters.oscBRange = OscBRange::Bass;
     parameters.interval = 0.35f;
     parameters.brightness = 0.55f;

@@ -17,8 +17,10 @@ Ghostar models the voice architecture of a 1983 monophonic analog synthesizer
 — the Crumar Spirit, designed by Jim Scott, Tom Rhea and Bob Moog — block by
 block: two bandlimited oscillators with one-directional hard sync and the
 panel's exact duty-cycle sets, a triangle-cross ring modulator with its
-un-nulled carrier bleed, a white-plus-pink noise source, and the signature
-**series dual filter** — a lower multimode section (parametric boost,
+AC-coupled A carrier and internal null trim, an MM5837 maximal-PRBS noise source at an explicit
+75 kHz nominal clock through the service schematic's complete RC/1458
+colouring network, and the
+signature **series dual filter** — a lower multimode section (parametric boost,
 inter-filter overdrive, resonant highpass, or out) sliding against a
 12/24 dB upper lowpass, with the frozen-formant tracking mode — feeding two
 parallel audio paths with independent VCAs. Modulation is the instrument's
@@ -44,11 +46,24 @@ whole panel, so every one is readable as well as playable
 What is modelled from documentation, what is *derived* from it, and what
 remains a voiced choice is set out control by control in the
 [circuit-modelling research and implementation contract](Docs/circuit-modelling-research.md).
-The character-defining laws are derived rather than invented: the resonance
-curve from the CEM3350's own Q scale and the panel's pot network, both filter
-nonlinearities from the BA130's forward characteristic, the envelope timing
-from the 556 timer circuit the service drawing shows, and keyboard tracking
-from the CV ladder's resistors. Every constant still voiced is listed as a
+The character-defining control laws are increasingly derived rather than
+invented: the resonance curve from the CEM3350's Q scale and panel network,
+envelope timing from the 556 circuit, and keyboard tracking from the CV
+ladder. The controlled-Upper high-Q limiter now solves its resolved
+BA130/TL082/1 nF feedback network implicitly; the fixed Upper stays linear.
+Lower now solves all three unbuffered mixer sliders, their 220 kΩ/68 pF arms,
+both moving CEM states and the traced C33/BA130 loop together. P1014's unequal
+CEM3340 waveform swings and DC offsets survive into both mixers and OSC-B
+modulation instead of being normalised away. The current-driven X wheel and
+voltage-fed Y wheel retain their opposing loaded travels and each selector
+position's distinct pitch/filter depth, at control and audio rate. OVERDRIVE
+solves its traced
+IC12A/BA130 throw and C34 output coupling from the Lower VLP state; the three
+remaining RS7 terminal assignments still await a hardware continuity table.
+The output stage preserves the
+hardware's less-obvious details too: an asymmetric 2.56/97.44 Shaper extreme,
+the post-VCA passive BRIGHTNESS network, and the normalled rear jack's
+frequency-dependent wiper cross-loading. Every constant still voiced is listed as a
 standing research task with an explicit evidence gap in
 [open questions](Docs/open-questions.md), and the field Ghostar competes in,
 its audited standing and the ordered work that closes the gap live in the

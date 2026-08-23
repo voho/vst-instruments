@@ -378,10 +378,12 @@ GhostarAudioProcessorEditor::GhostarAudioProcessorEditor(
                 "wheel sets the fastest rate and the panel knob the "
                 "slowest.");
     addKnob(masterVolume, ids::masterVolume, "MASTER VOLUME",
-            "Output level.");
+            "Dual 20 kΩ linear level control. The normalled main jack lets "
+            "the two loaded wipers interact; SPLIT isolates them.");
     addKnob(brightness, ids::brightness, "BRIGHTNESS",
-            "A 6 dB/octave lowpass on the Shaper path only. Fully up is "
-            "effectively open.");
+            "The passive post-VCA Shaper tone network. At zero it is a "
+            "294.7 Hz lowpass; fully up retains a gentle -1.58 dB high "
+            "shelf rather than bypassing.");
     addFader(shaperPathA, ids::shaperPathA, "A",
              "Osc A into the Shaper path.");
     addFader(shaperPathB, ids::shaperPathB, "B",

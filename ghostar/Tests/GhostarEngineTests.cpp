@@ -455,11 +455,10 @@ void testFullResonanceStaysBounded()
           "long marginal full-resonance render does not accumulate");
 }
 
-// The lowpass integrator carries no bound of its own since the diode shunt
-// became the resonant node's law, so the regenerative extremes — full
-// resonance across the cutoff span, driven and undriven, OVERDRIVE's boost
-// included, at more than one rate — are rendered here to hold the claim
-// that the shunt alone bounds the loop.
+// The lowpass integrator carries no emergency bound, so the regenerative
+// extremes — full resonance across the cutoff span, driven and undriven,
+// OVERDRIVE included, at more than one rate — hold the nonlinear circuits'
+// stability contract. They do not calibrate physical node levels.
 void testRegenerativeExtremesStayBounded()
 {
     for (const double rate : { 44100.0, 96000.0 })
@@ -493,12 +492,11 @@ void testRegenerativeExtremesStayBounded()
     }
 }
 
-// The diode shunt is a term of the continuous system, so the same patch
-// must converge to the same filter at every rate: the self-oscillation
-// amplitude — set entirely by the nonlinearity — must agree between hosts.
-// The per-sample maps this law replaced failed exactly this (their
-// equilibrium scaled with the sample rate).
-void testSelfOscillationLevelIsRateInvariant()
+// The external limiter uses trapezoidal companions alongside the CEM states,
+// so its settled level should agree across representative host rates.
+// Per-sample maps and a mixed backward-Euler/TPT update fail this comparison
+// by adding host-rate-dependent damping.
+void testSelfOscillationLevelAgreesAcrossTestedRates()
 {
     const auto steadyRms = [](double rate) {
         GhostarEngine engine;
@@ -518,13 +516,19 @@ void testSelfOscillationLevelIsRateInvariant()
         return rms(render(engine, 1.0, rate));
     };
 
+    const double at8 = steadyRms(8000.0);
     const double at44 = steadyRms(44100.0);
     const double at96 = steadyRms(96000.0);
-    check(at44 > 1.0e-3, "self-oscillation sustains at 44.1 kHz");
-    check(at96 > 1.0e-3, "self-oscillation sustains at 96 kHz");
+    // With P1014's 5 V/unit reference, the BA130 loop settles near 0.3 mFS
+    // at the output. Pin persistence below that physical knee without
+    // restoring the former arbitrary 24 mV/unit loudness calibration.
+    check(at8 > 1.0e-4, "self-oscillation sustains at 8 kHz");
+    check(at44 > 1.0e-4, "self-oscillation sustains at 44.1 kHz");
+    check(at96 > 1.0e-4, "self-oscillation sustains at 96 kHz");
+    const double quietest = std::min({ at8, at44, at96 });
+    const double loudest = std::max({ at8, at44, at96 });
     const double ratioDb =
-        20.0 * std::log10(std::max(at44, at96)
-                          / std::max(1.0e-12, std::min(at44, at96)));
+        20.0 * std::log10(loudest / std::max(1.0e-12, quietest));
     check(ratioDb < 0.5,
           "self-oscillation level agrees across host rates within 0.5 dB");
 }
@@ -558,10 +562,10 @@ void testArpeggiatorStepsHeldKeys()
           "the arpeggiator moves between held pitches");
 }
 
-// The labelled attack time is the actual time-to-peak: at a half-second
-// setting the level must still be climbing shortly before the half-second
-// mark and at full level shortly after it.
-void testAttackReachesPeakAtItsLabelledTime()
+// The panel's printed range follows the slider/cap RC constant. Because the
+// nominal 556 model aims about 1.3x beyond the +7.5 V threshold, the cap reaches
+// that threshold after ln(1.3/0.3) = 1.47 time constants (OQ-04).
+void testAttackPeakFollowsTheCircuitAim()
 {
     GhostarEngine engine;
     engine.prepare(44100.0, 256);
@@ -572,19 +576,19 @@ void testAttackReachesPeakAtItsLabelledTime()
     engine.setParameters(parameters);
     engine.noteOn(48, 0.9f);
 
-    render(engine, 0.30, 44100.0);
-    const auto climbing = render(engine, 0.10, 44100.0);   // 0.30..0.40 s
-    render(engine, 0.15, 44100.0);
-    const auto peaked = render(engine, 0.10, 44100.0);     // 0.55..0.65 s
+    render(engine, 0.40, 44100.0);
+    const auto climbing = render(engine, 0.05, 44100.0);   // before tau
+    render(engine, 0.27, 44100.0);
+    const auto peaked = render(engine, 0.05, 44100.0);     // after 1.47 tau
     const double climbingLevel = rms(climbing);
     const double peakedLevel = rms(peaked);
     check(peakedLevel > 1.0e-3, "the attack reaches an audible peak");
     check(climbingLevel < 0.9 * peakedLevel,
-          "the level is still climbing well before the labelled attack time");
+          "the attack is still climbing before its nominal model peak");
     render(engine, 0.2, 44100.0);
     const auto settled = render(engine, 0.10, 44100.0);
     check(std::abs(rms(settled) - peakedLevel) < 0.08 * peakedLevel,
-          "the level is at its peak just after the labelled attack time");
+          "the attack is at its peak after 1.47 time constants");
 }
 
 // The arpeggiator's octave steps are internal CV, not MIDI events: a held
@@ -681,7 +685,7 @@ void testTravelStepsGlideWhileSounding()
     render(engine, 0.5, 48000.0);
 
     // A brutal volume drop mid-note. Unsmoothed, the very next sample
-    // scales by ~1/100; smoothed, the envelope glides down over ~25 ms.
+    // scales by 1/10; smoothed, the attenuator glides down over ~25 ms.
     const auto before = render(engine, 0.05, 48000.0);
     parameters.masterVolume = 0.08f;
     engine.setParameters(parameters);
@@ -701,7 +705,7 @@ void testTravelStepsGlideWhileSounding()
     for (const float value : tail)
         tailSum += static_cast<double>(value) * static_cast<double>(value);
     const double tailRms = std::sqrt(tailSum / 4800.0);
-    check(tailRms < levelBefore * 0.05,
+    check(tailRms < levelBefore * 0.12,
           "the stepped volume target is reached after settling");
 }
 
@@ -914,9 +918,9 @@ int main()
     testEnvelopeGateFollowsTheSelectedBus();
     testFullResonanceStaysBounded();
     testRegenerativeExtremesStayBounded();
-    testSelfOscillationLevelIsRateInvariant();
+    testSelfOscillationLevelAgreesAcrossTestedRates();
     testArpeggiatorStepsHeldKeys();
-    testAttackReachesPeakAtItsLabelledTime();
+    testAttackPeakFollowsTheCircuitAim();
     testArpOctaveStepsSurviveTheMidiCeiling();
     testKeyPressDoesNotRetriggerWithoutKbdGate();
     testArpFirstStepIsTheScanBottom();
