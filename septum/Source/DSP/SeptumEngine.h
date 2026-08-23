@@ -239,6 +239,49 @@ namespace mapping
         return best;
     }
 
+    // [voiced, OQ-01/OQ-03] The rate the NOISE source is generated at.
+    //
+    // One full-scale value per *host* sample is white to the host Nyquist, and
+    // a white sequence spreads its power over that whole band, so its audible
+    // level falls as the host rate rises: measured 3.06 dB quieter at 96 kHz
+    // and 6.02 dB at 192 kHz than at 44.1 kHz, against a SAW in the same patch
+    // that is rate-invariant to 0.04 dB. Flat and level are separate claims and
+    // only the first was being made — the same defect the OVERDRIVE and the
+    // FB OSC loop already carry a fixed reference rate to avoid, and the same
+    // reason: it is the character of the port rather than of the instrument.
+    //
+    // The three properties cannot all hold at once. A sequence flat to the host
+    // Nyquist whose audible level does not move needs a variance proportional
+    // to the host rate, which is unbounded. What a fixed-rate instrument does
+    // is the fourth option: its noise is flat across the audio band and simply
+    // has no content above its own Nyquist. So the source is drawn at the
+    // instrument's rate and interpolated up, which fixes the level without a
+    // gain constant — unity-gain half-band interpolation preserves the variance
+    // *and* the audio-band density, because it changes only where the same
+    // continuous-time signal is sampled.
+    //
+    // The floor is the lower of the two rates OQ-01 brackets, and it is a floor
+    // rather than a target on purpose: generating below the slowest rate the
+    // instrument could be running at would band-limit the noise harder than the
+    // hardware ever does, while a floor picks a factor at every host rate
+    // without picking between 44.1 and 48 kHz.
+    inline constexpr double noiseInternalRateFloorHz = 44100.0;
+
+    // The largest power-of-two decimation whose internal rate stays at or above
+    // that floor: none at 44.1/48 kHz, 2x at 88.2/96 kHz, 4x at 176.4/192 kHz.
+    // Like the OVERDRIVE's ladder this stops at 4 because the interpolator
+    // stops at 4 — two half-band stages and nothing beyond them — so a host
+    // rate above 176.4 kHz that is not a multiple of one of the two base rates
+    // generates above the floor rather than at it.
+    [[nodiscard]] inline int noiseDecimation (double hostRateHz) noexcept
+    {
+        int factor = 1;
+        for (int candidate : { 2, 4 })
+            if (hostRateHz / candidate >= noiseInternalRateFloorHz - 1.0e-9)
+                factor = candidate;
+        return factor;
+    }
+
     // [voiced, OQ-12] Delay TIME 0-127 -> seconds, 1 ms to 1.3 s.
     [[nodiscard]] inline double delaySeconds (double value) noexcept
     {
@@ -768,6 +811,83 @@ inline constexpr std::array<double, 3> halfBandInnerTaps {
     0.03358705057227105, -0.08268763122280455, 0.30989245062299142
 };
 
+// NOISE, generated at the instrument's rate and interpolated to the host's.
+//
+// `mapping::noiseDecimation` carries the argument for why. The mechanics: one
+// value is drawn per *internal* sample and pushed through as many half-band
+// interpolators as the ladder asks for, which yields `factor` host-rate samples
+// at a time; `next` hands them out one per call. At 44.1 and 48 kHz the factor
+// is one and the draw is returned untouched, so those rates render exactly what
+// they rendered before.
+struct NoiseSource
+{
+    int factor { 1 };
+    HalfBandStage outer {}, inner {};
+    std::array<double, 4> pending {};
+    int pendingIndex { 0 };
+
+    void prepare (int decimation) noexcept
+    {
+        factor = decimation;
+        outer.configure (halfBandOuterTaps.data(),
+                         static_cast<int> (halfBandOuterTaps.size()));
+        inner.configure (halfBandInnerTaps.data(),
+                         static_cast<int> (halfBandInnerTaps.size()));
+        clear();
+    }
+
+    void clear() noexcept
+    {
+        outer.clear();
+        inner.clear();
+        pending.fill (0.0);
+        pendingIndex = 0;
+    }
+
+    // xorshift32. It replaced a 23-bit Galois LFSR whose *state* was read as
+    // the sample: successive states of a Galois LFSR are not independent
+    // (v(n+1) = 0.5 v(n) + 0.5 b(n)), so that wave was a one-pole-filtered bit
+    // stream — 10.9 dB darker across the band at 44.1 kHz and 1.1 dB at
+    // 192 kHz, which made the timbre a property of the user's interface rather
+    // than of the instrument. Its comment also named a Roland polynomial no
+    // document in the contract's source list settles.
+    [[nodiscard]] static double draw (std::uint32_t& rng) noexcept
+    {
+        rng ^= rng << 13;
+        rng ^= rng >> 17;
+        rng ^= rng << 5;
+        return (rng >> 8) * (1.0 / 8388607.5) - 1.0;
+    }
+
+    [[nodiscard]] double next (std::uint32_t& rng) noexcept
+    {
+        if (factor == 1)
+            return draw (rng);
+
+        if (pendingIndex == 0)
+        {
+            if (factor == 2)
+            {
+                outer.upsample (draw (rng), pending[0], pending[1]);
+            }
+            else
+            {
+                // The inner stage runs internal -> 2x internal and the outer
+                // one 2x -> host, the same order and the same two filters the
+                // OVERDRIVE climbs, so each of the inner stage's two outputs
+                // becomes two host-rate samples.
+                double half0 = 0.0, half1 = 0.0;
+                inner.upsample (draw (rng), half0, half1);
+                outer.upsample (half0, pending[0], pending[1]);
+                outer.upsample (half1, pending[2], pending[3]);
+            }
+        }
+        const double value = pending[static_cast<std::size_t> (pendingIndex)];
+        pendingIndex = (pendingIndex + 1) % factor;
+        return value;
+    }
+};
+
 // The AMP section's OVERDRIVE, evaluated at a fixed internal rate.
 //
 // Inside the oversampled loop the `tanh` shaper is evaluated with first-order
@@ -942,6 +1062,10 @@ private:
     struct Envelope
     {
         enum class Stage { Idle, Attack, Decay, Sustain, Release };
+        // Where a decay counts as arrived. Shared by the Decay branch's exit
+        // test and by `configure`'s re-entry test so the two cannot disagree
+        // about whether a level and its sustain are the same number.
+        static constexpr double settled = 1.0e-4;
         Stage stage { Stage::Idle };
         double level { 0.0 };
         double attackRate { 0.0 };   // level per sample while attacking
@@ -1020,6 +1144,12 @@ private:
         int combTouched { 0 };
         double combState { 0.0 };     // in-loop damping memory
         double hpfX1 { 0.0 }, hpfX2 { 0.0 }, hpfY1 { 0.0 }, hpfY2 { 0.0 };
+        // Per oscillator rather than per voice: the interpolator's ladder is a
+        // rate, so two oscillators both set to NOISE cannot share one chain
+        // without driving it at twice the host rate. The draws still come off
+        // the voice's one generator, so at a factor of one the two are exactly
+        // the interleaved stream they have always been.
+        NoiseSource noise {};
 
         void clearRuntime() noexcept
         {
@@ -1059,8 +1189,12 @@ private:
         SvfStage filter1 {}, filter2 {};
         double shelfState { 0.0 };
         // How much of the shelf's output is currently added: crossed between
-        // the three LOW FREQ positions rather than switched.
-        double shelfDepth { 0.0 };
+        // the three LOW FREQ positions rather than switched. A weight per
+        // position, like the filter's TYPE, so the cross takes the registered
+        // fade time whichever two positions it runs between — crossing the
+        // *depth* instead made the duration depend on how far apart the two
+        // endpoints happened to be.
+        SwitchCrossfade<3> lowFreqMix {};
 
         double glidePitch { 0.0 };    // current portamento pitch in note units
         double targetPitch { 0.0 };

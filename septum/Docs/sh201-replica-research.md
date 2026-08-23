@@ -725,7 +725,10 @@ Moving them changed no audio: the committed demos re-render bit-identically.
 Each is a standing research task; the measurement named would close it.
 
 - **OQ-01 — engine sample rate.** Clock tree fixes engine fs = USB fs;
-  44.1 vs 48 kHz undetermined. Close by: reading a real unit's USB
+  44.1 vs 48 kHz undetermined. The NOISE ladder takes the lower of the two as a
+  floor rather than choosing between them, so it decides a decimation factor at
+  every host rate without deciding this; the 0.37 dB the two families differ by
+  is the size of what is still open. Close by: reading a real unit's USB
   descriptors, or spectral analysis of a dry hardware capture's alias
   lines. Also owns the true oscillator interpolation/aliasing behavior
   (owners report supersaw content dying above ~15 kHz).
@@ -738,7 +741,15 @@ Each is a standing research task; the measurement named would close it.
   rate — a 23-bit Galois LFSR whose successive *states* were read as the
   sample shipped briefly and was neither (10.9 dB of tilt at 44.1 kHz, 1.1 dB
   at 192 kHz), under a comment naming a Roland polynomial no source in this
-  document settles. PW-SQU's polyBLEP residuals stop separating when the
+  document settles. The generator draws at the instrument's rate rather than
+  the host's and interpolates up through the OVERDRIVE's own half-band stages,
+  because one full-scale value per host sample makes the *level* follow the
+  rate even when the colour does not: measured in band, NOISE was 5.92 dB
+  quieter at 192 kHz than at 44.1 against a SAW in the same patch that did not
+  move, and is within 0.41 dB now. Flat, level-invariant and bounded cannot all
+  hold of a sequence white to the host Nyquist; a fixed-rate instrument's noise
+  is the fourth case, flat across the audio band with nothing above its own
+  Nyquist. PW-SQU's polyBLEP residuals stop separating when the
   narrow side of the pulse is shorter than a sample, which is reachable at the
   top of the PW range high on the keyboard; the bound is recorded here rather
   than worked around, because both ways of working around it change what the

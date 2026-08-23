@@ -94,6 +94,16 @@ void Engine::Envelope::configure (double sr, int a, int d, int s, int r) noexcep
     decayCoeff = std::exp (-6.907755 / std::max (1.0, mapping::decaySeconds (d) * sr));
     releaseCoeff = std::exp (-6.907755 / std::max (1.0, mapping::decaySeconds (r) * sr));
     sustain = s / 127.0;
+    // A SUSTAIN moved under a note that has already converged has to be walked
+    // to, not assigned. `setPatch` reconfigures every sounding voice on every
+    // parameter change, and the Sustain stage assigns `sustain` outright, so an
+    // ordinary automation move stepped the whole difference in one sample — out
+    // of digital silence, in the SUSTAIN 0 case. Handing the stage back to
+    // Decay lets its two-sided test do the walking. Inert on the legato
+    // note-on path, which reconfigures without triggering: in Sustain `level`
+    // holds exactly `sustain`, so an unchanged SUSTAIN leaves the stage alone.
+    if (stage == Stage::Sustain && std::abs (level - sustain) >= settled)
+        stage = Stage::Decay;
 }
 
 double Engine::Envelope::advance (int samples) noexcept
@@ -120,7 +130,7 @@ double Engine::Envelope::advance (int samples) noexcept
                 // immediately in that direction and the next sample assigned
                 // the new sustain outright — a step of the whole difference
                 // inside one sample, on an ordinary control move.
-                if (std::abs (level - sustain) < 1.0e-4)
+                if (std::abs (level - sustain) < settled)
                     stage = Stage::Sustain;
                 break;
             case Stage::Sustain:
@@ -430,6 +440,8 @@ void Engine::prepare (double sampleRate, int maxBlockSize)
         voice.osc1.comb.assign (combSamples, 0.0f);
         voice.osc2.comb.assign (combSamples, 0.0f);
         voice.osc1.combTouched = voice.osc2.combTouched = 0;
+        voice.osc1.noise.prepare (mapping::noiseDecimation (sampleRate_));
+        voice.osc2.noise.prepare (mapping::noiseDecimation (sampleRate_));
         voice.overdrive.prepare (sampleRate_);
     }
     latencySamples_ = voices_.front().overdrive.latency;
@@ -503,6 +515,12 @@ void Engine::reset()
         voice.osc2.superPhases.fill (0.0);
         voice.osc1.clearRuntime();
         voice.osc2.clearRuntime();
+        // The NOISE interpolators are cleared here and not on a note-on: their
+        // chain has no musical continuity to preserve, but starting it from
+        // zero costs the first few internal samples of level, which on a
+        // note-on would be an attack transient nothing asked for.
+        voice.osc1.noise.clear();
+        voice.osc2.noise.clear();
         voice.overdrive.clear();
     }
     for (auto& tone : tones_)
@@ -1060,15 +1078,7 @@ void Engine::triggerVoice (Voice& voice, Part part, int note, double velocity,
             // it. A stolen voice keeps its cross, like its filter states.
             voice.filterTypeMix.snapTo (static_cast<int> (tone.filterType));
             voice.filterSlopeFade = tone.filterSlope == FilterSlope::Db24 ? 1.0 : 0.0;
-            voice.shelfDepth =
-                tone.lowFreq == LowFreqMode::Flat
-                    ? 0.0
-                    : std::pow (10.0,
-                                (tone.lowFreq == LowFreqMode::Boost
-                                     ? mapping::lowShelfGainDb
-                                     : -mapping::lowShelfGainDb)
-                                    / 20.0)
-                          - 1.0;
+            voice.lowFreqMix.snapTo (static_cast<int> (tone.lowFreq));
             // The overdrive stage belongs with them. A *stolen* voice keeps
             // its filter and its envelope level deliberately, and clearing
             // the stage's matched delay line under it emptied the line the
@@ -1597,6 +1607,7 @@ namespace
     // belongs, and the reset is documented as naive anyway.
     inline OscOutput renderClassicWave (Waveform wave, double& phase, double inc,
                                         double duty, std::uint32_t& noiseRng,
+                                        NoiseSource& noise,
                                         bool corrected = true) noexcept
     {
         phase += inc;
@@ -1650,27 +1661,11 @@ namespace
             case Waveform::Sine:
                 return { std::sin (twoPi * phase), wrapped, wrapOffset };
             case Waveform::Noise:
-            {
-                // [voiced, OQ-03] White. The contract's position until a
-                // spectral capture of a real unit's NOISE closes OQ-03 is
-                // that the wave is white, and this generator is flat to
-                // within a fraction of a decibel across the band at every
-                // host rate.
-                //
-                // It replaced a 23-bit Galois LFSR whose *state* was read as
-                // the sample: successive states of a Galois LFSR are not
-                // independent (v(n+1) = 0.5 v(n) + 0.5 b(n)), so that wave
-                // was a one-pole-filtered bit stream — 10.9 dB darker across
-                // the band at 44.1 kHz and 1.1 dB at 192 kHz, which made the
-                // timbre a property of the user's interface rather than of
-                // the instrument. Its comment also named a Roland polynomial
-                // no document in the contract's source list settles.
-                noiseRng ^= noiseRng << 13;
-                noiseRng ^= noiseRng >> 17;
-                noiseRng ^= noiseRng << 5;
-                return { (noiseRng >> 8) * (1.0 / 8388607.5) - 1.0, wrapped,
-                         wrapOffset };
-            }
+                // [voiced, OQ-03] White across the audio band, at the
+                // instrument's own rate rather than the host's — see
+                // `mapping::noiseDecimation` for both halves of the claim and
+                // `NoiseSource` for the generator.
+                return { noise.next (noiseRng), wrapped, wrapOffset };
             default:
                 return { 0.0, wrapped, wrapOffset };
         }
@@ -1763,15 +1758,15 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
     // once per sample per voice.
     const double shelfA = twoPi * mapping::lowShelfHz / sampleRate_;
     const double shelfCoeff = shelfA / (1.0 + shelfA);
-    const double shelfDepthTarget =
-        tone.lowFreq == LowFreqMode::Flat
-            ? 0.0
-            : std::pow (10.0,
-                        (tone.lowFreq == LowFreqMode::Boost
-                             ? mapping::lowShelfGainDb
-                             : -mapping::lowShelfGainDb)
-                            / 20.0)
-                  - 1.0;
+    // How much of the shelf each of the three LOW FREQ positions adds, in the
+    // enum's own order (FLAT, BOOST, CUT). Indexed by the cross's weights, so
+    // a position that is not live costs nothing.
+    const double shelfBoostDepth =
+        std::pow (10.0, mapping::lowShelfGainDb / 20.0) - 1.0;
+    const double shelfCutDepth =
+        std::pow (10.0, -mapping::lowShelfGainDb / 20.0) - 1.0;
+    const std::array<double, 3> shelfDepthByPosition { 0.0, shelfBoostDepth,
+                                                       shelfCutDepth };
 
     for (int i = 0; i < samples; ++i)
     {
@@ -1829,7 +1824,8 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
             {
                 const auto out = renderClassicWave (wave2, voice.osc2.phase,
                                                     voice.inc2, voice.duty2,
-                                                    voice.noiseRng);
+                                                    voice.noiseRng,
+                                                    voice.osc2.noise);
                 sample2 = out.value;
                 osc2Wrapped = out.wrapped;
                 osc2WrapOffset = out.wrapOffset;
@@ -1872,6 +1868,7 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
                 const auto out = renderClassicWave (wave1, voice.osc1.phase,
                                                     voice.inc1, voice.duty1,
                                                     voice.noiseRng,
+                                                    voice.osc1.noise,
                                                     ! osc1SyncReset);
                 sample1 = out.value;
                 break;
@@ -1891,12 +1888,19 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
         // stale one back in when a non-FLAT position returned. LOW FREQ is
         // automatable and its three positions differ sample by sample, so the
         // shelf's own contribution is crossed rather than thrown, like the
-        // filter's TYPE above.
+        // filter's TYPE below — a weight per position walked at the same
+        // registered `fadeStep`, not the depth itself. Crossing the depth made
+        // the duration depend on the endpoints: FLAT -> CUT finished in 1.5 ms
+        // and BOOST -> CUT took 5.3 ms, so one switch had three transition
+        // times and none of them was the registered one.
         voice.shelfState += shelfCoeff * (mixed - voice.shelfState);
-        voice.shelfDepth +=
-            std::clamp (shelfDepthTarget - voice.shelfDepth, -fadeStep * 2.0,
-                        fadeStep * 2.0);
-        mixed += voice.shelfDepth * voice.shelfState;
+        voice.lowFreqMix.advance (static_cast<int> (tone.lowFreq), fadeStep);
+        mixed += voice.lowFreqMix.mix ([&shelfDepthByPosition] (int position)
+                                       {
+                                           return shelfDepthByPosition[
+                                               static_cast<std::size_t> (position)];
+                                       })
+                 * voice.shelfState;
 
         // ---- FILTER ------------------------------------------------------
         // Both of the filter's switches are crossed rather than thrown, for

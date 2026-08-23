@@ -10,9 +10,11 @@
 #include "DSP/SeptumSysEx.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -3591,11 +3593,20 @@ double worstJump (const std::vector<float>& x, std::size_t from, std::size_t to)
 }
 
 // [voiced, OQ-03] NOISE is white until a spectral capture says otherwise, and
-// white at every host rate: a generator whose colour depends on the rate is
-// reproducing the port rather than the instrument.
+// the same wave at every host rate: a generator whose colour or whose level
+// depends on the rate is reproducing the port rather than the instrument.
+//
+// The colour half. Read at 24 log-spaced bins the estimator carried about a
+// decibel of its own variance against a two-decibel threshold, which made this
+// a coin flip on every build — it read the same 44.1 kHz take as -1.35 dB at 24
+// bins, -0.83 at 96 and -1.93 at 512. It is read at 256 now, and the claim it
+// tests is the one the contract makes: that the shape does not follow the host
+// rate. The shape itself is not flat to the sample — the voice path rolls off
+// about 1.9 dB from 100 Hz to 16 kHz at every rate — so the absolute bound is
+// stated at what is measured rather than at what would be tidy.
 void testNoiseIsWhiteAtEveryHostRate()
 {
-    for (double sampleRate : { 44100.0, 96000.0, 192000.0 })
+    const auto tiltAt = [] (double sampleRate)
     {
         septum::Engine engine;
         engine.prepare (sampleRate, 256);
@@ -3606,15 +3617,70 @@ void testNoiseIsWhiteAtEveryHostRate()
         const auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 2.0,
                                        sampleRate);
         const auto skip = (std::size_t) (sampleRate * 0.2);
-        const double low = bandPower (take.left, sampleRate, 100.0, 500.0, skip);
-        const double mid = bandPower (take.left, sampleRate, 1000.0, 4000.0, skip);
-        const double high = bandPower (take.left, sampleRate, 8000.0, 16000.0, skip);
-        const double tilt = 10.0 * std::log10 (high / low);
-        const double bow = 10.0 * std::log10 (mid / low);
-        expect (std::abs (tilt) < 2.0 && std::abs (bow) < 2.0,
-                "NOISE is flat within 2 dB from 100 Hz to 16 kHz at "
+        const double low = bandPower (take.left, sampleRate, 100.0, 500.0, skip, 256);
+        const double mid = bandPower (take.left, sampleRate, 1000.0, 4000.0, skip, 256);
+        const double high = bandPower (take.left, sampleRate, 8000.0, 16000.0, skip, 256);
+        return std::pair<double, double> { 10.0 * std::log10 (high / low),
+                                           10.0 * std::log10 (mid / low) };
+    };
+
+    const auto reference = tiltAt (44100.0);
+    for (double sampleRate : { 44100.0, 96000.0, 192000.0 })
+    {
+        const auto measured = sampleRate == 44100.0 ? reference : tiltAt (sampleRate);
+        expect (std::abs (measured.first) < 3.0 && std::abs (measured.second) < 2.0,
+                "NOISE is flat within 3 dB from 100 Hz to 16 kHz at "
                     + std::to_string ((int) sampleRate) + " Hz (tilt "
-                    + std::to_string (tilt) + ", bow " + std::to_string (bow) + ")");
+                    + std::to_string (measured.first) + ", bow "
+                    + std::to_string (measured.second) + ")");
+        expect (std::abs (measured.first - reference.first) < 1.5
+                    && std::abs (measured.second - reference.second) < 1.5,
+                "NOISE has the same shape at " + std::to_string ((int) sampleRate)
+                    + " Hz as at 44.1 kHz (tilt " + std::to_string (measured.first)
+                    + " against " + std::to_string (reference.first) + ", bow "
+                    + std::to_string (measured.second) + " against "
+                    + std::to_string (reference.second) + ")");
+    }
+}
+
+// The level half. A white sequence drawn one value per *host* sample spreads
+// its power over the host's whole band, so its audible level falls as the rate
+// rises — 5.92 dB from 44.1 to 192 kHz, against a SAW in the same patch that
+// does not move at all, so the balance inside one patch changed with the user's
+// interface setting. NOISE is drawn at the instrument's rate and interpolated
+// up now, which is what makes the two legs track.
+void testNoiseLevelDoesNotFollowTheHostRate()
+{
+    const auto inBand = [] (double sampleRate, septum::Waveform wave)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 256);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = wave;
+        patch.upper.balance = -63;
+        engine.setPatch (patch);
+        const auto take = renderScore (engine, { { 0.0, true, 60, 100 } }, 1.4,
+                                       sampleRate);
+        const auto skip = (std::size_t) (sampleRate * 0.3);
+        return 10.0
+               * std::log10 (bandPower (take.left, sampleRate, 100.0, 16000.0, skip,
+                                        256));
+    };
+
+    const double reference = inBand (44100.0, septum::Waveform::Noise)
+                             - inBand (44100.0, septum::Waveform::Saw);
+    for (double sampleRate : { 48000.0, 88200.0, 96000.0, 176400.0, 192000.0 })
+    {
+        const double against = inBand (sampleRate, septum::Waveform::Noise)
+                               - inBand (sampleRate, septum::Waveform::Saw);
+        // The residual is the one thing a reference rate cannot remove: a 48 kHz
+        // instrument spreads the same variance over a wider band than a 44.1 kHz
+        // one, which is 0.37 dB and is OQ-01's own undecidedness showing.
+        expect (std::abs (against - reference) < 1.5,
+                "NOISE sits where it sat against a SAW in the same patch at "
+                    + std::to_string ((int) sampleRate) + " Hz (noise - saw "
+                    + std::to_string (against) + " dB against "
+                    + std::to_string (reference) + " dB at 44.1 kHz)");
     }
 }
 
@@ -3764,6 +3830,170 @@ void testRaisingSustainDoesNotStep()
             "raising SUSTAIN under a held note walks rather than steps (jump "
                 + std::to_string (thrown) + " against a steady "
                 + std::to_string (steady) + ")");
+}
+
+// The case above holds SUSTAIN for 50 ms with DECAY 100 — a 1.9 s decay, so the
+// envelope is still in Decay when the value moves and only that branch is
+// exercised. A note that has REACHED Sustain is the other half: the stage
+// assigned the new sustain outright, so an ordinary automation move stepped the
+// whole difference in one sample.
+void testSustainMovedUnderASettledNoteWalks()
+{
+    const double sampleRate = 44100.0;
+    const auto seam = [&] (int decay, int from, int to, double holdSeconds)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 8);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Sine;
+        patch.upper.ampEnvAttack = 0;
+        patch.upper.ampEnvDecay = decay;
+        patch.upper.ampEnvSustain = from;
+        engine.setPatch (patch);
+        engine.noteOn (24, 100);
+
+        std::vector<float> left (8), right (8);
+        const auto run = [&] (std::size_t samples)
+        {
+            std::vector<float> out;
+            for (std::size_t done = 0; done < samples; done += 8)
+            {
+                engine.process (left.data(), right.data(), 8);
+                for (int i = 0; i < 8; ++i)
+                    out.push_back (left[(std::size_t) i]);
+            }
+            return out;
+        };
+        const auto before = run ((std::size_t) (sampleRate * holdSeconds));
+        septum::Patch moved = patch;
+        moved.upper.ampEnvSustain = to;
+        engine.setPatch (moved);
+        const auto after = run ((std::size_t) (sampleRate * 0.05));
+
+        // The seam itself is the block boundary, so it is not inside either take.
+        const double thrown =
+            std::max ({ std::abs ((double) after.front() - (double) before.back()),
+                        worstJump (after, 0, 64) });
+        const double steady =
+            std::max (worstJump (before, before.size() - 200, before.size()),
+                      worstJump (after, after.size() - 200, after.size()));
+        expect (thrown < 4.0 * steady + 1.0e-4,
+                "SUSTAIN " + std::to_string (from) + " -> " + std::to_string (to)
+                    + " at DECAY " + std::to_string (decay)
+                    + " under a settled note walks rather than steps (jump "
+                    + std::to_string (thrown) + " against a steady "
+                    + std::to_string (steady) + ")");
+    };
+
+    // Both directions, at decays whose segment has certainly converged by the
+    // time the value moves. Against the assigning Sustain stage these read
+    // 0.0364 and 0.0337 — 650 and 220 times their own steady travel.
+    seam (40, 20, 110, 0.8);
+    seam (60, 100, 20, 0.5);
+    // A one-unit move is the ordinary case a knob makes, and stepped too.
+    seam (40, 20, 21, 0.8);
+}
+
+// LOW FREQ crosses the shelf's contribution rather than switching it. The cross
+// has to take the registered fade time whichever two of the three positions it
+// runs between: crossing the *depth* made the duration depend on how far apart
+// the endpoints happened to be, so one switch had three transition times
+// (1.5 ms, 3.8 ms, 5.3 ms) and none of them was the registered one.
+void testLowFreqCrossesOverTheRegisteredTimeFromEveryPosition()
+{
+    const double sampleRate = 44100.0;
+    const std::size_t settle = 4096, watch = 2048;
+    const auto take = [&] (septum::LowFreqMode start, septum::LowFreqMode end)
+    {
+        septum::Engine engine;
+        engine.prepare (sampleRate, 8);
+        septum::Patch patch = plainSawPatch();
+        patch.upper.osc1.wave = septum::Waveform::Sine;
+        patch.upper.lowFreq = start;
+        engine.setPatch (patch);
+        engine.noteOn (36, 100);
+
+        std::vector<float> left (8), right (8);
+        const auto run = [&] (std::size_t samples)
+        {
+            std::vector<float> out;
+            for (std::size_t done = 0; done < samples; done += 8)
+            {
+                engine.process (left.data(), right.data(), 8);
+                for (int i = 0; i < 8; ++i)
+                    out.push_back (left[(std::size_t) i]);
+            }
+            return out;
+        };
+        run (settle);
+        septum::Patch moved = patch;
+        moved.upper.lowFreq = end;
+        engine.setPatch (moved);
+        return run (watch);
+    };
+
+    // The three positions differ by a multiple of one shared signal — the
+    // shelf's own output — so a window's least-squares projection of the moving
+    // take onto the two held references is the cross weight, and the shelf's
+    // zero crossings never divide.
+    const auto crossSamples = [&] (septum::LowFreqMode a, septum::LowFreqMode b)
+    {
+        const auto held = take (a, a);
+        const auto dest = take (b, b);
+        const auto moving = take (a, b);
+        constexpr std::size_t window = 16;
+        std::size_t arrived = 0;
+        for (std::size_t w0 = 0; w0 + window <= moving.size(); w0 += window)
+        {
+            double num = 0.0, den = 0.0;
+            for (std::size_t i = w0; i < w0 + window; ++i)
+            {
+                const double d = (double) dest[i] - (double) held[i];
+                num += ((double) moving[i] - (double) held[i]) * d;
+                den += d * d;
+            }
+            if (den < 1.0e-12)
+                continue;
+            if (num / den < 0.995)
+                arrived = w0 + window;
+            else if (arrived > 0)
+                break;
+        }
+        return arrived;
+    };
+
+    const double registered =
+        septum::mapping::externalSwitchFadeSeconds * sampleRate;
+    const std::array<std::pair<septum::LowFreqMode, septum::LowFreqMode>, 6> moves {
+        { { septum::LowFreqMode::Flat, septum::LowFreqMode::Cut },
+          { septum::LowFreqMode::Flat, septum::LowFreqMode::Boost },
+          { septum::LowFreqMode::Boost, septum::LowFreqMode::Cut },
+          { septum::LowFreqMode::Cut, septum::LowFreqMode::Boost },
+          { septum::LowFreqMode::Cut, septum::LowFreqMode::Flat },
+          { septum::LowFreqMode::Boost, septum::LowFreqMode::Flat } }
+    };
+    double shortest = 1.0e9, longest = 0.0;
+    for (const auto& move : moves)
+    {
+        const auto measured = (double) crossSamples (move.first, move.second);
+        shortest = std::min (shortest, measured);
+        longest = std::max (longest, measured);
+        // One measurement window of slack either side: the projection is read
+        // sixteen samples at a time and the registered fade is 220.5 of them.
+        expect (measured >= registered - 16.0 && measured <= registered + 32.0,
+                "LOW FREQ position " + std::to_string ((int) move.first) + " -> "
+                    + std::to_string ((int) move.second)
+                    + " crosses over the registered fade time (measured "
+                    + std::to_string (measured) + " samples against "
+                    + std::to_string (registered) + ")");
+    }
+    // The point of the weight-per-position cross: the duration is a property of
+    // the switch, not of which two positions it happens to run between. Against
+    // the crossed depth these spread from 80 to 240 samples.
+    expect (longest - shortest <= 16.0,
+            "every LOW FREQ transition takes the same time (shortest "
+                + std::to_string (shortest) + ", longest "
+                + std::to_string (longest) + " samples)");
 }
 
 // Two S&H modulators must not be the same number.
@@ -4615,10 +4845,13 @@ int main()
     testAForeignSysExMessageDoesNotSplitAPatch();
     testADt1WritesAtTheAddressItNames();
     testNoiseIsWhiteAtEveryHostRate();
+    testNoiseLevelDoesNotFollowTheHostRate();
     testFilterDoesNotDistortAtZeroResonance();
     testTwentyFourDbPeakIsPinned();
     testFilterEnvelopeReArmsOnAFreshVoice();
     testRaisingSustainDoesNotStep();
+    testSustainMovedUnderASettledNoteWalks();
+    testLowFreqCrossesOverTheRegisteredTimeFromEveryPosition();
     testTheTwoLfosDrawDifferentRandomValues();
     testControlChangesDoNotStepTheOutput();
     testASwitchChangedAgainMidCrossStaysContinuous();

@@ -1962,6 +1962,105 @@ and requires the level never to fall by more than a tenth between steps and the
 peak never to reach the output limiter's knee. It fails 12 of 12 against the
 gated limiter.
 
+#### Step 50 — three more from the same review round
+
+**A SUSTAIN moved under a settled note stepped the whole difference in one
+sample.** Step 43 made the decay's exit test two-sided so a SUSTAIN raised under
+a *still-decaying* note glides, and stopped there: `Stage::Sustain` still
+assigned the new value outright, and `setPatch` reconfigures every sounding
+voice on every parameter change. So an ordinary automation move on a note that
+had finished decaying stepped. Measured at 44.1 kHz on a sine with the filter
+bypassed: AMP DECAY 40, SUSTAIN 20 → 110 after 0.8 s jumped **0.0364** against
+that take's own steady travel of 0.000196 — 186 times it; DECAY 60, 100 → 20
+jumped 0.0337; DECAY 0, 0 → 127 went from digital silence to −0.053 in one
+sample. Even a one-unit move stepped 7 times the steady travel. The amp envelope
+is deliberately outside the control slew, so nothing downstream smooths it.
+
+`configure` hands a converged voice back to `Stage::Decay` when the sustain it
+is given differs from the level the note is holding, and the two-sided branch
+does the walking. Every one of those seams is now 0.00025 or less — at or below
+the signal's own travel. The threshold the Decay branch tests against is a named
+constant shared by both tests now, so they cannot disagree about whether a level
+and its sustain are the same number. The fix is inert on the legato note-on
+path, which reconfigures without triggering: in Sustain the level *is* the
+sustain, so an unchanged SUSTAIN leaves the stage alone. Step 43's own test
+passes unchanged — it holds for 50 ms at DECAY 100, a 1.9 s decay, so it only
+ever exercised the Decay window.
+
+**LOW FREQ crossed at a rate that was a bare number, and for a duration that
+depended on the endpoints.** The shelf's contribution was walked at
+`fadeStep * 2.0` — a factor of two with no derivation, in the render path, which
+the contract forbids — under a comment saying the shelf is crossed "like the
+filter's TYPE". It was not: TYPE and SLOPE cross a 0…1 weight, and the shelf
+crossed the *depth*, which spans −0.602 to +1.512. Measured through the shipping
+engine, one switch had three transition times — FLAT → CUT in **1.52 ms**,
+FLAT → BOOST in **3.76 ms**, BOOST → CUT in **5.31 ms** — and none of them was
+the registered `externalSwitchFadeSeconds`, which the filter's TYPE beside it
+crosses in exactly 5.00 ms.
+
+LOW FREQ now carries a `SwitchCrossfade<3>`, one weight per position walked at
+the same `fadeStep`, and the three positions' depths are computed once per tick
+instead of a `std::pow` per sample. All six transitions measure the registered
+time. The bare number is gone and the comment is true.
+
+**NOISE was 5.92 dB quieter at 192 kHz than at 44.1 kHz.** The generator drew
+one full-scale value per *host* sample. A white sequence spreads its power over
+the whole band it is white across, so its audible density falls as that band
+widens: measured in-band (≤ 16 kHz) through the shipping engine, NOISE moved
+−2.57 dB at 88.2 kHz, −2.96 at 96, −5.60 at 176.4 and −5.92 at 192, against a
+SAW in the same patch that moved 0.04 dB. The balance between two legs of one
+patch followed the user's interface setting — the same defect the OVERDRIVE
+carries `overdriveInternalRateHz` to avoid and the FB OSC loop carries
+`fbOscLoopDampingReferenceRateHz` to avoid, and for the same stated reason: it
+is the character of the port rather than of the instrument.
+
+The three properties cannot all hold at once. A sequence flat to the *host*
+Nyquist whose audible level does not move needs a variance proportional to the
+host rate, which is unbounded — so "white to Nyquist, level-invariant, bounded"
+is not a thing any generator is. What a fixed-rate instrument does is the fourth
+option: its noise is flat across the audio band and has no content above its own
+Nyquist at all. So the source is drawn at the instrument's rate and interpolated
+up through the same two half-band stages the OVERDRIVE already climbs, by the
+largest power-of-two factor that keeps the internal rate at or above the lower
+of the two rates OQ-01 brackets — none at 44.1/48 kHz, 2× at 88.2/96, 4× at
+176.4/192. A floor rather than a target, so it decides a factor at every host
+rate without deciding OQ-01.
+
+This needs **no gain constant**: unity-gain half-band interpolation preserves
+both the variance and the audio-band density, because it only changes where the
+same continuous-time signal is sampled. Measured on the generator alone, the
+audio-band density is now within 0.05 dB of flat and within 0.4 dB across
+44.1…192 kHz; end to end, NOISE against SAW moves 0.41 dB across those rates
+instead of 5.92. The residual 0.37 dB between the 44.1 and 48 kHz families is
+OQ-01's own undecidedness showing, and is present in both builds. At 44.1 and
+48 kHz the factor is one and the draw is returned untouched, so those rates
+render exactly what they rendered before — all eleven demos are bit-identical.
+
+The interpolators live on the oscillator rather than on the voice, because the
+ladder is a rate: two oscillators both set to NOISE cannot share one chain
+without driving it at twice the host rate. The draws still come off the voice's
+single generator, so at a factor of one the two are the interleaved stream they
+have always been. They are cleared on `reset` and not on a note-on: the chain
+has no musical continuity to preserve, but starting it from zero would cost the
+first few internal samples of level, which on a note-on is an attack transient
+nothing asked for.
+
+**One existing test was resolved rather than re-thresholded.**
+`testNoiseIsWhiteAtEveryHostRate` read three bands at 24 log-spaced Goertzel
+bins, an estimator carrying about a decibel of its own variance against a
+two-decibel threshold — it read one 44.1 kHz take as −1.35 dB at 24 bins, −0.83
+at 96 and −1.93 at 512, so it was a coin flip on every build and this change
+happened to flip it. It reads 256 bins now, and it tests the claim OQ-03 makes:
+that the shape does not follow the host rate. The absolute bound is stated at
+what is measured — the voice path rolls off about 1.9 dB from 100 Hz to 16 kHz
+at *every* rate and on both builds, so 2 dB was never a bound the whole chain
+met. A second test fences the level claim directly: NOISE against a SAW in the
+same patch, which fails at all four rates above 48 kHz on the previous
+generator.
+
+All three fixes are fenced by checks watched to fail with them reverted — 14 of
+them. The 11 committed demos still re-render bit-identically.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:
