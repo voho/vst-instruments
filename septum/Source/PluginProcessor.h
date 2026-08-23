@@ -93,6 +93,15 @@ public:
     // the harness can stand in for the message loop.
     void reconcileControlChanges();
 
+    // Loads an entire structured patch into the processor and APVTS.
+    void loadPatch (const septum::Patch& patch);
+
+    // Parses and loads SysEx .syx bytes into the active patch.
+    void loadSysExData (const void* data, std::size_t sizeInBytes);
+
+    // Encodes the current patch into a Roland SH-201 SysEx .syx byte buffer.
+    [[nodiscard]] std::vector<std::uint8_t> createSysExDataForCurrentPatch() const;
+
     juce::AudioProcessorValueTreeState parameters;
 
     static juce::AudioProcessorValueTreeState::ParameterLayout

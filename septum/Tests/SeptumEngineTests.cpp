@@ -7,6 +7,7 @@
 
 #include "DSP/SeptumEngine.h"
 #include "DSP/SeptumPresets.h"
+#include "DSP/SeptumSysEx.h"
 
 #include <algorithm>
 #include <cmath>
@@ -3134,6 +3135,151 @@ void testAllNotesOffAndReset()
     }
     expect (high - low < 1.0e-4, "all-sound-off leaves no audible content");
 }
+
+void testSysExChecksumAndProtocol()
+{
+    const std::uint8_t testPayload[] = { 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03 };
+    const auto sum = septum::sysex::calculateChecksum (testPayload, sizeof (testPayload));
+    expect (septum::sysex::verifyChecksum (testPayload, sizeof (testPayload), sum),
+            "Roland checksum verifies against itself");
+
+    const auto dt1 = septum::sysex::makeDt1Message (0x00000100, testPayload, sizeof (testPayload));
+    expect (dt1.size() == 13 + sizeof (testPayload), "DT1 message has expected length");
+    expect (dt1.front() == 0xF0 && dt1.back() == 0xF7, "DT1 framed with F0..F7");
+    expect (dt1[1] == 0x41 && dt1[3] == 0x00 && dt1[4] == 0x00 && dt1[5] == 0x16, "Roland SH-201 Model ID matches");
+    expect (dt1[6] == 0x12, "DT1 command byte is 12H");
+
+    const auto rq1 = septum::sysex::makeRq1Message (0x00000100, 0x00000040);
+    expect (rq1.size() == 17, "RQ1 message length is 17 bytes");
+    expect (rq1[6] == 0x11, "RQ1 command byte is 11H");
+}
+
+void testSysExPatchSerializationRoundtrip()
+{
+    for (const auto& entry : septum::factoryPatches())
+    {
+        const auto packets = septum::sysex::encodePatchToSysExPackets (entry.patch);
+        expect (packets.size() == 6, "Every patch produces 6 DT1 blocks");
+
+        septum::Patch restored = septum::initPatch();
+        for (const auto& pkt : packets)
+        {
+            const bool ok = septum::sysex::decodeSysExMessage (pkt.data(), pkt.size(), restored);
+            expect (ok, "DT1 packet decodes successfully into patch");
+        }
+
+        expect (restored.name == entry.patch.name || restored.name == entry.name,
+                "Patch name roundtrips via SysEx (" + restored.name + ")");
+        expect (restored.upper.osc1.wave == entry.patch.upper.osc1.wave, "OSC1 wave matches");
+        expect (restored.upper.cutoff == entry.patch.upper.cutoff, "Cutoff matches");
+        expect (restored.upper.resonance == entry.patch.upper.resonance, "Resonance matches");
+        expect (restored.keyboardMode == entry.patch.keyboardMode, "Keyboard mode matches");
+        expect (restored.delayOn == entry.patch.delayOn, "Delay switch matches");
+        expect (restored.reverbOn == entry.patch.reverbOn, "Reverb switch matches");
+    }
+
+    const auto syxBuffer = septum::sysex::generateSyxBankFile (septum::factoryPatches());
+    expect (syxBuffer.size() > 1000, "Bank .syx buffer is populated");
+    std::vector<septum::NamedPatch> parsedBank;
+    const bool parsedOk = septum::sysex::parseSyxBankFile (syxBuffer.data(), syxBuffer.size(), parsedBank);
+    expect (parsedOk, "parseSyxBankFile parses whole bank successfully");
+    expect (parsedBank.size() == septum::factoryPatches().size(), "All patches recovered from .syx bank");
+}
+
+void testRolandGaloisLfsrNoise()
+{
+    septum::Engine engine;
+    engine.prepare (44100.0, 256);
+    septum::Patch patch = septum::initPatch();
+    patch.upper.osc1.wave = septum::Waveform::Noise;
+    patch.upper.cutoff = 127;
+    patch.upper.filterType = septum::FilterType::Bypass;
+    patch.upper.ampEnvAttack = 0;
+    patch.upper.ampEnvDecay = 0;
+    patch.upper.ampEnvSustain = 127;
+    patch.upper.level = 127;
+    engine.setPatch (patch);
+    engine.noteOn (60, 127);
+
+    const int total = 88200; // 2 seconds
+    std::vector<float> left (total, 0.0f), right (total, 0.0f);
+    engine.process (left.data(), right.data(), total);
+
+    double minVal = 1.0, maxVal = -1.0;
+    double sum = 0.0, sumSq = 0.0;
+    for (int i = 0; i < total; ++i)
+    {
+        minVal = std::min (minVal, (double) left[i]);
+        maxVal = std::max (maxVal, (double) left[i]);
+        sum += left[i];
+        sumSq += left[i] * left[i];
+    }
+    const double mean = sum / total;
+    const double rms = std::sqrt (sumSq / total);
+
+    expect (minVal >= -1.1 && maxVal <= 1.1, "LFSR noise is bounded within [-1, 1]");
+    expect (std::abs (mean) < 0.05, "LFSR noise is zero-mean DC-free");
+    expect (rms > 0.05 && rms < 0.75, "LFSR noise has appropriate RMS power");
+}
+
+void testAsymmetricOverdriveHarmonics()
+{
+    septum::Engine engine;
+    engine.prepare (44100.0, 256);
+    septum::Patch patch = septum::initPatch();
+    patch.upper.osc1.wave = septum::Waveform::Sine;
+    patch.upper.cutoff = 127;
+    patch.upper.filterType = septum::FilterType::Bypass;
+    patch.upper.overdrive = true;
+    patch.upper.drive = 90;
+    patch.upper.ampEnvAttack = 0;
+    patch.upper.ampEnvDecay = 0;
+    patch.upper.ampEnvSustain = 127;
+    patch.upper.level = 127;
+    engine.setPatch (patch);
+    engine.noteOn (69, 127); // A4 (440 Hz)
+
+    const int total = 44100;
+    std::vector<float> left (total, 0.0f), right (total, 0.0f);
+    engine.process (left.data(), right.data(), total);
+
+    double peak = 0.0;
+    for (float s : left)
+        peak = std::max (peak, std::abs ((double) s));
+    expect (peak > 0.05 && peak <= 1.10, "Overdriven sine wave has expected saturation ceiling: " + std::to_string (peak));
+}
+
+void testCoupledDb24FilterResonanceStability()
+{
+    for (double sr : { 44100.0, 48000.0, 96000.0 })
+    {
+        septum::Engine engine;
+        engine.prepare (sr, 256);
+        septum::Patch patch = septum::initPatch();
+        patch.upper.osc1.wave = septum::Waveform::Saw;
+        patch.upper.filterType = septum::FilterType::Lpf;
+        patch.upper.filterSlope = septum::FilterSlope::Db24;
+        patch.upper.cutoff = 64;
+        patch.upper.resonance = 127; // Maximum self-oscillation
+        engine.setPatch (patch);
+        engine.noteOn (60, 100);
+
+        const int total = (int) (sr * 1.5);
+        std::vector<float> left (total, 0.0f), right (total, 0.0f);
+        engine.process (left.data(), right.data(), total);
+
+        bool allFinite = true;
+        double peak = 0.0;
+        for (float s : left)
+        {
+            if (! std::isfinite (s))
+                allFinite = false;
+            peak = std::max (peak, std::abs ((double) s));
+        }
+        expect (allFinite, "Coupled -24 dB filter remains strictly finite at " + std::to_string (sr) + " Hz");
+        expect (peak <= 1.05, "Coupled -24 dB self-oscillation is bounded within safety ceiling at " + std::to_string (sr) + " Hz");
+    }
+}
 } // namespace
 
 int main()
@@ -3182,6 +3328,11 @@ int main()
     testOverdriveDoesNotFoldAtTheHostRate();
     testOverdriveKeepsCleanVoicesAligned();
     testAllNotesOffAndReset();
+    testSysExChecksumAndProtocol();
+    testSysExPatchSerializationRoundtrip();
+    testRolandGaloisLfsrNoise();
+    testAsymmetricOverdriveHarmonics();
+    testCoupledDb24FilterResonanceStability();
 
     if (failures == 0)
     {

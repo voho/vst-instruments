@@ -312,19 +312,26 @@ double OverdriveStage::shapeChain (double x, double preGain) noexcept
         return result;
     };
 
+    // Quadratic tube pre-conditioning: introduces gentle 2nd harmonic warmth
+    // before the soft-clipping saturation.
+    const auto tubeTransfer = [] (double in) noexcept
+    {
+        return in * (1.0 + 0.08 * std::tanh (in));
+    };
+
     // ADAA carries state from one internal sample to the next, so every call
     // to `shape` lands in a named local first: the order the shaper sees its
     // input in is the order time runs in, not whatever order the compiler
     // picks for a call's arguments.
     if (factor == 1)
-        return shape (preGain * x);
+        return shape (tubeTransfer (preGain * x));
 
     if (factor == 2)
     {
         double a = 0.0, b = 0.0;
         outer.upsample (x, a, b);
-        const double shapedA = shape (preGain * a);
-        const double shapedB = shape (preGain * b);
+        const double shapedA = shape (tubeTransfer (preGain * a));
+        const double shapedB = shape (tubeTransfer (preGain * b));
         return outer.downsample (shapedA, shapedB);
     }
 
@@ -333,11 +340,11 @@ double OverdriveStage::shapeChain (double x, double preGain) noexcept
     double a0 = 0.0, a1 = 0.0, b0 = 0.0, b1 = 0.0;
     inner.upsample (a, a0, a1);
     inner.upsample (b, b0, b1);
-    const double shapedA0 = shape (preGain * a0);
-    const double shapedA1 = shape (preGain * a1);
+    const double shapedA0 = shape (tubeTransfer (preGain * a0));
+    const double shapedA1 = shape (tubeTransfer (preGain * a1));
     const double down0 = inner.downsample (shapedA0, shapedA1);
-    const double shapedB0 = shape (preGain * b0);
-    const double shapedB1 = shape (preGain * b1);
+    const double shapedB0 = shape (tubeTransfer (preGain * b0));
+    const double shapedB1 = shape (tubeTransfer (preGain * b1));
     const double down1 = inner.downsample (shapedB0, shapedB1);
     return outer.downsample (down0, down1);
 }
@@ -1226,7 +1233,9 @@ void Engine::triggerVoice (Voice& voice, Part part, int note, double velocity,
                 phase = nextRandom() * (1.0 / 4294967296.0);
             osc->clearRuntime();
         }
-        voice.noiseRng = nextRandom() | 1u;
+        voice.noiseRng = nextRandom() & 0x7FFFFFu;
+        if (voice.noiseRng == 0)
+            voice.noiseRng = 0x555555u; // Non-zero seed for Galois LFSR
         voice.controlsPrimed = false;  // snap cutoff/resonance to this note
         if (! wasActive)
         {
@@ -1757,11 +1766,13 @@ namespace
                 return { std::sin (twoPi * phase), wrapped, wrapOffset };
             case Waveform::Noise:
             {
-                noiseRng ^= noiseRng << 13;
-                noiseRng ^= noiseRng >> 17;
-                noiseRng ^= noiseRng << 5;
-                return { (noiseRng >> 8) * (1.0 / 8388607.5) - 1.0, wrapped,
-                         wrapOffset };
+                // Roland VA 23-bit Galois LFSR with polynomial x^23 + x^18 + 1
+                const std::uint32_t lsb = noiseRng & 1u;
+                noiseRng >>= 1;
+                if (lsb != 0)
+                    noiseRng ^= 0x440000u;
+                const double val = (static_cast<double> (noiseRng & 0x7FFFFFu) * (2.0 / 8388607.0)) - 1.0;
+                return { val, wrapped, wrapOffset };
             }
             default:
                 return { 0.0, wrapped, wrapOffset };
@@ -2026,8 +2037,8 @@ void Engine::renderVoiceTick (Voice& voice, float* mono, int samples,
             filtered = stagePass (voice.filter1, filtered, k, a1, a2);
             if (tone.filterSlope == FilterSlope::Db24)
             {
-                // Second, non-resonant 2-pole stage (voiced topology).
-                const double k2 = mapping::filterSecondStageDamping;
+                // Second 2-pole stage with coupled resonance.
+                const double k2 = mapping::filterSecondStageDamping (k);
                 const double b1 = 1.0 / (1.0 + g * (g + k2));
                 const double b2 = g * b1;
                 filtered = stagePass (voice.filter2, filtered, k2, b1, b2);

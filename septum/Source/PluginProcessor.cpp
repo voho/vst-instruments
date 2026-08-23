@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "DSP/SeptumSysEx.h"
 
 #include <bit>
 #include <cmath>
@@ -1129,6 +1130,17 @@ bool SeptumAudioProcessor::handleMidiMessage (const juce::MidiMessage& message)
             return true;
         }
     }
+    else if (message.isSysEx())
+    {
+        const auto* rawData = message.getSysExData();
+        const auto rawSize = (std::size_t) message.getSysExDataSize();
+        Patch livePatch = snapshotPatch();
+        if (septum::sysex::decodeSysExMessage (rawData, rawSize, livePatch))
+        {
+            loadPatch (livePatch);
+            return true;
+        }
+    }
     else if (message.isAllNotesOff())
         engine.allNotesOff();
     else if (message.isAllSoundOff())
@@ -1434,6 +1446,66 @@ void SeptumAudioProcessor::applyProgram (int index)
     // snapshotting the APVTS.
     patchGeneration.fetch_add (1, std::memory_order_acq_rel);
     stagedProgram.store (-1, std::memory_order_release);
+}
+
+void SeptumAudioProcessor::loadPatch (const septum::Patch& patch)
+{
+    patchGeneration.fetch_add (1, std::memory_order_acq_rel);
+
+    const auto& bindings = toneBindings();
+    for (std::size_t i = 0; i < bindings.size(); ++i)
+    {
+        const float upVal = bindings[i].get (patch.upper);
+        const float loVal = bindings[i].get (patch.lower);
+        upperValues[i]->store (upVal, std::memory_order_relaxed);
+        lowerValues[i]->store (loVal, std::memory_order_relaxed);
+
+        const juce::String upId = "up_" + juce::String (bindings[i].suffix);
+        const juce::String loId = "lo_" + juce::String (bindings[i].suffix);
+        if (auto* param = parameters.getParameter (upId))
+            param->setValueNotifyingHost (parameters.getParameterRange (upId).convertTo0to1 (upVal));
+        if (auto* param = parameters.getParameter (loId))
+            param->setValueNotifyingHost (parameters.getParameterRange (loId).convertTo0to1 (loVal));
+    }
+    const auto& shared = patchBindings();
+    for (std::size_t i = 0; i < shared.size(); ++i)
+    {
+        if (std::strcmp (shared[i].id, "master_level") != 0)
+        {
+            const float pVal = shared[i].get (patch);
+            patchValues[i]->store (pVal, std::memory_order_relaxed);
+            if (auto* param = parameters.getParameter (shared[i].id))
+                param->setValueNotifyingHost (parameters.getParameterRange (shared[i].id).convertTo0to1 (pVal));
+        }
+    }
+
+    patchGeneration.fetch_add (1, std::memory_order_acq_rel);
+}
+
+void SeptumAudioProcessor::loadSysExData (const void* data, std::size_t sizeInBytes)
+{
+    if (data == nullptr || sizeInBytes == 0)
+        return;
+    std::vector<septum::NamedPatch> bank;
+    if (septum::sysex::parseSyxBankFile (static_cast<const std::uint8_t*> (data),
+                                         sizeInBytes, bank) && ! bank.empty())
+    {
+        loadPatch (bank.front().patch);
+    }
+    else
+    {
+        septum::Patch single = snapshotPatch();
+        if (septum::sysex::decodeSysExMessage (static_cast<const std::uint8_t*> (data),
+                                               sizeInBytes, single))
+        {
+            loadPatch (single);
+        }
+    }
+}
+
+std::vector<std::uint8_t> SeptumAudioProcessor::createSysExDataForCurrentPatch() const
+{
+    return septum::sysex::encodePatchToSyxBuffer (snapshotPatch());
 }
 
 const juce::String SeptumAudioProcessor::getProgramName (int index)

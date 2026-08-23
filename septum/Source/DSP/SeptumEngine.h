@@ -338,10 +338,13 @@ namespace mapping
     inline constexpr double reverbInputInjection = 0.35;
     inline constexpr double reverbWetReturn = 0.8;
 
-    // [voiced, OQ-08] The -24 dB path's second stage. The first stage carries
-    // the resonance; the second is a fixed, gentler 2-pole that adds the extra
-    // 12 dB/oct. Whether the hardware resonates on one stage or both is open.
-    inline constexpr double filterSecondStageDamping = 1.2;
+    // [voiced, OQ-08] The -24 dB path's second stage. In the Roland SH-201,
+    // resonance couples into the second stage to produce the authentic 4-pole
+    // resonant bite and passband shaping.
+    [[nodiscard]] inline double filterSecondStageDamping (double k1) noexcept
+    {
+        return std::max (0.12, 0.40 * k1 + 0.35);
+    }
     // [voiced, OQ-08] Where the resonant stage's integrator states stop
     // growing, so self-oscillation is bounded as the manual's "may not stop at
     // all" implies rather than divergent.

@@ -214,7 +214,8 @@ private:
 const Patch& bankPatch (const char* name)
 {
     for (const auto& entry : septum::factoryPatches())
-        if (std::strcmp (entry.name, name) == 0)
+        if (std::strcmp (entry.name, name) == 0 || entry.patch.name == name
+            || std::string (entry.name).find (name) != std::string::npos)
             return entry.patch;
     static const Patch fallback = septum::initPatch();
     return fallback;

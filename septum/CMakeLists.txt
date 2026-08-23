@@ -37,11 +37,13 @@ include(CTest)
 
 set(SEPTUM_DSP_SOURCES
     Source/DSP/SeptumEngine.cpp
-    Source/DSP/SeptumPresets.cpp)
+    Source/DSP/SeptumPresets.cpp
+    Source/DSP/SeptumSysEx.cpp)
 set(SEPTUM_DSP_HEADERS
     Source/DSP/SeptumEngine.h
     Source/DSP/SeptumPatch.h
-    Source/DSP/SeptumPresets.h)
+    Source/DSP/SeptumPresets.h
+    Source/DSP/SeptumSysEx.h)
 
 add_library(SeptumDSP STATIC
     ${SEPTUM_DSP_SOURCES}

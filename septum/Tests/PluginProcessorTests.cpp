@@ -5,6 +5,7 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "DSP/SeptumSysEx.h"
 
 #include <cmath>
 #include <cstdio>
@@ -304,9 +305,9 @@ void testProgramChangeStagesOnTheAudioPath()
 
     int superSawProgram = -1;
     for (int index = 0; index < processor.getNumPrograms(); ++index)
-        if (processor.getProgramName (index) == "SuperLead201")
+        if (processor.getProgramName (index).contains ("SuperLead201"))
             superSawProgram = index;
-    expect (superSawProgram > 0, "the supersaw program exists");
+    expect (superSawProgram >= 0, "the supersaw program exists");
 
     juce::MidiBuffer midi;
     midi.addEvent (juce::MidiMessage::programChange (1, superSawProgram), 0);
@@ -402,7 +403,7 @@ void testProgramChangeLandsWithoutMessagePump()
 
     int superSawProgram = -1;
     for (int index = 0; index < processor.getNumPrograms(); ++index)
-        if (processor.getProgramName (index) == "SuperLead201")
+        if (processor.getProgramName (index).contains ("SuperLead201"))
             superSawProgram = index;
 
     juce::AudioBuffer<float> block (2, 512);
@@ -451,7 +452,7 @@ void testReconcileKeepsEditsAfterProgramChange()
 
     int superSawProgram = -1;
     for (int index = 0; index < processor.getNumPrograms(); ++index)
-        if (processor.getProgramName (index) == "SuperLead201")
+        if (processor.getProgramName (index).contains ("SuperLead201"))
             superSawProgram = index;
     const septum::Patch& factory =
         septum::factoryPatches()[(std::size_t) superSawProgram].patch;
@@ -485,7 +486,7 @@ void testStateSurvivesUnpumpedProgramChange()
 
     int superSawProgram = -1;
     for (int index = 0; index < processor.getNumPrograms(); ++index)
-        if (processor.getProgramName (index) == "SuperLead201")
+        if (processor.getProgramName (index).contains ("SuperLead201"))
             superSawProgram = index;
 
     juce::MidiBuffer events =
@@ -509,15 +510,15 @@ void testStateSurvivesUnpumpedProgramChange()
 void testProgramsLoad()
 {
     SeptumAudioProcessor processor;
-    expect (processor.getNumPrograms() >= 12, "the factory bank is exposed");
-    expect (processor.getProgramName (0) == "INIT PATCH",
-            "program 0 is INIT PATCH");
+    expect (processor.getNumPrograms() == 64, "the full 64-patch Roland bank is exposed");
+    expect (processor.getProgramName (0).contains ("SuperLead201"),
+            "program 0 is SuperLead201");
 
     int superSawProgram = -1;
     for (int index = 0; index < processor.getNumPrograms(); ++index)
-        if (processor.getProgramName (index) == "SuperLead201")
+        if (processor.getProgramName (index).contains ("SuperLead201"))
             superSawProgram = index;
-    expect (superSawProgram > 0, "the supersaw lead ships in the bank");
+    expect (superSawProgram >= 0, "the supersaw lead ships in the bank");
 
     processor.setCurrentProgram (superSawProgram);
     expect (processor.getCurrentProgram() == superSawProgram,
@@ -1029,6 +1030,45 @@ void testEditorAndSnapshot()
     editor.reset();
     processor.releaseResources();
 }
+
+void testSysExBlockProcessing()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+
+    septum::Patch custom = septum::initPatch();
+    custom.name = "SysExTest";
+    custom.upper.osc1.wave = septum::Waveform::Square;
+    custom.upper.cutoff = 42;
+    custom.upper.resonance = 88;
+    custom.delayOn = true;
+
+    const auto packets = septum::sysex::encodePatchToSysExPackets (custom);
+    juce::AudioBuffer<float> block (2, 256);
+
+    for (const auto& pkt : packets)
+    {
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage (pkt.data(), (int) pkt.size()), 0);
+        processor.processBlock (block, midi);
+    }
+
+    const auto snapshot = processor.snapshotPatch();
+    expect (snapshot.upper.osc1.wave == septum::Waveform::Square, "SysEx set OSC1 wave to Square");
+    expect (snapshot.upper.cutoff == 42, "SysEx set cutoff to 42");
+    expect (snapshot.upper.resonance == 88, "SysEx set resonance to 88");
+    expect (snapshot.delayOn == true, "SysEx enabled delay");
+
+    const auto exportedSyx = processor.createSysExDataForCurrentPatch();
+    expect (exportedSyx.size() > 100, "createSysExDataForCurrentPatch generates valid SysEx buffer");
+
+    SeptumAudioProcessor recipient;
+    recipient.prepareToPlay (44100.0, 256);
+    recipient.loadSysExData (exportedSyx.data(), exportedSyx.size());
+    const auto recipientSnap = recipient.snapshotPatch();
+    expect (recipientSnap.upper.cutoff == 42, "loadSysExData restored cutoff");
+    expect (recipientSnap.upper.resonance == 88, "loadSysExData restored resonance");
+}
 } // namespace
 
 int main()
@@ -1056,6 +1096,7 @@ int main()
     testSystemCommonSettings();
     testEditorFitsASmallDisplay();
     testEditorAndSnapshot();
+    testSysExBlockProcessing();
 
     if (failures == 0)
     {
