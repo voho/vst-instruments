@@ -38,9 +38,9 @@ Preparatory Pattern the lessons all start from, through Fat Filter, Sync and
 Sample & Hold, to the Inverted Guitar — behind an Init program that is the
 default voice itself. The second half is **seventeen Ghostar Programs**:
 playable voicings that make no historical claim, each foregrounding one
-mechanism the instrument is known for, and level-matched so the bank can be
-stepped through without touching the volume. Selecting any program writes the
-whole panel, so every one is readable as well as playable
+mechanism the instrument is known for. Each is gesture- and gain-checked for
+audibility, headroom and clipping. Selecting any program writes the whole
+panel, so every one is readable as well as playable
 ([user guide](Docs/USER_GUIDE.md)).
 
 What is modelled from documentation, what is *derived* from it, and what

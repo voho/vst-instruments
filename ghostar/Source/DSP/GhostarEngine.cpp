@@ -97,6 +97,12 @@ namespace
     constexpr double filterNoiseMixGain = 0.45;
     constexpr double shaperMixGain = 0.45; // absolute scale open, OQ-20
     constexpr double shaperNoiseRelativeGain = 47.0 / 6.8;
+    // RS7's installed rotor phase does not source-close these output gains.
+    // Keep explicit voiced bridges for the owner's-manual BANDPASS peak and
+    // HIGHPASS rejection; IC12B/B8's traced 151x path is not assigned to a
+    // named detent until continuity proves it (OQ-20).
+    constexpr double lowerBandPassOutputGain = 11.0;
+    constexpr double lowerHighPassOutputGain = 8.0;
 
     // P1013's two output-path capacitor networks. BRIGHTNESS is a series
     // C18/P3 shunt across the Shaper CEM3360's fixed 20k master-pot load;
@@ -163,6 +169,36 @@ namespace
         return low * std::pow(high / low, clamp01(travel));
     }
 
+    // P1013's panel-cutoff pots are linear voltage dividers, but their
+    // wipers are visibly loaded by the following virtual-earth summers.
+    // Resistances are in kOhm here so the equations remain legible beside
+    // the drawing: P6 sees R50||R51, while P5 sees R48 alone.
+    [[nodiscard]] double loadedMasterCutoffVolts(double travel) noexcept
+    {
+        const double x = clamp01(travel);
+        return (24.0 * x - 12.0) * 110.5
+             / (110.5 + 100.0 * x * (1.0 - x));
+    }
+
+    [[nodiscard]] double loadedLowerOnlyVolts(double travel) noexcept
+    {
+        const double x = clamp01(travel);
+        return -12.0 * (1.0 - x) * 150.0
+             / (150.0 + 100.0 * x * (1.0 - x));
+    }
+
+    constexpr double cem3350VoltsPerOctave = 0.0196;
+    constexpr double panelMasterMixerGain = 100.0 / 221.0;
+    constexpr double panelLowerOnlyMixerGain = 100.0 / 150.0;
+    constexpr double dynamicCutoffNodeGain =
+        (1.0 / 12.1)
+        / (2.0 / 12.1 + 1.0 / 16.0 + 1.0 / 0.274 + 1.0 / 68.0);
+    // In FORMANT, R142 and corrected R188=22k form the second 34.1k arm.
+    constexpr double formantCutoffNodeGain =
+        (1.0 / 12.1)
+        / (1.0 / 12.1 + 1.0 / 34.1 + 1.0 / 16.0
+           + 1.0 / 0.274 + 1.0 / 68.0);
+
     // The ADSR sliders' RC time constant. Each of the six A/D/R sliders is
     // 2 MΩ log into its 4.7 µF cap. A voiced ~1 kΩ effective endpoint
     // resistance lands the printed fast limit. P1015's R23/R24=100 Ω sit
@@ -176,7 +212,17 @@ namespace
     constexpr double envelopeSliderOhms = 2.0e6;
     constexpr double envelopeSenseOhms = 100.0;
     constexpr double envelopeReferenceVolts = 7.5;
-    constexpr double envelopeResetSeconds = 0.005;
+    // P1015 has two reset-pulse lanes. X and Y/EXT use 10 nF through
+    // 470 kOhm (~5 ms), while keyboard KT in MULTIPLE and arpeggiator AA
+    // share the separately annotated 10 ms node (SM DWG 3).
+    constexpr double envelopeXyResetSeconds = 0.005;
+    constexpr double envelopeKtAaResetSeconds = 0.010;
+    // P1015 gives the MOD RATE converter 132 mV of full travel. The original
+    // CEM3360 production sheet specifies 3.0 mV/dB typical, hence 44 dB or
+    // 158.489319:1. Anchoring the manual's approximate 50 Hz fast end fixes
+    // the nominal slow end (OQ-21).
+    constexpr double lfoFastHz = 50.0;
+    constexpr double lfoSlowHz = 0.3154786722400966;
     // What the attack charges toward, as a multiple of the envelope's peak:
     // the 556's output-high level less the series diode, against the +7.5 V
     // the drawing labels at the control-voltage pin. The documents bound it
@@ -511,7 +557,8 @@ namespace
         cemTimingCapacitance + upperSlopeMemoryCapacitance;
     constexpr double upperLpCouplingOhms = 1.0e6;
     constexpr double upperFixedInputGain = 3.0; // VIF + VIV at Q=0.5
-    constexpr double upperTwentyFourDbOutputGain = 101.0 / 201.0;
+    constexpr double upperTwelveDbOutputGain = 201.0;
+    constexpr double upperTwentyFourDbOutputGain = 101.0;
     constexpr double lowerMixerPotOhms = 100.0e3;
     constexpr double lowerMixerResistanceOhms = 220.0e3;
     constexpr double lowerMixerCapacitance = 68.0e-12;
@@ -1401,10 +1448,9 @@ double GhostarEngine::runUpperCascade(double input, double g,
     upperControlledLp_ = controlledLp;
     upperFixedLp_ = fixedLp;
 
-    // IC14B is normalised to its 12 dB gain of 201. SW4 opens one 470 ohm
-    // leg at 24 dB, changing that gain to 101; absolute CEM/output scaling
-    // cancels, leaving the exact source-closed ratio.
-    return twelveDb ? controlledLp
+    // IC14B's absolute gain belongs at the physical Upper output. SW4 opens
+    // one 470 ohm leg at 24 dB, changing that gain from 201 to 101.
+    return twelveDb ? upperTwelveDbOutputGain * controlledLp
                     : upperTwentyFourDbOutputGain * fixedLp;
 }
 
@@ -1703,13 +1749,13 @@ void GhostarEngine::advanceEnvelope(Adsr& envelope, bool gate, bool triggerPulse
     }
 }
 
-void GhostarEngine::handleArpClock() noexcept
+bool GhostarEngine::handleArpClock() noexcept
 {
     if (parameters_.arpeggiator == ArpeggiatorMode::Off || keyStackSize_ == 0)
     {
         arpSoundingNote_ = -1;
         arpStep_ = 0;
-        return;
+        return false;
     }
 
     // The scan is chromatic bottom-to-top of whatever is held, wrapped.
@@ -1751,6 +1797,7 @@ void GhostarEngine::handleArpClock() noexcept
         static_cast<int>(sorted[static_cast<std::size_t>(noteIndex)])
         + octaveOffset;
     ++arpStep_;
+    return true;
 }
 
 // D11's physical capacitor tail continues far below the Loudness VCA's
@@ -1845,11 +1892,9 @@ void GhostarEngine::advanceControls() noexcept
 
     // ----------------------------------------------------------------- LFO
     // P2=100k LIN is loaded by R33=200k into the CEM3360 log-converter node,
-    // bending its electrical travel before the exponential rate law. The
-    // manual anchors ~50 Hz and only "less than 1 Hz"; 0.3 Hz remains the
-    // explicit nominal slow-end choice (OQ-21).
+    // bending its electrical travel before the source-derived 44 dB span.
     const double loadedRateTravel = loadedLinearPot(p.lfoRate, 200.0);
-    double lfoHz = exponentialTravel(loadedRateTravel, 0.3, 50.0);
+    double lfoHz = exponentialTravel(loadedRateTravel, lfoSlowHz, lfoFastHz);
     if (p.shaperYTo == ShaperYDestination::LfoRate)
     {
         const double ySignal = clamp01(shaperLevel_) * shaperWheel_;
@@ -1877,12 +1922,15 @@ void GhostarEngine::advanceControls() noexcept
     const double redNoise =
         std::clamp(noise_.red() * redNoiseBusGain, -1.0, 1.0);
 
+    bool arpeggiatorPulse = false;
     if (clockEdge)
     {
         sampleHoldValue_ = p.modSource == ModSource::SampleHoldY
                                ? shaperLevel_
                                : redNoise;
-        handleArpClock();
+        // P1016 sends AA for every selected arpeggiator step to P1015's
+        // 10 ms reset lane. An idle/off arpeggiator produces no AA pulse.
+        arpeggiatorPulse = handleArpClock();
     }
 
     // ------------------------------------------------------------- Shaper Y
@@ -2032,13 +2080,14 @@ void GhostarEngine::advanceControls() noexcept
     // ------------------------------------------------------------ Envelopes
     // P1015 has two related but distinct networks. Its first 4075 OR makes
     // the selected gate bus. Its edge branches separately accept every X
-    // and Y/EXT rise, plus every selected KT pulse in MULTIPLE, even while
-    // another source already holds the OR'ed bus high. Those events pull GS
-    // (both active-low 556 RESETs and both release-diode returns) low for the
-    // drawing's nominal ~5 ms. The caps therefore release during the notch;
-    // the final GS rise creates TS and starts both attacks from their retained
-    // post-notch levels. SINGLE has no KT pulse branch: a keyboard press only
-    // attacks when it can raise the selected bus itself (SM DWG 3, OQ-04).
+    // and Y/EXT rise, plus every raw KT pulse in MULTIPLE, even while another
+    // source already holds the OR'ed bus high. X/Y use the annotated ~5 ms
+    // lane; KT and the arpeggiator's AA pulse use the distinct 10 ms lane.
+    // All pull GS (both active-low 556 RESETs and both release-diode returns)
+    // low, so the caps release during the notch; the final GS rise creates TS
+    // and starts both attacks from their retained post-notch levels. SINGLE
+    // has no KT branch: a keyboard press only attacks when it can raise the
+    // selected bus itself (SM DWG 3, OQ-04).
     const bool selectedEnvelopeXGate = p.gateX && lfoSquareHigh_;
     const bool selectedEnvelopeYGate = p.gateYExt && shaperGate_;
     const bool combinedEnvelopeGate = anyGateSelected
@@ -2046,14 +2095,28 @@ void GhostarEngine::advanceControls() noexcept
             || selectedEnvelopeYGate);
     const bool xRise = selectedEnvelopeXGate && !previousEnvelopeXGate_;
     const bool yRise = selectedEnvelopeYGate && !previousEnvelopeYGate_;
-    const bool multipleKeyPulse = p.trigger == TriggerMode::Multiple
-        && p.gateKbd && pendingTrigger_;
+    // KT reaches the reset stretcher through the TRIGGER switch, before and
+    // independently of the KBD gate-selector deck. A selected gate must still
+    // be high when the notch ends for either envelope to attack.
+    const bool multipleKeyPulse =
+        p.trigger == TriggerMode::Multiple && pendingTrigger_;
     pendingTrigger_ = false;
 
-    if (xRise || yRise || multipleKeyPulse)
+    const auto resetSamples = [this](double seconds) {
+        return static_cast<std::uint32_t>(
+            std::max(1.0, std::round(seconds * sampleRate_)));
+    };
+    if (xRise || yRise)
     {
-        envelopeResetSamplesRemaining_ = static_cast<std::uint32_t>(
-            std::max(1.0, std::round(envelopeResetSeconds * sampleRate_)));
+        envelopeResetSamplesRemaining_ = std::max(
+            envelopeResetSamplesRemaining_,
+            resetSamples(envelopeXyResetSeconds));
+    }
+    if (multipleKeyPulse || arpeggiatorPulse)
+    {
+        envelopeResetSamplesRemaining_ = std::max(
+            envelopeResetSamplesRemaining_,
+            resetSamples(envelopeKtAaResetSeconds));
     }
 
     const bool resetPulseActive = envelopeResetSamplesRemaining_ != 0;
@@ -2306,14 +2369,11 @@ void GhostarEngine::advanceControls() noexcept
     }
 
     // ------------------------------------------------------------ Filter CVs
-    // The cutoff bus, in octaves. MASTER's *span* is derived — the panel
-    // summer drives the CEM3350's frequency pin through 12k1 against a
-    // 274 Ω shunt, delivering 21.2 mV per volt against the chip's
-    // −19.6 mV/octave, and the pot's ±10.5 V swing is ±11.4 octaves of
-    // authority over a chip window about ten octaves wide — but its
-    // absolute *placement* is set by a 100 kΩ trimmer whose factory
-    // setting no document records, so the 20 Hz–16 kHz mapping stays
-    // voiced inside a ±2.3-octave trim authority (OQ-02).
+    // The cutoff bus, in octaves. P6's loaded ±12 V endpoints, IC15's
+    // 100k/221k gain and the CEM3350 node ladder give ±5.882 octaves about
+    // panel 5. Only the 100 kΩ trimmer's factory placement is absent from
+    // the documents, so retain the previous geometric centre while using
+    // the complete derived span and loaded-pot curvature (OQ-02).
     //
     // Tracking's 108 % falls out of the same ladder: full KB AMOUNT puts
     // the keyboard's 1 V/octave bus through 12k1, so 21.2 mV/V ÷
@@ -2326,8 +2386,13 @@ void GhostarEngine::advanceControls() noexcept
     // 108.3% tracking amount itself is independently component-derived from
     // P1013's CEM3350 ladder (OQ-13).
     constexpr double trackingOctavesPerOctave = 1.083;
+    constexpr double voicedCutoffCentreHz = 565.685424949238;
+    const double masterCutoffVolts = loadedMasterCutoffVolts(p.cutoff);
+    const double upperMasterOctaves = dynamicCutoffNodeGain
+        * panelMasterMixerGain * masterCutoffVolts
+        / cem3350VoltsPerOctave;
     const double upperBaseHz =
-        exponentialTravel(p.cutoff, 20.0, 16000.0);
+        voicedCutoffCentreHz * std::exp2(upperMasterOctaves);
     const double trackingOctaves = static_cast<double>(p.kbAmount)
         * trackingOctavesPerOctave
         * (glidedNote_ - keyboardTrackingPivotMidi) / 12.0;
@@ -2339,13 +2404,27 @@ void GhostarEngine::advanceControls() noexcept
         trackingOctaves + envelopeOctaves + modUpperOctaves;
     controlUpperCutoffHz_ = upperBaseHz * std::exp2(upperOctaves);
 
-    // LOWER ONLY: coincide at 0.8 (anchored); span voiced (OQ-02). FORMANT
-    // freezes the lower filter's peak: keyboard, envelope and both wheels
-    // are cut; MASTER and LOWER ONLY still act.
-    const double lowerOffsetOctaves =
-        (static_cast<double>(p.lowerOnly) - 0.8) * 6.25;
     const bool lowerDynamic = p.tracking == TrackingMode::Dynamic;
+    // P5 is loaded by R48, so LOWER ONLY has a curved -7.101..+1.566 octave
+    // law about its documented panel-8 coincidence rather than a linear
+    // guessed span. FORMANT's changed frequency-node load makes that range
+    // 1.389% wider and gives MASTER a small, real ±0.0817-octave mismatch;
+    // both filters coincide throughout MASTER only in DYNAMIC.
+    const double lowerNodeGain = lowerDynamic
+        ? dynamicCutoffNodeGain : formantCutoffNodeGain;
+    const double lowerOnlyVolts = loadedLowerOnlyVolts(p.lowerOnly);
+    constexpr double lowerCoincidenceVolts =
+        -12.0 * (1.0 - 0.8) * 150.0
+        / (150.0 + 100.0 * 0.8 * (1.0 - 0.8));
+    const double lowerOffsetOctaves = lowerNodeGain
+        * panelLowerOnlyMixerGain
+        * (lowerOnlyVolts - lowerCoincidenceVolts)
+        / cem3350VoltsPerOctave;
+    const double formantMasterDriftOctaves = (lowerNodeGain
+        - dynamicCutoffNodeGain) * panelMasterMixerGain * masterCutoffVolts
+        / cem3350VoltsPerOctave;
     const double lowerOctaves = lowerOffsetOctaves
+        + formantMasterDriftOctaves
         + (lowerDynamic ? trackingOctaves + envelopeOctaves + modLowerOctaves
                         : 0.0);
     controlLowerCutoffHz_ = upperBaseHz * std::exp2(lowerOctaves);
@@ -2642,32 +2721,45 @@ void GhostarEngine::renderVoiceSample() noexcept
     // is an explicitly nonphysical interim approximation, not a traced path.
     const double overdriven = processOverdrive(
         p.lowerMode == LowerFilterMode::Overdrive ? lower.lp : 0.0);
+    bool upperInputIsPhysical = false;
     switch (p.lowerMode)
     {
         case LowerFilterMode::BandPass:
             // Owner-manual behavioral surrogate: dry plus resonant BP gives
-            // the stated parametric peak. The production RS7/MNA reduction,
-            // not this canonical identity, will supply the circuit output.
-            filterPath = filterPath + lower.bp;
+            // the stated parametric peak. The explicit voiced bridge remains
+            // separate from B8's traced-but-unassigned IC12B gain until
+            // installed-switch continuity closes the exact MNA.
+            filterPath += lowerBandPassOutputGain * lower.bp;
             break;
         case LowerFilterMode::Overdrive:
         {
             // IC12A/D1/D2 followed by R187/R167/C34/R173; the Upper filter
-            // re-filters the resulting distortion products.
+            // re-filters the resulting distortion products. This is already
+            // the physical R173 voltage in the shared 5 V/unit state domain.
             filterPath = overdriven;
+            upperInputIsPhysical = true;
             break;
         }
         case LowerFilterMode::HighPass:
-            // Behavioral placeholder only. input-k*BP-LP is the canonical
-            // section's HP identity, not a traced production Lower node;
-            // RS7 continuity plus OQ-20's MNA must replace it together.
-            filterPath = lower.hp;
+            // Owner-manual behavioral surrogate: the Lower section's
+            // low-pass-state subtraction followed by the Upper low-pass makes
+            // the stated double-peak response. The open output bridge keeps
+            // that physical state in the dry seam's output-referred domain;
+            // RS7 continuity still owns its exact MNA.
+            filterPath -= lowerHighPassOutputGain * lower.lp;
             break;
         case LowerFilterMode::Out:
             // The manual anchors the dry transfer into Upper; P1013 does not
             // expose which remaining throw/net implements it.
             break;
     }
+
+    // OUT/BANDPASS/HIGHPASS remain output-referred behavioral seams until
+    // RS7's installed rotor phase is measured. Refer them back through the
+    // 12 dB output buffer before entering the physical CEM states. OVERDRIVE
+    // already arrived through C34/R173 and must not be attenuated twice.
+    if (!upperInputIsPhysical)
+        filterPath /= upperTwelveDbOutputGain;
 
     // The two Upper halves cannot be advanced independently: their tied CEM
     // inputs, SW4's moving C40 timing capacitor, R194 cross-state path and

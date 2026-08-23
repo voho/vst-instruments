@@ -48,6 +48,11 @@ constexpr int renderBlockSize = 256;
 // -3 dBFS: loud enough to audition without a gain change between files, with
 // headroom left so no 16-bit sample sits against full scale.
 constexpr double normalisedPeak = 0.7079457843841379;
+// Peak normalisation must never disguise a broken or disconnected signal
+// path. Twenty-four decibels still accommodates the quietest intentional
+// take, while catching the 37 dB boost that previously hid OVERDRIVE's
+// missing Upper-filter output gain.
+constexpr double maximumNormalisationDb = 24.0;
 // These are file-delivery guards rather than synthesizer transfer values. A
 // demo with more DC can waste headroom or thump downstream equipment, while a
 // large non-zero endpoint can click when a player starts or stops the file.
@@ -696,54 +701,70 @@ Take renderProgramTour()
     // in-headroom with a default patch substituted, so every check this
     // renderer runs would pass while the committed WAV demonstrated
     // something other than the program it is captioned with.
+    struct Program
+    {
+        EngineParameters parameters;
+        float x;
+        float y;
+    };
     const auto programNamed = [](const char* wanted) {
         const int index = ghostar::factoryPresetIndexByName(wanted);
         if (index < 0)
             throw std::runtime_error(
                 std::string("the program tour names \"") + wanted
                 + "\", which is not in the factory bank");
-        return ghostar::factoryPresetParameters(index);
+        return Program { ghostar::factoryPresetParameters(index),
+                         ghostar::factoryPresetModWheel(index),
+                         ghostar::factoryPresetShaperWheel(index) };
+    };
+    const auto select = [](Take& take, const Program& program) {
+        take.setParameters(program.parameters);
+        take.xWheel(program.x);
+        take.yWheel(program.y);
     };
 
-    Take take(programNamed("Spirit Bass"));
+    const auto spiritBass = programNamed("Spirit Bass");
+    Take take(spiritBass.parameters);
+    take.xWheel(spiritBass.x);
+    take.yWheel(spiritBass.y);
     take.rest(0.15);
     const int bassRiff[] = { 33, 33, 40, 33, 36, 33 };
     for (const int note : bassRiff)
         take.hit(note, 1.0f, 0.24, 0.06);
     take.rest(0.35);
 
-    take.setParameters(programNamed("Vocal Pair"));
+    select(take, programNamed("Vowel Motion"));
     take.rest(0.1);
     take.hit(48, 1.0f, 0.9, 0.1);
     take.hit(52, 1.0f, 0.9, 0.1);
     take.hit(45, 1.0f, 1.4, 0.5);
 
-    take.setParameters(programNamed("Growl Bass"));
+    select(take, programNamed("Diode Growl"));
     take.rest(0.1);
     for (const int note : { 31, 31, 38, 36 })
         take.hit(note, 1.0f, 0.3, 0.08);
     take.rest(0.35);
 
-    take.setParameters(programNamed("Ring Bell"));
+    select(take, programNamed("Ring Temple"));
     take.rest(0.1);
     take.hit(64, 1.0f, 1.1, 0.15);
     take.hit(59, 1.0f, 1.5, 0.5);
 
-    take.setParameters(programNamed("Hollow Ghost"));
+    select(take, programNamed("Double Edge"));
     take.rest(0.1);
     take.hit(50, 1.0f, 0.8, 0.1);
     take.hit(57, 1.0f, 1.5, 0.5);
 
-    take.setParameters(programNamed("Leap Sequence"));
+    select(take, programNamed("Leap Machine"));
     take.rest(0.1);
     take.chordOn({ 45, 52, 57 });
     take.rest(4.0);
     take.chordOff({ 45, 52, 57 });
     // The X gate keeps clocking the last note after the keys are up, so the
     // passage is ended the way the panel ends it.
-    auto silenced = programNamed("Leap Sequence");
-    silenced.gateX = false;
-    take.setParameters(silenced);
+    auto silenced = programNamed("Leap Machine");
+    silenced.parameters.gateX = false;
+    select(take, silenced);
     take.rest(1.4);
     return take;
 }
@@ -1184,6 +1205,16 @@ int main(int argc, char** argv)
             return 1;
         }
         const auto gain = take.normalise();
+        const auto normalisationDb = 20.0 * std::log10(gain);
+        if (normalisationDb > maximumNormalisationDb)
+        {
+            std::fprintf(stderr,
+                         "%s rejected: %.1f dB normalisation exceeds the "
+                         "%.1f dB broken-signal guard\n",
+                         demo.fileName, normalisationDb,
+                         maximumNormalisationDb);
+            return 1;
+        }
         const auto absoluteDcMean = take.absoluteDcMean();
         const auto firstEdge = take.firstEdgeMagnitude();
         const auto lastEdge = take.lastEdgeMagnitude();
@@ -1210,7 +1241,7 @@ int main(int argc, char** argv)
         level.description = demo.description;
         level.seconds = static_cast<double>(take.left().size()) / demoSampleRate;
         level.renderedPeakDb = 20.0 * std::log10(renderedPeak);
-        level.normalisationDb = 20.0 * std::log10(gain);
+        level.normalisationDb = normalisationDb;
         levels.push_back(std::move(level));
         validatedTakes.push_back(std::move(take));
     }

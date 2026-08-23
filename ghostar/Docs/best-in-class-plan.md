@@ -96,8 +96,8 @@ Step 2 closed as no drift, with the sensitivities anchored and the
 missing environmental record documented. Point 4 holds *structurally* —
 every control exists with the silkscreen's detents and labels — and its
 tapers are now mostly derived too. Remaining examples include the cutoff
-span's absolute placement (OQ-02), glide's unmarked intermediate taper
-(OQ-08), LFO slow endpoint (OQ-21), BRIGHTNESS taper (OQ-22), and the
+span's absolute placement and panel-summer headroom (OQ-02), glide's
+unmarked intermediate taper (OQ-08), BRIGHTNESS taper (OQ-22), and the
 bounded nominal attack aim (OQ-04). Lossless scans closed the Shaper split,
 Master Volume law and electrical glide endpoint. Point 1 —
 behaviour under stress — is where Steps 1 and 3 aimed, and the alias table
@@ -139,12 +139,13 @@ recorded in the register entry named against each):
   D15-biased lower rail. The nominal 0.5 V floor aligns with the Loudness VCA
   zero, while D11/D14 add a nonlinear release knee into their shared GS line.
   R23/R24's 100 Ω lies in every segment and creates the fast-Attack cap-side
-  undershoot. Accepted MULTIPLE/X/Y edges insert the original nominal ~5 ms
-  reset/release notch before Attack; X/Y edges remain independent of an
-  already-high combined gate. The shipped width, ≈1.3× aim and diode curve
-  are nominal rather than measured-unit constants. Combining the manual's
-  MULTIPLE new-key rule with RUN's rising-segment lockout gives the modelled
-  selected-KT acceptance after the rise (OQ-04/OQ-05).
+  undershoot. X/Y edges use their nominal 5 ms reset/release lane, while raw
+  MULTIPLE KT and accepted arpeggiator AA use the separate annotated 10 ms
+  lane; X/Y remain independent of an already-high combined gate and cannot
+  shorten a coincident 10 ms notch. The shipped widths, ≈1.3× aim and diode
+  curve are nominal rather than measured-unit constants. Combining the
+  manual's MULTIPLE new-key rule with RUN's rising-segment lockout gives the
+  modelled selected-KT acceptance after the rise (OQ-04/OQ-05).
 - The Loudness CEM3360's affine control offset: its 10 kΩ/3.3 kΩ/240 kΩ
   network puts zero gain at 0.5 V, or `1/15` of the 7.5 V envelope peak.
   Full-envelope unity is a normalization; original-chip top saturation and
@@ -161,13 +162,18 @@ recorded in the register entry named against each):
 - The Upper filter's cascade order and fixed bias: R181 resolves to 91 kΩ,
   putting its fixed section at the same exact Q=0.5 (`k=2`) bias as LOW.
   Its coupled solve now includes SW4/C40 charge sharing, tied VIF+VIV drive,
-  1 MΩ coupling and the exact 101/201 slope gain (OQ-09).
-- The filter cutoff *span*: ≈10 octaves of pot authority over a
-  ~10-octave chip window, corroborated by the scan (OQ-02).
+  1 MΩ coupling and IC14B's exact absolute gains of 201/101 (OQ-09).
+- The filter panel laws: loaded P6 and IC15 give MASTER 11.76495 octaves of
+  total authority, while loaded P5 gives LOWER ONLY an asymmetric
+  −7.10055/+1.56630-octave Dynamic range about panel 8. FORMANT's alternate
+  node load widens the latter 1.389% and introduces a ±0.08170-octave
+  MASTER-dependent coincidence drift. Only absolute trim placement and
+  panel-summer saturation dynamics remain open (OQ-02).
 - MOD RATE's loaded control travel: P2=100 kΩ LIN against R33=200 kΩ gives
   `w(x)=200x/(200+100x(1−x))`, so the exponential converter sees `4/9`
-  at half knob travel. The original-CEM/calibrated-unit slow endpoint remains
-  open (OQ-21).
+  at half knob travel. P1015's 132 mV span and the original CEM3360's
+  3.0 mV/dB typical scale close the nominal 0.3154787–50 Hz range and
+  2.9974213 Hz midpoint (OQ-21).
 
 **Anchored laws** (stated outright by a primary source):
 
@@ -197,8 +203,10 @@ authority, and Step 4 sweeps every remaining numeric voicing into it:
 - TL082 dynamics, CEM3350 internal headroom, the three unresolved RS7 output
   mappings and non-OVERDRIVE C34 excitation. The selected-wave/state domain,
   Lower MNA, local capacitor and diode transfers are derived, not voiced
-  (OQ-10, OQ-12, OQ-20). The chip's Q ceiling read as the oscillation
-  threshold is voiced too.
+  (OQ-10, OQ-12, OQ-20). Pending continuity, BANDPASS's `dry + 11·VBP` and
+  HIGHPASS's `dry − 8·VLP` output-referred bridges are explicitly voiced;
+  their manual-anchored peak/rejection behaviours are tested. The chip's Q
+  ceiling read as the oscillation threshold is voiced too.
 - Ring-modulator factory trim, CEM feedthrough and per-unit residual carrier;
   the nominal circuit has no fixed symmetric carrier term (OQ-06).
 - Pitch-wheel endpoint: the network has ±15.88 st of full electrical
@@ -229,9 +237,9 @@ authority, and Step 4 sweeps every remaining numeric voicing into it:
   modulation. The CEM3340 pitch paths' external pole is closed; the BC308/PW
   and LM1458/CEM3350 destination dynamics still need same-unit phase captures
   (OQ-25).
-- The LFO slow endpoint/original-CEM3360 scale (OQ-21) and BRIGHTNESS pot
-  taper (OQ-22); both controls' loaded topology and exact resistance
-  endpoints are closed.
+- The BRIGHTNESS pot taper (OQ-22). MOD RATE's loaded topology and nominal
+  original-CEM3360 span are closed; only ordinary calibrated-unit tolerance
+  would move it (OQ-21).
 - The RED NOISE P1013-output-to-engine-bus scale (OQ-17), the MM5837 per-unit clock and
   source-to-engine-unit level (OQ-15), both mixers' overall engine-unit
   scales (OQ-20).
@@ -574,18 +582,18 @@ measurement's own detection floor and its verdict):
 
 | stroke | excess | blind floor | resid ≤20k | decided? |
 |---|---:|---:|---:|---|
-| saw-midkey-control | −85.1 | −15.4 | −52.1 | no |
-| wide-saw-10k | −70.7 | −16.1 | −49.1 | no |
-| wide-pulse3-10k | −72.7 | −15.7 | −54.1 | no |
-| wide-tri-10k | −78.2 | −16.4 | −49.8 | no |
-| sync-static-topkey | −76.3 | −15.4 | −40.8 | no |
-| sync-sweep-topkey | −77.3 | −13.6 | −42.1 | no |
-| ring-topkey | −100.5 | −14.7 | −59.0 | no |
-| oscb-mod-pitch | −47.5 | −15.4 | −14.8 | no |
-| oscb-mod-pwm | −40.0 | −16.2 | −32.0 | no |
-| oscb-mod-cutoff | −72.4 | −14.3 | −43.8 | no |
-| overdrive-full | −61.0 | −16.1 | −60.6 | no |
-| selfosc-highcutoff | −58.5 | −16.0 | −49.0 | no |
+| saw-midkey-control | −82.7 | −15.6 | −46.7 | no |
+| wide-saw-10k | −75.6 | −17.4 | −37.7 | no |
+| wide-pulse3-10k | −66.4 | −15.9 | −47.1 | no |
+| wide-tri-10k | −90.8 | −17.6 | −36.7 | no |
+| sync-static-topkey | −76.9 | −15.6 | −40.6 | no |
+| sync-sweep-topkey | −77.8 | −13.7 | −41.4 | no |
+| ring-topkey | −108.2 | −14.7 | −60.3 | no |
+| oscb-mod-pitch | −38.4 | −15.5 | −12.9 | no |
+| oscb-mod-pwm | −36.4 | −16.7 | −29.0 | no |
+| oscb-mod-cutoff | −72.2 | −15.0 | −40.0 | no |
+| overdrive-full | −62.8 | −16.1 | −62.2 | no |
+| selfosc-highcutoff | −37.3 | −16.0 | −35.7 | no |
 
 This 2026-08-23 rerun supersedes the earlier post-metric table after the
 P1014 waveform levels, complete Lower MNA, physical C34 state and corrected
@@ -594,13 +602,17 @@ ADSR sustain floor, nonlinear release knee/reset notch, destination-loaded X
 wheel, the explicit OVERDRIVE C34 A3+B7+C10 hypothesis and the coupled Upper
 LOW/VARIABLE two-section solve including C40 charge transfer. The latest
 figures additionally include the two CEM3340 `1.82 kΩ·1 nF` pitch-control
-parallel-RC states and their causal predict/commit scheduling.
+parallel-RC states and their causal predict/commit scheduling, plus the
+physical Upper 201/101 output-scale handoff and restored C34 OVERDRIVE level.
+This final rerun also includes P5/P6's loaded cutoff laws, FORMANT's node-load
+drift, the split 5 ms X/Y versus 10 ms KT/AA reset lanes and the nominal
+original-CEM3360 MOD RATE endpoint.
 The historical −200.0 rows remain gone:
-`wide-saw-10k` is −70.7 and `wide-tri-10k` −78.2, so real added content was
+`wide-saw-10k` is −75.6 and `wide-tri-10k` −90.8, so real added content was
 being floored by the withdrawn metric.
 
-**And every row is undecidable.** The blind floor sits between −13.6 and
-−16.4 dB, because a +1 dB level tolerance on tonal material leaves that much
+**And every row is undecidable.** The blind floor sits between −13.7 and
+−17.6 dB, because a +1 dB level tolerance on tonal material leaves that much
 room under a partial — and a component landing exactly on a partial is
 arithmetically indistinguishable from that partial being slightly louder, by
 this or any other magnitude comparison. So:
@@ -755,6 +767,16 @@ The engine's A3+B7+C10 hypothesis therefore includes the clean-VLP term
 rotor phase or assembly legend that resolves that contradiction or labels the
 other C34 histories.
 
+**Upper/RS7 scale repair — 2026-08-23.** IC14B's absolute 201/101 gains now
+remain in the physical Upper cascade instead of being reduced prematurely to
+their ratio. The C34 OVERDRIVE voltage therefore receives the downstream gain
+the schematic gives it; unresolved OUT/BANDPASS/HIGHPASS output-referred seams
+are divided by 201 at the handoff so their established linear level is
+preserved while the Upper limiter sees physical volts. Explicit 11× VBP and
+8× VLP-subtraction bridges make the manual's parametric-boost and two-edge
+high-pass behaviours audible pending RS7 continuity, and regressions pin all
+four modes plus factory-patch headroom.
+
 **The integrator bound is removed**, which is the step's third
 requirement answered. Step 1's audit showed it was not a runaway stop at
 all but the actual amplitude-setting nonlinearity, with a per-sample
@@ -786,10 +808,12 @@ The derivation decides.
 
 ## Step 4 executed — the register made exhaustive — 2026-08-22
 
-**What was derived.** OQ-02's *span* and sensitivities (the 12k1 ladder
-against the CEM3350's −19.6 mV/octave: 21.2 mV/V at the pin, ±11.4
-octaves of pot authority over a ~10-octave chip window, a fixed +193 mV
-offset, ±2.3 octaves of trim authority), OQ-04's whole segment law (the
+**What was derived.** OQ-02's first pass resolved the 12k1 ladder against
+the CEM3350's −19.6 mV/octave, the fixed +193 mV offset and ±2.3 octaves of
+trim authority. A later complete IC15/pot-loading reduction corrected the
+omitted 100/221 mixer gain: MASTER has ±5.88248 octaves, not ±11.4, and
+also closes the asymmetric LOWER ONLY law plus FORMANT coincidence drift.
+OQ-04's whole segment law (the
 panel's 5 ms–10 s is the RC time constant; the nominal attack aim is bounded
 but voiced), OQ-12's travel-to-Q mapping in full, and OQ-13's tracking amount
 (108 %, which reproduces the manual's "slightly over 100 %" from the
@@ -815,8 +839,7 @@ calibration and RS7's unlabelled output contacts.
 that had never been registered, found by walking every numeric literal in
 the file against the register: the mixer summing gain (OQ-20), the LFO's
 slow endpoint/original-CEM scale (OQ-21), the BRIGHTNESS pot's log law and
-series residual
-(OQ-22), and the travel smoother (OQ-23) — the last recorded explicitly
+series residual (OQ-22), and the travel smoother (OQ-23) — the last recorded explicitly
 as a *product policy* with no hardware analogue, so a future reader
 cannot mistake its 25 ms for a modelled time constant. The sweep also
 caught a register entry that contradicted the code: OQ-08 described the
@@ -918,26 +941,26 @@ ten mid-note and hears it glide, then settle.
 
 | travel | 512 | 2048 | travel | 512 | 2048 |
 |---|---|---|---|---|---|
-| tune | −79.0 | −47.5 | filterEnvAmount | −68.0 | −52.7 |
-| interval | −47.7 | −33.7 | filterAttack | −61.1 | −48.6 |
-| masterVolume | −76.1 | −50.9 | filterDecay | −74.9 | −64.4 |
-| brightness | −90.2 | −66.8 | filterSustain | −84.7 | −71.3 |
-| shaperPathA | −75.8 | −48.5 | filterRelease | −103.0 | −77.5 |
-| shaperPathB | −82.8 | −55.6 | loudnessAttack | −55.5 | −43.1 |
-| shaperPathRing | −83.1 | −55.5 | loudnessDecay | −79.0 | −68.2 |
-| shaperPathNoise | −70.9 | −43.1 | loudnessSustain | −78.1 | −64.8 |
-| filterPathA | −71.6 | −47.2 | loudnessRelease | −100.1 | −70.9 |
-| filterPathB | −77.9 | −53.5 | lfoRate | −55.8 | −33.5 |
-| filterPathNoise | −73.6 | −48.9 | shaperShape | −42.9 | −33.0 |
-| cutoff | −70.9 | −46.4 | shaperRate | −31.4 | −16.7 |
-| lowerOnly | −83.9 | −60.0 | glide | −81.0 | −52.0 |
-| resonance | −77.1 | −53.2 | xWheel | −86.9 | −63.9 |
-| kbAmount | −88.0 | −65.3 | yWheel | −50.7 | −30.1 |
+| tune | −78.6 | −47.0 | filterEnvAmount | −69.4 | −53.7 |
+| interval | −47.4 | −33.3 | filterAttack | −63.3 | −51.9 |
+| masterVolume | −76.1 | −50.9 | filterDecay | −77.6 | −67.4 |
+| brightness | −90.2 | −66.8 | filterSustain | −87.6 | −74.1 |
+| shaperPathA | −75.8 | −48.5 | filterRelease | −104.6 | −75.7 |
+| shaperPathB | −82.8 | −55.6 | loudnessAttack | −57.1 | −45.7 |
+| shaperPathRing | −83.1 | −55.5 | loudnessDecay | −80.8 | −70.2 |
+| shaperPathNoise | −70.9 | −43.1 | loudnessSustain | −79.9 | −66.9 |
+| filterPathA | −71.8 | −47.4 | loudnessRelease | −100.0 | −70.9 |
+| filterPathB | −78.1 | −53.7 | lfoRate | −54.5 | −32.3 |
+| filterPathNoise | −73.5 | −48.9 | shaperShape | −42.3 | −32.4 |
+| cutoff | −68.7 | −45.8 | shaperRate | −30.8 | −16.5 |
+| lowerOnly | −67.9 | −42.3 | glide | −80.7 | −51.9 |
+| resonance | −76.1 | −49.2 | xWheel | −85.1 | −63.2 |
+| kbAmount | −87.1 | −65.6 | yWheel | −50.3 | −29.7 |
 
 **Reading the tables.**
 
 - The smoother buys roughly 12–28 dB at 512 where zipper is notorious:
-  cutoff (−42.6 → −70.9), master volume (−48.5 → −76.1), LOWER ONLY,
+  cutoff (−42.6 → −68.7), master volume (−48.5 → −76.1), LOWER ONLY,
   resonance, brightness, most mixer faders, glide and the X wheel. The
   noise-mixer strokes are exceptions because the physical-noise rewrite
   changed the stochastic residual; those rows are measurements, not a blanket
@@ -947,17 +970,17 @@ ten mid-note and hears it glide, then settle.
 - The rerun after the shared sustain floor, nonlinear diode release, 100 Ω
   cap arms and retrigger-reset notch supersedes the earlier envelope rows.
   Decay, sustain and release remain below −60 dB at 2048; the fast Attack
-  sweeps are −48.6 dB (Filter) and −43.1 dB (Loudness). Those residuals follow the continuously moving
+  sweeps are −51.9 dB (Filter) and −45.7 dB (Loudness). Those residuals follow the continuously moving
   onset trajectory rather than a value step; no exposed envelope stroke
   regains the discontinuity class the smoother removed.
 - The final MOD RATE rerun includes P2's derived R33-loaded travel. Its
-  measured row is −55.8/−33.5 dB without changing the step-free verdict.
-  The destination-loaded wheels measure −86.9/−63.9 dB for current-driven X
-  and −50.7/−30.1 dB for voltage-fed Y; their very different figures follow
+  measured row is −54.5/−32.3 dB without changing the step-free verdict.
+  The destination-loaded wheels measure −85.1/−63.2 dB for current-driven X
+  and −50.3/−29.7 dB for voltage-fed Y; their very different figures follow
   their equally different electrical curves, with no new step class.
-- The rows that remain above −60 dB at 512 (shaperRate at −31.4 the
-  worst, then shaperShape, interval, yWheel, Loudness Attack, lfoRate and
-  Filter Attack) are not step
+- The rows that remain above −60 dB at 512 (shaperRate at −30.8 the
+  worst, then shaperShape, interval, yWheel, Loudness Attack and lfoRate)
+  are not step
   artifacts: their residual is smooth amplitude or frequency-trajectory
   ripple that scales with gesture
   speed — the Shaper travels integrate their rate into phase, so
@@ -1046,9 +1069,10 @@ misread:
   destination-specific PWM/filter delay remains measurement-owned (OQ-25).
 - MOD RATE's P2=100 kΩ LIN control is loaded by R33=200 kΩ, so the exact
   electrical travel is `w(x)=200x/(200+100x(1−x))`; half travel is `4/9`.
-  Ghostar now preserves that asymmetric knob feel. The manual still gives
-  only "less than 1 Hz" at the slow end, so 0.3 Hz remains explicit rather
-  than masquerading as a component-derived constant (OQ-21).
+  P1015 supplies 132 mV of travel, and the original CEM3360 production sheet
+  specifies 3.0 mV/dB typical. Ghostar therefore preserves both the loaded
+  knob feel and the nominal 0.3154787–50 Hz span; half travel is 2.9974213 Hz
+  (OQ-21).
 - The visually similar X and Y wheels are electrically opposite quirks.
   X's CEM3360 current output sees a 100 kΩ rheostat; Y's SHAPE voltage sees a
   100 kΩ divider through 15 kΩ. RS1/RS2 add one or two 100 kΩ oscillator or

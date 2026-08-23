@@ -267,9 +267,11 @@ void GhostarAudioProcessor::setCurrentProgram(int index)
     setTravel(ids::glide, preset.glide);
     setDetent(ids::glideMode, static_cast<int>(preset.glideMode), 3);
     setRocker(ids::splitPaths, preset.splitPaths);
-    // Every chart begins with the performance wheels fully back.
-    setTravel(ids::xWheel, 0.0f);
-    setTravel(ids::yWheel, 0.0f);
+    // Historical charts keep both wheels fully back; Ghostar's own Programs
+    // may store a useful stance so their routed modulation is audible as soon
+    // as the program is selected.
+    setTravel(ids::xWheel, ghostar::factoryPresetModWheel(index));
+    setTravel(ids::yWheel, ghostar::factoryPresetShaperWheel(index));
 }
 
 void GhostarAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
@@ -284,6 +286,7 @@ void GhostarAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     setLatencySamples(juce::roundToInt(
         ghostar::GhostarEngine::outputLatencySamples()));
     updateEngineParameters();
+    standaloneStarting.store(false, std::memory_order_relaxed);
 }
 
 void GhostarAudioProcessor::releaseResources() {}
@@ -565,6 +568,14 @@ void GhostarAudioProcessor::getStateInformation(
 void GhostarAudioProcessor::setStateInformation(const void* data,
                                               int sizeInBytes)
 {
+    // JUCE's Standalone wrapper silently reloads its previous filterState
+    // before either startPlaying() or construction of the editor. Ghostar
+    // deliberately powers up at Init. Once playback *or the UI* exists, a
+    // state load is explicit and must work even when no audio device opened.
+    if (wrapperType == juce::AudioProcessor::wrapperType_Standalone
+        && standaloneStarting.load(std::memory_order_relaxed))
+        return;
+
     if (const auto xml = getXmlFromBinary(data, sizeInBytes))
         if (xml->hasTagName(parameters.state.getType()))
         {
@@ -580,6 +591,7 @@ void GhostarAudioProcessor::setStateInformation(const void* data,
 
 juce::AudioProcessorEditor* GhostarAudioProcessor::createEditor()
 {
+    standaloneStarting.store(false, std::memory_order_relaxed);
     return new GhostarAudioProcessorEditor(*this);
 }
 

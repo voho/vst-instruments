@@ -35,6 +35,11 @@ enum class PresetBank
 [[nodiscard]] const char* factoryPresetName(int index) noexcept;
 // The default voice (Init) for an out-of-range index.
 [[nodiscard]] EngineParameters factoryPresetParameters(int index) noexcept;
+// Ghostar's performance bank stores useful starting wheel positions so its
+// routed modulation is audible on selection. The historical charts (and an
+// invalid index) return zero, matching their panel drawings.
+[[nodiscard]] float factoryPresetModWheel(int index) noexcept;
+[[nodiscard]] float factoryPresetShaperWheel(int index) noexcept;
 // SoundCharts for an out-of-range index, since Init leads that bank.
 [[nodiscard]] PresetBank factoryPresetBank(int index) noexcept;
 // A one-line description of what the program is doing, for a browser's
