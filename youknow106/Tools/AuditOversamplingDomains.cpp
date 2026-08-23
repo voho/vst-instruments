@@ -42,6 +42,7 @@ using youknow106::HighPassMode;
 using youknow106::YouKnow106Engine;
 using youknow106::VcfFastEarlyMode;
 using youknow106::VcfTanhMode;
+using youknow106::VcfSolverMode;
 using youknow106::oversampling_audit::DomainWorkCounters;
 
 constexpr int blockSize = 256;
@@ -96,11 +97,14 @@ constexpr std::array tanhScenarios {
 EngineParameters parametersFor(ScenarioKind kind,
                                VcfTanhMode tanhMode = VcfTanhMode::Exact,
                                VcfFastEarlyMode fastEarlyMode =
-                                   VcfFastEarlyMode::Hermite)
+                                   VcfFastEarlyMode::Hermite,
+                               VcfSolverMode solverMode =
+                                   VcfSolverMode::MersonHalfSteps)
 {
     EngineParameters parameters;
     parameters.vcfTanhMode = tanhMode;
     parameters.vcfFastEarlyMode = fastEarlyMode;
+    parameters.vcfSolverMode = solverMode;
     // Match the engine suite's long-lived plainPatch fixture, except that the
     // audit exercises the shipped Unit Character setting rather than its
     // deliberately pristine Character-zero reference.
@@ -197,13 +201,15 @@ PreparedSnapshot prepareSnapshot(const Scenario& scenario, int sampleRate,
                                  int requestedFactor,
                                  VcfTanhMode tanhMode = VcfTanhMode::Exact,
                                  VcfFastEarlyMode fastEarlyMode =
-                                     VcfFastEarlyMode::Hermite)
+                                     VcfFastEarlyMode::Hermite,
+                                 VcfSolverMode solverMode =
+                                     VcfSolverMode::MersonHalfSteps)
 {
     PreparedSnapshot snapshot;
     snapshot.engine.prepare(static_cast<double>(sampleRate), blockSize,
                             requestedFactor);
     snapshot.engine.setParameters(parametersFor(
-        scenario.kind, tanhMode, fastEarlyMode));
+        scenario.kind, tanhMode, fastEarlyMode, solverMode));
     for (int note = 0; note < scenario.heldNotes; ++note)
         snapshot.engine.noteOn(chordNotes[static_cast<std::size_t>(note)],
                                1.0f);
@@ -556,71 +562,86 @@ int printFingerprints()
     std::cout << "schema tanh_speedup scenario baseline_over_candidate"
                  " median min mad\n";
 
+    // The numerical-kernel ladder, in the order a player descends it. Mode 0
+    // is the shipping default, so every paired ratio below is reported against
+    // the engine as it stands rather than against an intermediate rung.
     struct KernelMode
     {
         VcfTanhMode tanh;
         VcfFastEarlyMode early;
+        VcfSolverMode solver;
         std::string_view name;
     };
     constexpr std::array modes {
         KernelMode { VcfTanhMode::Exact, VcfFastEarlyMode::Hermite,
-                     "exact" },
-        KernelMode { VcfTanhMode::ZonedHermite,
-                     VcfFastEarlyMode::Hermite,
+                     VcfSolverMode::MersonHalfSteps,
+                     "exact-merson" },
+        KernelMode { VcfTanhMode::Exact, VcfFastEarlyMode::Hermite,
+                     VcfSolverMode::Rk4HalfSteps,
+                     "exact-rk4-half" },
+        KernelMode { VcfTanhMode::Exact, VcfFastEarlyMode::Hermite,
+                     VcfSolverMode::Rk4Single,
+                     "exact-rk4-single" },
+        KernelMode { VcfTanhMode::ZonedHermite, VcfFastEarlyMode::Hermite,
+                     VcfSolverMode::MersonHalfSteps,
                      "zoned-hermite-reciprocal" },
-        KernelMode { VcfTanhMode::ZonedHermite,
-                     VcfFastEarlyMode::Cubic,
-                     "zoned-hermite-reciprocal-cubic-early" }
+        KernelMode { VcfTanhMode::ZonedHermite, VcfFastEarlyMode::Hermite,
+                     VcfSolverMode::Rk4Single,
+                     "zoned-hermite-rk4-single" },
+        KernelMode { VcfTanhMode::ZonedHermite, VcfFastEarlyMode::Cubic,
+                     VcfSolverMode::MersonHalfSteps,
+                     "zoned-hermite-reciprocal-cubic-early" },
+        KernelMode { VcfTanhMode::ZonedHermite, VcfFastEarlyMode::Cubic,
+                     VcfSolverMode::Rk4Single,
+                     "zoned-hermite-cubic-early-rk4-single" }
     };
+    constexpr std::size_t modeCount = modes.size();
 
     for (const auto& scenario : tanhScenarios)
     {
-        std::array<PreparedSnapshot, modes.size()> snapshots {
-            prepareSnapshot(scenario, 48000, 4,
-                            modes[0].tanh, modes[0].early),
-            prepareSnapshot(scenario, 48000, 4,
-                            modes[1].tanh, modes[1].early),
-            prepareSnapshot(scenario, 48000, 4,
-                            modes[2].tanh, modes[2].early)
-        };
-        for (const auto& snapshot : snapshots)
-            if (snapshot.factor != 4)
+        std::vector<PreparedSnapshot> snapshots;
+        snapshots.reserve(modeCount);
+        for (const auto& mode : modes)
+        {
+            snapshots.push_back(prepareSnapshot(
+                scenario, 48000, 4, mode.tanh, mode.early, mode.solver));
+            if (snapshots.back().factor != 4)
                 throw std::runtime_error(
                     "48 kHz tanh audit did not resolve to 4x");
+        }
 
-        std::array<std::vector<double>, modes.size()> times;
-        std::array<std::vector<std::uint64_t>, modes.size()> hashes;
-        std::vector<double> exactOverFast;
-        std::vector<double> fastOverCubicEarly;
-        exactOverFast.reserve(timingRepetitions);
-        fastOverCubicEarly.reserve(timingRepetitions);
-        for (auto& values : times)
-            values.reserve(timingRepetitions);
-        for (auto& values : hashes)
-            values.reserve(timingRepetitions);
+        std::vector<std::vector<double>> times(modeCount);
+        std::vector<std::vector<std::uint64_t>> hashes(modeCount);
+        std::vector<std::vector<double>> baselineOver(modeCount);
+        for (std::size_t mode = 0; mode < modeCount; ++mode)
+        {
+            times[mode].reserve(timingRepetitions);
+            hashes[mode].reserve(timingRepetitions);
+            baselineOver[mode].reserve(timingRepetitions);
+        }
 
         for (int repetition = 0; repetition < timingRepetitions; ++repetition)
         {
-            std::array<TimedRun, modes.size()> runs;
-            for (std::size_t step = 0; step < modes.size(); ++step)
+            std::vector<TimedRun> runs(modeCount);
+            for (std::size_t step = 0; step < modeCount; ++step)
             {
+                // Alternate the execution order every repetition so a
+                // scheduler or thermal trend cannot favour a fixed position.
                 const std::size_t mode = repetition % 2 == 0
-                                       ? step : modes.size() - 1 - step;
+                                       ? step : modeCount - 1 - step;
                 runs[mode] = renderTimed(snapshots[mode], clock);
             }
-            for (std::size_t mode = 0; mode < modes.size(); ++mode)
+            for (std::size_t mode = 0; mode < modeCount; ++mode)
             {
                 times[mode].push_back(runs[mode].cpuSeconds);
                 hashes[mode].push_back(runs[mode].fingerprint);
+                baselineOver[mode].push_back(
+                    runs[0].cpuSeconds
+                    / std::max(runs[mode].cpuSeconds, 1.0e-12));
             }
-            exactOverFast.push_back(runs[0].cpuSeconds
-                                    / std::max(runs[1].cpuSeconds, 1.0e-12));
-            fastOverCubicEarly.push_back(
-                runs[1].cpuSeconds
-                / std::max(runs[2].cpuSeconds, 1.0e-12));
         }
 
-        for (std::size_t mode = 0; mode < modes.size(); ++mode)
+        for (std::size_t mode = 0; mode < modeCount; ++mode)
         {
             requireStableHash(hashes[mode], scenario.name, modes[mode].name);
             const auto summary = summarize(times[mode]);
@@ -633,17 +654,14 @@ int printFingerprints()
                       << summary.mad * 1000.0 << " "
                       << summary.median / renderedSeconds << "\n";
         }
-        const auto exactSpeedup = summarize(exactOverFast);
-        std::cout << "tanh_speedup " << scenario.name
-                  << " exact-over-zoned-hermite-reciprocal " << std::fixed
-                  << std::setprecision(3) << exactSpeedup.median << " "
-                  << exactSpeedup.minimum << " " << exactSpeedup.mad << "\n";
-        const auto earlySpeedup = summarize(fastOverCubicEarly);
-        std::cout << "tanh_speedup " << scenario.name
-                  << " zoned-hermite-reciprocal-over-cubic-early "
-                  << std::fixed << std::setprecision(3)
-                  << earlySpeedup.median << " " << earlySpeedup.minimum
-                  << " " << earlySpeedup.mad << "\n";
+        for (std::size_t mode = 1; mode < modeCount; ++mode)
+        {
+            const auto speedup = summarize(baselineOver[mode]);
+            std::cout << "tanh_speedup " << scenario.name << " "
+                      << modes[0].name << "-over-" << modes[mode].name << " "
+                      << std::fixed << std::setprecision(3) << speedup.median
+                      << " " << speedup.minimum << " " << speedup.mad << "\n";
+        }
     }
     return 0;
 }

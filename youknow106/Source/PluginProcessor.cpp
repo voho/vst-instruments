@@ -575,13 +575,23 @@ YouKnow106AudioProcessor::createParameterLayout()
                 })));
 
     // The quality ladder, cheapest first, so a larger index is always more
-    // internal work. New instances start at 2x: it keeps practical scheduling
-    // headroom while 4x remains an explicit highest-fidelity choice. Version 3
-    // follows every parameter shipped by the two earlier public layouts.
+    // internal work. Version 3 follows every parameter shipped by the two
+    // earlier public layouts.
+    //
+    // New instances start at 1x. This is a product decision taken on request,
+    // and it is the one default in this plug-in that the project's own
+    // numerical-quality audits argue against: the common-host matrices in
+    // README.md admit the DCO at every tested factor but record the BBD and
+    // VCF domains as passing at 4x and rejecting their lower common-host
+    // factors, and Step 9's recalibration measures the HQ-off wet line about
+    // +0.30...+0.38 dB high at 44.1/48 kHz. 1x is therefore cheapest and
+    // aliases most; 2x and 4x remain one menu away, and the selection is a
+    // ceiling rather than a floor, so a host already running at 176.4 kHz or
+    // above resolves every rung to 1x anyway.
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { quality, 3 }, "Quality",
         juce::StringArray { "1x", "2x", "4x" },
-        choiceForOversamplingFactor (2),
+        choiceForOversamplingFactor (1),
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
     // This is an engine policy, not a patch control. Exact is ordinal zero so
@@ -595,6 +605,33 @@ YouKnow106AudioProcessor::createParameterLayout()
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { vcfFastEarlyMode, 5 }, "VCF Fast Early",
         juce::StringArray { "Hermite", "Cubic" }, 0,
+        juce::AudioParameterChoiceAttributes().withAutomatable (false)));
+
+    // The Runge-Kutta rung, cheapest last, so a larger index is always less
+    // numerical work -- the opposite ordering from Quality above, which is
+    // deliberate: this control descends a solver ladder while that one climbs
+    // an internal-rate one.
+    //
+    // The shipped default is the cheapest rung, which is the one place this
+    // ladder is not conservative, so the reasoning is recorded rather than
+    // implied. `Merson x2` remains ordinal zero and remains the reference
+    // kernel: `EngineParameters` still defaults to it, so the JUCE-free tools
+    // and every frozen fingerprint and work-counter contract keep testing it.
+    // What changed is only which rung an instance *starts* on. That was
+    // decided by ear on 2026-08-23 -- a four-letter blind set across a
+    // resonant lead, a self-oscillation and sustained chords returned no
+    // audible difference between any rung -- beside measured whole-file nulls
+    // of -88...-110 dBc and a self-oscillation anchor identical to four
+    // decimal places in amplitude and 0.14 cents in pitch. The cost is stated
+    // plainly: a session saved before this parameter existed carries no entry
+    // for it, so it now renders through `RK4 x1` rather than reproducing its
+    // old output bit for bit. See Docs/vcf-solver-optimization.md.
+    juce::StringArray vcfSolverChoices;
+    for (int choice = 0; choice < vcfSolverChoiceCount; ++choice)
+        vcfSolverChoices.add (vcfSolverChoiceName (choice));
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { vcfSolverMode, 6 }, "VCF Solver",
+        vcfSolverChoices, vcfSolverDefaultChoice,
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
     return layout;
@@ -652,7 +689,8 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
         { ParameterIndex::legacyHq, legacyHq },
         { ParameterIndex::quality, quality },
         { ParameterIndex::vcfTanhMode, vcfTanhMode },
-        { ParameterIndex::vcfFastEarlyMode, vcfFastEarlyMode }
+        { ParameterIndex::vcfFastEarlyMode, vcfFastEarlyMode },
+        { ParameterIndex::vcfSolverMode, vcfSolverMode }
     });
 
     static_assert (bindings.size() == parameterPointerCount);
@@ -934,6 +972,8 @@ bool YouKnow106AudioProcessor::updateEngineParameters() noexcept
         choiceOf (P::vcfTanhMode, vcfTanhChoiceCount - 1));
     engineParameters.vcfFastEarlyMode = static_cast<VcfFastEarlyMode> (
         choiceOf (P::vcfFastEarlyMode, vcfFastEarlyChoiceCount - 1));
+    engineParameters.vcfSolverMode = static_cast<VcfSolverMode> (
+        choiceOf (P::vcfSolverMode, vcfSolverChoiceCount - 1));
 
     // If a recall began while these atomics were being gathered, keep the
     // previous engine snapshot for this block. The next one will see the whole

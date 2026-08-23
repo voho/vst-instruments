@@ -4245,3 +4245,170 @@ the repository, and none was supplied); P7 remains recorded, not adopted —
 both stay open above. The P1 default stays the voiced curve until the
 delivered A/B is decided by ear; the verdict, when it arrives, is recorded
 here as chosen by ear per the A–Z rules.
+
+## YouKnow106 — VCF solver-tableau pass, 2026-08-23
+
+**Work mode: numerical kernel only. No modelled constant, level, corner or law
+moves, and the shipping path is bit-identical.** This pass answers a CPU
+question, not a fidelity one: the instrument spent ten right-hand-side
+evaluations per card per internal sample on a fixed two-half-step Merson pair,
+unconditionally, whatever step size the interval actually presented. The
+research note is [`Docs/vcf-solver-optimization.md`](vcf-solver-optimization.md);
+what belongs here is the decision record.
+
+### What was decided, and on what evidence
+
+- **`VCF Solver` is a new persisted, non-automatable engine-policy choice**
+  beside `VCF Tanh` and `VCF Fast Early`, with the same standing: outside
+  patches, Program Change, SysEx and randomization, and not recalled by a
+  program. Ordinal zero is `Merson x2`, which is the reference and which the
+  audit tool's complete `--fingerprint` matrix confirms is byte-identical to
+  the pre-pass engine at 1x, 2x and 4x. The tableau names in this record are
+  the internal ones; the menu shows `Max`, `High` and `Normal` and puts the
+  tableau in the control's help text, because a menu has to convey relative
+  cost and a research note has to name the method.
+- **`RK4 x2` (8 evaluations)** is classic RK4 over the same two half-intervals.
+  Same fourth order, same step size, one fifth less work.
+- **`RK4 x1` (4 evaluations)** takes one full-interval RK4 step wherever one is
+  admissible. Its accuracy bound is measured, not asserted: forcing the
+  full-interval tableau everywhere and comparing against the suite's
+  independent 96-substep RK4 reference over three internal rates, three loop
+  gains and nine cutoffs puts the departure from the reference at a normalized
+  step near 2.97, holds `-87 dB` out to 2.35, and makes the worst case flat at
+  `-97.5 dB` from 0.29 upward — that floor is the causal input reconstruction,
+  not the step size. The shipped limit is 1.25, under half the departure point.
+- **Merson stays underneath both RK4 rungs rather than beside them.** This is
+  the pass's one genuine finding. Merson's five-stage stability region reaches
+  about 3.55 on the negative real axis where classic RK4's reaches 2.785, and
+  the product grid's own `0.9*pi` omega cap can put the cascade's fastest
+  closed-loop eigenvalue past the smaller of the two. The suite's zero-input
+  cap fixture — six cards, Character-ceiling trims, cold and warm — found RK4
+  half-steps sustaining a false limit cycle of 0.538 V at `k = 2.0` and 1.181 V
+  at `k = 3.8`, with the onset between 2.66 and 3.00 per half step, exactly
+  where RK4's region ends. A first implementation that escalated only from one
+  RK4 step to two shipped that defect; the measurement caught it, and both
+  RK4 rungs now fall back to Merson above 2.0 per half step, 72% of the radius.
+
+### Why the abscissae were the design constraint
+
+Every rung's nodes are drawn from the seven `controlNodePositions` the engine
+already reconstructs the input and the converter-hold trajectory at. That is
+what makes the ladder additive rather than invasive: no rung moves a control
+node, changes the hold trajectory a converter write produces, or needs a second
+reconstruction grid. It is also why a one-step *Merson* tableau does not exist
+here — its `1/3` abscissa is not in the set, and buying one evaluation with an
+eighth control node and a wider hold trajectory is a bad trade.
+
+### What was rejected
+
+- **Kutta's third-order step, one per interval (3 evaluations).** Implemented,
+  measured, removed. It costs 30–45 dB of solve accuracy for one evaluation:
+  `-64.7 dB` relative error at an ordinary 1 kHz / resonant / 1x point where
+  `RK4 x1` holds `-97.5 dB`, and it loses the self-oscillating limit cycle
+  outright at 11 kHz with `k = 4.50`. A 25% saving on the cheapest rung does
+  not buy an audible-order error.
+- **Bogacki–Shampine RK3(2)** and **one-step Merson** were considered on paper
+  and not implemented; see the research note's rejection table.
+
+### What the ladder does not move
+
+The resonance path is calibrated against a self-oscillating sine — Roland's
+ADJUSTMENT trims to 4.8 Vp-p at 248 Hz with C4 held — so the limit cycle's
+amplitude and frequency are the audible property at risk. Driving the complete
+shipping signal path at the service trim's own converter code, every rung at
+every quality factor returns the same amplitude to four decimal places and the
+same frequency to about 0.02 Hz (0.14 cents), against a procedure that itself
+accepts ±10 cents. Two octaves of key tracking are likewise unchanged. A plain
+error-energy metric reads badly in self-oscillation because a free-running
+oscillator's *phase* diverges between any two solvers; that is a property of
+the metric, not of the ladder, and the amplitude/frequency pair is what the
+suite gates.
+
+### The listening verdict, 2026-08-23
+
+**Decided by ear, not by measurement.** A four-letter blind set was rendered
+through the complete shipping signal path at 44.1 kHz / 4x on three factory
+fixtures — B44 as a resonant lead, the A82-derived self-oscillation, and B88 as
+sustained chords — with identical MIDI, controls, length and preset in every
+letter, chorus and the shared noise source off, and whole-file RMS matched to
+letter A. Every RMS trim came out at 0.0000 dB. The letters were:
+
+- **A** — the shipping engine: `VCF Tanh Exact`, `VCF Solver Merson x2`.
+- **B** — `Exact` with `RK4 x2`.
+- **C** — `Exact` with `RK4 x1`.
+- **D** — `Fast` with `RK4 x1`.
+
+**The user's verdict: no difference heard, across all three fixtures.** No
+letter was preferred, and none was rejected.
+
+What that licenses: the two RK4 rungs are audibly indistinguishable from the
+shipping engine on this material, so the ladder is no longer hearing-gated the
+way `VCF Tanh=Fast` and `VCF Fast Early=Cubic` still are. What it does *not*
+license is any claim about a mechanism. Nothing was promoted, no constant
+moved, and the verdict says only what a listener reported: it is not a
+measurement of transparency, and it does not extend to material the set did not
+cover. The objective figures that stand beside it — whole-file nulls of
+`−138…−147 dBc` for `RK4 x2` and `−88…−110 dBc` for `RK4 x1`, and a
+self-oscillation anchor identical to four decimal places in amplitude and
+0.14 cents in pitch — were measured, and are recorded as measured in the
+research note.
+
+### Two defaults moved, on request, 2026-08-23
+
+Both are product decisions taken by the user after the verdict above, and both
+are recorded with their costs rather than as numerical results.
+
+- **`VCF Solver` ships on the cheapest rung.** Every instance now starts on
+  `RK4 x1` (menu name `Normal`), so the roughly 53% saving arrives without
+  anyone opening a menu. `EngineParameters` still defaults to `Merson x2`, so
+  the JUCE-free suites and every frozen fingerprint and work-counter contract
+  keep testing the reference kernel; only the rung a plug-in instance *starts*
+  on changed. The cost: a session saved before this parameter existed carries
+  no entry for it, so it now renders through `RK4 x1` rather than reproducing
+  its old output bit for bit. Inaudible by the verdict above, but no longer
+  bit-identical, and that distinction is the reason this is written down.
+- **`QUALITY` ships at 1x.** This one the listening test does *not* cover, and
+  this document's own numerical-quality matrices argue against it: the
+  common-host audit admits the DCO at every tested factor but records the BBD
+  and VCF domains as passing at 4x and rejecting their lower common-host
+  factors, and Step 9's recalibration measures HQ-off wet-line noise about
+  +0.30...+0.38 dB high at 44.1/48 kHz. The concern was put to the user and the
+  setting was chosen anyway; 2x and 4x remain one menu away, and the selection
+  is a ceiling rather than a floor, so a host at 176.4 kHz or above resolves
+  every rung to 1x regardless. Recorded as a product decision taken with the
+  audit result on the table.
+
+The menu itself was reworded at the same time: the two processing selectors now
+read in relative-cost terms (`Max`/`High`/`Normal`) and carry the numerical
+method in their help text instead of their labels, which is also what keeps
+them inside the Model zone's width.
+
+### Open, and deliberately not taken here
+
+- **An idle voice card still costs what a sounding one costs, and this is a
+  bigger lever than the whole ladder.** The six hardware cards are powered and
+  advance behind closed VCAs, exactly as the instrument does, and `renderVoice`
+  computes a silent card's DCO, filter and couplings before discarding the
+  result. On the reference machine `idle-dry` and `six-voice-plain-dry` are
+  within 1% of each other at every rung. An experimental build that skips a
+  silent card's audio entirely, measured with the same protocol purely to size
+  the opportunity, takes the shipping default from 2.022× realtime to 0.109×
+  when idle (−94.6%) and from 2.037× to 0.423× on one held voice (−79.3%),
+  while six held voices are unchanged.
+
+  It is *not* free, and the two audible mechanisms are specific: a same-pitch
+  retrigger on the same card currently keeps the free-running DCO phase (a
+  changed pitch already restarts the timer, so most note-ons discard it
+  anyway), and the filter would start from zero rather than from the steady
+  state the old note left. The first has a cheap fix — a sleeping card's pitch
+  CV is static, so its phase can be fast-forwarded analytically on wake in O(1)
+  rather than reset — but that is a design, not a measurement. The extension
+  slots above the six cards already reconstruct from silence, so the mechanism
+  exists. Under this repository's A–Z rules this needs the fast-forward and a
+  blind A/B on note-on transients — repeated same-pitch attacks and a slow
+  low-cutoff attack are the fixtures that would expose it — before it can be
+  offered. That A/B has not been run, so nothing here is implemented.
+- **Poly9 inner-zone `tanh`** remains where the sibling note left it: measured,
+  coefficient-fixed, and blocked on a state-compatibility decision rather than
+  a numerical one, because promoting it means a third ordinal on an existing
+  two-choice parameter.

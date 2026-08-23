@@ -75,6 +75,10 @@ inline constexpr auto quality      = "quality";
 // not stored in hardware patches or SysEx.
 inline constexpr auto vcfTanhMode  = "vcfTanhMode";
 inline constexpr auto vcfFastEarlyMode = "vcfFastEarlyMode";
+// Runge-Kutta tableau the same solver advances the capacitor states with.
+// Merson is the compatibility default; the cheaper rungs are persisted as a
+// machine setting, like the two above.
+inline constexpr auto vcfSolverMode = "vcfSolverMode";
 inline constexpr auto legacyHq     = "hq";
 } // namespace parameters
 

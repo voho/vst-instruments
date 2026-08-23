@@ -24,6 +24,41 @@ enum class VcaMode { Envelope, Gate };
 enum class KeyMode { Poly1, Poly2, Unison };
 enum class VcfTanhMode { Exact = 0, ZonedHermite = 1 };
 enum class VcfFastEarlyMode { Hermite = 0, Cubic = 1 };
+// Which explicit Runge-Kutta tableau advances the four OTA capacitor states
+// over one internal interval. Numerical kernel only: every rung integrates the
+// same continuous circuit equations, with the same controls at the same
+// abscissae, and differs only in truncation error and cost.
+//
+// `MersonHalfSteps` is the established reference and this struct's own default,
+// so the JUCE-free tools and every frozen fingerprint and work-counter contract
+// keep testing it. It is not what a plug-in instance starts on: after the blind
+// A/B set returned no audible difference between rungs, the host layer ships
+// `Rk4Single`. See PluginProcessor's `vcfSolverDefaultChoice`. The two cheaper
+// rungs exist because the fixed two-half-step Merson pair spends
+// ten right-hand-side evaluations per card per internal sample where the step
+// sizes musical settings actually produce need far fewer; see
+// Docs/vcf-solver-optimization.md for the measured error and CPU of each.
+//
+// Every rung's abscissae are a subset of `OtaCascade::controlNodePositions`,
+// so none of them moves a control node, changes the hold trajectory the
+// converter writes produce, or needs a second reconstruction grid.
+enum class VcfSolverMode
+{
+    // Two half-interval five-stage Merson steps: ten evaluations. Unchanged.
+    MersonHalfSteps = 0,
+    // Two half-interval classic four-stage RK4 steps: eight evaluations. Same
+    // fourth order and the same half-interval step size as the default, so it
+    // is the rung that lowers cost without changing the order of the method.
+    Rk4HalfSteps = 1,
+    // One full-interval classic RK4 step: four evaluations, escalating to the
+    // half-step pair -- and to Merson beyond that -- on the intervals where
+    // one step is not admissible. This is the ladder's cheapest rung. A
+    // three-stage Kutta step was measured beside it and rejected: it saves one further evaluation and costs
+    // 30-45 dB of solve accuracy, reaching -64.7 dB relative error at an
+    // ordinary 1 kHz / resonant / 1x operating point where this rung holds
+    // -97.5 dB, and it loses the self-oscillating limit cycle outright.
+    Rk4Single = 2
+};
 
 // The assign mode latched by the two momentary POLY buttons. A single press
 // selects that mode; pressing both selects Solo Unison. Firmware never leaves
@@ -142,6 +177,10 @@ struct EngineParameters
     // Numerical kernel only: Exact preserves the established sound and state;
     // ZonedHermite trades a bounded interpolation error for lower VCF CPU use.
     VcfTanhMode vcfTanhMode { VcfTanhMode::Exact };
+    // Numerical kernel only, and independent of the tanh choice above: which
+    // Runge-Kutta tableau advances the capacitor states. MersonHalfSteps
+    // preserves the established sound and state bit for bit.
+    VcfSolverMode vcfSolverMode { VcfSolverMode::MersonHalfSteps };
 
     // --- Optional physical-circuit mechanisms --------------------------------
     // Each is a card dispersion or an inherent non-linearity that the
@@ -1176,6 +1215,122 @@ private:
 
         static constexpr int integrationSubsteps = 2;
         static constexpr int rhsEvaluationsPerInterval = 10;
+
+        // The concrete tableaux `VcfSolverMode` resolves to. A mode names the
+        // *cheapest* tableau it is willing to use; `planTableau` below escalates
+        // it on the intervals where that tableau is not numerically
+        // admissible, so a rung is a cost ceiling rather than a promise about
+        // a particular interval. Merson is the bottom of that escalation for
+        // every rung, not a peer of the other two.
+        //
+        // Every abscissa is a `controlNodePositions` entry, which is what lets
+        // the whole ladder share one reconstruction grid and one hold
+        // trajectory:
+        //
+        //   MersonHalf  0, 1/6, 1/6, 1/4, 1/2 | 1/2, 2/3, 2/3, 3/4, 1
+        //   Rk4Half     0, 1/4, 1/4, 1/2      | 1/2, 3/4, 3/4, 1
+        //   Rk4Full     0, 1/2, 1/2, 1
+        enum class Tableau : std::uint8_t
+        {
+            MersonHalf, Rk4Half, Rk4Full
+        };
+        // Which of the seven control nodes each tableau reads, as a bit per
+        // ordinal. The reconstruction loop skips the rest: a full-interval rung
+        // needs three of the seven causal-cubic reconstructions, not all seven.
+        [[nodiscard]] static constexpr unsigned int tableauNodeMask(
+            Tableau tableau) noexcept
+        {
+            switch (tableau)
+            {
+                case Tableau::MersonHalf: return 0b1111111u;
+                case Tableau::Rk4Half:    return 0b1101101u;
+                case Tableau::Rk4Full:    return 0b1001001u;
+            }
+            return 0b1111111u;
+        }
+        [[nodiscard]] static constexpr int tableauRhsEvaluations(
+            Tableau tableau) noexcept
+        {
+            switch (tableau)
+            {
+                case Tableau::MersonHalf: return 10;
+                case Tableau::Rk4Half:    return 8;
+                case Tableau::Rk4Full:    return 4;
+            }
+            return 10;
+        }
+
+        // Largest normalized step `|h * lambda|` over the whole interval that
+        // each RK4 rung is allowed to take before `planTableau` escalates it.
+        //
+        // `singleStepRk4Limit` is an accuracy bound. Classic RK4 stays stable
+        // along the negative real axis to about 2.785 and along the imaginary
+        // axis to about 2.828, so a full-interval step of 1.25 is far inside
+        // the stability region; what sets it is the measured sweep against an
+        // independent 96-substep reference solve, which holds below -87 dB
+        // relative error out to 2.35 and only leaves the reference near 2.97.
+        // At 1.25 the sweep's worst case over every rate, cutoff and resonance
+        // is -97.5 dB, and that worst case comes from the causal input
+        // reconstruction rather than from the step size, so lowering the limit
+        // further does not improve it.
+        //
+        // `halfStepRk4Limit` is a *stability* bound, and it is why the ladder
+        // needs Merson underneath it rather than beside it: Merson's five-stage
+        // region reaches about 3.55 on the negative real axis where classic
+        // RK4 reaches 2.785, and the product grid's own 0.9*pi cap can put the
+        // cascade's fastest closed-loop eigenvalue past the smaller of the two.
+        // The suite's zero-input cap fixture finds the onset of a false limit
+        // cycle at 2.66 to 3.00 per half step -- exactly where RK4's region
+        // ends -- so the bound below is 2.0 per half step, 72% of that radius.
+        // Merson runs those intervals for every rung; see
+        // Docs/vcf-solver-optimization.md for both measurements.
+        static constexpr double singleStepRk4Limit = 1.25;
+        static constexpr double halfStepRk4Limit = 4.0;
+        // Bound on the cascade's fastest closed-loop eigenvalue, in units of
+        // the small-signal pole. Four identical one-poles closed through a
+        // gain of `feedback` put the loop roots at
+        // `s/w = -1 + feedback^(1/4) * exp(i*(pi + 2*pi*m)/4)`, whose largest
+        // magnitude is `sqrt((1 + q)^2 + q^2)` with `q = feedback^(1/4)/sqrt2`.
+        // The stage capacitor spread scales `w` per stage, so the caller
+        // supplies the largest stage pole rather than the nominal one.
+        [[nodiscard]] static double closedLoopSpectralFactor(
+            double feedback) noexcept;
+        // `closedLoopSpectralFactor` at the sanitized feedback ceiling of
+        // eight, which is the most any admissible loop gain can stretch the
+        // small-signal pole. A step small enough to pass against this is
+        // admissible whatever the resonance is, which is what lets
+        // `planTableau` decide the common case without evaluating the factor
+        // at all. The closed form is sqrt((1 + 2^(1/4))^2 + sqrt(2)): `q` at
+        // feedback eight is 8^(1/4)/sqrt(2), which reduces to exactly
+        // 2^(1/4).
+        static constexpr double maximumClosedLoopSpectralFactor =
+            2.491353317928156;
+        // The tableau one interval actually runs, given the cheapest one its
+        // mode allows, the largest stage pole the interval presents and the
+        // largest loop gain it presents. `poleStep` is the normalized step
+        // before the resonance term; the two are kept apart rather than
+        // multiplied by the caller so the ceiling short circuit above can be
+        // tried first. A non-finite `poleStep` fails every comparison and
+        // therefore resolves to Merson, which is the safe answer.
+        [[nodiscard]] static Tableau planTableau(
+            VcfSolverMode mode, double poleStep, double feedback) noexcept
+        {
+            if (mode == VcfSolverMode::MersonHalfSteps)
+                return Tableau::MersonHalf;
+            // The ceiling short circuit: a step this small is admissible at any
+            // resonance, so the common case never evaluates the factor.
+            if (poleStep * maximumClosedLoopSpectralFactor
+                    <= singleStepRk4Limit)
+                return mode == VcfSolverMode::Rk4Single
+                     ? Tableau::Rk4Full : Tableau::Rk4Half;
+            const double normalisedStep =
+                poleStep * closedLoopSpectralFactor(feedback);
+            if (mode == VcfSolverMode::Rk4Single
+                && normalisedStep <= singleStepRk4Limit)
+                return Tableau::Rk4Full;
+            return normalisedStep <= halfStepRk4Limit
+                 ? Tableau::Rk4Half : Tableau::MersonHalf;
+        }
         // The renderer's product-grid safety cap is 0.45 cycles per internal
         // sample. Apply the card's thermal spread before this numerical bound
         // so Unit Character cannot make the Merson solver see a larger
@@ -1200,7 +1355,9 @@ private:
                       bool enableEarlyEffect = true,
                       float calibration = 0.70f,
                       const ControlTrajectory* trajectory = nullptr,
-                      VcfTanhMode tanhMode = VcfTanhMode::Exact) noexcept;
+                      VcfTanhMode tanhMode = VcfTanhMode::Exact,
+                      VcfSolverMode solverMode =
+                          VcfSolverMode::MersonHalfSteps) noexcept;
 
         [[nodiscard]] static double reconstructInput(
             double current, const std::array<double, 3>& history,

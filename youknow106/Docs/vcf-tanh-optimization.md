@@ -11,6 +11,13 @@ Max profiling, paired whole-engine timing, and 48 kHz blind renders are
 recorded below; cross-platform ranking and the player's hearing judgment remain
 pending. No project result is inferred from library papers.
 
+This note owns the *nonlinearity* the VCF solver evaluates. Which Runge-Kutta
+tableau decides how often it is evaluated is a separate, independent selector
+with its own measurements; see
+[`vcf-solver-optimization.md`](vcf-solver-optimization.md). Every call count
+below is the default `Merson x2` rung's; `RK4 x2` and `RK4 x1` multiply them by
+0.8 and 0.4.
+
 ## Scope and current call count
 
 Huovilainen derives a virtual-analogue ladder with embedded `tanh`

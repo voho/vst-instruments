@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
+#include "PublicParameterOrder.h"
 
 #include <algorithm>
 #include <array>
@@ -128,9 +129,15 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::chorusNoise, 1.0f,   1.0e-5f },
     { parameters::polyphony,   6.0f,   1.0e-5f },
     { parameters::legacyHq,    1.0f,   1.0e-5f },
-    { parameters::quality,     1.0f,   1.0e-5f },
+    { parameters::quality,
+      static_cast<float> (
+          YouKnow106AudioProcessor::choiceForOversamplingFactor (1)),
+      1.0e-5f },
     { parameters::vcfTanhMode, 0.0f,   1.0e-5f },
     { parameters::vcfFastEarlyMode, 0.0f, 1.0e-5f },
+    { parameters::vcfSolverMode,
+      static_cast<float> (YouKnow106AudioProcessor::vcfSolverDefaultChoice),
+      1.0e-5f },
 });
 
 float parameterValue (const YouKnow106AudioProcessor& processor, const char* id)
@@ -415,6 +422,46 @@ void renderBlocks (YouKnow106AudioProcessor& processor, juce::AudioBuffer<float>
 
 // --------------------------------------------------------------------------
 
+// The macOS-only VST3 bundle test locates the standard Bypass and Program
+// parameters immediately after the public ones, so a parameter added to the
+// layout without being added to the shared order list pushes them out of
+// position and fails there -- and only there. That is how main went red when
+// `VCF Tanh` and `VCF Fast Early` were added, and stayed red. Check the same
+// list against the live processor here, where every platform runs it.
+void testPublicParameterOrderMatchesTheSharedList()
+{
+    YouKnow106AudioProcessor processor;
+    const auto& live = processor.getParameters();
+    const auto& shared = youknow106::tests::publicParameterOrder;
+
+    expect (live.size() == static_cast<int> (shared.size()),
+            "the processor exposes " + std::to_string (live.size())
+                + " public parameters but Tests/PublicParameterOrder.h lists "
+                + std::to_string (shared.size())
+                + "; append the new one there or the macOS VST3 bundle test "
+                  "will fail on Bypass/Program placement");
+    if (live.size() != static_cast<int> (shared.size()))
+        return;
+
+    for (std::size_t index = 0; index < shared.size(); ++index)
+    {
+        const auto* parameter = live[static_cast<int> (index)];
+        expect (parameter != nullptr
+                    && parameter->getName (128)
+                           == juce::String (shared[index].name),
+                "public parameter " + std::to_string (index)
+                    + " is not " + shared[index].name
+                    + "; Tests/PublicParameterOrder.h is out of order");
+        const auto* hosted =
+            dynamic_cast<const juce::HostedAudioProcessorParameter*> (parameter);
+        expect (hosted != nullptr
+                    && hosted->getParameterID()
+                           == juce::String (shared[index].id),
+                "public parameter " + std::to_string (index)
+                    + " does not carry the id " + shared[index].id);
+    }
+}
+
 void testParameterContract()
 {
     YouKnow106AudioProcessor processor;
@@ -488,7 +535,7 @@ void testParameterContract()
         return static_cast<juce::uint32> (a->paramID.hashCode())
              < static_cast<juce::uint32> (b->paramID.hashCode());
     });
-    expect (auParameters.size() == historicalAuOrder.size() + 3,
+    expect (auParameters.size() == historicalAuOrder.size() + 4,
             "the Audio Unit parameter contract has an unexpected size");
     for (std::size_t index = 0;
          index < historicalAuOrder.size() && index < auParameters.size(); ++index)
@@ -502,8 +549,8 @@ void testParameterContract()
     {
         expect (quality->getVersionHint() == 3,
                 "Quality was not appended after both historical AU layouts");
-        expect (auParameters.size() >= 3
-                    && auParameters[auParameters.size() - 3] == quality,
+        expect (auParameters.size() >= 4
+                    && auParameters[auParameters.size() - 4] == quality,
                 "Quality moved from its appended Audio Unit position");
     }
     if (const auto* vcfTanh = processor.parameters.getParameter (
@@ -511,8 +558,8 @@ void testParameterContract()
     {
         expect (vcfTanh->getVersionHint() == 4,
                 "VCF Tanh was not appended after the quality ladder");
-        expect (auParameters.size() >= 2
-                    && auParameters[auParameters.size() - 2] == vcfTanh,
+        expect (auParameters.size() >= 3
+                    && auParameters[auParameters.size() - 3] == vcfTanh,
                 "VCF Tanh moved from its appended Audio Unit position");
         expect (! vcfTanh->isAutomatable(),
                 "VCF Tanh is offered to the host as automatable");
@@ -528,8 +575,9 @@ void testParameterContract()
     {
         expect (vcfFastEarly->getVersionHint() == 5,
                 "VCF Fast Early was not appended after VCF Tanh");
-        expect (! auParameters.empty() && auParameters.back() == vcfFastEarly,
-                "VCF Fast Early is not the final Audio Unit parameter");
+        expect (auParameters.size() >= 2
+                    && auParameters[auParameters.size() - 2] == vcfFastEarly,
+                "VCF Fast Early moved from its appended Audio Unit position");
         expect (! vcfFastEarly->isAutomatable(),
                 "VCF Fast Early is offered to the host as automatable");
         const auto* choice = dynamic_cast<const juce::AudioParameterChoice*> (
@@ -538,6 +586,60 @@ void testParameterContract()
                     && choice->choices[0] == "Hermite"
                     && choice->choices[1] == "Cubic",
                 "the VCF Fast Early two-choice ordinal contract changed");
+    }
+    if (const auto* vcfSolver = processor.parameters.getParameter (
+            parameters::vcfSolverMode))
+    {
+        expect (vcfSolver->getVersionHint() == 6,
+                "VCF Solver was not appended after VCF Fast Early");
+        // The one control on the deck whose default is not the conservative
+        // end of its own ladder. It was put there deliberately, by ear, so
+        // pin it: drifting back to Merson would silently double the filter's
+        // CPU, and drifting further is not possible without a new rung.
+        expect (YouKnow106AudioProcessor::vcfSolverDefaultChoice
+                    == YouKnow106AudioProcessor::vcfSolverChoiceCount - 1,
+                "the shipped VCF Solver default is no longer the cheapest rung");
+        expect (std::strcmp (YouKnow106AudioProcessor::vcfSolverChoiceName (
+                                 YouKnow106AudioProcessor::
+                                     vcfSolverDefaultChoice),
+                             "Normal") == 0,
+                "the shipped VCF Solver default is not the Normal rung");
+        // The player's names carry no method, and the tooltip carries the
+        // method. Neither half may quietly become the other.
+        for (int rung = 0;
+             rung < YouKnow106AudioProcessor::vcfSolverChoiceCount; ++rung)
+        {
+            const juce::String name (
+                YouKnow106AudioProcessor::vcfSolverChoiceName (rung));
+            const juce::String technique (
+                YouKnow106AudioProcessor::vcfSolverChoiceTechnique (rung));
+            expect (! name.containsIgnoreCase ("RK4")
+                        && ! name.containsIgnoreCase ("Merson")
+                        && ! name.contains ("x1") && ! name.contains ("x2"),
+                    "a VCF Solver menu name leaks the numerical method");
+            expect (technique.containsIgnoreCase ("evaluations")
+                        && (technique.containsIgnoreCase ("RK4")
+                            || technique.containsIgnoreCase ("Merson")),
+                    "a VCF Solver technique string does not name its tableau");
+        }
+        // The engine's own default stays the reference kernel, whatever the
+        // plug-in ships. Every frozen fingerprint and work-counter contract
+        // depends on that separation.
+        expect (youknow106::EngineParameters {}.vcfSolverMode
+                    == youknow106::VcfSolverMode::MersonHalfSteps,
+                "the engine's own solver default is no longer the reference "
+                "Merson kernel");
+        expect (! auParameters.empty() && auParameters.back() == vcfSolver,
+                "VCF Solver is not the final Audio Unit parameter");
+        expect (! vcfSolver->isAutomatable(),
+                "VCF Solver is offered to the host as automatable");
+        const auto* choice = dynamic_cast<const juce::AudioParameterChoice*> (
+            vcfSolver);
+        expect (choice != nullptr && choice->choices.size() == 3
+                    && choice->choices[0] == "Max"
+                    && choice->choices[1] == "High"
+                    && choice->choices[2] == "Normal",
+                "the VCF Solver three-choice ordinal contract changed");
     }
 }
 
@@ -1043,6 +1145,69 @@ void testVcfFastEarlySelectorDrivesTheEngine()
             "the VCF Fast Early parameter did not reach the engine");
     hermite.releaseResources();
     cubic.releaseResources();
+}
+
+void testVcfSolverSelectorDrivesTheEngine()
+{
+    // Every rung must reach the engine and keep the audio finite. The
+    // difference between them is deliberately tiny -- the ladder exists to be
+    // inaudible -- so this checks that the parameter arrives at all and that
+    // the cheap rungs stay bounded, not that they diverge by any amount.
+    std::array<std::unique_ptr<YouKnow106AudioProcessor>,
+               YouKnow106AudioProcessor::vcfSolverChoiceCount> processors;
+    const auto configure = [] (YouKnow106AudioProcessor& processor,
+                               float solverChoice)
+    {
+        setParameterValue (processor, parameters::quality, 0.0f);
+        setParameterValue (processor, parameters::vcfSolverMode, solverChoice);
+        setParameterValue (processor, parameters::polyphony, 1.0f);
+        setParameterValue (processor, parameters::cutoff, 0.72f);
+        setParameterValue (processor, parameters::resonance, 1.0f);
+        setParameterValue (processor, parameters::calibration, 1.0f);
+        setParameterValue (processor, parameters::chorusI, 0.0f);
+        setParameterValue (processor, parameters::chorusII, 0.0f);
+        setParameterValue (processor, parameters::chorusNoise, 0.0f);
+        processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+        processor.prepareToPlay (sampleRate, blockSize);
+    };
+    for (int choice = 0;
+         choice < YouKnow106AudioProcessor::vcfSolverChoiceCount; ++choice)
+    {
+        processors[static_cast<std::size_t> (choice)] =
+            std::make_unique<YouKnow106AudioProcessor>();
+        configure (*processors[static_cast<std::size_t> (choice)],
+                   static_cast<float> (choice));
+    }
+
+    float peak = 0.0f;
+    float maximumDifference = 0.0f;
+    for (int block = 0; block < 48; ++block)
+    {
+        std::array<juce::AudioBuffer<float>,
+                   YouKnow106AudioProcessor::vcfSolverChoiceCount> audio;
+        for (std::size_t choice = 0; choice < processors.size(); ++choice)
+        {
+            audio[choice].setSize (2, blockSize);
+            audio[choice].clear();
+            juce::MidiBuffer midi;
+            if (block == 0)
+                midi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+            processors[choice]->processBlock (audio[choice], midi);
+            expect (bufferIsFinite (audio[choice]),
+                    "a VCF solver rung emitted non-finite audio");
+            peak = std::max (peak, bufferPeak (audio[choice]));
+        }
+        for (std::size_t choice = 1; choice < audio.size(); ++choice)
+            maximumDifference = std::max (
+                maximumDifference,
+                maximumBufferDifference (audio[0], audio[choice]));
+    }
+    expect (peak > 1.0e-4f,
+            "the VCF solver selector fixture produced silence");
+    expect (maximumDifference > 0.0f,
+            "the VCF Solver parameter did not reach the engine");
+    for (auto& processor : processors)
+        processor->releaseResources();
 }
 
 void testAllNotesOffReleasesAndAllSoundOffCuts()
@@ -3950,7 +4115,8 @@ void testEditedFlagFollowsTheCompleteProgram()
             || std::strcmp (expected.id, parameters::legacyHq) == 0
             || std::strcmp (expected.id, parameters::quality) == 0
             || std::strcmp (expected.id, parameters::vcfTanhMode) == 0
-            || std::strcmp (expected.id, parameters::vcfFastEarlyMode) == 0)
+            || std::strcmp (expected.id, parameters::vcfFastEarlyMode) == 0
+            || std::strcmp (expected.id, parameters::vcfSolverMode) == 0)
             continue;
 
         processor.setCurrentProgram (0);
@@ -4188,6 +4354,7 @@ bool isProgramParameter (const char* id)
     return std::strcmp (id, parameters::quality) != 0
         && std::strcmp (id, parameters::vcfTanhMode) != 0
         && std::strcmp (id, parameters::vcfFastEarlyMode) != 0
+        && std::strcmp (id, parameters::vcfSolverMode) != 0
         && std::strcmp (id, parameters::legacyHq) != 0;
 }
 
@@ -4224,6 +4391,8 @@ void testEveryProductProgramRestoresEveryParameter()
             parameterValue (processor, parameters::vcfTanhMode);
         const float poisonedVcfFastEarly =
             parameterValue (processor, parameters::vcfFastEarlyMode);
+        const float poisonedVcfSolver =
+            parameterValue (processor, parameters::vcfSolverMode);
 
         expect (processor.currentProgramIsEdited(),
                 std::string ("program ") + std::to_string (program)
@@ -4246,6 +4415,9 @@ void testEveryProductProgramRestoresEveryParameter()
                 else if (std::strcmp (
                              expected.id, parameters::vcfFastEarlyMode) == 0)
                     retained = poisonedVcfFastEarly;
+                else if (std::strcmp (
+                             expected.id, parameters::vcfSolverMode) == 0)
+                    retained = poisonedVcfSolver;
                 expect (std::abs (parameterValue (processor, expected.id)
                                  - retained)
                             <= expected.tolerance,
@@ -4527,13 +4699,13 @@ void testEveryInteractiveEditorControlExplainsItself()
     };
     audit (audit, *editor);
 
-    // Six extension knobs, ten utility buttons plus the QUALITY selector,
-    // six factory/custom patch controls,
+    // Six extension knobs, ten utility buttons plus the QUALITY and VCF SOLVER
+    // selectors, six factory/custom patch controls,
     // twenty-one original-programmer controls, the keybed and the bender.
     // Disabled hardware-only keys remain public so their help explains why
     // the immutable factory bank cannot perform that operation.
     constexpr int expectedInteractiveCount =
-        panel::controlCount + 6 + 11 + 6 + 21 + 1 + 1;
+        panel::controlCount + 6 + 12 + 6 + 21 + 1 + 1;
     expect (interactiveCount == expectedInteractiveCount,
             "the contextual-help audit did not cover every interactive control");
     expect (findDescendantButtonWithText (*editor, "SEND") == nullptr,
@@ -5226,6 +5398,9 @@ void testEditorRandomizeStrengthsAndReset()
                 == processor.parameters.getParameter (
                     parameters::vcfFastEarlyMode)
             || parameter
+                == processor.parameters.getParameter (
+                    parameters::vcfSolverMode)
+            || parameter
                 == processor.parameters.getParameter (parameters::legacyHq))
             continue;
         expect (std::abs (parameter->getValue()
@@ -5533,6 +5708,92 @@ void testPolyButtonsKeepAValidFirmwareLatch()
             "re-pressing Poly 2 extinguished the last assign lamp");
 
     juce::ModifierKeys::currentModifiers = previousModifiers;
+}
+
+// The two processing-cost selectors are the only ComboBoxes on the deck, so
+// the utility-knob sweep below never reaches them. They stack in one column
+// inside the MODEL zone, beside the Unit Character knob and under the painted
+// MODEL heading, and nothing in that zone may run into anything else.
+void checkProcessingSelectorLayout (juce::AudioProcessorEditor& editor,
+                                    bool atSupportedMinimum)
+{
+    const auto context = std::string (atSupportedMinimum ? "minimum-size "
+                                                         : "default-size ");
+    struct Selector { const char* boxName; const char* caption; };
+    constexpr auto selectors = std::to_array<Selector> ({
+        { "Quality",    "QUALITY" },
+        { "VCF Solver", "VCF SOLVER" },
+    });
+
+    const auto editorBounds = editor.getLocalBounds();
+    auto* character = findDescendantNamed (editor, "Unit Character");
+    const auto characterArea = character != nullptr
+        ? editor.getLocalArea (character, character->getLocalBounds())
+        : juce::Rectangle<int>();
+
+    std::array<juce::Rectangle<int>, selectors.size()> cells {};
+    for (std::size_t index = 0; index < selectors.size(); ++index)
+    {
+        const auto& selector = selectors[index];
+        auto* box = dynamic_cast<juce::ComboBox*> (
+            findDescendantNamed (editor, selector.boxName));
+        auto* caption = findDescendantLabelWithText (editor, selector.caption);
+        expect (box != nullptr,
+                context + selector.boxName + " selector is missing");
+        expect (caption != nullptr,
+                context + selector.boxName + " caption is missing");
+        if (box == nullptr || caption == nullptr)
+            continue;
+
+        const auto boxArea = editor.getLocalArea (box, box->getLocalBounds());
+        const auto captionArea = editor.getLocalArea (
+            caption, caption->getLocalBounds());
+        expect (! boxArea.isEmpty() && ! captionArea.isEmpty(),
+                context + selector.boxName + " has empty bounds");
+        expect (editorBounds.contains (boxArea)
+                    && editorBounds.contains (captionArea),
+                context + selector.boxName + " extends outside the editor");
+        expect (! boxArea.intersects (captionArea),
+                context + selector.boxName + " overlaps its caption");
+        if (! characterArea.isEmpty())
+            expect (! boxArea.intersects (characterArea)
+                        && ! captionArea.intersects (characterArea),
+                    context + selector.boxName
+                        + " overlaps the Unit Character knob");
+
+        cells[index] = boxArea.getUnion (captionArea);
+        for (std::size_t previous = 0; previous < index; ++previous)
+            expect (! cells[index].intersects (cells[previous]),
+                    context + selector.boxName
+                        + " overlaps another processing selector");
+
+        expect (caption->getFont().getHeight()
+                    >= (atSupportedMinimum ? 10.5f : 12.0f) - 0.05f,
+                context + selector.boxName
+                    + " caption is below the readable font floor");
+        expect (labelTextFitsAtItsDeclaredSize (*caption),
+                context + selector.boxName
+                    + " caption relies on ellipsis or compressed lettering");
+
+        // The selected entry has to be legible in the closed box, not just in
+        // the dropped list. JUCE lays a ComboBox's text out in
+        // `width + 3 - height` -- the arrow steals a square -- so measure the
+        // widest entry against exactly that, with the look and feel's own
+        // font. A too-narrow box shows "Sta..." and says nothing.
+        const auto& lookAndFeel = box->getLookAndFeel();
+        const auto boxFont = const_cast<juce::LookAndFeel&> (lookAndFeel)
+                                 .getComboBoxFont (*box);
+        const float textWidth = static_cast<float> (
+            box->getWidth() + 3 - box->getHeight());
+        for (int item = 0; item < box->getNumItems(); ++item)
+        {
+            const auto entry = box->getItemText (item);
+            expect (realTextWidth (boxFont, entry) <= textWidth,
+                    context + selector.boxName + " entry \"" 
+                        + entry.toStdString()
+                        + "\" does not fit its closed selector");
+        }
+    }
 }
 
 void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
@@ -6000,6 +6261,7 @@ void testEditorBuildsAndRenders()
             "the single-row console is no longer the wide shape it is drawn for");
     expect (editor->isOpaque(), "the editor does not advertise an opaque surface");
     checkUtilityKnobLayout (*editor, false);
+    checkProcessingSelectorLayout (*editor, false);
     checkSynthesisSectionsDominateUtilities (*editor);
     if (makerLabel != nullptr)
         expect (makerLabel->getFont().getHeight() >= 16.0f,
@@ -6024,6 +6286,7 @@ void testEditorBuildsAndRenders()
         if (size == supportedMinimum)
         {
             checkUtilityKnobLayout (*editor, true);
+            checkProcessingSelectorLayout (*editor, true);
             if (makerLabel != nullptr)
                 expect (makerLabel->getFont().getHeight() >= 14.0f,
                         "the maker credit is too small at the minimum size");
@@ -6166,6 +6429,7 @@ int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
 
+    testPublicParameterOrderMatchesTheSharedList();
     testParameterContract();
     testParameterTextRoundTrips();
     testProcessingProducesSound();
@@ -6179,6 +6443,7 @@ int main()
     testDeferredQualitySwitchIsNotAutomatable();
     testVcfTanhSelectorDrivesTheEngine();
     testVcfFastEarlySelectorDrivesTheEngine();
+    testVcfSolverSelectorDrivesTheEngine();
     testAllNotesOffReleasesAndAllSoundOffCuts();
     testTransportOfControllers();
     testUiPerformanceLeverMatchesMidiAndCoalesces();

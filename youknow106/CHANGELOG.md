@@ -6,7 +6,7 @@ Notable customer-facing changes to YouKnow106 are recorded here.
 
 - Added a universal macOS 11+ VST3, Audio Unit, and Standalone distribution.
 - Added a three-level 1x/2x/4x QUALITY control with fixed reported latency;
-  new instances default to the balanced 2x mode.
+  new instances default to the cheapest 1x mode, with 2x and 4x one menu away.
 - Added the complete 128-program factory bank, host preset navigation, edited
   state indication, and exact reload behavior.
 - Added hardware-format `.syx` patch import, drag-and-drop, and export.
@@ -23,6 +23,13 @@ Notable customer-facing changes to YouKnow106 are recorded here.
   tick marks inside their controls at large editor sizes.
 - Hardened host operation across transport reset, standard bypass, variable
   block sizes, concurrent state saves, and synchronous state-save callbacks.
+- Added a VCF SOLVER control beside QUALITY, choosing how much arithmetic the
+  filter's solver spends per internal sample. New instances use Normal, which
+  roughly halves whole-engine CPU; High and Max cost more, and Max is what
+  every earlier release ran. All three keep the same filter, resonance
+  calibration and self-oscillation, a blind listening test found no audible
+  difference between them, and the setting applies immediately without waiting
+  for an idle instrument or adding latency.
 - Preserved historical Audio Unit parameter ordering while adding QUALITY, and
   moved quality-dependent chorus coefficient work out of the audio callback.
 - Added a signed, notarized, stapled PKG release path with bundled licence and

@@ -2090,12 +2090,15 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     // The internal-rate ladder. The tooltip names the cost as well as the
     // benefit, because this is the one control a player reaches for when a
     // session runs out of CPU rather than when it needs a different sound.
+    // The help strip has a fixed line budget, so both processing tooltips are
+    // written to fit it rather than to say everything; the full reasoning
+    // lives in Docs/USER_GUIDE.md and Docs/vcf-solver-optimization.md.
     const juce::String qualityTooltip =
-        "Sets how far above the host's sample rate the oscillators, nonlinear "
-        "filter, amplifiers and chorus run. 4x aliases least and costs the "
-        "most; 1x is the cheapest. A change waits until the instrument is "
-        "idle, and at high host rates a lower factor is used automatically. "
-        "This has no hardware counterpart and is not part of a patch.";
+        "Sets how far above the host's sample rate the whole engine runs. "
+        "1x is the shipped setting and the cheapest; 2x and 4x alias less and "
+        "cost proportionally more. It changes the internal rate, so a change "
+        "waits until the instrument is idle, and at high host rates a lower "
+        "factor is used automatically. Not part of a patch.";
     for (int choice = 0; choice < YouKnow106AudioProcessor::qualityChoiceCount;
          ++choice)
         qualityBox.addItem (
@@ -2127,6 +2130,51 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     qualityLabel.setTooltip (qualityTooltip);
     qualityLabel.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (qualityLabel);
+
+    // The numerical rung the four-pole filter's own solver runs at. Unlike
+    // QUALITY it does not change the internal rate, so it costs no latency and
+    // needs no idle window to take effect.
+    const juce::String vcfSolverTooltip =
+        "Sets how much arithmetic the filter's solver spends per internal "
+        "sample. Normal is shipped and about halves filter CPU; High and Max "
+        "cost more without sounding different. Normal is "
+        + juce::String (
+            YouKnow106AudioProcessor::vcfSolverChoiceTechnique (2))
+        + "; High " + juce::String (
+            YouKnow106AudioProcessor::vcfSolverChoiceTechnique (1))
+        + "; Max " + juce::String (
+            YouKnow106AudioProcessor::vcfSolverChoiceTechnique (0))
+        + ", as every earlier release ran. Not part of a patch.";
+    for (int choice = 0;
+         choice < YouKnow106AudioProcessor::vcfSolverChoiceCount; ++choice)
+        vcfSolverBox.addItem (
+            YouKnow106AudioProcessor::vcfSolverChoiceName (choice),
+            choice + 1);
+    vcfSolverBox.setName ("VCF Solver");
+    vcfSolverBox.setTitle ("VCF Solver");
+    vcfSolverBox.setTooltip (vcfSolverTooltip);
+    vcfSolverBox.setColour (juce::ComboBox::backgroundColourId,
+                            fromPalette (panel::colour::slot));
+    vcfSolverBox.setColour (juce::ComboBox::textColourId,
+                            fromPalette (panel::colour::text));
+    vcfSolverBox.setColour (juce::ComboBox::outlineColourId,
+                            fromPalette (panel::colour::controlShadow));
+    vcfSolverBox.setColour (juce::ComboBox::arrowColourId,
+                            fromPalette (panel::colour::cyan));
+    addAndMakeVisible (vcfSolverBox);
+    comboBoxAttachments.push_back (std::make_unique<ComboBoxAttachment> (
+        audioProcessor.parameters, vcfSolverMode, vcfSolverBox));
+
+    vcfSolverLabel.setText ("VCF SOLVER", juce::dontSendNotification);
+    vcfSolverLabel.setFont (panelFont (11.0f));
+    vcfSolverLabel.setColour (
+        juce::Label::textColourId,
+        fromPalette (panel::colour::textDim).withAlpha (0.90f));
+    vcfSolverLabel.setJustificationType (juce::Justification::centred);
+    vcfSolverLabel.setName ("VCF Solver label");
+    vcfSolverLabel.setTooltip (vcfSolverTooltip);
+    vcfSolverLabel.setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (vcfSolverLabel);
 
     unisonButton.setClickingTogglesState (false);
     unisonButton.getProperties().set (hardwareStyleProperty, true);
@@ -3076,6 +3124,7 @@ const char* YouKnow106AudioProcessorEditor::parameterIdFor (
         { &chorusNoiseSlider, chorusNoise },
         { &polyphonySlider,   polyphony },
         { &qualityBox,        quality },
+        { &vcfSolverBox,      vcfSolverMode },
         { &unisonButton,      legacyKeyMode },
         { &portamentoToggleButton, portamento },
         { &keyTransposeButton, transpose }
@@ -3277,6 +3326,8 @@ void YouKnow106AudioProcessorEditor::resized()
             juce::jmax (10.5f, 14.0f * scale), true));
     qualityLabel.setFont (panelFont (
         juce::jmax (10.5f, 14.0f * scale), true));
+    vcfSolverLabel.setFont (panelFont (
+        juce::jmax (10.5f, 14.0f * scale), true));
     utilityLabels[4].setFont (panelFont (
         juce::jmax (10.5f, panel::labelPointSize * scale), true));
     constexpr float labelTop = panel::extensionDeckTop + 32.0f;
@@ -3290,10 +3341,35 @@ void YouKnow106AudioProcessorEditor::resized()
         scaled (22.0f, labelTop, 80.0f, labelHeight).toNearestInt());
     calibrationSlider.setBounds (
         scaled (33.0f, knobTop, knobSize, knobSize).toNearestInt());
-    qualityLabel.setBounds (
-        scaled (110.0f, labelTop, 86.0f, labelHeight).toNearestInt());
-    qualityBox.setBounds (
-        scaled (114.0f, knobTop + 16.0f, 78.0f, 24.0f).toNearestInt());
+    // The two processing-cost selectors share the MODEL zone's right half and
+    // stack there. Their column starts below the painted MODEL heading and
+    // ends level with the Unit Character knob beside it, so neither the
+    // heading, the knob, nor the deck's lower edge is crowded, and the VOICE
+    // group's baseline does not move.
+    // Wide enough for the longest menu entry. JUCE lays a ComboBox's text out
+    // in `width + 3 - height`, so the arrow steals a square: the widest legend
+    // here is VCF SOLVER's "Standard", and at 78 px it drew as "Sta...".
+    constexpr float selectorX = 104.0f;
+    constexpr float selectorWidth = 90.0f;
+    constexpr float selectorBoxInset = 0.0f;
+    constexpr float selectorLabelHeight = 15.0f;
+    constexpr float selectorBoxHeight = 23.0f;
+    constexpr float qualityLabelTop = panel::extensionDeckTop + 24.0f;
+    constexpr float vcfSolverLabelTop = panel::extensionDeckTop + 70.0f;
+    const auto selectorLabelBounds = [&] (float top) {
+        return scaled (selectorX, top, selectorWidth,
+                       selectorLabelHeight).toNearestInt();
+    };
+    const auto selectorBoxBounds = [&] (float labelTopY) {
+        return scaled (selectorX + selectorBoxInset,
+                       labelTopY + selectorLabelHeight + 2.0f,
+                       selectorWidth - 2.0f * selectorBoxInset,
+                       selectorBoxHeight).toNearestInt();
+    };
+    qualityLabel.setBounds (selectorLabelBounds (qualityLabelTop));
+    qualityBox.setBounds (selectorBoxBounds (qualityLabelTop));
+    vcfSolverLabel.setBounds (selectorLabelBounds (vcfSolverLabelTop));
+    vcfSolverBox.setBounds (selectorBoxBounds (vcfSolverLabelTop));
 
     // VOICE: the continuous voice-limit and response controls share a baseline.
     utilityLabels[5].setBounds (
