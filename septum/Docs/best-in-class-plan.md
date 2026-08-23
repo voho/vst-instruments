@@ -1825,6 +1825,43 @@ by atomic increment, so two of them never pick the same one.
 All four are fenced, each by a check watched to fail with its fix reverted, and
 the 11 committed demos still re-render bit-identically.
 
+#### Step 47 — four more, and one bound rather than a proof
+
+**A discarded grid came back with the next session save.** The tree handed to
+`getStateInformation` is a copy of the last state, so it can still carry an
+earlier restore's `arpeggio_grid` properties. The writer returned early when no
+grid was live and left them there — so restore a session with a grid, load a
+factory program (which discards it), save, and the grid was still in the file,
+ready to override that program's own style on the next restore. The early
+return removes the three properties now.
+
+**A device-control message was a whole buffer late.** SYSTEM COMMON is read
+once before the MIDI loop, and `applyCurrentPatch()` refreshes only the patch
+and the external input — so a Master Volume, Master Fine Tuning or Master
+Coarse Tuning arriving mid-block did not take effect until the next one. In an
+offline render with a large buffer that is arbitrarily late. The system
+settings are refreshed on the same event boundary as the patch now; the test
+sends MASTER LEVEL 0 a quarter of the way into a 4096-sample block and requires
+the note to be gone by the end of it.
+
+**Moving the style selector did not retire the imported grid.** It chose a
+template while the grid stayed valid under its own index, so returning to that
+index resurrected the import instead of loading the template — which
+contradicts the panel model this project wrote down for it: the manual says
+editing a style needs the SH-201 Editor, so the panel only ever *selects*, and
+a selection replaces what the patch held. The first move away retires the grid
+for good.
+
+**And the publication ring can still be lapped — this is a bound, not a
+proof.** With four slots, a 22-packet dump publishes 22 times and can lap a
+reader preempted mid-copy, which is the data race the ring was meant to remove
+rather than merely detect. The ring is 32 slots now, comfortably more than a
+whole dump, so no single dump can lap a reader. That is honest engineering
+headroom and not a guarantee: a proof needs publication that cannot reuse a
+slot while any reader may hold it, which for a real-time writer that must never
+block means a reader-registration scheme or an SPSC handoff to the message
+thread. Recorded here as the residual it is, rather than described as solved.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:

@@ -886,7 +886,17 @@ void SeptumAudioProcessor::writeImportedArpeggioToState (juce::ValueTree& state)
     septum::ArpeggioStyle style;
     if (! importedArpeggio.valid.load (std::memory_order_acquire)
         || ! readImportedArpeggioStyle (selector, style))
+    {
+        // The tree being written is a copy of the last state, so it may still
+        // carry a grid from a session that was restored earlier. Leaving it
+        // there saved a grid the plug-in had already discarded — a factory
+        // program loaded after the restore, say — and restoring that session
+        // brought it back to override the program's own style.
+        state.removeProperty ("arpeggio_grid", nullptr);
+        state.removeProperty ("arpeggio_grid_selector", nullptr);
+        state.removeProperty ("arpeggio_grid_end_step", nullptr);
         return;
+    }
 
     std::vector<std::uint8_t> bytes (
         septum::sysex::sizeArpeggioPattern * (std::size_t) septum::arpeggioMaxRows);
@@ -945,7 +955,7 @@ void SeptumAudioProcessor::publishImportedArpeggioStyle (
     importedArpeggio.valid.store (true, std::memory_order_release);
 }
 
-void SeptumAudioProcessor::invalidateImportedArpeggioStyle() noexcept
+void SeptumAudioProcessor::invalidateImportedArpeggioStyle() const noexcept
 {
     importedArpeggio.valid.store (false, std::memory_order_release);
     importedArpeggio.selector.store (-1, std::memory_order_release);
@@ -956,10 +966,17 @@ bool SeptumAudioProcessor::readImportedArpeggioStyle (
 {
     if (! importedArpeggio.valid.load (std::memory_order_acquire))
         return false;
-    // The grid belongs to the selector position it arrived under. Moving the
-    // selector chooses a template, exactly as the hardware's panel does.
+    // The grid belongs to the selector position it arrived under, and moving
+    // the selector chooses a template — the manual says editing a style needs
+    // the SH-201 Editor, so the panel only ever selects, and a selection
+    // replaces what the patch held. Retiring the grid on that first move is
+    // what makes returning to the same index load the template rather than
+    // resurrect the import.
     if (importedArpeggio.selector.load (std::memory_order_acquire) != selector)
+    {
+        invalidateImportedArpeggioStyle();
         return false;
+    }
 
     for (int attempt = 0; attempt < 8; ++attempt)
     {
@@ -1594,7 +1611,18 @@ void SeptumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             position = eventPosition;
         }
         if (handleMidiMessage (metadata.getMessage()))
+        {
+            // SYSTEM COMMON goes with it. The three Universal Realtime
+            // device-control messages land on MASTER LEVEL, MASTER TUNE and
+            // MASTER KEY SHIFT, and those were read once before this loop —
+            // so one arriving mid-block did not take effect until the next
+            // one, which in an offline render with a large buffer is an
+            // arbitrarily long delay.
+            engine.setMasterLevel ((int) std::lround (
+                masterValue->load (std::memory_order_relaxed)));
+            applySystemSettings();
             applyCurrentPatch();  // panel CC or program: next segment uses it
+        }
     }
     if (position < samples)
         engine.process (left + position, right + position, samples - position,

@@ -186,7 +186,10 @@ private:
     // that was overtaken retries rather than returning a torn grid.
     struct ImportedArpeggioStyle
     {
-        static constexpr std::size_t slotCount = 4;
+        // Comfortably more than the 22 blocks of a whole patch dump, so even
+        // a reader preempted across an entire dump is not lapped. It is a
+        // bound rather than a proof — see the note on the reader below.
+        static constexpr std::size_t slotCount = 32;
         std::array<septum::ArpeggioStyle, slotCount> slots {};
         // Handed out to writers, so two of them never pick the same slot.
         std::atomic<std::uint32_t> reserved { 0 };
@@ -196,7 +199,10 @@ private:
         std::atomic<bool> valid { false };
         std::atomic<int> selector { -1 };
     };
-    ImportedArpeggioStyle importedArpeggio;
+    // Mutable because `snapshotPatch()` is const and retires the grid when it
+    // finds the selector has moved: the store is two atomics, and the object
+    // is a cache in front of the parameters rather than part of them.
+    mutable ImportedArpeggioStyle importedArpeggio;
 
     void publishImportedArpeggioStyle (const septum::ArpeggioStyle& style,
                                        int selector) noexcept;
@@ -204,7 +210,7 @@ private:
     // only a key: without this, a program whose style index happened to match
     // the one an imported grid arrived under played the imported grid instead
     // of its own template.
-    void invalidateImportedArpeggioStyle() noexcept;
+    void invalidateImportedArpeggioStyle() const noexcept;
     [[nodiscard]] bool readImportedArpeggioStyle (
         int selector, septum::ArpeggioStyle& out) const noexcept;
     void writeImportedArpeggioToState (juce::ValueTree& state) const;

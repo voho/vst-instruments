@@ -1150,6 +1150,37 @@ void testUniversalRealtimeDeviceControl()
     expect (std::abs (valueOf ("master_level") - before) < 0.001f,
             "an unlisted device-control sub-ID changes nothing");
 
+    // A device-control message has to take effect where it sits in the block,
+    // not at the next one. SYSTEM COMMON was read once before the MIDI loop,
+    // so a Master Volume arriving mid-block was a whole buffer late — in an
+    // offline render with a large buffer, arbitrarily late.
+    {
+        SeptumAudioProcessor timed;
+        timed.prepareToPlay (44100.0, 4096);
+        juce::AudioBuffer<float> block (2, 4096);
+
+        // A held note, then MASTER LEVEL to zero a quarter of the way in.
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 110), 0);
+        const std::uint8_t body[] { 0x7F, 0x7F, 0x04, 0x01, 0x00, 0x00 };
+        midi.addEvent (juce::MidiMessage::createSysExMessage (body, (int) sizeof (body)),
+                       1024);
+        timed.processBlock (block, midi);
+
+        double before = 0.0, after = 0.0;
+        for (int i = 512; i < 1024; ++i)
+            before = std::max (before, (double) std::abs (block.getSample (0, i)));
+        for (int i = 3072; i < 4096; ++i)
+            after = std::max (after, (double) std::abs (block.getSample (0, i)));
+        expect (before > 1.0e-3,
+                "the note is sounding before the message (peak "
+                    + juce::String (before).toStdString() + ")");
+        expect (after < 0.2 * before,
+                "MASTER LEVEL 0 takes effect inside the same block (peak after "
+                    + juce::String (after).toStdString() + " against "
+                    + juce::String (before).toStdString() + ")");
+    }
+
     // The republish must not put an older value back over a message that
     // arrived while it was running. setValueNotifyingHost writes the same
     // atomic the audio thread stores into, so reading that atomic to decide
@@ -1462,6 +1493,92 @@ void testAnImportedArpeggioPatternSurvivesAndPlays()
         expect (matchesProgram,
                 "a program change drops the imported grid and plays the"
                 " program's own style");
+    }
+
+    // A grid discarded before a save must not come back with the session.
+    // The tree handed to getStateInformation is a copy of the last state, so
+    // it can still carry an earlier restore's grid properties.
+    {
+        SeptumAudioProcessor first;
+        first.prepareToPlay (44100.0, 256);
+        juce::AudioBuffer<float> b (2, 256);
+        for (const auto& pkt : septum::sysex::encodePatchToSysExPackets (dump))
+        {
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage (pkt.data(), (int) pkt.size()), 0);
+            first.processBlock (b, midi);
+        }
+        juce::MemoryBlock withGrid;
+        first.getStateInformation (withGrid);
+
+        // A session restored with the grid, then a factory program, then
+        // saved again: the second save must not still carry the grid.
+        SeptumAudioProcessor second;
+        second.prepareToPlay (44100.0, 256);
+        second.setStateInformation (withGrid.getData(), (int) withGrid.getSize());
+        second.setCurrentProgram (12);
+        juce::MemoryBlock afterProgram;
+        second.getStateInformation (afterProgram);
+
+        SeptumAudioProcessor third;
+        third.prepareToPlay (44100.0, 256);
+        third.setStateInformation (afterProgram.getData(), (int) afterProgram.getSize());
+        const auto after = third.snapshotPatch();
+        septum::Patch reference = septum::factoryPatches()[12].patch;
+        septum::applyArpeggioStyle (reference, reference.arpeggio.styleIndex);
+        bool matchesProgram = true;
+        for (int step = 0; step < septum::arpeggioMaxSteps && matchesProgram; ++step)
+            for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+                if (after.arpeggio.style.cell (step, row)
+                    != reference.arpeggio.style.cell (step, row))
+                {
+                    matchesProgram = false;
+                    break;
+                }
+        expect (matchesProgram,
+                "a grid discarded by a program change does not come back with"
+                " the next session save");
+    }
+
+    // Moving the style selector retires the grid for good: coming back to the
+    // same index has to load that template, not resurrect the import.
+    {
+        SeptumAudioProcessor host;
+        host.prepareToPlay (44100.0, 256);
+        juce::AudioBuffer<float> b (2, 256);
+        septum::Patch atZero = dump;
+        atZero.arpeggio.styleIndex = 0;
+        for (const auto& pkt : septum::sysex::encodePatchToSysExPackets (atZero))
+        {
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage (pkt.data(), (int) pkt.size()), 0);
+            host.processBlock (b, midi);
+        }
+        auto* selector = host.parameters.getParameter ("arp_style");
+        const auto& range = host.parameters.getParameterRange ("arp_style");
+        expect (selector != nullptr, "the style selector exists");
+        if (selector != nullptr)
+        {
+            selector->setValueNotifyingHost (range.convertTo0to1 (4.0f));
+            host.snapshotPatch();                       // the move is noticed here
+            selector->setValueNotifyingHost (range.convertTo0to1 (0.0f));
+            const auto back = host.snapshotPatch();
+            septum::Patch reference = septum::initPatch();
+            reference.arpeggio.endStep = 0;
+            septum::applyArpeggioStyle (reference, 0);
+            bool matchesTemplate = true;
+            for (int step = 0; step < septum::arpeggioMaxSteps && matchesTemplate; ++step)
+                for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+                    if (back.arpeggio.style.cell (step, row)
+                        != reference.arpeggio.style.cell (step, row))
+                    {
+                        matchesTemplate = false;
+                        break;
+                    }
+            expect (matchesTemplate,
+                    "returning to the imported grid's own selector index loads"
+                    " the template, not the retired grid");
+        }
     }
 
     // Moving the style selector picks a template again, which is what the
