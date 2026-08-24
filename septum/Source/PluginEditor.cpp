@@ -2009,6 +2009,25 @@ juce::StringArray SeptumAudioProcessorEditor::getSectionsOverflowingTheirWell() 
     return overflowing;
 }
 
+juce::String SeptumAudioProcessorEditor::getKeyboardRepaintKey() const
+{
+    const auto reading = [this] (const char* id)
+    {
+        const auto* value = processor.parameters.getRawParameterValue (id);
+        return value != nullptr ? (int) std::lround (value->load()) : 0;
+    };
+    // The octave is in here only since the split-point caption started being
+    // named the way the keys under it are named. Moving OCT renames the drawn
+    // keys through `applyKeyboardOctave`, which repaints the keyboard component
+    // — but the band is painted by the canvas behind it, so without the octave
+    // here it went on printing the old name over freshly renamed keys until
+    // something unrelated repainted the panel.
+    return juce::String (reading ("keyboard_mode")) + "/"
+           + juce::String (reading ("keyboard_part")) + "/"
+           + juce::String (reading ("split_point")) + "/"
+           + juce::String (reading ("system_octave"));
+}
+
 juce::StringArray SeptumAudioProcessorEditor::getSectionTitles() const
 {
     juce::StringArray titles;
@@ -2029,16 +2048,8 @@ void SeptumAudioProcessorEditor::timerCallback()
     // moves all three, so what the panel says about the tones has to follow
     // the parameters rather than only the edit tabs. Repainted only when one
     // of them has actually moved.
-    const auto reading = [this] (const char* id)
-    {
-        const auto* value = processor.parameters.getRawParameterValue (id);
-        return value != nullptr ? (int) std::lround (value->load()) : 0;
-    };
     reconcileEditTarget();
-    const juce::String keyState =
-        juce::String (reading ("keyboard_mode")) + "/"
-        + juce::String (reading ("keyboard_part")) + "/"
-        + juce::String (reading ("split_point"));
+    const juce::String keyState = getKeyboardRepaintKey();
     if (keyState != lastKeyboardState)
     {
         lastKeyboardState = keyState;

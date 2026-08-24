@@ -155,6 +155,14 @@ public:
     };
     [[nodiscard]] SplitPointCaption getSplitPointCaption() const;
 
+    // What the frame timer compares to decide whether the panel's own drawing
+    // of the tones and the keys has to be repainted. Public so the suite can
+    // check that everything that drawing depends on is actually in it: the
+    // keyboard component repaints itself, but the key-zone band and its
+    // split-point caption are painted by the canvas behind it, so anything the
+    // band reads and this key does not goes stale on screen.
+    [[nodiscard]] juce::String getKeyboardRepaintKey() const;
+
 private:
     // A hardware panel's controls do not reflow, so the alternative to
     // scaling this one is clipping it — and 784 points of panel do not fit

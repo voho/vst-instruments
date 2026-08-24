@@ -1730,7 +1730,9 @@ void SeptumAudioProcessor::applyProgram (int index)
     // half-loaded program. The generation goes odd behind it: a snapshot
     // that overlapped this spray in any way is discarded.
     stagedProgram.store (index, std::memory_order_release);
-    patchGeneration.fetch_add (1, std::memory_order_acq_rel);
+    // Remembered so the tail of this function can tell whether anything else
+    // wrote the parameters while the spray below was running.
+    const auto burst = patchGeneration.fetch_add (1, std::memory_order_acq_rel) + 1;
     invalidateImportedArpeggioStyle();
 
     const auto apply = [this] (const juce::String& id, float natural)
@@ -1757,6 +1759,17 @@ void SeptumAudioProcessor::applyProgram (int index)
     // Every parameter now matches the program; the audio path can go back to
     // snapshotting the APVTS.
     syncPatchShadows();
+    // Unless a dump landed on the audio thread while the spray was running, in
+    // which case it does not: the two writers interleave per binding, so the
+    // parameters now hold some of each, and `syncPatchShadows` has adopted that
+    // mixture and dropped the dump's pending notification — leaving the host
+    // and the panel on the program's values for every binding the dump reached
+    // after the spray had passed it, permanently, because nothing re-arms the
+    // flag. This is the same defect Step 48 removed from `reconcileProgram`,
+    // one function along. The generation counter already knows: nothing else
+    // bumps it but the two audio-thread patch writers.
+    if (patchGeneration.load (std::memory_order_acquire) != burst)
+        patchDirty.store (true, std::memory_order_release);
     patchGeneration.fetch_add (1, std::memory_order_acq_rel);
     stagedProgram.store (-1, std::memory_order_release);
 }
@@ -1863,27 +1876,34 @@ void SeptumAudioProcessor::republishPatchParameters()
         auto* parameter = parameters.getParameter (id);
         if (parameter == nullptr)
             return;
-        const float natural = shadow.load (std::memory_order_relaxed);
-        // This pass only tells the host and the panel what the audio thread has
-        // already stored. If the raw value no longer matches the shadow, the
-        // only writer that can have moved it is this thread — a knob, a host
-        // automation lane, a preset — and that writer is newer than the dump,
-        // so it wins, exactly as `reconcileProgram` already lets an edit stand
-        // over a program change. Publishing regardless put the dump's value
-        // back and snapped the slider under the player's hand.
-        if (raw->load (std::memory_order_relaxed) != natural)
-        {
-            shadow.store (raw->load (std::memory_order_relaxed),
-                          std::memory_order_relaxed);
-            return;
-        }
+        // Publish what the *raw* storage holds, not what the shadow holds.
+        // Those differ whenever something moved the value after the dump did —
+        // a knob, a host automation lane, a preset — and the raw storage is the
+        // one the engine renders from, so it is the one the host and the panel
+        // have to be told about. Publishing the shadow regardless put the
+        // dump's value back over an edit and snapped the slider under the
+        // player's hand.
+        //
+        // Skipping instead of publishing was the first attempt at that and it
+        // was wrong in the other direction: the audio thread writes the shadow
+        // and then the raw value, so a republish landing between those two
+        // stores sees them differ and reads the audio thread's own half-done
+        // write as a message-thread edit. It would skip, put the older value
+        // back in the shadow, and consume `patchDirty` — and a binding in the
+        // dump's last packet would then never be published at all. Publishing
+        // the raw value is right in both cases and needs no guess about who
+        // wrote it.
+        const float natural = raw->load (std::memory_order_relaxed);
+        shadow.store (natural, std::memory_order_relaxed);
         parameter->setValueNotifyingHost (
             parameters.getParameterRange (id).convertTo0to1 (natural));
         // setValueNotifyingHost has just written the parameter's own storage
         // with the value read above. A packet that landed while it ran is
         // newer than that, and `patchDirty` is set again for the next pass —
         // but the engine reads this storage every block, so the newer value
-        // goes back now rather than a frame from now.
+        // goes back now rather than a frame from now. The audio thread stores
+        // the shadow first, so this sees it even when the raw store is still
+        // to come.
         const float newest = shadow.load (std::memory_order_relaxed);
         if (newest != natural)
             raw->store (newest, std::memory_order_relaxed);

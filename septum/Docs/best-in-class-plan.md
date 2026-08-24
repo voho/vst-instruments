@@ -1717,6 +1717,14 @@ message-thread writer (`loadPatch`, `applyProgram`, `reconcileProgram`) points
 the shadows back at the parameters and clears it, so last writer wins rather
 than a queued republish undoing a program change.
 
+*(That last sentence has been overtaken twice. Step 48 removed the call from
+`reconcileProgram`, which writes nothing and so had no business clearing the
+flag; and Step 57 made the republish publish the raw value rather than the
+shadow, which is what enforces last-writer-wins now — `applyProgram` re-arms the
+flag instead of clearing it when a dump overlapped its spray. Left here with the
+correction rather than rewritten, because what this step actually did is still
+what it says.)*
+
 **One foreign SysEx message split a patch in two.** `parseSyxBankFile` read the
 patch boundary — the two high address bytes — off the raw message before
 `decodeSysExMessage` had accepted it, so anyone else's manufacturer ID, a
@@ -2416,6 +2424,85 @@ worse than none, so it was removed rather than kept. What still holds the
 property the reorder must not break — that a republish queued *before* a restore
 does not land on top of it — is the existing restore coverage, which passes
 unchanged.
+
+Nothing here changes audio: the 11 committed demos re-render bit-identically.
+
+#### Step 56 — a defect Step 53 created, and the invariant that would have caught it
+
+Making the split-point caption name the key the way the keyboard under it names
+it gave it a dependency it did not have before. The caption used to print the
+parameter's own text, fixed at middle C = C4, which never changed — so nothing
+could go stale. Now it follows the octave shift, and the frame timer's
+invalidation key did not.
+
+`applyKeyboardOctave` repaints the keyboard *component*; the key-zone band and
+its caption are painted by the canvas behind it. So moving OCT renamed the drawn
+keys and left the band printing the old name over them until something unrelated
+repainted the panel.
+
+`system_octave` is in the key now. But this is the second time a panel invariant
+has been held by nothing, so rather than add one reading, the key is built by a
+`getKeyboardRepaintKey()` the suite reads: a test moves each of KEYBOARD, PART,
+SPLIT POINT and OCT in turn and requires the key to change. Taking the octave
+back out fails it.
+
+#### Step 57 — a program change that swallowed a dump, and a fix of mine that was wrong the other way round
+
+**Two multi-parameter writers, no owner.** A host program selection runs
+`applyProgram` on the message thread; a dump runs `writePatchToParameters` on the
+audio thread. They interleave *per binding*, so the parameters end up holding
+some of each — and `applyProgram` then called `syncPatchShadows()`, which adopts
+whatever is there and drops the dump's pending notification. The host and the
+panel stayed on the program's values for every binding the dump reached after the
+spray had passed it, permanently, because nothing re-arms the flag. It is the
+same defect Step 48 removed from `reconcileProgram`, one function along, and it
+was not looked at then.
+
+`applyProgram` remembers the generation it started its own burst at and re-arms
+`patchDirty` when the counter has moved further than that — nothing bumps it but
+the two audio-thread patch writers, so a difference means a dump landed. The
+non-overlapping case is unchanged, which is why this is better than simply never
+clearing: no redundant walk of ninety `setValueNotifyingHost` calls on every
+program change.
+
+Fenced without a thread. `applyProgram` writes each parameter with
+`setValueNotifyingHost`, which notifies listeners as it goes, so a listener can
+push the dump through at exactly that instant — the real interleaving, replayed
+deterministically. With the re-arm removed the host is left on the program's 110
+while the engine renders the dump's 31.
+
+**And the guard Step 55 added was wrong in the other direction.** It skipped
+publishing a binding whose raw value had drifted from its shadow, reasoning that
+only the message thread could have moved it. Not so: Step 55 also made the audio
+thread write the shadow *before* the raw value, so a republish landing between
+those two stores sees them differ and reads the audio thread's own half-done
+write as a message-thread edit. It would skip, put the older value back in the
+shadow, and consume `patchDirty` — and a binding in the dump's last packet would
+never be published at all. The raw-first version had the mirror of this; the
+shadow-first version closed that one and opened this one.
+
+The pass publishes the **raw** value now, whatever wrote it. That needs no guess
+about who did: the raw storage is what the engine renders from, so it is what the
+host and the panel have to be told, and publishing it can never fight the engine.
+The edit-after-a-dump case Step 55 was fixing still works — the edit is in the raw
+storage, so publishing raw publishes the edit — and its check still fails against
+the pre-Step-55 code.
+
+A third check states the invariant both of those are really after, under real
+contention: a thread pushing dumps through `processBlock` against a hundred and
+twenty program changes, then one final republish, then — for six bindings — the
+value the host holds must equal the value the engine renders. It cannot fail
+spuriously, because it does not care which writer won.
+
+**Recorded, not fixed: the parity counter does not nest.** `patchGeneration` is a
+one-bit seqlock, and `writePatchToParameters` bumps it twice *inside*
+`applyProgram`'s odd window — so for the body of the dump's write the counter
+reads even, and a reader checking parity will accept a copy taken while the spray
+is still in flight. Two concurrent writers on one parity counter is the wrong
+shape; the fix is to give `applyProgram` the two-phase form the audio path
+already has, so there is one program writer rather than two. That is a
+restructuring, not a patch, and it is named here rather than attempted at the end
+of a review round.
 
 Nothing here changes audio: the 11 committed demos re-render bit-identically.
 

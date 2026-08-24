@@ -1489,6 +1489,157 @@ void testADumpsRepublishDoesNotUndoAnEditMadeAfterIt()
             "while the rest of the dump is published as before");
 }
 
+// A host program selection and an incoming dump are two multi-parameter writers
+// on two threads, and they interleave per binding: the parameters end up holding
+// some of each. `applyProgram` then adopted that mixture and dropped the dump's
+// pending notification, so the host and the panel stayed on the program's values
+// for every binding the dump reached after the spray had passed it — permanently,
+// because nothing re-arms the flag. The same defect Step 48 removed from
+// `reconcileProgram`, one function along.
+//
+// The dump has to land *inside* the spray for this to be the real thing, and it
+// does: `applyProgram` writes each parameter with `setValueNotifyingHost`, which
+// notifies listeners as it goes, so a listener can push the dump through at
+// exactly that instant. Deterministic, and no thread.
+void testAProgramLoadDoesNotSwallowADumpThatOverlappedIt()
+{
+    struct DumpDuringSpray final : juce::AudioProcessorValueTreeState::Listener
+    {
+        SeptumAudioProcessor& processor;
+        septum::Patch dump;
+        bool armed = false;
+        int sent = 0;
+        DumpDuringSpray (SeptumAudioProcessor& p, septum::Patch d)
+            : processor (p), dump (std::move (d)) {}
+        void parameterChanged (const juce::String&, float) override
+        {
+            if (! armed)
+                return;
+            armed = false;
+            processor.writePatchToParameters (dump);
+            ++sent;
+        }
+    };
+
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+
+    septum::Patch dump = septum::initPatch();
+    dump.upper.cutoff = 31;
+
+    auto* raw = processor.parameters.getRawParameterValue ("up_cutoff");
+    auto* parameter = processor.parameters.getParameter ("up_cutoff");
+    expect (raw != nullptr && parameter != nullptr, "up_cutoff exists");
+    if (raw == nullptr || parameter == nullptr)
+        return;
+
+    // A parameter the program spray will certainly move, to fire the listener.
+    processor.setCurrentProgram (0);
+    auto* trigger = processor.parameters.getParameter ("lo_cutoff");
+    const auto& triggerRange = processor.parameters.getParameterRange ("lo_cutoff");
+    trigger->setValueNotifyingHost (triggerRange.convertTo0to1 (3.0f));
+
+    DumpDuringSpray probe (processor, dump);
+    processor.parameters.addParameterListener ("lo_cutoff", &probe);
+    probe.armed = true;
+    processor.setCurrentProgram (5);
+    processor.parameters.removeParameterListener ("lo_cutoff", &probe);
+    expect (probe.sent == 1, "a dump landed inside the program spray");
+
+    // The spray passed up_cutoff before the dump wrote it, so the engine is
+    // rendering the dump's value.
+    expect ((int) raw->load() == 31,
+            "the engine renders the dump's value (up_cutoff "
+                + juce::String (raw->load()).toStdString() + ")");
+
+    processor.republishPatchParameters();       // the queued reconciler
+    const auto& range = processor.parameters.getParameterRange ("up_cutoff");
+    expect (std::abs (parameter->getValue() - range.convertTo0to1 (31.0f)) < 1.0e-6,
+            "and the host and the panel were told about it rather than being "
+            "left on the program's value (host "
+                + juce::String (range.convertFrom0to1 (parameter->getValue()))
+                      .toStdString()
+                + ")");
+}
+
+// The invariant both of the above are really after, stated once and checked
+// under contention: after a republish has run and nothing else is writing, the
+// value the host holds for a parameter is the value the engine renders from.
+// It cannot fail spuriously — it does not care which writer won.
+void testTheHostAndTheEngineAgreeAfterConcurrentWriters()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+
+    septum::Patch dump = septum::initPatch();
+    dump.upper.cutoff = 31;
+    dump.lower.cutoff = 118;
+    dump.upper.resonance = 77;
+    std::vector<std::uint8_t> bank;
+    for (const auto& pkt : septum::sysex::encodePatchToSysExPackets (dump))
+        bank.insert (bank.end(), pkt.begin(), pkt.end());
+
+    std::atomic<bool> running { true };
+    std::atomic<int> blocks { 0 };
+    std::thread audio ([&processor, &running, &blocks, &bank]
+    {
+        juce::AudioBuffer<float> block (2, 64);
+        while (running.load (std::memory_order_relaxed))
+        {
+            juce::MidiBuffer midi;
+            int at = 0;
+            for (std::size_t i = 0; i < bank.size();)
+            {
+                std::size_t end = i;
+                while (end < bank.size() && bank[end] != 0xF7) ++end;
+                midi.addEvent (juce::MidiMessage (bank.data() + i, (int) (end - i + 1)),
+                               at++ % 64);
+                i = end + 1;
+            }
+            processor.processBlock (block, midi);
+            blocks.fetch_add (1, std::memory_order_relaxed);
+        }
+    });
+
+    for (int round = 0; round < 120; ++round)
+    {
+        processor.setCurrentProgram (round % 8);
+        processor.republishPatchParameters();
+    }
+
+    running.store (false, std::memory_order_relaxed);
+    audio.join();
+    // Quiescent: one last pass publishes anything still armed.
+    processor.republishPatchParameters();
+
+    expect (blocks.load() > 0,
+            "the racing audio thread ran (" + std::to_string (blocks.load())
+                + " blocks)");
+
+    int disagreeing = 0;
+    juce::String worst;
+    for (const char* id : { "up_cutoff", "lo_cutoff", "up_resonance",
+                            "up_osc1_pitch", "lo_level", "patch_level" })
+    {
+        auto* value = processor.parameters.getRawParameterValue (id);
+        auto* parameter = processor.parameters.getParameter (id);
+        if (value == nullptr || parameter == nullptr)
+            continue;
+        const auto& range = processor.parameters.getParameterRange (id);
+        const float host = range.convertFrom0to1 (parameter->getValue());
+        if (std::abs (host - value->load()) > 0.5f)
+        {
+            ++disagreeing;
+            worst = juce::String (id) + " engine "
+                    + juce::String (value->load()) + " host " + juce::String (host);
+        }
+    }
+    expect (disagreeing == 0,
+            "after concurrent writers and a final republish, the host holds what "
+            "the engine renders (" + std::to_string (disagreeing)
+                + " disagree; worst " + worst.toStdString() + ")");
+}
+
 void testALoadInFlightDoesNotDestroyTheGridItIsLoading()
 {
     SeptumAudioProcessor processor;
@@ -2112,6 +2263,31 @@ void testTheSplitPointCaptionStaysOnThePanelAndAgreesWithTheKeys()
                     + std::to_string (editor->getPanel().getWidth()) + ")");
     }
 
+    // Everything the key-zone band reads has to be in the key the frame timer
+    // repaints on. The keyboard component repaints itself when the octave
+    // moves; the band and its caption are painted by the canvas behind it, so
+    // a reading the key leaves out goes stale on screen — which is what the
+    // octave did as soon as the caption started following it.
+    {
+        const auto keyFor = [&] { return editor->getKeyboardRepaintKey(); };
+        const std::pair<const char*, float> movers[] {
+            { "keyboard_mode", 1.0f }, { "keyboard_part", 1.0f },
+            { "split_point", 72.0f }, { "system_octave", 1.0f }
+        };
+        for (const auto& mover : movers)
+        {
+            const auto before = keyFor();
+            set (mover.first, mover.second);
+            expect (keyFor() != before,
+                    std::string ("the panel repaints when ") + mover.first
+                        + " moves (key \"" + before.toStdString() + "\" -> \""
+                        + keyFor().toStdString() + "\")");
+        }
+        set ("keyboard_mode", 2.0f);   // back to SPLIT for the checks below
+        set ("keyboard_part", 0.0f);
+        set ("system_octave", 0.0f);
+    }
+
     // And it follows the octave shift, because the drawn keys' printed names do.
     auto* keys = findKeyboard (editor->getPanel());
     expect (keys != nullptr, "the panel draws a keyboard");
@@ -2325,6 +2501,8 @@ int main()
     testUniversalRealtimeDeviceControl();
     testThePatchReconcilerCannotPublishAStaleDump();
     testADumpsRepublishDoesNotUndoAnEditMadeAfterIt();
+    testAProgramLoadDoesNotSwallowADumpThatOverlappedIt();
+    testTheHostAndTheEngineAgreeAfterConcurrentWriters();
     testALoadInFlightDoesNotDestroyTheGridItIsLoading();
     testAnImportedArpeggioPatternSurvivesAndPlays();
     testSysExBlockProcessing();
