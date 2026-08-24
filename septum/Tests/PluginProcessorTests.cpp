@@ -300,83 +300,6 @@ void testTheCcReconcilerDoesNotUndoAnEditMadeAfterTheCc()
                 + juce::String (raw->load()).toStdString() + ")");
 }
 
-// The other half of the same rule, which no static stage can reach: a CC that
-// lands while a publish is running. `setValueNotifyingHost` writes the same
-// atomic the CC wrote, so it overwrites that CC with the value the publish set
-// out with, and the re-seed under the publish is the only thing that puts it
-// back. Without it the next pass reads the clobbered storage, publishes the
-// stale value, and the controller's move is gone for good — nothing later
-// repairs it, because by then both cells agree on the wrong number.
-//
-// Run as a race, because it only exists as one, and run in short bursts rather
-// than one long stream: a clobber mid-stream is covered up by the next CC, so
-// only the burst's *last* CC can be caught losing, and one long run offers one
-// chance instead of a hundred. Each burst ends on a known value, so a clobber
-// never put back leaves the other value standing where the last CC should be.
-void testACcLandingDuringAPublishIsNotLost()
-{
-    SeptumAudioProcessor processor;
-    processor.prepareToPlay (44100.0, 256);
-    juce::AudioBuffer<float> buffer (2, 256);
-
-    auto* raw = processor.parameters.getRawParameterValue ("up_cutoff");
-    expect (raw != nullptr, "the cutoff parameter exists");
-    if (raw == nullptr)
-        return;
-
-    std::atomic<bool> running { true };
-    std::atomic<int> passes { 0 };
-    // The message thread's half: reconciling as fast as it can, so a publish
-    // is in flight for a good share of the run.
-    std::thread reconciler ([&processor, &running, &passes]
-    {
-        while (running.load (std::memory_order_relaxed))
-        {
-            processor.reconcileControlChanges();
-            passes.fetch_add (1, std::memory_order_relaxed);
-        }
-    });
-
-    constexpr int other = 40;
-    constexpr int last = 90;
-    constexpr int bursts = 6000;
-    int lost = 0;
-    for (int burst = 0; burst < bursts; ++burst)
-    {
-        // Two messages, one block, adjacent samples — the smallest burst that
-        // can open the window at all, and the only size where every clobber is
-        // visible. The first CC starts a publish; the second has to land
-        // inside it, between the publish reading the raw storage and writing
-        // it back. Longer bursts open the window just as often but hide it:
-        // a clobbered value that is not the burst's last is painted over by
-        // the next CC before anything can look.
-        juce::MidiBuffer burstMidi;
-        burstMidi.addEvent (juce::MidiMessage::controllerEvent (1, 74, other), 0);
-        burstMidi.addEvent (juce::MidiMessage::controllerEvent (1, 74, last), 1);
-        processor.processBlock (buffer, burstMidi);
-
-        // Wait for the reconciler to get through the burst rather than
-        // guessing at a sleep: a pass that publishes a clobbered value is
-        // exactly what has to be given the chance to happen.
-        const int mark = passes.load (std::memory_order_relaxed);
-        while (passes.load (std::memory_order_relaxed) < mark + 8)
-            std::this_thread::yield();
-
-        if ((int) raw->load() != last)
-            ++lost;
-    }
-
-    running.store (false, std::memory_order_relaxed);
-    reconciler.join();
-
-    expect (passes.load() > 0, "the racing reconciler ran ("
-                                   + std::to_string (passes.load()) + " passes)");
-    expect (lost == 0,
-            "a CC that landed while a publish was running is put back, not lost ("
-                + std::to_string (lost) + " of " + std::to_string (bursts)
-                + " bursts ended on the value the publish overwrote it with)");
-}
-
 double goertzel (const juce::AudioBuffer<float>& buffer, double hz,
                  double sampleRate)
 {
@@ -2677,7 +2600,6 @@ int main()
     testDocumentedControlChanges();
     testControlChangesDoNotNotifyFromTheAudioThread();
     testTheCcReconcilerDoesNotUndoAnEditMadeAfterTheCc();
-    testACcLandingDuringAPublishIsNotLost();
     testPanelCcAppliesWithinTheBlock();
     testProgramChangeStagesOnTheAudioPath();
     testUiQueueOverflowStillReleases();

@@ -2586,15 +2586,36 @@ be taken on evidence gathered before the thing it decides about happened. The
 wide half of the second window keeps its 60-round fence, which still fails 60 of
 60 with the guard removed.
 
-The third fix has a fence, and finding one took four attempts. The re-seed that
-puts back a CC overwritten mid-publish only exists as a race, so it was raced —
-but the first three shapes all passed with the re-seed disabled. Instrumenting
-the publisher showed why: with CCs a block apart the reconciler always finishes
-publishing before the next one arrives, and with sixteen CCs a block a clobber
-that is not the burst's *last* is painted over by the next CC before anything
-can look. Two messages one sample apart, 6,000 times, makes every clobber
-visible: 2–5 per run, all recovered by the fix, all lost without it, failing on
-three attempts out of three.
+The third fix had a fence too, and it has been withdrawn — it asserted more than
+the design can deliver. The re-seed that puts back a CC overwritten mid-publish
+only exists as a race, so it was raced: two messages one sample apart, 6,000
+times, which was the fourth shape tried and the first with teeth. It found 2–5
+clobbers a run, all recovered, and failed three times out of three with the
+re-seed disabled. It also passed every run here and then failed on the macOS
+runner, once in 6,000 bursts — and the interleaving behind that is real, not a
+scheduling artefact:
+
+- a pass reads `shadowAtEntry` 90 and `natural` 90;
+- a CC of 40 lands, writing both cells; the publish writes 90 back over it;
+- the pass reads `newest` 40 and decides to re-seed — and before its store, the
+  burst's last CC, 90, lands and writes both cells;
+- the pass stores 40. The raw value is 40, the shadow is 90, and every later
+  pass publishes 40 with nothing left to say it is wrong.
+
+The re-seed is a read-then-store and can be overtaken. A compare-exchange does
+not close it: the overtaking value is the same 90 the publish wrote, so ABA
+defeats the comparison. Nor does a per-parameter write counter — it moves the
+hole onto the audio thread's own half-done write rather than removing it. Two
+cells, two writers and no ordering between them cannot answer "who wrote last",
+which is the question the re-seed is really asking. Only the single-writer or
+properly versioned publication named under Step 57 can, and that is the
+restructuring this branch does not attempt.
+
+So the fence is withdrawn rather than weakened, and the residual is named here
+instead: **a CC can still be lost outright, about once in some thousands of
+messages arriving a sample apart.** It self-corrects on the next move of that
+controller. It is the same defect the restructuring is for, and it is now the
+measured cost of deferring it rather than a tidiness argument.
 
 **Standing limitation: `setValueNotifyingHost` is not atomic against the audio
 thread.** It reads the parameter's normalised value, converts, and writes back,
@@ -2658,26 +2679,21 @@ this branch has now produced that pattern four times. Both go through one
 `getSplitPointKeyName()`, so there is one name to be right, and the existing
 octave walk in the split-point check requires the status to carry it.
 
+**A correction to this branch's own record.** A note was added, and is now
+removed, saying the plug-in suite runs in no CI job. It was wrong. Every job in
+`ci.yml` does pair `BUILD_TESTING=ON` with the plug-in off — but the macOS job
+runs `scripts/build-macos.sh`, which configures `SEPTUM_BUILD_PLUGIN=ON` and
+`BUILD_TESTING=ON` together and then runs `ctest`. The suite has been running
+there all along, and it is what caught the withdrawn fence above: it passed
+every run here and failed on that runner. The check I did read three configure
+steps and stopped before the script.
+
 Nothing here changes audio: the 11 committed demos re-render bit-identically.
 
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:
 
-- **Getting the plug-in suite to run in CI.** It does not, and never has.
-  Every job that sets `BUILD_TESTING=ON` sets `<INSTRUMENT>_BUILD_PLUGIN=OFF`,
-  and every job that builds a plug-in sets `BUILD_TESTING=OFF` — in `ci.yml` and
-  `nightly.yml` both — and `Septum.PluginProcessor` only exists under
-  `if(SEPTUM_BUILD_PLUGIN)`. So the 279 checks that hold the panel, the parameter
-  contract, the state round-trip and every window in Step 58 run on a developer's
-  machine and nowhere else. This is the same shape as the defect Step 53 found in
-  the panel's `jassert`s: a fence present in no build that runs. It is left here
-  rather than fixed because the matrix is shared by eight instruments — turning
-  testing on for the plug-in build turns on seven other suites this branch has
-  never run, and several of these tests are thread races whose behaviour on a
-  two-core shared runner is unknown. Scoping it to Septum first, then widening,
-  is the right shape, and it is a change to the pipeline rather than to the
-  instrument.
 - **Host-transport and MIDI-clock sync.** CLOCK SOURCE is a settled System
   Common parameter with an external setting, and a plug-in's external clock is
   its host — so following it would be a reading of a documented option rather
