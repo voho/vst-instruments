@@ -2620,6 +2620,20 @@ Nothing here changes audio: the 11 committed demos re-render bit-identically.
 
 Recorded here so the next reader knows they were considered and left:
 
+- **Getting the plug-in suite to run in CI.** It does not, and never has.
+  Every job that sets `BUILD_TESTING=ON` sets `<INSTRUMENT>_BUILD_PLUGIN=OFF`,
+  and every job that builds a plug-in sets `BUILD_TESTING=OFF` — in `ci.yml` and
+  `nightly.yml` both — and `Septum.PluginProcessor` only exists under
+  `if(SEPTUM_BUILD_PLUGIN)`. So the 279 checks that hold the panel, the parameter
+  contract, the state round-trip and every window in Step 58 run on a developer's
+  machine and nowhere else. This is the same shape as the defect Step 53 found in
+  the panel's `jassert`s: a fence present in no build that runs. It is left here
+  rather than fixed because the matrix is shared by eight instruments — turning
+  testing on for the plug-in build turns on seven other suites this branch has
+  never run, and several of these tests are thread races whose behaviour on a
+  two-core shared runner is unknown. Scoping it to Septum first, then widening,
+  is the right shape, and it is a change to the pipeline rather than to the
+  instrument.
 - **Host-transport and MIDI-clock sync.** CLOCK SOURCE is a settled System
   Common parameter with an external setting, and a plug-in's external clock is
   its host — so following it would be a reading of a documented option rather
