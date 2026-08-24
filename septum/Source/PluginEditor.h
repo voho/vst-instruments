@@ -155,6 +155,17 @@ public:
     };
     [[nodiscard]] SplitPointCaption getSplitPointCaption() const;
 
+    // The key SPLIT POINT falls on, named the way the drawn keys are named.
+    // The parameter's own text is fixed at middle C = C4 while the keyboard is
+    // renamed by SYSTEM COMMON Octave Shift, so anything printing the split
+    // point has to come through here or it prints a second name for one key.
+    [[nodiscard]] juce::String getSplitPointKeyName() const;
+
+    // The line of English printed beside the edit tabs, saying which tones the
+    // keyboard mode lets sound. Read by the suite, which requires the split
+    // point in it to name the same key the caption over the keys does.
+    [[nodiscard]] juce::String getToneAudibilitySummary() const;
+
     // What the frame timer compares to decide whether the panel's own drawing
     // of the tones and the keys has to be repainted. Public so the suite can
     // check that everything that drawing depends on is actually in it: the

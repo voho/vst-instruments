@@ -2492,6 +2492,15 @@ void testTheSplitPointCaptionStaysOnThePanelAndAgreesWithTheKeys()
                     + std::to_string (shift) + " (caption "
                     + editor->getSplitPointCaption().text.toStdString()
                     + ", key " + expected.toStdString() + ")");
+        // The line of English above the keys names the same split point, and
+        // took it from the parameter's own text — fixed at middle C = C4. At
+        // OCT +1 it said "SPLIT at C4" about the key the caption and the
+        // keyboard both print as C5: one visible boundary, two names.
+        expect (editor->getToneAudibilitySummary().contains (expected),
+                "the tone status names the split point like the caption does at"
+                " shift " + std::to_string (shift) + " (status \""
+                    + editor->getToneAudibilitySummary().toStdString()
+                    + "\", key " + expected.toStdString() + ")");
     }
 }
 

@@ -915,10 +915,11 @@ SeptumAudioProcessorEditor::toneAudibility() const
     else
     {
         state.upperSounds = state.lowerSounds = true;
-        juce::String point ("C4");
-        if (auto* parameter = processor.parameters.getParameter ("split_point"))
-            point = parameter->getCurrentValueAsText();
-        state.summary = "SPLIT at " + point
+        // Through the same namer the caption over the keys uses. The
+        // parameter's own text is fixed at middle C = C4, so at OCT +1 this
+        // line said "SPLIT at C4" about the key the keyboard and the caption
+        // both print as C5 — the caption's own defect, one place along.
+        state.summary = "SPLIT at " + getSplitPointKeyName()
                         + " - LOWER below, UPPER above - 5 voices each";
     }
     return state;
@@ -1952,6 +1953,24 @@ void SeptumAudioProcessorEditor::paintKeyboardZones (juce::Graphics& g)
     }
 }
 
+// Named the way the keys under it are named. The parameter's own text is fixed
+// at middle C = C4, but the drawn keys are renamed by the octave shift, so at
+// OCT +1 the band said "C4" over the key the keyboard itself prints as C5 —
+// one drawn key with two names fifteen points apart. Everything that prints
+// the split point comes through here, so there is one name to be right.
+juce::String SeptumAudioProcessorEditor::getSplitPointKeyName() const
+{
+    const auto* value = processor.parameters.getRawParameterValue ("split_point");
+    const int splitNote = value != nullptr ? (int) std::lround (value->load()) : 60;
+    return juce::MidiMessage::getMidiNoteName (splitNote, true, true,
+                                               keyboard.getOctaveForMiddleC());
+}
+
+juce::String SeptumAudioProcessorEditor::getToneAudibilitySummary() const
+{
+    return toneAudibility().summary;
+}
+
 SeptumAudioProcessorEditor::SplitPointCaption
 SeptumAudioProcessorEditor::getSplitPointCaption() const
 {
@@ -1960,12 +1979,7 @@ SeptumAudioProcessorEditor::getSplitPointCaption() const
         return caption;
     const auto* value = processor.parameters.getRawParameterValue ("split_point");
     const int splitNote = value != nullptr ? (int) std::lround (value->load()) : 60;
-    // Named the way the keys under it are named. The parameter's own text is
-    // fixed at middle C = C4, but the drawn keys are renamed by the octave
-    // shift, so at OCT +1 the band said "C4" over the key the keyboard itself
-    // prints as C5 — one drawn key with two names fifteen points apart.
-    caption.text = juce::MidiMessage::getMidiNoteName (
-        splitNote, true, true, keyboard.getOctaveForMiddleC());
+    caption.text = getSplitPointKeyName();
 
     const int boundary = keyboard.getX()
                          + juce::roundToInt (
