@@ -903,8 +903,13 @@ void SeptumAudioProcessor::writeImportedArpeggioToState (juce::ValueTree& state)
                            .selector;
     }
     septum::ArpeggioStyle style;
+    // Never retiring. The selector this asks with was scraped from the slot
+    // itself a moment ago, so a mismatch cannot mean the user moved the
+    // selector — it can only mean a dump landed between the two reads. A
+    // save is a read of the patch; retiring on that threw away a grid
+    // nobody moved away from, and then stripped it from the session below.
     if (! importedArpeggio.valid.load (std::memory_order_acquire)
-        || ! readImportedArpeggioStyle (selector, style))
+        || ! readImportedArpeggioStyle (selector, style, /* mayRetire */ false))
     {
         // The tree being written is a copy of the last state, so it may still
         // carry a grid from a session that was restored earlier. Leaving it
