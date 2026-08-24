@@ -373,6 +373,7 @@ private:
         vcfTanhMode,
         vcfFastEarlyMode,
         vcfSolverMode,
+        aging,
         count
     };
     static constexpr std::size_t parameterPointerCount =

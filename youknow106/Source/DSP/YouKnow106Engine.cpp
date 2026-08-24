@@ -4995,7 +4995,7 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // did scale this by a per-card thermal factor, which spread the six cards
     // over 13 cents and removed the one thing this architecture exists to
     // guarantee -- see the note on tuning stability in
-    // Docs/circuit-modelling-research.md.
+    // Docs/research.md.
     const auto periodKey = std::bit_cast<std::uint64_t>(dco.periodSamples);
     const auto inverseRateKey =
         std::bit_cast<std::uint32_t>(inverseOversampledRate_);

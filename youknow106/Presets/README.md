@@ -7,9 +7,10 @@ position through the modelled circuit's own law, and the plug-in displays the
 resulting time or frequency next to the control.
 
 Parameters not listed stay at their version-1.1 defaults — 8' range, saw on,
-pulse off, HPF 1, POLY 1, chorus off, and the six non-hardware controls at
+pulse off, HPF 1, POLY 1, chorus off, and the non-hardware controls at
 their hardware-aligned/product defaults (velocity 0%, six voices, chorus noise
-100%, Unit Character 100%). Unit Character is the one of those whose
+100%, Unit Character 100%, Aging 0% — a freshly serviced unit; like QUALITY it
+is not part of a patch, so presets never move it). Unit Character is the one of those whose
 hardware-aligned value is its top: 100% is the "matches real hardware"
 reference a fresh instance starts on, and 0% is the calibrated nominal model
 with every per-card tolerance removed. QUALITY is a persisted processing

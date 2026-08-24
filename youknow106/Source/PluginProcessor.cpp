@@ -654,7 +654,7 @@ YouKnow106AudioProcessor::createParameterLayout()
     // decimal places in amplitude and 0.14 cents in pitch. The cost is stated
     // plainly: a session saved before this parameter existed carries no entry
     // for it, so it now renders through `RK4 x1` rather than reproducing its
-    // old output bit for bit. See Docs/vcf-solver-optimization.md.
+    // old output bit for bit. See Docs/research.md.
     juce::StringArray vcfSolverChoices;
     for (int choice = 0; choice < vcfSolverChoiceCount; ++choice)
         vcfSolverChoices.add (vcfSolverChoiceName (choice));
@@ -662,6 +662,17 @@ YouKnow106AudioProcessor::createParameterLayout()
         juce::ParameterID { vcfSolverMode, 6 }, "VCF Solver",
         vcfSolverChoices, vcfSolverDefaultChoice,
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
+
+    // Time since the modelled unit's last service, beside Unit Character on
+    // the panel but appended after every shipped parameter, with a later
+    // version hint, so no historical Audio Unit index moves. Zero -- the
+    // default -- is the freshly calibrated instrument every other mechanism
+    // describes; see EngineParameters::aging for the documented recalibration
+    // the full travel applies.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { aging, 7 }, "Aging",
+        juce::NormalisableRange<float> { 0.0f, 1.0f, 0.0f }, 0.0f,
+        percentAttributes()));
 
     return layout;
 }
@@ -719,7 +730,8 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
         { ParameterIndex::quality, quality },
         { ParameterIndex::vcfTanhMode, vcfTanhMode },
         { ParameterIndex::vcfFastEarlyMode, vcfFastEarlyMode },
-        { ParameterIndex::vcfSolverMode, vcfSolverMode }
+        { ParameterIndex::vcfSolverMode, vcfSolverMode },
+        { ParameterIndex::aging, aging }
     });
 
     static_assert (bindings.size() == parameterPointerCount);
@@ -995,6 +1007,7 @@ bool YouKnow106AudioProcessor::updateEngineParameters() noexcept
     engineParameters.masterTuneCents = valueOf (P::masterTune);
     engineParameters.velocityDepth = valueOf (P::velocity);
     engineParameters.calibration = valueOf (P::calibration);
+    engineParameters.aging = valueOf (P::aging);
     engineParameters.chorusNoise = valueOf (P::chorusNoise);
     engineParameters.polyphony = juce::roundToInt (valueOf (P::polyphony));
     engineParameters.vcfTanhMode = static_cast<VcfTanhMode> (
@@ -1616,10 +1629,11 @@ void YouKnow106AudioProcessor::randomizeParameters (float amount)
 
     using namespace youknow106::parameters;
     // Deliberately sound-design controls only. Main volume, voice count,
-    // oversampling, the VCF numerical kernel, and the two controls that describe
-    // the *instrument* rather than the patch — Unit Character and Chorus Noise —
-    // are excluded. Stored VCA LEVEL remains included because it is the
-    // hardware's per-patch balance trim, not the player's output-volume control.
+    // oversampling, the VCF numerical kernel, and the controls that describe
+    // the *instrument* rather than the patch — Unit Character, Aging and
+    // Chorus Noise — are excluded. Stored VCA LEVEL remains included because it
+    // is the hardware's per-patch balance trim, not the player's output-volume
+    // control.
     static constexpr auto soundParameterIds = std::to_array<const char*> ({
         benderDco, benderVcf, benderLfo, portamento, poly1, poly2,
         lfoRate, lfoDelay,
@@ -1921,8 +1935,8 @@ bool YouKnow106AudioProcessor::currentProgramIsEdited() const
         || differs (valueOf (velocity), expected.velocity)
         || differs (valueOf (calibration), expected.calibration)
         || differs (valueOf (chorusNoise), expected.chorusNoise)
-        // Numerical quality settings are deliberately absent: they are not
-        // part of a preset, so they cannot mark one as edited.
+        // Numerical quality settings and Aging are deliberately absent: none
+        // of them is part of a preset, so none can mark one as edited.
         || juce::roundToInt (valueOf (polyphony)) != expected.polyphony;
 }
 
@@ -2029,7 +2043,8 @@ void YouKnow106AudioProcessor::applyProgramValues (
     set (chorusNoise, controls.chorusNoise);
     set (polyphony, static_cast<float> (controls.polyphony));
     // Numerical quality settings are deliberately not recalled: see
-    // Preset::Controls.
+    // Preset::Controls. Aging is not either -- loading a program does not
+    // service or age the unit.
 
     applyPatchValues (patch);
 }

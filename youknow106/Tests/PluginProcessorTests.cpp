@@ -138,6 +138,7 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::vcfSolverMode,
       static_cast<float> (YouKnow106AudioProcessor::vcfSolverDefaultChoice),
       1.0e-5f },
+    { parameters::aging,       0.0f,   1.0e-5f },
 });
 
 float parameterValue (const YouKnow106AudioProcessor& processor, const char* id)
@@ -535,7 +536,7 @@ void testParameterContract()
         return static_cast<juce::uint32> (a->paramID.hashCode())
              < static_cast<juce::uint32> (b->paramID.hashCode());
     });
-    expect (auParameters.size() == historicalAuOrder.size() + 4,
+    expect (auParameters.size() == historicalAuOrder.size() + 5,
             "the Audio Unit parameter contract has an unexpected size");
     for (std::size_t index = 0;
          index < historicalAuOrder.size() && index < auParameters.size(); ++index)
@@ -549,8 +550,8 @@ void testParameterContract()
     {
         expect (quality->getVersionHint() == 3,
                 "Quality was not appended after both historical AU layouts");
-        expect (auParameters.size() >= 4
-                    && auParameters[auParameters.size() - 4] == quality,
+        expect (auParameters.size() >= 5
+                    && auParameters[auParameters.size() - 5] == quality,
                 "Quality moved from its appended Audio Unit position");
     }
     if (const auto* vcfTanh = processor.parameters.getParameter (
@@ -558,8 +559,8 @@ void testParameterContract()
     {
         expect (vcfTanh->getVersionHint() == 4,
                 "VCF Tanh was not appended after the quality ladder");
-        expect (auParameters.size() >= 3
-                    && auParameters[auParameters.size() - 3] == vcfTanh,
+        expect (auParameters.size() >= 4
+                    && auParameters[auParameters.size() - 4] == vcfTanh,
                 "VCF Tanh moved from its appended Audio Unit position");
         expect (! vcfTanh->isAutomatable(),
                 "VCF Tanh is offered to the host as automatable");
@@ -575,8 +576,8 @@ void testParameterContract()
     {
         expect (vcfFastEarly->getVersionHint() == 5,
                 "VCF Fast Early was not appended after VCF Tanh");
-        expect (auParameters.size() >= 2
-                    && auParameters[auParameters.size() - 2] == vcfFastEarly,
+        expect (auParameters.size() >= 3
+                    && auParameters[auParameters.size() - 3] == vcfFastEarly,
                 "VCF Fast Early moved from its appended Audio Unit position");
         expect (! vcfFastEarly->isAutomatable(),
                 "VCF Fast Early is offered to the host as automatable");
@@ -629,8 +630,9 @@ void testParameterContract()
                     == youknow106::VcfSolverMode::MersonHalfSteps,
                 "the engine's own solver default is no longer the reference "
                 "Merson kernel");
-        expect (! auParameters.empty() && auParameters.back() == vcfSolver,
-                "VCF Solver is not the final Audio Unit parameter");
+        expect (auParameters.size() >= 2
+                    && auParameters[auParameters.size() - 2] == vcfSolver,
+                "VCF Solver moved from its appended Audio Unit position");
         expect (! vcfSolver->isAutomatable(),
                 "VCF Solver is offered to the host as automatable");
         const auto* choice = dynamic_cast<const juce::AudioParameterChoice*> (
@@ -640,6 +642,13 @@ void testParameterContract()
                     && choice->choices[1] == "High"
                     && choice->choices[2] == "Normal",
                 "the VCF Solver three-choice ordinal contract changed");
+    }
+    if (const auto* aging = processor.parameters.getParameter (parameters::aging))
+    {
+        expect (aging->getVersionHint() == 7,
+                "Aging was not appended after every shipped AU layout");
+        expect (! auParameters.empty() && auParameters.back() == aging,
+                "Aging is not the final Audio Unit parameter");
     }
 }
 
@@ -2143,6 +2152,7 @@ void testEveryStoredPatchFieldRecallsWithoutMovingPerformanceControls()
         { parameters::masterTune,  13.0f },
         { parameters::velocity,     0.43f },
         { parameters::calibration,  0.17f },
+        { parameters::aging,        0.19f },
         { parameters::chorusNoise,  0.27f },
         { parameters::polyphony,    4.0f },
         { parameters::quality,      0.0f },
@@ -2225,6 +2235,7 @@ void testRandomizerPreservesQualityAndLevel()
     const float volume = parameterValue (processor, parameters::volume);
     const float voices = parameterValue (processor, parameters::polyphony);
     const float quality = parameterValue (processor, parameters::quality);
+    const float aging = parameterValue (processor, parameters::aging);
     const float vcfTanh = parameterValue (processor, parameters::vcfTanhMode);
     const float vcfFastEarly = parameterValue (
         processor, parameters::vcfFastEarlyMode);
@@ -2237,6 +2248,8 @@ void testRandomizerPreservesQualityAndLevel()
             "the randomiser moved the voice count");
     expect (std::abs (parameterValue (processor, parameters::quality) - quality) < 1.0e-4f,
             "the randomiser moved a quality setting");
+    expect (std::abs (parameterValue (processor, parameters::aging) - aging) < 1.0e-4f,
+            "the randomiser aged the instrument");
     expect (std::abs (parameterValue (processor, parameters::vcfTanhMode) - vcfTanh)
                 < 1.0e-4f,
             "the randomiser moved the VCF tanh setting");
@@ -4227,7 +4240,9 @@ void testEditedFlagFollowsTheCompleteProgram()
             || std::strcmp (expected.id, parameters::quality) == 0
             || std::strcmp (expected.id, parameters::vcfTanhMode) == 0
             || std::strcmp (expected.id, parameters::vcfFastEarlyMode) == 0
-            || std::strcmp (expected.id, parameters::vcfSolverMode) == 0)
+            || std::strcmp (expected.id, parameters::vcfSolverMode) == 0
+            // Aging is not part of a preset, so it cannot mark one as edited.
+            || std::strcmp (expected.id, parameters::aging) == 0)
             continue;
 
         processor.setCurrentProgram (0);
@@ -4458,15 +4473,18 @@ void testDerivedOriginalPanelSwitchesDriveTheirExistingParameters()
             "TRANSPOSE did not restore the selected interval");
 }
 
-// Numerical engine policy and the inert historical HQ anchor are not stored
-// in or restored by a program.
+// Numerical engine policy, the inert historical HQ anchor, and Aging are not
+// stored in or restored by a program: the engine settings are session
+// choices, and Aging describes the instrument -- loading a program does not
+// service or age the unit.
 bool isProgramParameter (const char* id)
 {
     return std::strcmp (id, parameters::quality) != 0
         && std::strcmp (id, parameters::vcfTanhMode) != 0
         && std::strcmp (id, parameters::vcfFastEarlyMode) != 0
         && std::strcmp (id, parameters::vcfSolverMode) != 0
-        && std::strcmp (id, parameters::legacyHq) != 0;
+        && std::strcmp (id, parameters::legacyHq) != 0
+        && std::strcmp (id, parameters::aging) != 0;
 }
 
 void testEveryProductProgramRestoresEveryParameter()
@@ -4498,6 +4516,8 @@ void testEveryProductProgramRestoresEveryParameter()
             parameterValue (processor, parameters::quality);
         const float poisonedLegacyHq =
             parameterValue (processor, parameters::legacyHq);
+        const float poisonedAging =
+            parameterValue (processor, parameters::aging);
         const float poisonedVcfTanh =
             parameterValue (processor, parameters::vcfTanhMode);
         const float poisonedVcfFastEarly =
@@ -4516,7 +4536,8 @@ void testEveryProductProgramRestoresEveryParameter()
             if (! isProgramParameter (expected.id))
             {
                 // The opposite contract: a recall must leave the poisoned
-                // engine-policy selection exactly where the player put it.
+                // engine-policy selection -- and the instrument's age --
+                // exactly where the player put them.
                 float retained = poisonedLegacyHq;
                 if (std::strcmp (expected.id, parameters::quality) == 0)
                     retained = poisonedQuality;
@@ -4529,11 +4550,14 @@ void testEveryProductProgramRestoresEveryParameter()
                 else if (std::strcmp (
                              expected.id, parameters::vcfSolverMode) == 0)
                     retained = poisonedVcfSolver;
+                else if (std::strcmp (expected.id, parameters::aging) == 0)
+                    retained = poisonedAging;
                 expect (std::abs (parameterValue (processor, expected.id)
                                  - retained)
                             <= expected.tolerance,
                         std::string ("program ") + std::to_string (program)
-                            + " moved a non-program engine parameter");
+                            + " moved a non-program parameter: "
+                            + expected.id);
                 continue;
             }
             expect (std::abs (parameterValue (processor, expected.id)
@@ -4810,13 +4834,13 @@ void testEveryInteractiveEditorControlExplainsItself()
     };
     audit (audit, *editor);
 
-    // Six extension knobs, ten utility buttons plus the QUALITY and VCF SOLVER
-    // selectors, six factory/custom patch controls,
+    // Seven extension knobs, ten utility buttons plus the QUALITY and VCF
+    // SOLVER selectors, six factory/custom patch controls,
     // twenty-one original-programmer controls, the keybed and the bender.
     // Disabled hardware-only keys remain public so their help explains why
     // the immutable factory bank cannot perform that operation.
     constexpr int expectedInteractiveCount =
-        panel::controlCount + 6 + 12 + 6 + 21 + 1 + 1;
+        panel::controlCount + 7 + 12 + 6 + 21 + 1 + 1;
     expect (interactiveCount == expectedInteractiveCount,
             "the contextual-help audit did not cover every interactive control");
     expect (findDescendantButtonWithText (*editor, "SEND") == nullptr,
@@ -5141,7 +5165,7 @@ void testPersistentContextHelpAndValueBubbles()
     // fixed help presentation cannot silently remove exact values.
     std::vector<juce::Slider*> sliders;
     collectDescendantsOfType (*editor, sliders);
-    int expectedSliders = 6;
+    int expectedSliders = 7;
     for (const auto& control : panel::controls())
         if (control.kind == panel::ControlKind::Slider
             || control.kind == panel::ControlKind::Knob
@@ -5500,7 +5524,8 @@ void testEditorRandomizeStrengthsAndReset()
         // The INIT key returns the panel to the initial patch, which is a patch
         // operation. Engine-policy choices are not in a patch, so they stay
         // where the player left them for the same reason program recall leaves
-        // them alone.
+        // them alone -- and so does Aging, which describes the instrument
+        // rather than the patch.
         if (parameter
                 == processor.parameters.getParameter (parameters::quality)
             || parameter
@@ -5512,7 +5537,9 @@ void testEditorRandomizeStrengthsAndReset()
                 == processor.parameters.getParameter (
                     parameters::vcfSolverMode)
             || parameter
-                == processor.parameters.getParameter (parameters::legacyHq))
+                == processor.parameters.getParameter (parameters::legacyHq)
+            || parameter
+                == processor.parameters.getParameter (parameters::aging))
             continue;
         expect (std::abs (parameter->getValue()
                          - initValues[static_cast<std::size_t> (index)]) < 1.0e-6f,
@@ -5920,6 +5947,7 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
         { "Master tune",    "TUNE" },
         { "Velocity",       "VELOCITY" },
         { "Unit Character", "CHARACTER" },
+        { "Aging",          "AGING" },
         { "Chorus noise",   "HISS" },
         { "Polyphony",      "VOICES" },
     });
@@ -6026,6 +6054,10 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
     checkInsideZone ("Unit Character", panel::modelZoneX,
                      panel::modelZoneWidth, "Model");
     checkInsideZone ("Unit Character label", panel::modelZoneX,
+                     panel::modelZoneWidth, "Model");
+    checkInsideZone ("Aging", panel::modelZoneX,
+                     panel::modelZoneWidth, "Model");
+    checkInsideZone ("Aging label", panel::modelZoneX,
                      panel::modelZoneWidth, "Model");
     checkInsideZone ("Quality", panel::modelZoneX,
                      panel::modelZoneWidth, "Model");
