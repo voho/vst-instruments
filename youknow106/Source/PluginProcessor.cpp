@@ -440,6 +440,18 @@ void YouKnow106AudioProcessor::migrateSplitModeParameters (juce::ValueTree& stat
             static_cast<float> (storedParameterValue (state, legacyHq, 1.0f) > 0.5f
                                     ? qualityChoiceCount - 1
                                     : 0));
+
+    // The VCF kernel selectors were added with the exact forms as their
+    // defaults, so a session saved before they existed reproduces its output
+    // through Exact/Hermite bit for bit. When the layout default moved to the
+    // polynomial kernel (2026-08-24 CPU pass) that promise was kept by
+    // migration: an absent entry restores the exact forms explicitly, and
+    // only a freshly created instance starts on the new default. A state
+    // that carries either selector is authoritative.
+    if (! containsParameterState (state, vcfTanhMode))
+        setStoredParameterValue (state, vcfTanhMode, 0.0f);
+    if (! containsParameterState (state, vcfFastEarlyMode))
+        setStoredParameterValue (state, vcfFastEarlyMode, 0.0f);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout
@@ -623,17 +635,22 @@ YouKnow106AudioProcessor::createParameterLayout()
         choiceForOversamplingFactor (1),
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
-    // This is an engine policy, not a patch control. Exact is ordinal zero so
-    // older states filled from the layout default remain bit-compatible. Keep
-    // published ordinals stable: session state stores the choice index.
+    // This is an engine policy, not a patch control. Keep published ordinals
+    // stable: session state stores the choice index, so Exact stays zero and
+    // Fast stays one, and the polynomial kernel is appended after them. New
+    // instances start on Poly -- the 2026-08-24 CPU pass, decided beside the
+    // measured 5.08e-6 kernel bound and recorded in Docs/research.md. Only
+    // fresh instances take it: a session saved before these selectors
+    // existed is migrated to the exact forms on restore (see
+    // migrateSplitModeParameters), and one that stored a choice keeps it.
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { vcfTanhMode, 4 }, "VCF Tanh",
-        juce::StringArray { "Exact", "Fast" }, 0,
+        juce::StringArray { "Exact", "Fast", "Poly" }, vcfTanhDefaultChoice,
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { vcfFastEarlyMode, 5 }, "VCF Fast Early",
-        juce::StringArray { "Hermite", "Cubic" }, 0,
+        juce::StringArray { "Hermite", "Cubic" }, vcfFastEarlyDefaultChoice,
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
     // The Runge-Kutta rung, cheapest last, so a larger index is always less

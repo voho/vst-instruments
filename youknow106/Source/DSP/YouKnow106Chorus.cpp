@@ -1163,6 +1163,27 @@ float Chorus::rateProportionalNoiseGain(float rateHz) noexcept
     return rateHz / reference;
 }
 
+bool Chorus::processBypassedWhenSettled(float input, float& left,
+                                        float& right) noexcept
+{
+    // Until the wet-mute glide has decayed to exactly zero -- or before the
+    // first process() call has primed the settings -- the full path still
+    // contributes audible wet, so the caller must keep running it.
+    if (!primed_ || wetGain_ != 0.0f)
+        return false;
+
+    // The modulation LFO free-runs behind the switch, exactly as it does
+    // through the full path with mode Off.
+    lfoPhase_ += rateHz_ * inverseSampleRate_;
+    if (lfoPhase_ >= 1.0f)
+        lfoPhase_ -= std::floor(lfoPhase_);
+
+    wetPathFlushPending_ = true;
+    left = dryMixGain * input;
+    right = dryMixGain * input;
+    return true;
+}
+
 void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      float& left, float& right,
                      bool enableClockBleed,
@@ -1173,6 +1194,20 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
 #if defined(YOUKNOW106_WORK_AUDIT)
     YOUKNOW106_COUNT_DOMAIN_WORK(chorusFrames, 1);
 #endif
+    // The settled bypass skipped the muted lines, so their content is stale
+    // history from before the skip began. Rebuild the wet path from silence:
+    // the established from-zero wet glide then brings the effect in exactly
+    // as a patch loaded with chorus engaged comes in.
+    if (wetPathFlushPending_) [[unlikely]]
+    {
+        wetPathFlushPending_ = false;
+        lineA_.reset(0x9e3779b9u);
+        lineB_.reset(0x85ebca6bu);
+        inputSupport_.reset();
+        clockSpurPhaseA_ = 0.0;
+        clockSpurPhaseB_ = 0.0;
+    }
+
     const auto target = settingsFor(mode);
 
     if (!primed_)

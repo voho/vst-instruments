@@ -81,6 +81,21 @@ Standard is the shipped setting. QUALITY and VCF SOLVER are independent, so a
 dense session can lower either or both. Neither is part of a patch, neither is
 recalled by a program, and both persist with the session.
 
+Two further engine-policy selectors appear in the host's generic parameter
+view rather than on the panel: **VCF Tanh** and **VCF Fast Early**. VCF Tanh
+chooses the filter's saturation arithmetic — `Exact` is the reference
+(`std::tanh` everywhere, and the one setting that also keeps silent voice
+cards and a switched-off chorus fully rendered), `Fast` is a table kernel
+measured at a −140 dB whole-file null against Exact, and `Poly`, the new
+default, is a polynomial kernel with a 4.3e-7 worst-case transfer error that
+also lets fully silent voice cards and a settled, switched-off chorus skip
+work they cannot make audible. Together with the `Cubic` Fast Early default,
+Poly roughly halves the whole instrument's CPU while playing and cuts an idle
+instance by about ninety percent. Selecting `Exact` restores the previous
+engine behaviour exactly. Like QUALITY and VCF SOLVER, neither selector is
+part of a patch; both persist with the session, and sessions saved before
+these selectors existed keep the exact forms.
+
 The factory bank is read-only. Host sessions and host presets retain edited
 states. The PATCH FILE buttons load and save hardware-compatible `.syx` files.
 RELOAD discards edits to the selected program, INIT restores the initial patch,

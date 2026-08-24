@@ -411,6 +411,57 @@ Not to be reopened without contradictory primary evidence:
   rendered page-35 scan; the PDF has no text layer): hold (CC 64) latches
   on any non-zero value, and mode messages 123–127 are all recognised as
   ALL NOTES OFF.
+- 2026-08-24 — CPU pass, on a stated goal of halving whole-engine cost with
+  quality configurable. Measured against the shipping defaults at 48 kHz
+  (thread-CPU clock, best of five 4 s passes, arm64): six-voice full patch
+  with chorus II 0.181x → 0.090x realtime (−50%), six sustained voices at
+  res 0.95 0.228x → 0.084x (−63%), the wide-open six-voice saw corner
+  0.163x → 0.082x (−49…−51% across runs), idle instance 0.080x → 0.007x
+  (−91%). Four mechanisms, all confined to the fast tanh family so `Exact`
+  keeps the established engine bit for bit (fingerprints and work counters
+  re-run green):
+  - `VCF Tanh` gained an appended third rung, `Poly`: an inner-zone
+    degree-11 odd polynomial in Estrin form (Chebyshev fit on |x| ≤ 1, max
+    transfer error 4.31e-7 against libm; 95–99.8% of profiled solver
+    arguments land inside), falling through to the established zoned
+    Hermite tables beyond. Measured and rejected on the same wall clock:
+    a Padé [9/8] rational core (5.5e-7 over the whole fine zone but a
+    divide on the solver's serial dependency chain) and a branchless
+    two-piece degree-13/degree-7 fit (more fused-multiply depth); both
+    lost end to end — the kernel is latency-bound, not throughput-bound.
+  - Retired-card freewheel: a silent physical card advances only the state
+    a reassignment can hear — DCO phase, sub-divider level, per-cycle
+    render scale, card noise — instead of a full render whose output the
+    engine already discards. This takes the 2026-08-23 idle-card lever
+    while answering that sizing's recorded objection: phase is advanced
+    with the full render's own arithmetic, so same-pitch retriggers do not
+    phase-lock and the free-running identity survives. Waking resumes from
+    the frozen analog state — measured ~6 dB closer to the always-rendered
+    reference than any from-silence flush (retrigger wake difference
+    −37 dB re file RMS in the first 100 ms window, decaying below −60 dB
+    within half a second).
+  - Settled-chorus bypass: with the effect off and the wet-mute glide
+    decayed to exactly zero, the chorus output is bit-exactly the dry
+    routing, so the muted BBD lines are skipped; on engage the wet path
+    rebuilds from silence through the existing 5 ms glide.
+  - Bit-identical micro-passes in the shared solver shell: settled-control
+    intervals broadcast their endpoints instead of interpolating them, and
+    an open resonance loop (feedback exactly zero) skips the feedback
+    nonlinearity it would multiply away.
+  New instances start on `Poly` + `Cubic` Early (both pinned by test);
+  sessions that stored a kernel keep it, and sessions saved before the
+  selectors existed are migrated to the exact forms on restore. Numerical
+  evidence: six-voice chord whole-file null −89 dB against Exact;
+  self-oscillation anchors identical to six decimals in amplitude and
+  0.003 cents in pitch (sample nulls on resonant material decorrelate by
+  phase drift and are judged by anchor, as the solver pass established).
+  The default flip and the freewheel wake are an audible-impact question
+  the measurements cannot close, so a four-take A/B set (A shipping
+  configuration, B new defaults; retrigger-after-silence, resonant lead,
+  self-oscillation, chorus engage; RMS-matched within 0.001 dB, no trims)
+  was rendered to `listening-tests/2026-08-24-cpu-defaults/` with its
+  `key.md` unread-by-design — **the direction ships pending that ear
+  test**, and `VCF Tanh = Exact` remains the one-menu revert.
 
 ## External validation and market position
 

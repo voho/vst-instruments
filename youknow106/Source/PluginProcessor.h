@@ -186,8 +186,15 @@ public:
     // restating it, so a rung added there appears on the panel by itself.
     static constexpr int qualityChoiceCount = static_cast<int> (
         youknow106::YouKnow106Engine::oversampleFactors.size());
-    static constexpr int vcfTanhChoiceCount = 2;
+    static constexpr int vcfTanhChoiceCount = 3;
     static constexpr int vcfFastEarlyChoiceCount = 2;
+    // The rung a new instance starts on: the appended PolyZoned kernel with
+    // the cubic Early multiplier, which together halve the whole instrument's
+    // measured CPU against the Exact forms (see Docs/research.md,
+    // 2026-08-24). Exact and Fast keep their published ordinals and their
+    // bit-exact kernels one menu away; a session that stored either keeps it.
+    static constexpr int vcfTanhDefaultChoice = 2;
+    static constexpr int vcfFastEarlyDefaultChoice = 1;
     static constexpr int vcfSolverChoiceCount = 3;
     // The rung a new instance -- and a state saved before this parameter
     // existed -- starts on. Not the engine's own default: `EngineParameters`

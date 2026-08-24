@@ -133,8 +133,13 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
       static_cast<float> (
           YouKnow106AudioProcessor::choiceForOversamplingFactor (1)),
       1.0e-5f },
-    { parameters::vcfTanhMode, 0.0f,   1.0e-5f },
-    { parameters::vcfFastEarlyMode, 0.0f, 1.0e-5f },
+    { parameters::vcfTanhMode,
+      static_cast<float> (YouKnow106AudioProcessor::vcfTanhDefaultChoice),
+      1.0e-5f },
+    { parameters::vcfFastEarlyMode,
+      static_cast<float> (
+          YouKnow106AudioProcessor::vcfFastEarlyDefaultChoice),
+      1.0e-5f },
     { parameters::vcfSolverMode,
       static_cast<float> (YouKnow106AudioProcessor::vcfSolverDefaultChoice),
       1.0e-5f },
@@ -566,10 +571,20 @@ void testParameterContract()
                 "VCF Tanh is offered to the host as automatable");
         const auto* choice = dynamic_cast<const juce::AudioParameterChoice*> (
             vcfTanh);
-        expect (choice != nullptr && choice->choices.size() == 2
+        expect (choice != nullptr && choice->choices.size() == 3
                     && choice->choices[0] == "Exact"
-                    && choice->choices[1] == "Fast",
-                "the VCF Tanh two-choice ordinal contract changed");
+                    && choice->choices[1] == "Fast"
+                    && choice->choices[2] == "Poly",
+                "the VCF Tanh ordinal contract changed: Exact and Fast are "
+                "published session ordinals and Poly is appended after them");
+        // The one default beside VCF Solver that is not the conservative end
+        // of its ladder: new instances start on the appended polynomial
+        // kernel, the 2026-08-24 CPU pass. Pin it against silent drift in
+        // either direction.
+        expect (YouKnow106AudioProcessor::vcfTanhDefaultChoice == 2
+                    && choice->getIndex()
+                           == YouKnow106AudioProcessor::vcfTanhDefaultChoice,
+                "a new instance no longer starts on the Poly tanh kernel");
     }
     if (const auto* vcfFastEarly = processor.parameters.getParameter (
             parameters::vcfFastEarlyMode))

@@ -211,6 +211,19 @@ public:
     // datasheet's own distortion figures already measure on the complete part,
     // and which `bbdTransfer` is fitted to. Modelling it again on top would be
     // counting the same physics twice.
+    // The cheap advance for a switched-off, fully settled effect. Once the
+    // wet-mute glide has decayed to exactly zero, process() with mode Off
+    // returns bit-exactly dryMixGain * input whatever the muted lines hold,
+    // so skipping their BBD work changes nothing the player can hear now --
+    // only the line history a later engage would start from. This advances
+    // the free-running LFO, marks the wet path for a from-silence rebuild on
+    // that engage, writes the settled output and returns true; it returns
+    // false -- caller must run process() -- until the glide has settled.
+    // The engine gates this behind the fast VCF tanh modes, so Exact keeps
+    // the established always-running lines.
+    bool processBypassedWhenSettled(float input, float& left,
+                                    float& right) noexcept;
+
     void process(float input, ChorusMode mode, float noiseScale,
                  float& left, float& right,
                  bool enableClockBleed = false,
@@ -600,6 +613,9 @@ private:
     float rateHz_ { 0.0f };
     float centreDelay_ { 0.0032f };
     float sweep_ { 0.0f };
+    // Set while the settled-bypass path skips the muted lines; the next
+    // engaged process() rebuilds the wet path from silence before use.
+    bool wetPathFlushPending_ { false };
     OptionalNoiseComponents optionalNoise_ {};
     std::uint32_t commonNoiseState_ { 0xd1b54a35u };
     std::uint32_t orthogonalNoiseState_ { 0x94d049bbu };

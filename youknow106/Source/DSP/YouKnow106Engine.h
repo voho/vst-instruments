@@ -22,7 +22,14 @@ enum class HighPassMode { Boost, One, Two, Three };
 enum class EnvPolarity { Normal, Inverted };
 enum class VcaMode { Envelope, Gate };
 enum class KeyMode { Poly1, Poly2, Unison };
-enum class VcfTanhMode { Exact = 0, ZonedHermite = 1 };
+// Published ordinals are stored by session state and must not move. PolyZoned
+// is appended rather than folded into ZonedHermite so a session saved on Fast
+// keeps reproducing the table-Hermite kernel bit for bit; the polynomial rung
+// replaces the fine-table lookup with an inner-zone odd polynomial
+// (|x| < 1 covers 95..99.8% of the arguments real patches produce, max
+// transfer error 5.08e-6 against libm) and batches the four stage
+// nonlinearities per right-hand-side evaluation.
+enum class VcfTanhMode { Exact = 0, ZonedHermite = 1, PolyZoned = 2 };
 enum class VcfFastEarlyMode { Hermite = 0, Cubic = 1 };
 // Which explicit Runge-Kutta tableau advances the four OTA capacitor states
 // over one internal interval. Numerical kernel only: every rung integrates the
@@ -1538,6 +1545,14 @@ private:
         // restart is consumed when this voice's turn in the converter scan
         // arrives, never synchronously at the host MIDI event.
         bool dcoResetPending { true };
+        // The retired card is advancing only its free-running state (DCO
+        // phase, sub-divider level, render scale, card noise) through the
+        // cheap freewheel path rather than the full render whose output the
+        // engine discards anyway. Set only under the fast VCF tanh modes;
+        // Exact keeps the established always-on card render. Waking resumes
+        // from the frozen support state rather than flushing it -- measured
+        // closer to the always-rendered reference; see initialiseVoice.
+        bool freewheeling { false };
         // The assigner's note-memory table and the voice CPU's pitch byte are
         // separate RAM. A POLY-button handler clears the former, but the
         // latter -- and the portamento integrator it drives -- keep running.
@@ -1837,6 +1852,12 @@ private:
     template <bool useCubicEarly = false>
     float renderVoice(Voice& voice, const EngineParameters& parameters,
                       float noiseSample) noexcept;
+    // The cheap advance a retired physical card takes under the fast VCF
+    // tanh modes: exactly the free-running state a reassignment can hear --
+    // DCO phase, sub-divider level, per-cycle render scale, card noise --
+    // with none of the reconstruction, comparator or filter work whose
+    // output is discarded behind the shut VCA. See Voice::freewheeling.
+    void freewheelVoiceCard(Voice& voice) noexcept;
     void advanceLfo(const EngineParameters& parameters) noexcept;
     void updateVoiceCardDrift(VoiceCard& card) noexcept;
     // The factor the engine would actually run for a requested rung at the

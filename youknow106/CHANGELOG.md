@@ -30,6 +30,15 @@ Notable customer-facing changes to YouKnow106 are recorded here.
   calibration and self-oscillation, a blind listening test found no audible
   difference between them, and the setting applies immediately without waiting
   for an idle instrument or adding latency.
+- Roughly halved whole-instrument CPU again, and cut an idle instance by
+  about ninety percent: the host-visible VCF Tanh selector gained a `Poly`
+  kernel (worst-case transfer error 4.3e-7, self-oscillation amplitude and
+  pitch preserved to six decimals and 0.003 cents) that also lets fully
+  silent voice cards and a settled, switched-off chorus skip work they
+  cannot make audible, and new instances start on it with the `Cubic` Fast
+  Early form. Selecting `Exact` restores the previous engine behaviour
+  exactly; sessions that chose a kernel keep it, and sessions from before
+  the selectors existed still restore the exact forms.
 - Preserved historical Audio Unit parameter ordering while adding QUALITY, and
   moved quality-dependent chorus coefficient work out of the audio callback.
 - Added a signed, notarized, stapled PKG release path with bundled licence and
