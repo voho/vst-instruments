@@ -5,6 +5,7 @@
 #include <bit>
 #include <cmath>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 namespace
@@ -2047,33 +2048,57 @@ void SeptumAudioProcessor::getStateInformation (
         // The value tree lags an audio-path program write until the message
         // thread reconciles it — which a headless host may never do.
         // Serializing the raw values instead makes saved state always match
-        // what is audible. The tree copy is ours alone, so this is safe on
-        // any thread; the copy seqlocks against the generation so it can
-        // never interleave a program write's burst, pairing the program
-        // index with values it does not describe. The final attempt copies
-        // unconditionally as a best effort.
+        // what is audible. The tree copy is ours alone, so this is safe on any
+        // thread; the copy seqlocks against the generation so it can never
+        // interleave a program write's burst, pairing the program index with
+        // values it does not describe.
+        //
+        // Read into a buffer and committed only once the generation has been
+        // seen to hold still across the read. Writing straight into the tree
+        // and retrying could not undo what a failed attempt had already put
+        // there, and the last attempt used to write unconditionally as a "best
+        // effort" — so a save racing a stream of dumps saved the spray in
+        // flight, some bindings from before it and some from after, a patch
+        // that never existed. Yielding between attempts buys a gap where the
+        // writer leaves one; where it leaves none, the tree's own values stand.
+        // They lag, but they are a patch somebody had.
+        std::vector<float> values;
+        std::vector<int> indices;
         for (int attempt = 0; attempt < 64; ++attempt)
         {
             const auto generation =
                 patchGeneration.load (std::memory_order_acquire);
-            if ((generation & 1u) != 0u && attempt < 63)
+            if ((generation & 1u) != 0u)
+            {
+                std::this_thread::yield();
                 continue;
+            }
+            values.clear();
+            indices.clear();
             for (int i = 0; i < state.getNumChildren(); ++i)
             {
-                auto child = state.getChild (i);
                 if (auto* raw = parameters.getRawParameterValue (
-                        child.getProperty ("id").toString()))
-                    child.setProperty ("value",
-                                       raw->load (std::memory_order_relaxed),
-                                       nullptr);
+                        state.getChild (i).getProperty ("id").toString()))
+                {
+                    indices.push_back (i);
+                    values.push_back (raw->load (std::memory_order_relaxed));
+                }
             }
-            state.setProperty ("program",
-                               currentProgram.load (std::memory_order_relaxed),
-                               nullptr);
+            const int program = currentProgram.load (std::memory_order_relaxed);
+            // The grid goes in either way: it is published as one store, so
+            // what a read of it returns is always a whole grid, never a
+            // mixture, and a failed attempt leaves nothing torn behind.
             writeImportedArpeggioToState (state);
-            if ((generation & 1u) == 0u
-                && patchGeneration.load (std::memory_order_acquire) == generation)
-                break;
+            if (patchGeneration.load (std::memory_order_acquire) != generation)
+            {
+                std::this_thread::yield();
+                continue;
+            }
+            for (std::size_t v = 0; v < indices.size(); ++v)
+                state.getChild (indices[v])
+                    .setProperty ("value", values[v], nullptr);
+            state.setProperty ("program", program, nullptr);
+            break;
         }
         if (const auto xml = state.createXml())
             copyXmlToBinary (*xml, destinationData);

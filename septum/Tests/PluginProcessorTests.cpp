@@ -7,6 +7,8 @@
 #include "PluginEditor.h"
 #include "DSP/SeptumSysEx.h"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -1794,6 +1796,100 @@ void testALoadInFlightDoesNotDestroyTheGridItIsLoading()
                 + std::to_string (rounds) + " loads lost their grid)");
 }
 
+// A state save copies the raw parameter values, so it seqlocks against the
+// generation counter: a copy that overlapped a patch write's burst is thrown
+// away and retried. But the retry was a tight spin — the odd branch cost one
+// atomic load — so sixty-three attempts passed inside a single burst without
+// it moving, and the sixty-fourth copied unconditionally as a "best effort".
+// What it saved was the spray mid-flight: some bindings from before the dump,
+// some from after, in a session file that will be restored as if it were a
+// patch somebody made.
+//
+// Two dumps that differ in every binding under test, landing on the audio
+// thread while the host saves. Whatever a save catches, it has to be one of
+// them and not a mixture of the two.
+void testAStateSaveNeverCatchesADumpHalfWritten()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+
+    // Bindings spread across the dump's 22 blocks, so a torn save shows up
+    // wherever the tear falls rather than only at one end.
+    const std::vector<juce::String> watched {
+        "up_cutoff", "up_resonance", "up_aenv_attack", "up_lfo1_rate",
+        "lo_cutoff", "lo_resonance", "lo_aenv_attack", "lo_lfo1_rate"
+    };
+    auto dumpWith = [] (int value)
+    {
+        septum::Patch patch = septum::initPatch();
+        patch.upper.cutoff = patch.lower.cutoff = value;
+        patch.upper.resonance = patch.lower.resonance = value;
+        patch.upper.ampEnvAttack = patch.lower.ampEnvAttack = value;
+        patch.upper.lfo1.rate = patch.lower.lfo1.rate = value;
+        return patch;
+    };
+    const std::array<int, 2> values { 17, 113 };
+    std::array<juce::MidiBuffer, 2> dumps;
+    for (std::size_t i = 0; i < dumps.size(); ++i)
+        for (const auto& packet :
+             septum::sysex::encodePatchToSysExPackets (dumpWith (values[i])))
+            dumps[i].addEvent (
+                juce::MidiMessage (packet.data(), (int) packet.size()), 0);
+
+    std::atomic<bool> running { true };
+    std::atomic<int> saves { 0 };
+    std::atomic<int> torn { 0 };
+    // The host's half: saving the session over and over while dumps land.
+    std::thread saver ([&processor, &running, &saves, &torn, &watched, &values]
+    {
+        while (running.load (std::memory_order_relaxed))
+        {
+            juce::MemoryBlock block;
+            processor.getStateInformation (block);
+            saves.fetch_add (1, std::memory_order_relaxed);
+
+            auto xml = juce::AudioProcessor::getXmlFromBinary (
+                block.getData(), (int) block.getSize());
+            if (xml == nullptr)
+                continue;
+            int seen[2] = { 0, 0 };
+            for (auto* child : xml->getChildIterator())
+            {
+                const auto id = child->getStringAttribute ("id");
+                if (std::find (watched.begin(), watched.end(), id)
+                    == watched.end())
+                    continue;
+                const int value = juce::roundToInt (
+                    child->getDoubleAttribute ("value"));
+                for (std::size_t i = 0; i < values.size(); ++i)
+                    if (value == values[i])
+                        ++seen[i];
+            }
+            // Both dumps present at once is a tear. Neither is the untouched
+            // initial patch, which is not a tear.
+            if (seen[0] > 0 && seen[1] > 0)
+                torn.fetch_add (1, std::memory_order_relaxed);
+        }
+    });
+
+    juce::AudioBuffer<float> audio (2, 256);
+    for (int round = 0; round < 3000; ++round)
+    {
+        juce::MidiBuffer midi = dumps[(std::size_t) (round % 2)];
+        processor.processBlock (audio, midi);
+    }
+
+    running.store (false, std::memory_order_relaxed);
+    saver.join();
+
+    expect (saves.load() > 0, "the racing host saved state ("
+                                  + std::to_string (saves.load()) + ")");
+    expect (torn.load() == 0,
+            "no save caught a dump half written (" + std::to_string (torn.load())
+                + " of " + std::to_string (saves.load())
+                + " saves paired values from two different patches)");
+}
+
 void testAnImportedArpeggioPatternSurvivesAndPlays()
 {
     SeptumAudioProcessor processor;
@@ -2596,6 +2692,7 @@ int main()
     testAProgramLoadDoesNotSwallowADumpThatOverlappedIt();
     testTheHostAndTheEngineAgreeAfterConcurrentWriters();
     testALoadInFlightDoesNotDestroyTheGridItIsLoading();
+    testAStateSaveNeverCatchesADumpHalfWritten();
     testAnImportedArpeggioPatternSurvivesAndPlays();
     testSysExBlockProcessing();
     testSysExDoesNotNotifyFromTheAudioThread();
