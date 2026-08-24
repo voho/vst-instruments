@@ -49,11 +49,37 @@ menu, and play MIDI notes. The panel follows the signal flow from LFO and DCO
 through HPF, VCF, VCA, envelope, and chorus. Hover a control for a short
 description and its current value.
 
-The QUALITY menu selects 1x, 2x, or 4x internal processing. New instances use
-2x for practical realtime headroom. Choose 4x for the highest-quality offline
-render or a lightly loaded session, and 1x when a dense project needs more CPU
-headroom. A quality change waits until the instrument is idle; at high host
-sample rates the effective factor may be reduced automatically.
+The QUALITY menu selects 1x, 2x, or 4x internal processing. **New instances
+use 1x**, which is the cheapest and aliases the most. Choose 4x for the
+highest-quality offline render or a lightly loaded session — it is the setting
+this project's own numerical-quality audits admit across every modelled domain
+— and 2x as a middle position. A quality change waits until the instrument is
+idle; at high host sample rates the effective factor may be reduced
+automatically.
+
+The VCF SOLVER menu beneath it sets how much arithmetic the filter's own
+solver spends on each internal sample. It does not change the internal rate, so
+it costs no latency and takes effect immediately rather than waiting for an
+idle moment.
+
+- **Normal** is what new instances use. It takes one solver step per internal
+  sample wherever one step is numerically admissible, and automatically takes
+  more where it is not — so a wide-open resonant filter still gets the work it
+  needs. On the measured x86-64 reference machine it uses about half the CPU of
+  Max.
+- **High** costs about a fifth more than Normal, for the same order of accuracy
+  at half the step size.
+- **Max** is the most expensive, and is what every earlier release ran.
+
+Hover the menu to read which numerical method each one uses.
+
+All three run the same filter and keep the same resonance calibration and the
+same self-oscillation amplitude and pitch. Asked to pick them apart in a blind
+listening test — a resonant lead, a self-oscillation and sustained chords — the
+player reported no audible difference between any of them, which is why
+Standard is the shipped setting. QUALITY and VCF SOLVER are independent, so a
+dense session can lower either or both. Neither is part of a patch, neither is
+recalled by a program, and both persist with the session.
 
 The factory bank is read-only. Host sessions and host presets retain edited
 states. The PATCH FILE buttons load and save hardware-compatible `.syx` files.
@@ -73,6 +99,17 @@ YouKnow106 responds to notes, pitch bend, modulation (CC 1), sustain (CC 64),
 all-notes-off, and Program Change 0–127. The synthesis panel is available to
 host automation but has no MIDI CC-learn mapping.
 
+Two details follow the original's MIDI implementation chart rather than the
+general MIDI convention. **Sustain latches on any non-zero value**, not only at
+64 and above — the chart's two rows are "hold OFF" at zero and "hold ON" for
+1–127, so a half-pressed pedal holds. And the **channel-mode messages CC 124–127
+(omni off, omni on, mono on, poly on) all release the keyboard**, because the
+chart notes that mode messages 123–127 are recognised as all-notes-off. Like
+all-notes-off itself, they release the keys into their normal envelope tails
+rather than cutting the sound; CC 120 is what cuts. Mono mode is not
+implemented, because the original does not respond to it — the chart says so in
+the same note.
+
 LOAD imports the first compatible patch dump from a `.syx` file; a file can
 also be dropped on the editor. SAVE writes the current tone as a compatible
 single-patch `.syx` dump. Performance and plug-in extension controls are not
@@ -86,7 +123,10 @@ part of that hardware-format tone data.
   host, and interface outputs are active. In the standalone app, check the
   selected audio device.
 - Stuck note: click PANIC or send MIDI all-notes-off.
-- High CPU: choose a lower QUALITY setting while the instrument is idle.
+- High CPU: new instances already start at the cheapest QUALITY and VCF SOLVER
+  settings. If you have raised either and need the headroom back, lower VCF
+  SOLVER first — it applies immediately and changes only the filter's numerical
+  solve, not the internal rate the oscillators and chorus run at.
 - A problem persists: include the YouKnow106 version, macOS version, Mac model,
   host and host version, plug-in format, sample rate, and reproduction steps in
   a message to [protocodus@proton.me](mailto:protocodus@proton.me).

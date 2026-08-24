@@ -149,12 +149,13 @@ forty-year-old unit will null against the plug-in.
   reported +3.95 dB floor as a relative calibration (anchored/derived;
   absolute noise PSD is OQ-03).
 
-**Instrument-level extensions** (product policy, defaults preserve the
-hardware-faithful reference): Unit Character scales every modelled
-tolerance from calibrated-nominal (0) through "matches real hardware"
-(100%) to exaggerated (200%); Aging drifts the instrument away from a
-fresh service along one documented recalibration; Velocity, Transpose,
-Master Tune, Chorus Noise (HISS), Polyphony 1–16 and the Quality ladder.
+**Instrument-level extensions** (product policy): Unit Character scales
+every modelled tolerance from calibrated-nominal (0) through "matches real
+hardware" (100%) to exaggerated (200%); Aging drifts the instrument away
+from a fresh service along one documented recalibration; Velocity,
+Transpose, Master Tune, Chorus Noise (HISS), Polyphony 1–16, the Quality
+ladder and the VCF numerical-kernel settings described under
+[Performance and quality](#performance-and-quality).
 
 ## What is not simulated
 
@@ -280,8 +281,10 @@ attaching an unrelated factory name. See
 
 The on-screen keyboard matches the physical 61-key C2–C7 span; host MIDI
 outside the keybed is not discarded. YouKnow106 receives external pitch
-bend, modulation (CC 1), hold (CC 64), all-notes-off and the reference
-instrument's Patch Selection Program Changes (0..63 → A11..A88,
+bend, modulation (CC 1), hold (CC 64 — split at zero exactly as the owner's
+MIDI chart prints it, so any nonzero value holds), all-notes-off (mode
+messages 123–127 are all recognised, as the chart specifies) and the
+reference instrument's Patch Selection Program Changes (0..63 → A11..A88,
 64..127 → B11..B88, consumed rather than echoed). The modelled keybed is
 not velocity sensitive, so incoming velocity reaches the engine only
 through the VELOCITY extension. There are no MIDI CC assignments for the
@@ -314,10 +317,24 @@ older builds carrying the invented both-buttons state canonicalise to II.
 The QUALITY selector offers a 1×/2×/4× internal-rate ladder applied as a
 ceiling against what the host rate needs; engine cost tracks the applied
 factor nearly linearly, and the worst audited six-voice resonant scenario
-measures 0.85× realtime at 4× on one Apple M1 Max core (0.23× at 1×). The
-plug-in reports a fixed 41-host-sample latency covering oscillator
+measures 0.85× realtime at 4× on one Apple M1 Max core (0.23× at 1×). New
+instances ship at 1× — a deliberate cheapest-first product decision the
+project's own numerical audits argue against (the BBD and VCF domains pass
+their absolute gates only at 4×); 2× and 4× are one menu away.
+
+The VCF SOLVER selector descends a solver ladder (Max/High/Normal) for the
+nonlinear filter. Normal — the cheapest rung, roughly half the filter's
+CPU — ships as the default, chosen by a blind listening test (2026-08-23)
+that returned no audible difference between any rung, beside measured
+whole-file nulls of −88…−110 dBc. The engine's own default stays the
+reference Merson kernel, so every frozen fingerprint keeps testing it. Two
+further machine settings (VCF Tanh, VCF Fast Early) select the solver's
+numerical kernels, with the exact forms as defaults. None of these is part
+of a patch.
+
+The plug-in reports a fixed 41-host-sample latency covering oscillator
 reconstruction and decimation only. A quality change waits until the
-instrument is idle; nothing the switch selects moves a modelled physical
+instrument is idle; nothing these switches select moves a modelled physical
 quantity — noise density and the warm-up clock are normalized to elapsed
 time. A host transport stop is treated as a stop, not a power cycle: the
 modelled chassis stays warm, while a new `prepare()` starts cold.

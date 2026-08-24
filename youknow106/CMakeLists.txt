@@ -29,6 +29,24 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# The DSP is split across static-library translation units, so the plug-in's
+# own LTO flags cannot optimise through that archive unless the library was
+# compiled for IPO too.  Release IPO keeps the equations unchanged while
+# allowing the linker to optimise the complete audio path.  Respect an
+# explicit caller choice, and fall back cleanly on toolchains without IPO.
+if(NOT DEFINED CMAKE_INTERPROCEDURAL_OPTIMIZATION
+   AND NOT DEFINED CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT YOUKNOW106_IPO_SUPPORTED
+                        OUTPUT YOUKNOW106_IPO_ERROR
+                        LANGUAGES C CXX)
+    if(YOUKNOW106_IPO_SUPPORTED)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+    else()
+        message(STATUS "Release IPO unavailable: ${YOUKNOW106_IPO_ERROR}")
+    endif()
+endif()
+
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build" FORCE)
 endif()
@@ -190,6 +208,12 @@ if(YOUKNOW106_BUILD_TOOLS)
     add_executable(YouKnow106RenderSota Tools/RenderSotaComparisons.cpp)
     target_link_libraries(YouKnow106RenderSota PRIVATE YouKnow106DSP)
     target_compile_features(YouKnow106RenderSota PRIVATE cxx_std_20)
+
+    add_executable(YouKnow106RenderTanhAuditions
+        Tools/RenderTanhAuditions.cpp
+        Tools/RealismComparisonSupport.h)
+    target_link_libraries(YouKnow106RenderTanhAuditions PRIVATE YouKnow106DSP)
+    target_compile_features(YouKnow106RenderTanhAuditions PRIVATE cxx_std_20)
 
     add_executable(YouKnow106RenderFidelityFixes Tools/RenderFidelityFixes.cpp)
     target_link_libraries(YouKnow106RenderFidelityFixes PRIVATE YouKnow106DSP)
@@ -353,6 +377,8 @@ if(YOUKNOW106_BUILD_TOOLS)
     if(MSVC)
         target_compile_options(YouKnow106RenderDemos PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderSota PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnow106RenderTanhAuditions
+            PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderFidelityFixes PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderRealismFixes PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderRealismComparison
@@ -383,6 +409,8 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106RenderDemos PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106RenderSota PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnow106RenderTanhAuditions PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106RenderFidelityFixes PRIVATE
             -Wall -Wextra -Wpedantic)
@@ -554,7 +582,14 @@ if(BUILD_TESTING)
         TIMEOUT ${YOUKNOW106_ENGINE_TEST_TIMEOUT})
     set_tests_properties(YouKnow106.Circuit PROPERTIES
         TIMEOUT ${YOUKNOW106_CIRCUIT_TEST_TIMEOUT})
-    set_tests_properties(YouKnow106.VcfIntegrator PROPERTIES TIMEOUT 60)
+    # The integrator bound was 60 s. The solver-ladder fixtures added in the
+    # 2026-08-23 pass run the independent 96-substep reference solve at two
+    # internal grids for three rungs, settle three self-oscillating limit
+    # cycles, and repeat the zero-input cap sweep for four more kernel
+    # combinations, which takes the suite to about 11 s run alone on the
+    # reference x86-64 part. Raised so the guard catches a hang rather than a
+    # slow or shared runner.
+    set_tests_properties(YouKnow106.VcfIntegrator PROPERTIES TIMEOUT 180)
 
     if(YOUKNOW106_BUILD_PLUGIN)
         add_executable(YouKnow106PluginProcessorTests Tests/PluginProcessorTests.cpp)

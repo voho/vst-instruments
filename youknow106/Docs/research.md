@@ -5,8 +5,10 @@ the model is built under, the current state of every open question, the
 guardrails that are settled, the decision log, and the sources. It replaced
 the former `circuit-modelling-research.md`, `open-questions.md`,
 `best-in-class-plan.md`, `comparative-assessment.md` and
-`external-sound-validation.md` on 2026-08-21; their complete histories, with
-every dated pass and measurement, remain in git. What is simulated and what
+`external-sound-validation.md` on 2026-08-21, and absorbed
+`vcf-tanh-optimization.md` and `vcf-solver-optimization.md` on 2026-08-24;
+their complete histories, with every dated pass and measurement, remain in
+git. What is simulated and what
 is not is summarised for readers in the [project README](../README.md).
 
 ## Evidence rules
@@ -376,8 +378,39 @@ Not to be reopened without contradictory primary evidence:
   circuit-derived resonance candidate behind its flag. No mixer or noise
   constant moved; no timing profile promoted; Vref not adopted.
 - 2026-08-21 — Exposed the aged-unit extension as the Aging host parameter
-  beside Unit Character (AU version hint 4; excluded from randomisation and
-  program recall). Consolidated the research docs into this file.
+  beside Unit Character (excluded from randomisation and program recall;
+  since the 2026-08-24 integration it carries AU version hint 7, after the
+  three VCF engine-policy parameters below). Consolidated the research docs
+  into this file.
+- 2026-08-23 — VCF tanh pass: `std::tanh` measured at 62–65% of
+  top-of-stack samples in high-resonance cases, so the nonlinearity became
+  selectable — `VCF Tanh` (Exact / Fast ZonedHermite) and `VCF Fast Early`
+  (Hermite / Cubic), persisted machine settings with the exact forms as
+  defaults and blind renders delivered. Poly9/Poly5 inner-zone candidates
+  were measured (7.26e-6 max transfer error; 13.5% median whole-engine
+  reduction) but adding one is a state-compatibility decision, not taken.
+- 2026-08-23 — VCF solver ladder: `VCF Solver` descends Max/High/Normal
+  (Merson ×2 / RK4 ×2 / RK4 ×1 — 10/8/4 right-hand-side evaluations), every
+  rung on the same seven control nodes so no rung moves a control node or
+  hold trajectory. The default rung's error against an independent
+  96-substep reference is −162.551 dB (4.2e-8 V peak). A blind four-letter
+  listening set returned no audible difference between rungs, so instances
+  ship on Normal (roughly half the filter's CPU) — **chosen by ear,
+  2026-08-23** — while `EngineParameters` stays on Merson as the reference
+  kernel every frozen fingerprint tests. QUALITY ships at 1× in the same
+  pass, recorded as a product decision the project's own numerical audits
+  argue against (BBD/VCF pass their absolute gates only at 4×).
+- 2026-08-23 — Sized and deliberately did not take the idle-card skip: a
+  candidate that sleeps powered-but-silent cards saves 94.6% of idle cost —
+  the largest remaining lever — but would phase-lock same-pitch retriggers
+  and break the free-running card state the hardware actually has.
+- 2026-08-23 — Audited a 30-claim hardware-quirk proposal: twelve already
+  modelled, eleven need measurements this project cannot make (routed to
+  their owning OQs), four factually wrong. Two chart-licensed MIDI fixes
+  shipped from the owner's-manual implementation chart (read from the
+  rendered page-35 scan; the PDF has no text layer): hold (CC 64) latches
+  on any non-zero value, and mode messages 123–127 are all recognised as
+  ALL NOTES OFF.
 
 ## External validation and market position
 

@@ -74,6 +74,15 @@ inline constexpr auto polyphony    = "polyphony";
 // Internal-rate quality ladder: 1x, 2x, 4x. The earlier two-state `hq` id must
 // remain registered so Audio Unit parameter indices and old sessions survive.
 inline constexpr auto quality      = "quality";
+// Numerical kernel used only by the hot nonlinear VCF solver. Exact remains
+// the compatibility default; alternatives are persisted as a machine setting,
+// not stored in hardware patches or SysEx.
+inline constexpr auto vcfTanhMode  = "vcfTanhMode";
+inline constexpr auto vcfFastEarlyMode = "vcfFastEarlyMode";
+// Runge-Kutta tableau the same solver advances the capacitor states with.
+// Merson is the compatibility default; the cheaper rungs are persisted as a
+// machine setting, like the two above.
+inline constexpr auto vcfSolverMode = "vcfSolverMode";
 inline constexpr auto legacyHq     = "hq";
 } // namespace parameters
 
@@ -148,12 +157,12 @@ inline constexpr float vectorPadWidth = 170.0f;
 // below VOICE MODE, and pitch controls below the DCO.
 inline constexpr float extensionDeckTop = panelHeight + keyboardHeight + 10.0f;
 inline constexpr float extensionDeckHeight = 128.0f;
-// MODEL holds three controls (Character, Aging, Quality); VOICE lends it the
-// width its two knobs never used.
+// MODEL holds four controls (Character, Aging, and the stacked Quality and
+// VCF Solver selectors); VOICE lends it the width its two knobs never used.
 inline constexpr float modelZoneX = 14.0f;
-inline constexpr float modelZoneWidth = 220.0f;
-inline constexpr float voiceZoneX = 246.0f;
-inline constexpr float voiceZoneWidth = 168.0f;
+inline constexpr float modelZoneWidth = 244.0f;
+inline constexpr float voiceZoneX = 268.0f;
+inline constexpr float voiceZoneWidth = 150.0f;
 inline constexpr float pitchZoneX = 420.0f;
 inline constexpr float pitchZoneWidth = 232.0f;
 inline constexpr float monitorZoneX = 664.0f;
@@ -170,9 +179,11 @@ inline constexpr float editorHeight = extensionDeckTop + extensionDeckHeight
                                     + helpStripGap + helpStripHeight
                                     + editorBottomMargin;
 // The physical keyboard is 61 notes, C2 through C7. With the display's
-// middle-C convention those are MIDI notes 36..96; the instrument's Key
-// Transpose function accounts for its wider transmitted range. External MIDI
-// is a separate input path and must not be clamped to the visible keybed.
+// middle-C convention those are MIDI notes 36..96, while the owner's MIDI
+// implementation chart prints the transmitted note range as `kkkkkkk : 24 -
+// 108` -- exactly that keybed widened by one octave each way, which is the
+// reach the instrument's KEY TRANSPOSE function supplies. External MIDI is a
+// separate input path and must not be clamped to the visible keybed.
 inline constexpr int keyboardLowestMidiNote = 36;
 inline constexpr int keyboardHighestMidiNote = 96;
 inline constexpr int keyboardWhiteKeyCount = 5 * 7 + 1;

@@ -40,6 +40,9 @@ using youknow106::ChorusMode;
 using youknow106::EngineParameters;
 using youknow106::HighPassMode;
 using youknow106::YouKnow106Engine;
+using youknow106::VcfFastEarlyMode;
+using youknow106::VcfTanhMode;
+using youknow106::VcfSolverMode;
 using youknow106::oversampling_audit::DomainWorkCounters;
 
 constexpr int blockSize = 256;
@@ -55,7 +58,9 @@ constexpr std::array<int, 6> chordNotes { 36, 48, 55, 60, 64, 67 };
 enum class ScenarioKind
 {
     IdleDry,
+    SingleVoicePlainDry,
     SixVoicePlainDry,
+    SingleVoiceResonantDry,
     SixVoiceResonantDry,
     SixVoiceFullMixerChorusTwo
 };
@@ -64,21 +69,42 @@ struct Scenario
 {
     ScenarioKind kind;
     std::string_view name;
-    bool holdChord;
+    int heldNotes;
 };
 
 constexpr std::array scenarios {
-    Scenario { ScenarioKind::IdleDry, "idle-dry", false },
-    Scenario { ScenarioKind::SixVoicePlainDry, "six-voice-plain-dry", true },
+    Scenario { ScenarioKind::IdleDry, "idle-dry", 0 },
+    Scenario { ScenarioKind::SixVoicePlainDry, "six-voice-plain-dry", 6 },
     Scenario { ScenarioKind::SixVoiceResonantDry,
-               "six-voice-resonant-dry", true },
+               "six-voice-resonant-dry", 6 },
     Scenario { ScenarioKind::SixVoiceFullMixerChorusTwo,
-               "six-voice-full-mixer-chorus-ii", true },
+               "six-voice-full-mixer-chorus-ii", 6 },
 };
 
-EngineParameters parametersFor(ScenarioKind kind)
+constexpr std::array tanhScenarios {
+    Scenario { ScenarioKind::IdleDry, "idle-dry", 0 },
+    Scenario { ScenarioKind::SingleVoicePlainDry,
+               "single-voice-plain-dry", 1 },
+    Scenario { ScenarioKind::SixVoicePlainDry, "six-voice-plain-dry", 6 },
+    Scenario { ScenarioKind::SingleVoiceResonantDry,
+               "single-voice-resonant-dry", 1 },
+    Scenario { ScenarioKind::SixVoiceResonantDry,
+               "six-voice-resonant-dry", 6 },
+    Scenario { ScenarioKind::SixVoiceFullMixerChorusTwo,
+               "six-voice-full-mixer-chorus-ii", 6 },
+};
+
+EngineParameters parametersFor(ScenarioKind kind,
+                               VcfTanhMode tanhMode = VcfTanhMode::Exact,
+                               VcfFastEarlyMode fastEarlyMode =
+                                   VcfFastEarlyMode::Hermite,
+                               VcfSolverMode solverMode =
+                                   VcfSolverMode::MersonHalfSteps)
 {
     EngineParameters parameters;
+    parameters.vcfTanhMode = tanhMode;
+    parameters.vcfFastEarlyMode = fastEarlyMode;
+    parameters.vcfSolverMode = solverMode;
     // Match the engine suite's long-lived plainPatch fixture, except that the
     // audit exercises the shipped Unit Character setting rather than its
     // deliberately pristine Character-zero reference.
@@ -106,11 +132,13 @@ EngineParameters parametersFor(ScenarioKind kind)
             parameters.resonance = 0.10f;
             parameters.chorus = ChorusMode::Off;
             break;
+        case ScenarioKind::SingleVoicePlainDry:
         case ScenarioKind::SixVoicePlainDry:
             parameters.cutoff = 0.62f;
             parameters.resonance = 0.10f;
             parameters.chorus = ChorusMode::Off;
             break;
+        case ScenarioKind::SingleVoiceResonantDry:
         case ScenarioKind::SixVoiceResonantDry:
             parameters.cutoff = 0.62f;
             parameters.resonance = 0.95f;
@@ -170,15 +198,21 @@ struct PreparedSnapshot
 };
 
 PreparedSnapshot prepareSnapshot(const Scenario& scenario, int sampleRate,
-                                 int requestedFactor)
+                                 int requestedFactor,
+                                 VcfTanhMode tanhMode = VcfTanhMode::Exact,
+                                 VcfFastEarlyMode fastEarlyMode =
+                                     VcfFastEarlyMode::Hermite,
+                                 VcfSolverMode solverMode =
+                                     VcfSolverMode::MersonHalfSteps)
 {
     PreparedSnapshot snapshot;
     snapshot.engine.prepare(static_cast<double>(sampleRate), blockSize,
                             requestedFactor);
-    snapshot.engine.setParameters(parametersFor(scenario.kind));
-    if (scenario.holdChord)
-        for (const int note : chordNotes)
-            snapshot.engine.noteOn(note, 1.0f);
+    snapshot.engine.setParameters(parametersFor(
+        scenario.kind, tanhMode, fastEarlyMode, solverMode));
+    for (int note = 0; note < scenario.heldNotes; ++note)
+        snapshot.engine.noteOn(chordNotes[static_cast<std::size_t>(note)],
+                               1.0f);
 
     const int preRollFrames = sampleRate * preRollSeconds;
     renderBlocks(snapshot.engine, preRollFrames / blockSize);
@@ -191,8 +225,8 @@ PreparedSnapshot prepareSnapshot(const Scenario& scenario, int sampleRate,
     }
 
     snapshot.factor = snapshot.engine.getOversamplingFactor();
-    if (scenario.holdChord && snapshot.engine.getActiveVoiceCount() != 6)
-        throw std::runtime_error("six-voice audit chord was not fully assigned");
+    if (snapshot.engine.getActiveVoiceCount() != scenario.heldNotes)
+        throw std::runtime_error("audit notes were not fully assigned");
     return snapshot;
 }
 
@@ -511,6 +545,127 @@ int printFingerprints()
     return 0;
 }
 
+[[maybe_unused]] int printTanhTimingReport()
+{
+    const CpuClock clock;
+    const double renderedSeconds = static_cast<double>(timingBlocks * blockSize)
+                                 / 48000.0;
+    std::cout << "protocol host_rate=48000 quality=4x block_size=" << blockSize
+              << " preroll_seconds=" << preRollSeconds
+              << " timed_blocks=" << timingBlocks
+              << " repetitions=" << timingRepetitions
+              << " order=paired-alternating snapshot_copy=outside-timer"
+              << " clock=" << clock.name()
+              << " hash=fnv1a64-raw-interleaved-f32\n";
+    std::cout << "schema tanh_timing scenario mode fingerprint median_cpu_ms"
+                 " min_cpu_ms mad_cpu_ms median_cpu_x_realtime\n";
+    std::cout << "schema tanh_speedup scenario baseline_over_candidate"
+                 " median min mad\n";
+
+    // The numerical-kernel ladder, in the order a player descends it. Mode 0
+    // is the shipping default, so every paired ratio below is reported against
+    // the engine as it stands rather than against an intermediate rung.
+    struct KernelMode
+    {
+        VcfTanhMode tanh;
+        VcfFastEarlyMode early;
+        VcfSolverMode solver;
+        std::string_view name;
+    };
+    constexpr std::array modes {
+        KernelMode { VcfTanhMode::Exact, VcfFastEarlyMode::Hermite,
+                     VcfSolverMode::MersonHalfSteps,
+                     "exact-merson" },
+        KernelMode { VcfTanhMode::Exact, VcfFastEarlyMode::Hermite,
+                     VcfSolverMode::Rk4HalfSteps,
+                     "exact-rk4-half" },
+        KernelMode { VcfTanhMode::Exact, VcfFastEarlyMode::Hermite,
+                     VcfSolverMode::Rk4Single,
+                     "exact-rk4-single" },
+        KernelMode { VcfTanhMode::ZonedHermite, VcfFastEarlyMode::Hermite,
+                     VcfSolverMode::MersonHalfSteps,
+                     "zoned-hermite-reciprocal" },
+        KernelMode { VcfTanhMode::ZonedHermite, VcfFastEarlyMode::Hermite,
+                     VcfSolverMode::Rk4Single,
+                     "zoned-hermite-rk4-single" },
+        KernelMode { VcfTanhMode::ZonedHermite, VcfFastEarlyMode::Cubic,
+                     VcfSolverMode::MersonHalfSteps,
+                     "zoned-hermite-reciprocal-cubic-early" },
+        KernelMode { VcfTanhMode::ZonedHermite, VcfFastEarlyMode::Cubic,
+                     VcfSolverMode::Rk4Single,
+                     "zoned-hermite-cubic-early-rk4-single" }
+    };
+    constexpr std::size_t modeCount = modes.size();
+
+    for (const auto& scenario : tanhScenarios)
+    {
+        std::vector<PreparedSnapshot> snapshots;
+        snapshots.reserve(modeCount);
+        for (const auto& mode : modes)
+        {
+            snapshots.push_back(prepareSnapshot(
+                scenario, 48000, 4, mode.tanh, mode.early, mode.solver));
+            if (snapshots.back().factor != 4)
+                throw std::runtime_error(
+                    "48 kHz tanh audit did not resolve to 4x");
+        }
+
+        std::vector<std::vector<double>> times(modeCount);
+        std::vector<std::vector<std::uint64_t>> hashes(modeCount);
+        std::vector<std::vector<double>> baselineOver(modeCount);
+        for (std::size_t mode = 0; mode < modeCount; ++mode)
+        {
+            times[mode].reserve(timingRepetitions);
+            hashes[mode].reserve(timingRepetitions);
+            baselineOver[mode].reserve(timingRepetitions);
+        }
+
+        for (int repetition = 0; repetition < timingRepetitions; ++repetition)
+        {
+            std::vector<TimedRun> runs(modeCount);
+            for (std::size_t step = 0; step < modeCount; ++step)
+            {
+                // Alternate the execution order every repetition so a
+                // scheduler or thermal trend cannot favour a fixed position.
+                const std::size_t mode = repetition % 2 == 0
+                                       ? step : modeCount - 1 - step;
+                runs[mode] = renderTimed(snapshots[mode], clock);
+            }
+            for (std::size_t mode = 0; mode < modeCount; ++mode)
+            {
+                times[mode].push_back(runs[mode].cpuSeconds);
+                hashes[mode].push_back(runs[mode].fingerprint);
+                baselineOver[mode].push_back(
+                    runs[0].cpuSeconds
+                    / std::max(runs[mode].cpuSeconds, 1.0e-12));
+            }
+        }
+
+        for (std::size_t mode = 0; mode < modeCount; ++mode)
+        {
+            requireStableHash(hashes[mode], scenario.name, modes[mode].name);
+            const auto summary = summarize(times[mode]);
+            std::cout << "tanh_timing " << scenario.name << " "
+                      << modes[mode].name << " "
+                      << hexHash(hashes[mode].front()) << " " << std::fixed
+                      << std::setprecision(3)
+                      << summary.median * 1000.0 << " "
+                      << summary.minimum * 1000.0 << " "
+                      << summary.mad * 1000.0 << " "
+                      << summary.median / renderedSeconds << "\n";
+        }
+        for (std::size_t mode = 1; mode < modeCount; ++mode)
+        {
+            const auto speedup = summarize(baselineOver[mode]);
+            std::cout << "tanh_speedup " << scenario.name << " "
+                      << modes[0].name << "-over-" << modes[mode].name << " "
+                      << std::fixed << std::setprecision(3) << speedup.median
+                      << " " << speedup.minimum << " " << speedup.mad << "\n";
+        }
+    }
+    return 0;
+}
+
 #if defined(YOUKNOW106_WORK_AUDIT)
 
 struct CounterCase
@@ -716,7 +871,7 @@ void validateCounterAlgebra(const CounterCase& testCase,
     expectEqual(errors, testCase.name, "decimatorNonzeroTapVisits",
                 counters.decimatorNonzeroTapVisits, 49u * decimatorCalls);
     expectEqual(errors, testCase.name, "decimatorStereoMacs",
-                counters.decimatorStereoMacs, 98u * decimatorCalls);
+                counters.decimatorStereoMacs, 50u * decimatorCalls);
 
     expectEqual(errors, testCase.name, "cutoff memo partition",
                 counters.cutoffMemoHits + counters.cutoffMemoMisses,
@@ -840,7 +995,7 @@ int runCounterAudit(bool selfTestOnly)
 void printUsage(const char* executable)
 {
     std::cout << "usage: " << executable
-              << " [--fingerprint|--self-test|--help]\n";
+              << " [--fingerprint|--tanh-benchmark|--self-test|--help]\n";
 }
 
 } // namespace
@@ -856,6 +1011,15 @@ int main(int argc, char** argv)
         }
         if (argc == 2 && std::string_view(argv[1]) == "--fingerprint")
             return printFingerprints();
+        if (argc == 2 && std::string_view(argv[1]) == "--tanh-benchmark")
+        {
+#if defined(YOUKNOW106_WORK_AUDIT)
+            std::cerr << "--tanh-benchmark requires YouKnow106OversamplingAudit\n";
+            return 2;
+#else
+            return printTanhTimingReport();
+#endif
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--self-test")
         {
 #if defined(YOUKNOW106_WORK_AUDIT)

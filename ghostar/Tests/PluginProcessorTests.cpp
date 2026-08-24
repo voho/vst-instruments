@@ -1,0 +1,749 @@
+// Plug-in layer suite: the host-facing contract — parameter layout
+// stability, MIDI reaching the engine, panic and all-notes-off semantics,
+// state round-trips, and the editor rendering (which also produces the
+// committed documentation screenshot when GHOSTAR_EDITOR_SNAPSHOT is set).
+
+#include "PluginProcessor.h"
+#include "PluginEditor.h"
+
+#include <cmath>
+#include <cstdlib>
+#include <iostream>
+#include <set>
+#include <string>
+#include <vector>
+
+namespace ghostar
+{
+// Drive the real sparse kernels and ring schedule without involving an
+// oscillator, envelope or gain calibration. GhostarEngine already grants
+// this test seam access for component-level checks.
+struct GhostarCircuitTestAccess
+{
+    static double decimatorImpulseCentroid() noexcept
+    {
+        GhostarEngine engine;
+        engine.prepare(48000.0, 64);
+
+        constexpr int responseSamples = 128;
+        double sum = 0.0;
+        double firstMoment = 0.0;
+        bool impulse = true;
+        for (int outputSample = 0; outputSample < responseSamples;
+             ++outputSample)
+        {
+            for (int step = 0; step < 4; ++step)
+            {
+                engine.filterStageARing_[
+                    static_cast<std::size_t>(engine.stageAIndex_)] =
+                        impulse ? 1.0 : 0.0;
+                impulse = false;
+                engine.stageAIndex_ =
+                    (engine.stageAIndex_ + 1) % GhostarEngine::stageATaps;
+
+                if ((step & 1) == 1)
+                {
+                    engine.filterStageBRing_[
+                        static_cast<std::size_t>(engine.stageBIndex_)] =
+                            convolve(engine.stageAKernel_,
+                                     engine.filterStageARing_,
+                                     engine.stageAIndex_);
+                    engine.stageBIndex_ =
+                        (engine.stageBIndex_ + 1)
+                        % GhostarEngine::stageBTaps;
+                }
+            }
+
+            const double value = convolve(engine.stageBKernel_,
+                                          engine.filterStageBRing_,
+                                          engine.stageBIndex_);
+            sum += value;
+            firstMoment += static_cast<double>(outputSample) * value;
+        }
+        return firstMoment / sum;
+    }
+
+private:
+    template <typename Kernel, std::size_t taps>
+    static double convolve(const Kernel& kernel,
+                           const std::array<double, taps>& ring,
+                           int oldestIndex) noexcept
+    {
+        double result = 0.0;
+        for (int index = 0; index < kernel.count; ++index)
+        {
+            int ringIndex = oldestIndex
+                + kernel.offsets[static_cast<std::size_t>(index)];
+            if (ringIndex >= static_cast<int>(taps))
+                ringIndex -= static_cast<int>(taps);
+            result += kernel.values[static_cast<std::size_t>(index)]
+                    * ring[static_cast<std::size_t>(ringIndex)];
+        }
+        return result;
+    }
+};
+} // namespace ghostar
+
+namespace
+{
+constexpr double sampleRate = 48000.0;
+constexpr int blockSize = 256;
+int failureCount = 0;
+
+void expect(bool condition, const std::string& message)
+{
+    if (!condition)
+    {
+        ++failureCount;
+        std::cerr << "FAIL: " << message << '\n';
+    }
+}
+
+bool isFinite(const juce::AudioBuffer<float>& buffer)
+{
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+    {
+        const auto* samples = buffer.getReadPointer(channel);
+        for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+            if (!std::isfinite(samples[sample]))
+                return false;
+    }
+    return true;
+}
+
+double peakOf(const juce::AudioBuffer<float>& buffer)
+{
+    double peak = 0.0;
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+    {
+        const auto* samples = buffer.getReadPointer(channel);
+        for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+            peak = std::max(peak,
+                            std::abs(static_cast<double>(samples[sample])));
+    }
+    return peak;
+}
+
+// Renders `blocks` blocks, feeding `midi` into the first one; returns the
+// peak of the final block.
+double renderBlocks(GhostarAudioProcessor& processor, int blocks,
+                    const juce::MidiBuffer& midi)
+{
+    juce::AudioBuffer<float> buffer(2, blockSize);
+    double lastPeak = 0.0;
+    for (int block = 0; block < blocks; ++block)
+    {
+        buffer.clear();
+        juce::MidiBuffer events = block == 0 ? midi : juce::MidiBuffer {};
+        processor.processBlock(buffer, events);
+        expect(isFinite(buffer), "a processed block carried non-finite audio");
+        lastPeak = peakOf(buffer);
+    }
+    return lastPeak;
+}
+
+juce::Image renderEditorSnapshot(juce::AudioProcessorEditor& editor)
+{
+    juce::Image snapshot(juce::Image::ARGB, editor.getWidth(),
+                         editor.getHeight(), true);
+    juce::Graphics graphics(snapshot);
+    editor.paintEntireComponent(graphics, true);
+    return snapshot;
+}
+
+// A panel that rendered as one flat colour would still be "valid"; what we
+// actually want to know is that it drew something.
+bool snapshotHasDetail(const juce::Image& snapshot)
+{
+    if (!snapshot.isValid())
+        return false;
+
+    std::set<juce::uint32> distinct;
+    for (int y = 0; y < snapshot.getHeight(); y += 4)
+        for (int x = 0; x < snapshot.getWidth(); x += 4)
+        {
+            const auto pixel = snapshot.getPixelAt(x, y);
+            if (pixel.getAlpha() < 250)
+                return false;
+            distinct.insert(pixel.getARGB());
+            if (distinct.size() > 64)
+                return true;
+        }
+    return distinct.size() > 8;
+}
+
+// The automation contract: every published ID, exactly once. A removed or
+// renamed ID breaks saved sessions, so the full list is pinned here.
+void testParameterLayoutIsStable()
+{
+    GhostarAudioProcessor processor;
+    namespace ids = ghostar::parameters;
+    const char* expectedIds[] = {
+        ids::tune, ids::octave, ids::oscAWaveform, ids::sync,
+        ids::oscBWaveform, ids::oscBRange, ids::interval, ids::trigger,
+        ids::gateKbd, ids::gateX, ids::gateYExt, ids::arpeggiator,
+        ids::modSource, ids::lfoRate, ids::shaperMode, ids::shaperShape,
+        ids::shaperRate, ids::modXTo, ids::shapeXWithY, ids::shaperYTo,
+        ids::masterVolume, ids::brightness, ids::shaperPathA,
+        ids::shaperPathB, ids::shaperPathRing, ids::shaperPathNoise,
+        ids::filterPathA, ids::filterPathB, ids::filterPathNoise, ids::cutoff,
+        ids::lowerOnly, ids::upperResonance, ids::resonance, ids::slope,
+        ids::kbAmount, ids::lowerMode, ids::tracking, ids::filterEnvAmount,
+        ids::filterAttack, ids::filterDecay, ids::filterSustain,
+        ids::filterRelease, ids::vcaBypass, ids::loudnessAttack,
+        ids::loudnessDecay, ids::loudnessSustain, ids::loudnessRelease,
+        ids::glide, ids::glideMode, ids::xWheel, ids::yWheel,
+        ids::splitPaths,
+    };
+
+    int found = 0;
+    for (const auto* id : expectedIds)
+    {
+        if (processor.parameters.getParameter(id) != nullptr)
+            ++found;
+        else
+            expect(false, std::string("missing parameter: ") + id);
+    }
+    expect(found == static_cast<int>(std::size(expectedIds)),
+           "the published parameter set changed");
+}
+
+void testMidiProducesAudio()
+{
+    GhostarAudioProcessor processor;
+    processor.prepareToPlay(sampleRate, blockSize);
+
+    juce::MidiBuffer midi;
+    midi.addEvent(
+        juce::MidiMessage::noteOn(1, 48, static_cast<juce::uint8>(100)), 7);
+    const double sounding = renderBlocks(processor, 24, midi);
+    expect(sounding > 1.0e-4, "a keyed note produced no audio");
+
+    juce::MidiBuffer off;
+    off.addEvent(juce::MidiMessage::noteOff(1, 48), 0);
+    renderBlocks(processor, 1, off);
+    juce::MidiBuffer silentTail;
+    const double released = renderBlocks(processor, 400, silentTail);
+    expect(released < 1.0e-4, "a released note did not decay to silence");
+    processor.releaseResources();
+}
+
+void testAllNotesOffReleasesEveryKey()
+{
+    GhostarAudioProcessor processor;
+    processor.prepareToPlay(sampleRate, blockSize);
+
+    juce::MidiBuffer midi;
+    midi.addEvent(
+        juce::MidiMessage::noteOn(1, 48, static_cast<juce::uint8>(100)), 0);
+    midi.addEvent(
+        juce::MidiMessage::noteOn(1, 55, static_cast<juce::uint8>(100)), 8);
+    renderBlocks(processor, 8, midi);
+    expect(processor.isGateOpenForDisplay(), "keyed notes opened the gate");
+
+    juce::MidiBuffer allNotesOff;
+    allNotesOff.addEvent(
+        juce::MidiMessage::controllerEvent(1, 123, 0), 0);
+    renderBlocks(processor, 1, allNotesOff);
+    expect(!processor.isGateOpenForDisplay(),
+           "CC123 did not release the held keys");
+
+    juce::MidiBuffer quiet;
+    const double tail = renderBlocks(processor, 400, quiet);
+    expect(tail < 1.0e-4, "the all-notes-off release did not reach silence");
+    processor.releaseResources();
+}
+
+void testStateRoundTrip()
+{
+    namespace ids = ghostar::parameters;
+    GhostarAudioProcessor saved;
+    if (auto* parameter = saved.parameters.getParameter(ids::cutoff))
+        parameter->setValueNotifyingHost(0.31f);
+    if (auto* parameter = saved.parameters.getParameter(ids::lowerMode))
+        parameter->setValueNotifyingHost(1.0f); // the last detent: High Pass
+    juce::MemoryBlock state;
+    saved.getStateInformation(state);
+
+    GhostarAudioProcessor restored;
+    restored.setStateInformation(state.getData(),
+                                 static_cast<int>(state.getSize()));
+    auto* cutoff = restored.parameters.getRawParameterValue(ids::cutoff);
+    expect(cutoff != nullptr && std::abs(cutoff->load() - 0.31f) < 0.002f,
+           "a stored travel value did not survive the round trip");
+    auto* lowerMode = restored.parameters.getRawParameterValue(ids::lowerMode);
+    expect(lowerMode != nullptr
+               && std::lround(lowerMode->load()) == 3,
+           "a stored switch position did not survive the round trip");
+}
+
+// JUCE's Standalone holder persists the last panel as `filterState` and
+// restores it before playback or the editor starts. Ghostar instead powers
+// up at Init, but explicit Load State must still work with no audio device.
+void testStandaloneStartsAtInitButStillLoadsStateExplicitly()
+{
+    namespace ids = ghostar::parameters;
+    GhostarAudioProcessor saved;
+    saved.setCurrentProgram(3); // Fat Filter: cutoff 0.45
+    juce::MemoryBlock state;
+    saved.getStateInformation(state);
+
+    juce::AudioProcessor::setTypeOfNextNewPlugin(
+        juce::AudioProcessor::wrapperType_Standalone);
+    GhostarAudioProcessor standalone;
+    juce::AudioProcessor::setTypeOfNextNewPlugin(
+        juce::AudioProcessor::wrapperType_Undefined);
+
+    standalone.setStateInformation(state.getData(),
+                                   static_cast<int>(state.getSize()));
+    auto* cutoff = standalone.parameters.getRawParameterValue(ids::cutoff);
+    expect(standalone.getCurrentProgram() == 0
+               && cutoff != nullptr
+               && std::abs(cutoff->load() - 0.62f) < 0.002f,
+           "Standalone restored its previous panel instead of starting at Init");
+
+    // StandaloneFilterWindow builds the editor even if device initialisation
+    // failed. Its Options -> Load State action must therefore end the startup
+    // phase independently of prepareToPlay().
+    std::unique_ptr<juce::AudioProcessorEditor> editor(
+        standalone.createEditorAndMakeActive());
+    expect(editor != nullptr, "Standalone did not create its editor");
+    standalone.setStateInformation(state.getData(),
+                                   static_cast<int>(state.getSize()));
+    expect(standalone.getCurrentProgram() == 3
+               && cutoff != nullptr
+               && std::abs(cutoff->load() - 0.45f) < 0.002f,
+           "Standalone rejected an explicit state load without an audio device");
+    standalone.editorBeingDeleted(editor.get());
+    editor.reset();
+
+    standalone.setCurrentProgram(0);
+    standalone.prepareToPlay(sampleRate, blockSize);
+    standalone.setStateInformation(state.getData(),
+                                   static_cast<int>(state.getSize()));
+    expect(standalone.getCurrentProgram() == 3
+               && cutoff != nullptr
+               && std::abs(cutoff->load() - 0.45f) < 0.002f,
+           "Standalone rejected an explicit state load after starting");
+    standalone.releaseResources();
+}
+
+// Zero-crossing pitch estimate over rendered blocks, for checks that need
+// to hear *which* note sounded rather than just that something did.
+double renderedZeroCrossingHz(GhostarAudioProcessor& processor, int blocks)
+{
+    juce::AudioBuffer<float> buffer(2, blockSize);
+    juce::MidiBuffer empty;
+    std::vector<float> collected;
+    for (int block = 0; block < blocks; ++block)
+    {
+        buffer.clear();
+        juce::MidiBuffer events;
+        processor.processBlock(buffer, events);
+        const auto* samples = buffer.getReadPointer(0);
+        collected.insert(collected.end(), samples, samples + blockSize);
+    }
+    int crossings = 0;
+    for (std::size_t index = 1; index < collected.size(); ++index)
+        if ((collected[index - 1] < 0.0f) != (collected[index] < 0.0f))
+            ++crossings;
+    const double seconds =
+        static_cast<double>(collected.size()) / sampleRate;
+    return static_cast<double>(crossings) / (2.0 * seconds);
+}
+
+// MIDI CC120 (All Sound Off) must silence the instrument without resetting
+// controllers: a pitch bend held across it still applies to the next note.
+void testAllSoundOffKeepsTheBend()
+{
+    GhostarAudioProcessor processor;
+    processor.prepareToPlay(sampleRate, blockSize);
+
+    juce::MidiBuffer noteOn;
+    noteOn.addEvent(
+        juce::MidiMessage::noteOn(1, 48, static_cast<juce::uint8>(100)), 0);
+    renderBlocks(processor, 24, noteOn);
+    const double unbentHz = renderedZeroCrossingHz(processor, 90);
+
+    juce::MidiBuffer bendThenStop;
+    bendThenStop.addEvent(juce::MidiMessage::pitchWheel(1, 16383), 0);
+    bendThenStop.addEvent(juce::MidiMessage::controllerEvent(1, 120, 0), 8);
+    renderBlocks(processor, 1, bendThenStop);
+    juce::MidiBuffer quiet;
+    const double stopped = renderBlocks(processor, 8, quiet);
+    expect(stopped < 1.0e-4, "CC120 did not silence the sounding voice");
+
+    renderBlocks(processor, 24, noteOn);
+    const double bentHz = renderedZeroCrossingHz(processor, 90);
+    expect(bentHz > unbentHz * 1.35,
+           "the pitch bend did not survive CC120");
+    processor.releaseResources();
+}
+
+// A mono host layout has no right channel to split onto; enabling SPLIT
+// there must fold both paths into the mono output instead of silently
+// discarding the whole Shaper path.
+void testMonoLayoutKeepsTheShaperPath()
+{
+    namespace ids = ghostar::parameters;
+    GhostarAudioProcessor processor;
+    auto layout = processor.getBusesLayout();
+    layout.outputBuses.getReference(0) = juce::AudioChannelSet::mono();
+    expect(processor.setBusesLayout(layout),
+           "the processor did not accept a mono output layout");
+
+    const auto set = [&processor](const char* id, float value) {
+        if (auto* parameter = processor.parameters.getParameter(id))
+            parameter->setValueNotifyingHost(value);
+    };
+    set(ids::splitPaths, 1.0f);
+    set(ids::filterPathA, 0.0f);
+    set(ids::filterPathB, 0.0f);
+    set(ids::filterPathNoise, 0.0f);
+    set(ids::shaperPathA, 0.8f);
+    set(ids::shaperMode, 1.0f / 3.0f); // KBD HOLD: contour rises while held
+
+    processor.prepareToPlay(sampleRate, blockSize);
+    juce::AudioBuffer<float> buffer(1, blockSize);
+    juce::MidiBuffer midi;
+    midi.addEvent(
+        juce::MidiMessage::noteOn(1, 48, static_cast<juce::uint8>(100)), 0);
+    double lastPeak = 0.0;
+    double heard = 0.0;
+    for (int block = 0; block < 48; ++block)
+    {
+        buffer.clear();
+        juce::MidiBuffer events = block == 0 ? midi : juce::MidiBuffer {};
+        processor.processBlock(buffer, events);
+        expect(isFinite(buffer), "a mono block carried non-finite audio");
+        lastPeak = peakOf(buffer);
+        heard = std::max(heard, lastPeak);
+    }
+    expect(heard > 1.0e-4,
+           "the Shaper path fell silent in a mono layout with SPLIT on");
+    processor.releaseResources();
+}
+
+// A note queued from the on-screen keyboard before PANIC is clicked must
+// not replay after the reset.
+void testPanicDropsQueuedUiNotes()
+{
+    GhostarAudioProcessor processor;
+    processor.prepareToPlay(sampleRate, blockSize);
+
+    processor.keyboardState.noteOn(1, 60, 1.0f);
+    processor.requestPanic();
+    juce::MidiBuffer quiet;
+    const double after = renderBlocks(processor, 12, quiet);
+    expect(after < 1.0e-4, "a note queued before panic replayed after it");
+    expect(!processor.isGateOpenForDisplay(),
+           "panic left the keying gate open");
+
+    // Only what precedes the click dies: a key pressed after PANIC but
+    // before the next audio callback is a fresh note and must sound.
+    processor.keyboardState.noteOff(1, 60, 0.0f);
+    processor.keyboardState.noteOn(1, 64, 1.0f);
+    processor.requestPanic();
+    processor.keyboardState.noteOn(1, 60, 1.0f);
+    const double post = renderBlocks(processor, 24, quiet);
+    expect(post > 1.0e-4,
+           "a note pressed after panic was dropped with the stale queue");
+    processor.releaseResources();
+}
+
+// The two real halfband kernels delay a single internal impulse by 15 + 2*63
+// internal samples. The host output is taken after substep three, leaving
+// (15 + 126 - 3) / 4 = 34.5 output samples. A signed impulse centroid checks
+// that physical ring schedule without involving an oscillator or envelope.
+void testDecimatorLatencyMatchesItsActualImpulseResponse()
+{
+    const double measured =
+        ghostar::GhostarCircuitTestAccess::decimatorImpulseCentroid();
+    expect(std::abs(measured - 34.5) < 1.0e-9,
+           "the two decimator rings do not delay by 34.5 output samples");
+}
+
+// A host can only compensate for a delay the processor publishes. The DSP
+// check above pins the engine's stated figure to the actual two-stage chain;
+// this check pins the processor-facing rounded value to that figure.
+void testAdvertisedLatencyMatchesTheMeasuredDelay()
+{
+    GhostarAudioProcessor processor;
+    processor.prepareToPlay(sampleRate, blockSize);
+
+    const double derived = ghostar::GhostarEngine::outputLatencySamples();
+    expect(processor.getLatencySamples() == juce::roundToInt(derived),
+           "the plug-in does not publish the latency the engine derives");
+    expect(processor.getLatencySamples() > 0,
+           "the plug-in still claims to be latency-free");
+    processor.releaseResources();
+}
+
+void testAdvertisedTailCoversTheLongestRelease()
+{
+    GhostarAudioProcessor processor;
+    const double longest = ghostar::GhostarEngine::longestReleaseTailSeconds();
+    expect(longest > 1.0,
+           "the engine reports an implausible longest release");
+    expect(processor.getTailLengthSeconds() >= longest,
+           "the advertised tail is shorter than the longest release");
+}
+
+// The factory bank is Init, the manual's eleven Sound Charts, and the
+// seventeen Ghostar Programs. The host-facing contract: the count and names
+// are published, selecting a program writes it into the host parameters,
+// and a selected program actually plays.
+void testFactoryProgramsAreTheSoundCharts()
+{
+    namespace ids = ghostar::parameters;
+    GhostarAudioProcessor processor;
+
+    expect(processor.getNumPrograms() == 29,
+           "the program bank is not Init plus eleven charts plus seventeen "
+           "programs");
+    expect(processor.getProgramName(0) == "Init",
+           "the bank does not open with the default voice");
+    expect(processor.getProgramName(1) == "Preparatory Pattern",
+           "the charts do not start with the Preparatory Pattern");
+    expect(juce::String(ghostar::factoryPresetDescription(1))
+               .startsWith("Intentionally silent"),
+           "the Preparatory Pattern does not warn that it is silent");
+    expect(processor.getProgramName(3) == "Fat Filter",
+           "program 3 is not the Fat Filter chart");
+    expect(processor.getProgramName(12) == "Spirit Bass",
+           "the performance bank does not begin where it should");
+
+    processor.setCurrentProgram(3);
+    expect(processor.getCurrentProgram() == 3,
+           "the selected program index was not retained");
+
+    auto* cutoff = processor.parameters.getRawParameterValue(ids::cutoff);
+    expect(cutoff != nullptr && std::abs(cutoff->load() - 0.45f) < 0.002f,
+           "Fat Filter did not write its cutoff travel");
+    auto* gateKbd = processor.parameters.getRawParameterValue(ids::gateKbd);
+    expect(gateKbd != nullptr && gateKbd->load() > 0.5f,
+           "Fat Filter did not switch the keyboard gate on");
+    auto* octave = processor.parameters.getRawParameterValue(ids::octave);
+    expect(octave != nullptr && std::lround(octave->load()) == 2,
+           "Fat Filter did not select the 8' octave");
+    auto* xWheel = processor.parameters.getRawParameterValue(ids::xWheel);
+    expect(xWheel != nullptr && xWheel->load() < 0.002f,
+           "selecting a chart did not pull the X wheel fully back");
+
+    // An out-of-range selection must be ignored, not clamp or crash.
+    processor.setCurrentProgram(processor.getNumPrograms());
+    expect(processor.getCurrentProgram() == 3,
+           "an out-of-range program selection was not ignored");
+
+    // A performance program must reach the host parameters exactly as a
+    // chart does — the two banks travel the same lane.
+    processor.setCurrentProgram(12);
+    expect(processor.getCurrentProgram() == 12,
+           "the performance program was not selected");
+    auto* slope = processor.parameters.getRawParameterValue(ids::slope);
+    expect(slope != nullptr && std::lround(slope->load()) == 1,
+           "Spirit Bass did not select the 24 dB slope");
+
+    // Ghostar Programs can store a musically useful wheel stance, unlike the
+    // historical charts whose drawings always begin with both wheels back.
+    processor.setCurrentProgram(13); // Vowel Motion
+    auto* yWheel = processor.parameters.getRawParameterValue(ids::yWheel);
+    expect(yWheel != nullptr && std::abs(yWheel->load() - 0.45f) < 0.002f,
+           "Vowel Motion did not load its performance-ready Y-wheel stance");
+    processor.setCurrentProgram(3);
+    expect(yWheel != nullptr && yWheel->load() < 0.002f,
+           "returning to a Sound Chart did not pull the Y wheel back");
+
+    // The selected program's name must survive a state round trip; the
+    // values themselves already travel as parameters.
+    juce::MemoryBlock state;
+    processor.getStateInformation(state);
+    GhostarAudioProcessor restored;
+    restored.setStateInformation(state.getData(),
+                                 static_cast<int>(state.getSize()));
+    expect(restored.getCurrentProgram() == 3,
+           "the program index did not survive the state round trip");
+    auto* restoredCutoff =
+        restored.parameters.getRawParameterValue(ids::cutoff);
+    expect(restoredCutoff != nullptr
+               && std::abs(restoredCutoff->load() - 0.45f) < 0.002f,
+           "the restored state lost the chart's cutoff travel");
+
+    processor.prepareToPlay(sampleRate, blockSize);
+    juce::MidiBuffer midi;
+    midi.addEvent(
+        juce::MidiMessage::noteOn(1, 48, static_cast<juce::uint8>(100)), 0);
+    const double sounding = renderBlocks(processor, 24, midi);
+    expect(sounding > 1.0e-4, "the selected Sound Chart produced no audio");
+    processor.releaseResources();
+}
+
+void testEditorRendering()
+{
+    GhostarAudioProcessor processor;
+    processor.prepareToPlay(sampleRate, blockSize);
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor(
+        processor.createEditor());
+    expect(editor != nullptr, "the processor produced no editor");
+    if (editor == nullptr)
+        return;
+
+    // The editor opens at whatever fits the display it is on, so the
+    // documentation image is pinned to the panel's design size here rather
+    // than taken from whatever the build machine happens to have.
+    editor->setSize(1460, 780);
+    editor->resized();
+    const auto snapshot = renderEditorSnapshot(*editor);
+    expect(snapshotHasDetail(snapshot),
+           "the editor rendered as a flat surface at its default size");
+    expect(snapshot.getWidth() == 1460 && snapshot.getHeight() == 780,
+           "the documentation screenshot is no longer the design size");
+
+    // Committed documentation image, regenerated by the nightly build.
+    const auto snapshotPath = juce::SystemStats::getEnvironmentVariable(
+        "GHOSTAR_EDITOR_SNAPSHOT", {});
+    if (snapshotPath.isNotEmpty() && snapshot.isValid())
+    {
+        const juce::File snapshotFile { snapshotPath };
+        snapshotFile.getParentDirectory().createDirectory();
+        juce::FileOutputStream output { snapshotFile };
+        juce::PNGImageFormat png;
+        const bool prepared = output.openedOk() && output.setPosition(0)
+                           && output.truncate();
+        const bool wrote =
+            prepared && png.writeImageToStream(snapshot, output);
+        output.flush();
+        expect(wrote, "could not write the requested editor snapshot");
+    }
+
+    editor.reset();
+    processor.releaseResources();
+}
+
+// The panel is a fixed geometry, so the only question a small screen asks is
+// whether it scales or gets cut off. A 1366x768 laptop's work area is under
+// 768 points tall once the taskbar and the host's window frame are counted,
+// and the design panel is 780.
+void testEditorFitsASmallDisplay()
+{
+    // The fit rule itself, on screens no build machine has to have.
+    using Editor = GhostarAudioProcessorEditor;
+    const juce::Rectangle<int> design { 1460, 780 };
+    expect(Editor::panelSizeForWorkArea({}) == design,
+           "an unknown work area should open the panel at its design size");
+    expect(Editor::panelSizeForWorkArea({ 1920, 1080 }) == design,
+           "a display with room should open the panel at its design size");
+    for (const auto work : { juce::Rectangle<int> { 1366, 768 },
+                             juce::Rectangle<int> { 1280, 800 },
+                             juce::Rectangle<int> { 1280, 720 } })
+    {
+        const auto fitted = Editor::panelSizeForWorkArea(work);
+        expect(fitted.getWidth() <= work.getWidth()
+                   && fitted.getHeight() <= work.getHeight(),
+               "the panel does not fit the display it was fitted to");
+        const auto ratio = static_cast<double>(fitted.getWidth())
+                           / static_cast<double>(fitted.getHeight());
+        expect(std::abs(ratio - 1460.0 / 780.0) < 0.02,
+               "the fitted panel lost the design proportions");
+    }
+    // Smaller than the readable floor: a window the user can move beats type
+    // nobody can read, so the rule clamps rather than shrinking further.
+    expect(Editor::panelSizeForWorkArea({ 800, 600 }).getWidth() == 876,
+           "the fit rule went below the readable minimum");
+
+    GhostarAudioProcessor processor;
+    std::unique_ptr<juce::AudioProcessorEditor> editor(
+        processor.createEditor());
+    expect(editor != nullptr, "the processor produced no editor");
+    if (editor == nullptr)
+        return;
+
+    expect(editor->isResizable(),
+           "the editor cannot be resized, so a host cannot make it fit");
+
+    auto* constrainer = editor->getConstrainer();
+    expect(constrainer != nullptr, "the editor has no size constrainer");
+    if (constrainer == nullptr)
+        return;
+
+    // Room for the window frame, the menu bar and the taskbar around it.
+    constexpr int smallDisplayWidth = 1366;
+    constexpr int smallDisplayHeight = 768;
+    constexpr int chrome = 64;
+    expect(constrainer->getMinimumWidth() <= smallDisplayWidth - chrome,
+           "the editor cannot be narrowed onto a 1366-point display");
+    expect(constrainer->getMinimumHeight() <= smallDisplayHeight - chrome,
+           "the editor cannot be shortened onto a 768-point display");
+
+    const auto designRatio = static_cast<double>(editor->getWidth())
+                             / static_cast<double>(editor->getHeight());
+
+    // A host resizing the window to that display goes through the
+    // constrainer, which is what holds the panel's proportions.
+    juce::Rectangle<int> asked { 0, 0, smallDisplayWidth - chrome,
+                                 smallDisplayHeight - chrome };
+    constrainer->checkBounds(asked, editor->getBounds(),
+                             { 0, 0, 8192, 8192 }, false, false, false, true);
+    const auto ratio = static_cast<double>(asked.getWidth())
+                       / static_cast<double>(asked.getHeight());
+    expect(std::abs(ratio - designRatio) < 0.02,
+           "the panel lost its proportions when it was made to fit");
+    expect(asked.getWidth() <= smallDisplayWidth - chrome
+               && asked.getHeight() <= smallDisplayHeight - chrome,
+           "the constrained size still does not fit the display");
+
+    // And at that size the panel is still a panel: it draws, including the
+    // keys, which are the part a clipped window loses first.
+    editor->setSize(asked.getWidth(), asked.getHeight());
+    const auto small = renderEditorSnapshot(*editor);
+    expect(snapshotHasDetail(small),
+           "the editor rendered as a flat surface at a small size");
+
+    // The white keys are the brightest thing on a charcoal panel, and they
+    // are the bottom of the layout: finding them in the bottom eighth of the
+    // image is what says the panel scaled instead of being cut off.
+    bool sawKeys = false;
+    if (small.isValid())
+    {
+        const int floorStart = small.getHeight() * 7 / 8;
+        for (int y = floorStart; y < small.getHeight() && !sawKeys; ++y)
+            for (int x = 0; x < small.getWidth(); x += 2)
+                if (small.getPixelAt(x, y).getBrightness() > 0.85f)
+                {
+                    sawKeys = true;
+                    break;
+                }
+    }
+    expect(sawKeys, "the keyboard is not on screen once the panel is fitted");
+
+    editor.reset();
+}
+} // namespace
+
+int main()
+{
+    juce::ScopedJuceInitialiser_GUI guiInitialiser;
+    testParameterLayoutIsStable();
+    testMidiProducesAudio();
+    testAllNotesOffReleasesEveryKey();
+    testStateRoundTrip();
+    testStandaloneStartsAtInitButStillLoadsStateExplicitly();
+    testFactoryProgramsAreTheSoundCharts();
+    testAllSoundOffKeepsTheBend();
+    testMonoLayoutKeepsTheShaperPath();
+    testPanicDropsQueuedUiNotes();
+    testAdvertisedTailCoversTheLongestRelease();
+    testDecimatorLatencyMatchesItsActualImpulseResponse();
+    testAdvertisedLatencyMatchesTheMeasuredDelay();
+    testEditorRendering();
+    testEditorFitsASmallDisplay();
+
+    if (failureCount != 0)
+    {
+        std::cerr << failureCount << " Ghostar plug-in check(s) failed.\n";
+        return EXIT_FAILURE;
+    }
+    std::cout << "All Ghostar plug-in checks passed.\n";
+    return EXIT_SUCCESS;
+}

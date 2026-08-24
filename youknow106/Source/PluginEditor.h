@@ -324,6 +324,11 @@ private:
     // the button this replaced could only say on or off.
     juce::ComboBox qualityBox;
     juce::Label qualityLabel;
+    // The VCF solver ladder beside it. Same kind of control and the same kind
+    // of setting -- processing cost, not sound design -- so it sits in the
+    // same group rather than hiding in the host's parameter list.
+    juce::ComboBox vcfSolverBox;
+    juce::Label vcfSolverLabel;
     juce::TextButton randomize1Button { "DRIFT 1%" };
     juce::TextButton randomize10Button { "VARY 10%" };
     juce::TextButton randomize50Button { "MORPH 50%" };

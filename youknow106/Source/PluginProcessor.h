@@ -186,6 +186,51 @@ public:
     // restating it, so a rung added there appears on the panel by itself.
     static constexpr int qualityChoiceCount = static_cast<int> (
         youknow106::YouKnow106Engine::oversampleFactors.size());
+    static constexpr int vcfTanhChoiceCount = 2;
+    static constexpr int vcfFastEarlyChoiceCount = 2;
+    static constexpr int vcfSolverChoiceCount = 3;
+    // The rung a new instance -- and a state saved before this parameter
+    // existed -- starts on. Not the engine's own default: `EngineParameters`
+    // keeps `Merson x2`, so the JUCE-free suites and the frozen fingerprint
+    // and work-counter contracts still test the reference kernel. See the
+    // note over the layout entry.
+    static constexpr int vcfSolverDefaultChoice = 2;
+    // Named once, so the layout, the editor and the tests cannot disagree
+    // about which rung an ordinal is.
+    //
+    // These are the player's names, not the method's: what a menu has to
+    // convey is how much the rung costs relative to the others, and the
+    // tableau that delivers it belongs in the tooltip. Ordinal zero is the
+    // most expensive because it is the historical reference, so the list
+    // reads downward from Max to the shipped Normal -- the opposite direction
+    // from QUALITY, which climbs.
+    //
+    // They are also short on purpose. JUCE lays a ComboBox's text out in
+    // `width + 3 - height`, the Model zone's padding caps the selector at
+    // about 92 px, and at the minimum editor size that leaves room for roughly
+    // six characters. Longer words drew as "Sta...".
+    static constexpr const char* vcfSolverChoiceName (int choice) noexcept
+    {
+        switch (choice)
+        {
+            case 1:  return "High";
+            case 2:  return "Normal";
+            default: return "Max";
+        }
+    }
+    // The tableau behind each name, for the tooltip and for documentation.
+    static constexpr const char* vcfSolverChoiceTechnique (int choice) noexcept
+    {
+        switch (choice)
+        {
+            case 1:  return "two half-interval classic RK4 steps, "
+                            "8 evaluations";
+            case 2:  return "one full-interval classic RK4 step, "
+                            "4 evaluations";
+            default: return "two half-interval five-stage Merson steps, "
+                            "10 evaluations";
+        }
+    }
     static constexpr int oversamplingFactorForChoice (int choice) noexcept
     {
         return youknow106::YouKnow106Engine::oversampleFactors[
@@ -202,10 +247,7 @@ public:
                 choice = index;
         return choice;
     }
-    int getQualityChoice() const noexcept
-    {
-        return choiceOf (youknow106::parameters::quality, qualityChoiceCount - 1);
-    }
+    int getQualityChoice() const noexcept;
     bool isEngineReady() const noexcept
     {
         return engineReady.load (std::memory_order_acquire);
@@ -281,8 +323,64 @@ private:
         const char* id = nullptr;
         std::atomic<float>* value = nullptr;
     };
-    static constexpr std::size_t parameterPointerCount = 43;
+    // Direct indices for the audio-thread snapshot. The constructor binds each
+    // index explicitly; cold callers retain valueOf(id), while processBlock
+    // avoids searching that table for every parameter on each callback.
+    enum class ParameterIndex : std::size_t
+    {
+        volume,
+        benderDco,
+        benderVcf,
+        benderLfo,
+        portamento,
+        legacyKeyMode,
+        lfoRate,
+        lfoDelay,
+        dcoLfo,
+        pwm,
+        pwmMode,
+        range,
+        saw,
+        pulse,
+        sub,
+        noise,
+        highPass,
+        cutoff,
+        resonance,
+        envPolarity,
+        vcfEnv,
+        vcfLfo,
+        keyFollow,
+        vcaMode,
+        vcaLevel,
+        attack,
+        decay,
+        sustain,
+        release,
+        legacyChorus,
+        transpose,
+        masterTune,
+        velocity,
+        calibration,
+        chorusNoise,
+        polyphony,
+        poly1,
+        poly2,
+        chorusI,
+        chorusII,
+        legacyHq,
+        quality,
+        vcfTanhMode,
+        vcfFastEarlyMode,
+        vcfSolverMode,
+        aging,
+        count
+    };
+    static constexpr std::size_t parameterPointerCount =
+        static_cast<std::size_t> (ParameterIndex::count);
     std::array<ParameterPointer, parameterPointerCount> parameterPointers {};
+    float valueOf (ParameterIndex parameter) const noexcept;
+    int choiceOf (ParameterIndex parameter, int maximum) const noexcept;
 
     youknow106::YouKnow106Engine engine;
     // The last complete APVTS/performance snapshot accepted by the audio

@@ -6,7 +6,7 @@ Notable customer-facing changes to YouKnow106 are recorded here.
 
 - Added a universal macOS 11+ VST3, Audio Unit, and Standalone distribution.
 - Added a three-level 1x/2x/4x QUALITY control with fixed reported latency;
-  new instances default to the balanced 2x mode.
+  new instances default to the cheapest 1x mode, with 2x and 4x one menu away.
 - Added the complete 128-program factory bank, host preset navigation, edited
   state indication, and exact reload behavior.
 - Added hardware-format `.syx` patch import, drag-and-drop, and export.
@@ -23,6 +23,13 @@ Notable customer-facing changes to YouKnow106 are recorded here.
   tick marks inside their controls at large editor sizes.
 - Hardened host operation across transport reset, standard bypass, variable
   block sizes, concurrent state saves, and synchronous state-save callbacks.
+- Added a VCF SOLVER control beside QUALITY, choosing how much arithmetic the
+  filter's solver spends per internal sample. New instances use Normal, which
+  roughly halves whole-engine CPU; High and Max cost more, and Max is what
+  every earlier release ran. All three keep the same filter, resonance
+  calibration and self-oscillation, a blind listening test found no audible
+  difference between them, and the setting applies immediately without waiting
+  for an idle instrument or adding latency.
 - Preserved historical Audio Unit parameter ordering while adding QUALITY, and
   moved quality-dependent chorus coefficient work out of the audio callback.
 - Added a signed, notarized, stapled PKG release path with bundled licence and
@@ -37,6 +44,13 @@ Notable customer-facing changes to YouKnow106 are recorded here.
   window was open.
 - Fixed the pitch-bend lever so holding one axis with the keyboard survives
   releasing the other.
+- Fixed sustain (CC 64) to latch on any non-zero value instead of only at 64
+  and above, matching the original's MIDI implementation chart, which prints
+  hold off at zero and hold on for 1–127. A half-pressed pedal now holds.
+- Fixed the channel-mode messages CC 124–127 so they release the keyboard like
+  all-notes-off, which the same chart says the instrument does with every mode
+  message from 123 up. They were previously ignored, leaving notes hanging in
+  hosts that end playback with an omni or poly message rather than CC 123.
 - Kept the modelled instrument warm across a transport stop, so the chassis
   warm-up runs as intended instead of restarting whenever playback stops.
 - Retired the voice lamps, meters and oscilloscope whenever the host bypasses

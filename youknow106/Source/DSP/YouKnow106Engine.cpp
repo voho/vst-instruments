@@ -98,9 +98,12 @@ constexpr float highPassCutBleedResistanceOhms = 1000000.0f; // R21 / R23
 // filter core or the voice VCA behind it.
 //
 // The capacitor is the read part; the resistance it works against is not.
-// R99/R102 33 kOhm is *not* this pole's load -- the same p. 13 pass re-roles
-// it as a DC bridge from the sub switch emitter to the WAVE line, in parallel
-// with D5/D6 -- and the node's termination, together with the WAVE output's
+// R99/R102 33 kOhm is *not* this pole's load -- the 2026-08-20 p. 13 junction
+// read re-roles it as the sub switch transistor's collector load returning to
+// the shared SUB LEVEL rail, retiring the 2026-08-07 "bridge across the diode"
+// reading, so the sub's conducting path reaches the WAVE line through 60 kOhm
+// (R101/R97 27 kOhm behind D6/D5, then this 33 kOhm) -- and the node's
+// termination, together with the WAVE output's
 // source impedance, is exactly OQ-15's remaining measurement. 33 kOhm is
 // therefore a voiced stand-in, taken by analogy with the two settled
 // 10 uF NP / 33 kOhm couplings downstream (C14/R39 and C12/R36), and what
@@ -639,8 +642,8 @@ float YouKnow106Engine::chassisGradientCelsius(int cardIndex) noexcept
 float YouKnow106Engine::chassisGradientMeanCelsius() noexcept
 {
     // A constant, but not one the language will fold: std::exp is not
-    // constexpr. This is read once per voice per internal sample, so it is
-    // computed once rather than six exponentials at a time.
+    // constexpr. Thermal-scale refreshes read it for every card, so compute it
+    // once rather than repeating the same six exponentials per refresh.
     static const float mean = [] {
         float total = 0.0f;
         for (int card = 0; card < hardwareVoices; ++card)
@@ -967,17 +970,21 @@ float YouKnow106Engine::outputReferenceGain(float referenceRmsVolts) noexcept
 
 float YouKnow106Engine::outputSummerClip(float value) noexcept
 {
+    static_assert(outputSummerClipExponent == 8.0f);
     if (!std::isfinite(value))
         return 0.0f;
 
     constexpr float railUnits = outputSummerRailVolts / internalVoltsPerUnit;
-    // Evaluated in double for the same reason bbdTransfer is: the fractional
-    // powers stay stable, and an extreme finite float approaches the rail
-    // instead of overflowing an intermediate power and folding back.
+    // The exponent is fixed at eight, so multiplies and three square roots
+    // preserve the same algebraic curve without two general-purpose powers.
+    // Double keeps even FLT_MAX's normalized eighth power finite, letting an
+    // extreme input approach the rail instead of folding back to zero.
     const double normalised = std::abs(static_cast<double>(value))
                             / static_cast<double>(railUnits);
-    const double exponent = static_cast<double>(outputSummerClipExponent);
-    const double denominator = algebraicSoftClipDenominator(normalised, exponent);
+    const double squared = normalised * normalised;
+    const double fourth = squared * squared;
+    const double eighth = fourth * fourth;
+    const double denominator = std::sqrt(std::sqrt(std::sqrt(1.0 + eighth)));
     return static_cast<float>(static_cast<double>(value) / denominator);
 }
 
@@ -1845,6 +1852,7 @@ float YouKnow106Engine::Envelope::tick(std::uint16_t attackIncrement,
 void YouKnow106Engine::Dco::reset() noexcept
 {
     phase = 0.0;
+    geometry.valid = false;
     renderScale = 1.0f;
     pulseState = -1.0f;
     subState = 1.0f;
@@ -2127,18 +2135,174 @@ YouKnow106Engine::PwmHoldState YouKnow106Engine::exactPwmHoldEndpoint(
         pwmHoldCoefficients((1.0 - event) * duration));
 }
 
+namespace
+{
+constexpr double vcfTanhFineLimit = 5.0;
+constexpr double vcfTanhLimit = 19.0;
+constexpr std::size_t vcfTanhFineIntervals = 160;
+constexpr std::size_t vcfTanhTailIntervals = 56;
+constexpr double vcfTanhFineWidth = 1.0 / 32.0;
+constexpr double vcfTanhTailWidth = 1.0 / 4.0;
+constexpr double vcfTanhFineScale = 32.0;
+constexpr double vcfTanhTailScale = 4.0;
+
+struct VcfTanhHermiteCoefficient
+{
+    double constant {};
+    double linear {};
+    double quadratic {};
+    double cubic {};
+};
+
+// Each table is built once, off the audio path, from libm's exact-mode values
+// and analytic slopes. The fine table covers every argument in the profiled
+// single-note and six-note fixtures; the coarse tail preserves the prior
+// far-tail saturation behaviour without occupying the hot table's footprint.
+template <std::size_t intervals>
+std::array<VcfTanhHermiteCoefficient, intervals> makeVcfTanhHermiteTable(
+    double start, double width)
+{
+    struct Node
+    {
+        double value {};
+        double slope {};
+    };
+    std::array<Node, intervals + 1u> nodes {};
+    for (std::size_t index = 0; index < nodes.size(); ++index)
+    {
+        const double value = std::tanh(
+            start + width * static_cast<double>(index));
+        nodes[index] = { value, 1.0 - value * value };
+    }
+    for (std::size_t index = 0; index < intervals; ++index)
+        if (nodes[index + 1u].value == nodes[index].value)
+        {
+            nodes[index].slope = 0.0;
+            nodes[index + 1u].slope = 0.0;
+        }
+
+    std::array<VcfTanhHermiteCoefficient, intervals> table {};
+    for (std::size_t index = 0; index < table.size(); ++index)
+    {
+        const Node left = nodes[index];
+        const Node right = nodes[index + 1u];
+        // Once adjacent exact-mode nodes round to the same double, the
+        // representable function is flat. Their shared node slopes were
+        // zeroed above so neighbouring intervals meet it continuously;
+        // make the plateau itself explicit too.
+        if (right.value == left.value)
+        {
+            table[index] = { left.value, 0.0, 0.0, 0.0 };
+            continue;
+        }
+        const double delta = right.value - left.value;
+        const double leftSlope = width * left.slope;
+        const double rightSlope = width * right.slope;
+        table[index] = {
+            left.value,
+            leftSlope,
+            3.0 * delta - 2.0 * leftSlope - rightSlope,
+            -2.0 * delta + leftSlope + rightSlope
+        };
+    }
+    return table;
+}
+
+const auto vcfTanhFineTable = makeVcfTanhHermiteTable<vcfTanhFineIntervals>(
+    0.0, vcfTanhFineWidth);
+const auto vcfTanhTailTable = makeVcfTanhHermiteTable<vcfTanhTailIntervals>(
+    vcfTanhFineLimit, vcfTanhTailWidth);
+} // namespace
+
+double YouKnow106Engine::OtaCascade::zonedHermiteTanh(double value) noexcept
+{
+    if (std::isnan(value))
+        return value;
+    const double magnitude = std::abs(value);
+    // Direct callers retain the denormal bypass. The integrated Fast path
+    // starts from validated finite state; its table polynomial is bit-exact
+    // for subnormals, so it need not repeat this cold guard 90 times per card.
+    if (magnitude < std::numeric_limits<double>::min())
+        return value;
+    return zonedHermiteTanhUnchecked(value);
+}
+
+double YouKnow106Engine::OtaCascade::zonedHermiteTanhUnchecked(
+    double value) noexcept
+{
+    const double magnitude = std::abs(value);
+    if (magnitude < vcfTanhFineLimit)
+    {
+        const double position = magnitude * vcfTanhFineScale;
+        const std::size_t interval = static_cast<std::size_t>(position);
+        const double fraction = position - static_cast<double>(interval);
+        const auto& coefficient = vcfTanhFineTable[interval];
+        const double result = ((coefficient.cubic * fraction
+                              + coefficient.quadratic) * fraction
+                              + coefficient.linear) * fraction
+                              + coefficient.constant;
+        return std::copysign(result, value);
+    }
+    if (magnitude >= vcfTanhLimit)
+        return std::copysign(1.0, value);
+
+    const double position = (magnitude - vcfTanhFineLimit)
+                          * vcfTanhTailScale;
+    const std::size_t interval = static_cast<std::size_t>(position);
+    const double fraction = position - static_cast<double>(interval);
+    const auto& coefficient = vcfTanhTailTable[interval];
+    const double result = ((coefficient.cubic * fraction
+                          + coefficient.quadratic) * fraction
+                          + coefficient.linear) * fraction
+                          + coefficient.constant;
+    return std::copysign(result, value);
+}
+
+double YouKnow106Engine::OtaCascade::cubicEarlyTanh(double value) noexcept
+{
+    const double magnitude = std::abs(value);
+    if (magnitude >= 1.5)
+        return std::copysign(1.0, value);
+    return value * (1.0 - (4.0 / 27.0) * value * value);
+}
+
+double YouKnow106Engine::OtaCascade::closedLoopSpectralFactor(
+    double feedback) noexcept
+{
+    // Four identical one-poles closed through `feedback` put the loop roots at
+    // s/w = -1 + feedback^(1/4) * exp(i*(pi + 2*pi*m)/4). The farthest of the
+    // four from the origin is the one whose exponential lands in the third or
+    // fourth quadrant, at distance sqrt((1 + q)^2 + q^2) with
+    // q = feedback^(1/4) / sqrt(2). At the sanitized feedback ceiling of eight
+    // that is 2.494; with the loop open it is exactly one.
+    const double bounded = std::clamp(
+        std::isfinite(feedback) ? feedback : 0.0, 0.0, 8.0);
+    const double q = std::sqrt(std::sqrt(bounded)) * 0.70710678118654752440;
+    const double real = 1.0 + q;
+    const double factor = std::sqrt(real * real + q * q);
+    // `planTableau`'s short circuit trusts the declared ceiling, so hold the
+    // formula to it here rather than restating the constant in a comment. The
+    // clamp is the identity for every admissible feedback.
+    return std::min(factor, maximumClosedLoopSpectralFactor);
+}
+
 // Advance the continuous four-stage OTA equations over one internal interval.
-// Two fixed half-interval Merson steps use five right-hand-side evaluations
-// each. The only circuit state is capacitor voltage, and the causal cubic
-// supplies input between the two known sample endpoints.
+// The default rung's two fixed half-interval Merson steps use five
+// right-hand-side evaluations each; the two cheaper rungs run classic RK4 over
+// the same interval, and `planTableau` decides which of the three this
+// interval can take. The only circuit state is capacitor voltage, and the
+// causal cubic supplies input between the two known sample endpoints.
 // The compatibility profile closes a circuit-shaped nonlinear resonance
 // return, Hfb*tanh(V4/Hfb), so the loop remains bounded beyond oscillation.
+template <bool useCubicEarly>
 float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
                                             float feedback,
                                             float headroom,
                                             bool enableEarlyEffect,
                                             float calibration,
-                                            const ControlTrajectory* trajectory) noexcept
+                                            const ControlTrajectory* trajectory,
+                                            VcfTanhMode tanhMode,
+                                            VcfSolverMode solverMode) noexcept
 {
 #if defined(YOUKNOW106_WORK_AUDIT)
     YOUKNOW106_COUNT_DOMAIN_WORK(vcfSteps, 1);
@@ -2173,6 +2337,29 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
         parameterHistoryPrimed = true;
     }
 
+    // A bounded state, the finite histories and card trims maintained by the
+    // engine, and the sanitized controls can only form finite Merson arguments.
+    // Recover a hostile standalone state once here so Fast does not repeat the
+    // helper's NaN check at every nonlinear evaluation.
+    const bool useFastTanh = useCubicEarly
+                          || tanhMode == VcfTanhMode::ZonedHermite;
+    if (useFastTanh
+        && !std::all_of(state.begin(), state.end(), [](double value) {
+               return std::abs(value) <= 64.0;
+           }))
+    {
+#if defined(YOUKNOW106_WORK_AUDIT)
+        YOUKNOW106_COUNT_DOMAIN_WORK(vcfRecoveries, 1);
+#endif
+        state.fill(0.0);
+        inputHistory.fill(currentInput);
+        inputHistoryCount = 2;
+        previousOmegaStep = currentOmega;
+        previousFeedback = currentFeedback;
+        previousHeadroom = currentHeadroom;
+        return 0.0f;
+    }
+
     struct IntegrationNode
     {
         double position {};
@@ -2202,12 +2389,58 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
     static constexpr auto nodes = makeNodes(controlNodePositions);
     constexpr std::size_t pointCount = nodes.size();
     constexpr double substep = 0.5;
+
+    // Which tableau this interval runs. `MersonHalfSteps` is unconditional and
+    // pays nothing for the bound; the two RK4 rungs each name the cheapest
+    // tableau they will accept and let `planTableau` decide from the largest
+    // stage pole and the largest loop gain the interval can present -- both
+    // can be escalated, and both fall back to Merson where classic RK4's
+    // stability region ends. The trajectory's interior nodes carry the hold's
+    // own curvature and can leave the endpoint interval, so they are scanned
+    // when one is supplied.
+    const Tableau plannedTableau = [&] {
+        if (solverMode == VcfSolverMode::MersonHalfSteps)
+            return Tableau::MersonHalf;
+        double planOmega = std::max(previousOmegaStep, currentOmega);
+        double planFeedback = std::max(previousFeedback, currentFeedback);
+        if (trajectory != nullptr)
+            for (std::size_t point = 0; point < pointCount; ++point)
+            {
+                planOmega = std::max(
+                    planOmega, clampOmegaStep(trajectory->omegaStep[point]));
+                const double candidate = trajectory->feedback[point];
+                if (std::isfinite(candidate))
+                    planFeedback = std::max(
+                        planFeedback, std::clamp(candidate, 0.0, 8.0));
+            }
+        // The stage capacitor spread scales each pole independently, and the
+        // Early effect scales every stage rate by at most 1 + earlyAmount.
+        double largestScale = 0.0;
+        for (const float scale : gScale)
+            largestScale = std::max(largestScale,
+                                    static_cast<double>(std::abs(scale)));
+        const double earlyCeiling = enableEarlyEffect
+            ? 1.0 + static_cast<double>(otaEarlyEffectCoefficient)
+                        * currentCalibration
+            : 1.0;
+        return planTableau(solverMode,
+                           planOmega * largestScale * earlyCeiling,
+                           planFeedback);
+    }();
+    // A full-interval rung reads three of the seven control nodes. Skipping
+    // the rest is not an approximation: the tableau never evaluates there, so
+    // the reconstruction, the control interpolation and the per-stage omega
+    // product at those ordinals have no reader.
+    const unsigned int nodeMask = tableauNodeMask(plannedTableau);
+
     std::array<double, pointCount> inputAt {};
     std::array<double, pointCount> omegaAt {};
     std::array<double, pointCount> feedbackAt {};
     std::array<double, pointCount> headroomAt {};
     for (std::size_t point = 0; point < pointCount; ++point)
     {
+        if ((nodeMask >> point & 1u) == 0u)
+            continue;
 #if defined(YOUKNOW106_WORK_AUDIT)
         YOUKNOW106_COUNT_DOMAIN_WORK(vcfInputReconstructions, 1);
 #endif
@@ -2250,40 +2483,6 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
         }
     }
 
-    const auto derivative = [&](const std::array<double, 4>& value,
-                                double drive, std::size_t point) {
-        std::array<double, 4> result {};
-        const double runningHeadroom = headroomAt[point];
-#if defined(YOUKNOW106_WORK_AUDIT)
-        YOUKNOW106_COUNT_DOMAIN_WORK(vcfRhsEvaluations, 1);
-        YOUKNOW106_COUNT_DOMAIN_WORK(vcfFeedbackEvaluations, 1);
-        if (enableEarlyEffect && currentCalibration > 0.0)
-            YOUKNOW106_COUNT_DOMAIN_WORK(vcfEarlyEvaluations,
-                                         result.size());
-#endif
-        double previous = drive - feedbackAt[point] * feedbackHeadroom
-            * std::tanh(value[3] / feedbackHeadroom);
-        for (std::size_t stage = 0; stage < result.size(); ++stage)
-        {
-#if defined(YOUKNOW106_WORK_AUDIT)
-            YOUKNOW106_COUNT_DOMAIN_WORK(vcfStageEvaluations, 1);
-#endif
-            const double early = enableEarlyEffect
-                    && currentCalibration > 0.0
-                ? 1.0 + static_cast<double>(otaEarlyEffectCoefficient)
-                    * currentCalibration
-                    * std::tanh(value[stage] / runningHeadroom)
-                : 1.0;
-            result[stage] = omegaAt[point]
-                * static_cast<double>(gScale[stage])
-                * early * runningHeadroom
-                * std::tanh((previous - value[stage]
-                             + static_cast<double>(offsetVoltage[stage]))
-                            / runningHeadroom);
-            previous = value[stage];
-        }
-        return result;
-    };
     const auto advanceOne = [](const std::array<double, 4>& origin,
                                const std::array<double, 4>& slope,
                                double distance) {
@@ -2313,32 +2512,211 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
                 * (wa * a[stage] + wb * b[stage] + wc * c[stage]);
         return result;
     };
+    const auto advanceFour = [](const std::array<double, 4>& origin,
+                                double step,
+                                const std::array<double, 4>& a, double wa,
+                                const std::array<double, 4>& b, double wb,
+                                const std::array<double, 4>& c, double wc,
+                                const std::array<double, 4>& d, double wd) {
+        std::array<double, 4> result {};
+        for (std::size_t stage = 0; stage < result.size(); ++stage)
+            result[stage] = origin[stage] + step
+                * (wa * a[stage] + wb * b[stage] + wc * c[stage]
+                   + wd * d[stage]);
+        return result;
+    };
 
-    for (int step = 0; step < integrationSubsteps; ++step)
+    const bool applyEarlyEffect = enableEarlyEffect
+                               && currentCalibration > 0.0;
+    const double earlyAmount =
+        static_cast<double>(otaEarlyEffectCoefficient) * currentCalibration;
+    std::array<double, 4> stageScale {};
+    std::array<double, 4> stageOffset {};
+    for (std::size_t stage = 0; stage < stageScale.size(); ++stage)
     {
-#if defined(YOUKNOW106_WORK_AUDIT)
-        YOUKNOW106_COUNT_DOMAIN_WORK(vcfIntegrationSubsteps, 1);
-#endif
-        const std::size_t origin = static_cast<std::size_t>(3 * step);
-        const auto k1 = derivative(state, inputAt[origin], origin);
-        const auto k2 = derivative(
-            advanceOne(state, k1, substep / 3.0),
-            inputAt[origin + 1u], origin + 1u);
-        const auto k3 = derivative(
-            advanceTwo(state, substep, k1, 1.0 / 6.0,
-                       k2, 1.0 / 6.0),
-            inputAt[origin + 1u], origin + 1u);
-        const auto k4 = derivative(
-            advanceTwo(state, substep, k1, 1.0 / 8.0,
-                       k3, 3.0 / 8.0),
-            inputAt[origin + 2u], origin + 2u);
-        const auto k5 = derivative(
-            advanceThree(state, substep, k1, 1.0 / 2.0,
-                         k3, -3.0 / 2.0, k4, 2.0),
-            inputAt[origin + 3u], origin + 3u);
-        state = advanceThree(state, substep, k1, 1.0 / 6.0,
-                             k4, 2.0 / 3.0, k5, 1.0 / 6.0);
+        stageScale[stage] = static_cast<double>(gScale[stage]);
+        stageOffset[stage] = static_cast<double>(offsetVoltage[stage]);
     }
+    std::array<std::array<double, 4>, pointCount> stageOmegaAt {};
+    for (std::size_t point = 0; point < pointCount; ++point)
+    {
+        if ((nodeMask >> point & 1u) == 0u)
+            continue;
+        for (std::size_t stage = 0; stage < stageScale.size(); ++stage)
+            stageOmegaAt[point][stage] = omegaAt[point] * stageScale[stage];
+    }
+
+    // Fast amortizes normalization over the nodes this tableau actually reads
+    // -- seven on the default rung, five or three on the cheaper ones. In the
+    // Character-on path, those reciprocals replace 90 RHS divisions per card
+    // interval on the default rung. Exact keeps the established division
+    // expressions and their frozen rounding behavior.
+    const auto integrate = [&]<bool useReciprocal, Tableau tableau>(
+                               const auto& nonlinear) {
+        std::array<double, pointCount> inverseHeadroomAt {};
+        if constexpr (useReciprocal)
+            for (std::size_t point = 0; point < pointCount; ++point)
+                if ((tableauNodeMask(tableau) >> point & 1u) != 0u)
+                    inverseHeadroomAt[point] = 1.0 / headroomAt[point];
+
+        // Four doubles are an arm64 HFA: by value keeps RK states in d0-d3;
+        // a const reference forces every temporary through addressable memory.
+        const auto derivative = [&](std::array<double, 4> value,
+                                    double drive, std::size_t point) {
+            std::array<double, 4> result {};
+            const double runningHeadroom = headroomAt[point];
+            const auto normalise = [&](double input) {
+                if constexpr (useReciprocal)
+                    return input * inverseHeadroomAt[point];
+                return input / runningHeadroom;
+            };
+#if defined(YOUKNOW106_WORK_AUDIT)
+            YOUKNOW106_COUNT_DOMAIN_WORK(vcfRhsEvaluations, 1);
+            YOUKNOW106_COUNT_DOMAIN_WORK(vcfFeedbackEvaluations, 1);
+            if (applyEarlyEffect)
+                YOUKNOW106_COUNT_DOMAIN_WORK(vcfEarlyEvaluations,
+                                             result.size());
+#endif
+            const double feedbackArgument = [&] {
+                if constexpr (useReciprocal)
+                    return value[3] * (1.0 / feedbackHeadroom);
+                return value[3] / feedbackHeadroom;
+            }();
+            double previous = drive - feedbackAt[point] * feedbackHeadroom
+                * nonlinear(feedbackArgument);
+            for (std::size_t stage = 0; stage < result.size(); ++stage)
+            {
+#if defined(YOUKNOW106_WORK_AUDIT)
+                YOUKNOW106_COUNT_DOMAIN_WORK(vcfStageEvaluations, 1);
+#endif
+                const double early = [&] {
+                    if (!applyEarlyEffect)
+                        return 1.0;
+                    if constexpr (useCubicEarly)
+                        return 1.0 + earlyAmount
+                            * cubicEarlyTanh(normalise(value[stage]));
+                    return 1.0 + earlyAmount
+                        * nonlinear(normalise(value[stage]));
+                }();
+                result[stage] = stageOmegaAt[point][stage]
+                    * early * runningHeadroom
+                    * nonlinear(normalise(
+                        previous - value[stage]
+                        + stageOffset[stage]));
+                previous = value[stage];
+            }
+            return result;
+        };
+
+        if constexpr (tableau == Tableau::MersonHalf)
+        {
+            for (int step = 0; step < integrationSubsteps; ++step)
+            {
+#if defined(YOUKNOW106_WORK_AUDIT)
+                YOUKNOW106_COUNT_DOMAIN_WORK(vcfIntegrationSubsteps, 1);
+#endif
+                const std::size_t origin = static_cast<std::size_t>(3 * step);
+                const auto k1 = derivative(state, inputAt[origin], origin);
+                const auto k2 = derivative(
+                    advanceOne(state, k1, substep / 3.0),
+                    inputAt[origin + 1u], origin + 1u);
+                const auto k3 = derivative(
+                    advanceTwo(state, substep, k1, 1.0 / 6.0,
+                               k2, 1.0 / 6.0),
+                    inputAt[origin + 1u], origin + 1u);
+                const auto k4 = derivative(
+                    advanceTwo(state, substep, k1, 1.0 / 8.0,
+                               k3, 3.0 / 8.0),
+                    inputAt[origin + 2u], origin + 2u);
+                const auto k5 = derivative(
+                    advanceThree(state, substep, k1, 1.0 / 2.0,
+                                 k3, -3.0 / 2.0, k4, 2.0),
+                    inputAt[origin + 3u], origin + 3u);
+                state = advanceThree(state, substep, k1, 1.0 / 6.0,
+                                     k4, 2.0 / 3.0, k5, 1.0 / 6.0);
+            }
+        }
+        else
+        {
+            // Classic RK4: one node at the start of the sub-interval, two
+            // at its midpoint and one at its end. The half-step rung walks
+            // that shape twice over the established 0/1/4/1/2 and 1/2/3/4/1
+            // ordinals; the full-interval rung walks it once over 0/1/2/1.
+            constexpr bool halfSteps = tableau == Tableau::Rk4Half;
+            constexpr int steps = halfSteps ? 2 : 1;
+            constexpr double stepSize = halfSteps ? 0.5 : 1.0;
+            for (int step = 0; step < steps; ++step)
+            {
+#if defined(YOUKNOW106_WORK_AUDIT)
+                YOUKNOW106_COUNT_DOMAIN_WORK(vcfIntegrationSubsteps, 1);
+#endif
+                const std::size_t start = halfSteps
+                    ? static_cast<std::size_t>(3 * step) : 0u;
+                const std::size_t middle = halfSteps
+                    ? static_cast<std::size_t>(2 + 3 * step) : 3u;
+                const std::size_t end = halfSteps
+                    ? static_cast<std::size_t>(3 + 3 * step) : 6u;
+                const auto k1 = derivative(state, inputAt[start], start);
+                const auto k2 = derivative(
+                    advanceOne(state, k1, 0.5 * stepSize),
+                    inputAt[middle], middle);
+                const auto k3 = derivative(
+                    advanceOne(state, k2, 0.5 * stepSize),
+                    inputAt[middle], middle);
+                const auto k4 = derivative(
+                    advanceOne(state, k3, stepSize), inputAt[end], end);
+                state = advanceFour(state, stepSize,
+                                    k1, 1.0 / 6.0, k2, 1.0 / 3.0,
+                                    k3, 1.0 / 3.0, k4, 1.0 / 6.0);
+            }
+        }
+    };
+
+    // One switch per interval over a value that is constant for the whole
+    // parameter snapshot. Each arm instantiates only the integration shell;
+    // the derivative it calls is shared, so the ladder does not clone the hot
+    // right-hand side -- an experiment that did clone one measured 6% slower.
+    const auto integrateWithTableau = [&]<bool useReciprocal>(
+                                          const auto& nonlinear) {
+        switch (plannedTableau)
+        {
+            case Tableau::Rk4Half:
+                integrate.template operator()<useReciprocal, Tableau::Rk4Half>(
+                    nonlinear);
+                return;
+            case Tableau::Rk4Full:
+                integrate.template operator()<useReciprocal, Tableau::Rk4Full>(
+                    nonlinear);
+                return;
+            case Tableau::MersonHalf:
+                break;
+        }
+        integrate.template operator()<useReciprocal, Tableau::MersonHalf>(
+            nonlinear);
+    };
+
+    if constexpr (useCubicEarly)
+        integrateWithTableau.template operator()<true>(
+            [](double value) noexcept {
+                return OtaCascade::zonedHermiteTanhUnchecked(value);
+            });
+    else
+        switch (tanhMode)
+        {
+            case VcfTanhMode::ZonedHermite:
+                integrateWithTableau.template operator()<true>(
+                    [](double value) noexcept {
+                        return OtaCascade::zonedHermiteTanhUnchecked(value);
+                    });
+                break;
+            case VcfTanhMode::Exact:
+            default:
+                integrateWithTableau.template operator()<false>(
+                    [](double value) noexcept {
+                        return std::tanh(value);
+                    });
+                break;
+        }
 
     for (std::size_t point = inputHistory.size() - 1u; point > 0u; --point)
         inputHistory[point] = inputHistory[point - 1u];
@@ -2348,9 +2726,11 @@ float YouKnow106Engine::OtaCascade::process(float input, float omegaStep,
     previousFeedback = currentFeedback;
     previousHeadroom = currentHeadroom;
 
+    // The comparison also rejects NaNs and infinities.  A separate isfinite
+    // predicate was redundant and measurably enlarged this hot loop.
     const bool valid = std::all_of(
         state.begin(), state.end(), [](double value) {
-            return std::isfinite(value) && std::abs(value) <= 64.0;
+            return std::abs(value) <= 64.0;
         });
     if (!valid)
     {
@@ -2409,6 +2789,7 @@ YouKnow106Engine::YouKnow106Engine() noexcept
     // exponentials do not belong in the first audio callback.
     (void) chassisGradientMeanCelsius();
     buildVoiceCards();
+    refreshVoiceCardThermalScales();
     clearHeldNotes();
 }
 
@@ -2450,7 +2831,6 @@ void YouKnow106Engine::buildHalfbandKernel() noexcept
     const double besselDenominator = besselI0(kaiserBeta);
 
     constexpr int centre = (halfbandTaps - 1) / 2;
-    double sum = 0.0;
     for (int n = 0; n < halfbandTaps; ++n)
     {
         const float offset = static_cast<float>(n - centre);
@@ -2479,9 +2859,19 @@ void YouKnow106Engine::buildHalfbandKernel() noexcept
             / besselDenominator;
         halfbandKernel_[static_cast<std::size_t>(n)] =
             ideal * static_cast<float>(window);
-        sum += static_cast<double>(
-            halfbandKernel_[static_cast<std::size_t>(n)]);
     }
+
+    // The ideal and window equations are symmetric, but C++ does not require
+    // independent libm evaluations at +/-x to round identically. The paired
+    // hot loop needs bit-equal coefficients, so make that design invariant
+    // explicit before normalisation instead of merely observing it locally.
+    for (int tap = 0; tap < centre; ++tap)
+        halfbandKernel_[static_cast<std::size_t>(halfbandTaps - 1 - tap)] =
+            halfbandKernel_[static_cast<std::size_t>(tap)];
+
+    double sum = 0.0;
+    for (const float tap : halfbandKernel_)
+        sum += static_cast<double>(tap);
 
     // Normalise to exactly unity gain at DC so decimation cannot shift level.
     if (sum > 1.0e-9)
@@ -2605,6 +2995,21 @@ void YouKnow106Engine::refreshVoiceCardStageTrims() noexcept
     }
 }
 
+void YouKnow106Engine::refreshVoiceCardThermalScales() noexcept
+{
+    for (int index = 0; index < maxVoices; ++index)
+    {
+        auto& card = cards_[static_cast<std::size_t>(index)];
+        card.thermalFilterOmegaScale =
+            activeParameters_.enableSpatialThermalGradient
+                ? 1.0 + static_cast<double>(vcfCutoffTempcoPerCelsius)
+                    * static_cast<double>(activeParameters_.calibration)
+                    * (static_cast<double>(chassisGradientCelsius(index))
+                       - static_cast<double>(chassisGradientMeanCelsius()))
+                : 1.0;
+    }
+}
+
 void YouKnow106Engine::prepare(double sampleRate, int maxBlockSize,
                                bool oversamplingEnabled)
 {
@@ -2647,8 +3052,40 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
     inverseOversampledRate_ = static_cast<float>(1.0 / oversampledRate_);
     noiseRateScale_ = static_cast<float>(
         std::sqrt(oversampledRate_ / noiseReferenceRateHz));
-    voiceBusCouplingG_ = std::tan(
-        pi * voiceBusCouplingCornerHz() * inverseOversampledRate_);
+    const auto slewFor = [this](float seconds) {
+        return 1.0f - std::exp(-inverseOversampledRate_ / seconds);
+    };
+    processingCoefficients_.vcfSlew = slewFor(vcfHoldSlewSeconds);
+    processingCoefficients_.dcoSlew = slewFor(dcoHoldSlewSecondsVoiced);
+    processingCoefficients_.resonanceSlew =
+        slewFor(resonanceHoldSlewSecondsVoiced);
+    processingCoefficients_.noiseSlew = slewFor(noiseHoldSlewSecondsVoiced);
+    processingCoefficients_.internalIntervalSeconds = 1.0 / oversampledRate_;
+    processingCoefficients_.voiceVcaDecay = std::exp(
+        -processingCoefficients_.internalIntervalSeconds
+        / static_cast<double>(voiceVcaHoldSlewSeconds));
+    processingCoefficients_.commonVcaTime =
+        static_cast<double>(commonVcaHoldTimeConstantSeconds());
+    processingCoefficients_.commonVcaDecay = std::exp(
+        -processingCoefficients_.internalIntervalSeconds
+        / processingCoefficients_.commonVcaTime);
+    processingCoefficients_.subDecay = std::exp(
+        -processingCoefficients_.internalIntervalSeconds
+        / static_cast<double>(subHoldSlewSeconds));
+    processingCoefficients_.pwmFullInterval = pwmHoldCoefficients(
+        processingCoefficients_.internalIntervalSeconds);
+    voiceEnergyFollower_ = slewFor(voiceEnergyFollowerSeconds);
+    processingCoefficients_.outputGlide =
+        1.0f - std::exp(-inverseSampleRate_ / panelGlideSeconds);
+    processingCoefficients_.scanPhasePerInternalSample =
+        controlScanHz / oversampledRate_;
+    processingCoefficients_.outputBoundaryGain = outputBoundaryGain();
+    processingCoefficients_.outputSlewMaxStep =
+        static_cast<float>(653846.15 / oversampledRate_);
+
+    // C14's load and the following HPF are selected by one panel switch.  Their
+    // coefficients move only with that mode or this internal rate.
+    updateSharedHighPass(activeParameters_);
     moduleCouplingG_ = std::tan(
         pi * moduleCouplingCornerHz() * inverseOversampledRate_);
     vcaInputCouplingG_ = std::tan(
@@ -3084,6 +3521,16 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
                            : 0.0f;
     result.keyTranspose = std::clamp(result.keyTranspose, -12, 12);
     result.polyphony = std::clamp(result.polyphony, 1, maxVoices);
+    if (result.vcfTanhMode != VcfTanhMode::Exact
+        && result.vcfTanhMode != VcfTanhMode::ZonedHermite)
+        result.vcfTanhMode = VcfTanhMode::Exact;
+    if (result.vcfFastEarlyMode != VcfFastEarlyMode::Hermite
+        && result.vcfFastEarlyMode != VcfFastEarlyMode::Cubic)
+        result.vcfFastEarlyMode = VcfFastEarlyMode::Hermite;
+    if (result.vcfSolverMode != VcfSolverMode::MersonHalfSteps
+        && result.vcfSolverMode != VcfSolverMode::Rk4HalfSteps
+        && result.vcfSolverMode != VcfSolverMode::Rk4Single)
+        result.vcfSolverMode = VcfSolverMode::MersonHalfSteps;
     return result;
 }
 
@@ -3105,28 +3552,59 @@ void YouKnow106Engine::updateSharedHighPass(const EngineParameters& parameters) 
 
 void YouKnow106Engine::setParameters(const EngineParameters& parameters)
 {
+    // Before the first valid prepared audio interval, even an equal snapshot has
+    // the one-shot responsibility of priming the physical holds below.  Once
+    // audio time has begun, an equal complete image has no ordered converter
+    // write or assignment side effect and can return exactly.
+    const bool startupSnapshot = !prepared_ || !panelGlidePrimed_;
+    if (!startupSnapshot && parameters == activeParameters_
+        && parameters == targetParameters_)
+        return;
+
     const auto next = sanitise(parameters);
+    if (!startupSnapshot && next == activeParameters_
+        && next == targetParameters_)
+        return;
+
     const bool assignModeChanged = next.keyMode != activeParameters_.keyMode;
     const bool unisonVoiceCountChanged = next.polyphony != activeParameters_.polyphony
                                       && (next.keyMode == KeyMode::Unison
                                           || activeParameters_.keyMode
                                                  == KeyMode::Unison);
+    const bool highPassChanged = next.highPass != activeParameters_.highPass;
+    const bool stageTrimsChanged =
+        next.calibration != activeParameters_.calibration
+        || next.enableVcfStageOffsets
+               != activeParameters_.enableVcfStageOffsets;
+    const bool thermalScalesChanged = startupSnapshot
+        || next.calibration != activeParameters_.calibration
+        || next.enableSpatialThermalGradient
+               != activeParameters_.enableSpatialThermalGradient;
+    const bool agingChanged = next.aging != activeParameters_.aging;
     // Before the first valid prepared audio interval, a host snapshot is the
     // power-up image rather than a timed panel move. `panelGlidePrimed_` is
     // already the exact one-shot marker for that boundary: invalid/zero calls
     // return before setting it, and reset clears it. Do not use output-path
     // silence here. Once audio time has started, the hardware scanner keeps
     // running through ordinary silence and after panic.
-    const bool startupSnapshot = !prepared_ || !panelGlidePrimed_;
     targetParameters_ = next;
     // Switch positions land immediately. Main VOLUME is the only continuous
     // panel control applied outside the scanned converter path; it glides in
     // the render loop so host automation cannot make a block-boundary step.
     activeParameters_ = targetParameters_;
+    useCubicEarly_ =
+        activeParameters_.vcfTanhMode == VcfTanhMode::ZonedHermite
+        && activeParameters_.vcfFastEarlyMode == VcfFastEarlyMode::Cubic;
     // Unit Character scales the stage offsets, so they follow the panel; the
     // aged-unit precompute follows only panel edits and reset, not note-ons.
-    refreshVoiceCardStageTrims();
-    refreshAgedUnitState();
+    if (stageTrimsChanged)
+        refreshVoiceCardStageTrims();
+    if (thermalScalesChanged)
+        refreshVoiceCardThermalScales();
+    if (agingChanged)
+        refreshAgedUnitState();
+    if (highPassChanged)
+        updateSharedHighPass(activeParameters_);
 
     // A host may deliver its saved snapshot before prepare(), after prepare(),
     // or more than once while restoring state. Until audio time begins, prime
@@ -3424,10 +3902,11 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
     const bool pitchChanged = !voice.hasVoicePitchHistory
                            || voice.lastVoiceMidi != voiceMidi;
 
+    // reset() permanently binds array slot N to card N. Every caller passes the
+    // voice from that same slot, so this defensive assignment is a no-op and the
+    // card trims already installed by reset()/setParameters() remain current.
+    // In particular, a note-on must not recompute all 16 cards' four stages.
     voice.cardIndex = slot;
-    // A no-op while slot and card index always agree, but written so a future
-    // assigner change cannot silently leave a voice on another card's offsets.
-    refreshVoiceCardStageTrims();
     voice.active = true;
     voice.keyDown = true;
     voice.sustained = false;
@@ -4489,6 +4968,7 @@ float YouKnow106Engine::dynamicOtaHeadroomVolts(
     return 2.0f * dynamicThermalVoltage / stageAttenuation;
 }
 
+template <bool useCubicEarly>
 float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parameters,
                                     float noiseSample) noexcept
 {
@@ -4503,6 +4983,11 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
 #endif
     auto& dco = voice.dco;
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
+    const auto boundedOmegaStep = [&](float baseOmegaStep) {
+        return static_cast<float>(OtaCascade::clampOmegaStep(
+            static_cast<double>(baseOmegaStep)
+                * card.thermalFilterOmegaScale));
+    };
 
     // Nothing thermal, and nothing per-card, reaches this increment. The note
     // timer divides one crystal-derived clock by an integer, so a card's
@@ -4511,11 +4996,27 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // over 13 cents and removed the one thing this architecture exists to
     // guarantee -- see the note on tuning stability in
     // Docs/research.md.
-    const double increment = dco.periodSamples > 1.0e-9
+    const auto periodKey = std::bit_cast<std::uint64_t>(dco.periodSamples);
+    const auto inverseRateKey =
+        std::bit_cast<std::uint32_t>(inverseOversampledRate_);
+    auto& geometry = dco.geometry;
+    if (!geometry.valid || geometry.periodKey != periodKey
+        || geometry.inverseRateKey != inverseRateKey)
+    {
+        // Keep the original expression types and evaluation order: increment
+        // first, then resetFraction(period * inverseRate), then rise.
+        geometry.increment = dco.periodSamples > 1.0e-9
                            ? 1.0 / dco.periodSamples : 0.0;
-    const auto resetAndRise = dcoResetAndRise(dco.periodSamples);
-    const double reset = resetAndRise[0];
-    const double rise = resetAndRise[1];
+        const auto resetAndRise = dcoResetAndRise(dco.periodSamples);
+        geometry.reset = resetAndRise[0];
+        geometry.rise = resetAndRise[1];
+        geometry.periodKey = periodKey;
+        geometry.inverseRateKey = inverseRateKey;
+        geometry.valid = true;
+    }
+    const double increment = geometry.increment;
+    const double reset = geometry.reset;
+    const double rise = geometry.rise;
 
     const double previousPhase = dco.phase;
     const double unwrapped = dco.phase + increment;
@@ -4794,8 +5295,11 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // Module p. 13 (2026-08-07 designator read): saw and pulse leave the
     // waveshaper already summed on ONE per-voice WAVE output (IC12/IC8/IC4
     // pin 14 or 16), the sub joins that line through R101/R97 27k behind
-    // D6/D5 from its own switch transistor, the shared noise rail arrives on
-    // its own leg, and C56/C50 couple the node into the voice module's input.
+    // D6/D5 from its own switch transistor -- 60k of conducting-path series
+    // resistance back to the SUB LEVEL rail once R102/R99's 33k collector load
+    // is counted (2026-08-20 junction read) -- the shared noise rail arrives
+    // on its own leg, and C56/C50 couple the node into the voice module's
+    // input.
     // No panel switch reaches this node: SAW is gated by a control rail at
     // the generator ("0: saw ON" at Tr24/R148), PULSE by the -0.8 V hold that
     // pins the comparator (what the pinned state leaves on the node is
@@ -4854,8 +5358,8 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // modelled sample rate: they add neither an inter-domain boundary nor
     // latency. Apply the product-grid cap after the thermal card spread so Unit
     // Character cannot push the numerical interval past the proven boundary.
-    const float effectiveFilterOmegaStep = boundedThermalFilterOmegaStep(
-        voice.filterOmegaStep, parameters, voice.cardIndex);
+    const float effectiveFilterOmegaStep = boundedOmegaStep(
+        voice.filterOmegaStep);
     OtaCascade::ControlTrajectory eventControlTrajectory;
     const OtaCascade::ControlTrajectory* controlTrajectory = nullptr;
     if (exactVcfControlInterval_[
@@ -4888,8 +5392,7 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
             const float baseOmega = twoPi * limited
                                   * inverseOversampledRate_;
             return VcfControl {
-                boundedThermalFilterOmegaStep(
-                    baseOmega, parameters, voice.cardIndex),
+                boundedOmegaStep(baseOmega),
                 mappedFeedback
             };
         };
@@ -4948,10 +5451,11 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         eventControlTrajectory.headroom.back() = dynamicHeadroom;
         controlTrajectory = &eventControlTrajectory;
     }
-    const float filtered = voice.filter.process(
+    const float filtered = voice.filter.process<useCubicEarly>(
         filterInput, effectiveFilterOmegaStep, voice.feedback,
         dynamicHeadroom, parameters.enableVcfEarlyEffect,
-        parameters.calibration, controlTrajectory);
+        parameters.calibration, controlTrajectory, parameters.vcfTanhMode,
+        parameters.vcfSolverMode);
 
     // C59 stands between pin 3 VCF OUT and pin 9 VCA IN, so the amplifier
     // never sees the filter's DC. The cascade makes DC of its own: the stage
@@ -5004,23 +5508,40 @@ void YouKnow106Engine::downsamplePair(HalfbandDecimator& decimator,
 
     float sumLeft = 0.0f;
     float sumRight = 0.0f;
-    // Walking the compacted active taps rather than all 95 with a per-tap
-    // branch. Same taps, same ascending order, same accumulation sequence.
+    // The real half-band kernel is exactly symmetric after float
+    // normalisation. Pairing its mirrored samples halves the multiplications
+    // while preserving the same 95-tap response and group delay.
     const int newest = (decimator.writeIndex - 1) & (halfbandRingSize - 1);
-    for (int entry = 0; entry < halfbandActiveTapCount_; ++entry)
+    const int pairs = halfbandActiveTapCount_ / 2;
+    for (int pair = 0; pair < pairs; ++pair)
     {
 #if defined(YOUKNOW106_WORK_AUDIT)
-        YOUKNOW106_COUNT_DOMAIN_WORK(decimatorNonzeroTapVisits, 1);
+        YOUKNOW106_COUNT_DOMAIN_WORK(decimatorNonzeroTapVisits, 2);
         YOUKNOW106_COUNT_DOMAIN_WORK(decimatorStereoMacs, 2);
 #endif
-        const auto& active =
-            halfbandActiveTaps_[static_cast<std::size_t>(entry)];
-        const int index = (newest - active.tap) & (halfbandRingSize - 1);
-        sumLeft += active.coefficient
-            * decimator.left[static_cast<std::size_t>(index)];
-        sumRight += active.coefficient
-            * decimator.right[static_cast<std::size_t>(index)];
+        const auto& first = halfbandActiveTaps_[static_cast<std::size_t>(pair)];
+        const auto& second = halfbandActiveTaps_[static_cast<std::size_t>(
+            halfbandActiveTapCount_ - 1 - pair)];
+        const int firstIndex = (newest - first.tap) & (halfbandRingSize - 1);
+        const int secondIndex = (newest - second.tap) & (halfbandRingSize - 1);
+        sumLeft += first.coefficient
+            * (decimator.left[static_cast<std::size_t>(firstIndex)]
+               + decimator.left[static_cast<std::size_t>(secondIndex)]);
+        sumRight += first.coefficient
+            * (decimator.right[static_cast<std::size_t>(firstIndex)]
+               + decimator.right[static_cast<std::size_t>(secondIndex)]);
     }
+
+    const auto& centre = halfbandActiveTaps_[static_cast<std::size_t>(pairs)];
+    const int centreIndex = (newest - centre.tap) & (halfbandRingSize - 1);
+    sumLeft += centre.coefficient
+        * decimator.left[static_cast<std::size_t>(centreIndex)];
+    sumRight += centre.coefficient
+        * decimator.right[static_cast<std::size_t>(centreIndex)];
+#if defined(YOUKNOW106_WORK_AUDIT)
+    YOUKNOW106_COUNT_DOMAIN_WORK(decimatorNonzeroTapVisits, 1);
+    YOUKNOW106_COUNT_DOMAIN_WORK(decimatorStereoMacs, 2);
+#endif
 
     outputLeft = sumLeft;
     outputRight = sumRight;
@@ -5068,12 +5589,6 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
     const auto& parameters = activeParameters_;
 
-    // One shared network, so its coefficients are settled once here rather than
-    // six times inside the voice loop. It has to come after the pending
-    // oversampling switch, which is what moves the rate they are prewarped
-    // against.
-    updateSharedHighPass(parameters);
-
     if (!panelGlidePrimed_)
     {
         glidedVolume_ = parameters.volume;
@@ -5085,39 +5600,27 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     // networks; resonance keeps Step 11's explicitly voiced 522 us companion
     // trajectory, while DCO and noise retain their isolated compatibility
     // policies until their RCs are established. Exact full-interval decays
-    // are precomputed once per call; only the rare interval that actually
-    // contains a fractional write needs an event-position exponential.
-    const auto slewFor = [this](float seconds) {
-        return 1.0f - std::exp(-inverseOversampledRate_ / seconds);
+    // are precomputed when the processing rate changes; only the rare interval
+    // that actually contains a fractional write needs an event-position
+    // exponential.
+    // Hold, scan and output coefficients are refreshed by updateProcessingRate;
+    // this reference keeps the sample equations below unchanged while avoiding
+    // per-host-block exponentials and divisions.
+    const auto& coefficients = processingCoefficients_;
+    // Ordinary intervals use finite engine-owned state, sanitized targets and
+    // precomputed finite decays. Keep exactOnePoleHoldEndpoint's full guards
+    // for the rare physical event and direct hostile-input test paths.
+    const auto advanceOrdinaryOnePoleHold = [](double state, float target,
+                                                double decay) noexcept {
+        const double resolvedTarget = static_cast<double>(target);
+        return resolvedTarget + (state - resolvedTarget) * decay;
     };
-    const float vcfSlew = slewFor(vcfHoldSlewSeconds);
-    const float dcoSlew = slewFor(dcoHoldSlewSecondsVoiced);
-    const float resonanceSlew = slewFor(resonanceHoldSlewSecondsVoiced);
-    const float noiseSlew = slewFor(noiseHoldSlewSecondsVoiced);
-    const double internalIntervalSeconds = 1.0 / oversampledRate_;
-    const double voiceVcaDecay = std::exp(
-        -internalIntervalSeconds
-        / static_cast<double>(voiceVcaHoldSlewSeconds));
-    const double commonVcaTime =
-        static_cast<double>(commonVcaHoldTimeConstantSeconds());
-    const double commonVcaDecay = std::exp(
-        -internalIntervalSeconds / commonVcaTime);
-    const double subDecay = std::exp(
-        -internalIntervalSeconds
-        / static_cast<double>(subHoldSlewSeconds));
-    const PwmHoldCoefficients pwmFullInterval =
-        pwmHoldCoefficients(internalIntervalSeconds);
-    voiceEnergyFollower_ = slewFor(voiceEnergyFollowerSeconds);
-    const float outputGlide =
-        1.0f - std::exp(-inverseSampleRate_ / panelGlideSeconds);
-    const double scanPhasePerInternalSample = controlScanHz / oversampledRate_;
-    const float outputBoundaryGain = YouKnow106Engine::outputBoundaryGain();
-    // TA75558S IC6 output slew limit, SR = 1.7 V/us (653846 engine units per
-    // second at 2.6 V per unit). Depends only on the internal rate, which is
-    // fixed for the whole call, so it belongs beside the other per-call slew
-    // constants above rather than being re-divided every internal sample.
-    const float outputSlewMaxStep =
-        static_cast<float>(653846.15 / oversampledRate_);
+    bool patchLevelCacheValid = false;
+    std::uint32_t patchLevelCacheKey = 0u;
+    float patchLevelCacheValue = 0.0f;
+    bool outputCouplingCacheValid = false;
+    std::uint32_t outputCouplingCacheKey = 0u;
+    float outputCouplingCacheGain = 0.0f;
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
@@ -5177,8 +5680,6 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 return 0.0f;
             };
             const float resonanceIntervalStart = resonanceCv_;
-            exactVcfControlInterval_.fill(false);
-
             // One converter serves the whole instrument. The service chart
             // and the hash-matched B-2 code establish the complete ordinal
             // write order and show sequential activity across the pass. The
@@ -5271,7 +5772,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
             if (!physicalHoldEvent.active
                 && latchUpcomingPassiveHoldEvent(
-                    controlScanPhase_, scanPhasePerInternalSample,
+                    controlScanPhase_, coefficients.scanPhasePerInternalSample,
                     parameters))
             {
                 physicalHoldEvent.active = true;
@@ -5295,7 +5796,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     resonanceIntervalStart,
                     physicalHoldEvent.previousTarget, true,
                     physicalHoldEvent.position, physicalHoldEvent.target,
-                    internalIntervalSeconds);
+                    coefficients.internalIntervalSeconds);
                 resonanceCv_ = resonanceVcfHoldInterval_.endpoint;
             }
             else
@@ -5304,23 +5805,28 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 {
                     resonanceVcfHoldInterval_ = exactVcfHoldInterval(
                         resonanceIntervalStart, resonanceCvTarget_, false,
-                        1.0, resonanceCvTarget_, internalIntervalSeconds);
+                        1.0, resonanceCvTarget_,
+                        coefficients.internalIntervalSeconds);
                     resonanceCv_ = resonanceVcfHoldInterval_.endpoint;
                 }
                 else
                     resonanceCv_ +=
-                        (resonanceCvTarget_ - resonanceCv_) * resonanceSlew;
+                        (resonanceCvTarget_ - resonanceCv_)
+                            * coefficients.resonanceSlew;
             }
             const bool commonVcaEvent = physicalHoldEvent.active
                 && physicalHoldEvent.write.destination
                        == ConverterDestination::CommonVca;
-            sharedVca_ = exactOnePoleHoldEndpoint(
-                sharedVca_,
-                commonVcaEvent ? physicalHoldEvent.previousTarget
-                               : sharedVcaTarget_,
-                commonVcaEvent, physicalHoldEvent.position,
-                commonVcaEvent ? physicalHoldEvent.target : sharedVcaTarget_,
-                internalIntervalSeconds, commonVcaTime, commonVcaDecay);
+            sharedVca_ = commonVcaEvent
+                ? exactOnePoleHoldEndpoint(
+                    sharedVca_, physicalHoldEvent.previousTarget, true,
+                    physicalHoldEvent.position, physicalHoldEvent.target,
+                    coefficients.internalIntervalSeconds,
+                    coefficients.commonVcaTime,
+                    coefficients.commonVcaDecay)
+                : advanceOrdinaryOnePoleHold(
+                    sharedVca_, sharedVcaTarget_,
+                    coefficients.commonVcaDecay);
 
             const bool pwmEvent = physicalHoldEvent.active
                 && physicalHoldEvent.write.destination
@@ -5331,21 +5837,24 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 pwmEvent ? physicalHoldEvent.previousTarget : pwmVoltsTarget_,
                 pwmEvent, physicalHoldEvent.position,
                 pwmEvent ? physicalHoldEvent.target : pwmVoltsTarget_,
-                internalIntervalSeconds, pwmFullInterval);
+                coefficients.internalIntervalSeconds,
+                coefficients.pwmFullInterval);
             pwmVoltsFirstPole_ = pwmState.first;
             pwmVolts_ = pwmState.second;
 
             const bool subEvent = physicalHoldEvent.active
                 && physicalHoldEvent.write.destination
                        == ConverterDestination::Sub;
-            subCv_ = exactOnePoleHoldEndpoint(
-                subCv_, subEvent ? physicalHoldEvent.previousTarget
-                                 : subCvTarget_,
-                subEvent, physicalHoldEvent.position,
-                subEvent ? physicalHoldEvent.target : subCvTarget_,
-                internalIntervalSeconds,
-                static_cast<double>(subHoldSlewSeconds), subDecay);
-            noiseCv_ += (noiseCvTarget_ - noiseCv_) * noiseSlew;
+            subCv_ = subEvent
+                ? exactOnePoleHoldEndpoint(
+                    subCv_, physicalHoldEvent.previousTarget, true,
+                    physicalHoldEvent.position, physicalHoldEvent.target,
+                    coefficients.internalIntervalSeconds,
+                    static_cast<double>(subHoldSlewSeconds),
+                    coefficients.subDecay)
+                : advanceOrdinaryOnePoleHold(
+                    subCv_, subCvTarget_, coefficients.subDecay);
+            noiseCv_ += (noiseCvTarget_ - noiseCv_) * coefficients.noiseSlew;
             advanceThermalWarmup();
 
             if (--driftControlCountdown_ <= 0)
@@ -5404,104 +5913,121 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // Every slot, not just the first `limit` of them. The voice count
             // bounds what the key assigner may take; lowering it must stop new
             // notes rather than freeze notes that are already sounding.
-            for (int slot = 0; slot < maxVoices; ++slot)
-            {
-                auto& voice = voices_[static_cast<std::size_t>(slot)];
+            const auto renderVoices = [&]<bool useCubicEarly> {
+                for (int slot = 0; slot < maxVoices; ++slot)
+                {
+                    auto& voice = voices_[static_cast<std::size_t>(slot)];
 
 #if defined(YOUKNOW106_WORK_AUDIT)
-                YOUKNOW106_COUNT_DOMAIN_WORK(holdVoiceUpdates, 1);
+                    YOUKNOW106_COUNT_DOMAIN_WORK(holdVoiceUpdates, 1);
 #endif
-                // Each hold capacitor's own slew turns the scan's staircase
-                // back into a continuous control voltage before it reaches
-                // its converter. The amplifier's hold is the slow one.
-                const bool cutoffEvent = cutoffHoldEvent
-                    && physicalHoldEvent.write.destination
-                           == ConverterDestination::Vcf
-                    && physicalHoldEvent.write.voice == slot;
-                const float cutoffIntervalStart = voice.cutoffCounts;
-                if (cutoffEvent)
-                {
-                    cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)] =
-                        exactVcfHoldInterval(
-                            cutoffIntervalStart,
+                    // Each hold capacitor's own slew turns the scan's staircase
+                    // back into a continuous control voltage before it reaches
+                    // its converter. The amplifier's hold is the slow one.
+                    const bool cutoffEvent = cutoffHoldEvent
+                        && physicalHoldEvent.write.destination
+                               == ConverterDestination::Vcf
+                        && physicalHoldEvent.write.voice == slot;
+                    const float cutoffIntervalStart = voice.cutoffCounts;
+                    if (cutoffEvent)
+                    {
+                        cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)] =
+                            exactVcfHoldInterval(
+                                cutoffIntervalStart,
+                                physicalHoldEvent.previousTarget, true,
+                                physicalHoldEvent.position,
+                                physicalHoldEvent.target,
+                                coefficients.internalIntervalSeconds);
+                        voice.cutoffCounts =
+                            cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)]
+                                .endpoint;
+                    }
+                    else if (resonanceEvent)
+                    {
+                        cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)] =
+                            exactVcfHoldInterval(
+                                cutoffIntervalStart, voice.cutoffCountsTarget,
+                                false, 1.0, voice.cutoffCountsTarget,
+                                coefficients.internalIntervalSeconds);
+                        voice.cutoffCounts =
+                            cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)]
+                                .endpoint;
+                    }
+                    else
+                    {
+                        voice.cutoffCounts +=
+                            (voice.cutoffCountsTarget - voice.cutoffCounts)
+                                * coefficients.vcfSlew;
+                    }
+                    // Every slot reaches this store before renderVoice can read its
+                    // entry, so clearing the whole array at the interval boundary
+                    // would only write the same values twice.
+                    exactVcfControlInterval_[static_cast<std::size_t>(slot)] =
+                        resonanceEvent || cutoffEvent;
+                    voice.dcoCv +=
+                        (voice.dcoCvTarget - voice.dcoCv) * coefficients.dcoSlew;
+                    const bool voiceVcaEvent = physicalHoldEvent.active
+                        && physicalHoldEvent.write.destination
+                               == ConverterDestination::VoiceVca
+                        && physicalHoldEvent.write.voice == slot;
+                    voice.vcaControl = voiceVcaEvent
+                        ? exactOnePoleHoldEndpoint(
+                            voice.vcaControl,
                             physicalHoldEvent.previousTarget, true,
                             physicalHoldEvent.position,
                             physicalHoldEvent.target,
-                            internalIntervalSeconds);
-                    voice.cutoffCounts =
-                        cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)]
-                            .endpoint;
-                }
-                else if (resonanceEvent)
-                {
-                    cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)] =
-                        exactVcfHoldInterval(
-                            cutoffIntervalStart, voice.cutoffCountsTarget,
-                            false, 1.0, voice.cutoffCountsTarget,
-                            internalIntervalSeconds);
-                    voice.cutoffCounts =
-                        cutoffVcfHoldIntervals_[static_cast<std::size_t>(slot)]
-                            .endpoint;
-                }
-                else
-                {
-                    voice.cutoffCounts +=
-                        (voice.cutoffCountsTarget - voice.cutoffCounts)
-                            * vcfSlew;
-                }
-                exactVcfControlInterval_[static_cast<std::size_t>(slot)] =
-                    resonanceEvent || cutoffEvent;
-                voice.dcoCv +=
-                    (voice.dcoCvTarget - voice.dcoCv) * dcoSlew;
-                const bool voiceVcaEvent = physicalHoldEvent.active
-                    && physicalHoldEvent.write.destination
-                           == ConverterDestination::VoiceVca
-                    && physicalHoldEvent.write.voice == slot;
-                voice.vcaControl = exactOnePoleHoldEndpoint(
-                    voice.vcaControl,
-                    voiceVcaEvent ? physicalHoldEvent.previousTarget
-                                  : voice.vcaControlTarget,
-                    voiceVcaEvent, physicalHoldEvent.position,
-                    voiceVcaEvent ? physicalHoldEvent.target
-                                  : voice.vcaControlTarget,
-                    internalIntervalSeconds,
-                    static_cast<double>(voiceVcaHoldSlewSeconds),
-                    voiceVcaDecay);
-                // Both of these feed `renderVoice`, which returns before it
-                // reads any of their results for an inactive extension slot
-                // (`!voice.active && cardIndex >= hardwareVoices`, and
-                // `cardIndex` is always the slot). One guard, so the two
-                // cannot drift apart from that early return or each other.
-                if (voice.active || slot < hardwareVoices)
-                {
-                    updatePulseComparator(voice, parameters);
-                    updateVoiceAudio(voice, parameters);
-                }
+                            coefficients.internalIntervalSeconds,
+                            static_cast<double>(voiceVcaHoldSlewSeconds),
+                            coefficients.voiceVcaDecay)
+                        : advanceOrdinaryOnePoleHold(
+                            voice.vcaControl, voice.vcaControlTarget,
+                            coefficients.voiceVcaDecay);
+                    // Both of these feed `renderVoice`, which returns before it
+                    // reads any of their results for an inactive extension slot
+                    // (`!voice.active && cardIndex >= hardwareVoices`, and
+                    // `cardIndex` is always the slot). One guard, so the two
+                    // cannot drift apart from that early return or each other.
+                    if (voice.active || slot < hardwareVoices)
+                    {
+                        updatePulseComparator(voice, parameters);
+                        updateVoiceAudio(voice, parameters);
+                    }
 
-                if (!voice.active)
-                {
-                    // The six physical DCO/filter cards remain powered behind
-                    // their closed VCAs; extension slots stop inside renderVoice.
-                    renderVoice(voice, parameters, noiseSample);
-                    continue;
+                    if (!voice.active)
+                    {
+                        // The six physical DCO/filter cards remain powered behind
+                        // their closed VCAs. Extension slots have no card state to
+                        // advance, so avoid entering renderVoice only to take its
+                        // identical early return.
+                        if (voice.cardIndex < hardwareVoices)
+                            renderVoice<useCubicEarly>(
+                                voice, parameters, noiseSample);
+                        continue;
+                    }
+
+                    mono += renderVoice<useCubicEarly>(
+                        voice, parameters, noiseSample);
+                    loudestEnvelope = std::max(
+                        loudestEnvelope, voice.envelope.value);
+
+                    // Retire on the modelled amplifier actually being shut. A
+                    // card's optional control offset can hold the control voltage
+                    // just above the turn-on for ever, where the grounded-base
+                    // stage still passes an inaudible trickle; without an explicit
+                    // silence threshold a voice at -100 dB would block a deferred
+                    // quality change indefinitely.
+                    if (voice.envelope.stage == EnvelopeStage::Idle
+                        && !voice.keyDown && !voice.sustained
+                        && voice.vcaGain <= VoiceVcaControlLaw::silenceGain)
+                        silenceVoice(voice);
+                    else
+                        sounding = true;
                 }
-
-                mono += renderVoice(voice, parameters, noiseSample);
-                loudestEnvelope = std::max(loudestEnvelope, voice.envelope.value);
-
-                // Retire on the modelled amplifier actually being shut. A
-                // card's optional control offset can hold the control voltage
-                // just above the turn-on for ever, where the grounded-base
-                // stage still passes an inaudible trickle; without an explicit
-                // silence threshold a voice at -100 dB would block a deferred
-                // quality change indefinitely.
-                if (voice.envelope.stage == EnvelopeStage::Idle
-                    && !voice.keyDown && !voice.sustained
-                    && voice.vcaGain <= VoiceVcaControlLaw::silenceGain)
-                    silenceVoice(voice);
-                else
-                    sounding = true;
-            }
+            };
+            if (useCubicEarly_)
+                [[unlikely]] renderVoices.template operator()<true>();
+            else
+                renderVoices.template operator()<false>();
 
             displayEnvelope_ = loudestEnvelope;
 
@@ -5511,7 +6037,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             if (converterPassCompleted && assignmentRescanPending_
                 && assignmentRescanPassArmed_)
                 completeVoiceAssignmentRescan();
-            controlScanPhase_ += scanPhasePerInternalSample;
+            controlScanPhase_ += coefficients.scanPhasePerInternalSample;
 
             // One high-pass, on the summed voices. The schematic carries a
             // single set of parts for it -- on the jack board, downstream of
@@ -5541,8 +6067,16 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // only by ENV/GATE (plus the optional velocity extension).
             const float vcaInput = commonVcaInputCoupling_.process(
                 shaped, commonVcaInputCouplingG_, 0.0f, 1.0f);
-            const float levelled = vcaInput * patchLevelGain(
-                static_cast<float>(sharedVca_));
+            const float patchLevelInput = static_cast<float>(sharedVca_);
+            const auto patchLevelKey =
+                std::bit_cast<std::uint32_t>(patchLevelInput);
+            if (!patchLevelCacheValid || patchLevelCacheKey != patchLevelKey)
+            {
+                patchLevelCacheValue = patchLevelGain(patchLevelInput);
+                patchLevelCacheKey = patchLevelKey;
+                patchLevelCacheValid = true;
+            }
+            const float levelled = vcaInput * patchLevelCacheValue;
 
             // The chorus input coupling capacitors sit in its two wet branches;
             // dry bypasses them. IC6 applies its component-derived dry/wet
@@ -5563,10 +6097,16 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // freshly calibrated instrument has exactly the same rails, and a
             // "pristine reference" whose output stage could swing to infinity
             // would be the less faithful model, not the more faithful one.
+            const auto wetLeftKey = std::bit_cast<std::uint32_t>(wetLeft);
+            const auto wetRightKey = std::bit_cast<std::uint32_t>(wetRight);
             wetLeft = outputSummerClip(wetLeft);
-            wetRight = outputSummerClip(wetRight);
+            // outputSummerClip's rail and exponent are fixed. Reuse only for an
+            // identical float representation, preserving signed zero and NaN
+            // payload distinctions as well as ordinary unequal stereo samples.
+            wetRight = wetLeftKey == wetRightKey
+                     ? wetLeft : outputSummerClip(wetRight);
 
-            // TA75558S IC6 output slew limit (outputSlewMaxStep above). A part
+            // TA75558S IC6 output slew limit. A part
             // property, so -- exactly like the rails above -- it is not
             // scaled by Unit Character: a previous revision divided it by
             // calibration, granting the pristine reference a 10x faster
@@ -5576,12 +6116,14 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             {
                 const float deltaL = wetLeft - outputSlewStateLeft_;
                 outputSlewStateLeft_ += std::clamp(
-                    deltaL, -outputSlewMaxStep, outputSlewMaxStep);
+                    deltaL, -coefficients.outputSlewMaxStep,
+                    coefficients.outputSlewMaxStep);
                 wetLeft = outputSlewStateLeft_;
 
                 const float deltaR = wetRight - outputSlewStateRight_;
                 outputSlewStateRight_ += std::clamp(
-                    deltaR, -outputSlewMaxStep, outputSlewMaxStep);
+                    deltaR, -coefficients.outputSlewMaxStep,
+                    coefficients.outputSlewMaxStep);
                 wetRight = outputSlewStateRight_;
             }
             else
@@ -5620,7 +6162,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
         applyLatencyPad(outputLeft, outputRight);
 
-        glidedVolume_ += (parameters.volume - glidedVolume_) * outputGlide;
+        glidedVolume_ +=
+            (parameters.volume - glidedVolume_) * coefficients.outputGlide;
 
         // C17/C20, R54/R57 and VR1 are one loaded network, not a fixed pole
         // followed by an unrelated gain. The 41.3 kOhm selector ladder and
@@ -5631,16 +6174,31 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
         // network independently -- fine for the two callers that only want one
         // of the two values, but this call site always wants both, so it is
         // solved once here and both results are read off the one network.
-        const auto outputCouplingNetwork =
-            outputCouplingWiperNetworkFor(glidedVolume_);
-        const float outputCouplingCorner = 1.0f
-            / (twoPi * outputCouplingCapacitanceF
-               * outputCouplingNetwork.resistance);
-        outputCouplingG_ = std::tan(
-            pi * outputCouplingCorner * inverseSampleRate_);
-        const float outputCouplingGain = outputCouplingNetwork.loadedLower > 0.0f
-            ? outputCouplingNetwork.loadedLower / outputCouplingNetwork.resistance
-            : 0.0f;
+        const auto outputCouplingKey =
+            std::bit_cast<std::uint32_t>(glidedVolume_);
+        float outputCouplingGain;
+        if (!outputCouplingCacheValid
+            || outputCouplingCacheKey != outputCouplingKey)
+        {
+            const auto outputCouplingNetwork =
+                outputCouplingWiperNetworkFor(glidedVolume_);
+            const float outputCouplingCorner = 1.0f
+                / (twoPi * outputCouplingCapacitanceF
+                   * outputCouplingNetwork.resistance);
+            outputCouplingG_ = std::tan(
+                pi * outputCouplingCorner * inverseSampleRate_);
+            outputCouplingGain = outputCouplingNetwork.loadedLower > 0.0f
+                ? outputCouplingNetwork.loadedLower
+                    / outputCouplingNetwork.resistance
+                : 0.0f;
+            outputCouplingCacheKey = outputCouplingKey;
+            outputCouplingCacheGain = outputCouplingGain;
+            outputCouplingCacheValid = true;
+        }
+        else
+        {
+            outputCouplingGain = outputCouplingCacheGain;
+        }
         outputLeft = outputCouplingLeft_.process(
             outputLeft, outputCouplingG_, 0.0f, outputCouplingGain);
         outputRight = outputCouplingRight_.process(
@@ -5655,10 +6213,12 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
         const float transitionGain = rateTransitionGain_;
         left[sample] = std::isfinite(outputLeft)
-                     ? outputLeft * outputBoundaryGain * transitionGain
+                     ? outputLeft * coefficients.outputBoundaryGain
+                           * transitionGain
                      : 0.0f;
         right[sample] = std::isfinite(outputRight)
-                      ? outputRight * outputBoundaryGain * transitionGain
+                      ? outputRight * coefficients.outputBoundaryGain
+                            * transitionGain
                       : 0.0f;
 
         if (rateTransition_ == RateTransition::FadingOut)

@@ -57,6 +57,8 @@ jobs:
             "electry:ElectryRenderDemos:14"
             "taikor:TaikorRenderDemos:27"
             "youknow106:YouKnow106RenderDemos:10"
+            "septum:SeptumRenderDemos:11"
+            "ghostar:GhostarRenderDemos:12"
           )
 
           # A failed instrument contributes nothing to the commit below. The
@@ -129,7 +131,7 @@ jobs:
           # which git diff alone would not see.
           git add -A vocalor/Docs/audio drumalor/Docs/audio \
             neuramar/Docs/audio electry/Docs/audio taikor/Docs/audio \
-            youknow106/Docs/audio
+            youknow106/Docs/audio septum/Docs/audio ghostar/Docs/audio
           if git diff --cached --quiet; then
             echo "Demo audio is unchanged; nothing to commit."
             exit 0
@@ -145,9 +147,11 @@ jobs:
             # be wrong, and the next nightly will render the newer tree.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
                 vocalor drumalor neuramar electry taikor youknow106 \
+                septum ghostar \
                 ':(exclude)vocalor/Docs' ':(exclude)drumalor/Docs' \
                 ':(exclude)neuramar/Docs' ':(exclude)electry/Docs' \
-                ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs'; then
+                ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs' \
+                ':(exclude)septum/Docs' ':(exclude)ghostar/Docs'; then
               echo "An instrument changed upstream during the render; deferring to the next nightly."
               exit 0
             fi
@@ -206,6 +210,12 @@ jobs:
           - name: YouKnow106
             directory: youknow106
             snapshot_variable: YOUKNOW106_EDITOR_SNAPSHOT
+          - name: Septum
+            directory: septum
+            snapshot_variable: SEPTUM_EDITOR_SNAPSHOT
+          - name: Ghostar
+            directory: ghostar
+            snapshot_variable: GHOSTAR_EDITOR_SNAPSHOT
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -337,6 +347,12 @@ jobs:
           - name: YouKnow106
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
+          - name: Septum
+            directory: septum
+            build_plugin_option: SEPTUM_BUILD_PLUGIN
+          - name: Ghostar
+            directory: ghostar
+            build_plugin_option: GHOSTAR_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -382,9 +398,17 @@ jobs:
             exit 1
           fi
           archive="$dist/${{ matrix.name }}-${version}-Linux-x64.tar.gz"
-          tar -czf "$archive" -C "$artefacts" \
-            "VST3/${{ matrix.name }}.vst3" \
-            "Standalone/${{ matrix.name }}"
+          # Licence and notice files ship inside the binary archive when the
+          # instrument carries them (the MIT licence requires the notice to
+          # accompany binaries).
+          contents=("VST3/${{ matrix.name }}.vst3" "Standalone/${{ matrix.name }}")
+          for notice in LICENSE THIRD_PARTY_NOTICES.md ThirdParty/JUCE-LICENSE.md; do
+            if [[ -f "${{ matrix.directory }}/$notice" ]]; then
+              cp "${{ matrix.directory }}/$notice" "$artefacts/$(basename "$notice")"
+              contents+=("$(basename "$notice")")
+            fi
+          done
+          tar -czf "$archive" -C "$artefacts" "${contents[@]}"
           test -s "$archive"
           tar -tzf "$archive" >/dev/null
 
@@ -422,6 +446,12 @@ jobs:
           - name: YouKnow106
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
+          - name: Septum
+            directory: septum
+            build_plugin_option: SEPTUM_BUILD_PLUGIN
+          - name: Ghostar
+            directory: ghostar
+            build_plugin_option: GHOSTAR_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -459,7 +489,17 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
           $zipName = "${{ matrix.name }}-$version-Windows-x64.zip"
           $zipPath = Join-Path $dist $zipName
-          Compress-Archive -LiteralPath (Join-Path $artefactDir "VST3"), (Join-Path $artefactDir "Standalone") -DestinationPath $zipPath
+          # Licence and notice files ship inside the binary archive when the
+          # instrument carries them (the MIT licence requires the notice to
+          # accompany binaries).
+          $contents = @((Join-Path $artefactDir "VST3"), (Join-Path $artefactDir "Standalone"))
+          foreach ($notice in @("LICENSE", "THIRD_PARTY_NOTICES.md", "ThirdParty/JUCE-LICENSE.md")) {
+            $source = Join-Path "${{ matrix.directory }}" $notice
+            if (Test-Path -LiteralPath $source -PathType Leaf) {
+              $contents += $source
+            }
+          }
+          Compress-Archive -LiteralPath $contents -DestinationPath $zipPath
           if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf) -or
               (Get-Item -LiteralPath $zipPath).Length -eq 0) {
             throw "expected non-empty package at $zipPath"
@@ -505,7 +545,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=()
-          for directory in vocalor drumalor neuramar electry taikor youknow106; do
+          for directory in vocalor drumalor neuramar electry taikor youknow106 septum ghostar; do
             rendered="rendered-screenshots/${directory}-standalone.png"
             if [[ -s "$rendered" ]]; then
               mkdir -p "${directory}/Docs/screenshots"
@@ -534,7 +574,7 @@ jobs:
           # brand-new instrument whose build failed cannot cost the others
           # their commit.
           paths=()
-          for directory in vocalor drumalor neuramar electry taikor youknow106; do
+          for directory in vocalor drumalor neuramar electry taikor youknow106 septum ghostar; do
             if [[ -d "${directory}/Docs/screenshots" ]]; then
               paths+=("${directory}/Docs/screenshots")
             fi
@@ -562,9 +602,11 @@ jobs:
             # render, so it does not defer the push.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
                 vocalor drumalor neuramar electry taikor youknow106 \
+                septum ghostar \
                 ':(exclude)vocalor/Docs' ':(exclude)drumalor/Docs' \
                 ':(exclude)neuramar/Docs' ':(exclude)electry/Docs' \
-                ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs'; then
+                ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs' \
+                ':(exclude)septum/Docs' ':(exclude)ghostar/Docs'; then
               echo "Instrument code changed upstream during the build; deferring the screenshot refresh to the next nightly."
               exit 0
             fi
@@ -614,11 +656,11 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Check the twenty-four-file manifest
+      - name: Check the thirty-two-file manifest
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for product in Vocalor Drumalor Neuramar Electry Taikor YouKnow106; do
+          for product in Vocalor Drumalor Neuramar Electry Taikor YouKnow106 Septum Ghostar; do
             # Deliberately expand this glob so the array contains every match.
             # shellcheck disable=SC2206
             mac_zips=(dist/${product}-*-macOS-universal.zip)
@@ -648,15 +690,15 @@ jobs:
             done
           done
           assets=(dist/*)
-          if (( ${#assets[@]} != 24 )); then
-            echo "error: expected exactly twenty-four release assets, found ${#assets[@]}" >&2
+          if (( ${#assets[@]} != 32 )); then
+            echo "error: expected exactly thirty-two release assets, found ${#assets[@]}" >&2
             printf '  %s\n' "${assets[@]:-(none)}" >&2
             exit 1
           fi
           printf 'Release asset: %s\n' "${assets[@]}"
 
       # Retained on the workflow run itself (downloadable by anyone with repo
-      # access), as one complete set rather than six per-instrument artifacts.
+      # access), as one complete set rather than eight per-instrument artifacts.
       - name: Upload workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

@@ -79,6 +79,30 @@ Circuit-modelled six-voice DCO polysynth: integer-divided note timers with true 
 
 ---
 
+## [Septum](septum/)
+
+[![Septum](septum/Docs/screenshots/septum-standalone.png)](septum/README.md)
+
+- **Nightly builds**: download the 14-day `vst-instruments-nightly-all-platforms` artifact from the latest successful main-branch [Nightly workflow run](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml).
+
+Ten-voice virtual-analog synthesizer modelling the Roland SH-201's documented architecture: two complete tones of OSC1+OSC2 → MIX/MOD → FILTER → AMP with three envelopes and two LFOs each, a shared modulation-delay → reverb chain, and SINGLE/DUAL/SPLIT keyboard modes with 10 voices halved in DUAL. The seven-saw SUPER SAW implements Szabo's measured JP-8000 detune polynomial, offsets, free-running phases and pitch-tracked high-pass; FB OSC is a soft-clipped feedback comb; the multimode filter reaches bounded self-oscillation as the manual warns; and the analog output stage carries the service notes' component values. The arpeggiator runs the documented 32 × 16 style grid — shuffled grid divisions, tie chains, DURATION and all twelve MOTIF values, whose mapping is held to the manual's own three worked examples. The rear INPUT jacks are modelled as well, with INPUT VOL, CENTER CANCEL and the AUDIO FILTER's LPF/HPF/BPF/NOTCH, and EXT-IN selectable as an oscillator waveform. The overdrive is evaluated at a fixed rate through half-band polyphase stages with antiderivative anti-aliasing, so its character does not follow the host's sample rate. Every parameter and range is quoted from the MIDI implementation's address map, and the complete documented CC map is honoured for both tones, hold and sostenuto included.
+
+- **Documentation**: [Septum README](septum/README.md) · [Rendered Demos](septum/Docs/audio/README.md) · [Replica Research](septum/Docs/sh201-replica-research.md)
+
+---
+
+## [Ghostar](ghostar/)
+
+[![Ghostar](ghostar/Docs/screenshots/ghostar-standalone.png)](ghostar/README.md)
+
+- **Nightly builds**: download the 14-day `vst-instruments-nightly-all-platforms` artifact from the latest successful main-branch [Nightly workflow run](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml).
+
+Circuit-modelled monophonic dual-filter analog synthesizer, built from the documentation of a 1983 Moog-designed Italian mono synth: two bandlimited oscillators with hard sync and the panel's exact duty-cycle sets, a triangle-cross ring modulator with un-nulled carrier bleed, and the signature series dual filter — a lower multimode section (parametric boost, inter-filter overdrive, resonant highpass) sliding against a 12/24 dB upper lowpass with a frozen-formant tracking mode — feeding two parallel audio paths with independent VCAs. Modulation includes the RIPPLE/ARPEGGIO/LEAP arpeggiator, patterned and random sample-and-hold, red-noise drift, and the Shaper Y variable-rate integrator routed through performance wheels. Its character-defining laws are derived from primary documents rather than voiced: the resonance curve from the filter chip's own exponential Q scale driven through the panel's pot network, both filter nonlinearities from the BA130 diode's forward characteristic, and the envelope timing from the 556 timer circuit the service drawing shows. Every waveform discontinuity is bandlimited as a sub-sample event — the hard-sync reset included — at 4× oversampling, and the filter's nonlinearity is a term of the continuous system, so a patch sounds the same at every host rate. The modelled hardware shipped no presets — its manual taught eleven Sound Charts instead — so those charts open the program bank, from the deliberately silent Preparatory Pattern to the Inverted Guitar, with seventeen level-matched Ghostar Programs behind them.
+
+- **Documentation**: [Ghostar README](ghostar/README.md) · [Rendered Demos](ghostar/Docs/audio/README.md) · [Circuit Research](ghostar/Docs/circuit-modelling-research.md)
+
+---
+
 ## macOS Gatekeeper Note
 
 Nightly workflow artifacts are ad-hoc signed. If macOS Gatekeeper prevents opening a downloaded build, clear the quarantine attribute:

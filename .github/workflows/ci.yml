@@ -52,6 +52,16 @@ jobs:
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
             target_demo: YouKnow106RenderDemos
             expected_demos: 10
+          - name: Septum
+            directory: septum
+            build_plugin_option: SEPTUM_BUILD_PLUGIN
+            target_demo: SeptumRenderDemos
+            expected_demos: 11
+          - name: Ghostar
+            directory: ghostar
+            build_plugin_option: GHOSTAR_BUILD_PLUGIN
+            target_demo: GhostarRenderDemos
+            expected_demos: 12
     steps:
       - uses: actions/checkout@v4
         with:
@@ -95,6 +105,7 @@ jobs:
           echo "${{ matrix.name }}: rendered all $rendered demo WAVs"
 
       - name: Configure Linux plug-in build
+        if: matrix.dsp_only != true
         run: |
           cmake \
             -S "${{ matrix.directory }}" \
@@ -104,11 +115,13 @@ jobs:
             -DBUILD_TESTING=OFF
 
       - name: Build Linux VST3 and standalone
+        if: matrix.dsp_only != true
         run: |
           cmake --build "${{ matrix.directory }}/build-dsp" --parallel \
             --target "${{ matrix.name }}_VST3" "${{ matrix.name }}_Standalone"
 
       - name: Package Linux VST3 and standalone
+        if: matrix.dsp_only != true
         run: |
           set -euo pipefail
           artefacts="${{ matrix.directory }}/build-dsp/${{ matrix.name }}_artefacts/Release"
@@ -117,13 +130,22 @@ jobs:
           dist="${{ matrix.directory }}/build-dsp/dist"
           mkdir -p "$dist"
           archive="$dist/${{ matrix.name }}-Linux-x64.tar.gz"
-          tar -czf "$archive" -C "$artefacts" \
-            "VST3/${{ matrix.name }}.vst3" \
-            "Standalone/${{ matrix.name }}"
+          # Licence and notice files ship inside the binary archive when the
+          # instrument carries them (the MIT licence requires the notice to
+          # accompany binaries).
+          contents=("VST3/${{ matrix.name }}.vst3" "Standalone/${{ matrix.name }}")
+          for notice in LICENSE THIRD_PARTY_NOTICES.md ThirdParty/JUCE-LICENSE.md; do
+            if [[ -f "${{ matrix.directory }}/$notice" ]]; then
+              cp "${{ matrix.directory }}/$notice" "$artefacts/$(basename "$notice")"
+              contents+=("$(basename "$notice")")
+            fi
+          done
+          tar -czf "$archive" -C "$artefacts" "${contents[@]}"
           test -s "$archive"
           tar -tzf "$archive" >/dev/null
 
       - name: Upload Linux package
+        if: matrix.dsp_only != true
         uses: actions/upload-artifact@v4
         with:
           name: ci-linux-${{ matrix.directory }}
@@ -156,6 +178,12 @@ jobs:
           - name: YouKnow106
             directory: youknow106
             snapshot_variable: YOUKNOW106_EDITOR_SNAPSHOT
+          - name: Septum
+            directory: septum
+            snapshot_variable: SEPTUM_EDITOR_SNAPSHOT
+          - name: Ghostar
+            directory: ghostar
+            snapshot_variable: GHOSTAR_EDITOR_SNAPSHOT
     steps:
       - uses: actions/checkout@v4
         with:
@@ -219,6 +247,12 @@ jobs:
           - name: YouKnow106
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
+          - name: Septum
+            directory: septum
+            build_plugin_option: SEPTUM_BUILD_PLUGIN
+          - name: Ghostar
+            directory: ghostar
+            build_plugin_option: GHOSTAR_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@v4
         with:
@@ -234,14 +268,17 @@ jobs:
           ctest --test-dir "${{ matrix.directory }}/build-win" -C Release --output-on-failure
 
       - name: Configure Windows plug-in build
+        if: matrix.dsp_only != true
         run: |
           cmake -S "${{ matrix.directory }}" -B "${{ matrix.directory }}/build-win" "-D${{ matrix.build_plugin_option }}=ON" -DBUILD_TESTING=OFF
 
       - name: Build Windows VST3 and standalone
+        if: matrix.dsp_only != true
         run: |
           cmake --build "${{ matrix.directory }}/build-win" --config Release --parallel --target "${{ matrix.name }}_VST3" "${{ matrix.name }}_Standalone"
 
       - name: Package Windows VST3 and standalone
+        if: matrix.dsp_only != true
         shell: pwsh
         run: |
           $artefacts = "${{ matrix.directory }}/build-win/${{ matrix.name }}_artefacts/Release"
@@ -256,13 +293,24 @@ jobs:
           $dist = "${{ matrix.directory }}/build-win/dist"
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
           $zip = Join-Path $dist "${{ matrix.name }}-Windows-x64.zip"
-          Compress-Archive -LiteralPath (Join-Path $artefacts "VST3"), (Join-Path $artefacts "Standalone") -DestinationPath $zip
+          # Licence and notice files ship inside the binary archive when the
+          # instrument carries them (the MIT licence requires the notice to
+          # accompany binaries).
+          $contents = @((Join-Path $artefacts "VST3"), (Join-Path $artefacts "Standalone"))
+          foreach ($notice in @("LICENSE", "THIRD_PARTY_NOTICES.md", "ThirdParty/JUCE-LICENSE.md")) {
+            $source = Join-Path "${{ matrix.directory }}" $notice
+            if (Test-Path -LiteralPath $source -PathType Leaf) {
+              $contents += $source
+            }
+          }
+          Compress-Archive -LiteralPath $contents -DestinationPath $zip
           if (-not (Test-Path -LiteralPath $zip -PathType Leaf) -or
               (Get-Item -LiteralPath $zip).Length -eq 0) {
             throw "expected package at $zip"
           }
 
       - name: Upload Windows package
+        if: matrix.dsp_only != true
         uses: actions/upload-artifact@v4
         with:
           name: ci-windows-${{ matrix.directory }}

@@ -880,6 +880,20 @@ struct YouKnow106TestAccess
         return engine.thermalWarmupFraction_;
     }
 
+    static std::array<float, 2> thermalOmegaPair(
+        const YouKnow106Engine& engine, int cardIndex,
+        float baseOmegaStep) noexcept
+    {
+        const auto& card = engine.cards_[static_cast<std::size_t>(cardIndex)];
+        const float cached = static_cast<float>(
+            YouKnow106Engine::OtaCascade::clampOmegaStep(
+                static_cast<double>(baseOmegaStep)
+                    * card.thermalFilterOmegaScale));
+        const float direct = YouKnow106Engine::boundedThermalFilterOmegaStep(
+            baseOmegaStep, engine.activeParameters_, cardIndex);
+        return { cached, direct };
+    }
+
     static double internalRate(const YouKnow106Engine& engine) noexcept
     {
         return engine.oversampledRate_;
@@ -929,6 +943,11 @@ struct YouKnow106TestAccess
     static EngineParameters sanitise(const EngineParameters& parameters) noexcept
     {
         return YouKnow106Engine::sanitise(parameters);
+    }
+
+    static bool usesCubicEarly(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.useCubicEarly_;
     }
 };
 } // namespace youknow106
@@ -2020,6 +2039,166 @@ void testDuplicateAndUnmatchedKeyEdgesAreIgnored()
     renderExact(engine, 2);
     expectNear(engine.getDisplayEnvelope(), beforeUnmatched, 0.01,
                "an unmatched Note Off changed a sounding assignment");
+}
+
+// OQ-12's ROM-resolved envelope recurrence makes SUSTAIN asymmetric mid-note:
+// "Decay is `S + Q(E-S,c)` when `E>S`, otherwise `S`". Pushing the slider *up*
+// takes the else branch and lands on the new level in one pass; pulling it
+// *down* leaves the level above the new target, so the same state re-enters
+// the multiplicative fall -- at the DECAY coefficient, not the release one,
+// because the two share a state but not a slider. Nothing else in the suite
+// moves SUSTAIN after note-on, so this is the only fence on that branch.
+void testMidNoteSustainSnapsUpAndDecaysDown()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int scanPeriod = static_cast<int>(sampleRate * 0.0042);
+    constexpr float sustainLow = 0.2f;
+    constexpr float sustainHigh = 0.9f;
+    // Widely separated coefficients, so a fall at the release rate could not
+    // be mistaken for a fall at the decay rate.
+    constexpr float decayPosition = 0.25f;
+    constexpr float releasePosition = 1.0f;
+    constexpr int fallPasses = 30;
+
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.keyMode = KeyMode::Poly1;
+    parameters.polyphony = 1;
+    parameters.attack = 0.0f;
+    parameters.decay = decayPosition;
+    parameters.sustain = sustainLow;
+    parameters.release = releasePosition;
+    engine.setParameters(parameters);
+    engine.noteOn(60, 1.0f);
+
+    const float lowLevel = YouKnow106Engine::envelopeDacFraction(
+        YouKnow106Engine::storedControlAlignedWord(sustainLow));
+    const float highLevel = YouKnow106Engine::envelopeDacFraction(
+        YouKnow106Engine::storedControlAlignedWord(sustainHigh));
+
+    renderExact(engine, scanPeriod * 400);
+    expectNear(engine.getDisplayEnvelope(), lowLevel, 1.0e-4,
+               "the held note did not settle on the low sustain level");
+
+    // Up: the else branch, one pass.
+    parameters.sustain = sustainHigh;
+    engine.setParameters(parameters);
+    renderExact(engine, scanPeriod * 2);
+    expectNear(engine.getDisplayEnvelope(), highLevel, 1.0e-4,
+               "raising SUSTAIN mid-note did not snap to the new level");
+
+    // Down: no snap. A snap would land on the new target immediately; the
+    // decay branch has barely moved after one pass, so anything above the
+    // midpoint of the two levels separates them without depending on how many
+    // passes the fractional schedule actually fitted into this render.
+    parameters.sustain = sustainLow;
+    engine.setParameters(parameters);
+    renderExact(engine, scanPeriod);
+    expect(engine.getDisplayEnvelope() > lowLevel + 0.5f * (highLevel - lowLevel),
+           "lowering SUSTAIN mid-note snapped down instead of decaying");
+
+    // ... and the fall that follows is the decay coefficient's, replayed here
+    // through the same exact-replica helpers the engine ticks.
+    const auto decayMultiplier =
+        YouKnow106Engine::envelopeDecayReleaseMultiplier(decayPosition);
+    const auto releaseMultiplier =
+        YouKnow106Engine::envelopeDecayReleaseMultiplier(releasePosition);
+    const auto sustainWord =
+        YouKnow106Engine::storedControlAlignedWord(sustainLow);
+    std::uint16_t decayed = YouKnow106Engine::storedControlAlignedWord(
+        sustainHigh);
+    std::uint16_t released = decayed;
+    float slowestDecayed = 0.0f;
+    float fastestDecayed = 0.0f;
+    for (int pass = 1; pass <= fallPasses + 2; ++pass)
+    {
+        decayed = YouKnow106Engine::envelopeDecayLevel(decayed, sustainWord,
+                                                       decayMultiplier);
+        released = YouKnow106Engine::envelopeReleaseLevel(released,
+                                                          releaseMultiplier);
+        // The converter schedule is fractional, so accept a two-pass window
+        // around the nominal count rather than assuming an exact landing.
+        if (pass == fallPasses - 2)
+            slowestDecayed = YouKnow106Engine::envelopeDacFraction(decayed);
+        if (pass == fallPasses + 2)
+            fastestDecayed = YouKnow106Engine::envelopeDacFraction(decayed);
+    }
+    const float releasedLevel = YouKnow106Engine::envelopeDacFraction(released);
+
+    renderExact(engine, scanPeriod * (fallPasses - 1));
+    const float observed = engine.getDisplayEnvelope();
+    expect(observed <= slowestDecayed && observed >= fastestDecayed,
+           "the mid-note sustain fall did not follow the decay coefficient");
+    // The two laws must be far enough apart that the assertion above could
+    // not have passed on a release-rate fall or on a snap.
+    expect(releasedLevel - slowestDecayed > 0.2f
+               && fastestDecayed - lowLevel > 0.2f,
+           "the fixture no longer separates the decay law from release/snap");
+
+    // Releasing the key now must switch coefficients: the same level falls at
+    // the release rate, which is far slower than the decay it was following.
+    engine.noteOff(60);
+    const float atRelease = engine.getDisplayEnvelope();
+    renderExact(engine, scanPeriod * fallPasses);
+    const float afterRelease = engine.getDisplayEnvelope();
+    expect(afterRelease < atRelease
+               && afterRelease > atRelease - (slowestDecayed - fastestDecayed),
+           "release did not take over from decay at the release coefficient");
+}
+
+// The portamento generator is one 8.8-semitone state per voice slot that
+// "advanc[es] by constant add/subtract and clamp, including while inactive",
+// so a reassigned card glides from whatever *it* last played -- not from the
+// pitch of the note the player last heard. Existing cover pins only the
+// fresh-CPU case; this pins the cross-assignment one that produces the wide
+// intervals on the instrument.
+void testReassignedVoiceGlidesFromItsOwnPreviousPitch()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int scanPeriod = static_cast<int>(sampleRate * 0.0042);
+
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.keyMode = KeyMode::Poly1;
+    parameters.polyphony = 2;
+    parameters.portamento = 0.55f;
+    parameters.sustain = 1.0f;
+    parameters.release = 0.0f;
+    engine.setParameters(parameters);
+
+    // Card 0 takes the low note and its glide state settles there.
+    engine.noteOn(36, 1.0f);
+    renderExact(engine, scanPeriod * 400);
+    expect(YouKnow106TestAccess::lastVoiceMidi(engine, 0) == 36,
+           "the first key did not land on card 0");
+    engine.noteOff(36);
+    renderExact(engine, scanPeriod * 40);
+
+    // Card 1 then takes and releases a note, so card 0 is the longest-released
+    // free slot when the distant pitch arrives.
+    engine.noteOn(72, 1.0f);
+    renderExact(engine, scanPeriod * 40);
+    engine.noteOff(72);
+    renderExact(engine, scanPeriod * 4);
+
+    engine.noteOn(84, 1.0f);
+    renderExact(engine, scanPeriod * 2);
+    expect(YouKnow106TestAccess::lastVoiceMidi(engine, 0) == 84,
+           "the distant key did not return to the longest-released card");
+
+    // The glide must start from card 0's own last pitch, four octaves below,
+    // not from 72 and not from the target.
+    const float departure = YouKnow106TestAccess::currentMidi(engine, 0);
+    expect(departure < 48.0f,
+           "the reassigned card did not glide from its own previous pitch");
+    expect(departure > 36.0f - 1.0f,
+           "the reassigned card started below the pitch it last played");
+
+    renderExact(engine, scanPeriod * 4000);
+    expectNear(YouKnow106TestAccess::currentMidi(engine, 0), 84.0, 1.0e-3,
+               "the reassigned card never arrived at its target");
 }
 
 void testIdleSnapshotPrimesEverySharedHold()
@@ -7482,6 +7661,51 @@ void testSpatialThermalGradientBelongsToUnitCharacter()
            "Character");
 }
 
+void testSpatialThermalScaleCacheTracksLiveDependencies()
+{
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.calibration = 0.8f;
+    parameters.enableSpatialThermalGradient = true;
+    engine.setParameters(parameters);
+
+    std::array<float, 1> left {};
+    std::array<float, 1> right {};
+    engine.process(left.data(), right.data(), 1);
+
+    const auto expectCacheMatchesDirectLaw = [&](const char* when) {
+        constexpr std::array<float, 4> baseSteps {
+            0.0f, 0.01f, 0.9f, 100.0f
+        };
+        for (int card = 0; card < YouKnow106Engine::maxVoices; ++card)
+            for (const float base : baseSteps)
+            {
+                const auto values = YouKnow106TestAccess::thermalOmegaPair(
+                    engine, card, base);
+                expect(values[0] == values[1],
+                       std::string("the cached thermal cutoff scale is stale ")
+                           + when + " on card " + std::to_string(card));
+            }
+    };
+
+    expectCacheMatchesDirectLaw("after startup");
+    parameters.calibration = 0.35f;
+    engine.setParameters(parameters);
+    expectCacheMatchesDirectLaw("after a live Unit Character edit");
+    parameters.enableSpatialThermalGradient = false;
+    engine.setParameters(parameters);
+    expectCacheMatchesDirectLaw("after disabling the gradient");
+    parameters.enableSpatialThermalGradient = true;
+    engine.setParameters(parameters);
+    expectCacheMatchesDirectLaw("after restoring the gradient");
+
+    engine.reset();
+    expectCacheMatchesDirectLaw("after reset");
+    engine.prepare(44100.0, blockSize, false);
+    expectCacheMatchesDirectLaw("after a processing-rate change");
+}
+
 void testDeterminismAndSilence()
 {
     const auto run = []() {
@@ -7509,6 +7733,58 @@ void testDeterminismAndSilence()
     const auto silent = render(engine, 24000);
     expect(peakOf(silent.left, 0) == 0.0 && peakOf(silent.right, 0) == 0.0,
            "an idle engine is not exactly silent");
+}
+
+void testRepeatedSanitisedParameterSnapshotsAreInert()
+{
+    auto clean = plainPatch();
+    clean.cutoff = EngineParameters {}.cutoff;
+    auto hostileButEquivalent = clean;
+    hostileButEquivalent.cutoff = std::numeric_limits<float>::quiet_NaN();
+
+    YouKnow106Engine unchanged;
+    YouKnow106Engine repeated;
+    unchanged.prepare(48000.0, blockSize, true);
+    repeated.prepare(48000.0, blockSize, true);
+    unchanged.setParameters(clean);
+    repeated.setParameters(hostileButEquivalent);
+    unchanged.noteOn(60, 1.0f);
+    repeated.noteOn(60, 1.0f);
+
+    std::array<float, blockSize> unchangedLeft {};
+    std::array<float, blockSize> unchangedRight {};
+    std::array<float, blockSize> repeatedLeft {};
+    std::array<float, blockSize> repeatedRight {};
+    const auto renderAndCompare = [&] (const char* failure)
+    {
+        unchanged.process(unchangedLeft.data(), unchangedRight.data(), blockSize);
+        repeated.process(repeatedLeft.data(), repeatedRight.data(), blockSize);
+        expect(unchangedLeft == repeatedLeft && unchangedRight == repeatedRight,
+               failure);
+    };
+
+    // First cross the one-shot startup boundary, then keep presenting an input
+    // which sanitises to the already-active image. It must not create a panel
+    // write or refresh physical card state merely because the host repeats its
+    // complete snapshot each block.
+    renderAndCompare("equivalent sanitised startup snapshots rendered differently");
+    for (int block = 0; block < 8; ++block)
+    {
+        repeated.setParameters(hostileButEquivalent);
+        renderAndCompare("an unchanged sanitised snapshot altered running audio");
+    }
+
+    // reset() deliberately reopens startup priming. Repeating the same image
+    // on that side of the boundary must still be harmless rather than taking
+    // the running-state shortcut too early.
+    unchanged.reset();
+    repeated.reset();
+    unchanged.setParameters(clean);
+    repeated.setParameters(hostileButEquivalent);
+    repeated.setParameters(hostileButEquivalent);
+    unchanged.noteOn(60, 1.0f);
+    repeated.noteOn(60, 1.0f);
+    renderAndCompare("an equal snapshot after reset changed startup priming");
 }
 
 void testExtremeAutomationStaysFinite()
@@ -7743,6 +8019,33 @@ void testSanitiseFallbackDefaultsMatchDeclaredDefaults()
     polyphonyLow.polyphony = -5;
     expect(YouKnow106TestAccess::sanitise(polyphonyLow).polyphony == 1,
            "polyphony below range did not clamp to 1");
+
+    EngineParameters invalidTanhMode;
+    invalidTanhMode.vcfTanhMode = static_cast<VcfTanhMode>(99);
+    expect(YouKnow106TestAccess::sanitise(invalidTanhMode).vcfTanhMode
+               == declaredDefaults.vcfTanhMode,
+           "invalid VCF tanh mode did not fall back to its declared default");
+    EngineParameters invalidFastEarlyMode;
+    invalidFastEarlyMode.vcfFastEarlyMode =
+        static_cast<VcfFastEarlyMode>(99);
+    expect(YouKnow106TestAccess::sanitise(invalidFastEarlyMode)
+               .vcfFastEarlyMode == declaredDefaults.vcfFastEarlyMode,
+           "invalid Fast Early mode did not fall back to its declared default");
+
+    YouKnow106Engine dispatch;
+    EngineParameters selected;
+    selected.vcfTanhMode = VcfTanhMode::ZonedHermite;
+    dispatch.setParameters(selected);
+    expect(!YouKnow106TestAccess::usesCubicEarly(dispatch),
+           "Fast Hermite incorrectly enabled the cubic Early kernel");
+    selected.vcfFastEarlyMode = VcfFastEarlyMode::Cubic;
+    dispatch.setParameters(selected);
+    expect(YouKnow106TestAccess::usesCubicEarly(dispatch),
+           "Fast Cubic Early did not resolve outside the audio loop");
+    selected.vcfTanhMode = VcfTanhMode::Exact;
+    dispatch.setParameters(selected);
+    expect(!YouKnow106TestAccess::usesCubicEarly(dispatch),
+           "Fast Early selection changed Exact's resolved kernel");
 }
 
 // `exactOnePoleHoldEndpoint` backs every passive hold that is not the VCF's
@@ -8585,6 +8888,8 @@ int main()
     testPhysicalPitchWriteRestartIsBandlimited();
     testRescanGateOffReachesTheVoiceCpu();
     testDuplicateAndUnmatchedKeyEdgesAreIgnored();
+    testMidNoteSustainSnapsUpAndDecaysDown();
+    testReassignedVoiceGlidesFromItsOwnPreviousPitch();
     testIdleSnapshotPrimesEverySharedHold();
     testStartedIdleEditsUseTheOrderedConverterScan();
     testPhysicalFiltersKeepRunningBehindClosedVcas();
@@ -8669,7 +8974,9 @@ int main()
     testVcfStageOffsetsAreLiveBeforeTheFirstSample();
     testVcfEarlyEffectBelongsToUnitCharacter();
     testSpatialThermalGradientBelongsToUnitCharacter();
+    testSpatialThermalScaleCacheTracksLiveDependencies();
     testDeterminismAndSilence();
+    testRepeatedSanitisedParameterSnapshotsAreInert();
     testResetLeavesNoHistoryInTheOutputPath();
     testExtremeAutomationStaysFinite();
     testParameterSanitisation();
