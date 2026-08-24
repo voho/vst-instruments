@@ -1273,18 +1273,33 @@ void SeptumAudioProcessor::reconcileControlChanges()
                 continue;
             const auto& cached = ccCache[index];
             const auto& range = cached.parameter->getNormalisableRange();
-            const float natural = ccShadow[index].load (std::memory_order_relaxed);
+            // Publish what the raw storage holds, not what the shadow holds.
+            // Those differ whenever something moved the value after the CC
+            // did — a knob, an automation lane — and the raw storage is what
+            // the engine renders from, so it is what the host and the panel
+            // have to be told about. Publishing the shadow regardless put the
+            // CC's value back over an edit and snapped the slider under the
+            // player's hand.
+            //
+            // The shadow is read first and only as a baseline. Read before the
+            // raw value, a CC landing between the two loads leaves the newer
+            // value in `natural` and the older one here, never the reverse.
+            const float shadowAtEntry =
+                ccShadow[index].load (std::memory_order_relaxed);
+            const float natural = cached.raw->load (std::memory_order_relaxed);
             cached.parameter->beginChangeGesture();
             cached.parameter->setValueNotifyingHost (
                 range.convertTo0to1 (range.snapToLegalValue (natural)));
             cached.parameter->endChangeGesture();
             // setValueNotifyingHost has just written the parameter's own
-            // storage with the value read above. A CC that arrived while it
-            // ran is newer than that, and its dirty bit is already set for the
-            // next pass — but the engine reads this storage every block, so
-            // the newer value is put back now rather than a frame from now.
+            // storage with the value read above, so a CC that arrived while it
+            // ran was overwritten. Its dirty bit is already set for the next
+            // pass — but the engine reads this storage every block, so the
+            // newer value is put back now rather than a frame from now. A
+            // shadow that has not moved means no CC landed, and whatever this
+            // thread is publishing stays put.
             const float newest = ccShadow[index].load (std::memory_order_relaxed);
-            if (newest != natural)
+            if (newest != shadowAtEntry)
                 cached.raw->store (newest, std::memory_order_relaxed);
         }
     }
@@ -1364,16 +1379,24 @@ void SeptumAudioProcessor::republishSystemParameters()
         if (parameter == nullptr || raw == nullptr)
             continue;
         const auto& range = parameter->getNormalisableRange();
-        const float natural = deviceControlShadow[i].load (std::memory_order_relaxed);
+        // Raw, not shadow, and the shadow only as a baseline — the same rule
+        // the CC pass and the patch republish follow, and for the same reason:
+        // the raw storage is what the engine renders from, so publishing the
+        // shadow over it put a device-control message back on top of a later
+        // edit. Baseline read before the raw value, so a message landing
+        // between the two loads leaves the newer value in `natural`.
+        const float shadowAtEntry =
+            deviceControlShadow[i].load (std::memory_order_relaxed);
+        const float natural = raw->load (std::memory_order_relaxed);
         parameter->beginChangeGesture();
         parameter->setValueNotifyingHost (range.convertTo0to1 (natural));
         parameter->endChangeGesture();
         // A second message for the same parameter that landed while
-        // setValueNotifyingHost ran is newer than the value it just wrote into
-        // the parameter's storage, and the engine reads that storage every
-        // block — so it goes back now, not a frame from now.
+        // setValueNotifyingHost ran was overwritten by it, and the engine
+        // reads that storage every block — so it goes back now, not a frame
+        // from now. An unmoved shadow means nothing landed.
         const float newest = deviceControlShadow[i].load (std::memory_order_relaxed);
-        if (newest != natural)
+        if (newest != shadowAtEntry)
             raw->store (newest, std::memory_order_relaxed);
     }
 }
@@ -1803,20 +1826,21 @@ void SeptumAudioProcessor::writePatchToParameters (const septum::Patch& patch,
         const float upperNatural = bindings[i].get (patch.upper);
         const float lowerNatural = bindings[i].get (patch.lower);
         // Into the parameter's own storage, which is what the engine
-        // snapshots, and into the shadow, which is what the message-thread
-        // republish reads. Publishing from the parameter's storage let a
-        // republish already in flight write an older value back over this one.
+        // snapshots, and into the shadow, which is the republish's evidence
+        // that this thread wrote at all.
         //
-        // The shadow goes first, and the order is load-bearing. The republish
-        // now refuses to publish a binding whose raw value has moved away from
-        // its shadow, on the reasoning that only the message thread could have
-        // moved it — so this thread must never leave the pair unequal with the
-        // raw value the newer of the two. Shadow first makes every interleaving
-        // end with them equal or with the raw value the older one.
-        upperShadow[i].store (upperNatural, std::memory_order_relaxed);
-        lowerShadow[i].store (lowerNatural, std::memory_order_relaxed);
+        // Raw first, shadow last — the order every audio-thread writer here
+        // uses, `handleController` and the device-control store included. The
+        // republish takes the shadow as a baseline before it reads the raw
+        // value and re-seeds only when that baseline moves, so a shadow store
+        // that lands is the signal the write is complete and the raw value is
+        // safe to put back. Shadow first would raise that signal while the raw
+        // value was still the old one, and the republish would then re-seed
+        // with a value it had already published.
         upperValues[i]->store (upperNatural, std::memory_order_relaxed);
         lowerValues[i]->store (lowerNatural, std::memory_order_relaxed);
+        upperShadow[i].store (upperNatural, std::memory_order_relaxed);
+        lowerShadow[i].store (lowerNatural, std::memory_order_relaxed);
     }
     const auto& shared = patchBindings();
     for (std::size_t i = 0; i < shared.size(); ++i)
@@ -1824,8 +1848,8 @@ void SeptumAudioProcessor::writePatchToParameters (const septum::Patch& patch,
         if (std::strcmp (shared[i].id, "master_level") == 0)
             continue;
         const float natural = shared[i].get (patch);
-        patchShadow[i].store (natural, std::memory_order_relaxed);   // shadow first
         patchValues[i]->store (natural, std::memory_order_relaxed);
+        patchShadow[i].store (natural, std::memory_order_relaxed);   // shadow last
     }
     patchDirty.store (true, std::memory_order_release);
     patchGeneration.fetch_add (1, std::memory_order_acq_rel);
@@ -1904,8 +1928,15 @@ void SeptumAudioProcessor::republishPatchParameters()
         // dump's last packet would then never be published at all. Publishing
         // the raw value is right in both cases and needs no guess about who
         // wrote it.
+        // The shadow is read, never written, so the audio thread stays its
+        // only writer on this path. Written here, a packet landing in the gap
+        // was clobbered in both cells at once — the store put the old value
+        // back in the shadow, `setValueNotifyingHost` put it back in the raw
+        // storage, and the comparison below then saw nothing to recover.
+        // Reading the baseline before the raw value keeps the newer of the
+        // two in `natural` whichever way the interleaving falls.
+        const float shadowAtEntry = shadow.load (std::memory_order_relaxed);
         const float natural = raw->load (std::memory_order_relaxed);
-        shadow.store (natural, std::memory_order_relaxed);
         parameter->setValueNotifyingHost (
             parameters.getParameterRange (id).convertTo0to1 (natural));
         // setValueNotifyingHost has just written the parameter's own storage
@@ -1913,10 +1944,11 @@ void SeptumAudioProcessor::republishPatchParameters()
         // newer than that, and `patchDirty` is set again for the next pass —
         // but the engine reads this storage every block, so the newer value
         // goes back now rather than a frame from now. The audio thread stores
-        // the shadow first, so this sees it even when the raw store is still
-        // to come.
+        // the raw value first and the shadow last, so a shadow that has moved
+        // is a write that has fully landed; one that has not moved means the
+        // value being published is nobody else's and stays put.
         const float newest = shadow.load (std::memory_order_relaxed);
-        if (newest != natural)
+        if (newest != shadowAtEntry)
             raw->store (newest, std::memory_order_relaxed);
     };
     const auto& bindings = toneBindings();

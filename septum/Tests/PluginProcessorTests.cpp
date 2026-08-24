@@ -8,6 +8,7 @@
 #include "DSP/SeptumSysEx.h"
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -246,16 +247,28 @@ void testControlChangesDoNotNotifyFromTheAudioThread()
 // The reconciler publishes a CC's value to the host and the UI, and
 // setValueNotifyingHost writes the parameter object's own storage — the very
 // atomic the audio thread stores a received CC into and the engine renders
-// from. Reading that storage to decide what to publish therefore raced with
-// the audio thread: a CC arriving after the read put its value there, the
-// publish wrote the older value back over it, and the newer CC's dirty bit
-// then made the next pass republish the stale value it had just been
-// overwritten with. The controller's move was lost outright.
+// from. Two different things leave that storage disagreeing with the shadow,
+// and they need opposite answers:
 //
-// The reconciler reads a shadow only the audio thread writes now. Here the
-// clobber is staged directly: the parameter's storage is set to a stale value
-// behind the reconciler's back, which is exactly the state the race leaves.
-void testTheCcReconcilerCannotPublishAStaleValue()
+//   a CC landing while the publish runs is newer than what is being published
+//   and has to be put back — the re-seed under the publish does that, and can
+//   tell it happened because a CC moves the shadow as well as the raw value;
+//
+//   a knob or an automation lane moved after the CC landed is also newer, and
+//   has to be left alone — nothing but the audio thread writes the shadow, so
+//   that case leaves the baseline untouched and the re-seed keeps its hands off.
+//
+// Publishing the shadow answered both with "the CC wins", which put the CC's
+// value back over the edit and snapped the slider under the player's hand.
+// Publishing the raw storage, with the shadow read only as a baseline, answers
+// each correctly.
+//
+// Staged here is the case that separates the two designs and can be staged at
+// all: a value moved after the CC with the shadow untouched. That is what an
+// edit leaves. It is *not* what the race leaves — a real CC moves both cells —
+// so a static stage can never stand in for the race, and the earlier version
+// of this test, which read it as the race, was pinning the wrong answer.
+void testTheCcReconcilerDoesNotUndoAnEditMadeAfterTheCc()
 {
     SeptumAudioProcessor processor;
     processor.prepareToPlay (44100.0, 256);
@@ -271,18 +284,95 @@ void testTheCcReconcilerCannotPublishAStaleValue()
     processor.processBlock (buffer, cc);
     expect ((int) raw->load() == 90, "the CC lands in the rendered value");
 
-    raw->store (11.0f);              // what the race leaves behind
+    raw->store (11.0f);              // a knob, moved after the CC landed
     processor.reconcileControlChanges();
 
     const auto& range = processor.parameters.getParameterRange ("up_cutoff");
-    expect (std::abs (parameter->getValue() - range.convertTo0to1 (90.0f)) < 1.0e-6,
-            "the reconciler publishes the CC's own value, not the parameter's"
-            " storage (published "
+    expect (std::abs (parameter->getValue() - range.convertTo0to1 (11.0f)) < 1.0e-6,
+            "the reconciler publishes the edit, not the CC the edit replaced"
+            " (published "
                 + juce::String (range.convertFrom0to1 (parameter->getValue())).toStdString()
                 + ")");
-    expect ((int) raw->load() == 90,
-            "and the value the engine renders from is the CC's too (got "
+    expect ((int) raw->load() == 11,
+            "and the value the engine renders from is the edit too (got "
                 + juce::String (raw->load()).toStdString() + ")");
+}
+
+// The other half of the same rule, which no static stage can reach: a CC that
+// lands while a publish is running. `setValueNotifyingHost` writes the same
+// atomic the CC wrote, so it overwrites that CC with the value the publish set
+// out with, and the re-seed under the publish is the only thing that puts it
+// back. Without it the next pass reads the clobbered storage, publishes the
+// stale value, and the controller's move is gone for good — nothing later
+// repairs it, because by then both cells agree on the wrong number.
+//
+// Run as a race, because it only exists as one, and run in short bursts rather
+// than one long stream: a clobber mid-stream is covered up by the next CC, so
+// only the burst's *last* CC can be caught losing, and one long run offers one
+// chance instead of a hundred. Each burst ends on a known value, so a clobber
+// never put back leaves the other value standing where the last CC should be.
+void testACcLandingDuringAPublishIsNotLost()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    juce::AudioBuffer<float> buffer (2, 256);
+
+    auto* raw = processor.parameters.getRawParameterValue ("up_cutoff");
+    expect (raw != nullptr, "the cutoff parameter exists");
+    if (raw == nullptr)
+        return;
+
+    std::atomic<bool> running { true };
+    std::atomic<int> passes { 0 };
+    // The message thread's half: reconciling as fast as it can, so a publish
+    // is in flight for a good share of the run.
+    std::thread reconciler ([&processor, &running, &passes]
+    {
+        while (running.load (std::memory_order_relaxed))
+        {
+            processor.reconcileControlChanges();
+            passes.fetch_add (1, std::memory_order_relaxed);
+        }
+    });
+
+    constexpr int other = 40;
+    constexpr int last = 90;
+    constexpr int bursts = 6000;
+    int lost = 0;
+    for (int burst = 0; burst < bursts; ++burst)
+    {
+        // Two messages, one block, adjacent samples — the smallest burst that
+        // can open the window at all, and the only size where every clobber is
+        // visible. The first CC starts a publish; the second has to land
+        // inside it, between the publish reading the raw storage and writing
+        // it back. Longer bursts open the window just as often but hide it:
+        // a clobbered value that is not the burst's last is painted over by
+        // the next CC before anything can look.
+        juce::MidiBuffer burstMidi;
+        burstMidi.addEvent (juce::MidiMessage::controllerEvent (1, 74, other), 0);
+        burstMidi.addEvent (juce::MidiMessage::controllerEvent (1, 74, last), 1);
+        processor.processBlock (buffer, burstMidi);
+
+        // Wait for the reconciler to get through the burst rather than
+        // guessing at a sleep: a pass that publishes a clobbered value is
+        // exactly what has to be given the chance to happen.
+        const int mark = passes.load (std::memory_order_relaxed);
+        while (passes.load (std::memory_order_relaxed) < mark + 8)
+            std::this_thread::yield();
+
+        if ((int) raw->load() != last)
+            ++lost;
+    }
+
+    running.store (false, std::memory_order_relaxed);
+    reconciler.join();
+
+    expect (passes.load() > 0, "the racing reconciler ran ("
+                                   + std::to_string (passes.load()) + " passes)");
+    expect (lost == 0,
+            "a CC that landed while a publish was running is put back, not lost ("
+                + std::to_string (lost) + " of " + std::to_string (bursts)
+                + " bursts ended on the value the publish overwrote it with)");
 }
 
 double goertzel (const juce::AudioBuffer<float>& buffer, double hz,
@@ -1325,18 +1415,19 @@ void testUniversalRealtimeDeviceControl()
                     + ")");
     }
 
-    // The republish must not put an older value back over a message that
-    // arrived while it was running. setValueNotifyingHost writes the same
-    // atomic the audio thread stores into, so reading that atomic to decide
-    // what to publish lost the newer message outright. Staged here the way the
-    // race leaves it: the parameter's storage is set to a stale value behind
-    // the republish's back.
+    // The republish must not put a device-control message back over a value
+    // moved after it. setValueNotifyingHost writes the same atomic the audio
+    // thread stores into, and the shadow is the only evidence of who moved it:
+    // a message moves both cells, an edit moves only the raw one. Staged here
+    // is the edit — the case a static stage can express — and the republish
+    // has to leave it standing. The message-landed-mid-publish case is the
+    // re-seed's, and needs the two threads to actually interleave.
     send (0x01, 0x00, 55);
     processor.parameters.getRawParameterValue ("master_level")->store (9.0f);
     processor.republishSystemParameters();
-    expect (std::abs (valueOf ("master_level") - 55.0f) < 0.5f,
-            "the system republish publishes the message's own value, not the"
-            " parameter's storage (got "
+    expect (std::abs (valueOf ("master_level") - 9.0f) < 0.5f,
+            "the system republish publishes the edit, not the message"
+            " the edit replaced (got "
                 + juce::String (valueOf ("master_level")).toStdString() + ")");
 }
 
@@ -2480,7 +2571,8 @@ int main()
     testRenderingAndVoices();
     testDocumentedControlChanges();
     testControlChangesDoNotNotifyFromTheAudioThread();
-    testTheCcReconcilerCannotPublishAStaleValue();
+    testTheCcReconcilerDoesNotUndoAnEditMadeAfterTheCc();
+    testACcLandingDuringAPublishIsNotLost();
     testPanelCcAppliesWithinTheBlock();
     testProgramChangeStagesOnTheAudioPath();
     testUiQueueOverflowStillReleases();
