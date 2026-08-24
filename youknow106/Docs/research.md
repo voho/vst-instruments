@@ -460,8 +460,10 @@ Not to be reopened without contradictory primary evidence:
   configuration, B new defaults; retrigger-after-silence, resonant lead,
   self-oscillation, chorus engage; RMS-matched within 0.001 dB, no trims)
   was rendered to `listening-tests/2026-08-24-cpu-defaults/` with its
-  `key.md` unread-by-design — **the direction ships pending that ear
-  test**, and `VCF Tanh = Exact` remains the one-menu revert.
+  `key.md` unread-by-design. **Verdict, 2026-08-24, by ear: the player
+  could not tell A from B on any take**, so the new defaults stand —
+  chosen by ear, not settled by a measurement — and `VCF Tanh = Exact`
+  remains the one-menu revert.
 
 ## External validation and market position
 
