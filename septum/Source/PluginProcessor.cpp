@@ -903,13 +903,13 @@ void SeptumAudioProcessor::writeImportedArpeggioToState (juce::ValueTree& state)
                            .selector;
     }
     septum::ArpeggioStyle style;
-    // Never retiring. The selector this asks with was scraped from the slot
-    // itself a moment ago, so a mismatch cannot mean the user moved the
-    // selector — it can only mean a dump landed between the two reads. A
-    // save is a read of the patch; retiring on that threw away a grid
-    // nobody moved away from, and then stripped it from the session below.
+    // The flag is not even asked for. The selector this reads with was
+    // scraped from the slot itself a moment ago, so a mismatch cannot mean
+    // the user moved the selector — only that a dump landed between the two
+    // reads. A save is a read of the patch; retiring on that threw away a
+    // grid nobody moved away from, and then stripped it from the session.
     if (! importedArpeggio.valid.load (std::memory_order_acquire)
-        || ! readImportedArpeggioStyle (selector, style, /* mayRetire */ false))
+        || ! readImportedArpeggioStyle (selector, style))
     {
         // The tree being written is a copy of the last state, so it may still
         // carry a grid from a session that was restored earlier. Leaving it
@@ -994,7 +994,7 @@ void SeptumAudioProcessor::invalidateImportedArpeggioStyle() const noexcept
 }
 
 bool SeptumAudioProcessor::readImportedArpeggioStyle (
-    int selector, septum::ArpeggioStyle& out, bool mayRetire) const noexcept
+    int selector, septum::ArpeggioStyle& out, bool* selectorMoved) const noexcept
 {
     if (! importedArpeggio.valid.load (std::memory_order_acquire))
         return false;
@@ -1022,17 +1022,16 @@ bool SeptumAudioProcessor::readImportedArpeggioStyle (
         // template rather than resurrect the import.
         if (slotSelector != selector)
         {
-            // Only when the selector this was asked with came from a settled
-            // patch revision. `loadPatch` publishes the grid first and then
-            // writes some ninety parameters one at a time, so for the whole of
-            // that burst the audio thread's snapshot carries the *previous*
-            // selector while the slot already carries the new one — and
-            // retiring on that mismatch destroyed the grid the load had just
-            // brought in, permanently: the next state save then strips it from
-            // the session file too. The generation counter already marks that
-            // burst; this only has to be told about it.
-            if (mayRetire)
-                invalidateImportedArpeggioStyle();
+            // Reported, never acted on. `loadPatch` publishes the grid first
+            // and then writes some ninety parameters one at a time, so for the
+            // whole of that burst a snapshot carries the *previous* selector
+            // while the slot already carries the new one — and retiring on
+            // that mismatch destroyed the grid the load had just brought in,
+            // permanently: the next state save then stripped it from the
+            // session file too. Whether the burst overlapped this read is a
+            // question only the caller can answer, and only afterwards.
+            if (selectorMoved != nullptr)
+                *selectorMoved = true;
             return false;
         }
         return true;
@@ -1061,21 +1060,12 @@ septum::Patch SeptumAudioProcessor::snapshotPatch() const
         shared[index].set (patch,
                            patchValues[index]->load (std::memory_order_relaxed));
 
-    // Whether the values just read belong to one patch revision. A writer
-    // holds the generation odd across its whole burst, so an odd reading — or
-    // one that moved while this ran — means the selector above may be from a
-    // different revision than the grid below, and the grid must not be retired
-    // on a mismatch between them. `applyCurrentPatch` throws such a snapshot
-    // away; the retire is the one part of it that used to survive.
-    const bool settled = (generationAtEntry & 1u) == 0u
-                         && patchGeneration.load (std::memory_order_acquire)
-                                == generationAtEntry;
-
     // The style index is the panel's selector; the grid it names is what the
     // engine actually plays — unless a SysEx dump brought a grid of its own,
     // which no parameter can hold and which the hardware stores in the patch.
+    bool selectorMoved = false;
     if (readImportedArpeggioStyle (patch.arpeggio.styleIndex, patch.arpeggio.style,
-                                   settled))
+                                   &selectorMoved))
     {
         // END STEP still overrides, exactly as it does over a template.
         if (patch.arpeggio.endStep > 0)
@@ -1086,6 +1076,22 @@ septum::Patch SeptumAudioProcessor::snapshotPatch() const
     {
         septum::applyArpeggioStyle (patch, patch.arpeggio.styleIndex);
     }
+
+    // Whether everything read above — the selector among it — belongs to one
+    // patch revision. A writer holds the generation odd across its whole
+    // burst, so an odd reading, or one that moved while this ran, means the
+    // selector may be from a different revision than the slot it was compared
+    // against. `applyCurrentPatch` throws such a snapshot away; the retire is
+    // the one part of it that used to survive. Closing the window *below* the
+    // read is the whole point: closed above it, a burst starting in between
+    // was still free to publish a new grid under a new selector and have this
+    // read retire it.
+    const bool settled = (generationAtEntry & 1u) == 0u
+                         && patchGeneration.load (std::memory_order_acquire)
+                                == generationAtEntry;
+    if (selectorMoved && settled)
+        invalidateImportedArpeggioStyle();
+
     septum::clampToDocumentedRanges (patch);
     return patch;
 }
