@@ -2352,6 +2352,73 @@ arpeggiator has open now, and the two paths measure the same 45 ms.
 All three are fenced by checks watched to fail with their fix reverted — sixteen
 of them. The 11 committed demos still re-render bit-identically.
 
+#### Step 55 — the same review round, on the processor
+
+Three more from the round Step 54 opened, all three verified and then attacked
+by an independent pass before anything was touched.
+
+**A SysEx load was destroying the grid it was loading — almost every time.**
+`loadPatch` publishes the imported arpeggio grid first and then writes some
+ninety parameters one at a time, so for the whole of that burst the audio
+thread's snapshot carries the *previous* style selector while the slot already
+carries the new one. The reader retires the grid on that mismatch — which is
+right when the player moves the selector, and catastrophic here: the load is
+what brought the grid in. And the loss is permanent, because the next state save
+strips `arpeggio_grid` from the session file too.
+
+This was reported as a narrow race against `setStateInformation`. It is not
+narrow. Measured with a reader thread taking snapshots against sixty loads that
+move the selector: **53 to 60 of the sixty lost their grid**. The feature Step 45
+added — importing an arpeggio pattern from a dump — barely worked on any load
+that changed the style index.
+
+The reader takes a `mayRetire` argument now, and `snapshotPatch` passes it only
+when the generation counter says the values it just read belong to one settled
+patch revision. `applyCurrentPatch` already throws such a snapshot away; the
+retire was the one part of it that survived. Fenced by that same two-thread test,
+which loses 53–60 of 60 with the guard removed and none with it in.
+
+**A dump's republish undid an edit made after it.** The republish exists to tell
+the host and the panel what the audio thread already stored. If the player turned
+a knob in the millisecond before that callback ran, it put the dump's value back
+and snapped the slider under their hand — and unlike `reconcileProgram`, it never
+checked whether the value had moved since.
+
+Two edits, and the order matters. `writePatchToParameters` now stores the shadow
+*before* the raw value, so a raw value that has drifted from its shadow can only
+mean a message-thread writer; and the republish skips a binding where they differ,
+re-seeding the shadow instead. The guard alone would have been wrong: with the
+raw value written first, a packet landing between the two stores would have been
+dropped permanently, since `patchDirty` was already consumed. The review's own
+prescription had exactly that hole in it.
+
+One existing check had to be re-expressed rather than kept. It poked `7.0` into
+the raw values to stand for "a republish overtaken by a later packet" — a state
+the audio thread cannot produce, since it writes both halves of the pair. It now
+asserts what the republish really guarantees, and a new check fails against the
+old code with the edit reverted to the dump's value.
+
+**A control change arriving during a state restore stopped being published.**
+`cancelPendingRepublishes()` ran *after* `replaceState`, so it also cleared the
+flag of a message that had landed during the restore — and that message had
+already written the parameter's own storage, which is what the engine renders
+from. The sound followed the MIDI while the host and the panel stayed on the
+restored session, with nothing left to tell them. The cancel runs before the
+restore now: anything queued beforehand is superseded, and anything landing in
+the window re-arms and is published to all three together.
+
+**This one is not fenced, and that is worth saying plainly.** The window is the
+few hundred microseconds `replaceState` takes, and whether it produces a
+divergence at all depends on where in that function the parameter concerned is
+written. A two-thread test passed against both orderings, and a listener-driven
+one could not be aimed at the right instant. A check that passes either way is
+worse than none, so it was removed rather than kept. What still holds the
+property the reorder must not break — that a republish queued *before* a restore
+does not land on top of it — is the existing restore coverage, which passes
+unchanged.
+
+Nothing here changes audio: the 11 committed demos re-render bit-identically.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:

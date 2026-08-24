@@ -7,9 +7,12 @@
 #include "PluginEditor.h"
 #include "DSP/SeptumSysEx.h"
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <thread>
+#include <vector>
 
 namespace
 {
@@ -1374,21 +1377,30 @@ void testThePatchReconcilerCannotPublishAStaleDump()
     expect ((int) upperCutoff->load() == 31 && (int) lowerCutoff->load() == 118,
             "the dump lands in the values the engine renders from");
 
-    // What a republish overtaken by a later packet leaves behind.
-    upperCutoff->store (7.0f);
-    lowerCutoff->store (7.0f);
+    // The republish tells the host and the panel what the audio thread already
+    // stored, and leaves that storage where it is. (This used to poke 7.0 into
+    // the raw values first, to stand for "a republish overtaken by a later
+    // packet" — but the audio thread writes the shadow and the raw value
+    // together, so a raw value that has drifted from its shadow can only mean a
+    // *message-thread* writer, which is newer and now wins. The poke asserted a
+    // state the real code cannot produce.)
     processor.republishPatchParameters();
 
     expect ((int) upperCutoff->load() == 31 && (int) lowerCutoff->load() == 118,
-            "the republish restores the dump's own values, not the parameter"
-            " storage (upper " + juce::String (upperCutoff->load()).toStdString()
-                + ", lower " + juce::String (lowerCutoff->load()).toStdString() + ")");
+            "the republish leaves the dump's own values in place (upper "
+                + juce::String (upperCutoff->load()).toStdString() + ", lower "
+                + juce::String (lowerCutoff->load()).toStdString() + ")");
 
     auto* parameter = processor.parameters.getParameter ("up_cutoff");
     const auto& range = processor.parameters.getParameterRange ("up_cutoff");
     expect (parameter != nullptr
                 && std::abs (parameter->getValue() - range.convertTo0to1 (31.0f)) < 1.0e-6,
             "and the host is told the dump's value");
+
+    // And a second pass is a no-op: the dirty flag was consumed by the first.
+    processor.republishPatchParameters();
+    expect ((int) upperCutoff->load() == 31 && (int) lowerCutoff->load() == 118,
+            "a second republish changes nothing");
 
     // A program change that lands after the dump but before its republish is
     // the later writer, so the republish must not undo it.
@@ -1420,6 +1432,126 @@ void testThePatchReconcilerCannotPublishAStaleDump()
 // it. `snapshotPatch()` rebuilds the style from the selector every block, so
 // every decoded row used to be thrown away by the next call: a pattern
 // imported from a real unit neither played nor survived a re-export.
+// `loadPatch` publishes the imported grid first and then writes some ninety
+// parameters one at a time, so for the whole of that burst a snapshot taken on
+// the audio thread carries the *previous* style selector while the slot already
+// carries the new one. The reader retires the grid on that mismatch — which is
+// right when the player moves the selector, and wrong here: the load is what
+// brought the grid in. The loss is permanent, and the next state save strips
+// `arpeggio_grid` from the session file too, so the pattern is gone for good.
+//
+// The window needs two threads to reach, so this uses two. It cannot fail
+// spuriously: with the guard in place a snapshot never retires anything, at any
+// interleaving. Without it the grid is destroyed within a round or two.
+// The republish that follows a dump only tells the host and the panel what the
+// audio thread already stored. If the player turns a knob in the millisecond
+// before that callback runs, the knob is the newer writer and has to win — the
+// republish used to put the dump's value back and snap the slider under their
+// hand. This is the mirror of testReconcileKeepsEditsAfterProgramChange.
+void testADumpsRepublishDoesNotUndoAnEditMadeAfterIt()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+    juce::AudioBuffer<float> block (2, 256);
+
+    septum::Patch dump = septum::initPatch();
+    dump.upper.cutoff = 31;
+    dump.lower.cutoff = 118;
+    for (const auto& pkt : septum::sysex::encodePatchToSysExPackets (dump))
+    {
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage (pkt.data(), (int) pkt.size()), 0);
+        processor.processBlock (block, midi);
+    }
+
+    auto* raw = processor.parameters.getRawParameterValue ("up_cutoff");
+    auto* parameter = processor.parameters.getParameter ("up_cutoff");
+    expect (raw != nullptr && parameter != nullptr, "up_cutoff exists");
+    if (raw == nullptr || parameter == nullptr)
+        return;
+    expect ((int) raw->load() == 31, "the dump landed");
+
+    // The knob, on the message thread, before the queued republish runs.
+    const auto& range = processor.parameters.getParameterRange ("up_cutoff");
+    parameter->setValueNotifyingHost (range.convertTo0to1 (90.0f));
+    expect ((int) raw->load() == 90, "the edit lands");
+
+    processor.republishPatchParameters();
+
+    expect ((int) raw->load() == 90,
+            "an edit made after the dump survives its republish (up_cutoff "
+                + juce::String (raw->load()).toStdString() + ")");
+    expect (std::abs (parameter->getValue() - range.convertTo0to1 (90.0f)) < 1.0e-6,
+            "and the host is left holding the edit rather than the dump");
+    // The binding the edit did not touch still gets its notification.
+    auto* lower = processor.parameters.getRawParameterValue ("lo_cutoff");
+    expect (lower != nullptr && (int) lower->load() == 118,
+            "while the rest of the dump is published as before");
+}
+
+void testALoadInFlightDoesNotDestroyTheGridItIsLoading()
+{
+    SeptumAudioProcessor processor;
+    processor.prepareToPlay (44100.0, 256);
+
+    septum::Patch dump = septum::initPatch();
+    dump.arpeggio.styleIndex = 5;           // not where the selector sits now
+    dump.arpeggio.style = septum::ArpeggioStyle {};
+    dump.arpeggio.style.endStep = 11;
+    for (int row = 0; row < septum::arpeggioMaxRows; ++row)
+        for (int step = 0; step < 11; ++step)
+            dump.arpeggio.style.cells[(std::size_t) step][(std::size_t) row] =
+                (signed char) (1 + ((step * 13 + row * 3) % 100));
+    const auto packets = septum::sysex::encodePatchToSysExPackets (dump);
+    std::vector<std::uint8_t> bank;
+    for (const auto& pkt : packets)
+        bank.insert (bank.end(), pkt.begin(), pkt.end());
+
+    std::atomic<bool> running { true };
+    std::atomic<int> snapshots { 0 };
+    // The audio thread's half: nothing but snapshots, as fast as it can.
+    std::thread reader ([&processor, &running, &snapshots]
+    {
+        while (running.load (std::memory_order_relaxed))
+        {
+            const auto patch = processor.snapshotPatch();
+            snapshots.fetch_add (1, std::memory_order_relaxed);
+            (void) patch;
+        }
+    });
+
+    int lost = 0;
+    constexpr int rounds = 60;
+    for (int round = 0; round < rounds; ++round)
+    {
+        // Put the selector somewhere else first, so the load actually moves it
+        // and the mid-burst snapshot has a mismatch to trip over.
+        if (auto* selector = processor.parameters.getParameter ("arp_style"))
+        {
+            const auto& range = processor.parameters.getParameterRange ("arp_style");
+            selector->setValueNotifyingHost (range.convertTo0to1 (2.0f));
+        }
+        processor.loadSysExData (bank.data(), bank.size());
+        // Once the burst is over the selector agrees with the slot, so a read
+        // must find the grid the load brought in.
+        const auto settled = processor.snapshotPatch();
+        if (settled.arpeggio.style.endStep != 11
+            || settled.arpeggio.style.cells[0][0]
+                   != dump.arpeggio.style.cells[0][0])
+            ++lost;
+    }
+
+    running.store (false, std::memory_order_relaxed);
+    reader.join();
+
+    expect (snapshots.load() > 0, "the racing reader took snapshots ("
+                                      + std::to_string (snapshots.load()) + ")");
+    expect (lost == 0,
+            "a snapshot taken while a load is in flight does not retire the grid "
+            "that load is bringing in (" + std::to_string (lost) + " of "
+                + std::to_string (rounds) + " loads lost their grid)");
+}
+
 void testAnImportedArpeggioPatternSurvivesAndPlays()
 {
     SeptumAudioProcessor processor;
@@ -2192,6 +2324,8 @@ int main()
     testEditorAndSnapshot();
     testUniversalRealtimeDeviceControl();
     testThePatchReconcilerCannotPublishAStaleDump();
+    testADumpsRepublishDoesNotUndoAnEditMadeAfterIt();
+    testALoadInFlightDoesNotDestroyTheGridItIsLoading();
     testAnImportedArpeggioPatternSurvivesAndPlays();
     testSysExBlockProcessing();
     testSysExDoesNotNotifyFromTheAudioThread();

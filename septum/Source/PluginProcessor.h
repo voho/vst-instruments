@@ -224,8 +224,15 @@ private:
     // the one an imported grid arrived under played the imported grid instead
     // of its own template.
     void invalidateImportedArpeggioStyle() const noexcept;
+    // `mayRetire` is the caller saying its selector is trustworthy. The read
+    // retires the grid when the selector it was filed under no longer matches
+    // the one being asked for, because moving the selector chooses a template
+    // — but a snapshot taken while a patch is being written holds a selector
+    // from one revision and can meet a slot from the next, and retiring on
+    // that mismatch throws away a grid nobody moved away from.
     [[nodiscard]] bool readImportedArpeggioStyle (
-        int selector, septum::ArpeggioStyle& out) const noexcept;
+        int selector, septum::ArpeggioStyle& out,
+        bool mayRetire = true) const noexcept;
     void writeImportedArpeggioToState (juce::ValueTree& state) const;
     void readImportedArpeggioFromState (const juce::ValueTree& state);
     std::atomic<float>* masterValue { nullptr };
