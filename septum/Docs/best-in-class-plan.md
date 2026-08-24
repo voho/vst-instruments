@@ -2504,6 +2504,116 @@ already has, so there is one program writer rather than two. That is a
 restructuring, not a patch, and it is named here rather than attempted at the end
 of a review round.
 
+Step 58's audit found that `applyProgram` is not the only one. `loadPatch` and
+`setStateInformation` each open and close an odd window of their own on the same
+one-bit counter, and a dump landing inside either bumps it twice from the audio
+thread — so all three, not one, can read even to a snapshot taken mid-burst. It
+is the same defect and the same fix; naming only `applyProgram` understated it.
+
+Nothing here changes audio: the 11 committed demos re-render bit-identically.
+
+#### Step 58 — an audit of the publish protocol, and the four writes it found
+
+Step 57 fixed one publisher and left a question: is the shadow-and-raw protocol
+the right shape at all, or was it patched twice because it is wrong? Rather than
+answer that from the same head that wrote it, the protocol went to an audit —
+two agents to verify the two findings I had open, two to refute them, three to
+sweep the file for anything neither had named, one to rule on shape. The ruling
+was **patch, not restructure**: the windows that came back are not evidence
+against the design, they are four places where the design's own rule — one
+writer per cell, and the raw storage is the truth — is broken by the code that
+states it. Three of the four are fixed here. One is not a defect.
+
+**A state save destroyed the grid it was saving.** `writeImportedArpeggioToState`
+scrapes the selector out of the published slot and then asks the reader for the
+grid filed under that selector. The reader retires the grid when the two
+disagree, because moving the selector chooses a template — but the selector here
+came from the slot moments earlier, so a disagreement cannot mean the player
+moved anything. It can only mean a dump landed between the two reads. The save
+then invalidated the grid permanently and stripped it from the session file on
+the way out. All three sweeps found this independently and none of the earlier
+review rounds had.
+
+**The retire was decided before the read it decides about.** `snapshotPatch`
+closed its seqlock window above the grid read rather than below it, so a burst
+starting in the gap passed the settled test and the read went on to retire a
+grid the burst had just published. Step 56's guard covered the burst it was
+aimed at and left that one open. The read no longer retires at all: it reports
+the mismatch, and `snapshotPatch` acts on the report only after re-checking the
+generation below the read. The state save does not ask for the report.
+
+**Two publishers were still publishing the shadow.** Step 57's reasoning —
+publish the cell the engine renders from, because that is the one the host and
+the panel have to be told about — reached `republishPatchParameters` and stopped
+there. `reconcileControlChanges` and `republishSystemParameters` both still
+published the shadow, so a knob or an automation lane moved after a CC had its
+value put straight back and the slider snapped under the player's hand. All
+three publish the raw value now and read the shadow only as a baseline; the
+patch republish no longer *writes* the shadow, which had meant a dump packet
+landing in that gap was overwritten in both cells at once with nothing left to
+recover from. `writePatchToParameters` stores raw first and shadow last, like
+the other two audio-thread writers, so a shadow store that lands is the signal
+that the write behind it is complete.
+
+Both static fences for that had to be rewritten, because they were pinning the
+wrong answer. Each staged the clobber as "raw moved, shadow untouched" and read
+it as what the race leaves — but a real message moves both cells, so that state
+is what an *edit* leaves, and the tests were requiring that an edit be undone.
+
+**Rejected: clearing the forced-release latch before the queue check.** The
+audit called this a stuck note — a press dropped by a full queue spends the
+latched release and delivers nothing in its place. It is not. The latch and the
+press name the same key, so cancelling the release is what leaves the engine
+sounding a key that is, on screen, held down; firing it would stop a note under
+a pressed key. `testRetriggerAfterOverflowSurvives` stages exactly this and pins
+the opposite, and it is right. The re-press does lose its articulation, which is
+inherent to dropping the press and is not what was claimed. Recorded as
+considered and refused rather than silently skipped.
+
+**Two of the three fixes ship without a fence, and the reason is measured, not
+assumed.** Both windows are a few tens of nanoseconds between two atomic loads:
+
+- the state save's window scored zero hits in 20,000 publishes raced against
+  three saver threads, which the arithmetic agrees with (~0.1 expected), and a
+  save is far too expensive per iteration to raise that;
+- the snapshot's window was observed twice in 33,000 racing loads and could not
+  be provoked again in 12,000 more with four racing readers.
+
+A test that passes with and without the fix is worse than no test, so neither is
+committed. What is committed is the argument, in the commit message and at each
+call site: a save reads the patch rather than editing it, and a decision cannot
+be taken on evidence gathered before the thing it decides about happened. The
+wide half of the second window keeps its 60-round fence, which still fails 60 of
+60 with the guard removed.
+
+The third fix has a fence, and finding one took four attempts. The re-seed that
+puts back a CC overwritten mid-publish only exists as a race, so it was raced —
+but the first three shapes all passed with the re-seed disabled. Instrumenting
+the publisher showed why: with CCs a block apart the reconciler always finishes
+publishing before the next one arrives, and with sixteen CCs a block a clobber
+that is not the burst's *last* is painted over by the next CC before anything
+can look. Two messages one sample apart, 6,000 times, makes every clobber
+visible: 2–5 per run, all recovered by the fix, all lost without it, failing on
+three attempts out of three.
+
+**Standing limitation: `setValueNotifyingHost` is not atomic against the audio
+thread.** It reads the parameter's normalised value, converts, and writes back,
+off the audio thread, into the same atomic the audio thread stores to — so an
+audio-thread write landing inside it is lost, and no ordering of the surrounding
+stores changes that. It affects every publisher and both program paths. It is
+not fixable inside this protocol: it would need a parameter type whose host
+notification does not round-trip through the value, which is a JUCE-level
+change. Named here because it is the floor under every window above — the
+re-seeds exist precisely to recover from it, and they recover from it after the
+fact rather than preventing it.
+
+Also left, and named so they are not rediscovered as new: the seqlock split that
+would give `applyProgram` one writer instead of two (already recorded under Step
+57), a parameter-pointer and range cache for the publishers, `applyProgramAsync`
+still reading the program index outside the burst, `decodeSysExMessage` not
+reporting which arpeggio-pattern rows a packet touched, and the UI queue's
+overflow policy.
+
 Nothing here changes audio: the 11 committed demos re-render bit-identically.
 
 #### What this pass did not do
