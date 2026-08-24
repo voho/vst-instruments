@@ -2616,6 +2616,50 @@ overflow policy.
 
 Nothing here changes audio: the 11 committed demos re-render bit-identically.
 
+#### Step 59 — the review round on Step 58, and a save that wrote a patch nobody made
+
+Four P2s came back on the previous head. Two were already fixed by Step 58 —
+the state save's retiring read, and the parity counter's nesting, which is
+recorded above as the restructuring this branch does not attempt. The other two
+were new, and both real.
+
+**A state save could serialise a patch that never existed.** The save seqlocks
+its copy of the raw values against the generation counter — but it wrote each
+value straight into the tree as it read it, and a retry cannot undo what the
+failed attempt already put there. Worse, the last of sixty-four attempts wrote
+unconditionally, under the name of a best effort. And the retry was not a wait:
+the odd branch cost one atomic load and nothing else, so sixty-three of them
+passed in a few hundred nanoseconds — less time than the burst they were waiting
+out takes to write a hundred and eighty values. A save that began inside a burst
+spent its whole budget without the burst moving, and then copied the spray in
+flight: some bindings from before the dump, some from after, in a session file
+that will be restored as though somebody had made it.
+
+Both halves are fixed. The values are read into a buffer and committed only once
+the generation has been seen to hold still across the read; a yield between
+attempts buys the gap where the writer leaves one; and where the writer leaves
+none, the tree's own values stand. They lag — which is what the raw-value copy
+exists to avoid — but they are a patch somebody had, and that is the trade the
+alternative loses.
+
+The fence has teeth this time, because the window is a whole burst rather than
+two adjacent loads: two dumps differing in every binding under test, landing on
+the audio thread while a second thread saves, three thousand of them, and no
+save may pair values from both. Restoring the unconditional last attempt fails
+it on all three runs at 31, 32 and 39 torn saves out of about a hundred.
+
+**One visible split point had two names.** Step 53 made the key-zone caption
+name the boundary the way the drawn keys name it, through the keyboard's own
+middle-C octave. The line of English above the keys still read the parameter's
+text, which is fixed at middle C = C4 — so at OCT +1 the caption and the
+keyboard printed C5 over the boundary key while the tone status said "SPLIT at
+C4". The same defect, one place along, untreated when the first one was fixed;
+this branch has now produced that pattern four times. Both go through one
+`getSplitPointKeyName()`, so there is one name to be right, and the existing
+octave walk in the split-point check requires the status to carry it.
+
+Nothing here changes audio: the 11 committed demos re-render bit-identically.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:
