@@ -2679,6 +2679,27 @@ this branch has now produced that pattern four times. Both go through one
 `getSplitPointKeyName()`, so there is one name to be right, and the existing
 octave walk in the split-point check requires the status to carry it.
 
+**And a hole the previous fix opened.** Staging the values but not the grid
+left them able to disagree: on an exhausted save the settings stayed the tree's,
+which lag, while the grid was whatever the last *rejected* attempt had already
+written into the session — an old patch wearing a newer patch's pattern, which
+is the pairing `writePatchToParameters` opens its odd window to prevent. The
+grid is staged into a tree of its own now and copied across with the values, or
+with neither. Absent means the read found no grid, which is the instruction to
+drop one a restored tree may still carry, so the copy removes rather than skips.
+
+It is not fenced, and the reason is specific rather than a shrug. The selector a
+grid is filed under is the plug-in's `arp_style`, and `styleIndex` deliberately
+has no home on the wire — the address map has no style-number parameter, because
+the block plus its sixteen pattern blocks *are* the style. So every SysEx dump
+publishes its grid under whatever selector is already set, and two racing dumps
+cannot be made to disagree about it. Staging the mispairing needs a second kind
+of writer — a program change or a parameter move — racing the dump, which is a
+different test than this one and was not built. Measured on the way to finding
+that out: under dumps landing back to back the save's own grid read is overtaken
+eight times running and gives up, so it strips the grid from 90 saves out of 93;
+two quiet blocks between dumps and it keeps it in 703 of 705.
+
 **A correction to this branch's own record.** A note was added, and is now
 removed, saying the plug-in suite runs in no CI job. It was wrong. Every job in
 `ci.yml` does pair `BUILD_TESTING=ON` with the plug-in off — but the macOS job

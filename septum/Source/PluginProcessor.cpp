@@ -2085,10 +2085,16 @@ void SeptumAudioProcessor::getStateInformation (
                 }
             }
             const int program = currentProgram.load (std::memory_order_relaxed);
-            // The grid goes in either way: it is published as one store, so
-            // what a read of it returns is always a whole grid, never a
-            // mixture, and a failed attempt leaves nothing torn behind.
-            writeImportedArpeggioToState (state);
+            // Staged like the rest of it, into a tree of its own. A publish is
+            // one store, so a read of the grid is always a whole grid — but
+            // that only says it is not torn in itself. Written straight into
+            // the session while the values waited for a verdict, an exhausted
+            // save paired the tree's own settings, which lag, with a grid from
+            // the attempt that had just been rejected: an old patch wearing a
+            // newer patch's pattern. The values and the grid have to come from
+            // the same reading or from neither.
+            juce::ValueTree grid ("grid");
+            writeImportedArpeggioToState (grid);
             if (patchGeneration.load (std::memory_order_acquire) != generation)
             {
                 std::this_thread::yield();
@@ -2098,6 +2104,17 @@ void SeptumAudioProcessor::getStateInformation (
                 state.getChild (indices[v])
                     .setProperty ("value", values[v], nullptr);
             state.setProperty ("program", program, nullptr);
+            // Absent means the read found no grid to save, which is the
+            // instruction to drop one the restored tree may still carry.
+            for (const auto* key : { "arpeggio_grid", "arpeggio_grid_selector",
+                                     "arpeggio_grid_end_step" })
+            {
+                const juce::Identifier property (key);
+                if (grid.hasProperty (property))
+                    state.setProperty (property, grid[property], nullptr);
+                else
+                    state.removeProperty (property, nullptr);
+            }
             break;
         }
         if (const auto xml = state.createXml())
