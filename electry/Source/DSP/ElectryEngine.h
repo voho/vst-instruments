@@ -1,3 +1,82 @@
+// Electry: an original, physically modelled dry electric guitar.
+//
+// The engine is a white-box model with named references, not a capture of any
+// one instrument. Each block below names the published work it follows; what
+// the model implements from each, and where the claim stops, is set out block
+// by block in the README's "How it works". Constants not fixed by a cited
+// result are voiced -- this project's choices inside a range the sources bound
+// but do not pin.
+//
+//   String core, single-delay-loop waveguides
+//     Karjalainen, Valimaki and Tolonen, "Plucked-String Models: From the
+//     Karplus-Strong Algorithm to Digital Waveguides and Beyond", CMJ 1998.
+//     http://users.spa.aalto.fi/vpv/publications/cmj98.pdf
+//
+//   Stiffness dispersion, B = pi^3 E d^4 / (64 T L^2)
+//     Fletcher and Rossing, The Physics of Musical Instruments, for B itself;
+//     Rauhala and Valimaki, "Dispersion modeling in waveguide piano synthesis
+//     using tunable allpass filters",
+//     https://www.researchgate.net/publication/229009513_Dispersion_modeling_in_waveguide_piano_synthesis_using_tunable_allpass_filters
+//     and Abel and Smith, DAFx-06,
+//     https://www.dafx.de/paper-archive/2006/papers/p_013.pdf
+//     for the factored allpass design practice.
+//
+//   Dead spots
+//     Fleischer, "Investigating Dead Spots of Electric Guitars",
+//     https://www.researchgate.net/publication/233653803_Investigating_Dead_Spots_of_Electric_Guitars
+//
+//   Tension modulation
+//     Tolonen, Valimaki and Karjalainen, "Modeling of tension modulation
+//     nonlinearity in plucked strings",
+//     https://www.researchgate.net/publication/3333696_Modeling_of_tension_modulation_nonlinearity_in_plucked_strings
+//
+//   Plectrum and finger excitation, touch and collisions
+//     Germain and Evangelista, WASPAA 2009,
+//     https://ieeexplore.ieee.org/document/5346502/
+//     Evangelista and Eckerholm, "Player-Instrument Interaction Models for
+//     Digital Waveguide Synthesis of Guitar: Touch and Collisions",
+//     https://www.researchgate.net/publication/224130817_Player-Instrument_Interaction_Models_for_Digital_Waveguide_Synthesis_of_Guitar_Touch_and_Collisions
+//
+//   Fret collisions
+//     Bilbao and Torin, "Numerical modeling and sound synthesis for
+//     articulated string/fretboard interactions",
+//     https://www.research.ed.ac.uk/en/publications/numerical-modeling-and-sound-synthesis-for-articulated-stringfret/
+//
+//   Slide, and the winding contact noise
+//     Pakarinen, Puputti and Valimaki, "Virtual Slide Guitar",
+//     https://research.aalto.fi/en/publications/virtual-slide-guitar
+//     NIME 2008 companion:
+//     https://www.nime.org/proceedings/2008/nime2008_049.pdf
+//
+//   Pickups
+//     Paiva, Pakarinen and Valimaki, "Acoustics and Modeling of Pickups",
+//     https://www.researchgate.net/publication/234034228_Acoustics_and_Modeling_of_Pickups
+//     Novak et al., "Measurements and Modeling of the Nonlinear Behavior of a
+//     Guitar Pickup at Low Frequencies",
+//     https://www.researchgate.net/publication/312046898_Measurements_and_Modeling_of_the_Nonlinear_Behavior_of_a_Guitar_Pickup_at_Low_Frequencies
+//     Aperture analysis: https://www.cycfi.com/2014/08/virtual-pickups-part-3/
+//
+//   Sympathetic coupling and bridge admittance
+//     Bank, "Model-based digital pianos ... in real time",
+//     https://home.mit.bme.hu/~bank/publist/dafx10adm.pdf
+//     Maestre et al., "Joint Modeling of Impedance and Radiation as a Recursive
+//     Parallel Filter Structure for Efficient Synthesis of String Instrument
+//     Sound by Digital Waveguides",
+//     https://caml.music.mcgill.ca/lib/exe/fetch.php?media=publications%3Amaestre_jointmodeling_ieeeaslp_2017.pdf
+//
+//   Amplifier and cabinet
+//     Pakarinen and Yeh, "A Review of Digital Techniques for Modeling
+//     Vacuum-Tube Guitar Amplifiers", CMJ 2009,
+//     https://direct.mit.edu/comj/article/33/2/85/94374/A-Review-of-Digital-Techniques-for-Modeling-Vacuum
+//
+//   Why the runtime stays analytic rather than a solved FDTD or a learned model
+//     Bilbao et al., "Real-Time Guitar Synthesis",
+//     https://www.pure.ed.ac.uk/ws/portalfiles/portal/470239305/BilbaoEtal2024RealTimeGuitarSynthesis.pdf
+//     and the NeurIPS 2024 sound-and-motion simulation line,
+//     https://arxiv.org/abs/2407.05516
+//     -- both are why the cost model rules those out for an eight-string
+//     realtime voice, not why they would be wrong.
+
 #pragma once
 
 #include "DspMath.h"

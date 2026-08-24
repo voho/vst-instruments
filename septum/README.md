@@ -1,126 +1,391 @@
 # Septum
 
-A ten-voice virtual-analog synthesizer, built as a self-contained JUCE
-project: VST3 and Standalone for macOS, Linux and Windows, plus Audio Unit on
+A ten-voice virtual-analog synthesizer modelling the Roland SH-201 (2006) —
+the last keyboard of the calculated-supersaw family that began with the
+JP-8000. VST3 and Standalone for macOS, Linux and Windows, plus Audio Unit on
 macOS.
-
-Septum models the voice architecture of the Roland SH-201 (2006) — the
-last keyboard of the calculated-supersaw family that began with the JP-8000 —
-block by block from Roland's own published documents: the owner's manual, the
-MIDI implementation's complete parameter address map, and the service notes'
-block and circuit diagrams. It is an independent original implementation, not
-affiliated with or licensed by Roland Corporation, and contains no firmware,
-ROM data, samples, captured audio, or factory patch data. Its panel follows
-the modelled instrument's functional layout with independent branding and
-project-drawn controls.
-
-The name is Latin twice over: *septum*, a dividing wall, for the two tones —
-UPPER and LOWER — that partition every patch; and *septem*, seven, for the
-seven detuned sawtooth oscillators that give the instrument its signature
-voice.
-
-> **Listen first.** Eleven [rendered demonstrations](Docs/audio/README.md)
-> cover the seven-saw SUPER SAW and its spread curve, FB OSC feedback, the
-> −24 dB filter into self-oscillation, oscillator sync, ring modulation, PWM
-> strings through the chorus delay template, S&H effects, DUAL-mode pads and
-> the arpeggiator — each matched to an official real-unit recording for
-> by-ear comparison.
 
 ![Septum](Docs/screenshots/septum-standalone.png)
 
-The panel is laid out so the signal path reads off it: the voice chain across
-the top (OSC 1 + OSC 2 → MIX/MOD → FILTER → AMP, with the connectors drawn in),
-the modulators beneath it, and the two ends of the instrument — arpeggiator,
-external input, delay, reverb — along the bottom. Every control is the same
-size wherever it appears and shows its value in the units the manual prints,
-so nothing has to be dragged to be read.
+Two complete tones — UPPER and LOWER — each running
+`OSC1 + OSC2 → MIX/MOD → FILTER → AMP` with three envelopes and two LFOs,
+into a shared modulation-delay → reverb chain, with SINGLE/DUAL/SPLIT
+keyboard modes and 10 voices halved in DUAL. The seven-saw SUPER SAW, the
+soft-clipped FB OSC comb, a multimode filter that reaches bounded
+self-oscillation, the documented 32 × 16 arpeggiator grid, the rear INPUT
+jacks with their four-type AUDIO FILTER, and a component-level model of the
+analog output stage.
 
-## What kind of replica this is
+The name is Latin twice over: *septum*, a dividing wall, for the two tones
+that partition every patch; and *septem*, seven, for the seven detuned
+sawtooth oscillators that give the instrument its signature voice.
 
-The modelled instrument's sound engine is pure DSP: the service notes show
-one Roland custom DSP ("WSP", a Toshiba-fabbed gate array) computing all
-synthesis and effects, no PCM wave ROM anywhere in the design, and a
-documented analog input/output stage around the codec. A faithful replica is
-therefore a *behavioral model of a DSP engine* plus a component-level model
-of the analog output path — not an analog circuit simulation. What is settled
-by which source, what follows a published measurement of related hardware,
-and what remains a voiced choice is recorded mechanism by mechanism in the
-[research and implementation contract](Docs/sh201-replica-research.md),
-whose open questions each name the measurement that would close them.
+It is an independent original implementation, not affiliated with or licensed
+by Roland Corporation, and contains no firmware, ROM data, samples, captured
+audio, or factory patch data.
 
-The engine's grounding, briefly:
+## Audio demos
 
-- **Architecture (settled).** One patch holds two complete tones (UPPER,
-  LOWER), each `OSC1 + OSC2 → MIX/MOD → FILTER → AMP` with a two-stage pitch
-  envelope, filter and amp ADSRs, and two LFOs; a shared modulation-delay →
-  reverb chain with per-tone sends; SINGLE/DUAL/SPLIT keyboard modes;
-  10 voices, halved in DUAL. Every parameter and range comes verbatim from
-  the MIDI implementation's address map, including the waveform order
-  (SAW, SQU, PW-SQU, TRI, SINE, NOISE, FB-OSC, SUPER-SAW, EXT-IN), the LFO
-  shape order, the 20-entry tempo-sync note table, and the effect frequency
-  tables.
-- **SUPER SAW (reported).** Seven sawtooth oscillators per oscillator slot,
-  implemented with Adam Szabo's JP-8000 measurements quoted verbatim: the
-  fixed detune offsets, the 11th-degree spread-knob polynomial, free-running
-  phases randomized per note, and the pitch-tracked high-pass on the summed
-  stack. The SH-201's fixed center/side mix (it has no MIX knob) is a voiced
-  choice, flagged as a standing listening-test candidate.
-- **FB OSC (reported mechanism, voiced constants).** A sawtooth with a
-  soft-clipped feedback comb at half the fundamental period — "high
-  overtones, similar to feedback on a guitar" with one feedback-amount
-  control, polyphonic on both oscillator slots as the hardware allows.
-- **Filter (settled behavior, voiced calibration).** LPF/HPF/BPF/BYPASS at
-  −12 or −24 dB/oct; KEY FOLLOW −200…+200 pivoting at C4 with +100 tracking
-  1:1 per the manual's own diagram; resonance reaching sustained bounded
-  self-oscillation exactly as the manual warns. The knob-to-Hz and
-  resonance-to-Q curves are voiced pending hardware measurement.
-- **Analog output stage (settled).** The service-notes component values:
-  22 µF/22 kΩ coupling (0.329 Hz), the 8.2 kΩ/820 pF and 4.7 kΩ/270 pF RC
-  poles (23.7 kHz, 125.4 kHz), gain chain normalized to digital full scale.
-- **Arpeggiator (settled mechanism, original styles).** The settled 32 × 16
-  style grid with GRID (including the shuffled divisions), DURATION with tie
-  chains and FUL, all twelve MOTIF values, OCTAVE RANGE, ACCENT, ARPEGGIO
-  VELOCITY, END STEP (with a `STYLE` position that defers to the selected
-  template's own length), HOLD and SPLIT ARPEGGIO. The motif mapping reproduces
-  the three worked examples the manual prints, exactly; they are the test.
-  Roland's 32 factory styles are unpublished data and none ships here — the
-  16 styles supplied are original patterns.
-- **External input (settled).** The rear INPUT jacks, with INPUT VOL, CENTER
-  CANCEL and the AUDIO FILTER — LPF/HPF/BPF/**NOTCH** at −12 or −24 dB, none
-  of it stored in the patch, exactly as the manual says three times over. The
-  EXT-IN waveform plays the input through the voice in mono, and the direct
-  monitor hands the input over while it does; the manual's own "sound only
-  when you play the keyboard" recipe is what settles that order, and it is a
-  test.
-- **D Beam (settled).** Three modes — PITCH on CC#69, EXPRESS with ACTIVE
-  EXPRESSION's two-tone combination, and FILTER/ASSIGN over the address map's
-  own 37-destination list — with the polarity that inverts the assign
-  direction and the UPPER/LOWER/BOTH destination, every one of them a
-  parameter a host can automate. The beam takes its target from where the
-  patch has it toward one end of that parameter's documented range, which is
-  the manual's own description of what holding FILTER/ASSIGN and turning a
-  knob does. D BEAM SENS is stored and inert: it compensates an infrared
-  sensor for sunlight, and there is no sensor here.
-- **MIDI (settled).** The control-change map from owner's manual p. 72 for
-  both tones and the part controllers, including both documented pedals
-  (hold CC#64, sostenuto CC#66), the audio filter's CC#2 and CC#4, and the
-  printed CC#88 collision resolved to CC#83 as documented in the research
-  contract.
+Rendered by [`Tools/RenderDemos.cpp`](Tools/RenderDemos.cpp) through the same
+JUCE-free `septum::Engine` the plug-in runs, at 44.1 kHz — no samples, impulse
+responses or external processing anywhere. Each take is normalised to
+−3 dBFS on its own peak; the pre-normalisation peak stays visible below. CI
+re-renders and verifies the set on every push, so the committed audio cannot
+drift from the code.
 
-The demos are rendered through this exact engine by a JUCE-free tool that CI
-rebuilds and verifies, so the committed audio cannot drift from the code.
+<!-- peaks-table-begin: regenerated by SeptumRenderDemos; edits between the markers are overwritten -->
+| File | What it is | Length | Rendered peak | Normalisation |
+| --- | --- | ---: | ---: | ---: |
+| `01-supersaw-lead.wav` | Both oscillators SUPER SAW: a trance line into a held stack | 8.5 s | −9.2 dBFS | +6.2 dB |
+| `02-supersaw-spread-sweep.wav` | One chord while the spread knob sweeps the seven-saw detune curve | 7.8 s | −11.7 dBFS | +8.7 dB |
+| `03-fb-osc-lead.wav` | FB OSC from clean saw into feedback, then a legato solo phrase | 9.7 s | −23.6 dBFS | +20.6 dB |
+| `04-acid-filter-24db.wav` | The -24 dB low-pass at high resonance under a 16th-note line | 9.3 s | −28.9 dBFS | +25.9 dB |
+| `05-sync-sweeper.wav` | Oscillator sync swept by the pitch envelope and by hand | 8.8 s | −24.3 dBFS | +21.3 dB |
+| `06-ring-bell.wav` | Ring modulation: equal-sine product bells | 9.2 s | −14.9 dBFS | +11.9 dB |
+| `07-pwm-strings.wav` | Pulse-width modulation strings through the chorus delay template | 15.8 s | −2.5 dBFS | −0.5 dB |
+| `08-sub-bass.wav` | Square plus sine an octave down with the LOW FREQ boost | 8.0 s | −21.1 dBFS | +18.1 dB |
+| `09-sample-hold-fx.wav` | Sample & hold LFO into the band-pass filter | 9.2 s | −16.5 dBFS | +13.5 dB |
+| `10-dual-pad.wav` | DUAL keyboard mode: two complete tones layered under one hall | 23.9 s | −8.5 dBFS | +5.5 dB |
+| `11-arpeggiator.wav` | One chord through the arpeggiator: UP, UP&DOWN(L&H) with a heavy shuffle, then OCTAVE RANGE +2 on HOLD | 15.1 s | −17.8 dBFS | +14.8 dB |
+<!-- peaks-table-end -->
 
-## Presets
+### Listening against the real instrument
 
-The 13 shipped programs are original sounds programmed against the engine —
-Roland's 64 factory patches are data no public document publishes and none of
-it ships here. The eight delay templates (Simple Delay … Chorus 1/2) and
-eight reverb templates (Room 1 … Plate 2) implement the settled template
-names with this project's voiced values.
+Roland still hosts real-unit recordings of the modelled instrument, so each
+demo names the closest official reference. Those MP3s are played on real
+hardware with unknown mastering: they are by-ear references, not measurement
+targets. The demos play this project's own presets, not Roland's factory
+patch data, so a comparison judges the *engine's* character — spread
+trajectory, FB-OSC growl, resonance behaviour, envelope snap, effect texture
+— rather than patch-for-patch identity.
+
+- [roland.com SH-201 song list](https://www.roland.com/global/products/sh-201/songlist/) — 17 official patch demos and a song demo
+- [rolandus.com SH-201 patches](https://www.rolandus.com/go/sh-201_patches/) — the 2007 mini-site, 33 more demos including a supersaw comparison
+- [Roland SH-201 Demo, No Talking](https://www.youtube.com/watch?v=BfDj8V3MTCo) — a no-narration real-unit run-through
+
+| Demo | Closest real-unit reference |
+| --- | --- |
+| `01-supersaw-lead.wav` | [SuperSawBrs](https://static.roland.com/assets/media/mp3/sh_201_super_saw_brs.mp3), [Fat Saw Lead](https://static.roland.com/assets/media/mp3/sh_201_fat_saw_lead.mp3) |
+| `02-supersaw-spread-sweep.wav` | [SH-201 vs JP-8000 supersaw](https://www.rolandus.com/go/sh-201_patches/mp3/PAD/TOP8_SH-201vsJP-8000.mp3) |
+| `03-fb-osc-lead.wav` | [FB OSC Lead](https://static.roland.com/assets/media/mp3/sh_201_fb_osc_lead.mp3) |
+| `04-acid-filter-24db.wav` | [Reso Bass](https://static.roland.com/assets/media/mp3/sh_201_reso_bass.mp3) |
+| `05-sync-sweeper.wav` | [OSC SyncLead](https://static.roland.com/assets/media/mp3/sh_201_osc_sync_lead.mp3) |
+| `06-ring-bell.wav` | RingModBell (PRESET A-4; audible in the [factory run-through](https://www.youtube.com/watch?v=lKpt2Q5GRXg)) |
+| `07-pwm-strings.wav` | [SilkyStrings](https://static.roland.com/assets/media/mp3/sh_201_silky_strings.mp3) |
+| `08-sub-bass.wav` | [Fat Bass](https://static.roland.com/assets/media/mp3/sh_201_fat_bass.mp3) |
+| `09-sample-hold-fx.wav` | [S&H FX 2](https://static.roland.com/assets/media/mp3/sh_201_s_and_h_fx_2.mp3) |
+| `10-dual-pad.wav` | [JP-8SweepPad](https://static.roland.com/assets/media/mp3/sh_201_jp_8_sweep_pad.mp3) |
+| `11-arpeggiator.wav` | [Sweep Arp](https://static.roland.com/assets/media/mp3/sh_201_sweep_arp.mp3), [Electro Seq](https://static.roland.com/assets/media/mp3/sh_201_electro_seq.mp3) |
+
+## How it works
+
+The modelled instrument's sound engine is pure DSP: the service notes show one
+Roland custom DSP ("WSP", a Toshiba-fabbed gate array) computing all synthesis
+and effects, no PCM wave ROM anywhere in the design, and a documented analog
+stage around the codec. A faithful replica is therefore a *behavioural model
+of a DSP engine* plus a component-level model of the analog output path — not
+an analog circuit simulation.
+
+Every mechanism below is tagged by how well it is grounded. **Settled** means
+a primary document pins it. **Reported** means it follows a published
+measurement of related hardware, or a consistent owner/press account.
+**Voiced** means this project chose the value because no source pins it —
+those live in the engine's `mapping` namespace, each tagged with the open
+question that owns it, so a measurement can replace one without touching the
+render code. The open questions are listed under [Known gaps](#known-gaps).
+
+**Primary sources.**
+
+| Source | What it settles |
+| --- | --- |
+| Roland SH-201 Owner's Manual, 84 pp., © 2006 | Architecture, panel controls, parameter list with ranges (pp. 60–70), CC map (p. 72), MIDI chart (p. 73), specifications (p. 74), block diagram (p. 75) |
+| Roland SH-201 MIDI Implementation v1.00, 2006-03-01 | The parameter contract: SysEx address map with every raw range and display mapping, enumeration orders, LFO sync-note table, effect frequency tables |
+| Roland SH-201/SH-201C Service Notes, May 2006, doc 17058418E0 | NEC V850E/ME2 CPU, WSP DSP + private SDRAM, AK4552 codec, TUSB3200 USB clock master (384fs), analog I/O component values, factory test levels |
+| SH-201 leaflet addendum (`SH-201_AD.pdf`) | Effect template names, `-5` → `5th` INTERVAL spec change, factory reset |
+| Adam Szabo, *How to Emulate the Super Saw*, KTH bachelor's thesis, 2010 | JP-8000 Super Saw measurements: oscillator offsets, detune polynomial, mix laws, pitch-tracked HPF, free-running phases |
+| Roland JP-8000 Owner's Manual + Supplemental Notes SN77 | The ancestor's supersaw/FB-OSC control semantics |
+| Sound on Sound, *Roland SH-201* (Nick Magnus, April 2007) | V-Synth-derived engine, 5+5 dual/split voices, envelope snappiness, EXT-IN routing, the 24 dB filter "similar in character to that of the JP8000" |
+| AKM AK4552 datasheet | Codec conversion: 24-bit delta-sigma, digital-filter passband 0.454·fs |
+
+### Architecture
+
+*Settled.* One patch holds two complete tones. Each is
+`OSC1 + OSC2 → MIX/MOD → FILTER → AMP` with a two-stage pitch envelope, filter
+and amp ADSRs, and two LFOs; a shared modulation-delay → reverb chain takes
+per-tone sends; SINGLE/DUAL/SPLIT keyboard modes give 10 voices, halved to 5+5
+in DUAL. Every parameter and range comes verbatim from the MIDI
+implementation's address map, including the waveform order (SAW, SQU, PW-SQU,
+TRI, SINE, NOISE, FB-OSC, SUPER-SAW, EXT-IN), the LFO shape order, the
+20-entry tempo-sync note table and the effect frequency tables.
+
+### Oscillators
+
+**SUPER SAW** — seven sawtooth waves inside one oscillator slot, the PW knob
+setting pitch spread. *Reported*, from Szabo's JP-8000 measurements quoted
+verbatim: fixed per-oscillator offsets at full detune of −0.11002313,
+−0.06288439, −0.01952356, 0, +0.01991221, +0.06216538, +0.10745242 relative to
+the centre frequency (cross-checked against a KVR reverse-engineering giving
+≈5/256, 16/256, 28/256); the fitted 11th-degree spread polynomial implemented
+verbatim; phases randomised free-running per note-on; and the saws deliberately
+*not* band-limited, because the aliasing above the fundamental is part of the
+signature sound. The summed stack passes a high-pass tracked to the note's
+fundamental, removing folded noise below it — an RBJ 2nd-order high-pass at
+1.0× f₀, Q = 0.707. The SH-201 has no supersaw MIX knob, so Szabo's mix laws
+(centre `−0.55366·m + 0.99785`, sides `−0.73764·m² + 1.2841·m + 0.044372`) are
+evaluated at a fixed *m* = 0.75, just past the centre/side equality point at
+*m* ≈ 0.737, leaving the sides ~0.15 dB above the centre. *Voiced.*
+
+**FB OSC** — *settled* as "a tone containing high overtones, similar to
+feedback on a guitar", with one feedback control, polyphonic on both slots
+where the JP-8000 ancestor forced mono and exposed two controls. *Reported*
+mechanism: a sawtooth feeding a comb filter, aliasing heavily. Implemented as
+a sawtooth whose soft-clipped output is delayed by half the fundamental period
+and added back scaled 0…1.15, values past unity held bounded by the clip. The
+half-period delay reinforces even harmonics — the octave-up emphasis of guitar
+feedback. Delay ratio and gain law are *voiced*.
+
+**The rest** — SAW, SQU, PW-SQU, TRI, SINE and NOISE are band-limited; the
+triangle's own coefficient was the one that shipped un-band-limited until it
+was fixed. **INTERVAL** is *settled* against OSC 1 rather than against zero
+(OM p. 30): −OCT drops OSC 2 an octave below OSC 1, 5th raises it seven
+semitones above, and both together put OSC 2 at OSC 1's pitch.
+
+### Mixer, sync and ring
+
+*Settled:* TYPE cycles MIX → SYNC → RING. SYNC restarts OSC1's cycle at each
+OSC2 cycle start, implemented as the naive hard-sync reset it is documented as
+— the modelled DSP's own sync aliases audibly, and no source documents
+band-limiting there. RING multiplies OSC1 × OSC2, the product occupying the
+OSC1 leg of the balance crossfade, so BALANCE fully left hears the ring product
+alone. BALANCE −63…+63 holds each leg at unity at centre with the opposite leg
+attenuating to silence at the extremes — endpoints settled, law *voiced*. LOW
+FREQ CUT/FLAT/BOOST is a first-order low shelf, *voiced* at 200 Hz ± 8 dB.
+
+### Filter
+
+*Settled:* LPF/HPF/BPF/BYPASS at −12 or −24 dB/oct; cutoff and resonance
+0–127; resonance far right reaches sustained self-oscillation, exactly as the
+manual warns; KEY FOLLOW −200…+200 in steps of 10, the p. 36 diagram placing
+the pivot at C4 with +100 tracking the keyboard 1:1 and +200 at 2:1.
+*Reported:* the 24 dB filter is "similar in character to that of the JP8000"
+(SoS) — a clean digital resonant filter, not a modelled analog ladder.
+
+Implemented as a TPT state-variable filter: −12 dB is one resonant 2-pole
+stage, −24 dB cascades a second non-resonant stage (*voiced* topology). All
+three responses are raw integrator taps, so all three gain with RESONANCE and
+all three reach the documented oscillation. Resonance maps to SVF damping
+through a square-root taper, `k = 2 − 2.04·√(v/127)`: Q ≈ 0.5 at zero,
+slightly negative damping at 127 so self-oscillation grows until a continuous
+soft-knee state limiter holds it, matching the manual's "may not stop at all".
+Cutoff maps exponentially over 20 Hz → 20.48 kHz; envelope depth ±63 spans
+±10 octaves linearly; cutoff velocity sensitivity ±63 spans ±4 octaves.
+
+The cutoff sum is assembled in two parts, deliberately. The *panel* side —
+cutoff knob, key follow, velocity offset, LFO — passes a 2.5 ms one-pole slew
+that models nothing the hardware does and exists only so a patch edit or an
+S&H LFO edge cannot put a discontinuity into the coefficient. The *envelope*
+side does not: filter and amp envelopes read the same slider through the same
+mapping, so smoothing one and not the other would make the reported "fast ADSR
+response times ensure bags of punch" true of the amp and false of the filter.
+Both stages' coefficients then walk sample by sample across the control tick,
+so taking the envelope out of the slew put no staircase back in.
+
+### Envelopes
+
+*Settled:* PITCH ENV is attack/decay only with shared A/D and per-oscillator
+signed depth; FILTER ENV is ADSR with signed depth; AMP ENV is ADSR; all
+sliders 0–127. *Reported:* "fast ADSR response times ensure bags of punch"
+(SoS). *Voiced:* linear-ramp attack, exponential decay and release measured to
+−60 dB, times mapping exponentially over A: 1 ms → 5 s and D/R: 2 ms → 12 s,
+pitch-env A/D on the same law, pitch-env depth ±63 → ±24 semitones linear, and
+a stolen voice in POLY restarting its envelope from its current level.
+
+### LFOs
+
+*Settled:* two identical LFOs per tone, shared by that tone's voices to match
+the hardware's per-tone "2 LFOs"; shapes TRI, SIN, SAW, SQR, TRP, S&H (one
+change per cycle) and RND; rate 0–127 or the 20-entry tempo-sync table against
+the patch tempo; fade time; key trigger restarting the cycle on a key press;
+destination 1 ∈ {PITCH1, PW1, FILTER, AUDIO-FILTER}, destination 2 ∈ {PITCH2,
+PW2, AMP}, each with a signed depth whose negative half inverts the waveform.
+*Voiced:* rate 0.03 → 30 Hz exponential, the trapezoid as
+rise-¼/high-¼/fall-¼/low-¼, RND as linearly interpolated random targets per
+cycle against S&H's stepped ones, fade time `(v/127)² × 10 s`, and the depth
+scalings — pitch ±1 octave with a squared taper, PW the full parameter span,
+filter ±5 octaves, amp up to ±100 % level.
+
+### AMP, overdrive and pan
+
+*Settled:* LEVEL 0–127; OVERDRIVE is an insertion effect in the AMP section,
+"similar to vacuum tube amplifier distortion", DRIVE 0–127, LEVEL still acting
+as clean volume; hidden PAN L64–63R; LEVEL VELOCITY SENS ±63. *Voiced:* drive
+maps to 0…32 dB of pre-gain into a tanh clipper, output-compensated by
+`pre^−0.4` to hold loudness roughly constant; LEVEL is a squared amplitude
+law; pan is equal-power.
+
+Where the shaper is evaluated is a separate question from what it computes.
+The overdrive runs at a fixed internal rate through half-band polyphase stages
+with antiderivative anti-aliasing, so its character does not follow the host's
+sample rate.
+
+### Arpeggiator
+
+*Settled mechanism, original styles.* The documented 32 × 16 style grid, with
+GRID including the shuffled divisions, DURATION with tie chains and FUL, all
+twelve MOTIF values, OCTAVE RANGE, ACCENT, ARPEGGIO VELOCITY, END STEP with a
+`STYLE` position that defers to the template's own length, HOLD and SPLIT
+ARPEGGIO. The manual prints three worked examples of the motif mapping and
+they are the test: the implementation reproduces all three exactly, including
+the documented fallback that plays the highest pressed key by default.
+Roland's 32 factory styles are unpublished data and none ships here — the 16
+styles supplied are original patterns.
+
+### External input
+
+*Settled.* The rear INPUT jacks with INPUT VOL, CENTER CANCEL and the AUDIO
+FILTER — LPF/HPF/BPF/**NOTCH** at −12 or −24 dB — none of it stored in the
+patch, exactly as the manual says three separate times. CUTOFF answers on
+CC#2 and RESONANCE on CC#4. The EXT-IN waveform plays the input through the
+voice in mono, and the direct monitor hands the input over while it does; the
+manual's own "sound only when you play the keyboard" recipe is what settles
+that order, and it is a test. With no input bus connected an EXT-IN oscillator
+renders silence, as the hardware does with nothing plugged in.
+
+### D Beam
+
+*Settled.* Three modes — PITCH on CC#69, EXPRESS with ACTIVE EXPRESSION's
+two-tone combination, and FILTER/ASSIGN over the address map's own
+37-destination list — with the polarity that inverts the assign direction and
+the UPPER/LOWER/BOTH destination, every one an automatable parameter. The beam
+takes its target from where the patch has it toward one end of that
+parameter's documented range, which is the manual's own description of what
+holding FILTER/ASSIGN and turning a knob does. D BEAM SENS is stored and
+inert: it compensates an infrared sensor for sunlight, and there is no sensor
+here.
+
+### Effects
+
+A shared modulation delay → reverb chain with per-tone sends, the eight delay
+templates (Simple Delay … Chorus 1/2) and eight reverb templates (Room 1 …
+Plate 2) implementing the *settled* template names with this project's
+*voiced* values.
+
+### Analog output stage
+
+*Settled from the service notes* — the replica's one genuinely "circuit"
+component. Per channel after the DAC: 22 µF coupling into 22 kΩ giving a
+0.329 Hz high-pass, a 2nd-order passive RC low-pass from 4.7 kΩ/270 pF and
+8.2 kΩ/820 pF giving poles at 125.4 kHz and 23.7 kHz, a non-inverting
+M5218AFP stage of gain 2.5 (33k/22k, 10 pF → ~482 kHz pole), the analog
+master-volume pot and the 2× line stage. The replica implements the DC block
+and both RC poles at their component values — audible only at high host rates,
+present for completeness — and normalises the 2.5×/2× gain chain to unity
+digital full scale. The factory anchors are 5.0 Vp-p at OUTPUT on a 440 Hz
+test, −4.0 dB at 20 kHz through the full analog chain, and residual noise
+≤ −72 dB DIN-weighted. The codec's own digital filter (passband 0.454·fs) is
+not separately modelled; the host's converters stand in for it.
+
+### Voice allocation and MIDI
+
+Ten voices, halved in DUAL, with solo/legato and portamento. The *settled* CC
+map from owner's manual p. 72 is honoured for both tones and the part
+controllers, including both documented pedals — hold CC#64 and sostenuto
+CC#66 — the audio filter's CC#2 and CC#4, and the printed CC#88 collision
+resolved to CC#83. Sostenuto holds only the keys that were down when it went
+down; a note caught by both pedals releases only when both are up, and a
+stolen voice loses its latch, since the latch belonged to the note the pedal
+caught and not to the physical voice.
+
+### Presets
+
+Thirteen programs built into the binary (`Source/DSP/SeptumPresets.cpp`), INIT
+PATCH first, reproducing the documented initialization behaviour where only
+OSC 1 is heard because the balance sits fully left. They are original sounds
+programmed against the engine: the modelled instrument's 64 factory patches
+are Roland's data, published nowhere as parameter values, and none of that
+data ships here. Host sessions store the full parameter state, so any edited
+sound saves with the project.
+
+## Known gaps
+
+**Not modelled.** The recorder, SysEx DT1/RQ1 patch I/O, and the USB audio
+topology are documented but deferred. The codec's own digital filter is left
+to the host's converters.
+
+**Open calibration questions.** Each names the measurement that would close
+it; the constants they own are tagged in the engine's `mapping` namespace.
+
+| # | Question | What would close it |
+| --- | --- | --- |
+| OQ-01 | Engine sample rate — the clock tree fixes engine fs = USB fs, but 44.1 vs 48 kHz is undetermined; also owns true oscillator interpolation and aliasing (owners report supersaw content dying above ~15 kHz) | Read a real unit's USB descriptors, or analyse alias lines in a dry capture |
+| OQ-02 | The CC#88 collision, read here as CC#83 | Capture the panel's transmitted CCs while moving UPPER filter-env D and LOWER OSC2 pitch-env depth |
+| OQ-03 | Noise colour; pulse-width endpoints | Spectral capture of the NOISE wave; scope capture of PW at 0/64/127 |
+| OQ-04 | Supersaw HPF — 1.0×f₀ Q=0.707 here, against a KVR fit proposing 2.5×f₀ Q=√2; both defensible | FFT below and around the fundamental of one dry supersaw note |
+| OQ-05 | Supersaw fixed centre/side mix; *m* = 0.75 is voiced | FFT of a hardware note at zero and full spread |
+| OQ-06 | FB-OSC comb delay ratio, feedback law, in-loop nonlinearity | Capture feedback-knob sweeps at fixed pitch, match partial structure |
+| OQ-07 | BALANCE law; LOW FREQ shelf corner and gain | Capture BALANCE at −63/−32/0/+32/+63 with dissimilar waves; fit the shelf from a saw |
+| OQ-08 | Filter calibration — cutoff-to-Hz table, resonance-to-Q curve, oscillation onset, whether −24 dB puts resonance on one stage or both, envelope and velocity depth scalings | Measure a real unit's swept responses at a grid of knob values |
+| OQ-09 | Envelope time tables and segment curvature | Measure attack/decay/release at slider 0/32/64/96/127 from dry captures |
+| OQ-10 | LFO rate table, trapezoid segment ratios, RND smoothing, depth scalings | Film the rate LED or capture PWM audio at rate 0/64/127; scope filter-cutoff modulation |
+| OQ-11 | Overdrive transfer curve | Capture a sine through DRIVE 0/32/64/96/127 and fit the static curve |
+| OQ-12 | Effect calibration — delay TIME-to-ms, the 16 template parameter sets, reverb RT60 per TIME/SIZE | Tap the repeats; dump SysEx after applying each template |
+| OQ-13 | Voice-steal policy | Play 11 notes and observe which voice drops |
+| OQ-14 | External-input calibration — INPUT VOL taper, audio-filter cutoff and resonance curves, whether it self-oscillates, what CENTER CANCEL actually outputs, modulation depths | Capture INPUT-to-OUTPUT response across audio-filter settings; feed a known stereo signal with CENTER CANCEL on and off |
+| OQ-15 | Arpeggiator calibration — shuffle amounts behind 1/8L, 1/8H, 1/16L, 1/16H; the ACCENT blend; the OCTAVE RANGE cycle order; how a PHRASE style's rows become intervals | Record the arpeggiator's MIDI output across GRID, ACCENT and OCTAVE RANGE and read note times and velocities straight off it — the one open question here that a MIDI capture alone can close |
+| OQ-16 | D Beam calibration — mode exclusivity, PITCH interval and direction, ASSIGN travel shape, where ACTIVE EXPRESSION starts adding LOWER | Record the beam's MIDI output at a grid of hand heights in each mode |
+
+A SysEx dump of the factory bank would additionally give regression vectors
+for the parameter codec, settle the LFO tempo-sync bit order ("ON, OFF" as
+printed against the standard "OFF, ON") and the bank-select LSB discrepancy
+(manual p. 84 says PRESET LSB 64; MIDI implementation p. 1 says LSB 0 for
+preset and 20H for user). That data is Roland's and none ships here; a loader
+for user-supplied dumps is a natural follow-up.
+
+## Release history
+
+### Unreleased
+
+- First complete instrument: both tones with every tone parameter, all nine
+  waveforms, MIX/SYNC/RING, the filter, three envelopes, two LFOs with tempo
+  sync, overdrive, delay → reverb with per-tone sends and the 16 templates,
+  SINGLE/DUAL/SPLIT with 10/5+5 voices, solo/legato, portamento, per-tone
+  pitch bend, the System Common tune, key shift, octave and transpose, and the
+  analog output stage.
+- Added the arpeggiator: the documented grid, duration and tie chains, all
+  twelve motifs held to the manual's three worked examples, octave range,
+  accent, velocity, END STEP as a parameter and a panel control, hold and
+  split.
+- Added the external-input path — INPUT VOL, CENTER CANCEL, the four-type
+  AUDIO FILTER, and EXT-IN as a selectable oscillator waveform — with the
+  monitor/voice changeover the manual's own recipe settles.
+- Added the D Beam as a group of automatable controls: three modes, the
+  37-destination assign list, polarity, destination and ACTIVE EXPRESSION.
+- Added a faithful SysEx codec for the documented address map and the
+  64-patch matrix.
+- Overdrive is evaluated at a fixed internal rate through half-band polyphase
+  stages, so its character no longer follows the host's sample rate; its stage
+  state now survives a voice takeover and its own switch.
+- Registered every voiced constant in the engine's `mapping` namespace with
+  the open question that owns it — no bare numbers left in the render code,
+  and the demos re-rendered bit-identically.
+- Re-pinned the resonance curve to a square-root taper chosen by ear, after a
+  linear taper put the control's whole audible range in the top fifth of its
+  travel.
+- Fixed the band-pass so it gains with resonance instead of losing 21 dB
+  across the top of the knob and returning inverted past the oscillation
+  threshold.
+- Band-limited the triangle, which the shipping coefficient did not.
+- Let a hard-sync reset be the naive reset it is documented as.
+- Made INTERVAL an interval against OSC 1, and printed what the manual prints
+  for KEY FOLLOW, delay FEEDBACK and PITCH WIDE.
+- Fixed sostenuto so it no longer catches later presses, and stopped the
+  octave cycle leaving the MIDI range.
+- Rebuilt the panel around a fixed control geometry that scales to the window,
+  lighting bipolar knobs from zero.
 
 ## Build
 
-Linux/CI (JUCE-free DSP, tests, demo renderer):
+Linux and CI — the JUCE-free DSP core, tests and demo renderer:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSEPTUM_BUILD_PLUGIN=OFF -DBUILD_TESTING=ON
@@ -128,40 +393,23 @@ cmake --build build --parallel && ctest --test-dir build --output-on-failure
 ./build/SeptumRenderDemos Docs/audio
 ```
 
-macOS (full plug-in set):
+The full plug-in (JUCE 8.0.14 is fetched pinned at configure time, or pass
+`-DSEPTUM_JUCE_PATH=/path/to/JUCE`):
 
 ```bash
-./scripts/build-macos.sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build --parallel && ctest --test-dir build --output-on-failure
 ```
+
+On macOS, `./scripts/build-macos.sh` drives the same build through Xcode as a
+universal binary and renders the committed editor screenshot while the suite
+runs. VST3 + Standalone also build on Linux and Windows; CI exercises all
+three platforms.
 
 The plug-in declares a stereo input bus for the modelled instrument's INPUT
 jacks. It is disabled by default, so a host that gives a synthesizer no input
 loads Septum unchanged; enable it to feed the AUDIO FILTER and the EXT-IN
 waveform.
-
-The full plug-in also builds on Linux and Windows (VST3 + Standalone); CI
-exercises all three platforms. A pinned JUCE 8.0.14 is fetched at configure
-time, or pass `-DSEPTUM_JUCE_PATH=/path/to/JUCE`.
-
-## Layout
-
-- `Source/DSP/` — the JUCE-free engine: the parameter contract
-  (`SeptumPatch.h`, quoting the documented ranges and tables), the
-  engine with every panel-to-physics mapping in one auditable namespace
-  (`SeptumEngine.h/.cpp`), and the original preset bank.
-- `Source/` — JUCE plug-in processor (APVTS mirroring the parameter
-  contract, documented CC map, factory programs) and the panel editor.
-- `Tools/RenderDemos.cpp` — renders the committed demo WAVs.
-- `Tests/` — engine tests (tuning, enumeration semantics, polyphony rules,
-  self-oscillation boundedness, effect tails, full-bank rendering at two
-  rates) and plug-in tests (layout, MIDI, programs, state, editor
-  snapshot).
-- `Docs/` — the research contract, demo audio, screenshots.
-
-## Not yet modelled
-
-The recorder and SysEx DT1/RQ1 I/O are documented but deferred; the research
-contract lists them alongside the open calibration questions.
 
 ## Licensing
 

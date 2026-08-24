@@ -1,3 +1,61 @@
+// Vocalor: a procedural source-filter vocal and choir instrument.
+//
+// The engine turns MIDI notes into original sung vowels. It clones no named
+// singer, loads no recordings and contacts no service. Each mechanism follows
+// published voice science; the README's "How it works" says what the model
+// implements from each and where the claim stops, and constants not fixed by a
+// cited result are voiced.
+//
+//   Formant tuning, and F1 tracking the fundamental in the upper register
+//     Joliveau, Smith and Wolfe, "Tuning of vocal tract resonance by sopranos",
+//     https://www.phys.unsw.edu.au/~jw/reprints/Joliveauetal.pdf
+//     Vos et al., "The Perception of Formant Tuning in Soprano Voices",
+//     https://pure.royalholloway.ac.uk/ws/files/28187915/VosEtAl_FormTuningJVoicePURE.pdf
+//     UCLA SPL 2025 formant-tuning study,
+//     https://www.surgery.medsch.ucla.edu/spl/papers/2025JASA09_FormantTuning.pdf
+//
+//   The singer's formant as a resonance cluster, not a fixed boost
+//     "A Formant Range Profile for Singers",
+//     https://pmc.ncbi.nlm.nih.gov/articles/PMC5409887/
+//     Sopranos are the documented exception -- the cluster is usually at least
+//     2 kHz wide against under 1 kHz for tenors, and at 932 Hz there is no
+//     typical band at all: "Singer's formant in sopranos: fact or fiction?",
+//     https://pubmed.ncbi.nlm.nih.gov/11792022/
+//
+//   The nasal branch: pole-zero-pole with a nasal pole near 300 Hz and the
+//   zero between it and F1
+//     Klatt synthesizer parameters (Berkeley),
+//     https://linguistics.berkeley.edu/plab/guestwiki/index.php?title=Klatt_Synthesizer_Parameters
+//     Weenink, "The KlattGrid speech synthesizer",
+//     https://www.isca-archive.org/interspeech_2009/weenink09_interspeech.pdf
+//
+//   Aspiration noise as pitch-synchronous amplitude-modulated Gaussian noise
+//     Klatt and Klatt, JASA 1990, https://pubmed.ncbi.nlm.nih.gov/2137837/
+//
+//   Choir formant statistics -- and the finding that cuts against the obvious
+//   move of simply scattering formants wider in ensemble
+//     Ternstrom and Sundberg, "Formant frequencies of choir singers",
+//     https://pubs.aip.org/asa/jasa/article-pdf/86/2/517/12172019/517_1_online.pdf
+//
+//   Ensemble intonation drifting off equal temperament in a cappella SATB
+//     https://www.researchgate.net/publication/6223729_Equal_or_non-equal_temperament_in_a_capella_SATB_singing
+//     ChoralNet, "Intonation II", https://choralnet.org/archives/415533
+//
+//   Ensemble synchronisation perception
+//     "Perception of synchronization in singing ensembles",
+//     https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0218162
+//
+//   Vibrato rate and cycle structure
+//     Horii's cycle analysis, https://pubs.asha.org/doi/10.1044/jshr.3204.829
+//     Nandamudi and Scherer, https://pubmed.ncbi.nlm.nih.gov/30190093/
+//
+// Named as deferred rather than modelled, so the citation is here but the
+// mechanism is not: the subglottal pole-zero pair, where a tracheal branch
+// contributes 5-12 dB of attenuation to whichever formant sits near a
+// subglottal resonance (JASA 2007, https://pubmed.ncbi.nlm.nih.gov/17927433/),
+// and the finding that a degree of pitch instability is not a defect
+// (JASA 123(5):2733, https://pubmed.ncbi.nlm.nih.gov/18529191/).
+
 #pragma once
 
 #include "VocalorMath.h"

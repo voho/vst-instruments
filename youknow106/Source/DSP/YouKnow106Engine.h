@@ -44,7 +44,7 @@ enum class VcfFastEarlyMode { Hermite = 0, Cubic = 1 };
 // rungs exist because the fixed two-half-step Merson pair spends
 // ten right-hand-side evaluations per card per internal sample where the step
 // sizes musical settings actually produce need far fewer; see
-// Docs/research.md for the measured error and CPU of each.
+// Docs/decisions.md for the measured error and CPU of each.
 //
 // Every rung's abscissae are a subset of `OtaCascade::controlNodePositions`,
 // so none of them moves a control node, changes the hold trajectory the
@@ -350,8 +350,9 @@ public:
     // These are the circuit's own transfer relations, exposed as pure
     // functions so the regression suites can check them against the
     // service-note anchors and against an independent numeric solve without
-    // reaching into a live voice. Docs/research.md records
-    // where every constant below comes from.
+    // reaching into a live voice. The README's "How it works" records
+    // where every constant below comes from, and its "Known gaps" the
+    // evidence that would close each one still voiced.
     // ------------------------------------------------------------------
 
     // Counter clock the range divider feeds the note timer: the 8 MHz master
@@ -1290,7 +1291,7 @@ private:
         // cycle at 2.66 to 3.00 per half step -- exactly where RK4's region
         // ends -- so the bound below is 2.0 per half step, 72% of that radius.
         // Merson runs those intervals for every rung; see
-        // Docs/research.md for both measurements.
+        // Docs/decisions.md for both measurements.
         static constexpr double singleStepRk4Limit = 1.25;
         static constexpr double halfStepRk4Limit = 4.0;
         // Bound on the cascade's fastest closed-loop eigenvalue, in units of

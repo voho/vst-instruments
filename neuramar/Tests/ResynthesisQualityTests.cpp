@@ -452,8 +452,49 @@ void testStiffStringPartialPlacement()
 // one pitch describes a different pitch. They say nothing about the instrument's
 // central claim, which is that the fitted model reproduces the sound that was
 // dropped in. Everything below measures that, at the analysed pitch, against the
-// generating fixture, using the metric definitions in
-// Docs/resynthesis-quality-benchmark.md.
+// generating fixture, using the metric definitions below.
+//
+// METRIC DEFINITIONS. Analyse at 48 kHz float unless a test explicitly varies
+// the host rate. The statistical unit is a source item, not an STFT frame, so
+// a long note cannot dominate a result.
+//
+// Multi-resolution spectrum. Hann windows at (window, hop) pairs (256, 64),
+// (1024, 256), (4096, 1024) and (16384, 4096). For reference magnitude X and
+// render magnitude Y, report each resolution and their arithmetic mean:
+//
+//     spectral convergence = ||X - Y||F / max(||X||F, epsilon)
+//     log-magnitude MAE    = mean(|20 log10(X + eps) - 20 log10(Y + eps)|)
+//
+// with epsilon at -100 dB relative to the reference peak. Evaluate the log term
+// on the union of bins where either signal exceeds -80 dB relative to that
+// peak, so added energy in reference-silent bins is penalised. Publish the
+// individual resolutions, never only the mean: multi-scale spectral results
+// depend materially on their exact configuration (Schwaer and Mueller,
+// https://www.audiolabs-erlangen.de/content/05_fau/professor/00_mueller/03_publications/2023_SchwaerM_MultiScaleSpecLoss_IEEE-SPL.pdf).
+//
+// Envelope and residual. Extract an F0-adaptive CheapTrick envelope
+// (https://doi.org/10.1016/j.specom.2014.09.003) at the known or consensus F0,
+// and report ERB-spaced envelope dB RMSE, spectral-tilt error, and formant
+// centre, bandwidth and peak-gain error. Subtract fitted harmonic and accepted
+// modal components from both signals jointly; for the residual report ERB-band
+// power dB MAE over time, spectral flatness, residual autocorrelation,
+// stochastic-energy fraction, and the 0-50 Hz modulation spectrum of every band
+// envelope. Never use waveform MSE for independently generated noise.
+//
+// Aliasing. Steady analytic fixtures with stochastic layers, effects, unison,
+// modulation and nonlinear output processing disabled, rendered at 44.1, 48 and
+// 96 kHz through the upper MIDI range. Discard the onset, jointly fit
+// sine/cosine coefficients at every known below-Nyquist target partial, and let
+// Evalid be that fitted signal's energy and Espurious the residual after
+// subtraction:
+//
+//     alias-to-signal ratio = 10 log10(Espurious / Evalid)
+//     maximum spur          = largest unexpected spectral line in dBc
+//
+// Measure the maximum spur with an eight-times-zero-padded Hann spectrum,
+// excluding the two-bin Hann main lobe either side of every valid partial, and
+// report 8-12, 12-16 and 16-20 kHz energy error separately -- otherwise a dark
+// renderer wins by deleting valid high frequencies.
 // ---------------------------------------------------------------------------
 
 using Complex = std::complex<double>;
@@ -943,8 +984,11 @@ void testRootNoteReconstruction()
     };
 
     // Generous guards. These are regression bounds on numbers that had never
-    // been measured before, not acceptance gates; the gates live in
-    // Docs/resynthesis-quality-benchmark.md and remain targets.
+    // been measured before, not acceptance gates. The acceptance gates a
+    // preregistered competitor comparison would need remain proposed targets:
+    // no such comparison has been run, and none of these figures is evidence
+    // about real acoustic instruments -- they are a self-comparison across
+    // Neuramar versions on deterministic analytic fixtures.
     constexpr double convergenceGuard = 0.15;
     constexpr double logMagnitudeGuard = 13.0;
     constexpr double residualErbGuard = 7.0;

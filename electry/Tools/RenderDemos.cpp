@@ -1085,6 +1085,25 @@ constexpr const char* peaksTableBegin =
     " edits between the markers are overwritten -->";
 constexpr const char* peaksTableEnd = "<!-- peaks-table-end -->";
 
+// The rendered-peak table lives in the instrument's own README, beside the
+// audio-demo list a reader is looking at, so each instrument keeps exactly one
+// document. Only the instrument's own Docs/audio directory has such a README:
+// an ad-hoc output directory carries none, and resolving one there is how the
+// renderer knows the difference.
+std::filesystem::path instrumentReadme(const std::filesystem::path& directory)
+{
+    auto normalised = directory.lexically_normal();
+    if (normalised.filename().empty())
+        normalised = normalised.parent_path();
+
+    if (normalised.filename() != "audio"
+        || normalised.parent_path().filename() != "Docs")
+        return {};
+
+    return normalised.parent_path().parent_path() / "README.md";
+}
+
+
 struct RenderedLevel
 {
     std::string fileName;
@@ -1104,7 +1123,7 @@ std::string formatSignedDb(double value)
 bool updatePeaksTable(const std::filesystem::path& directory,
                       const std::vector<RenderedLevel>& levels)
 {
-    const auto readmePath = directory / "README.md";
+    const auto readmePath = instrumentReadme(directory);
     if (! std::filesystem::exists(readmePath))
         return true; // An ad-hoc output directory carries no documentation.
 

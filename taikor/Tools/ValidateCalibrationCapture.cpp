@@ -1,3 +1,87 @@
+// TaikorValidateCalibrationCapture -- the acquisition inventory preflight for
+// Taikor's controlled calibration capture.
+//
+// WHY THIS EXISTS. Taikor has no owned real-taiko reference set. Several of
+// the gaps listed under the README's "Known gaps" -- absolute contact
+// stiffness, soft-hit continuum transfer, rear-head diffraction, the complete
+// air-loading coordinate migration -- are gated on one, and writing a sample
+// parser or a residual model before the first capture would only turn
+// assumptions into code. This tool therefore checks acquisition *facts* and
+// minimum coverage. It does not open audio, interpret samples, estimate
+// transfers or fit a model.
+//
+// THE MEASUREMENT CONTRACT. It is a recording protocol, not a curve-fitting
+// recipe. Two experiments are required and must stay separate:
+//   A. low-amplitude linear identification of the drum's mechanical mobility
+//      and force-to-pressure transfer;
+//   B. full-level bachi strikes for nonlinear contact, repetition and
+//      perceptual validation.
+// Ordinary audio alone cannot separate contact mobility, radiation, room sound
+// and microphone colour.
+//
+// Record from one synchronized clock without processing:
+//   Force             modal-hammer or instrumented-bachi normal force  [N]
+//   Contact traction  spatial pressure/traction map in the head frame
+//                     (spatial scale, force/pressure gain, polarity, latency)
+//   Head              normal velocity per observation coordinate, by LDV [m/s]
+//   Bachi             axial position or velocity before impact through rebound
+//   Near / Far        simultaneous front-head sound pressure at known xyz [Pa]
+//   Trigger           common acquisition trigger if not embedded
+//
+// Positive force and velocity are motion from the batter head into the drum.
+// Compensate every sensor's gain, polarity, phase and latency before
+// estimating a transfer function, and record the instrumented bachi's added
+// sensor mass. A point LDV reading only approximates the traction-weighted
+// velocity of a finite contact patch: validate it with a small spatial scan or
+// export the measured area average the fit used.
+//
+// Put probe microphones nominally 0.03 m and 0.40 m above the batter head to
+// span Taikor's Mic Distance control, out of the striker and LDV paths so no
+// capsule shadows another, and record exact coordinates and orientation rather
+// than assuming the nominal distances. Rear-head velocity and cavity pressure
+// are the first optional channels for a later reciprocal rear-head model; a
+// rear microphone pair comes after those state measurements.
+//
+// Capture at one common rate of at least 96 kHz with calibrated sensor
+// bandwidth and anti-aliasing, retaining at least 24-bit native resolution (a
+// 32-bit float export is fine but adds no converter resolution). Keep at least
+// 250 ms of pre-trigger noise and record until every band-limited decay
+// reaches the measured noise floor: at least 4 s for the first fixture, at
+// least 12 s for an o-daiko. Keep gains fixed with headroom for the hardest
+// strike. Use an anechoic or sufficiently large damped space, or define a
+// direct-sound window before the first reflection; archive the room sound and
+// a room impulse response, but do not fit room modes into the drum's poles. Do
+// not normalise, gate, denoise, compress, equalise, align channels separately,
+// or discard the native acquisition files.
+//
+// USING IT. The first line of the TSV must contain all 48 columns below
+// exactly once; extra columns are allowed. One row per take and measured cell,
+// so experiment A repeats a physical take_id across its simultaneously
+// observed coordinates while experiment B uses one unique take_id per strike.
+// Use "-" for fields that do not apply. Paths are archive references or
+// channel selectors, not files this tool opens.
+//
+//   build-dsp/TaikorValidateCalibrationCapture --print-header > captures.tsv
+//   build-dsp/TaikorValidateCalibrationCapture --check captures.tsv
+//
+// Change fixture_state_id whenever either head, tension, shell mounting or
+// stand state changes. Every row must be at least 96 kHz / 24 bit, carry
+// 0.25 s of pre-trigger, be unprocessed, and last at least 4 s (12 s for a
+// canonical odaiko); one session/drum/fixture-state group retains one clock,
+// rate and native depth. Experiment A needs a complete 3 input x 3 observation
+// x 2 level mobility core -- a centre coordinate at radius <= 0.05 and two
+// edge coordinates at radius >= 0.70 with distinct azimuths, on both sides of
+// the matrix -- with 10 distinct accepted takes per cell. Experiment B needs
+// the canonical articulations (don, ka, tsu-held, don-rim) against hard and
+// soft bachi at the tabulated nominal radii and *measured* incoming speeds,
+// again 10 distinct takes per condition, plus stable bachi identity, positive
+// bare mass, non-negative moving sensor mass and raw/calibrated tip
+// profilometry (a reworked tip gets a new ID) -- which is what separates tip
+// curvature from contact stiffness.
+//
+// Checking the referenced files and the sample data inside them is
+// deliberately left to the post-capture analyzer.
+
 #include <algorithm>
 #include <array>
 #include <cmath>

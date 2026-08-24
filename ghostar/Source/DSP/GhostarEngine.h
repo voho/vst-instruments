@@ -1,9 +1,9 @@
 // Ghostar: a circuit-modelled monophonic dual-filter analog synthesizer,
 // built block by block from documentation of the 1983 instrument named in
-// Docs/circuit-modelling-research.md. That document is the modelling
-// contract: every law the engine applies is recorded there as anchored,
-// derived or voiced, and the voiced constants are listed as standing tasks
-// in Docs/open-questions.md.
+// the README's "How it works", which is the modelling contract: every law
+// the engine applies is recorded there as anchored, derived or voiced, with
+// the primary sources it rests on, and the voiced constants are listed as
+// standing tasks under the README's "Known gaps".
 #pragma once
 
 #include "DSP/SpiritNoise.h"
@@ -52,7 +52,7 @@ struct EngineParameters
 {
     // Panel travel is 0..1 throughout: the engine maps each control through
     // the modelled hardware law (documented control by control in
-    // Docs/circuit-modelling-research.md) rather than storing pre-cooked
+    // control by control in the README) rather than storing pre-cooked
     // seconds or hertz.
 
     // --- MASTER ------------------------------------------------------------
@@ -320,7 +320,7 @@ private:
     // parameters_ carries what the voice actually runs on this sample;
     // continuous travels glide toward targetParameters_ over ~25 ms so a
     // block-latched host or a 7-bit CC never steps the audio (the
-    // best-in-class plan's Step 5). Switches apply immediately, and a
+    // Docs/decisions.md). Switches apply immediately, and a
     // fully silent engine snaps, so state restores land exactly.
     EngineParameters parameters_ {};
     EngineParameters targetParameters_ {};

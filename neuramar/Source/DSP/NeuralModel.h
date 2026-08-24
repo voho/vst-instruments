@@ -1,3 +1,75 @@
+// Neuramar's local synthesis model: a learned controller over explicit
+// harmonic, stochastic and modal synthesizers.
+//
+// WHY THIS SHAPE. Neuramar fits a compact model on the user's own machine in
+// seconds, with no pretrained weights, no dataset and no GPU. That budget is
+// what rules out the alternatives rather than any judgement about them:
+//   - RAVE (Caillon and Esling, 2021, https://arxiv.org/abs/2111.05011) is a
+//     trained autoencoder, not a bounded one-sample fitting method.
+//   - Jin et al., DAFx-23
+//     (https://www.dafx.de/paper-archive/details/zWyI3tFAzaieWGQuM45sEg)
+//     adapts a pretrained decoder and reports minutes of GPU adaptation.
+//   - Neural codecs -- SoundStream
+//     (https://research.google/pubs/soundstream-an-end-to-end-neural-audio-codec/)
+//     and EnCodec (https://github.com/facebookresearch/encodec) -- reconstruct
+//     audio rather than yielding a playable instrument.
+//
+// Neuramar instead takes the factorisation established by DDSP
+// (https://openreview.net/forum?id=B1x1ma4tDr) as a design prior: a learned
+// controller driving explicit synthesizers, so every parameter the model
+// produces stays inspectable and playable. Differentiable Wavetable Synthesis
+// (https://arxiv.org/abs/2111.10003) shows why a small explicit basis
+// generalises where a black-box decoder does not.
+//
+// THE BRANCHES.
+//   Harmonic Core -- the harmonic-oscillator factorization of DDSP section 3.1
+//     (https://arxiv.org/abs/2001.04643), which removes above-Nyquist harmonics
+//     and then normalizes the surviving distribution:
+//     https://github.com/magenta/ddsp/blob/main/ddsp/core.py#L784-L794
+//     Stiff-string inharmonicity follows Fletcher's law,
+//     https://doi.org/10.1121/1.1908504
+//   Stochastic Air -- narrow explicit noise bands, following NoiseBandNet's
+//     motivation (https://arxiv.org/abs/2307.08007) over the
+//     harmonic-plus-residual decomposition of Serra and Smith's spectral
+//     modelling synthesis (https://doi.org/10.2307/3680788).
+//   Modal Bone -- a small modal branch for inharmonic candidate peaks,
+//     inspired by Differentiable Modal Synthesis,
+//     https://proceedings.neurips.cc/paper_files/paper/2024/file/0232cafe8d1909a01019abe8af32f3e1-Paper-Conference.pdf
+//
+// SPECTRAL ENVELOPE AND FORMANT CONTROL. Preserving an envelope in absolute
+// frequency while pitch moves follows the source-filter motivation in Schwarz
+// and Rodet's spectral-envelope work,
+// https://quod.lib.umich.edu/i/icmc/bbp2372.1999.417?rgn=main;view=fulltext
+// Interpolating between measured peaks has direct precedent in Jensen and
+// Hansen (https://crss.utdallas.edu/Publications/Jensen2001.pdf), and the slope
+// limiting follows the local shape-preserving construction of Fritsch and
+// Butland, https://doi.org/10.1137/0905021
+//
+// ANALYSIS. Pitch estimation rests on the YIN basis, de Cheveigne and Kawahara
+// 2002, https://pubmed.ncbi.nlm.nih.gov/12002874/ -- no pretrained pitch model
+// or dataset is bundled. (SwiftF0 is a promising small modern estimator,
+// https://arxiv.org/abs/2508.18440 with an implementation at
+// https://github.com/lars76/swift-f0, but bundling it would mean shipping
+// weights.) Harmonic parameters are solved jointly by least squares over the
+// analysis aperture; see Smith, Spectral Audio Signal Processing,
+// https://ccrma.stanford.edu/~jos/sasp/Least_Squares_Sinusoidal_Parameter.html
+//
+// THE CONTROLLER. The input encoding follows the motivation of Fourier Features
+// (https://arxiv.org/abs/2006.10739). Neuramar uses ordinary tanh hidden units
+// rather than the sinusoidal activations proposed by SIREN
+// (https://arxiv.org/abs/2006.09661), and inference is deliberately at control
+// rate rather than per sample.
+//
+// Filter behaviour under modulation is analysed by Parker, Zavalishin and
+// Le Bivic,
+// https://www.dafx.de/paper-archive/2016/dafxpapers/20-DAFx-16_paper_41-PN.pdf
+// Frequency-dependent damping of noise follows Frontiers in Signal Processing,
+// 2024,
+// https://www.frontiersin.org/journals/signal-processing/articles/10.3389/frsip.2024.1494864/full
+//
+// What the model does and does not claim is set out in the README's "How it
+// works" and "Known gaps".
+
 #pragma once
 
 #include <array>

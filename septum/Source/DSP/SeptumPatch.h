@@ -4,7 +4,7 @@
 // displays use the document's `display = raw - 64` convention, stored here
 // already decoded (so a depth field really holds -63..+63). Where a value's
 // physical meaning is not settled by any source, the mapping lives in the
-// engine and is recorded as a voiced choice in Docs/sh201-replica-research.md.
+// engine and is recorded as a voiced choice in the README's "How it works".
 
 #pragma once
 

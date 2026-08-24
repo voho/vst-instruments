@@ -1,113 +1,76 @@
 # Electry
 
-Electry is an original, physically modeled dry electric guitar instrument.
+An original, physically modeled **dry electric guitar**: VST3, Audio Unit and
+Standalone for macOS, plus Linux and Windows builds.
+
+![Electry](Docs/screenshots/electry-standalone.png)
+
 Eight string voices run dual-polarisation waveguide loops with physically
-derived stiffness dispersion, decay-targeted damping, tension-modulation
-pitch glide, a fretting hand with a position and a reach that decides where
-each note is played, a point-touch model that produces natural and pinch
-harmonics as the string's own mode shapes rather than as transpositions,
-slides whose length is a distance over a hand speed and whose squeak is the
-winding passing under the finger, a picking hand that never puts the plectrum
-down in exactly the same place twice, a pitch wheel that bends every string like
-a vibrato bar, channel pressure that is the fretting hand's own one-sided
-vibrato with a separate finger on each string it is actually stopping, a
-resonance wheel that can push a distorted tone into self-sustaining
-amplifier feedback, one bridge shared by all eight strings — the ones you are
-not fingering ring off it and the ones you are exchange energy through it — and
-a published pickup signal structure (position comb, two coils for the humbucker
-and one for the single coil, finite magnetic aperture, nonlinear flux, induced
-EMF, and loaded coil resonance). The performance is selected with two
-independent banks of latching keyswitches below the playable range - one for
-the picking style, one for the play style - so any stroke can drive any
-style. The individual models have named research references
-(see the [physical-modeling research
-contract](Docs/physical-modeling-research.md)); Electry does not claim to be
-a capture-accurate clone of any one instrument.
+derived stiffness dispersion, decay-targeted damping and tension-modulation
+pitch glide. A fretting hand with a position and a reach decides where each
+note is played; a point-touch model produces natural and pinch harmonics as the
+string's own mode shapes rather than as transpositions; slides are a distance
+over a hand speed, their squeak the winding passing under the finger; a picking
+hand never puts the plectrum down in exactly the same place twice. The pitch
+wheel bends every string like a vibrato bar, channel pressure is the fretting
+hand's own one-sided vibrato with a separate finger on each string it is
+actually stopping, and a resonance wheel can push a distorted tone into
+self-sustaining amplifier feedback. One bridge is shared by all eight strings:
+the ones you are not fingering ring off it, and the ones you are exchange
+energy through it. The pickups follow a published signal structure — position
+comb, two coils for the humbucker and one for the single coil, finite magnetic
+aperture, nonlinear flux, induced EMF and loaded coil resonance.
+
+The performance is selected with two independent banks of latching keyswitches
+below the playable range — one for the picking style, one for the play style —
+so any stroke can drive any style.
 
 The compact FX panel provides a distortion pedal, an amplifier and modelled
-cabinet, compression, lead delay, and a stereo room; every effect defaults to a
-true 0% dry setting, and the two clipping stages, the power supply's sag and the
-output transformer's core all run inside a 4x oversampled domain so a high-gain
-metal tone saturates instead of folding its own harmonics back into the guitar
-band. Mono is the authentic summed dry DI; Stereo is a
+cabinet, compression, lead delay and a stereo room; every effect defaults to a
+true 0 % dry setting, and the two clipping stages, the power supply's sag and
+the output transformer's core all run inside a 4× oversampled domain, so a
+high-gain metal tone saturates instead of folding its own harmonics back into
+the guitar band. Mono is the authentic summed dry DI; Stereo is a
 phase-coherent divided-pickup view of the eight physical strings, not an effect
-or delay. Both are also ready for the amp simulation of your choice. Material,
-body, pickup, and construction controls span deliberately contrasting
-solid-body anchors; scale length spans a conventional 25.5-inch electric to a
-modern 28-inch baritone/8-string build.
+or a delay. Material, body, pickup and construction controls span deliberately
+contrasting solid-body anchors, and scale length spans a conventional 25.5-inch
+electric to a modern 28-inch baritone/8-string build.
 
-![Electry electric guitar interface](Docs/screenshots/electry-standalone.png)
+Every model has named research references, listed below. Electry does not claim
+to be a capture-accurate clone of any one instrument.
 
-## Contents
+## Audio demos
 
-- [Hear it](#hear-it)
-- [Keyswitches and playable range](#keyswitches-and-playable-range)
-- [Sound architecture](#sound-architecture)
-- [Amplifier chain](#amplifier-chain)
-- [Guitar construction axes](#guitar-construction-axes)
-- [Exact 31-parameter contract](#exact-31-parameter-contract)
-- [Build products](#build-products)
-- [Requirements](#requirements)
-- [Build on macOS](#build-on-macos)
-- [JUCE-free DSP build](#juce-free-dsp-build)
-- [Install and validate locally](#install-and-validate-locally)
-- [Sign, package and notarize](#sign-package-and-notarize)
-- [Project layout](#project-layout)
-- [Licensing](#licensing)
+Fourteen takes, rendered by [`Tools/RenderDemos.cpp`](Tools/RenderDemos.cpp)
+from the same JUCE-free code the plug-in runs: the full playable range, every
+pick-stroke and play style, dry and amplified rhythm, lead tone, pickup and
+tone contrasts, sympathetic strum, guitar-build contrasts, velocity dynamics,
+power chords, a long arrangement, and the whammy and feedback wheels. They are
+demonstrations, not evidence — an audible example is not a measurement, and
+none of the claims below rest on them.
 
-## Hear it
+<!-- peaks-table-begin: regenerated by ElectryRenderDemos; edits between the markers are overwritten -->
+| File | Rendered peak | Normalisation applied |
+| --- | --- | --- |
+| `01-range-open-strings.wav` | −12.4 dBFS | +9.4 dB |
+| `02-range-full-fretboard.wav` | −11.2 dBFS | +8.2 dB |
+| `03-play-styles.wav` | −3.2 dBFS | +0.2 dB |
+| `04-drop-e-rhythm-dry.wav` | −13.3 dBFS | +10.3 dB |
+| `05-drop-e-rhythm-amp.wav` | −20.6 dBFS | +17.6 dB |
+| `06-lead-amp-delay-room.wav` | −8.8 dBFS | +5.8 dB |
+| `07-pickups-and-tone.wav` | −14.2 dBFS | +11.2 dB |
+| `08-sympathetic-strum-stereo.wav` | −16.2 dBFS | +13.2 dB |
+| `09-guitar-build-contrasts.wav` | −9.1 dBFS | +6.1 dB |
+| `10-velocity-dynamics.wav` | −11.6 dBFS | +8.6 dB |
+| `11-power-chords-dry.wav` | −8.5 dBFS | +5.5 dB |
+| `12-power-chords-amp.wav` | −19.8 dBFS | +16.8 dB |
+| `13-long-rhythm-arrangement.wav` | −20.2 dBFS | +17.2 dB |
+| `14-whammy-and-feedback.wav` | −14.8 dBFS | +11.8 dB |
+<!-- peaks-table-end -->
 
-Fourteen rendered examples — the full playable range, every pick-stroke and
-play-style combination including the pinch harmonic, the slide and the dead
-note, the guitar-build and pickup axes, the pitch-wheel bar, the fretting
-hand's vibrato and the resonance-wheel feedback, and the Drop-E rhythm and
-lead tones dry and through the amplifier — are committed under
-[`Docs/audio/`](Docs/audio/README.md), with the score for each one in
-`Tools/RenderDemos.cpp`. They are produced by the shipping JUCE-free signal
-path, so they cannot drift away from what the plug-in sounds like, and they are
-reproducible on any platform with a C++20 toolchain.
+## How it works
 
-The screenshot is produced by the plug-in regression suite itself
-(`ELECTRY_EDITOR_SNAPSHOT`), so it is always a real editor render rather than
-a mock-up; the Nightly workflow re-renders it on every run and commits it
-when the editor has changed. The Standalone, VST3, and
-Audio Unit use that same
-JUCE component. Panels, knobs, the fretboard, the keyswitch strips, and the
-on-screen keyboard are drawn as resolution-independent JUCE graphics;
-interactive controls stay native for automation, keyboard operation, and
-accessibility.
-
-The editor uses audible impact as its visual hierarchy: pickup/tone,
-excitation, age, body resonance, and velocity are oversized in the Core row;
-guitar-build controls are medium; articulation-specific noise and artifact
-details are compact.
-The walnut-and-amber chassis nods to a workbench electric guitar without
-reproducing a branded hardware panel.
-
-### Live fretboard
-
-Under the play-style strip, a 22-fret eight-string fingerboard shows the model
-as it plays: which physical string each note was allocated to, exactly where it
-is stopped (with its note name), how hard it is ringing, and which strings are
-ringing only through the sympathetic bridge coupling. Sounding strings are
-amber and vibrate as the fundamental standing wave of their sounding length, so
-the part of the string behind the fretting finger correctly stays still;
-bridge-coupled strings are cool blue. A per-string meter on the right shows the
-level with proper attack/release ballistics, and the header readout reports
-both counts, for example `3 STRINGS +4 RING`.
-
-All of the fretboard's geometry, ballistics, colour mapping and the lock-free
-audio-to-editor transfer live in the JUCE-free `Source/DSP/ElectryVisuals.*`
-module, so they are unit-tested on every platform and the editor stays a thin
-renderer. The PERFORMANCE panel beside the fretboard holds the four controls
-that change what it shows.
-
-> **Just want to try it?** Download the
-> `vst-instruments-nightly-all-platforms` artifact from the latest successful main-branch
-> [Nightly workflow run](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml).
-> The builds are ad-hoc signed, not notarized, and retained for 14 days.
-
-## Keyswitches and playable range
+### Keyswitches and playable range
 
 MIDI notes 12..21 are two independent banks of latching keyswitches; they
 never sound, and each bank keeps its most recent selection for every
@@ -176,7 +139,7 @@ sustain pedal (CC 64) holds released strings; breath/CC 2 adds continuous
 bridge-hand damping on top of the Palm Mute parameter; CC 120/123 behave as
 All Sound Off and All Notes Off.
 
-## Sound architecture
+### Sound architecture
 
 - **Strings:** one voice per physical string. Each voice runs two
   single-delay-loop waveguides (the two transverse polarisations) with
@@ -304,8 +267,7 @@ All Sound Off and All Notes Off.
   belongs to. Recalibrating it against the stretch law the rest of the model
   uses was scheduled and struck; the measurements and the reason — the suite's
   fixed-bin spectral estimators cannot score a signal whose pitch moves during
-  the attack — are in the
-  [plan](Docs/best-in-class-plan.md#considered-and-not-planned). The pitch wheel
+  the attack — mean the recalibration was scheduled and struck. The pitch wheel
   moves the same delay target along the Bend Time glide, each string by its own
   compliance.
 - **Fretting-hand vibrato:** channel pressure rocks the finger, and the pitch
@@ -609,7 +571,7 @@ All Sound Off and All Notes Off.
   in physical low-to-high string order, keeps the body centred, folds down
   coherently, and adds no chorus, modulation, random phase, or Haas delay.
 
-## Amplifier chain
+### Amplifier chain
 
 The five FX controls run in the same JUCE-free library as the string model
 (`Source/DSP/ElectryFx.*`), so the complete signal path is regression tested on
@@ -692,14 +654,46 @@ every platform rather than only inside a host.
   0.048x with the oversampled gain block engaged. For reference the eight-string
   model itself runs at roughly 0.13-0.17x realtime at 96 kHz.
 
-## Guitar construction axes
+### Guitar construction axes
 
 The material controls use contrasting classic solid-body anchors. They default
 to 0, the thick carved mahogany/maple set-neck end of every axis, because the
-shipped instrument is a specific guitar rather than the average of the range -
-the reasoning and what it costs in control range are in the
-[research contract](Docs/physical-modeling-research.md#the-default-voicing-and-what-moving-it-cost).
+shipped instrument is a specific guitar rather than the average of the range.
 Scale length is widened for the Drop-E instrument and defaults to 27.63":
+
+The defaults were once the midpoint of every axis, which is not an instrument
+anyone owns. They are now a thick carved set-neck blank strung with the
+heaviest set on a 27.63-inch scale, a humbucker-leaning bridge pickup, the tone
+control a little back, and a softer pick close to the bridge. Against the same
+nine muted references at five pitches the joint error is 5.03 dB where the
+midpoints measured 6.31, so this is a measurably closer instrument and not only
+a preference. The gain does not decompose: the four "weight" fields — body
+wood, size, shape, construction — moved on their own score 6.41, slightly
+*worse* than the midpoints they replace, because the pick sitting at 0.35 costs
+more than a thick blank recovers. Moving the pick out from 0.18 costs 2.1 dB
+and selecting the neck pickup costs 1.5 dB. The eleven fields are one voicing.
+
+**What it cost is control range, and the number is not small.** Sweeping each
+axis end to end by the same normalised-difference measure the suite uses:
+
+| Axis | On the old midpoints | On the new defaults | Suite floor |
+| --- | --- | --- | --- |
+| body wood | 0.058 | 0.047 | 0.055 |
+| body size | 0.106 | 0.045 | 0.055 |
+| body shape | 0.066 | 0.042 | 0.055 |
+| construction | 0.065 | 0.058 | 0.055 |
+| string gauge | 0.125 | 0.050 | 0.080 |
+| body resonance | 0.080 | 0.028 | 0.080 |
+| pick position | 1.341 | 1.346 | 0.350 |
+
+Five axes lose between a tenth and two thirds of their audible range, and four
+now sit below the floors the suite had set for them. Nothing in the model
+changed: a darker, heavier, louder note simply makes every structural axis a
+smaller fraction of itself, and body resonance is worst hit. That is why
+`testMaterialAndControlAudibility` and `testArtifactsControl` state the
+instrument they measure on rather than inheriting the defaults — seven checks
+failed when the defaults moved without one line of the model changing, and
+their thresholds were calibrated on the mid-scale, tone-open instrument.
 
 | Control | 0 | 1 |
 | --- | --- | --- |
@@ -710,7 +704,7 @@ Scale length is widened for the Drop-E instrument and defaults to 27.63":
 | Scale length | 25.5 in conventional electric | 28 in baritone / 8-string |
 | Pickup type | Humbucker, two coils 19 mm apart | Single coil, one bobbin |
 
-## Exact 31-parameter contract
+### Exact 31-parameter contract
 
 The original 20 version-1 host parameters remain in their exact order; the
 Artifacts control is parameter 21 and Output field is appended as parameter
@@ -760,146 +754,248 @@ crossfade over roughly 4 ms.
 | 30 | `strumSpread` | Strum spread | 0..40 ms mean pick travel per string crossed, plus a 20 ms pre-roll whenever it is non-zero, default 0 ms (block chord) |
 | 31 | `vibratoDepth` | Resonance depth | 0..100% full-scale reach of the CC 1 resonance (coupling lift and amplifier feedback), default 35% |
 
-## Build products
+### References and claim boundaries
 
-`scripts/build-macos.sh` writes three bundles below `build-macos/`:
+| Block | Reference | What Electry 1.0 implements | Precise claim |
+| --- | --- | --- | --- |
+| String core | Karjalainen, Välimäki, and Tolonen's single-delay-loop condensation of digital waveguides | Eight independent strings in Drop-E tuning, each with two transverse-polarisation single-delay-loop waveguides, third-order Lagrange fractional reads, and a contractive bridge coupling matrix | The published SDL string family with two coupled polarisations per string; not a bidirectional multi-rail scattering simulation |
+| Two-stage decay and beating | Two-polarisation string behavior described in the same plucked-string literature | The polarisation parallel to the body carries a 1.7x longer decay target and a sub-cent detune, so the mixed output beats slowly and decays in two stages. Both the detune and the exchange between the polarisations are fractions of a round trip rather than fixed numbers of samples, so neither follows the host clock; the loop filter's own two-frequency fit still does, leaving a measured 4.5 dB residual spread across 44.1-192 kHz at the top of the range | A qualitative reproduction of the documented mechanism with voiced constants; not calibrated polarisation data from a measured instrument |
+| Stiffness dispersion | Stiff-string inharmonicity `B = pi^3 E d^4 / (64 T L^2)` (Fletcher and Rossing) and robust factored allpass design practice (Rauhala and Välimäki; Abel and Smith) | A per-note `B` from string diameter, effective wound-core bending fraction, scale length, and tension drives an eight-stage factored first-order cascade; two coefficients are fitted jointly at low and high partials, with exact fundamental phase compensation | A physically derived, bounded two-band fit whose regression error is under 20% at both references for the worst heavy Drop-E case; not a capture-fitted very-high-order piano dispersion filter |
+| Loop damping and tuning | Decay-time-targeted loop-filter design from the plucked-string literature; a dry electric low-E reference recording for the targets themselves | Per-string, per-fret one-pole loop filters solved by bisection from independent T60 targets at the fundamental and a high reference frequency, with all loop-filter phase delays compensated analytically at the fundamental. The wound strings' fundamental targets are tens of seconds and their high-frequency ratio two orders of magnitude smaller, following the reference | Decay-targeted loop design with exact fundamental tuning (regression bound: under 8 cents across E1..D6 at tested host rates through 384 kHz), whose fundamental and high-frequency targets are calibrated against one reference recording; not per-partial measured decay matching across a fretboard, and not a model of the reference instrument |
+| Dead spots | Fleischer's electric-guitar dead-spot studies relating neck conductance to decay time | A per-string fret-position Gaussian that locally shortens decay, deepened by the bolt-on end of the construction axis | The documented mechanism direction with voiced positions and depths; not measured conductance maps of specific instruments |
+| Tension modulation | Tolonen, Välimäki, and Karjalainen's tension-modulation nonlinearity | A string-energy envelope drives a bounded shortening of the loop delay, producing the attack pitch glide that relaxes over hundreds of milliseconds | The published phenomenon in its energy-envelope shortcut form; not the exact elongation integral or a time-varying-fraction-delay implementation |
+| Plectrum and finger excitation | Plectrum and touch interaction modeling by Germain and Evangelista and by Evangelista and Eckerholm | A three-phase excitation combines contact retention and scrape, a principal string-period-scaled two-pole modal release that approximates triangular pluck displacement, one further release pole whose corner follows the square root of the string's open frequency (a heavier string leaves the pick more slowly) with its own attenuation at the fundamental divided back out, and a normally much smaller broadband pick-edge transient for sustained pick styles; the release window is asymmetric (a slow load and a fast slip, both smoothsteps, at constant area) and its reflected image is distributed over a hardness-dependent contact patch of 0.5 to 1.5 mm; delay-line projection is level-calibrated to open E4 so equal effort remains usable on E1, while polarity, polarisation split, spectrum, and comb position differ per style | A realtime modal approximation to released-string displacement plus a separate pick edge, a distributed contact width, and bounded register calibration; not an exact delay-line initial-condition solve, beam-mechanics plectrum profile, or force-based finger contact solver |
+| Fret collisions | Bilbao and Torin's energy-balanced string/fretboard collision modeling | The Artifacts path's incidental fret contact: a decaying collision window whose soft limit clips vertical displacement against a velocity-dependent clearance and re-radiates deterministic rattle noise on hard-picked notes | Collision-informed contact behavior in a bounded, stable form; not an FDTD distributed-contact simulation |
+| Pinch harmonic | The same touch model driven by the picking hand; standard descriptions of the technique as a thumb contact immediately after the plectrum | The touch position is the pluck fraction, so Pick Position selects the partial; a firmer (depth 1.0) and longer (90 ms) contact than the fretting finger's, because the mode-shape law gives a near-bridge touch little purchase on the low partials | Node selection by hand position with the technique's own asymmetry between low and high partials preserved; not a model of thumb geometry, pick grip, or the exact contact area |
+| Touch harmonics | The touch-interaction half of Evangelista and Eckerholm's player/instrument models, and the classical mode-shape result that a point contact removes energy as `sin^2(n pi p)` | A one-tap FIR `(1 - d/2) + (d/2) z^-M` with `M = p * period` inside each polarisation loop, which *is* the `sin^2(n pi p)` weighting rather than an approximation of it; unity at a node, `1 - d` at an antinode, magnitude bounded by one at every depth. The natural harmonic touches the midpoint, so the octave is the string's own even series with its own inharmonicity, decay and pickup comb; the finger lifts once the note has formed | An exact first-order point-contact loss condensed into the delay loop, exact in magnitude and phase at the surviving partials whenever the touch sits on a node; not a distributed finger-force contact solve, and not exact at a non-node touch position |
+| Slide | Pakarinen, Puputti, and Välimäki's virtual slide guitar, whose string algorithm carries a parametric model of the tube/string contact noise produced by a wound string's surface ridges | The finger stays down and the sounding length glides at a hand speed in frets per second rather than over a fixed time; the friction is a noise band centred at `v / w`, the hand's speed along the string over the winding pitch, with its level following the derivative of the glide | A time-varying delay length plus a velocity-dependent friction band, with the winding pitch a fitted linear stand-in for real wrap-wire practice; not an energy-compensated time-varying waveguide, and not a measured contact-noise spectrum |
+| Hammer-on and pull-off | Touch/legato interaction models from Evangelista and Eckerholm | Keyswitched legato: a sounding string within reach retargets its delay over about 10 ms while the loop state is preserved, with a soft finger excitation and no plectrum noise | Continuous-state legato with fingered attacks; not a distributed finger-force model |
+| Pickups | Paiva, Pakarinen, and Välimäki's pickup acoustics and modeling; low-frequency pickup nonlinearity measurements (Novak et al.); engineering aperture analyses | Per-string pickup-position combs follow each fret, with the delayed tap weighted 0.60 so the null is 12 dB deep rather than infinite, as a real aperture, two-coil sum and three-dimensional field never cancel exactly; an O(1) fractional rectangular moving average gives the finite aperture's exact sinc response; bounded flux nonlinearity plus shallow string-mass/pole balance is differentiated into induced EMF, guarded ultrasonically, then passed through the loaded coil/tone circuit | The published pickup signal structure (position comb of measured rather than ideal null depth, finite aperture, nonlinear flux, induced voltage, electrical resonance) with datasheet-plausible level calibration; not a magnetic finite-element, per-coil, or capture-fitted model of named pickups |
+| Solid body | Solid-body bridge-admittance and dead-spot literature; geometric estimates | Structural bridge displacement is differentiated before four double-precision, peak-normalised modal resonators and a 4 kHz guard, producing body-induced voltage before the loaded pickup coils; positive real modal conductance across each note's first six partials can only shorten loop T60 | Geometry-informed structural pickup voltage plus passive mode-dependent energy extraction; not undifferentiated acoustic body displacement mixed into pickup voltage, and the mode tables remain voicing estimates rather than measured admittance data |
+| Construction controls | Solid-body material/geometry contrasts, humbucker vs single-coil construction, set-neck vs bolt-on, and modern extended-range scale practice | Wood, size, shape, construction, and pickup type interpolate between contrasting reference voicings; scale length spans 25.5 to 28 inches for Drop-E | Parametrized construction and extended-range voicing; not a licensed or capture-verified reproduction of a named instrument |
+| Play noise | Handling-noise observations in the virtual slide guitar work of Pakarinen, Puputti, and Välimäki | Deterministic seeded plectrum scrape, finger contact, and release damping noise, band-shaped per string (wound vs plain) and split between a one-percent string trace and local pickup/body paths | Procedural, deterministic contact noise consistent with the documented mechanisms; not convolved recordings or measured contact-noise spectra |
+| Sympathetic string coupling | Bank and Karjalainen's passive admittance modeling and the sympathetic-string literature | The plucked strings' bridge force drives a one-sample-delayed bus; every string that is not being fingered runs its own single-polarisation waveguide at its open pitch, with a loop filter solved from the same pair of decay targets a played string of the same steel gets - the high-frequency one backed off toward the fundamental's wherever the pair would ask the loop for a gain above unity, so the fundamental's target is never the one given up - exact fundamental phase compensation and bridge pickup tap. Only played voices write to the bus and only idle voices read it | A one-directional (loss-only from the driver's point of view) slice of bridge coupling, provably acyclic and therefore unconditionally stable; not a shared multiport bridge scattering junction with mutual re-radiation |
+| Dead note | The same additive-loss contact model as the bridge hand, applied by the fretting hand instead | A broadband 30 ms loss added in parallel to the string's own at both fitted points, with none of the palm mute's mode-shape relief or loss band, because this contact is nowhere near the bridge and is the whole hand rather than its heel | A contact loss inside the loop, so the pick's attack is untouched and the note decays through its own solved filter; not a gate, and not a model of hand pressure or coverage |
+| Bridge-hand damping | Palm-muting practice, the same decay-targeted loop design, and dry muted power-chord reference recordings for the depths | The hand is an absorber whose loss adds to the string's own in parallel, so decay rates sum at each fitted frequency independently; the raw hand rate is multiplied by three at the high reference and divided by twenty-two at the fundamental, an effective 66:1 ratio between the two fitted points, because a contact near the bridge removes far more energy from high modes than from a fundamental that barely moves there; a relief that large only works paired with a band of loss centred on five times the fundamental, which removes the harmonics the longer tail would otherwise let ring - alone, each of the two is worse than neither; the Palm Mute style (whose depth the Mute Damp control spans from a loose half-mute to a tight chug) and the continuous pressure are one absorber at different depths and combine the same way, re-solving the same loop filters and the analytic phase compensation so the note stays in tune; the coupled strings are damped and starved with it | Progressive contact damping as an additive loss with reference-calibrated depths and a bounded, conservative frequency tilt, applied identically to every play style; not a distributed hand/string contact solve or a resolved mode-shape weighting |
+| Fretting hand | Ordinary left-hand kinematics; the position/reach/fretting-mode controls the sampled field exposes (Orange Tree Samples' floating fret position, Impact Soundworks' Set Hand and Fretting Mode) | A floating hand position with a four-fret reach above the index finger drives string allocation through a fret-distance cost; open strings are free at the nut and progressively expensive as the hand travels; the hand shifts only when the note is out of reach and only at the start of a chord, and relaxes to the nut when the phrase ends | A single-position hand with a fixed reach and a deterministic cost; not a fingering solver, a chord recogniser, or a model of alternative fingerings for a whole phrase |
+| Strum travel | Ordinary plectrum kinematics | Note-ons inside a 35 ms window are treated as one stroke; the first string fixes the edge the pick starts from and every further string's excitation is delayed by the travel time per string crossed | Constant-velocity pick travel across the string plane; not a model of pick angle, chord voicing, or the player's hand position |
+| Pitch-wheel bar | The elastic string-tension relation `dF/F = dT/2T` with `dT = E A dl/l` (Fletcher and Rossing) applied to a whole-bridge stretch, as a vibrato bar applies it | The wheel stretches every string - fingered and sympathetically ringing alike - over a nominal +/-2 semitone range; each string's share follows its elastic core stiffness against its tension (which reduces to core-fraction squared over open frequency squared for one scale length), compressed toward the two-to-one spread measured on real tremolo bridges and normalised so the most compliant string spans the full range; the strings travel over the Bend Time glide rather than snapping | The documented per-string compliance direction with a voiced compression exponent; not a model of a specific bridge's geometry, spring balance, or friction |
+| Fretting-hand vibrato | The same elastic tension relation the bar uses, applied by one finger rather than by the whole bridge; ordinary rock vibrato practice for the rate and depth | Channel pressure drives a shared 4.8-6.4 Hz raised-cosine offset of up to 40 cents on the fingered strings only, easing in over 90 ms and never going below the fretted pitch | The documented asymmetry and locality of a fingered vibrato against a bar's; not a model of finger force, string displacement geometry, or a per-string bend |
+| Amplifier feedback | Acoustic guitar-to-amplifier feedback practice: a loudspeaker's pressure field re-excites the strings, and each string answers at its own resonances | The host pushes its previous processed block back as a bounded mono acoustic return with one block of latency (the air path); a soft-clipped, gain-scaled copy drives the string loops and the sympathetic bus, scaled by the CC1 resonance, the Resonance Depth parameter and the rig's acoustic loudness derived from the amplifier controls, so a distorted tone at full wheel regenerates while a dry DI never can; every element of the loop is bounded, so the howl saturates instead of growing | A one-block-latent, level-gated, saturating regeneration path; not a room acoustics, speaker directivity, or standing-wave model |
+| Controllable artifacts | The same touch/collision literature plus bridge-hardware behavior | An exactly bypassable deterministic path combines a bridge-hardware modal bank driven through the selected pickup mix, incidental fret contact on hard-picked notes, and per-string saddle rattle, all driven by played energy. It is mechanical hardware noise, distinct from the sympathetic string coupling above | Plausible procedural imperfection with bounded feed-forward resonators; not measured hardware-noise statistics |
+| Audible-work culling | Standard realtime-DSP practice | A pickup faded out by the selector is skipped entirely; Mono runs one shared coil/DC/decimation chain and mirrors it; damping-only control moves reuse the existing dispersion fit; the whole engine freezes to exact zero once nothing vibrates and the shared path is below -120 dBFS | Removal of inaudible arithmetic with the audible result unchanged; not a quality/latency trade |
+| Oversampling | Standard nonlinear-audio antialiasing practice | The complete physical, body, collision, and nonlinear pickup path runs at 2x for host rates through 96 kHz, followed by a fixed 63-tap halfband FIR; higher-rate hosts run 1x | Genuine internal oversampling and filtered decimation, not a quality label applied to a native-rate nonlinear stage |
+| Output field | Phase-coherent divided/hex pickup practice | Mono is the conventional summed DI. Stereo weights each modeled string by its physical lateral position, keeps shared body modes centered, uses linked output limiting and independent matched decimation, and folds coherently to mono | A virtual divided-pickup string field with no time or phase widening; not room, amplifier, cabinet, chorus, or acoustic stereo |
+| Amplifier and cabinet | Pakarinen and Yeh's review of vacuum-tube amplifier modeling; published supply-sag behaviour (a plate rail falling from around 350 V to around 250 V within 100 ms and recovering over 300-600 ms); transformer core saturation as a volt-second limit; standard antialiasing practice for cascaded nonlinear stages; sealed-guitar-cabinet response measurements; extended-range metal rhythm practice for the voicing | Two cascaded smooth triode ceilings driven off a standing grid bias with a level-tracking bias drift and an interstage Miller roll-off, a tight input coupling network, a power stage whose supply droops by up to 28% under its own output current with a 70 ms attack and a 400 ms recovery and whose rail sets the headroom rather than the gain, an output transformer modelled as a normalised flux integral with the excess the core cannot carry subtracted back out, and a five-section cabinet (box high-pass, low-mid thump, scooped mid, presence peak, fourth-order roll-off), all inside a 4x oversampled domain reached through Kaiser-windowed halfband stages designed at prepare time | Structurally motivated static-nonlinearity amplifier voicing with genuine oversampling and a filter-modelled cabinet; not a circuit-solved (Wave Digital or nodal state-space) amplifier, a measured impulse response, or a model of any named amplifier or speaker |
 
-- `Electry_artefacts/Release/VST3/Electry.vst3`
-- `Electry_artefacts/Release/AU/Electry.component`
-- `Electry_artefacts/Release/Standalone/Electry.app`
+## Known gaps
 
-## Requirements
+### What the automated tests do and do not establish
 
-- macOS 11 or newer (Apple silicon or Intel; universal by default)
-- Full Xcode installation selected with `xcode-select`
-- CMake 3.22 or newer
-- Internet access for the first configure (JUCE 8.0.14 is fetched and
-  pinned by checksum), or a local checkout supplied via `JUCE_PATH`
+Current automated tests establish: finite, bounded, non-silent output for
+all twelve pick-stroke/play-style combinations at 44.1-384 kHz; the 2x/1x
+internal-rate policy, exact
+host-to-physical clock timing, and filtered-decimation pitch stability;
+exact-silence idle output;
+sample-identical renders for identical MIDI (including across engine reuse,
+which caught a real aperture-state leak during development); fundamental
+accuracy within 8 cents across E1..D6 at three rates; stable allpass bounds
+and under-20% low/high dispersion-deficit fit error on the heavy short-scale
+Drop-E case; positive bounded modal conductance and exact structural-loss
+bypass at 0%; independent latching of the two keyswitch banks, keyswitch
+silence, dead-zone and range gating; the alternate sequence surviving style
+changes and skipping hammered notes; measurably distinct attack spectra and
+levels for down, up, hammered, muted and harmonic playing, an audibly
+composed upstroke palm mute, a stroke-independent harmonic octave, and a
+bit-identical hammered note under either latched stroke; a node touch that
+removes the odd partials by more than 20 dB while leaving the even ones, a
+touch filter whose closed-form magnitude never exceeds one at any depth, an
+exactly absent touch on every other articulation, a finger that lifts, and a
+harmonic whose octave partial decays within 2 dB of the same partial of the
+ordinarily picked note - the direct evidence that the loop is no longer
+retuned; a pinch harmonic whose energy-weighted mean partial index sits well
+above an ordinary pick stroke's, whose strongest partial is at least the sixth
+near the bridge and exactly the octave with the hand over the neck, which gains
+more than 10 dB on the fundamental, and which renders as neither a pick stroke
+nor a natural harmonic; palm-mute decay
+contraction; the per-string wheel-compliance table's physical ordering and
+the rendered audio following it on two strings; wheel travel time following
+Bend Time with an exact settle on the target; a ringing coupled string
+retuned by the wheel; hammer-on
+same-string continuation, pitch settling, and click-free transition; a
+sharp-to-true attack tension glide between 0.4
+and 80 cents; bridge-brighter-than-neck centroid ordering; tone-control
+high-band reduction; independently audible wood, size, shape, construction,
+scale, gauge, body-level, position, hardness, and age endpoints; monotonic
+multi-dimensional velocity response plus an exactly flat 0% setting;
+deterministic, monotonic, exactly silent-at-zero Artifacts behavior and a
+bounded maximum-artifact eight-string strum; bridge-coupled sympathetic ring
+of an open string that the played note does not itself produce, exact bypass
+and never-configured coupled loops at 0%, coupling determinism, a coupled
+string handed back to the player when it is picked, and bounded, ring-out-to-
+exact-silence behaviour at maximum coupling across three host rates;
+a decay envelope that agrees across 44.1, 48, 88.2, 96 and 192 kHz to within
+3 dB in every window through 1.5 s, a polarisation exchange that is one number
+per round trip at every pitch with neither of its clamps engaged, a 22nd-fret
+high E that still sustains on 44.1, 48 and 96 kHz hosts, a coupled ring whose
+kilohertz band sits 60 dB or more under its low band, and coupled loops whose
+realised round-trip decay - read back from the gain and coefficient they
+actually run - holds its fundamental target at String Age 1.0 and at half and
+full bridge-hand pressure, to the same value on 44.1, 48 and 96 kHz hosts;
+monotonic palm-mute decay contraction, an exact no-op at zero pressure, an
+in-tune heavily muted string, the solved loop coefficient actually moving, and
+CC 2 pressure including hostile input; strum travel offsets in physical string
+order, an undelayed leading string, a lower stacked chord peak, a fresh stroke
+outside the chord window, and no premature retirement of a delayed string;
+the CC1 resonance lifting the sympathetic ring with Resonance Depth scaling
+its reach and a bit-exact bypass at a lowered wheel; the closed
+engine-amplifier loop self-sustaining after note release at full wheel and
+distortion while the same loop decays with the wheel down or the amplifier
+dry, all bounded; pluck position following the fretted sounding length by 2^(fret/12);
+fretboard geometry, meter ballistics, standing-wave shape, colour knee and a
+lossless packed audio-to-editor round trip; per-string display readout naming
+the right string, fret, note and articulation; selector-driven pickup culling,
+click-free restoration of a culled pickup, Mono channel linking and a
+click-free stereo-field opening; exact digital silence from an untouched
+engine, a subnormal-free ring-out that reaches exact zero, and a clean wake
+from the frozen state; contrasting construction
+endpoints that both stay in tune; plectrum contact noise in the pre-attack
+window; release noise that appears only after note-off; a dead note that lands like a
+picked one, leaves no partial of the fretted pitch after 150 ms, and decays
+through its own loop rather than being gated; eight-string
+polyphony with open-position chord mapping, repick reuse, and stealing; a
+slide whose pitch travels through the intermediate semitones rather than
+jumping, whose travel time scales with the interval, whose friction band
+follows the speed of the hand, which is far louder on a wound string than on a
+plain one and exactly absent at a silent Finger Noise control; a
+fretting hand that keeps a lead phrase in one position instead of falling back
+to open strings, leaves the open-position shapes untouched, and relaxes to the
+nut when the phrase ends;
+pitch-wheel travel and sustain-pedal hold; a
+fretting-hand vibrato at the modelled depth and rate that is sharp of the fret
+and never flat of it, eases in rather than switching on, leaves the
+bridge-coupled strings alone where the bar moves them, and is a bit-exact no-op
+at zero pressure; hostile parameter and performance
+input safety; and a portable CPU ceiling with the eight-string render ratio
+printed on every run in worst-case Stereo, maximum Body Resonance, and maximum
+Artifacts mode. Mono is checked sample-for-sample dual mono; Stereo tests pin
+physical low/high string orientation, coherent fold-down, bounded side level,
+energy balance, determinism, and opposite string endpoints. The plug-in suite
+additionally pins the 31-parameter
+contract, formatted values, state round-trips including a pre-1.1 session that
+picks up the new defaults, bus layout, sample-accurate
+note starts, MIDI controller behavior (sustain, all-sound-off,
+all-notes-off), UI keyswitch triggering of both banks, panic, output-gain and APVTS
+output-field effects, two visible non-overlapping mode buttons,
+the sympathetic, palm-mute (parameter and CC 2) and strum-spread controls
+reaching the rendered audio, offscreen editor rendering including the live
+fretboard's bounds, and prepare/release cycles at three rates.
 
-## Build on macOS
+The amplifier chain has its own suite: halfband unity DC gain, the -6 dB
+halfband symmetry point, passband ripple and stopband rejection; a bit-exact
+dry bypass with every control at zero and an audible effect from each control
+on its own at 100%; the alias floor of the pedal, the amplifier, and the two
+stacked, at two input levels; a supply that droops on a loud sustained passage
+and far less on a quiet one, develops over its modelled time constant and
+recovers during a rest; an output transformer whose distortion falls about
+46 dB per decade of frequency and 41 dB for 24 dB of level, measured at the
+stage rather than through the cabinet; each of the cabinet's five voicing features
+relative to 1 kHz; loudness bounds across the whole amp travel and every
+combination of the gain and compressor controls on a rendered Drop-E rhythm
+figure, dry and palm muted; the lead delay's first repeat at 360 ms with a
+clean gap before it; a decaying, decorrelated room tail; bounded sample steps
+across gain-stage engagement and disengagement and a return to bit-exact
+bypass afterwards; render determinism; finiteness, output-clamp headroom and
+the expected group delay at eight host rates from 22.05 to 384 kHz; and
+recovery from NaN, infinite, and out-of-range input as well as null and
+zero-length calls, including a single non-finite sample in the middle of an
+otherwise clean block. The cabinet's low-frequency probe sits below the modelled
+box corner, which is deliberately low enough that a Drop-E eighth string's
+fundamental reaches the cabinet rather than being cut before it. A further test renders a short take through the demo
+renderer, so the committed demonstration audio's toolchain is covered too.
+
+Fourteen rendered examples of the whole path are committed under
+`Docs/audio/` and produced from this same JUCE-free code by
+`Tools/RenderDemos.cpp`, so what the document describes can be listened to
+rather than only read. They are demonstrations, not evidence: an audible
+example is not a measurement, and none of the claims above rest on them.
+
+Those engineering tests do not replace hardware validation. A stronger claim
+about any named instrument would additionally require documented capture
+chains, waveform and decay-map error analysis across the fretboard and
+control space, pickup response fits against measured coils, and
+level-matched blind listening with enough trials to report uncertainty.
+Electry 1.0 therefore makes a deliberately testable statement: its string,
+interaction, and pickup structures come from the published models cited
+above; its constants are labeled as voicing wherever they are not
+literature-derived; and every remaining boundary is stated rather than
+implied.
+
+## Release history
+
+### 1.0.0
+
+First release, in one JUCE codebase producing VST3, Audio Unit and Standalone:
+
+- Eight Drop-E string voices as dual-polarisation single-delay-loop waveguides
+  with third-order Lagrange fractional reads, per-note stiffness dispersion
+  fitted at two partials, decay-targeted loop filters solved by bisection, and
+  a contractive shared-bridge coupling matrix.
+- A fretting hand with a floating position and a four-fret reach; a picking
+  hand with per-stroke contact variation and constant-velocity strum travel;
+  two independent latching keyswitch banks, so any of three pick strokes can
+  drive any of seven play styles.
+- Point-touch harmonics as an exact first-order contact loss inside the loop —
+  natural, pinch and touch — plus slides, hammer-ons and pull-offs, dead notes,
+  palm muting as an additive absorber, and incidental fret collisions.
+- The pitch wheel as a vibrato bar with per-string elastic compliance, channel
+  pressure as the fretting hand's one-sided vibrato, and a resonance wheel that
+  drives a bounded, saturating amplifier-feedback path through the host's own
+  processed block.
+- A published pickup signal structure: per-string position comb following each
+  fret, an O(1) fractional moving average for the finite aperture's exact sinc
+  response, bounded flux nonlinearity differentiated into induced EMF, and a
+  loaded coil/tone circuit.
+- A four-mode solid-body structural path, geometry-informed and passive, plus
+  wood, size, shape, construction, pickup-type and scale-length axes spanning
+  contrasting solid-body anchors.
+- An FX chain — distortion, amplifier with supply sag and output transformer,
+  modelled cabinet, compression, lead delay and stereo room — with the
+  nonlinear stages inside a 4× oversampled domain, and every effect defaulting
+  to a true 0 % dry setting.
+- Mono as the summed dry DI and Stereo as a phase-coherent divided-pickup view
+  that folds coherently back to mono.
+- Audible-work culling: a faded-out pickup is skipped entirely, Mono runs one
+  shared coil chain and mirrors it, and the whole engine freezes to exact zero
+  once nothing vibrates.
+
+## Build
+
+The JUCE-free DSP core, tests and demo renderer:
 
 ```bash
-cd electry
-./scripts/build-macos.sh
-```
-
-The script configures the Xcode generator, builds universal binaries, runs
-the CTest suite (engine and plug-in contract tests), and ad-hoc signs the
-three bundles. Environment overrides: `BUILD_UNIVERSAL=OFF` for a
-native-arch build, `CONFIG=Debug`, `BUILD_DIR`, and `JUCE_PATH` for a local
-JUCE 8.0.14 checkout.
-
-## JUCE-free DSP build
-
-The complete string, interaction, pickup, and amplifier path builds and tests
-without JUCE on any platform with CMake and a C++20 toolchain (this is what
-Linux CI runs):
-
-```bash
-cd electry
 cmake -S . -B build-dsp -DCMAKE_BUILD_TYPE=Release \
   -DELECTRY_BUILD_PLUGIN=OFF -DBUILD_TESTING=ON
 cmake --build build-dsp --parallel
 ctest --test-dir build-dsp --output-on-failure
-```
-
-That configuration also builds `ElectryRenderDemos`, which re-renders the
-committed demonstration audio:
-
-```bash
 ./build-dsp/ElectryRenderDemos Docs/audio
 ```
 
-`ELECTRY_BUILD_TOOLS=OFF` leaves the renderer out.
-
-## Install and validate locally
-
-```bash
-ditto build-macos/Electry_artefacts/Release/VST3/Electry.vst3 \
-  ~/Library/Audio/Plug-Ins/VST3/Electry.vst3
-ditto build-macos/Electry_artefacts/Release/AU/Electry.component \
-  ~/Library/Audio/Plug-Ins/Components/Electry.component
-```
-
-Run `auval -v aumu Elc1 Eltr` after installing the Audio Unit, and rescan
-plug-ins in your host. The Standalone app runs directly from the build
-tree.
-
-## Sign, package and notarize
+The full plug-in (JUCE 8.0.14 is fetched pinned at configure time, or pass
+`-DELECTRY_JUCE_PATH=/path/to/JUCE`):
 
 ```bash
-cd electry
-./scripts/sign-and-package-macos.sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 ```
 
-Without arguments the script stages the three bundles with their licence
-documentation, ad-hoc signs them, and writes
-`build-macos/dist/Electry-1.2.0-macOS-universal.zip` and `.pkg`. For
-distribution, provide `APP_SIGN_IDENTITY` (Developer ID Application),
-`INSTALLER_SIGN_IDENTITY` (Developer ID Installer), and optionally
-`NOTARY_PROFILE` for `notarytool` submission and stapling.
-
-## Project layout
-
-```text
-CMakeLists.txt       DSP library, demo renderer, JUCE plug-in, and CTest targets
-Source/DSP/          ElectryEngine (JUCE-free physical model), ElectryFx
-                     (JUCE-free amplifier, cabinet and time effects), and
-                     ElectryVisuals (JUCE-free fretboard geometry/ballistics)
-Source/              PluginProcessor and PluginEditor (JUCE shell)
-Tests/               Engine, amplifier-chain, and plug-in contract tests
-Tools/               RenderDemos, which produces the committed Docs/audio set
-Docs/                Physical-modeling research, implementation contract, and
-                     the rendered demonstration audio
-Presets/             Sound-design recipes for the 31-parameter set
-scripts/             macOS build and packaging helpers
-ThirdParty/          JUCE licence notice
-```
+On macOS, `./scripts/build-macos.sh` drives the same build through Xcode as a
+universal binary and renders the committed editor screenshot while the suite
+runs.
 
 ## Licensing
 
-Electry's original source is under the [MIT License](LICENSE); see the
-[third-party notices](THIRD_PARTY_NOTICES.md). Electry builds against JUCE,
-which is dual-licensed under AGPLv3 or a commercial JUCE licence
-([notice](ThirdParty/JUCE-LICENSE.md)); confirm the applicable terms before
-distributing binaries. No samples, impulse responses, or third-party preset
-libraries are included; "Les Paul" and "Telecaster" name the reference
-styles of the modeling axes and are trademarks of their respective owners,
-with no affiliation or endorsement implied.
-
-## Changelog
-
-- 2026-08-17: Added a non-finite input guard to `ElectryVisuals::vibrationShape`, matching its sibling helpers, and a regression test, since a NaN or infinite argument previously survived its clamp unchanged and could draw a NaN offset into the live fretboard's vibrating string path.
-- 2026-08-17: `PluginProcessor.cpp`'s parameter attributes each install a `getText`/`getValueForString` pair for the APVTS - `percentValue`, `plainNumericValue` and `timeValue`, plus scaleLength's own bespoke inches parser - but only the value-to-text direction (`getText`) had ever been exercised, by `testParameterTextFormatting`; the reverse direction, `getValueForText`, which a host or the generic parameter editor calls whenever typed automation text is parsed back into a value, had no coverage anywhere, so a mis-parse (a wrong sign, a `ms`/`s` mixup, or scaleLength's inches clamp overshooting) could ship silently. Added `testParameterTextParsing`, which round-trips representative text through `getValueForText`/`convertFrom0to1` for each of the four parser shapes, including strumSpread's all-alphabetic "Block chord" label folding to 0.0 rather than faulting `String::getFloatValue()`, bendTime's text crossing the `ms`/`s` suffix boundary in both spellings of the same duration, and scaleLength's `jlimit` clamping a typed inch value past either end of its 25.50"-28.00" span instead of extrapolating out of range; test-only, so it does not touch DSP source. The DSP-only CTest suite (`ElectryEngineTests`, `ElectryFxTests`, `RenderDemos`) passed locally and is unaffected, `Docs/audio` is untouched since no engine/DSP source changed, and the new case is expected to build and pass in CI's full plugin build alongside the rest of `Electry.PluginProcessor` (only built there, same as prior MIDI-dispatch tests above, since this sandbox has no macOS/JUCE toolchain to link and run it locally).
-- 2026-08-17: `ElectryAudioProcessor::dispatchMidiData`'s MIDI CC121 (Reset All Controllers) handling - which fans out into five separate engine calls, `setPitchBend(0)`, `setResonance(0)`, `setPalmMutePressure(0)`, `setVibrato(0)` and `setSustainPedal(false)` - had no coverage anywhere: `testMidiControllersAndVoiceLifecycle` only ever sends CC64, CC120 and CC123, and every other performance control is exercised through its own dedicated controller number, never CC121, so a dropped call or a wrong controller number here would leave a bent pitch wheel or a held sustain pedal stuck exactly when a host sends the routine Reset All Controllers message a DAW issues on transport stop or program change, while every existing test kept passing. Added `testResetAllControllersDispatch`, which drives two of the five resets end to end through actual rendered audio - bending the open low string fully up via a raw pitch-wheel message and confirming CC121 glides it back to the unbent pitch (mirroring `testPitchWheelMidiDispatch`'s measurement approach), and holding the sustain pedal over a released note and confirming CC121 releases it exactly as an explicit pedal-up would (mirroring `testMidiControllersAndVoiceLifecycle`'s own sustain-pedal case). Test-only, so it does not touch DSP source; the DSP-only CTest suite (`ElectryEngineTests`, `ElectryFxTests`, `RenderDemos`) passed locally and is unaffected, `Docs/audio` is untouched since no engine/DSP source changed, and the new case is expected to build and pass in CI's full plugin build alongside the rest of `Electry.PluginProcessor` (only built there, same as the other MIDI-dispatch tests above, since `ElectryPluginProcessorTests` needs JUCE and this sandbox has no macOS/JUCE toolchain to link and run it locally).
-- 2026-08-17: `drawStrokeVariation`, `beginChordStroke` and `drawVibratoCycle` each carried their own byte-identical copy of the same one-line lambda - `bipolarNoise(state) + bipolarNoise(state) + bipolarNoise(state)`, the three-summed-uniforms draw the stroke-contact/force/angle/width jitter, the strum's acceleration and crossing gaps, and the vibrato's per-cycle rate and depth all rest on - over their own locally seeded `state`, so a future edit to the draw's shape could reach one copy and silently leave the other two stale. Factored the shared arithmetic into a new `ElectryEngine::sumThreeUniforms(std::uint32_t&)`, defined next to `bipolarNoise` in the header so it inlines the same way; each call site's local `normal` lambda now just forwards to it over its own `state`, so the three draws stay independently seeded and the expression compiles to the same instruction sequence it always did. Verified with the CTest suite (all tests pass) and a byte-identical `ElectryRenderDemos` render before and after, since the arithmetic and its evaluation order are unchanged.
-- 2026-08-17: `ElectryEngine::DelayTap::setDelay` - the cubic-Lagrange fractional read shared by both pickup taps and the sympathetic-string bridge tap - clamps its request to `[4, delayLineSize - 8]` before solving four interpolation coefficients from the clamped delay's fractional part, but was only ever exercised indirectly, through whatever pickup or sympathetic-tap position a configured voice happened to land on; nothing in the suite asked it for a delay outside that clamped range directly, or checked the coefficients themselves rather than the pickup or sympathetic audio they eventually shape. Added a `TestAccess::delayTapAt` inspection seam and `testDelayTapClampsAndInterpolates`, which solves a fresh `DelayTap` directly for a request below the floor, a request past the ceiling, an exact-integer delay (asserting the four weights collapse to a single unit tap) and a fractional delay (asserting its weights sum to exactly unity, the identity a cubic Lagrange interpolator must satisfy); confirmed as a genuine regression test by temporarily lowering the floor clamp from 4 to 2 samples, seeing the new test fail, and reverting. Test-only, so it does not touch the engine, verified with the CTest suite (all tests pass) and a byte-identical `ElectryRenderDemos` render since no engine/DSP source changed.
-- 2026-08-16: Added `testProcessRejectsInvalidBuffers`, direct test coverage for `ElectryEngine::process()`'s own null-pointer, non-positive-length and unprepared-engine guards, which no existing test drove directly.
-- 2026-08-16: `ElectryAudioProcessor::dispatchMidiData`'s channel-pressure (status 0xd0, reading `data[1]`) and polyphonic-aftertouch (status 0xa0, reading `data[2]` since `data[1]` there is the note number) handling, both forwarding to `ElectryEngine::setVibrato`, had no coverage anywhere: `ElectryEngineTests` drives `setVibrato` directly with already-decoded floats, and this file's own controller test only sends 7-bit CCs, so a status-nibble typo or a swapped data index would leave every host's pressure/aftertouch vibrato silently inert while still passing every existing test. Added `testChannelPressureAndAftertouchVibratoDispatch`, which renders a fretted note through a real `ElectryAudioProcessor` with each raw message sent, lets the vibrato's 258 ms onset ramp settle, and measures the rendered fundamental over several swing cycles with the same Hann-windowed DFT scan the pitch-wheel test uses, asserting it reads measurably sharper (a differential comparison against the same setup with no pressure sent, since the vibrato's average bias over a multi-cycle window is not itself a documented constant) than the unpressed baseline for full-value channel pressure, half-value channel pressure (distinct from full-value, so a missing `/ 127.0f` scale can't hide behind the shared 1.0f clamp), channel pressure sent on channel 9 instead of channel 1 (so a regression comparing the whole status byte instead of the masked nibble would be caught), and polyphonic aftertouch sent with a pressure-unrelated note byte (so a data[1]/data[2] index swap can't accidentally pass); test-only, so it does not touch DSP source. The DSP-only CTest suite (`ElectryEngineTests`, `ElectryFxTests`, `RenderDemos`) passed locally and is unaffected, `Docs/audio` is untouched since no engine/DSP source changed, and the new case is expected to build and pass in CI's full plugin build alongside the rest of `Electry.PluginProcessor` (only built there, same as the pitch-wheel dispatch test above, since `ElectryPluginProcessorTests` needs JUCE and this sandbox has no macOS/JUCE toolchain to link and run it locally).
-- 2026-08-16: `ElectryAudioProcessor::dispatchMidiData`'s pitch-wheel handling - reconstructing the 14-bit wheel position from its two 7-bit MIDI data bytes, then dividing the excursion below centre by 8192 but above centre by 8191 to match the MIDI spec's asymmetric bend range, before clamping and forwarding it to `ElectryEngine::setPitchBend` - had no test anywhere: `ElectryEngineTests` drives `setPitchBend` directly with already-decoded floats, and `PluginProcessorTests`' own controller test only sends 7-bit CCs, so a wrong byte order, a swapped divisor or a dropped clamp in that raw-MIDI parsing would still have passed every existing test while bending every host's pitch wheel by the wrong amount or the wrong direction. Extracted the reconstruction into a new `static` `ElectryAudioProcessor::decodePitchBend14` so it can be asserted on exactly rather than only through rendered audio - a plain byte-order/divisor bug is one thing, but the low-order data byte alone contributes at most a few cents to a full two-semitone bend, too little for an audio measurement to reliably resolve. Added `testPitchWheelByteReconstruction`, which fixes the high-order byte and sweeps the low-order one through both sides of the asymmetric-divisor boundary and asserts each exact decoded value (catching, for instance, an implementation that dropped the low-order byte entirely and would otherwise still pass a full-down/centre/full-up check), and `testPitchWheelMidiDispatch`, which sends a raw `MidiMessage::pitchWheel` at 0x0000/0x2000/0x3fff into a real `ElectryAudioProcessor`, lets the note settle, and measures the actual rendered fundamental with a small Hann-windowed DFT scan (mirroring `ElectryEngineTests`' own `measureFrequency`) to assert the centred wheel leaves the open low string in tune and the two extremes bend it by the documented +/-2 semitones end to end. The extraction is a pure refactor - `dispatchMidiData` calls the new function with the same arithmetic, unchanged - so it does not touch DSP source. The DSP-only CTest suite (`ElectryEngineTests`, `ElectryFxTests`, `RenderDemos`) is unaffected and still passes locally, `Docs/audio` is untouched since no engine/DSP source changed, and the new `Electry.PluginProcessor` cases passed in CI's full plugin build.
-- 2026-08-16: `ElectryEngine::setSustainPedal` was the one performance setter in `ElectryEngine.h` left without the doc comment its neighbours (`setPitchBend`, `setResonance`, `setPalmMutePressure`, `setVibrato`, `setAcousticReturnLevel`) all carry, so its MIDI CC64 semantics - a key-up while held only flags the voice `sustained` instead of releasing it (see `noteOff()`), a string already sounding when the pedal comes down is unaffected, and releasing the pedal both releases every still-`sustained`, not-held voice and clears the flag everywhere - had to be read out of `ElectryEngine.cpp` instead of the header; doc-only, so it does not touch any DSP source, verified with the CTest suite (all tests pass) and a byte-identical `ElectryRenderDemos` render.
-- 2026-08-16: `ElectryEngine::setPitchBend`'s own guard - `2.0f * clampf(std::isfinite(bend) ? bend : 0.0f, -1.0f, 1.0f)` - was, like `setVibrato` before it, only ever driven with ordinary in-range bends across the suite, or in `testParameterSanitisation` with a NaN whose only assertion was that the resulting audio stayed finite, never that the stored bend target itself folded to zero rather than clamped-then-doubled correctly. Added a `pitchBendTarget()` inspection seam to `ElectryEngineTestAccess` and `testSetPitchBendSanitisation`, which asserts a NaN and either infinity fall back to zero, a below/-above-range bend clamps to -2/+2 semitones, an ordinary bend doubles through unaltered, and a NaN bend held on a genuinely fretted, sounding string still renders finite audio; test-only, so it does not touch the engine, verified with the CTest suite (all tests pass; `Docs/audio` untouched since no engine/DSP source changed).
-- 2026-08-16: `ElectryFx::setParameters`'s `sanitiseMix` guard - a non-finite distortion, amp, compressor, delay or room mix falls back to 0.0, then any finite value is clamped to 0..1 - was only ever driven through `testHostileInput`, which checked that the chain stayed finite but never the sanitised value itself, so a clamp landing on the wrong boundary or a fallback missing one of the five fields would still have passed. Added a `targetParameters()` inspection seam to `ElectryFxTestAccess` and `testSetParametersSanitisation`, which asserts each of the five mixes independently falls back to 0.0 from NaN or infinity, clamps to its nearer boundary from an out-of-range value, and passes an ordinary in-range value through unaltered; test-only, so it does not touch the DSP, verified with the CTest suite (all tests pass) and a byte-identical `ElectryRenderDemos` render.
-- 2026-08-16: Added a direct regression test for the sample-rate clamp in `ElectryEngine::prepare()`, covering non-finite, sub-floor and above-ceiling host rates that were previously exercised only indirectly.
-- 2026-08-15: Removed redundant `allpassPhaseDelay` calls from the dispersion grid search in `configureVoicePitch`, sharing each candidate coefficient's fundamental-frequency phase-delay term across the two reference-partial comparisons instead of recomputing it, with bit-identical rendered output.
-- 2026-08-16: Added direct regression coverage for `setResonance`, `setAcousticReturnLevel` and `setPalmMutePressure`'s own non-finite/clamp guards, which were previously only exercised indirectly through finite-audio assertions.
-- 2026-08-15: The fretboard editor's paint() recomputed the neck's fret-span (a `std::exp2` call) on every wire, inlay, and sounding-string position it drew each animation frame; `ElectryVisuals` now exposes a `fretSpan()` helper and span-aware overloads of `fretWireFraction()`/`fretCentreFraction()` so `paint()` solves it once per frame instead, with identical drawn output.
-- 2026-08-15: Factored the clamp-omega-cosine-alpha arithmetic shared by `Biquad::setLowpass`, `setHighpass` and `setPeaking` in `ElectryFx.cpp` into one `designBiquadBasis` helper instead of three copies of the same RBJ cookbook math, with no change to engine output.
-- 2026-08-15: Hoisted the palm-mute settle factor out of `updateVoiceControl`'s per-loop hand-loss modulation so it is solved once per control tick per voice instead of twice (once for the vertical polarisation, once for the horizontal), with bit-identical rendered output.
-- 2026-08-15: Factored the neck and bridge pickups' tap/aperture/coil/flux/EMF chain in `renderVoice` into one shared `readPickup` lambda instead of two near-identical copies differing only in their delay tap, aperture, coil pair and artifact/noise blend weights; verified with the CTest suite and a byte-identical `ElectryRenderDemos` render before and after.
-- 2026-08-15: `bodyConductanceAt` recomputed each body mode's clamped omega, omega-squared and loss rate from scratch on every call, even though those three values depend only on the mode's fixed frequency and Q, not on the sounding partial being scored; `configureBody` now solves them once per mode into `bodyModeOmega_`/`bodyModeOmegaSquared_`/`bodyModeDamping_` and `bodyConductanceAt` (reached up to six times per `configureVoiceDamping` call, itself run on every note-on) reads them directly, with a byte-identical `ElectryRenderDemos` render and a passing CTest suite before and after.
-- 2026-08-15: `configureVoicePitch`'s analytic phase compensation (`loopPhaseDelay`) called `allpassPhaseDelay` once for each dispersion coefficient on both the vertical and horizontal loop, even though the dispersion grid search always assigns the same low/high coefficient pair to both polarisations at once; the two `allpassPhaseDelay` calls (an atan2 pair each) are now solved once per recompensation and reused for both loops' phase-delay sums, kept as separate terms summed in their original order to stay bit-identical; verified with the CTest suite and a byte-identical `ElectryRenderDemos` render before and after.
-- 2026-08-15: `renderVoice` and `renderSympatheticString` each carried their own copy of the `channelsLinked_` branch that pans a neck/bridge contribution across the stereo field; both now call one shared `accumulateStereoContribution` helper in `ElectryEngine.cpp`, with the same multiplication order preserved so the output is unchanged; verified with the CTest suite and a byte-identical `ElectryRenderDemos` render before and after.
-- 2026-08-15: `renderVoice`'s pick-release progress fraction recomputed `std::max(1, voice.excitationLength)` and its float cast from scratch on every rendered sample of the Release phase, even though `excitationLength` is fixed once per attack in `startExcitation`; the clamped length is now cached there as `excitationLengthDenominator` and read directly per sample, with a byte-identical `ElectryRenderDemos` render and a passing CTest suite before and after.
-- 2026-08-16: `renderVoice` recomputed `std::max(1, ...)` and a float cast of `voice.noiseLength`/`voice.artifactCollisionLength` on every rendered sample of the pick/release noise burst and the incidental fret-contact window, even though both lengths are fixed once per burst wherever they are armed (`startExcitation`, `beginVoiceRelease`, and `startVoice` respectively); the clamped lengths are now cached there as `noiseLengthDenominator` and `artifactCollisionLengthDenominator` and read directly per sample, with a byte-identical `ElectryRenderDemos` render and a passing CTest suite before and after.
-- 2026-08-16: Added `testParameterSanitisationFallsBackToDefaults`, a direct unit test of `ElectryEngine::sanitise` covering every field's non-finite-falls-back-to-default and finite-out-of-range-clamps-to-boundary behaviour plus enum and in-range pass-through, which the existing `testParameterSanitisation` only exercised indirectly through rendered-audio finiteness; verified with the CTest suite (all tests pass) and a byte-identical `ElectryRenderDemos` render, since no engine code was touched.
-- 2026-08-16: `ElectryVisuals`' non-finite and out-of-range guards - `levelHeat`'s own `isfinite` check, `meterBallistics`' guard on a non-finite `target` (only its `current` guard was covered), and `packStringVisual`'s non-finite-level sanitize and its clamps on an out-of-range note, fret and play style - were exercised by no existing test, since `testVisualStateAndGeometry` only ever fed the helpers ordinary in-range values. Added `testVisualStateSanitizesNonFiniteInput`, which drives each guard directly with NaN, infinity and wildly out-of-range inputs and asserts the documented fallback; test-only, so it does not touch the engine and the rendered demo audio is unchanged.
-- 2026-08-16: `chooseString`'s voice-stealing tie-break - a releasing voice always outranks a held one, and among voices of equal status the oldest by `startOrder` goes first - was only ever checked for the resulting voice count staying at eight, never for which string it actually picked. Added `testVoiceStealingPriority`, which fills all eight strings and asserts the steal lands on the oldest reachable held string, then repeats it with a younger string mid-release and asserts the releasing one is taken instead; test-only, so it does not touch the engine, verified with the CTest suite (all tests pass) and a byte-identical `ElectryRenderDemos` render.
-- 2026-08-16: `updateVoiceControl`'s hand-loss dip settle factor recomputed `0.040f * static_cast<float>(sampleRate_)` from scratch on every control tick of every active voice with an engaged dip, even though it depends only on the internal clock fixed by `prepare()`; the product is now cached there as `handLossSettleWindowSamples_` and read directly, with a byte-identical `ElectryRenderDemos` render and a passing CTest suite before and after.
-- 2026-08-16: `noteOn`'s velocity guard - `clampf(std::isfinite(velocity) ? velocity : 0.0f, 0.0f, 1.0f)`, which folds a NaN, infinite or negative velocity down to silence and clamps a velocity above 1.0 to exactly 1.0 - was only ever exercised with ordinary in-range velocities elsewhere in the suite. Added `testNoteOnVelocitySanitisation`, which asserts NaN, positive-infinite, negative-infinite and negative velocities all start no voice, and that a velocity above 1.0 renders bit-identical audio to a velocity of exactly 1.0; test-only, so it does not touch the engine, verified with the CTest suite (all tests pass) and a byte-identical `ElectryRenderDemos` render.
-- 2026-08-16: `ElectryVisuals`' index- and span-clamping guards - `stringRowFraction`'s string-index, inset and degenerate-string-count clamps, `stringThickness`'s string-index clamp, and the span-aware `fretWireFraction`/`fretCentreFraction` overloads' non-positive-span fallback - were exercised by no existing test, since `testVisualStateAndGeometry` only ever fed them ordinary in-range indices, a fixed in-range inset and the span the engine's own fixed fret count always produces. Added `testVisualGeometryClampsOutOfRangeInput`, which drives each guard directly with out-of-range and degenerate inputs and asserts the documented clamp or fallback; test-only, so it does not touch the engine, verified with the CTest suite (all tests pass) and a byte-identical `ElectryRenderDemos` render.
-- 2026-08-16: `ElectryEngine::prepare`'s sample-rate guard - a non-finite rate falls back to 48 kHz, then any finite rate is clamped to its supported 8 kHz-384 kHz range - was only ever driven with rates already inside that range across the suite. Added `testPrepareSanitisesSampleRate`, which prepares the engine with a NaN, an above-ceiling, a below-floor and a negative sample rate and asserts each yields the identical open-string delay-line target as an explicit `prepare()` at the fallback or clamped rate, plus finite rendered audio; test-only, so it does not touch the engine, verified with the CTest suite (all tests pass) and a byte-identical `ElectryRenderDemos` render.
-- 2026-08-16: `ElectryFx::prepare`'s own sample-rate guard - the same non-finite-falls-back-to-48-kHz, then-clamp-to-8-kHz-384-kHz-range shape as the engine's, but on the FX chain's independent `sampleRate_` - was only ever driven with rates already inside that range, since `testDeterminismAndRateMatrix`'s eight-rate sweep never includes a NaN, negative or out-of-range value. Added a `sampleRate()` inspection seam to `ElectryFxTestAccess` and `testPrepareSanitisesSampleRate`, which asserts a NaN, an above-ceiling, a below-floor and a negative request each sanitise to the identical stored rate as an explicit `prepare()` at the fallback or clamped rate, plus a finite processed block after preparing at a NaN rate; test-only, so it does not touch the DSP and the rendered demo audio is unchanged.
-- 2026-08-16: `ElectryEngine::setVibrato`'s own guard - `clampf(std::isfinite(normalised) ? normalised : 0.0f, 0.0f, 1.0f)` on the channel-pressure target that drives the fretting-hand vibrato - was the one performance setter of its family (`setPitchBend`, `setResonance`, `setAcousticReturnLevel`, `setPalmMutePressure` are all driven with NaN by `testParameterSanitisation`) never fed a non-finite or out-of-range value anywhere in the suite; every existing call site passes an ordinary 0..1 pressure. Added a `vibratoTarget()` inspection seam to `ElectryEngineTestAccess` and `testSetVibratoSanitisation`, which asserts a NaN and either infinity fall back to zero, a negative or above-1.0 pressure clamps to the nearer boundary, an ordinary value passes through unaltered, and a NaN channel pressure held on a genuinely fretted, sounding string still renders finite audio; test-only, so it does not touch the engine, verified with `ctest --test-dir electry/build-dsp` (all tests pass); no engine/DSP source changed, so no audio re-render was needed.
-- 2026-08-16: `pushAcousticReturn`'s own guard - a null left pointer or non-positive sample count is a no-op, a null right pointer duplicates left rather than being read through, a non-finite averaged sample folds to zero before it is stored, and a single push longer than the 8192-sample ring drops its oldest samples instead of overflowing - was only ever driven through `testParameterSanitisation`, which checked that the eventual rendered audio stayed finite but never looked at the ring itself, so a guard that silently stored a NaN, averaged through a stale right pointer, or mishandled a negative count would still have passed. Added `feedbackAvailable()`, `feedbackRingSample()` and `feedbackRingCapacity()` inspection seams to `ElectryEngineTestAccess` and `testPushAcousticReturnSanitisation`, which drives each behaviour directly against the ring it actually fills, including a single over-capacity push verified to keep exactly its newest samples in order; test-only, so it does not touch the engine, verified with the CTest suite (all tests pass) and a byte-identical `ElectryRenderDemos` render.
-- 2026-08-16: `clampf`, `lerp` and `smoothStep` each had a byte-identical copy hand-maintained in `ElectryEngine.cpp`/`.h`, `ElectryFx.cpp` and (for `clampf`) `ElectryVisuals.cpp` - three floating-point primitives an engine change could edit in one copy and silently leave stale in the other two. Consolidated all three into a new header, `Source/DSP/DspMath.h`, that the three DSP translation units now include instead of redefining; every call site is unqualified and already resolved through the `electry` namespace, so none needed to change, and the arithmetic itself is untouched float-for-float. Verified with the CTest suite (all tests pass) and a byte-identical `ElectryRenderDemos` render.
+Original code under the MIT license (`LICENSE`). JUCE is used under its own
+terms — see `THIRD_PARTY_NOTICES.md`. No samples, impulse responses or
+third-party presets are included.

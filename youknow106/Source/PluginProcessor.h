@@ -56,7 +56,7 @@ public:
     // chorus is running, and a value that changed with a patch would have to
     // be re-announced to hosts that cache it. The cost is that a host cannot
     // idle-suspend an instance whose patch has the chorus off, which
-    // Docs/RELEASE_CHECKLIST.md carries as an explicit accept-or-qualify.
+    // is an accepted, documented cost rather than an oversight.
     double getTailLengthSeconds() const override
     {
         return std::numeric_limits<double>::infinity();
@@ -190,7 +190,7 @@ public:
     static constexpr int vcfFastEarlyChoiceCount = 2;
     // The rung a new instance starts on: the appended PolyZoned kernel with
     // the cubic Early multiplier, which together halve the whole instrument's
-    // measured CPU against the Exact forms (see Docs/research.md,
+    // measured CPU against the Exact forms (see Docs/decisions.md,
     // 2026-08-24). Exact and Fast keep their published ordinals and their
     // bit-exact kernels one menu away; a session that stored either keeps it.
     static constexpr int vcfTanhDefaultChoice = 2;

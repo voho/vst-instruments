@@ -211,12 +211,13 @@ constexpr float referenceOutputCalibration = 0.6309573f; // -4 dB
 // gain: mode order, frequency, drum size, microphone position and phase all
 // remain consequences of the integral. The value is anchored once against the
 // deterministic factory modal tail; absolute pressure awaits the force/LDV and
-// capsule captures in Docs/calibration.
+// capsule captures whose protocol heads Tools/ValidateCalibrationCapture.cpp.
 constexpr float resolvedRadiationCalibration = 1.52922e-5f;
 // The coherent observer is implemented and exercised directly, but changing
 // the resolved transfer also changes which partial this keyboard is heard at.
 // Release activation requires the owned pressure/velocity captures described
-// in Docs/calibration and an explicit tuning migration; do not make that a
+// described in Tools/ValidateCalibrationCapture.cpp and an explicit tuning
+// migration; do not make that a
 // side-effect of landing the observer architecture.
 constexpr bool usePhaseAwareResolvedObservation = false;
 
@@ -746,7 +747,7 @@ float TaikoEngine::micDistanceSizeScale (float radius) noexcept
 // was pinned with; only moving the pair means anything.
 //
 // Which of these to ship was decided by ear, in the A-Z listening test recorded
-// under "The body moves with the pair" in Docs/best-in-class-plan.md.
+// under the 2026-08-19 shell-perspective entry in Docs/decisions.md.
 float TaikoEngine::shellPerspectiveGain (const DrumState& drum, int ringOrder,
                                          float omega, float frequency,
                                          float micDistanceMetres) noexcept

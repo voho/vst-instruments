@@ -5231,8 +5231,8 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // temperature has no term in its pitch: the count is the count. A revision
     // did scale this by a per-card thermal factor, which spread the six cards
     // over 13 cents and removed the one thing this architecture exists to
-    // guarantee -- see the note on tuning stability in
-    // Docs/research.md.
+    // guarantee -- see "No pitch drift and no inter-voice detune" under
+    // the README's "Known gaps".
     const auto periodKey = std::bit_cast<std::uint64_t>(dco.periodSamples);
     const auto inverseRateKey =
         std::bit_cast<std::uint32_t>(inverseOversampledRate_);

@@ -1,84 +1,524 @@
 # Ghostar
 
-A circuit-modelled monophonic dual-filter analog synthesizer, built as a
-self-contained JUCE project: VST3, Audio Unit and Standalone, universal
-`arm64`/`x86_64` on macOS, plus Linux and Windows builds.
+A circuit-modelled monophonic dual-filter analog synthesizer, built block by
+block from the documentation of a 1983 instrument — the Crumar Spirit,
+designed by Jim Scott, Tom Rhea and Bob Moog for Crumar s.p.a. VST3, Audio
+Unit and Standalone, universal `arm64`/`x86_64` on macOS, plus Linux and
+Windows.
 
 ![Ghostar](Docs/screenshots/ghostar-standalone.png)
 
-Start with the [user guide](Docs/USER_GUIDE.md), see
-[customer-facing changes](CHANGELOG.md) and
-[privacy information](PRIVACY.md); framework licensing is described in
-[third-party notices](THIRD_PARTY_NOTICES.md). Ghostar is at version 0.9.0: a
-complete instrument whose remaining voiced constants are named, each with the
-evidence that would close it.
+Two bandlimited oscillators with one-directional hard sync and the panel's
+exact duty-cycle sets, a triangle-cross ring modulator with un-nulled carrier
+bleed, an MM5837 maximal-PRBS noise source through the service schematic's
+complete colouring network, and the signature **series dual filter** — a lower
+multimode section (parametric boost, inter-filter overdrive, resonant highpass,
+or out) sliding against a 12/24 dB upper lowpass with a frozen-formant tracking
+mode — feeding two parallel audio paths with independent VCAs. Modulation is
+the instrument's own: MOD X with the RIPPLE/ARPEGGIO/LEAP arpeggiator, and the
+SHAPER Y variable-rate integrator, both routed through performance wheels.
 
-Ghostar models the voice architecture of a 1983 monophonic analog synthesizer
-— the Crumar Spirit, designed by Jim Scott, Tom Rhea and Bob Moog — block by
-block: two bandlimited oscillators with one-directional hard sync and the
-panel's exact duty-cycle sets, a triangle-cross ring modulator with its
-AC-coupled A carrier and internal null trim, an MM5837 maximal-PRBS noise source at an explicit
-75 kHz nominal clock through the service schematic's complete RC/1458
-colouring network, and the
-signature **series dual filter** — a lower multimode section (parametric boost,
-inter-filter overdrive, resonant highpass, or out) sliding against a
-12/24 dB upper lowpass, with the frozen-formant tracking mode — feeding two
-parallel audio paths with independent VCAs. Modulation is the instrument's
-own: MOD X (LFO, patterned and random sample-and-hold, red-noise drift,
-Osc B) with the RIPPLE/ARPEGGIO/LEAP arpeggiator, and the SHAPER Y
-variable-rate integrator with its four gate modes, both routed through
-performance wheels to the panel's destination sets. It is an independent
-original implementation, not affiliated with or licensed by Crumar or its
-successors, and contains no firmware, ROM data, samples or captured audio.
+Ghostar is at version 0.9.0: a complete instrument whose remaining voiced
+constants are each named alongside the evidence that would close them. It is
+an independent original implementation, not affiliated with, endorsed by, or
+licensed by Crumar or its successors, and contains no firmware, ROM data,
+samples or captured audio. Its name and livery are its own.
 
-The hardware shipped no presets: its manual taught eleven **Sound Charts**
-instead, drawn panel settings with a lesson attached. Those charts are the
-first half of Ghostar's program bank — from the deliberately silent
-Preparatory Pattern the lessons all start from, through Fat Filter, Sync and
-Sample & Hold, to the Inverted Guitar — behind an Init program that is the
-default voice itself. The second half is **seventeen Ghostar Programs**:
-playable voicings that make no historical claim, each foregrounding one
-mechanism the instrument is known for. Each is gesture- and gain-checked for
-audibility, headroom and clipping. Selecting any program writes the whole
-panel, so every one is readable as well as playable
-([user guide](Docs/USER_GUIDE.md)).
+The modelled hardware shipped no presets — its manual taught eleven **Sound
+Charts** instead, drawn panel settings with a lesson attached. Those charts
+open the program bank, from the deliberately silent Preparatory Pattern to the
+Inverted Guitar, with seventeen level-matched **Ghostar Programs** behind them.
+Selecting any program writes the whole panel, so every one is readable as well
+as playable.
 
-What is modelled from documentation, what is *derived* from it, and what
-remains a voiced choice is set out control by control in the
-[circuit-modelling research and implementation contract](Docs/circuit-modelling-research.md).
-The character-defining control laws are increasingly derived rather than
-invented: the resonance curve from the CEM3350's Q scale and panel network,
-envelope timing from the 556 circuit, and keyboard tracking from the CV
-ladder. The controlled-Upper high-Q limiter now solves its resolved
-BA130/TL082/1 nF feedback network implicitly; the fixed Upper stays linear.
-Both halves advance in one coupled solve so SLOPE moves the real 1 nF timing
-capacitor with retained charge, applies the 1 MΩ 12 dB state bleed and keeps
-the tied CEM-input and 101/201 output-gain laws.
-Lower now solves all three unbuffered mixer sliders, their 220 kΩ/68 pF arms,
-both moving CEM states and the traced C33/BA130 loop together. P1014's unequal
-CEM3340 waveform swings and DC offsets survive into both mixers and OSC-B
-modulation instead of being normalised away. The current-driven X wheel and
-voltage-fed Y wheel retain their opposing loaded travels and each selector
-position's distinct pitch/filter depth, at control and audio rate. OVERDRIVE
-solves the traced IC12A/BA130 scalar and an explicitly conditional
-A3+B7+C10 C34 network from the Lower VLP state; installed-switch continuity
-must still resolve that hypothesis and the other RS7 assignments.
-The output stage preserves the
-hardware's less-obvious details too: an asymmetric 2.56/97.44 Shaper extreme,
-the post-VCA passive BRIGHTNESS network, and the normalled rear jack's
-frequency-dependent wiper cross-loading. Every constant still voiced is listed as a
-standing research task with an explicit evidence gap in
-[open questions](Docs/open-questions.md), and the field Ghostar competes in,
-its audited standing and the ordered work that closes the gap live in the
-[best-in-class plan](Docs/best-in-class-plan.md) — where the alias audit's
-worst-case table, the zipper audit's per-travel table, and the reasoning
-behind each are quoted in full.
+## Audio demos
 
-The committed demonstration audio in [Docs/audio](Docs/audio/README.md) is
-rendered by `GhostarRenderDemos` from the same engine, so it cannot drift from
-what Ghostar actually sounds like.
+Twelve maintained takes, rendered by
+[`Tools/RenderDemos.cpp`](Tools/RenderDemos.cpp) from the same JUCE-free
+`ghostar::GhostarEngine` the plug-in runs — no samples and no external
+processing anywhere. Each exercises one signature mechanism: the
+relative-offset series dual filter, the frozen-formant tracking mode, the
+inter-filter overdrive, hard sync swept by the Shaper, the triangle-cross ring
+modulator, the LEAP arpeggiator, the two independent audio paths, the
+patterned sample-and-hold, AUTO glide and the red-noise drift source. The
+resonance sweep runs the control end to end on one held note, so the law
+derived from the filter chip's Q scale and the panel's pot network can be
+heard doing what the derivation says: almost nothing through the first half of
+the travel, the peak arriving through the third quarter, the last tenth
+running away into self-oscillation.
 
-## Building
+Files are 44.1 kHz 16-bit stereo, peak-normalised to −3 dBFS.
+
+<!-- peaks-table-begin: regenerated by GhostarRenderDemos; edits between the markers are overwritten -->
+| File | What it is | Length | Rendered peak | Normalisation |
+| --- | --- | ---: | ---: | ---: |
+| `01-dual-filter-vocal.wav` | The signature dual filter: the lower parametric boost slid against the upper lowpass | 10.5 s | +4.2 dBFS | −7.2 dB |
+| `02-formant-brass.wav` | FORMANT tracking: a frozen lower-filter peak under articulated brass stabs | 10.2 s | −1.6 dBFS | −1.4 dB |
+| `03-overdrive-growl.wav` | The soft clipper between the filters on a two-oscillator bass riff | 8.4 s | +6.7 dBFS | −9.7 dB |
+| `04-sync-sweep.wav` | Hard sync: Shaper Y sweeps Osc B through the lock on every note | 8.4 s | −9.5 dBFS | +6.5 dB |
+| `05-ring-bells.wav` | The triangle-cross ring modulator's clangorous register | 10.5 s | −10.2 dBFS | +7.2 dB |
+| `06-leap-arpeggio.wav` | The LEAP arpeggiator cycling unison, up an octave, down an octave per note | 7.5 s | −11.6 dBFS | +8.6 dB |
+| `07-two-path-drone.wav` | Both audio paths split left/right: enveloped bass against a free-running ring-and-noise drone | 14.5 s | −5.6 dBFS | +2.6 dB |
+| `08-sample-hold-filter.wav` | S+H RANDOM stepping both filter cutoffs over a held fifth | 8.6 s | −7.1 dBFS | +4.1 dB |
+| `09-auto-glide-lead.wav` | AUTO glide legato lead with vibrato ridden in on the X wheel | 8.0 s | −10.6 dBFS | +7.6 dB |
+| `10-red-noise-drift.wav` | RED NOISE wander on both oscillators' pitch | 8.3 s | −4.5 dBFS | +1.5 dB |
+| `11-resonance-sweep.wav` | The resonance travel end to end: gentle for half its journey, then steep into self-oscillation | 10.8 s | −12.8 dBFS | +9.8 dB |
+| `12-program-tour.wav` | Six of the Ghostar Programs in turn, each with a phrase that suits it | 20.1 s | −1.9 dBFS | −1.1 dB |
+<!-- peaks-table-end -->
+
+## How it works
+
+Ghostar is a white-box circuit model with named reference material, not a
+black-box claim that one plug-in is indistinguishable from the instrument it
+models. Every law below is tagged by provenance: **anchored** (stated by the
+owner's manual, service manual or a component datasheet), **derived**
+(computed from anchored values by a stated equation), or **voiced** (chosen
+inside a range the sources bound but do not fix). Voiced constants are listed
+under [Known gaps](#known-gaps) with the measurement that would close each.
+
+### Primary sources
+
+- **OM** — Crumar Spirit Owner's Manual, 30-page factory scan
+  ([manuals.fdiskc.com](https://manuals.fdiskc.com/tree/Crumar/Crumar%20Spirit%20Owners%20Manual.pdf),
+  mirror [archive.org](https://archive.org/details/manualzilla-id-6890440)).
+  Printed pages 17–25 — the generic tutorial chapter — are missing from every
+  circulating scan; every control-reference page survives.
+- **SM** — Crumar Spirit Service Manual: schematics DWG 1–3, PCB layouts,
+  component list, errata
+  ([midimanuals.com](http://www.midimanuals.com/manuals/crumar/spirit/service_manual/spiritservicemanual.pdf),
+  600 dpi mirror [archive.org](https://archive.org/details/sm_Crumar_Spirit_Service_Manual)).
+  No calibration text exists — schematics, parts and errata only.
+- **RM** — 2023 reissue User Manual, a verbatim re-typeset of OM plus a
+  trimmers chapter and MIDI addendum, linked from
+  [crumarspirit.com](https://www.crumarspirit.com/).
+- [**CEM3340/3345 datasheet**](https://sandsoftwaresound.net/wp-content/uploads/2021/03/CES_CEM3340_VCO.pdf)
+  (VCO, CES © 1980) and the complete four-page
+  [**CEM3350 preliminary datasheet**](https://sandsoftwaresound.net/wp-content/uploads/2021/03/CES_CEM3350_VCF_Prelim.pdf)
+  (dual state-variable VCF). The latter's standard-response and
+  multiple-resonator application figures resolve how the VLP/VBP state pins
+  are used. Period corroboration: the E&MM CEM3350 design article (Feb 1982)
+  and the CES *Synthesource* newsletter (Winter 1981).
+- [**CEM3360 production datasheet**](https://www.synfo.nl/datasheets/CEM3360.pdf)
+  (dual linear VCA, CES © 1984) — current-output and control architecture,
+  the typical 52 %/V linear scale (48–56 %/V), 1.93 V maximum-gain control
+  voltage (1.79–2.08 V), −1.6 µA linear-pin bias (−0.5…−4.0 µA), 80 dB
+  typical / 70 dB minimum zero-control attenuation, and the exponential-control
+  scale of 3.0 mV/dB typical (2.7–3.3), which closes the MOD RATE span from
+  its 132 mV swing.
+- [**ITT Transistors Manual 1972/73**](https://www.bitsavers.org/components/itt/_dataBooks/1972_ITT_Transistors.pdf),
+  BC173 pp. 33–36 — gain-group and VBE ranges for the Shaper VCA's auxiliary
+  transistor chain, plus its 5 V emitter-base rating.
+- [**DAC0800/DAC0802 datasheet**](https://www.ti.com/lit/ds/symlink/dac0800.pdf),
+  whose positive-reference current law and complementary current-output pinout
+  close the signed keyboard-CV cancellation.
+- **Fairchild 1978 Diode Data Book**, printed pp. 3-12 (BA128·BA130) and 4-6
+  (curve set D4) — the BA130 forward characteristic used by the local high-Q
+  and OVERDRIVE branches.
+- [**Tom Rhea memo, 25 May 1981**](https://www.drtomrhea.com/_files/ugd/a27ff8_9336666b18834d1790849ade46fc221c.pdf),
+  to Bob Moog and Jim Scott, preserving the project's earlier dual-filter
+  proposal and its SERIES/PARALLEL plus CLEAN/DISTORT concept. Design-history
+  evidence, not a truth table for the production RS7 switch.
+- **Signetics 555/556 1973 databook** and **AN170**, for the 556A timer
+  behaviour the envelopes are built on.
+- [**National Semiconductor 1977 MOS/LSI databook**](https://bitsavers.trailing-edge.com/components/national/_dataBooks/1977_National_MOS_LSI_databook.pdf),
+  MM5837 pp. 3-14–3-15: the self-clocked digital noise source's levels,
+  1.1–2.4 s cycle and 24–56 kHz half-power point.
+- [**US 3,943,456**](https://till.com/articles/moog/patents.html) (Luce/Moog
+  Music, 1976) — the variable-rate-integrator signal generator that is the
+  Shaper Y core, attributed to the Spirit by J. D. Tillman and corroborated by
+  the P1015 schematic's OTA-integrator topology.
+- Panel silkscreen verified against photos of serials 00045 and 00046.
+  Where OM prose and the silkscreen disagree the silkscreen wins — it agrees
+  with the schematic net names and every independent witness in both such
+  cases.
+- Secondary colour: Sound On Sound Retrozone (Gordon Reid, 2001), Amazona
+  Blue Box, GreatSynthesizers reissue notes, and Cherry Audio's licensed 2025
+  behavioural recreation with its history chapter.
+
+### Architecture
+
+*Anchored, OM p. 26.* Two VCOs, a triangle-cross ring modulator and one noise
+source feed **two parallel audio paths**:
+
+- **Filter/ADSR path** — mixer (A, B, NOISE) → **Lower Filter L** → **Upper
+  Filter U** in series, with the OVERDRIVE soft-clipper sitting *between*
+  them → C30 coupling → VCA driven by the LOUDNESS ENVELOPE, or held open by
+  VCA BYPASS.
+- **Shaper Y path** — mixer (A, B, RING, NOISE) → VCA whose gain is the
+  SHAPER Y output → passive **BRIGHTNESS** shelf.
+
+C30 = 470 nF is the Filter path's real coupling capacitor, *before* its
+Loudness VCA. It sees `R_L = R132 ‖ R133 = 24k ‖ 100k = 19.3548 kΩ`, giving
+`τ = 9.09677 ms` and `f_c = 17.4958 Hz`; its state keeps charging while the
+VCA is closed. The Shaper path has no corresponding high-pass.
+
+### Oscillators
+
+*Anchored:* TUNE spans ±3 semitones; OCTAVE is 32'/16'/8'/4', with the
+keyboard's second C sounding middle C at 8'. Osc A's waveforms are triangle,
+rectangular 50/30/15/**6** %, sawtooth; Osc B's are triangle, rectangular
+40/20/10/3 %, sawtooth. (SOS's "5 %" and Cherry Audio's "8 %" for A's
+narrowest pulse are secondary errors; the panel line-art at 400 dpi and a
+serial-00046 photo settle it.) INTERVAL is ± a perfect fifth, exponential,
+centred at zero. Osc B's RANGE adds BASS and WIDE positions that disconnect B
+from keyboard, TUNE, OCTAVE and bend, INTERVAL becoming the drone pitch:
+30–300 Hz in BASS, 2–10,000 Hz in WIDE.
+
+*Derived:* P1014 deliberately equalises the three CEM3340 outputs before the
+selector. Triangle is direct at 4 V; the saw's 8 V source and typical 100 Ω
+output impedance drive 10k series / 10k shunt for `800/201 = 3.98010 V`; the
+open-emitter pulse drives 10k series / 6.8k shunt for `3978/905 = 4.39558 V`.
+Each IC10 stage then applies `V_out = (1 + 10/24 + 10/91)·V_tap − 5 V`, giving
+endpoints of triangle −5…+1.10623 V, saw −5…+1.07585 V and pulse
+−5…+1.71010 V — peak-to-peak ratios 1 / 0.995025 / 1.098895. Those residual
+level differences and their shared negative offset survive into both mixers
+and into Osc-B modulation instead of being normalised away.
+
+*Derived:* each CEM3340 pin-14 multiplier current output returns through
+`R_s = 1.82 kΩ` bypassed by 1 nF (A: R82/C72; B: R118/C77). Curtis states that
+this bypass limits bandwidth with `f_LP = 1/(2πR_sC)`, so `τ = 1.82 µs` and
+`f_c = 87,447.77 Hz`. Because pin 15 sums every pitch current before the
+multiplier, that pole filters the complete keyboard/tune/bend/interval/X/Y
+octave sum before exponential conversion — not just Osc-B audio modulation.
+Ghostar uses exact linear-input state evolution on the 4× grid, preserving
+unity DC gain, the exact 1.82 µs delay and a monotone step at every rate.
+
+**SYNC** is one-directional A→B conventional hard sync. Both CEM pin-6 inputs
+are open; A's raw 8→0 V saw fall, taken *before* its selector, passes
+SW2/C24 = 220 pF/BC308/R107 = 47 kΩ into B's triangle and threshold pins 10/9,
+following the CEM3340 datasheet's alternate conventional-sync circuit. Exactly
+one B phase reset follows each A wrap, independent of A's waveform selection
+and PWM.
+
+**Band-limiting.** Every phase or same-selector duty discontinuity is
+corrected as a sub-sample event — BLEP for the value jumps of saw, pulse and a
+moving duty edge, BLAMP for the triangle's corners, and both for the hard-sync
+reset. The CEM3340's documented 0…100 % PWM span is preserved, so wheel
+modulation can reach constant-low and constant-high plateaus; the panel's 3 %
+is only Osc B's narrowest detent. A live selector change emits the already
+deferred sample in its old waveform's physical scale, suppresses any fictitious
+cross-selector PWM event, and applies newly discovered phase-event residuals in
+the new waveform's scale.
+
+**No oscillator drift is applied.** The CEM3340's on-chip compensation puts
+the chip's own contribution at ±0.09 to ±0.35 cents/°C and the regulated
+supply path below ≈0.35 cents even for a ±10 % mains excursion, while no
+measured record of the *environmental* excursion inside a synthesizer
+enclosure exists to derive a wander process from. Inventing one would be
+inventing a number.
+
+### Ring modulator
+
+*Anchored topology, derived transfer.* The fixed internal CEM3340 triangles
+are taken before the waveform switches, so WAVEFORM has no effect on RING.
+A passes C15 = 1 µF into R26 = 39 kΩ ‖ R27 = 100 kΩ (`f_c = 5.67245 Hz`) and
+drives both IC7's signal input and IC6's dry-A reference; B drives IC7's
+control through R23 = 220 kΩ against R24 = 1.8 MΩ to +12 V and R25 = 62 kΩ to
+ground. IC6's feedback is R28 = 68 kΩ plus the internal P2 = 25 kΩ carrier-null
+trim. At nominal swing and null the engine-unit transfer is
+`ring = −(15/13)·HP(A_tri)·B_tri`, with no deterministic symmetric leak term.
+
+### Noise
+
+*Anchored source, derived transfers.* One self-clocked MM5837: a 17-stage
+maximal PRBS (taps 17/14, 131071 bits) through C17/R4/R5 and the resolved
+R6/C8, R7/C9, C10 passive network. IC4A's 27k / `1M ‖ (100k + 15n)` feedback
+shelf makes the audio output — poles at 0.595, 9.646, 31.039, 179.275 and
+8157.418 Hz; zeros at DC, 40.191, 84.015 and 530.516 Hz. The separate R6/C8
+junction feeds IC4B at `1 + 100k/2k2`; its RED NOISE output has poles 0.595,
+31.039, 179.275, 8157.418 Hz and zeros DC, 530.516 Hz. The 75 kHz nominal
+clock is the datasheet cycle-time midpoint; absolute source level and the RED
+NOISE bus scale remain *voiced*.
+
+### Mixers
+
+The audio sliders are unbuffered 100 kΩ linear pots, so at travel `t` each
+wiper contributes `100k·t·(1−t)` of Thevenin resistance. At the Shaper's
+virtual-earth mixer that gives 47 kΩ arms for A/B/Ring and an errata-corrected
+6.8 kΩ for Noise. The Filter is not that topology: every wiper feeds 220 kΩ to
+the Lower CEM's VLP state and a separate 68 pF to its VBP state. Ghostar
+solves all three Thevenin wipers, all three 68 pF histories, VLP/VBP and C33
+together, so even a zeroed slider keeps its physical loading. Exact pot-end
+charge projection removes a trapezoidal alternating mode without inventing
+resistance.
+
+### Filters — the signature
+
+Both hardware filters are CEM3350 dual state-variable sections, not a
+transistor ladder despite the Moog pedigree. Ghostar models the resolved Upper
+sections as TPT state-variable filters; its controlled half includes the
+complete external C37 high-Q loop, and the fixed half stays linear because it
+has no such branch. Lower uses the production topology, reduced with the two
+22 nF CEM states and the traced TL082/BA130/C33 loop to one 2×2 implicit solve
+plus one monotone diode-current scalar.
+
+| Control | Law | Provenance |
+| --- | --- | --- |
+| MASTER cutoff | Sets both filters' cutoff, always. P6 = 100 kΩ LIN across ±12 V loaded by `R50‖R51 = 110.5 kΩ`, then IC15's 100/221 gain and the Dynamic CEM node gain 0.021233778 V/V give a curved ±5.88248-octave law about panel 5 — 11.76495 octaves total | routing *anchored* OM p. 31; taper and span *derived*; absolute placement *voiced* (565.685 Hz at panel 5, so nominally 9.589 Hz–33.372 kHz) |
+| LOWER ONLY | P5 = 100 kΩ LIN from 0 to −12 V loaded by R48 = 150 kΩ. Relative to the manual's panel-8 coincidence, Dynamic spans −7.10055 to +1.56630 octaves. In Formant, the corrected R188 = 22 kΩ changes node gain by 1.389 %, widening that to −7.19917/+1.58805 and making coincidence drift ±0.08170 octave across MASTER | coincidence and direction *anchored* OM p. 31; taper, span and the FORMANT quirk *derived* |
+| RESONANCE switch | LOW fixes Upper Q = 0.5 (`k = 2` exactly); VARIABLE slaves Upper Q to the pot and alone uses the declared Q-ceiling enhancement | *anchored*, OM p. 30 + SM DWG 2 |
+| RESONANCE pot | Lower Q always, Upper Q in VARIABLE, both self-oscillating at maximum. *Derived*: the chip's Q control is exponential at −65 mV/decade, the pot is 100 kΩ linear (top ground, bottom −12 V) into 18k2, each Q pin has a 221 Ω shunt against a pull-up to +12 V — 91 kΩ Upper, 75 kΩ Lower, so the two filters genuinely differ — and the pot's own output impedance flattens mid-travel. LOW disconnects the pot, resting the Upper pin at +29.1 mV where OM says Q = 0.5, which calibrates the whole law. Upper Q reaches 0.51 / 1.48 / 3.33 / 10.9 / 82 at travel 0 / .5 / .75 / .9 / 1 | *derived*, CEM3350 datasheet + SM DWG 2, anchored at LOW by OM p. 30 |
+| SLOPE | Upper is 12 dB (controlled section) or 24 dB (controlled plus fixed-Q = 0.5 section). Both halves tie VIF+VIV, so drive is `u·(1 + 1/Q)`. SW4 moves C40 = 1 nF between their 22 nF LP nodes with retained charge, leaves a 1 MΩ cross-coupling only in 12 dB, and changes IC14B's absolute output gain from 201 to 101. All four states are solved together and the newly selected node is charge-projected | *derived*, OM pp. 30/32 + SM DWG 2 + CEM3350 datasheet |
+| Lower mode | OUT / OVERDRIVE / BANDPASS / HIGHPASS. BANDPASS is a **parametric boost** — "a peak … without attenuation of frequencies far from this cutoff" — not a true band-pass. OVERDRIVE is the manual's distorted parametric register *between* the filters, its production throw a distinct Lower-VLP-fed IC12A/BA130 path. HIGHPASS gives the documented "double-peak, highpass-lowpass" response | behaviour *anchored*, OM pp. 30–32; BP/HP output gains *voiced* (`dry + 11·VBP`, `dry − 8·VLP`) |
+| KB AMOUNT | Keyboard tracking of Upper always, Lower when DYNAMIC; 0 to 108 % at full. The 1 V/octave bus through the 12k1 ladder delivers 21.2 mV/V against the chip's −19.6 mV/octave, reproducing the manual's "slightly over 100 %" from the resistors alone. P1016 uses six DAC0800 key bits with B7/B8 grounded, so each semitone is four DAC counts; its pin-4 sink through R31 = 4.99 kΩ opposes +12A/R39 = 26.6 kΩ at IC16A, putting cancellation at `q = 64·4.99/26.6 = 12.006015` semitones above the lowest C — MIDI 60.006015, rail-independent because both currents share +12A | amount and pivot *derived* |
+| TRACKING | FORMANT disconnects Lower from keyboard CV, X and Y modulation, the filter envelope and the pedal, freezing its peak as a fixed formant; MASTER and LOWER ONLY still act | *anchored*, OM pp. 31/33 |
+| FILTER ENVELOPE AMOUNT | Bipolar, centre zero, unattenuated span ±2.5 octaves straddling the cutoff; INVERT mirrors it. Permanently wired to Upper, to Lower only in DYNAMIC | *anchored*, OM pp. 27/33 |
+| OVERDRIVE clipper | A separate IC12A/BA130/RS7 network between Lower and Upper, so the Upper re-filters its distortion products. A3 closes the nonlinear return, B7 selects its output and C10 would feed clean VLP through 33 kΩ, giving the conditional `Vth = (47·VLP + 33·o)/80`, `Rth = 47k ‖ 33k` | placement and components *anchored* OM p. 32 + SM; the A3+B7+C10 combination is an explicit functional hypothesis, *open* |
+| BRIGHTNESS | After the Shaper VCA, C18 = 27 nF in series with P3 = 100 kΩ LOG shunts the VCA's full 20 kΩ Master track. In SPLIT, `H(s) = (1 + s·C18·R)/(1 + s·C18·(R + 20k))`: panel 0 is a 294.731 Hz low-pass; panel 10 has pole 49.1219 Hz, zero 58.9463 Hz and a 5/6 high shelf (−1.5836 dB). Normalled, P1017 cross-loads both Master gangs | topology and endpoints *anchored*, OM p. 29 + SM; coupled transfer *derived*; P3's LOG taper *voiced* |
+
+### Envelopes, gating and the keyboard
+
+*Derived from SM DWG 3 and the Signetics 556 databook.* Each envelope has its
+own 4.7 µF cap and 2 MΩ log A/D/R sliders. R23/R24 = 100 Ω lie between the
+common segment/556-threshold node and the actual cap, so every current crosses
+them: the nominal range is 5.17 ms to 9.40047 s, and a fast Attack trips with
+the cap at `1 − 100/R_attack·(1.3 − 1) = 0.97` of the 7.5 V threshold. The two
+100 kΩ sustain tracks share one D15-biased bottom rail (`f = 1/15` nominal),
+and D11/D14 give release its nonlinear knee. Maximum audible release is 31.3 s
+rather than a pure-RC 25.5 s.
+
+Selected X/Y rising edges use the separate 10 nF/470 kΩ nominal 5 ms reset
+lane; raw MULTIPLE key triggers and accepted arpeggiator steps meet at
+R10 = 1 MΩ/C7 = 10 nF for 10 ms. Either releases both caps before Attack
+resumes from their retained levels, and a 5 ms edge cannot shorten a coincident
+10 ms notch.
+
+**LOUDNESS VCA.** Envelope voltage `LC = 7.5·e` reaches the CEM3360 linear
+control pin through R135 = 10 kΩ, with R136 = 3.3 kΩ to ground and
+R137 = 240 kΩ to −12 V. KCL gives `V_C = 1.84186·e − 0.122791 V`: zero at
+`e = 1/15`, a derived 0.5 V dead zone that preserves the hardware's silent
+low-voltage release region. The active region normalises as
+`gain = clamp((15e − 1)/14, 0, 1)`; BYPASS holds it at one.
+
+**GATE SELECT.** KBD, X (the LFO square) and Y/EXT (the Shaper's own gate) are
+OR'ed for hold, but X and Y keep independent rising-edge branches so
+auto-repeat is not masked by another high source; at least one must be on for
+the envelopes to run. **TRIGGER** MULTIPLE routes every raw new-key trigger,
+tapped before KBD gate selection, through the 10 ms reset lane, and Attack
+resumes only if a selected gate remains high; SINGLE has no such branch, so
+legato — or a keyboard rise hidden under X/Y — does not attack.
+
+**Keyboard.** 37 keys C–C, digitally scanned, last-note priority with held-note
+memory: releasing the newest key falls back to the newest key still held,
+*without* retriggering. **GLIDE** is a conventional lag on the keyboard CV;
+C6 = 470 nF and P1 = 2 MΩ give the full-resistance endpoint `τ = 0.94 s`, with
+OFF / AUTO (only while more than one key is held) / ON.
+
+**PITCH BEND.** The raw 100 kΩ pot spans ±12 V and reaches the CV summer
+through 680 kΩ. Against TUNE's ±6 V about centre through 1.8 MΩ and its
+anchored ±3 semitones, full *electrical* travel is
+`(12/680k)/(6/1.8M)·3 = ±15.88` semitones. No source gives the spring-loaded
+wheel's mechanical fraction, so the ±8-semitone endpoint is explicitly *voiced*.
+
+### MOD X, Shaper Y and the arpeggiator
+
+**MOD SOURCE** *(anchored)*: LFO triangle; LFO square; S+H RANDOM (red noise
+sampled); S+H Y (Shaper sampled — a regular, patterned staircase); RED NOISE
+(continuous slow random); and OSC B — the **selected, buffered** Osc B
+waveform, since the schematic feeds the post-waveform-switch TP2 net to the
+mod board, not the hard-wired triangle the manual's prose implies.
+
+**LFO/S+H RATE** *(derived)*: nominally 0.3154787–50 Hz, also the S&H and
+arpeggiator clock, with no effect on RED NOISE or OSC B. P2 = 100 kΩ LIN
+loaded by R33 = 200 kΩ gives `w(x) = 200x/(200 + 100x(1−x))` and
+`w(0.5) = 4/9`; P1015's 132 mV span against the CEM3360's 3.0 mV/dB typical
+scale gives 44 dB — 158.489319 : 1 — and a 2.9974213 Hz midpoint.
+
+**SHAPER Y** *(anchored + derived)* is the US 3,943,456 variable-rate
+integrator. RATE is the total period: several cycles per minute to >20 Hz in
+FREE, or total rise+fall time in the envelope modes. SHAPE splits that period
+between rise and fall without ever changing total time; D19/D20 steer the two
+halves of a 1 MΩ linear pot through 27 kΩ, giving a rise fraction of
+`(27k + travel·1M)/1.054M` — the asymmetric **2.5617/97.4383** extremes, not a
+tidy 5/95. Modes are FREE (symmetric about 0 V), KBD HOLD (rise and hold while
+gated), RESET (single rise-fall from zero, always multiple-trigger) and RUN
+(the rising segment always completes; after it has, an accepted new gate starts
+another cycle). The Y gate SG is IC6's phase state, not a level detector: high
+only on the rise, low through fall, envelope idle and KBD HOLD's top hold.
+
+**ARPEGGIATOR** *(anchored)*: OFF / RIPPLE / ARPEGGIO / LEAP. All modes scan
+held keys chromatically bottom-to-top, wrapped, one note per LFO clock, and
+every newly held group restarts at its lowest key even if its no-key gap falls
+between clocks. RIPPLE is the plain wrapped sequence; ARPEGGIO plays the
+sequence at pitch, then +1 octave, then −1; LEAP cycles the octave per note
+0/+1/−1, so the pattern period is `lcm(N, 3)`.
+
+**RWM** is pulse-width modulation of the rectangular waveforms only — A's
+belongs to the X bus, B's to the Y bus. The mirrored 200 kΩ/620 kΩ branches
+establish a nominal passive load, but the BC308 stage, PW trim and CEM3340 PWM
+input leave the signed duty transfer open, so a ±0.42 duty is *voiced*.
+
+### The wheels
+
+The MOD X and SHAPER Y wheels are attenuators — "attenuation always occurs
+toward zero volts" (OM p. 25), so a bipolar source keeps its symmetry and a
+unipolar one scales toward silence. They are not electrically interchangeable:
+X's CEM3360 current output drives its 100 kΩ wheel as a rheostat and bites
+early, while Y reaches its divider through 15 kΩ and blooms late. Destination
+switching changes both curve and maximum, because it changes the load: the
+selected pitch load is `22k ‖ 100k` for one oscillator and `22k ‖ 100k ‖ 100k`
+for both, the filter load 100 kΩ for one and 50 kΩ for both. Retaining
+separately voiced one-octave X→A and Y→B source anchors, the derived depths are
+X→A+B 0.867470 oct each, X→U 3.539889 oct, X→U+L 2.359926 oct each, Y→A+B
+0.929638 oct each and Y→L 1.648923 oct. Half electrical travel is already
+0.867470 oct on X→A but only 0.335643 oct on Y→B.
+
+### Output stage
+
+Both CEM3360 current outputs see the full 20 kΩ tracks of dual-gang P4 as
+fixed loads, independent of the wipers, which reach P1017 through equal
+R49/R50 = 10 kΩ resistors. The SHAPED jack's normal contact joins those wipers
+and inserting a plug opens the link. With C18 open, the equal sources give the
+familiar `main = m·(Filter + Shaper)/2`; at audio frequencies C18/P3 changes
+the Shaper source impedance, so the normalled wipers cross-load and BRIGHTNESS
+also colours the *Filter* contribution. Ghostar solves that coupled network,
+and SPLIT opens it to expose the isolated wipers. P1017 carries no series
+output capacitors: both rear outputs are DC-coupled.
+
+### Rate independence
+
+The voice core runs at 4× with a two-stage decimation chain, and every
+waveform discontinuity is corrected as a sub-sample event. The high-Q
+limiter's capacitor is integrated alongside the CEM states and its diode
+current is solved implicitly, so the filter's nonlinearity is a term of the
+continuous system rather than a per-sample afterthought: self-oscillation
+level agrees within 0.5 dB at 8, 44.1 and 96 kHz host rates. A patch therefore
+sounds the same at every host rate.
+
+Every continuous panel control and both performance wheels glide to new values
+over ~25 ms, so host automation at any block size and 7-bit MIDI CCs never
+step the audio. Switches stay immediate, and a silent instrument adopts
+restored settings exactly. This is a product policy, not a hardware law.
+
+### Documented discrepancies, resolved
+
+1. **MOD X TO: position 3** — OM prose says OSC B; the panel, the SM net names
+   ("MOD A"/"MOD A+B", with no "MOD B" existing), SOS and Cherry Audio all say
+   OSC A. Modelled as OSC A.
+2. **SHAPER Y TO: positions 2/3** — OM prose transposes them; panel order
+   (A+B then B) wins.
+3. **Osc A narrowest pulse** — 6 %, from panel line-art and photo.
+4. **ARPEGGIO pass order** — at pitch, then +1, then −1 octave.
+5. **MOD SOURCE "OSC B"** — the schematic feeds the selected waveform; the
+   manual says triangle. Modelled per the schematic.
+6. **BRIGHTNESS order** — OM p. 26 places the tone control before the Shaper
+   VCA; SM DWG 2 places C18/P3 across that VCA's output load. Modelled after
+   the VCA, per the electrical schematic.
+
+### Why it sounds the way it does
+
+The reputation — "vocal", "nasal", "ghostly", "woody/reedy", "wicked",
+"gnarly" — is carried by the relative-offset series dual filter with its
+parametric-boost lower peak; the FORMANT freeze; the inter-filter overdrive
+being re-filtered by the upper lowpass; the second, independently-enveloped
+audio path with ring mod; and second-order modulation, where Y shapes X, Y
+drives the LFO's rate, and the S&H runs off Y's own staircase.
+
+## Known gaps
+
+**No calibration-grade hardware data set exists.** No filter, envelope,
+noise-level or control-depth captures of a Spirit have been published. The
+first measured unit would become this project's ground truth; isolated
+observations such as SOS's interval endpoint are useful corroboration, not a
+same-unit calibration set.
+
+The headline open items:
+
+| Area | What is open | What would close it |
+| --- | --- | --- |
+| Pitch-bend wheel | The raw pot has ±15.88 semitones of electrical authority; the ±8-semitone endpoint is voiced because no source gives the spring-loaded wheel's mechanical travel fraction | Measure the wheel's mechanical fraction, or capture a full-travel bend |
+| Filter cutoff placement | The 11.76495-octave span is derived, but absolute placement rests on an undocumented 100 kΩ trim; 565.685 Hz at panel 5 is voiced | A swept response from a calibrated unit |
+| Pulse duty cycles | The printed percentages are panel labels; the hardware duties behind them are not published | Scope capture of each selector detent |
+| 556A envelope curvature | Nominal pulse widths, the fast-Attack residual, the aim voltage and the diode calibration are modelled, not measured | Capture segment traces at a grid of slider values |
+| Shaper trigger acceptance | Exactly which selected-source edge is accepted, especially under Y self-feedback, is unresolved | Scope the trigger bus against SG under self-Y |
+| RS7 rotor phase | The A3+B7+C10 OVERDRIVE combination is an explicit functional hypothesis: standard same-index phasing selects C11, which grounds VLP. BANDPASS and HIGHPASS keep voiced output-referred bridges meanwhile | Installed-switch continuity measurement |
+| 1458 / CEM3350 headroom | Original loaded op-amp swing, TL082 dynamics and internal chip headroom need hardware measurement | Measured clipping points on a real unit |
+| BRIGHTNESS taper | P3's exact LOG law is voiced | Identify or measure the pot |
+| Ring carrier residual | A particular unit's P2 trim setting, tolerances and CEM3360 feedthrough | Capture the un-nulled residual on a real unit |
+| Noise level | The MM5837's absolute source level and the RED NOISE bus scale | Same-unit captures |
+| Shaper audio-VCA transfer | The `max(0, Y)` approximation stands in for the full active transfer; near maximum gain the auxiliary chain reaches the sum of two BC173 5 V emitter-base ratings, so a per-unit avalanche knee is plausible | Simultaneous measurement of the control node and gain |
+
+**Withdrawn, not restated.** The alias audit's own metric was wrong: it
+compared each bin against the loudest reference bin within ±3 bins, turning
+every partial into a 70 Hz-wide plateau a component could hide under —
+injecting a known alias twenty dB *above* the acceptance gate produced the
+metric's −200 dB floor. The measure now tolerates a measured pitch
+disagreement proportionally to frequency and publishes the floor below which
+it cannot see, which on tonal material is about −15 dB. A −60 dB alias gate
+therefore cannot be certified by comparing two renders at all. What the audit
+now gives is a sound upper bound on how far the shipping render differs from a
+16× ground truth. The DSP work is unaffected; the certification is what fell.
+
+## Release history
+
+### 0.9.0 — unreleased
+
+**First complete instrument.** VST3, Audio Unit and Standalone for macOS
+(universal), Linux and Windows, wrapping the circuit-modelled engine: two
+bandlimited oscillators with hard sync and the panel's duty-cycle sets,
+±a-perfect-fifth interval detune with BASS/WIDE drone ranges, the
+triangle-cross ring modulator, MM5837 noise, two parallel audio paths with
+independent VCAs, the series dual filter with all four Lower modes and the
+12/24 dB Upper, both ADSRs with gate logic, MOD X with all six sources and the
+RIPPLE/ARPEGGIO/LEAP arpeggiator, Shaper Y with all four modes, and both
+wheel-destination buses including SHAPE X WITH Y and Y-to-LFO-rate.
+
+**Document-derived circuit pass.** Character-defining laws that were
+first-pass choices are now tied to primary documents:
+
+- Noise moved to the MM5837's 17-stage maximal PRBS and the complete P1013
+  coupling, RC and 1458 feedback transfer; the generic random generator,
+  pink-noise recipe and unsupported 1.5 Hz branch are gone.
+- Resonance follows the filter chip's own exponential Q scale through the
+  panel's actual pot network, anchored by the manual's "LOW fixes Q = 0.5".
+  Q at half travel is now 1.5 where the old law gave 5.7, and the two filters
+  have genuinely different curves as their bias networks require.
+- Filter cutoff controls solve the loading of both linear pots and the IC15
+  summers; the former linear −5/+1.25-octave shortcut is removed.
+- Envelope times read the panel's 5 ms–10 s as the RC time constant it is, so
+  long decays and releases last about 2.8× longer than before.
+- Shaper symmetry follows the 1 MΩ pot, its 27 kΩ series resistor and the two
+  steering diodes, giving the derived 2.56/97.44 extremes in place of voiced
+  5/95 endpoints.
+- MOD RATE, X/Y modulation depths, ring modulation, glide, master volume,
+  keyboard tracking, the Loudness VCA offset, the output coupling network and
+  BRIGHTNESS each moved from a voiced law to a derived one.
+- The CEM3340 pitch-control memory and selected-wave output stage are
+  modelled, so each oscillator's whole pitch sum crosses its own 87.45 kHz
+  pole and the three selector taps keep their residual level differences.
+
+**Audio quality.** Every waveform discontinuity is bandlimited as a sub-sample
+event — the hard-sync reset included, which was uncorrected, and the triangle's
+corners, which had no correction at all — and the voice core runs at 4× with a
+two-stage decimation chain. The high-Q limiter's capacitor is integrated
+alongside the CEM states with its diode current solved implicitly, so
+self-oscillation agrees within 0.5 dB at 8, 44.1 and 96 kHz.
+
+**Withdrawn.** The alias audit's metric was wrong and its verdict is withdrawn
+rather than restated; see [Known gaps](#known-gaps).
+
+**Presets and panel.** Init, then the eleven manual Sound Charts (Preparatory
+Pattern through Inverted Guitar) and seventeen Ghostar Programs, each
+gesture-, audibility- and clipping-checked. The editor is rebuilt around the
+modelled instrument's own panel and scales between 60 % and 200 % instead of
+being pinned to one window size. Standalone powers up at Init rather than
+letting an automatic last-state restore put an edited panel behind the Init
+name.
+
+**Host behaviour.** Every modelled panel control is an automatable parameter
+with the silkscreen's own detent labels — the spring-loaded bend wheel is the
+one momentary exception, riding MIDI pitch bend. CC1/CC2 ride the X and Y
+wheels, CC120 stops all sound while keeping controller positions, and CC123
+releases held keys through the envelopes. Travel smoothing glides continuous
+controls over ~25 ms so automation never steps the audio.
+
+**Fixes.** RUN now accepts a selected keyboard's MULTIPLE legato pulse as soon
+as its rising segment has completed, matching the manual even while the
+combined gate bus remains high. A newly held arpeggiator group always restarts
+its bottom-to-top scan at the lowest key, so a short between-clock release can
+no longer inherit the preceding phrase's step.
+
+## Build
 
 The JUCE-free DSP core, tests and demo renderer:
 
@@ -90,14 +530,13 @@ ctest --test-dir build-dsp --output-on-failure
 ./build-dsp/GhostarRenderDemos Docs/audio
 ```
 
-The same build produces the two measurement tools whose tables the
-best-in-class plan quotes — `GhostarAliasAudit` (worst-case aliasing against
-a 16x ground truth) and `GhostarZipperAudit` (block-latching residual per
-published travel). Both take several minutes at full length; `--smoke` runs
-the short version CI uses.
+The same build produces two measurement tools: `GhostarAliasAudit` (worst-case
+aliasing against a 16× ground truth) and `GhostarZipperAudit` (block-latching
+residual per published travel). Both take several minutes at full length;
+`--smoke` runs the short version CI uses.
 
-The full plug-in (JUCE 8.0.14 is fetched pinned to its release commit, or
-pass `-DGHOSTAR_JUCE_PATH=/path/to/JUCE`):
+The full plug-in (JUCE 8.0.14 is fetched pinned to its release commit, or pass
+`-DGHOSTAR_JUCE_PATH=/path/to/JUCE`):
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -105,6 +544,12 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-On macOS, `./scripts/build-macos.sh` drives the same build through Xcode as
-a universal binary and renders the committed editor screenshot while the
-suite runs.
+On macOS, `./scripts/build-macos.sh` drives the same build through Xcode as a
+universal binary and renders the committed editor screenshot while the suite
+runs.
+
+## Licensing and privacy
+
+Original code under the MIT license (`LICENSE`). JUCE is used under its own
+terms — see `THIRD_PARTY_NOTICES.md`. Ghostar collects and transmits nothing;
+see `PRIVACY.md`.

@@ -639,7 +639,7 @@ YouKnow106AudioProcessor::createParameterLayout()
     // stable: session state stores the choice index, so Exact stays zero and
     // Fast stays one, and the polynomial kernel is appended after them. New
     // instances start on Poly -- the 2026-08-24 CPU pass, decided beside the
-    // measured 5.08e-6 kernel bound and recorded in Docs/research.md. Only
+    // measured 5.08e-6 kernel bound and recorded in Docs/decisions.md. Only
     // fresh instances take it: a session saved before these selectors
     // existed is migrated to the exact forms on restore (see
     // migrateSplitModeParameters), and one that stored a choice keeps it.
@@ -671,7 +671,7 @@ YouKnow106AudioProcessor::createParameterLayout()
     // decimal places in amplitude and 0.14 cents in pitch. The cost is stated
     // plainly: a session saved before this parameter existed carries no entry
     // for it, so it now renders through `RK4 x1` rather than reproducing its
-    // old output bit for bit. See Docs/research.md.
+    // old output bit for bit. See Docs/decisions.md.
     juce::StringArray vcfSolverChoices;
     for (int choice = 0; choice < vcfSolverChoiceCount; ++choice)
         vcfSolverChoices.add (vcfSolverChoiceName (choice));

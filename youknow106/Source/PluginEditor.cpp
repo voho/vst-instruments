@@ -2099,7 +2099,7 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     // session runs out of CPU rather than when it needs a different sound.
     // The help strip has a fixed line budget, so both processing tooltips are
     // written to fit it rather than to say everything; the full reasoning
-    // lives in Docs/USER_GUIDE.md and Docs/research.md.
+    // lives in the README's "Performance and quality".
     const juce::String qualityTooltip =
         "Sets how far above the host's sample rate the whole engine runs. "
         "1x is the shipped setting and the cheapest; 2x and 4x alias less and "

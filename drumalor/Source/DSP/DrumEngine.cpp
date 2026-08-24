@@ -186,10 +186,18 @@ float hertzianContactSeconds (float baseSeconds, float velocity, float exponent)
 
 // Where the drawn pitch sweep is fully used. A head is stiff because it is
 // stretched, so the amount the pitch bends follows the energy the strike put
-// into it (Avanzini and Marogna) rather than the panel knob alone - but a knob
-// that only reached its marked value on a velocity-127 hit would be a knob
-// nobody could set, so the depth saturates a little below the top of the range
-// and every accent keeps the sweep it has today.
+// into it rather than the panel knob alone - but a knob that only reached its
+// marked value on a velocity-127 hit would be a knob nobody could set, so the
+// depth saturates a little below the top of the range and every accent keeps
+// the sweep it has today.
+//
+// Driving the bend from a running estimate of the system's energy, rather than
+// from a solved nonlinear membrane, follows Avanzini and Marogna's
+// energy-estimation approach to tension modulation
+// (https://pubmed.ncbi.nlm.nih.gov/22280712/). That is what makes it
+// affordable inside a thirteen-voice kit, and the same argument sets how deep
+// the sweep goes: the depth is the square of what the strike leaves in the
+// head, latched at note-on rather than followed.
 constexpr float sweepSaturationVelocity = 0.85f;
 
 // accentVoltage() and excitationScaleFor() of a fixed velocity are themselves
@@ -342,6 +350,11 @@ float rationalShaper (float value, float positiveCurvature,
 }
 
 // The antiderivative of rationalShaper: F(x) = integral of t / (1 + c|t|).
+//
+// Antiderivative anti-aliasing of the nonlinear stages follows Gabrielli and
+// Squartini's 2025 ADAA study, which motivates it as a lower-cost route to
+// reduced aliasing than oversampling the stage:
+// https://www.dafx.de/paper-archive/2025/DAFx25_paper_30.pdf
 //
 // Both signs collapse to F(x) = x^2 * h(c|x|) with h(u) = (u - log1p(u)) / u^2,
 // which is what this evaluates. That is algebraically the same function as the
@@ -2882,7 +2895,10 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
     // shapes at the same frequency - cos(m theta) and sin(m theta), one rotated
     // half a lobe from the other - and any departure from that symmetry lifts
     // them apart. Worland measured that ordinary non-uniform lug tension is
-    // enough to do it, and a drummer hears the result as the warble that a real
+    // enough to do it - normal modes of a drumhead under non-uniform tension,
+    // https://pubs.aip.org/asa/jasa/article/127/1/525/793705/ - which is why
+    // every mode above the first is emitted here as the two modes it
+    // physically is, and a drummer hears the result as the warble that a real
     // head's decay has and a single pole pair cannot produce: two close
     // frequencies sounding together beat at their difference.
     //

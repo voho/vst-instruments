@@ -16,8 +16,7 @@ DIST_DIR="${BUILD_DIR}/dist"
 PACKAGE_ROOT="${BUILD_DIR}/package-root"
 CACHE_FILE="${BUILD_DIR}/CMakeCache.txt"
 CMAKE_FILE="${PROJECT_DIR}/CMakeLists.txt"
-CHANGELOG_FILE="${PROJECT_DIR}/CHANGELOG.md"
-USER_GUIDE_FILE="${PROJECT_DIR}/Docs/USER_GUIDE.md"
+RELEASE_NOTES_FILE="${PROJECT_DIR}/README.md"
 CUSTOMER_LICENSE_FILE="${PROJECT_DIR}/EULA.md"
 PRODUCT_NAME="YouKnow106"
 VENDOR_NAME="Protocodus"
@@ -99,12 +98,8 @@ if [[ "${RELEASE_MODE}" == "1" ]]; then
         echo "error: missing ${CMAKE_FILE}" >&2
         exit 1
     fi
-    if [[ ! -f "${CHANGELOG_FILE}" ]]; then
-        echo "error: missing ${CHANGELOG_FILE}" >&2
-        exit 1
-    fi
-    if [[ ! -f "${USER_GUIDE_FILE}" ]]; then
-        echo "error: missing ${USER_GUIDE_FILE}" >&2
+    if [[ ! -f "${RELEASE_NOTES_FILE}" ]]; then
+        echo "error: missing ${RELEASE_NOTES_FILE}" >&2
         exit 1
     fi
     if [[ ! -f "${CUSTOMER_LICENSE_FILE}" ]]; then
@@ -126,17 +121,19 @@ if [[ "${RELEASE_MODE}" == "1" ]]; then
         echo "error: could not read the YouKnow106 version from CMakeLists.txt" >&2
         exit 1
     fi
-    CHANGELOG_DATE="$(awk -v prefix="## ${PROJECT_VERSION} - " \
-        'index($0, prefix) == 1 { print substr($0, length(prefix) + 1); exit }' \
-        "${CHANGELOG_FILE}")"
-    if [[ ! "${CHANGELOG_DATE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-        echo "error: CHANGELOG.md needs a dated ${PROJECT_VERSION} release heading" >&2
-        exit 1
-    fi
-    if ! grep -Fq "YouKnow106 ${PROJECT_VERSION} is" "${USER_GUIDE_FILE}" \
-            || ! grep -Fq "YouKnow106-${PROJECT_VERSION}-macOS-universal.pkg" \
-                "${USER_GUIDE_FILE}"; then
-        echo "error: user guide does not match version ${PROJECT_VERSION} and its universal PKG" >&2
+    # The release history lives in the instrument README, under a per-version
+    # heading. A release may only be cut once that heading carries a real date
+    # instead of "unreleased", so the shipped notes can never describe a version as
+    # unreleased while it is being packaged.
+    RELEASE_DATE="$(awk -v version="${PROJECT_VERSION}" '
+        index($0, "### " version " ") == 1 {
+            if (match($0, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/))
+                print substr($0, RSTART, RLENGTH)
+            exit
+        }
+    ' "${RELEASE_NOTES_FILE}")"
+    if [[ ! "${RELEASE_DATE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        echo "error: README.md needs a dated '### ${PROJECT_VERSION}' release-history heading" >&2
         exit 1
     fi
     if ! git -C "${PROJECT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -464,9 +461,8 @@ REQUIRED_DOCUMENTS=(
     "${PROJECT_DIR}/LICENSE"
     "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md"
     "${PROJECT_DIR}/ThirdParty/JUCE-LICENSE.md"
-    "${PROJECT_DIR}/Docs/USER_GUIDE.md"
+    "${PROJECT_DIR}/README.md"
     "${PROJECT_DIR}/PRIVACY.md"
-    "${PROJECT_DIR}/CHANGELOG.md"
     "${JUCE_LICENSE_INDEX}"
 )
 if [[ "${RELEASE_MODE}" == "1" ]]; then
@@ -497,10 +493,10 @@ stage_documentation() {
     ditto "${PROJECT_DIR}/LICENSE" "${destination}/LICENSE"
     ditto "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md" \
         "${destination}/THIRD_PARTY_NOTICES.md"
-    ditto "${PROJECT_DIR}/Docs/USER_GUIDE.md" \
-        "${destination}/Docs/USER_GUIDE.md"
+    # One document: the README carries the instrument description, how it
+    # works, its known gaps and its release history.
+    ditto "${PROJECT_DIR}/README.md" "${destination}/README.md"
     ditto "${PROJECT_DIR}/PRIVACY.md" "${destination}/PRIVACY.md"
-    ditto "${PROJECT_DIR}/CHANGELOG.md" "${destination}/CHANGELOG.md"
     if [[ -f "${CUSTOMER_LICENSE_FILE}" ]]; then
         ditto "${CUSTOMER_LICENSE_FILE}" "${destination}/EULA.md"
     fi
