@@ -734,13 +734,22 @@ bool decodeSysExMessage (const std::uint8_t* msg, std::size_t msgLen,
     // decoders are already each other's inverse — the round-trip tests are
     // what fence that — so a write that covers the whole block is unchanged,
     // and a write that covers one byte moves one field.
-    // The offset is already known good — `isForThisInstrument()` checked it —
-    // so this only has to clip a payload that runs off the end.
-    const auto applyOverlay = [&packet] (std::uint8_t* image, std::size_t blockSize)
+    // The offset and the length are both known good — `isForThisInstrument()`
+    // checked that the whole payload fits inside this block — so the overlay
+    // is a plain copy.
+    const auto applyOverlay = [&packet] (std::uint8_t* image, std::size_t)
+    {
+        std::memcpy (image + packet.offsetInBlock(), packet.data,
+                     packet.dataLength);
+    };
+
+    // Whether the payload actually carried the byte at this offset. A partial
+    // write must not disturb a field it did not address — see the END STEP
+    // case below for the one field where the round trip alone cannot tell.
+    const auto carries = [&packet] (std::size_t offset)
     {
         const std::size_t at = packet.offsetInBlock();
-        std::memcpy (image + at, packet.data,
-                     std::min (packet.dataLength, blockSize - at));
+        return offset >= at && offset < at + packet.dataLength;
     };
 
     const unsigned block = packet.block();
@@ -790,7 +799,21 @@ bool decodeSysExMessage (const std::uint8_t* msg, std::size_t msgLen,
             std::array<std::uint8_t, sizeArpeggioCommon> image {};
             encodeArpeggioCommon (targetPatch.arpeggio, image.data());
             applyOverlay (image.data(), image.size());
+            // Reconstituting the block is exact for every field here but one.
+            // END STEP has two homes: the wire value goes to `style.endStep`
+            // *and* to `arp.endStep`, whose zero — "however long the selected
+            // template is" — is the replica's own addition and has no wire
+            // spelling. So encoding the block writes the style's length into
+            // bytes 06/07, and decoding it back turns that zero into an
+            // explicit override. A one-byte write to ARPEGGIO ACCENT was
+            // therefore truncating the pattern: measured on INIT PATCH and on
+            // every factory program, writing back the byte already at any of
+            // this block's eight offsets moved END STEP from 0 to 4.
+            const int endStepBefore = targetPatch.arpeggio.endStep;
+            const bool carriedEndStep = carries (0x06) || carries (0x07);
             decodeArpeggioCommon (image.data(), image.size(), targetPatch.arpeggio);
+            if (! carriedEndStep)
+                targetPatch.arpeggio.endStep = endStepBefore;
             clampToDocumentedRanges (targetPatch);
             return true;
         }

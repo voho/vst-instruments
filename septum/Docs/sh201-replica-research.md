@@ -689,6 +689,30 @@ the full 5–300 tempo range included, and so does the trip *through the plug-in
 — the grid has no parameter to live in and is carried beside them. The one
 thing a load drops is the patch name.
 
+A DT1 addresses a *byte*, so a partial write is applied by reconstituting the
+block — encode what the patch holds, lay the received bytes over it, decode the
+whole thing back. Two rules make that exact rather than nearly exact. **A packet
+whose payload will not fit inside its block is refused in full**: the address map
+is sparse (Patch Common ends at offset `20` and the next block begins at a fresh
+address, not at `21`), so where the overflow belongs is undefined, and applying a
+prefix while reporting success would let a bank reader count a truncated write as
+applied. And **a field the payload did not address may not move**: the round trip
+is its own inverse everywhere except ARPEGGIO END STEP, whose zero — "however
+long the selected template is" — is the replica's own addition and has no wire
+spelling, so it is preserved across a write that does not carry its two nibbles.
+Fenced by a check that writes back the byte every block already holds, at every
+offset, and requires the patch not to move.
+
+One divergence is the panel's rather than the codec's, and is recorded rather
+than changed: KEY FOLLOW is published as a parameter in steps of 1 over
+−200…+200 where the instrument stores 41 positions in steps of 10, and DELAY
+FEEDBACK in steps of 1 over −98…+98 where the instrument stores 99 in steps of 2.
+`clampToDocumentedRanges` snaps both before the engine ever sees them, so what
+sounds is always a value the instrument can hold — but the knob can be left
+showing a position between two of them. Closing it means republishing those two
+parameters on the instrument's own grid, which changes what a saved session
+means, so it is named here instead.
+
 **Not implemented, with the reason.**
 
 - **The D Beam** — see its own section: a sensor a plug-in cannot have.

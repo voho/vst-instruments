@@ -1400,6 +1400,11 @@ private:
     [[nodiscard]] bool arpeggioDrives (Part part) const noexcept;
     void arpeggioAddKey (Part part, int note, int velocity);
     void arpeggioRemoveKey (Part part, int note);
+    // Whether a still-running arpeggiator is currently gating this note on
+    // this part — its own note, not a key. All Notes Off has to know: the
+    // keys come up, but a chord ARPEGGIO HOLD has latched keeps playing, and
+    // the note it has open at that instant is not a key that was released.
+    [[nodiscard]] bool arpeggioIsSounding (Part part, int note) const noexcept;
     void arpeggioStopPart (Part part);
     // Notices a part crossing the arpeggiator's boundary. Called wherever a
     // key event or a render can observe the crossing, not only from the

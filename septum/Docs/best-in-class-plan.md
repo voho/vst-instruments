@@ -2296,6 +2296,62 @@ Every one of these is fenced by a check watched to fail with its fix reverted.
 The panel is the same size, so the committed screenshot is regenerated rather
 than reshaped, and no audio changes at all.
 
+#### Step 54 — a review round on the codec, and one hole in the arpeggiator
+
+**A one-byte DT1 was truncating the arpeggio pattern.** Step 46 made a DT1
+address a byte rather than a block by reconstituting the block — encode what the
+patch holds, lay the received bytes over it, decode the whole thing back — on the
+grounds that the encoders and decoders are each other's inverse. They are,
+everywhere but one field. ARPEGGIO END STEP has two homes: the wire value goes to
+`style.endStep` *and* to `arp.endStep`, whose zero — "however long the selected
+template is" — is the replica's own addition and has no wire spelling. So
+encoding the block wrote the style's length into bytes `06`/`07`, and decoding it
+back turned that zero into an explicit override.
+
+Measured with the sharpest probe there is — write back the byte a block already
+holds, and see whether anything moves. From INIT PATCH and from a factory
+program, **all eight offsets of the arpeggio block moved END STEP from 0 to 4**:
+a knob move on ARPEGGIO ACCENT, arriving from a real unit, cut the pattern to
+four steps. END STEP is preserved now across a write that does not carry its two
+nibbles, and the no-op probe is a test: every block, every offset, both starting
+patches, with the patch's whole wire image compared as well.
+
+Two fields the review named alongside it are **not** this defect and are recorded
+rather than changed. KEY FOLLOW 15 becoming 20 and DELAY FEEDBACK 21 becoming 22
+are `clampToDocumentedRanges` doing its job: the panel publishes those two
+parameters in steps of 1 where the instrument stores steps of 10 and 2, and the
+clamp already runs in `snapshotPatch()`, so what sounds was always the snapped
+value. The DT1 only makes the stored patch agree with what was already audible.
+The contract names the divergence and what closing it would cost.
+
+**A DT1 that would not fit its block was applied in part and reported as
+applied.** The overlay clipped a payload running off the end and returned
+success, so a bulk write spanning two blocks updated the first and lost the rest
+— and the bank reader, which gates on the same predicate, counted it as a
+complete packet. There is no honest continuation either: the address map is
+sparse, Patch Common ending at offset `20` while the next block begins at a fresh
+address rather than at `21`, so where the overflow belongs is undefined. Such a
+packet is refused in full now. Nothing this encoder writes is affected — it emits
+one packet per block, at offset zero, of exactly that block's size — and the
+fencepost is tested from both sides: a write that exactly fills a block and a
+single byte at its last offset are both still accepted.
+
+**All Notes Off took a step out of a latched arpeggio.** Step 42 made the message
+"every key coming up", which is what the document's Hold 1 / Sostenuto proviso
+makes it: the keys come off one at a time so ARPEGGIO HOLD latches on the last
+one exactly as it does when the player lifts their hands. The sweep that follows
+then released the voices no pedal holds — and an arpeggio note is not a key, so
+`keyStillDown` could not see it and the step that was sounding went with them.
+
+Measured on a 16th-note pattern at 120 BPM with HOLD on and DURATION 60 %:
+lifting the three keys leaves the arpeggiator's own **45 ms** gap between steps;
+All Notes Off left **115 ms**, because the open step was taken and the pattern
+only came back at the next one. The sweep skips a note a still-driving
+arpeggiator has open now, and the two paths measure the same 45 ms.
+
+All three are fenced by checks watched to fail with their fix reverted — sixteen
+of them. The 11 committed demos still re-render bit-identically.
+
 #### What this pass did not do
 
 Recorded here so the next reader knows they were considered and left:

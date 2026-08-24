@@ -1211,6 +1211,20 @@ void Engine::setPortamentoControl (int note)
 // latch with them, which is All *Sounds* Off — a sustain pedal held down had
 // the notes taken out from under it, and a sostenuto latch set before the
 // message was gone even though its pedal was still down.
+bool Engine::arpeggioIsSounding (Part part, int note) const noexcept
+{
+    const auto& runtime = arpeggios_[part == Part::Upper ? 0 : 1];
+    // Only while it is still driving. Once the last key is up and HOLD is off
+    // the arpeggiator has stopped, and its rows are stale rather than open.
+    if (runtime.keyCount == 0)
+        return false;
+    for (const auto& row : runtime.rows)
+        if ((row.note == note && (row.sustained || row.remaining > 0))
+            || (row.tailNote == note && row.tailRemaining > 0))
+            return true;
+    return false;
+}
+
 void Engine::allNotesOff()
 {
     syncArpeggioRouting();
@@ -1236,8 +1250,17 @@ void Engine::allNotesOff()
     // The sostenuto latch belongs to the pedal, not to the keys, and
     // outliving the keys that set it is its entire job. It is cleared when
     // the pedal comes up.
+    //
+    // A note a latched arpeggiator has open is not a key either. This message
+    // is every key coming up — that is what the loop above makes it — so a
+    // chord ARPEGGIO HOLD latched has to carry on exactly as it does when the
+    // player lifts their hands. Without this test it did not: measured on a
+    // 16th-note pattern at 120 BPM with HOLD on, three note-offs leave the
+    // arpeggiator's own 45 ms gap between steps and All Notes Off left 115,
+    // because the sweep took the step that was sounding and the pattern only
+    // came back at the next one.
     for (auto& voice : voices_)
-        if (voice.active)
+        if (voice.active && ! arpeggioIsSounding (voice.part, voice.note))
             releaseIfNoPedalHolds (voice);
 }
 

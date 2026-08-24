@@ -4773,6 +4773,226 @@ void testPatchCommonMatchesTheAddressMap()
 // differs — Roland's range is 1-32 with a default of 1, and the replica adds a
 // zero below that range meaning "play the template to its own end", which is
 // what a patch carrying no imported grid needs.
+// A DT1 writes bytes at an address. The decode reconstitutes the block —
+// encode what the patch holds, lay the received bytes over it, decode it back —
+// which is exact only where encode and decode are each other's inverse. Writing
+// back the byte a block already holds is the sharpest probe there is: nothing
+// may move.
+//
+// One field failed it. END STEP has two homes: the wire value goes to
+// `style.endStep` and to `arp.endStep`, whose zero — "however long the selected
+// template is" — is the replica's own addition and has no wire spelling. So a
+// one-byte write to ARPEGGIO ACCENT re-encoded the style's length into bytes
+// 06/07 and decoded it back as an explicit override, truncating the pattern.
+// All Notes Off is every key coming up — that is what the document's proviso
+// about Hold 1 and Sostenuto makes it, and what the engine's own loop builds. A
+// chord ARPEGGIO HOLD has latched therefore has to carry on exactly as it does
+// when the player lifts their hands. It did not: the sweep that releases the
+// voices no pedal holds took the arpeggiator's currently-open step with them,
+// because an arpeggio note is not a key and `keyStillDown` could not see it.
+void testAllNotesOffDoesNotInterruptALatchedArpeggio()
+{
+    const double sampleRate = 44100.0;
+    const auto take = [&] (bool useAllNotesOff)
+    {
+        septum::Patch patch = septum::initPatch();
+        patch.upper.osc1.wave = septum::Waveform::Saw;
+        patch.upper.balance = -63;
+        patch.upper.filterType = septum::FilterType::Bypass;
+        patch.upper.ampEnvAttack = 0;
+        patch.upper.ampEnvDecay = 0;
+        patch.upper.ampEnvSustain = 127;
+        patch.upper.ampEnvRelease = 0;   // a release is audible immediately
+        patch.tempo = 120;
+        patch.arpeggio.on = true;
+        patch.arpeggio.hold = true;
+        patch.arpeggio.styleIndex = 1;
+        patch.arpeggio.grid = septum::ArpeggioGrid::Sixteenth;
+        patch.arpeggio.duration = septum::ArpeggioDuration::P60;
+        patch.arpeggio.motif = septum::ArpeggioMotif::Up;
+        septum::applyArpeggioStyle (patch, patch.arpeggio.styleIndex);
+
+        septum::Engine engine;
+        engine.prepare (sampleRate, 64);
+        engine.setPatch (patch);
+        engine.reset();
+
+        std::vector<float> left, right (64), block (64);
+        const auto render = [&] (double seconds)
+        {
+            const auto total = (std::size_t) (sampleRate * seconds);
+            for (std::size_t done = 0; done < total; done += 64)
+            {
+                engine.process (block.data(), right.data(), 64);
+                for (int i = 0; i < 64; ++i)
+                    left.push_back (block[(std::size_t) i]);
+            }
+        };
+
+        for (int note : { 60, 64, 67 })
+            engine.noteOn (note, 100);
+        render (1.0);
+        if (useAllNotesOff)
+            engine.allNotesOff();
+        else
+            for (int note : { 60, 64, 67 })
+                engine.noteOff (note);
+        render (1.0);
+        return left;
+    };
+
+    // The longest run of silence after the flip, in 5 ms buckets. With a 60 %
+    // duration at 120 BPM the arpeggiator's own gap between sixteenths is about
+    // 45 ms; anything much longer is a step that was taken away.
+    const auto longestSilenceMs = [&] (const std::vector<float>& x)
+    {
+        const std::size_t window = (std::size_t) (sampleRate * 0.005);
+        const std::size_t from = (std::size_t) (sampleRate * 1.0) / window;
+        std::size_t run = 0, worst = 0, bucket = 0;
+        for (std::size_t i = 0; i + window <= x.size(); i += window, ++bucket)
+        {
+            double peak = 0.0;
+            for (std::size_t j = 0; j < window; ++j)
+                peak = std::max (peak, std::abs ((double) x[i + j]));
+            if (bucket < from)
+                continue;
+            if (peak < 1.0e-4)
+                worst = std::max (worst, ++run);
+            else
+                run = 0;
+        }
+        return worst * 5.0;
+    };
+
+    const double byKeys = longestSilenceMs (take (false));
+    const double byMessage = longestSilenceMs (take (true));
+    expect (byKeys > 0.0 && byKeys < 80.0,
+            "lifting the keys leaves the arpeggiator's own gap between steps ("
+                + std::to_string (byKeys) + " ms)");
+    expect (byMessage <= byKeys + 10.0,
+            "and All Notes Off leaves the same gap rather than taking the step "
+            "that was sounding (All Notes Off " + std::to_string (byMessage)
+                + " ms against " + std::to_string (byKeys) + " ms for the keys)");
+}
+
+void testANoOpDt1LeavesThePatchAlone()
+{
+    const auto blockOf = [] (const septum::Patch& patch, unsigned block,
+                             std::vector<std::uint8_t>& image)
+    {
+        switch (block)
+        {
+            case 0x00: image.assign (septum::sysex::sizePatchCommon, 0);
+                       septum::sysex::encodePatchCommon (patch, image.data()); break;
+            case 0x01: image.assign (septum::sysex::sizeTonePatch, 0);
+                       septum::sysex::encodeTonePatch (patch.upper, image.data()); break;
+            case 0x02: image.assign (septum::sysex::sizeTonePatch, 0);
+                       septum::sysex::encodeTonePatch (patch.lower, image.data()); break;
+            case 0x03: image.assign (septum::sysex::sizeDelay, 0);
+                       septum::sysex::encodeDelayParams (patch.delay, image.data()); break;
+            case 0x04: image.assign (septum::sysex::sizeReverb, 0);
+                       septum::sysex::encodeReverbParams (patch.reverb, image.data()); break;
+            default:   image.assign (septum::sysex::sizeArpeggioCommon, 0);
+                       septum::sysex::encodeArpeggioCommon (patch.arpeggio, image.data()); break;
+        }
+    };
+    // The whole patch as it goes on the wire, so nothing with a wire home can
+    // move without this noticing.
+    const auto wireImage = [] (const septum::Patch& patch)
+    {
+        std::vector<std::uint8_t> all;
+        for (const auto& packet : septum::sysex::encodePatchToSysExPackets (patch))
+            all.insert (all.end(), packet.begin(), packet.end());
+        return all;
+    };
+
+    const std::pair<const char*, septum::Patch> starts[] {
+        { "INIT PATCH", septum::initPatch() },
+        { "a factory program", septum::factoryPatches()[0].patch },
+    };
+
+    for (const auto& start : starts)
+        for (unsigned block = 0x00; block <= 0x05; ++block)
+        {
+            std::vector<std::uint8_t> image;
+            blockOf (start.second, block, image);
+            for (std::size_t offset = 0; offset < image.size(); ++offset)
+            {
+                septum::Patch patch = start.second;
+                const std::uint8_t already = image[offset];
+                const auto message = septum::sysex::makeDt1Message (
+                    0x10000000u | (block << 8) | (std::uint32_t) offset, &already, 1, 0x10);
+                const bool accepted = septum::sysex::decodeSysExMessage (
+                    message.data(), message.size(), patch);
+                expect (accepted,
+                        std::string ("a one-byte DT1 inside block ")
+                            + std::to_string (block) + " is accepted");
+
+                expect (wireImage (patch) == wireImage (start.second),
+                        std::string ("writing back the byte already at block ")
+                            + std::to_string (block) + " offset "
+                            + std::to_string (offset) + " of " + start.first
+                            + " leaves the patch's wire image alone");
+
+                // END STEP is the field with no wire spelling for its zero, so
+                // it needs its own check: only a write that carries bytes 06/07
+                // of the arpeggio block may move it.
+                const bool carriesEndStep =
+                    block == 0x05 && (offset == 0x06 || offset == 0x07);
+                if (! carriesEndStep)
+                    expect (patch.arpeggio.endStep == start.second.arpeggio.endStep,
+                            std::string ("and leaves ARPEGGIO END STEP alone (block ")
+                                + std::to_string (block) + " offset "
+                                + std::to_string (offset) + ": "
+                                + std::to_string (start.second.arpeggio.endStep) + " -> "
+                                + std::to_string (patch.arpeggio.endStep) + ")");
+            }
+        }
+}
+
+// A payload this codec cannot apply in full is refused in full. The overlay used
+// to clip a payload that ran off the end of its block and still report success,
+// so a bulk write spanning two blocks updated the first and lost the rest — and
+// the bank reader, which gates on the same predicate, counted it as applied.
+void testADt1PastTheEndOfItsBlockIsRefused()
+{
+    septum::Patch patch = septum::initPatch();
+    const septum::Patch before = patch;
+
+    // Patch Delay is five bytes. A six-byte write at offset 0 runs one past it;
+    // a two-byte write at offset 4 runs one past it.
+    const std::uint8_t six[6] { 1, 2, 3, 4, 5, 6 };
+    const auto overrun =
+        septum::sysex::makeDt1Message (0x10000300u, six, 6, 0x10);
+    expect (! septum::sysex::decodeSysExMessage (overrun.data(), overrun.size(), patch),
+            "a DT1 whose payload runs past the end of its block is refused");
+    expect (patch.delay.time == before.delay.time
+                && patch.delay.feedback == before.delay.feedback,
+            "and nothing of it is applied");
+
+    const std::uint8_t two[2] { 7, 8 };
+    const auto straddle =
+        septum::sysex::makeDt1Message (0x10000304u, two, 2, 0x10);
+    expect (! septum::sysex::decodeSysExMessage (straddle.data(), straddle.size(), patch),
+            "a DT1 straddling the end of its block is refused");
+
+    // Exactly filling the block is still accepted, and so is one byte at the
+    // last offset — the refusal must not be a fencepost.
+    std::vector<std::uint8_t> whole (septum::sysex::sizeDelay, 0);
+    septum::sysex::encodeDelayParams (before.delay, whole.data());
+    const auto exact = septum::sysex::makeDt1Message (0x10000300u, whole.data(),
+                                                      whole.size(), 0x10);
+    expect (septum::sysex::decodeSysExMessage (exact.data(), exact.size(), patch),
+            "a DT1 that exactly fills its block is accepted");
+    const std::uint8_t last[1] { 3 };
+    const auto lastByte = septum::sysex::makeDt1Message (0x10000304u, last, 1, 0x10);
+    expect (septum::sysex::decodeSysExMessage (lastByte.data(), lastByte.size(), patch),
+            "and so is one byte at the block's last offset");
+    expect (patch.delay.modulationDepth == 3,
+            "which lands on the field that offset names (MOD DEPTH "
+                + std::to_string (patch.delay.modulationDepth) + ")");
+}
+
 void testInitPatchIsRolandsInitPatch()
 {
     const auto packets = septum::sysex::encodePatchToSysExPackets (septum::initPatch());
@@ -5092,6 +5312,9 @@ int main()
     testSysExCarriesTheArpeggioGridAndTempo();
     testPatchCommonMatchesTheAddressMap();
     testSysExBlockAddressesMatchTheAddressMap();
+    testAllNotesOffDoesNotInterruptALatchedArpeggio();
+    testANoOpDt1LeavesThePatchAlone();
+    testADt1PastTheEndOfItsBlockIsRefused();
     testInitPatchIsRolandsInitPatch();
     testLfoTempoSyncSwitchReadsOffOnLikeEveryOtherSwitch();
     testReverbPreDelayFollowsTheEditorTable();

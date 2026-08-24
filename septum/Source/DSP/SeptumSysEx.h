@@ -189,10 +189,22 @@ struct Dt1Packet
     // packet for a known base and block can still be addressed past the end
     // of that block, and a bank reader that moved its patch boundary on the
     // strength of base-and-block alone split a patch on one of those.
+    //
+    // The *whole* payload has to fit, not just its first byte. The overlay
+    // used to clip a payload that ran off the end of its block and still
+    // report success, so a bulk write spanning two blocks updated the first
+    // and lost the rest while the bank reader counted it as applied. There is
+    // no honest way to continue such a payload either: the address map is
+    // sparse — Patch Common ends at offset 20H and the next block begins at a
+    // fresh address rather than at 21H — so where the remaining bytes belong
+    // is undefined. A packet this codec cannot apply in full is refused in
+    // full. Nothing this encoder writes is affected: it emits one packet per
+    // block, at offset zero, of exactly that block's size.
     [[nodiscard]] bool isForThisInstrument() const noexcept
     {
-        return patchBaseIsKnown() && blockIsKnown()
-               && offsetInBlock() < blockSize() && dataLength > 0;
+        return patchBaseIsKnown() && blockIsKnown() && dataLength > 0
+               && offsetInBlock() < blockSize()
+               && offsetInBlock() + dataLength <= blockSize();
     }
 };
 
