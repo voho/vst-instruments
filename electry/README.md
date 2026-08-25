@@ -6,8 +6,8 @@ Standalone for macOS, plus Linux and Windows builds.
 ![Electry](Docs/screenshots/electry-standalone.png)
 
 Eight string voices run dual-polarisation waveguide loops with physically
-derived stiffness dispersion, decay-targeted damping and tension-modulation
-pitch glide. A fretting hand with a position and a reach decides where each
+derived stiffness dispersion, decay-targeted damping and exact fundamental
+phase compensation. A fretting hand with a position and a reach decides where each
 note is played; a point-touch model produces natural and pinch harmonics as the
 string's own mode shapes rather than as transpositions; slides are a distance
 over a hand speed, their squeak the winding passing under the finger; a picking
@@ -65,19 +65,19 @@ renderer, real-recording boundaries and blind-study plan live in the
 | File | Rendered peak | Normalisation applied |
 | --- | --- | --- |
 | `01-range-open-strings.wav` | −12.4 dBFS | +9.4 dB |
-| `02-range-full-fretboard.wav` | −11.2 dBFS | +8.2 dB |
+| `02-range-full-fretboard.wav` | −11.3 dBFS | +8.3 dB |
 | `03-play-styles.wav` | −3.2 dBFS | +0.2 dB |
-| `04-drop-e-rhythm-dry.wav` | −12.5 dBFS | +9.5 dB |
-| `05-drop-e-rhythm-amp.wav` | −14.3 dBFS | +11.3 dB |
+| `04-drop-e-rhythm-dry.wav` | −13.4 dBFS | +10.4 dB |
+| `05-drop-e-rhythm-amp.wav` | −14.4 dBFS | +11.4 dB |
 | `06-lead-amp-delay-room.wav` | −7.3 dBFS | +4.3 dB |
-| `07-pickups-and-tone.wav` | −13.9 dBFS | +10.9 dB |
-| `08-sympathetic-strum-stereo.wav` | −15.9 dBFS | +12.9 dB |
-| `09-guitar-build-contrasts.wav` | −8.8 dBFS | +5.8 dB |
-| `10-velocity-dynamics.wav` | −12.1 dBFS | +9.1 dB |
-| `11-power-chords-dry.wav` | −8.2 dBFS | +5.2 dB |
+| `07-pickups-and-tone.wav` | −14.2 dBFS | +11.2 dB |
+| `08-sympathetic-strum-stereo.wav` | −16.3 dBFS | +13.3 dB |
+| `09-guitar-build-contrasts.wav` | −8.6 dBFS | +5.6 dB |
+| `10-velocity-dynamics.wav` | −11.6 dBFS | +8.6 dB |
+| `11-power-chords-dry.wav` | −8.5 dBFS | +5.5 dB |
 | `12-power-chords-amp.wav` | −12.9 dBFS | +9.9 dB |
-| `13-long-rhythm-arrangement.wav` | −14.0 dBFS | +11.0 dB |
-| `14-whammy-and-feedback.wav` | −12.5 dBFS | +9.5 dB |
+| `13-long-rhythm-arrangement.wav` | −14.4 dBFS | +11.4 dB |
+| `14-whammy-and-feedback.wav` | −12.4 dBFS | +9.4 dB |
 | `15-mute-and-dead-audition.wav` | −12.4 dBFS | +9.4 dB |
 | `16-mute-and-dead-metal.wav` | −14.0 dBFS | +11.0 dB |
 <!-- peaks-table-end -->
@@ -299,16 +299,14 @@ All Sound Off and All Notes Off.
   decaying fret-collision window on hard-picked notes that soft-limits
   displacement and re-radiates deterministic rattle. Hammer-ons retarget a
   sounding loop without clearing its state.
-- **Tension modulation:** the same physical string geometry used for dispersion
-  turns effective pick load and position into transverse release displacement;
-  its squared state shortens the loop delay and relaxes over hundreds of
-  milliseconds. At the shipping heavy-set 27.63-inch default, a full-force open
-  E1 seeds about 30 cents and E2 about 10 cents; a velocity-0.25 E1 stroke is
-  about 2.5 cents. The 4.44 N full-force anchor was chosen against one lawful
-  CC0 Drop-E performance, not a measured pick-force trace, so the exact depth
-  remains a documented calibration rather than a universal plectrum law. The
-  pitch wheel moves the same delay target along the Bend Time glide, each
-  string by its own compliance.
+- **Attack pitch:** hard strokes keep the written pitch across all eight
+  strings. A force-derived tension-modulation prototype was removed after an
+  absolute-pitch audit found that its one-recording E1 calibration pulled
+  different strings sharp by different amounts and made low chords sour. Real
+  plucked strings can show nonlinear attack glide, but that path remains
+  withheld until matched, absolute-pitch, multi-string and multi-velocity
+  captures can bound it. The pitch wheel still moves the delay target along the
+  Bend Time glide, each string by its own compliance.
 - **Fretting-hand vibrato:** channel pressure rocks the finger, and the pitch
   follows the *square* of the finger's displacement, because rocking a stopped
   string sideways by `x` lengthens its path by `k x^2` — the same `dL/L`
@@ -356,8 +354,8 @@ All Sound Off and All Notes Off.
   where `F^0` is one for every stroke. Force and contact spectrum are then two
   axes rather than one, and separating them is what un-flattened the top of the
   keyboard: force decides how far the string swings, and thence how hard it
-  meets the frets and how far it stretches itself sharp, while what the pick
-  puts into the string is set by its slip time `t_s = Z d / F + Z / k` — the
+  meets the frets, while what the pick puts into the string is set by its slip
+  time `t_s = Z d / F + Z / k` — the
   string leaves at the kink velocity `F / Z` over a grip depth the stroke does
   not change plus the pick tip's own elastic recoil. That second term is a floor
   no amount of force gets under, which is the sense in which the plectrum's
@@ -493,9 +491,9 @@ All Sound Off and All Notes Off.
   Dead now uses a 1.6 s contact target, fits its upper loss at the eighth
   partial and applies only 15% of the hand amount to the attack path. In the
   stateful Open -> Mute -> Dead -> Dead E1 comparison, its 30-100/100-250/
-  250-380 ms levels are -7.84/-14.85/-22.54 dB and its power centroids are
-  212/139/87 Hz, against 221/137/85 Hz in the four-hit reference. Its picked
-  onset stays within 0.51 dB of Sustain and 99.89% of tracked harmonic power is
+  250-380 ms levels are -8.10/-15.11/-23.42 dB and its power centroids are
+  209/142/94 Hz, against 221/137/85 Hz in the four-hit reference. Its picked
+  onset stays within 0.47 dB of Sustain and 99.88% of tracked harmonic power is
   below 250 Hz: a dark periodic thunk, not a gate. Mute Pressure can stack as
   the separate bridge hand; Mute Tightness changes only the Mute style.
 - **Bridge-hand damping:** the heel of the hand is a passive absorber, so its
@@ -807,7 +805,7 @@ crossfade over roughly 4 ms.
 | Stiffness dispersion | Stiff-string inharmonicity `B = pi^3 E d^4 / (64 T L^2)` (Fletcher and Rossing) and robust factored allpass design practice (Rauhala and Välimäki; Abel and Smith) | A per-note `B` from string diameter, effective wound-core bending fraction, scale length, and tension drives an eight-stage factored first-order cascade; two coefficients are fitted jointly at low and high partials, with exact fundamental phase compensation | A physically derived, bounded two-band fit whose regression error is under 20% at both references for the worst heavy Drop-E case; not a capture-fitted very-high-order piano dispersion filter |
 | Loop damping and tuning | Decay-time-targeted loop-filter design from the plucked-string literature; a dry electric low-E reference recording for the targets themselves | Per-string, per-fret one-pole loop filters solved by bisection from independent T60 targets at the fundamental and a high reference frequency, with all loop-filter phase delays compensated analytically at the fundamental. The wound strings' fundamental targets are tens of seconds and their high-frequency ratio two orders of magnitude smaller, following the reference | Decay-targeted loop design with exact fundamental tuning (regression bound: under 8 cents across E1..D6 at tested host rates through 384 kHz), whose fundamental and high-frequency targets are calibrated against one reference recording; not per-partial measured decay matching across a fretboard, and not a model of the reference instrument |
 | Dead spots | Fleischer's electric-guitar dead-spot studies relating neck conductance to decay time | A per-string fret-position Gaussian that locally shortens decay, deepened by the bolt-on end of the construction axis | The documented mechanism direction with voiced positions and depths; not measured conductance maps of specific instruments |
-| Tension modulation | Tolonen, Välimäki, and Karjalainen's tension-modulation nonlinearity; Avanzini, Marogna, and Bank's quasistatic energy store | Each stroke derives standing tension and elastic stiffness from the same string geometry used by the dispersion solve, converts its effective pick load and position to a transverse deflection, and seeds a squared-deflection proxy in SI units; returning waveguide displacement follows that state and shortens the loop delay as the string relaxes | The published phenomenon in an efficient envelope form, force-calibrated against one CC0 Drop-E performance; not the exact elongation integral, the paper's full energy estimator, a measured force trace, or a time-varying-fraction-delay implementation |
+| Attack pitch | Tolonen, Välimäki, and Karjalainen's tension-modulation nonlinearity; Avanzini, Marogna, and Bank's quasistatic energy store | The shipping string keeps its compensated fundamental delay independent of pick velocity; a regression checks maximum-velocity Sustain on all eight isolated opens and a simultaneous low chord, then the three isolated low strings under Mute and Dead | Nonlinear tension glide is a documented future mechanism, not a shipping claim: the single-recording force prototype failed absolute multi-string tuning and remains withheld until matched captures identify a bounded model |
 | Plectrum and finger excitation | Plectrum and touch interaction modeling by Germain and Evangelista and by Evangelista and Eckerholm | A three-phase excitation combines a conservative contact-loss placeholder and scrape, a string-period-scaled modal release approximating triangular pluck displacement, a mass-dependent release pole and a smaller broadband pick edge; an asymmetric constant-area release and a 0.5-1.5 mm contact patch vary with pick hardness, while deterministic per-stroke draws vary force, position, angle and tip contact | A realtime modal approximation to released-string displacement plus bounded contact and pick detail; not an exact delay-line initial-condition solve, beam-mechanics plectrum profile, force-based finger contact solver, or local bidirectional plectrum-scattering junction |
 | Fret collisions | Bilbao and Torin's energy-balanced string/fretboard collision modeling | The Artifacts path's incidental fret contact: a decaying collision window whose soft limit clips vertical displacement against a velocity-dependent clearance and re-radiates deterministic rattle noise on hard-picked notes | Collision-informed contact behavior in a bounded, stable form; not an FDTD distributed-contact simulation |
 | Pinch harmonic | The same touch model driven by the picking hand; standard descriptions of the technique as a thumb contact immediately after the plectrum | The touch position is the pluck fraction, so Pick Position selects the partial; a firmer (depth 1.0) and longer (90 ms) contact than the fretting finger's, because the mode-shape law gives a near-bridge touch little purchase on the low partials | Node selection by hand position with the technique's own asymmetry between low and high partials preserved; not a model of thumb geometry, pick grip, or the exact contact area |
@@ -868,9 +866,10 @@ contraction; the per-string wheel-compliance table's physical ordering and
 the rendered audio following it on two strings; wheel travel time following
 Bend Time with an exact settle on the target; a ringing coupled string
 retuned by the wheel; hammer-on
-same-string continuation, pitch settling, and click-free transition; a
-sharp-to-true attack tension glide between 0.4
-and 80 cents; bridge-brighter-than-neck centroid ordering; tone-control
+same-string continuation, pitch settling, and click-free transition;
+maximum-velocity attack tuning within 8 cents on every open string, less than
+6 cents of cross-string spread, and the same rails on low-string Mute and Dead;
+bridge-brighter-than-neck centroid ordering; tone-control
 high-band reduction; independently audible internal wood, size, shape,
 construction, scale and gauge endpoints plus the exposed body-level, position,
 hardness and age endpoints; monotonic
@@ -908,7 +907,7 @@ engine, a subnormal-free ring-out that reaches exact zero, and a clean wake
 from the frozen state; all six Guitar Build anchors audibly distinct and in
 tune; plectrum contact noise in the pre-attack
 window; release noise that appears only after note-off; a Dead note that lands
-within 0.51 dB of Sustain, retains the calibrated dark periodic E1 body and
+  within 0.47 dB of Sustain, retains the calibrated dark periodic E1 body and
 decays through its own loop rather than being gated; eight-string
 polyphony with open-position chord mapping, repick reuse, and stealing; a
 slide whose pitch travels through the intermediate semitones rather than
@@ -979,8 +978,8 @@ example is not a measurement, and none of the claims above rest on them.
 The exact Guitar-TECHS F2 replication uses the corpus detector's zero-phase
 fourth-order 500 Hz high-pass. Two players' Palm bodies reach 0.9944-0.9988
 harmonicity at 30-80 ms and lose 6.52/14.95 dB more above-500-Hz share than
-their matched ordinary notes. Electry reaches about 0.9970 harmonicity but only
-0.90 dB of that selective loss and starts less periodic. Two scalar retunes
+their matched ordinary notes. Electry reaches about 0.9973 harmonicity but only
+0.93 dB of that selective loss and starts less periodic. Two scalar retunes
 regressed other coordinates and were restored; this points toward a
 capture-fitted, time-varying tonal contact rather than more sustained noise or
 another global damping constant. An independent EG-IPT E2 Palm reaches 0.9971
@@ -989,19 +988,16 @@ ongoing stochastic hand tail. Dataset, chain and pairing limits are recorded in
 the [`evaluation contract`](Docs/evaluation.md).
 
 The current shared-hand regression isolates the new E2 while an old E1 rings.
-Palm -> Open raises the old E1's 30-80 ms power above 500 Hz by 7.808 dB and
-its upper share by 0.124 percentage points; Open -> Palm lowers them by 7.535
-dB and 0.132 points. Contact/control maximum steps are
-0.001071/0.000311 and 0.000975/0.001171, inside the declared
+Palm -> Open raises the old E1's 30-80 ms power above 500 Hz by 11.437 dB and
+its upper share by 0.268 percentage points; Open -> Palm lowers them by 7.334
+dB and 0.152 points. Contact/control maximum steps are
+0.001358/0.000312 and 0.000973/0.001161, inside the declared
 `1.5 * control + 0.005` bound. Same-style Palm remains exact and delayed
 lookahead is exact until physical contact. Adjacent CC2 movement is below
-0.054 dB on E1/E2. The checkpoint passes the four JUCE-free CTest targets and
-all five plug-in targets; two independent sixteen-WAV renders and two
-ten-probe evaluator WAV/manifest renders are deterministic. In this additive
-checkpoint demos 04, 05, 06, 09 and 11-16 change for the fitted Guitar Build,
-circuit FX and the lead-tail fade; demos 01-03, 07, 08 and 10 remain byte-exact.
-The ten dry evaluator WAVs remain bit-exact; only their manifest gains the
-explicit default Guitar Build coordinate.
+0.040 dB on E1/E2. The checkpoint passes the full five-target CTest suite.
+Because the absolute-pitch correction changes every picked waveform, all
+sixteen demo WAVs and all ten dry evaluator probes were regenerated; their
+current hashes and measurements are recorded in the evaluation contract.
 
 ### Remaining realism gates
 

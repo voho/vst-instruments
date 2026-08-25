@@ -688,9 +688,9 @@ Take renderBuildContrasts()
 Take renderVelocityDynamics()
 {
     // The velocity response at full travel: the same string from a finger-light
-    // touch to a hard metal attack, then the same ramp palm-muted, so the
-    // level, brightness, contact noise and pitch glide can all be heard moving
-    // together.
+    // touch to a hard metal attack, then the same ramp palm-muted, so level,
+    // brightness, contact noise and bridge-hand contraction can all be heard
+    // moving together without velocity pulling the strings out of tune.
     EngineParameters parameters;
     parameters.velocityAmount = 1.0f;
     parameters.pickupSelector = PickupSelector::Bridge;

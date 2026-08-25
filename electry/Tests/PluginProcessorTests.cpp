@@ -1429,8 +1429,7 @@ void testPitchWheelMidiDispatch()
                 + std::to_string (centsDown) + " cents)");
 
     // A centred message has to undo a real prior bend on the same ringing
-    // voice. Both cases below receive the centre event at the same string age,
-    // so their late differential cancels the physical attack-tension bloom;
+    // voice. Both cases below receive the centre event at the same string age;
     // dropping the second event leaves the first case about 200 cents sharp.
     const auto afterCentreHz = [] (int initialWheelPosition14) -> double
     {
@@ -1460,7 +1459,9 @@ void testPitchWheelMidiDispatch()
     const auto recentered = afterCentreHz (16383);
     const auto recenterErrorCents = 1200.0
         * std::log2 (recentered / centredReference);
-    expect (std::abs (recenterErrorCents) < 0.25,
+    // The audio estimator's final scan is quantized to 0.5 cents; allow one
+    // bin while still separating this path decisively from a missed reset.
+    expect (std::abs (recenterErrorCents) < 0.75,
             "a centred pitch wheel (0x2000) did not return the pre-bent open "
             "low string to its matched unbent pitch (measured "
                 + std::to_string (recenterErrorCents) + " cents)");

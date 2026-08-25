@@ -222,40 +222,11 @@ struct ElectryEngineTestAccess
         return engine.sympatheticHandGain_;
     }
 
-    // The slow follower on a played voice's *own* two loop outputs. Nothing
-    // any other string does reaches it, so it is the exact place to look for
-    // an unsubtracted self-term: a voice that drives itself through the bridge
-    // bus changes this, and a voice that drives only the others does not.
-    static float voiceLoopEnergy(const ElectryEngine& engine,
-                                 int stringIndex) noexcept
-    {
-        return engine.voices_[static_cast<std::size_t>(stringIndex)]
-            .energyEnvelope;
-    }
-
     static float voiceOutputEnergy(const ElectryEngine& engine,
                                    int stringIndex) noexcept
     {
         return engine.voices_[static_cast<std::size_t>(stringIndex)]
             .outputEnergy;
-    }
-
-    static float voiceTensionCents(const ElectryEngine& engine,
-                                   int stringIndex) noexcept
-    {
-        const auto& voice = engine.voices_[static_cast<std::size_t>(stringIndex)];
-        return 1200.0f * std::log2(
-            1.0f + voice.tensionDepth * voice.energyEnvelope);
-    }
-
-    static float expectedVerticalTensionDelay(const ElectryEngine& engine,
-                                              int stringIndex) noexcept
-    {
-        const auto& voice = engine.voices_[static_cast<std::size_t>(stringIndex)];
-        return std::clamp(
-            voice.compensatedPeriodVertical
-                / (1.0f + voice.tensionDepth * voice.energyEnvelope),
-            4.0f, static_cast<float>(ElectryEngine::delayLineSize - 8));
     }
 
     static void retriggerVoice(ElectryEngine& engine, int stringIndex,
@@ -264,19 +235,6 @@ struct ElectryEngineTestAccess
         engine.startVoice(
             engine.voices_[static_cast<std::size_t>(stringIndex)], midiNote,
             velocity, PlayStyle::Sustain, false, 0);
-    }
-
-    // Unit tests for a downstream pickup network need a stationary source.
-    // The integration tests leave this alone and cover the moving string; this
-    // seam only prevents a pickup regression snapshot from interpreting a
-    // deliberately moving partial as a change in the pickup itself.
-    static void disableAttackTension(ElectryEngine& engine) noexcept
-    {
-        for (auto& voice : engine.voices_)
-        {
-            voice.tensionDepth = 0.0f;
-            voice.energyEnvelope = 0.0f;
-        }
     }
 
     // The hand's loss dip sits inside the feedback loop, so its magnitude must
@@ -553,8 +511,7 @@ struct ElectryEngineTestAccess
     }
 
     // How far through its travel a legato glide is, so the slide's timing can
-    // be read from the glide itself rather than from a delay target that
-    // tension modulation is also moving.
+    // be read from the glide itself rather than inferred from audio.
     static float legatoBlend(const ElectryEngine& engine,
                              int stringIndex) noexcept
     {
@@ -943,9 +900,9 @@ double measureFrequency(const std::vector<float>& data, int start, int length,
     return scan(coarse, 6.0, 0.5);
 }
 
-// A moving/inharmonic string does not keep a partial on the nominal FFT bin.
-// Search each partial locally so an articulation test measures its amplitude,
-// not how far the attack glide or stiffness moved it from equal temperament.
+// An inharmonic dispersive string does not keep every partial on an ideal
+// harmonic FFT bin. Search each partial locally so an articulation test
+// measures its amplitude rather than grid or stiffness offset.
 double trackedPartialMagnitude(const std::vector<float>& data, int start,
                                int length, double sampleRate,
                                double fundamentalHz, int partial)
@@ -993,9 +950,10 @@ double centsBetween(double frequencyA, double frequencyB)
 double spectralCentroid(const std::vector<float>& data, int start, int length,
                         double sampleRate, double fundamentalHz)
 {
-    // Track the note before sampling its partials. A hard pluck is physically
-    // sharp and relaxes through this window; reading only nominal FFT bins
-    // mistakes that pitch trajectory for missing upper harmonics.
+    // Track the note before sampling its partials. Dispersion and fractional-
+    // delay fitting can put the measured fundamental slightly off a nominal
+    // FFT bin; treating that offset as missing upper harmonics would skew the
+    // envelope measurement.
     fundamentalHz = measureFrequency(data, start, length, sampleRate,
                                      fundamentalHz);
     double weighted = 0.0;
@@ -2751,122 +2709,207 @@ void testHammerOnLegatoContinuity()
            "hammer-on transition produced a hard discontinuity");
 }
 
-void testTensionGlide()
+void testHardPickingStaysInTune()
 {
-    // Tension modulation: a hard attack sounds slightly sharp and relaxes as
-    // the string energy decays. Both measurements share the same scan
-    // reference so grid quantise bias cancels in the difference.
+    // A single uncontrolled E1 recording cannot calibrate an independent
+    // nonlinear pitch excursion for all eight strings. The former extrapolation
+    // raised hard E1 by about 30 cents but B1/E2 by only 9-13 cents, leaving the
+    // lowest metal chord roughly 20 cents sour for its first 200 ms. Pin the
+    // audible contract instead: maximum velocity may change level, spectrum and
+    // contact, but every isolated open string must keep the written pitch and
+    // a simultaneously rendered low chord must keep those intervals together.
     constexpr double sampleRate = 48000.0;
-    ElectryEngine engine;
-    engine.prepare(sampleRate, 512);
-    EngineParameters parameters;
-    parameters.pickNoise = 0.0f;
-    parameters.fingerNoise = 0.0f;
-    parameters.stringGauge = 0.0f; // the light set glides most
-    parameters.velocityAmount = 1.0f;
-    engine.setParameters(parameters);
+    constexpr std::array<int, ElectryEngine::stringCount> openNotes {
+        28, 35, 40, 45, 50, 55, 59, 64
+    };
+    constexpr int analysisStart = static_cast<int>(0.030 * sampleRate);
+    constexpr int analysisLength = static_cast<int>(0.180 * sampleRate);
 
-    auto hard = renderNote(engine, sampleRate, 45, 1.0f, PlayStyle::Sustain, 1.8);
-
-    const double early = measureFrequency(hard.left,
-                                          static_cast<int>(0.05 * sampleRate),
-                                          static_cast<int>(0.14 * sampleRate),
-                                          sampleRate, midiHz(45));
-    const double late = measureFrequency(hard.left,
-                                         static_cast<int>(1.2 * sampleRate),
-                                         static_cast<int>(0.5 * sampleRate),
-                                         sampleRate, midiHz(45));
-    const double glide = centsBetween(early, late);
-    const auto trajectory = [&] (int note, float velocity)
+    const auto renderHard = [&] (int note, PlayStyle style)
     {
-        ElectryEngine probe;
-        probe.prepare(sampleRate, 512);
-        EngineParameters physical;
-        physical.pickNoise = 0.0f;
-        physical.fingerNoise = 0.0f;
-        physical.releaseNoise = 0.0f;
-        physical.artifactAmount = 0.0f;
-        physical.velocityAmount = 1.0f;
-        probe.setParameters(physical);
-        probe.reset();
-        probe.noteOn(note, velocity);
-        std::array<float, 6> result {};
-        constexpr std::array<double, 6> times {{ 0.02, 0.05, 0.10, 0.20, 0.40, 0.80 }};
-        int rendered = 0;
-        for (std::size_t index = 0; index < times.size(); ++index)
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickNoise = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        parameters.velocityAmount = 1.0f;
+        engine.setParameters(parameters);
+        return renderNote(engine, sampleRate, note, 1.0f, style, 0.40);
+    };
+    const auto scanFundamental = [&] (const StereoBuffer& audio, int note,
+                                      int start, int length)
+    {
+        double best = midiHz(note);
+        double bestMagnitude = -1.0;
+        for (double cents = -60.0; cents <= 60.0; cents += 0.25)
         {
-            const int target = static_cast<int>(times[index] * sampleRate);
-            StereoBuffer slice(target - rendered);
-            renderInto(probe, slice);
-            rendered = target;
-            const int stringIndex = TestAccess::stringForNote(probe, note);
-            result[index] = TestAccess::voiceTensionCents(probe, stringIndex);
+            const double frequency = midiHz(note)
+                * std::pow(2.0, cents / 1200.0);
+            const double magnitude = dftMagnitude(
+                audio.left, start, length, sampleRate, frequency);
+            if (magnitude > bestMagnitude)
+            {
+                bestMagnitude = magnitude;
+                best = frequency;
+            }
         }
-        return result;
+        return best;
     };
-    const auto e1 = trajectory(28, 1.0f);
-    const auto e2 = trajectory(40, 1.0f);
-    const auto softE1 = trajectory(28, 0.25f);
-    const auto seedCents = [&] (int note, float velocity)
+    const auto fundamentalPeriodicity = [&] (const StereoBuffer& audio,
+                                              int note, int start, int length)
     {
-        ElectryEngine probe;
-        probe.prepare(sampleRate, 512);
-        EngineParameters physical;
-        physical.velocityAmount = 1.0f;
-        physical.artifactAmount = 0.0f;
-        probe.setParameters(physical);
-        probe.reset();
-        probe.noteOn(note, velocity);
-        const int stringIndex = TestAccess::stringForNote(probe, note);
-        return TestAccess::voiceTensionCents(probe, stringIndex);
+        double mean = 0.0;
+        for (int i = 0; i < length; ++i)
+            mean += audio.left[static_cast<std::size_t>(start + i)];
+        mean /= static_cast<double>(length);
+
+        const double nominal = midiHz(note);
+        const double lowFrequency = nominal * std::pow(2.0, -60.0 / 1200.0);
+        const double highFrequency = nominal * std::pow(2.0, 60.0 / 1200.0);
+        const int firstLag = static_cast<int>(std::ceil(sampleRate / highFrequency));
+        const int lastLag = static_cast<int>(std::floor(sampleRate / lowFrequency));
+        double strongest = -1.0;
+        for (int lag = firstLag; lag <= lastLag; ++lag)
+        {
+            double product = 0.0;
+            double earlyPower = 0.0;
+            double latePower = 0.0;
+            for (int i = 0; i + lag < length; ++i)
+            {
+                const double early = audio.left[
+                    static_cast<std::size_t>(start + i)] - mean;
+                const double late = audio.left[
+                    static_cast<std::size_t>(start + i + lag)] - mean;
+                product += early * late;
+                earlyPower += early * early;
+                latePower += late * late;
+            }
+            strongest = std::max(
+                strongest,
+                product / std::sqrt(std::max(earlyPower * latePower, 1.0e-30)));
+        }
+        return strongest;
     };
-    const float hardE1Seed = seedCents(28, 1.0f);
-    const float softE1Seed = seedCents(28, 0.25f);
-    const float hardE2Seed = seedCents(40, 1.0f);
-    const float softE2Seed = seedCents(40, 0.25f);
-    const float hardD3Seed = seedCents(50, 1.0f);
-    const float hardG3Seed = seedCents(55, 1.0f);
-    std::printf("PROBE physical attack bloom E1 cents: %.3f %.3f %.3f %.3f %.3f %.3f; E2: %.3f %.3f %.3f %.3f %.3f %.3f; soft E1 at 50 ms: %.3f; D3/G3 seeds: %.3f/%.3f\n",
-                e1[0], e1[1], e1[2], e1[3], e1[4], e1[5],
-                e2[0], e2[1], e2[2], e2[3], e2[4], e2[5], softE1[1],
-                hardD3Seed, hardG3Seed);
-    expect(e1[1] > 25.0f && e1[1] < 35.0f,
-           "the hard Drop-E attack missed its 30-cent physical/reference target ("
-               + std::to_string(e1[1]) + " cents at 50 ms)");
-    expect(e2[1] > 7.0f && e2[1] < 13.0f,
-           "the hard E2 attack missed its 10-cent elastic target ("
-               + std::to_string(e2[1]) + " cents at 50 ms)");
-    expect(hardE1Seed > 27.0f && hardE1Seed < 33.0f
-               && hardE2Seed > 8.0f && hardE2Seed < 12.0f
-               && softE2Seed > 0.6f && softE2Seed < 1.1f,
-           "the force/elasticity seed missed its E1/E2 calibration ("
-               + std::to_string(hardE1Seed) + ", "
-               + std::to_string(hardE2Seed) + ", "
-               + std::to_string(softE2Seed) + " cents)");
-    expect(hardD3Seed > 1.0f && hardG3Seed > 2.0f * hardD3Seed
-               && hardG3Seed < 10.0f * hardD3Seed && hardG3Seed < 60.0f,
-           "the axial fit broke at the wound/plain D3-G3 transition ("
-               + std::to_string(hardD3Seed) + "/"
-               + std::to_string(hardG3Seed) + " cents)");
-    const double hardRise = std::exp2(hardE1Seed / 1200.0f) - 1.0;
-    const double softRise = std::exp2(softE1Seed / 1200.0f) - 1.0;
-    expect(std::abs(hardRise / softRise - 12.0983) < 0.05,
-           "the initial tension rise does not follow squared pick force");
-    expect(softE1[1] > 1.0f && softE1[1] < 4.0f
-               && e1[1] > 8.0f * softE1[1],
-           "the returning-wave follower erased the velocity spread ("
-               + std::to_string(e1[1]) + " hard, "
-               + std::to_string(softE1[1]) + " soft cents)");
-    expect(e1[2] < e1[1] && e1[3] < e1[2] && e1[4] < e1[3]
-               && e1[5] < e1[4],
-           "the Drop-E tension bloom does not relax after the attack");
-    expect(glide > 0.4,
-           "a hard attack does not glide sharp-to-true (measured "
-               + std::to_string(glide) + " cents)");
-    expect(glide < 80.0, "the attack pitch glide is implausibly large");
+    const auto harmonicErrorFor = [&] (int note, PlayStyle style)
+    {
+        const auto hard = renderHard(note, style);
+        expect(rmsInRange(hard.left, analysisStart,
+                          analysisStart + analysisLength) > 1.0e-5,
+               "hard-pick tuning fixture rendered too little body at MIDI "
+                   + std::to_string(note));
+        const double measured = measureFrequency(
+            hard.left, analysisStart, analysisLength, sampleRate, midiHz(note));
+        return centsBetween(measured, midiHz(note));
+    };
+
+    std::array<double, ElectryEngine::stringCount> errors {};
+    for (std::size_t index = 0; index < openNotes.size(); ++index)
+    {
+        const int note = openNotes[index];
+        errors[index] = harmonicErrorFor(note, PlayStyle::Sustain);
+        expect(std::abs(errors[index]) < 8.0,
+               "a maximum-velocity open string is out of tune at MIDI "
+                   + std::to_string(note) + " (" + std::to_string(errors[index])
+                   + " cents)");
+    }
+
+    const auto [lowest, highest] = std::minmax_element(errors.begin(), errors.end());
+    expect(*highest - *lowest < 6.0,
+           "maximum-velocity open strings pull apart by "
+               + std::to_string(*highest - *lowest) + " cents");
+    std::cout << "PROBE maximum-velocity open-string tuning spread: "
+              << *lowest << ".." << *highest << " cents\n";
+
+    // Also exercise allocation, summing and the default played-string bridge
+    // coupling. Isolated strings alone would not prove that the low voicing a
+    // player actually hears survives the complete polyphonic path.
+    ElectryEngine chordEngine;
+    chordEngine.prepare(sampleRate, 512);
+    EngineParameters chordParameters;
+    chordParameters.pickNoise = 0.0f;
+    chordParameters.fingerNoise = 0.0f;
+    chordParameters.releaseNoise = 0.0f;
+    chordParameters.artifactAmount = 0.0f;
+    chordParameters.velocityAmount = 1.0f;
+    chordEngine.setParameters(chordParameters);
+    chordEngine.reset();
+    chordEngine.noteOn(pickKeyswitch(PickStyle::Down), 1.0f);
+    chordEngine.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+    for (int index = 0; index < 3; ++index)
+        chordEngine.noteOn(openNotes[static_cast<std::size_t>(index)], 1.0f);
+    StereoBuffer lowChord(static_cast<int>(0.40 * sampleRate));
+    renderInto(chordEngine, lowChord);
+
+    std::array<double, 3> chordErrors {};
+    for (std::size_t index = 0; index < chordErrors.size(); ++index)
+    {
+        const int note = openNotes[index];
+        chordErrors[index] = centsBetween(
+            scanFundamental(lowChord, note, analysisStart, analysisLength),
+            midiHz(note));
+        expect(std::abs(chordErrors[index]) < 8.0,
+               "the simultaneous maximum-velocity low chord is out of tune at "
+               "MIDI " + std::to_string(note) + " ("
+                   + std::to_string(chordErrors[index]) + " cents)");
+    }
+    const auto [chordLow, chordHigh] = std::minmax_element(
+        chordErrors.begin(), chordErrors.end());
+    expect(*chordHigh - *chordLow < 6.0,
+           "the simultaneous maximum-velocity low chord pulls apart by "
+               + std::to_string(*chordHigh - *chordLow) + " cents");
+    std::cout << "PROBE simultaneous low-chord tuning spread: "
+              << *chordLow << ".." << *chordHigh << " cents\n";
+
+    // Mute and Dead are the priority hard-style articulations. Their dark,
+    // shortened bodies still retain a measurable fundamental; they may not
+    // reintroduce the same low-chord interval error through a style-specific
+    // path.
+    constexpr int mutedStart = static_cast<int>(0.080 * sampleRate);
+    constexpr int mutedLength = static_cast<int>(0.250 * sampleRate);
+    const auto fundamentalErrorFor = [&] (int note, PlayStyle style)
+    {
+        const auto hard = renderHard(note, style);
+        expect(rmsInRange(hard.left, mutedStart,
+                          mutedStart + mutedLength) > 1.0e-5,
+               "hard-style tuning fixture rendered too little body at MIDI "
+                   + std::to_string(note));
+        const double periodicity = fundamentalPeriodicity(
+            hard, note, mutedStart, mutedLength);
+        expect(periodicity > 0.60,
+               "hard-style tuning fixture lacks a tonal fundamental at MIDI "
+                   + std::to_string(note) + " (periodicity "
+                   + std::to_string(periodicity) + ")");
+        return centsBetween(
+            scanFundamental(hard, note, mutedStart, mutedLength), midiHz(note));
+    };
+    int hardStylePitchChecks = 0;
+    for (const auto style : { PlayStyle::PalmMute, PlayStyle::Dead })
+    {
+        std::array<double, 3> lowChordErrors {};
+        for (std::size_t index = 0; index < lowChordErrors.size(); ++index)
+        {
+            const int note = openNotes[index];
+            lowChordErrors[index] = fundamentalErrorFor(note, style);
+            ++hardStylePitchChecks;
+            expect(std::abs(lowChordErrors[index]) < 8.0,
+                   "a maximum-velocity hard-style open string is out of tune "
+                   "at MIDI " + std::to_string(note) + " ("
+                       + std::to_string(lowChordErrors[index]) + " cents)");
+        }
+        const auto [styleLow, styleHigh] = std::minmax_element(
+            lowChordErrors.begin(), lowChordErrors.end());
+        expect(*styleHigh - *styleLow < 6.0,
+               "maximum-velocity hard-style low strings pull apart by "
+                   + std::to_string(*styleHigh - *styleLow) + " cents");
+    }
+    expect(hardStylePitchChecks == 6,
+           "the hard-style tuning matrix did not cover all six low-string cases");
 }
 
-void testAttackTensionStateTransitions()
+void testAttackStateTransitions()
 {
     constexpr double sampleRate = 48000.0;
     const auto quietParameters = []
@@ -2881,41 +2924,9 @@ void testAttackTensionStateTransitions()
         return parameters;
     };
 
-    // The attack can arrive at any offset within the 16-sample control phase.
-    // Its seeded stretch must already be present in the delay target before
-    // the next control tick, at every such offset.
-    std::array<float, 4> onsetTargets {};
-    constexpr std::array<int, 4> phaseOffsets {{ 0, 1, 3, 7 }};
-    for (std::size_t index = 0; index < phaseOffsets.size(); ++index)
-    {
-        ElectryEngine engine;
-        engine.prepare(sampleRate, 512);
-        engine.setParameters(quietParameters());
-        engine.reset();
-        if (phaseOffsets[index] > 0)
-        {
-            StereoBuffer phaseAdvance(phaseOffsets[index]);
-            renderInto(engine, phaseAdvance);
-        }
-        engine.noteOn(28, 1.0f);
-        const int stringIndex = TestAccess::stringForNote(engine, 28);
-        const auto voice = TestAccess::snapshot(engine, stringIndex);
-        const float expected =
-            TestAccess::expectedVerticalTensionDelay(engine, stringIndex);
-        onsetTargets[index] = voice.verticalDelayTarget;
-        expect(std::abs(voice.verticalDelayTarget - expected) < 1.0e-4f,
-               "attack tension waited for a control tick at phase offset "
-                   + std::to_string(phaseOffsets[index]));
-    }
-    const auto [minimumTarget, maximumTarget] = std::minmax_element(
-        onsetTargets.begin(), onsetTargets.end());
-    expect(*maximumTarget - *minimumTarget < 1.0e-4f,
-           "attack onset pitch depends on control phase (delay spread "
-               + std::to_string(*maximumTarget - *minimumTarget) + ")");
-
-    // A stolen string that jumps two octaves is choked in amplitude. Both
-    // followers carry squared amplitude and must lose the same 0.28^2 energy,
-    // or the new soft note inherits the old hard note's pitch and lifetime.
+    // A stolen string that jumps two octaves is choked in amplitude. Its
+    // retirement follower carries squared amplitude and must lose the same
+    // 0.28^2 energy, or the new soft note inherits the old note's lifetime.
     {
         ElectryEngine engine;
         engine.prepare(sampleRate, 512);
@@ -2924,29 +2935,25 @@ void testAttackTensionStateTransitions()
         engine.noteOn(28, 1.0f);
         StereoBuffer ringing(static_cast<int>(0.030 * sampleRate));
         renderInto(engine, ringing);
-        const float energyBefore = TestAccess::voiceLoopEnergy(engine, 0);
         const float outputBefore = TestAccess::voiceOutputEnergy(engine, 0);
 
         TestAccess::retriggerVoice(engine, 0, 52, 0.01f);
 
         constexpr float retainedEnergy = 0.28f * 0.28f;
         const auto stolen = TestAccess::snapshot(engine, 0);
-        const float energyAfter = TestAccess::voiceLoopEnergy(engine, 0);
         const float outputAfter = TestAccess::voiceOutputEnergy(engine, 0);
         expect(stolen.midiNote == 52,
                "the hard-to-soft jump did not exercise the oldest string");
-        expect(energyBefore > 0.0f && outputBefore > 0.0f,
+        expect(outputBefore > 0.0f,
                "the hard note had no follower energy to choke");
-        expect(std::abs(energyAfter / energyBefore - retainedEnergy) < 1.0e-4f
-                   && std::abs(outputAfter / outputBefore - retainedEnergy)
-                          < 1.0e-4f,
-               "a large pitch jump did not scale both energy followers by "
-               "0.28 squared");
+        expect(std::abs(outputAfter / outputBefore - retainedEnergy) < 1.0e-4f,
+               "a large pitch jump did not scale the retirement follower by "
+                   "0.28 squared");
     }
 
     // A delayed repick is still the old ringing stroke until the pick reaches
-    // it. All audible state must remain exact through that pre-roll—not only
-    // tension—then the reserved attack must still arrive at contact.
+    // it. All audible state must remain exact through that pre-roll, then the
+    // reserved attack must still arrive at contact.
     {
         ElectryEngine control;
         ElectryEngine pendingRepick;
@@ -2962,25 +2969,18 @@ void testAttackTensionStateTransitions()
             StereoBuffer ringing(static_cast<int>(0.080 * sampleRate));
             renderInto(*engine, ringing);
         }
-        const float before = TestAccess::voiceTensionCents(pendingRepick, 0);
-
         pendingRepick.noteOn(28, 0.20f);
         const auto pending = TestAccess::snapshot(pendingRepick, 0);
-        const float after = TestAccess::voiceTensionCents(pendingRepick, 0);
         expect(pending.startDelaySamples
                    > static_cast<int>(0.005 * sampleRate),
                "the same-note repick was not delayed for the regression");
-        expect(before > 1.0f && std::abs(after - before) < 1.0e-4f,
-               "a delayed same-note repick discarded the ringing tension");
 
         StereoBuffer controlWaiting(static_cast<int>(0.005 * sampleRate));
         StereoBuffer repickWaiting(static_cast<int>(0.005 * sampleRate));
         renderInto(control, controlWaiting);
         renderInto(pendingRepick, repickWaiting);
-        expect(TestAccess::snapshot(pendingRepick, 0).startDelaySamples > 0
-                   && TestAccess::voiceTensionCents(pendingRepick, 0)
-                          > 0.5f * before,
-               "ringing tension vanished before the delayed repick arrived");
+        expect(TestAccess::snapshot(pendingRepick, 0).startDelaySamples > 0,
+               "the delayed repick arrived before its scheduled contact");
         expect(controlWaiting.left == repickWaiting.left
                    && controlWaiting.right == repickWaiting.right,
                "scheduling a delayed Palm repick changed the old ring before "
@@ -3627,10 +3627,9 @@ void testPickingHandVariation()
     // converges: the twelfth pair reads -27.3 dB against -94.3 dB on the 12 s
     // protocol, 67 dB apart. With the excitation itself varying, the two
     // protocols have to
-    // stay in the same broad range. They cannot agree exactly once string
-    // tension is amplitude-dependent: a rapid re-pick inherits a sharp,
-    // ringing string while the 12 s stroke does not. The 12 dB guard keeps
-    // that physical state dependence while still separating it widely from
+    // stay in the same broad range. A rapid re-pick inherits a ringing string
+    // while the 12 s stroke does not, so they cannot agree exactly. The 12 dB
+    // guard keeps that state dependence while still separating it widely from
     // the 67 dB convergence of a repeated, invariant excitation.
     const auto rapid = repeat(0.5, PickStyle::Down);
     const auto rapidPairs = pairDbs(rapid, 1);
@@ -3979,9 +3978,8 @@ void testGuitarBuildRangeIsAudible()
                    "Guitar Build produced non-finite audio");
 
             // Keep the contrast render as a hard metal pick, but measure
-            // structural tuning with the same low-force strike as the global
-            // pitch contract so the intended tension-bloom pitch rise is not
-            // mistaken for a Build error.
+            // structural tuning in the settled body so the attack waveform is
+            // not mistaken for a Build error.
             const auto tuningRender = renderNote(
                 engine, sampleRate, midiNote, 0.3f, PlayStyle::Sustain, 1.1);
             const double measured = measureFrequency(
@@ -4018,7 +4016,12 @@ void testGuitarBuildRangeIsAudible()
             std::cout << "PROBE Guitar Build note " << midiNote << " anchor "
                       << anchor - 1 << "->" << anchor << ": "
                       << difference << '\n';
-            expect(difference > 0.06,
+            // The former 0.06 rail was set while unsupported detuning inflated
+            // E1 anchor 0->1 from a timbre difference to 1.220. Exact tuning
+            // leaves that pair at 0.047, so re-freeze this waveform alarm at
+            // the nearest hundredth below it; the separate 0.12 endpoint rail
+            // still protects the macro's overall travel.
+            expect(difference > 0.04,
                    "adjacent Guitar Build anchors collapse to the same sound ("
                        + std::to_string(anchor - 1) + "->"
                        + std::to_string(anchor) + ": "
@@ -4890,7 +4893,12 @@ void testDeadNote()
     }
     const double contextualRmse = std::sqrt(
         contextualSquaredError / 6.0);
-    expect(contextualRmse < 4.7,
+    // Restoring absolute chord tuning moved this fixed-window score from 4.559
+    // to 4.921 dB because the rejected moving-pitch path had contributed phase
+    // to the old windows. All three aggregate envelopes remain inside the four
+    // real hits' ranges. Re-freeze at the nearest tenth instead of retuning
+    // Dead from one uncontrolled performance to buy back the old snapshot.
+    expect(contextualRmse < 5.0,
            "the stateful Dead first-to-repick contrast regressed ("
                + std::to_string(contextualRmse) + " dB RMSE)");
     std::array<double, 3> phraseMedian {};
@@ -4904,7 +4912,7 @@ void testDeadNote()
         phraseMedian[window] = 0.5 * (values[1] + values[2]);
     }
     constexpr std::array<double, 3> documentedMedian {
-        -7.842, -14.848, -22.545
+        -8.100, -15.114, -23.415
     };
     for (std::size_t window = 0; window < phraseMedian.size(); ++window)
     {
@@ -5115,9 +5123,8 @@ void testFrettingHandVibrato()
         expect(identical, "a silent pressure control is not a bit-exact no-op");
     }
 
-    // The string's own tension modulation is relaxing the delay target the
-    // whole time, so the vibrato is measured against the same note without it
-    // rather than against a constant. The ratio removes the trend exactly:
+    // Measure the vibrato against the same note without it rather than against
+    // a constant. The ratio removes every shared loop/filter offset exactly:
     // both renders are the same note at the same velocity.
     std::vector<double> ratio;
     ratio.reserve(moving.target.size());
@@ -5217,8 +5224,8 @@ void testFrettingHandVibrato()
 
 // A hand is not an LFO. Four things separate them and all four are read off
 // the engine's own vibrato offset rather than off a pitch estimate, because
-// the quantity under test is a modulation shape and any estimator would smear
-// it with the string's own tension relaxation.
+// the quantity under test is a modulation shape and an audio estimator would
+// smear it across several cycles.
 //
 // The shape: the pitch follows the square of the finger's displacement, so a
 // cycle spends 36.4% of itself above half its own peak where a raised cosine
@@ -5774,8 +5781,8 @@ void testPinchHarmonic()
     const double pinchedMean = meanPartial(pinchedPartials);
     const double neckMean = meanPartial(neckPartials);
 
-    // Re-measured with per-partial peak tracking: nominal-bin sampling counted
-    // the two articulations' different pitch bloom as extra separation.
+    // Measured with per-partial peak tracking so stiffness and window leakage
+    // cannot masquerade as articulation separation.
     expect(pinchedMean > pickedMean + 1.75,
            "the pinch did not move the note's weight up the harmonic series "
            "(picked " + std::to_string(pickedMean) + ", pinched "
@@ -7755,8 +7762,8 @@ void testPalmMuteSpectralLoss()
             - decibels(std::sqrt(
                 openEarly[1] / std::max(openEarly[0], 1.0e-30)));
 
-        // Current defaults measure 10.04/15.28 dB of extra high-band loss and
-        // 19.64/22.68 dB of absolute high-band loss on E1/E2. These floors
+        // Current defaults measure 10.376/15.409 dB of extra high-band loss and
+        // 19.976/22.836 dB of absolute high-band loss on E1/E2. These floors
         // leave several dB for numeric variation while rejecting a materially
         // weaker hand tilt or a uniformly darkened string.
         const double minimumExtraLoss = midiNote == 28 ? 7.0 : 10.0;
@@ -7766,7 +7773,7 @@ void testPalmMuteSpectralLoss()
                    && highPairedDecay < -minimumHighLoss,
                "palm mute lost too little >500 Hz body energy on "
                    + std::to_string(midiNote));
-        // The early attack is also darker at the defaults (-3.73/-0.77 dB),
+        // The early attack is also darker at the defaults (-4.155/-0.844 dB),
         // but E2 is close enough to flat that this is deliberately secondary.
         const double maximumEarlyTilt = midiNote == 28 ? -2.0 : -0.25;
         expect(std::isfinite(earlyTiltDelta)
@@ -9225,10 +9232,8 @@ void testPickContactGeometry()
 // on; that part is worth about a cent in the settled window a DFT can read,
 // so this test guards the invariant rather than that refinement.
 //
-// Measured against the same note unmuted, not against nominal pitch. The
-// bridge hand legitimately reduces the displacement-driven attack bloom, so a
-// few cents of early difference is physical; the bound still rejects the
-// former uncompensated hand-filter phase error of up to 13 cents.
+// Measured against the same note unmuted, so estimator bias cancels; the bound
+// rejects the former uncompensated hand-filter phase error of up to 13 cents.
 void testPalmMuteDoesNotShiftPitch()
 {
     constexpr double sampleRate = 48000.0;
@@ -9243,7 +9248,6 @@ void testPalmMuteDoesNotShiftPitch()
 
         const auto fundamentalOf = [&] (float pressure, float velocity,
                                         std::uint64_t precedingNotes,
-                                        bool stationaryString,
                                         double& rmsOut)
         {
             EngineParameters parameters;
@@ -9256,8 +9260,6 @@ void testPalmMuteDoesNotShiftPitch()
             engine.noteOn(pickKeyswitch(PickStyle::Down), 1.0f);
             engine.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
             engine.noteOn(midiNote, velocity);
-            if (stationaryString)
-                TestAccess::disableAttackTension(engine);
             StereoBuffer buffer(static_cast<int>(0.4 * sampleRate));
             renderInto(engine, buffer);
             double sum = 0.0;
@@ -9286,12 +9288,12 @@ void testPalmMuteDoesNotShiftPitch()
         };
 
         double openRms = 0.0;
-        const double open = fundamentalOf(0.0f, 0.95f, 0, false, openRms);
+        const double open = fundamentalOf(0.0f, 0.95f, 0, openRms);
 
         for (const float pressure : { 0.30f, 0.55f, 1.00f })
         {
             double mutedRms = 0.0;
-            const double muted = fundamentalOf(pressure, 0.95f, 0, false,
+            const double muted = fundamentalOf(pressure, 0.95f, 0,
                                                mutedRms);
             // Assert only where the note still has enough sustained energy for
             // pitch to be a property of it at all. A fully muted low E is ~37
@@ -9313,10 +9315,8 @@ void testPalmMuteDoesNotShiftPitch()
         // The contact-rate multiplier moves with both written velocity and
         // the deterministic stroke draw. Cover both axes on the two lowest E
         // strings without multiplying the full playable-range matrix above.
-        // Freeze the separate physical attack-tension bloom in this added
-        // matrix: its mute-dependent trajectory legitimately changes pitch,
-        // while this assertion is specifically about compensating the phase
-        // of the hand-loss filter whose depth the multiplier changes.
+        // This matrix specifically covers compensation of the hand-loss
+        // filter whose depth the contact-rate multiplier changes.
         if (midiNote <= 40)
         {
             for (const float velocity : { 0.20f, 0.95f })
@@ -9325,10 +9325,10 @@ void testPalmMuteDoesNotShiftPitch()
                 {
                     double variedOpenRms = 0.0;
                     const double variedOpen = fundamentalOf(
-                        0.0f, velocity, precedingNotes, true, variedOpenRms);
+                        0.0f, velocity, precedingNotes, variedOpenRms);
                     double variedMutedRms = 0.0;
                     const double variedMuted = fundamentalOf(
-                        0.55f, velocity, precedingNotes, true, variedMutedRms);
+                        0.55f, velocity, precedingNotes, variedMutedRms);
                     if (variedMutedRms < 1.0e-5
                         || variedMutedRms < 0.03 * variedOpenRms)
                         continue;
@@ -10019,7 +10019,6 @@ void testHumbuckerTwoCoilNotch()
         engine->noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
         for (const int note : { 28, 35, 40, 45, 50, 55, 59, 64 })
             engine->noteOn(note, velocity);
-        TestAccess::disableAttackTension(*engine);
         StereoBuffer buffer(static_cast<int>(seconds * sampleRate));
         renderInto(*engine, buffer);
         return buffer;
@@ -10036,7 +10035,6 @@ void testHumbuckerTwoCoilNotch()
         engine->noteOn(pickKeyswitch(PickStyle::Down), 1.0f);
         engine->noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
         engine->noteOn(midiNote, velocity);
-        TestAccess::disableAttackTension(*engine);
         StereoBuffer buffer(static_cast<int>(seconds * sampleRate));
         renderInto(*engine, buffer);
         return buffer;
@@ -10156,10 +10154,10 @@ void testHumbuckerTwoCoilNotch()
                 dftMagnitude(render.left, start, window, sampleRate,
                              f0 * partial.index) + 1.0e-30);
             worst = std::max(worst, std::abs(measured - partial.decibels));
-            // The stationary-source seam removes the attack glide from this
-            // pickup unit test. Its strong partials reproduce within 0.2 dB;
-            // the tail is 30-80 dB down and moves by less than 1 dB when that
-            // formerly tiny upstream modulation is removed.
+            // The pitch-stationary source keeps this a pickup unit test. Its
+            // strong partials reproduce within 0.2 dB; the tail is 30-80 dB
+            // down, so a one-decibel tolerance avoids promoting numerical
+            // residue into a pickup claim.
             const double tolerance = partial.index <= 12 ? 0.2 : 1.0;
             expect(std::abs(measured - partial.decibels) < tolerance,
                    "single-coil partial " + std::to_string(partial.index)
@@ -10788,10 +10786,10 @@ void testFingeredStringsShareTheBridge()
     //    Resonance: bounded, and falling. Strict monotonicity over successive
     //    1 s windows is *not* asserted - the uncoupled engine already breaks it
     //    three times over this render, by up to 0.43 dB, so the bar is that the
-    //    coupling does not add regeneration on top of that. The physical
-    //    attack glide now moves the beating pattern through these coarse
-    //    windows; the bounded build measures 1.50 dB while still falling 75
-    //    dB end to end, so two decibels separates beating from growth.
+    //    coupling does not add regeneration on top of that. Polarisation and
+    //    body-mode beating move energy through these coarse windows even while
+    //    the render falls end to end, so two decibels separates beating from
+    //    actual growth.
     const auto longChord = renderChord(allEight, 1.0f, 1.0f, 1.0f, 30.0);
     expect(allFinite(longChord), "thirty seconds of maximum coupling is not finite");
     expect(peakAbs(longChord.left) < 3.05f && peakAbs(longChord.right) < 3.05f,
@@ -10880,11 +10878,11 @@ void testFingeredStringsShareTheBridge()
     // 5. The self-term. With one voice sounding, the bus *is* that voice's own
     //    contribution, so `bus - own` is exactly zero and the injection must be
     //    exactly zero however far the control is pushed. The check is on the
-    //    voice's own loop energy rather than on the output, because the output
-    //    also carries the seven idle strings ringing sympathetically, which
-    //    legitimately do move with the control. A voice that drove itself
-    //    through the bus would change its own loop - and every decay time, T60
-    //    and timbre calibration in the instrument sits downstream of that.
+    //    voice's own output-energy follower rather than on the summed pickup
+    //    output, because that sum also carries seven idle strings ringing
+    //    sympathetically. A voice that drove itself through the bus would
+    //    change this follower - and every decay time, T60 and timbre calibration
+    //    in the instrument sits downstream of that.
     const auto singleNoteLoopEnergy = [&] (float sympathetic)
     {
         ElectryEngine engine;
@@ -10905,7 +10903,7 @@ void testFingeredStringsShareTheBridge()
         expect(stringIndex >= 0, "the single note did not sound");
         expect(TestAccess::bridgeCouplingGain(engine) == 0.0f,
                "a lone voice was given a non-zero share of the bridge bus");
-        return TestAccess::voiceLoopEnergy(engine, stringIndex);
+        return TestAccess::voiceOutputEnergy(engine, stringIndex);
     };
     const float loopEnergyOff = singleNoteLoopEnergy(0.0f);
     expect(loopEnergyOff > 0.0f, "the single note left no loop energy to read");
@@ -11178,8 +11176,8 @@ int main()
     testPitchWheelGlideFollowsBendTime();
     testPitchWheelBendsSympatheticStrings();
     testHammerOnLegatoContinuity();
-    testTensionGlide();
-    testAttackTensionStateTransitions();
+    testHardPickingStaysInTune();
+    testAttackStateTransitions();
     testPickupsToneAndBuildMorph();
     testHumbuckerTwoCoilNotch();
     testArtifactsControl();
@@ -11245,7 +11243,7 @@ int main()
     testPushAcousticReturnSanitisation();
     testCpuGuardrail();
 
-    // Test attack tension modulation and palm-mute bridge impact physics
+    // Palm-mute bridge impact smoke check.
     {
         constexpr auto sampleRate = 48000.0;
         ElectryEngine engine;

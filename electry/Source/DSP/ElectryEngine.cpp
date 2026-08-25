@@ -205,24 +205,17 @@ constexpr float steelDensity = 7850.0f;      // kg/m^3
 constexpr float steelYoungModulus = 2.0e11f; // Pa
 
 // The waveguide is normalised for stable modal projection rather than stored
-// in SI units. Mapping loop displacement back to metres lets the nonlinear
-// stretch law use the same physical core, tension and length as the dispersion
-// solve. The prior physical prototype
-// measured 0.002831 loop mean-square at 2.05 mm, giving 0.03853 m per loop
-// unit; 0.040 is that calibration rounded, and the rendered follower does not
-// exceed the physical seed. Separately, the 4.44 N full-force model load gives
-// 2.75 mm of E1 displacement at the default 27.625-inch scale/pick position,
-// and therefore a 30-cent initial rise, consistent with the CC0 Drop-E reference
-// without baking one string's displacement into all eight strings.
+// in SI units. The prior physical prototype measured 0.002831 loop mean-square
+// at 2.05 mm, giving 0.03853 m per loop unit; 0.040 is that calibration rounded.
+// It converts the fret-clearance controls below into the loop's units.
 constexpr float waveguideDisplacementMetresPerUnit = 0.040f;
-constexpr float fullForcePickLoadNewtons = 4.440f;
 
 // A low eight-string is commonly set near 1.75 mm at the upper frets. Let a
 // forceful, artifact-heavy stroke close a little under that nominal action and
-// a gentler one require a little more travel, then convert through the same SI
-// calibration as the tension model. The former 0.52..0.24 loop-unit range was
-// 20.8..9.6 mm: even the engine's 2.75 mm full-force E1 seed could never reach
-// it, so the alleged fret-collision branch was dead.
+// a gentler one require a little more travel, then convert through the loop's
+// SI displacement calibration. The former 0.52..0.24 loop-unit range was
+// 20.8..9.6 mm, far above nominal electric-guitar action, so the alleged
+// fret-collision branch was dead.
 constexpr float looseFretClearanceMetres = 0.00208f;
 constexpr float hardFretClearanceMetres = 0.00096f;
 
@@ -477,10 +470,10 @@ ElectryEngine::stringSpecs() noexcept
     // what left the low register sounding hollow - the fundamental faded while
     // the upper partials were still going.
     static constexpr std::array<StringSpec, stringCount> specs {{
-        // Flexural and axial effective cores are separate empirical fits: a
-        // winding can slip differently under bending and tension. Their
-        // initial values intentionally retain the calibrated instrument while
-        // allowing either fit to move independently when measured data exists.
+        // The flexural core is the dispersion fit; the separate axial core is
+        // the pitch-wheel compliance coordinate. A winding can slip
+        // differently under bending and tension, so those two fits need not
+        // share a diameter fraction.
         { 28, true, 2.0320f, 0.22f, 0.22f, 20.0f }, // E1, wound (.080)
         { 35, true, 1.5240f, 0.25f, 0.25f, 19.0f }, // B1, wound (.060)
         { 40, true, 1.0668f, 0.28f, 0.28f, 18.0f }, // E2, wound
@@ -913,8 +906,7 @@ ElectryEngine::makeVelocityProfile(float velocity) const noexcept
     profile.amplitude = std::pow(force, response);
 
     // Effort stays the stroke's force: it decides how hard the string meets
-    // the frets (`collision`). The elastic pitch bloom reads the amplitude
-    // force law directly below rather than carrying a second velocity curve.
+    // the frets (`collision`) without changing the written pitch.
     profile.effort = lerp(0.65f, v, response);
 
     // The contact spectrum does not follow that force, and the coupling
@@ -1010,8 +1002,6 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     // std::pow inside renderVoice(), twice per string per sample. They depend
     // only on the internal clock, so they belong here.
     const float internalRate = static_cast<float>(sampleRate_);
-    energyAttackCoefficient_ = rateAdjustedCoefficient(0.004f, internalRate);
-    energyReleaseCoefficient_ = rateAdjustedCoefficient(0.00006f, internalRate);
     // Calibrated at 48 kHz like its neighbours. Left as a bare per-sample
     // literal it would give the hand a different physical response time at
     // every host rate.
@@ -1855,10 +1845,10 @@ void ElectryEngine::configureVoiceDamping(Voice& voice,
         //
         // The 2025 Guitar-TECHS DI set independently confirms that the upper
         // band has to leave first. Raising this tilt from 3.0 to 4.5 moves the
-        // default E2's paired >500 Hz loss to -4.85/-15.57 dB in the 50-150 and
+        // default E2's paired >500 Hz loss to -4.56/-16.28 dB in the 50-150 and
         // 150-500 ms windows while its <500 Hz figures move by only 0.06/0.04
         // dB. At maximum Palm Tightness those upper-band losses become
-        // -11.20/-28.73
+        // -11.52/-32.06
         // dB, spanning the first player's -11.18/-21.82 dB without forcing the
         // second player's much firmer contact onto every muted note.
         constexpr float handHighFrequencyTilt = 4.5f;
@@ -2283,10 +2273,7 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         voice.compensationDirty = false;
     }
 
-    const float tensionFactor =
-        1.0f / (1.0f + voice.tensionDepth * voice.energyEnvelope);
-
-    const float verticalDelay = voice.compensatedPeriodVertical * tensionFactor;
+    const float verticalDelay = voice.compensatedPeriodVertical;
     // A slightly longer horizontal path detunes the second polarisation by a
     // fraction of a cent, producing the natural slow beating of real strings.
     // The additive term is a detuning, so it has to be a fixed fraction of the
@@ -2296,7 +2283,7 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     // referenced to the 96 kHz internal clock, so 44.1/48 kHz hosts are
     // unchanged and the faster ones now agree with them in cents.
     const float horizontalDelay = voice.compensatedPeriodHorizontal
-                                * tensionFactor * 1.00023f
+                                * 1.00023f
                                 + horizontalDetuneSamples_;
 
     voice.vertical.targetDelay = clampf(verticalDelay, 4.0f,
@@ -3162,56 +3149,6 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     const float contactMetres = 0.001f * lerp(1.5f, 0.5f, parameters.pickHardness);
     const float soundingMetres = std::max(scaleLengthMetres() / fretStretch,
                                           0.05f);
-    // To second order, a string displaced by y at fraction p of its sounding
-    // length grows by y^2 / (2 L p (1-p)). With dT = E A dL/L and the
-    // first-order linearisation of f proportional to sqrt(T), the frequency
-    // rise is
-    //
-    //     df/f = E A y^2 / (4 T L^2 p (1-p)).
-    //
-    // The axial core is its own empirical fit: winding slip under tension need
-    // not match the effective flexural core used by the dispersion model.
-    // The gauge cancels only in an ideal string; retaining both areas keeps
-    // this solve consistent with the actual fitted set.
-    const float gaugeScale = lerp(1.0f, 11.0f / 9.0f,
-                                  parameters.stringGauge);
-    const float diameter = spec.plainDiameterMm * 1.0e-3f * gaugeScale;
-    const float coreDiameter = diameter * spec.axialCoreScale;
-    const float coreArea = 0.25f * pi * coreDiameter * coreDiameter;
-    const float massScale = spec.wound ? 0.85f : 1.0f;
-    const float linearMass = massScale * steelDensity * 0.25f * pi
-                           * diameter * diameter;
-    const float waveSpeed = 2.0f * soundingMetres * voice.baseFrequency;
-    const float standingTension = linearMass * waveSpeed * waveSpeed;
-    const float pluckGeometry = std::max(combFraction * (1.0f - combFraction),
-                                         0.015f);
-    voice.tensionDepth = steelYoungModulus * coreArea
-        / std::max(4.0f * standingTension * soundingMetres * soundingMetres
-                     * pluckGeometry,
-                   1.0e-9f);
-
-    // `amplitude` already contains velocity, stroke-to-stroke force and the
-    // articulation's displacement reduction. Divide out the purely tonal
-    // hardness/age gains, and reference the ordinary sustain's 1.55 modal
-    // projection, so this is the stroke's physical force rather than a second
-    // output-level curve. The triangular-string statics then turn that force
-    // into the string-specific displacement below. Seeding the follower at
-    // release also fixes the old backwards trajectory, where the inferred
-    // energy did not peak until about 184 ms after the pick.
-    constexpr float sustainDisplacementGain = 1.55f;
-    const float relativeForce =
-        amplitude / std::max(0.48f * hardnessGain * ageAmplitudeGain, 1.0e-6f)
-        * (displacementGain / sustainDisplacementGain);
-    const float pluckForce = fullForcePickLoadNewtons
-                           * std::max(relativeForce, 0.0f);
-    const float deflectionMetres = pluckForce * pluckGeometry * soundingMetres
-                                 / std::max(standingTension, 1.0e-6f);
-    voice.energyEnvelope = std::max(voice.energyEnvelope,
-                                    deflectionMetres * deflectionMetres);
-    // startVoice() solved the un-stretched period before this attack's contact
-    // geometry existed. Re-solve now that the physical deflection is seeded;
-    // otherwise onset pitch depends on how far away the next control tick is.
-    configureVoicePitch(voice, false);
     voice.excitationCombDelay = combFraction * voice.vertical.targetDelay;
     voice.excitationCombWidth = 0.5f * (contactMetres / soundingMetres)
                               * voice.vertical.targetDelay;
@@ -3513,14 +3450,7 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     voice.releaseGainTarget = 1.0f;
     voice.releaseGainCoefficient = 0.0f;
     if (! wasRinging)
-    {
-        voice.energyEnvelope = 0.0f;
         voice.outputEnergy = 0.0f;
-    }
-
-    // The elastic depth depends on this stroke's contact position, which is
-    // resolved in startExcitation(). No fresh attack contributes tension yet.
-    voice.tensionDepth = 0.0f;
 
     // A ringing physical string carries the preceding bridge/body thud through
     // a repick or retarget. A genuinely fresh string starts silent;
@@ -3559,7 +3489,6 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
             }
             constexpr float retainedEnergy =
                 retainedAmplitude * retainedAmplitude;
-            voice.energyEnvelope *= retainedEnergy;
             voice.outputEnergy *= retainedEnergy;
             voice.vertical.currentDelay = voice.vertical.targetDelay;
             voice.horizontal.currentDelay = voice.horizontal.targetDelay;
@@ -3798,7 +3727,6 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.noiseRemaining = 0;
     voice.artifactCollisionRemaining = 0;
     voice.artifactCollisionLength = 0;
-    voice.energyEnvelope = 0.0f;
     voice.outputEnergy = 0.0f;
     voice.busContribution = 0.0f;
     voice.displayLevel = 0.0f;
@@ -4551,22 +4479,9 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         sums.body += 0.9f * artifactContactSignal
                    + 0.09f * artifactBuzzAmount_ * saddleRattle;
 
-    // The slow energy envelope feeds tension modulation: its release side
-    // follows the string's own decay scale so the attack pitch glide relaxes
-    // over hundreds of milliseconds, as measured tension modulation does.
     const float instantaneousLoopEnergy = verticalSample * verticalSample
                                         + horizontalSample * horizontalSample;
-    const float deflectionSquared = instantaneousLoopEnergy
-        * waveguideDisplacementMetresPerUnit
-        * waveguideDisplacementMetresPerUnit;
-    const float coefficient = deflectionSquared > voice.energyEnvelope
-        ? energyAttackCoefficient_ : energyReleaseCoefficient_;
-    voice.energyEnvelope += coefficient
-                          * (deflectionSquared - voice.energyEnvelope);
-
-    // A separate, faster follower drives voice retirement only. Tying that to
-    // the slow tension envelope kept an inaudible released string alive for
-    // several seconds, needlessly holding its slot; this follower falls to
+    // This follower drives voice retirement. It falls to
     // the retirement floor within about half a second of the audio going
     // silent while still tracking a genuine sustain.
     const float retireCoefficient = instantaneousLoopEnergy > voice.outputEnergy

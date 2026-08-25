@@ -25,11 +25,6 @@
 //     Fleischer, "Investigating Dead Spots of Electric Guitars",
 //     https://www.researchgate.net/publication/233653803_Investigating_Dead_Spots_of_Electric_Guitars
 //
-//   Tension modulation
-//     Tolonen, Valimaki and Karjalainen, "Modeling of tension modulation
-//     nonlinearity in plucked strings",
-//     https://www.researchgate.net/publication/3333696_Modeling_of_tension_modulation_nonlinearity_in_plucked_strings
-//
 //   Plectrum and finger excitation, touch and collisions
 //     Germain and Evangelista, WASPAA 2009,
 //     https://ieeexplore.ieee.org/document/5346502/
@@ -836,8 +831,7 @@ private:
         PolarisationLoop horizontal {};
 
         // Sounding pitch program. The compensated periods cache the loop
-        // filter phase compensation so the tension-modulation factor can be
-        // applied cheaply every control tick.
+        // filter phase compensation applied to the fractional delays.
         float baseFrequency { 110.0f };
         // The pitch the dispersion grid search was last fitted at; the fit is
         // quantised to a few cents so a wheel glide does not re-run it on
@@ -857,12 +851,6 @@ private:
         float legatoBlend { 1.0f };
         float legatoIncrement { 0.0f };
 
-        // Tension-modulation state (attack pitch glide). The envelope is the
-        // squared transverse deflection in metres; the depth is the string's
-        // elastic frequency coefficient in inverse square metres, including
-        // the geometry of this stroke's pluck position.
-        float energyEnvelope { 0.0f };
-        float tensionDepth { 0.0f };
         float palmImpactState { 0.0f };
         float palmImpactVel { 0.0f };
 
@@ -1451,8 +1439,6 @@ private:
     // every rendered sample of every string. They depend only on the internal
     // clock, so prepare() is their only correct home.
     float handEnvelopeCoefficient_ { 0.0015f };
-    float energyAttackCoefficient_ { 0.004f };
-    float energyReleaseCoefficient_ { 0.00006f };
     float retireAttackCoefficient_ { 0.01f };
     float retireReleaseCoefficient_ { 0.0009f };
     float artifactBandCoefficient_ { 0.12f };
