@@ -883,19 +883,32 @@ is the usability reference: an eight-string with separate phrase-player and
 note-by-note modes, deliberately optimized for immediate heavy and
 sound-designed results rather than dry-guitar literalism.
 
-The workflow audit pointed to one playability gap, not to more mute samples.
+The workflow audits pointed to interaction gaps, not to a need for more mute
+samples.
 [Hydra's official TACT manual](https://impactsoundworks.com/manuals/Shreddage%203.5%20Hydra%20Manual.pdf)
 allows articulation conditions to latch or act temporarily;
 [Evolution Dracus](https://www.orangetreesamples.com/download/manual/EvolutionDracus-UsersGuide.pdf)
 offers latching and non-latching keyswitch assignments; and
 [RealEight](https://www.musiclab.com/assets/files/RealEight.pdf) can switch its
 separate left-hand and bridge mutes by key, pedal, wheel or velocity, with key
-operation toggled or held. Electry now exposes the smallest compatible answer:
-one visible `LATCH | HOLD` choice for the existing play-style bank, defaulting
-to the former `LATCH` behavior. The PLAY STYLE strip stores the base; in HOLD,
-the newest physical, host or on-screen play-style key overrides it only while
-down and reveals an older held key or the base on release. Pick Stroke remains
-independent and velocity keeps its physical force meaning.
+operation toggled or held. Electry answers that surface with one visible
+`LATCH | HOLD` choice for the existing play-style bank, defaulting to the former
+`LATCH` behavior. The PLAY STYLE strip stores the base; in HOLD, the newest
+physical, host or on-screen play-style key overrides it only while down and
+reveals an older held key or the base on release. Pick Stroke remains independent
+and velocity keeps its physical force meaning.
+
+A later direct-performance audit found the other gap: the picking hand could
+not strike a string again without sending another playable Note On and thereby
+changing fretting-key ownership. Hydra exposes per-string held-note pick keys,
+while [Ample Metal Hellrazer](https://www.amplesound.net/en/pro-pd.asp?id=33)
+can repick a held chord. Electry now reserves E6..B6 as a blue per-string repick
+lane, mapped from physical strings 8..1. Each trigger uses its velocity and the
+current Pick Stroke and Play Style, re-enters the existing physical attack path,
+and adds no fretting-key owner. Durable per-string ownership survives an audible
+Mute or Dead voice's retirement, keeps that stopped string out of open-string
+sympathetic and free-string allocation paths until normal voice stealing, and
+lets the picking hand restart it from silence.
 
 `LATCH | HOLD` is saved as non-parameter state alongside the current 26 host
 parameters; transient held keys are never serialized. Because Electry is not
@@ -906,10 +919,14 @@ conditioned before a same-sample attack in either host insertion order; CC123
 joins that pass and retains its source order against them.
 Duplicate and overlapping holds, base changes beneath a hold, delayed-note
 style capture, UI/host parity, CC120/123, Panic, prepare/release, mode changes,
-current state and hold-time state saves are regression-pinned. This closes the
-workflow gap without copying discrete half/full/short layers: Mute Tightness,
-Mute Pressure (CC2) and stroke force remain one continuous bridge-hand surface, and
-no DSP or rendered evaluator target changes.
+current state and hold-time state saves are regression-pinned. The repick lane
+is additionally pinned across every physical string, zero-owner silence,
+Alternate, Mute/Dead capture, original-key release, full audio retirement,
+allocation, sympathetic exclusion and the live fretboard. These controls close
+the documented workflow gaps without copying discrete half/full/short layers:
+Mute Tightness, Mute Pressure (CC2) and stroke force remain one continuous
+bridge-hand surface. The rendered evaluator targets remain unchanged because
+the new path is a live performance gesture, not a new articulation model.
 
 The adjacent specialist bar is
 [Outboard PalmML](https://outboard.audio/en/help/outboard-palmml): it is a

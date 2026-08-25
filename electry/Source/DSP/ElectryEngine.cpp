@@ -1080,6 +1080,8 @@ void ElectryEngine::reset()
         voice.fluxScale = stringFluxScale(voice.stringIndex);
         updateStyleWeights(voice);
     }
+    heldMidiNotes_.fill(-1);
+    heldNoteCounts_.fill(0);
 
     smoothedParameters_ = sanitise(targetParameters_);
     pickStyle_ = PickStyle::Down;
@@ -1290,6 +1292,12 @@ void ElectryEngine::setSustainPedal(bool down) noexcept
 
 void ElectryEngine::noteOn(int midiNote, float velocity)
 {
+    noteOnInternal(midiNote, velocity, -1);
+}
+
+void ElectryEngine::noteOnInternal(int midiNote, float velocity,
+                                   int forcedStringIndex)
+{
     if (! prepared_)
         return;
 
@@ -1311,6 +1319,23 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
         {
             playStyle_ = static_cast<PlayStyle>(index - pickStyleKeyswitchCount);
         }
+        return;
+    }
+
+    if (isRepickNote(midiNote))
+    {
+        const int stringIndex = midiNote - firstRepickNote;
+        const auto index = static_cast<std::size_t>(stringIndex);
+        if (heldNoteCounts_[index] <= 0)
+            return;
+
+        // This is the picking hand striking a string the fretting hand already
+        // owns. Re-enter the ordinary note path so articulation, Alternate,
+        // strum scheduling and stroke variation stay identical. Forcing its
+        // physical string also revives a Mute or Dead voice that has already
+        // decayed below the audio-retirement floor; noteOnInternal restores the
+        // durable fretting-key owner instead of adding a trigger-key owner.
+        noteOnInternal(heldMidiNotes_[index], velocity, stringIndex);
         return;
     }
 
@@ -1344,13 +1369,14 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
                > static_cast<std::int64_t>(handReturnSamples_))
     {
         bool anyHeld = false;
-        for (const auto& voice : voices_)
-            anyHeld = anyHeld || (voice.active && voice.keyDown);
+        for (const int count : heldNoteCounts_)
+            anyHeld = anyHeld || count > 0;
         if (! anyHeld)
             frettingHandPosition_ = 0.0f;
     }
 
-    const int stringIndex = chooseString(midiNote, playStyle_);
+    const int stringIndex = forcedStringIndex >= 0
+        ? forcedStringIndex : chooseString(midiNote, playStyle_);
     if (stringIndex < 0)
         return;
 
@@ -1429,6 +1455,24 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
         startVoice(voice, midiNote, velocity, playStyle_, strokeIsUp,
                    startDelaySamples);
 
+    const auto heldIndex = static_cast<std::size_t>(stringIndex);
+    if (forcedStringIndex < 0)
+    {
+        if (heldMidiNotes_[heldIndex] == midiNote)
+            heldNoteCounts_[heldIndex] = std::min(
+                heldNoteCounts_[heldIndex] + 1, 65535);
+        else
+        {
+            heldMidiNotes_[heldIndex] = midiNote;
+            heldNoteCounts_[heldIndex] = 1;
+        }
+    }
+    // startVoice() normally derives ownership from audible voice state, which
+    // may have retired since the fretting key went down. The durable per-string
+    // state is canonical for both ordinary overlaps and picking-hand repicks.
+    voice.keyDown = heldNoteCounts_[heldIndex] > 0;
+    voice.keyDownCount = heldNoteCounts_[heldIndex];
+
     updateActiveVoiceCount();
 }
 
@@ -1437,15 +1481,26 @@ void ElectryEngine::noteOff(int midiNote)
     if (! prepared_ || isKeyswitchNote(midiNote))
         return;
 
-    for (auto& voice : voices_)
+    for (int stringIndex = 0; stringIndex < stringCount; ++stringIndex)
     {
-        if (! voice.active || ! voice.keyDown || voice.midiNote != midiNote)
+        const auto index = static_cast<std::size_t>(stringIndex);
+        if (heldNoteCounts_[index] <= 0 || heldMidiNotes_[index] != midiNote)
             continue;
-        if (voice.keyDownCount > 1)
+
+        auto& voice = voices_[index];
+        if (heldNoteCounts_[index] > 1)
         {
-            --voice.keyDownCount;
+            --heldNoteCounts_[index];
+            if (voice.active && voice.midiNote == midiNote)
+                voice.keyDownCount = heldNoteCounts_[index];
             continue;
         }
+
+        heldNoteCounts_[index] = 0;
+        heldMidiNotes_[index] = -1;
+        if (! voice.active || voice.midiNote != midiNote)
+            continue;
+
         voice.keyDownCount = 0;
         voice.keyDown = false;
         if (sustainPedalDown_)
@@ -1457,6 +1512,8 @@ void ElectryEngine::noteOff(int midiNote)
 
 void ElectryEngine::allNotesOff()
 {
+    heldMidiNotes_.fill(-1);
+    heldNoteCounts_.fill(0);
     for (auto& voice : voices_)
     {
         if (! voice.active)
@@ -1481,7 +1538,16 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle) const noexcep
         return fret >= 0 && fret <= fretCount;
     };
 
-    // A repick of a note that is already sounding grabs the same string.
+    // A repeated held pitch keeps its physical string even if a short Mute or
+    // Dead attack has already decayed below the audio retirement floor.
+    for (int s = 0; s < stringCount; ++s)
+        if (heldNoteCounts_[static_cast<std::size_t>(s)] > 0
+            && heldMidiNotes_[static_cast<std::size_t>(s)] == midiNote
+            && playable(s))
+            return s;
+
+    // A repick of a note that is still sounding grabs the same string. This
+    // fallback also keeps the private test seam's directly-created voices sane.
     for (int s = 0; s < stringCount; ++s)
         if (voices_[static_cast<std::size_t>(s)].active
             && voices_[static_cast<std::size_t>(s)].midiNote == midiNote
@@ -1520,7 +1586,8 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle) const noexcep
     float bestCost = 1.0e30f;
     for (int s = 0; s < stringCount; ++s)
     {
-        if (! playable(s) || voices_[static_cast<std::size_t>(s)].active)
+        if (! playable(s) || voices_[static_cast<std::size_t>(s)].active
+            || heldNoteCounts_[static_cast<std::size_t>(s)] > 0)
             continue;
         const float cost = frettingCost(fretOn(s));
         if (cost < bestCost)
@@ -4980,8 +5047,10 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
     }
 
     bool rendered = false;
-    for (auto& voice : voices_)
+    for (int stringIndex = 0; stringIndex < stringCount; ++stringIndex)
     {
+        const auto index = static_cast<std::size_t>(stringIndex);
+        auto& voice = voices_[index];
         if (voice.active)
         {
             renderVoice(voice, sums);
@@ -5015,7 +5084,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
             }
             rendered = true;
         }
-        else if (sympatheticActive_
+        else if (heldNoteCounts_[index] == 0 && sympatheticActive_
                  && (voice.sympatheticEnergy > 1.0e-11f
                      || std::abs(sympatheticDrive) > 1.0e-6f
                      || std::abs(feedbackDrive_) > 1.0e-9f))
@@ -5301,7 +5370,8 @@ void ElectryEngine::getStringVisualState(
     {
         const auto& voice = voices_[static_cast<std::size_t>(stringIndex)];
         auto& state = destination[static_cast<std::size_t>(stringIndex)];
-        state.sounding = voice.active;
+        const bool held = heldNoteCounts_[static_cast<std::size_t>(stringIndex)] > 0;
+        state.sounding = voice.active || held;
         state.releasing = voice.active && voice.releasing;
         state.playStyle = voice.playStyle;
         state.strokeUp = voice.strokeIsUp;
@@ -5314,6 +5384,14 @@ void ElectryEngine::getStringVisualState(
             // retirement logic uses; 4.0 places a hard picked note near full
             // scale without clipping the meter on a strum.
             state.level = clampf(4.0f * voice.displayLevel, 0.0f, 1.0f);
+        }
+        else if (held)
+        {
+            state.sympathetic = false;
+            state.midiNote = heldMidiNotes_[static_cast<std::size_t>(stringIndex)];
+            state.fret = state.midiNote
+                       - stringSpecs()[static_cast<std::size_t>(stringIndex)].openMidiNote;
+            state.level = 0.0f;
         }
         else
         {

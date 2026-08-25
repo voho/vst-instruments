@@ -240,6 +240,10 @@ public:
     // Drop-E eight-string, 22-fret instrument: open low E1 to fret 22 on E4.
     static constexpr int lowestPlayableNote = 28;
     static constexpr int highestPlayableNote = 86;
+    // E6..B6 repick the physically held strings from low to high without
+    // adding another fretting-key owner. D#6 remains a silent separator.
+    static constexpr int firstRepickNote = 88;
+    static constexpr int repickNoteCount = stringCount;
     // How far the fretting hand reaches above its index finger. Four fret
     // spaces is one finger per fret with the ordinary stretch a player uses
     // without shifting, so the hand covers `position .. position + reach`.
@@ -249,6 +253,10 @@ public:
                   "three picking styles and seven play styles need one keyswitch each");
     static_assert(firstKeyswitchNote + keyswitchCount <= lowestPlayableNote,
                   "keyswitches must not overlap the playable range");
+    static_assert(highestPlayableNote + 2 == firstRepickNote,
+                  "D#6 must separate playable notes from repick keys");
+    static_assert(firstRepickNote + repickNoteCount <= 128,
+                  "repick keys must fit in the MIDI note range");
 
     void prepare(double sampleRate, int maxBlockSize);
     void reset();
@@ -328,6 +336,11 @@ public:
     [[nodiscard]] static bool isPlayableNote(int midiNote) noexcept
     {
         return midiNote >= lowestPlayableNote && midiNote <= highestPlayableNote;
+    }
+    [[nodiscard]] static bool isRepickNote(int midiNote) noexcept
+    {
+        return midiNote >= firstRepickNote
+            && midiNote < firstRepickNote + repickNoteCount;
     }
 
 private:
@@ -1178,6 +1191,7 @@ private:
                     int startDelaySamples,
                     std::uint64_t reservedStartOrder = 0,
                     bool keyStateAlreadyApplied = false) noexcept;
+    void noteOnInternal(int midiNote, float velocity, int forcedStringIndex);
     void legatoRetarget(Voice& voice, int midiNote, float velocity,
                         PlayStyle playStyle) noexcept;
     void beginVoiceRelease(Voice& voice) noexcept;
@@ -1320,6 +1334,11 @@ private:
     // of the range.
     float frettingHandPosition_ { 0.0f };
     int handReturnSamples_ { 72000 };
+    // MIDI-key ownership outlives audible waveguide state: a held Mute or Dead
+    // string may decay below the voice retirement floor and still be available
+    // to its per-string picking-hand trigger.
+    std::array<int, stringCount> heldMidiNotes_ {};
+    std::array<int, stringCount> heldNoteCounts_ {};
 
     // Continuous bridge-hand damping: the parameter plus the CC2 pressure.
     float palmMutePressure_ { 0.0f };

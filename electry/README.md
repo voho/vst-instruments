@@ -103,17 +103,19 @@ the `LATCH | HOLD` choice alone.
 
 1. Load **Drop-E Metal**, leave the built-in amp on, and play MIDI E1..D6
    (notes 28..86). C0/C#0/D0 select Down, Up or Alternate picking.
-2. Select E0 **Mute** for chugs. **Mute Tightness** is the articulation's
+2. Keep a note or chord held and tap the blue E6..B6 zone to repick physical
+   strings 8..1 without releasing the fretting keys.
+3. Select E0 **Mute** for chugs. **Mute Tightness** is the articulation's
    loose-to-tight construction; **Mute Pressure** and MIDI CC 2 are the live
    bridge hand and also stack on Dead. A0 **Dead** is the separate fretting hand.
-3. Use `PLAY-STYLE KEYS: HOLD` with Sustain as the visible base to hold E0 only
+4. Use `PLAY-STYLE KEYS: HOLD` with Sustain as the visible base to hold E0 only
    over chugs or A0 over ghosts. `LATCH` keeps the choice selected.
-4. Choose Mono for a conventional DI, Stereo for one guitar's divided-pickup
+5. Choose Mono for a conventional DI, Stereo for one guitar's divided-pickup
    field, or Double before the phrase for two independently performed engines.
 
 ## How it works
 
-### Keyswitches and playable range
+### Keyswitches, playable range and repick triggers
 
 MIDI notes 12..21 are two independent banks of silent keyswitches. Notes
 12..14 (C0..D0) always latch how the pick moves. Notes 15..21 (D#0..A0) either
@@ -142,8 +144,15 @@ notes, delayed strums and pending repicks keep the style captured at Note On.
 | 21 | A0 | Dead note — the fretting hand lies across the strings without pressing them to a fret; it stays a dark periodic ghost rather than a gate |
 
 Notes 22..27 are ignored, and notes 28..86 are playable on a 22-fret,
-eight-string Drop-E instrument tuned
-E1-B1-E2-A2-D3-G3-B3-E4; notes outside these ranges are ignored. Each note is
+eight-string Drop-E instrument tuned E1-B1-E2-A2-D3-G3-B3-E4. D#6 (87) is a
+silent separator. Notes 88..95 (E6..B6) are picking-hand triggers for physical
+strings 8..1, from the lowest E1 string to the highest E4 string. A trigger
+repicks the note physically held on that string with its own velocity and the
+current Pick Stroke and Play Style; an unheld string stays silent. It never
+adds fretting-key ownership, so its Note Off is inert and the original note's
+Note Off still releases normally. Held ownership survives the old sound's
+natural decay, allowing a silent Mute or Dead note to be struck again. Notes
+outside these ranges are ignored. Each playable note is
 allocated to one of the eight physical strings by a fretting hand that has a
 position and a reach: a repick of a sounding note grabs the same string,
 hammer-on continues the nearest sounding string, otherwise the free string
@@ -1035,6 +1044,17 @@ frozen blind comparison pass, Electry claims a research-grounded,
 regression-measured model—not capture parity or market leadership.
 
 ## Development checkpoints
+
+### 2026-08-26 tuning and picking-hand checkpoint
+
+- Corrected hard-pick pitch across all eight strings; the default isolated
+  open strings now measure within 0..2.5 cents after attack, while the low
+  chord spans -4.25..+0.75 cents.
+- Made live CC2 bridge-hand pressure visible in the engine status, independent
+  of the host's Mute Pressure knob.
+- Added the blue E6..B6 per-string repick lane. Its picking hand can restart a
+  fully decayed held Mute or Dead string without adding note ownership, and it
+  follows current velocity, Pick Stroke, Play Style, CC2 and Double state.
 
 ### 2026-08-25 realism and performance checkpoint
 

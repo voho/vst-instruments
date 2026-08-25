@@ -492,8 +492,11 @@ struct ElectryEngineTestAccess
 
     static void silenceVoice(ElectryEngine& engine, int stringIndex) noexcept
     {
+        const auto index = static_cast<std::size_t>(stringIndex);
+        engine.heldMidiNotes_[index] = -1;
+        engine.heldNoteCounts_[index] = 0;
         engine.silenceVoice(
-            engine.voices_[static_cast<std::size_t>(stringIndex)]);
+            engine.voices_[index]);
         engine.updateActiveVoiceCount();
     }
 
@@ -1935,6 +1938,158 @@ void testOverlappingSameNoteOffKeepsLatestRepickHeld()
     const auto afterLatestOff = TestAccess::snapshot(engine, stringIndex);
     expect(! afterLatestOff.keyDown && afterLatestOff.releasing,
            "the final matching Note Off did not release the Palm repick");
+}
+
+void testHeldStringRepickKeys()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr std::array<int, ElectryEngine::stringCount> openNotes {
+        28, 35, 40, 45, 50, 55, 59, 64
+    };
+
+    expect(ElectryEngine::firstRepickNote == 88
+               && ElectryEngine::repickNoteCount == 8
+               && ElectryEngine::firstRepickNote
+                      + ElectryEngine::repickNoteCount - 1 == 95,
+           "held-string repick mapping drifted from MIDI E6..B6");
+
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    EngineParameters parameters;
+    parameters.sympatheticAmount = 0.0f;
+    engine.setParameters(parameters);
+
+    // The eight command notes are picking-hand gestures, not pitches. With no
+    // physically held string they are silent and allocate no voice.
+    engine.reset();
+    for (int trigger = 0; trigger < ElectryEngine::repickNoteCount; ++trigger)
+        engine.noteOn(ElectryEngine::firstRepickNote + trigger, 0.9f);
+    StereoBuffer silence(256);
+    renderInto(engine, silence);
+    expect(engine.getActiveVoiceCount() == 0 && peakAbs(silence.left) == 0.0f,
+           "an unowned held-string repick key produced a voice or sound");
+
+    // E6..B6 map directly from the lowest physical string to the highest. Age
+    // resets only if the requested held string really took a fresh attack.
+    for (int stringIndex = 0; stringIndex < ElectryEngine::stringCount; ++stringIndex)
+    {
+        engine.reset();
+        const int note = openNotes[static_cast<std::size_t>(stringIndex)];
+        engine.noteOn(note, 0.75f);
+        StereoBuffer aged(128);
+        renderInto(engine, aged);
+        const auto before = TestAccess::snapshot(engine, stringIndex);
+
+        engine.noteOn(ElectryEngine::firstRepickNote + stringIndex, 0.95f);
+        const auto after = TestAccess::snapshot(engine, stringIndex);
+        expect(before.active && before.ageSamples > 0 && after.active
+                   && after.midiNote == note && after.ageSamples == 0
+                   && engine.getActiveVoiceCount() == 1,
+               "held-string repick key did not retrigger only physical string "
+                   + std::to_string(stringIndex));
+    }
+
+    // Repicks are new wrist strokes and capture the current articulation, but
+    // neither their Note Offs nor any number of triggers add fretting ownership.
+    engine.reset();
+    engine.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
+    engine.noteOn(openNotes[0], 0.80f);
+    expect(! TestAccess::snapshot(engine, 0).strokeIsUp,
+           "held-string Alternate fixture did not begin down");
+
+    engine.noteOn(styleKeyswitch(PlayStyle::PalmMute), 1.0f);
+    engine.noteOn(ElectryEngine::firstRepickNote, 0.90f);
+    const auto mutedUp = TestAccess::snapshot(engine, 0);
+    expect(mutedUp.playStyle == PlayStyle::PalmMute && mutedUp.strokeIsUp,
+           "held-string repick did not capture same-sample Mute or advance Alternate");
+    engine.noteOff(ElectryEngine::firstRepickNote);
+    expect(TestAccess::snapshot(engine, 0).keyDown,
+           "held-string repick Note Off released the fretted pitch");
+
+    engine.noteOn(styleKeyswitch(PlayStyle::Dead), 1.0f);
+    engine.noteOn(ElectryEngine::firstRepickNote, 0.95f);
+    const auto deadDown = TestAccess::snapshot(engine, 0);
+    expect(deadDown.playStyle == PlayStyle::Dead && ! deadDown.strokeIsUp,
+           "second held-string repick did not capture Dead or alternate down");
+
+    engine.noteOn(ElectryEngine::firstRepickNote, 0.85f);
+    expect(TestAccess::snapshot(engine, 0).strokeIsUp,
+           "third held-string repick did not continue the Alternate sequence");
+    engine.noteOff(openNotes[0]);
+    const auto released = TestAccess::snapshot(engine, 0);
+    expect(! released.keyDown && released.releasing,
+           "repeated held-string repicks added unmatched fretting-key ownership");
+
+    // A physically held key outlives the audible waveguide. Dead A2 decays all
+    // the way through normal retirement, remains visible at zero level, blocks
+    // that stopped string from being reused or sympathetically opened, and can
+    // still be restarted by its picking-hand key.
+    ElectryEngine retired;
+    retired.prepare(sampleRate, 512);
+    auto retirementParameters = parameters;
+    retirementParameters.sympatheticAmount = 0.80f;
+    retired.setParameters(retirementParameters);
+    retired.reset();
+    retired.noteOn(styleKeyswitch(PlayStyle::Dead), 1.0f);
+    retired.noteOn(45, 0.90f); // open A2, physical string index 3
+
+    double waited = 0.0;
+    while (retired.getActiveVoiceCount() > 0 && waited < 8.0)
+    {
+        StereoBuffer decay(static_cast<int>(0.25 * sampleRate));
+        renderInto(retired, decay);
+        waited += 0.25;
+    }
+    expect(retired.getActiveVoiceCount() == 0,
+           "held Dead string did not reach normal audio retirement");
+
+    std::array<electry::StringVisualState, ElectryEngine::stringCount> visuals {};
+    retired.getStringVisualState(visuals);
+    expect(visuals[3].sounding && ! visuals[3].sympathetic
+               && visuals[3].midiNote == 45 && visuals[3].fret == 0
+               && visuals[3].level == 0.0f,
+           "retired held string lost its zero-level fretting-hand display");
+
+    // An ordinary overlapping Note On after retirement also reuses the held
+    // string and retains the older owner when its newer matching Note Off lands.
+    retired.noteOn(45, 0.85f);
+    expect(TestAccess::stringForNote(retired, 45) == 3,
+           "ordinary overlap did not reuse its retired held string");
+    retired.noteOff(45);
+    expect(TestAccess::snapshot(retired, 3).keyDown,
+           "newer Note Off cleared the older retired-string owner");
+    waited = 0.0;
+    while (retired.getActiveVoiceCount() > 0 && waited < 8.0)
+    {
+        StereoBuffer decay(static_cast<int>(0.25 * sampleRate));
+        renderInto(retired, decay);
+        waited += 0.25;
+    }
+    expect(retired.getActiveVoiceCount() == 0,
+           "overlapped held Dead string did not retire again");
+
+    retired.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+    retired.noteOn(47, 0.85f);
+    expect(TestAccess::stringForNote(retired, 47) == 2,
+           "allocator reused a retired but physically held string");
+    StereoBuffer coupled(static_cast<int>(0.15 * sampleRate));
+    renderInto(retired, coupled);
+    expect(! TestAccess::snapshot(retired, 3).sympatheticReady,
+           "retired held string reopened as an unfretted sympathetic string");
+
+    retired.noteOn(styleKeyswitch(PlayStyle::Dead), 1.0f);
+    retired.noteOn(ElectryEngine::firstRepickNote + 3, 0.95f);
+    const auto revived = TestAccess::snapshot(retired, 3);
+    expect(revived.active && revived.keyDown && revived.midiNote == 45
+               && revived.playStyle == PlayStyle::Dead,
+           "per-string key did not revive its fully retired held Dead note");
+    retired.noteOff(ElectryEngine::firstRepickNote + 3);
+    expect(TestAccess::snapshot(retired, 3).keyDown,
+           "revived string was released by its picking-hand key-up");
+    retired.noteOff(45);
+    const auto revivedRelease = TestAccess::snapshot(retired, 3);
+    expect(! revivedRelease.keyDown && revivedRelease.releasing,
+           "original Note Off did not release the revived held string");
 }
 
 void testAlternateStrokeSequence()
@@ -11165,6 +11320,7 @@ int main()
     testDeterminism();
     testKeyswitchesSelectStylesSilently();
     testOverlappingSameNoteOffKeepsLatestRepickHeld();
+    testHeldStringRepickKeys();
     testAlternateStrokeSequence();
     testAlternateChordSharesOneStroke();
     testRapidSameStringRepicksAreSeparateStrokes();

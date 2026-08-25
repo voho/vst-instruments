@@ -1296,6 +1296,224 @@ void testSameSamplePalmMutePressureAttack()
             "same-sample CC2=127 left the Sustain attack effectively unmuted");
 }
 
+void testRepickMidiContract()
+{
+    constexpr int heldNote = electry::ElectryEngine::lowestPlayableNote;
+    constexpr int repickNote = electry::ElectryEngine::firstRepickNote;
+    const int muteKeyswitch = electry::ElectryEngine::firstPlayStyleKeyswitchNote
+                            + static_cast<int> (electry::PlayStyle::PalmMute);
+
+    const auto differenceEnergy = [] (const std::vector<float>& first,
+                                      const std::vector<float>& second)
+    {
+        double result = 0.0;
+        for (std::size_t sample = 0; sample < first.size(); ++sample)
+        {
+            const double difference = static_cast<double> (first[sample])
+                                    - second[sample];
+            result += difference * difference;
+        }
+        return result;
+    };
+
+    struct ConditionedRepick
+    {
+        std::vector<float> audio;
+        int playStyle = -1;
+        int pressure = -1;
+        bool ownedAfterNoteOff = false;
+        bool ownedAfterVelocityZero = false;
+        bool releasedByOriginalNoteOff = false;
+    };
+    const auto renderConditionedRepick = [] (bool repickFirst, int cc2Value)
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        setParameterValue (processor, electry::parameters::sympathetic, 0.0f);
+
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, heldNote, (juce::uint8) 110), 0);
+        renderBlock (processor, audio, midi);
+        renderSeconds (processor, audio, 0.04);
+
+        const auto repick = juce::MidiMessage::noteOn (
+            1, repickNote, (juce::uint8) 120);
+        if (repickFirst)
+            midi.addEvent (repick, 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, muteKeyswitch, (juce::uint8) 127), 0);
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, 2, cc2Value), 0);
+        if (! repickFirst)
+            midi.addEvent (repick, 0);
+        renderBlock (processor, audio, midi);
+
+        ConditionedRepick result;
+        const auto* channel = audio.getReadPointer (0);
+        result.audio.assign (channel, channel + audio.getNumSamples());
+        result.playStyle = capturedPlayStyle (processor, heldNote);
+        result.pressure = processor.getMidiMutePressureForDisplay();
+        const auto stillOwned = [&processor]
+        {
+            const auto state = processor.getStringVisualState (0);
+            return state.sounding && state.midiNote == heldNote && ! state.releasing;
+        };
+
+        midi.addEvent (juce::MidiMessage::noteOff (1, repickNote), 0);
+        renderBlock (processor, audio, midi);
+        result.ownedAfterNoteOff = stillOwned();
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, repickNote, (juce::uint8) 0), 0);
+        renderBlock (processor, audio, midi);
+        result.ownedAfterVelocityZero = stillOwned();
+        midi.addEvent (juce::MidiMessage::noteOff (1, heldNote), 0);
+        renderBlock (processor, audio, midi);
+        const auto released = processor.getStringVisualState (0);
+        result.releasedByOriginalNoteOff = ! released.sounding || released.releasing;
+
+        processor.releaseResources();
+        return result;
+    };
+
+    const auto repickFirst = renderConditionedRepick (true, 127);
+    const auto conditionsFirst = renderConditionedRepick (false, 127);
+    const auto noCc2 = renderConditionedRepick (true, 0);
+    expect (repickFirst.audio == conditionsFirst.audio,
+            "repick before same-sample Mute/CC2 missed attack conditioning");
+    expect (repickFirst.playStyle
+                == static_cast<int> (electry::PlayStyle::PalmMute)
+                && repickFirst.pressure == 127,
+            "same-sample repick did not capture Mute and full CC2 pressure");
+    expect (differenceEnergy (repickFirst.audio, noCc2.audio) > 1.0e-8,
+            "same-sample CC2 did not audibly condition the Mute repick");
+    expect (repickFirst.ownedAfterNoteOff
+                && repickFirst.ownedAfterVelocityZero,
+            "repick Note Off or velocity-zero Note On removed the held string owner");
+    expect (repickFirst.releasedByOriginalNoteOff,
+            "repick added an owner that survived the original playable Note Off");
+
+    struct AlternateRepick
+    {
+        std::vector<float> audio;
+        bool beganDown = false;
+        bool repickedUp = false;
+        bool soundingBeforeRepick = false;
+        bool unchangedByVelocityZero = false;
+    };
+    const auto renderAlternateRepick = [] (bool onScreen, bool sustainOnly,
+                                            bool shouldRepick)
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        setParameterValue (processor, electry::parameters::sympathetic, 0.0f);
+
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        if (sustainOnly)
+            midi.addEvent (juce::MidiMessage::controllerEvent (1, 64, 127), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, electry::ElectryEngine::firstKeyswitchNote
+                   + static_cast<int> (electry::PickStyle::Alternate),
+            (juce::uint8) 127), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, heldNote, (juce::uint8) 110), 0);
+        renderBlock (processor, audio, midi);
+        const bool beganDown = ! processor.getStringVisualState (0).strokeUp;
+        if (sustainOnly)
+        {
+            midi.addEvent (juce::MidiMessage::noteOff (1, heldNote), 0);
+            renderBlock (processor, audio, midi);
+        }
+        const bool soundingBeforeRepick =
+            processor.getStringVisualState (0).sounding;
+        renderSeconds (processor, audio, 0.04);
+
+        if (shouldRepick && onScreen)
+            processor.keyboardState.noteOn (
+                1, repickNote, 110.0f / 127.0f);
+        else if (shouldRepick)
+            midi.addEvent (juce::MidiMessage::noteOn (
+                1, repickNote, (juce::uint8) 110), 0);
+        renderBlock (processor, audio, midi);
+        const auto* channel = audio.getReadPointer (0);
+        AlternateRepick result;
+        result.audio.assign (channel, channel + audio.getNumSamples());
+        result.beganDown = beganDown;
+        result.repickedUp = processor.getStringVisualState (0).strokeUp;
+        result.soundingBeforeRepick = soundingBeforeRepick;
+        if (shouldRepick && ! sustainOnly)
+        {
+            midi.addEvent (juce::MidiMessage::noteOn (
+                1, repickNote, (juce::uint8) 0), 0);
+            renderBlock (processor, audio, midi);
+            result.unchangedByVelocityZero =
+                processor.getStringVisualState (0).strokeUp == result.repickedUp;
+        }
+        processor.releaseResources();
+        return result;
+    };
+
+    const auto hostAlternate = renderAlternateRepick (false, false, true);
+    const auto uiAlternate = renderAlternateRepick (true, false, true);
+    expect (hostAlternate.beganDown && hostAlternate.repickedUp
+                && uiAlternate.beganDown && uiAlternate.repickedUp,
+            "host or on-screen repick did not advance Alternate from Down to Up");
+    expect (uiAlternate.audio == hostAlternate.audio,
+            "on-screen Alternate repick did not match host MIDI");
+    expect (hostAlternate.unchangedByVelocityZero,
+            "velocity-zero repick created an attack and advanced Alternate");
+
+    const auto sustainTail = renderAlternateRepick (false, true, false);
+    const auto sustainedRepick = renderAlternateRepick (false, true, true);
+    expect (sustainedRepick.soundingBeforeRepick
+                && sustainedRepick.audio == sustainTail.audio
+                && ! sustainedRepick.repickedUp,
+            "repick accepted a sustain-pedal voice without a physically held key");
+
+    struct StereoRepick
+    {
+        std::array<std::vector<float>, 2> channels;
+    };
+    const auto renderDoubleRepick = [] (bool shouldRepick)
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        setParameterValue (processor, electry::parameters::sympathetic, 0.0f);
+        setParameterValue (processor, electry::parameters::outputMode, 2.0f);
+
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        renderSeconds (processor, audio, 0.05);
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, heldNote, (juce::uint8) 110), 0);
+        renderBlock (processor, audio, midi);
+        renderSeconds (processor, audio, 0.05);
+        if (shouldRepick)
+            midi.addEvent (juce::MidiMessage::noteOn (
+                1, repickNote, (juce::uint8) 120), 0);
+        renderBlock (processor, audio, midi);
+
+        StereoRepick result;
+        for (int channel = 0; channel < 2; ++channel)
+        {
+            const auto* samples = audio.getReadPointer (channel);
+            result.channels[static_cast<std::size_t> (channel)].assign (
+                samples, samples + audio.getNumSamples());
+        }
+        processor.releaseResources();
+        return result;
+    };
+
+    const auto doubleTail = renderDoubleRepick (false);
+    const auto doubleRepick = renderDoubleRepick (true);
+    expect (differenceEnergy (doubleRepick.channels[0], doubleTail.channels[0])
+                > 1.0e-8
+                && differenceEnergy (doubleRepick.channels[1], doubleTail.channels[1])
+                       > 1.0e-8,
+            "Double repick did not produce a fresh attack in both engines");
+}
+
 // ElectryAudioProcessor::decodePitchBend14()'s 14-bit reconstruction is exact
 // integer/float arithmetic, so it is asserted on precisely here rather than
 // only inferred from rendered audio: the low-order MIDI data byte alone
@@ -2421,6 +2639,21 @@ void testEditorRendering()
         && styleKeyMode != nullptr && keyboard != nullptr
         && keyboardHint != nullptr)
     {
+        const auto* midiKeyboard = dynamic_cast<const ElectryKeyboardComponent*> (
+            keyboard);
+        const auto* hintLabel = dynamic_cast<const juce::Label*> (keyboardHint);
+        expect (midiKeyboard != nullptr
+                    && midiKeyboard->getRangeStart()
+                        == electry::ElectryEngine::firstKeyswitchNote
+                    && midiKeyboard->getRangeEnd()
+                        == electry::ElectryEngine::firstRepickNote
+                           + electry::ElectryEngine::repickNoteCount - 1,
+                "keyboard does not expose keyswitches through all eight repick triggers");
+        expect (hintLabel != nullptr
+                    && hintLabel->getText().containsIgnoreCase ("repick")
+                    && hintLabel->getText().contains ("E6..B6")
+                    && hintLabel->getText().contains ("8..1"),
+                "keyboard hint does not explain the per-string repick zone");
         if (factoryProgramControl != nullptr)
             expect (factoryProgramControl->getBottom() <= pickStrip->getY(),
                     "factory-rig selector overlaps the performance section");
@@ -2570,6 +2803,7 @@ int main()
     testSameSampleMuteKeyswitchOrder();
     testMidiControllersAndVoiceLifecycle();
     testSameSamplePalmMutePressureAttack();
+    testRepickMidiContract();
     testPitchWheelByteReconstruction();
     testPitchWheelMidiDispatch();
     testResonanceWheelFeedback();

@@ -26,8 +26,8 @@ public:
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
 };
 
-// A guitar-oriented keyboard that keeps the keyswitch banks visually separate
-// from the playable Drop-E eight-string range. Pick style stays latched; the
+// A guitar-oriented keyboard that keeps keyswitches, playable notes and the
+// per-string repick triggers visually separate. Pick style stays latched; the
 // play-style highlight follows either its latch or the active HOLD override.
 class ElectryKeyboardComponent final : public juce::MidiKeyboardComponent
 {
